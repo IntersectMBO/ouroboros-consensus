@@ -21,10 +21,12 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
+import Codec.Serialise.Class
 
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
-  deriving stock (Show, Generic)
-  deriving newtype (Eq, Ord, NoThunks)
+  deriving stock Show
+  deriving Generic
+  deriving newtype (Eq, Ord, NoThunks, Serialise)
 
 newtype PerasWeight = PerasWeight {unPerasWeight :: Word64}
   deriving stock (Show, Generic)

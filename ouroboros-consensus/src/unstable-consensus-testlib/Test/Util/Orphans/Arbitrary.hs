@@ -310,8 +310,13 @@ instance
 -------------------------------------------------------------------------------}
 
 instance Arbitrary EraParams where
-  arbitrary = EraParams <$> arbitrary <*> arbitrary <*> arbitrary <*> (GenesisWindow <$> arbitrary)
-
+  arbitrary =
+    EraParams
+      <$> arbitrary
+      <*> arbitrary
+      <*> arbitrary
+      <*> (GenesisWindow <$> arbitrary)
+      <*> (PerasRoundLength <$> arbitrary)
 instance Arbitrary SafeZone where
   arbitrary =
     oneof
@@ -332,6 +337,7 @@ instance Arbitrary Bound where
       <$> (RelativeTime <$> arbitrary)
       <*> (SlotNo <$> arbitrary)
       <*> (EpochNo <$> arbitrary)
+      <*> (PerasRoundNo <$> arbitrary)
 
 instance Arbitrary (K Past blk) where
   arbitrary = K <$> (Past <$> arbitrary <*> arbitrary)
