@@ -310,10 +310,19 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs
 
   txWireSize =
-        hcollapse
+    \tx ->
+      let tx' :: NS GenTx xs
+          tx' = getOneEraGenTx (getHardForkGenTx tx)
+          -- HFC overhead
+          -- note that HFC might be disabled, then this gives an upperbound.
+          overhead | nsToIndex tx' <= 23 = 2
+                   | otherwise           = 3
+
+      in
+        (+ overhead)
+      . hcollapse
       . hcmap proxySingle (K . txWireSize)
-      . getOneEraGenTx
-      . getHardForkGenTx
+      $ tx'
 
   blockCapacityTxMeasure
     HardForkLedgerConfig{..}
