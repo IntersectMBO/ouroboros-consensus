@@ -293,7 +293,7 @@ However, this precondition is currently not checked [during initialization](http
 
 ### Chain selection and LoE
 
-During the node's startup and initial chain selection phase, the `ChainDB` [explicitly prevents](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L231) selecting more than `k` blocks in maximal candidates if [LoE](TODO-ref!) (Limit on Eagerness) is enabled.
+During the node's startup and initial chain selection phase, the `ChainDB` [explicitly prevents](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L231) selecting more than `k` blocks in maximal candidates if [LoE](genesis-design#limit-on-eagerness) (Limit on Eagerness) is enabled.
 This precaution helps avoid accidentally adopting an adversarial chain from the `VolatileDB`, a chain that LoE would have rejected during live syncing.
 
 When a new block (or part of a fork) would extend the current chain beyond the LoE limit, it is added to the `ChainDB`'s database, but it does not immediately trigger a chain selection switch or extension.
