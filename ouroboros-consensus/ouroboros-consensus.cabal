@@ -412,6 +412,7 @@ library unstable-consensus-testlib
     Test.Util.Serialisation.Golden
     Test.Util.Serialisation.Roundtrip
     Test.Util.Serialisation.SomeResult
+    Test.Util.Serialisation.TxWireSize
     Test.Util.Shrink
     Test.Util.Slots
     Test.Util.Split
@@ -456,6 +457,7 @@ library unstable-consensus-testlib
     nothunks,
     optparse-applicative,
     ouroboros-consensus,
+    ouroboros-network,
     ouroboros-network-api,
     ouroboros-network-mock,
     pretty-simple,
