@@ -26,6 +26,7 @@ import Test.Tasty
 import Test.Tasty.QuickCheck (Property, testProperty, (===))
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Serialisation.Roundtrip
+import           Test.Util.Serialisation.TxWireSize
 
 tests :: TestTree
 tests =
@@ -33,6 +34,8 @@ tests =
     "Cardano"
     [ testGroup "Examples roundtrip" $
         examplesRoundtrip Cardano.Examples.codecConfig Cardano.Examples.examples
+    , testProperty "GenTx.txWireSize.txSubmission" $ prop_txWireSize_txSubmission testCodecCfg
+    , testProperty "GenTx.txWireSize.tight" $ prop_txWireSize (const Nothing) testCodecCfg
     , roundtrip_all_skipping
         result
         testCodecCfg
