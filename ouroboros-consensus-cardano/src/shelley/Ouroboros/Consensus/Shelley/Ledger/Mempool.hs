@@ -112,6 +112,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
+import           Ouroboros.Network.SizeInBytes
 
 data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx era)
   deriving stock Generic
@@ -491,21 +492,37 @@ instance MaxTxSizeUTxO DijkstraEra where
 
 -----
 
+wrapCBORinCBOROverhead :: Word32
+                       -- ^ payload size
+                       -> SizeInBytes
+wrapCBORinCBOROverhead size =
+    2 -- wrapCBORinCBOR's encodeTag 24
+
+    + -- upper bound for wrapCBORinCBOR's encodeBytes overhead;
+      -- it is bounded by maximum tx size
+      case size of
+        _ | size <= 0x17 -> 1
+          | size <= 0xff -> 2
+          | size <= 0xffff -> 3
+          | otherwise -> 5
+    + fromIntegral size
+
+
 instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) where
   type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
-  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
+  txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg       = txsMaxBytes
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
   type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
-  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
+  txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg       = txsMaxBytes
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
-  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
+  txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg       = txsMaxBytes
 
@@ -636,7 +653,7 @@ instance
   TxLimits (ShelleyBlock p AlonzoEra)
   where
   type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
-  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
+  txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure              _cfg st tx = runValidation $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg       = blockCapacityAlonzoMeasure
 
@@ -778,9 +795,12 @@ instance
   TxLimits (ShelleyBlock p BabbageEra)
   where
   type TxMeasure (ShelleyBlock p BabbageEra) = AlonzoMeasure
+  txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
-  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
+
+-- instance ( ShelleyCompatible p ConwayEra
+--          ) => TxLimits (ShelleyBlock p ConwayEra) where
 
 instance
   ShelleyCompatible p ConwayEra =>
@@ -797,4 +817,4 @@ instance
   type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureDijkstra st tx
   blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure
-  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
+  txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
