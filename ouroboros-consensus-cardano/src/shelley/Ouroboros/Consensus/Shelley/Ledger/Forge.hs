@@ -7,12 +7,13 @@
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
 import qualified Cardano.Ledger.Core as Core (Tx)
-import qualified Cardano.Ledger.Core as SL (hashTxSeq, toTxSeq)
+import qualified Cardano.Ledger.Core as SL (hashBlockBody, mkBasicBlockBody, txSeqBlockBodyL)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
-import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
+import qualified Cardano.Ledger.Shelley.BlockBody as SL (bBodySize)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import qualified Data.Sequence.Strict as Seq
+import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -68,7 +69,7 @@ forgeShelleyBlock
         curSlot
         curNo
         prevHash
-        (SL.hashTxSeq @era body)
+        (SL.hashBlockBody @era body)
         actualBodySize
         protocolVersion
     let blk = mkShelleyBlock $ SL.Block hdr body
@@ -79,9 +80,8 @@ forgeShelleyBlock
     protocolVersion = shelleyProtocolVersion $ configBlock cfg
 
     body =
-      SL.toTxSeq @era $
-        Seq.fromList $
-          fmap extractTx txs
+      SL.mkBasicBlockBody
+        & SL.txSeqBlockBodyL .~ Seq.fromList (fmap extractTx txs)
 
     actualBodySize = SL.bBodySize protocolVersion body
 

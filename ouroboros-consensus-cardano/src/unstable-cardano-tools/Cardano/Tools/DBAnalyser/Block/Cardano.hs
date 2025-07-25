@@ -157,9 +157,12 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     genesisConway <-
       either (error . show) return
         =<< Aeson.eitherDecodeFileStrict' (conwayGenesisPath cc)
+    genesisDijkstra <-
+      either (error . show) return
+        =<< Aeson.eitherDecodeFileStrict' (dijkstraGenesisPath cc)
 
     let transCfg =
-          SL.mkLatestTransitionConfig genesisShelley genesisAlonzo genesisConway
+          SL.mkLatestTransitionConfig genesisShelley genesisAlonzo genesisConway genesisDijkstra
 
     initialNonce <- case shelleyGenesisHash cc of
       Just h -> pure h

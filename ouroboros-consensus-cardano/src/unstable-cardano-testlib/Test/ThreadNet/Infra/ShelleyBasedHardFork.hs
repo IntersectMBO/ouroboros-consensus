@@ -48,10 +48,10 @@ import Cardano.Ledger.Binary.Encoding
   , encodeMemPack
   , toPlainEncoding
   )
+import qualified Cardano.Ledger.Conway.State as SL
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import qualified Cardano.Ledger.UMap as SL
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
 import Control.Monad.Except (runExcept)
@@ -90,7 +90,6 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Protocol.TPraos
-import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
@@ -186,7 +185,7 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , TranslateTxMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
   , SL.TranslateEra era2 SL.NewEpochState
-  , SL.TranslateEra era2 WrapTx
+  , SL.TranslateEra era2 SL.Tx
   , SL.TranslationError era2 SL.NewEpochState ~ Void
   , -- At the moment, fix the protocols together
     ProtoCrypto proto1 ~ ProtoCrypto proto2
@@ -593,8 +592,8 @@ instance
                   . SL.esLStateL
                   . SL.lsCertStateL
                   . SL.certDStateL
-                  . SL.dsUnifiedL
-                  . SL.umElemsL
+                  . SL.accountsL
+                  . SL.accountsMapL
        in LedgerTables . ValuesMK
             <$> SL.eraDecoder @era
               (decodeMap (ShelleyHFCTxIn <$> decodeMemPack) (toShelleyTxOut <$> decShareCBOR certInterns))

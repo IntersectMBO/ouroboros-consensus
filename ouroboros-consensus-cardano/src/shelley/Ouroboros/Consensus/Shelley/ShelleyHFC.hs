@@ -40,10 +40,10 @@ import Cardano.Ledger.Binary.Encoding
   , encodeMemPack
   , toPlainEncoding
   )
+import qualified Cardano.Ledger.Conway.State as SL
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import qualified Cardano.Ledger.UMap as SL
 import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import Codec.CBOR.Decoding
@@ -392,30 +392,30 @@ translateShelleyTables (LedgerTables utxoTable) =
 
 instance
   ( ShelleyBasedEra era
-  , SL.TranslateEra era WrapTx
+  , SL.TranslateEra era SL.Tx
   ) =>
   SL.TranslateEra era (GenTx :.: ShelleyBlock proto)
   where
-  type TranslationError era (GenTx :.: ShelleyBlock proto) = SL.TranslationError era WrapTx
+  type TranslationError era (GenTx :.: ShelleyBlock proto) = SL.TranslationError era SL.Tx
   translateEra ctxt (Comp (ShelleyTx _txId tx)) =
-    Comp . mkShelleyTx . unwrapTx @era
-      <$> SL.translateEra ctxt (WrapTx @(SL.PreviousEra era) tx)
+    Comp . mkShelleyTx
+      <$> SL.translateEra ctxt tx
 
 instance
   ( ShelleyBasedEra era
-  , SL.TranslateEra era WrapTx
+  , SL.TranslateEra era SL.Tx
   ) =>
   SL.TranslateEra era (WrapValidatedGenTx :.: ShelleyBlock proto)
   where
   type
     TranslationError era (WrapValidatedGenTx :.: ShelleyBlock proto) =
-      SL.TranslationError era WrapTx
+      SL.TranslationError era SL.Tx
   translateEra ctxt (Comp (WrapValidatedGenTx (ShelleyValidatedTx _txId vtx))) =
     Comp
       . WrapValidatedGenTx
       . mkShelleyValidatedTx
       . SL.coerceValidated
-      <$> SL.translateValidated @era @WrapTx ctxt (SL.coerceValidated vtx)
+      <$> SL.translateValidated @era @SL.Tx ctxt (SL.coerceValidated vtx)
 
 {-------------------------------------------------------------------------------
   Canonical TxIn
@@ -527,6 +527,6 @@ instance
                   . SL.esLStateL
                   . SL.lsCertStateL
                   . SL.certDStateL
-                  . SL.dsUnifiedL
-                  . SL.umElemsL
+                  . SL.accountsL
+                  . SL.accountsMapL
        in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))

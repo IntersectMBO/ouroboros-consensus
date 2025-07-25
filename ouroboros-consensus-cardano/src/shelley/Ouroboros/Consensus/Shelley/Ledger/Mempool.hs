@@ -40,14 +40,16 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import Cardano.Ledger.Alonzo.Core
-  ( Tx
-  , TxSeq
+  ( BlockBody
+  , Tx
+  , allInputsTxBodyF
   , bodyTxL
   , eraDecoder
-  , fromTxSeq
   , ppMaxBBSizeL
   , ppMaxBlockExUnitsL
   , sizeTxF
+  , txIdTx
+  , txSeqBlockBodyL
   )
 import qualified Cardano.Ledger.Alonzo.Rules as AlonzoEra
 import Cardano.Ledger.Alonzo.Scripts
@@ -68,10 +70,9 @@ import Cardano.Ledger.Binary
   , FullByteString (..)
   , ToCBOR (..)
   )
+import qualified Cardano.Ledger.Conway.PParams as SL
 import qualified Cardano.Ledger.Conway.Rules as ConwayEra
-import qualified Cardano.Ledger.Conway.Rules as SL
 import qualified Cardano.Ledger.Conway.UTxO as SL
-import qualified Cardano.Ledger.Core as SL (allInputsTxBodyF, txIdTxBody)
 import qualified Cardano.Ledger.Hashes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
@@ -85,6 +86,7 @@ import Data.Foldable (toList)
 import Data.Measure (Measure)
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
+import Data.Word (Word32)
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
 import Lens.Micro ((^.))
@@ -149,7 +151,7 @@ instance Typeable era => ShowProxy (SL.ApplyTxError era)
 --  more?) transactions extra in that block.
 --
 --  As the sum of the serialised transaction sizes is not equal to the size of
---  the serialised block body ('TxSeq') consisting of those transactions
+--  the serialised block body ('BlockBody') consisting of those transactions
 --  (see cardano-node#1545 for an example), we account for some extra overhead
 --  per transaction as a safety margin.
 --
@@ -176,10 +178,10 @@ instance
   getTransactionKeySets (ShelleyTx _ tx) =
     LedgerTables $
       KeysMK
-        (tx ^. (bodyTxL . SL.allInputsTxBodyF))
+        (tx ^. bodyTxL . allInputsTxBodyF)
 
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
-mkShelleyTx tx = ShelleyTx (SL.txIdTxBody @era (tx ^. bodyTxL)) tx
+mkShelleyTx tx = ShelleyTx (txIdTx tx) tx
 
 mkShelleyValidatedTx ::
   forall era proto.
@@ -188,7 +190,7 @@ mkShelleyValidatedTx ::
   Validated (GenTx (ShelleyBlock proto era))
 mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
  where
-  txid = SL.txIdTxBody @era (SL.extractTx vtx ^. bodyTxL)
+  txid = txIdTx (SL.extractTx vtx)
 
 newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId SL.TxId
   deriving newtype (Eq, Ord, NoThunks)
@@ -214,12 +216,12 @@ instance ShelleyBasedEra era => ConvertRawTxId (GenTx (ShelleyBlock proto era)) 
 instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
   extractTxs =
     map mkShelleyTx
-      . txSeqToList
+      . blockBodyToTxList
       . SL.bbody
       . shelleyBlockRaw
    where
-    txSeqToList :: TxSeq era -> [Tx era]
-    txSeqToList = toList . fromTxSeq @era
+    blockBodyToTxList :: BlockBody era -> [Tx era]
+    blockBodyToTxList blockBody = toList $ blockBody ^. txSeqBlockBodyL
 
 {-------------------------------------------------------------------------------
   Serialisation
@@ -642,7 +644,7 @@ newtype DijkstraMeasure = DijkstraMeasure
 blockCapacityDijkstraMeasure ::
   forall proto era mk.
   ( ShelleyCompatible proto era
-  , L.AlonzoEraPParams era
+  , SL.ConwayEraPParams era
   ) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
   DijkstraMeasure
@@ -653,6 +655,7 @@ txMeasureDijkstra ::
   ( ShelleyCompatible proto era
   , L.AlonzoEraTxWits era
   , L.BabbageEraTxBody era
+  , SL.ConwayEraPParams era
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
   , TxRefScriptsSizeTooBig era
@@ -660,7 +663,7 @@ txMeasureDijkstra ::
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) DijkstraMeasure
-txMeasureDijkstra st tx = DijkstraMeasure <$> txMeasureConway st tx -- TODO(geo2a): eta-reduce
+txMeasureDijkstra st = fmap DijkstraMeasure . txMeasureConway st
 
 -----
 
@@ -695,7 +698,7 @@ instance TxMeasureMetrics ConwayMeasure where
 blockCapacityConwayMeasure ::
   forall proto era mk.
   ( ShelleyCompatible proto era
-  , L.AlonzoEraPParams era
+  , SL.ConwayEraPParams era
   ) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
   ConwayMeasure
@@ -704,11 +707,10 @@ blockCapacityConwayMeasure st =
     { alonzoMeasure = blockCapacityAlonzoMeasure st
     , refScriptsSize =
         IgnoringOverflow $
-          ByteSize32 $
-            fromIntegral $
-              -- For post-Conway eras, this will become a protocol parameter.
-              SL.maxRefScriptSizePerBlock
+          ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)
     }
+ where
+  pparams = getPParams $ tickedShelleyLedgerState st
 
 txMeasureConway ::
   forall proto era.
@@ -718,6 +720,7 @@ txMeasureConway ::
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
   , TxRefScriptsSizeTooBig era
+  , SL.ConwayEraPParams era
   ) =>
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
@@ -728,8 +731,9 @@ txMeasureConway st tx@(ShelleyTx _txid tx') =
   utxo = SL.getUTxO . tickedShelleyLedgerState $ st
   txsz = SL.txNonDistinctRefScriptsSize utxo tx' :: Int
 
-  -- For post-Conway eras, this will become a protocol parameter.
-  limit = SL.maxRefScriptSizePerTx
+  pparams = getPParams $ tickedShelleyLedgerState st
+
+  limit = fromIntegral @Word32 @Int (pparams ^. SL.ppMaxRefScriptSizePerTxG)
 
   refScriptBytes =
     validateMaybe (txRefScriptsSizeTooBig txsz limit) $ do
@@ -757,41 +761,14 @@ instance TxRefScriptsSizeTooBig DijkstraEra where
           , mismatchExpected = limit
           }
 
------
-
-txMeasureBabbage ::
-  forall proto era.
-  ( ShelleyCompatible proto era
-  , L.AlonzoEraTxWits era
-  , L.BabbageEraTxBody era
-  , ExUnitsTooBigUTxO era
-  , MaxTxSizeUTxO era
-  ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
-  GenTx (ShelleyBlock proto era) ->
-  V.Validation (TxErrorSG era) ConwayMeasure
-txMeasureBabbage st tx@(ShelleyTx _txid tx') =
-  (\x -> ConwayMeasure x refScriptBytes) <$> txMeasureAlonzo st tx
- where
-  utxo = SL.getUTxO $ tickedShelleyLedgerState st
-
-  -- The Babbage rules should have checked this ref script size against a
-  -- limit, but they did not. Now that Cardano @mainnet@ is in Conway, that
-  -- omission is no longer an attack vector. Any other chain intending to
-  -- ever use Babbage as its current era ought to patch this.
-  refScriptBytes =
-    IgnoringOverflow $
-      ByteSize32 $
-        fromIntegral (SL.txNonDistinctRefScriptsSize utxo tx' :: Int)
-
 -- | We anachronistically use 'ConwayMeasure' in Babbage.
 instance
   ShelleyCompatible p BabbageEra =>
   TxLimits (ShelleyBlock p BabbageEra)
   where
-  type TxMeasure (ShelleyBlock p BabbageEra) = ConwayMeasure
-  txMeasure _cfg st tx = runValidation $ txMeasureBabbage st tx
-  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  type TxMeasure (ShelleyBlock p BabbageEra) = AlonzoMeasure
+  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
 
 instance
   ShelleyCompatible p ConwayEra =>

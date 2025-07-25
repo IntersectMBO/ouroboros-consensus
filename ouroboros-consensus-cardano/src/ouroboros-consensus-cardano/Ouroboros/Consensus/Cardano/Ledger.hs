@@ -26,15 +26,14 @@ module Ouroboros.Consensus.Cardano.Ledger
 
 import Cardano.Ledger.Binary.Decoding hiding (Decoder)
 import Cardano.Ledger.Binary.Encoding hiding (Encoding)
+import qualified Cardano.Ledger.Conway.State as SL
 import Cardano.Ledger.Core (Era, eraDecoder, eraProtVerLow)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.LedgerState as SL
-  ( dsUnifiedL
-  , esLStateL
+  ( esLStateL
   , lsCertStateL
   , nesEsL
   )
-import qualified Cardano.Ledger.UMap as SL
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
 import qualified Data.Map as Map
@@ -255,7 +254,7 @@ instance
                   . SL.esLStateL
                   . SL.lsCertStateL
                   . SL.certDStateL
-                  . SL.dsUnifiedL
-                  . SL.umElemsL
+                  . SL.accountsL
+                  . SL.accountsMapL
        in LedgerTables . ValuesMK
             <$> eraDecoder @era (decodeMap decodeMemPack (toCardanoTxOut <$> decShareCBOR certInterns))

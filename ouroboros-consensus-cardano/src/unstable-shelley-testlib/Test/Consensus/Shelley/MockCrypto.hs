@@ -80,4 +80,5 @@ type CanMock proto era =
   , Arbitrary (StashedAVVMAddresses era)
   , Arbitrary (Core.GovState era)
   , Arbitrary (SL.CertState era)
+  , Arbitrary (Core.BlockBody era)
   )
