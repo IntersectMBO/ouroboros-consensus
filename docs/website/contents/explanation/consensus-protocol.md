@@ -403,3 +403,41 @@ Praos provides strong security guarantees, formally proven to ensure a vanishing
 The Praos instances for Consensus can be found [in this module](https://github.com/intersectmbo/ouroboros-consensus/blob/50ea594c1e0c467f3d96a1d2848de5a15f792fdf/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos.hs#L17).
 
 [^1]: See this paper for background on range extension. Briefly, it means that one can derive multiple independent VRF outputs from a single VRF output via hashing and domain separation.
+### Genesis
+
+The protocols discussed so far require newcomers to rely on trusted peers to safely determine the correct blockchain state.
+Without access to these trusted peers, nodes joining the network are susceptible to _long-range attacks_, where an adversary can create a private chain that forks off from the honest chain and continually extends it.
+Given enough time, this private adversarial chain can eventually fork the honest chain by more than `k` blocks, even if the adversary holds less than half of the total active stake, making it impossible for the new node to roll back to the honest chain without manual intervention.
+
+[Genesis](https://iohk.io/en/blog/posts/2023/02/09/ouroboros-genesis-enhanced-security-in-a-dynamic-environment/) is a protocol specifically designed to prevent long-range attacks, allowing a node to bootstrap from a trusted copy of the genesis block.
+This protocol directly addresses the challenge of dynamic availability, where block-producing nodes can go online and offline unpredictably, by ensuring the system remains secure and operational as long as an honest majority of active stake is maintained.
+
+To achieve this, Ouroboros Genesis introduces the _Density Rule_, which is applied only when syncing.
+This rule dictates that a candidate blockchain is preferred over a node's currently held chain if it is "denser" (contains more blocks) in a specific window of `s` slots, anchored at the intersection point between the two competing chains.
+For Cardano, `s` is typically set to `3k/f`.
+This mechanism allows a syncing node to identify and switch to the honest chain, even if the block being considered is more than `k` blocks away from the chain tip, because the honest chain will consistently be denser at the point of divergence due to the honest majority.
+
+To prevent a syncing node from eagerly adopting a potentially adversarial chain that diverges too far from the true honest chain, we implement a Limit on Eagerness (LoE) mechanism.
+This mechanism restricts the syncing node from selecting a block that is more than `k` blocks ahead of its _LoE anchor_. This anchor is set as
+he intersection point of all of the node's current peers' latest header chains.
+
+The LoE anchor primarily advances when the common intersection point of all of a syncing node's current peers' header chains progresses forward.
+
+The LoE relies on the Honest Availability Assumption (HAA), which postulates that at least one honest peer is always connected and accessible, ensuring the LoE anchor remains on a valid path.
+
+The Genesis Density Disconnection (GDD) mechanism supports the LoE by proactively disconnecting from peers that offer "sparser" (less dense) chains, thereby helping the LoE anchor to reliably advance along the honest path.
+
+To prevent syncing nodes from being stalled by unresponsive or malicious peers, the Consensus layer incorporates a Limit on Patience (LoP) mechanism.
+Its core purpose is to disconnect from any peer that claims to have subsequent headers on its chain but fails to send them promptly, thereby preventing a syncing node from being indefinitely stalled by a peer that is withholding data, whether intentionally (maliciously) or unintentionally (due to poor performance).
+
+For the LoE anchor to advance, the node needs to find sufficient common ground with its peers. The LoP, along with GDD, ensures this by disconnecting peers that are stalling progress or offering problematic (sparse) chains.
+
+During the node's initial synchronization, Consensus implements the ChainSync Jumping (CSJ) optimization.
+In a large network, if every syncing node were to download every block header from all its connected peers, it would lead to significant redundancy and excessive load.
+Honest peers would often be transmitting the same historical chain, resulting in wasteful remote retrieval and local validation of identical headers multiple times.
+This creates an unnecessarily high sync load and can be a vector for resource exhaustion attacks on syncing nodes and their upstream peers.
+Instead of every peer continuously sending all historical headers, CSJ orchestrates peer interactions to ensure that only necessary header data is exchanged.
+
+Once a node has successfully synced and is "caught up," it reverts to the behavior of a standard Ouroboros Praos node, with Genesis-specific functionalities like the Limit on Eagerness (LoE) and Genesis Density Disconnection (GDD) being disabled.
+
+The [Genesis paper](https://iohk.io/en/research/library/papers/ouroboros-genesis-composable-proof-of-stake-blockchains-with-dynamic-availability/) provides the formal definition of the protocol. For more details on the implementation, please refer to [this section](genesis-design).
