@@ -27,6 +27,7 @@ const sidebars = {
 	      'explanation/queries',
 	      'explanation/consensus-protocol',
 	      'explanation/genesis-design',
+	      'explanation/managing-updates',
 	     ]
     }
   ],
