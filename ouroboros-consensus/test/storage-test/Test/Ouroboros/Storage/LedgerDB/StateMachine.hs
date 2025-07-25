@@ -85,7 +85,7 @@ import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel
 import Test.Tasty
-import Test.Tasty.QuickCheck
+import Test.Tasty.QuickCheck hiding (Some (..))
 import Test.Util.TestBlock hiding
   ( TestBlock
   , TestBlockCodecConfig

@@ -12,6 +12,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -132,7 +133,7 @@ import Ouroboros.Network.PeerSelection.PeerMetric (nullMetric)
 import Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
 import Ouroboros.Network.Protocol.KeepAlive.Type
-import Ouroboros.Network.Protocol.Limits (waitForever)
+import Ouroboros.Network.Protocol.Limits (ProtocolTimeLimitsWithRnd (..), waitForever)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import Ouroboros.Network.Protocol.TxSubmission2.Type
@@ -1034,7 +1035,9 @@ runThreadNetwork
 
       let rng = case seed of
             Seed s -> mkStdGen s
-          (kaRng, psRng) = split rng
+          (kaRng, rng') = split rng
+          (gsmRng, rng'') = split rng'
+          (psRng, chainSyncRng) = split rng''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1073,7 +1076,7 @@ runThreadNetwork
                     }
               , gsmArgs =
                   GSM.GsmNodeKernelArgs
-                    { gsmAntiThunderingHerd = kaRng
+                    { gsmAntiThunderingHerd = gsmRng
                     , gsmDurationUntilTooOld = Nothing
                     , gsmMarkerFileView =
                         GSM.MarkerFileView
@@ -1105,18 +1108,12 @@ runThreadNetwork
               nodeKernel
               -- these tracers report every message sent/received by this
               -- node
+              chainSyncRng
               nullDebugProtocolTracers
               (customNodeToNodeCodecs pInfoConfig)
               NTN.noByteLimits
               -- see #1882, tests that can't cope with timeouts.
-              ( pure $
-                  NTN.ChainSyncTimeout
-                    { canAwaitTimeout = waitForever
-                    , intersectTimeout = waitForever
-                    , mustReplyTimeout = waitForever
-                    , idleTimeout = waitForever
-                    }
-              )
+              (ProtocolTimeLimitsWithRnd $ \_state -> (waitForever,))
               CSClient.ChainSyncLoPBucketDisabled
               CSClient.CSJDisabled
               nullMetric
