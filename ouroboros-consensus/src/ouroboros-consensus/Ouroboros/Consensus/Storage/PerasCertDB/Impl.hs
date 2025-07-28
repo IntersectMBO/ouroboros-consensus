@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Storage.PerasCertDB.Impl
   ) where
 
 import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Foldable as Foldable (foldl')
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -201,19 +200,10 @@ implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
   gc PerasVolatileCertState{pvcsCerts, pvcsWeightByPoint} =
     PerasVolatileCertState
       { pvcsCerts = certsToKeep
-      , pvcsWeightByPoint =
-          Foldable.foldl'
-            ( \s cert ->
-                removeFromPerasWeightSnapshot
-                  (perasCertBoostedBlock cert)
-                  boostPerCert
-                  s
-            )
-            pvcsWeightByPoint
-            certsToRemove
+      , pvcsWeightByPoint = prunePerasWeightSnapshot slot pvcsWeightByPoint
       }
    where
-    (certsToRemove, certsToKeep) =
+    (_, certsToKeep) =
       Map.partition isTooOld pvcsCerts
     isTooOld cert =
       pointSlot (perasCertBoostedBlock cert) < NotOrigin slot
