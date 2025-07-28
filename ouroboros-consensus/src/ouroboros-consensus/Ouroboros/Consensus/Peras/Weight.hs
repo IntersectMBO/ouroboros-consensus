@@ -13,8 +13,8 @@ module Ouroboros.Consensus.Peras.Weight
   , perasWeightSnapshotToList
   , addToPerasWeightSnapshot
   , removeFromPerasWeightSnapshot
-  , boostedWeightForPoint
-  , boostedWeightForFragment
+  , weightBoostOfPoint
+  , weightBoostOfFragment
   ) where
 
 import Data.Foldable as Foldable (foldl')
@@ -71,21 +71,21 @@ removeFromPerasWeightSnapshot pt (PerasWeight weight) =
     | w > weight = Just $ PerasWeight (w - weight)
     | otherwise = Nothing
 
-boostedWeightForPoint ::
+weightBoostOfPoint ::
   forall blk.
   StandardHash blk =>
   PerasWeightSnapshot blk -> Point blk -> PerasWeight
-boostedWeightForPoint (PerasWeightSnapshot weightByPoint) pt =
+weightBoostOfPoint (PerasWeightSnapshot weightByPoint) pt =
   Map.findWithDefault mempty pt weightByPoint
 
-boostedWeightForFragment ::
+weightBoostOfFragment ::
   forall blk h.
   (HasHeader blk, HasHeader h, HeaderHash blk ~ HeaderHash h) =>
   PerasWeightSnapshot blk ->
   AnchoredFragment h ->
   PerasWeight
-boostedWeightForFragment weightSnap frag =
+weightBoostOfFragment weightSnap frag =
   -- TODO think about whether this could be done in sublinear complexity
   foldMap
-    (boostedWeightForPoint weightSnap)
-    (castPoint . blockPoint <$> AF.toOldestFirst frag)
+    (weightBoostOfPoint weightSnap . castPoint . blockPoint)
+    (AF.toOldestFirst frag)
