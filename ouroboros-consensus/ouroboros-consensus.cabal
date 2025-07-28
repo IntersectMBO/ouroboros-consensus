@@ -278,6 +278,7 @@ library
     Ouroboros.Consensus.TypeFamilyWrappers
     Ouroboros.Consensus.Util
     Ouroboros.Consensus.Util.AnchoredFragment
+    Ouroboros.Consensus.Util.AnchoredSeq
     Ouroboros.Consensus.Util.Args
     Ouroboros.Consensus.Util.Assert
     Ouroboros.Consensus.Util.CBOR
@@ -905,6 +906,7 @@ benchmark PerasCertDB-bench
   other-modules:
   build-depends:
     base,
+    cardano-ledger-core,
     ouroboros-consensus,
     ouroboros-network-api,
     tasty-bench,

@@ -14,12 +14,15 @@
 -- and fragments.
 module Test.Consensus.Peras.WeightSnapshot (tests) where
 
+import Cardano.Ledger.BaseTypes (unNonZero)
 import Data.Containers.ListUtils (nubOrd)
+import Data.List (find)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromJust)
 import Data.Traversable (for)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -59,12 +62,32 @@ prop_perasWeightSnapshot testSetup =
               ]
           | frag <- tsFragments
           ]
+      , conjoin
+          [ conjoin
+              [ counterexample ("Incorrect volatile suffix for " <> condense frag) $
+                  takeVolatileSuffixReference frag =:= volSuffix
+              , counterexample ("Volatile suffix must be a suffix of" <> condense frag) $
+                  AF.headPoint frag =:= AF.headPoint volSuffix
+                    .&&. AF.withinFragmentBounds (AF.anchorPoint volSuffix) frag
+              , counterexample ("A longer volatile suffix still has total weight at most k") $
+                  let isImproperSuffix = AF.length volSuffix == AF.length frag
+                      fragSuffixOneLonger =
+                        AF.anchorNewest (fromIntegral (AF.length volSuffix) + 1) frag
+                      weightOneLonger = totalWeightOfFragment snap fragSuffixOneLonger
+                   in isImproperSuffix .||. weightOneLonger `gt` maxRollbackWeight tsSecParam
+              , counterexample ("Volatile suffix of " <> condense frag <> " must contain at most k blocks") $
+                  AF.length volSuffix `le` fromIntegral (unNonZero (maxRollbacks tsSecParam))
+              ]
+          | frag <- tsFragments
+          , let volSuffix = takeVolatileSuffix snap tsSecParam frag
+          ]
       ]
  where
   TestSetup
     { tsWeights
     , tsPoints
     , tsFragments
+    , tsSecParam
     } = testSetup
 
   snap = mkPerasWeightSnapshot $ Map.toList tsWeights
@@ -77,6 +100,24 @@ prop_perasWeightSnapshot testSetup =
     foldMap
       (weightBoostOfPointReference . blockPoint)
       (AF.toOldestFirst frag)
+
+  takeVolatileSuffixReference ::
+    AnchoredFragment TestBlock -> AnchoredFragment TestBlock
+  takeVolatileSuffixReference =
+    fromJust . find hasWeightAtMostK . suffixes
+   where
+    -- Consider suffixes of @frag@, longest first
+    suffixes frag =
+      [ AF.anchorNewest (fromIntegral len) frag
+      | len <- reverse [0 .. AF.length frag]
+      ]
+
+    hasWeightAtMostK frag =
+      totalWeight <= maxRollbackWeight tsSecParam
+     where
+      weightBoost = weightBoostOfFragmentReference frag
+      lengthWeight = PerasWeight (fromIntegral (AF.length frag))
+      totalWeight = lengthWeight <> weightBoost
 
 -- | Test that the weight of a fragment is equal to the weight of its
 -- first\/last point plus the weight of the remaining suffix\/infix.
@@ -109,6 +150,7 @@ data TestSetup = TestSetup
   -- ^ Check the weight of these points.
   , tsFragments :: [AnchoredFragment TestBlock]
   -- ^ Check the weight of these fragments.
+  , tsSecParam :: SecurityParam
   }
   deriving stock Show
 
@@ -136,11 +178,13 @@ instance Arbitrary TestSetup where
     tsFragments <-
       for treeChains genInfixFragment
 
+    tsSecParam <- arbitrary
     pure
       TestSetup
         { tsWeights
         , tsPoints
         , tsFragments
+        , tsSecParam
         }
    where
     -- Generate a weight boost (for some point).
@@ -176,6 +220,9 @@ instance Arbitrary TestSetup where
       , [ ts{tsFragments = tsFragments'}
         | tsFragments' <- shrinkList (\_frag -> []) tsFragments
         ]
+      , [ ts{tsSecParam = tsSecParam'}
+        | tsSecParam' <- shrink tsSecParam
+        ]
       ]
    where
     -- Decrease by @1@, unless this would mean that it is non-positive.
@@ -188,4 +235,5 @@ instance Arbitrary TestSetup where
       { tsWeights
       , tsPoints
       , tsFragments
+      , tsSecParam
       } = ts
