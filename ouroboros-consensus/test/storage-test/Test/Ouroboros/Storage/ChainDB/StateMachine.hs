@@ -25,7 +25,6 @@
 -- These are the main tests for the chain DB. Commands include
 --
 -- * Add a block
--- * Add a block with a @SlotNo@ that is ahead of the wall-clock.
 -- * Get the current chain and/or ledger state
 -- * Create a new iterator and use it to stream blocks
 -- * Create a new follower and use it to follow the chain
@@ -178,9 +177,7 @@ import Test.Util.WithEq
 
 -- | Commands
 data Cmd blk it flr
-  = -- | Advance the current slot to the block's slot (unless smaller than the
-    -- current slot), add the block and run chain selection.
-    AddBlock blk
+  = AddBlock blk
   | GetCurrentChain
   | GetTipBlock
   | GetTipHeader
@@ -366,7 +363,6 @@ data ChainDBState m blk = ChainDBState
 data ChainDBEnv m blk = ChainDBEnv
   { varDB :: StrictTVar m (ChainDBState m blk)
   , registry :: ResourceRegistry m
-  , varCurSlot :: StrictTVar m SlotNo
   , varNextId :: StrictTVar m Id
   , varVolatileDbFs :: StrictTMVar m MockFS
   , args :: ChainDbArgs Identity m blk
@@ -405,7 +401,7 @@ run ::
   m (Success blk (TestIterator m blk) (TestFollower m blk))
 run cfg env@ChainDBEnv{varDB, ..} cmd =
   readTVarIO varDB >>= \st@ChainDBState{chainDB = ChainDB{..}, internal} -> case cmd of
-    AddBlock blk -> Point <$> (advanceAndAdd st (blockSlot blk) blk)
+    AddBlock blk -> Point <$> advanceAndAdd st blk
     GetCurrentChain -> Chain <$> atomically getCurrentChain
     GetTipBlock -> MbBlock <$> getTipBlock
     GetTipHeader -> MbHeader <$> getTipHeader
@@ -437,9 +433,8 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
   follower = fmap Flr . giveWithEq
   ignore _ = Unit ()
 
-  advanceAndAdd :: ChainDBState m blk -> SlotNo -> blk -> m (Point blk)
-  advanceAndAdd ChainDBState{chainDB} newCurSlot blk = do
-    atomically $ modifyTVar varCurSlot (max newCurSlot)
+  advanceAndAdd :: ChainDBState m blk -> blk -> m (Point blk)
+  advanceAndAdd ChainDBState{chainDB} blk = do
     -- `blockProcessed` always returns 'Just'
     res <- addBlock chainDB InvalidBlockPunishment.noPunishment blk
     ChainDB.triggerChainSelection chainDB
@@ -1169,6 +1164,9 @@ precondition Model{..} (At cmd) =
       Stream from to -> isValidIterator from to
       Reopen -> Not $ Boolean (Model.isOpen dbModel)
       WipeVolatileDB -> Boolean $ Model.isOpen dbModel
+      UpdateLoE frag -> Boolean $ Chain.pointOnChain (AF.anchorPoint frag) immChain
+       where
+        immChain = Model.immutableChain (configSecurityParam cfg) dbModel
       _ -> Top
  where
   garbageCollectable :: RealPoint blk -> Logic
@@ -1604,7 +1602,6 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
     threadRegistry <- unsafeNewRegistry
     iteratorRegistry <- unsafeNewRegistry
     (tracer, getTrace) <- recordingTracerIORef
-    varCurSlot <- uncheckedNewTVarM 0
     varNextId <- uncheckedNewTVarM 0
     nodeDBs <- emptyNodeDBs
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
@@ -1629,7 +1626,6 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
               ChainDBEnv
                 { varDB
                 , registry = iteratorRegistry
-                , varCurSlot
                 , varNextId
                 , varVolatileDbFs = nodeDBsVol nodeDBs
                 , varLoEFragment
