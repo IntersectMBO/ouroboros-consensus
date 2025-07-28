@@ -41,9 +41,9 @@ import Ouroboros.Consensus.Util.IOLike
   )
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion (..))
-import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound (objectDiffusionClientInboundPeerPipelined)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound (objectDiffusionInitInboundPeerPipelined, objectDiffusionNonInitInboundPeerPipelined)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec (codecObjectDiffusionId)
-import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionServerOutboundPeer)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionInitOutboundPeer, objectDiffusionNonInitOutboundPeer)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsToAck (..))
 import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
 import Test.QuickCheck
@@ -56,7 +56,8 @@ tests :: TestTree
 tests =
   testGroup
     "ObjectDiffusion.Smoke"
-    [ testProperty "smoke" prop_smoke
+    [ testProperty "smoke (init by inbound peer)" prop_smoke_init_inbound
+    , testProperty "smoke (init by outbound peer)" prop_smoke_init_outbound
     ]
 
 {-------------------------------------------------------------------------------
@@ -111,8 +112,8 @@ makeObjectPoolWriter (SmokeObjectPool pool) =
   Main property
 -------------------------------------------------------------------------------}
 
-prop_smoke :: ListWithUniqueIds SmokeObject SmokeObjectId -> Property
-prop_smoke (ListWithUniqueIds objects) =
+prop_smoke_init_inbound :: ListWithUniqueIds SmokeObject SmokeObjectId -> Property
+prop_smoke_init_inbound (ListWithUniqueIds objects) =
   case simulationResult of
     Right inboundPoolContent -> inboundPoolContent === objects
     Left msg -> counterexample (show msg) $ property False
@@ -127,7 +128,7 @@ prop_smoke (ListWithUniqueIds objects) =
     controlMessage <- uncheckedNewTVarM Continue
 
     let
-      server =
+      inbound =
         objectDiffusionInbound
           nullTracer
           numObjectIdsToAck
@@ -135,7 +136,7 @@ prop_smoke (ListWithUniqueIds objects) =
           (makeObjectPoolWriter inboundPool)
           nodeToNodeVersion
 
-      client =
+      outbound =
         objectDiffusionOutbound
           nullTracer
           numObjectIdsToAck
@@ -151,7 +152,7 @@ prop_smoke (ListWithUniqueIds objects) =
               ((\x -> "Outbound " ++ show x) `contramap` nullTracer)
               codecObjectDiffusionId
               outboundChannel
-              (objectDiffusionServerOutboundPeer client)
+              (objectDiffusionNonInitOutboundPeer outbound)
         )
 
     inboundAsync <-
@@ -161,7 +162,73 @@ prop_smoke (ListWithUniqueIds objects) =
               ((\x -> "Inbound " ++ show x) `contramap` nullTracer)
               codecObjectDiffusionId
               inboundChannel
-              (objectDiffusionClientInboundPeerPipelined server)
+              (objectDiffusionInitInboundPeerPipelined inbound)
+        )
+
+    controlMessageAsync <- async $ do
+      threadDelay 1000 -- give a head start to the other threads
+      atomically $ writeTVar controlMessage Terminate
+      threadDelay 1000 -- wait for the other threads to finish
+    _ <- waitAnyCancel [outboundAsync, inboundAsync, controlMessageAsync]
+
+    traceWith nullTracer "========== [ Test finished ] =========="
+
+    everythingInPool inboundPool
+
+  numObjectIdsToAck = NumObjectIdsToAck 10
+  nodeToNodeVersion = NodeToNodeV_14
+
+prop_smoke_init_outbound :: ListWithUniqueIds SmokeObject SmokeObjectId -> Property
+prop_smoke_init_outbound (ListWithUniqueIds objects) =
+  case simulationResult of
+    Right inboundPoolContent -> inboundPoolContent === objects
+    Left msg -> counterexample (show msg) $ property False
+ where
+  simulationResult = runSimStrictShutdown $ do
+    traceWith nullTracer "========== [ Starting test ] =========="
+    traceWith nullTracer (show objects)
+
+    inboundPool <- newObjectPool []
+    outboundPool <- newObjectPool objects
+
+    controlMessage <- uncheckedNewTVarM Continue
+
+    let
+      inbound =
+        objectDiffusionInbound
+          nullTracer
+          numObjectIdsToAck
+          (makeObjectPoolReader inboundPool)
+          (makeObjectPoolWriter inboundPool)
+          nodeToNodeVersion
+
+      outbound =
+        objectDiffusionOutbound
+          nullTracer
+          numObjectIdsToAck
+          (makeObjectPoolReader outboundPool)
+          nodeToNodeVersion
+          (readTVar controlMessage)
+
+    (outboundChannel, inboundChannel) <- createConnectedChannels
+    outboundAsync <-
+      async $
+        ( ()
+            <$ runPeer
+              ((\x -> "Outbound " ++ show x) `contramap` nullTracer)
+              codecObjectDiffusionId
+              outboundChannel
+              (objectDiffusionInitOutboundPeer outbound)
+        )
+
+    inboundAsync <-
+      async $
+        ( ()
+            <$ runPipelinedPeer
+              ((\x -> "Inbound " ++ show x) `contramap` nullTracer)
+              codecObjectDiffusionId
+              inboundChannel
+              (objectDiffusionNonInitInboundPeerPipelined inbound)
         )
 
     controlMessageAsync <- async $ do
