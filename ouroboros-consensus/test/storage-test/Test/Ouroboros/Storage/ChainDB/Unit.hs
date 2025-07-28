@@ -449,7 +449,6 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
   openChainDbEnv = do
     threadRegistry <- unsafeNewRegistry
     iteratorRegistry <- unsafeNewRegistry
-    varCurSlot <- uncheckedNewTVarM 0
     varNextId <- uncheckedNewTVarM 0
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
     nodeDbs <- emptyNodeDBs
@@ -460,7 +459,6 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
           ChainDBEnv
             { varDB
             , registry = iteratorRegistry
-            , varCurSlot
             , varNextId
             , varVolatileDbFs = nodeDBsVol nodeDbs
             , args
