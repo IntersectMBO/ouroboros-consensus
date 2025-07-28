@@ -190,6 +190,10 @@ data ChainDB m blk = ChainDB
   --
   -- NOTE: A direct consequence of this guarantee is that the anchor of the
   -- fragment will move as the chain grows.
+  --
+  -- Note that with Ouroboros Peras, the size of this fragment is defined in
+  -- terms /weight/ instead of /length/, see
+  -- 'Ouroboros.Consensus.Peras.Weight.takeVolatileSuffix'.
   , getCurrentChainWithTime ::
       STM m (AnchoredFragment (HeaderWithTime blk))
   -- ^ Exact same as 'getCurrentChain', except each header is annotated
