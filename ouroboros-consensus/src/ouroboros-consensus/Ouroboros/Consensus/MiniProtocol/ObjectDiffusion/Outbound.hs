@@ -28,7 +28,7 @@ import Ouroboros.Network.ControlMessage
   , timeoutWithControlMessage
   )
 import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
-import Ouroboros.Network.Protocol.ObjectDiffusion.Client
+import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 
 data TraceObjectDiffusionOutbound objectId object
@@ -80,20 +80,20 @@ objectDiffusionOutbound ::
   ObjectPoolReader objectId object index m ->
   NodeToNodeVersion ->
   ControlMessageSTM m ->
-  ObjectDiffusionClient objectId object m ()
+  ObjectDiffusionOutbound objectId object m ()
 objectDiffusionOutbound tracer maxUnacked ObjectPoolReader{..} _version controlMessageSTM =
-  ObjectDiffusionClient (pure (client Seq.empty objectPoolZeroIndex))
+  ObjectDiffusionOutbound (pure (client Seq.empty objectPoolZeroIndex))
  where
-  client :: StrictSeq (objectId, index) -> index -> ClientStIdle objectId object m ()
+  client :: StrictSeq (objectId, index) -> index -> OutboundStIdle objectId object m ()
   client !unackedSeq !lastIndex =
-    ClientStIdle{recvMsgRequestObjectIds, recvMsgRequestObjects}
+    OutboundStIdle{recvMsgRequestObjectIds, recvMsgRequestObjects}
    where
     recvMsgRequestObjectIds ::
       forall blocking.
       SingBlockingStyle blocking ->
       NumObjectIdsToAck ->
       NumObjectIdsToReq ->
-      m (ClientStObjectIds blocking objectId object m ())
+      m (OutboundStObjectIds blocking objectId object m ())
     recvMsgRequestObjectIds blocking ackNo reqNo = do
       when (getNumObjectIdsToAck ackNo > fromIntegral (Seq.length unackedSeq)) $
         throwIO ProtocolErrorAckedTooManyObjectIds
@@ -170,7 +170,7 @@ objectDiffusionOutbound tracer maxUnacked ObjectPoolReader{..} _version controlM
 
     recvMsgRequestObjects ::
       [objectId] ->
-      m (ClientStObjects objectId object m ())
+      m (OutboundStObjects objectId object m ())
     recvMsgRequestObjects objectIds = do
       -- Trace the IDs of the transactions requested.
       traceWith tracer (TraceObjectDiffusionOutboundRecvMsgRequestObjects objectIds)

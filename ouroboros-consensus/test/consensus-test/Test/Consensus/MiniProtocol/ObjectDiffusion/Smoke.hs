@@ -41,9 +41,9 @@ import Ouroboros.Consensus.Util.IOLike
   )
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion (..))
-import Ouroboros.Network.Protocol.ObjectDiffusion.Client (objectDiffusionClientPeer)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound (objectDiffusionClientInboundPeerPipelined)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec (codecObjectDiffusionId)
-import Ouroboros.Network.Protocol.ObjectDiffusion.Server (objectDiffusionServerPeerPipelined)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionServerOutboundPeer)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsToAck (..))
 import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
 import Test.QuickCheck
@@ -151,7 +151,7 @@ prop_smoke (ListWithUniqueIds objects) =
               ((\x -> "Outbound " ++ show x) `contramap` nullTracer)
               codecObjectDiffusionId
               outboundChannel
-              (objectDiffusionClientPeer client)
+              (objectDiffusionServerOutboundPeer client)
         )
 
     inboundAsync <-
@@ -161,7 +161,7 @@ prop_smoke (ListWithUniqueIds objects) =
               ((\x -> "Inbound " ++ show x) `contramap` nullTracer)
               codecObjectDiffusionId
               inboundChannel
-              (objectDiffusionServerPeerPipelined server)
+              (objectDiffusionClientInboundPeerPipelined server)
         )
 
     controlMessageAsync <- async $ do

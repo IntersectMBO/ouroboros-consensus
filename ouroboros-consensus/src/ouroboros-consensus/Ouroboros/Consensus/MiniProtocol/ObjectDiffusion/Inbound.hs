@@ -41,7 +41,7 @@ import Control.Tracer (Tracer, traceWith)
 import Network.TypedProtocol.Core (N, Nat (..), natToInt)
 
 import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
-import Ouroboros.Network.Protocol.ObjectDiffusion.Server
+import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPoolReader
@@ -184,9 +184,9 @@ objectDiffusionInbound
   -> ObjectPoolReader objectId object index m
   -> ObjectPoolWriter objectId object index m
   -> NodeToNodeVersion
-  -> ObjectDiffusionServerPipelined objectId object m ()
+  -> ObjectDiffusionInboundPipelined objectId object m ()
 objectDiffusionInbound tracer (NumObjectIdsToAck maxUnacked) mpReader mpWriter _version =
-    ObjectDiffusionServerPipelined $ do
+    ObjectDiffusionInboundPipelined $ do
 #ifdef OBJECTSUBMISSION_DELAY
       -- make the client linger before asking for object's and expending
       -- our resources as well, as he may disconnect for some reason
@@ -490,13 +490,13 @@ objectDiffusionInbound tracer (NumObjectIdsToAck maxUnacked) mpReader mpWriter _
               })
         else continueWithStateM (serverIdle n) st
 
-newtype Stateful s n objectId object m = Stateful (s -> ServerStIdle n objectId object m ())
+newtype Stateful s n objectId object m = Stateful (s -> InboundStIdle n objectId object m ())
 
 newtype StatefulM s n objectId object m
-  = StatefulM (s -> m (ServerStIdle n objectId object m ()))
+  = StatefulM (s -> m (InboundStIdle n objectId object m ()))
 
 newtype StatefulCollect s n objectId object m
-  = StatefulCollect (s -> Collect objectId object -> m (ServerStIdle n objectId object m ()))
+  = StatefulCollect (s -> Collect objectId object -> m (InboundStIdle n objectId object m ()))
 
 -- | After checking that there are no unexpected thunks in the provided state,
 -- pass it to the provided function.
@@ -505,7 +505,7 @@ newtype StatefulCollect s n objectId object m
 continueWithState :: NoThunks s
                   => Stateful s n objectId object m
                   -> s
-                  -> ServerStIdle n objectId object m ()
+                  -> InboundStIdle n objectId object m ()
 continueWithState (Stateful f) !st =
     checkInvariant (show <$> unsafeNoThunks st) (f st)
 
@@ -514,7 +514,7 @@ continueWithState (Stateful f) !st =
 continueWithStateM :: NoThunks s
                    => StatefulM s n objectId object m
                    -> s
-                   -> m (ServerStIdle n objectId object m ())
+                   -> m (InboundStIdle n objectId object m ())
 continueWithStateM (StatefulM f) !st =
     checkInvariant (show <$> unsafeNoThunks st) (f st)
 {-# NOINLINE continueWithStateM #-}
@@ -525,7 +525,7 @@ collectAndContinueWithState :: NoThunks s
                             => StatefulCollect s n objectId object m
                             -> s
                             -> Collect objectId object
-                            -> m (ServerStIdle n objectId object m ())
+                            -> m (InboundStIdle n objectId object m ())
 collectAndContinueWithState (StatefulCollect f) !st c =
     checkInvariant (show <$> unsafeNoThunks st) (f st c)
 {-# NOINLINE collectAndContinueWithState #-}
