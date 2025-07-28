@@ -27,6 +27,7 @@ module Ouroboros.Consensus.Peras.Weight
   , weightBoostOfPoint
   , weightBoostOfFragment
   , totalWeightOfFragment
+  , takeVolatileSuffix
   ) where
 
 import Data.Foldable as Foldable (foldl')
@@ -36,6 +37,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -288,9 +290,87 @@ totalWeightOfFragment weightSnap frag =
   weightLength = PerasWeight $ fromIntegral $ AF.length frag
   weightBoost = weightBoostOfFragment weightSnap frag
 
+-- | Take the longest suffix of the given fragment with total weight
+-- ('totalWeightOfFragment') at most @k@. This is the volatile suffix of blocks
+-- which are subject to rollback.
+--
+-- If the total weight of the input fragment is at least @k@, then the anchor of
+-- the output fragment is the most recent point on the input fragment that is
+-- buried under at least weight @k@ (also counting the weight boost of that
+-- point).
+--
+-- >>> :{
+-- weights :: [(Point Blk, PerasWeight)]
+-- weights =
+--   [ (BlockPoint 2 "foo", PerasWeight 2)
+--   , (GenesisPoint,       PerasWeight 3)
+--   , (BlockPoint 3 "bar", PerasWeight 2)
+--   , (BlockPoint 2 "foo", PerasWeight 2)
+--   ]
+-- snap = mkPerasWeightSnapshot weights
+-- foo = HeaderFields (SlotNo 2) (BlockNo 1) "foo"
+-- bar = HeaderFields (SlotNo 3) (BlockNo 2) "bar"
+-- frag :: AnchoredFragment (HeaderFields Blk)
+-- frag = Empty AnchorGenesis :> foo :> bar
+-- :}
+--
+-- >>> k1 = SecurityParam $ knownNonZeroBounded @1
+-- >>> k3 = SecurityParam $ knownNonZeroBounded @3
+-- >>> k6 = SecurityParam $ knownNonZeroBounded @6
+-- >>> k9 = SecurityParam $ knownNonZeroBounded @9
+--
+-- >>> AF.toOldestFirst $ takeVolatileSuffix snap k1 frag
+-- []
+--
+-- >>> AF.toOldestFirst $ takeVolatileSuffix snap k3 frag
+-- [HeaderFields {headerFieldSlot = SlotNo 3, headerFieldBlockNo = BlockNo 2, headerFieldHash = "bar"}]
+--
+-- >>> AF.toOldestFirst $ takeVolatileSuffix snap k6 frag
+-- [HeaderFields {headerFieldSlot = SlotNo 3, headerFieldBlockNo = BlockNo 2, headerFieldHash = "bar"}]
+--
+-- >>> AF.toOldestFirst $ takeVolatileSuffix snap k9 frag
+-- [HeaderFields {headerFieldSlot = SlotNo 2, headerFieldBlockNo = BlockNo 1, headerFieldHash = "foo"},HeaderFields {headerFieldSlot = SlotNo 3, headerFieldBlockNo = BlockNo 2, headerFieldHash = "bar"}]
+takeVolatileSuffix ::
+  forall blk h.
+  (StandardHash blk, HasHeader h, HeaderHash blk ~ HeaderHash h) =>
+  PerasWeightSnapshot blk ->
+  -- | The security parameter @k@ is interpreted as a weight.
+  SecurityParam ->
+  AnchoredFragment h ->
+  AnchoredFragment h
+takeVolatileSuffix snap secParam frag
+  | Map.null $ getPerasWeightSnapshot snap =
+      -- Optimize the case where Peras is disabled.
+      AF.anchorNewest (unPerasWeight k) frag
+  | hasAtMostWeightK frag = frag
+  | otherwise = go 0 lenFrag (AF.Empty $ AF.headAnchor frag)
+ where
+  k :: PerasWeight
+  k = maxRollbackWeight secParam
+
+  hasAtMostWeightK :: AnchoredFragment h -> Bool
+  hasAtMostWeightK f = totalWeightOfFragment snap f <= k
+
+  lenFrag = fromIntegral $ AF.length frag
+
+  -- Binary search for the longest suffix of @frag@ which 'hasAtMostWeightK'.
+  go ::
+    Word64 -> -- lb. The length lb suffix satisfies 'hasAtMostWeightK'.
+    Word64 -> -- ub. The length ub suffix does not satisfy 'hasAtMostWeightK'.
+    AnchoredFragment h -> -- The length lb suffix.
+    AnchoredFragment h
+  go lb ub lbFrag
+    | lb + 1 == ub = lbFrag
+    | hasAtMostWeightK midFrag = go mid ub midFrag
+    | otherwise = go lb mid lbFrag
+   where
+    mid = (lb + ub) `div` 2
+    midFrag = AF.anchorNewest mid frag
+
 -- $setup
 -- >>> import Cardano.Ledger.BaseTypes
 -- >>> import Ouroboros.Consensus.Block
+-- >>> import Ouroboros.Consensus.Config.SecurityParam
 -- >>> import Ouroboros.Network.AnchoredFragment (AnchoredFragment, AnchoredSeq(..), Anchor(..))
 -- >>> import qualified Ouroboros.Network.AnchoredFragment as AF
 -- >>> :set -XDataKinds -XTypeApplications -XTypeFamilies
