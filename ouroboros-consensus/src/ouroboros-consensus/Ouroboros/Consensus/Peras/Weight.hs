@@ -12,7 +12,7 @@ module Ouroboros.Consensus.Peras.Weight
   , mkPerasWeightSnapshot
   , perasWeightSnapshotToList
   , addToPerasWeightSnapshot
-  , removeFromPerasWeightSnapshot
+  , prunePerasWeightSnapshot
   , weightBoostOfPoint
   , weightBoostOfFragment
   ) where
@@ -57,19 +57,15 @@ addToPerasWeightSnapshot ::
 addToPerasWeightSnapshot pt weight =
   PerasWeightSnapshot . Map.insertWith (<>) pt weight . getPerasWeightSnapshot
 
-removeFromPerasWeightSnapshot ::
-  StandardHash blk =>
-  Point blk ->
-  PerasWeight ->
+prunePerasWeightSnapshot ::
+  SlotNo ->
   PerasWeightSnapshot blk ->
   PerasWeightSnapshot blk
-removeFromPerasWeightSnapshot pt (PerasWeight weight) =
-  PerasWeightSnapshot . Map.update subtractWeight pt . getPerasWeightSnapshot
+prunePerasWeightSnapshot slot =
+  PerasWeightSnapshot . Map.dropWhileAntitone isTooOld . getPerasWeightSnapshot
  where
-  subtractWeight :: PerasWeight -> Maybe PerasWeight
-  subtractWeight (PerasWeight w)
-    | w > weight = Just $ PerasWeight (w - weight)
-    | otherwise = Nothing
+  isTooOld :: Point blk -> Bool
+  isTooOld pt = pointSlot pt < NotOrigin slot
 
 weightBoostOfPoint ::
   forall blk.
