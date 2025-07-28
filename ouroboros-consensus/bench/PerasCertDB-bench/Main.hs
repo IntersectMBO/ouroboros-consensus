@@ -3,7 +3,7 @@
 
 -- | This module contains benchmarks for Peras chain weight calculation as
 --   implemented by the by the
---   'Ouroboros.Consensus.Peras.Weight.boostedWeightForFragment' function.
+--   'Ouroboros.Consensus.Peras.Weight.weightBoostOfFragment' function.
 --
 --   We benchmark the calculation on a static sequence of chain fragments of increasing
 --   length, ranging from 0 to around 8640, with a sampling rate of 100. The chain fragments
@@ -16,8 +16,8 @@ import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (PerasWeight (PerasWeight), SlotNo (..))
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
-  , boostedWeightForFragment
   , mkPerasWeightSnapshot
+  , weightBoostOfFragment
   )
 import Ouroboros.Network.AnchoredFragment qualified as AF
 import Test.Ouroboros.Storage.TestBlock (TestBlock (..), TestBody (..), TestHeader (..))
@@ -49,7 +49,7 @@ benchmarkParams =
 
 main :: IO ()
 main =
-  Test.Tasty.Bench.defaultMain $ map benchBoostedWeightForFragment inputs
+  Test.Tasty.Bench.defaultMain $ map benchWeightBoostOfFragment inputs
  where
   -- NOTE: we do not use the 'env' combinator to set up the test data since
   --       it requires 'NFData' for 'AF.AnchoredFragment'. While the necessary
@@ -62,11 +62,11 @@ main =
         zip [0 ..] $
           zip (map uniformWeightSnapshot fragments) fragments
 
-benchBoostedWeightForFragment ::
+benchWeightBoostOfFragment ::
   (Natural, (PerasWeightSnapshot TestBlock, AF.AnchoredFragment TestBlock)) -> Benchmark
-benchBoostedWeightForFragment (i, (weightSnapshot, fragment)) =
-  bench ("boostedWeightForFragment of length " <> show i) $
-    whnf (boostedWeightForFragment weightSnapshot) fragment
+benchWeightBoostOfFragment (i, (weightSnapshot, fragment)) =
+  bench ("weightBoostOfFragment of length " <> show i) $
+    whnf (weightBoostOfFragment weightSnapshot) fragment
 
 -- | An infinite list of chain fragments
 fragments :: [AF.AnchoredFragment TestBlock]
