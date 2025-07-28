@@ -127,7 +127,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   , UnknownRange (..)
   , validBounds
   )
-import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
+import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanImmTip)
 import Ouroboros.Consensus.Storage.Common ()
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( LedgerDbCfgF (..)
@@ -454,7 +454,7 @@ addBlock cfg blk m
   ignoreBlock =
     -- If the block is as old as the tip of the ImmutableDB, i.e. older
     -- than @k@, we ignore it, as we can never switch to it.
-    olderThanK hdr (headerToIsEBB hdr) immBlockNo
+    olderThanImmTip hdr immBlockNo
       ||
       -- If it's an invalid block we've seen before, ignore it.
       Map.member (blockHash blk) (invalid m)

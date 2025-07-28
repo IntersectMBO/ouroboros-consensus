@@ -820,9 +820,8 @@ deriving stock instance
 
 -- | Trace type for the various events that occur when adding a block.
 data TraceAddBlockEvent blk
-  = -- | A block with a 'BlockNo' more than @k@ back than the current tip was
-    -- ignored.
-    IgnoreBlockOlderThanK (RealPoint blk)
+  = -- | A block with a 'BlockNo' not newer than the immutable tip was ignored.
+    IgnoreBlockOlderThanImmTip (RealPoint blk)
   | -- | A block that is already in the Volatile DB was ignored.
     IgnoreBlockAlreadyInVolatileDB (RealPoint blk)
   | -- | A block that is know to be invalid was ignored.
