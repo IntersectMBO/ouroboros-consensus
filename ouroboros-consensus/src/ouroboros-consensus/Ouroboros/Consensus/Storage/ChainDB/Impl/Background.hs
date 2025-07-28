@@ -41,7 +41,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   , addBlockRunner
   ) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
 import Control.Monad (forM_, forever, void)
 import Control.Monad.Trans.Class (lift)
@@ -57,7 +56,6 @@ import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -69,6 +67,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   ( chainSelSync
   )
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
@@ -132,10 +131,11 @@ launchBgTasks cdb@CDB{..} replayed = do
   Copying blocks from the VolatileDB to the ImmutableDB
 -------------------------------------------------------------------------------}
 
--- | Copy the blocks older than @k@ from the VolatileDB to the ImmutableDB.
+-- | Copy the blocks older than the immutable tip from the VolatileDB to the
+-- ImmutableDB.
 --
--- These headers of these blocks can be retrieved by dropping the @k@ most
--- recent blocks from the fragment stored in 'cdbChain'.
+-- The headers of these blocks can be retrieved by considering headers in
+-- 'cdbChain' that are not also in 'getCurrentChain' (a suffix of 'cdbChain').
 --
 -- The copied blocks are removed from the fragment stored in 'cdbChain'.
 --
@@ -153,10 +153,11 @@ copyToImmutableDB ::
   ) =>
   ChainDbEnv m blk ->
   Electric m (WithOrigin SlotNo)
-copyToImmutableDB CDB{..} = electric $ do
+copyToImmutableDB cdb@CDB{..} = electric $ do
   toCopy <- atomically $ do
     curChain <- icWithoutTime <$> readTVar cdbChain
-    let nbToCopy = max 0 (AF.length curChain - fromIntegral (unNonZero k))
+    curChainVolSuffix <- Query.getCurrentChain cdb
+    let nbToCopy = max 0 $ AF.length curChain - AF.length curChainVolSuffix
         toCopy :: [Point blk]
         toCopy =
           map headerPoint $
@@ -165,10 +166,10 @@ copyToImmutableDB CDB{..} = electric $ do
     return toCopy
 
   if null toCopy
-    -- This can't happen in practice, as we're only called when the fragment
-    -- is longer than @k@. However, in the tests, we will be calling this
-    -- function manually, which means it might be called when there are no
-    -- blocks to copy.
+    -- This can't happen in practice, as we're only called when there are new
+    -- immutable blocks. However, in the tests, we will be calling this function
+    -- manually, which means it might be called when there are no blocks to
+    -- copy.
     then trace NoBlocksToCopyToImmutableDB
     else forM_ toCopy $ \pt -> do
       let hash = case pointHash pt of
@@ -193,7 +194,6 @@ copyToImmutableDB CDB{..} = electric $ do
   -- Get the /possibly/ updated tip of the ImmutableDB
   atomically $ ImmutableDB.getTipSlot cdbImmutableDB
  where
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
   trace = traceWith (contramap TraceCopyToImmutableDBEvent cdbTracer)
 
   -- \| Remove the header corresponding to the given point from the beginning
@@ -218,9 +218,11 @@ copyToImmutableDB CDB{..} = electric $ do
 -- | Copy blocks from the VolatileDB to ImmutableDB and trigger further tasks in
 -- other threads.
 --
--- We watch the chain for changes. Whenever the chain is longer than @k@, then
--- the headers older than @k@ are copied from the VolatileDB to the ImmutableDB
--- (using 'copyToImmutableDB'). Once that is complete,
+-- Wait until the current chain ('cdbChain') is longer than its volatile suffix
+-- ('getCurrentChain'). When this occurs, it indicates that new blocks have
+-- become immutable. These newly immutable blocks are then copied are copied
+-- from the VolatileDB to the ImmutableDB (using 'copyToImmutableDB'). Once that
+-- is complete,
 --
 -- * Trigger LedgerDB maintenance tasks, namely flushing, taking snapshots and
 --   garbage collection.
@@ -254,15 +256,15 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule fuse = do
   LedgerDB.tryFlush cdbLedgerDB
   forever copyAndTrigger
  where
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
-
   copyAndTrigger :: m ()
   copyAndTrigger = do
-    -- Wait for the chain to grow larger than @k@
+    -- Wait for 'cdbChain' to become longer than 'getCurrentChain'.
     numToWrite <- atomically $ do
       curChain <- icWithoutTime <$> readTVar cdbChain
-      check $ fromIntegral (AF.length curChain) > unNonZero k
-      return $ fromIntegral (AF.length curChain) - unNonZero k
+      curChainVolSuffix <- Query.getCurrentChain cdb
+      let numToWrite = AF.length curChain - AF.length curChainVolSuffix
+      check $ numToWrite > 0
+      return $ fromIntegral numToWrite
 
     -- Copy blocks to ImmutableDB
     --
