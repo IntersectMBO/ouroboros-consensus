@@ -37,6 +37,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import qualified Ouroboros.Consensus.HardFork.History as HF
 import Test.QuickCheck
+import Ouroboros.Consensus.HardFork.History.EraParams (EraParams(eraPerasRoundLength))
 
 {-------------------------------------------------------------------------------
   Generate hard fork shape
@@ -121,6 +122,8 @@ genEraParams = do
   eraSlotLength <- slotLengthFromSec <$> choose (1, 5)
   eraSafeZone <- genSafeZone
   eraGenesisWin <- GenesisWindow <$> choose (1, 10)
+  -- TODO(geo2a): revise this value, needs to divide epoch size
+  eraPerasRoundLength <- PerasRoundLength <$> choose (1, 10)
   return HF.EraParams{..}
  where
   genSafeZone :: Gen HF.SafeZone
