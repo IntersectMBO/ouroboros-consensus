@@ -598,6 +598,7 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ChainSync.CSJ
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
+    Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Versioned
 
