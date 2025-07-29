@@ -55,11 +55,12 @@ import Codec.CBOR.Decoding
   )
 import Codec.CBOR.Encoding (encodeListLen, encodeNull)
 import Codec.Serialise
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Control.Monad.Except (Except, throwError)
 import Data.Bifunctor
 import Data.Foldable (toList)
 import Data.Kind (Type)
+import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.SOP.Counting
 import Data.SOP.NonEmpty
@@ -83,7 +84,7 @@ data Bound = Bound
   { boundTime :: !RelativeTime
   , boundSlot :: !SlotNo
   , boundEpoch :: !EpochNo
-  , boundPerasRound :: !PerasRoundNo
+  , boundPerasRound :: !(Maybe PerasRoundNo)
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -94,7 +95,7 @@ initBound =
     { boundTime = RelativeTime 0
     , boundSlot = SlotNo 0
     , boundEpoch = EpochNo 0
-    , boundPerasRound = PerasRoundNo 0
+    , boundPerasRound = Nothing
     }
 
 -- | Version of 'mkUpperBound' when the upper bound may not be known
@@ -124,14 +125,15 @@ mkUpperBound EraParams{..} lo hiEpoch =
     { boundTime = addRelTime inEraTime $ boundTime lo
     , boundSlot = addSlots inEraSlots $ boundSlot lo
     , boundEpoch = hiEpoch
-    , boundPerasRound = addPerasRounds inEraPerasRounds $ boundPerasRound lo
+    , boundPerasRound = addPerasRounds <$> inEraPerasRounds <*> boundPerasRound lo
     }
  where
-  inEraEpochs, inEraSlots, inEraPerasRounds :: Word64
+  inEraEpochs, inEraSlots :: Word64
   inEraEpochs = countEpochs hiEpoch (boundEpoch lo)
   inEraSlots = inEraEpochs * unEpochSize eraEpochSize
-  -- TODO(geo2a): the bound on Peras rounds may need to be
-  inEraPerasRounds = inEraSlots `div` (unPerasRoundLength eraPerasRoundLength)
+
+  inEraPerasRounds :: Maybe Word64
+  inEraPerasRounds = div <$> Just inEraSlots <*> (unPerasRoundLength <$> eraPerasRoundLength)
 
   inEraTime :: NominalDiffTime
   inEraTime = fromIntegral inEraSlots * getSlotLength eraSlotLength
@@ -228,7 +230,8 @@ newtype Summary xs = Summary {getSummary :: NonEmpty xs EraSummary}
 -------------------------------------------------------------------------------}
 
 -- | 'Summary' for a ledger that never forks
-neverForksSummary :: EpochSize -> SlotLength -> GenesisWindow -> PerasRoundLength -> Summary '[x]
+neverForksSummary ::
+  EpochSize -> SlotLength -> GenesisWindow -> Maybe PerasRoundLength -> Summary '[x]
 neverForksSummary epochSize slotLen genesisWindow perasRoundLength =
   Summary $
     NonEmptyOne $
@@ -481,16 +484,18 @@ invariantSummary = \(Summary summary) ->
               , " (INV-2b)"
               ]
 
-        unless
-          ( (unEpochSize $ eraEpochSize curParams) `mod` (unPerasRoundLength $ eraPerasRoundLength curParams)
-              /= 0
-          ) $
-          throwError $
-            mconcat
-              [ "Invalid Peras round length "
-              , show curSummary
-              , " (Peras round length does not divide epoch size)"
-              ]
+        when (isJust $ eraPerasRoundLength curParams)
+          $ unless
+            ( (unEpochSize $ eraEpochSize curParams)
+                `mod` (unPerasRoundLength . fromJust $ eraPerasRoundLength curParams)
+                /= 0
+            )
+          $ throwError
+          $ mconcat
+            [ "Invalid Peras round length "
+            , show curSummary
+            , " (Peras round length does not divide epoch size)"
+            ]
 
         go curEnd next
    where

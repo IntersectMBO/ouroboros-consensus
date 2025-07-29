@@ -169,8 +169,7 @@ shelleyEraParams genesis =
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.StandardSafeZone stabilityWindow
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , -- TODO(geo2a): revise this value
-      eraPerasRoundLength = defaultPerasRoundLength
+    , eraPerasRoundLength = Nothing
     }
  where
   stabilityWindow =
@@ -186,8 +185,7 @@ shelleyEraParamsNeverHardForks genesis =
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.UnsafeIndefiniteSafeZone
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , -- TODO(geo2a): revise this value
-      eraPerasRoundLength = defaultPerasRoundLength
+    , eraPerasRoundLength = Nothing
     }
  where
   stabilityWindow =

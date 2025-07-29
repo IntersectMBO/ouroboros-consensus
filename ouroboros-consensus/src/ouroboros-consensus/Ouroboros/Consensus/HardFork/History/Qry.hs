@@ -258,6 +258,14 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
       EraUnbounded -> return ()
       EraEnd b -> guard $ p b
 
+  guardEndM :: (Bound -> Maybe Bool) -> Maybe ()
+  guardEndM p =
+    case eraEnd of
+      EraUnbounded -> return ()
+      EraEnd b -> do
+        cond <- p b
+        guard cond
+
   go :: Expr Identity a -> Maybe a
   go (EVar a) =
     return $ runIdentity a
@@ -292,9 +300,11 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     return $ EpochInEra (countEpochs e (boundEpoch eraStart))
   go (EAbsToRelPerasRoundNo expr) = do
     absPerasRoundNo <- go expr
-    guard $ absPerasRoundNo >= boundPerasRound eraStart
-    -- TODO(geo2a): check we are in Peras-enabled era
-    pure $ PerasRoundNoInEra (countPerasRounds absPerasRoundNo (boundPerasRound eraStart))
+    -- here we implicitly check that we are in Peras-enabled era,
+    -- i.e. the round bound is not Nothing
+    eraStartPerasRound <- boundPerasRound eraStart
+    guard $ absPerasRoundNo >= eraStartPerasRound
+    pure $ PerasRoundNoInEra (countPerasRounds absPerasRoundNo eraStartPerasRound)
 
   -- Convert relative to absolute
   --
@@ -322,9 +332,13 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     return absEpoch
   go (ERelToAbsPerasRoundNo expr) = do
     relPerasRound <- go expr
-    let absPerasRound = addPerasRounds (getPerasRoundNoInEra relPerasRound) (boundPerasRound eraStart)
-    guardEnd $ \end -> absPerasRound <= boundPerasRound end
-    -- TODO(geo2a): how to check that we are in Peras-enabled era?
+    -- here we implicitly check that we are in Peras-enabled era,
+    -- i.e. the round bound is not Nothing
+    eraStartPerasRound <- boundPerasRound eraStart
+    let absPerasRound = addPerasRounds (getPerasRoundNoInEra relPerasRound) eraStartPerasRound
+    guardEndM $ \end -> do
+      eraEndPerasRound <- boundPerasRound end
+      pure $ absPerasRound <= eraEndPerasRound
     pure absPerasRound
 
   -- Convert between relative values
@@ -345,12 +359,18 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     return $ SlotInEra (getEpochInEra e * epochSize)
   go (ERelPerasRoundNoToSlot expr) = do
     r <- go expr
-    let slot = getPerasRoundNoInEra r * unPerasRoundLength eraPerasRoundLength
+    -- here we implicitly check that we are in Peras-enabled era,
+    -- i.e. the round length is not Nothing
+    slot <- (*) <$> Just (getPerasRoundNoInEra r) <*> (unPerasRoundLength <$> eraPerasRoundLength)
     pure (SlotInEra slot)
   go (ERelSlotToPerasRoundNo expr) = do
     s <- go expr
-    let perasRoundNo = getSlotInEra s `div` unPerasRoundLength eraPerasRoundLength
-    guardEnd $ \end -> perasRoundNo < unPerasRoundNo (boundPerasRound end)
+    -- here we implicitly check that we are in Peras-enabled era,
+    -- i.e. the round length is not Nothing
+    perasRoundNo <- div <$> Just (getSlotInEra s) <*> (unPerasRoundLength <$> eraPerasRoundLength)
+    guardEndM $ \end -> do
+      eraEndPerasRound <- boundPerasRound end
+      pure $ perasRoundNo < unPerasRoundNo eraEndPerasRound
     pure (PerasRoundNoInEra perasRoundNo)
   -- Get era parameters
   --
@@ -378,8 +398,11 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     guardEnd $ \end -> s < boundSlot end
     -- TODO(geo2a): do we need to check that round length divides epoch length here?
     ((_, _), es) <- go $ slotToEpochExpr s
-    guard $ (unEpochSize es) `mod` (unPerasRoundLength eraPerasRoundLength) == 0
-    return eraPerasRoundLength
+    -- here we implicitly check that we are in Peras-enabled era,
+    -- i.e. the round length is not Nothing
+    roundLength <- eraPerasRoundLength
+    guard $ (unEpochSize es) `mod` (unPerasRoundLength roundLength) == 0
+    eraPerasRoundLength
 
 {-------------------------------------------------------------------------------
   PastHorizonException

@@ -136,8 +136,7 @@ data EraParams = EraParams
   , eraSlotLength :: !SlotLength
   , eraSafeZone :: !SafeZone
   , eraGenesisWin :: !GenesisWindow
-  -- TODO(geo2a): current Cardano mainnet eras will not have Peras. What should this value be for them?
-  , eraPerasRoundLength :: !PerasRoundLength
+  , eraPerasRoundLength :: !(Maybe PerasRoundLength)
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -149,6 +148,7 @@ data EraParams = EraParams
 -- * epoch size to @10k@ slots
 -- * the safe zone to @2k@ slots
 -- * the upper bound to 'NoLowerBound'
+-- * the Peras Round Length is unset
 --
 -- This is primarily useful for tests.
 defaultEraParams :: SecurityParam -> SlotLength -> EraParams
@@ -158,8 +158,7 @@ defaultEraParams (SecurityParam k) slotLength =
     , eraSlotLength = slotLength
     , eraSafeZone = StandardSafeZone (unNonZero k * 2)
     , eraGenesisWin = GenesisWindow (unNonZero k * 2)
-    , -- TODO(geo2a): revise this value
-      eraPerasRoundLength = defaultPerasRoundLength
+    , eraPerasRoundLength = Nothing
     }
  where
   epochSize = unNonZero k * 10
@@ -246,7 +245,7 @@ instance Serialise EraParams where
       , encode eraSlotLength
       , encode eraSafeZone
       , encode (unGenesisWindow eraGenesisWin)
-      , encode (unPerasRoundLength eraPerasRoundLength)
+      , encode (maybe 0 unPerasRoundLength eraPerasRoundLength)
       ]
 
   decode = do
@@ -255,5 +254,5 @@ instance Serialise EraParams where
     eraSlotLength <- decode
     eraSafeZone <- decode
     eraGenesisWin <- GenesisWindow <$> decode
-    eraPerasRoundLength <- PerasRoundLength <$> decode
+    eraPerasRoundLength <- Just . PerasRoundLength <$> decode
     return EraParams{..}
