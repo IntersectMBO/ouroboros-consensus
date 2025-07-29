@@ -65,6 +65,10 @@ jobs:
       with:
         use-sodium-vrf: false
 
+    - name: "Move to base action: install liburing on ubuntu"
+      if: runner.os == 'Linux'
+      run: sudo apt -y install liburing-dev
+
     - name: Install Haskell
       uses: input-output-hk/actions/haskell@latest
       id: setup-haskell
