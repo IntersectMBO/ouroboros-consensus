@@ -63,6 +63,7 @@ withCDDLs f =
             D.removeFile "ntnheader.cddl"
             D.removeFile "ntntx.cddl"
             D.removeFile "ntntxid.cddl"
+            D.removeFile "dijkstra.cddl"
         )
         (\_ -> f)
 
