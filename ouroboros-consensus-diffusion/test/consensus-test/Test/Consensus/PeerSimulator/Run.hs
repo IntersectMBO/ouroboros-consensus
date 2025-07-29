@@ -58,7 +58,6 @@ import Ouroboros.Network.ControlMessage
   ( ControlMessage (..)
   , ControlMessageSTM
   )
-import Ouroboros.Network.Protocol.ChainSync.Codec
 import Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import qualified Test.Consensus.PeerSimulator.BlockFetch as BlockFetch
 import qualified Test.Consensus.PeerSimulator.CSJInvariants as CSJInvariants
@@ -74,6 +73,7 @@ import Test.Consensus.PeerSimulator.Trace
 import Test.Consensus.PointSchedule
   ( BlockFetchTimeout
   , CSJParams (..)
+  , ChainSyncTimeout
   , GenesisTest (..)
   , GenesisTestFull
   , LoPBucketParams (..)

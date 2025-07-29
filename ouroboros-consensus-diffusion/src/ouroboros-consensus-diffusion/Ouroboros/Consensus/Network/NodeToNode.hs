@@ -37,9 +37,6 @@ module Ouroboros.Consensus.Network.NodeToNode
     -- ** Projections
   , initiator
   , initiatorAndResponder
-
-    -- * Re-exports
-  , ChainSyncTimeout (..)
   ) where
 
 import Codec.CBOR.Decoding (Decoder)
@@ -151,6 +148,7 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( mapTxSubmissionMempoolReader
   )
 import Ouroboros.Network.TxSubmission.Outbound
+import System.Random (StdGen, split)
 
 {-------------------------------------------------------------------------------
   Handlers
@@ -602,18 +600,22 @@ mkApps ::
   ) =>
   -- | Needed for bracketing only
   NodeKernel m addrNTN addrNTC blk ->
+  StdGen ->
   Tracers m addrNTN blk e ->
   (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bKA bPS) ->
   ByteLimits bCS bBF bTX bKA ->
-  m ChainSyncTimeout ->
+  -- Chain-Sync timeouts for chain-sync client (using `Header blk`) as well as
+  -- the server (`SerialisedHeader blk`).
+  (forall header. ProtocolTimeLimitsWithRnd (ChainSync header (Point blk) (Tip blk))) ->
   CsClient.ChainSyncLoPBucketConfig ->
   CsClient.CSJConfig ->
   ReportPeerMetrics m (ConnectionId addrNTN) ->
   Handlers m addrNTN blk ->
   Apps m addrNTN bCS bBF bTX bKA bPS NodeToNodeInitiatorResult ()
-mkApps kernel Tracers{..} mkCodecs ByteLimits{..} genChainSyncTimeout lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
+mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
   Apps{..}
  where
+  (chainSyncRng, chainSyncRng') = split rng
   NodeKernel{getDiffusionPipeliningSupport} = kernel
 
   aChainSyncClient ::
@@ -650,13 +652,13 @@ mkApps kernel Tracers{..} mkCodecs ByteLimits{..} genChainSyncTimeout lopBucketC
           csjConfig
           getDiffusionPipeliningSupport
         $ \csState -> do
-          chainSyncTimeout <- genChainSyncTimeout
           (r, trailing) <-
-            runPipelinedPeerWithLimits
+            runPipelinedPeerWithLimitsRnd
               (contramap (TraceLabelPeer them) tChainSyncTracer)
+              chainSyncRng
               (cChainSyncCodec (mkCodecs version))
               blChainSync
-              (timeLimitsChainSync chainSyncTimeout)
+              chainSyncTimeouts
               channel
               $ chainSyncClientPeerPipelined
               $ hChainSyncClient
@@ -681,7 +683,6 @@ mkApps kernel Tracers{..} mkCodecs ByteLimits{..} genChainSyncTimeout lopBucketC
     m ((), Maybe bCS)
   aChainSyncServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "ChainSyncServer"
-    chainSyncTimeout <- genChainSyncTimeout
     bracketWithPrivateRegistry
       ( chainSyncHeaderServerFollower
           (getChainDB kernel)
@@ -692,11 +693,12 @@ mkApps kernel Tracers{..} mkCodecs ByteLimits{..} genChainSyncTimeout lopBucketC
       )
       ChainDB.followerClose
       $ \flr ->
-        runPeerWithLimits
+        runPeerWithLimitsRnd
           (contramap (TraceLabelPeer them) tChainSyncSerialisedTracer)
+          chainSyncRng'
           (cChainSyncCodecSerialised (mkCodecs version))
           blChainSync
-          (timeLimitsChainSync chainSyncTimeout)
+          chainSyncTimeouts
           channel
           $ chainSyncServerPeer
           $ hChainSyncServer them version flr

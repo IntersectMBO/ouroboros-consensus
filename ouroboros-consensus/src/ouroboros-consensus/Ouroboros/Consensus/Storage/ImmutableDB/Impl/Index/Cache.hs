@@ -804,6 +804,7 @@ openPrimaryIndex cacheEnv chunk allowExisting = do
   flip onException (hClose pHnd) $ do
     newCurrentChunkInfo <- case allowExisting of
       MustBeNew -> return $ emptyCurrentChunkInfo chunk
+      MustExist -> loadCurrentChunkInfo hasFS chunkInfo chunk
       AllowExisting -> loadCurrentChunkInfo hasFS chunkInfo chunk
     mbEvicted <-
       modifyMVar cacheVar $
