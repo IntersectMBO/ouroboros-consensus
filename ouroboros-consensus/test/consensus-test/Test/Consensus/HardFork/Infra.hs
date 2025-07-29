@@ -123,7 +123,8 @@ genEraParams = do
   eraSafeZone <- genSafeZone
   eraGenesisWin <- GenesisWindow <$> choose (1, 10)
   -- TODO(geo2a): revise this value, needs to divide epoch size
-  eraPerasRoundLength <- PerasRoundLength <$> choose (1, 10)
+  -- TODO(geo2a): consider refactoring the lambda
+  eraPerasRoundLength <- (\x -> if x == 0 then Nothing else Just . PerasRoundLength $ x) <$> choose (0, 10)
   return HF.EraParams{..}
  where
   genSafeZone :: Gen HF.SafeZone
