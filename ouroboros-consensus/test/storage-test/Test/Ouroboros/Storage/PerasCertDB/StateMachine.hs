@@ -94,12 +94,27 @@ instance StateModel Model where
     action ->
       model.open && case action of
         CloseDB -> True
-        -- Do not add equivocating certificates.
         AddCert cert -> all p model.certs
          where
-          p cert' = perasCertRound cert /= perasCertRound cert' || cert == cert'
+          p cert' = roundNoDeterminesCert && uniqueSlotNos
+           where
+            -- Do not add an equivocating certificate.
+            roundNoDeterminesCert =
+              perasCertRound cert == perasCertRound cert' =>> cert == cert'
+            -- Do not add a certificate boosting a block in a slot in which we
+            -- have already boosted another block.
+            uniqueSlotNos =
+              pointSlot boostPt == pointSlot boostPt' =>> boostPt == boostPt'
+             where
+              boostPt = perasCertBoostedBlock cert
+              boostPt' = perasCertBoostedBlock cert'
         GetWeightSnapshot -> True
         GarbageCollect _slot -> True
+   where
+    -- Logical implication
+    (=>>) :: Bool -> Bool -> Bool
+    a =>> b = not a || b
+    infixr 1 =>>
 
 deriving stock instance Show (Action Model a)
 deriving stock instance Eq (Action Model a)
