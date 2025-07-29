@@ -622,7 +622,7 @@ getChainSelMessage ::
   ChainSelQueue m blk ->
   m (ChainSelMessage m blk)
 getChainSelMessage starvationTracer starvationVar chainSelQueue =
-  atomically (tryReadTBQueue' queue) >>= \case
+  atomically (tryReadTBQueue queue) >>= \case
     Just msg -> pure msg
     Nothing -> do
       startStarvationMeasure
@@ -648,11 +648,6 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
       traceWith starvationTracer $ ChainSelStarvation (FallingEdgeWith pt)
       atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
     ChainSelReprocessLoEBlocks{} -> pure ()
-
--- TODO Can't use tryReadTBQueue from io-classes because it is broken for IOSim
--- (but not for IO). https://github.com/input-output-hk/io-sim/issues/195
-tryReadTBQueue' :: MonadSTM m => TBQueue m a -> STM m (Maybe a)
-tryReadTBQueue' q = (Just <$> readTBQueue q) `orElse` pure Nothing
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
