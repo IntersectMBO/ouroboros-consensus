@@ -100,3 +100,9 @@ source-repository-package
   subdir:
     .
     bloomfilter-blocked
+
+source-repository-package
+  type: git
+  location: https://github.com/jasagredo/digest
+  tag: 329fc2a911878ffe47472751cb40aae20ab2c00a
+  --sha256: sha256-Ok1UkECZfYy3jFdDTOk6AUbYYuG3w8XDVJ8d2NK6ixw=
