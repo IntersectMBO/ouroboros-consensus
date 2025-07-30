@@ -1232,15 +1232,32 @@ invariant cfg Model{..} =
 
 postcondition ::
   TestConstraints blk =>
+  TopLevelConfig blk ->
   Model blk m Concrete ->
   At Cmd blk m Concrete ->
   At Resp blk m Concrete ->
   Logic
-postcondition model cmd resp =
+postcondition cfg model cmd resp =
   (toMock (eventAfter ev) resp .== eventMockResp ev)
     .// "real response didn't match model response"
+    .&& immutableTipMonotonicity
  where
   ev = lockstep model cmd resp
+
+  immutableTipMonotonicity = case unAt cmd of
+    -- When we wipe the VolatileDB (and haven't persisted all immutable blocks),
+    -- the immutable tip can recede.
+    WipeVolatileDB -> Top
+    _ ->
+      Annotate ("Immutable tip non-monotonicity: " <> show before <> " > " <> show after) $
+        Boolean (before <= after)
+   where
+    before = immTipBlockNo $ eventBefore ev
+    after = immTipBlockNo $ eventAfter ev
+    immTipBlockNo =
+      Chain.headBlockNo
+        . Model.immutableChain (configSecurityParam cfg)
+        . dbModel
 
 semantics ::
   forall blk.
@@ -1271,7 +1288,7 @@ sm loe env genBlock cfg initLedger =
     { initModel = initModel loe cfg initLedger
     , transition = transition
     , precondition = precondition
-    , postcondition = postcondition
+    , postcondition = postcondition cfg
     , generator = Just . generator loe genBlock
     , shrinker = shrinker
     , semantics = semantics cfg env
