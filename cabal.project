@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-07-22T09:13:54Z
+  , hackage.haskell.org 2025-08-07T11:24:08Z
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2025-08-06T10:58:15Z
 
@@ -96,11 +96,9 @@ constraints:
   plutus-ledger-api < 1.51,
   plutus-tx < 1.51,
 
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/lsm-tree
-  tag: 84857d4f921a265f267df175e74ba6c652d2b1a0
-  --sha256: sha256-IgE/sqDfehaJVRLaf2euzc7sJ3hRUr+hAe2GUILvXa8=
-  subdir:
-    .
-    bloomfilter-blocked
+if os (windows)
+  source-repository-package
+    type: git
+    location: https://github.com/jasagredo/digest
+    tag: 329fc2a911878ffe47472751cb40aae20ab2c00a
+    --sha256: sha256-84f8dFee9EfWbQ5UTLZ9MrsZ3JVojNhzfTGmWof6wHU=
