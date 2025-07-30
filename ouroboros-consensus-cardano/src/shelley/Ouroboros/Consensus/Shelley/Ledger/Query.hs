@@ -96,7 +96,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
-  , ledgerPeerSnpahotSupportsSRV
+  , ledgerPeerSnapshotSupportsSRV
   )
 import Ouroboros.Consensus.Shelley.Ledger.PeerSelection ()
 import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
@@ -1047,7 +1047,7 @@ encodeShelleyResult v query = case query of
   GetProposals{} -> LC.toEraCBOR @era
   GetRatifyState{} -> LC.toEraCBOR @era
   GetFuturePParams{} -> LC.toEraCBOR @era
-  GetBigLedgerPeerSnapshot -> encodeLedgerPeerSnapshot (ledgerPeerSnpahotSupportsSRV v)
+  GetBigLedgerPeerSnapshot -> encodeLedgerPeerSnapshot (ledgerPeerSnapshotSupportsSRV v)
   QueryStakePoolDefaultVote{} -> toCBOR
   GetPoolDistr2{} -> LC.toEraCBOR @era
   GetStakeDistribution2{} -> LC.toEraCBOR @era
@@ -1095,7 +1095,7 @@ decodeShelleyResult v query = case query of
   GetProposals{} -> LC.fromEraCBOR @era
   GetRatifyState{} -> LC.fromEraCBOR @era
   GetFuturePParams{} -> LC.fromEraCBOR @era
-  GetBigLedgerPeerSnapshot -> decodeLedgerPeerSnapshot (ledgerPeerSnpahotSupportsSRV v)
+  GetBigLedgerPeerSnapshot -> decodeLedgerPeerSnapshot (ledgerPeerSnapshotSupportsSRV v)
   QueryStakePoolDefaultVote{} -> fromCBOR
   GetPoolDistr2{} -> LC.fromEraCBOR @era
   GetStakeDistribution2 -> LC.fromEraCBOR @era

@@ -4,7 +4,7 @@
 module Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
   , ShelleyNodeToNodeVersion (..)
-  , ledgerPeerSnpahotSupportsSRV
+  , ledgerPeerSnapshotSupportsSRV
   ) where
 
 import qualified Data.Map.Strict as Map
@@ -33,8 +33,8 @@ data ShelleyNodeToClientVersion
     ShelleyNodeToClientVersion14
   deriving (Show, Eq, Ord, Enum, Bounded)
 
-ledgerPeerSnpahotSupportsSRV :: ShelleyNodeToClientVersion -> LedgerPeerSnapshotSRVSupport
-ledgerPeerSnpahotSupportsSRV v
+ledgerPeerSnapshotSupportsSRV :: ShelleyNodeToClientVersion -> LedgerPeerSnapshotSRVSupport
+ledgerPeerSnapshotSupportsSRV v
   | v < ShelleyNodeToClientVersion14 = LedgerPeerSnapshotDoesntSupportSRV
   | otherwise = LedgerPeerSnapshotSupportsSRV
 
