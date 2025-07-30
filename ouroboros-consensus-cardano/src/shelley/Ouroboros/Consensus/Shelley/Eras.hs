@@ -1,11 +1,13 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -70,6 +72,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
 {-------------------------------------------------------------------------------
   Era polymorphism
@@ -328,3 +331,19 @@ instance SupportsTwoPhaseValidation DijkstraEra where
             )
         ) -> True
     _ -> False
+
+{-------------------------------------------------------------------------------
+ SerialiseValue
+
+ These instances are necessary only to support threadnet shelley tests and the
+ unstable-cardano-tools library.
+-------------------------------------------------------------------------------}
+
+instance SerialiseValue (SL.ShelleyTxOut ShelleyEra) where
+  serialiseValue = serialiseLSMViaMemPack
+  deserialiseValue = deserialiseLSMViaMemPack
+
+deriving via
+  ResolveAsFirst (SL.ShelleyTxOut ShelleyEra)
+  instance
+    ResolveValue (SL.ShelleyTxOut ShelleyEra)

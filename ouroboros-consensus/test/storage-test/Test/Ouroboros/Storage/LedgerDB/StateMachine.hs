@@ -44,6 +44,7 @@ import Control.Monad.Except
 import Control.Monad.State hiding (state)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..))
+import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as L
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -63,11 +64,14 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
   ( LedgerDbFlavorArgs
   )
+import Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Args hiding
   ( LedgerDbFlavorArgs
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util hiding (Some)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -102,7 +106,9 @@ tests =
     , testProperty "InMemV2" $
         prop_sequential 100000 inMemV2TestArguments noFilePath simulatedFS
     , testProperty "LMDB" $
-        prop_sequential 1000 lmdbTestArguments realFilePath realFS
+        prop_sequential 1000 lmdbTestArguments (realFilePath "lmdb") realFS
+    , testProperty "LSM" $
+        prop_sequential 1000 lsmTestArguments (realFilePath "lsm") realFS
     ]
 
 prop_sequential ::
@@ -156,9 +162,10 @@ data TestArguments m = TestArguments
 noFilePath :: IO (FilePath, IO ())
 noFilePath = pure ("Bogus", pure ())
 
-realFilePath :: IO (FilePath, IO ())
-realFilePath = liftIO $ do
-  tmpdir <- (FilePath.</> "test_lmdb") <$> Dir.getTemporaryDirectory
+realFilePath :: String -> IO (FilePath, IO ())
+realFilePath l = liftIO $ do
+  tmpdir <- (FilePath.</> ("test_" <> l)) <$> Dir.getTemporaryDirectory
+  Dir.createDirectoryIfMissing False tmpdir
   pure
     ( tmpdir
     , do
@@ -194,6 +201,17 @@ inMemV2TestArguments ::
 inMemV2TestArguments secParam _ =
   TestArguments
     { argFlavorArgs = LedgerDbFlavorArgsV2 $ V2Args InMemoryHandleArgs
+    , argLedgerDbCfg = extLedgerDbConfig secParam
+    }
+
+lsmTestArguments ::
+  SecurityParam ->
+  FilePath ->
+  TestArguments IO
+lsmTestArguments secParam fp =
+  TestArguments
+    { argFlavorArgs =
+        LedgerDbFlavorArgsV2 $ V2Args $ LSMHandleArgs $ LSMArgs fp LSM.stdGenSalt (LSM.stdMkBlockIOFS fp)
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -490,19 +508,40 @@ openLedgerDB flavArgs env cfg fs = do
           Nothing
   (ldb, _, od) <- case flavArgs of
     LedgerDbFlavorArgsV1 bss ->
-      let initDb =
+      let snapManager = V1.snapshotManager args
+          initDb =
             V1.mkInitDb
               args
               bss
               getBlock
-       in openDBInternal args initDb stream replayGoal
-    LedgerDbFlavorArgsV2 bss ->
+              snapManager
+       in openDBInternal args initDb snapManager stream replayGoal
+    LedgerDbFlavorArgsV2 bss -> do
+      (snapManager, bss') <- case bss of
+        V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
+        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)) -> do
+          (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (lgrRegistry args)
+          session <-
+            allocate
+              (lgrRegistry args)
+              ( \_ -> do
+                  salt <- genSalt
+                  LSM.openSession
+                    (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 . V2.LSMTrace >$< lgrTracer args)
+                    fs'
+                    blockio
+                    salt
+                    (mkFsPath [path])
+              )
+              LSM.closeSession
+          pure (LSM.snapshotManager (snd session) args, V2.LSMHandleEnv session rk1)
       let initDb =
             V2.mkInitDb
               args
-              bss
+              bss'
               getBlock
-       in openDBInternal args initDb stream replayGoal
+              snapManager
+      openDBInternal args initDb snapManager stream replayGoal
   withRegistry $ \reg -> do
     vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
     case vr of
@@ -617,6 +656,7 @@ mkTrackOpenHandles = do
           atomically $ modifyTVar varOpen $ case ev of
             V2.TraceLedgerTablesHandleCreate -> succ
             V2.TraceLedgerTablesHandleClose -> pred
+            _ -> id
         _ -> pure ()
   pure (tracer, readTVarIO varOpen)
 
