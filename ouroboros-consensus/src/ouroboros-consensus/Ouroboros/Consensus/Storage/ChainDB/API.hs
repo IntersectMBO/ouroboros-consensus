@@ -91,6 +91,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , ReadOnlyForker'
   , Statistics
   )
+import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -390,6 +391,8 @@ data ChainDB m blk = ChainDB
   , addPerasCert :: PerasCert blk -> m ()
   -- ^ TODO
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
+  -- ^ TODO
+  , getPerasCertSnapshot :: STM m (PerasCertSnapshot blk)
   -- ^ TODO
   , closeDB :: m ()
   -- ^ Close the ChainDB

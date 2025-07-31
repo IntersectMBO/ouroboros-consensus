@@ -245,6 +245,7 @@ mkHandlers
     , getDiffusionPipeliningSupport
     }
   NodeKernel
+    -- ChainDB contains the functionality of PerasCertDB
     { getChainDB
     , getMempool
     , getTopLevelConfig
@@ -295,6 +296,21 @@ mkHandlers
             (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
             (getMempoolWriter getMempool)
             version
+      -- TODO: add certDiffusion{Client,Server} here
+      -- ,hCertDiffusionInbound = \... ->
+          -- objectDiffusionInbound
+          --   nullTracer
+          --   numObjectIdsToAck
+          --   (makeObjectPoolReader inboundPool)
+          --   (makeObjectPoolWriter inboundPool)
+          --   nodeToNodeVersion
+      -- ,hCertDiffusionOutbound = \... ->
+              -- objectDiffusionOutbound
+              --   nullTracer
+              --   numObjectIdsToAck
+              --   (makeObjectPoolReader outboundPool)
+              --   nodeToNodeVersion
+              --   (readTVar controlMessage)
       , hKeepAliveClient = \_version -> keepAliveClient (Node.keepAliveClientTracer tracers) keepAliveRng
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM

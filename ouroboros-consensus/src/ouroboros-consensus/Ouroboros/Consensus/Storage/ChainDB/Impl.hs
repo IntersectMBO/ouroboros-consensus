@@ -281,6 +281,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                 -- TODO trigger chain selection in a more efficient way
                 waitChainSelectionPromise =<< ChainSel.triggerChainSelectionAsync cdb
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
+            , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
             }
     addBlockTestFuse <- newFuse "test chain selection"
     copyTestFuse <- newFuse "test copy to immutable db"
