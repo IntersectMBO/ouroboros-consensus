@@ -18,10 +18,10 @@ import Control.Monad.Class.MonadThrow
 import Control.Tracer (Tracer, traceWith)
 import Data.Foldable (find)
 import Data.List.NonEmpty qualified as NonEmpty
-import Data.Maybe (catMaybes, isNothing, mapMaybe)
+import Data.Maybe (catMaybes, isNothing)
 import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as Seq
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPoolReader
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Network.ControlMessage
   ( ControlMessage
   , ControlMessageSTM
@@ -84,10 +84,12 @@ objectDiffusionOutbound ::
 objectDiffusionOutbound tracer maxUnacked ObjectPoolReader{..} _version controlMessageSTM =
   ObjectDiffusionOutbound (pure (client Seq.empty objectPoolZeroIndex))
  where
-  client :: StrictSeq (objectId, index) -> index -> OutboundStIdle objectId object m ()
+  client :: StrictSeq (object, index) -> index -> OutboundStIdle objectId object m ()
   client !unackedSeq !lastIndex =
     OutboundStIdle{recvMsgRequestObjectIds, recvMsgRequestObjects}
    where
+    onlyIds :: forall f. Functor f => f (object, SizeInBytes) -> f (objectId, SizeInBytes)
+    onlyIds = fmap (\(obj, size) -> (rdrGetObjectId obj, size))
     recvMsgRequestObjectIds ::
       forall blocking.
       SingBlockingStyle blocking ->
@@ -117,14 +119,14 @@ objectDiffusionOutbound tracer maxUnacked ObjectPoolReader{..} _version controlM
               let !unackedSeq'' =
                     unackedSeq'
                       <> Seq.fromList
-                        [(objectId, index) | (objectId, index, _) <- objects]
+                        [(object, index) | (object, index, _) <- objects]
                   !lastIndex'
                     | null objects = lastIndex
                     | otherwise = index
                    where
                     (_, index, _) = last objects
-                  objects' :: [(objectId, SizeInBytes)]
-                  objects' = [(objectId, size) | (objectId, _, size) <- objects]
+                  objects' :: [(object, SizeInBytes)]
+                  objects' = [(object, size) | (object, _, size) <- objects]
                   client' = client unackedSeq'' lastIndex'
                in (objects', client')
 
@@ -139,8 +141,8 @@ objectDiffusionOutbound tracer maxUnacked ObjectPoolReader{..} _version controlM
 
           mbobjects <- timeoutWithControlMessage controlMessageSTM $
             do
-              ObjectPoolSnapshot{objectPoolObjectIdsAfter} <- objectPoolGetSnapshot
-              let objects = objectPoolObjectIdsAfter lastIndex
+              ObjectPoolSnapshot{objectPoolObjectsAfter} <- objectPoolGetSnapshot
+              let objects = objectPoolObjectsAfter lastIndex
               check (not $ null objects)
               pure (take (fromIntegral reqNo) objects)
 
@@ -153,7 +155,7 @@ objectDiffusionOutbound tracer maxUnacked ObjectPoolReader{..} _version controlM
                     -- Assert objects is non-empty: we blocked until objects was non-null,
                     -- and we know reqNo > 0, hence `take reqNo objects` is non-null.
                     Nothing -> error "objectDiffusionOutbound: empty transaction's list"
-               in pure (SendMsgReplyObjectIds (BlockingReply objects'') client')
+               in pure (SendMsgReplyObjectIds (BlockingReply (onlyIds objects'')) client')
         SingNonBlocking -> do
           when (reqNo == 0 && ackNo == 0) $
             throwIO ProtocolErrorRequestedNothing
@@ -161,12 +163,12 @@ objectDiffusionOutbound tracer maxUnacked ObjectPoolReader{..} _version controlM
             throwIO ProtocolErrorRequestNonBlocking
 
           objects <- atomically $ do
-            ObjectPoolSnapshot{objectPoolObjectIdsAfter} <- objectPoolGetSnapshot
-            let objects = objectPoolObjectIdsAfter lastIndex
+            ObjectPoolSnapshot{objectPoolObjectsAfter} <- objectPoolGetSnapshot
+            let objects = objectPoolObjectsAfter lastIndex
             return (take (fromIntegral reqNo) objects)
 
           let !(objects', client') = update objects
-          pure (SendMsgReplyObjectIds (NonBlockingReply objects') client')
+          pure (SendMsgReplyObjectIds (NonBlockingReply (onlyIds objects')) client')
 
     recvMsgRequestObjects ::
       [objectId] ->
@@ -175,22 +177,14 @@ objectDiffusionOutbound tracer maxUnacked ObjectPoolReader{..} _version controlM
       -- Trace the IDs of the transactions requested.
       traceWith tracer (TraceObjectDiffusionOutboundRecvMsgRequestObjects objectIds)
 
-      ObjectPoolSnapshot{objectPoolLookupObject} <- atomically objectPoolGetSnapshot
-
       -- The window size is expected to be small (currently 10) so the find is acceptable.
-      let objectIndices = [find (\(t, _) -> t == objectId) unackedSeq | objectId <- objectIds]
-          objectIndices' = map snd $ catMaybes objectIndices
-
-      when (any isNothing objectIndices) $
+      let requestedObjects = [find (\(obj, _) -> rdrGetObjectId obj == objectId) unackedSeq | objectId <- objectIds]
+      when (any isNothing requestedObjects) $
         throwIO ProtocolErrorRequestedUnavailableObject
-
-      -- The 'objectPoolLookupObject' will return nothing if the transaction is no
-      -- longer in the objectPool. This is good. Neither the sending nor
-      -- receiving side wants to forward objects that are no longer of interest.
-      let objects = mapMaybe objectPoolLookupObject objectIndices'
+      let requestedObjects' = fst <$> catMaybes requestedObjects
           client' = client unackedSeq lastIndex
 
       -- Trace the transactions to be sent in the response.
-      traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjects objects)
+      traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjects requestedObjects')
 
-      return $ SendMsgReplyObjects objects client'
+      return $ SendMsgReplyObjects requestedObjects' client'

@@ -44,30 +44,7 @@ import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPoolReader
-
--- TODO: This is a copy of
--- `Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.TxSubmissionObjectPool.Writer`
--- `ouroboros-network`, brought here to make things compile. We might want a
--- different interface at some point.
---
-data ObjectPoolWriter objectId object index m =
-     ObjectPoolWriter {
-
-       -- | Compute the transaction id from a transaction.
-       --
-       -- This is used in the protocol handler to verify a full transaction
-       -- matches a previously given transaction id.
-       --
-       getObjectId          :: object -> objectId,
-
-       -- | Supply a batch of transactions to the objectPool. They are either
-       -- accepted or rejected individually, but in the order supplied.
-       --
-       -- The 'objectId's of all transactions that were added successfully are
-       -- returned.
-       objectPoolAddObjects :: [object] -> m [objectId]
-    }
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 
 data ProcessedObjectCount = ProcessedObjectCount {
       -- | Just accepted this many transactions.
@@ -182,16 +159,11 @@ objectDiffusionInbound
   => Tracer m (TraceObjectDiffusionInbound objectId object)
   -> NumObjectIdsToAck  -- ^ Maximum number of unacknowledged objectIds allowed
   -> ObjectPoolReader objectId object index m
-  -> ObjectPoolWriter objectId object index m
+  -> ObjectPoolWriter objectId object m
   -> NodeToNodeVersion
   -> ObjectDiffusionInboundPipelined objectId object m ()
 objectDiffusionInbound tracer (NumObjectIdsToAck maxUnacked) mpReader mpWriter _version =
     ObjectDiffusionInboundPipelined $ do
-#ifdef OBJECTSUBMISSION_DELAY
-      -- make the client linger before asking for object's and expending
-      -- our resources as well, as he may disconnect for some reason
-      threadDelay (fromMaybe (-1) longWait)
-#endif
       continueWithStateM (serverIdle Zero) initialServerState
   where
     -- TODO #1656: replace these fixed limits by policies based on
@@ -203,7 +175,7 @@ objectDiffusionInbound tracer (NumObjectIdsToAck maxUnacked) mpReader mpWriter _
     ObjectPoolReader{objectPoolGetSnapshot} = mpReader
 
     ObjectPoolWriter
-      { getObjectId
+      { wrGetObjectId
       , objectPoolAddObjects
       } = mpWriter
 
@@ -311,7 +283,7 @@ objectDiffusionInbound tracer (NumObjectIdsToAck maxUnacked) mpReader mpWriter _
         -- approach to this and check it.
         --
         let objectsMap :: Map objectId object
-            objectsMap = Map.fromList [ (getObjectId object, object) | object <- objects ]
+            objectsMap = Map.fromList [ (wrGetObjectId object, object) | object <- objects ]
 
             objectIdsReceived  = Map.keysSet objectsMap
             objectIdsRequested = Set.fromList objectIds
@@ -362,9 +334,10 @@ objectDiffusionInbound tracer (NumObjectIdsToAck maxUnacked) mpReader mpWriter _
         traceWith tracer $
           TraceObjectDiffusionCollected collected
 
-        objectIdsAccepted <- objectPoolAddObjects objectsReady
+        -- TODO: Certificate / Vote validation
+        () <- objectPoolAddObjects objectsReady
 
-        let !accepted = length objectIdsAccepted
+        let !accepted = length objectsReady
 
         traceWith tracer $ TraceObjectDiffusionProcessed ProcessedObjectCount {
             pobjectcAccepted = accepted

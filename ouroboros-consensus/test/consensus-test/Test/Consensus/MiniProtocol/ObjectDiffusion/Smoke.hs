@@ -3,7 +3,6 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -15,7 +14,6 @@ import Control.Monad.IOSim (runSimStrictShutdown)
 import Control.Tracer (nullTracer, traceWith)
 import Data.Functor.Contravariant (contramap)
 import Data.List (foldl')
-import Data.Sequence (fromList, (!?))
 import Network.TypedProtocol.Channel (createConnectedChannels)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import NoThunks.Class (NoThunks)
@@ -23,7 +21,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
   ( ObjectPoolWriter (..)
   , objectDiffusionInbound
   )
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPoolReader
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   ( ObjectPoolReader (..)
   , ObjectPoolSnapshot (..)
   )
@@ -83,29 +81,29 @@ makeObjectPoolReader ::
   MonadSTM m => SmokeObjectPool m -> ObjectPoolReader SmokeObjectId SmokeObject Int m
 makeObjectPoolReader (SmokeObjectPool pool) =
   ObjectPoolReader
-    { objectPoolGetSnapshot = poolToSnapshot <$> readTVar pool
+    { rdrGetObjectId = smokeObjectId
+    , objectPoolGetSnapshot = poolToSnapshot <$> readTVar pool
     , objectPoolZeroIndex = -1 -- objectPoolObjectIdsAfter is strict, and first index is 0.
     }
 
 poolToSnapshot :: [SmokeObject] -> ObjectPoolSnapshot SmokeObjectId SmokeObject Int
 poolToSnapshot pool =
   ObjectPoolSnapshot
-    { objectPoolObjectIdsAfter = \minIndex -> do
-        (index, SmokeObject{smokeObjectId}) <- zip [0 ..] pool
+    { objectPoolObjectsAfter = \minIndex -> do
+        (index, smokeObject) <- zip [0 ..] pool
         guard (index > minIndex)
-        return (smokeObjectId, index, SizeInBytes 0) -- REVIEW: 0?
-    , objectPoolLookupObject = (fromList pool !?)
+        return (smokeObject, index, SizeInBytes 0) -- REVIEW: 0?
     , objectPoolHasObject = \objectId -> any ((== objectId) . smokeObjectId) pool
     }
 
 makeObjectPoolWriter ::
-  MonadSTM m => SmokeObjectPool m -> ObjectPoolWriter SmokeObjectId SmokeObject Int m
+  MonadSTM m => SmokeObjectPool m -> ObjectPoolWriter SmokeObjectId SmokeObject m
 makeObjectPoolWriter (SmokeObjectPool pool) =
   ObjectPoolWriter
-    { getObjectId = smokeObjectId
+    { wrGetObjectId = smokeObjectId
     , objectPoolAddObjects = \objects -> do
         atomically $ modifyTVar pool (++ objects)
-        return $ map smokeObjectId objects
+        return ()
     }
 
 {-------------------------------------------------------------------------------
