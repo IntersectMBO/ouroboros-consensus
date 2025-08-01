@@ -30,7 +30,6 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
 import Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Foldable (for_)
 import Data.Function (on)
 import Data.Functor.Contravariant ((>$<))
 import Data.List (sortBy)
@@ -42,6 +41,7 @@ import Data.Maybe (fromJust, isJust)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -72,7 +72,6 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
   ( InvalidBlockPunishment
-  , noPunishment
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
@@ -349,8 +348,8 @@ chainSelSync ::
 -- limit, the block will be added to the DB without modifying the chain.
 -- When the LoE fragment advances later, these blocks have to be scheduled
 -- for ChainSel again, but this does not happen automatically.
--- So we fetch all direct successors of each of the chain's blocks and run
--- ChainSel for them.
+-- So we fetch all direct successors of each of the chain's blocks, construct
+-- all candidates involving these blocks and select the best one.
 -- We run a background thread that polls the candidate fragments and sends
 -- 'ChainSelReprocessLoEBlocks' whenever we receive a new header or lose a
 -- peer.
@@ -358,35 +357,46 @@ chainSelSync ::
 -- Note that we do this even when we are caught-up, as we might want to select
 -- blocks that were originally postponed by the LoE, but can be adopted once we
 -- conclude that we are caught-up (and hence are longer bound by the LoE).
-chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
-  (succsOf, chain) <- lift $ atomically $ do
+chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
+  (succsOf, lookupBlockInfo, curChain) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
-    (,)
+    (,,)
       <$> ( ignoreInvalidSuc cdbVolatileDB invalid
               <$> VolatileDB.filterByPredecessor cdbVolatileDB
           )
+      <*> VolatileDB.getBlockInfo cdbVolatileDB
       <*> Query.getCurrentChain cdb
   let
-    chainHashes :: [ChainHash blk]
-    chainHashes =
-      castHash . pointHash
-        <$> AF.anchorPoint chain : (blockPoint <$> AF.toOldestFirst chain)
-    chainHashesSet :: Set (ChainHash blk)
-    chainHashesSet = Set.fromList chainHashes
-
-    -- The hashes of all immediate successor blocks of blocks on our chain
-    -- (including the anchor) without hashes on our chain.
-    loeHashes :: [HeaderHash blk]
-    loeHashes =
-      [ loeHash
-      | hashSel <- chainHashes
-      , loeHash <- Set.toList $ succsOf hashSel
-      , BlockHash loeHash `Set.notMember` chainHashesSet
+    -- All immediate successor blocks of blocks on the current chain (including
+    -- the anchor), excluding those on the current chain.
+    loePoints :: [RealPoint blk]
+    loePoints =
+      [ castRealPoint loePt
+      | curChainPt <-
+          AF.anchorPoint curChain : (blockPoint <$> AF.toOldestFirst curChain)
+      , loeHash <- Set.toList $ succsOf $ castHash (pointHash curChainPt)
+      , Just bi <- [lookupBlockInfo loeHash]
+      , let loePt = RealPoint (VolatileDB.biSlotNo bi) loeHash
+      , not $ AF.pointOnFragment (realPointToPoint loePt) curChain
       ]
-  for_ loeHashes $ \hash -> do
-    hdr <- lift $ VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
-    chainSelectionForBlock cdb BlockCache.empty hdr noPunishment
-  lift $ atomically $ putTMVar varProcessed ()
+
+    chainSelEnv = mkChainSelEnv cdb BlockCache.empty curChain Nothing
+
+  chainDiffs :: [[ChainDiff (Header blk)]] <-
+    for loePoints $ constructPreferableCandidates cdb curChain Map.empty
+
+  -- Consider all candidates at once, to avoid transient chain switches.
+  case NE.nonEmpty $ concat chainDiffs of
+    Just chainDiffs' -> withRegistry $ \rr -> do
+      -- Find the best valid candidate.
+      chainSelection chainSelEnv rr chainDiffs' >>= \case
+        Just validatedChainDiff ->
+          -- Switch to the new better chain.
+          switchTo cdb Nothing validatedChainDiff
+        Nothing -> pure ()
+    Nothing -> pure ()
+
+  atomically $ putTMVar varProcessed ()
 chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   (isMember, invalid, curChain) <-
     lift $
