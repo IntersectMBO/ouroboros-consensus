@@ -717,8 +717,9 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
             return ()
           Just validatedChainDiff ->
             switchTo
+              cdb
+              p
               validatedChainDiff
-              (varTentativeHeader chainSelEnv)
               AddingBlocks
    where
     chainSelEnv = mkChainSelEnv curChain
@@ -827,11 +828,136 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
             return ()
           Just validatedChainDiff ->
             switchTo
+              cdb
+              p
               validatedChainDiff
-              (varTentativeHeader chainSelEnv)
               SwitchingToAFork
    where
     chainSelEnv = mkChainSelEnv curChain
+
+  -- \| We have a new block @b@ that doesn't fit onto the current chain, but
+  -- we have found a 'ChainDiff' connecting it to the current chain via
+  -- intersection point @x@. We may also have extended that 'ChainDiff' with
+  -- more blocks fitting onto @b@, i.e., a suffix @s@.
+  --
+  -- We now translate that 'ChainDiff' from 'HeaderFields' to 'Header's by
+  -- reading the headers from disk.
+  --
+  -- Note that we need to read the headers corresponding to the hashes
+  -- @(x,b)@ and @(b,?]@ from disk. Not for @b@, as that's in our cache.
+  translateToHeaders ::
+    ChainDiff (HeaderFields blk) ->
+    StateT
+      (Map (HeaderHash blk) (Header blk))
+      m
+      (ChainDiff (Header blk))
+  -- \^ Fork, anchored at @x@, contains (the header of) @b@ and ends
+  -- with the suffix @s@.
+  translateToHeaders =
+    Diff.mapM (getKnownHeaderThroughCache cdbVolatileDB . headerFieldHash)
+
+-- | Try to apply the given 'ChainDiff' on the current chain fragment. The
+-- 'LedgerDB' is updated in the same transaction.
+--
+-- Note that we /cannot/ have switched to a different current chain in the
+-- meantime, since this function will only be called by a single background
+-- thread.
+--
+-- It /is/ possible that the background thread copying headers older than @k@
+-- from the VolatileDB to the ImmutableDB has removed some headers from the
+-- beginning of the current chain fragment, but does not affect us, as we cannot
+-- roll back more than @k@ headers anyway.
+switchTo ::
+  forall m blk.
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , InspectLedger blk
+  , HasHardForkHistory blk
+  , HasCallStack
+  ) =>
+  ChainDbEnv m blk ->
+  -- | Which block we performed chain selection for.
+  RealPoint blk ->
+  -- | Chain and ledger to switch to
+  ValidatedChainDiff (Header blk) (Forker' m blk) ->
+  ChainSwitchType ->
+  m ()
+switchTo CDB{..} triggerPt vChainDiff chainSwitchType = do
+  traceWith addBlockTracer $
+    ChangingSelection $
+      castPoint $
+        Diff.getTip $
+          getChainDiff vChainDiff
+  (curChain, newChain, events, prevTentativeHeader, newLedger) <- atomically $ do
+    InternalChain curChain curChainWithTime <- readTVar cdbChain -- Not Query.getCurrentChain!
+    curLedger <- getVolatileTip cdbLedgerDB
+    newLedger <- forkerGetLedgerState newForker
+    case Diff.apply curChain chainDiff of
+      -- Impossible, as described in the docstring
+      Nothing ->
+        error "chainDiff doesn't fit onto current chain"
+      Just newChain -> do
+        let lcfg = configLedger cdbTopLevelConfig
+            diffWithTime =
+              -- the new ledger state can translate the slots of the new
+              -- headers
+              Diff.map
+                ( mkHeaderWithTime
+                    lcfg
+                    (ledgerState newLedger)
+                )
+                chainDiff
+            newChainWithTime =
+              case Diff.apply curChainWithTime diffWithTime of
+                Nothing -> error "chainDiff failed for HeaderWithTime"
+                Just x -> x
+
+        writeTVar cdbChain $ InternalChain newChain newChainWithTime
+        forkerCommit newForker
+
+        -- Inspect the new ledger for potential problems
+        let events :: [LedgerEvent blk]
+            events =
+              inspectLedger
+                cdbTopLevelConfig
+                (ledgerState curLedger)
+                (ledgerState newLedger)
+
+        -- Clear the tentative header
+        prevTentativeHeader <- swapTVar cdbTentativeHeader SNothing
+
+        case chainSwitchType of
+          -- When adding blocks, the intersection point of the old and new
+          -- tentative/selected chain is not receding, in which case
+          -- `fhSwitchFork` is unnecessary. In the case of pipelining a
+          -- block, it would even result in rolling back by one block and
+          -- rolling forward again.
+          AddingBlocks -> pure ()
+          SwitchingToAFork -> do
+            -- Update the followers
+            followerHandles <- Map.elems <$> readTVar cdbFollowers
+            -- The suffix of @curChain@ that we are going to orphan by
+            -- adopting @chainDiff@.
+            let oldSuffix = AF.anchorNewest (getRollback chainDiff) curChain
+            forM_ followerHandles $ \hdl -> fhSwitchFork hdl oldSuffix
+
+        return (curChain, newChain, events, prevTentativeHeader, newLedger)
+  let mkTraceEvent = case chainSwitchType of
+        AddingBlocks -> AddedToCurrentChain
+        SwitchingToAFork -> SwitchedToAFork
+      selChangedInfo = mkSelectionChangedInfo curChain newChain newLedger
+  traceWith addBlockTracer $
+    mkTraceEvent events selChangedInfo curChain newChain
+  whenJust (strictMaybeToMaybe prevTentativeHeader) $
+    traceWith $
+      PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
+
+  forkerClose newForker
+ where
+  ValidatedChainDiff chainDiff newForker = vChainDiff
+
+  addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
+  addBlockTracer = TraceAddBlockEvent >$< cdbTracer
 
   mkSelectionChangedInfo ::
     AnchoredFragment (Header blk) ->
@@ -846,7 +972,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
       { newTipPoint = castRealPoint tipPoint
       , newTipEpoch = tipEpoch
       , newTipSlotInEpoch = tipSlotInEpoch
-      , newTipTrigger = p
+      , newTipTrigger = triggerPt
       , newTipSelectView
       , oldTipSelectView =
           selectView (configBlock cfg)
@@ -873,121 +999,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
               tipEpochData = History.runQueryPure query summary
               sv = selectView (configBlock cfg) tipHdr
            in (blockRealPoint tipHdr, tipEpochData, sv)
-
-  -- \| Try to apply the given 'ChainDiff' on the current chain fragment. The
-  -- 'LedgerDB' is updated in the same transaction.
-  --
-  -- Note that we /cannot/ have switched to a different current chain in the
-  -- meantime, since this function will only be called by a single
-  -- background thread.
-  --
-  -- It /is/ possible that the background thread copying headers older than
-  -- @k@ from the VolatileDB to the ImmutableDB has removed some headers
-  -- from the beginning of the current chain fragment, but does not affect
-  -- us, as we cannot roll back more than @k@ headers anyway.
-  switchTo ::
-    HasCallStack =>
-    ValidatedChainDiff (Header blk) (Forker' m blk) ->
-    -- \^ Chain and ledger to switch to
-    StrictTVar m (StrictMaybe (Header blk)) ->
-    -- \^ Tentative header
-    ChainSwitchType ->
-    m ()
-  switchTo vChainDiff varTentativeHeader chainSwitchType = do
-    traceWith addBlockTracer $
-      ChangingSelection $
-        castPoint $
-          AF.headPoint $
-            getSuffix $
-              getChainDiff vChainDiff
-    (curChain, newChain, events, prevTentativeHeader, newLedger) <- atomically $ do
-      InternalChain curChain curChainWithTime <- readTVar cdbChain -- Not Query.getCurrentChain!
-      curLedger <- getVolatileTip cdbLedgerDB
-      newLedger <- forkerGetLedgerState newForker
-      case Diff.apply curChain chainDiff of
-        -- Impossible, as described in the docstring
-        Nothing ->
-          error "chainDiff doesn't fit onto current chain"
-        Just newChain -> do
-          let lcfg = configLedger cdbTopLevelConfig
-              diffWithTime =
-                -- the new ledger state can translate the slots of the new
-                -- headers
-                Diff.map
-                  ( mkHeaderWithTime
-                      lcfg
-                      (ledgerState newLedger)
-                  )
-                  chainDiff
-              newChainWithTime =
-                case Diff.apply curChainWithTime diffWithTime of
-                  Nothing -> error "chainDiff failed for HeaderWithTime"
-                  Just x -> x
-
-          writeTVar cdbChain $ InternalChain newChain newChainWithTime
-          forkerCommit newForker
-
-          -- Inspect the new ledger for potential problems
-          let events :: [LedgerEvent blk]
-              events =
-                inspectLedger
-                  cdbTopLevelConfig
-                  (ledgerState curLedger)
-                  (ledgerState newLedger)
-
-          -- Clear the tentative header
-          prevTentativeHeader <- swapTVar varTentativeHeader SNothing
-
-          case chainSwitchType of
-            -- When adding blocks, the intersection point of the old and new
-            -- tentative/selected chain is not receding, in which case
-            -- `fhSwitchFork` is unnecessary. In the case of pipelining a
-            -- block, it would even result in rolling back by one block and
-            -- rolling forward again.
-            AddingBlocks -> pure ()
-            SwitchingToAFork -> do
-              -- Update the followers
-              followerHandles <- Map.elems <$> readTVar cdbFollowers
-              -- The suffix of @curChain@ that we are going to orphan by
-              -- adopting @chainDiff@.
-              let oldSuffix = AF.anchorNewest (getRollback chainDiff) curChain
-              forM_ followerHandles $ \hdl -> fhSwitchFork hdl oldSuffix
-
-          return (curChain, newChain, events, prevTentativeHeader, newLedger)
-    let mkTraceEvent = case chainSwitchType of
-          AddingBlocks -> AddedToCurrentChain
-          SwitchingToAFork -> SwitchedToAFork
-        selChangedInfo = mkSelectionChangedInfo curChain newChain newLedger
-    traceWith addBlockTracer $
-      mkTraceEvent events selChangedInfo curChain newChain
-    whenJust (strictMaybeToMaybe prevTentativeHeader) $
-      traceWith $
-        PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
-
-    forkerClose newForker
-   where
-    ValidatedChainDiff chainDiff newForker = vChainDiff
-
-  -- \| We have a new block @b@ that doesn't fit onto the current chain, but
-  -- we have found a 'ChainDiff' connecting it to the current chain via
-  -- intersection point @x@. We may also have extended that 'ChainDiff' with
-  -- more blocks fitting onto @b@, i.e., a suffix @s@.
-  --
-  -- We now translate that 'ChainDiff' from 'HeaderFields' to 'Header's by
-  -- reading the headers from disk.
-  --
-  -- Note that we need to read the headers corresponding to the hashes
-  -- @(x,b)@ and @(b,?]@ from disk. Not for @b@, as that's in our cache.
-  translateToHeaders ::
-    ChainDiff (HeaderFields blk) ->
-    StateT
-      (Map (HeaderHash blk) (Header blk))
-      m
-      (ChainDiff (Header blk))
-  -- \^ Fork, anchored at @x@, contains (the header of) @b@ and ends
-  -- with the suffix @s@.
-  translateToHeaders =
-    Diff.mapM (getKnownHeaderThroughCache cdbVolatileDB . headerFieldHash)
 
 -- | Check whether the header for the hash is in the cache, if not, get
 -- the corresponding header from the VolatileDB and store it in the cache.
