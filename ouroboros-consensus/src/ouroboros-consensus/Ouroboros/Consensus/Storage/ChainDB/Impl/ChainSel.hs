@@ -273,7 +273,7 @@ initialChainSelection
             , bcfg
             , varInvalid
             , blockCache = BlockCache.empty
-            , curChainAndLedger
+            , curChain
             , validationTracer = InitChainSelValidation >$< tracer
             , -- initial chain selection is not concerned about pipelining
               pipeliningTracer = nullTracer
@@ -548,83 +548,79 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         <*> VolatileDB.getBlockInfo cdbVolatileDB
         <*> Query.getCurrentChain cdb
         <*> Query.getTipPoint cdb
-  -- This is safe: the LedgerDB tip doesn't change in between the previous
-  -- atomically block and this call to 'withTipForker'.
-  LedgerDB.withTipForker cdbLedgerDB rr $ \curForker -> do
-    curChainAndLedger :: ChainAndLedger m blk <-
-      -- The current chain we're working with here is not longer than @k@
-      -- blocks (see 'getCurrentChain' and 'cdbChain'), which is easier to
-      -- reason about when doing chain selection, etc.
-      assert (fromIntegral (AF.length curChain) <= unNonZero k) $
-        VF.newM curChain curForker
 
-    let
-      immBlockNo :: WithOrigin BlockNo
-      immBlockNo = AF.anchorBlockNo curChain
+  -- The current chain we're working with here is not longer than @k@ blocks
+  -- (see 'getCurrentChain' and 'cdbChain'), which is easier to reason about
+  -- when doing chain selection, etc.
+  assert (fromIntegral (AF.length curChain) <= unNonZero k) pure ()
 
-      -- Let these two functions ignore invalid blocks
-      lookupBlockInfo' = ignoreInvalid cdb invalid lookupBlockInfo
-      succsOf' = ignoreInvalidSuc cdb invalid succsOf
+  let
+    immBlockNo :: WithOrigin BlockNo
+    immBlockNo = AF.anchorBlockNo curChain
 
-    -- The preconditions
-    assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
+    -- Let these two functions ignore invalid blocks
+    lookupBlockInfo' = ignoreInvalid cdb invalid lookupBlockInfo
+    succsOf' = ignoreInvalidSuc cdb invalid succsOf
 
-    let
-      -- Trim the LoE fragment to be anchored in the immutable tip, ie the
-      -- anchor of @curChain@. In particular, this establishes the property that
-      -- it intersects with the current chain.
-      sanitizeLoEFrag ::
-        AnchoredFragment (HeaderWithTime blk) ->
-        AnchoredFragment (HeaderWithTime blk)
-      sanitizeLoEFrag loeFrag0 =
-        case AF.splitAfterPoint loeFrag0 (AF.anchorPoint curChain) of
-          Just (_, frag) -> frag
-          -- As the (unsanitized) LoE fragment is rooted in a recent immutable
-          -- tip, this case means that it doesn't intersect with the current
-          -- chain. This can temporarily be the case; we are conservative and
-          -- use the empty fragment anchored at the immutable tip for chain
-          -- selection.
-          Nothing -> AF.Empty $ AF.castAnchor $ AF.anchor curChain
+  -- The preconditions
+  assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
 
-    loeFrag <- fmap sanitizeLoEFrag <$> cdbLoE
+  let
+    -- Trim the LoE fragment to be anchored in the immutable tip, ie the
+    -- anchor of @curChain@. In particular, this establishes the property that
+    -- it intersects with the current chain.
+    sanitizeLoEFrag ::
+      AnchoredFragment (HeaderWithTime blk) ->
+      AnchoredFragment (HeaderWithTime blk)
+    sanitizeLoEFrag loeFrag0 =
+      case AF.splitAfterPoint loeFrag0 (AF.anchorPoint curChain) of
+        Just (_, frag) -> frag
+        -- As the (unsanitized) LoE fragment is rooted in a recent immutable
+        -- tip, this case means that it doesn't intersect with the current
+        -- chain. This can temporarily be the case; we are conservative and
+        -- use the empty fragment anchored at the immutable tip for chain
+        -- selection.
+        Nothing -> AF.Empty $ AF.castAnchor $ AF.anchor curChain
 
-    traceWith
-      addBlockTracer
-      (ChainSelectionLoEDebug curChain (AF.mapAnchoredFragment hwtHeader <$> loeFrag))
+  loeFrag <- fmap sanitizeLoEFrag <$> cdbLoE
 
-    if
-      -- The chain might have grown since we added the block such that the
-      -- block is older than @k@.
-      | olderThanK hdr isEBB immBlockNo -> do
-          traceWith addBlockTracer $ IgnoreBlockOlderThanK p
+  traceWith
+    addBlockTracer
+    (ChainSelectionLoEDebug curChain (AF.mapAnchoredFragment hwtHeader <$> loeFrag))
 
-      -- The block is invalid
-      | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
-          traceWith addBlockTracer $ IgnoreInvalidBlock p reason
+  if
+    -- The chain might have grown since we added the block such that the
+    -- block is older than @k@.
+    | olderThanK hdr isEBB immBlockNo -> do
+        traceWith addBlockTracer $ IgnoreBlockOlderThanK p
 
-          -- We wouldn't know the block is invalid if its prefix was invalid,
-          -- hence 'InvalidBlockPunishment.BlockItself'.
-          InvalidBlockPunishment.enact
-            punish
-            InvalidBlockPunishment.BlockItself
+    -- The block is invalid
+    | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
+        traceWith addBlockTracer $ IgnoreInvalidBlock p reason
 
-      -- The block fits onto the end of our current chain
-      | pointHash tipPoint == headerPrevHash hdr -> do
-          -- ### Add to current chain
-          traceWith addBlockTracer (TryAddToCurrentChain p)
-          addToCurrentChain rr succsOf' curChainAndLedger loeFrag
+        -- We wouldn't know the block is invalid if its prefix was invalid,
+        -- hence 'InvalidBlockPunishment.BlockItself'.
+        InvalidBlockPunishment.enact
+          punish
+          InvalidBlockPunishment.BlockItself
 
-      -- The block is reachable from the current selection
-      -- and it doesn't fit after the current selection
-      | Just diff <- Paths.isReachable lookupBlockInfo' curChain p -> do
-          -- ### Switch to a fork
-          traceWith addBlockTracer (TrySwitchToAFork p diff)
-          switchToAFork rr succsOf' lookupBlockInfo' curChainAndLedger loeFrag diff
+    -- The block fits onto the end of our current chain
+    | pointHash tipPoint == headerPrevHash hdr -> do
+        -- ### Add to current chain
+        traceWith addBlockTracer (TryAddToCurrentChain p)
+        addToCurrentChain rr succsOf' curChain loeFrag
 
-      -- We cannot reach the block from the current selection
-      | otherwise -> do
-          -- ### Store but don't change the current chain
-          traceWith addBlockTracer (StoreButDontChange p)
+    -- The block is reachable from the current selection
+    -- and it doesn't fit after the current selection
+    | Just diff <- Paths.isReachable lookupBlockInfo' curChain p -> do
+        -- ### Switch to a fork
+        traceWith addBlockTracer (TrySwitchToAFork p diff)
+        switchToAFork rr succsOf' lookupBlockInfo' curChain loeFrag diff
+
+    -- We cannot reach the block from the current selection
+    | otherwise -> do
+        -- ### Store but don't change the current chain
+        traceWith addBlockTracer (StoreButDontChange p)
  where
   -- Note that we may have extended the chain, but have not trimmed it to
   -- @k@ blocks/headers. That is the job of the background thread, which
@@ -642,8 +638,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
   addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
   addBlockTracer = TraceAddBlockEvent >$< cdbTracer
 
-  mkChainSelEnv :: ChainAndLedger m blk -> ChainSelEnv m blk
-  mkChainSelEnv curChainAndLedger =
+  mkChainSelEnv :: AnchoredFragment (Header blk) -> ChainSelEnv m blk
+  mkChainSelEnv curChain =
     ChainSelEnv
       { lgrDB = cdbLedgerDB
       , bcfg = configBlock cdbTopLevelConfig
@@ -654,7 +650,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
           filter ((TentativeChain ==) . fhChainType) . Map.elems
             <$> readTVar cdbFollowers
       , blockCache = blockCache
-      , curChainAndLedger = curChainAndLedger
+      , curChain
       , validationTracer =
           TraceAddBlockEvent . AddBlockValidation >$< cdbTracer
       , pipeliningTracer =
@@ -668,12 +664,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
     HasCallStack =>
     ResourceRegistry m ->
     (ChainHash blk -> Set (HeaderHash blk)) ->
-    ChainAndLedger m blk ->
-    -- \^ The current chain and ledger
+    AnchoredFragment (Header blk) ->
+    -- \^ The current chain
     LoE (AnchoredFragment (HeaderWithTime blk)) ->
     -- \^ LoE fragment
     m ()
-  addToCurrentChain rr succsOf curChainAndLedger loeFrag = do
+  addToCurrentChain rr succsOf curChain loeFrag = do
     -- Extensions of @B@ that do not exceed the LoE
     let suffixesAfterB = Paths.maximalCandidates succsOf Nothing (realPointToPoint p)
 
@@ -697,7 +693,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
     let chainDiffs =
           NE.nonEmpty $
             filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain . Diff.getSuffix) $
-              fmap (trimToLoE loeFrag curChainAndLedger) $
+              fmap (trimToLoE loeFrag curChain) $
                 fmap Diff.extend $
                   NE.toList candidates
     -- All candidates are longer than the current chain, so they will be
@@ -725,8 +721,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
               (varTentativeHeader chainSelEnv)
               AddingBlocks
    where
-    chainSelEnv = mkChainSelEnv curChainAndLedger
-    curChain = VF.validatedFragment curChainAndLedger
+    chainSelEnv = mkChainSelEnv curChain
     curHead = AF.headAnchor curChain
 
   -- \| Trim the given candidate fragment to respect the LoE.
@@ -747,20 +742,20 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
   --
   -- PRECONDITIONS:
   --
-  -- 1. The given 'ChainDiff' can apply on top of the given 'ChainAndLedger'.
+  -- 1. The given 'ChainDiff' can apply on top of the current chain.
   -- 2. The LoE fragment intersects with the current selection.
   trimToLoE ::
     (HasHeader blk', HeaderHash blk ~ HeaderHash blk') =>
     LoE (AnchoredFragment blk') ->
-    ChainAndLedger m blk ->
+    AnchoredFragment (Header blk) ->
     ChainDiff (Header blk) ->
     ChainDiff (Header blk)
   trimToLoE LoEDisabled _ diff = diff
   trimToLoE (LoEEnabled loe) curChain diff =
-    case Diff.apply (VF.validatedFragment curChain) diff of
+    case Diff.apply curChain diff of
       Nothing ->
         error
-          "trimToLoE: precondition 1 violated: the given 'ChainDiff' must apply on top of the given 'ChainAndLedger'"
+          "trimToLoE: precondition 1 violated: the given 'ChainDiff' must apply on top of the current chain"
       Just cand ->
         case AF.intersect cand loe of
           Nothing ->
@@ -772,7 +767,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
                   if AF.null loeSuffix
                     then fromJust $ AF.join candPrefix trimmedCandSuffix
                     else candPrefix
-             in Diff.diff (VF.validatedFragment curChain) trimmedCand
+             in Diff.diff curChain trimmedCand
 
   -- \| We have found a 'ChainDiff' through the VolatileDB connecting the new
   -- block to the current chain. We'll call the intersection/anchor @x@.
@@ -785,14 +780,14 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
     ResourceRegistry m ->
     (ChainHash blk -> Set (HeaderHash blk)) ->
     LookupBlockInfo blk ->
-    ChainAndLedger m blk ->
+    AnchoredFragment (Header blk) ->
     -- \^ The current chain (anchored at @i@) and ledger
     LoE (AnchoredFragment (HeaderWithTime blk)) ->
     -- \^ LoE fragment
     ChainDiff (HeaderFields blk) ->
     -- \^ Header fields for @(x,b]@
     m ()
-  switchToAFork rr succsOf lookupBlockInfo curChainAndLedger loeFrag diff = do
+  switchToAFork rr succsOf lookupBlockInfo curChain loeFrag diff = do
     -- We use a cache to avoid reading the headers from disk multiple
     -- times in case they're part of multiple forks that go through @b@.
     let initCache = Map.singleton (headerHash hdr) hdr
@@ -810,7 +805,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         )
         -- 4. Trim fragments so that they follow the LoE, that is, they extend
         -- the LoE by at most @k@ blocks or are extended by the LoE.
-        . fmap (fmap (trimToLoE loeFrag curChainAndLedger))
+        . fmap (fmap (trimToLoE loeFrag curChain))
         -- 3. Translate the 'HeaderFields' to 'Header' by reading the
         -- headers from disk.
         . flip evalStateT initCache
@@ -836,8 +831,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
               (varTentativeHeader chainSelEnv)
               SwitchingToAFork
    where
-    chainSelEnv = mkChainSelEnv curChainAndLedger
-    curChain = VF.validatedFragment curChainAndLedger
+    chainSelEnv = mkChainSelEnv curChain
 
   mkSelectionChangedInfo ::
     AnchoredFragment (Header blk) ->
@@ -1023,7 +1017,7 @@ data ChainSelEnv m blk = ChainSelEnv
   , varTentativeHeader :: StrictTVar m (StrictMaybe (Header blk))
   , getTentativeFollowers :: STM m [FollowerHandle m blk]
   , blockCache :: BlockCache blk
-  , curChainAndLedger :: ChainAndLedger m blk
+  , curChain :: AnchoredFragment (Header blk)
   , punish :: Maybe (RealPoint blk, InvalidBlockPunishment m)
   -- ^ The block that this chain selection invocation is processing, and the
   -- punish action for the peer that sent that block; see
@@ -1079,8 +1073,6 @@ chainSelection chainSelEnv rr chainDiffs =
     $ go (sortCandidates (NE.toList chainDiffs))
  where
   ChainSelEnv{..} = chainSelEnv
-
-  curChain = VF.validatedFragment curChainAndLedger
 
   sortCandidates :: [ChainDiff (Header blk)] -> [ChainDiff (Header blk)]
   sortCandidates =
