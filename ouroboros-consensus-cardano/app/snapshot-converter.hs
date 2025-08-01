@@ -38,71 +38,92 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB 
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Lock as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Args
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq as V2
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.IOLike
+import qualified System.Directory as Directory
 import System.FS.API
 import System.FS.API.Lazy
 import System.FS.CRC
 import System.FS.IO
 import System.FilePath (splitFileName)
+import System.IO (hFlush, stdout)
 import System.IO.Temp
 
 data Format
-  = Legacy
-  | Mem
-  | LMDB
+  = Legacy FilePath
+  | Mem FilePath
+  | LMDB FilePath
+  | LSM FilePath FilePath
   deriving (Show, Read)
 
 data Config = Config
   { from :: Format
   -- ^ Which format the input snapshot is in
-  , inpath :: FilePath
-  -- ^ Path to the input snapshot
   , to :: Format
   -- ^ Which format the output snapshot must be in
-  , outpath :: FilePath
-  -- ^ Path to the output snapshot
   }
 
 getCommandLineConfig :: IO (Config, BlockType)
 getCommandLineConfig =
   execParser $
     info
-      ((,) <$> parseConfig <*> blockTypeParser <**> helper)
+      ((,) <$> (Config <$> parseConfig In <*> parseConfig Out) <*> blockTypeParser <**> helper)
       (fullDesc <> progDesc "Utility for converting snapshots to and from UTxO-HD")
 
-parseConfig :: Parser Config
-parseConfig =
-  Config
-    <$> argument
-      auto
-      ( mconcat
-          [ help "From format (Legacy, Mem or LMDB)"
-          , metavar "FORMAT-IN"
-          ]
-      )
-    <*> strArgument
-      ( mconcat
-          [ help "Input dir/file. Use relative paths like ./100007913"
-          , metavar "PATH-IN"
-          ]
-      )
-    <*> argument
-      auto
-      ( mconcat
-          [ help "To format (Legacy, Mem or LMDB)"
-          , metavar "FORMAT-OUT"
-          ]
-      )
-    <*> strArgument
-      ( mconcat
-          [ help "Output dir/file Use relative paths like ./100007913"
-          , metavar "PATH-OUT"
-          ]
-      )
+data InOut = In | Out
+
+inoutForGroup :: InOut -> String
+inoutForGroup In = "Input arguments:"
+inoutForGroup Out = "Output arguments:"
+
+inoutForHelp :: InOut -> String -> String
+inoutForHelp In = ("Input " ++)
+inoutForHelp Out = ("Output " ++)
+
+inoutForCommand :: InOut -> String -> String
+inoutForCommand In = (++ "-in")
+inoutForCommand Out = (++ "-out")
+
+parseConfig :: InOut -> Parser Format
+parseConfig io =
+  ( Legacy
+      <$> parserOptionGroup
+        (inoutForGroup io)
+        (parsePath (inoutForCommand io "legacy") (inoutForHelp io "snapshot file"))
+  )
+    <|> ( Mem
+            <$> parserOptionGroup
+              (inoutForGroup io)
+              (parsePath (inoutForCommand io "mem") (inoutForHelp io "snapshot dir"))
+        )
+    <|> ( LMDB
+            <$> parserOptionGroup
+              (inoutForGroup io)
+              (parsePath (inoutForCommand io "lmdb") (inoutForHelp io "snapshot dir"))
+        )
+    <|> ( LSM
+            <$> parserOptionGroup
+              (inoutForGroup io)
+              (parsePath (inoutForCommand io "lsm-snapshot") (inoutForHelp io "snapshot dir"))
+            <*> parserOptionGroup
+              (inoutForGroup io)
+              (parsePath (inoutForCommand io "lsm-database") (inoutForHelp io "LSM database"))
+        )
+
+parsePath :: String -> String -> Parser FilePath
+parsePath optName strHelp =
+  strOption
+    ( mconcat
+        [ long optName
+        , help strHelp
+        , metavar "PATH"
+        ]
+    )
 
 -- Helpers
 
@@ -140,31 +161,6 @@ instance StandardHash blk => Show (Error blk) where
       <> err
   show (ReadSnapshotCRCError fp err) = "An error occurred while reading the snapshot checksum at " <> show fp <> ": \n\t" <> show err
 
-checkSnapshotFileStructure :: Format -> FsPath -> SomeHasFS IO -> ExceptT (Error blk) IO ()
-checkSnapshotFileStructure m p (SomeHasFS fs) = case m of
-  Legacy -> want (doesFileExist fs) p "is NOT a file"
-  Mem -> newFormatCheck "tvar"
-  LMDB -> newFormatCheck "data.mdb"
- where
-  want :: (FsPath -> IO Bool) -> FsPath -> String -> ExceptT (Error blk) IO ()
-  want fileType path err = do
-    exists <- Trans.lift $ fileType path
-    Monad.unless exists $ throwError $ SnapshotFormatMismatch m err
-
-  isDir = (doesDirectoryExist, [], "is NOT a directory")
-  hasTablesDir = (doesDirectoryExist, ["tables"], "DOES NOT contain a \"tables\" directory")
-  hasState = (doesFileExist, ["state"], "DOES NOT contain a \"state\" file")
-  hasTables tb = (doesFileExist, ["tables", tb], "DOES NOT contain a \"tables/" <> tb <> "\" file")
-
-  newFormatCheck tb =
-    mapM_
-      (\(doCheck, extra, err) -> want (doCheck fs) (p </> mkFsPath extra) err)
-      [ isDir
-      , hasTablesDir
-      , hasState
-      , hasTables tb
-      ]
-
 load ::
   forall blk.
   ( CanStowLedgerTables (LedgerState blk)
@@ -176,10 +172,9 @@ load ::
   CodecConfig blk ->
   FilePath ->
   ExceptT (Error blk) IO (ExtLedgerState blk EmptyMK, LedgerTables (ExtLedgerState blk) ValuesMK)
-load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), path, ds)} rr ccfg tempFP =
+load config rr ccfg tempFP =
   case from config of
-    Legacy -> do
-      checkSnapshotFileStructure Legacy path fs
+    Legacy (pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), path, _)) -> do
       (st, checksumAsRead) <-
         first unstowLedgerTables
           <$> withExceptT
@@ -196,13 +191,11 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
             SnapshotError $
               InitFailureRead ReadSnapshotDataCorruption
       pure (forgetLedgerTables st, projectLedgerTables st)
-    Mem -> do
-      checkSnapshotFileStructure Mem path fs
+    Mem (pathToDiskSnapshot -> Just (fs, _, ds)) -> do
       (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot nullTracer rr ccfg fs ds
       let h = V2.currentHandle ls
       (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h) (V2.state h))
-    LMDB -> do
-      checkSnapshotFileStructure LMDB path fs
+    LMDB (pathToDiskSnapshot -> Just (fs, _, ds)) -> do
       ((dbch, k, bstore), _) <-
         withExceptT SnapshotError $
           V1.loadSnapshot
@@ -215,7 +208,8 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
       values <- Trans.lift (V1.bsReadAll bstore (V1.changelogLastFlushedState dbch))
       _ <- Trans.lift $ RR.release k
       pure (V1.current dbch, values)
-load _ _ _ _ = error "Malformed input path!"
+    LSM _ _ -> error "unimplemented"
+    _ -> error "Malformed input path!"
 
 store ::
   ( CanStowLedgerTables (LedgerState blk)
@@ -227,9 +221,9 @@ store ::
   (ExtLedgerState blk EmptyMK, LedgerTables (ExtLedgerState blk) ValuesMK) ->
   SomeHasFS IO ->
   IO ()
-store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), path, DiskSnapshot _ suffix)} ccfg (state, tbs) tempFS =
+store config ccfg (state, tbs) tempFS =
   case to config of
-    Legacy -> do
+    Legacy (p@(pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), path, _))) -> do
       crc <-
         writeExtLedgerState
           fs
@@ -238,11 +232,27 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
           (stowLedgerTables $ state `withLedgerTables` tbs)
       withFile hasFS (path <.> "checksum") (WriteMode MustBeNew) $ \h ->
         Monad.void $ hPutAll hasFS h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc
-    Mem -> do
+      putStrLn "DONE"
+      putStrLn $
+        unlines $
+          [ "You can now copy the file "
+              ++ p
+              ++ " to your `ledger` directory in your ChainDB storage."
+          , "Note this snapshot can only be used by cardano-node <10.4."
+          ]
+    Mem (p@(pathToDiskSnapshot -> Just (fs, _, DiskSnapshot _ suffix))) -> do
       lseq <- V2.empty state tbs $ V2.newInMemoryLedgerTablesHandle nullTracer fs
       let h = V2.currentHandle lseq
       Monad.void $ InMemory.implTakeSnapshot ccfg nullTracer fs suffix h
-    LMDB -> do
+      putStrLn "DONE"
+      putStrLn $
+        unlines $
+          [ "You can now copy the directory "
+              ++ p
+              ++ " to your `ledger` directory in your ChainDB storage."
+          , "Note this snapshot can only be used by cardano-node >=10.4 configured to use the InMemory backend (set the \"LedgerDB\".\"Backend\" key in your config file to \"V2InMemory\" or leave it undefined)."
+          ]
+    LMDB (p@(pathToDiskSnapshot -> Just (fs, _, DiskSnapshot _ suffix))) -> do
       chlog <- newTVarIO (V1.empty state)
       lock <- V1.mkLedgerDBLock
       bs <-
@@ -254,7 +264,43 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
           (V1.InitFromValues (pointSlot $ getTip state) state tbs)
       Monad.void $ V1.withReadLock lock $ do
         V1.implTakeSnapshot chlog ccfg nullTracer (V1.SnapshotsFS fs) bs suffix
-store _ _ _ _ = error "Malformed output path!"
+      putStrLn "DONE"
+      putStrLn $
+        unlines $
+          [ "You can now copy the directory "
+              ++ p
+              ++ " to your `ledger` directory in your ChainDB storage."
+          , "Note this snapshot can only be used by cardano-node >=10.4 configured to use the LMDB backend (set the \"LedgerDB\".\"Backend\" key in your config file to \"V1LMDB\")."
+          ]
+    LSM (p@(pathToDiskSnapshot -> Just (fs, _, DiskSnapshot _ suffix))) dbPath -> do
+      exists <- Directory.doesDirectoryExist dbPath
+      Monad.when (not exists) $ Directory.createDirectory dbPath
+      RR.withRegistry $ \reg -> do
+        (_, SomeHasFSAndBlockIO hasFS blockIO) <- LSM.stdMkBlockIOFS dbPath reg
+        salt <- LSM.stdGenSalt
+        LSM.withNewSession nullTracer hasFS blockIO salt (mkFsPath [""]) $ \session -> do
+          lsmTable <- LSM.tableFromValuesMK reg session tbs
+          lsmHandle <- LSM.newLSMLedgerTablesHandle nullTracer reg session lsmTable
+          Monad.void $
+            LSM.implTakeSnapshot
+              ccfg
+              nullTracer
+              fs
+              suffix
+              (V2.StateRef state lsmHandle)
+      putStrLn "DONE"
+      putStrLn $
+        unlines $
+          [ "You can now:"
+          , "- copy the directory "
+              ++ p
+              ++ " to your `ledger` directory in your ChainDB storage."
+          , "- copy the directory "
+              ++ dbPath
+              ++ " to your fast storage device and point to it in your config file."
+          , "Note this snapshot can only be used by cardano-node >=10.7 configured to use the LSM backend (set the \"LedgerDB\".\"Backend\" key in your config file to \"V2LSM\")."
+          ]
+    _ -> error "Malformed output path!"
 
 main :: IO ()
 main = withStdTerminalHandles $ do
@@ -270,9 +316,10 @@ main = withStdTerminalHandles $ do
     withSystemTempDirectory "lmdb" $ \dir -> do
       let tempFS = SomeHasFS $ ioHasFS $ MountPoint dir
       RR.withRegistry $ \rr -> do
-        putStrLn "Loading snapshot..."
+        putStr "Loading snapshot..."
+        hFlush stdout
         state <- either throwIO pure =<< runExceptT (load conf rr ccfg dir)
-        putStrLn "Loaded snapshot"
-        putStrLn "Writing snapshot..."
+        putStrLn "DONE"
+        putStr "Writing snapshot..."
+        hFlush stdout
         store conf ccfg state tempFS
-        putStrLn "Written snapshot"
