@@ -577,7 +577,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
             chainSelection chainSelEnv rr chainDiffs' >>= \case
               Just validatedChainDiff ->
                 -- Switch to the new better chain.
-                switchTo cdb p validatedChainDiff
+                switchTo cdb (Just p) validatedChainDiff
               Nothing -> noChange
           Nothing -> noChange
  where
@@ -780,7 +780,7 @@ switchTo ::
   ) =>
   ChainDbEnv m blk ->
   -- | Which block we performed chain selection for.
-  RealPoint blk ->
+  Maybe (RealPoint blk) ->
   -- | Chain and ledger to switch to
   ValidatedChainDiff (Header blk) (Forker' m blk) ->
   m ()
