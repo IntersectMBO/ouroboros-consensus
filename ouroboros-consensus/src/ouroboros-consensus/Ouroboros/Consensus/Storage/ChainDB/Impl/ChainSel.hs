@@ -583,7 +583,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
             chainSelection chainSelEnv rr chainDiffs' >>= \case
               Just validatedChainDiff ->
                 -- Switch to the new better chain.
-                switchTo cdb p validatedChainDiff
+                switchTo cdb (Just p) validatedChainDiff
               -- No valid candidate better than our chain.
               Nothing -> noChange
           -- No candidate better than our chain.
@@ -788,8 +788,10 @@ switchTo ::
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
-  -- | Which block we performed chain selection for.
-  RealPoint blk ->
+  -- | Which block we performed chain selection for (if any). This is 'Nothing'
+  -- when reprocessing blocks that were postponed due to the Limit on Eagerness
+  -- (cf 'ChainSelReprocessLoEBlocks').
+  Maybe (RealPoint blk) ->
   -- | Chain and ledger to switch to
   ValidatedChainDiff (Header blk) (Forker' m blk) ->
   m ()

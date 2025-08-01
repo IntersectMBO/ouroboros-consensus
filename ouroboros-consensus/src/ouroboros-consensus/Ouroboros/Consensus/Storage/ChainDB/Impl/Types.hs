@@ -783,7 +783,7 @@ data SelectionChangedInfo blk = SelectionChangedInfo
   , newTipSlotInEpoch :: Word64
   -- ^ The slot in the epoch, i.e., the relative slot number, of the new
   -- tip.
-  , newTipTrigger :: RealPoint blk
+  , newTipTrigger :: Maybe (RealPoint blk)
   -- ^ The new tip of the current chain ('newTipPoint') is the result of
   -- performing chain selection for a /trigger/ block ('newTipTrigger').
   -- In most cases, we add a new block to the tip of the current chain, in
@@ -793,6 +793,10 @@ data SelectionChangedInfo blk = SelectionChangedInfo
   -- chain being A and having a disconnected C lying around, adding B will
   -- result in A -> B -> C as the new chain. The trigger B /= the new tip
   -- C.
+  --
+  -- Due to the Ouroboros Genesis (Limit on Eagerness), chain selection can also
+  -- be triggered without any particular trigger block, in which case this is
+  -- 'Nothing'.
   , newTipSelectView :: SelectView (BlockProtocol blk)
   -- ^ The 'SelectView' of the new tip. It is guaranteed that
   --
