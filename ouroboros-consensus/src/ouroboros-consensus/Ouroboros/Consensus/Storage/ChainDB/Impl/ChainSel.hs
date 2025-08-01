@@ -575,7 +575,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
 
         let noChange = traceWith addBlockTracer $ StoreButDontChange p
 
-            chainSelEnv = mkChainSelEnv curChain
+            chainSelEnv = mkChainSelEnv cdb blockCache curChain (Just (p, punish))
 
         case NE.nonEmpty chainDiffs of
           Just chainDiffs' -> do
@@ -604,26 +604,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
 
   addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
   addBlockTracer = TraceAddBlockEvent >$< cdbTracer
-
-  mkChainSelEnv :: AnchoredFragment (Header blk) -> ChainSelEnv m blk
-  mkChainSelEnv curChain =
-    ChainSelEnv
-      { lgrDB = cdbLedgerDB
-      , bcfg = configBlock cdbTopLevelConfig
-      , varInvalid = cdbInvalid
-      , varTentativeState = cdbTentativeState
-      , varTentativeHeader = cdbTentativeHeader
-      , getTentativeFollowers =
-          filter ((TentativeChain ==) . fhChainType) . Map.elems
-            <$> readTVar cdbFollowers
-      , blockCache = blockCache
-      , curChain
-      , validationTracer =
-          TraceAddBlockEvent . AddBlockValidation >$< cdbTracer
-      , pipeliningTracer =
-          TraceAddBlockEvent . PipeliningEvent >$< cdbTracer
-      , punish = Just (p, punish)
-      }
 
 -- | Construct all candidates involving the given block (represented by a
 -- 'RealPoint') that are preferable to the current chain.
@@ -976,6 +956,35 @@ data ChainSelEnv m blk = ChainSelEnv
   -- the reason we bothered to restrict the expressiveness of the
   -- 'InvalidBlockPunishment' combinators.
   }
+
+mkChainSelEnv ::
+  IOLike m =>
+  ChainDbEnv m blk ->
+  -- | See 'blockCache'
+  BlockCache blk ->
+  -- | See 'curChain'
+  AnchoredFragment (Header blk) ->
+  -- | See 'punish'.
+  Maybe (RealPoint blk, InvalidBlockPunishment m) ->
+  ChainSelEnv m blk
+mkChainSelEnv CDB{..} blockCache curChain punish =
+  ChainSelEnv
+    { lgrDB = cdbLedgerDB
+    , bcfg = configBlock cdbTopLevelConfig
+    , varInvalid = cdbInvalid
+    , varTentativeState = cdbTentativeState
+    , varTentativeHeader = cdbTentativeHeader
+    , getTentativeFollowers =
+        filter ((TentativeChain ==) . fhChainType) . Map.elems
+          <$> readTVar cdbFollowers
+    , blockCache
+    , curChain
+    , validationTracer =
+        TraceAddBlockEvent . AddBlockValidation >$< cdbTracer
+    , pipeliningTracer =
+        TraceAddBlockEvent . PipeliningEvent >$< cdbTracer
+    , punish
+    }
 
 -- | Perform chain selection with the given candidates. If a validated
 -- candidate was chosen to replace the current chain, return it along with the
