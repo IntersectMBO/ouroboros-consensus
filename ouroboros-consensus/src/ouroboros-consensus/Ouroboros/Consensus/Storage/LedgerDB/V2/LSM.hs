@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( -- * LedgerTablesHandle
     newLSMLedgerTablesHandle
   , tableFromValuesMK
+  , UTxOTable
 
     -- * Snapshots
   , loadSnapshot
