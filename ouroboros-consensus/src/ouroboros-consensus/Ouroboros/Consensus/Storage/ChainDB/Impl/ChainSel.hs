@@ -490,11 +490,6 @@ olderThanK hdr isEBB immBlockNo
  where
   bNo = blockNo hdr
 
--- | When we switch to a new selected chain, we are either extending the current
--- chain by adding blocks on top or we are switching to a fork.
-data ChainSwitchType = AddingBlocks | SwitchingToAFork
-  deriving (Show, Eq)
-
 -- | Trigger chain selection for the given block.
 --
 -- PRECONDITION: the block is in the VolatileDB.
@@ -716,11 +711,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
           Nothing ->
             return ()
           Just validatedChainDiff ->
-            switchTo
-              cdb
-              p
-              validatedChainDiff
-              AddingBlocks
+            switchTo cdb p validatedChainDiff
    where
     chainSelEnv = mkChainSelEnv curChain
     curHead = AF.headAnchor curChain
@@ -827,11 +818,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
           Nothing ->
             return ()
           Just validatedChainDiff ->
-            switchTo
-              cdb
-              p
-              validatedChainDiff
-              SwitchingToAFork
+            switchTo cdb p validatedChainDiff
    where
     chainSelEnv = mkChainSelEnv curChain
 
@@ -880,9 +867,8 @@ switchTo ::
   RealPoint blk ->
   -- | Chain and ledger to switch to
   ValidatedChainDiff (Header blk) (Forker' m blk) ->
-  ChainSwitchType ->
   m ()
-switchTo CDB{..} triggerPt vChainDiff chainSwitchType = do
+switchTo CDB{..} triggerPt vChainDiff = do
   traceWith addBlockTracer $
     ChangingSelection $
       castPoint $
@@ -926,25 +912,23 @@ switchTo CDB{..} triggerPt vChainDiff chainSwitchType = do
         -- Clear the tentative header
         prevTentativeHeader <- swapTVar cdbTentativeHeader SNothing
 
-        case chainSwitchType of
-          -- When adding blocks, the intersection point of the old and new
-          -- tentative/selected chain is not receding, in which case
-          -- `fhSwitchFork` is unnecessary. In the case of pipelining a
-          -- block, it would even result in rolling back by one block and
-          -- rolling forward again.
-          AddingBlocks -> pure ()
-          SwitchingToAFork -> do
-            -- Update the followers
-            followerHandles <- Map.elems <$> readTVar cdbFollowers
-            -- The suffix of @curChain@ that we are going to orphan by
-            -- adopting @chainDiff@.
-            let oldSuffix = AF.anchorNewest (getRollback chainDiff) curChain
-            forM_ followerHandles $ \hdl -> fhSwitchFork hdl oldSuffix
+        -- When adding blocks, the intersection point of the old and new
+        -- tentative/selected chain is not receding, in which case
+        -- `fhSwitchFork` is unnecessary. In the case of pipelining a
+        -- block, it would even result in rolling back by one block and
+        -- rolling forward again.
+        when (getRollback (getChainDiff vChainDiff) > 0) $ do
+          -- Update the followers
+          followerHandles <- Map.elems <$> readTVar cdbFollowers
+          -- The suffix of @curChain@ that we are going to orphan by
+          -- adopting @chainDiff@.
+          let oldSuffix = AF.anchorNewest (getRollback chainDiff) curChain
+          forM_ followerHandles $ \hdl -> fhSwitchFork hdl oldSuffix
 
         return (curChain, newChain, events, prevTentativeHeader, newLedger)
-  let mkTraceEvent = case chainSwitchType of
-        AddingBlocks -> AddedToCurrentChain
-        SwitchingToAFork -> SwitchedToAFork
+  let mkTraceEvent
+        | getRollback (getChainDiff vChainDiff) == 0 = AddedToCurrentChain
+        | otherwise = SwitchedToAFork
       selChangedInfo = mkSelectionChangedInfo curChain newChain newLedger
   traceWith addBlockTracer $
     mkTraceEvent events selChangedInfo curChain newChain
