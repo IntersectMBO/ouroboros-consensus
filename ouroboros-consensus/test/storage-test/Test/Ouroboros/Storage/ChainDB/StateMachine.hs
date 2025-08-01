@@ -439,7 +439,6 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
   advanceAndAdd ChainDBState{chainDB} blk = do
     -- `blockProcessed` always returns 'Just'
     res <- addBlock chainDB InvalidBlockPunishment.noPunishment blk
-    ChainDB.triggerChainSelection chainDB
     return $ case res of
       FailedToAddBlock f -> error $ "advanceAndAdd: block not added - " ++ f
       SuccesfullyAddedBlock pt -> pt
