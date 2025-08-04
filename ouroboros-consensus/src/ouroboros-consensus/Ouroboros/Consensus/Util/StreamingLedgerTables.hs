@@ -8,27 +8,27 @@
 module Ouroboros.Consensus.Util.StreamingLedgerTables where
 
 import Cardano.Slotting.Slot
-import Codec.CBOR.Decoding (Decoder)
+import Codec.CBOR.Decoding (Decoder, decodeBreakOr, decodeMapLenIndef)
 import Codec.CBOR.Encoding (Encoding, encodeBreak, encodeMapLenIndef)
-import Codec.CBOR.FlatTerm
 import Codec.CBOR.Read
 import Codec.CBOR.Write
 import Control.Concurrent.Class.MonadMVar
+import Control.Monad (unless)
 import Control.Monad.Class.MonadAsync
 import Control.Monad.Class.MonadST
 import Control.Monad.Class.MonadSTM
 import Control.Monad.Class.MonadThrow
+import Control.Monad.Except
+import Control.Monad.State.Strict
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder.Extra (defaultChunkSize)
 import qualified Data.Map.Strict as Map
-import Data.MemPack
 import Data.Proxy
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import Database.LSMTree
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.Tables.Diff
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
@@ -36,7 +36,6 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Network.Block
 import Streaming
 import qualified Streaming as S
-import qualified Streaming.Internal as SI
 import qualified Streaming.Prelude as S
 import System.FS.API
 
@@ -65,120 +64,38 @@ noRemainingBytes s =
     Just (BS.null -> True, s') -> noRemainingBytes s'
     Just _ -> error "Remaining bytes!"
 
+decodeCbor ::
+  (MonadST m, MonadError DeserialiseFailure m) =>
+  (forall s. Decoder s a) ->
+  StateT (Stream (Of ByteString) m r) m a
+decodeCbor dec =
+  StateT $ \s -> go s =<< stToIO (deserialiseIncremental dec)
+ where
+  go s = \case
+    Partial k ->
+      S.next s >>= \case
+        Right (bs, s') -> go s' =<< stToIO (k (Just bs))
+        Left r -> go (pure r) =<< stToIO (k Nothing)
+    Done bs _off a -> pure (a, S.yield bs *> s)
+    Fail _bs _off err -> throwError err
+
 yieldCborMapS ::
   forall m a b.
-  MonadST m =>
+  (MonadST m, MonadError DeserialiseFailure m) =>
   (forall s. Decoder s a) ->
   (forall s. Decoder s b) ->
   Stream (Of ByteString) m () ->
   Stream (Of (a, b)) m (Stream (Of ByteString) m ())
-yieldCborMapS decK decV s = do
-  k <- S.lift $ stToIO (deserialiseIncremental decK)
-  mbs <- S.lift (S.uncons s)
-  case mbs of
-    Nothing -> error "Empty stream of bytes"
-    Just (bs, s') ->
-      case deserialiseFromBytes decodeTermToken (BS.fromStrict bs) of
-        Left err -> error $ show err
-        Right (bs', TkMapLen n) -> go (Just n) (Left k) $ Right (BS.toStrict bs', s')
-        Right (bs', TkMapBegin) -> go Nothing (Left k) $ Right (BS.toStrict bs', s')
-        _ -> error "Not a map!"
+yieldCborMapS decK decV = execStateT $ do
+  hoist lift $ decodeCbor decodeMapLenIndef
+  go
  where
-  go (Just 0) k mbs = case mbs of
-    Left s' -> pure s'
-    Right (bs, s') -> pure (S.yield bs *> s')
-  go remainingItems k mbs = case (k, mbs) of
-    -- We have a partial decoding, awaiting for a bytestring
-
-    -- We have read a bytestring from the stream
-    (Left (Partial kont), Right (bs, s')) -> do
-      k' <- S.lift $ stToIO $ kont $ Just bs
-      case k' of
-        -- after running the kontinuation, we still require more input,
-        -- then read again from the stream
-        Partial{} -> go remainingItems (Left k') . maybeToEither s' =<< S.lift (S.uncons s')
-        -- We were done with the previous bytestring, so let's
-        -- recurse without reading more.
-        _ -> go remainingItems (Left k') (Left s')
-
-    -- We are in a partial reading, but we were unable to read more
-    -- input, so we call `kont` with `Nothing` which will fail.
-    (Left (Partial kont), Left s') -> do
-      k' <- S.lift $ stToIO $ kont Nothing
-      go remainingItems (Left k') (Left s')
-
-    -- We have read a bytestring from the stream
-    (Right (valK, Partial kont), Right (bs, s')) -> do
-      k' <- S.lift $ stToIO $ kont $ Just bs
-      case k' of
-        -- after running the kontinuation, we still require more input,
-        -- then read again from the stream
-        Partial{} -> go remainingItems (Right (valK, k')) . maybeToEither s' =<< S.lift (S.uncons s')
-        -- We were done with the previous bytestring, so let's
-        -- recurse without reading more.
-        _ -> go remainingItems (Right (valK, k')) (Left s')
-
-    -- We are in a partial reading, but we were unable to read more
-    -- input, so we call `kont` with `Nothing` which will fail.
-    (Right (valK, Partial kont), Left s') -> do
-      k' <- S.lift $ stToIO $ kont Nothing
-      go remainingItems (Right (valK, k')) (Left s')
-
-    -- We completed a read
-    (Left (Done unused _offset val), Left s') -> do
-      if BS.null unused
-        then
-          -- We have no unused bytes, so read another chunk
-          S.lift (S.uncons s') >>= \case
-            -- If there is no more input, fail because we were expecting a value!
-            Nothing -> error "No value!"
-            -- Recurse if there is more input
-            Just mbs' -> do
-              k' <- S.lift $ stToIO (deserialiseIncremental decV)
-              go remainingItems (Right (val, k')) $ Right mbs'
-        else do
-          -- We still have unused bytes, so use those before reading
-          -- again.
-          k' <- S.lift $ stToIO (deserialiseIncremental decV)
-          go remainingItems (Right (val, k')) (Right (unused, s'))
-
-    -- We completed a read
-    (Right (valK, Done unused _offset val), Left s') -> do
-      -- yield the pair
-      S.yield (valK, val)
-      case remainingItems of
-        Just 1 -> pure (S.yield unused *> s')
-        _ -> do
-          k' <- S.lift $ stToIO (deserialiseIncremental decK)
-          if BS.null unused
-            then
-              -- We have no unused bytes, so read another chunk
-              S.lift (S.uncons s') >>= \case
-                -- If there is no more input, then we are done!
-                Nothing ->
-                  case remainingItems of
-                    Just n -> error $ "Missing " ++ show (n - 1) ++ " items!"
-                    Nothing -> error "Missing a break!"
-                -- Recurse if there is more input
-                Just mbs' -> do
-                  go ((\x -> x - 1) <$> remainingItems) (Left k') $ Right mbs'
-            else do
-              -- We still have unused bytes, so use those before reading
-              -- again.
-              go ((\x -> x - 1) <$> remainingItems) (Left k') (Right (unused, s'))
-    (Left (Done _ _ _), Right _) -> error "unreachable!"
-    (Right (_, Done _ _ _), Right _) -> error "unreachable!"
-    (Left Fail{}, Right{}) -> error "unreachable!"
-    (Right (_, Fail{}), Right{}) -> error "unreachable!"
-    (Left (Fail bs _ err), Left s') ->
-      case remainingItems of
-        Nothing -> case deserialiseFromBytes decodeTermToken (BS.fromStrict bs) of
-          Right (bs', TkBreak) -> pure (S.yield (BS.toStrict bs') *> s')
-          _ -> error "Break not found!"
-        _ ->
-          error $ show err
-    (Right (_, Fail bs _ err), _) ->
-      error $ show err
+  go = do
+    doBreak <- hoist lift $ decodeCbor decodeBreakOr
+    unless doBreak $ do
+      kv <- hoist lift $ decodeCbor $ (,) <$> decK <*> decV
+      lift $ S.yield kv
+      go
 
 maybeToEither :: a -> Maybe b -> Either a b
 maybeToEither _ (Just b) = Right b
