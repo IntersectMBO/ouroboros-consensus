@@ -51,7 +51,7 @@ vrfChecks? η₀ pd f bhb
 ... | nothing          = no λ ()
 ... | just (σ , vrfHK) =
         vrfHK ≟ hash vrfVk
-        ×-dec ¿ verify {T = VRFRes} ¿³ vrfVk seed (vrfPrf , vrfRes)
+        ×-dec ¿ verify ¿³ vrfVk seed (vrfPrf , vrfRes)
         ×-dec checkLeaderVal? (hBLeader bhb) f σ
   where
     open BHBody bhb

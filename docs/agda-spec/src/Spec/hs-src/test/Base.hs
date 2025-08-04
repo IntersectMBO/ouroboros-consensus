@@ -6,6 +6,8 @@ module Base (
 , deriveVkeyDSIGFromSkeyDSIG
 , sampleSKeyKES
 , deriveVkeyKESFromSkeyKES
+, sampleSKeyVRF
+, deriveVkeyVRFFromSkeyVRF
 ) where
 
 import Lib
@@ -14,6 +16,8 @@ import Cardano.Ledger.Hashes (Hash, HASH, HashAlgorithm)
 import Cardano.Ledger.Keys (DSIGN, VKey (..))
 import Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), SignedDSIGN (..), verifySignedDSIGN, signedDSIGN)
 import qualified Cardano.Crypto.KES as KES
+import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.Crypto.VRF.Praos as VRF
 import Cardano.Crypto.Util (naturalToBytes, bytesToNatural)
 import Cardano.Crypto.Hash (hashFromBytes, sizeHash)
 import Cardano.Crypto.Seed (Seed, mkSeedFromBytes)
@@ -70,19 +74,19 @@ deriveVkeyDSIGFromSkeyDSIG sk = vkeyDSIGNToInteger $ VKey $ deriveVerKeyDSIGN sk
 
 type KESAlg = KES.Sum6KES DSIGN HASH
 
-vkeyKESFromInteger :: forall v. KES.KESAlgorithm v => Integer -> Maybe (KES.VerKeyKES v)
+vkeyKESFromInteger :: KES.KESAlgorithm v => Integer -> Maybe (KES.VerKeyKES v)
 vkeyKESFromInteger = KES.rawDeserialiseVerKeyKES . naturalToBytes (fromIntegral $ KES.sizeVerKeyKES $ Proxy @KESAlg) . fromInteger
 
 vkeyKESToInteger :: KES.KESAlgorithm v => KES.VerKeyKES v -> Integer
 vkeyKESToInteger = toInteger . bytesToNatural . KES.rawSerialiseVerKeyKES
 
-skeyKESFromInteger :: forall v. KES.UnsoundPureKESAlgorithm v => Integer -> Maybe (KES.UnsoundPureSignKeyKES v)
+skeyKESFromInteger :: KES.UnsoundPureKESAlgorithm v => Integer -> Maybe (KES.UnsoundPureSignKeyKES v)
 skeyKESFromInteger = KES.rawDeserialiseUnsoundPureSignKeyKES . naturalToBytes (fromIntegral $ KES.sizeSignKeyKES $ Proxy @KESAlg) . fromInteger
 
 skeyKESToInteger :: KES.UnsoundPureKESAlgorithm v => KES.UnsoundPureSignKeyKES v -> Integer
 skeyKESToInteger = toInteger . bytesToNatural . KES.rawSerialiseUnsoundPureSignKeyKES
 
-sigKESFromInteger :: forall v. KES.KESAlgorithm v => Integer -> Maybe (KES.SigKES v)
+sigKESFromInteger :: KES.KESAlgorithm v => Integer -> Maybe (KES.SigKES v)
 sigKESFromInteger = KES.rawDeserialiseSigKES . naturalToBytes (fromIntegral $ KES.sizeSigKES $ Proxy @KESAlg) . fromInteger
 
 sigKESToInteger :: KES.KESAlgorithm v => KES.SigKES v -> Integer
@@ -106,6 +110,31 @@ deriveVkeyKESFromSkeyKES sk = vkeyKESToInteger @KESAlg $ KES.unsoundPureDeriveVe
         (error "Failed to convert an Agda KES SKey to a Haskell KES SKey")
         $ skeyKESFromInteger sk
 
+-- VRF
+
+type VRFAlg = VRF.PraosVRF
+
+vkeyVRFFromInteger :: VRF.VRFAlgorithm v => Integer -> Maybe (VRF.VerKeyVRF v)
+vkeyVRFFromInteger = VRF.rawDeserialiseVerKeyVRF . naturalToBytes (fromIntegral $ VRF.sizeVerKeyVRF $ Proxy @VRFAlg) . fromInteger
+
+vkeyVRFToInteger :: VRF.VRFAlgorithm v => VRF.VerKeyVRF v -> Integer
+vkeyVRFToInteger = toInteger . bytesToNatural . VRF.rawSerialiseVerKeyVRF
+
+skeyVRFFromInteger :: Integer -> VRF.SignKeyVRF VRFAlg
+skeyVRFFromInteger = fst . VRF.genKeyPairVRF . mkSeedFromBytes . naturalToBytes (fromIntegral $ VRF.sizeSignKeyVRF $ Proxy @VRFAlg) . fromInteger
+
+skeyVRFToInteger :: VRF.VRFAlgorithm v => VRF.SignKeyVRF v -> Integer
+skeyVRFToInteger = toInteger . bytesToNatural . VRF.rawSerialiseSignKeyVRF
+
+proofVRFFromInteger :: VRF.VRFAlgorithm v => Integer -> Maybe (VRF.CertVRF v)
+proofVRFFromInteger = VRF.rawDeserialiseCertVRF . naturalToBytes (fromIntegral $ VRF.sizeCertVRF $ Proxy @VRFAlg) . fromInteger
+
+proofVRFToInteger :: VRF.VRFAlgorithm v => VRF.CertVRF v -> Integer
+proofVRFToInteger = toInteger . bytesToNatural . VRF.rawSerialiseCertVRF
+
+deriveVkeyVRFFromSkeyVRF :: Integer -> Integer
+deriveVkeyVRFFromSkeyVRF = vkeyVRFToInteger @VRFAlg . VRF.deriveVerKeyVRF . skeyVRFFromInteger
+
 -- External functions
 
 externalFunctions :: ExternalFunctions
@@ -114,6 +143,8 @@ externalFunctions = dummyExternalFunctions
   , extIsSignedDSIG = extIsSignedDSIG'
   , extSignKES      = extSignKES'
   , extIsSignedKES  = extIsSignedKES'
+  , extEvaluate     = extEvaluate'
+  , extVerify       = extVerify'
   }
   where
     extSignDSIG' sk ser =
@@ -129,6 +160,7 @@ externalFunctions = dummyExternalFunctions
           fromMaybe
             (error "Failed to convert an Agda SKey to a Haskell SKey")
             $ skeyDSIGNFromInteger sk
+
         hash =
           fromMaybe
             (error $ "Failed to get hash from integer:\n" <> show ser)
@@ -148,10 +180,12 @@ externalFunctions = dummyExternalFunctions
           unVKey
             . fromMaybe (error "Failed to convert an Agda VKey to a Haskell VKey")
             $ vkeyDSIGNFromInteger vk
+
         hash =
           fromMaybe
             (error $ "Failed to get hash from integer:\n" <> show ser)
             $ integerToHash ser
+
         signature =
           signedDSIGNFromInteger sig
 
@@ -169,8 +203,10 @@ externalFunctions = dummyExternalFunctions
           fromMaybe
             (error "Failed to convert an Agda KES SKey to a Haskell KES SKey")
             $ skeyKESFromInteger (skf n)
+
         kp =
           fromIntegral n
+
         hash =
           fromMaybe
             (error $ "Failed to get hash from integer:\n" <> show ser)
@@ -191,14 +227,68 @@ externalFunctions = dummyExternalFunctions
           fromMaybe
             (error "Failed to convert an Agda KES VKey to a Haskell KES VKey")
             $ vkeyKESFromInteger vk
+
         kp =
           fromIntegral n
+
         hash =
           fromMaybe
             (error $ "Failed to get hash from integer:\n" <> show ser)
             $ integerToHash ser
+
         signature =
           signedKESFromInteger sig
+
+    extEvaluate' sk seed = (proof, ser)
+      where
+        skey =
+          skeyVRFFromInteger sk
+
+        input =
+          fromMaybe
+            (error $ "Failed to get hash from integer:\n" <> show seed)
+            $ integerToHash seed
+
+        VRF.CertifiedVRF output cert =
+          VRF.evalCertified
+            @VRFAlg
+            @(Hash HASH ByteString)
+            ()
+            input
+            skey
+
+        proof =
+          proofVRFToInteger cert
+
+        ser =
+          (toInteger . bytesToNatural . VRF.getOutputVRFBytes) output
+
+    extVerify' vk seed (proof, ser) =
+      VRF.verifyCertified
+        @VRFAlg
+        @(Hash HASH ByteString)
+        ()
+        vkey
+        input
+        (VRF.CertifiedVRF output cert)
+      where
+        vkey =
+          fromMaybe
+            (error "Failed to convert an Agda VRF VKey to a Haskell VRF VKey")
+            $ vkeyVRFFromInteger vk
+
+        input =
+          fromMaybe
+            (error $ "Failed to get hash from integer:\n" <> show seed)
+            $ integerToHash seed
+
+        output =
+          VRF.mkTestOutputVRF $ fromIntegral ser
+
+        cert =
+          fromMaybe
+            (error "Failed to convert an Agda VRF proof to a Haskell VRF proof")
+            $ proofVRFFromInteger proof
 
 -- Utilities
 
@@ -210,3 +300,6 @@ sampleSKeyDSIGN = skeyDSIGNToInteger $ genKeyDSIGN @DSIGN sampleSeed
 
 sampleSKeyKES :: Integer
 sampleSKeyKES = skeyKESToInteger @KESAlg $ KES.unsoundPureGenKeyKES sampleSeed
+
+sampleSKeyVRF :: Integer
+sampleSKeyVRF = (skeyVRFToInteger @VRFAlg . fst . VRF.genKeyPairVRF) sampleSeed

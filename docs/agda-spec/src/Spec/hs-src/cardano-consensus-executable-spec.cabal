@@ -38,8 +38,10 @@ test-suite test
     build-depends:
         cardano-consensus-executable-spec,
         cardano-crypto-class,
+        cardano-crypto-praos >= 2.2.1.0,
         cardano-protocol-tpraos ^>=1.4,
         cardano-ledger-core,
+        ouroboros-consensus-protocol,
         hspec,
         HUnit,
         text,

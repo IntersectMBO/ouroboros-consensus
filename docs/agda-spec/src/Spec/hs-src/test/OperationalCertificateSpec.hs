@@ -1,6 +1,11 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 
-module OperationalCertificateSpec (spec) where
+module OperationalCertificateSpec (
+  spec
+, bh
+, bhb
+, hk
+) where
 
 import Data.Text
 
@@ -21,8 +26,14 @@ import Base (
 coldSk :: Integer
 coldSk = sampleSKeyDSIGN
 
+coldVk :: Integer
+coldVk = deriveVkeyDSIGFromSkeyDSIG coldSk
+
 hotSk :: Integer
 hotSk = sampleSKeyKES
+
+hotVk :: Integer
+hotVk = deriveVkeyKESFromSkeyKES hotSk
 
 -- Since kp = kesPeriod bhbSlot = kesPeriod 0 = 0 / SlotsPerKESPeriodᶜ = 0 / 5 = 0,
 -- then period = kp -ᵏ ocC₀ = 0 - 0 = 0.
@@ -50,7 +61,7 @@ cs' = MkHSMap
 
 oc :: OCert
 oc = MkOCert
-  { ocVkₕ = deriveVkeyKESFromSkeyKES hotSk
+  { ocVkₕ = hotVk
   , ocN   = 234
   , ocC₀  = 0
   , ocΣ   = ocΣ'
@@ -62,7 +73,7 @@ oc = MkOCert
 bhb :: BHBody
 bhb = MkBHBody
   { bhbPrevHeader = Nothing
-  , bhbIssuerVk   = deriveVkeyDSIGFromSkeyDSIG coldSk
+  , bhbIssuerVk   = coldVk
   , bhbVrfVk      = 567
   , bhbBlockNo    = 1
   , bhbSlot       = 0
@@ -110,5 +121,5 @@ spec = do
     it "ocertStep results in the expected state" $
       ocertStep externalFunctions stpools cs bh @?= Success cs'
 -- NOTE: Uncomment to run the debug version.
---  describe (unpack $ ocertDebug dummyExternalFunctions stpools cs bh) $ do
+--  describe (unpack $ ocertDebug externalFunctions stpools cs bh) $ do
 --    it "shows its argument" True
