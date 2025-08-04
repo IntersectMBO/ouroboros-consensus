@@ -66,9 +66,10 @@ import Ouroboros.Consensus.Shelley.Node
   , ShelleyLeaderCredentials
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike)
-import qualified Test.Cardano.Ledger.Api.Examples.Consensus.Alonzo as SL
-import qualified Test.Cardano.Ledger.Api.Examples.Consensus.Conway as SL
-import qualified Test.Cardano.Ledger.Api.Examples.Consensus.Dijkstra as SL
+import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
+import qualified Test.Cardano.Ledger.Conway.Examples as Conway
+import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
+import qualified Test.Cardano.Ledger.Shelley.Examples as Shelley
 import qualified Test.ThreadNet.Infra.Byron as Byron
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.Util.Seed (Seed (Seed), runGen)
@@ -287,14 +288,18 @@ mkTestProtocolInfo
               --
               --  * The LocalTxSubmissionServer does not (yet) rely on any
               --    details of these.
-              SL.exampleAlonzoGenesis
-              SL.exampleConwayGenesis
-              SL.exampleDijkstraGenesis
+              exampleAlonzoGenesis
+              exampleConwayGenesis
+              exampleDijkstraGenesis
           )
           emptyCheckpointsMap
           protocolVersion
       )
    where
+    exampleAlonzoGenesis = Shelley.leTranslationContext Alonzo.ledgerExamples
+    exampleConwayGenesis = Shelley.leTranslationContext Conway.ledgerExamples
+    exampleDijkstraGenesis = Shelley.leTranslationContext Dijkstra.ledgerExamples
+
     leaderCredentialsByron :: ByronLeaderCredentials
     leaderCredentialsByron =
       Byron.mkLeaderCredentials
