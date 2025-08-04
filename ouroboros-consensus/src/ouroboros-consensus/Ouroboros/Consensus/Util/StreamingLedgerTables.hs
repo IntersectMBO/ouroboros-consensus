@@ -8,12 +8,12 @@
 module Ouroboros.Consensus.Util.StreamingLedgerTables where
 
 import Cardano.Slotting.Slot
-import Codec.CBOR.Decoding (Decoder, decodeBreakOr, decodeMapLenIndef)
+import Codec.CBOR.Decoding (Decoder, decodeBreakOr, decodeMapLenOrIndef)
 import Codec.CBOR.Encoding (Encoding, encodeBreak, encodeMapLenIndef)
 import Codec.CBOR.Read
 import Codec.CBOR.Write
 import Control.Concurrent.Class.MonadMVar
-import Control.Monad (unless)
+import Control.Monad (replicateM_, unless)
 import Control.Monad.Class.MonadAsync
 import Control.Monad.Class.MonadST
 import Control.Monad.Class.MonadSTM
@@ -87,15 +87,17 @@ yieldCborMapS ::
   Stream (Of ByteString) m () ->
   Stream (Of (a, b)) m (Stream (Of ByteString) m ())
 yieldCborMapS decK decV = execStateT $ do
-  hoist lift $ decodeCbor decodeMapLenIndef
-  go
+  hoist lift (decodeCbor decodeMapLenOrIndef) >>= \case
+    Nothing -> go
+    Just n -> replicateM_ n yieldKV
  where
+  yieldKV = do
+    kv <- hoist lift $ decodeCbor $ (,) <$> decK <*> decV
+    lift $ S.yield kv
+
   go = do
     doBreak <- hoist lift $ decodeCbor decodeBreakOr
-    unless doBreak $ do
-      kv <- hoist lift $ decodeCbor $ (,) <$> decK <*> decV
-      lift $ S.yield kv
-      go
+    unless doBreak $ yieldKV *> go
 
 maybeToEither :: a -> Maybe b -> Either a b
 maybeToEither _ (Just b) = Right b
