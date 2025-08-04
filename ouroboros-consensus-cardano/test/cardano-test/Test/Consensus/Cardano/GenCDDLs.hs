@@ -1,5 +1,4 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Test.Consensus.Cardano.GenCDDLs (withCDDLs) where
@@ -23,6 +22,7 @@ import qualified Test.Cardano.Ledger.Allegra.Binary.Cddl as Allegra
 import qualified Test.Cardano.Ledger.Alonzo.Binary.Cddl as Alonzo
 import qualified Test.Cardano.Ledger.Babbage.Binary.Cddl as Babbage
 import qualified Test.Cardano.Ledger.Conway.Binary.Cddl as Conway
+import qualified Test.Cardano.Ledger.Dijkstra.Binary.Cddl as Dijkstra
 import qualified Test.Cardano.Ledger.Mary.Binary.Cddl as Mary
 import qualified Test.Cardano.Ledger.Shelley.Binary.Cddl as Shelley
 import Test.Tasty
@@ -42,7 +42,7 @@ withCDDLs f =
       withResource
         ( do
             probeTools
-            D.getCurrentDirectory >>= setupCDDLCEnv
+            setupCDDLCEnv
 
             ntnBlock <- cddlc "cddl/node-to-node/blockfetch/block.cddl"
             ntnBlock' <- fixupBlockCDDL ntnBlock
@@ -63,7 +63,6 @@ withCDDLs f =
             D.removeFile "ntnheader.cddl"
             D.removeFile "ntntx.cddl"
             D.removeFile "ntntxid.cddl"
-            D.removeFile "dijkstra.cddl"
         )
         (\_ -> f)
 
@@ -94,8 +93,8 @@ fixupBlockCDDL spec =
     CDDLSpec <$> BS.readFile fp
 
 -- | This sets the environment variables needed for `cddlc` to run properly.
-setupCDDLCEnv :: FilePath -> IO ()
-setupCDDLCEnv tempDirectory = do
+setupCDDLCEnv :: IO ()
+setupCDDLCEnv = do
   byron <- map takePath <$> Byron.readByronCddlFileNames
   shelley <- map takePath <$> Shelley.readShelleyCddlFileNames
   allegra <- map takePath <$> Allegra.readAllegraCddlFileNames
@@ -103,13 +102,7 @@ setupCDDLCEnv tempDirectory = do
   alonzo <- map takePath <$> Alonzo.readAlonzoCddlFileNames
   babbage <- map takePath <$> Babbage.readBabbageCddlFileNames
   conway <- map takePath <$> Conway.readConwayCddlFileNames
-  dijkstra <- copyConwayAsDijkstra tempDirectory conway
-  -- TODO(geo2a): once Ledger adds Dijkstra CDDLs, use the following
-  --              code instead of the line above and delete
-  --              the copyConwayAsDijkstra function.
-  --              This will also get rid of the spurious dijkstra.cddl
-  --              appearing in ouroboros-consensus-cardano
-  -- dijkstra <- map takePath <$> Dijkstra.readConwayCddlFileNames
+  dijkstra <- map takePath <$> Dijkstra.readDijkstraCddlFileNames
 
   localDataDir <- windowsPathHack <$> getDataDir
   let local_paths =
@@ -123,14 +116,6 @@ setupCDDLCEnv tempDirectory = do
               <> local_paths
 
   E.setEnv "CDDL_INCLUDE_PATH" (include_path <> ":")
- where
-  copyConwayAsDijkstra :: FilePath -> [FilePath] -> IO [FilePath]
-  copyConwayAsDijkstra dijkstraDir =
-    \case
-      [conwayDir] -> do
-        D.copyFile (conwayDir F.</> "conway.cddl") (dijkstraDir F.</> "dijkstra.cddl")
-        pure [dijkstraDir]
-      other -> error $ unwords $ "Invalid Conway CDDL directory path: " : other
 
 -- | Call @sed@ on the given file with the given args
 sed :: FilePath -> [String] -> IO ()

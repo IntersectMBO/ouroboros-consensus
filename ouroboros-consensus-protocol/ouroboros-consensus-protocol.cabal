@@ -120,7 +120,7 @@ test-suite protocol-test
     cardano-crypto-class ^>=2.2,
     cardano-ledger-binary:testlib,
     cardano-ledger-core >=1.17 && <1.19,
-    cardano-protocol-tpraos ^>=1.4,
+    cardano-protocol-tpraos ^>=1.4.1,
     containers,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-consensus-protocol,

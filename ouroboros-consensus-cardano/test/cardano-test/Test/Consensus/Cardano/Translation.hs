@@ -75,10 +75,10 @@ import Ouroboros.Consensus.Shelley.Ledger
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
-import Test.Cardano.Ledger.Api.Examples.Consensus.Shelley
-import Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
+import Test.Cardano.Ledger.Alonzo.Binary.Twiddle ()
+import Test.Cardano.Ledger.Babbage.Binary.Twiddle ()
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
+import Test.Cardano.Ledger.Shelley.Examples
 import Test.Consensus.Byron.Generators
   ( genByronLedgerConfig
   , genByronLedgerState
