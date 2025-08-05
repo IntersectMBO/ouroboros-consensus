@@ -113,7 +113,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (eraPerasRoundLength))
+import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (..))
 import Ouroboros.Consensus.HardFork.History.Util
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.HeaderValidation
@@ -343,11 +343,11 @@ instance
           internsFromMap $
             shelleyLedgerState st
               ^. SL.nesEsL
-              . SL.esLStateL
-              . SL.lsCertStateL
-              . SL.certDStateL
-              . SL.dsUnifiedL
-              . SL.umElemsL
+                . SL.esLStateL
+                . SL.lsCertStateL
+                . SL.certDStateL
+                . SL.dsUnifiedL
+                . SL.umElemsL
      in LedgerTables . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
 
 instance
@@ -462,10 +462,10 @@ slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState
 slUtxoL st vals =
   st
     & SL.nesEsL
-    . SL.esLStateL
-    . SL.lsUTxOStateL
-    . SL.utxoL
-    <<.~ vals
+      . SL.esLStateL
+      . SL.lsUTxOStateL
+      . SL.utxoL
+      <<.~ vals
 
 {-------------------------------------------------------------------------------
   GetTip

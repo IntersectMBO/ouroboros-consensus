@@ -39,6 +39,8 @@ data HardForkSpecificNodeToNodeVersion
 data HardForkSpecificNodeToClientVersion
   = -- | Include the Genesis window in 'EraParams'.
     HardForkSpecificNodeToClientVersion3
+  | -- | Include Peras round length in 'EraParams'.
+    HardForkSpecificNodeToClientVersion4
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 data HardForkNodeToNodeVersion xs where

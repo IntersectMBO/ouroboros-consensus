@@ -16,12 +16,12 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasCert (..)
   ) where
 
+import Codec.Serialise.Class
 import Data.Monoid (Sum (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
-import Codec.Serialise.Class
 
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving stock Show

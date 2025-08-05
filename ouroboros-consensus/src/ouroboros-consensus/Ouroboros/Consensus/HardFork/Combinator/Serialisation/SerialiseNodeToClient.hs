@@ -24,6 +24,7 @@ import qualified Codec.Serialise as Serialise
 import Control.Exception (throw)
 import Data.Maybe (catMaybes)
 import Data.Proxy
+import qualified Data.Reflection as Reflection
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting
@@ -203,14 +204,16 @@ instance SerialiseHFC xs => SerialiseNodeToClient (HardForkBlock xs) (HardForkLe
 instance SerialiseHFC xs => SerialiseNodeToClient (HardForkBlock xs) (History.Shape xs) where
   encodeNodeToClient ccfg version (History.Shape (Exactly xs)) =
     encodeNodeToClientNP
-      (\_ _ (K a) -> Serialise.encode a)
+      -- TODO(geo2a): derive an 'EraParamsFormat' from protocol version info instead of hard-coding it
+      (\_ _ (K a) -> Reflection.give History.EraParamsWithoutPerasRoundLength $ Serialise.encode a)
       ccfg
       version
       xs
   decodeNodeToClient ccfg version =
     History.Shape . Exactly
       <$> decodeNodeToClientNP
-        (\_ _ -> K <$> Serialise.decode)
+        -- TODO(geo2a): derive an 'EraParamsFormat' from protocol version info instead of hard-coding it
+        (\_ _ -> Reflection.give History.EraParamsWithoutPerasRoundLength $ K <$> Serialise.decode)
         ccfg
         version
 
@@ -488,6 +491,7 @@ instance
   Results
 -------------------------------------------------------------------------------}
 
+-- TODO(geo2a): derive an 'EraParamsFormat' from protocol version info instead of hard-coding it
 instance
   SerialiseHFC xs =>
   SerialiseBlockQueryResult (HardForkBlock xs) BlockQuery
@@ -505,8 +509,8 @@ instance
               encodeQueryIfCurrentResult ccfgs versions qry
    where
     ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra ccfg
-  encodeBlockQueryResult _ _ (QueryAnytime qry _) = encodeQueryAnytimeResult qry
-  encodeBlockQueryResult _ _ (QueryHardFork qry) = encodeQueryHardForkResult qry
+  encodeBlockQueryResult _ _ (QueryAnytime qry _) = encodeQueryAnytimeResult History.EraParamsWithoutPerasRoundLength qry
+  encodeBlockQueryResult _ _ (QueryHardFork qry) = encodeQueryHardForkResult History.EraParamsWithoutPerasRoundLength qry
 
   decodeBlockQueryResult ccfg version (QueryIfCurrent qry) =
     case isNonEmpty (Proxy @xs) of
@@ -521,8 +525,8 @@ instance
               decodeQueryIfCurrentResult ccfgs versions qry
    where
     ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra ccfg
-  decodeBlockQueryResult _ _ (QueryAnytime qry _) = decodeQueryAnytimeResult qry
-  decodeBlockQueryResult _ _ (QueryHardFork qry) = decodeQueryHardForkResult qry
+  decodeBlockQueryResult _ _ (QueryAnytime qry _) = decodeQueryAnytimeResult History.EraParamsWithoutPerasRoundLength qry
+  decodeBlockQueryResult _ _ (QueryHardFork qry) = decodeQueryHardForkResult History.EraParamsWithoutPerasRoundLength qry
 
 encodeQueryIfCurrentResult ::
   All SerialiseConstraintsHFC xs =>
@@ -539,7 +543,9 @@ encodeQueryIfCurrentResult (_ :* _) (EraNodeToClientDisabled :* _) (QZ qry) =
   qryDisabledEra ::
     forall blk fp result.
     SingleEraBlock blk =>
-    BlockQuery blk fp result -> result -> Encoding
+    BlockQuery blk fp result ->
+    result ->
+    Encoding
   qryDisabledEra _ _ = throw $ disabledEraException (Proxy @blk)
 encodeQueryIfCurrentResult (_ :* cs) (_ :* vs) (QS qry) =
   encodeQueryIfCurrentResult cs vs qry
@@ -560,7 +566,9 @@ decodeQueryIfCurrentResult (_ :* _) (EraNodeToClientDisabled :* _) (QZ qry) =
   qryDisabledEra ::
     forall blk fp result.
     SingleEraBlock blk =>
-    BlockQuery blk fp result -> forall s. Decoder s result
+    BlockQuery blk fp result ->
+    forall s.
+    Decoder s result
   qryDisabledEra _ = fail . show $ disabledEraException (Proxy @blk)
 decodeQueryIfCurrentResult (_ :* cs) (_ :* vs) (QS qry) =
   decodeQueryIfCurrentResult cs vs qry

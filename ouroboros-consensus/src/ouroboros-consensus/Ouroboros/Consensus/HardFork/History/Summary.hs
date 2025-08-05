@@ -62,6 +62,7 @@ import Data.Foldable (toList)
 import Data.Kind (Type)
 import Data.Maybe (fromJust, isJust)
 import Data.Proxy
+import Data.Reflection (Given, given)
 import Data.SOP.Counting
 import Data.SOP.NonEmpty
 import Data.SOP.Sing (SListI, lengthSList)
@@ -508,25 +509,39 @@ invariantSummary = \(Summary summary) ->
   Serialisation
 -------------------------------------------------------------------------------}
 
-instance Serialise Bound where
+instance Given EraParamsFormat => Serialise Bound where
   encode Bound{..} =
-    mconcat
-      [ encodeListLen 4
+    mconcat $
+      [ encodeListLen $ case epf of
+          EraParamsWithoutPerasRoundLength -> 3
+          EraParamsWithPerasRoundLength -> 4
       , encode boundTime
       , encode boundSlot
       , encode boundEpoch
-      , encode boundPerasRound
       ]
+        <> case epf of
+          EraParamsWithoutPerasRoundLength -> []
+          EraParamsWithPerasRoundLength -> [encode boundPerasRound]
+   where
+    epf :: EraParamsFormat
+    epf = given
 
   decode = do
-    enforceSize "Bound" 4
+    enforceSize "Bound" $ case epf of
+      EraParamsWithoutPerasRoundLength -> 3
+      EraParamsWithPerasRoundLength -> 4
     boundTime <- decode
     boundSlot <- decode
     boundEpoch <- decode
-    boundPerasRound <- decode
+    boundPerasRound <- case epf of
+      EraParamsWithoutPerasRoundLength -> pure Nothing
+      EraParamsWithPerasRoundLength -> Just <$> decode
     return Bound{..}
+   where
+    epf :: EraParamsFormat
+    epf = given
 
-instance Serialise EraEnd where
+instance Given EraParamsFormat => Serialise EraEnd where
   encode EraUnbounded = encodeNull
   encode (EraEnd bound) = encode bound
 
@@ -537,7 +552,7 @@ instance Serialise EraEnd where
         return EraUnbounded
       _ -> EraEnd <$> decode
 
-instance Serialise EraSummary where
+instance Given EraParamsFormat => Serialise EraSummary where
   encode EraSummary{..} =
     mconcat
       [ encodeListLen 3
@@ -553,7 +568,7 @@ instance Serialise EraSummary where
     eraParams <- decode
     return EraSummary{..}
 
-instance SListI xs => Serialise (Summary xs) where
+instance (SListI xs, Given EraParamsFormat) => Serialise (Summary xs) where
   encode (Summary eraSummaries) = encode (toList eraSummaries)
 
   -- @xs@ is the list of eras that is statically known to us; the server has a

@@ -135,11 +135,11 @@ roundtripEpochSlot s@ArbitrarySummary{beforeHorizonEpoch = epoch} =
 roundtripPerasRoundSlot :: ArbitrarySummary -> Property
 roundtripPerasRoundSlot s@ArbitrarySummary{beforeHorizonPerasRoundNo = perasRoundNo} =
   noPastHorizonException s $ do
-        slot <- HF.perasRoundNoToSlot perasRoundNo
-        perasRoundNo' <- HF.slotToPerasRoundNo slot
-        pure $
-          conjoin
-            [perasRoundNo' === perasRoundNo]
+    slot <- HF.perasRoundNoToSlot perasRoundNo
+    perasRoundNo' <- HF.slotToPerasRoundNo slot
+    pure $
+      conjoin
+        [perasRoundNo' === perasRoundNo]
 
 reportsPastHorizon :: ArbitrarySummary -> Property
 reportsPastHorizon s@ArbitrarySummary{..} =
@@ -171,9 +171,9 @@ data ArbitrarySummary = forall xs. ArbitrarySummary
   , beforeHorizonTime :: RelativeTime
   , beforeHorizonSlot :: SlotNo
   , beforeHorizonEpoch :: EpochNo
-  -- | 'PerasRoundNo' is not optional here,
-  -- i.e. we do not model non-Peras eras in the time conversion tests
   , beforeHorizonPerasRoundNo :: PerasRoundNo
+  -- ^ 'PerasRoundNo' is not optional here,
+  -- i.e. we do not model non-Peras eras in the time conversion tests
   , mPastHorizonTime :: Maybe RelativeTime
   , mPastHorizonSlot :: Maybe SlotNo
   , mPastHorizonEpoch :: Maybe EpochNo
@@ -219,7 +219,6 @@ instance Arbitrary ArbitrarySummary where
               HF.addPerasRounds
                 beforeHorizonPerasRounds
                 (maybe (PerasRoundNo 0) id $ HF.boundPerasRound summaryStart) -- TODO(geo2a): refactor magic zero
-
         return
           ArbitrarySummary
             { arbitrarySummary = summary
@@ -247,7 +246,6 @@ instance Arbitrary ArbitrarySummary where
               HF.countPerasRounds
                 (maybe (PerasRoundNo 0) id $ HF.boundPerasRound summaryEnd) -- TODO(geo2a): refactor magic zero
                 (maybe (PerasRoundNo 0) id $ HF.boundPerasRound summaryStart) -- TODO(geo2a): refactor magic zero
-
             summaryTimeSpan :: NominalDiffTime
             summaryTimeSpan =
               diffRelTime
@@ -265,7 +263,6 @@ instance Arbitrary ArbitrarySummary where
           choose (0, summaryTimeSpanSeconds)
             `suchThat` \x -> x /= summaryTimeSpanSeconds
         beforeHorizonPerasRounds <- choose (0, summaryPerasRounds - 1) -- TODO(geo2a): this will underflow if summaryPerasRounds is 0
-
         let beforeHorizonSlot :: SlotNo
             beforeHorizonEpoch :: EpochNo
             beforeHorizonTime :: RelativeTime
@@ -315,7 +312,6 @@ instance Arbitrary ArbitrarySummary where
               HF.addPerasRounds
                 pastHorizonPerasRounds
                 (maybe (PerasRoundNo 0) id $ HF.boundPerasRound summaryEnd) -- TODO(geo2a): refactor magic zero
-
         return
           ArbitrarySummary
             { arbitrarySummary = summary

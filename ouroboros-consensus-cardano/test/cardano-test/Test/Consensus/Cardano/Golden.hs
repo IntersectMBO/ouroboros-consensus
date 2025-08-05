@@ -7,9 +7,11 @@
 
 module Test.Consensus.Cardano.Golden (tests) where
 
+import qualified Data.Reflection as Reflection
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
+import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Query (QueryVersion)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
@@ -20,19 +22,22 @@ import Test.Util.Paths
 import Test.Util.Serialisation.CDDL
 import Test.Util.Serialisation.Golden
 
+-- in these tests, we force the serialisation to ignore Peras for now to keep backward compatibility.
+-- TODO(geo2a): remove the calls to `Reflection.give` Peras-aware serialisation is supported on mainnet
 tests :: TestTree
 tests =
-  goldenTest_all
-    codecConfig
-    ($(getGoldenDir) </> "cardano")
-    ( Just $
-        CDDLsForNodeToNode
-          ("ntnblock.cddl", "serialisedCardanoBlock")
-          ("ntnheader.cddl", "header")
-          ("ntntx.cddl", "tx")
-          ("ntntxid.cddl", "txId")
-    )
-    examples
+  Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+    goldenTest_all
+      codecConfig
+      ($(getGoldenDir) </> "cardano")
+      ( Just $
+          CDDLsForNodeToNode
+            ("ntnblock.cddl", "serialisedCardanoBlock")
+            ("ntnheader.cddl", "header")
+            ("ntntx.cddl", "tx")
+            ("ntntxid.cddl", "txId")
+      )
+      examples
 
 instance
   CardanoHardForkConstraints c =>

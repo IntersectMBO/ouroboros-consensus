@@ -18,9 +18,11 @@ module Ouroboros.Consensus.Mock.Node
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Codec.Serialise (Serialise)
 import qualified Data.Map.Strict as Map
+import qualified Data.Reflection as Reflection
 import Data.Void (Void)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
+import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mock.Ledger
@@ -75,6 +77,7 @@ instance
   , Show (ForgeStateUpdateError (SimpleBlock SimpleMockCrypto ext))
   , Serialise ext
   , RunMockBlock SimpleMockCrypto ext
+  , Reflection.Given History.EraParamsFormat
   ) =>
   RunNode (SimpleBlock SimpleMockCrypto ext)
 

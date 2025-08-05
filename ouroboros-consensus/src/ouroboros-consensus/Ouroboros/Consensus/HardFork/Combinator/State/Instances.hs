@@ -28,6 +28,7 @@ import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise
 import Data.Coerce
 import Data.Proxy
+import qualified Data.Reflection as Reflection
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Strict
@@ -37,6 +38,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.HardFork.Combinator.Lifting
 import Ouroboros.Consensus.HardFork.Combinator.State.Lift
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
+import qualified Ouroboros.Consensus.HardFork.History as History
 import Prelude hiding (sequence)
 
 {-------------------------------------------------------------------------------
@@ -124,31 +126,37 @@ deriving via
   encoders/decoders are used by the HFC to store the ledger state.
 -------------------------------------------------------------------------------}
 
+-- TODO(geo2a): can we avoid hard-coding 'EraParamsFormat' here?
 encodeCurrent :: (f blk -> Encoding) -> Current f blk -> Encoding
 encodeCurrent f Current{..} =
-  mconcat
-    [ encodeListLen 2
-    , encode currentStart
-    , f currentState
-    ]
+  Reflection.give History.EraParamsWithoutPerasRoundLength $
+    mconcat
+      [ encodeListLen 2
+      , encode currentStart
+      , f currentState
+      ]
 
+-- TODO(geo2a): can we avoid hard-coding 'EraParamsFormat' here?
 decodeCurrent :: Decoder s (f blk) -> Decoder s (Current f blk)
-decodeCurrent f = do
+decodeCurrent f = Reflection.give History.EraParamsWithoutPerasRoundLength $ do
   enforceSize "decodeCurrent" 2
   currentStart <- decode
   currentState <- f
   return Current{..}
 
+-- TODO(geo2a): can we avoid hard-coding 'EraParamsFormat' here?
 encodePast :: Past -> Encoding
 encodePast Past{..} =
-  mconcat
-    [ encodeListLen 2
-    , encode pastStart
-    , encode pastEnd
-    ]
+  Reflection.give History.EraParamsWithoutPerasRoundLength $
+    mconcat
+      [ encodeListLen 2
+      , encode pastStart
+      , encode pastEnd
+      ]
 
+-- TODO(geo2a): can we avoid hard-coding 'EraParamsFormat' here?
 decodePast :: Decoder s Past
-decodePast = do
+decodePast = Reflection.give History.EraParamsWithoutPerasRoundLength $ do
   enforceSize "decodePast" 2
   pastStart <- decode
   pastEnd <- decode

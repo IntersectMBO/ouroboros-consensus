@@ -15,6 +15,9 @@ module Ouroboros.Consensus.HardFork.History.EraParams
 
     -- * Defaults
   , defaultEraParams
+
+    -- * Serialisation
+  , EraParamsFormat (..)
   ) where
 
 import Cardano.Binary (enforceSize)
@@ -23,6 +26,7 @@ import Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
 import Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
 import Codec.Serialise (Serialise (..))
 import Control.Monad (void)
+import Data.Reflection (Given, given)
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -237,22 +241,45 @@ decodeSafeBeforeEpoch = do
     (2, 1) -> void $ decode @EpochNo
     _ -> fail $ "SafeBeforeEpoch: invalid size and tag " <> show (size, tag)
 
-instance Serialise EraParams where
+-- | Older versions are not aware of the Peras round length as part of 'EraParams',
+-- so we need to stay backwards-compatible for now. This type can be removed
+-- once mainnet is in a Peras-enabled era (as we can then always use the behavior of
+-- 'EraParamsWithPerasRoundLength').
+data EraParamsFormat
+  = EraParamsWithoutPerasRoundLength
+  | EraParamsWithPerasRoundLength
+  deriving stock (Show, Eq)
+
+instance Given EraParamsFormat => Serialise EraParams where
   encode EraParams{..} =
     mconcat $
-      [ encodeListLen 5
+      [ encodeListLen $ case epf of
+          EraParamsWithoutPerasRoundLength -> 4
+          EraParamsWithPerasRoundLength -> 5
       , encode (unEpochSize eraEpochSize)
       , encode eraSlotLength
       , encode eraSafeZone
       , encode (unGenesisWindow eraGenesisWin)
-      , encode (maybe 0 unPerasRoundLength eraPerasRoundLength)
       ]
+        <> case epf of
+          EraParamsWithoutPerasRoundLength -> []
+          EraParamsWithPerasRoundLength -> [encode (maybe 0 unPerasRoundLength eraPerasRoundLength)]
+   where
+    epf :: EraParamsFormat
+    epf = given
 
   decode = do
-    enforceSize "EraParams" 5
+    enforceSize "EraParams" $ case epf of
+      EraParamsWithoutPerasRoundLength -> 4
+      EraParamsWithPerasRoundLength -> 5
     eraEpochSize <- EpochSize <$> decode
     eraSlotLength <- decode
     eraSafeZone <- decode
     eraGenesisWin <- GenesisWindow <$> decode
-    eraPerasRoundLength <- Just . PerasRoundLength <$> decode
+    eraPerasRoundLength <- case epf of
+      EraParamsWithoutPerasRoundLength -> pure Nothing
+      EraParamsWithPerasRoundLength -> Just . PerasRoundLength <$> decode
     return EraParams{..}
+   where
+    epf :: EraParamsFormat
+    epf = given

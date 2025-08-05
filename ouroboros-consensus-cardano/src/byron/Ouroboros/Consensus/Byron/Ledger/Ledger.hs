@@ -333,7 +333,7 @@ byronEraParams genesis =
     , eraSlotLength = fromByronSlotLength $ genesisSlotLength genesis
     , eraSafeZone = HardFork.StandardSafeZone (2 * k)
     , eraGenesisWin = GenesisWindow (2 * k)
-    ,  eraPerasRoundLength = Nothing
+    , eraPerasRoundLength = Nothing
     }
  where
   k = unNonZero $ maxRollbacks $ genesisSecurityParam genesis

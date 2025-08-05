@@ -6,6 +6,7 @@ module Test.ThreadNet.Praos (tests) where
 import Cardano.Ledger.BaseTypes (nonZero)
 import Control.Monad (replicateM)
 import qualified Data.Map.Strict as Map
+import qualified Data.Reflection as Reflection
 import Data.Word (Word64)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block
@@ -119,19 +120,20 @@ prop_simple_praos_convergence
     } =
     counterexample flakyTestCopy $
       counterexample (tracesToDot testOutputNodes) $
-        prop_general
-          PropGeneralArgs
-            { pgaBlockProperty = prop_validSimpleBlock
-            , pgaCountTxs = countSimpleGenTxs
-            , pgaExpectedCannotForge = noExpectedCannotForges
-            , pgaFirstBlockNo = 0
-            , pgaFixedMaxForkLength = Nothing
-            , pgaFixedSchedule = Nothing
-            , pgaSecurityParam = k
-            , pgaTestConfig = testConfig
-            , pgaTestConfigB = testConfigB
-            }
-          testOutput
+        Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+          prop_general
+            PropGeneralArgs
+              { pgaBlockProperty = prop_validSimpleBlock
+              , pgaCountTxs = countSimpleGenTxs
+              , pgaExpectedCannotForge = noExpectedCannotForges
+              , pgaFirstBlockNo = 0
+              , pgaFixedMaxForkLength = Nothing
+              , pgaFixedSchedule = Nothing
+              , pgaSecurityParam = k
+              , pgaTestConfig = testConfig
+              , pgaTestConfigB = testConfigB
+              }
+            testOutput
    where
     testConfigB =
       TestConfigB
@@ -154,26 +156,27 @@ prop_simple_praos_convergence
     TestConfig{numCoreNodes} = testConfig
 
     testOutput@TestOutput{testOutputNodes} =
-      runTestNetwork
-        testConfig
-        testConfigB
-        TestConfigMB
-          { nodeInfo = \nid ->
-              plainTestNodeInitialization
-                ( protocolInfoPraos
-                    numCoreNodes
-                    nid
-                    params
-                    ( HardFork.defaultEraParams
-                        k
-                        slotLength
-                    )
-                    setupInitialNonce
-                    evolvingStake
-                )
-                (blockForgingPraos numCoreNodes nid)
-          , mkRekeyM = Nothing
-          }
+      Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+        runTestNetwork
+          testConfig
+          testConfigB
+          TestConfigMB
+            { nodeInfo = \nid ->
+                plainTestNodeInitialization
+                  ( protocolInfoPraos
+                      numCoreNodes
+                      nid
+                      params
+                      ( HardFork.defaultEraParams
+                          k
+                          slotLength
+                      )
+                      setupInitialNonce
+                      evolvingStake
+                  )
+                  (blockForgingPraos numCoreNodes nid)
+            , mkRekeyM = Nothing
+            }
 
     flakyTestCopy =
       "This test may be flaky, and its failure may not be indicative of an actual problem: see https://github.com/IntersectMBO/ouroboros-consensus/issues/1105"

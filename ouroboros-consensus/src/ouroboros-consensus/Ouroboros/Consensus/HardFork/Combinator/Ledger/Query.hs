@@ -44,6 +44,7 @@ import Data.Bifunctor
 import Data.Functor.Product
 import Data.Kind (Type)
 import Data.Proxy
+import qualified Data.Reflection as Reflection
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting (getExactly)
@@ -74,6 +75,7 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.History
   ( Bound (..)
   , EraParams
+  , EraParamsFormat (..)
   , Shape (..)
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
@@ -549,24 +551,24 @@ instance Serialise (Some QueryAnytime) where
       0 -> return $ Some GetEraStart
       _ -> fail $ "QueryAnytime: invalid tag " ++ show tag
 
-encodeQueryAnytimeResult :: QueryAnytime result -> result -> Encoding
-encodeQueryAnytimeResult GetEraStart = encode
+encodeQueryAnytimeResult :: EraParamsFormat -> QueryAnytime result -> result -> Encoding
+encodeQueryAnytimeResult epf GetEraStart = Reflection.give epf $ encode
 
-decodeQueryAnytimeResult :: QueryAnytime result -> forall s. Decoder s result
-decodeQueryAnytimeResult GetEraStart = decode
+decodeQueryAnytimeResult :: EraParamsFormat -> QueryAnytime result -> forall s. Decoder s result
+decodeQueryAnytimeResult epf GetEraStart = Reflection.give epf $ decode
 
 encodeQueryHardForkResult ::
   SListI xs =>
-  QueryHardFork xs result -> result -> Encoding
-encodeQueryHardForkResult = \case
-  GetInterpreter -> encode
+  EraParamsFormat -> QueryHardFork xs result -> result -> Encoding
+encodeQueryHardForkResult epf = \case
+  GetInterpreter -> Reflection.give epf encode
   GetCurrentEra -> encode
 
 decodeQueryHardForkResult ::
   SListI xs =>
-  QueryHardFork xs result -> forall s. Decoder s result
-decodeQueryHardForkResult = \case
-  GetInterpreter -> decode
+  EraParamsFormat -> QueryHardFork xs result -> forall s. Decoder s result
+decodeQueryHardForkResult epf = \case
+  GetInterpreter -> Reflection.give epf decode
   GetCurrentEra -> decode
 
 {-------------------------------------------------------------------------------

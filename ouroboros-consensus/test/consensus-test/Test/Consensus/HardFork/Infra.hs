@@ -35,10 +35,10 @@ import Data.SOP.Strict
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.HardFork.History (Bound (boundPerasRound))
 import qualified Ouroboros.Consensus.HardFork.History as HF
+import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (eraPerasRoundLength))
 import Test.QuickCheck
-import Ouroboros.Consensus.HardFork.History.EraParams (EraParams(eraPerasRoundLength))
-import Ouroboros.Consensus.HardFork.History (Bound(boundPerasRound))
 
 {-------------------------------------------------------------------------------
   Generate hard fork shape
@@ -125,7 +125,9 @@ genEraParams = do
   eraGenesisWin <- GenesisWindow <$> choose (1, 10)
   -- we restrict Peras round length to divide the epoch size.
   -- for testing purposes, we include Peras round length in every era.
-  eraPerasRoundLength <- Just . PerasRoundLength <$> choose (1, 10) `suchThat` (\x -> (unEpochSize eraEpochSize) `mod` x == 0)
+  eraPerasRoundLength <-
+    Just . PerasRoundLength
+      <$> choose (1, 10) `suchThat` (\x -> (unEpochSize eraEpochSize) `mod` x == 0)
   return HF.EraParams{..}
  where
   genSafeZone :: Gen HF.SafeZone
@@ -165,7 +167,7 @@ genSummary is =
   -- TODO(geo2a): we probably still want to test non-Peras eras, but it is rather difficult
   -- to parameterise the test suite, as it requires also parameterise many non-test functions, like
   -- 'HF.initBound', and leading to a huge diff.
-  initBoundWithPeras = HF.initBound {boundPerasRound = Just . PerasRoundNo $ 0}
+  initBoundWithPeras = HF.initBound{boundPerasRound = Just . PerasRoundNo $ 0}
 
   genEraSummary :: Era -> HF.Bound -> Gen (HF.EraSummary, HF.EraEnd)
   genEraSummary _era lo = do

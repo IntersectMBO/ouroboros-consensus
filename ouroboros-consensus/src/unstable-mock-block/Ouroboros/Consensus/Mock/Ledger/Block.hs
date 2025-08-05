@@ -84,6 +84,7 @@ import Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Kind (Type)
 import Data.Proxy
+import Data.Reflection (Given)
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
@@ -380,7 +381,7 @@ deriving instance
   NoThunks (MockLedgerConfig c ext) =>
   NoThunks (SimpleLedgerConfig c ext)
 deriving instance
-  Serialise (MockLedgerConfig c ext) =>
+  (Serialise (MockLedgerConfig c ext), Given HardFork.EraParamsFormat) =>
   Serialise (SimpleLedgerConfig c ext)
 
 type instance LedgerCfg (LedgerState (SimpleBlock c ext)) = SimpleLedgerConfig c ext
@@ -388,7 +389,7 @@ type instance LedgerCfg (LedgerState (SimpleBlock c ext)) = SimpleLedgerConfig c
 instance MockProtocolSpecific c ext => HasPartialLedgerConfig (SimpleBlock c ext)
 
 instance
-  Serialise (MockLedgerConfig c ext) =>
+  (Serialise (MockLedgerConfig c ext), Given HardFork.EraParamsFormat) =>
   SerialiseNodeToClient (SimpleBlock c ext) (SimpleLedgerConfig c ext)
 
 instance GetTip (LedgerState (SimpleBlock c ext)) where
