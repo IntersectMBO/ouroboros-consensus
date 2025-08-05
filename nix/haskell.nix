@@ -2,6 +2,7 @@ inputs: final: prev:
 
 let
   inherit (prev) lib;
+  fs = lib.fileset;
   inherit (final) haskell-nix;
 
   forAllProjectPackages = cfg: args@{ config, lib, ... }: {
@@ -74,4 +75,30 @@ let
 in
 {
   inherit hsPkgs;
+
+  cabal-docspec-check = final.stdenv.mkDerivation {
+    name = "cabal-docspec-check";
+
+    src = fs.toSource {
+      root = ./..;
+      fileset = fs.unions [
+        (fs.fileFilter (f: f.hasExt "cabal" || f.hasExt "hs") ./..)
+      ];
+    };
+
+    nativeBuildInputs = [
+      final.fd
+      final.cabal-docspec
+      (hsPkgs.ghcWithPackages
+        (ps: [ ps.latex-svg-image ] ++ lib.filter (p: p ? components.library)
+          (lib.attrValues (haskell-nix.haskellLib.selectProjectPackages ps))))
+      final.texliveFull
+    ];
+
+    buildPhase = ''
+      export CABAL_DIR=$(mktemp -d)
+      touch $CABAL_DIR/config $out
+      cabal-docspec --no-cabal-plan $(fd -e cabal --exact-depth 2)
+    '';
+  };
 }
