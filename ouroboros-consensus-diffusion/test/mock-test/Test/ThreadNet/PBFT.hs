@@ -6,6 +6,7 @@ module Test.ThreadNet.PBFT (tests) where
 
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Data.Map.Strict as Map
+import qualified Data.Reflection as Reflection
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -75,24 +76,25 @@ prop_simple_pbft_convergence
     , setupNodeJoinPlan = nodeJoinPlan
     } =
     tabulate "Ref.PBFT result" [Ref.resultConstrName refResult] $
-      prop_asSimulated
-        .&&. prop_general
-          PropGeneralArgs
-            { pgaBlockProperty = prop_validSimpleBlock
-            , pgaCountTxs = countSimpleGenTxs
-            , pgaExpectedCannotForge = expectedCannotForge numCoreNodes
-            , pgaFirstBlockNo = 0
-            , pgaFixedMaxForkLength =
-                Just $ NumBlocks $ case refResult of
-                  Ref.Forked{} -> 1
-                  _ -> 0
-            , pgaFixedSchedule =
-                Just $ roundRobinLeaderSchedule numCoreNodes numSlots
-            , pgaSecurityParam = k
-            , pgaTestConfig = testConfig
-            , pgaTestConfigB = testConfigB
-            }
-          testOutput
+      Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+        prop_asSimulated
+          .&&. prop_general
+            PropGeneralArgs
+              { pgaBlockProperty = prop_validSimpleBlock
+              , pgaCountTxs = countSimpleGenTxs
+              , pgaExpectedCannotForge = expectedCannotForge numCoreNodes
+              , pgaFirstBlockNo = 0
+              , pgaFixedMaxForkLength =
+                  Just $ NumBlocks $ case refResult of
+                    Ref.Forked{} -> 1
+                    _ -> 0
+              , pgaFixedSchedule =
+                  Just $ roundRobinLeaderSchedule numCoreNodes numSlots
+              , pgaSecurityParam = k
+              , pgaTestConfig = testConfig
+              , pgaTestConfigB = testConfigB
+              }
+            testOutput
    where
     TestConfig{numCoreNodes, numSlots} = testConfig
     slotLength = slotLengthFromSec 1
@@ -118,19 +120,20 @@ prop_simple_pbft_convergence
     params = PBftParams k numCoreNodes sigThd
 
     testOutput =
-      runTestNetwork
-        testConfig
-        testConfigB
-        TestConfigMB
-          { nodeInfo = \nid ->
-              plainTestNodeInitialization
-                ( protocolInfoMockPBFT
-                    params
-                    (HardFork.defaultEraParams k slotLength)
-                )
-                (pure $ blockForgingMockPBFT nid)
-          , mkRekeyM = Nothing
-          }
+      Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+        runTestNetwork
+          testConfig
+          testConfigB
+          TestConfigMB
+            { nodeInfo = \nid ->
+                plainTestNodeInitialization
+                  ( protocolInfoMockPBFT
+                      params
+                      (HardFork.defaultEraParams k slotLength)
+                  )
+                  (pure $ blockForgingMockPBFT nid)
+            , mkRekeyM = Nothing
+            }
 
     refResult :: Ref.Result
     refResult = Ref.simulate params nodeJoinPlan numSlots

@@ -7,6 +7,7 @@ module Test.ThreadNet.BFT (tests) where
 
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import Data.Constraint
+import qualified Data.Reflection as Reflection
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config.SecurityParam
@@ -55,7 +56,8 @@ instance Arbitrary TestSetup where
 tests :: TestTree
 tests =
   testGroup "BFT" $
-    [ roundtrip_all SimpleCodecConfig dictNestedHdr Nothing
+    [ Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+        roundtrip_all SimpleCodecConfig dictNestedHdr Nothing
     , testProperty "simple convergence" $ \setup ->
         prop_simple_bft_convergence setup
     ]
@@ -70,20 +72,22 @@ prop_simple_bft_convergence
     , setupTestConfig = testConfig
     , setupNodeJoinPlan = nodeJoinPlan
     } =
-    prop_general
-      PropGeneralArgs
-        { pgaBlockProperty = prop_validSimpleBlock
-        , pgaCountTxs = countSimpleGenTxs
-        , pgaExpectedCannotForge = noExpectedCannotForges
-        , pgaFirstBlockNo = 0
-        , pgaFixedMaxForkLength = Nothing
-        , pgaFixedSchedule =
-            Just $ roundRobinLeaderSchedule numCoreNodes numSlots
-        , pgaSecurityParam = k
-        , pgaTestConfig = testConfig
-        , pgaTestConfigB = testConfigB
-        }
-      testOutput
+    -- this is needed because MockBftBlock is not a HardForkBlock and thus lacks a bunch of instances.
+    Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+      prop_general
+        PropGeneralArgs
+          { pgaBlockProperty = prop_validSimpleBlock
+          , pgaCountTxs = countSimpleGenTxs
+          , pgaExpectedCannotForge = noExpectedCannotForges
+          , pgaFirstBlockNo = 0
+          , pgaFixedMaxForkLength = Nothing
+          , pgaFixedSchedule =
+              Just $ roundRobinLeaderSchedule numCoreNodes numSlots
+          , pgaSecurityParam = k
+          , pgaTestConfig = testConfig
+          , pgaTestConfigB = testConfigB
+          }
+        testOutput
    where
     TestConfig{numCoreNodes, numSlots} = testConfig
     slotLength = slotLengthFromSec 20
@@ -103,19 +107,21 @@ prop_simple_bft_convergence
         , version = newestVersion (Proxy @MockBftBlock)
         }
 
+    testOutput :: TestOutput MockBftBlock
     testOutput =
-      runTestNetwork
-        testConfig
-        testConfigB
-        TestConfigMB
-          { nodeInfo = \nid ->
-              plainTestNodeInitialization
-                ( protocolInfoBft
-                    numCoreNodes
-                    nid
-                    k
-                    (HardFork.defaultEraParams k slotLength)
-                )
-                (pure $ blockForgingBft nid)
-          , mkRekeyM = Nothing
-          }
+      Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+        runTestNetwork
+          testConfig
+          testConfigB
+          TestConfigMB
+            { nodeInfo = \nid ->
+                plainTestNodeInitialization
+                  ( protocolInfoBft
+                      numCoreNodes
+                      nid
+                      k
+                      (HardFork.defaultEraParams k slotLength)
+                  )
+                  (pure $ blockForgingBft nid)
+            , mkRekeyM = Nothing
+            }

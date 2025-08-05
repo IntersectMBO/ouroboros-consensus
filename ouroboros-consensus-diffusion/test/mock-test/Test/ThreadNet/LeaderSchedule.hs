@@ -7,6 +7,7 @@ import Cardano.Ledger.BaseTypes (nonZero)
 import Control.Monad (replicateM)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Reflection as Reflection
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config.SecurityParam
@@ -88,19 +89,20 @@ prop_simple_leader_schedule_convergence
     , setupSlotLength = slotLength
     } =
     counterexample (tracesToDot testOutputNodes) $
-      prop_general
-        PropGeneralArgs
-          { pgaBlockProperty = prop_validSimpleBlock
-          , pgaCountTxs = countSimpleGenTxs
-          , pgaExpectedCannotForge = noExpectedCannotForges
-          , pgaFirstBlockNo = 0
-          , pgaFixedMaxForkLength = Nothing
-          , pgaFixedSchedule = Just schedule
-          , pgaSecurityParam = k
-          , pgaTestConfig = testConfig
-          , pgaTestConfigB = testConfigB
-          }
-        testOutput
+      Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+        prop_general
+          PropGeneralArgs
+            { pgaBlockProperty = prop_validSimpleBlock
+            , pgaCountTxs = countSimpleGenTxs
+            , pgaExpectedCannotForge = noExpectedCannotForges
+            , pgaFirstBlockNo = 0
+            , pgaFixedMaxForkLength = Nothing
+            , pgaFixedSchedule = Just schedule
+            , pgaSecurityParam = k
+            , pgaTestConfig = testConfig
+            , pgaTestConfigB = testConfigB
+            }
+          testOutput
    where
     TestConfig{numCoreNodes} = testConfig
 
@@ -119,27 +121,28 @@ prop_simple_leader_schedule_convergence
     dummyF = 0.5
 
     testOutput@TestOutput{testOutputNodes} =
-      runTestNetwork
-        testConfig
-        testConfigB
-        TestConfigMB
-          { nodeInfo = \nid ->
-              plainTestNodeInitialization
-                ( protocolInfoPraosRule
-                    numCoreNodes
-                    nid
-                    PraosParams
-                      { praosSecurityParam = k
-                      , praosSlotsPerEpoch = unEpochSize epochSize
-                      , praosLeaderF = dummyF
-                      }
-                    (HardFork.defaultEraParams k slotLength)
-                    schedule
-                    emptyPraosEvolvingStake
-                )
-                (pure blockForgingPraosRule)
-          , mkRekeyM = Nothing
-          }
+      Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+        runTestNetwork
+          testConfig
+          testConfigB
+          TestConfigMB
+            { nodeInfo = \nid ->
+                plainTestNodeInitialization
+                  ( protocolInfoPraosRule
+                      numCoreNodes
+                      nid
+                      PraosParams
+                        { praosSecurityParam = k
+                        , praosSlotsPerEpoch = unEpochSize epochSize
+                        , praosLeaderF = dummyF
+                        }
+                      (HardFork.defaultEraParams k slotLength)
+                      schedule
+                      emptyPraosEvolvingStake
+                  )
+                  (pure blockForgingPraosRule)
+            , mkRekeyM = Nothing
+            }
 
 {-------------------------------------------------------------------------------
   Dependent generation and shrinking of leader schedules
