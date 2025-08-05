@@ -205,6 +205,7 @@ type instance TxIn (LedgerState ByronBlock) = Void
 type instance TxOut (LedgerState ByronBlock) = Void
 type instance LSMTxOut (LedgerState ByronBlock) = TxOut (LedgerState ByronBlock)
 
+-- Byron has no ledger tables, therefore we don't need to convert to and from LSMTxOut
 instance HasLSMTxOut (LedgerState ByronBlock) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id

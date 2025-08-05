@@ -41,7 +41,13 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Util.Args
 import System.FS.API
 
-data LedgerDbBackendArgs m = V1LMDB (Complete V1.LedgerDbFlavorArgs m) | V2InMemory | V2LSM FilePath
+data LedgerDbBackendArgs m
+  = V1LMDB (Complete V1.LedgerDbFlavorArgs m)
+  | V2InMemory
+  | V2LSM
+      -- | The filepath **relative to the fast storage device** in which we will
+      -- open/create the LSM-tree database.
+      FilePath
 
 {-------------------------------------------------------------------------------
   Arguments

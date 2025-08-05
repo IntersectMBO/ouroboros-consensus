@@ -211,7 +211,10 @@ lsmTestArguments ::
 lsmTestArguments secParam fp =
   TestArguments
     { argFlavorArgs =
-        LedgerDbFlavorArgsV2 $ V2Args $ LSMHandleArgs $ LSMArgs fp LSM.stdGenSalt (LSM.stdMkBlockIOFS fp)
+        LedgerDbFlavorArgsV2 $
+          V2Args $
+            LSMHandleArgs $
+              LSMArgs (mkFsPath $ FilePath.splitDirectories fp) LSM.stdGenSalt (LSM.stdMkBlockIOFS fp)
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -531,7 +534,7 @@ openLedgerDB flavArgs env cfg fs = do
                     fs'
                     blockio
                     salt
-                    (mkFsPath [path])
+                    path
               )
               LSM.closeSession
           pure (LSM.snapshotManager (snd session) args, V2.LSMHandleEnv session rk1)

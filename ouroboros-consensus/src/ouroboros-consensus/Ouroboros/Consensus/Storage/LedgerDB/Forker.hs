@@ -115,6 +115,11 @@ data Forker m l blk = Forker
   -- The second component of the returned tuple is the maximal key found by the
   -- forker. This is only necessary because some backends have a different
   -- sorting for the keys than the order defined in Haskell.
+  --
+  -- The last key retrieved is part of the map too. It is intended to be fed
+  -- back into the next iteration of the range read. If the function returns
+  -- Nothing, it means the read returned no results, or in other words, we
+  -- reached the end of the ledger tables.
   , forkerGetLedgerState :: !(STM m (l EmptyMK))
   -- ^ Get the full ledger state without tables.
   --

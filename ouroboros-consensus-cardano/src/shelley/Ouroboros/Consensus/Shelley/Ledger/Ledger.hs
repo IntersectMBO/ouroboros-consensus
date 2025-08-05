@@ -322,8 +322,8 @@ type instance TxIn (LedgerState (ShelleyBlock proto era)) = SL.TxIn
 type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
 
 -- | We use this newtype only to alter MemPack serialization. LSM trees use an
--- index that looks at the first 8 bytes so it is important to put the index
--- first such that we avoid all TxIns from the same tx to imply a collision in
+-- index that looks at the first 8 bytes, so it is important to put the index
+-- first to avoid all TxIns from the same tx to cause a collision in
 -- the LSM index.
 newtype LSMTxIn = LSMTxIn {lsmTxIn :: SL.TxIn}
 
@@ -332,8 +332,7 @@ instance MemPack LSMTxIn where
   packM (LSMTxIn (SL.TxIn txid txix)) = packM txix >> packM txid
   unpackM = do
     txix <- unpackM
-    txid <- unpackM
-    pure . LSMTxIn $ SL.TxIn txid txix
+    LSMTxIn . flip SL.TxIn txix <$> unpackM
 
 instance SerialiseKey SL.TxIn where
   serialiseKey = serialiseLSMViaMemPack . LSMTxIn

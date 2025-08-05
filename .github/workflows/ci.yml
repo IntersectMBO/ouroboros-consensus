@@ -223,6 +223,9 @@ jobs:
       with:
         use-sodium-vrf: false
 
+    - name: "Move to base action: install liburing on ubuntu"
+      run: sudo apt -y install liburing-dev
+
     - name: Download benchmark executables
       uses: actions/download-artifact@v4
       with:

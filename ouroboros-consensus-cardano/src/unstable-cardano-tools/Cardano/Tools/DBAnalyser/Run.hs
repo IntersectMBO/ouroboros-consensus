@@ -50,7 +50,6 @@ import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
-import System.FS.API
 import System.IO
 import Text.Printf (printf)
 
@@ -101,7 +100,7 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
                 fs'
                 blockio
                 salt
-                (mkFsPath [path])
+                path
           )
           LSM.closeSession
       pure (LSM.snapshotManager (snd session) lgrDbArgs, V2.LSMHandleEnv session rk1)

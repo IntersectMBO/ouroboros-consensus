@@ -88,8 +88,8 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- ^ Create a copy of the handle.
   --
   -- When applying diffs to a table, we will first duplicate the handle, then
-  -- apply the diffs in the copy. It is expected that this operation takes
-  -- constant time.
+  -- apply the diffs in the copy. It is expected that duplicating the handle
+  -- takes constant time.
   , read :: !(l EmptyMK -> LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
@@ -102,6 +102,11 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- retrieved. This is necessary because the LSM backend uses an alternative
   -- serialization format and the last key in the returned Map might not be the
   -- last key read.
+  --
+  -- The last key retrieved is part of the map too. It is intended to be fed
+  -- back into the next iteration of the range read. If the function returns
+  -- Nothing, it means the read returned no results, or in other words, we
+  -- reached the end of the ledger tables.
   , readAll :: !(l EmptyMK -> m (LedgerTables l ValuesMK))
   -- ^ Costly read all operation, not to be used in Consensus but only in
   -- snapshot-converter executable. The values will be read as if they were from

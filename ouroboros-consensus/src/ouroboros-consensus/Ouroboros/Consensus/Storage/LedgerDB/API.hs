@@ -791,6 +791,38 @@ type LedgerSupportsV2LedgerDB l =
 -- Therefore, we will instead store 'LSMTxOut' in the LSM database, which will
 -- be 'TxOut' for most of the unitary blocks and basic hard fork blocks, but
 -- will be 'ByteArray's for the Cardano Block.
+--
+-- In short, the serialisation API for `lsm-tree` looks like this:
+--
+-- > data Table k v = ...
+-- > class SerialiseKey k where
+-- >   serialiseKey :: k -> ByteArray
+-- >   deserialiseKey :: ByteArray -> k
+-- > class SerialiseValue k where
+-- >   serialiseKey :: v -> ByteArray
+-- >   deserialiseKey :: ByteArray -> v
+--
+-- So we cannot pass a deserialisation hint like we do with
+-- 'IndexedMemPack', so this option must be discarded:
+--
+-- > type Option1 = Table TxIn TxOut
+-- > instance SerialiseValue TxOut where
+-- >   deserialiseValue = {- we want to use mempack, but we have no deserialisation hint -}
+--
+-- Therefore, we decided to use ByteArrays for Cardano which we later interpret
+-- with a deserialisation hint in `fromLSMTxOut`:
+--
+-- > type Option2 = Table TxIn ByteArray
+-- > instance SerialiseValue TxOut where
+-- >   deserialiseValue = id
+-- > fromLSMTxOut ::  Hint -> ByteArray -> TxOut
+-- > fromLSMTxOut hint byteArray = {- use mempack with hint on byte array -}
+-- >
+-- > -- Roughly what I mean by "consensus deserialises manually outside of lsm-tree"
+-- > readTxOuts hint txIns table = fromLSMTxOut hint <$> lookups table txIns
+--
+-- So we will define `LSMTxOut (LedgerState (CardanoBlock StandardCrypto))` to
+-- `ByteArray`.
 type LSMTxOut :: LedgerStateKind -> Type
 type family LSMTxOut l
 

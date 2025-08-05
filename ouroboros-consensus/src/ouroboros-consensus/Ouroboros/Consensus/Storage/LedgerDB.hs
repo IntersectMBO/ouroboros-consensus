@@ -93,7 +93,7 @@ openDB
                     fs
                     blockio
                     salt
-                    (mkFsPath [path])
+                    path
               )
               LSM.closeSession
           pure (LSM.snapshotManager (snd session) args, V2.LSMHandleEnv session rk1)

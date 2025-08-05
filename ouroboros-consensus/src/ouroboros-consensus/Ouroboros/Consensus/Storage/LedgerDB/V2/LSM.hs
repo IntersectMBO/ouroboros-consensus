@@ -74,7 +74,6 @@ import Data.Void
 import Database.LSMTree (Session, Table)
 import qualified Database.LSMTree as LSM
 import qualified Database.LSMTree.Internal.Types as LSM
-import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -102,13 +101,6 @@ import Prelude hiding (read)
 -- | Type alias for convenience
 type UTxOTable m l = Table m (TxIn l) (LSMTxOut l) Void
 
-data LedgerTablesHandleState m l
-  = LedgerTablesHandleOpen !(UTxOTable m l)
-  | LedgerTablesHandleClosed
-  deriving Generic
-
-deriving instance NoThunks (LedgerTablesHandleState m l)
-
 instance NoThunks (Table m txin txout Void) where
   showTypeOf _ = "Table"
   wNoThunks _ (LSM.Table _tbl) = pure Nothing
@@ -132,13 +124,6 @@ tableFromValuesMK rr session (LedgerTables (ValuesMK values)) = do
     V.fromList $
       [(k, toLSMTxOut (Proxy @l) v, Nothing) | (k, v) <- Map.toList values]
   pure res
-
-guardClosed ::
-  MonadSTM m => StrictTVar m (LedgerTablesHandleState m l) -> (UTxOTable m l -> m a) -> m a
-guardClosed tv f =
-  readTVarIO tv >>= \case
-    LedgerTablesHandleClosed -> error $ show LSMClosedExn
-    LedgerTablesHandleOpen st -> f st
 
 snapshotManager ::
   ( IOLike m
@@ -183,40 +168,34 @@ newLSMLedgerTablesHandle ::
   Session m ->
   (ResourceKey m, UTxOTable m l) ->
   m (LedgerTablesHandle m l)
-newLSMLedgerTablesHandle tracer rr session (resKey, t0) = do
-  !tv <- newTVarIO (LedgerTablesHandleOpen t0)
+newLSMLedgerTablesHandle tracer rr session (resKey, t) = do
   traceWith tracer V2.TraceLedgerTablesHandleCreate
   pure
     LedgerTablesHandle
       { close = do
           Monad.void $ release resKey
-          atomically $ writeTVar tv LedgerTablesHandleClosed
           traceWith tracer V2.TraceLedgerTablesHandleClose
-      , duplicate = guardClosed tv $ \t -> do
+      , duplicate = do
           table <- allocate rr (\_ -> LSM.duplicate t) LSM.closeTable
           newLSMLedgerTablesHandle tracer rr session table
       , read = \st (LedgerTables (KeysMK keys)) ->
-          guardClosed
-            tv
-            ( \t -> do
-                let keys' = Set.toList keys
-                res <- LSM.lookups t (V.fromList keys')
-                pure $
-                  LedgerTables $
-                    ValuesMK $
-                      Map.fromList [(k, fromLSMTxOut st v) | (k, LSM.Found v) <- zip keys' (V.toList res)]
-            )
-      , readRange = implReadRange tv
+          do
+            let keys' = Set.toList keys
+            res <- LSM.lookups t (V.fromList keys')
+            pure $
+              LedgerTables $
+                ValuesMK $
+                  Map.fromList [(k, fromLSMTxOut st v) | (k, LSM.Found v) <- zip keys' (V.toList res)]
+      , readRange = implReadRange t
       , readAll = \st ->
           let readAll' m = do
-                (v, n) <- implReadRange tv st (m, 100000)
+                (v, n) <- implReadRange t st (m, 100000)
                 maybe (pure v) (fmap (ltliftA2 unionValues v) . readAll' . Just) n
            in readAll' Nothing
-      , pushDiffs = const (implPushDiffs tv)
-      , takeHandleSnapshot = \_ snapshotName -> guardClosed tv $
-          \table -> do
-            LSM.saveSnapshot (fromString snapshotName) "UTxO table" table
-            pure Nothing
+      , pushDiffs = const (implPushDiffs t)
+      , takeHandleSnapshot = \_ snapshotName -> do
+          LSM.saveSnapshot (fromString snapshotName) "UTxO table" t
+          pure Nothing
       , tablesSize = pure Nothing
       }
 
@@ -224,31 +203,27 @@ implReadRange ::
   IOLike m =>
   HasLedgerTables l =>
   LedgerSupportsLSMLedgerDB l =>
-  StrictTVar m (LedgerTablesHandleState m l) ->
+  UTxOTable m l ->
   l EmptyMK ->
   (Maybe (TxIn l), Int) ->
   m (LedgerTables l ValuesMK, Maybe (TxIn l))
-implReadRange tv st (mPrev, num) =
-  guardClosed
-    tv
-    ( \table ->
-        let
-          cursorFromStart = LSM.withCursor table (LSM.take num)
-          -- Here we ask for one value more and we drop one value because the
-          -- cursor returns also the key at which it was opened.
-          cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table k (LSM.take $ num + 1)
-         in
-          do
-            entries <- V.toList <$> maybe cursorFromStart cursorFromKey mPrev
-            pure
-              ( LedgerTables . ValuesMK . Map.fromList $
-                  [(k, (fromLSMTxOut st v)) | LSM.Entry k v <- entries]
-              , case snd <$> unsnoc entries of
-                  Nothing -> Nothing
-                  Just (LSM.Entry k _) -> Just k
-                  Just (LSM.EntryWithBlob k _ _) -> Just k
-              )
-    )
+implReadRange table st (mPrev, num) =
+  let
+    cursorFromStart = LSM.withCursor table (LSM.take num)
+    -- Here we ask for one value more and we drop one value because the
+    -- cursor returns also the key at which it was opened.
+    cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table k (LSM.take $ num + 1)
+   in
+    do
+      entries <- V.toList <$> maybe cursorFromStart cursorFromKey mPrev
+      pure
+        ( LedgerTables . ValuesMK . Map.fromList $
+            [(k, (fromLSMTxOut st v)) | LSM.Entry k v <- entries]
+        , case snd <$> unsnoc entries of
+            Nothing -> Nothing
+            Just (LSM.Entry k _) -> Just k
+            Just (LSM.EntryWithBlob k _ _) -> Just k
+        )
  where
 #if __GLASGOW_HASKELL__ < 908
     unsnoc :: [a] -> Maybe ([a], a)
@@ -263,22 +238,18 @@ implPushDiffs ::
   , IOLike m
   , HasLedgerTables l
   ) =>
-  StrictTVar m (LedgerTablesHandleState m l) -> l DiffMK -> m ()
-implPushDiffs tv !st1 = do
+  UTxOTable m l -> l DiffMK -> m ()
+implPushDiffs t !st1 = do
   let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
-  guardClosed
-    tv
-    ( \t ->
-        LSM.updates t $
-          V.fromList
-            [ ( k
-              , case h of
-                  Diff.Insert v -> LSM.Insert (toLSMTxOut (Proxy @l) v) Nothing
-                  Diff.Delete -> LSM.Delete
-              )
-            | (k, h) <- Map.toList diffs
-            ]
-    )
+  LSM.updates t $
+    V.fromList
+      [ ( k
+        , case h of
+            Diff.Insert v -> LSM.Insert (toLSMTxOut (Proxy @l) v) Nothing
+            Diff.Delete -> LSM.Delete
+        )
+      | (k, h) <- Map.toList diffs
+      ]
 
 -- | The path within the LedgerDB's filesystem to the file that contains the
 -- snapshot's serialized ledger state
