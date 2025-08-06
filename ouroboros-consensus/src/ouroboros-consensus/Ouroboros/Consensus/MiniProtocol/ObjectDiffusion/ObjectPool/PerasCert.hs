@@ -1,3 +1,6 @@
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE StandaloneDeriving #-}
+
 -- | Instantiate 'ObjectPoolReader' and 'ObjectPoolWriter' using Peras
 -- certificates from the 'PerasCertDB' (or the 'ChainDB' which is wrapping the
 -- 'PerasCertDB').
@@ -8,6 +11,8 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
   , makePerasCertPoolWriterFromChainDB
   ) where
 
+import qualified Data.Map as Map
+import GHC.Exception (throw)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -26,14 +31,16 @@ makePerasCertPoolReaderFromSnapshot ::
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromSnapshot getCertSnapshot =
   ObjectPoolReader
-    { oprObjectId = perasCertRound
+    { oprObjectId = getPerasCertRound
     , oprZeroTicketNo = PerasCertDB.zeroPerasCertTicketNo
     , oprObjectsAfter = \lastKnown limit -> do
         certSnapshot <- getCertSnapshot
         pure $
           take (fromIntegral limit) $
-            [ (ticketNo, perasCertRound cert, pure cert)
-            | (cert, ticketNo) <- PerasCertDB.getCertsAfter certSnapshot lastKnown
+            [ (ticketNo, getPerasCertRound cert, pure (getPerasCert cert))
+            | (ticketNo, cert) <-
+                Map.toAscList $
+                  PerasCertDB.getCertsAfter certSnapshot lastKnown
             ]
     }
 
@@ -44,15 +51,16 @@ makePerasCertPoolReaderFromCertDB perasCertDB =
   makePerasCertPoolReaderFromSnapshot (PerasCertDB.getCertSnapshot perasCertDB)
 
 makePerasCertPoolWriterFromCertDB ::
-  (StandardHash blk, MonadSTM m) =>
+  (StandardHash blk, IOLike m) =>
   PerasCertDB m blk -> ObjectPoolWriter PerasRoundNo (PerasCert blk) m
 makePerasCertPoolWriterFromCertDB perasCertDB =
   ObjectPoolWriter
-    { opwObjectId = perasCertRound
-    , opwAddObjects =
-        mapM_ $ PerasCertDB.addCert perasCertDB
+    { opwObjectId = getPerasCertRound
+    , opwAddObjects = \certs -> do
+        validatePerasCerts certs
+          >>= mapM_ (PerasCertDB.addCert perasCertDB)
     , opwHasObject = do
-        certSnapshot <- atomically $ PerasCertDB.getCertSnapshot perasCertDB
+        certSnapshot <- PerasCertDB.getCertSnapshot perasCertDB
         pure $ PerasCertDB.containsCert certSnapshot
     }
 
@@ -63,14 +71,38 @@ makePerasCertPoolReaderFromChainDB chainDB =
   makePerasCertPoolReaderFromSnapshot (ChainDB.getPerasCertSnapshot chainDB)
 
 makePerasCertPoolWriterFromChainDB ::
-  (StandardHash blk, MonadSTM m) =>
+  (StandardHash blk, IOLike m) =>
   ChainDB m blk -> ObjectPoolWriter PerasRoundNo (PerasCert blk) m
 makePerasCertPoolWriterFromChainDB chainDB =
   ObjectPoolWriter
-    { opwObjectId = perasCertRound
-    , opwAddObjects =
-        mapM_ $ ChainDB.addPerasCertAsync chainDB
+    { opwObjectId = getPerasCertRound
+    , opwAddObjects = \certs -> do
+        validatePerasCerts certs
+          >>= mapM_ (ChainDB.addPerasCertAsync chainDB)
     , opwHasObject = do
-        certSnapshot <- atomically $ ChainDB.getPerasCertSnapshot chainDB
+        certSnapshot <- ChainDB.getPerasCertSnapshot chainDB
         pure $ PerasCertDB.containsCert certSnapshot
     }
+
+data PerasCertInboundException
+  = forall blk. PerasCertValidationError (PerasValidationErr blk)
+
+deriving instance Show PerasCertInboundException
+
+instance Exception PerasCertInboundException
+
+-- | Validate a list of 'PerasCert's, throwing a 'PerasCertInboundException' if
+-- any of them are invalid.
+validatePerasCerts ::
+  (StandardHash blk, MonadThrow m) =>
+  [PerasCert blk] ->
+  m [ValidatedPerasCert blk]
+validatePerasCerts certs = do
+  let perasCfg = makePerasCfg Nothing
+  -- TODO replace the mocked-up Nothing with a real
+  -- 'BlockConfig' when all the plumbing is in place
+  -- see https://github.com/tweag/cardano-peras/issues/73
+  -- see https://github.com/tweag/cardano-peras/issues/120
+  case traverse (validatePerasCert perasCfg) certs of
+    Left validationErr -> throw (PerasCertValidationError validationErr)
+    Right validatedCerts -> return validatedCerts

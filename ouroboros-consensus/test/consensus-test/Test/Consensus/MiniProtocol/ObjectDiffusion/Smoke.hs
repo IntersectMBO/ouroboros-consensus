@@ -139,7 +139,7 @@ makeObjectPoolWriter (SmokeObjectPool poolContentTvar) =
         atomically $ modifyTVar poolContentTvar (++ objects)
         return ()
     , opwHasObject = do
-        poolContent <- atomically $ readTVar poolContentTvar
+        poolContent <- readTVar poolContentTvar
         pure $ \objectId -> any (\obj -> getSmokeObjectId obj == objectId) poolContent
     }
 
