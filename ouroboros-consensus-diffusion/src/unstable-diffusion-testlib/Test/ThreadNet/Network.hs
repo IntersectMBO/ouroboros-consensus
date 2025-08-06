@@ -122,8 +122,8 @@ import Ouroboros.Network.NodeToNode
   ( ConnectionId (..)
   , ExpandedInitiatorContext (..)
   , IsBigLedgerPeer (..)
-  , MiniProtocolParameters (..)
   , ResponderContext (..)
+  , defaultMiniProtocolParameters
   )
 import Ouroboros.Network.PeerSelection.Governor
   ( makePublicPeerSelectionStateVar
@@ -1053,13 +1053,7 @@ runThreadNetwork
               , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
-              , miniProtocolParameters =
-                  MiniProtocolParameters
-                    { chainSyncPipeliningHighMark = 4
-                    , chainSyncPipeliningLowMark = 2
-                    , blockFetchPipeliningMax = 10
-                    , txSubmissionMaxUnacked = 1000 -- TODO ?
-                    }
+              , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =
                   BlockFetchConfiguration
                     { bfcMaxConcurrencyBulkSync = 1
