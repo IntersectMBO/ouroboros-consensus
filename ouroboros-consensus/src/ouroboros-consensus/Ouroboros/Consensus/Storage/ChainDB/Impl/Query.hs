@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getMaxSlotNo
   , getPastLedger
   , getPerasWeightSnapshot
+  , getPerasCertSnapshot
   , getReadOnlyForkerAtPoint
   , getStatistics
   , getTipBlock
@@ -59,6 +60,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasWeightSnapshot)
+import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (eitherToMaybe)
@@ -286,6 +288,10 @@ getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
 
 getPerasWeightSnapshot :: ChainDbEnv m blk -> STM m (PerasWeightSnapshot blk)
 getPerasWeightSnapshot CDB{..} = PerasCertDB.getWeightSnapshot cdbPerasCertDB
+
+getPerasCertSnapshot ::
+  ChainDbEnv m blk -> STM m (PerasCertSnapshot blk)
+getPerasCertSnapshot CDB{..} = PerasCertDB.getCertSnapshot cdbPerasCertDB
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent

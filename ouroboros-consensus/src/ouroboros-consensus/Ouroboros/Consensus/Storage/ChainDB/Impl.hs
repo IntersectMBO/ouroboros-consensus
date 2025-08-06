@@ -285,6 +285,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
+            , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
             }
     addBlockTestFuse <- newFuse "test chain selection"
     copyTestFuse <- newFuse "test copy to immutable db"
