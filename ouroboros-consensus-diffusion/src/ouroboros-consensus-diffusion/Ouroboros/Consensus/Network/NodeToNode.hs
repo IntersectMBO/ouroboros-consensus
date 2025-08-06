@@ -71,6 +71,10 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound (objectDiffusionInbound)
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound (objectDiffusionOutbound)
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.Node.ExitPolicy
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
@@ -199,6 +203,15 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ConnectionId addr ->
       TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ()
+  , hPerasCertDiffusionInbound ::
+      NodeToNodeVersion ->
+      ConnectionId addr ->
+      PerasCertDiffusionInboundPipelined blk m ()
+  , hPerasCertDiffusionOutbound ::
+      NodeToNodeVersion ->
+      ControlMessageSTM m ->
+      ConnectionId addr ->
+      PerasCertDiffusionOutbound blk m ()
   , hKeepAliveClient ::
       NodeToNodeVersion ->
       ControlMessageSTM m ->
@@ -295,6 +308,20 @@ mkHandlers
             (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
             (getMempoolWriter getMempool)
             version
+      , hPerasCertDiffusionInbound = \version peer ->
+          objectDiffusionInbound
+            (contramap (TraceLabelPeer peer) (Node.certDiffusionInboundTracer tracers))
+            (certDiffusionMaxUnacked miniProtocolParameters)
+            (makePerasCertPoolReaderFromChainDB $ getChainDB)
+            (makePerasCertPoolWriterFromChainDB $ getChainDB)
+            version
+      , hPerasCertDiffusionOutbound = \version controlMessageSTM peer ->
+          objectDiffusionOutbound
+            (contramap (TraceLabelPeer peer) (Node.certDiffusionOutboundTracer tracers))
+            (certDiffusionMaxUnacked miniProtocolParameters)
+            (makePerasCertPoolReaderFromChainDB $ getChainDB)
+            version
+            controlMessageSTM
       , hKeepAliveClient = \_version -> keepAliveClient (Node.keepAliveClientTracer tracers) keepAliveRng
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
