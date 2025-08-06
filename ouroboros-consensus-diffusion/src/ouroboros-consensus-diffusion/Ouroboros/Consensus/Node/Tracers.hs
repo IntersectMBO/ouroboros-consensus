@@ -42,6 +42,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
   )
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
 import Ouroboros.Network.Block (Tip)
 import Ouroboros.Network.BlockFetch
@@ -87,6 +88,8 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , csjTracer ::
       f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
   , dbfTracer :: f (CSJumping.TraceEventDbf remotePeer)
+  , certDiffusionInboundTracer :: f (TraceLabelPeer remotePeer (TracePerasCertDiffusionInbound blk))
+  , certDiffusionOutboundTracer :: f (TraceLabelPeer remotePeer (TracePerasCertDiffusionOutbound blk))
   }
 
 instance
@@ -115,6 +118,8 @@ instance
       , gddTracer = f gddTracer
       , csjTracer = f csjTracer
       , dbfTracer = f dbfTracer
+      , certDiffusionInboundTracer = f certDiffusionInboundTracer
+      , certDiffusionOutboundTracer = f certDiffusionOutboundTracer
       }
    where
     f ::
@@ -151,6 +156,8 @@ nullTracers =
     , gddTracer = nullTracer
     , csjTracer = nullTracer
     , dbfTracer = nullTracer
+    , certDiffusionInboundTracer = nullTracer
+    , certDiffusionOutboundTracer = nullTracer
     }
 
 showTracers ::
@@ -189,6 +196,8 @@ showTracers tr =
     , gddTracer = showTracing tr
     , csjTracer = showTracing tr
     , dbfTracer = showTracing tr
+    , certDiffusionInboundTracer = showTracing tr
+    , certDiffusionOutboundTracer = showTracing tr
     }
 
 {-------------------------------------------------------------------------------
