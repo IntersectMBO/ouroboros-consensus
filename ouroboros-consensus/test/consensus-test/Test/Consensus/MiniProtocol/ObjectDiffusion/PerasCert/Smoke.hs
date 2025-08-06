@@ -12,6 +12,7 @@ module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke (tests) where
 import Control.Tracer (contramap, nullTracer)
 import Data.Functor.Identity (Identity (..))
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Map as Map
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
@@ -78,7 +79,12 @@ newCertDB certs = do
   db <- PerasCertDB.openDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
   mapM_
     ( \cert -> do
-        result <- PerasCertDB.addCert db cert
+        let validatedCert =
+              ValidatedPerasCert
+                { vpcCert = cert
+                , vpcCertBoost = boostPerCert
+                }
+        result <- PerasCertDB.addCert db validatedCert
         case result of
           AddedPerasCertToDB -> pure ()
           PerasCertAlreadyInDB -> throwIO (userError "Expected AddedPerasCertToDB, but cert was already in DB")
@@ -120,7 +126,9 @@ prop_smoke protocolConstants (ListWithUniqueIds certs) =
         inboundPoolWriter = makePerasCertPoolWriterFromCertDB inboundPool
         getAllInboundPoolContent = do
           snap <- atomically $ PerasCertDB.getCertSnapshot inboundPool
-          let rawContent = PerasCertDB.getCertsAfter snap (PerasCertDB.zeroPerasCertTicketNo)
-          pure $ fst <$> rawContent
+          let rawContent =
+                Map.toAscList $
+                  PerasCertDB.getCertsAfter snap (PerasCertDB.zeroPerasCertTicketNo)
+          pure $ getPerasCert . snd <$> rawContent
 
     return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)

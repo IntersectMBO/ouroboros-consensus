@@ -287,7 +287,7 @@ objectDiffusionInbound tracer (maxFifoLength, maxNumIdsToReq, maxNumObjectsToReq
       -- objectIds that we already have in the pool and thus don't need to
       -- request.
       let st' = st{numIdsInFlight = numIdsInFlight st - numIdsRequested}
-      poolHasObject <- opwHasObject
+      poolHasObject <- atomically $ opwHasObject
       continueWithStateM
         (go n)
         (preAcknowledge st' poolHasObject collectedIds)
