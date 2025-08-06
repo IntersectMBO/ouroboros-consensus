@@ -86,7 +86,7 @@ module _ (ext : ExternalFunctions) where
                   ∷ ("slotToSeed slot                     \t: " +ˢ show stsslot)
                   ∷ ("nonceToSeed η₀                      \t: " +ˢ show ntsη₀)
                   ∷ ("seed                                \t: " +ˢ show seed)
-                  ∷ ("verify vrfVk seed (vrfPrf , vrfRes) \t: " +ˢ show (⌊ ¿ verify {T = VRFRes} ¿³ vrfVk seed (vrfPrf , vrfRes) ⌋))
+                  ∷ ("verify vrfVk seed (vrfPrf , vrfRes) \t: " +ˢ show (⌊ ¿ verify ¿³ vrfVk seed (vrfPrf , vrfRes) ⌋))
                   ∷ ("hBLeader bhb                        \t: " +ˢ Show-Certifiedℕ {DummyBlockStructure} .show t)
                   ∷ ("f                                   \t: " +ˢ show ActiveSlotCoeff)
                   ∷ ("checkLeaderVal? (hBLeader bhb) f σ  \t: " +ˢ show (⌊ checkLeaderVal? t ActiveSlotCoeff σ ⌋))
