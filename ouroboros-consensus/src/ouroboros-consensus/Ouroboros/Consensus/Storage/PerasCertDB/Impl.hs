@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.PerasCertDB.Impl
   ) where
 
 import Control.Tracer (Tracer, nullTracer, traceWith)
+import Data.Functor ((<&>))
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -69,6 +70,7 @@ openDB args = do
     PerasCertDB
       { addCert = getEnv1 h implAddCert
       , getWeightSnapshot = getEnvSTM h implGetWeightSnapshot
+      , getCertSnapshot = getEnvSTM h implGetCertSnapshot
       , garbageCollect = getEnv1 h implGarbageCollect
       , closeDB = implCloseDB h
       }
@@ -151,12 +153,15 @@ implAddCert env cert = do
       PerasVolatileCertState
         { pvcsCerts
         , pvcsWeightByPoint
+        , pvcsCertsByTicket
+        , pvcsLastTicketNo
         }
       fp <-
       readTVar pcdbVolatileState
     if Map.member roundNo pvcsCerts
       then pure PerasCertAlreadyInDB
       else do
+        let pvcsLastTicketNo' = succ pvcsLastTicketNo
         writeTVar pcdbVolatileState $
           WithFingerprint
             PerasVolatileCertState
@@ -165,6 +170,9 @@ implAddCert env cert = do
               , -- Note that the same block might be boosted by multiple points.
                 pvcsWeightByPoint =
                   addToPerasWeightSnapshot boostedPt boostPerCert pvcsWeightByPoint
+              , pvcsCertsByTicket =
+                  Map.insert pvcsLastTicketNo' cert pvcsCertsByTicket
+              , pvcsLastTicketNo = pvcsLastTicketNo'
               }
             (succ fp)
         pure AddedPerasCertToDB
@@ -187,6 +195,23 @@ implGetWeightSnapshot ::
 implGetWeightSnapshot PerasCertDbEnv{pcdbVolatileState} =
   fmap pvcsWeightByPoint <$> readTVar pcdbVolatileState
 
+implGetCertSnapshot ::
+  IOLike m =>
+  PerasCertDbEnv m blk -> STM m (PerasCertSnapshot blk)
+implGetCertSnapshot PerasCertDbEnv{pcdbVolatileState} =
+  readTVar pcdbVolatileState
+    <&> forgetFingerprint
+    <&> \PerasVolatileCertState
+           { pvcsCerts
+           , pvcsCertsByTicket
+           } ->
+        PerasCertSnapshot
+          { containsCert = \r -> Map.member r pvcsCerts
+          , getCertsAfter = \ticketNo ->
+              let (_, certs) = Map.split ticketNo pvcsCertsByTicket
+               in [(cert, tno) | (tno, cert) <- Map.toAscList certs]
+          }
+
 implGarbageCollect ::
   forall m blk.
   (IOLike m, StandardHash blk) =>
@@ -197,16 +222,22 @@ implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
   atomically $ modifyTVar pcdbVolatileState (fmap gc)
  where
   gc :: PerasVolatileCertState blk -> PerasVolatileCertState blk
-  gc PerasVolatileCertState{pvcsCerts, pvcsWeightByPoint} =
+  gc
     PerasVolatileCertState
-      { pvcsCerts = certsToKeep
-      , pvcsWeightByPoint = prunePerasWeightSnapshot slot pvcsWeightByPoint
-      }
-   where
-    (_, certsToKeep) =
-      Map.partition isTooOld pvcsCerts
-    isTooOld cert =
-      pointSlot (perasCertBoostedBlock cert) < NotOrigin slot
+      { pvcsCerts
+      , pvcsWeightByPoint
+      , pvcsLastTicketNo
+      , pvcsCertsByTicket
+      } =
+      PerasVolatileCertState
+        { pvcsCerts = Map.filter keepCert pvcsCerts
+        , pvcsWeightByPoint = prunePerasWeightSnapshot slot pvcsWeightByPoint
+        , pvcsCertsByTicket = Map.filter keepCert pvcsCertsByTicket
+        , pvcsLastTicketNo = pvcsLastTicketNo
+        }
+     where
+      keepCert cert =
+        pointSlot (perasCertBoostedBlock cert) >= NotOrigin slot
 
 {-------------------------------------------------------------------------------
   Implementation-internal types
@@ -221,6 +252,13 @@ data PerasVolatileCertState blk = PerasVolatileCertState
   -- ^ The weight of boosted blocks w.r.t. the certificates currently in the db.
   --
   -- INVARIANT: In sync with 'pvcsCerts'.
+  , pvcsCertsByTicket :: !(Map PerasCertTicketNo (PerasCert blk))
+  -- ^ The certificates by 'PerasCertTicketNo'.
+  --
+  -- INVARIANT: In sync with 'pvcsCerts'.
+  , pvcsLastTicketNo :: !PerasCertTicketNo
+  -- ^ The most recent 'PerasCertTicketNo' (or 'zeroPerasCertTicketNo'
+  -- otherwise).
   }
   deriving stock (Show, Generic)
   deriving anyclass NoThunks
@@ -231,6 +269,8 @@ initialPerasVolatileCertState =
     PerasVolatileCertState
       { pvcsCerts = Map.empty
       , pvcsWeightByPoint = emptyPerasWeightSnapshot
+      , pvcsCertsByTicket = Map.empty
+      , pvcsLastTicketNo = zeroPerasCertTicketNo
       }
     (Fingerprint 0)
 
