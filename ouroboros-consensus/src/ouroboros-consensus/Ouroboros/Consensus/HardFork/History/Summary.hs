@@ -489,7 +489,7 @@ invariantSummary = \(Summary summary) ->
           $ unless
             ( (unEpochSize $ eraEpochSize curParams)
                 `mod` (unPerasRoundLength . fromJust $ eraPerasRoundLength curParams)
-                /= 0
+                == 0
             )
           $ throwError
           $ mconcat
