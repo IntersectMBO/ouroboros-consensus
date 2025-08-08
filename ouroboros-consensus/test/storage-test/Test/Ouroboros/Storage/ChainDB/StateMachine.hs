@@ -1434,6 +1434,8 @@ tag =
           Left t
     _ -> Right $ tagChainSelReprocess t test
 
+  -- Tag this test case if we ever switched from a longer to a shorter chain in
+  -- a non-degenerate case.
   tagSwitchedToShorterChain :: EventPred m
   tagSwitchedToShorterChain = C.predicate $ \case
     ev

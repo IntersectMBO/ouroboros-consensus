@@ -450,6 +450,7 @@ addPerasCert ::
   Model blk ->
   Model blk
 addPerasCert cfg cert m
+  -- Do not alter the model when a certificate for that round already exists.
   | Map.member certRound (perasCerts m) = m
   | otherwise =
       chainSelection

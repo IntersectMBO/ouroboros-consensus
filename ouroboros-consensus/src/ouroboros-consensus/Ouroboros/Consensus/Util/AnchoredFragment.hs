@@ -54,6 +54,12 @@ compareHeadBlockNo ::
   Ordering
 compareHeadBlockNo = compare `on` AF.headBlockNo
 
+-- | Check that we can switch from @ours@ to @theirs@ by rolling back our chain
+-- by at most @k@ weight.
+--
+-- If @ours@ and @cand@ do not intersect, this returns 'False'. If they do
+-- intersect, then we check that the suffix of @ours@ after the intersection has
+-- total weight at most @k@.
 forksAtMostKWeight ::
   ( StandardHash blk
   , HasHeader b
@@ -62,23 +68,18 @@ forksAtMostKWeight ::
   PerasWeightSnapshot blk ->
   -- | By how much weight can we roll back our chain at most?
   PerasWeight ->
-  -- | Our chain.
+  -- | Our chain @ours@.
   AnchoredFragment b ->
-  -- | Their chain
+  -- | Their chain @theirs@.
   AnchoredFragment b ->
-  -- | Indicates whether their chain forks at most the
-  -- given the amount of weight.
+  -- | Indicates whether their chain forks at most the given the amount of
+  -- weight. Returns 'False' if the two fragments do not intersect.
   Bool
 forksAtMostKWeight weights maxWeight ours theirs =
   case ours `AF.intersect` theirs of
     Nothing -> False
     Just (_, _, ourSuffix, _) ->
-      anchorWeight <> suffixWeight <= maxWeight
-     where
-      anchorWeight =
-        weightBoostOfPoint weights (castPoint $ AF.anchorPoint ourSuffix)
-      suffixWeight =
-        totalWeightOfFragment weights ourSuffix
+      totalWeightOfFragment weights ourSuffix <= maxWeight
 
 -- | Compare two (potentially empty!) 'AnchoredFragment's.
 --
