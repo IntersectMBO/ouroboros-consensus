@@ -833,10 +833,14 @@ getFilteredVoteDelegatees ::
   SL.NewEpochState era ->
   Set (SL.Credential 'SL.Staking) ->
   VoteDelegatees
-getFilteredVoteDelegatees ss creds =
-  Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMapRestricted
+getFilteredVoteDelegatees ss creds
+  | Set.null creds =
+      Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMap
+  | otherwise =
+      Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMapRestricted
  where
-  accountsMapRestricted = Map.restrictKeys (getDState ss ^. SL.accountsL . SL.accountsMapL) creds
+  accountsMap = getDState ss ^. SL.accountsL . SL.accountsMapL
+  accountsMapRestricted = Map.restrictKeys accountsMap creds
 
 {-------------------------------------------------------------------------------
   Serialisation
