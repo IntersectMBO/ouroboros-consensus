@@ -330,9 +330,7 @@ newtype LSMTxIn = LSMTxIn {lsmTxIn :: SL.TxIn}
 instance MemPack LSMTxIn where
   packedByteCount = packedByteCount . lsmTxIn
   packM (LSMTxIn (SL.TxIn txid txix)) = packM txix >> packM txid
-  unpackM = do
-    txix <- unpackM
-    LSMTxIn . flip SL.TxIn txix <$> unpackM
+  unpackM = LSMTxIn <$> (flip SL.TxIn <$> unpackM <*> unpackM)
 
 instance SerialiseKey SL.TxIn where
   serialiseKey = serialiseLSMViaMemPack . LSMTxIn

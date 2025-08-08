@@ -294,6 +294,7 @@ library
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
+    indexed-traversable ^>=0.1.4,
     FailT ^>=0.1.2,
     aeson,
     base >=4.14 && <4.22,

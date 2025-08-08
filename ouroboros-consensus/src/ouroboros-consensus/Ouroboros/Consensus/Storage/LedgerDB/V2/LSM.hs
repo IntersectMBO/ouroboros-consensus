@@ -2,14 +2,12 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -55,11 +53,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
 import Cardano.Binary as CBOR
 import Codec.Serialise (decode)
+import Control.Monad (foldM)
 import qualified Control.Monad as Monad
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Except
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Foldable.WithIndex
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
@@ -69,11 +69,11 @@ import qualified Data.Primitive.ByteArray as PBA
 import qualified Data.Set as Set
 import Data.String (fromString)
 import qualified Data.Vector as V
-import Data.Vector.Primitive (Vector (..))
+import qualified Data.Vector.Mutable as VM
+import qualified Data.Vector.Primitive as VP
 import Data.Void
 import Database.LSMTree (Session, Table)
 import qualified Database.LSMTree as LSM
-import qualified Database.LSMTree.Internal.Types as LSM
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -103,7 +103,7 @@ type UTxOTable m l = Table m (TxIn l) (LSMTxOut l) Void
 
 instance NoThunks (Table m txin txout Void) where
   showTypeOf _ = "Table"
-  wNoThunks _ (LSM.Table _tbl) = pure Nothing
+  wNoThunks _ _ = pure Nothing
 
 data LSMClosedExn = LSMClosedExn
   deriving (Show, Exception)
@@ -120,10 +120,21 @@ tableFromValuesMK ::
   m (ResourceKey m, UTxOTable m l)
 tableFromValuesMK rr session (LedgerTables (ValuesMK values)) = do
   res@(_, table) <- allocate rr (\_ -> LSM.newTable session) LSM.closeTable
-  LSM.inserts table $
-    V.fromList $
-      [(k, toLSMTxOut (Proxy @l) v, Nothing) | (k, v) <- Map.toList values]
+  vec <- VM.unsafeNew 1000 -- can use unsafe
+  _ <- ifoldlM (go table) (0, vec) values
   pure res
+ where
+  go table k (n, vec) v
+    | n == 1000 =
+        do
+          vec' <- V.unsafeFreeze vec -- can use unsafe because vec won't be used afterwards
+          LSM.inserts table vec'
+          vec'' <- VM.unsafeNew 1000
+          pure (0, vec'')
+    | otherwise =
+        do
+          VM.unsafeWrite vec n (k, toLSMTxOut (Proxy @l) v, Nothing) -- can use unsafe
+          pure (n + 1, vec)
 
 snapshotManager ::
   ( IOLike m
@@ -165,10 +176,9 @@ newLSMLedgerTablesHandle ::
   ) =>
   Tracer m V2.FlavorImplSpecificTrace ->
   ResourceRegistry m ->
-  Session m ->
   (ResourceKey m, UTxOTable m l) ->
   m (LedgerTablesHandle m l)
-newLSMLedgerTablesHandle tracer rr session (resKey, t) = do
+newLSMLedgerTablesHandle tracer rr (resKey, t) = do
   traceWith tracer V2.TraceLedgerTablesHandleCreate
   pure
     LedgerTablesHandle
@@ -177,15 +187,28 @@ newLSMLedgerTablesHandle tracer rr session (resKey, t) = do
           traceWith tracer V2.TraceLedgerTablesHandleClose
       , duplicate = do
           table <- allocate rr (\_ -> LSM.duplicate t) LSM.closeTable
-          newLSMLedgerTablesHandle tracer rr session table
-      , read = \st (LedgerTables (KeysMK keys)) ->
-          do
-            let keys' = Set.toList keys
-            res <- LSM.lookups t (V.fromList keys')
-            pure $
-              LedgerTables $
-                ValuesMK $
-                  Map.fromList [(k, fromLSMTxOut st v) | (k, LSM.Found v) <- zip keys' (V.toList res)]
+          newLSMLedgerTablesHandle tracer rr table
+      , read = \st (LedgerTables (KeysMK keys)) -> do
+          vec <- VM.unsafeNew (Set.size keys)
+          _ <-
+            Set.foldl'
+              (\m x -> m >>= \i -> VM.write vec i x >> pure (i + 1))
+              (pure 0)
+              keys
+          vec' <- V.freeze vec
+          res <- LSM.lookups t vec'
+          pure
+            . LedgerTables
+            . ValuesMK
+            . foldl'
+              ( \m (k, item) ->
+                  case item of
+                    LSM.Found v -> Map.insert k (fromLSMTxOut st v) m
+                    LSM.NotFound -> m
+                    LSM.FoundWithBlob{} -> m
+              )
+              Map.empty
+            $ V.zip vec' res
       , readRange = implReadRange t
       , readAll = \st ->
           let readAll' m = do
@@ -207,30 +230,33 @@ implReadRange ::
   l EmptyMK ->
   (Maybe (TxIn l), Int) ->
   m (LedgerTables l ValuesMK, Maybe (TxIn l))
-implReadRange table st (mPrev, num) =
-  let
-    cursorFromStart = LSM.withCursor table (LSM.take num)
-    -- Here we ask for one value more and we drop one value because the
-    -- cursor returns also the key at which it was opened.
-    cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table k (LSM.take $ num + 1)
-   in
-    do
-      entries <- V.toList <$> maybe cursorFromStart cursorFromKey mPrev
-      pure
-        ( LedgerTables . ValuesMK . Map.fromList $
-            [(k, (fromLSMTxOut st v)) | LSM.Entry k v <- entries]
-        , case snd <$> unsnoc entries of
-            Nothing -> Nothing
-            Just (LSM.Entry k _) -> Just k
-            Just (LSM.EntryWithBlob k _ _) -> Just k
-        )
+implReadRange table st (mPrev, num) = do
+  entries <- maybe cursorFromStart cursorFromKey mPrev
+  pure
+    ( LedgerTables
+        . ValuesMK
+        . V.foldl'
+          ( \m -> \case
+              LSM.Entry k v -> Map.insert k (fromLSMTxOut st v) m
+              LSM.EntryWithBlob{} -> m
+          )
+          Map.empty
+        $ entries
+    , case snd <$> V.unsnoc entries of
+        Nothing -> Nothing
+        Just (LSM.Entry k _) -> Just k
+        Just (LSM.EntryWithBlob k _ _) -> Just k
+    )
  where
-#if __GLASGOW_HASKELL__ < 908
-    unsnoc :: [a] -> Maybe ([a], a)
-    unsnoc = foldr (\x -> Just . maybe ([], x) (\(~(a, b)) -> (x : a, b))) Nothing
-#else
-    unsnoc = List.unsnoc
-#endif
+  cursorFromStart = LSM.withCursor table (LSM.take num)
+  -- Here we ask for one value more and we drop one value because the
+  -- cursor returns also the key at which it was opened.
+  cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table k (LSM.take $ num + 1)
+
+foldMWithKey :: Monad m => (a -> k -> v -> m a) -> a -> Map.Map k v -> m a
+foldMWithKey f z m = foldM step z (Map.toAscList m)
+ where
+  step acc (k, v) = f acc k v
 
 implPushDiffs ::
   forall m l.
@@ -241,15 +267,19 @@ implPushDiffs ::
   UTxOTable m l -> l DiffMK -> m ()
 implPushDiffs t !st1 = do
   let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
-  LSM.updates t $
-    V.fromList
-      [ ( k
-        , case h of
-            Diff.Insert v -> LSM.Insert (toLSMTxOut (Proxy @l) v) Nothing
-            Diff.Delete -> LSM.Delete
-        )
-      | (k, h) <- Map.toList diffs
-      ]
+  vec <- VM.unsafeNew (Map.size diffs)
+  Monad.void $
+    foldMWithKey
+      ( \idx k item -> do
+          VM.unsafeWrite vec idx (k, (f item))
+          pure (idx + 1)
+      )
+      0
+      diffs
+  LSM.updates t =<< V.freeze vec
+ where
+  f (Diff.Insert v) = LSM.Insert (toLSMTxOut (Proxy @l) v) Nothing
+  f Diff.Delete = LSM.Delete
 
 -- | The path within the LedgerDB's filesystem to the file that contains the
 -- snapshot's serialized ledger state
@@ -308,13 +338,18 @@ writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
 implDeleteSnapshot ::
   IOLike m => Session m -> SomeHasFS m -> Tracer m (TraceSnapshotEvent blk) -> DiskSnapshot -> m ()
 implDeleteSnapshot session (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) tracer ss = do
-  let p = snapshotToDirPath ss
-  exists <- doesDirectoryExist p
-  Monad.when exists (removeDirectoryRecursive p)
-  LSM.deleteSnapshot
-    session
-    (fromString $ show (dsNumber ss) <> maybe "" ("_" <>) (dsSuffix ss))
+  deleteState `finally` deleteLsmTable
   traceWith tracer (DeletedSnapshot ss)
+ where
+  deleteState = do
+    let p = snapshotToDirPath ss
+    exists <- doesDirectoryExist p
+    Monad.when exists (removeDirectoryRecursive p)
+
+  deleteLsmTable =
+    LSM.deleteSnapshot
+      session
+      (fromString $ show (dsNumber ss) <> maybe "" ("_" <>) (dsSuffix ss))
 
 -- | Read snapshot from disk.
 --
@@ -363,19 +398,19 @@ loadSnapshot tracer rr ccfg fs session ds = do
       Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
         throwE $
           InitFailureRead ReadSnapshotDataCorruption
-      (,pt) <$> lift (empty extLedgerSt values (newLSMLedgerTablesHandle tracer rr session))
+      (,pt) <$> lift (empty extLedgerSt values (newLSMLedgerTablesHandle tracer rr))
 
 -- | Helper for implementing 'serialiseKey' and 'serialiseValue' for types that
 -- are serialized via 'MemPack'.
 serialiseLSMViaMemPack :: MemPack a => a -> LSM.RawBytes
 serialiseLSMViaMemPack a =
   let barr = pack a
-   in LSM.RawBytes (Vector 0 (PBA.sizeofByteArray barr) barr)
+   in LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
 
 -- | Helper for implementing 'deserialiseKey' and 'deserialiseValue' for types
 -- that are serialized via 'MemPack'.
 deserialiseLSMViaMemPack :: MemPack b => LSM.RawBytes -> b
-deserialiseLSMViaMemPack (LSM.RawBytes (Vector _ _ barr)) = unpackError barr
+deserialiseLSMViaMemPack (LSM.RawBytes (VP.Vector _ _ barr)) = unpackError barr
 
 stdGenSalt :: IO LSM.Salt
 stdGenSalt = fst . genWord64 <$> initStdGen
