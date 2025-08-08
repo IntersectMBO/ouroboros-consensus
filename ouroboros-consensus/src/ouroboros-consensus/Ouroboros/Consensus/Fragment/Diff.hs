@@ -35,6 +35,7 @@ module Ouroboros.Consensus.Fragment.Diff
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Network.AnchoredFragment
   ( AnchoredFragment
   , AnchoredSeq (..)
@@ -73,12 +74,31 @@ getTip = castPoint . AF.headPoint . getSuffix
 getAnchorPoint :: ChainDiff b -> Point b
 getAnchorPoint = castPoint . AF.anchorPoint . getSuffix
 
--- | Return 'True' iff applying the 'ChainDiff' to a chain @C@ will result in
--- a chain shorter than @C@, i.e., the number of blocks to roll back is
--- greater than the length of the new elements in the suffix to add.
-rollbackExceedsSuffix :: HasHeader b => ChainDiff b -> Bool
-rollbackExceedsSuffix (ChainDiff nbRollback suffix) =
-  nbRollback > fromIntegral (AF.length suffix)
+-- | Return 'True' iff applying the 'ChainDiff' to the given chain @C@ will
+-- result in a chain with less weight than @C@, i.e., the suffix of @C@ to roll
+-- back has more weight than suffix is adding.
+rollbackExceedsSuffix ::
+  forall b0 b1 b2.
+  ( HasHeader b0
+  , HasHeader b1
+  , HasHeader b2
+  , HeaderHash b0 ~ HeaderHash b1
+  , HeaderHash b0 ~ HeaderHash b2
+  ) =>
+  PerasWeightSnapshot b0 ->
+  -- | The chain @C@ the diff is applied to.
+  AnchoredFragment b1 ->
+  ChainDiff b2 ->
+  Bool
+rollbackExceedsSuffix weights curChain (ChainDiff nbRollback suffix) =
+  weightOf suffixToRollBack > weightOf suffix
+ where
+  suffixToRollBack = AF.anchorNewest nbRollback curChain
+
+  weightOf ::
+    (HasHeader b, HeaderHash b ~ HeaderHash b0) =>
+    AnchoredFragment b -> PerasWeight
+  weightOf = totalWeightOfFragment weights
 
 {-------------------------------------------------------------------------------
   Constructors

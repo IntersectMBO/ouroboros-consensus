@@ -13,13 +13,14 @@
 -- adding a block.
 module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   ( addBlockAsync
+  , addPerasCertAsync
   , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
   , triggerChainSelectionAsync
 
     -- * Exported for testing purposes
-  , olderThanK
+  , olderThanImmTip
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
@@ -38,7 +39,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust, isJust)
+import Data.Maybe (fromJust, fromMaybe, isJust)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -63,9 +64,12 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.SelectView
+import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
+  , AddPerasCertPromise
   , BlockComponent (..)
   , ChainType (..)
   , LoE (..)
@@ -89,10 +93,12 @@ import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.AnchoredFragment
+import Ouroboros.Consensus.Util.EarlyExit (exitEarly, withEarlyExit_)
 import Ouroboros.Consensus.Util.Enclose (encloseWith)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
@@ -122,6 +128,7 @@ initialChainSelection ::
   TopLevelConfig blk ->
   StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
   LoE () ->
+  PerasWeightSnapshot blk ->
   m (ChainAndLedger m blk)
 initialChainSelection
   immutableDB
@@ -131,7 +138,8 @@ initialChainSelection
   tracer
   cfg
   varInvalid
-  loE = do
+  loE
+  weights = do
     -- TODO: Improve the user experience by trimming any potential
     -- blocks from the future from the VolatileDB.
     --
@@ -176,7 +184,7 @@ initialChainSelection
     let curChain = Empty (AF.castAnchor i)
     curChainAndLedger <- VF.newM curChain curForker
 
-    case NE.nonEmpty (filter (preferAnchoredCandidate bcfg curChain) chains) of
+    case NE.nonEmpty (filter (preferAnchoredCandidate bcfg weights curChain) chains) of
       -- If there are no candidates, no chain selection is needed
       Nothing -> return curChainAndLedger
       Just chains' ->
@@ -258,7 +266,7 @@ initialChainSelection
     chainSelection' curChainAndLedger candidates =
       atomically (forkerCurrentPoint ledger) >>= \curpt ->
         assert (all ((curpt ==) . castPoint . AF.anchorPoint) candidates) $
-          assert (all (preferAnchoredCandidate bcfg curChain) candidates) $ do
+          assert (all (preferAnchoredCandidate bcfg weights curChain) candidates) $ do
             cse <- chainSelEnv
             chainSelection cse rr (Diff.extend <$> candidates)
      where
@@ -273,6 +281,7 @@ initialChainSelection
             , bcfg
             , varInvalid
             , blockCache = BlockCache.empty
+            , weights
             , curChainAndLedger
             , validationTracer = InitChainSelValidation >$< tracer
             , -- initial chain selection is not concerned about pipelining
@@ -317,6 +326,15 @@ addBlockAsync ::
   m (AddBlockPromise m blk)
 addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
   addBlockToAdd (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
+
+addPerasCertAsync ::
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  ChainDbEnv m blk ->
+  PerasCert blk ->
+  m (AddPerasCertPromise m)
+addPerasCertAsync CDB{cdbTracer, cdbChainSelQueue} =
+  addPerasCertToQueue (TraceAddPerasCertEvent >$< cdbTracer) cdbChainSelQueue
 
 -- | Schedule reprocessing of blocks postponed by the LoE.
 triggerChainSelectionAsync ::
@@ -404,8 +422,8 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   -- We follow the steps from section "## Adding a block" in ChainDB.md
 
   if
-    | olderThanK hdr isEBB immBlockNo -> do
-        lift $ traceWith addBlockTracer $ IgnoreBlockOlderThanK (blockRealPoint b)
+    | olderThanImmTip hdr immBlockNo -> do
+        lift $ traceWith addBlockTracer $ IgnoreBlockOlderThanImmTip (blockRealPoint b)
         lift $ deliverWrittenToDisk False
     | isMember (blockHash b) -> do
         lift $ traceWith addBlockTracer $ IgnoreBlockAlreadyInVolatileDB (blockRealPoint b)
@@ -456,34 +474,88 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   deliverProcessed tip =
     atomically $
       putTMVar varBlockProcessed (SuccesfullyAddedBlock tip)
+chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
+  curChain <- lift $ atomically $ Query.getCurrentChain cdb
+  let immTip = castPoint $ AF.anchorPoint curChain
+
+  withEarlyExit_ $ do
+    -- Ignore the certificate if it boosts a block that is so old that it can't
+    -- influence our selection.
+    when (pointSlot boostedBlock < pointSlot immTip) $ do
+      lift $ lift $ traceWith tracer $ IgnorePerasCertTooOld certRound boostedBlock immTip
+      exitEarly
+
+    -- Add the certificate to the PerasCertDB.
+    lift (lift $ PerasCertDB.addCert cdbPerasCertDB cert) >>= \case
+      PerasCertDB.AddedPerasCertToDB -> pure ()
+      -- If it already is in the PerasCertDB, we are done.
+      PerasCertDB.PerasCertAlreadyInDB -> exitEarly
+
+    -- If the certificate boosts a block on our current chain (including the
+    -- anchor), then it just makes our selection even stronger.
+    when (AF.withinFragmentBounds (castPoint boostedBlock) curChain) $ do
+      lift $ lift $ traceWith tracer $ PerasCertBoostsCurrentChain certRound boostedBlock
+      exitEarly
+
+    boostedHash <- case pointHash boostedBlock of
+      -- If the certificate boosts the Genesis point, then it can not influence
+      -- chain selection as all chains contain it.
+      GenesisHash -> do
+        lift $ lift $ traceWith tracer $ PerasCertBoostsGenesis certRound
+        exitEarly
+      -- Otherwise, the certificate boosts a block potentially on a (future)
+      -- candidate.
+      BlockHash boostedHash -> pure boostedHash
+    boostedHdr <-
+      lift (lift $ VolatileDB.getBlockComponent cdbVolatileDB GetHeader boostedHash) >>= \case
+        -- If we have not (yet) received the boosted block, we don't need to do
+        -- anything further for now regarding chain selection. Once we receive
+        -- it, the additional weight of the certificate is taken into account.
+        Nothing -> do
+          lift $ lift $ traceWith tracer $ PerasCertBoostsBlockNotYetReceived certRound boostedBlock
+          exitEarly
+        Just boostedHdr -> pure boostedHdr
+
+    -- Trigger chain selection for the boosted block.
+    lift $ lift $ traceWith tracer $ ChainSelectionForBoostedBlock certRound boostedBlock
+    lift $ chainSelectionForBlock cdb BlockCache.empty boostedHdr noPunishment
+
+  -- Deliver promise indicating that we processed the cert.
+  lift $ atomically $ putTMVar varProcessed ()
+ where
+  tracer :: Tracer m (TraceAddPerasCertEvent blk)
+  tracer = TraceAddPerasCertEvent >$< cdbTracer
+
+  certRound :: PerasRoundNo
+  certRound = perasCertRound cert
+
+  boostedBlock :: Point blk
+  boostedBlock = perasCertBoostedBlock cert
 
 -- | Return 'True' when the given header should be ignored when adding it
 -- because it is too old, i.e., we wouldn't be able to switch to a chain
--- containing the corresponding block because its block number is more than
--- @k@ blocks or exactly @k@ blocks back.
+-- containing the corresponding block because its block number is older than
+-- that of the immutable tip.
 --
 -- Special case: the header corresponds to an EBB which has the same block
--- number as the block @k@ blocks back (the most recent \"immutable\" block).
--- As EBBs share their block number with the block before them, the EBB is not
--- too old in that case and can be adopted as part of our chain.
+-- number as the most recent \"immutable\" block. As EBBs share their block
+-- number with the block before them, the EBB is not too old in that case and
+-- can be adopted as part of our chain.
 --
 -- This special case can occur, for example, when the VolatileDB is empty
 -- (because of corruption). The \"immutable\" block is then also the tip of
 -- the chain. If we then try to add the EBB after it, it will have the same
 -- block number, so we must allow it.
-olderThanK ::
-  HasHeader (Header blk) =>
+olderThanImmTip ::
+  GetHeader blk =>
   -- | Header of the block to add
   Header blk ->
-  -- | Whether the block is an EBB or not
-  IsEBB ->
-  -- | The block number of the most recent \"immutable\" block, i.e., the
-  -- block @k@ blocks back.
+  -- | The block number of the most recent immutable block.
   WithOrigin BlockNo ->
   Bool
-olderThanK hdr isEBB immBlockNo
+olderThanImmTip hdr immBlockNo
   | NotOrigin bNo == immBlockNo
-  , isEBB == IsEBB =
+  , headerToIsEBB hdr == IsEBB =
       False
   | otherwise =
       NotOrigin bNo <= immBlockNo
@@ -540,14 +612,15 @@ chainSelectionForBlock ::
   InvalidBlockPunishment m ->
   Electric m ()
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
-  (invalid, succsOf, lookupBlockInfo, curChain, tipPoint) <-
+  (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, weights) <-
     atomically $
-      (,,,,)
+      (,,,,,)
         <$> (forgetFingerprint <$> readTVar cdbInvalid)
         <*> VolatileDB.filterByPredecessor cdbVolatileDB
         <*> VolatileDB.getBlockInfo cdbVolatileDB
         <*> Query.getCurrentChain cdb
         <*> Query.getTipPoint cdb
+        <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
   -- This is safe: the LedgerDB tip doesn't change in between the previous
   -- atomically block and this call to 'withTipForker'.
   LedgerDB.withTipForker cdbLedgerDB rr $ \curForker -> do
@@ -594,9 +667,9 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
 
     if
       -- The chain might have grown since we added the block such that the
-      -- block is older than @k@.
-      | olderThanK hdr isEBB immBlockNo -> do
-          traceWith addBlockTracer $ IgnoreBlockOlderThanK p
+      -- block is older than the immutable tip.
+      | olderThanImmTip hdr immBlockNo -> do
+          traceWith addBlockTracer $ IgnoreBlockOlderThanImmTip p
 
       -- The block is invalid
       | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
@@ -612,14 +685,14 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
       | pointHash tipPoint == headerPrevHash hdr -> do
           -- ### Add to current chain
           traceWith addBlockTracer (TryAddToCurrentChain p)
-          addToCurrentChain rr succsOf' curChainAndLedger loeFrag
+          addToCurrentChain rr succsOf' weights curChainAndLedger loeFrag
 
       -- The block is reachable from the current selection
       -- and it doesn't fit after the current selection
       | Just diff <- Paths.isReachable lookupBlockInfo' curChain p -> do
           -- ### Switch to a fork
           traceWith addBlockTracer (TrySwitchToAFork p diff)
-          switchToAFork rr succsOf' lookupBlockInfo' curChainAndLedger loeFrag diff
+          switchToAFork rr succsOf' lookupBlockInfo' weights curChainAndLedger loeFrag diff
 
       -- We cannot reach the block from the current selection
       | otherwise -> do
@@ -636,14 +709,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
   p :: RealPoint blk
   p = headerRealPoint hdr
 
-  isEBB :: IsEBB
-  isEBB = headerToIsEBB hdr
-
   addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
   addBlockTracer = TraceAddBlockEvent >$< cdbTracer
 
-  mkChainSelEnv :: ChainAndLedger m blk -> ChainSelEnv m blk
-  mkChainSelEnv curChainAndLedger =
+  mkChainSelEnv :: PerasWeightSnapshot blk -> ChainAndLedger m blk -> ChainSelEnv m blk
+  mkChainSelEnv weights curChainAndLedger =
     ChainSelEnv
       { lgrDB = cdbLedgerDB
       , bcfg = configBlock cdbTopLevelConfig
@@ -654,6 +724,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
           filter ((TentativeChain ==) . fhChainType) . Map.elems
             <$> readTVar cdbFollowers
       , blockCache = blockCache
+      , weights
       , curChainAndLedger = curChainAndLedger
       , validationTracer =
           TraceAddBlockEvent . AddBlockValidation >$< cdbTracer
@@ -668,12 +739,13 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
     HasCallStack =>
     ResourceRegistry m ->
     (ChainHash blk -> Set (HeaderHash blk)) ->
+    PerasWeightSnapshot blk ->
     ChainAndLedger m blk ->
     -- \^ The current chain and ledger
     LoE (AnchoredFragment (HeaderWithTime blk)) ->
     -- \^ LoE fragment
     m ()
-  addToCurrentChain rr succsOf curChainAndLedger loeFrag = do
+  addToCurrentChain rr succsOf weights curChainAndLedger loeFrag = do
     -- Extensions of @B@ that do not exceed the LoE
     let suffixesAfterB = Paths.maximalCandidates succsOf Nothing (realPointToPoint p)
 
@@ -696,7 +768,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
 
     let chainDiffs =
           NE.nonEmpty $
-            filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain . Diff.getSuffix) $
+            filter (preferAnchoredCandidate (bcfg chainSelEnv) weights curChain . Diff.getSuffix) $
               fmap (trimToLoE loeFrag curChainAndLedger) $
                 fmap Diff.extend $
                   NE.toList candidates
@@ -721,11 +793,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
             return ()
           Just validatedChainDiff ->
             switchTo
+              weights
               validatedChainDiff
               (varTentativeHeader chainSelEnv)
               AddingBlocks
    where
-    chainSelEnv = mkChainSelEnv curChainAndLedger
+    chainSelEnv = mkChainSelEnv weights curChainAndLedger
     curChain = VF.validatedFragment curChainAndLedger
     curHead = AF.headAnchor curChain
 
@@ -785,6 +858,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
     ResourceRegistry m ->
     (ChainHash blk -> Set (HeaderHash blk)) ->
     LookupBlockInfo blk ->
+    PerasWeightSnapshot blk ->
     ChainAndLedger m blk ->
     -- \^ The current chain (anchored at @i@) and ledger
     LoE (AnchoredFragment (HeaderWithTime blk)) ->
@@ -792,7 +866,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
     ChainDiff (HeaderFields blk) ->
     -- \^ Header fields for @(x,b]@
     m ()
-  switchToAFork rr succsOf lookupBlockInfo curChainAndLedger loeFrag diff = do
+  switchToAFork rr succsOf lookupBlockInfo weights curChainAndLedger loeFrag diff = do
     -- We use a cache to avoid reading the headers from disk multiple
     -- times in case they're part of multiple forks that go through @b@.
     let initCache = Map.singleton (headerHash hdr) hdr
@@ -804,7 +878,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
       -- blocks, so it satisfies the precondition of 'preferCandidate'.
       fmap
         ( filter
-            ( preferAnchoredCandidate (bcfg chainSelEnv) curChain
+            ( preferAnchoredCandidate (bcfg chainSelEnv) weights curChain
                 . Diff.getSuffix
             )
         )
@@ -815,10 +889,10 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         -- headers from disk.
         . flip evalStateT initCache
         . mapM translateToHeaders
-        -- 2. Filter out candidates that are shorter than the current
-        -- chain. We don't want to needlessly read the headers from disk
-        -- for those candidates.
-        . NE.filter (not . Diff.rollbackExceedsSuffix)
+        -- 2. Filter out candidates that have less weight than the current
+        -- chain. We don't want to needlessly read the headers from disk for
+        -- those candidates.
+        . NE.filter (not . Diff.rollbackExceedsSuffix weights curChain)
         -- 1. Extend the diff with candidates fitting on @B@
         . Paths.extendWithSuccessors succsOf lookupBlockInfo
         $ diff
@@ -832,35 +906,38 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
             return ()
           Just validatedChainDiff ->
             switchTo
+              weights
               validatedChainDiff
               (varTentativeHeader chainSelEnv)
               SwitchingToAFork
    where
-    chainSelEnv = mkChainSelEnv curChainAndLedger
+    chainSelEnv = mkChainSelEnv weights curChainAndLedger
     curChain = VF.validatedFragment curChainAndLedger
 
   mkSelectionChangedInfo ::
-    AnchoredFragment (Header blk) ->
-    -- \^ old chain
-    AnchoredFragment (Header blk) ->
-    -- \^ new chain
-    ExtLedgerState blk EmptyMK ->
-    -- \^ new tip
+    PerasWeightSnapshot blk ->
+    AnchoredFragment (Header blk) -> -- old selection
+    ChainDiff (Header blk) -> -- diff we are adopting
+    ExtLedgerState blk EmptyMK -> -- new tip
     SelectionChangedInfo blk
-  mkSelectionChangedInfo oldChain newChain newTip =
+  mkSelectionChangedInfo weights oldChain diff newTip =
     SelectionChangedInfo
       { newTipPoint = castRealPoint tipPoint
       , newTipEpoch = tipEpoch
       , newTipSlotInEpoch = tipSlotInEpoch
       , newTipTrigger = p
-      , newTipSelectView
-      , oldTipSelectView =
-          selectView (configBlock cfg)
-            <$> eitherToMaybe (AF.head oldChain)
+      , newSuffixSelectView
+      , oldSuffixSelectView =
+          withEmptyFragmentToMaybe $
+            weightedSelectView (configBlock cfg) weights oldSuffix
       }
    where
     cfg :: TopLevelConfig blk
     cfg = cdbTopLevelConfig
+
+    oldSuffix, newSuffix :: AnchoredFragment (Header blk)
+    oldSuffix = AF.anchorNewest (getRollback diff) oldChain
+    newSuffix = getSuffix diff
 
     ledger :: LedgerState blk EmptyMK
     ledger = ledgerState newTip
@@ -871,14 +948,13 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         (configLedger cfg)
         ledger
 
-    (tipPoint, (tipEpoch, tipSlotInEpoch), newTipSelectView) =
-      case AF.head newChain of
-        Left _anchor -> error "cannot have switched to an empty chain"
-        Right tipHdr ->
+    (tipPoint, (tipEpoch, tipSlotInEpoch), newSuffixSelectView) =
+      case (AF.head newSuffix, weightedSelectView (configBlock cfg) weights newSuffix) of
+        (Right tipHdr, NonEmptyFragment wsv) ->
           let query = History.slotToEpoch' (blockSlot tipHdr)
               tipEpochData = History.runQueryPure query summary
-              sv = selectView (configBlock cfg) tipHdr
-           in (blockRealPoint tipHdr, tipEpochData, sv)
+           in (blockRealPoint tipHdr, tipEpochData, wsv)
+        _ -> error "cannot have switched via a diff with an empty suffix"
 
   -- \| Try to apply the given 'ChainDiff' on the current chain fragment. The
   -- 'LedgerDB' is updated in the same transaction.
@@ -893,13 +969,14 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
   -- us, as we cannot roll back more than @k@ headers anyway.
   switchTo ::
     HasCallStack =>
+    PerasWeightSnapshot blk ->
     ValidatedChainDiff (Header blk) (Forker' m blk) ->
     -- \^ Chain and ledger to switch to
     StrictTVar m (StrictMaybe (Header blk)) ->
     -- \^ Tentative header
     ChainSwitchType ->
     m ()
-  switchTo vChainDiff varTentativeHeader chainSwitchType = do
+  switchTo weights vChainDiff varTentativeHeader chainSwitchType = do
     traceWith addBlockTracer $
       ChangingSelection $
         castPoint $
@@ -963,7 +1040,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
     let mkTraceEvent = case chainSwitchType of
           AddingBlocks -> AddedToCurrentChain
           SwitchingToAFork -> SwitchedToAFork
-        selChangedInfo = mkSelectionChangedInfo curChain newChain newLedger
+        selChangedInfo =
+          mkSelectionChangedInfo
+            weights
+            curChain
+            (getChainDiff vChainDiff)
+            newLedger
     traceWith addBlockTracer $
       mkTraceEvent events selChangedInfo curChain newChain
     whenJust (strictMaybeToMaybe prevTentativeHeader) $
@@ -1023,6 +1105,7 @@ data ChainSelEnv m blk = ChainSelEnv
   , varTentativeHeader :: StrictTVar m (StrictMaybe (Header blk))
   , getTentativeFollowers :: STM m [FollowerHandle m blk]
   , blockCache :: BlockCache blk
+  , weights :: PerasWeightSnapshot blk
   , curChainAndLedger :: ChainAndLedger m blk
   , punish :: Maybe (RealPoint blk, InvalidBlockPunishment m)
   -- ^ The block that this chain selection invocation is processing, and the
@@ -1068,7 +1151,7 @@ chainSelection ::
 chainSelection chainSelEnv rr chainDiffs =
   assert
     ( all
-        (preferAnchoredCandidate bcfg curChain . Diff.getSuffix)
+        (preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix)
         chainDiffs
     )
     $ assert
@@ -1083,8 +1166,7 @@ chainSelection chainSelEnv rr chainDiffs =
   curChain = VF.validatedFragment curChainAndLedger
 
   sortCandidates :: [ChainDiff (Header blk)] -> [ChainDiff (Header blk)]
-  sortCandidates =
-    sortBy (flip (compareAnchoredFragments bcfg) `on` Diff.getSuffix)
+  sortCandidates = sortBy (flip $ compareChainDiffs bcfg weights curChain)
 
   -- 1. Take the first candidate from the list of sorted candidates
   -- 2. Validate it
@@ -1120,7 +1202,7 @@ chainSelection chainSelEnv rr chainDiffs =
         -- it will be dropped here, as it will not be preferred over the
         -- current chain.
         let candidates2
-              | preferAnchoredCandidate bcfg curChain (Diff.getSuffix candidate') =
+              | preferAnchoredCandidate bcfg weights curChain (Diff.getSuffix candidate') =
                   candidate' : candidates1
               | otherwise =
                   candidates1
@@ -1178,7 +1260,7 @@ chainSelection chainSelEnv rr chainDiffs =
     let isRejected hdr =
           Map.member (headerHash hdr) (forgetFingerprint invalid)
     return $
-      filter (preferAnchoredCandidate bcfg curChain . Diff.getSuffix) $
+      filter (preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix) $
         map (Diff.takeWhileOldest (not . isRejected)) cands
 
 -- [Ouroboros]
@@ -1386,3 +1468,25 @@ ignoreInvalidSuc ::
   (ChainHash blk -> Set (HeaderHash blk))
 ignoreInvalidSuc _ invalid succsOf =
   Set.filter (`Map.notMember` invalid) . succsOf
+
+-- | Compare two 'ChainDiff's w.r.t. the chain order.
+--
+-- PRECONDITION: Both 'ChainDiff's fit onto the given current chain.
+compareChainDiffs ::
+  forall blk.
+  BlockSupportsProtocol blk =>
+  BlockConfig blk ->
+  PerasWeightSnapshot blk ->
+  -- | Current chain.
+  AnchoredFragment (Header blk) ->
+  ChainDiff (Header blk) ->
+  ChainDiff (Header blk) ->
+  Ordering
+compareChainDiffs bcfg weights curChain =
+  -- Precondition of 'compareAnchoredFragment's is satisfied as the result of
+  -- @mkCand@ has the same anchor as @curChain@.
+  compareAnchoredFragments bcfg weights `on` mkCand
+ where
+  mkCand =
+    fromMaybe (error "compareChainDiffs: precondition violated")
+      . Diff.apply curChain

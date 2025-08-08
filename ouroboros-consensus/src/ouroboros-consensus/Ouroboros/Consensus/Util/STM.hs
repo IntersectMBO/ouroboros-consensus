@@ -1,9 +1,5 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -36,10 +32,12 @@ import Control.Monad (void)
 import Control.Monad.State (StateT (..))
 import Control.ResourceRegistry
 import Data.Void
-import Data.Word (Word64)
-import GHC.Generics (Generic)
 import GHC.Stack
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.BlockFetch.ConsensusInterface
+  ( Fingerprint (..)
+  , WithFingerprint (..)
+  )
 
 {-------------------------------------------------------------------------------
   Misc
@@ -82,20 +80,6 @@ blockUntilJust getMaybeA = do
 
 blockUntilAllJust :: MonadSTM m => [STM m (Maybe a)] -> STM m [a]
 blockUntilAllJust = mapM blockUntilJust
-
--- | Simple type that can be used to indicate something in a @TVar@ is
--- changed.
-newtype Fingerprint = Fingerprint Word64
-  deriving stock (Show, Eq, Generic)
-  deriving newtype Enum
-  deriving anyclass NoThunks
-
--- | Store a value together with its fingerprint.
-data WithFingerprint a = WithFingerprint
-  { forgetFingerprint :: !a
-  , getFingerprint :: !Fingerprint
-  }
-  deriving (Show, Eq, Functor, Generic, NoThunks)
 
 {-------------------------------------------------------------------------------
   Simulate monad stacks

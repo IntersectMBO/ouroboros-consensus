@@ -3,6 +3,7 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | Queries
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
@@ -32,7 +33,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getChainSelStarvation
   ) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.ResourceRegistry (ResourceRegistry)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -44,7 +44,10 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
+import Ouroboros.Consensus.Peras.Weight
+  ( PerasWeightSnapshot
+  , takeVolatileSuffix
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (..)
@@ -86,29 +89,44 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 getCurrentChain ::
   forall m blk.
   ( IOLike m
+  , StandardHash blk
   , HasHeader (Header blk)
   , ConsensusProtocol (BlockProtocol blk)
   ) =>
   ChainDbEnv m blk ->
   STM m (AnchoredFragment (Header blk))
-getCurrentChain CDB{..} =
-  AF.anchorNewest (unNonZero k) . icWithoutTime <$> readTVar cdbChain
- where
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
+getCurrentChain cdb@CDB{..} =
+  getCurrentChainLike cdb $ icWithoutTime <$> readTVar cdbChain
 
 -- | Same as 'getCurrentChain', /mutatis mutandi/.
 getCurrentChainWithTime ::
   forall m blk.
   ( IOLike m
+  , StandardHash blk
   , HasHeader (HeaderWithTime blk)
   , ConsensusProtocol (BlockProtocol blk)
   ) =>
   ChainDbEnv m blk ->
   STM m (AnchoredFragment (HeaderWithTime blk))
-getCurrentChainWithTime CDB{..} =
-  AF.anchorNewest (unNonZero k) . icWithTime <$> readTVar cdbChain
+getCurrentChainWithTime cdb@CDB{..} =
+  getCurrentChainLike cdb $ icWithTime <$> readTVar cdbChain
+
+getCurrentChainLike ::
+  forall m blk h.
+  ( IOLike m
+  , StandardHash blk
+  , HasHeader h
+  , HeaderHash blk ~ HeaderHash h
+  , ConsensusProtocol (BlockProtocol blk)
+  ) =>
+  ChainDbEnv m blk ->
+  STM m (AnchoredFragment h) ->
+  STM m (AnchoredFragment h)
+getCurrentChainLike cdb@CDB{..} getCurChain = do
+  weights <- forgetFingerprint <$> getPerasWeightSnapshot cdb
+  takeVolatileSuffix weights k <$> getCurChain
  where
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
+  k = configSecurityParam cdbTopLevelConfig
 
 -- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
 -- last @k@ blocks of the current chain.
