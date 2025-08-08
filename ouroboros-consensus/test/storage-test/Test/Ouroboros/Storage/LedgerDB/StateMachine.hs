@@ -504,6 +504,7 @@ openLedgerDB flavArgs env cfg fs = do
               args
               bss
               getBlock
+              (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
        in openDBInternal args initDb stream replayGoal
     LedgerDbFlavorArgsV2 bss ->
       let initDb =
@@ -511,6 +512,7 @@ openLedgerDB flavArgs env cfg fs = do
               args
               bss
               getBlock
+              (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
        in openDBInternal args initDb stream replayGoal
   withRegistry $ \reg -> do
     vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)

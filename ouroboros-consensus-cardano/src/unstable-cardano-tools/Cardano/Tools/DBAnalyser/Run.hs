@@ -71,6 +71,7 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
           lgrDbArgs
           bss
           (\_ -> error "no replay")
+          (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig lgrDbArgs)
       )
       emptyStream
       genesisPoint
@@ -83,6 +84,7 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
           lgrDbArgs
           args
           (\_ -> error "no replay")
+          (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig lgrDbArgs)
       )
       emptyStream
       genesisPoint

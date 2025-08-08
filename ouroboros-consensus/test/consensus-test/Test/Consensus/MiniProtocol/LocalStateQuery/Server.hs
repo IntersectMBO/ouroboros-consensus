@@ -244,6 +244,7 @@ initLedgerDB s c = do
         streamAPI
         (Chain.headPoint c)
         (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+        (LedgerDB.praosGetVolatileSuffix s)
 
   result <-
     LedgerDB.validateFork

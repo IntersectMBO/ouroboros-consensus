@@ -16,7 +16,6 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Arrow ((>>>))
 import Control.Monad (join)
 import qualified Control.Monad as Monad (void, (>=>))
@@ -79,8 +78,9 @@ mkInitDb ::
   Complete LedgerDbArgs m blk ->
   Complete V2.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
+  GetVolatileSuffix m blk ->
   InitDB (LedgerSeq' m blk) m blk
-mkInitDb args flavArgs getBlock =
+mkInitDb args flavArgs getBlock getVolatileSuffix =
   InitDB
     { initFromGenesis = emptyF =<< lgrGenesis
     , initFromSnapshot =
@@ -110,6 +110,7 @@ mkInitDb args flavArgs getBlock =
                 , ldbResolveBlock = getBlock
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbOpenHandlesLock = lock
+                , ldbGetVolatileSuffix = getVolatileSuffix
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h bss
@@ -486,6 +487,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   --
   --  * Modify 'ldbSeq' while holding a write lock, and then close the removed
   --    handles without any locking. See e.g. 'implGarbageCollect'.
+  , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
   }
   deriving Generic
 
@@ -575,15 +577,16 @@ getEnvSTM (LDBHandle varState) f =
   Acquiring consistent views
 -------------------------------------------------------------------------------}
 
--- | Take the suffix of the 'ldbSeq' containing the @k@ most recent states. The
--- 'LedgerSeq' can contain more than @k@ states if we adopted new blocks, but
--- garbage collection has not yet been run.
+-- | Take the suffix of the 'ldbSeq' containing the only the volatile states
+-- (and the first immutable state at the anchor). The 'LedgerSeq' can contain
+-- more than one immutable state if we adopted new blocks, but garbage
+-- collection has not yet been run.
 getVolatileLedgerSeq ::
-  (MonadSTM m, GetTip l) => LedgerDBEnv m l blk -> STM m (LedgerSeq m l)
-getVolatileLedgerSeq env =
-  LedgerSeq . AS.anchorNewest k . getLedgerSeq <$> readTVar (ldbSeq env)
- where
-  k = unNonZero $ maxRollbacks $ ledgerDbCfgSecParam $ ldbCfg env
+  (MonadSTM m, GetTip l) =>
+  LedgerDBEnv m l blk -> STM m (LedgerSeq m l)
+getVolatileLedgerSeq env = do
+  volSuffix <- getVolatileSuffix (ldbGetVolatileSuffix env)
+  LedgerSeq . volSuffix . getLedgerSeq <$> readTVar (ldbSeq env)
 
 -- | Get a 'StateRef' from the 'LedgerSeq' (via 'getVolatileLedgerSeq') in the
 -- 'LedgerDBEnv', with the 'LedgerTablesHandle' having been duplicated (such
