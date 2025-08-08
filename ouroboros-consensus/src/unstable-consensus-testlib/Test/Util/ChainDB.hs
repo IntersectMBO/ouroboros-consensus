@@ -30,7 +30,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Args
 import Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -84,10 +84,8 @@ mkTestChunkInfo = simpleChunkInfo . eraEpochSize . tblcHardForkParams . topLevel
 
 -- | Creates a default set of of arguments for ChainDB tests.
 fromMinimalChainDbArgs ::
-  ( MonadThrow m
-  , MonadSTM m
+  ( IOLike m
   , ConsensusProtocol (BlockProtocol blk)
-  , PrimMonad m
   ) =>
   MinimalChainDbArgs m blk -> Complete ChainDbArgs m blk
 fromMinimalChainDbArgs MinimalChainDbArgs{..} =
@@ -119,21 +117,12 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , volValidationPolicy = VolatileDB.ValidateAll
           }
     , cdbLgrDbArgs =
-        LedgerDbArgs
-          { lgrSnapshotPolicyArgs =
-              LedgerDB.SnapshotPolicyArgs
-                LedgerDB.DefaultSnapshotInterval
-                LedgerDB.DefaultNumOfDiskSnapshots
-          , -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
-            -- k seconds, where k is the security parameter.
-            lgrGenesis = return mcdbInitLedger
+        LedgerDB.defaultArgs
+          { lgrGenesis = return mcdbInitLedger
           , lgrHasFS = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
-          , lgrTracer = nullTracer
           , lgrRegistry = mcdbRegistry
           , lgrConfig = configLedgerDb mcdbTopLevelConfig OmitLedgerEvents
           , lgrFlavorArgs = LedgerDbFlavorArgsV2 (V2Args InMemoryHandleArgs)
-          , lgrQueryBatchSize = DefaultQueryBatchSize
-          , lgrStartSnapshot = Nothing
           }
     , cdbsArgs =
         ChainDbSpecificArgs

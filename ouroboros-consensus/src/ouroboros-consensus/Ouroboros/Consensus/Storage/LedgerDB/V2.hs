@@ -16,7 +16,6 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Arrow ((>>>))
 import Control.Monad (join)
 import qualified Control.Monad as Monad (void, (>=>))
@@ -110,6 +109,7 @@ mkInitDb args flavArgs getBlock =
                 , ldbResolveBlock = getBlock
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbOpenHandlesLock = lock
+                , ldbGetVolatileSuffix = lgrGetVolatileSuffix args (ledgerDbCfgSecParam lgrConfig)
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h bss
@@ -269,13 +269,13 @@ implIntTruncateSnapshots sfs@(SomeHasFS fs) = do
       dirs
 
 implGetVolatileTip ::
-  (MonadSTM m, GetTip l) =>
+  (MonadSTM m, GetTip l, HeaderHash blk ~ HeaderHash l) =>
   LedgerDBEnv m l blk ->
   STM m (l EmptyMK)
 implGetVolatileTip = fmap current . getVolatileLedgerSeq
 
 implGetImmutableTip ::
-  (MonadSTM m, GetTip l) =>
+  (MonadSTM m, GetTip l, HeaderHash blk ~ HeaderHash l) =>
   LedgerDBEnv m l blk ->
   STM m (l EmptyMK)
 implGetImmutableTip = fmap anchor . getVolatileLedgerSeq
@@ -486,6 +486,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   --
   --  * Modify 'ldbSeq' while holding a write lock, and then close the removed
   --    handles without any locking. See e.g. 'implGarbageCollect'.
+  , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
   }
   deriving Generic
 
@@ -579,11 +580,11 @@ getEnvSTM (LDBHandle varState) f =
 -- 'LedgerSeq' can contain more than @k@ states if we adopted new blocks, but
 -- garbage collection has not yet been run.
 getVolatileLedgerSeq ::
-  (MonadSTM m, GetTip l) => LedgerDBEnv m l blk -> STM m (LedgerSeq m l)
-getVolatileLedgerSeq env =
-  LedgerSeq . AS.anchorNewest k . getLedgerSeq <$> readTVar (ldbSeq env)
- where
-  k = unNonZero $ maxRollbacks $ ledgerDbCfgSecParam $ ldbCfg env
+  (MonadSTM m, GetTip l, HeaderHash blk ~ HeaderHash l) =>
+  LedgerDBEnv m l blk -> STM m (LedgerSeq m l)
+getVolatileLedgerSeq env = do
+  volSuffix <- getVolatileSuffix (ldbGetVolatileSuffix env) (castPoint . getTip . state)
+  LedgerSeq . volSuffix . getLedgerSeq <$> readTVar (ldbSeq env)
 
 -- | Get a 'StateRef' from the 'LedgerSeq' (via 'getVolatileLedgerSeq') in the
 -- 'LedgerDBEnv', with the 'LedgerTablesHandle' having been duplicated (such
@@ -594,7 +595,7 @@ getVolatileLedgerSeq env =
 -- returned; for the simple use case of getting a single 'StateRef', use @t ~
 -- 'Solo'@.
 getStateRef ::
-  (IOLike m, Traversable t, GetTip l) =>
+  (IOLike m, Traversable t, GetTip l, HeaderHash blk ~ HeaderHash l) =>
   LedgerDBEnv m l blk ->
   (LedgerSeq m l -> t (StateRef m l)) ->
   m (t (StateRef m l))
@@ -608,7 +609,7 @@ getStateRef ldbEnv project =
 -- | Like 'StateRef', but takes care of closing the handle when the given action
 -- returns or errors.
 withStateRef ::
-  (IOLike m, Traversable t, GetTip l) =>
+  (IOLike m, Traversable t, GetTip l, HeaderHash blk ~ HeaderHash l) =>
   LedgerDBEnv m l blk ->
   (LedgerSeq m l -> t (StateRef m l)) ->
   (t (StateRef m l) -> m a) ->

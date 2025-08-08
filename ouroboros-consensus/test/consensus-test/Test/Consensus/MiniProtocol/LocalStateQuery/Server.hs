@@ -23,7 +23,6 @@ import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
-import Control.Tracer
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Network.TypedProtocol.Stateful.Proofs (connect)
@@ -44,7 +43,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Stream hiding
   )
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
 import Ouroboros.Network.Mock.Chain (Chain (..))
@@ -226,16 +224,12 @@ initLedgerDB s c = do
   reg <- unsafeNewRegistry
   fs <- newTMVarIO MockFS.empty
   let args =
-        LedgerDbArgs
-          { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
-          , lgrHasFS = SomeHasFS $ simHasFS fs
+        defaultArgs
+          { lgrHasFS = SomeHasFS $ simHasFS fs
           , lgrGenesis = return testInitExtLedger
-          , lgrTracer = nullTracer
           , lgrFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency InMemoryBackingStoreArgs
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents
-          , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrRegistry = reg
-          , lgrStartSnapshot = Nothing
           }
   ldb <-
     fst
