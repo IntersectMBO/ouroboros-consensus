@@ -2,7 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -22,14 +22,21 @@ module Ouroboros.Consensus.Storage.LedgerDB.Args
   , QueryBatchSize (..)
   , defaultArgs
   , defaultQueryBatchSize
+
+    -- * 'GetVolatileSuffix'
+  , GetVolatileSuffix (..)
+  , praosGetVolatileSuffix
   ) where
 
+import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Kind
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.API
@@ -38,6 +45,9 @@ import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Util.Args
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.AnchoredSeq (AnchoredSeq)
+import qualified Ouroboros.Network.AnchoredSeq as AS
 import System.FS.API
 
 {-------------------------------------------------------------------------------
@@ -120,3 +130,28 @@ defaultQueryBatchSize requestedQueryBatchSize = case requestedQueryBatchSize of
   -- acceptable performance. We might want to tweak this further, but for now
   -- this default seems good enough.
   DefaultQueryBatchSize -> 100_000
+
+{-------------------------------------------------------------------------------
+  GetVolatileSuffix
+-------------------------------------------------------------------------------}
+
+-- | Get the volatile suffix of the given 'AnchoredSeq' of states that the
+-- LedgerDB maintains.
+newtype GetVolatileSuffix m blk = GetVolatileSuffix
+  { getVolatileSuffix ::
+      forall s.
+      AS.Anchorable (WithOrigin SlotNo) s s =>
+      STM
+        m
+        ( AnchoredSeq (WithOrigin SlotNo) s s ->
+          AnchoredSeq (WithOrigin SlotNo) s s
+        )
+  }
+  deriving NoThunks via OnlyCheckWhnfNamed "GetVolatileSuffix" (GetVolatileSuffix m blk)
+
+-- | Return the the most recent @k@ blocks, which is the rule mandated by Praos.
+praosGetVolatileSuffix :: IOLike m => SecurityParam -> GetVolatileSuffix m blk
+praosGetVolatileSuffix secParam =
+  GetVolatileSuffix $ pure $ AS.anchorNewest k
+ where
+  k = unNonZero $ maxRollbacks secParam

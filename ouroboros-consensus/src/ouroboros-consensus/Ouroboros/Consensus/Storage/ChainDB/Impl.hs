@@ -160,12 +160,14 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   (chainDB, testing, env) <- lift $ do
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
+    let secParam = configSecurityParam $ Args.cdbsTopLevelConfig cdbSpecificArgs
     (lgrDB, replayed) <-
       LedgerDB.openDB
         argsLgrDb
         (ImmutableDB.streamAPI immutableDB)
         immutableDbTipPoint
         (Query.getAnyKnownBlock immutableDB volatileDB)
+        (LedgerDB.praosGetVolatileSuffix secParam)
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
