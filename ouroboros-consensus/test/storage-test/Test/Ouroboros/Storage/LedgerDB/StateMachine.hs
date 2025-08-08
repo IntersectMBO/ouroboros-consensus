@@ -492,6 +492,7 @@ openLedgerDB flavArgs env cfg fs = do
           (pure genesis)
           fs
           cfg
+          mkPraosGetVolatileSuffix
           tracer
           flavArgs
           rr

@@ -131,7 +131,7 @@ defaultSpecificArgs =
 -- and must therefore be set explicitly.
 defaultArgs ::
   forall m blk.
-  Monad m =>
+  IOLike m =>
   Incomplete ChainDbArgs m blk
 defaultArgs =
   ChainDbArgs
