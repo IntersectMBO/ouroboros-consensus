@@ -19,7 +19,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( -- * LedgerTablesHandle
     newLSMLedgerTablesHandle
   , tableFromValuesMK
-
+  , UTxOTable
+  
     -- * LSM TxOuts
   , LSMTxOut
   , HasLSMTxOut (..)
@@ -49,6 +50,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
     -- * snapshot-converter
   , implTakeSnapshot
+  , LSM.withNewSession
   ) where
 
 import Cardano.Binary as CBOR

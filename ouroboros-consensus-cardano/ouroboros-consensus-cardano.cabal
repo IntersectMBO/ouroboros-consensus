@@ -98,6 +98,7 @@ library
     Ouroboros.Consensus.Cardano.Block
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
+    Ouroboros.Consensus.Cardano.StreamingLedgerTables
     Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
     Ouroboros.Consensus.Cardano.QueryHF
@@ -137,6 +138,9 @@ library
     bytestring >=0.10 && <0.13,
     cardano-binary,
     cardano-crypto,
+    fs-api,
+    streaming,
+    contra-tracer,
     cardano-crypto-class ^>=2.2,
     cardano-crypto-wrapper,
     cardano-ledger-allegra ^>=1.8,
@@ -704,6 +708,7 @@ executable snapshot-converter
     cardano-crypto-class,
     cardano-crypto-wrapper,
     contra-tracer,
+    directory,
     filepath,
     fs-api,
     mtl,
