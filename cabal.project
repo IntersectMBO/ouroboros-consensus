@@ -86,3 +86,8 @@ source-repository-package
     libs/set-algebra
     libs/small-steps
     libs/vector-map
+
+constraints:
+  plutus-core < 1.51,
+  plutus-ledger-api < 1.51,
+  plutus-tx < 1.51,
