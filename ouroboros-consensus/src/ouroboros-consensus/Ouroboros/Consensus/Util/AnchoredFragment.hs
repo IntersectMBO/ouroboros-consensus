@@ -84,9 +84,9 @@ forksAtMostKBlocks k ours theirs = case ours `AF.intersect` theirs of
 -- Usage note: the primary user of this function is the chain database when
 -- sorting fragments that are preferred over our selection. It establishes the
 -- precondition in the following way: It will only compare candidate fragments
--- that it has previously verified are preferable to our current chain. Since
--- these fragments intersect with our current chain, they must by transitivity
--- also intersect each other.
+-- that it has previously verified are preferable to our current chain.
+-- Therefore, they are non-empty, as an empty fragment anchored in our chain can
+-- never be preferable to our chain.
 compareAnchoredFragments ::
   forall blk h.
   ( BlockSupportsProtocol blk
