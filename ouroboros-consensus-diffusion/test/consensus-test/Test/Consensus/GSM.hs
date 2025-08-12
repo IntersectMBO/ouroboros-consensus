@@ -174,10 +174,10 @@ prop_sequential_iosim1 actions = do
         TooOld -> GSM.enterPreSyncing gsm
         YoungEnough -> GSM.enterCaughtUp gsm
 
-  lift . lift $ yieldSeveralTimes
-
   -- start the GSM
   hGSM <- lift . lift $ async gsmEntryPoint
+
+  lift . lift $ yieldSeveralTimes
 
   (metadata, mbExn) <- do
     (metadata, _env) <- QD.runActions actions
