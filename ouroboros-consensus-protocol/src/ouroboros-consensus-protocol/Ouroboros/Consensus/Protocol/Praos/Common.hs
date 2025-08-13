@@ -311,9 +311,7 @@ instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsUnsound ocert sk
 instantiatePraosCredentials maxKESEvolutions tr (PraosCredentialsAgent _ path) = do
   HotKey.mkDynamicHotKey
     maxKESEvolutions
-    ( Just $ \handleKey handleDrop -> do
-        runKESAgentClient tr path handleKey handleDrop
-    )
+    (Just $ runKESAgentClient tr path)
     (pure ())
 
 -- | See 'PraosProtocolSupportsNode'
