@@ -168,8 +168,9 @@ data HotKey c m = HotKey
   -- PRECONDITION: the key is not poisoned.
   --
   -- POSTCONDITION: the signature is in normal form.
-  , forget :: m ()
-  -- ^ Securely erase the key and release its memory.
+  , forget_ :: m ()
+  -- ^ Securely erase the key and release its memory. User code should use
+  -- 'finalize' instead (which forgets and then finalizes the 'HotKey').
   , finalize_ :: m ()
   -- ^ Release any resources held by the 'HotKey', except for the signing
   -- key itself. User code should use 'finalize' instead.
@@ -178,7 +179,7 @@ data HotKey c m = HotKey
 -- | Release all resources held by the 'HotKey', including the signing key
 -- itself. Use this exactly once per 'HotKey' instance.
 finalize :: Monad m => HotKey c m -> m ()
-finalize hotKey = forget hotKey >> finalize_ hotKey
+finalize hotKey = forget_ hotKey >> finalize_ hotKey
 
 deriving via (OnlyCheckWhnfNamed "HotKey" (HotKey c m)) instance NoThunks (HotKey c m)
 
@@ -348,7 +349,7 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
               KESKey _ key -> do
                 let evolution = kesEvolution kesStateInfo
                 KES.signedKES () evolution toSign key
-      , forget = unset
+      , forget_ = unset
       , finalize_ = finalizer'
       }
  where
