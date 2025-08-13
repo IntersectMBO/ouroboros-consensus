@@ -305,7 +305,11 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     Set (SL.Credential 'HotCommitteeRole) ->
     Set SL.MemberStatus ->
     BlockQuery (ShelleyBlock proto era) QFNoTables SL.CommitteeMembersState
-  -- | Not supported in eras before Conway.
+  -- | The argument specifies the credential of each account whose delegatee
+  -- should be returned. When it's empty, the full map of delegatees is
+  -- returned.
+  --
+  -- Not supported in eras before Conway.
   GetFilteredVoteDelegatees ::
     CG.ConwayEraGov era =>
     Set (SL.Credential 'SL.Staking) ->
@@ -833,10 +837,14 @@ getFilteredVoteDelegatees ::
   SL.NewEpochState era ->
   Set (SL.Credential 'SL.Staking) ->
   VoteDelegatees
-getFilteredVoteDelegatees ss creds =
-  Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMapRestricted
+getFilteredVoteDelegatees ss creds
+  | Set.null creds =
+      Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMap
+  | otherwise =
+      Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMapRestricted
  where
-  accountsMapRestricted = Map.restrictKeys (getDState ss ^. SL.accountsL . SL.accountsMapL) creds
+  accountsMap = getDState ss ^. SL.accountsL . SL.accountsMapL
+  accountsMapRestricted = Map.restrictKeys accountsMap creds
 
 {-------------------------------------------------------------------------------
   Serialisation
