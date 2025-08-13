@@ -14,7 +14,7 @@ The following artifacts influence and/or describe the Consensus implementation.
     [Agda style](/pdfs/consensus-spec-agda.pdf),
     <!-- xrefcheck: ignore link -->
     [LaTeX style](/pdfs/consensus-spec.pdf)
-* [Quick reference table for all Cardano features](https://github.com/cardano-foundation/CIPs/blob/master/CIP-0059/feature-table.md).
+* [Quick reference table for all Cardano features](https://github.com/cardano-foundation/CIPs/blob/master/CIP-0059/feature-table).
   This includes the dates and first slot numbers of all eras and hard forks.
 * IOG media:
     * [The abstract nature of the consensus layer](https://iohk.io/en/blog/posts/2020/05/28/the-abstract-nature-of-the-consensus-layer/).

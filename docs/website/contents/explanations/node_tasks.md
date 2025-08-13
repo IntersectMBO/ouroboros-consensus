@@ -8,7 +8,7 @@ This document gives an overview of the tasks of a [caught-up](../references/glos
 We refer to the [component diagram](../references/data_flow) for a very high-level overview of the data flow in a node.
 Another good diagram is [Figure 1.1. in the Shelley networking spec](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf).
 
-Also see the [Glossary](../references/glossary.md) for jargon explanations.
+Also see the [Glossary](../references/glossary) for jargon explanations.
 
 ### Chain selection and storage layer
 
