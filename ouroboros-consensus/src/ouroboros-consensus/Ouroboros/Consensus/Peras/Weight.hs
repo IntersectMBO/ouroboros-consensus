@@ -71,7 +71,7 @@ emptyPerasWeightSnapshot = PerasWeightSnapshot Map.empty
 --
 -- >>> snap = mkPerasWeightSnapshot weights
 -- >>> snap
--- [(Origin,PerasWeight 3),(At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"}),PerasWeight 4),(At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"}),PerasWeight 2)]
+-- [(Point Origin,PerasWeight 3),(Point (At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"})),PerasWeight 4),(Point (At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"})),PerasWeight 2)]
 mkPerasWeightSnapshot ::
   StandardHash blk =>
   [(Point blk, PerasWeight)] ->
@@ -96,7 +96,7 @@ mkPerasWeightSnapshot =
 --
 -- >>> snap = mkPerasWeightSnapshot weights
 -- >>> perasWeightSnapshotToList snap
--- [(Origin,PerasWeight 3),(At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"}),PerasWeight 4),(At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"}),PerasWeight 2)]
+-- [(Point Origin,PerasWeight 3),(Point (At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"})),PerasWeight 4),(Point (At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"})),PerasWeight 2)]
 perasWeightSnapshotToList :: PerasWeightSnapshot blk -> [(Point blk, PerasWeight)]
 perasWeightSnapshotToList = Map.toAscList . getPerasWeightSnapshot
 
@@ -113,15 +113,15 @@ perasWeightSnapshotToList = Map.toAscList . getPerasWeightSnapshot
 --
 -- >>> snap0 = mkPerasWeightSnapshot weights
 -- >>> snap0
--- [(Origin,PerasWeight 3),(At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"}),PerasWeight 2)]
+-- [(Point Origin,PerasWeight 3),(Point (At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"})),PerasWeight 2)]
 --
 -- >>> snap1 = addToPerasWeightSnapshot (BlockPoint 3 "bar") (PerasWeight 2) snap0
 -- >>> snap1
--- [(Origin,PerasWeight 3),(At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"}),PerasWeight 2),(At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"}),PerasWeight 2)]
+-- [(Point Origin,PerasWeight 3),(Point (At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"})),PerasWeight 2),(Point (At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"})),PerasWeight 2)]
 --
 -- >>> snap2 = addToPerasWeightSnapshot (BlockPoint 2 "foo") (PerasWeight 2) snap1
 -- >>> snap2
--- [(Origin,PerasWeight 3),(At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"}),PerasWeight 4),(At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"}),PerasWeight 2)]
+-- [(Point Origin,PerasWeight 3),(Point (At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"})),PerasWeight 4),(Point (At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"})),PerasWeight 2)]
 addToPerasWeightSnapshot ::
   StandardHash blk =>
   Point blk ->
@@ -150,10 +150,10 @@ addToPerasWeightSnapshot pt weight =
 -- >>> snap = mkPerasWeightSnapshot weights
 --
 -- >>> prunePerasWeightSnapshot (SlotNo 2) snap
--- [(At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"}),PerasWeight 4),(At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"}),PerasWeight 2)]
+-- [(Point (At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"})),PerasWeight 4),(Point (At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"})),PerasWeight 2)]
 --
 -- >>> prunePerasWeightSnapshot (SlotNo 3) snap
--- [(At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"}),PerasWeight 2)]
+-- [(Point (At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"})),PerasWeight 2)]
 prunePerasWeightSnapshot ::
   SlotNo ->
   PerasWeightSnapshot blk ->
