@@ -6,10 +6,10 @@ The front page is defined in the [`index.js`](src/components/HomepageFeatures/in
 
 The website's source pages are located in the [`contents`](./contents) directory. In accordance with the [Diátaxis framework](https://diataxis.fr/) for organizing technical documentation, we categorize our pages into four sections:
 
-- **Explanations** ([`contents/explanation`](./contents/explanation))
+- **Explanations** ([`contents/explanation`](./contents/explanations))
 - **Tutorials** ([`contents/tutorials`](./contents/tutorials))
 - **HOWTOs** ([`contents/howtos`](./contents/howtos))
-- **Reference** ([`contents/reference`](./contents/reference))
+- **Reference** ([`contents/reference`](./contents/references))
 
 Refer to the [Diátaxis framework](https://diataxis.fr/) for guidance on the type of documentation that belongs in each section.
 
