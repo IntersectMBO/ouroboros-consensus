@@ -318,7 +318,7 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
           _ <- poisonState oldState
           return $ mkKESState maxKESEvolutions newOCert newKey evolution startPeriod
       unset =
-        modifyMVar_ varKESState $ poisonState
+        modifyMVar_ varKESState poisonState
 
   forM_ initialStateMay $ \(newOCert, newKey, evolution, startPeriod) ->
     set newOCert newKey evolution startPeriod
