@@ -19,7 +19,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   , triggerChainSelectionAsync
 
     -- * Exported for testing purposes
-  , olderThanK
+  , olderThanImmTip
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
@@ -404,8 +404,8 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   -- We follow the steps from section "## Adding a block" in ChainDB.md
 
   if
-    | olderThanK hdr isEBB immBlockNo -> do
-        lift $ traceWith addBlockTracer $ IgnoreBlockOlderThanK (blockRealPoint b)
+    | olderThanImmTip hdr immBlockNo -> do
+        lift $ traceWith addBlockTracer $ IgnoreBlockOlderThanImmTip (blockRealPoint b)
         lift $ deliverWrittenToDisk False
     | isMember (blockHash b) -> do
         lift $ traceWith addBlockTracer $ IgnoreBlockAlreadyInVolatileDB (blockRealPoint b)
@@ -459,31 +459,28 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
 
 -- | Return 'True' when the given header should be ignored when adding it
 -- because it is too old, i.e., we wouldn't be able to switch to a chain
--- containing the corresponding block because its block number is more than
--- @k@ blocks or exactly @k@ blocks back.
+-- containing the corresponding block because its block number is (weakly) older
+-- than that of the immutable tip.
 --
 -- Special case: the header corresponds to an EBB which has the same block
--- number as the block @k@ blocks back (the most recent \"immutable\" block).
--- As EBBs share their block number with the block before them, the EBB is not
--- too old in that case and can be adopted as part of our chain.
+-- number as the most recent \"immutable\" block. As EBBs share their block
+-- number with the block before them, the EBB is not too old in that case and
+-- can be adopted as part of our chain.
 --
 -- This special case can occur, for example, when the VolatileDB is empty
 -- (because of corruption). The \"immutable\" block is then also the tip of
 -- the chain. If we then try to add the EBB after it, it will have the same
 -- block number, so we must allow it.
-olderThanK ::
-  HasHeader (Header blk) =>
+olderThanImmTip ::
+  GetHeader blk =>
   -- | Header of the block to add
   Header blk ->
-  -- | Whether the block is an EBB or not
-  IsEBB ->
-  -- | The block number of the most recent \"immutable\" block, i.e., the
-  -- block @k@ blocks back.
+  -- | The block number of the most recent immutable block.
   WithOrigin BlockNo ->
   Bool
-olderThanK hdr isEBB immBlockNo
+olderThanImmTip hdr immBlockNo
   | NotOrigin bNo == immBlockNo
-  , isEBB == IsEBB =
+  , headerToIsEBB hdr == IsEBB =
       False
   | otherwise =
       NotOrigin bNo <= immBlockNo
@@ -594,9 +591,9 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
 
     if
       -- The chain might have grown since we added the block such that the
-      -- block is older than @k@.
-      | olderThanK hdr isEBB immBlockNo -> do
-          traceWith addBlockTracer $ IgnoreBlockOlderThanK p
+      -- block is older than the immutable tip.
+      | olderThanImmTip hdr immBlockNo -> do
+          traceWith addBlockTracer $ IgnoreBlockOlderThanImmTip p
 
       -- The block is invalid
       | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
@@ -635,9 +632,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
 
   p :: RealPoint blk
   p = headerRealPoint hdr
-
-  isEBB :: IsEBB
-  isEBB = headerToIsEBB hdr
 
   addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
   addBlockTracer = TraceAddBlockEvent >$< cdbTracer
