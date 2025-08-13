@@ -20,7 +20,6 @@ module Ouroboros.Consensus.Block.Forging
   , forgeStateUpdateInfoFromUpdateInfo
 
     -- * 'UpdateInfo'
-  , KESTracer
   , UpdateInfo (..)
   ) where
 
@@ -74,8 +73,6 @@ castForgeStateUpdateInfo = \case
   ForgeStateUpdated x -> ForgeStateUpdated x
   ForgeStateUpdateFailed x -> ForgeStateUpdateFailed x
   ForgeStateUpdateSuppressed -> ForgeStateUpdateSuppressed
-
-type family KESTracer blk
 
 -- | Stateful wrapper around block production
 --

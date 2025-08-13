@@ -70,7 +70,7 @@ import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Forging (BlockForging, KESTracer)
+import Ouroboros.Consensus.Block.Forging (BlockForging)
 import Ouroboros.Consensus.Cardano.CanHardFork
   ( crossEraForecastAcrossShelley
   , translateChainDepStateAcrossShelley
@@ -385,8 +385,6 @@ instance
 {-------------------------------------------------------------------------------
   Protocol info
 -------------------------------------------------------------------------------}
-
-type instance KESTracer (ShelleyBlock proto era) = KESAgentClientTrace
 
 protocolInfoShelleyBasedHardFork ::
   forall m proto1 era1 proto2 era2.
