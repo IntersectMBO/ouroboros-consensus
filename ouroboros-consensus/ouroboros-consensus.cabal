@@ -685,6 +685,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.ChainDB.FollowerPromptness
     Test.Ouroboros.Storage.ChainDB.GcSchedule
     Test.Ouroboros.Storage.ChainDB.Iterator
+    Test.Ouroboros.Storage.ChainDB.LedgerSnapshots
     Test.Ouroboros.Storage.ChainDB.Model
     Test.Ouroboros.Storage.ChainDB.Model.Test
     Test.Ouroboros.Storage.ChainDB.Paths
@@ -698,7 +699,6 @@ test-suite storage-test
     Test.Ouroboros.Storage.ImmutableDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB
     Test.Ouroboros.Storage.LedgerDB.Serialisation
-    Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy
     Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
@@ -721,7 +721,7 @@ test-suite storage-test
     bytestring,
     cardano-binary,
     cardano-ledger-binary:testlib,
-    cardano-ledger-core:{cardano-ledger-core, testlib},
+    cardano-ledger-core:cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
     cborg,

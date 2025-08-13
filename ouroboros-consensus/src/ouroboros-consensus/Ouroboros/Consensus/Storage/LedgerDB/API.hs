@@ -149,9 +149,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , withPrivateTipForker
   , withTipForker
 
-    -- * Snapshots
-  , SnapCounters (..)
-
     -- * Testing
   , TestInternals (..)
   , TestInternals'
@@ -160,7 +157,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
 
 import Codec.Serialise
 import qualified Control.Monad as Monad
-import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
@@ -262,18 +258,12 @@ data LedgerDB m l blk = LedgerDB
   --  * The set of previously applied points.
   , tryTakeSnapshot ::
       l ~ ExtLedgerState blk =>
-      Maybe (Time, Time) ->
-      Word64 ->
-      m SnapCounters
+      m ()
   -- ^ If the provided arguments indicate so (based on the SnapshotPolicy with
   -- which this LedgerDB was opened), take a snapshot and delete stale ones.
   --
-  -- The arguments are:
-  --
-  -- - If a snapshot has been taken already, the time at which it was taken
-  --   and the current time.
-  --
-  -- - How many blocks have been processed since the last snapshot.
+  -- For V1, this must not be called concurrently with 'garbageCollect' and/or
+  -- 'tryFlush'.
   , tryFlush :: m ()
   -- ^ Flush V1 in-memory LedgerDB state to disk, if possible. This is a no-op
   -- for implementations that do not need an explicit flush function.
@@ -421,18 +411,6 @@ getReadOnlyForker ::
 getReadOnlyForker ldb rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb rr pt
 
 {-------------------------------------------------------------------------------
-  Snapshots
--------------------------------------------------------------------------------}
-
--- | Counters to keep track of when we made the last snapshot.
-data SnapCounters = SnapCounters
-  { prevSnapshotTime :: !(Maybe Time)
-  -- ^ When was the last time we made a snapshot
-  , ntBlocksSinceLastSnap :: !Word64
-  -- ^ How many blocks have we processed since the last snapshot
-  }
-
-{-------------------------------------------------------------------------------
   Initialization
 -------------------------------------------------------------------------------}
 
@@ -514,7 +492,7 @@ initialize ::
   Point blk ->
   InitDB db m blk ->
   Maybe DiskSnapshot ->
-  m (InitLog blk, db, Word64)
+  m (InitLog blk, db)
 initialize
   replayTracer
   snapTracer
@@ -536,7 +514,6 @@ initialize
       m
         ( InitLog blk
         , db
-        , Word64
         )
     tryNewestFirst acc [] = do
       -- We're out of snapshots. Start at genesis
@@ -557,7 +534,7 @@ initialize
         Left err -> do
           closeDb initDb
           error $ "Invariant violation: invalid immutable chain " <> show err
-        Right (db, replayed) -> return (acc InitFromGenesis, db, replayed)
+        Right db -> return (acc InitFromGenesis, db)
     tryNewestFirst acc (s : ss) = do
       eInitDb <- initFromSnapshot s
       case eInitDb of
@@ -609,7 +586,7 @@ initialize
               Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot hasFS s
               closeDb initDb
               tryNewestFirst (acc . InitFailure s err) ss
-            Right (db, replayed) -> return (acc (InitFromSnapshot s pt), db, replayed)
+            Right db -> return (acc (InitFromSnapshot s pt), db)
 
     replayTracer' =
       decorateReplayTracerWithGoal
@@ -633,32 +610,27 @@ replayStartingWith ::
   db ->
   Point blk ->
   InitDB db m blk ->
-  ExceptT (SnapshotFailure blk) m (db, Word64)
+  ExceptT (SnapshotFailure blk) m db
 replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, currentTip} = do
   streamAll
     stream
     from
     InitFailureTooRecent
-    (initDb, 0)
+    initDb
     push
  where
-  push ::
-    blk ->
-    (db, Word64) ->
-    m (db, Word64)
-  push blk (!db, !replayed) = do
+  push :: blk -> db -> m db
+  push blk !db = do
     !db' <- initReapplyBlock cfg blk db
 
-    let !replayed' = replayed + 1
-
-        events =
+    let events =
           inspectLedger
             (getExtLedgerCfg (ledgerDbCfg cfg))
             (currentTip db)
             (currentTip db')
 
     traceWith tracer (ReplayedBlock (blockRealPoint blk) events)
-    return (db', replayed')
+    return db'
 
 {-------------------------------------------------------------------------------
   Trace replay events

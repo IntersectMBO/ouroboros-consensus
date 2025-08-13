@@ -1,13 +1,11 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 
 -- | Background tasks:
 --
@@ -53,7 +51,6 @@ import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
 import Data.Time.Clock
 import Data.Void (Void)
-import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
@@ -76,7 +73,7 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
+import Ouroboros.Consensus.Util.STM (Watcher (..), blockUntilJust, forkLinkedWatcher)
 import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -93,15 +90,13 @@ launchBgTasks ::
   , HasHardForkHistory blk
   ) =>
   ChainDbEnv m blk ->
-  -- | Number of immutable blocks replayed on ledger DB startup
-  Word64 ->
   m ()
-launchBgTasks cdb@CDB{..} replayed = do
+launchBgTasks cdb@CDB{..} = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
 
-  ledgerDbTasksTrigger <- newLedgerDbTasksTrigger replayed
+  ledgerDbTasksTrigger <- newLedgerDbTasksTrigger
   !ledgerDbMaintenaceThread <-
     forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
       ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
@@ -259,10 +254,9 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule fuse = do
   copyAndTrigger :: m ()
   copyAndTrigger = do
     -- Wait for the chain to grow larger than @k@
-    numToWrite <- atomically $ do
+    atomically $ do
       curChain <- icWithoutTime <$> readTVar cdbChain
       check $ fromIntegral (AF.length curChain) > unNonZero k
-      return $ fromIntegral (AF.length curChain) - unNonZero k
 
     -- Copy blocks to ImmutableDB
     --
@@ -270,7 +264,7 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule fuse = do
     -- copied to disk (though not flushed, necessarily).
     gcSlotNo <- withFuse fuse (copyToImmutableDB cdb)
 
-    triggerLedgerDbTasks ledgerDbTasksTrigger gcSlotNo numToWrite
+    triggerLedgerDbTasks ledgerDbTasksTrigger gcSlotNo
     scheduleGC' gcSlotNo
 
   scheduleGC' :: WithOrigin SlotNo -> m ()
@@ -292,29 +286,10 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule fuse = do
 -- | Trigger for the LedgerDB maintenance tasks, namely whenever the immutable
 -- DB tip slot advances when we finish copying blocks to it.
 newtype LedgerDbTasksTrigger m
-  = LedgerDbTasksTrigger (StrictTVar m LedgerDbTaskState)
+  = LedgerDbTasksTrigger (StrictTVar m (WithOrigin SlotNo))
 
-data LedgerDbTaskState = LedgerDbTaskState
-  { ldbtsImmTip :: !(WithOrigin SlotNo)
-  , ldbtsPrevSnapshotTime :: !(Maybe Time)
-  , ldbtsBlocksSinceLastSnapshot :: !Word64
-  }
-  deriving stock Generic
-  deriving anyclass NoThunks
-
-newLedgerDbTasksTrigger ::
-  IOLike m =>
-  -- | Number of blocks replayed.
-  Word64 ->
-  m (LedgerDbTasksTrigger m)
-newLedgerDbTasksTrigger replayed = LedgerDbTasksTrigger <$> newTVarIO st
- where
-  st =
-    LedgerDbTaskState
-      { ldbtsImmTip = Origin
-      , ldbtsPrevSnapshotTime = Nothing
-      , ldbtsBlocksSinceLastSnapshot = replayed
-      }
+newLedgerDbTasksTrigger :: IOLike m => m (LedgerDbTasksTrigger m)
+newLedgerDbTasksTrigger = LedgerDbTasksTrigger <$> newTVarIO Origin
 
 triggerLedgerDbTasks ::
   forall m.
@@ -322,15 +297,9 @@ triggerLedgerDbTasks ::
   LedgerDbTasksTrigger m ->
   -- | New tip of the ImmutableDB.
   WithOrigin SlotNo ->
-  -- | Number of blocks written to the ImmutableDB.
-  Word64 ->
   m ()
-triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) immTip numWritten =
-  atomically $ modifyTVar varSt $ \st ->
-    st
-      { ldbtsImmTip = immTip
-      , ldbtsBlocksSinceLastSnapshot = ldbtsBlocksSinceLastSnapshot st + numWritten
-      }
+triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) =
+  atomically . writeTVar varSt
 
 -- | Run LedgerDB maintenance tasks when 'LedgerDbTasksTrigger' changes.
 --
@@ -342,38 +311,16 @@ ledgerDbTaskWatcher ::
   IOLike m =>
   ChainDbEnv m blk ->
   LedgerDbTasksTrigger m ->
-  Watcher m LedgerDbTaskState (WithOrigin SlotNo)
+  Watcher m SlotNo SlotNo
 ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
   Watcher
-    { wFingerprint = ldbtsImmTip
+    { wFingerprint = id
     , wInitial = Nothing
-    , wReader = readTVar varSt
-    , wNotify =
-        \LedgerDbTaskState
-           { ldbtsImmTip
-           , ldbtsBlocksSinceLastSnapshot = blocksSinceLast
-           , ldbtsPrevSnapshotTime = prevSnapTime
-           } ->
-            whenJust (withOriginToMaybe ldbtsImmTip) $ \slotNo -> do
-              LedgerDB.tryFlush cdbLedgerDB
-
-              now <- getMonotonicTime
-              LedgerDB.SnapCounters
-                { prevSnapshotTime
-                , ntBlocksSinceLastSnap
-                } <-
-                LedgerDB.tryTakeSnapshot
-                  cdbLedgerDB
-                  ((,now) <$> prevSnapTime)
-                  blocksSinceLast
-              atomically $ modifyTVar varSt $ \st ->
-                st
-                  { ldbtsBlocksSinceLastSnapshot =
-                      ldbtsBlocksSinceLastSnapshot st - blocksSinceLast + ntBlocksSinceLastSnap
-                  , ldbtsPrevSnapshotTime = prevSnapshotTime
-                  }
-
-              LedgerDB.garbageCollect cdbLedgerDB slotNo
+    , wReader = blockUntilJust $ withOriginToMaybe <$> readTVar varSt
+    , wNotify = \slotNo -> do
+        LedgerDB.tryFlush cdbLedgerDB
+        LedgerDB.tryTakeSnapshot cdbLedgerDB
+        LedgerDB.garbageCollect cdbLedgerDB slotNo
     }
 
 {-------------------------------------------------------------------------------
