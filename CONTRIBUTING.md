@@ -337,7 +337,8 @@ package, we should release it to CHaP instead (see the
 [CHaP README](https://github.com/IntersectMBO/cardano-haskell-packages)
 for more).
 
-In general, we strive to avoid having `source-repository-package`s on our `main` branch. However, there are situations in which we want to prevent pull requests from piling up while awaiting the release of upstream components[^1]. In these cases, we allow merging pull requests that contain `source-repository-package`s, provided the referenced commit is on the `main` branch of the upstream package.
+In general, we strive to avoid having `source-repository-package`s on our `main` branch. However, there are situations where we want to prevent pull requests from piling up while awaiting the release of upstream components[^1]. 
+In these cases, we allow merging pull requests that contain `source-repository-package`s, provided the referenced commit is on the `main` branch of the upstream package.
 
 If you do add a temporary `source-repository-package` stanza, you need to
 provide a `--sha256` comment in `cabal.project` so that Nix knows the hash
