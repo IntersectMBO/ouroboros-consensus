@@ -337,6 +337,9 @@ package, we should release it to CHaP instead (see the
 [CHaP README](https://github.com/IntersectMBO/cardano-haskell-packages)
 for more).
 
+In general, we strive to avoid having `source-repository-package`s on our `main` branch. However, there are situations where we want to prevent pull requests from piling up while awaiting the release of upstream components[^1]. 
+In these cases, we allow merging pull requests that contain `source-repository-package`s, provided the referenced commit is on the `main` branch of the upstream package.
+
 If you do add a temporary `source-repository-package` stanza, you need to
 provide a `--sha256` comment in `cabal.project` so that Nix knows the hash
 of the content. There are two relatively straightforward ways to do this:
@@ -415,3 +418,5 @@ code of conduct.
 
 [haddock-site]: https://haskell-haddock.readthedocs.io/latest/
 [chap]: https://github.com/IntersectMBO/cardano-haskell-packages
+
+[^1]: [#1376](https://github.com/IntersectMBO/ouroboros-consensus/pull/1376) provides an example of an integration pull request that incorporated changes from several others that were waiting on the release of upstream packages. The resulting pull request was extremely tedious to review, making the process more error-prone than reviewing a shorter one due to its sheer size.
