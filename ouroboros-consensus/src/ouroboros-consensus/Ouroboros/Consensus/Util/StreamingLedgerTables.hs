@@ -19,8 +19,8 @@ module Ouroboros.Consensus.Util.StreamingLedgerTables
   ) where
 
 import Cardano.Slotting.Slot
-import Codec.CBOR.Decoding (Decoder, decodeBreakOr, decodeMapLenOrIndef)
-import Codec.CBOR.Encoding (Encoding, encodeBreak, encodeMapLenIndef)
+import Codec.CBOR.Decoding (Decoder, decodeBreakOr, decodeListLen, decodeMapLenOrIndef)
+import Codec.CBOR.Encoding (Encoding, encodeBreak, encodeListLen, encodeMapLenIndef)
 import Codec.CBOR.Read
 import Codec.CBOR.Write
 import Control.Concurrent.Class.MonadMVar
@@ -101,7 +101,7 @@ yieldCborMapS ::
   Stream (Of ByteString) m () ->
   Stream (Of (a, b)) (ExceptT DeserialiseFailure m) (Stream (Of ByteString) m ())
 yieldCborMapS decK decV = execStateT $ do
-  hoist lift (decodeCbor decodeMapLenOrIndef) >>= \case
+  hoist lift (decodeCbor decodeListLen >> decodeCbor decodeMapLenOrIndef) >>= \case
     Nothing -> go
     Just n -> replicateM_ n yieldKV
  where
@@ -232,7 +232,7 @@ sinkInMemoryS ::
   ExceptT DeserialiseFailure m ()
 sinkInMemoryS _ writeChunkSize encK encV (SomeHasFS fs) fp s =
   ExceptT $ withFile fs (mkFsPath [fp]) (WriteMode MustBeNew) $ \hdl -> do
-    void $ hPutSome fs hdl $ toStrictByteString encodeMapLenIndef
+    void $ hPutSome fs hdl $ toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)
     e <- runExceptT $ go hdl writeChunkSize mempty s
     case e of
       Left err -> pure $ Left err
@@ -241,11 +241,11 @@ sinkInMemoryS _ writeChunkSize encK encV (SomeHasFS fs) fp s =
         pure $ Right ()
  where
   go tb 0 m s' = do
-    lift $ void $ hPutSome fs tb $ toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- m]
+    lift $ void $ hPutSome fs tb $ toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- reverse m]
     go tb writeChunkSize mempty s'
   go tb n m s' = do
     mbs <- S.uncons s'
     case mbs of
       Nothing ->
-        lift $ void $ hPutSome fs tb $ toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- m]
+        lift $ void $ hPutSome fs tb $ toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- reverse m]
       Just (item, s'') -> go tb (n - 1) (item : m) s''
