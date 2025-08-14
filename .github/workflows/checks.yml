@@ -95,6 +95,9 @@ jobs:
       with:
         use-sodium-vrf: false
 
+    - name: "Move to base action: install liburing on ubuntu"
+      run: sudo apt -y install liburing-dev
+
     - name: Install cabal-plan
       run: |
         wget -q https://github.com/haskell-hvr/cabal-plan/releases/download/v0.7.3.0/cabal-plan-0.7.3.0-x86_64-linux.xz
