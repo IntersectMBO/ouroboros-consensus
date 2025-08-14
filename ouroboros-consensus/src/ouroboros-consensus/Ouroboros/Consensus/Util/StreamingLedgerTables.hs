@@ -39,6 +39,7 @@ import Data.Proxy
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import Database.LSMTree
+import Debug.Trace as Debug
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Diff
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
@@ -49,18 +50,6 @@ import Streaming
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
 import System.FS.API
-
-yieldInMemory ::
-  SomeHasFS IO ->
-  FsPath ->
-  (forall s. Decoder s a) ->
-  (forall s. Decoder s b) ->
-  ( Stream (Of (a, b)) (ExceptT DeserialiseFailure IO) (Stream (Of ByteString) IO ()) ->
-    ExceptT DeserialiseFailure IO (Stream (Of ByteString) IO r)
-  ) ->
-  ExceptT DeserialiseFailure IO r
-yieldInMemory shfs fp decK decV k =
-  yieldInMemoryS shfs fp decK decV k
 
 streamingFile ::
   forall m r.
@@ -153,6 +142,7 @@ yieldLmdbS readChunkSize hint bsvh =
  where
   go p = do
     LedgerTables (ValuesMK values) <- S.lift $ bsvhRangeRead bsvh hint p
+    Debug.traceM "Read some"
     if Map.null values
       then pure ()
       else do
@@ -203,16 +193,13 @@ sinkLmdbS writeChunkSize hint bs s = do
 
 sinkLsmS ::
   forall l m.
-  ( SerialiseKey (TxIn l)
-  , ResolveValue (LSMTxOut l)
-  , SerialiseValue (LSMTxOut l)
-  , MonadAsync m
+  ( MonadAsync m
   , MonadMVar m
   , MonadThrow (STM m)
   , MonadMask m
   , MonadST m
   , MonadEvaluate m
-  , HasLSMTxOut l
+  , LedgerSupportsLSMLedgerDB l
   ) =>
   Proxy l ->
   Int ->
@@ -233,6 +220,7 @@ sinkLsmS p writeChunkSize session s =
       Just (item, s'') -> go tb (n - 1) (item : m) s''
 
 sinkInMemoryS ::
+  forall m l.
   MonadThrow m =>
   Proxy l ->
   Int ->
@@ -240,21 +228,24 @@ sinkInMemoryS ::
   (TxOut l -> Encoding) ->
   SomeHasFS m ->
   FilePath ->
-  Stream (Of (TxIn l, TxOut l)) m () ->
-  m ()
+  Stream (Of (TxIn l, TxOut l)) (ExceptT DeserialiseFailure m) () ->
+  ExceptT DeserialiseFailure m ()
 sinkInMemoryS _ writeChunkSize encK encV (SomeHasFS fs) fp s =
-  withFile fs (mkFsPath [fp]) (WriteMode MustBeNew) $ \hdl -> do
+  ExceptT $ withFile fs (mkFsPath [fp]) (WriteMode MustBeNew) $ \hdl -> do
     void $ hPutSome fs hdl $ toStrictByteString encodeMapLenIndef
-    go hdl writeChunkSize mempty s
-    void $ hPutSome fs hdl $ toStrictByteString encodeBreak
-    pure ()
+    e <- runExceptT $ go hdl writeChunkSize mempty s
+    case e of
+      Left err -> pure $ Left err
+      Right () -> do
+        void $ hPutSome fs hdl $ toStrictByteString encodeBreak
+        pure $ Right ()
  where
   go tb 0 m s' = do
-    void $ hPutSome fs tb $ toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- m]
+    lift $ void $ hPutSome fs tb $ toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- m]
     go tb writeChunkSize mempty s'
   go tb n m s' = do
     mbs <- S.uncons s'
     case mbs of
       Nothing ->
-        void $ hPutSome fs tb $ toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- m]
+        lift $ void $ hPutSome fs tb $ toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- m]
       Just (item, s'') -> go tb (n - 1) (item : m) s''
