@@ -1,11 +1,13 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -36,7 +38,7 @@ module Ouroboros.Consensus.Shelley.Eras
 import Cardano.Binary
 import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Allegra.Translation ()
-import Cardano.Ledger.Alonzo (AlonzoEra)
+import Cardano.Ledger.Alonzo (AlonzoEra, AlonzoTxOut)
 import Cardano.Ledger.Alonzo.Core as Core
 import qualified Cardano.Ledger.Alonzo.Rules as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
@@ -70,6 +72,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
 {-------------------------------------------------------------------------------
   Era polymorphism
@@ -328,3 +331,46 @@ instance SupportsTwoPhaseValidation DijkstraEra where
             )
         ) -> True
     _ -> False
+
+{-------------------------------------------------------------------------------
+ SerialiseValue
+
+ These instances are necessary only to support threadnet shelley tests and the
+ unstable-cardano-tools library.
+-------------------------------------------------------------------------------}
+
+instance SerialiseValue (SL.ShelleyTxOut ShelleyEra) where
+  serialiseValue = serialiseLSMViaMemPack
+  deserialiseValue = deserialiseLSMViaMemPack
+
+deriving via
+  ResolveAsFirst (SL.ShelleyTxOut ShelleyEra)
+  instance
+    ResolveValue (SL.ShelleyTxOut ShelleyEra)
+
+instance SerialiseValue (SL.ShelleyTxOut AllegraEra) where
+  serialiseValue = serialiseLSMViaMemPack
+  deserialiseValue = deserialiseLSMViaMemPack
+
+deriving via
+  ResolveAsFirst (SL.ShelleyTxOut AllegraEra)
+  instance
+    ResolveValue (SL.ShelleyTxOut AllegraEra)
+
+instance SerialiseValue (SL.ShelleyTxOut MaryEra) where
+  serialiseValue = serialiseLSMViaMemPack
+  deserialiseValue = deserialiseLSMViaMemPack
+
+deriving via
+  ResolveAsFirst (SL.ShelleyTxOut MaryEra)
+  instance
+    ResolveValue (SL.ShelleyTxOut MaryEra)
+
+instance SerialiseValue (AlonzoTxOut AlonzoEra) where
+  serialiseValue = serialiseLSMViaMemPack
+  deserialiseValue = deserialiseLSMViaMemPack
+
+deriving via
+  ResolveAsFirst (AlonzoTxOut AlonzoEra)
+  instance
+    ResolveValue (AlonzoTxOut AlonzoEra)
