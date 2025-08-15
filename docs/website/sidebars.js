@@ -36,6 +36,7 @@ const sidebars = {
         'for-developers/Glossary',
         'for-developers/ComponentDiagram',
         'for-developers/BlockBlockDiagram',
+        'for-developers/OperationalCertificateIssueNumber',
         'for-developers/CardanoPraosBasics',
         'for-developers/Ticking',
         'for-developers/CivicTime',
