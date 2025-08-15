@@ -127,6 +127,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (split)
 import Ouroboros.Consensus.Util.CallStack
@@ -178,6 +179,7 @@ import Test.Util.WithEq
 -- | Commands
 data Cmd blk it flr
   = AddBlock blk
+  | AddPerasCert (PerasCert blk)
   | GetCurrentChain
   | GetTipBlock
   | GetTipHeader
@@ -402,8 +404,9 @@ run ::
   Cmd blk (TestIterator m blk) (TestFollower m blk) ->
   m (Success blk (TestIterator m blk) (TestFollower m blk))
 run cfg env@ChainDBEnv{varDB, ..} cmd =
-  readTVarIO varDB >>= \st@ChainDBState{chainDB = ChainDB{..}, internal} -> case cmd of
+  readTVarIO varDB >>= \st@ChainDBState{chainDB = chainDB@ChainDB{..}, internal} -> case cmd of
     AddBlock blk -> Point <$> advanceAndAdd st blk
+    AddPerasCert cert -> Unit <$> addPerasCertSync chainDB cert
     GetCurrentChain -> Chain <$> atomically getCurrentChain
     GetTipBlock -> MbBlock <$> getTipBlock
     GetTipHeader -> MbHeader <$> getTipHeader
@@ -639,6 +642,7 @@ runPure ::
   (Resp blk IteratorId FollowerId, DBModel blk)
 runPure cfg = \case
   AddBlock blk -> ok Point $ update (add blk)
+  AddPerasCert cert -> ok Unit $ ((),) . update (Model.addPerasCert cfg cert)
   GetCurrentChain -> ok Chain $ query (Model.volatileChain k getHeader)
   GetTipBlock -> ok MbBlock $ query Model.tipBlock
   GetTipHeader -> ok MbHeader $ query (fmap getHeader . Model.tipBlock)
@@ -910,6 +914,11 @@ generator loe genBlock m@Model{..} =
   At
     <$> frequency
       [ (30, genAddBlock)
+      , let freq = case loe of
+              LoEDisabled -> 10
+              -- The LoE does not yet support Peras.
+              LoEEnabled () -> 0
+         in (freq, AddPerasCert <$> genAddPerasCert)
       , (if empty then 1 else 10, return GetCurrentChain)
       , --    , (if empty then 1 else 10, return GetLedgerDB)
         (if empty then 1 else 10, return GetTipBlock)
@@ -1034,6 +1043,20 @@ generator loe genBlock m@Model{..} =
         else GetBlockComponent pt
 
   genAddBlock = AddBlock <$> genBlock m
+
+  genAddPerasCert :: Gen (PerasCert blk)
+  genAddPerasCert = do
+    -- TODO chain condition?
+    blk <- genBlock m
+    let pcCertRound = case Model.maxPerasRoundNo dbModel of
+          Nothing -> PerasRoundNo 0
+          Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
+        cert =
+          PerasCert
+            { pcCertRound
+            , pcCertBoostedBlock = blockPoint blk
+            }
+    pure cert
 
   genBounds :: Gen (StreamFrom blk, StreamTo blk)
   genBounds =
@@ -1233,15 +1256,32 @@ invariant cfg Model{..} =
 
 postcondition ::
   TestConstraints blk =>
+  TopLevelConfig blk ->
   Model blk m Concrete ->
   At Cmd blk m Concrete ->
   At Resp blk m Concrete ->
   Logic
-postcondition model cmd resp =
+postcondition cfg model cmd resp =
   (toMock (eventAfter ev) resp .== eventMockResp ev)
     .// "real response didn't match model response"
+    .&& immutableTipMonotonicity
  where
   ev = lockstep model cmd resp
+
+  immutableTipMonotonicity = case unAt cmd of
+    -- When we wipe the VolatileDB (and haven't persisted all immutable blocks),
+    -- the immutable tip can recede.
+    WipeVolatileDB -> Top
+    _ ->
+      Annotate ("Immutable tip non-monotonicity: " <> show before <> " > " <> show after) $
+        Boolean (before <= after)
+   where
+    before = immTipBlockNo $ eventBefore ev
+    after = immTipBlockNo $ eventAfter ev
+    immTipBlockNo =
+      Chain.headBlockNo
+        . Model.immutableChain (configSecurityParam cfg)
+        . dbModel
 
 semantics ::
   forall blk.
@@ -1272,7 +1312,7 @@ sm loe env genBlock cfg initLedger =
     { initModel = initModel loe cfg initLedger
     , transition = transition
     , precondition = precondition
-    , postcondition = postcondition
+    , postcondition = postcondition cfg
     , generator = Just . generator loe genBlock
     , shrinker = shrinker
     , semantics = semantics cfg env
@@ -1330,14 +1370,19 @@ deriving instance SOP.Generic (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic (VolatileDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (VolatileDB.TraceEvent blk)
+deriving instance SOP.Generic (PerasCertDB.TraceEvent blk)
+deriving instance SOP.HasDatatypeInfo (PerasCertDB.TraceEvent blk)
 deriving anyclass instance SOP.Generic (TraceChainSelStarvationEvent blk)
 deriving anyclass instance SOP.HasDatatypeInfo (TraceChainSelStarvationEvent blk)
+deriving anyclass instance SOP.Generic (TraceAddPerasCertEvent blk)
+deriving anyclass instance SOP.HasDatatypeInfo (TraceAddPerasCertEvent blk)
 
 data Tag
   = TagGetIsValidJust
   | TagGetIsValidNothing
   | TagChainSelReprocessChangedSelection
   | TagChainSelReprocessKeptSelection
+  | TagSwitchedToShorterChain
   deriving (Show, Eq)
 
 -- | Predicate on events
@@ -1364,6 +1409,7 @@ tag =
     , tagGetIsValidNothing
     , tagChainSelReprocess TagChainSelReprocessChangedSelection (/=)
     , tagChainSelReprocess TagChainSelReprocessKeptSelection (==)
+    , tagSwitchedToShorterChain
     ]
  where
   tagGetIsValidJust :: EventPred m
@@ -1387,6 +1433,21 @@ tag =
       | (test `on` Model.tipPoint . dbModel) (eventBefore ev) (eventAfter ev) ->
           Left t
     _ -> Right $ tagChainSelReprocess t test
+
+  -- Tag this test case if we ever switch from a longer to a shorter chain in a
+  -- non-degenerate case.
+  tagSwitchedToShorterChain :: EventPred m
+  tagSwitchedToShorterChain = C.predicate $ \case
+    ev
+      | case unAt $ eventCmd ev of
+          -- Wiping the VolatileDB is not interesting here.
+          WipeVolatileDB{} -> False
+          _ -> True
+      , ((>) `on` curChainLength) (eventBefore ev) (eventAfter ev) ->
+          Left TagSwitchedToShorterChain
+      | otherwise -> Right tagSwitchedToShorterChain
+   where
+    curChainLength = Chain.length . Model.currentChain . dbModel
 
 -- | Step the model using a 'QSM.Command' (i.e., a command associated with
 -- an explicit set of variables)
@@ -1756,8 +1817,10 @@ traceEventName = \case
   TraceLedgerDBEvent ev -> "Ledger." <> constrName ev
   TraceImmutableDBEvent ev -> "ImmutableDB." <> constrName ev
   TraceVolatileDBEvent ev -> "VolatileDB." <> constrName ev
+  TracePerasCertDbEvent ev -> "PerasCertDB." <> constrName ev
   TraceLastShutdownUnclean -> "LastShutdownUnclean"
   TraceChainSelStarvationEvent ev -> "ChainSelStarvation." <> constrName ev
+  TraceAddPerasCertEvent ev -> "AddPerasCert." <> constrName ev
 
 mkArgs ::
   IOLike m =>

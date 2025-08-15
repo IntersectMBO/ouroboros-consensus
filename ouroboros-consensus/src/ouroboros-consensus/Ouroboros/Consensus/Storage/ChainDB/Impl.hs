@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
+  , TraceAddPerasCertEvent (..)
   , TraceChainSelStarvationEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
@@ -53,6 +54,7 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack (HasCallStack)
+import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
@@ -78,6 +80,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (newFuse, whenJust, withFuse)
 import Ouroboros.Consensus.Util.Args
@@ -86,6 +89,7 @@ import Ouroboros.Consensus.Util.STM
   ( Fingerprint (..)
   , WithFingerprint (..)
   )
+import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( ChainSelStarvation (..)
@@ -160,13 +164,18 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   (chainDB, testing, env) <- lift $ do
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
+    (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <-
+      mkLedgerDbGetVolatileSuffix
     (lgrDB, replayed) <-
       LedgerDB.openDB
         argsLgrDb
         (ImmutableDB.streamAPI immutableDB)
         immutableDbTipPoint
         (Query.getAnyKnownBlock immutableDB volatileDB)
+        ledgerDbGetVolatileSuffix
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
+
+    perasCertDB <- PerasCertDB.openDB argsPerasCertDB
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
@@ -174,6 +183,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
+    initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
     chain <- withRegistry $ \rr -> do
       chainAndLedger <-
         ChainSel.initialChainSelection
@@ -185,6 +195,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (Args.cdbsTopLevelConfig cdbSpecificArgs)
           varInvalid
           (void initialLoE)
+          (forgetFingerprint initialWeights)
       traceWith initChainSelTracer InitialChainSelected
 
       let chain = VF.validatedFragment chainAndLedger
@@ -245,7 +256,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
+            , cdbPerasCertDB = perasCertDB
             }
+
+    setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
+
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
           API.ChainDB
@@ -272,13 +287,17 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
             , getReadOnlyForkerAtPoint = getEnv2 h Query.getReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
+            , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
+            , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
             }
     addBlockTestFuse <- newFuse "test chain selection"
     copyTestFuse <- newFuse "test copy to immutable db"
     let testing =
           Internal
             { intCopyToImmutableDB = getEnv h (withFuse copyTestFuse . Background.copyToImmutableDB)
-            , intGarbageCollect = getEnv1 h Background.garbageCollect
+            , intGarbageCollect = \slot -> getEnv h $ \e -> do
+                Background.garbageCollectBlocks e slot
+                LedgerDB.garbageCollect (cdbLedgerDB e) slot
             , intTryTakeSnapshot = getEnv h $ \env' ->
                 void $ LedgerDB.tryTakeSnapshot (cdbLedgerDB env') Nothing maxBound
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
@@ -300,7 +319,44 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   return ((chainDB, testing), env)
  where
   tracer = Args.cdbsTracer cdbSpecificArgs
-  Args.ChainDbArgs argsImmutableDb argsVolatileDb argsLgrDb cdbSpecificArgs = args
+  Args.ChainDbArgs
+    argsImmutableDb
+    argsVolatileDb
+    argsLgrDb
+    argsPerasCertDB
+    cdbSpecificArgs = args
+
+  -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')
+  -- determining which of its states are volatile/immutable. Once we have
+  -- initialized the ChainDB we can defer this decision to
+  -- 'Query.getCurrentChain'.
+  --
+  -- However, we initialize the LedgerDB before the ChainDB (for initial chain
+  -- selection), so during that period, we temporarily consider no state (apart
+  -- from the anchor state) as immutable. This is fine as we don't perform eg
+  -- any rollbacks during this period.
+  mkLedgerDbGetVolatileSuffix ::
+    m
+      ( LedgerDB.GetVolatileSuffix m blk
+      , STM m (AnchoredFragment (Header blk)) -> m ()
+      )
+  mkLedgerDbGetVolatileSuffix = do
+    varGetCurrentChain ::
+      StrictTMVar m (OnlyCheckWhnf (STM m (AnchoredFragment (Header blk)))) <-
+      newEmptyTMVarIO
+    let getVolatileSuffix =
+          LedgerDB.GetVolatileSuffix $
+            tryReadTMVar varGetCurrentChain >>= \case
+              -- If @setVarChain@ has not yet been invoked, return the entire
+              -- suffix as volatile.
+              Nothing -> pure id
+              -- Otherwise, return the suffix with the same length as the
+              -- current chain.
+              Just (OnlyCheckWhnf getCurrentChain) -> do
+                curChainLen <- AF.length <$> getCurrentChain
+                pure $ AF.anchorNewest (fromIntegral curChainLen)
+        setVarChain = atomically . writeTMVar varGetCurrentChain . OnlyCheckWhnf
+    pure (getVolatileSuffix, setVarChain)
 
 -- | We use 'runInnerWithTempRegistry' for the component databases.
 innerOpenCont ::

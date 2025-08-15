@@ -125,6 +125,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Ju
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import Ouroboros.Consensus.Node.GsmState (GsmState (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
@@ -691,12 +692,10 @@ checkKnownIntersectionInvariants ::
   ( HasHeader blk
   , HasHeader (Header blk)
   , HasAnnTip blk
-  , ConsensusProtocol (BlockProtocol blk)
   ) =>
-  ConsensusConfig (BlockProtocol blk) ->
   KnownIntersectionState blk ->
   Either String ()
-checkKnownIntersectionInvariants cfg kis
+checkKnownIntersectionInvariants kis
   -- 'theirHeaderStateHistory' invariant
   | let HeaderStateHistory snapshots = theirHeaderStateHistory
         historyTips :: [WithOrigin (AnnTip blk)]
@@ -723,19 +722,6 @@ checkKnownIntersectionInvariants cfg kis
           , show fragmentAnchorPoint
           ]
   -- 'ourFrag' invariants
-  | let nbHeaders = AF.length ourFrag
-        ourAnchorPoint = AF.anchorPoint ourFrag
-  , nbHeaders < fromIntegral (unNonZero k)
-  , ourAnchorPoint /= GenesisPoint =
-      throwError $
-        unwords
-          [ "ourFrag contains fewer than k headers and not close to genesis:"
-          , show nbHeaders
-          , "vs"
-          , show k
-          , "with anchor"
-          , show ourAnchorPoint
-          ]
   | let ourFragAnchor = AF.anchorPoint ourFrag
         theirFragAnchor = AF.anchorPoint theirFrag
   , ourFragAnchor /= castPoint theirFragAnchor =
@@ -761,8 +747,6 @@ checkKnownIntersectionInvariants cfg kis
   | otherwise =
       return ()
  where
-  SecurityParam k = protocolSecurityParam cfg
-
   KnownIntersectionState
     { mostRecentIntersection
     , ourFrag
@@ -774,14 +758,12 @@ assertKnownIntersectionInvariants ::
   ( HasHeader blk
   , HasHeader (Header blk)
   , HasAnnTip blk
-  , ConsensusProtocol (BlockProtocol blk)
   , HasCallStack
   ) =>
-  ConsensusConfig (BlockProtocol blk) ->
   KnownIntersectionState blk ->
   KnownIntersectionState blk
-assertKnownIntersectionInvariants cfg kis =
-  assertWithMsg (checkKnownIntersectionInvariants cfg kis) kis
+assertKnownIntersectionInvariants kis =
+  assertWithMsg (checkKnownIntersectionInvariants kis) kis
 
 {-------------------------------------------------------------------------------
   The ChainSync client definition
@@ -892,8 +874,7 @@ chainSyncClient cfgEnv dynEnv =
             (ForkTooDeep GenesisPoint)
  where
   ConfigEnv
-    { cfg
-    , chainDbView
+    { chainDbView
     , tracer
     } = cfgEnv
 
@@ -995,7 +976,7 @@ chainSyncClient cfgEnv dynEnv =
                   -- we will /never/ adopt them, which is handled in the "no
                   -- more intersection case".
                   StillIntersects () $
-                    assertKnownIntersectionInvariants (configConsensus cfg) $
+                    assertKnownIntersectionInvariants $
                       KnownIntersectionState
                         { mostRecentIntersection = castPoint intersection
                         , ourFrag = ourFrag'
@@ -1158,7 +1139,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                 (ourTipFromChain ourFrag)
                 theirTip
       let kis =
-            assertKnownIntersectionInvariants (configConsensus cfg) $
+            assertKnownIntersectionInvariants $
               KnownIntersectionState
                 { mostRecentIntersection = intersection
                 , ourFrag
@@ -1234,7 +1215,6 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
   ConfigEnv
     { mkPipelineDecision0
     , tracer
-    , cfg
     , historicityCheck
     } = cfgEnv
 
@@ -1622,9 +1602,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         else mostRecentIntersection
 
                     kis' =
-                      assertKnownIntersectionInvariants
-                        (configConsensus cfg)
-                        $ KnownIntersectionState
+                      assertKnownIntersectionInvariants $
+                        KnownIntersectionState
                           { mostRecentIntersection = mostRecentIntersection'
                           , ourFrag = ourFrag
                           , theirFrag = theirFrag'
@@ -1856,7 +1835,12 @@ checkTime cfgEnv dynEnv intEnv =
   checkPreferTheirsOverOurs kis
     | -- Precondition is fulfilled as ourFrag and theirFrag intersect by
       -- construction.
-      preferAnchoredCandidate (configBlock cfg) ourFrag theirFrag =
+      preferAnchoredCandidate
+        (configBlock cfg)
+        -- TODO: remove this entire check, see https://github.com/tweag/cardano-peras/issues/64
+        emptyPerasWeightSnapshot
+        ourFrag
+        theirFrag =
         pure ()
     | otherwise =
         throwSTM $
@@ -1961,7 +1945,7 @@ checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
   traceWith (tracer cfgEnv) $ TraceValidatedHeader hdr
 
   pure $
-    assertKnownIntersectionInvariants (configConsensus cfg) $
+    assertKnownIntersectionInvariants $
       KnownIntersectionState
         { mostRecentIntersection = mostRecentIntersection'
         , ourFrag = ourFrag

@@ -26,6 +26,7 @@ import Control.Monad.Trans (lift)
 import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Foldable as Foldable
+import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.Map (Map)
@@ -82,8 +83,9 @@ mkInitDb ::
   Complete LedgerDbArgs m blk ->
   Complete V1.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
+  GetVolatileSuffix m blk ->
   InitDB (DbChangelog' blk, ResourceKey m, BackingStore' m blk) m blk
-mkInitDb args bss getBlock =
+mkInitDb args bss getBlock getVolatileSuffix =
   InitDB
     { initFromGenesis = do
         st <- lgrGenesis
@@ -119,7 +121,6 @@ mkInitDb args bss getBlock =
               else pure chlog'
         pure (chlog'', r, bstore)
     , currentTip = \(ch, _, _) -> ledgerState . current $ ch
-    , pruneDb = \(ch, r, bs) -> pure (pruneToImmTipOnly ch, r, bs)
     , mkLedgerDb = \(db, ldbBackingStoreKey, ldbBackingStore) -> do
         (varDB, prevApplied) <-
           (,) <$> newTVarIO db <*> newTVarIO Set.empty
@@ -142,6 +143,7 @@ mkInitDb args bss getBlock =
                 , ldbShouldFlush = shouldFlush flushFreq
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbResolveBlock = getBlock
+                , ldbGetVolatileSuffix = getVolatileSuffix
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h
@@ -185,7 +187,7 @@ implMkLedgerDb h =
       , getForkerAtTarget = newForkerAtTarget h
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
-      , garbageCollect = getEnvSTM1 h implGarbageCollect
+      , garbageCollect = getEnv1 h implGarbageCollect
       , tryTakeSnapshot = getEnv2 h implTryTakeSnapshot
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
@@ -200,10 +202,16 @@ implGetVolatileTip ::
 implGetVolatileTip = fmap current . readTVar . ldbChangelog
 
 implGetImmutableTip ::
-  MonadSTM m =>
+  (MonadSTM m, GetTip l) =>
   LedgerDBEnv m l blk ->
   STM m (l EmptyMK)
-implGetImmutableTip = fmap anchor . readTVar . ldbChangelog
+implGetImmutableTip env = do
+  volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix env
+  -- The DbChangelog might contain more than k states if they have not yet
+  -- been garbage-collected.
+  fmap (AS.anchor . volSuffix . changelogStates)
+    . readTVar
+    $ ldbChangelog env
 
 implGetPastLedgerState ::
   ( MonadSTM m
@@ -214,7 +222,18 @@ implGetPastLedgerState ::
   , HeaderHash l ~ HeaderHash blk
   ) =>
   LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l EmptyMK))
-implGetPastLedgerState env point = getPastLedgerAt point <$> readTVar (ldbChangelog env)
+implGetPastLedgerState env point = do
+  volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix env
+  readTVar (ldbChangelog env) <&> \chlog -> do
+    -- The DbChangelog might contain more than k states if they have not yet
+    -- been garbage-collected, so make sure that the point is volatile (or the
+    -- immutable tip).
+    guard $
+      AS.withinBounds
+        (pointSlot point)
+        ((point ==) . castPoint . either getTip getTip)
+        (volSuffix (changelogStates chlog))
+    getPastLedgerAt point chlog
 
 implGetHeaderStateHistory ::
   ( MonadSTM m
@@ -226,6 +245,7 @@ implGetHeaderStateHistory ::
   LedgerDBEnv m l blk -> STM m (HeaderStateHistory blk)
 implGetHeaderStateHistory env = do
   ldb <- readTVar (ldbChangelog env)
+  volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix env
   let currentLedgerState = ledgerState $ current ldb
       -- This summary can convert all tip slots of the ledger states in the
       -- @ledgerDb@ as these are not newer than the tip slot of the current
@@ -237,6 +257,9 @@ implGetHeaderStateHistory env = do
   pure
     . HeaderStateHistory
     . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'
+    -- The DbChangelog might contain more than k states if they have not yet
+    -- been garbage-collected, so only take the corresponding suffix.
+    . volSuffix
     $ changelogStates ldb
 
 implValidate ::
@@ -274,10 +297,17 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
 
--- | Remove all points with a slot older than the given slot from the set of
--- previously applied points.
-implGarbageCollect :: MonadSTM m => LedgerDBEnv m l blk -> SlotNo -> STM m ()
-implGarbageCollect env slotNo =
+-- | Remove 'DbChangelog' states older than the given slot, and all points with
+-- a slot older than the given slot from the set of previously applied points.
+implGarbageCollect ::
+  ( MonadSTM m
+  , IsLedger (LedgerState blk)
+  , l ~ ExtLedgerState blk
+  ) =>
+  LedgerDBEnv m l blk -> SlotNo -> m ()
+implGarbageCollect env slotNo = atomically $ do
+  modifyTVar (ldbChangelog env) $
+    prune (LedgerDbPruneBeforeSlot slotNo)
   modifyTVar (ldbPrevApplied env) $
     Set.dropWhileAntitone ((< slotNo) . realPointSlot)
 
@@ -410,7 +440,7 @@ implIntPush ::
   LedgerDBEnv m l blk -> l DiffMK -> m ()
 implIntPush env st = do
   chlog <- readTVarIO $ ldbChangelog env
-  let chlog' = prune (LedgerDbPruneKeeping (ledgerDbCfgSecParam $ ldbCfg env)) $ extend st chlog
+  let chlog' = pruneToImmTipOnly $ extend st chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
 
 implIntReapplyThenPush ::
@@ -545,6 +575,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- frequency that was provided when opening the LedgerDB.
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
+  , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
   }
   deriving Generic
 
@@ -729,27 +760,39 @@ acquireAtTarget ::
   ReadLocked m (Either GetForkerError (DbChangelog l))
 acquireAtTarget ldbEnv target = readLocked $ runExceptT $ do
   dblog <- lift $ readTVarIO (ldbChangelog ldbEnv)
+  volSuffix <- lift $ atomically $ getVolatileSuffix $ ldbGetVolatileSuffix ldbEnv
+  -- The DbChangelog might contain more than k states if they have not yet
+  -- been garbage-collected.
+  let volStates = volSuffix $ changelogStates dblog
+
+      immTip :: Point blk
+      immTip = castPoint $ getTip $ AS.anchor volStates
+
+      rollbackMax :: Word64
+      rollbackMax = fromIntegral $ AS.length volStates
+
+      rollbackTo pt
+        | pointSlot pt < pointSlot immTip = throwError $ PointTooOld Nothing
+        | otherwise = case rollback pt dblog of
+            Nothing -> throwError PointNotOnChain
+            Just dblog' -> pure dblog'
   -- Get the prefix of the dblog ending in the specified target.
   case target of
     Right VolatileTip -> pure dblog
-    Right ImmutableTip -> pure $ rollbackToAnchor dblog
-    Right (SpecificPoint pt) -> do
-      let immTip = getTip $ anchor dblog
-      case rollback pt dblog of
-        Nothing
-          | pointSlot pt < pointSlot immTip -> throwError $ PointTooOld Nothing
-          | otherwise -> throwError PointNotOnChain
-        Just dblog' -> pure dblog'
-    Left n -> case rollbackN n dblog of
-      Nothing ->
+    Right ImmutableTip -> rollbackTo immTip
+    Right (SpecificPoint pt) -> rollbackTo pt
+    Left n -> do
+      when (n > rollbackMax) $
         throwError $
           PointTooOld $
             Just
               ExceededRollback
-                { rollbackMaximum = maxRollback dblog
+                { rollbackMaximum = rollbackMax
                 , rollbackRequested = n
                 }
-      Just dblog' -> pure dblog'
+      case rollbackN n dblog of
+        Nothing -> error "unreachable"
+        Just dblog' -> pure dblog'
 
 {-------------------------------------------------------------------------------
   Make forkers from consistent views
@@ -761,6 +804,7 @@ newForker ::
   , LedgerSupportsProtocol blk
   , NoThunks (l EmptyMK)
   , GetTip l
+  , StandardHash l
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
@@ -776,7 +820,6 @@ newForker h ldbEnv rr dblog = readLocked $ do
           { foeBackingStoreValueHandle = forkerMVar
           , foeChangelog = dblogVar
           , foeSwitchVar = ldbChangelog ldbEnv
-          , foeSecurityParam = ledgerDbCfgSecParam $ ldbCfg ldbEnv
           , foeTracer =
               LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
           }
@@ -798,6 +841,7 @@ mkForker ::
   , HasHeader blk
   , HasLedgerTables l
   , GetTip l
+  , StandardHash l
   ) =>
   LedgerDBHandle m l blk ->
   QueryBatchSize ->
