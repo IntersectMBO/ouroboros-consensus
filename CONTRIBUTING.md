@@ -90,7 +90,7 @@ EOF
 
 An alternative to using `nix` is to set up the development
 environment yourself. Follow [these
-instructions](https://developers.cardano.org/docs/get-started/cardano-node/installing-cardano-node/)
+instructions](https://developers.cardano.org/docs/operate-a-stake-pool/node-operations/installing-cardano-node/#building-via-cabal)
 to properly configure your system.
 
 # Building the project
@@ -181,12 +181,11 @@ This section contain guidelines on what to check when making a pull request.
 - When bumping version bounds on the dependencies *it is not necessary* to
   increase the package version number. See [this
   section](#updating-the-dependencies-bounds).
-- When you want to create a changelog entry, follow [this and the following
-  section](docs/website/contents/for-developers/ReleaseProcess.md#installing-scriv).
+- When you want to create a changelog entry, follow [this and the following section](docs/website/contents/howtos/contributing/how_to_make_a_release.md#installing-scriv).
 
 ## Following our git process
 
-Our [git process](docs/website/contents/for-developers/GitProcess.md) describes
+Our [git process](docs/website/contents/howtos/contributing/consensus_git_process.md) describes
 the `git` practices we encourage when working with the code in this repository.
 
 ## Updating the documentation
@@ -197,7 +196,7 @@ documentation (see [this section](#documentation)).
 ## Following the style guide
 
 We have a [Haskell style
-guide](docs/website/contents/for-developers/StyleGuide.md) that should be
+guide](docs/website/contents/howtos/contributing/style_guide.md) that should be
 followed when writing code in Consensus. Our style guide is not set in stone,
 and improvements are always welcome.
 
@@ -252,12 +251,12 @@ frustrations later on in the process.
 
 We maintain a changelog. If your pull request requires a changelog entry, please
 follow [these
-instructions](docs/website/contents/for-developers/ReleaseProcess.md#adding-a-changelog-fragment).
+instructions](docs/website/contents/howtos/contributing/how_to_make_a_release.md#adding-a-changelog-fragment).
 Even if your change doesn't require a changelog fragment, create an empty one as
 CI will reject your change otherwise. We made this choice to ensure authors of
 PRs would always take a moment to consider whether a changelog fragment should
 be added for their PR. For more information see [our release
-process](docs/website/contents/for-developers/ReleaseProcess.md).
+process](docs/website/contents/howtos/contributing/how_to_make_a_release.md).
 
 When creating a pull-request (PR), it is **crucial** that the PR:
 
