@@ -279,8 +279,8 @@ store config ccfg (state, tbs) tempFS =
         (_, SomeHasFSAndBlockIO hasFS blockIO) <- LSM.stdMkBlockIOFS dbPath reg
         salt <- LSM.stdGenSalt
         LSM.withNewSession nullTracer hasFS blockIO salt (mkFsPath [""]) $ \session -> do
-          lsmTable <- LSM.tableFromValuesMK reg session tbs
-          lsmHandle <- LSM.newLSMLedgerTablesHandle nullTracer reg session lsmTable
+          lsmTable <- LSM.tableFromValuesMK reg session state tbs
+          lsmHandle <- LSM.newLSMLedgerTablesHandle nullTracer reg lsmTable
           Monad.void $
             LSM.implTakeSnapshot
               ccfg

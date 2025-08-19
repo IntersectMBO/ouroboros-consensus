@@ -156,6 +156,7 @@ library
     cardano-ledger-dijkstra ^>=0.1,
     cardano-ledger-mary ^>=1.9,
     temporary,
+    resource-registry,
     cardano-ledger-shelley ^>=1.17,
     cardano-prelude,
     cardano-protocol-tpraos ^>=1.4.1,
