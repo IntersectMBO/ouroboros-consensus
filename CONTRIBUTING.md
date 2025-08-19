@@ -90,7 +90,7 @@ EOF
 
 An alternative to using `nix` is to set up the development
 environment yourself. Follow [these
-instructions](https://developers.cardano.org/docs/get-started/cardano-node/installing-cardano-node/)
+instructions](https://developers.cardano.org/docs/operate-a-stake-pool/node-operations/installing-cardano-node/#building-via-cabal)
 to properly configure your system.
 
 # Building the project
