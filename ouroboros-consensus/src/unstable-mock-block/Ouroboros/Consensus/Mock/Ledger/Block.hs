@@ -113,7 +113,6 @@ import Ouroboros.Consensus.Storage.Common
   , SizeInBytes
   )
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
@@ -405,6 +404,8 @@ instance
   where
   type LedgerErr (LedgerState (SimpleBlock c ext)) = MockError (SimpleBlock c ext)
 
+  type LedgerBlock (LedgerState (SimpleBlock c ext)) = SimpleBlock c ext
+
   type
     AuxLedgerEvent (LedgerState (SimpleBlock c ext)) =
       VoidLedgerEvent (LedgerState (SimpleBlock c ext))
@@ -527,23 +528,6 @@ instance LedgerSupportsPeerSelection (SimpleBlock c ext) where
 
 type instance TxIn (LedgerState (SimpleBlock c ext)) = Mock.TxIn
 type instance TxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
-
-instance LedgerSupportsLSMLedgerDB (LedgerState (SimpleBlock c ext)) where
-  type LSMTxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
-  toLSMTxOut _ = id
-  fromLSMTxOut _ = id
-  lsmIndex _ = OrdinaryIndex
-  lsmSnapLabel _ = "MockBlock"
-
-instance SerialiseKey Mock.TxIn where
-  serialiseKey = serialiseLSMViaMemPack
-  deserialiseKey = deserialiseLSMViaMemPack
-
-instance SerialiseValue Mock.TxOut where
-  serialiseValue = serialiseLSMViaMemPack
-  deserialiseValue = deserialiseLSMViaMemPack
-
-deriving via ResolveAsFirst Mock.TxOut instance ResolveValue Mock.TxOut
 
 instance CanUpgradeLedgerTables (LedgerState (SimpleBlock c ext)) where
   upgradeTables _ _ = id

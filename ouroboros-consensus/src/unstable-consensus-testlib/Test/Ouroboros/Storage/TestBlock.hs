@@ -116,9 +116,9 @@ import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Storage.ImmutableDB (Tip)
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
+import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
@@ -565,6 +565,8 @@ instance GetTip (Ticked (LedgerState TestBlock)) where
 instance IsLedger (LedgerState TestBlock) where
   type LedgerErr (LedgerState TestBlock) = TestBlockError
 
+  type LedgerBlock (LedgerState TestBlock) = TestBlock
+
   type
     AuxLedgerEvent (LedgerState TestBlock) =
       VoidLedgerEvent (LedgerState TestBlock)
@@ -577,12 +579,8 @@ instance IsLedger (LedgerState TestBlock) where
 type instance TxIn (LedgerState TestBlock) = Void
 type instance TxOut (LedgerState TestBlock) = Void
 
-instance LedgerSupportsLSMLedgerDB (LedgerState TestBlock) where
-  type LSMTxOut (LedgerState TestBlock) = Void
-  toLSMTxOut _ = id
-  fromLSMTxOut _ = id
-  lsmIndex _ = LSM.OrdinaryIndex
-  lsmSnapLabel _ = "Storage_TestBlock"
+instance ShowProxy TestBlock where
+  showProxy _ = "Storage_TestBlock"
 
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x y) = TestLedger x y

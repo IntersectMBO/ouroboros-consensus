@@ -741,7 +741,6 @@ test-suite storage-test
     generics-sop,
     io-classes:{io-classes, strict-mvar, strict-stm},
     io-sim,
-    lsm-tree,
     mempack,
     mtl,
     nothunks,

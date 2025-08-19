@@ -377,8 +377,9 @@ We can now use `tickLedgerStateD` to instantiate `IsLedger`:
 
 > instance IsLedger (LedgerState BlockD) where
 >   type instance LedgerErr (LedgerState BlockD) = Void
+>   type instance LedgerBlock (LedgerState BlockD) = BlockD
 >   type instance AuxLedgerEvent (LedgerState BlockD) = ()
->
+
 >   applyChainTickLedgerResult _events _cfg slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = tickLedgerStateD slot $ convertMapKind ldgrSt
@@ -412,10 +413,10 @@ applying each individual transaction - exactly as it was in for `BlockC`:
 >     pure LedgerResult { lrResult = convertMapKind $ b `applyBlockTo` tickedLdgrSt
 >                       , lrEvents = []
 >                       }
->
+
 >   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 >   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
->
+
 >   getBlockKeySets = const trivialLedgerTables
 
 Note that prior to `applyBlockLedgerResult` being invoked, the calling code will

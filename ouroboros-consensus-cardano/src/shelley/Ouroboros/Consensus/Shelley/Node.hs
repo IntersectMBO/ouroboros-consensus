@@ -50,7 +50,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , pHeaderIssuer
   )
-import Ouroboros.Consensus.Storage.LedgerDB.API
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -122,6 +121,5 @@ instance
   , TxLimits (ShelleyBlock proto era)
   , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
-  , LedgerSupportsLSMLedgerDB (LedgerState (ShelleyBlock proto era))
   ) =>
   RunNode (ShelleyBlock proto era)

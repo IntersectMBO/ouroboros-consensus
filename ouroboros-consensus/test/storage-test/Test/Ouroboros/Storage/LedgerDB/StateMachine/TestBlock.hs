@@ -49,7 +49,6 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.TreeDiff
 import Data.Word
-import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -59,7 +58,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
+import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block (Point (Point))
@@ -216,22 +215,8 @@ queryKeys f (LedgerTables (ValuesMK utxovals)) = f utxovals
 type instance TxIn (LedgerState TestBlock) = Token
 type instance TxOut (LedgerState TestBlock) = TValue
 
-instance LSM.SerialiseKey Token where
-  serialiseKey = serialiseLSMViaMemPack
-  deserialiseKey = deserialiseLSMViaMemPack
-
-instance LSM.SerialiseValue TValue where
-  serialiseValue = serialiseLSMViaMemPack
-  deserialiseValue = deserialiseLSMViaMemPack
-
-deriving via LSM.ResolveAsFirst TValue instance LSM.ResolveValue TValue
-
-instance LedgerSupportsLSMLedgerDB (LedgerState TestBlock) where
-  type LSMTxOut (LedgerState TestBlock) = TValue
-  toLSMTxOut _ = id
-  fromLSMTxOut _ = id
-  lsmIndex _ = LSM.OrdinaryIndex
-  lsmSnapLabel _ = "LedgerDB_TestBlock"
+instance ShowProxy TestBlock where
+  showProxy _ = "LedgerDB_TestBlock"
 
 instance CanUpgradeLedgerTables (LedgerState TestBlock) where
   upgradeTables _ _ = id

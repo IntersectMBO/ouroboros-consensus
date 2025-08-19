@@ -160,6 +160,8 @@ data instance Ticked (LedgerState (HardForkBlock xs)) mk
 instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
   type LedgerErr (LedgerState (HardForkBlock xs)) = HardForkLedgerError xs
 
+  type LedgerBlock (LedgerState (HardForkBlock xs)) = HardForkBlock xs
+
   type AuxLedgerEvent (LedgerState (HardForkBlock xs)) = OneEraLedgerEvent xs
 
   applyChainTickLedgerResult evs cfg@HardForkLedgerConfig{..} slot (HardForkLedgerState st) =

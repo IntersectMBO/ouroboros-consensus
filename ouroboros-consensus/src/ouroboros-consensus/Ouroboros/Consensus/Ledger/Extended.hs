@@ -148,6 +148,8 @@ instance
   where
   type LedgerErr (ExtLedgerState blk) = ExtValidationError blk
 
+  type LedgerBlock (ExtLedgerState blk) = blk
+
   type AuxLedgerEvent (ExtLedgerState blk) = AuxLedgerEvent (LedgerState blk)
 
   applyChainTickLedgerResult evs cfg slot (ExtLedgerState ledger header) =

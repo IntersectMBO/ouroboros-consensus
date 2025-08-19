@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Util.IndexedMemPack
   ( IndexedMemPack (..)
   , MemPack (..)
   , indexedPackByteString
+  , indexedPackByteArray
   , indexedUnpackError
   ) where
 

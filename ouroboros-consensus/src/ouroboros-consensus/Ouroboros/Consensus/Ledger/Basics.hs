@@ -166,6 +166,8 @@ class
   -- these errors does not depend on the type of the block.
   type LedgerErr l :: Type
 
+  type LedgerBlock l :: Type
+
   -- | Event emitted by the ledger
   --
   -- TODO we call this 'AuxLedgerEvent' to differentiate from 'LedgerEvent' in

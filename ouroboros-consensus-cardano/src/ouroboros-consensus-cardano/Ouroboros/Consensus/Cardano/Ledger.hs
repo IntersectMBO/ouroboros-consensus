@@ -38,7 +38,6 @@ import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
 import qualified Data.Map as Map
 import Data.MemPack
-import qualified Data.Primitive.ByteArray as PBA
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
@@ -46,7 +45,6 @@ import Data.SOP.Index
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
-import Data.Vector.Primitive (Vector (..))
 import Data.Void
 import GHC.Generics (Generic)
 import Lens.Micro
@@ -64,7 +62,6 @@ import Ouroboros.Consensus.Shelley.Ledger
   , ShelleyCompatible
   , shelleyLedgerState
   )
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -76,7 +73,7 @@ instance
     { getCardanoTxIn :: SL.TxIn
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, SerialiseKey)
+    deriving newtype NoThunks
 
   injectCanonicalTxIn IZ byronTxIn = absurd byronTxIn
   injectCanonicalTxIn (IS idx) shelleyTxIn = case idx of
@@ -116,22 +113,6 @@ data CardanoTxOut c
   | DijkstraTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) DijkstraEra)))
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
-
-instance SerialiseValue RawBytes where
-  serialiseValue = id
-  deserialiseValue = id
-
-deriving via ResolveAsFirst RawBytes instance ResolveValue RawBytes
-
-instance CardanoHardForkConstraints c => LedgerSupportsLSMLedgerDB (LedgerState (CardanoBlock c)) where
-  type LSMTxOut (LedgerState (CardanoBlock c)) = RawBytes
-  toLSMTxOut _ txout =
-    let barr = eliminateCardanoTxOut (const pack) txout
-     in RawBytes (Vector 0 (PBA.sizeofByteArray barr) barr)
-  fromLSMTxOut st (RawBytes (Vector _ _ barr)) =
-    indexedUnpackError st barr
-  lsmSnapLabel _ = "Cardano"
-  lsmIndex _ = CompactIndex
 
 -- | Eliminate the wrapping of CardanoTxOut with the provided function. Similar
 -- to 'hcimap' on an 'NS'.

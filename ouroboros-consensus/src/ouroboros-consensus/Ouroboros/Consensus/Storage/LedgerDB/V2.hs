@@ -48,6 +48,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -59,7 +60,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM (snapshotToStatePath)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Ouroboros.Consensus.Util (whenJust)
+import Ouroboros.Consensus.Util (ShowProxy, whenJust)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -78,6 +79,7 @@ mkInitDb ::
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerSupportsV2LedgerDB (LedgerState blk)
+  , ShowProxy blk
   ) =>
   Complete LedgerDbArgs m blk ->
   HandleEnv m ->
@@ -151,7 +153,7 @@ mkInitDb args bss getBlock snapManager =
       InMemoryHandleEnv -> InMemory.newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
       LSMHandleEnv lsmRes ->
         \values -> do
-          table <- LSM.tableFromValuesMK lgrRegistry (sessionResource lsmRes) values
+          table <- LSM.tableFromValuesMK lgrRegistry (sessionResource lsmRes) (forgetLedgerTables st) values
           LSM.newLSMLedgerTablesHandle v2Tracer lgrRegistry table
 
   loadSnapshot ::

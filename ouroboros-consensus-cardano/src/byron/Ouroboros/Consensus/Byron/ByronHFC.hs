@@ -46,8 +46,6 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
-import Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -295,7 +293,7 @@ instance HasCanonicalTxIn '[ByronBlock] where
     { getByronHFCTxIn :: Void
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack, LSM.SerialiseKey)
+    deriving newtype (NoThunks, MemPack)
 
   injectCanonicalTxIn IZ key = absurd key
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
@@ -313,15 +311,6 @@ deriving via
   Void
   instance
     IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
-
-instance LedgerSupportsLSMLedgerDB (LedgerState (HardForkBlock '[ByronBlock])) where
-  type
-    LSMTxOut (LedgerState (HardForkBlock '[ByronBlock])) =
-      TxOut (LedgerState (HardForkBlock '[ByronBlock]))
-  toLSMTxOut _ = id
-  fromLSMTxOut _ = id
-  lsmIndex _ = LSM.OrdinaryIndex
-  lsmSnapLabel _ = "ByronHFC"
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}

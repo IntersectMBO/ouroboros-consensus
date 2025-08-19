@@ -130,8 +130,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , mkHeaderView
   )
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.CBOR
   ( decodeWithOrigin
   , encodeWithOrigin
@@ -322,36 +320,6 @@ instance ShelleyCompatible proto era => UpdateLedger (ShelleyBlock proto era)
 type instance TxIn (LedgerState (ShelleyBlock proto era)) = SL.TxIn
 type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
 
--- | We use this newtype only to alter MemPack serialization. LSM trees use an
--- index that looks at the first 8 bytes, so it is important to put the index
--- first to avoid all TxIns from the same tx to cause a collision in
--- the LSM index.
-newtype LSMTxIn = LSMTxIn {lsmTxIn :: SL.TxIn}
-
-instance MemPack LSMTxIn where
-  packedByteCount = packedByteCount . lsmTxIn
-  packM (LSMTxIn (SL.TxIn txid txix)) = packM txix >> packM txid
-  unpackM = LSMTxIn <$> (flip SL.TxIn <$> unpackM <*> unpackM)
-
-instance SerialiseKey SL.TxIn where
-  serialiseKey = serialiseLSMViaMemPack . LSMTxIn
-  deserialiseKey = lsmTxIn . deserialiseLSMViaMemPack
-
-instance
-  ( SerialiseValue (TxOut (LedgerState (ShelleyBlock proto era)))
-  , ResolveValue (TxOut (LedgerState (ShelleyBlock proto era)))
-  ) =>
-  LedgerSupportsLSMLedgerDB (LedgerState (ShelleyBlock proto era))
-  where
-  type
-    LSMTxOut (LedgerState (ShelleyBlock proto era)) =
-      TxOut (LedgerState (ShelleyBlock proto era))
-
-  toLSMTxOut _ = id
-  fromLSMTxOut _ = id
-  lsmSnapLabel _ = "Shelley"
-  lsmIndex _ = LSM.CompactIndex
-
 instance
   (txout ~ Core.TxOut era, MemPack txout) =>
   IndexedMemPack (LedgerState (ShelleyBlock proto era) EmptyMK) txout
@@ -532,6 +500,8 @@ untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
 instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) where
   type LedgerErr (LedgerState (ShelleyBlock proto era)) = SL.BlockTransitionError era
+
+  type LedgerBlock (LedgerState (ShelleyBlock proto era)) = ShelleyBlock proto era
 
   type AuxLedgerEvent (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerEvent era
 

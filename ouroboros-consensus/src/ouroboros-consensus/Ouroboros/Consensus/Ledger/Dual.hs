@@ -95,7 +95,6 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -387,6 +386,8 @@ data instance Ticked (LedgerState (DualBlock m a)) mk = TickedDualLedgerState
 
 instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
   type LedgerErr (LedgerState (DualBlock m a)) = DualLedgerError m a
+
+  type LedgerBlock (LedgerState (DualBlock m a)) = DualBlock m a
 
   -- \| The dual ledger events are exactly those of the main ledger; it ignores
   -- any possible auxiliary ledger events.
@@ -1104,20 +1105,6 @@ decodeDualLedgerState decodeMain = do
 
 type instance TxIn (LedgerState (DualBlock m a)) = TxIn (LedgerState m)
 type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
-
-instance
-  ( LSM.ResolveValue (TxOut (LedgerState m))
-  , LSM.SerialiseValue (TxOut (LedgerState m))
-  , LSM.SerialiseKey (TxIn (LedgerState m))
-  , LedgerSupportsLSMLedgerDB (LedgerState m)
-  ) =>
-  LedgerSupportsLSMLedgerDB (LedgerState (DualBlock m a))
-  where
-  type LSMTxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
-  toLSMTxOut _ = id
-  fromLSMTxOut _ = id
-  lsmIndex _ = lsmIndex (Proxy @(LedgerState m))
-  lsmSnapLabel _ = lsmSnapLabel (Proxy @(LedgerState m))
 
 instance CanUpgradeLedgerTables (LedgerState (DualBlock m a)) where
   upgradeTables _ _ = id

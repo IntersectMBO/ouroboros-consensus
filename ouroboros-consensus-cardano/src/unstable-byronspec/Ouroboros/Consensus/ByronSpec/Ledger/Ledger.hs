@@ -109,6 +109,8 @@ data instance Ticked (LedgerState ByronSpecBlock) mk = TickedByronSpecLedgerStat
 instance IsLedger (LedgerState ByronSpecBlock) where
   type LedgerErr (LedgerState ByronSpecBlock) = ByronSpecLedgerError
 
+  type LedgerBlock (LedgerState ByronSpecBlock) = ByronSpecBlock
+
   type
     AuxLedgerEvent (LedgerState ByronSpecBlock) =
       VoidLedgerEvent (LedgerState ByronSpecBlock)
