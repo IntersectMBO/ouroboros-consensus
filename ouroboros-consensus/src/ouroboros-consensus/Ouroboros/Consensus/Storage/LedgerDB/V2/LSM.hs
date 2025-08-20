@@ -111,7 +111,15 @@ toTxOutBytes st txout =
 
 fromTxOutBytes :: IndexedMemPack (l EmptyMK) (TxOut l) => l EmptyMK -> TxOutBytes -> TxOut l
 fromTxOutBytes st (TxOutBytes (LSM.RawBytes (VP.Vector _ _ barr))) =
-  indexedUnpackError st barr
+  case indexedUnpack st barr of
+    Left err ->
+      error $
+        unlines
+          [ "There was an error deserializing a TxOut from the LSM backend."
+          , "This will likely result in a restart-crash loop."
+          , "The error: " <> show err
+          ]
+    Right v -> v
 
 instance LSM.SerialiseValue TxOutBytes where
   serialiseValue = unTxOutBytes
@@ -132,7 +140,15 @@ toTxInBytes _ txin =
 
 fromTxInBytes :: MemPack (TxIn l) => Proxy l -> TxInBytes -> TxIn l
 fromTxInBytes _ (TxInBytes (LSM.RawBytes (VP.Vector _ _ barr))) =
-  unpackError barr
+  case unpack barr of
+    Left err ->
+      error $
+        unlines
+          [ "There was an error deserializing a TxIn from the LSM backend."
+          , "This will likely result in a restart-crash loop."
+          , "The error: " <> show err
+          ]
+    Right v -> v
 
 instance LSM.SerialiseKey TxInBytes where
   serialiseKey = unTxInBytes
