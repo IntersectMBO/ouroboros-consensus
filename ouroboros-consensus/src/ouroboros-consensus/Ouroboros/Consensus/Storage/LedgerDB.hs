@@ -81,13 +81,12 @@ openDB
     LedgerDbFlavorArgsV2 bss -> do
       (snapManager, bss') <- case bss of
         V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
-        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)) -> do
+        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path salt mkFS)) -> do
           (rk1, V2.SomeHasFSAndBlockIO fs blockio) <- mkFS (lgrRegistry args)
           session <-
             allocate
               (lgrRegistry args)
-              ( \_ -> do
-                  salt <- genSalt
+              ( \_ ->
                   LSM.openSession
                     (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 . V2.LSMTrace >$< lgrTracer args)
                     fs

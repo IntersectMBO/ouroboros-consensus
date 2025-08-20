@@ -180,7 +180,7 @@ import System.FS.API (SomeHasFS (..), mkFsPath)
 import System.FS.API.Types (MountPoint (..))
 import System.FS.IO (ioHasFS)
 import System.FilePath (splitDirectories, (</>))
-import System.Random (StdGen, newStdGen, randomIO, split)
+import System.Random (StdGen, genWord64, newStdGen, randomIO, split)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -1007,7 +1007,7 @@ stdLowLevelRunNodeArgsIO
     }
   $(SafeWildCards.fields 'StdRunNodeArgs) = do
     llrnBfcSalt <- stdBfcSaltIO
-    llrnRng <- newStdGen
+    (lsmSalt, llrnRng) <- genWord64 <$> newStdGen
     pure
       LowLevelRunNodeArgs
         { llrnBfcSalt
@@ -1062,7 +1062,7 @@ stdLowLevelRunNodeArgsIO
                       ( V2.LSMHandleArgs
                           ( V2.LSMArgs
                               (mkFsPath $ splitDirectories path)
-                              LSM.stdGenSalt
+                              lsmSalt
                               (LSM.stdMkBlockIOFS (nonImmutableDbPath srnDatabasePath))
                           )
                       )

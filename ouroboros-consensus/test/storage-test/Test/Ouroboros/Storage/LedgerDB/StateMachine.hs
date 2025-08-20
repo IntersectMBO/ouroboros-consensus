@@ -111,7 +111,7 @@ tests =
 
 prop_sequential ::
   Int ->
-  (SecurityParam -> FilePath -> TestArguments IO) ->
+  (SecurityParam -> LSM.Salt -> FilePath -> TestArguments IO) ->
   IO (FilePath, IO ()) ->
   IO (SomeHasFS IO, IO ()) ->
   Actions Model ->
@@ -152,7 +152,7 @@ prop_sequential maxSuccess mkTestArguments getDiskDir fsOps actions =
 initialEnvironment ::
   IO (SomeHasFS IO, IO ()) ->
   IO (FilePath, IO ()) ->
-  (SecurityParam -> FilePath -> TestArguments IO) ->
+  (SecurityParam -> LSM.Salt -> FilePath -> TestArguments IO) ->
   ChainDB IO ->
   ResourceRegistry IO ->
   IO Environment
@@ -164,7 +164,7 @@ initialEnvironment fsOps getDiskDir mkTestArguments cdb rr = do
       undefined
       (TestInternals undefined undefined undefined undefined undefined (pure ()) (pure 0))
       cdb
-      (flip mkTestArguments diskDir)
+      (\sp st -> mkTestArguments sp st diskDir)
       sfs
       (pure $ NumOpenHandles 0)
       (cleanupFS >> cleanupDisk)
@@ -206,9 +206,10 @@ realFS = liftIO $ do
 
 inMemV1TestArguments ::
   SecurityParam ->
+  LSM.Salt ->
   FilePath ->
   TestArguments IO
-inMemV1TestArguments secParam _ =
+inMemV1TestArguments secParam _ _ =
   TestArguments
     { argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing InMemoryBackingStoreArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
@@ -216,9 +217,10 @@ inMemV1TestArguments secParam _ =
 
 inMemV2TestArguments ::
   SecurityParam ->
+  LSM.Salt ->
   FilePath ->
   TestArguments IO
-inMemV2TestArguments secParam _ =
+inMemV2TestArguments secParam _ _ =
   TestArguments
     { argFlavorArgs = LedgerDbFlavorArgsV2 $ V2Args InMemoryHandleArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
@@ -226,23 +228,25 @@ inMemV2TestArguments secParam _ =
 
 lsmTestArguments ::
   SecurityParam ->
+  LSM.Salt ->
   FilePath ->
   TestArguments IO
-lsmTestArguments secParam fp =
+lsmTestArguments secParam salt fp =
   TestArguments
     { argFlavorArgs =
         LedgerDbFlavorArgsV2 $
           V2Args $
             LSMHandleArgs $
-              LSMArgs (mkFsPath $ FilePath.splitDirectories fp) LSM.stdGenSalt (LSM.stdMkBlockIOFS fp)
+              LSMArgs (mkFsPath $ FilePath.splitDirectories fp) salt (LSM.stdMkBlockIOFS fp)
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
 lmdbTestArguments ::
   SecurityParam ->
+  LSM.Salt ->
   FilePath ->
   TestArguments IO
-lmdbTestArguments secParam fp =
+lmdbTestArguments secParam _ fp =
   TestArguments
     { argFlavorArgs =
         LedgerDbFlavorArgsV1 $
@@ -315,11 +319,11 @@ instance StateModel Model where
   data Action Model a where
     WipeLedgerDB :: Action Model ()
     TruncateSnapshots :: Action Model ()
-    DropAndRestore :: Word64 -> Action Model ()
+    DropAndRestore :: Word64 -> LSM.Salt -> Action Model ()
     ForceTakeSnapshot :: Action Model ()
     GetState ::
       Action Model (ExtLedgerState TestBlock EmptyMK, ExtLedgerState TestBlock EmptyMK)
-    Init :: SecurityParam -> Action Model ()
+    Init :: SecurityParam -> LSM.Salt -> Action Model ()
     ValidateAndCommit :: Word64 -> [TestBlock] -> Action Model ()
 
   actionName WipeLedgerDB{} = "WipeLedgerDB"
@@ -330,12 +334,12 @@ instance StateModel Model where
   actionName Init{} = "Init"
   actionName ValidateAndCommit{} = "ValidateAndCommit"
 
-  arbitraryAction _ UnInit = Some . Init <$> QC.arbitrary
+  arbitraryAction _ UnInit = Some <$> (Init <$> QC.arbitrary <*> QC.arbitrary)
   arbitraryAction _ model@(Model chain secParam) =
     frequency $
       [ (2, pure $ Some GetState)
       , (2, pure $ Some ForceTakeSnapshot)
-      , (1, Some . DropAndRestore <$> QC.choose (0, fromIntegral $ AS.length chain))
+      , (1, Some <$> (DropAndRestore <$> QC.choose (0, fromIntegral $ AS.length chain) <*> QC.arbitrary))
       ,
         ( 4
         , Some <$> do
@@ -361,7 +365,7 @@ instance StateModel Model where
 
   initialState = UnInit
 
-  nextState _ (Init secParam) _var = Model (AS.Empty genesis) secParam
+  nextState _ (Init secParam _) _var = Model (AS.Empty genesis) secParam
   nextState state GetState _var = state
   nextState state ForceTakeSnapshot _var = state
   nextState state@(Model _ secParam) (ValidateAndCommit n blks) _var =
@@ -397,7 +401,7 @@ instance StateModel Model where
       mapM_ push blks
   nextState state WipeLedgerDB _var = state
   nextState state TruncateSnapshots _var = state
-  nextState state (DropAndRestore n) _var = modelRollback n state
+  nextState state (DropAndRestore n _) _var = modelRollback n state
   nextState UnInit _ _ = error "Uninitialized model created a command different than Init"
 
   precondition UnInit Init{} = True
@@ -542,13 +546,12 @@ openLedgerDB flavArgs env cfg fs rr = do
     LedgerDbFlavorArgsV2 bss -> do
       (snapManager, bss') <- case bss of
         V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
-        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)) -> do
+        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path salt mkFS)) -> do
           (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (lgrRegistry args)
           session <-
             allocate
               (lgrRegistry args)
-              ( \_ -> do
-                  salt <- genSalt
+              ( \_ ->
                   LSM.openSession
                     (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 . V2.LSMTrace >$< lgrTracer args)
                     fs'
@@ -587,17 +590,17 @@ data Environment
       (LedgerDB' IO TestBlock)
       (TestInternals' IO TestBlock)
       (ChainDB IO)
-      (SecurityParam -> TestArguments IO)
+      (SecurityParam -> LSM.Salt -> TestArguments IO)
       (SomeHasFS IO)
       !(IO NumOpenHandles)
       !(IO ())
       !(ResourceRegistry IO)
 
 instance RunModel Model (StateT Environment IO) where
-  perform _ (Init secParam) _ = do
+  perform _ (Init secParam salt) _ = do
     Environment _ _ chainDb mkArgs fs _ cleanup rr <- get
     (ldb, testInternals, getNumOpenHandles) <- lift $ do
-      let args = mkArgs secParam
+      let args = mkArgs secParam salt
       openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs rr
     put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup rr)
   perform _ WipeLedgerDB _ = do
@@ -626,12 +629,12 @@ instance RunModel Model (StateT Environment IO) where
             forkerClose forker
           ValidateExceededRollBack{} -> error "Unexpected Rollback"
           ValidateLedgerError (AnnLedgerError forker _ err) -> forkerClose forker >> error ("Unexpected ledger error" <> show err)
-  perform state@(Model _ secParam) (DropAndRestore n) lk = do
+  perform state@(Model _ secParam) (DropAndRestore n salt) lk = do
     Environment _ testInternals chainDb _ _ _ _ _ <- get
     lift $ do
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
       closeLedgerDB testInternals
-    perform state (Init secParam) lk
+    perform state (Init secParam salt) lk
   perform _ TruncateSnapshots _ = do
     Environment _ testInternals _ _ _ _ _ _ <- get
     lift $ truncateSnapshots testInternals

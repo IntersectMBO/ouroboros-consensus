@@ -34,7 +34,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   , Session
   , LSM.openSession
   , LSM.closeSession
-  , stdGenSalt
   , stdMkBlockIOFS
 
     -- * snapshot-converter
@@ -87,7 +86,6 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 import System.FS.API
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
-import System.Random
 import Prelude hiding (read)
 
 -- | Type alias for convenience
@@ -438,9 +436,6 @@ loadSnapshot tracer rr ccfg fs session ds = do
         throwE $
           InitFailureRead ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newLSMLedgerTablesHandle tracer rr))
-
-stdGenSalt :: IO LSM.Salt
-stdGenSalt = fst . genWord64 <$> initStdGen
 
 stdMkBlockIOFS ::
   FilePath -> ResourceRegistry IO -> IO (ResourceKey IO, V2.SomeHasFSAndBlockIO IO)
