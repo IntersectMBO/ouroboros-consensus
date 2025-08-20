@@ -231,8 +231,6 @@ instance GetTip (Ticked (LedgerState BlockB)) where
 instance IsLedger (LedgerState BlockB) where
   type LedgerErr (LedgerState BlockB) = Void
 
-  type LedgerBlock (LedgerState BlockB) = BlockB
-
   type
     AuxLedgerEvent (LedgerState BlockB) =
       VoidLedgerEvent (LedgerState BlockB)

@@ -2,7 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -500,8 +500,6 @@ untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
 instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) where
   type LedgerErr (LedgerState (ShelleyBlock proto era)) = SL.BlockTransitionError era
-
-  type LedgerBlock (LedgerState (ShelleyBlock proto era)) = ShelleyBlock proto era
 
   type AuxLedgerEvent (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerEvent era
 

@@ -2,7 +2,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -60,7 +59,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM (snapshotToStatePath)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Ouroboros.Consensus.Util (ShowProxy, whenJust)
+import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -79,7 +78,6 @@ mkInitDb ::
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerSupportsV2LedgerDB (LedgerState blk)
-  , ShowProxy blk
   ) =>
   Complete LedgerDbArgs m blk ->
   HandleEnv m ->

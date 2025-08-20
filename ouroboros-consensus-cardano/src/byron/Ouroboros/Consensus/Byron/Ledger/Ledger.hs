@@ -14,7 +14,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Instances requires for consensus/ledger integration
@@ -188,7 +187,6 @@ data instance Ticked (LedgerState ByronBlock) mk = TickedByronLedgerState
 instance IsLedger (LedgerState ByronBlock) where
   type LedgerErr (LedgerState ByronBlock) = CC.ChainValidationError
 
-  type LedgerBlock (LedgerState ByronBlock) = ByronBlock
   type
     AuxLedgerEvent (LedgerState ByronBlock) =
       VoidLedgerEvent (LedgerState ByronBlock)

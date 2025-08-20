@@ -387,8 +387,6 @@ data instance Ticked (LedgerState (DualBlock m a)) mk = TickedDualLedgerState
 instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
   type LedgerErr (LedgerState (DualBlock m a)) = DualLedgerError m a
 
-  type LedgerBlock (LedgerState (DualBlock m a)) = DualBlock m a
-
   -- \| The dual ledger events are exactly those of the main ledger; it ignores
   -- any possible auxiliary ledger events.
   --

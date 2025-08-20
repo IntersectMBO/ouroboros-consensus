@@ -659,8 +659,6 @@ instance GetTip (Ticked (LedgerState (TestBlockWith ptype))) where
 instance PayloadSemantics ptype => IsLedger (LedgerState (TestBlockWith ptype)) where
   type LedgerErr (LedgerState (TestBlockWith ptype)) = TestBlockError ptype
 
-  type LedgerBlock (LedgerState (TestBlockWith ptype)) = TestBlockWith ptype
-
   type
     AuxLedgerEvent (LedgerState (TestBlockWith ptype)) =
       VoidLedgerEvent (LedgerState (TestBlockWith ptype))

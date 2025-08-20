@@ -27,10 +27,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   , snapshotToStatePath
   , snapshotManager
 
-    -- * Serialise helpers
-  , serialiseLSMViaMemPack
-  , deserialiseLSMViaMemPack
-
     -- * Re-exports
   , LSM.Entry (..)
   , LSM.RawBytes (..)
@@ -47,7 +43,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
 import Cardano.Binary as CBOR
 import Codec.Serialise (decode)
-import Control.Monad (foldM)
 import qualified Control.Monad as Monad
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Except
@@ -84,7 +79,6 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
@@ -227,7 +221,6 @@ newLSMLedgerTablesHandle ::
   ( IOLike m
   , HasLedgerTables l
   , IndexedMemPack (l EmptyMK) (TxOut l)
-  , ShowProxy (LedgerBlock l)
   ) =>
   Tracer m V2.FlavorImplSpecificTrace ->
   ResourceRegistry m ->
@@ -274,7 +267,7 @@ newLSMLedgerTablesHandle tracer rr (resKey, t) = do
       , takeHandleSnapshot = \_ snapshotName -> do
           LSM.saveSnapshot
             (fromString snapshotName)
-            (LSM.SnapshotLabel $ Text.pack $ "UTxO table: " ++ showProxy (Proxy @(LedgerBlock l)))
+            (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
             t
           pure Nothing
       , tablesSize = pure Nothing
@@ -311,11 +304,6 @@ implReadRange table st (mPrev, num) = do
   -- cursor returns also the key at which it was opened.
   cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table (toTxInBytes (Proxy @l) k) (LSM.take $ num + 1)
 
-foldMWithKey :: Monad m => (a -> k -> v -> m a) -> a -> Map.Map k v -> m a
-foldMWithKey f z m = foldM step z (Map.toAscList m)
- where
-  step acc (k, v) = f acc k v
-
 implPushDiffs ::
   forall m l.
   ( IOLike m
@@ -327,8 +315,8 @@ implPushDiffs t !st1 = do
   let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
   vec <- VM.unsafeNew (Map.size diffs)
   Monad.void $
-    foldMWithKey
-      ( \idx k item -> do
+    ifoldlM
+      ( \k idx item -> do
           VM.unsafeWrite vec idx (toTxInBytes (Proxy @l) k, (f item))
           pure (idx + 1)
       )
@@ -412,7 +400,6 @@ loadSnapshot ::
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , IOLike m
-  , ShowProxy blk
   ) =>
   Tracer m V2.FlavorImplSpecificTrace ->
   ResourceRegistry m ->
@@ -444,25 +431,13 @@ loadSnapshot tracer rr ccfg fs session ds = do
                 LSM.openTableFromSnapshot
                   session
                   (fromString $ snapshotToDirName ds)
-                  (LSM.SnapshotLabel $ Text.pack $ "UTxO table: " ++ showProxy (Proxy @blk))
+                  (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
             )
             LSM.closeTable
       Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
         throwE $
           InitFailureRead ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newLSMLedgerTablesHandle tracer rr))
-
--- | Helper for implementing 'serialiseKey' and 'serialiseValue' for types that
--- are serialized via 'MemPack'.
-serialiseLSMViaMemPack :: MemPack a => a -> LSM.RawBytes
-serialiseLSMViaMemPack a =
-  let barr = pack a
-   in LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
-
--- | Helper for implementing 'deserialiseKey' and 'deserialiseValue' for types
--- that are serialized via 'MemPack'.
-deserialiseLSMViaMemPack :: MemPack b => LSM.RawBytes -> b
-deserialiseLSMViaMemPack (LSM.RawBytes (VP.Vector _ _ barr)) = unpackError barr
 
 stdGenSalt :: IO LSM.Salt
 stdGenSalt = fst . genWord64 <$> initStdGen

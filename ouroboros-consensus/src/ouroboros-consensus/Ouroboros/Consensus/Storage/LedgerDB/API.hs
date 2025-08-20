@@ -780,7 +780,6 @@ type LedgerSupportsLedgerDB' l blk =
   ( LedgerSupportsV1LedgerDB l
   , LedgerSupportsV2LedgerDB l
   , LedgerDbSerialiseConstraints blk
-  , ShowProxy blk
   )
 
 {-------------------------------------------------------------------------------

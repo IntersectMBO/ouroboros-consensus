@@ -3,7 +3,7 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -73,7 +73,6 @@ import qualified Data.SOP.Tails as Tails
 import Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import Data.Typeable
-import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -103,7 +102,6 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
@@ -159,8 +157,6 @@ data instance Ticked (LedgerState (HardForkBlock xs)) mk
 
 instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
   type LedgerErr (LedgerState (HardForkBlock xs)) = HardForkLedgerError xs
-
-  type LedgerBlock (LedgerState (HardForkBlock xs)) = HardForkBlock xs
 
   type AuxLedgerEvent (LedgerState (HardForkBlock xs)) = OneEraLedgerEvent xs
 
@@ -1296,15 +1292,6 @@ composeTxOutTranslations = \case
 
 class MemPack (TxOut (LedgerState x)) => MemPackTxOut x
 instance MemPack (TxOut (LedgerState x)) => MemPackTxOut x
-
-instance MemPack (DefaultHardForkTxOut xs) => LSM.SerialiseValue (DefaultHardForkTxOut xs) where
-  serialiseValue = serialiseLSMViaMemPack
-  deserialiseValue = deserialiseLSMViaMemPack
-
-deriving via
-  LSM.ResolveAsFirst (DefaultHardForkTxOut xs)
-  instance
-    LSM.ResolveValue (DefaultHardForkTxOut xs)
 
 instance
   (All MemPackTxOut xs, Typeable xs) =>

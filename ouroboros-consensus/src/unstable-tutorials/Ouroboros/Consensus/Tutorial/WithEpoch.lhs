@@ -377,7 +377,6 @@ We can now use `tickLedgerStateD` to instantiate `IsLedger`:
 
 > instance IsLedger (LedgerState BlockD) where
 >   type instance LedgerErr (LedgerState BlockD) = Void
->   type instance LedgerBlock (LedgerState BlockD) = BlockD
 >   type instance AuxLedgerEvent (LedgerState BlockD) = ()
 
 >   applyChainTickLedgerResult _events _cfg slot ldgrSt =

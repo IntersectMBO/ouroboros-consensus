@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -17,7 +17,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Simple block to go with the mock ledger
 --
@@ -403,8 +402,6 @@ instance
   IsLedger (LedgerState (SimpleBlock c ext))
   where
   type LedgerErr (LedgerState (SimpleBlock c ext)) = MockError (SimpleBlock c ext)
-
-  type LedgerBlock (LedgerState (SimpleBlock c ext)) = SimpleBlock c ext
 
   type
     AuxLedgerEvent (LedgerState (SimpleBlock c ext)) =

@@ -565,8 +565,6 @@ instance GetTip (Ticked (LedgerState TestBlock)) where
 instance IsLedger (LedgerState TestBlock) where
   type LedgerErr (LedgerState TestBlock) = TestBlockError
 
-  type LedgerBlock (LedgerState TestBlock) = TestBlock
-
   type
     AuxLedgerEvent (LedgerState TestBlock) =
       VoidLedgerEvent (LedgerState TestBlock)

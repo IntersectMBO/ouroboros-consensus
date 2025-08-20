@@ -569,7 +569,6 @@ types for a ledger.  Though we are here using
 
 > instance IsLedger (LedgerState BlockC) where
 >   type instance LedgerErr  (LedgerState BlockC) = Void
->   type instance LedgerBlock (LedgerState BlockC) = BlockC
 >   type instance AuxLedgerEvent (LedgerState BlockC) = Void
 
 >   applyChainTickLedgerResult _events _cfg _slot ldgrSt =
