@@ -62,6 +62,11 @@ parseDBAnalyserConfig =
             [ long "v2-in-mem"
             , help "use v2 in-memory backend"
             ]
+      , flag' V2LSM $
+          mconcat
+            [ long "v2-lsm"
+            , help "use v2 LSM backend"
+            ]
       ]
 
 parseSelectDB :: Parser SelectDB

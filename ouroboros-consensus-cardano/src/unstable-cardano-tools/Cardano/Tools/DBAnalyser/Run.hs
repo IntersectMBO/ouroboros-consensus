@@ -50,7 +50,9 @@ import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
+import System.FS.API
 import System.IO
+import System.Random
 import Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
@@ -148,6 +150,7 @@ analyse dbaConfig args =
     lock <- newMVar ()
     chainDBTracer <- mkTracer lock verbose
     analysisTracer <- mkTracer lock True
+    lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
     let shfs = Node.stdMkChainDbHasFS dbDir
@@ -172,6 +175,13 @@ analyse dbaConfig args =
           V2InMem ->
             LedgerDB.LedgerDbFlavorArgsV2
               (LedgerDB.V2.V2Args LedgerDB.V2.InMemoryHandleArgs)
+          V2LSM ->
+            LedgerDB.LedgerDbFlavorArgsV2
+              ( LedgerDB.V2.V2Args
+                  ( LedgerDB.V2.LSMHandleArgs
+                      (LedgerDB.V2.LSMArgs (mkFsPath ["lsm"]) lsmSalt (LSM.stdMkBlockIOFS dbDir))
+                  )
+              )
         args' =
           ChainDB.completeChainDbArgs
             registry
