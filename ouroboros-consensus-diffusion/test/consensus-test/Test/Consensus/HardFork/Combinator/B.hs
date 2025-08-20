@@ -300,6 +300,7 @@ blockForgingB =
     , forgeBlock = \cfg bno slot st txs proof ->
         return $
           forgeBlockB cfg bno slot st (fmap txForgetValidated txs) proof
+    , finalize = return ()
     }
 
 -- | A basic 'History.SafeZone'

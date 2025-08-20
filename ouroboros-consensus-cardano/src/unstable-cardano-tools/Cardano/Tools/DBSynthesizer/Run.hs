@@ -33,6 +33,7 @@ import Data.Aeson as Aeson
 import Data.Bool (bool)
 import Data.ByteString as BS (ByteString, readFile)
 import qualified Data.Set as Set
+import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
 import Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
@@ -158,7 +159,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           flavargs
           $ ChainDB.defaultArgs
 
-    forgers <- blockForging
+    (_, forgers) <- allocate registry (const $ mkForgers nullTracer) (mapM_ BlockForging.finalize)
     let fCount = length forgers
     putStrLn $ "--> forger count: " ++ show fCount
     if fCount > 0
@@ -187,7 +188,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
       { pInfoConfig
       , pInfoInitLedger
       }
-    , blockForging
+    , mkForgers
     ) = protocolInfoCardano runP
 
 preOpenChainDB :: DBSynthesizerOpenMode -> FilePath -> IO ()
