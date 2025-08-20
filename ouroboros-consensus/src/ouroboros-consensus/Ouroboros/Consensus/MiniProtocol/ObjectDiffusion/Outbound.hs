@@ -12,15 +12,14 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
   ) where
 
 import Control.Exception (assert)
-import Control.Monad (unless, when)
+import Control.Monad (forM, unless, when)
 import Control.Monad.Class.MonadSTM
 import Control.Monad.Class.MonadThrow
 import Control.Tracer (Tracer, traceWith)
-import Data.Foldable (find)
 import Data.List.NonEmpty qualified as NonEmpty
-import Data.Maybe (catMaybes, isNothing)
 import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as Seq
+import Data.Set qualified as Set
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Network.ControlMessage
   ( ControlMessage
@@ -31,11 +30,16 @@ import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 
+-- Note: This module is inspired from TxSubmission outbound side.
+
 data TraceObjectDiffusionOutbound objectId object
-  = -- | The IDs of the transactions requested.
+  = TraceObjectDiffusionOutboundRecvMsgRequestObjectIds NumObjectIdsReq
+  | -- | The IDs to be sent in the response
+    TraceObjectDiffusionOutboundSendMsgReplyObjectIds [objectId]
+  | -- | The IDs of the objects requested.
     TraceObjectDiffusionOutboundRecvMsgRequestObjects
       [objectId]
-  | -- | The transactions to be sent in the response.
+  | -- | The objects to be sent in the response.
     TraceObjectDiffusionOutboundSendMsgReplyObjects
       [object]
   | TraceControlMessage ControlMessage
@@ -44,10 +48,11 @@ data TraceObjectDiffusionOutbound objectId object
 data ObjectDiffusionOutboundError
   = ProtocolErrorAckedTooManyObjectIds
   | ProtocolErrorRequestedNothing
-  | ProtocolErrorRequestedTooManyObjectIds NumObjectIdsToReq NumObjectIdsToAck
+  | ProtocolErrorRequestedTooManyObjectIds NumObjectIdsReq NumObjectsOutstanding
   | ProtocolErrorRequestBlocking
   | ProtocolErrorRequestNonBlocking
   | ProtocolErrorRequestedUnavailableObject
+  | ProtocolErrorRequestedDuplicateObject
   deriving Show
 
 instance Exception ObjectDiffusionOutboundError where
@@ -68,135 +73,181 @@ instance Exception ObjectDiffusionOutboundError where
     "The peer made a non-blocking request for more objectIds when there are "
       ++ "no unacknowledged objectIds. It should have used a blocking request."
   displayException ProtocolErrorRequestedUnavailableObject =
-    "The peer requested a transaction which is not available, either "
+    "The peer requested an object which is not available, either "
       ++ "because it was never available or because it was previously requested."
+  displayException ProtocolErrorRequestedDuplicateObject =
+    "The peer requested the same object twice."
+
+data OutboundSt objectId object ticketNo = OutboundSt
+  { outstandingFifo :: !(StrictSeq object)
+  , lastTicketNo :: !ticketNo
+  }
 
 objectDiffusionOutbound ::
   forall objectId object ticketNo m.
   (Ord objectId, Ord ticketNo, MonadSTM m, MonadThrow m) =>
   Tracer m (TraceObjectDiffusionOutbound objectId object) ->
   -- | Maximum number of unacknowledged objectIds allowed
-  NumObjectIdsToAck ->
+  NumObjectsOutstanding ->
   ObjectPoolReader objectId object ticketNo m ->
   NodeToNodeVersion ->
   ControlMessageSTM m ->
   ObjectDiffusionOutbound objectId object m ()
-objectDiffusionOutbound tracer maxUnacked ObjectPoolReader{..} _version controlMessageSTM =
-  ObjectDiffusionOutbound (pure (mkOutboundState Seq.empty objectPoolZeroTicketNo))
+objectDiffusionOutbound tracer maxFifoLength ObjectPoolReader{..} _version controlMessageSTM =
+  ObjectDiffusionOutbound (pure (makeBundle $ OutboundSt Seq.empty oprZeroTicketNo))
  where
-  mkOutboundState :: StrictSeq (object, ticketNo) -> ticketNo -> OutboundStIdle objectId object m ()
-  mkOutboundState !outstandingFifo !lastTicketNo =
-    OutboundStIdle{recvMsgRequestObjectIds, recvMsgRequestObjects}
-   where
-    -- Compared to TxSubmission, `outstandingFifo` here contains the full objects, not just their IDs.
-    -- Sometimes we need to recover just the IDS.
-    onlyIds :: forall f. Functor f => f (object, SizeInBytes) -> f (objectId, SizeInBytes)
-    onlyIds = fmap (\(obj, size) -> (rdrGetObjectId obj, size))
+  makeBundle :: OutboundSt objectId object ticketNo -> OutboundStIdle objectId object m ()
+  makeBundle !st =
+    OutboundStIdle
+      { recvMsgRequestObjectIds = recvMsgRequestObjectIds st
+      , recvMsgRequestObjects = recvMsgRequestObjects st
+      }
 
-    recvMsgRequestObjectIds ::
-      forall blocking.
-      SingBlockingStyle blocking ->
-      NumObjectIdsToAck ->
-      NumObjectIdsToReq ->
-      m (OutboundStObjectIds blocking objectId object m ())
-    recvMsgRequestObjectIds blocking ackNo reqNo = do
-      when (getNumObjectIdsToAck ackNo > fromIntegral (Seq.length outstandingFifo)) $
-        throwIO ProtocolErrorAckedTooManyObjectIds
+  updateStNewObjects ::
+    OutboundSt objectId object ticketNo ->
+    [(object, ticketNo)] ->
+    OutboundSt objectId object ticketNo
+  updateStNewObjects !OutboundSt{..} newObjectsWithTicketNos =
+    -- These objects should all be fresh
+    assert (all (\(_, ticketNo) -> ticketNo > lastTicketNo) newObjectsWithTicketNos) $
+      let !outstandingFifo' =
+            outstandingFifo
+              <> (Seq.fromList $ fst <$> newObjectsWithTicketNos)
+          !lastTicketNo'
+            | null newObjectsWithTicketNos = lastTicketNo
+            | otherwise = snd $ last newObjectsWithTicketNos
+       in OutboundSt
+            { outstandingFifo = outstandingFifo'
+            , lastTicketNo = lastTicketNo'
+            }
 
-      when
-        ( fromIntegral (Seq.length outstandingFifo)
-            - getNumObjectIdsToAck ackNo
-            + getNumObjectIdsToReq reqNo
-            > getNumObjectIdsToAck maxUnacked
-        )
-        $ throwIO (ProtocolErrorRequestedTooManyObjectIds reqNo maxUnacked)
+  recvMsgRequestObjectIds ::
+    forall blocking.
+    OutboundSt objectId object ticketNo ->
+    SingBlockingStyle blocking ->
+    NumObjectIdsAck ->
+    NumObjectIdsReq ->
+    m (OutboundStObjectIds blocking objectId object m ())
+  recvMsgRequestObjectIds !st@OutboundSt{..} blocking numIdsToAck numIdsToReq = do
+    traceWith tracer (TraceObjectDiffusionOutboundRecvMsgRequestObjectIds numIdsToReq)
 
-      -- First we update our tracking state to remove the number of objectIds
-      -- that the peer has acknowledged.
-      let !outstandingFifo' = Seq.drop (fromIntegral ackNo) outstandingFifo
+    when (numIdsToAck > fromIntegral (Seq.length outstandingFifo)) $
+      throwIO ProtocolErrorAckedTooManyObjectIds
 
-      -- We define how to update our tracking state when extra objects are available.
-      let updateState newObjects =
-            -- These objects should all be fresh
-            assert (all (\(_, ticketNo, _) -> ticketNo > lastTicketNo) newObjects) $
-              let !outstandingFifo'' =
-                    outstandingFifo'
-                      <> Seq.fromList
-                        [(object, ticketNo) | (object, ticketNo, _) <- newObjects]
-                  !lastTicketNo'
-                    | null newObjects = lastTicketNo
-                    | otherwise = ticketNo
-                   where
-                    (_, ticketNo, _) = last newObjects
-                  objects' :: [(object, SizeInBytes)]
-                  objects' = [(object, size) | (object, _, size) <- newObjects]
-                  outboundState = mkOutboundState outstandingFifo'' lastTicketNo'
-               in (objects', outboundState)
+    when
+      ( Seq.length outstandingFifo
+          - fromIntegral numIdsToAck
+          + fromIntegral numIdsToReq
+          > fromIntegral maxFifoLength
+      )
+      $ throwIO (ProtocolErrorRequestedTooManyObjectIds numIdsToReq maxFifoLength)
 
-      -- Grab info about any new objects after the last object ticketNo we've seen,
-      -- up to the number that the peer has requested.
-      case blocking of
-        -----------------------------------------------------------------------
-        SingBlocking -> do
-          when (reqNo == 0) $
-            throwIO ProtocolErrorRequestedNothing
-          unless (Seq.null outstandingFifo') $
-            throwIO ProtocolErrorRequestBlocking
+    -- First we update our FIFO to remove the number of objectIds that the
+    -- inbound peer has acknowledged.
+    let !outstandingFifo' = Seq.drop (fromIntegral numIdsToAck) outstandingFifo
+        -- must specify the type here otherwise GHC complains about mismatch objectId types
+        st' :: OutboundSt objectId object ticketNo
+        !st' = st{outstandingFifo = outstandingFifo'}
 
-          mbNewObjects <- timeoutWithControlMessage controlMessageSTM $
-            do
-              ObjectPoolSnapshot{objectPoolObjectsAfter} <- objectPoolGetSnapshot
-              let newObjects = objectPoolObjectsAfter lastTicketNo
-              check (not $ null newObjects)
-              pure (take (fromIntegral reqNo) newObjects)
+    -- Grab info about any new objects after the last object ticketNo we've
+    -- seen, up to the number that the peer has requested.
+    case blocking of
+      -----------------------------------------------------------------------
+      SingBlocking -> do
+        when (numIdsToReq == 0) $
+          throwIO ProtocolErrorRequestedNothing
+        unless (Seq.null outstandingFifo') $
+          throwIO ProtocolErrorRequestBlocking
 
-          case mbNewObjects of
-            Nothing -> pure (SendMsgDone ())
-            Just newObjects ->
-              let !(newObjects', outboundState') = updateState newObjects
-                  newObjects'' = case NonEmpty.nonEmpty newObjects' of
-                    Just x -> x
-                    -- Assert objects is non-empty: we blocked until objects was non-null,
-                    -- and we know reqNo > 0, hence `take reqNo objects` is non-null.
-                    Nothing -> error "objectDiffusionOutbound: empty transaction's list"
-               in pure (SendMsgReplyObjectIds (BlockingReply (onlyIds newObjects'')) outboundState')
-        -----------------------------------------------------------------------
-        SingNonBlocking -> do
-          when (reqNo == 0 && ackNo == 0) $
-            throwIO ProtocolErrorRequestedNothing
-          when (Seq.null outstandingFifo') $
-            throwIO ProtocolErrorRequestNonBlocking
+        mbNewContent <- timeoutWithControlMessage controlMessageSTM $
+          do
+            newObjectsWithTicketNos <-
+              oprObjectsAfter
+                lastTicketNo
+                (fromIntegral numIdsToReq)
+            check (not $ null newObjectsWithTicketNos)
+            pure newObjectsWithTicketNos
 
-          newObjects <- atomically $ do
-            ObjectPoolSnapshot{objectPoolObjectsAfter} <- objectPoolGetSnapshot
-            let newObjects = objectPoolObjectsAfter lastTicketNo
-            return (take (fromIntegral reqNo) newObjects)
+        case mbNewContent of
+          Nothing -> pure (SendMsgDone ())
+          Just newContent -> do
+            newObjectsWithTicketNos <- forM newContent $
+              \(ticketNo, _, getObject) -> do
+                object <- getObject
+                pure (object, ticketNo)
 
-          let !(newObjects', outboundState') = updateState newObjects
-          pure (SendMsgReplyObjectIds (NonBlockingReply (onlyIds newObjects')) outboundState')
+            let !newIds = oprObjectId . fst <$> newObjectsWithTicketNos
+                st'' = updateStNewObjects st' newObjectsWithTicketNos
 
-    recvMsgRequestObjects ::
-      [objectId] ->
-      m (OutboundStObjects objectId object m ())
-    recvMsgRequestObjects reqObjectIds = do
-      -- Trace the IDs of the transactions requested.
-      traceWith tracer (TraceObjectDiffusionOutboundRecvMsgRequestObjects reqObjectIds)
+            traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjectIds newIds)
 
-      -- All the objects correspond to advertised objectIds are already in the outstandingFifo.
-      -- So we don't need to read from the object pool here.
+            -- Assert objects is non-empty: we blocked until objects was
+            -- non-null, and we know numIdsToReq > 0, hence
+            -- `take numIdsToReq objects` is non-null.
+            assert (not $ null newObjectsWithTicketNos) $
+              pure $
+                SendMsgReplyObjectIds
+                  (BlockingReply (NonEmpty.fromList $ newIds))
+                  (makeBundle st'')
 
-      -- The window size is expected to be small for cert diffusion, so the find is probably acceptable.
-      -- TODO: revisit the underlying outstandingFifo data structure and search when
-      -- we will use ObjectDiffusion for votes (and not just cert diffusion)
-      let requestedObjects =
-            [ find (\(obj, _) -> rdrGetObjectId obj == reqObjectId) outstandingFifo | reqObjectId <- reqObjectIds
-            ]
-      when (any isNothing requestedObjects) $
-        throwIO ProtocolErrorRequestedUnavailableObject
-      let requestedObjects' = fst <$> catMaybes requestedObjects
-          outboundState' = mkOutboundState outstandingFifo lastTicketNo
+      -----------------------------------------------------------------------
+      SingNonBlocking -> do
+        when (numIdsToReq == 0 && numIdsToAck == 0) $
+          throwIO ProtocolErrorRequestedNothing
+        when (Seq.null outstandingFifo') $
+          throwIO ProtocolErrorRequestNonBlocking
 
-      -- Trace the transactions to be sent in the response.
-      traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjects requestedObjects')
+        newContent <-
+          atomically $
+            oprObjectsAfter lastTicketNo (fromIntegral numIdsToReq)
+        newObjectsWithTicketNos <- forM newContent $
+          \(ticketNo, _, getObject) -> do
+            object <- getObject
+            pure (object, ticketNo)
 
-      return $ SendMsgReplyObjects requestedObjects' outboundState'
+        let !newIds = oprObjectId . fst <$> newObjectsWithTicketNos
+            st'' = updateStNewObjects st' newObjectsWithTicketNos
+
+        traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjectIds newIds)
+
+        pure (SendMsgReplyObjectIds (NonBlockingReply newIds) (makeBundle st''))
+
+  recvMsgRequestObjects ::
+    OutboundSt objectId object ticketNo ->
+    [objectId] ->
+    m (OutboundStObjects objectId object m ())
+  recvMsgRequestObjects !st@OutboundSt{..} requestedIds = do
+    traceWith tracer (TraceObjectDiffusionOutboundRecvMsgRequestObjects requestedIds)
+
+    -- All the objects correspond to advertised objectIds are already in the
+    -- outstandingFifo. So we don't need to read from the object pool here.
+
+    -- I've optimized the search to do only one traversal of 'outstandingFifo'.
+    -- When the 'requestedIds' is exactly the whole 'outstandingFifo', then this
+    -- should take O(n * log n) time.
+    --
+    -- TODO: We might need to revisit the underlying 'outstandingFifo' data
+    -- structure and the search if performance isn't sufficient when we'll use
+    -- ObjectDiffusion for votes diffusion (and not just cert diffusion).
+
+    let requestedIdsSet = Set.fromList requestedIds
+
+    when (Set.size requestedIdsSet /= length requestedIds) $
+      throwIO ProtocolErrorRequestedDuplicateObject
+
+    let requestedObjects =
+          foldr
+            ( \obj acc ->
+                if Set.member (oprObjectId obj) requestedIdsSet
+                  then obj : acc
+                  else acc
+            )
+            []
+            outstandingFifo
+
+    when (Set.size requestedIdsSet /= length requestedObjects) $
+      throwIO ProtocolErrorRequestedUnavailableObject
+
+    traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjects requestedObjects)
+
+    pure (SendMsgReplyObjects requestedObjects (makeBundle st))

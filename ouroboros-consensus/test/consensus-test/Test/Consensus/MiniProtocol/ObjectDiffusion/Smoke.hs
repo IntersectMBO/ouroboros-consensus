@@ -10,11 +10,9 @@
 -- | Smoke tests for the object diffusion protocol
 module Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke (tests, WithId (..), ListWithUniqueIds (..), prop_smoke_object_diffusion) where
 
-import Control.Monad (guard)
 import Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Functor.Contravariant (contramap)
-import Data.List (foldl')
 import Network.TypedProtocol.Channel (Channel, createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
@@ -24,7 +22,6 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   ( ObjectPoolReader (..)
-  , ObjectPoolSnapshot (..)
   , ObjectPoolWriter (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound (objectDiffusionOutbound)
@@ -51,8 +48,12 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound
   , objectDiffusionOutboundClientPeer
   , objectDiffusionOutboundServerPeer
   )
-import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsToAck (..), ObjectDiffusion)
-import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
+import Ouroboros.Network.Protocol.ObjectDiffusion.Type
+  ( NumObjectIdsReq (..)
+  , NumObjectsOutstanding (..)
+  , NumObjectsReq (..)
+  , ObjectDiffusion
+  )
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck
@@ -87,12 +88,12 @@ instance (Eq idTy, WithId a idTy, Arbitrary a) => Arbitrary (ListWithUniqueIds a
     ListWithUniqueIds <$> do
       (objects :: [a]) <- arbitrary
       return $
-        foldl'
-          (\acc obj -> if any (\obj' -> getId obj == getId obj') acc then acc else obj : acc)
+        foldr
+          (\obj acc -> if any (\obj' -> getId obj == getId obj') acc then acc else obj : acc)
           []
           objects
 
-instance WithId SmokeObject SmokeObjectId where getId = smokeObjectId
+instance WithId SmokeObject SmokeObjectId where getId = getSmokeObjectId
 
 {-------------------------------------------------------------------------------
   Mock objectPools
@@ -101,7 +102,7 @@ instance WithId SmokeObject SmokeObjectId where getId = smokeObjectId
 newtype SmokeObjectId = SmokeObjectId Int
   deriving (Eq, Ord, Show, NoThunks, Arbitrary)
 
-newtype SmokeObject = SmokeObject {smokeObjectId :: SmokeObjectId}
+newtype SmokeObject = SmokeObject {getSmokeObjectId :: SmokeObjectId}
   deriving (Eq, Ord, Show, NoThunks, Arbitrary)
 
 newtype SmokeObjectPool m = SmokeObjectPool (StrictTVar m [SmokeObject])
@@ -113,29 +114,29 @@ makeObjectPoolReader ::
   MonadSTM m => SmokeObjectPool m -> ObjectPoolReader SmokeObjectId SmokeObject Int m
 makeObjectPoolReader (SmokeObjectPool poolContentTvar) =
   ObjectPoolReader
-    { rdrGetObjectId = smokeObjectId
-    , objectPoolGetSnapshot = poolContentToSnapshot <$> readTVar poolContentTvar
-    , objectPoolZeroTicketNo = -1 -- objectPoolObjectIdsAfter uses strict comparison, and first index is 0.
+    { oprObjectId = getSmokeObjectId
+    , oprObjectsAfter = \minTicketNo limit -> do
+        poolContent <- readTVar poolContentTvar
+        pure $
+          take (fromIntegral limit) $
+            drop (minTicketNo + 1) $
+              ( (\(ticketNo, smokeObject) -> (ticketNo, getSmokeObjectId smokeObject, pure smokeObject))
+                  <$> zip [(0 :: Int) ..] poolContent
+              )
+    , oprZeroTicketNo = -1 -- objectPoolObjectIdsAfter uses strict comparison, and first ticketNo is 0.
     }
- where
-  poolContentToSnapshot :: [SmokeObject] -> ObjectPoolSnapshot SmokeObjectId SmokeObject Int
-  poolContentToSnapshot poolContent =
-    ObjectPoolSnapshot
-      { objectPoolObjectsAfter = \minIndex -> do
-          (index, smokeObject) <- zip [0 ..] poolContent
-          guard (index > minIndex)
-          return (smokeObject, index, SizeInBytes 0) -- REVIEW: 0?
-      , objectPoolHasObject = \objectId -> any ((== objectId) . smokeObjectId) poolContent
-      }
 
 makeObjectPoolWriter ::
   MonadSTM m => SmokeObjectPool m -> ObjectPoolWriter SmokeObjectId SmokeObject m
-makeObjectPoolWriter (SmokeObjectPool poolContent) =
+makeObjectPoolWriter (SmokeObjectPool poolContentTvar) =
   ObjectPoolWriter
-    { wrGetObjectId = smokeObjectId
-    , objectPoolAddObjects = \objects -> do
-        atomically $ modifyTVar poolContent (++ objects)
+    { opwObjectId = getSmokeObjectId
+    , opwAddObjects = \objects -> do
+        atomically $ modifyTVar poolContentTvar (++ objects)
         return ()
+    , opwHasObject = do
+        poolContent <- atomically $ readTVar poolContentTvar
+        pure $ \objectId -> any (\obj -> getSmokeObjectId obj == objectId) poolContent
     }
 
 mkMockPoolInterfaces ::
@@ -143,18 +144,17 @@ mkMockPoolInterfaces ::
   [SmokeObject] ->
   m
     ( ObjectPoolReader SmokeObjectId SmokeObject Int m
-    , ObjectPoolReader SmokeObjectId SmokeObject Int m
     , ObjectPoolWriter SmokeObjectId SmokeObject m
+    , m [SmokeObject]
     )
 mkMockPoolInterfaces objects = do
   outboundPool <- newObjectPool objects
-  inboundPool <- newObjectPool []
+  inboundPool@(SmokeObjectPool tvar) <- newObjectPool []
 
   let outboundPoolReader = makeObjectPoolReader outboundPool
-      inboundPoolReader = makeObjectPoolReader inboundPool
       inboundPoolWriter = makeObjectPoolWriter inboundPool
 
-  return (outboundPoolReader, inboundPoolReader, inboundPoolWriter)
+  return (outboundPoolReader, inboundPoolWriter, atomically $ readTVar tvar)
 
 {-------------------------------------------------------------------------------
   Main properties
@@ -162,8 +162,14 @@ mkMockPoolInterfaces objects = do
 
 -- Protocol constants
 
-numObjectIdsToAck :: NumObjectIdsToAck
-numObjectIdsToAck = NumObjectIdsToAck 10
+maxFifoSize :: NumObjectsOutstanding
+maxFifoSize = NumObjectsOutstanding 10
+
+maxIdsToReq :: NumObjectIdsReq
+maxIdsToReq = NumObjectIdsReq 3
+
+maxObjectsToReq :: NumObjectsReq
+maxObjectsToReq = NumObjectsReq 2
 
 nodeToNodeVersion :: NodeToNodeVersion
 nodeToNodeVersion = NodeToNodeV_14
@@ -257,8 +263,8 @@ prop_smoke_object_diffusion ::
     IOSim
       s
       ( ObjectPoolReader objectId object ticketNo (IOSim s)
-      , ObjectPoolReader objectId object ticketNo (IOSim s)
       , ObjectPoolWriter objectId object (IOSim s)
+      , (IOSim s) [object]
       )
   ) ->
   Property
@@ -270,22 +276,24 @@ prop_smoke_object_diffusion objects mkOutboundAsync mkInboundAsync mkPoolInterfa
       traceWith tracer "========== [ Starting ObjectDiffusion smoke test ] =========="
       traceWith tracer (show objects)
 
-      (outboundPoolReader, inboundPoolReader, inboundPoolWriter) <- mkPoolInterfaces
+      (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent) <- mkPoolInterfaces
       controlMessage <- uncheckedNewTVarM Continue
 
       let
         inbound =
           objectDiffusionInbound
             tracer
-            numObjectIdsToAck
-            inboundPoolReader
+            ( maxFifoSize
+            , maxIdsToReq
+            , maxObjectsToReq
+            )
             inboundPoolWriter
             nodeToNodeVersion
 
         outbound =
           objectDiffusionOutbound
             tracer
-            numObjectIdsToAck
+            maxFifoSize
             outboundPoolReader
             nodeToNodeVersion
             (readTVar controlMessage)
@@ -301,10 +309,8 @@ prop_smoke_object_diffusion objects mkOutboundAsync mkInboundAsync mkPoolInterfa
       _ <- waitAnyCancel [outboundAsync, inboundAsync, controlMessageAsync]
 
       traceWith tracer "========== [ ObjectDiffusion smoke test finished ] =========="
+      poolContent <- getAllInboundPoolContent
 
-      snapshot <- atomically $ objectPoolGetSnapshot inboundPoolReader
-      let poolContent =
-            (\(obj, _, _) -> obj) <$> objectPoolObjectsAfter snapshot (objectPoolZeroTicketNo inboundPoolReader)
       traceWith tracer "inboundPoolContent:"
       traceWith tracer (show poolContent)
       traceWith tracer "========== ======================================= =========="

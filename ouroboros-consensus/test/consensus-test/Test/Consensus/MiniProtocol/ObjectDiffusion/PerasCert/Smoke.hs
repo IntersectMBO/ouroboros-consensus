@@ -119,15 +119,18 @@ prop_smoke (ListWithUniqueIds certs) =
     IOSim
       s
       ( ObjectPoolReader PerasRoundNo (PerasCert TestBlock) PerasCertTicketNo (IOSim s)
-      , ObjectPoolReader PerasRoundNo (PerasCert TestBlock) PerasCertTicketNo (IOSim s)
       , ObjectPoolWriter PerasRoundNo (PerasCert TestBlock) (IOSim s)
+      , (IOSim s) [PerasCert TestBlock]
       )
   mkPoolInterfaces = do
     outboundPool <- newCertDB certs
     inboundPool <- newCertDB []
 
     let outboundPoolReader = makePerasCertPoolReaderFromCertDB outboundPool
-        inboundPoolReader = makePerasCertPoolReaderFromCertDB inboundPool
         inboundPoolWriter = makePerasCertPoolWriterFromCertDB inboundPool
+        getAllInboundPoolContent = do
+          snap <- atomically $ PerasCertDB.getCertSnapshot inboundPool
+          let rawContent = PerasCertDB.getCertsAfter snap (PerasCertDB.zeroPerasCertTicketNo)
+          pure $ fst <$> rawContent
 
-    return (outboundPoolReader, inboundPoolReader, inboundPoolWriter)
+    return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)

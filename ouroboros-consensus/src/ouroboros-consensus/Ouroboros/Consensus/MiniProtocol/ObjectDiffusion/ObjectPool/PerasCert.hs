@@ -5,7 +5,6 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
   , makePerasCertPoolWriterFromChainDB
   ) where
 
-import Data.Functor ((<&>))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -24,18 +23,15 @@ makePerasCertPoolReader ::
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReader getCertSnapshot =
   ObjectPoolReader
-    { rdrGetObjectId = perasCertRound
-    , objectPoolGetSnapshot =
-        getCertSnapshot <&> \snap ->
-          ObjectPoolSnapshot
-            { objectPoolObjectsAfter = \ticketNo ->
-                [ (cert, tno, sz)
-                | (cert, tno) <- PerasCertDB.getCertsAfter snap ticketNo
-                , let sz = 0 -- TODO
-                ]
-            , objectPoolHasObject = PerasCertDB.containsCert snap
-            }
-    , objectPoolZeroTicketNo = PerasCertDB.zeroPerasCertTicketNo
+    { oprObjectId = perasCertRound
+    , oprZeroTicketNo = PerasCertDB.zeroPerasCertTicketNo
+    , oprObjectsAfter = \lastKnown limit -> do
+        certSnapshot <- getCertSnapshot
+        pure $
+          take (fromIntegral limit) $
+            [ (ticketNo, perasCertRound cert, pure cert)
+            | (cert, ticketNo) <- PerasCertDB.getCertsAfter certSnapshot lastKnown
+            ]
     }
 
 makePerasCertPoolReaderFromCertDB ::
@@ -45,13 +41,16 @@ makePerasCertPoolReaderFromCertDB perasCertDB =
   makePerasCertPoolReader (PerasCertDB.getCertSnapshot perasCertDB)
 
 makePerasCertPoolWriterFromCertDB ::
-  (StandardHash blk, Monad m) =>
+  (StandardHash blk, MonadSTM m) =>
   PerasCertDB m blk -> ObjectPoolWriter PerasRoundNo (PerasCert blk) m
 makePerasCertPoolWriterFromCertDB perasCertDB =
   ObjectPoolWriter
-    { wrGetObjectId = perasCertRound
-    , objectPoolAddObjects =
+    { opwObjectId = perasCertRound
+    , opwAddObjects =
         mapM_ $ PerasCertDB.addCert perasCertDB
+    , opwHasObject = do
+        certSnapshot <- atomically $ PerasCertDB.getCertSnapshot perasCertDB
+        pure $ PerasCertDB.containsCert certSnapshot
     }
 
 makePerasCertPoolReaderFromChainDB ::
@@ -61,11 +60,14 @@ makePerasCertPoolReaderFromChainDB chainDB =
   makePerasCertPoolReader (ChainDB.getPerasCertSnapshot chainDB)
 
 makePerasCertPoolWriterFromChainDB ::
-  (StandardHash blk, Monad m) =>
+  (StandardHash blk, MonadSTM m) =>
   ChainDB m blk -> ObjectPoolWriter PerasRoundNo (PerasCert blk) m
 makePerasCertPoolWriterFromChainDB chainDB =
   ObjectPoolWriter
-    { wrGetObjectId = perasCertRound
-    , objectPoolAddObjects =
+    { opwObjectId = perasCertRound
+    , opwAddObjects =
         mapM_ $ ChainDB.addPerasCertAsync chainDB
+    , opwHasObject = do
+        certSnapshot <- atomically $ ChainDB.getPerasCertSnapshot chainDB
+        pure $ PerasCertDB.containsCert certSnapshot
     }

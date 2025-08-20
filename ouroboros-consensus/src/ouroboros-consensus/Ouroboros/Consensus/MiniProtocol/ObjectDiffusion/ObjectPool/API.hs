@@ -1,34 +1,29 @@
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   ( ObjectPoolReader (..)
-  , ObjectPoolSnapshot (..)
   , ObjectPoolWriter (..)
   ) where
 
-import Control.Monad.Class.MonadSTM (STM)
-import Ouroboros.Network.SizeInBytes (SizeInBytes)
+import Control.Concurrent.Class.MonadSTM.Strict (STM)
+import Data.Word (Word64)
 
 data ObjectPoolReader objectId object ticketNo m
   = ObjectPoolReader
-  { rdrGetObjectId :: object -> objectId
+  { oprObjectId :: object -> objectId
   -- ^ Return the id of the specified object
-  , objectPoolGetSnapshot :: STM m (ObjectPoolSnapshot objectId object ticketNo)
-  -- ^ Get a snapshot of the object pool
-  , objectPoolZeroTicketNo :: ticketNo
-  -- ^ Ticket number before the first item in the pool (so objectPoolObjectsAfter objectPoolZeroTicketNo returns all possible objects)
-  }
-data ObjectPoolSnapshot objectId object ticketNo
-  = ObjectPoolSnapshot
-  -- TODO: revisit when we will have to load certificates from disk. This method might not be pure anymore
-  { objectPoolObjectsAfter :: ticketNo -> [(object, ticketNo, SizeInBytes)]
-  -- ^ Get all objects having a ticket number strictly greater than the given one, along with their ticket numbers and sizes
-  , objectPoolHasObject :: objectId -> Bool
-  -- ^ Check if the object pool contains an object with the given id
+  , oprZeroTicketNo :: ticketNo
+  -- ^ Ticket number before the first item in the pool (so oprObjectsAfter oprZeroTicketNo returns all possible objects)
+  , oprObjectsAfter :: ticketNo -> Word64 -> STM m [(ticketNo, objectId, m object)]
+  -- ^ Get the list of objects available in the pool with a ticketNo greater than the specified one. The number of returned objects is capped by the given Word64.
+  -- Only the IDs and ticketNos of the objects are directly accessible; each actual object must be loaded through a monadic action.
+  -- TODO: This signature assume that we have all the IDs and ticketNos in memory, but not the actual objects. This might change if IDs must be loaded from disk too.
   }
 
 data ObjectPoolWriter objectId object m
   = ObjectPoolWriter
-  { wrGetObjectId :: object -> objectId
+  { opwObjectId :: object -> objectId
   -- ^ Return the id of the specified object
-  , objectPoolAddObjects :: [object] -> m ()
+  , opwAddObjects :: [object] -> m ()
   -- ^ Add a batch of objects to the objectPool.
+  , opwHasObject :: m (objectId -> Bool)
+  -- ^ Check if the object pool contains an object with the given id
   }
