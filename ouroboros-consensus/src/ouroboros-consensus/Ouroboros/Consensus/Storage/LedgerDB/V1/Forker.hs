@@ -173,10 +173,10 @@ implForkerRangeReadTables qbs env rq0 = do
 
   let st = changelogLastFlushedState ldb
   bsvh <- getValueHandle env
-  values <- BackingStore.bsvhRangeRead bsvh st (rq{BackingStore.rqCount = nrequested})
+  (values, mx) <- BackingStore.bsvhRangeRead bsvh st (rq{BackingStore.rqCount = nrequested})
   traceWith (foeTracer env) ForkerRangeReadTablesEnd
-  let res@(LedgerTables (ValuesMK resValues)) = ltliftA2 (doFixupReadResult nrequested) diffs values
-  pure (res, fst <$> Map.lookupMax resValues)
+  let res = ltliftA2 (doFixupReadResult nrequested) diffs values
+  pure (res, mx)
  where
   rq = BackingStore.RangeQuery rq1 (fromIntegral $ defaultQueryBatchSize qbs)
 

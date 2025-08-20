@@ -102,3 +102,9 @@ if os (windows)
     location: https://github.com/jasagredo/digest
     tag: 329fc2a911878ffe47472751cb40aae20ab2c00a
     --sha256: sha256-84f8dFee9EfWbQ5UTLZ9MrsZ3JVojNhzfTGmWof6wHU=
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/lmdb-simple
+  tag: 3ffc400a9f4cd3dc8dec3cb81bbdbfa031c0fd82
+
