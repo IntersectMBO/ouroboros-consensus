@@ -48,7 +48,6 @@ import Control.Monad.Trans.Except
 import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Foldable as Foldable
-import Data.Foldable.WithIndex
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
@@ -78,6 +77,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.Util (chunks)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
@@ -160,27 +160,13 @@ tableFromValuesMK rr session st (LedgerTables (ValuesMK values)) = do
           LSM.newTableWith (LSM.defaultTableConfig{LSM.confFencePointerIndex = LSM.OrdinaryIndex}) session
       )
       LSM.closeTable
-  let sz = min 1000 (Map.size values)
-  vec <- VM.unsafeNew sz -- can use unsafe
-  (n, vec') <- ifoldlM (go table) (0, vec) values
-  case n of
-    0 -> pure ()
-    _ -> do
-      vec'' <- V.unsafeFreeze vec'
-      LSM.inserts table vec''
+  mapM_ (go table) $ chunks 1000 $ Map.toList values
   pure res
  where
-  go table k (n, vec) v
-    | n == 1000 =
-        do
-          vec' <- V.unsafeFreeze vec -- can use unsafe because vec won't be used afterwards
-          LSM.inserts table vec'
-          vec'' <- VM.unsafeNew 1000
-          pure (0, vec'')
-    | otherwise =
-        do
-          VM.unsafeWrite vec n (toTxInBytes (Proxy @l) k, toTxOutBytes st v, Nothing) -- can use unsafe
-          pure (n + 1, vec)
+  go table items =
+    LSM.inserts table $
+      V.fromListN (length items) $
+        map (\(k, v) -> (toTxInBytes (Proxy @l) k, toTxOutBytes st v, Nothing)) items
 
 snapshotManager ::
   ( IOLike m
@@ -235,13 +221,13 @@ newLSMLedgerTablesHandle tracer rr (resKey, t) = do
           table <- allocate rr (\_ -> LSM.duplicate t) LSM.closeTable
           newLSMLedgerTablesHandle tracer rr table
       , read = \st (LedgerTables (KeysMK keys)) -> do
-          vec <- VM.unsafeNew (Set.size keys)
-          _ <-
-            Foldable.foldl'
-              (\m x -> m >>= \i -> VM.write vec i (toTxInBytes (Proxy @l) x) >> pure (i + 1))
-              (pure 0)
-              keys
-          vec' <- V.freeze vec
+          let vec' = V.create $ do
+                vec <- VM.new (Set.size keys)
+                Monad.foldM_
+                  (\i x -> VM.write vec i (toTxInBytes (Proxy @l) x) >> pure (i + 1))
+                  0
+                  keys
+                pure vec
           res <- LSM.lookups t vec'
           pure
             . LedgerTables
@@ -311,16 +297,14 @@ implPushDiffs ::
   UTxOTable m -> l DiffMK -> m ()
 implPushDiffs t !st1 = do
   let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
-  vec <- VM.unsafeNew (Map.size diffs)
-  Monad.void $
-    ifoldlM
-      ( \k idx item -> do
-          VM.unsafeWrite vec idx (toTxInBytes (Proxy @l) k, (f item))
-          pure (idx + 1)
-      )
-      0
-      diffs
-  LSM.updates t =<< V.freeze vec
+  let vec = V.create $ do
+        vec' <- VM.new (Map.size diffs)
+        Monad.foldM_
+          (\idx (k, item) -> VM.write vec' idx (toTxInBytes (Proxy @l) k, (f item)) >> pure (idx + 1))
+          0
+          $ Map.toList diffs
+        pure vec'
+  LSM.updates t vec
  where
   f (Diff.Insert v) = LSM.Insert (toTxOutBytes (forgetLedgerTables st1) v) Nothing
   f Diff.Delete = LSM.Delete
