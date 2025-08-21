@@ -10,7 +10,8 @@
 -- | Smoke tests for the object diffusion protocol
 module Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke (tests, WithId (..), ListWithUniqueIds (..), prop_smoke_object_diffusion) where
 
-import Control.Monad.IOSim (IOSim, runSimStrictShutdown)
+import Control.Monad.IOSim (runSimStrictShutdown)
+import Control.ResourceRegistry (forkLinkedThread, waitAnyThread, withRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Functor.Contravariant (contramap)
 import Network.TypedProtocol.Channel (Channel, createConnectedChannels)
@@ -26,7 +27,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound (objectDiffusionOutbound)
 import Ouroboros.Consensus.Util.IOLike
-  ( MonadAsync (..)
+  ( IOLike
   , MonadDelay (..)
   , MonadSTM (..)
   , StrictTVar
@@ -176,51 +177,43 @@ nodeToNodeVersion = NodeToNodeV_14
 
 prop_smoke_init_inbound :: ListWithUniqueIds SmokeObject idTy -> Property
 prop_smoke_init_inbound (ListWithUniqueIds objects) =
-  prop_smoke_object_diffusion objects mkOutboundAsync mkInboundAsync (mkMockPoolInterfaces objects)
+  prop_smoke_object_diffusion objects runOutboundPeer runInboundPeer (mkMockPoolInterfaces objects)
  where
-  mkOutboundAsync outbound outboundChannel tracer =
-    async $
-      ( ()
-          <$ runPeer
-            ((\x -> "Outbound (Server): " ++ show x) `contramap` tracer)
-            codecObjectDiffusionId
-            outboundChannel
-            (objectDiffusionOutboundServerPeer outbound)
-      )
+  runOutboundPeer outbound outboundChannel tracer =
+    runPeer
+      ((\x -> "Outbound (Server): " ++ show x) `contramap` tracer)
+      codecObjectDiffusionId
+      outboundChannel
+      (objectDiffusionOutboundServerPeer outbound)
+      >> pure ()
 
-  mkInboundAsync inbound inboundChannel tracer =
-    async $
-      ( ()
-          <$ runPipelinedPeer
-            ((\x -> "Inbound (Client): " ++ show x) `contramap` tracer)
-            codecObjectDiffusionId
-            inboundChannel
-            (objectDiffusionInboundClientPeerPipelined inbound)
-      )
+  runInboundPeer inbound inboundChannel tracer =
+    runPipelinedPeer
+      ((\x -> "Inbound (Client): " ++ show x) `contramap` tracer)
+      codecObjectDiffusionId
+      inboundChannel
+      (objectDiffusionInboundClientPeerPipelined inbound)
+      >> pure ()
 
 prop_smoke_init_outbound :: ListWithUniqueIds SmokeObject SmokeObjectId -> Property
 prop_smoke_init_outbound (ListWithUniqueIds objects) =
-  prop_smoke_object_diffusion objects mkOutboundAsync mkInboundAsync (mkMockPoolInterfaces objects)
+  prop_smoke_object_diffusion objects runOutboundPeer runInboundPeer (mkMockPoolInterfaces objects)
  where
-  mkOutboundAsync outbound outboundChannel tracer =
-    async $
-      ( ()
-          <$ runPeer
-            ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer)
-            codecObjectDiffusionId
-            outboundChannel
-            (objectDiffusionOutboundClientPeer outbound)
-      )
+  runOutboundPeer outbound outboundChannel tracer =
+    runPeer
+      ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer)
+      codecObjectDiffusionId
+      outboundChannel
+      (objectDiffusionOutboundClientPeer outbound)
+      >> pure ()
 
-  mkInboundAsync inbound inboundChannel tracer =
-    async $
-      ( ()
-          <$ runPipelinedPeer
-            ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer)
-            codecObjectDiffusionId
-            inboundChannel
-            (objectDiffusionInboundServerPeerPipelined inbound)
-      )
+  runInboundPeer inbound inboundChannel tracer =
+    runPipelinedPeer
+      ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer)
+      codecObjectDiffusionId
+      inboundChannel
+      (objectDiffusionInboundServerPeerPipelined inbound)
+      >> pure ()
 
 --- The core logic of the smoke test is shared between the generic smoke tests for ObjectDiffusion, and the ones specialised to PerasCert/PerasVote diffusion
 prop_smoke_object_diffusion ::
@@ -233,42 +226,30 @@ prop_smoke_object_diffusion ::
   , Ord ticketNo
   ) =>
   [object] ->
-  ( forall s.
-    ObjectDiffusionOutbound objectId object (IOSim s) () ->
-    ( Channel
-        (IOSim s)
-        ( AnyMessage
-            (ObjectDiffusion initAgency objectId object)
-        )
-    ) ->
-    (Tracer (IOSim s) String) ->
-    IOSim s (Async (IOSim s) ())
+  ( forall m.
+    IOLike m =>
+    ObjectDiffusionOutbound objectId object m () ->
+    Channel m (AnyMessage (ObjectDiffusion initAgency objectId object)) ->
+    (Tracer m String) ->
+    m ()
   ) ->
-  ( forall s.
-    ObjectDiffusionInboundPipelined
-      objectId
-      object
-      (IOSim s)
-      () ->
-    ( Channel
-        (IOSim s)
-        ( AnyMessage
-            (ObjectDiffusion initAgency objectId object)
-        )
-    ) ->
-    (Tracer (IOSim s) String) ->
-    IOSim s (Async (IOSim s) ())
+  ( forall m.
+    IOLike m =>
+    ObjectDiffusionInboundPipelined objectId object m () ->
+    (Channel m (AnyMessage (ObjectDiffusion initAgency objectId object))) ->
+    (Tracer m String) ->
+    m ()
   ) ->
-  ( forall s.
-    IOSim
-      s
-      ( ObjectPoolReader objectId object ticketNo (IOSim s)
-      , ObjectPoolWriter objectId object (IOSim s)
-      , (IOSim s) [object]
+  ( forall m.
+    IOLike m =>
+    m
+      ( ObjectPoolReader objectId object ticketNo m
+      , ObjectPoolWriter objectId object m
+      , m [object]
       )
   ) ->
   Property
-prop_smoke_object_diffusion objects mkOutboundAsync mkInboundAsync mkPoolInterfaces =
+prop_smoke_object_diffusion objects runOutboundPeer runInboundPeer mkPoolInterfaces =
   let
     simulationResult = runSimStrictShutdown $ do
       let tracer = nullTracer
@@ -298,15 +279,19 @@ prop_smoke_object_diffusion objects mkOutboundAsync mkInboundAsync mkPoolInterfa
             nodeToNodeVersion
             (readTVar controlMessage)
 
-      (outboundChannel, inboundChannel) <- createConnectedChannels
-      outboundAsync <- mkOutboundAsync outbound outboundChannel tracer
-      inboundAsync <- mkInboundAsync inbound inboundChannel tracer
-
-      controlMessageAsync <- async $ do
-        threadDelay 1000 -- give a head start to the other threads
-        atomically $ writeTVar controlMessage Terminate
-        threadDelay 1000 -- wait for the other threads to finish
-      _ <- waitAnyCancel [outboundAsync, inboundAsync, controlMessageAsync]
+      withRegistry $ \reg -> do
+        (outboundChannel, inboundChannel) <- createConnectedChannels
+        outboundThread <-
+          forkLinkedThread reg "ObjectDiffusion Outbound peer thread" $
+            runOutboundPeer outbound outboundChannel tracer
+        inboundThread <-
+          forkLinkedThread reg "ObjectDiffusion Inbound peer thread" $
+            runInboundPeer inbound inboundChannel tracer
+        controlMessageThread <- forkLinkedThread reg "ObjectDiffusion Control thread" $ do
+          threadDelay 1000 -- give a head start to the other threads
+          atomically $ writeTVar controlMessage Terminate
+          threadDelay 1000 -- wait for the other threads to finish
+        waitAnyThread [outboundThread, inboundThread, controlMessageThread]
 
       traceWith tracer "========== [ ObjectDiffusion smoke test finished ] =========="
       poolContent <- getAllInboundPoolContent

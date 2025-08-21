@@ -205,11 +205,15 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ConnectionId addr ->
       PerasCertDiffusionInboundPipelined blk m ()
+  -- ^ TODO: We should pass 'hPerasCertDiffusionInbound' to the network
+  -- layer, as per https://github.com/tweag/cardano-peras/issues/78
   , hPerasCertDiffusionOutbound ::
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
       PerasCertDiffusionOutbound blk m ()
+  -- ^ TODO: We should pass 'hPerasCertDiffusionOutbound' to the network
+  -- layer, as per https://github.com/tweag/cardano-peras/issues/78
   , hKeepAliveClient ::
       NodeToNodeVersion ->
       ControlMessageSTM m ->

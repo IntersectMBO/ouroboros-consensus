@@ -10,11 +10,9 @@
 
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke (tests) where
 
-import Control.Monad.IOSim (IOSim)
-import Control.Tracer (Tracer (..), contramap, nullTracer)
+import Control.Tracer (contramap, nullTracer)
 import Data.Functor.Identity (Identity (..))
 import qualified Data.List.NonEmpty as NE
-import Debug.Trace (traceM)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
@@ -44,10 +42,6 @@ import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.TestBlock
-
--- When wanting to debug a part of the test:
-debugTracer :: Monad m => Tracer m String
-debugTracer = Tracer traceM
 
 tests :: TestTree
 tests =
@@ -94,33 +88,29 @@ newCertDB certs = do
 
 prop_smoke :: ListWithUniqueIds (PerasCert TestBlock) PerasRoundNo -> Property
 prop_smoke (ListWithUniqueIds certs) =
-  prop_smoke_object_diffusion certs mkOutboundAsync mkInboundAsync mkPoolInterfaces
+  prop_smoke_object_diffusion certs runOutboundPeer runInboundPeer mkPoolInterfaces
  where
-  mkOutboundAsync outbound outboundChannel tracer =
-    async $
-      ( ()
-          <$ runPeer
-            ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer)
-            codecObjectDiffusionId
-            outboundChannel
-            (objectDiffusionOutboundClientPeer outbound)
-      )
-  mkInboundAsync inbound inboundChannel tracer =
-    async $
-      ( ()
-          <$ runPipelinedPeer
-            ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer)
-            codecObjectDiffusionId
-            inboundChannel
-            (objectDiffusionInboundServerPeerPipelined inbound)
-      )
+  runOutboundPeer outbound outboundChannel tracer =
+    runPeer
+      ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer)
+      codecObjectDiffusionId
+      outboundChannel
+      (objectDiffusionOutboundClientPeer outbound)
+      >> pure ()
+  runInboundPeer inbound inboundChannel tracer =
+    runPipelinedPeer
+      ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer)
+      codecObjectDiffusionId
+      inboundChannel
+      (objectDiffusionInboundServerPeerPipelined inbound)
+      >> pure ()
   mkPoolInterfaces ::
-    forall s.
-    IOSim
-      s
-      ( ObjectPoolReader PerasRoundNo (PerasCert TestBlock) PerasCertTicketNo (IOSim s)
-      , ObjectPoolWriter PerasRoundNo (PerasCert TestBlock) (IOSim s)
-      , (IOSim s) [PerasCert TestBlock]
+    forall m.
+    IOLike m =>
+    m
+      ( ObjectPoolReader PerasRoundNo (PerasCert TestBlock) PerasCertTicketNo m
+      , ObjectPoolWriter PerasRoundNo (PerasCert TestBlock) m
+      , m [PerasCert TestBlock]
       )
   mkPoolInterfaces = do
     outboundPool <- newCertDB certs
