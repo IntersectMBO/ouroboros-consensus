@@ -32,6 +32,7 @@ import Data.Aeson as Aeson
   )
 import Data.Bool (bool)
 import Data.ByteString as BS (ByteString, readFile)
+import Data.Functor (($>))
 import qualified Data.Set as Set
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
@@ -160,10 +161,13 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           flavargs
           $ ChainDB.defaultArgs
 
-    (_, forgers) <- allocate registry (const $ mkForgers nullTracer) (mapM_ BlockForging.finalize)
+    (forgersReleaseKey, forgers) <-
+      allocate registry
+        (const $ mkForgers nullTracer)
+        (mapM_ BlockForging.finalize)
     let fCount = length forgers
     putStrLn $ "--> forger count: " ++ show fCount
-    if fCount > 0
+    r <- if fCount > 0
       then do
         putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
         preOpenChainDB synthOpenMode confDbDir
@@ -180,6 +184,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
       else do
         putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
         pure $ ForgeResult 0
+    release forgersReleaseKey $> r
  where
   DBSynthesizerOptions
     { synthOpenMode
