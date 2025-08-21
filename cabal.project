@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2025-08-05T11:23:47Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2025-08-06T10:58:15Z
+  , cardano-haskell-packages 2025-08-21T00:00:00Z
 
 packages:
   ouroboros-consensus
@@ -60,7 +60,7 @@ source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
   tag: f6f9e8927cbf3c9d604ca35814d533a0378034dc
-  --sha256: sha256-2vOUUvY19Emx5UpHNHZnIaWoqI5g3kPgjFQJGm9mVmk=
+  --sha256: sha256-LMFLIGXus4NyOcJnZ60rwNgwDLdeXdblVUkjGbpn74c=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
@@ -85,8 +85,3 @@ source-repository-package
     libs/set-algebra
     libs/small-steps
     libs/vector-map
-
-constraints:
-  plutus-core < 1.51,
-  plutus-ledger-api < 1.51,
-  plutus-tx < 1.51,
