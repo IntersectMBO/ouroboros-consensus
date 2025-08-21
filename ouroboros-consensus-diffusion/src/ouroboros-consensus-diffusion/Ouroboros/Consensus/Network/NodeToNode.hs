@@ -898,6 +898,7 @@ initiator ::
 initiator miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
     miniProtocolParameters
+    InitiatorOnlyDiffusionMode
     -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
     -- This is currently ok, as we might accept multiple connections from the
     -- same ip address, however this will change when we will switch to
@@ -914,7 +915,9 @@ initiator miniProtocolParameters version versionData Apps{..} =
         , keepAliveProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aKeepAliveClient version ctx)))
         , peerSharingProtocol =
-            (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aPeerSharingClient version ctx)))
+            (InitiatorAndResponderProtocol
+              (MiniProtocolCb (\initiatorCtx -> aPeerSharingClient version initiatorCtx))
+              (MiniProtocolCb (\responderCtx -> aPeerSharingServer version responderCtx)))
         }
     )
     version
@@ -934,6 +937,7 @@ initiatorAndResponder ::
 initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
     miniProtocolParameters
+    InitiatorAndResponderDiffusionMode
     ( NodeToNodeProtocols
         { chainSyncProtocol =
             ( InitiatorAndResponderProtocol
