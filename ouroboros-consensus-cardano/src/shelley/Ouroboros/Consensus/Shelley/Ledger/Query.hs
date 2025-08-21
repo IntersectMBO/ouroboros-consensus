@@ -228,7 +228,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (Map (SL.KeyHash 'SL.StakePool) SL.PoolParams)
+      (Map (SL.KeyHash 'SL.StakePool) SL.StakePoolState)
   GetRewardInfoPools ::
     BlockQuery
       (ShelleyBlock proto era)
@@ -425,7 +425,7 @@ instance
       GetStakePools ->
         SL.getPools st
       GetStakePoolParams poolids ->
-        SL.getPoolParameters st poolids
+        SL.getStakePools st poolids
       GetRewardInfoPools ->
         SL.getRewardInfoPools globals st
       GetPoolState mPoolIds ->
@@ -433,10 +433,10 @@ instance
          in case mPoolIds of
               Just poolIds ->
                 SL.PState
-                  { SL.psStakePoolParams =
-                      Map.restrictKeys (SL.psStakePoolParams certPState) poolIds
-                  , SL.psFutureStakePoolParams =
-                      Map.restrictKeys (SL.psFutureStakePoolParams certPState) poolIds
+                  { SL.psStakePools =
+                      Map.restrictKeys (SL.psStakePools certPState) poolIds
+                  , SL.psFutureStakePools =
+                      Map.restrictKeys (SL.psFutureStakePools certPState) poolIds
                   , SL.psRetiring = Map.restrictKeys (SL.psRetiring certPState) poolIds
                   , SL.psDeposits = Map.restrictKeys (SL.psDeposits certPState) poolIds
                   }

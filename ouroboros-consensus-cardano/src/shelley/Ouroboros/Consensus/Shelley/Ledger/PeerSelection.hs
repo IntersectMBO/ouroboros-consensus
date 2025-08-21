@@ -25,6 +25,7 @@ import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
+import qualified Cardano.Ledger.State as SL
 
 instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto era) where
   getPeers ShelleyLedgerState{shelleyLedgerState} =
@@ -48,9 +49,9 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
 
     futurePoolParams
       , poolParams ::
-        Map (SL.KeyHash 'SL.StakePool) SL.PoolParams
+        Map (SL.KeyHash 'SL.StakePool) SL.StakePoolState
     (futurePoolParams, poolParams) =
-      (SL.psFutureStakePoolParams pstate, SL.psStakePoolParams pstate)
+      (SL.psFutureStakePools pstate, SL.psStakePools pstate)
      where
       pstate :: SL.PState era
       pstate =
@@ -85,14 +86,14 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
     -- \| Note that a stake pool can have multiple registered relays
     pparamsLedgerRelayAccessPoints ::
       (LedgerRelayAccessPoint -> StakePoolRelay) ->
-      SL.PoolParams ->
+      SL.StakePoolState ->
       Maybe (NonEmpty StakePoolRelay)
     pparamsLedgerRelayAccessPoints injStakePoolRelay =
       NE.nonEmpty
         . force
         . mapMaybe (fmap injStakePoolRelay . relayToLedgerRelayAccessPoint)
         . toList
-        . SL.ppRelays
+        . SL.spsRelays
 
     -- \| Combine the stake pools registered in the future and the current pool
     -- parameters, and remove duplicates.

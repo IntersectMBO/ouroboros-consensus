@@ -70,7 +70,6 @@ import Ouroboros.Consensus.Shelley.Node
   , ShelleyGenesis
   , ShelleyLeaderCredentials
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
 import qualified Test.Cardano.Ledger.Conway.Examples as Conway
 import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
