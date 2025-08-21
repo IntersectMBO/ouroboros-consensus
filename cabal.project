@@ -59,8 +59,8 @@ allow-newer:
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: 640fb66d27ac202764de0dda76621c6d57852ba9
-  --sha256: sha256-2vOUUvY19Emx5UpHNHZnIaWoqI5g3kPgjFQJGm9mVmk=
+  tag: 4edd7fd8b7101d24625c88d45c31f15e6345998e
+  --sha256: sha256-cJQIEmKeGDOkvNMm4Gmhp3l0Ikhpu/PQD9WqzSZWB68=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
@@ -85,8 +85,3 @@ source-repository-package
     libs/set-algebra
     libs/small-steps
     libs/vector-map
-
-constraints:
-  plutus-core < 1.51,
-  plutus-ledger-api < 1.51,
-  plutus-tx < 1.51,
