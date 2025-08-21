@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Cardano.StreamingLedgerTables
   , toLMDB
   , toLSM
   , toInMemory
+  , lstate
   ) where
 
 import Cardano.Ledger.BaseTypes (WithOrigin (..))
@@ -23,6 +24,8 @@ import Cardano.Ledger.Core (ByronEra, Era, eraDecoder, toEraCBOR)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.State as SL
+import qualified Cardano.Protocol.TPraos.API as SL
+import Cardano.Slotting.Time
 import qualified Codec.CBOR.Encoding
 import Control.ResourceRegistry
 import Control.Tracer (nullTracer)
@@ -39,6 +42,7 @@ import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Ledger
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State
+import Ouroboros.Consensus.HardFork.History.Summary
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Shelley.Ledger
@@ -47,13 +51,15 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Args
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
-import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.StreamingLedgerTables
 import System.Directory
 import System.FS.API
 import System.FS.IO
 import System.FilePath as FilePath
 import System.IO.Temp
+import System.Random
+import qualified Test.Cardano.Ledger.Conway.Examples as Conway
+import Test.Cardano.Protocol.TPraos.Examples
 
 type L = LedgerState (CardanoBlock StandardCrypto)
 
@@ -142,7 +148,7 @@ fromLSM ::
   IO (YieldArgs L IO)
 fromLSM fp hint reg = do
   (_, SomeHasFSAndBlockIO hasFS blockIO) <- stdMkBlockIOFS fp reg
-  salt <- stdGenSalt
+  salt <- fst . genWord64 <$> newStdGen
   (_, session) <-
     allocate reg (\_ -> openSession nullTracer hasFS blockIO salt (mkFsPath ["lsm"])) closeSession
   tb <-
@@ -151,8 +157,14 @@ fromLSM fp hint reg = do
       ( \_ ->
           openTableFromSnapshot
             session
-            (toSnapshotName $ show $ pointSlot $ Ouroboros.Consensus.Ledger.Abstract.getTip hint)
-            (SnapshotLabel $ T.pack $ "UTxO table: " ++ showProxy (Proxy @(LedgerBlock L)))
+            ( toSnapshotName $
+                show $
+                  unSlotNo $
+                    withOrigin (error "impossible") id $
+                      pointSlot $
+                        Ouroboros.Consensus.Ledger.Abstract.getTip hint
+            )
+            (SnapshotLabel $ T.pack "UTxO table")
       )
       closeTable
   YieldLSM 1000 <$> newLSMLedgerTablesHandle nullTracer reg tb
@@ -224,37 +236,38 @@ toLSM ::
 toLSM fp _ reg = do
   removePathForcibly fp
   System.Directory.createDirectory fp
+  System.Directory.createDirectory (fp ++ "/lsm")
   (_, SomeHasFSAndBlockIO hasFS blockIO) <- stdMkBlockIOFS fp reg
-  salt <- stdGenSalt
+  salt <- fst . genWord64 <$> newStdGen
   (_, session) <-
     allocate reg (\_ -> newSession nullTracer hasFS blockIO salt (mkFsPath ["lsm"])) closeSession
   pure (SinkLSM 1000 session)
 
--- lstate :: L EmptyMK
--- lstate =
---   HardForkLedgerState
---     $ HardForkState
---     $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
---     $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
---     $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
---     $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
---     $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
---     $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
---     $ TZ
---     $ Current
---       (Bound (RelativeTime 0) 0 (EpochNo 0))
---     $ Flip
---       ShelleyLedgerState
---         { shelleyLedgerTip =
---             At
---               ShelleyTip
---                 { shelleyTipSlotNo = SlotNo 9
---                 , shelleyTipBlockNo = BlockNo 3
---                 , shelleyTipHash =
---                     ShelleyHash $ SL.unHashHeader $ pleHashHeader $ ledgerExamplesTPraos Conway.ledgerExamples
---                 }
---         , shelleyLedgerState =
---             leNewEpochState $ pleLedgerExamples $ ledgerExamplesTPraos Conway.ledgerExamples
---         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
---         , shelleyLedgerTables = emptyLedgerTables
---         }
+lstate :: L EmptyMK
+lstate =
+  HardForkLedgerState
+    $ HardForkState
+    $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
+    $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
+    $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
+    $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
+    $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
+    $ TS (K $ Past (Bound (RelativeTime 0) 0 (EpochNo 0)) (Bound (RelativeTime 0) 0 (EpochNo 0)))
+    $ TZ
+    $ Current
+      (Bound (RelativeTime 0) 0 (EpochNo 0))
+    $ Flip
+      ShelleyLedgerState
+        { shelleyLedgerTip =
+            At
+              ShelleyTip
+                { shelleyTipSlotNo = SlotNo 9
+                , shelleyTipBlockNo = BlockNo 3
+                , shelleyTipHash =
+                    ShelleyHash $ SL.unHashHeader $ pleHashHeader $ ledgerExamplesTPraos Conway.ledgerExamples
+                }
+        , shelleyLedgerState =
+            leNewEpochState $ pleLedgerExamples $ ledgerExamplesTPraos Conway.ledgerExamples
+        , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
+        , shelleyLedgerTables = emptyLedgerTables
+        }

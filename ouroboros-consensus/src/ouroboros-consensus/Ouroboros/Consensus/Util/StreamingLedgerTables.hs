@@ -40,13 +40,13 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import Database.LSMTree
+import qualified Debug.Trace as Debug
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Streaming
@@ -115,7 +115,6 @@ type Constraints l m =
   ( LedgerSupportsV1LedgerDB l
   , LedgerSupportsV2LedgerDB l
   , HasLedgerTables l
-  , ShowProxy (LedgerBlock l)
   , GetTip l
   , IOLike m
   )
@@ -214,7 +213,7 @@ yieldInMemoryS ::
   (forall s. Decoder s (TxOut l)) ->
   Yield l m
 yieldInMemoryS mkFs fp decK decV _ k =
-  streamingFile (mkFs $ MountPoint fp) (mkFsPath ["tables"]) $ \s -> do
+  streamingFile (mkFs $ MountPoint fp) (mkFsPath ["tables", "tvar"]) $ \s -> do
     k $ yieldCborMapS decK decV s
 
 {-------------------------------------------------------------------------------
@@ -231,12 +230,12 @@ yieldLmdbS readChunkSize bsvh hint k = do
   lift $ S.effects r
  where
   go p = do
-    LedgerTables (ValuesMK values) <- lift $ S.lift $ bsvhRangeRead bsvh hint p
-    if Map.null values
-      then pure $ pure ()
-      else do
+    (LedgerTables (ValuesMK values), mx) <- lift $ S.lift $ bsvhRangeRead bsvh hint p
+    case mx of
+      Nothing -> pure $ pure ()
+      Just x -> do
         S.each $ Map.toList values
-        go (RangeQuery (LedgerTables . KeysMK . Set.singleton . fst <$> Map.lookupMax values) readChunkSize)
+        go (RangeQuery (Just . LedgerTables . KeysMK $ Set.singleton x) readChunkSize)
 
 yieldLsmS ::
   Monad m =>
@@ -296,7 +295,6 @@ sinkLsmS ::
   , MemPack (TxIn l)
   , IndexedMemPack (l EmptyMK) (TxOut l)
   , GetTip l
-  , ShowProxy (LedgerBlock l)
   ) =>
   Int ->
   Session m ->
@@ -306,8 +304,8 @@ sinkLsmS writeChunkSize session st s = do
   r <- go tb writeChunkSize mempty s
   lift $
     saveSnapshot
-      (toSnapshotName (show $ pointSlot $ getTip st))
-      (SnapshotLabel $ T.pack $ "UTxO table: " <> showProxy (Proxy @(LedgerBlock l)))
+      (toSnapshotName (show $ unSlotNo $ withOrigin (error "impossible") id $ pointSlot $ getTip st))
+      (SnapshotLabel $ T.pack "UTxO table")
       tb
   lift $ closeTable tb
   pure r
@@ -338,7 +336,7 @@ sinkInMemoryS ::
   FilePath ->
   Sink l m r
 sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) fp _ s =
-  ExceptT $ withFile fs (mkFsPath [fp]) (WriteMode MustBeNew) $ \hdl -> do
+  ExceptT $ withFile fs (mkFsPath [Debug.traceShowId fp]) (WriteMode MustBeNew) $ \hdl -> do
     void $ hPutSome fs hdl $ toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)
     e <- runExceptT $ go hdl writeChunkSize mempty s
     case e of
