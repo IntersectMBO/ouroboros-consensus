@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( -- * LedgerTablesHandle
     newLSMLedgerTablesHandle
   , tableFromValuesMK
+  , UTxOTable
 
     -- * Snapshots
   , loadSnapshot
@@ -38,6 +39,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
     -- * snapshot-converter
   , implTakeSnapshot
+  , LSM.withNewSession
+  , toTxInBytes
+  , toTxOutBytes
+  , LSM.newSession
+  , LSM.toSnapshotName
+  , LSM.SnapshotLabel (LSM.SnapshotLabel)
+  , LSM.openTableFromSnapshot
+  , LSM.closeTable
   ) where
 
 import Cardano.Binary as CBOR
@@ -172,9 +181,7 @@ tableFromValuesMK rr session st (LedgerTables (ValuesMK values)) = do
   res@(_, table) <-
     allocate
       rr
-      ( \_ ->
-          LSM.newTableWith (LSM.defaultTableConfig{LSM.confFencePointerIndex = LSM.OrdinaryIndex}) session
-      )
+      (\_ -> LSM.newTable session)
       LSM.closeTable
   mapM_ (go table) $ chunks 1000 $ Map.toList values
   pure res
