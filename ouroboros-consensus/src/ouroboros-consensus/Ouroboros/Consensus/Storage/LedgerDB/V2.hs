@@ -17,13 +17,12 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
 import Control.Arrow ((>>>))
-import qualified Control.Monad as Monad (void, (>=>))
+import qualified Control.Monad as Monad (join, void)
 import Control.Monad.Except
 import Control.RAWLock
 import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Foldable (traverse_)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
@@ -197,7 +196,7 @@ mkInternals bss h =
         let selectWhereTo = case whereTo of
               TakeAtImmutableTip -> anchorHandle
               TakeAtVolatileTip -> currentHandle
-        withStateRef env (MkSolo . selectWhereTo) $ \(MkSolo st) ->
+        withStateRef env (MkSolo . selectWhereTo) $ \(MkSolo (st, _)) ->
           Monad.void $
             takeSnapshot
               (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
@@ -367,7 +366,7 @@ implTryTakeSnapshot ::
 implTryTakeSnapshot bss env mTime nrBlocks =
   if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
     then do
-      withStateRef env (MkSolo . anchorHandle) $ \(MkSolo st) ->
+      withStateRef env (MkSolo . anchorHandle) $ \(MkSolo (st, _)) ->
         Monad.void $
           takeSnapshot
             (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
@@ -565,7 +564,8 @@ getEnvSTM (LDBHandle varState) f =
 
 -- | Get a 'StateRef' from the 'LedgerSeq' in the 'LedgerDBEnv', with the
 -- 'LedgerTablesHandle' having been duplicated (such that the original can be
--- closed). The caller is responsible for closing the handle.
+-- closed). The caller should close the handle using the returned @ResourceKey@,
+-- although closing the registry will also release the handle.
 --
 -- For more flexibility, an arbitrary 'Traversable' of the 'StateRef' can be
 -- returned; for the simple use case of getting a single 'StateRef', use @t ~
@@ -573,14 +573,15 @@ getEnvSTM (LDBHandle varState) f =
 getStateRef ::
   (IOLike m, Traversable t) =>
   LedgerDBEnv m l blk ->
+  ResourceRegistry m ->
   (LedgerSeq m l -> t (StateRef m l)) ->
-  m (t (StateRef m l))
-getStateRef ldbEnv project =
+  m (t (StateRef m l, ResourceKey m))
+getStateRef ldbEnv reg project =
   RAWLock.withReadAccess (ldbOpenHandlesLock ldbEnv) $ \() -> do
     tst <- project <$> readTVarIO (ldbSeq ldbEnv)
     for tst $ \st -> do
-      tables' <- duplicate $ tables st
-      pure st{tables = tables'}
+      (resKey, tables') <- allocate reg (\_ -> duplicate $ tables st) close
+      pure (st{tables = tables'}, resKey)
 
 -- | Like 'StateRef', but takes care of closing the handle when the given action
 -- returns or errors.
@@ -588,10 +589,10 @@ withStateRef ::
   (IOLike m, Traversable t) =>
   LedgerDBEnv m l blk ->
   (LedgerSeq m l -> t (StateRef m l)) ->
-  (t (StateRef m l) -> m a) ->
+  (t (StateRef m l, ResourceKey m) -> m a) ->
   m a
-withStateRef ldbEnv project =
-  bracket (getStateRef ldbEnv project) (traverse_ (close . tables))
+withStateRef ldbEnv project f =
+  withRegistry $ \reg -> getStateRef ldbEnv reg project >>= f
 
 acquireAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
@@ -602,9 +603,10 @@ acquireAtTarget ::
   ) =>
   LedgerDBEnv m l blk ->
   Either Word64 (Target (Point blk)) ->
-  m (Either GetForkerError (StateRef m l))
-acquireAtTarget ldbEnv target =
-  getStateRef ldbEnv $ \l -> case target of
+  ResourceRegistry m ->
+  m (Either GetForkerError (StateRef m l, ResourceKey m))
+acquireAtTarget ldbEnv target reg =
+  getStateRef ldbEnv reg $ \l -> case target of
     Right VolatileTip -> pure $ currentHandle l
     Right ImmutableTip -> pure $ anchorHandle l
     Right (SpecificPoint pt) -> do
@@ -638,7 +640,7 @@ newForkerAtTarget ::
   Target (Point blk) ->
   m (Either GetForkerError (Forker m l blk))
 newForkerAtTarget h rr pt = getEnv h $ \ldbEnv ->
-  acquireAtTarget ldbEnv (Right pt) >>= traverse (newForker h ldbEnv rr)
+  acquireAtTarget ldbEnv (Right pt) rr >>= traverse (newForker h ldbEnv rr)
 
 newForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
@@ -653,14 +655,14 @@ newForkerByRollback ::
   Word64 ->
   m (Either GetForkerError (Forker m l blk))
 newForkerByRollback h rr n = getEnv h $ \ldbEnv ->
-  acquireAtTarget ldbEnv (Left n) >>= traverse (newForker h ldbEnv rr)
+  acquireAtTarget ldbEnv (Left n) rr >>= traverse (newForker h ldbEnv rr)
 
 closeForkerEnv ::
   IOLike m => ForkerEnv m l blk -> m ()
 closeForkerEnv ForkerEnv{foeResourcesToRelease = (lock, key, toRelease)} =
   RAWLock.withWriteAccess lock $
     const $ do
-      id =<< atomically (swapTVar toRelease (pure ()))
+      Monad.join $ atomically (swapTVar toRelease (pure ()))
       _ <- release key
       pure ((), ())
 
@@ -750,14 +752,19 @@ newForker ::
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
   ResourceRegistry m ->
-  StateRef m l ->
+  (StateRef m l, ResourceKey m) ->
   m (Forker m l blk)
-newForker h ldbEnv rr st = do
+newForker h ldbEnv rr (st, rk) = do
   forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
   let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
   traceWith tr ForkerOpen
   lseqVar <- newTVarIO . LedgerSeq . AS.Empty $ st
-  (k, toRelease) <- allocate rr (\_ -> newTVarIO (pure ())) (readTVarIO Monad.>=> id)
+  -- The closing action that we allocate in the TVar from the start is not
+  -- strictly necessary if the caller uses a short-lived registry like the ones
+  -- in Chain selection or the forging loop. Just in case the user passes a
+  -- long-lived registry, we store such closing action to make sure the handle
+  -- is closed even under @forkerClose@ if the registry outlives the forker.
+  (k, toRelease) <- allocate rr (\_ -> newTVarIO (Monad.void (release rk))) (Monad.join . readTVarIO)
   let forkerEnv =
         ForkerEnv
           { foeLedgerSeq = lseqVar
