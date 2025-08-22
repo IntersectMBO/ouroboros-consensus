@@ -33,7 +33,6 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , getBlock
   , getBlockByPoint
   , getBlockComponentByPoint
-  , getDbChangelog
   , getIsValid
   , getLoEFragment
   , getMaxSlotNo
@@ -84,11 +83,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , wipeVolatileDB
   ) where
 
-import Cardano.Ledger.BaseTypes
-  ( knownNonZeroBounded
-  , nonZeroOr
-  , unNonZero
-  )
+import Cardano.Ledger.BaseTypes (unNonZero)
 import Codec.Serialise (Serialise, serialise)
 import Control.Monad (unless)
 import Control.Monad.Except (runExcept)
@@ -129,11 +124,6 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
 import Ouroboros.Consensus.Storage.Common ()
-import Ouroboros.Consensus.Storage.LedgerDB.API
-  ( LedgerDbCfgF (..)
-  , LedgerDbPrune (..)
-  )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
 import Ouroboros.Consensus.Util.IOLike (MonadSTM)
@@ -374,35 +364,6 @@ isValid ::
   Model blk ->
   Maybe Bool
 isValid = flip getIsValid
-
-getDbChangelog ::
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk)) =>
-  TopLevelConfig blk ->
-  Model blk ->
-  DbChangelog.DbChangelog' blk
-getDbChangelog cfg m@Model{..} =
-  DbChangelog.prune tip
-    . DbChangelog.reapplyThenPushMany' ledgerDbCfg blks
-    $ DbChangelog.empty initLedger
- where
-  blks = Chain.toOldestFirst $ currentChain m
-
-  k = configSecurityParam cfg
-
-  ledgerDbCfg =
-    LedgerDbCfg
-      { ledgerDbCfgSecParam = k
-      , ledgerDbCfg = ExtLedgerCfg cfg
-      , ledgerDbCfgComputeLedgerEvents = OmitLedgerEvents
-      }
-
-  tip =
-    case maxActualRollback k m of
-      0 -> LedgerDbPruneAll
-      n ->
-        -- Since we know that @`n`@ is not zero, it is impossible for `nonZeroOr`
-        -- to return a `Nothing` and the final result to have default value of @`1`@.
-        LedgerDbPruneKeeping $ SecurityParam $ nonZeroOr n $ knownNonZeroBounded @1
 
 getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
 getLoEFragment = loeFragment
