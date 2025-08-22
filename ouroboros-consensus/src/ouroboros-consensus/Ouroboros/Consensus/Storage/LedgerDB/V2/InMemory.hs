@@ -96,8 +96,10 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   pure
     LedgerTablesHandle
       { close = do
-          atomically $ writeTVar tv LedgerTablesHandleClosed
-          traceWith tracer V2.TraceLedgerTablesHandleClose
+          p <- atomically $ swapTVar tv LedgerTablesHandleClosed
+          case p of
+            LedgerTablesHandleOpen{} -> traceWith tracer V2.TraceLedgerTablesHandleClose
+            _ -> pure ()
       , duplicate = do
           hs <- readTVarIO tv
           !x <- guardClosed hs $ newInMemoryLedgerTablesHandle tracer someFS

@@ -165,6 +165,17 @@ implForkerCommit env = do
                   _ AS.:< closeOld' -> closeLedgerSeq (LedgerSeq closeOld')
                 -- Finally, close the anchor of @lseq@ (which is a duplicate of
                 -- the head of @olddb'@).
+                --
+                -- Note if the resource registry used to create the Forker is
+                -- ephemeral as the one created on each Chain selection or each
+                -- Forging loop iteration, this first duplicated state will be
+                -- closed by the resource registry closing down, so this will be
+                -- a double release, which is fine. We prefer keeping this
+                -- action just in case some client passes a registry that
+                -- outlives the forker.
+                --
+                -- The rest of the states in the forker will be closed via
+                -- @foeResourcesToRelease@ instead of via the registry.
                 close $ tables $ AS.anchor lseq
           pure (closeDiscarded, s)
       )
