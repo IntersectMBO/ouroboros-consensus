@@ -312,7 +312,7 @@ mkHandlers
             version
       , hPerasCertDiffusionInbound = \version peer ->
           objectDiffusionInbound
-            (contramap (TraceLabelPeer peer) (Node.certDiffusionInboundTracer tracers))
+            (contramap (TraceLabelPeer peer) (Node.perasCertDiffusionInboundTracer tracers))
             ( perasCertDiffusionMaxFifoLength miniProtocolParameters
             , 10 -- TODO: change this to a sensible value
             , 10 -- TODO: change this to a sensible value
@@ -321,7 +321,7 @@ mkHandlers
             version
       , hPerasCertDiffusionOutbound = \version controlMessageSTM peer ->
           objectDiffusionOutbound
-            (contramap (TraceLabelPeer peer) (Node.certDiffusionOutboundTracer tracers))
+            (contramap (TraceLabelPeer peer) (Node.perasCertDiffusionOutboundTracer tracers))
             (perasCertDiffusionMaxFifoLength miniProtocolParameters)
             (makePerasCertPoolReaderFromChainDB $ getChainDB)
             version
