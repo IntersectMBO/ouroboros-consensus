@@ -323,7 +323,7 @@ jobs:
       - name: Build website
         run: yarn build
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: ./docs/website/build
 
