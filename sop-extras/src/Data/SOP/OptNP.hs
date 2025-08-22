@@ -148,8 +148,29 @@ ctraverse' _ f = go
   go (OptSkip xs) = OptSkip <$> go xs
   go OptNil = pure OptNil
 
+ctraverse_ ::
+  forall c proxy empty xs f g.
+  (All c xs, Applicative g) =>
+  proxy c -> (forall a. c a => f a -> g ()) -> OptNP empty f xs -> g ()
+ctraverse_ _ f = go
+ where
+  go :: All c ys => OptNP empty' f ys -> g ()
+  go (OptCons x xs) = f x *> go xs
+  go (OptSkip xs) = go xs
+  go OptNil = pure ()
+
+traverse_ ::
+  forall empty xs f g.
+  (SListI xs, Applicative g) =>
+  (forall a. f a -> g ()) -> OptNP empty f xs -> g ()
+traverse_ f = ctraverse_ (Proxy @Top) f
+
 instance HAp (OptNP empty) where
   hap = ap
+
+instance HTraverse_ (OptNP empty) where
+  hctraverse_ = ctraverse_
+  htraverse_ = traverse_
 
 instance HSequence (OptNP empty) where
   hctraverse' = ctraverse'

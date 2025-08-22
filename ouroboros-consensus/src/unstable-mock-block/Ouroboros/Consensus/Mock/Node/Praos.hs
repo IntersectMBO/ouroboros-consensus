@@ -145,4 +145,5 @@ praosBlockForging cid initHotKey = do
               tickedLedgerSt
               (map txForgetValidated txs)
               isLeader
+      , finalize = pure ()
       }
