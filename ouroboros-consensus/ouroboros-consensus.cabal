@@ -742,6 +742,7 @@ test-suite storage-test
     ouroboros-consensus,
     ouroboros-network-api,
     ouroboros-network-mock,
+    ouroboros-network-protocols,
     pretty-show,
     quickcheck-dynamic,
     quickcheck-lockstep ^>=0.8,
