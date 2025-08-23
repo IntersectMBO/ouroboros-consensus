@@ -297,7 +297,7 @@ B - the release of FOO-1.0.0 (tag: release-FOO-1.0.0)
 A - ...
 ```
 
-# Installing `scriv`
+## Installing `scriv`
 
 To manage the workflow described above, we will use the `scriv` tool slightly
 modified to support cabal files. If you use `nix` then you will find `scriv` in
@@ -320,7 +320,7 @@ pass in the flag `--break-system-packages`:
 pip install --break-system-packages scriv
 ```
 
-# Adding a changelog fragment
+## Adding a changelog fragment
 
 When a given branch contains a change that deserves a changelog entry, you
 should add a changelog
@@ -341,7 +341,7 @@ To create a changelog fragment you can follow these steps:
    guidelines][git-contributing-to-a-project].
 3. Add the file(s) to the branch.
 
-# Cutting a release
+## Cutting a release
 
 First, make sure `scriv` is [installed](#installing-scriv), along with the
 following Python3 packages (unless you use `scriv` in a `nix` shell):
@@ -396,7 +396,7 @@ git pull
 [contributing-to-a-project]: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#Commit-Guidelines
 [chap]: https://github.com/IntersectMBO/cardano-haskell-packages
 
-# The first time we had to break this release process
+## The first time we had to break this release process
 
 On the first half of April 2023, we were asked to get a new Consensus release
 from current `master` in order for it to be integrated into the node. However
@@ -459,7 +459,7 @@ a new organization, and also migrate to a new repository.
 
 [solution]: https://github.com/IntersectMBO/cardano-haskell-packages/pull/207
 
-# The new organization
+## The new organization
 
 The consensus packages are now split as follows:
 
