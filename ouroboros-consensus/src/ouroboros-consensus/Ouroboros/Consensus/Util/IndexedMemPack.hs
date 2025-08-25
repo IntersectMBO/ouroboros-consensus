@@ -14,12 +14,15 @@ module Ouroboros.Consensus.Util.IndexedMemPack
   ( IndexedMemPack (..)
   , MemPack (..)
   , indexedPackByteString
+  , indexedPackByteArray
   , indexedUnpackError
+  , indexedUnpack
   ) where
 
 import qualified Control.Monad as Monad
-import Control.Monad.Trans.Fail (Fail, errorFail, failT)
+import Control.Monad.Trans.Fail (Fail, errorFail, failT, runFailAgg)
 import Data.Array.Byte (ByteArray (..))
+import Data.Bifunctor (first)
 import Data.ByteString
 import Data.MemPack
 import Data.MemPack.Buffer
@@ -52,6 +55,12 @@ indexedPackByteArray isPinned idx a =
     (indexedPackedByteCount idx a)
     (indexedPackM idx a)
 {-# INLINE indexedPackByteArray #-}
+
+indexedUnpack ::
+  forall idx a b.
+  (Buffer b, IndexedMemPack idx a, HasCallStack) => idx -> b -> Either SomeError a
+indexedUnpack idx = first fromMultipleErrors . runFailAgg . indexedUnpackFail idx
+{-# INLINEABLE indexedUnpack #-}
 
 indexedUnpackError ::
   forall idx a b. (Buffer b, IndexedMemPack idx a, HasCallStack) => idx -> b -> a
