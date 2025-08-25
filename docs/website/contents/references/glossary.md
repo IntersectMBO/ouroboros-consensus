@@ -1,4 +1,3 @@
-<!-- xrefcheck: ignore all -->
 # Glossary
 
 Notes on the use and maintenance of this glossary:
@@ -79,7 +78,7 @@ Wraps several other components and provides *chain selection* (ChainSel) functio
 
 This property states that there are at least $k$ blocks in $3k/f$ slots.
 
-Here $f$ refers to the [active slot coefficient](#active-slot-coefficient).
+Here $f$ refers to the [active slot coefficient](#active-slot-coefficient-f).
 
 The main Praos theorem also establishes a similarly-shaped bound on the probability of the immutable chain having less than `k` blocks in any contiguous run of `s` slots. The IOG researchers chose `s=3k/f` for Cardano. We started calling it `scg`, since `s` is a pretty common identifier.
 
@@ -196,7 +195,7 @@ When Ouroboros runs as intended, all short forks are short-lived.
 ## ;Forecasting
 
 Forecasting is the ability to validate headers that are ahead of a node's current selection.
-Because of [Common Prefix](#common-prefix) and [Chain Growth](#chain-growth), the latest `k+1` ledger states along the node's selection always provide sufficient information for the node to validate its peers' headers that are no more than `3k/f` after the peer's first header.
+Because of [Common Prefix](#common-prefix) and [Chain Growth](#chain-growth-property), the latest `k+1` ledger states along the node's selection always provide sufficient information for the node to validate its peers' headers that are no more than `3k/f` after the peer's first header.
 Since the node hasn't selected that header's block, it has to use forecasting in order to validate its descendant headers.
 
 ### ;Forecast horizon
@@ -289,7 +288,7 @@ All honest block-producing nodes that are fully synchronized to the state of the
 
  - active parties - honest caught-up parties plus the adversary.
 
-   [Genesis](#genesis) has two natural requirements which must be met throughout the system's lifetime:
+   [Genesis](miscellaneous/genesis_design.md) has two natural requirements which must be met throughout the system's lifetime:
 
     - The ratio `α` of honest caught-up parties over active parties is above `1/2`.
 
