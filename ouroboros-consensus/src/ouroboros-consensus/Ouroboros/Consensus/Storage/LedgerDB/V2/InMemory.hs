@@ -139,7 +139,7 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
           guardClosed h $
             \values ->
               withFile hasFS (mkFsPath [snapshotName, "tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
-                fmap snd $
+                fmap (Just . snd) $
                   hPutAllCRC hasFS hf $
                     CBOR.toLazyByteString $
                       valuesMKEncoder hint values
