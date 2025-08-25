@@ -48,6 +48,7 @@ import qualified Data.List as L
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.SOP.Dict as Dict
+import Data.Void
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -63,11 +64,13 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
   ( LedgerDbFlavorArgs
   )
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Args hiding
   ( LedgerDbFlavorArgs
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import Ouroboros.Consensus.Util hiding (Some)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -497,19 +500,25 @@ openLedgerDB flavArgs env cfg fs = do
           Nothing
   (ldb, _, od) <- case flavArgs of
     LedgerDbFlavorArgsV1 bss ->
-      let initDb =
+      let snapManager = V1.snapshotManager args
+          initDb =
             V1.mkInitDb
               args
               bss
               getBlock
-       in openDBInternal args initDb stream replayGoal
-    LedgerDbFlavorArgsV2 bss ->
+              snapManager
+       in openDBInternal args initDb snapManager stream replayGoal
+    LedgerDbFlavorArgsV2 bss -> do
+      (snapManager, bss') <- case bss of
+        V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
+        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs x)) -> absurd x
       let initDb =
             V2.mkInitDb
               args
-              bss
+              bss'
               getBlock
-       in openDBInternal args initDb stream replayGoal
+              snapManager
+      openDBInternal args initDb snapManager stream replayGoal
   withRegistry $ \reg -> do
     vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
     case vr of

@@ -43,10 +43,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , snapshotToMetadataPath
 
     -- * Management
-  , deleteSnapshot
-  , listSnapshots
-  , loadSnapshotMetadata
+  , SnapshotManager (..)
+  , defaultDeleteSnapshot
+  , defaultListSnapshots
   , trimSnapshots
+  , loadSnapshotMetadata
   , writeSnapshotMetadata
 
     -- * Policy
@@ -205,6 +206,25 @@ data MetadataErr
     MetadataBackendMismatch
   deriving (Eq, Show)
 
+-- | Management of snapshots for the different LedgerDB backends.
+--
+-- The LedgerDB V1 takes snapshots in @ReadLocked m@, hence the two different
+-- @m@ and @n@ monad types.
+data SnapshotManager m n blk st = SnapshotManager
+  { listSnapshots :: m [DiskSnapshot]
+  , deleteSnapshot :: DiskSnapshot -> m ()
+  , takeSnapshot ::
+      Maybe String ->
+      -- \^ The (possibly empty) suffix for the snapshot name
+      st ->
+      -- \^ The state needed for taking the snapshot:
+      -- - In V1: this will be the DbChangelog and the Backing store
+      -- - In V2: this will be a StateRef
+      n (Maybe (DiskSnapshot, RealPoint blk))
+      -- \^ If a Snapshot was taken, its information and the point at which it
+      -- was taken.
+  }
+
 -- | Named snapshot are permanent, they will never be deleted even if failing to
 -- deserialize.
 diskSnapshotIsPermanent :: DiskSnapshot -> Bool
@@ -228,19 +248,21 @@ snapshotFromPath fileName = do
     _ : str -> Just str
 
 -- | List on-disk snapshots, highest number first.
-listSnapshots :: Monad m => SomeHasFS m -> m [DiskSnapshot]
-listSnapshots (SomeHasFS HasFS{listDirectory}) =
+defaultListSnapshots :: Monad m => SomeHasFS m -> m [DiskSnapshot]
+defaultListSnapshots (SomeHasFS HasFS{listDirectory}) =
   aux <$> listDirectory (mkFsPath [])
  where
   aux :: Set String -> [DiskSnapshot]
   aux = List.sortOn (Down . dsNumber) . mapMaybe snapshotFromPath . Set.toList
 
 -- | Delete snapshot from disk
-deleteSnapshot :: (Monad m, HasCallStack) => SomeHasFS m -> DiskSnapshot -> m ()
-deleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) ss = do
+defaultDeleteSnapshot ::
+  (Monad m, HasCallStack) => SomeHasFS m -> Tracer m (TraceSnapshotEvent blk) -> DiskSnapshot -> m ()
+defaultDeleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) tracer ss = do
   let p = snapshotToDirPath ss
   exists <- doesDirectoryExist p
   when exists (removeDirectoryRecursive p)
+  traceWith tracer (DeletedSnapshot ss)
 
 -- | Write a snapshot metadata JSON file.
 writeSnapshotMetadata ::
@@ -276,25 +298,16 @@ loadSnapshotMetadata (SomeHasFS hasFS) ds = ExceptT $ do
           Left decodeErr -> pure $ Left $ MetadataInvalid decodeErr
           Right meta -> pure $ Right meta
 
-snapshotsMapM_ :: Monad m => SomeHasFS m -> (FilePath -> m a) -> m ()
-snapshotsMapM_ (SomeHasFS fs) f = do
-  mapM_ f
-    =<< Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
+snapshotsMapM_ :: Monad m => SnapshotManager m n blk st -> (DiskSnapshot -> m a) -> m ()
+snapshotsMapM_ snapManager f =
+  mapM_ f =<< listSnapshots snapManager
 
 -- | Testing only! Destroy all snapshots in the DB.
-destroySnapshots :: Monad m => SomeHasFS m -> m ()
-destroySnapshots sfs@(SomeHasFS fs) = do
+destroySnapshots :: Monad m => SnapshotManager m n blk st -> m ()
+destroySnapshots snapManager =
   snapshotsMapM_
-    sfs
-    ( ( \d -> do
-          isDir <- doesDirectoryExist fs d
-          if isDir
-            then removeDirectoryRecursive fs d
-            else removeFile fs d
-      )
-        . mkFsPath
-        . (: [])
-    )
+    snapManager
+    (deleteSnapshot snapManager)
 
 -- | Read an extended ledger state from disk
 readExtLedgerState ::
@@ -336,20 +349,18 @@ writeExtLedgerState (SomeHasFS hasFS) encLedger path cs = do
 -- The deleted snapshots are returned.
 trimSnapshots ::
   Monad m =>
-  Tracer m (TraceSnapshotEvent r) ->
-  SomeHasFS m ->
+  SnapshotManager m n blk st ->
   SnapshotPolicy ->
   m [DiskSnapshot]
-trimSnapshots tracer fs SnapshotPolicy{onDiskNumSnapshots} = do
+trimSnapshots snapManager SnapshotPolicy{onDiskNumSnapshots} = do
   -- We only trim temporary snapshots
-  ss <- filter diskSnapshotIsTemporary <$> listSnapshots fs
+  ss <- filter diskSnapshotIsTemporary <$> listSnapshots snapManager
   -- The snapshot are most recent first, so we can simply drop from the
   -- front to get the snapshots that are "too" old.
   let ssTooOld = drop (fromIntegral onDiskNumSnapshots) ss
   mapM
     ( \s -> do
-        deleteSnapshot fs s
-        traceWith tracer $ DeletedSnapshot s
+        deleteSnapshot snapManager s
         pure s
     )
     ssTooOld
