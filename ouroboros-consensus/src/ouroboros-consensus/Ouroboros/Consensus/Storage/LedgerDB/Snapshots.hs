@@ -184,17 +184,20 @@ instance FromJSON SnapshotMetadata where
 data SnapshotBackend
   = UTxOHDMemSnapshot
   | UTxOHDLMDBSnapshot
+  | UTxOHDLSMSnapshot
   deriving (Eq, Show)
 
 instance ToJSON SnapshotBackend where
   toJSON = \case
     UTxOHDMemSnapshot -> "utxohd-mem"
     UTxOHDLMDBSnapshot -> "utxohd-lmdb"
+    UTxOHDLSMSnapshot -> "utxohd-lsm"
 
 instance FromJSON SnapshotBackend where
   parseJSON = Aeson.withText "SnapshotBackend" $ \case
     "utxohd-mem" -> pure UTxOHDMemSnapshot
     "utxohd-lmdb" -> pure UTxOHDLMDBSnapshot
+    "utxohd-lsm" -> pure UTxOHDLSMSnapshot
     _ -> fail "unknown SnapshotBackend"
 
 data MetadataErr

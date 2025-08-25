@@ -12,7 +12,6 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -498,7 +497,7 @@ instance
     { getShelleyHFCTxIn :: SL.TxIn
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype NoThunks
+    deriving newtype (NoThunks, MemPack)
 
   injectCanonicalTxIn IZ txIn = ShelleyHFCTxIn txIn
   injectCanonicalTxIn (IS IZ) txIn = ShelleyHFCTxIn (coerce txIn)
@@ -507,10 +506,6 @@ instance
   ejectCanonicalTxIn IZ txIn = getShelleyHFCTxIn txIn
   ejectCanonicalTxIn (IS IZ) txIn = coerce (getShelleyHFCTxIn txIn)
   ejectCanonicalTxIn (IS (IS idx')) _ = case idx' of {}
-
-deriving newtype instance
-  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
-  MemPack (CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
 
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>

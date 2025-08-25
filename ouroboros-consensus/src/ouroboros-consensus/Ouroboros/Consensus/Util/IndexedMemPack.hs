@@ -14,12 +14,17 @@ module Ouroboros.Consensus.Util.IndexedMemPack
   ( IndexedMemPack (..)
   , MemPack (..)
   , indexedPackByteString
+  , indexedPackByteArray
   , indexedUnpackError
+  , indexedUnpack
+  , indexedUnpackLeftOver'
+  , unpackLeftOver'
   ) where
 
 import qualified Control.Monad as Monad
-import Control.Monad.Trans.Fail (Fail, errorFail, failT)
+import Control.Monad.Trans.Fail (Fail, errorFail, failT, runFailAgg)
 import Data.Array.Byte (ByteArray (..))
+import Data.Bifunctor (first)
 import Data.ByteString
 import Data.MemPack
 import Data.MemPack.Buffer
@@ -53,6 +58,12 @@ indexedPackByteArray isPinned idx a =
     (indexedPackM idx a)
 {-# INLINE indexedPackByteArray #-}
 
+indexedUnpack ::
+  forall idx a b.
+  (Buffer b, IndexedMemPack idx a, HasCallStack) => idx -> b -> Either SomeError a
+indexedUnpack idx = first fromMultipleErrors . runFailAgg . indexedUnpackFail idx
+{-# INLINEABLE indexedUnpack #-}
+
 indexedUnpackError ::
   forall idx a b. (Buffer b, IndexedMemPack idx a, HasCallStack) => idx -> b -> a
 indexedUnpackError idx = errorFail . indexedUnpackFail idx
@@ -77,6 +88,18 @@ indexedUnpackLeftOver idx b = do
   Monad.when (consumedBytes > len) $ errorLeftOver (indexedTypeName @idx @a idx) consumedBytes len
   pure res
 {-# INLINEABLE indexedUnpackLeftOver #-}
+
+indexedUnpackLeftOver' ::
+  forall idx a b.
+  (IndexedMemPack idx a, Buffer b, HasCallStack) => idx -> b -> Either SomeError (a, Int)
+indexedUnpackLeftOver' idx = first fromMultipleErrors . runFailAgg . indexedUnpackLeftOver idx
+{-# INLINEABLE indexedUnpackLeftOver' #-}
+
+unpackLeftOver' ::
+  forall a b.
+  (MemPack a, Buffer b, HasCallStack) => b -> Either SomeError (a, Int)
+unpackLeftOver' = first fromMultipleErrors . runFailAgg . unpackLeftOver
+{-# INLINEABLE unpackLeftOver' #-}
 
 errorLeftOver :: HasCallStack => String -> Int -> Int -> a
 errorLeftOver name consumedBytes len =

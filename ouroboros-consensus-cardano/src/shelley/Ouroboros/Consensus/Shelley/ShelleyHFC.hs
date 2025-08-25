@@ -10,7 +10,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -429,15 +428,13 @@ instance
     { getShelleyBlockHFCTxIn :: SL.TxIn
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype NoThunks
+    deriving newtype (NoThunks, MemPack)
 
   injectCanonicalTxIn IZ txIn = ShelleyBlockHFCTxIn txIn
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
   ejectCanonicalTxIn IZ txIn = getShelleyBlockHFCTxIn txIn
   ejectCanonicalTxIn (IS idx') _ = case idx' of {}
-
-deriving newtype instance MemPack (CanonicalTxIn '[ShelleyBlock proto era])
 
 {-------------------------------------------------------------------------------
   HardForkTxOut

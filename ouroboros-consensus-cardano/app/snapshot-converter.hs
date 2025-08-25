@@ -38,6 +38,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB 
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Lock as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq as V2
 import Ouroboros.Consensus.Util.CRC
@@ -199,7 +200,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
       checkSnapshotFileStructure Mem path fs
       (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot nullTracer rr ccfg fs ds
       let h = V2.currentHandle ls
-      (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h))
+      (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h) (V2.state h))
     LMDB -> do
       checkSnapshotFileStructure LMDB path fs
       ((dbch, k, bstore), _) <-
@@ -240,7 +241,7 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
     Mem -> do
       lseq <- V2.empty state tbs $ V2.newInMemoryLedgerTablesHandle nullTracer fs
       let h = V2.currentHandle lseq
-      Monad.void $ V2.implTakeSnapshot ccfg nullTracer fs suffix h
+      Monad.void $ InMemory.implTakeSnapshot ccfg nullTracer fs suffix h
     LMDB -> do
       chlog <- newTVarIO (V1.empty state)
       lock <- V1.mkLedgerDBLock
