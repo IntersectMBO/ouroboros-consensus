@@ -95,7 +95,7 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- The first argument has to be the ledger state before applying
   -- the block, the second argument should be the ledger state after
   -- applying a block. See 'CanUpgradeLedgerTables'.
-  , takeHandleSnapshot :: !(l EmptyMK -> String -> m CRC)
+  , takeHandleSnapshot :: !(l EmptyMK -> String -> m (Maybe CRC))
   , tablesSize :: !(m (Maybe Int))
   -- ^ Consult the size of the ledger tables in the database. This will return
   -- 'Nothing' in backends that do not support this operation.
