@@ -12,7 +12,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -44,11 +43,11 @@ import Control.Monad.Except
 import Control.Monad.State hiding (state)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..))
+import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as L
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.SOP.Dict as Dict
-import Data.Void
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -64,13 +63,14 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
   ( LedgerDbFlavorArgs
   )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
+import Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Args hiding
   ( LedgerDbFlavorArgs
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util hiding (Some)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -95,7 +95,6 @@ import Test.Util.TestBlock hiding
   , TestBlockCodecConfig
   , TestBlockStorageConfig
   )
-import "quickcheck-dynamic" Test.QuickCheck.Extras
 
 tests :: TestTree
 tests =
@@ -106,23 +105,45 @@ tests =
     , testProperty "InMemV2" $
         prop_sequential 100000 inMemV2TestArguments noFilePath simulatedFS
     , testProperty "LMDB" $
-        prop_sequential 1000 lmdbTestArguments realFilePath realFS
+        prop_sequential 1000 lmdbTestArguments (realFilePath "lmdb") realFS
+    , testProperty "LSM" $
+        prop_sequential 1000 lsmTestArguments (realFilePath "lsm") realFS
     ]
 
 prop_sequential ::
   Int ->
-  (SecurityParam -> FilePath -> TestArguments IO) ->
+  (SecurityParam -> LSM.Salt -> FilePath -> TestArguments IO) ->
   IO (FilePath, IO ()) ->
   IO (SomeHasFS IO, IO ()) ->
   Actions Model ->
   QC.Property
-prop_sequential maxSuccess mkTestArguments getLmdbDir fsOps as = QC.withMaxSuccess maxSuccess $
-  QC.monadicIO $ do
-    ref <- lift $ initialEnvironment fsOps getLmdbDir mkTestArguments =<< initChainDB
-    (_, env@(Environment _ testInternals _ _ _ _ clean)) <- runPropertyStateT (runActions as) ref
-    checkNoLeakedHandles env
-    QC.run $ closeLedgerDB testInternals >> clean
-    QC.assert True
+prop_sequential maxSuccess mkTestArguments getDiskDir fsOps actions =
+  QC.withMaxSuccess maxSuccess $
+    QC.monadic runner $
+      Monad.void $
+        runActions $
+          actions
+ where
+  setup :: IO Environment
+  setup = do
+    cdb <- initChainDB
+    rr <- unsafeNewRegistry
+    initialEnvironment fsOps getDiskDir mkTestArguments cdb rr
+
+  cleanup :: Environment -> IO ()
+  cleanup (Environment _ testInternals _ _ _ _ clean registry) = do
+    closeRegistry registry
+    closeLedgerDB testInternals
+    clean
+
+  runner :: StateT Environment IO QC.Property -> QC.Property
+  runner mprop =
+    QC.ioProperty $
+      bracket setup cleanup $
+        \env0 -> do
+          (prop1, env1) <- runStateT mprop env0
+          p2 <- checkNoLeakedHandles env1
+          pure $ prop1 QC..&&. p2
 
 -- | The initial environment is mostly undefined because it will be initialized
 -- by the @Init@ command. We are forced to provide this dummy implementation
@@ -132,21 +153,23 @@ prop_sequential maxSuccess mkTestArguments getLmdbDir fsOps as = QC.withMaxSucce
 initialEnvironment ::
   IO (SomeHasFS IO, IO ()) ->
   IO (FilePath, IO ()) ->
-  (SecurityParam -> FilePath -> TestArguments IO) ->
+  (SecurityParam -> LSM.Salt -> FilePath -> TestArguments IO) ->
   ChainDB IO ->
+  ResourceRegistry IO ->
   IO Environment
-initialEnvironment fsOps getLmdbDir mkTestArguments cdb = do
+initialEnvironment fsOps getDiskDir mkTestArguments cdb rr = do
   (sfs, cleanupFS) <- fsOps
-  (lmdbDir, cleanupLMDB) <- getLmdbDir
+  (diskDir, cleanupDisk) <- getDiskDir
   pure $
     Environment
       undefined
       (TestInternals undefined undefined undefined undefined undefined (pure ()) (pure 0))
       cdb
-      (flip mkTestArguments lmdbDir)
+      (\sp st -> mkTestArguments sp st diskDir)
       sfs
       (pure $ NumOpenHandles 0)
-      (cleanupFS >> cleanupLMDB)
+      (cleanupFS >> cleanupDisk)
+      rr
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -160,9 +183,10 @@ data TestArguments m = TestArguments
 noFilePath :: IO (FilePath, IO ())
 noFilePath = pure ("Bogus", pure ())
 
-realFilePath :: IO (FilePath, IO ())
-realFilePath = liftIO $ do
-  tmpdir <- (FilePath.</> "test_lmdb") <$> Dir.getTemporaryDirectory
+realFilePath :: String -> IO (FilePath, IO ())
+realFilePath l = liftIO $ do
+  tmpdir <- (FilePath.</> ("test_" <> l)) <$> Dir.getTemporaryDirectory
+  Dir.createDirectoryIfMissing False tmpdir
   pure
     ( tmpdir
     , do
@@ -183,9 +207,10 @@ realFS = liftIO $ do
 
 inMemV1TestArguments ::
   SecurityParam ->
+  LSM.Salt ->
   FilePath ->
   TestArguments IO
-inMemV1TestArguments secParam _ =
+inMemV1TestArguments secParam _ _ =
   TestArguments
     { argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing InMemoryBackingStoreArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
@@ -193,19 +218,36 @@ inMemV1TestArguments secParam _ =
 
 inMemV2TestArguments ::
   SecurityParam ->
+  LSM.Salt ->
   FilePath ->
   TestArguments IO
-inMemV2TestArguments secParam _ =
+inMemV2TestArguments secParam _ _ =
   TestArguments
     { argFlavorArgs = LedgerDbFlavorArgsV2 $ V2Args InMemoryHandleArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
-lmdbTestArguments ::
+lsmTestArguments ::
   SecurityParam ->
+  LSM.Salt ->
   FilePath ->
   TestArguments IO
-lmdbTestArguments secParam fp =
+lsmTestArguments secParam salt fp =
+  TestArguments
+    { argFlavorArgs =
+        LedgerDbFlavorArgsV2 $
+          V2Args $
+            LSMHandleArgs $
+              LSMArgs (mkFsPath $ FilePath.splitDirectories fp) salt (LSM.stdMkBlockIOFS fp)
+    , argLedgerDbCfg = extLedgerDbConfig secParam
+    }
+
+lmdbTestArguments ::
+  SecurityParam ->
+  LSM.Salt ->
+  FilePath ->
+  TestArguments IO
+lmdbTestArguments secParam _ fp =
   TestArguments
     { argFlavorArgs =
         LedgerDbFlavorArgsV1 $
@@ -278,11 +320,11 @@ instance StateModel Model where
   data Action Model a where
     WipeLedgerDB :: Action Model ()
     TruncateSnapshots :: Action Model ()
-    DropAndRestore :: Word64 -> Action Model ()
+    DropAndRestore :: Word64 -> LSM.Salt -> Action Model ()
     ForceTakeSnapshot :: Action Model ()
     GetState ::
       Action Model (ExtLedgerState TestBlock EmptyMK, ExtLedgerState TestBlock EmptyMK)
-    Init :: SecurityParam -> Action Model ()
+    Init :: SecurityParam -> LSM.Salt -> Action Model ()
     ValidateAndCommit :: Word64 -> [TestBlock] -> Action Model ()
     -- \| This action is used only to observe the side effects of closing an
     -- uncommitted forker, to ensure all handles are properly deallocated.
@@ -297,12 +339,12 @@ instance StateModel Model where
   actionName ValidateAndCommit{} = "ValidateAndCommit"
   actionName OpenAndCloseForker = "OpenAndCloseForker"
 
-  arbitraryAction _ UnInit = Some . Init <$> QC.arbitrary
+  arbitraryAction _ UnInit = Some <$> (Init <$> QC.arbitrary <*> QC.arbitrary)
   arbitraryAction _ model@(Model chain secParam) =
     frequency $
       [ (2, pure $ Some GetState)
       , (2, pure $ Some ForceTakeSnapshot)
-      , (1, Some . DropAndRestore <$> QC.choose (0, fromIntegral $ AS.length chain))
+      , (1, Some <$> (DropAndRestore <$> QC.choose (0, fromIntegral $ AS.length chain) <*> QC.arbitrary))
       ,
         ( 4
         , Some <$> do
@@ -335,7 +377,7 @@ instance StateModel Model where
 
   initialState = UnInit
 
-  nextState _ (Init secParam) _var = Model (AS.Empty genesis) secParam
+  nextState _ (Init secParam _) _var = Model (AS.Empty genesis) secParam
   nextState state GetState _var = state
   nextState state ForceTakeSnapshot _var = state
   nextState state@(Model _ secParam) (ValidateAndCommit n blks) _var =
@@ -371,7 +413,7 @@ instance StateModel Model where
       mapM_ push blks
   nextState state WipeLedgerDB _var = state
   nextState state TruncateSnapshots _var = state
-  nextState state (DropAndRestore n) _var = modelRollback n state
+  nextState state (DropAndRestore n _) _var = modelRollback n state
   nextState state OpenAndCloseForker _var = state
   nextState UnInit _ _ = error "Uninitialized model created a command different than Init"
 
@@ -489,12 +531,12 @@ openLedgerDB ::
   ChainDB IO ->
   LedgerDbCfg (ExtLedgerState TestBlock) ->
   SomeHasFS IO ->
+  ResourceRegistry IO ->
   IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock, IO NumOpenHandles)
-openLedgerDB flavArgs env cfg fs = do
+openLedgerDB flavArgs env cfg fs rr = do
   (stream, volBlocks) <- dbStreamAPI (ledgerDbCfgSecParam cfg) env
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
   replayGoal <- fmap (realPointToPoint . last . Map.keys) . atomically $ readTVar (dbBlocks env)
-  rr <- unsafeNewRegistry
   (tracer, getNumOpenHandles) <- mkTrackOpenHandles
   let args =
         LedgerDbArgs
@@ -521,7 +563,24 @@ openLedgerDB flavArgs env cfg fs = do
     LedgerDbFlavorArgsV2 bss -> do
       (snapManager, bss') <- case bss of
         V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
-        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs x)) -> absurd x
+        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path salt mkFS)) -> do
+          (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (lgrRegistry args)
+          session <-
+            allocate
+              (lgrRegistry args)
+              ( \_ ->
+                  LSM.openSession
+                    (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 . V2.LSMTrace >$< lgrTracer args)
+                    fs'
+                    blockio
+                    salt
+                    path
+              )
+              LSM.closeSession
+          pure
+            ( LSM.snapshotManager (snd session) args
+            , V2.LSMHandleEnv (V2.LSMResources (fst session) (snd session) rk1)
+            )
       let initDb =
             V2.mkInitDb
               args
@@ -549,36 +608,37 @@ data Environment
       (LedgerDB' IO TestBlock)
       (TestInternals' IO TestBlock)
       (ChainDB IO)
-      (SecurityParam -> TestArguments IO)
+      (SecurityParam -> LSM.Salt -> TestArguments IO)
       (SomeHasFS IO)
-      (IO NumOpenHandles)
-      (IO ())
+      !(IO NumOpenHandles)
+      !(IO ())
+      !(ResourceRegistry IO)
 
 data LedgerDBError = ErrorValidateExceededRollback
 
 instance RunModel Model (StateT Environment IO) where
   type Error Model (StateT Environment IO) = LedgerDBError
 
-  perform _ (Init secParam) _ = do
-    Environment _ _ chainDb mkArgs fs _ cleanup <- get
+  perform _ (Init secParam salt) _ = do
+    Environment _ _ chainDb mkArgs fs _ cleanup rr <- get
     (ldb, testInternals, getNumOpenHandles) <- lift $ do
-      let args = mkArgs secParam
-      openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs
-    put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup)
+      let args = mkArgs secParam salt
+      openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs rr
+    put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup rr)
     pure $ pure ()
   perform _ WipeLedgerDB _ = do
-    Environment _ testInternals _ _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ _ <- get
     lift $ wipeLedgerDB testInternals
     pure $ pure ()
   perform _ GetState _ = do
-    Environment ldb _ _ _ _ _ _ <- get
+    Environment ldb _ _ _ _ _ _ _ <- get
     lift $ fmap pure $ atomically $ (,) <$> getImmutableTip ldb <*> getVolatileTip ldb
   perform _ ForceTakeSnapshot _ = do
-    Environment _ testInternals _ _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ _ <- get
     lift $ takeSnapshotNOW testInternals TakeAtImmutableTip Nothing
     pure $ pure ()
   perform _ (ValidateAndCommit n blks) _ = do
-    Environment ldb _ chainDb _ _ _ _ <- get
+    Environment ldb _ chainDb _ _ _ _ _ <- get
     lift $ do
       atomically $
         modifyTVar (dbBlocks chainDb) $
@@ -594,15 +654,15 @@ instance RunModel Model (StateT Environment IO) where
             forkerClose forker
             pure $ pure ()
           ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
-          ValidateLedgerError (AnnLedgerError forker _ _) -> forkerClose forker >> error "Unexpected ledger error"
-  perform state@(Model _ secParam) (DropAndRestore n) lk = do
-    Environment _ testInternals chainDb _ _ _ _ <- get
+          ValidateLedgerError (AnnLedgerError forker _ err) -> forkerClose forker >> error ("Unexpected ledger error" <> show err)
+  perform state@(Model _ secParam) (DropAndRestore n salt) lk = do
+    Environment _ testInternals chainDb _ _ _ _ _ <- get
     lift $ do
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
       closeLedgerDB testInternals
-    perform state (Init secParam) lk
+    perform state (Init secParam salt) lk
   perform _ OpenAndCloseForker _ = do
-    Environment ldb _ _ _ _ _ _ <- get
+    Environment ldb _ _ _ _ _ _ _ <- get
     lift $ withRegistry $ \rr -> do
       eFrk <- LedgerDB.getForkerAtTarget ldb rr VolatileTip
       case eFrk of
@@ -610,7 +670,7 @@ instance RunModel Model (StateT Environment IO) where
         Right frk -> forkerClose frk
     pure $ pure ()
   perform _ TruncateSnapshots _ = do
-    Environment _ testInternals _ _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ _ <- get
     lift $ truncateSnapshots testInternals
     pure $ pure ()
   perform UnInit _ _ = error "Uninitialized model created a command different than Init"
@@ -666,13 +726,16 @@ mkTrackOpenHandles = do
           atomically $ modifyTVar varOpen $ case ev of
             V2.TraceLedgerTablesHandleCreate -> succ
             V2.TraceLedgerTablesHandleClose -> pred
+            _ -> id
         _ -> pure ()
   pure (tracer, readTVarIO varOpen)
 
 -- | Check that we didn't leak any 'LedgerTablesHandle's (with V2 only).
-checkNoLeakedHandles :: Environment -> QC.PropertyM IO ()
-checkNoLeakedHandles (Environment _ testInternals _ _ _ getNumOpenHandles _) = do
-  expected <- liftIO $ NumOpenHandles <$> LedgerDB.getNumLedgerTablesHandles testInternals
-  actual <- liftIO getNumOpenHandles
-  QC.assertWith (actual == expected) $
-    "leaked handles, expected " <> show expected <> ", but actual " <> show actual
+checkNoLeakedHandles :: Environment -> IO QC.Property
+checkNoLeakedHandles (Environment _ testInternals _ _ _ getNumOpenHandles _ _) = do
+  expected <- NumOpenHandles <$> LedgerDB.getNumLedgerTablesHandles testInternals
+  actual <- getNumOpenHandles
+  pure $
+    QC.counterexample
+      ("leaked handles, expected " <> show expected <> ", but actual " <> show actual)
+      (actual == expected)

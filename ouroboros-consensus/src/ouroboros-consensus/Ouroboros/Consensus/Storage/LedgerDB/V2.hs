@@ -46,6 +46,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -54,6 +55,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Args
@@ -86,10 +88,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
     { initFromGenesis = emptyF =<< lgrGenesis
     , initFromSnapshot =
         loadSnapshot (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS
-    , abortLedgerDbInit = \ls -> do
-        closeLedgerSeq ls
-        flip whenJust releaseLedgerDBResources $ case bss of
-          InMemoryHandleEnv -> Nothing
+    , abortLedgerDbInit = closeLedgerSeq
     , initReapplyBlock = \a b c -> do
         (x, y) <- reapplyThenPush lgrRegistry a b c
         x
@@ -114,9 +113,10 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
                 , ldbResolveBlock = getBlock
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbOpenHandlesLock = lock
+                , ldbGetVolatileSuffix = getVolatileSuffix
                 , ldbResourceKeys = case bss of
                     InMemoryHandleEnv -> Nothing
-                , ldbGetVolatileSuffix = getVolatileSuffix
+                    LSMHandleEnv lsmRes -> Just $ LedgerDBResourceKeys (sessionKey lsmRes) (blockIOKey lsmRes)
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -141,6 +141,11 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
   emptyF st =
     empty' st $ case bss of
       InMemoryHandleEnv -> InMemory.newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
+      LSMHandleEnv lsmRes ->
+        \values -> do
+          table <-
+            LSM.tableFromValuesMK v2Tracer lgrRegistry (sessionResource lsmRes) (forgetLedgerTables st) values
+          LSM.newLSMLedgerTablesHandle v2Tracer lgrRegistry table
 
   loadSnapshot ::
     CodecConfig blk ->
@@ -149,6 +154,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
     m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
   loadSnapshot ccfg fs ds = case bss of
     InMemoryHandleEnv -> runExceptT $ InMemory.loadSnapshot v2Tracer lgrRegistry ccfg fs ds
+    LSMHandleEnv lsmRes -> runExceptT $ LSM.loadSnapshot v2Tracer lgrRegistry ccfg fs (sessionResource lsmRes) ds
 
 implMkLedgerDb ::
   forall m l blk.
@@ -247,7 +253,7 @@ mkInternals h snapManager =
 implIntTruncateSnapshots :: MonadThrow m => SnapshotManager m m blk st -> SomeHasFS m -> m ()
 implIntTruncateSnapshots snapManager (SomeHasFS fs) = do
   snapshotsMapM_ snapManager $
-    \pre -> withFile fs (InMemory.snapshotToStatePath pre) (AppendMode AllowExisting) $
+    \pre -> withFile fs (snapshotToStatePath pre) (AppendMode AllowExisting) $
       \h -> hTruncate fs h 0
 
 implGetVolatileTip ::

@@ -593,6 +593,7 @@ library unstable-cardano-tools
     ouroboros-network-api,
     ouroboros-network-framework ^>=0.19,
     ouroboros-network-protocols,
+    random,
     resource-registry,
     singletons,
     sop-core,

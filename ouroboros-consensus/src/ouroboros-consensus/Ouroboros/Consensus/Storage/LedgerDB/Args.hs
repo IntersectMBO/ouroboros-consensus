@@ -18,6 +18,7 @@
 -- | Arguments for LedgerDB initialization.
 module Ouroboros.Consensus.Storage.LedgerDB.Args
   ( LedgerDbArgs (..)
+  , LedgerDbBackendArgs (..)
   , LedgerDbFlavorArgs (..)
   , QueryBatchSize (..)
   , defaultArgs
@@ -49,6 +50,14 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq (AnchoredSeq)
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import System.FS.API
+
+data LedgerDbBackendArgs m
+  = V1LMDB (Complete V1.LedgerDbFlavorArgs m)
+  | V2InMemory
+  | V2LSM
+      -- | The filepath **relative to the fast storage device** in which we will
+      -- open/create the LSM-tree database.
+      FilePath
 
 {-------------------------------------------------------------------------------
   Arguments

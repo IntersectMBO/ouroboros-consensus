@@ -38,6 +38,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , diskSnapshotIsTemporary
   , snapshotFromPath
   , snapshotToChecksumPath
+  , snapshotToStatePath
   , snapshotToDirName
   , snapshotToDirPath
   , snapshotToMetadataPath
@@ -184,17 +185,20 @@ instance FromJSON SnapshotMetadata where
 data SnapshotBackend
   = UTxOHDMemSnapshot
   | UTxOHDLMDBSnapshot
+  | UTxOHDLSMSnapshot
   deriving (Eq, Show)
 
 instance ToJSON SnapshotBackend where
   toJSON = \case
     UTxOHDMemSnapshot -> "utxohd-mem"
     UTxOHDLMDBSnapshot -> "utxohd-lmdb"
+    UTxOHDLSMSnapshot -> "utxohd-lsm"
 
 instance FromJSON SnapshotBackend where
   parseJSON = Aeson.withText "SnapshotBackend" $ \case
     "utxohd-mem" -> pure UTxOHDMemSnapshot
     "utxohd-lmdb" -> pure UTxOHDLMDBSnapshot
+    "utxohd-lsm" -> pure UTxOHDLSMSnapshot
     _ -> fail "unknown SnapshotBackend"
 
 data MetadataErr
@@ -382,6 +386,11 @@ snapshotToMetadataPath = mkFsPath . (\x -> [x, "meta"]) . snapshotToDirName
 -- | The path within the LedgerDB's filesystem to the snapshot's directory
 snapshotToDirPath :: DiskSnapshot -> FsPath
 snapshotToDirPath = mkFsPath . (: []) . snapshotToDirName
+
+-- | The path within the LedgerDB's filesystem to the file that contains the
+-- snapshot's serialized ledger state
+snapshotToStatePath :: DiskSnapshot -> FsPath
+snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
 
 -- | Version 1: uses versioning ('Ouroboros.Consensus.Util.Versioned') and only
 -- encodes the ledger state @l@.
