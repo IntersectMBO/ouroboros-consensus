@@ -704,7 +704,7 @@ runThreadNetwork
         let emptySt = emptySt'
             doRangeQuery = roforkerRangeReadTables forker
         fullLedgerSt <- fmap ledgerState $ do
-          fullUTxO <- doRangeQuery NoPreviousQuery
+          (fullUTxO, _) <- doRangeQuery NoPreviousQuery
           pure $! withLedgerTables emptySt fullUTxO
         roforkerClose forker
         -- Combine the node's seed with the current slot number, to make sure

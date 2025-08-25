@@ -58,6 +58,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
   ) where
 
 import Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
+import Data.Bifunctor
 import Data.Kind
 import GHC.Generics
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
@@ -93,7 +94,7 @@ data DiffsToFlush l = DiffsToFlush
   -- considered as "last flushed" in the kept 'DbChangelog'
   }
 
-data BackingStore m keys values diff = BackingStore
+data BackingStore m keys key values diff = BackingStore
   { bsClose :: !(m ())
   -- ^ Close the backing store
   --
@@ -107,7 +108,7 @@ data BackingStore m keys values diff = BackingStore
   --
   -- The destination path must not already exist. After this operation, it
   -- will be a directory.
-  , bsValueHandle :: !(m (BackingStoreValueHandle m keys values))
+  , bsValueHandle :: !(m (BackingStoreValueHandle m keys key values))
   -- ^ Open a 'BackingStoreValueHandle' capturing the current value of the
   -- entire database
   , bsWrite :: !(SlotNo -> WriteHint diff -> diff -> m ())
@@ -118,14 +119,15 @@ data BackingStore m keys values diff = BackingStore
   }
 
 deriving via
-  OnlyCheckWhnfNamed "BackingStore" (BackingStore m keys values diff)
+  OnlyCheckWhnfNamed "BackingStore" (BackingStore m keys key values diff)
   instance
-    NoThunks (BackingStore m keys values diff)
+    NoThunks (BackingStore m keys key values diff)
 
 type LedgerBackingStore m l =
   BackingStore
     m
     (LedgerTables l KeysMK)
+    (TxIn l)
     (LedgerTables l ValuesMK)
     (LedgerTables l DiffMK)
 
@@ -157,7 +159,7 @@ data InitFrom values
 -- The performance cost is usually minimal unless this handle is held open too
 -- long. We expect clients of the 'BackingStore' to not retain handles for a
 -- long time.
-data BackingStoreValueHandle m keys values = BackingStoreValueHandle
+data BackingStoreValueHandle m keys key values = BackingStoreValueHandle
   { bsvhAtSlot :: !(WithOrigin SlotNo)
   -- ^ At which slot this handle was created
   , bsvhClose :: !(m ())
@@ -165,7 +167,7 @@ data BackingStoreValueHandle m keys values = BackingStoreValueHandle
   --
   -- Other methods throw exceptions if called on a closed handle. 'bsvhClose'
   -- itself is idempotent.
-  , bsvhRangeRead :: !(ReadHint values -> RangeQuery keys -> m values)
+  , bsvhRangeRead :: !(ReadHint values -> RangeQuery keys -> m (values, Maybe key))
   -- ^ See 'RangeQuery'
   , bsvhReadAll :: !(ReadHint values -> m values)
   -- ^ Costly read all operation, not to be used in Consensus but only in
@@ -180,14 +182,15 @@ data BackingStoreValueHandle m keys values = BackingStoreValueHandle
   }
 
 deriving via
-  OnlyCheckWhnfNamed "BackingStoreValueHandle" (BackingStoreValueHandle m keys values)
+  OnlyCheckWhnfNamed "BackingStoreValueHandle" (BackingStoreValueHandle m keys key values)
   instance
-    NoThunks (BackingStoreValueHandle m keys values)
+    NoThunks (BackingStoreValueHandle m keys key values)
 
 type LedgerBackingStoreValueHandle m l =
   BackingStoreValueHandle
     m
     (LedgerTables l KeysMK)
+    (TxIn l)
     (LedgerTables l ValuesMK)
 
 type BackingStoreValueHandle' m blk = LedgerBackingStoreValueHandle m (ExtLedgerState blk)
@@ -196,15 +199,16 @@ castBackingStoreValueHandle ::
   (Functor m, ReadHint values ~ ReadHint values') =>
   (values -> values') ->
   (keys' -> keys) ->
-  BackingStoreValueHandle m keys values ->
-  BackingStoreValueHandle m keys' values'
-castBackingStoreValueHandle f g bsvh =
+  (key -> key') ->
+  BackingStoreValueHandle m keys key values ->
+  BackingStoreValueHandle m keys' key' values'
+castBackingStoreValueHandle f g h bsvh =
   BackingStoreValueHandle
     { bsvhAtSlot
     , bsvhClose
     , bsvhReadAll = \rhint -> f <$> bsvhReadAll rhint
     , bsvhRangeRead = \rhint (RangeQuery prev count) ->
-        fmap f . bsvhRangeRead rhint $ RangeQuery (fmap g prev) count
+        fmap (second (fmap h) . first f) . bsvhRangeRead rhint $ RangeQuery (fmap g prev) count
     , bsvhRead = \rhint -> fmap f . bsvhRead rhint . g
     , bsvhStat
     }
@@ -221,7 +225,7 @@ castBackingStoreValueHandle f g bsvh =
 -- | A combination of 'bsValueHandle' and 'bsvhRead'
 bsRead ::
   MonadThrow m =>
-  BackingStore m keys values diff ->
+  BackingStore m keys key values diff ->
   ReadHint values ->
   keys ->
   m (WithOrigin SlotNo, values)
@@ -231,7 +235,7 @@ bsRead store rhint keys = withBsValueHandle store $ \vh -> do
 
 bsReadAll ::
   MonadThrow m =>
-  BackingStore m keys values diff ->
+  BackingStore m keys key values diff ->
   ReadHint values ->
   m values
 bsReadAll store rhint = withBsValueHandle store $ \vh -> bsvhReadAll vh rhint
@@ -239,8 +243,8 @@ bsReadAll store rhint = withBsValueHandle store $ \vh -> bsvhReadAll vh rhint
 -- | A 'IOLike.bracket'ed 'bsValueHandle'
 withBsValueHandle ::
   MonadThrow m =>
-  BackingStore m keys values diff ->
-  (BackingStoreValueHandle m keys values -> m a) ->
+  BackingStore m keys key values diff ->
+  (BackingStoreValueHandle m keys key values -> m a) ->
   m a
 withBsValueHandle store =
   bracket
