@@ -52,8 +52,7 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent
   )
 import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
-import           Ouroboros.Network.TxSubmission.Inbound.V2.Types (TraceTxLogic,
-                     TxSubmissionCounters)
+import           Ouroboros.Network.TxSubmission.Inbound.V2.Types
 import           Ouroboros.Network.TxSubmission.Outbound
 
 {-------------------------------------------------------------------------------

@@ -86,6 +86,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isNothing)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
+
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
@@ -130,21 +131,16 @@ import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
-import Ouroboros.Network.BlockFetch
-  ( BlockFetchConfiguration (..)
-  )
-import qualified Ouroboros.Network.Diffusion as Diffusion
-import qualified Ouroboros.Network.Diffusion.Configuration as Diffusion
-import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
-import Ouroboros.Network.Magic
-import Ouroboros.Network.NodeToClient
+
+import qualified Cardano.Network.Diffusion.Configuration as Diffusion
+import Cardano.Network.NodeToClient
   ( ConnectionId
   , LocalAddress
   , NodeToClientVersionData (..)
   , combineVersions
   , simpleSingletonVersions
   )
-import Ouroboros.Network.NodeToNode
+import Cardano.Network.NodeToNode
   ( DiffusionMode (..)
   , ExceptionInHandler (..)
   , MiniProtocolParameters
@@ -153,6 +149,12 @@ import Ouroboros.Network.NodeToNode
   , blockFetchPipeliningMax
   , defaultMiniProtocolParameters
   )
+import Ouroboros.Network.BlockFetch
+  ( BlockFetchConfiguration (..)
+  )
+import qualified Ouroboros.Network.Diffusion as Diffusion
+import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
+import Ouroboros.Network.Magic
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PublicPeerSelectionState
   )
@@ -471,6 +473,7 @@ runWith ::
   , Hashable addrNTN -- the constraint comes from `initNodeKernel`
   , NetworkIO m
   , NetworkAddr addrNTN
+  , Show addrNTN
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -669,7 +672,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       (gcChainSyncLoPBucketConfig llrnGenesisConfig)
       (gcCSJConfig llrnGenesisConfig)
       (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-      (NTN.mkHandlers nodeKernelArgs nodeKernel)
+      (NTN.mkHandlers nodeKernelArgs nodeKernel rnTxSubmissionLogicVersion)
 
   mkNodeToClientApps ::
     NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
@@ -883,7 +886,8 @@ mkNodeKernelArgs
   getUseBootstrapPeers
   publicPeerSelectionStateVar
   genesisArgs
-  getDiffusionPipeliningSupport =
+  getDiffusionPipeliningSupport
+  txSubmissionInitDelay =
     do
       let (kaRng, rng') = split rng
           (psRng, txRng) = split rng'

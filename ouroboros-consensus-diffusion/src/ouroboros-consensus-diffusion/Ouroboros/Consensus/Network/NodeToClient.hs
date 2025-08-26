@@ -71,6 +71,14 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
+
+import Cardano.Network.NodeToClient hiding
+  ( NodeToClientVersion (..)
+  )
+import qualified Cardano.Network.NodeToClient as N
+  ( NodeToClientVersion (..)
+  , NodeToClientVersionData
+  )
 import Ouroboros.Network.Block
   ( Serialised
   , decodePoint
@@ -80,17 +88,9 @@ import Ouroboros.Network.Block
   )
 import Ouroboros.Network.BlockFetch
 import Ouroboros.Network.Channel
-import Ouroboros.Network.Context
 import Ouroboros.Network.Driver
 import qualified Ouroboros.Network.Driver.Stateful as Stateful
 import Ouroboros.Network.Mux
-import Ouroboros.Network.NodeToClient hiding
-  ( NodeToClientVersion (..)
-  )
-import qualified Ouroboros.Network.NodeToClient as N
-  ( NodeToClientVersion (..)
-  , NodeToClientVersionData
-  )
 import Ouroboros.Network.Protocol.ChainSync.Codec
 import Ouroboros.Network.Protocol.ChainSync.Server
 import Ouroboros.Network.Protocol.ChainSync.Type

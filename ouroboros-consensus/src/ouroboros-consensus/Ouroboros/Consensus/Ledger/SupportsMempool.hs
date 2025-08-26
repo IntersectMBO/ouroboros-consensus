@@ -45,6 +45,7 @@ import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
 --
