@@ -390,7 +390,7 @@ castTraceFetchDecision ::
   forall remotePeer blk.
   TraceDecisionEvent remotePeer (HeaderWithTime blk) -> TraceDecisionEvent remotePeer (Header blk)
 castTraceFetchDecision = \case
-  PeersFetch xs -> PeersFetch (map (fmap (second (map castPoint))) xs) -- [TraceLabelPeer peer (FetchDecision [Point header])]
+  PeersFetch xs -> PeersFetch (map (fmap (second (map castPoint))) xs)
   PeerStarvedUs peer -> PeerStarvedUs peer
 
 castTraceFetchClientState ::
