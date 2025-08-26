@@ -79,6 +79,8 @@ import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
+
+import Cardano.Network.NodeToNode
 import Ouroboros.Network.Block
   ( Serialised (..)
   , decodePoint
@@ -92,13 +94,11 @@ import Ouroboros.Network.BlockFetch.Client
   , blockFetchClient
   )
 import Ouroboros.Network.Channel
-import Ouroboros.Network.Context
 import Ouroboros.Network.DeltaQ
 import Ouroboros.Network.Driver
 import Ouroboros.Network.Driver.Limits
 import Ouroboros.Network.KeepAlive
 import Ouroboros.Network.Mux
-import Ouroboros.Network.NodeToNode
 import Ouroboros.Network.PeerSelection.PeerMetric.Type
   ( FetchedMetricsTracer
   , ReportPeerMetrics (..)
@@ -632,6 +632,9 @@ mkApps ::
   , ShowProxy (Header blk)
   , ShowProxy (TxId (GenTx blk))
   , ShowProxy (GenTx blk)
+  , Show addrNTN
+  , LedgerSupportsMempool blk
+  , HasTxId (GenTx blk)
   ) =>
   -- | Needed for bracketing only
   NodeKernel m addrNTN addrNTC blk ->
@@ -810,38 +813,38 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
           (txSubmissionClientPeer (hTxSubmissionClient version controlMessageSTM them))
       return (NoInitiatorResult, trailing)
 
-    aTxSubmission2Server
-      :: NodeToNodeVersion
-      -> ResponderContext addrNTN
-      -> Channel m bTX
-      -> m ((), Maybe bTX)
-    aTxSubmission2Server version ResponderContext { rcConnectionId = them } channel = do
-      labelThisThread "TxSubmissionServer"
+  aTxSubmission2Server
+    :: NodeToNodeVersion
+    -> ResponderContext addrNTN
+    -> Channel m bTX
+    -> m ((), Maybe bTX)
+  aTxSubmission2Server version ResponderContext { rcConnectionId = them } channel = do
+    labelThisThread "TxSubmissionServer"
 
-      let runServer serverApi =
-              runPipelinedPeerWithLimits
-                  (contramap (TraceLabelPeer them) tTxSubmission2Tracer)
-                  (cTxSubmission2Codec (mkCodecs version))
-                  blTxSubmission2
-                  timeLimitsTxSubmission2
-                  channel
-                  (txSubmissionServerPeerPipelined serverApi)
+    let runServer serverApi =
+            runPipelinedPeerWithLimits
+                (contramap (TraceLabelPeer them) tTxSubmission2Tracer)
+                (cTxSubmission2Codec (mkCodecs version))
+                blTxSubmission2
+                timeLimitsTxSubmission2
+                channel
+                (txSubmissionServerPeerPipelined serverApi)
 
-      case hTxSubmissionServer version them of
-        Left legacyTxSubmissionServer ->
-            runServer legacyTxSubmissionServer
-        Right newTxSubmissionServer ->
-          withPeer (TraceLabelPeer them `contramap` tTxLogicTracer)
-                   (getTxChannelsVar kernel)
-                   (getTxMempoolSem kernel)
-                   defaultTxDecisionPolicy
-                   (getSharedTxStateVar kernel)
-                   (mapTxSubmissionMempoolReader txForgetValidated
-                   $ getMempoolReader (getMempool kernel))
-                   (getMempoolWriter (getMempool kernel))
-                   txWireSize
-                   them $ \api ->
-                     runServer (newTxSubmissionServer api)
+    case hTxSubmissionServer version them of
+      Left legacyTxSubmissionServer ->
+          runServer legacyTxSubmissionServer
+      Right newTxSubmissionServer ->
+        withPeer (TraceLabelPeer them `contramap` tTxLogicTracer)
+                 (getTxChannelsVar kernel)
+                 (getTxMempoolSem kernel)
+                 defaultTxDecisionPolicy
+                 (getSharedTxStateVar kernel)
+                 (mapTxSubmissionMempoolReader txForgetValidated
+                 $ getMempoolReader (getMempool kernel))
+                 (getMempoolWriter (getMempool kernel))
+                 txWireSize
+                 them $ \api ->
+                   runServer (newTxSubmissionServer api)
 
   aKeepAliveClient ::
     NodeToNodeVersion ->
