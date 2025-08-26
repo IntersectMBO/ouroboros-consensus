@@ -15,8 +15,8 @@ import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy
-import Ouroboros.Network.NodeToClient.Version
-import Ouroboros.Network.NodeToNode.Version
+import Cardano.Network.NodeToClient.Version
+import Cardano.Network.NodeToNode.Version
 
 {-------------------------------------------------------------------------------
   Protocol versioning

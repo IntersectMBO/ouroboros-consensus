@@ -49,3 +49,13 @@ if impl (ghc >= 9.12)
   allow-newer:
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: b87b35827c309d168af77571b6d44198136f1199
+  --sha256:
+  subdir:
+    cardano-diffusion
+    network-mux
+    ouroboros-network

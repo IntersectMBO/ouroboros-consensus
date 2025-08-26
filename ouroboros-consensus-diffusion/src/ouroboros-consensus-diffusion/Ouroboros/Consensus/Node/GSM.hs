@@ -31,7 +31,7 @@ module Ouroboros.Consensus.Node.GSM
   , module Ouroboros.Consensus.Node.GsmState
   ) where
 
-import Cardano.Network.Types (LedgerStateJudgement (..))
+import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import qualified Cardano.Slotting.Slot as Slot
 import qualified Control.Concurrent.Class.MonadSTM.TVar as LazySTM
 import Control.Monad (forever, join, unless)
