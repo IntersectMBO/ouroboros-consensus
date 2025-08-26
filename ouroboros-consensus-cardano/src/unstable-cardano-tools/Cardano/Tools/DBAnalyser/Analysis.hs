@@ -444,10 +444,10 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
         Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
         Right f -> pure f
     tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-    LedgerDB.forkerClose frk
-    case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk (oldLedger `withLedgerTables` tbs) of
+    r <- case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk (oldLedger `withLedgerTables` tbs) of
       Right newLedger -> do
-        LedgerDB.push internal newLedger
+        LedgerDB.forkerPush frk newLedger
+        IOLike.atomically $ LedgerDB.forkerCommit frk
         when (blockSlot blk >= slotNo) storeLedgerState
         when (blockSlot blk > slotNo) $ issueWarning blk
         when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
@@ -457,6 +457,8 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
         traceWith tracer $ LedgerErrorEvent (blockPoint blk) err
         storeLedgerState
         pure (Stop, ())
+    LedgerDB.forkerClose frk
+    pure r
 
   tickThenXApply = case ledgerAppMode of
     LedgerReapply -> pure ...: tickThenReapply
