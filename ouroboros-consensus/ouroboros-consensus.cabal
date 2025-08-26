@@ -358,7 +358,7 @@ library
     time,
     transformers,
     transformers-base,
-    typed-protocols ^>=1.0,
+    typed-protocols ^>=1.1,
     vector ^>=0.13,
 
   x-docspec-extra-packages:
@@ -645,7 +645,7 @@ test-suite consensus-test
     transformers,
     transformers-base,
     tree-diff,
-    typed-protocols:{examples, stateful, typed-protocols} ^>=1,
+    typed-protocols:{examples, stateful, typed-protocols} ^>=1.1,
     unstable-consensus-testlib,
     unstable-mock-block,
 
