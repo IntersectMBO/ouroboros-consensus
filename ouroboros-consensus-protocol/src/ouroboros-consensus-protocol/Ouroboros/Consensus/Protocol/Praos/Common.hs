@@ -312,7 +312,6 @@ instantiatePraosCredentials maxKESEvolutions tr (PraosCredentialsAgent _ path) =
   HotKey.mkDynamicHotKey
     maxKESEvolutions
     (Just $ runKESAgentClient tr path)
-    (pure ())
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces
