@@ -16,7 +16,8 @@ import Cardano.Network.PeerSelection.Bootstrap
   ( UseBootstrapPeers
   , requiresBootstrapPeers
   )
-import Cardano.Network.Types (LedgerStateJudgement)
+import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement)
+import Cardano.Network.FetchMode (mkReadFetchMode)
 import Control.Monad
 import Control.Tracer (Tracer)
 import Data.Map.Strict (Map)
@@ -56,7 +57,6 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
   , ChainSelStarvation
   , FetchMode (..)
   , PraosFetchMode (..)
-  , mkReadFetchMode
   )
 import Ouroboros.Network.SizeInBytes
 

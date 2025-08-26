@@ -21,6 +21,7 @@ module Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
   , blockFetchServer'
   ) where
 
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (Tracer, traceWith)
 import Data.Typeable (Typeable)
@@ -36,7 +37,6 @@ import Ouroboros.Consensus.Storage.ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Block (Serialised (..))
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.BlockFetch.Server
   ( BlockFetchBlockSender (..)
   , BlockFetchSendBlocks (..)
