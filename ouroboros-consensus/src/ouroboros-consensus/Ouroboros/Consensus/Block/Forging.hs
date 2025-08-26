@@ -9,7 +9,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Block.Forging
-  ( BlockForging (..)
+  ( MkBlockForging (..)
+  , BlockForging (..)
   , CannotForge
   , ForgeStateInfo
   , ForgeStateUpdateError
@@ -74,18 +75,22 @@ castForgeStateUpdateInfo = \case
   ForgeStateUpdateFailed x -> ForgeStateUpdateFailed x
   ForgeStateUpdateSuppressed -> ForgeStateUpdateSuppressed
 
+data MkBlockForging m blk = MkBlockForging
+  { forgeLabel :: Text
+  -- ^ Identifier used in the trace messages produced for this
+  -- 'BlockForging' record.
+  --
+  -- Useful when the node is running with multiple sets of credentials.
+  , blockForgingM :: m (BlockForging m blk)
+  }
+
 -- | Stateful wrapper around block production
 --
 -- NOTE: do not refer to the consensus or ledger config in the closure of this
 -- record because they might contain an @EpochInfo Identity@, which will be
 -- incorrect when used as part of the hard fork combinator.
 data BlockForging m blk = BlockForging
-  { forgeLabel :: Text
-  -- ^ Identifier used in the trace messages produced for this
-  -- 'BlockForging' record.
-  --
-  -- Useful when the node is running with multiple sets of credentials.
-  , canBeLeader :: CanBeLeader (BlockProtocol blk)
+  { canBeLeader :: CanBeLeader (BlockProtocol blk)
   -- ^ Proof that the node can be a leader
   --
   -- NOTE: the other fields of this record may refer to this value (or a

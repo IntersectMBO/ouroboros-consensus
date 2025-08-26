@@ -425,6 +425,19 @@ instance Isomorphic ForgeStateUpdateInfo where
           (inject' (Proxy @(WrapForgeStateUpdateError blk)) forgeStateUpdateError)
       ForgeStateUpdateSuppressed -> ForgeStateUpdateSuppressed
 
+instance Functor m => Isomorphic (MkBlockForging m) where
+  project MkBlockForging{..} =
+    MkBlockForging
+      { forgeLabel = forgeLabel
+      , blockForgingM = project <$> blockForgingM
+      }
+
+  inject MkBlockForging{..} =
+    MkBlockForging
+      { forgeLabel = forgeLabel
+      , blockForgingM = inject <$> blockForgingM
+      }
+
 instance Functor m => Isomorphic (BlockForging m) where
   project ::
     forall blk.
@@ -432,8 +445,7 @@ instance Functor m => Isomorphic (BlockForging m) where
     BlockForging m (HardForkBlock '[blk]) -> BlockForging m blk
   project BlockForging{..} =
     BlockForging
-      { forgeLabel = forgeLabel
-      , canBeLeader = project' (Proxy @(WrapCanBeLeader blk)) canBeLeader
+      { canBeLeader = project' (Proxy @(WrapCanBeLeader blk)) canBeLeader
       , finalize = finalize
       , updateForgeState = \cfg sno tickedChainDepSt ->
           project
@@ -484,8 +496,7 @@ instance Functor m => Isomorphic (BlockForging m) where
     BlockForging m blk -> BlockForging m (HardForkBlock '[blk])
   inject BlockForging{..} =
     BlockForging
-      { forgeLabel = forgeLabel
-      , canBeLeader = inject' (Proxy @(WrapCanBeLeader blk)) canBeLeader
+      { canBeLeader = inject' (Proxy @(WrapCanBeLeader blk)) canBeLeader
       , finalize = finalize
       , updateForgeState = \cfg sno tickedChainDepSt ->
           inject

@@ -9,7 +9,7 @@ import Cardano.Crypto.KES
 import Cardano.Crypto.VRF
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Ouroboros.Consensus.Block.Forging (BlockForging)
+import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
@@ -78,5 +78,5 @@ protocolInfoPraosRule
         | nid' <- enumCoreNodes numCoreNodes
         ]
 
-blockForgingPraosRule :: Monad m => [BlockForging m MockPraosRuleBlock]
+blockForgingPraosRule :: Monad m => [MkBlockForging m MockPraosRuleBlock]
 blockForgingPraosRule = [simpleBlockForging () forgePraosRuleExt]

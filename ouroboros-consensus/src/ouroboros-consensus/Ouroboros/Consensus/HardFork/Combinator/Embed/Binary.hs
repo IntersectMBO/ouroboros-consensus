@@ -35,18 +35,18 @@ protocolInfoBinary ::
   (CanHardFork '[blk1, blk2], Monad m) =>
   -- First era
   ProtocolInfo blk1 ->
-  (Tracer.Tracer m kesAgentTrace -> m [BlockForging m blk1]) ->
+  (Tracer.Tracer m kesAgentTrace -> [MkBlockForging m blk1]) ->
   History.EraParams ->
   (ConsensusConfig (BlockProtocol blk1) -> PartialConsensusConfig (BlockProtocol blk1)) ->
   (LedgerConfig blk1 -> PartialLedgerConfig blk1) ->
   -- Second era
   ProtocolInfo blk2 ->
-  (Tracer.Tracer m kesAgentTrace -> m [BlockForging m blk2]) ->
+  (Tracer.Tracer m kesAgentTrace -> [MkBlockForging m blk2]) ->
   History.EraParams ->
   (ConsensusConfig (BlockProtocol blk2) -> PartialConsensusConfig (BlockProtocol blk2)) ->
   (LedgerConfig blk2 -> PartialLedgerConfig blk2) ->
   ( ProtocolInfo (HardForkBlock '[blk1, blk2])
-  , Tracer.Tracer m kesAgentTrace -> m [BlockForging m (HardForkBlock '[blk1, blk2])]
+  , Tracer.Tracer m kesAgentTrace -> [MkBlockForging m (HardForkBlock '[blk1, blk2])]
   )
 protocolInfoBinary
   protocolInfo1
@@ -109,7 +109,7 @@ protocolInfoBinary
                         headerStateChainDep initHeaderState1
               }
         }
-    , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr
+    , \tr -> alignWith alignBlockForging (blockForging1 tr) (blockForging2 tr)
     )
    where
     ProtocolInfo
@@ -148,18 +148,18 @@ protocolInfoBinary
     shape = History.Shape $ exactlyTwo eraParams1 eraParams2
 
     alignBlockForging ::
-      These (BlockForging m blk1) (BlockForging m blk2) ->
-      BlockForging m (HardForkBlock '[blk1, blk2])
+      These (MkBlockForging m blk1) (MkBlockForging m blk2) ->
+      MkBlockForging m (HardForkBlock '[blk1, blk2])
     alignBlockForging = \case
-      This bf1 ->
+      This bf1 -> do
         hardForkBlockForging
           (forgeLabel bf1)
           (OptCons bf1 $ OptSkip OptNil)
-      That bf2 ->
+      That bf2 -> do
         hardForkBlockForging
           (forgeLabel bf2)
           (OptSkip $ OptCons bf2 OptNil)
-      These bf1 bf2 ->
+      These bf1 bf2 -> do
         hardForkBlockForging
           (forgeLabel bf1 <> "-" <> forgeLabel bf2)
           (OptCons bf1 $ OptCons bf2 OptNil)

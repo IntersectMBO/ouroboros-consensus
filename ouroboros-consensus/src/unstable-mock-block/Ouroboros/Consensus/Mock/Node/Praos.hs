@@ -88,8 +88,8 @@ blockForgingPraos ::
   IOLike m =>
   NumCoreNodes ->
   CoreNodeId ->
-  m [BlockForging m MockPraosBlock]
-blockForgingPraos numCoreNodes nid = sequence [praosBlockForging nid initHotKey]
+  [MkBlockForging m MockPraosBlock]
+blockForgingPraos numCoreNodes nid = [praosBlockForging nid initHotKey]
  where
   verKeyVRF :: CoreNodeId -> VerKeyVRF MockVRF
   verKeyVRF (CoreNodeId n) = VerKeyMockVRF n
@@ -121,29 +121,31 @@ praosBlockForging ::
   IOLike m =>
   CoreNodeId ->
   HotKey PraosMockCrypto ->
-  m (BlockForging m MockPraosBlock)
+  MkBlockForging m MockPraosBlock
 praosBlockForging cid initHotKey = do
-  varHotKey <- newMVar initHotKey
-  return $
-    BlockForging
-      { forgeLabel = "praosBlockForging"
-      , canBeLeader = cid
-      , updateForgeState = \_ sno _ ->
-          modifyMVar varHotKey $
-            pure
-              . second forgeStateUpdateInfoFromUpdateInfo
-              . evolveKey sno
-      , checkCanForge = \_ _ _ _ _ -> return ()
-      , forgeBlock = \cfg bno sno tickedLedgerSt txs isLeader -> do
-          hotKey <- readMVar varHotKey
-          return $
-            forgeSimple
-              (forgePraosExt hotKey)
-              cfg
-              bno
-              sno
-              tickedLedgerSt
-              (map txForgetValidated txs)
-              isLeader
-      , finalize = pure ()
-      }
+  MkBlockForging
+    { forgeLabel = "praosBlockForging"
+    , blockForgingM = do
+        varHotKey <- newMVar initHotKey
+        pure BlockForging
+          { canBeLeader = cid
+          , updateForgeState = \_ sno _ ->
+              modifyMVar varHotKey $
+                pure
+                  . second forgeStateUpdateInfoFromUpdateInfo
+                  . evolveKey sno
+          , checkCanForge = \_ _ _ _ _ -> return ()
+          , forgeBlock = \cfg bno sno tickedLedgerSt txs isLeader -> do
+              hotKey <- readMVar varHotKey
+              return $
+                forgeSimple
+                  (forgePraosExt hotKey)
+                  cfg
+                  bno
+                  sno
+                  tickedLedgerSt
+                  (map txForgetValidated txs)
+                  isLeader
+          , finalize = pure ()
+          }
+    }

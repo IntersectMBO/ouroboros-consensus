@@ -53,11 +53,11 @@ praosBlockForging ::
   , IOLike m
   ) =>
   PraosParams ->
-  HotKey.HotKey c m ->
+  m (HotKey.HotKey c m) ->
   ShelleyLeaderCredentials c ->
-  BlockForging m (ShelleyBlock (Praos c) era)
-praosBlockForging praosParams hotKey credentials =
-  praosSharedBlockForging hotKey slotToPeriod credentials
+  MkBlockForging m (ShelleyBlock (Praos c) era)
+praosBlockForging praosParams mkHotKey credentials =
+  praosSharedBlockForging mkHotKey slotToPeriod credentials
  where
   PraosParams{praosSlotsPerKESPeriod} = praosParams
 
@@ -77,28 +77,32 @@ praosSharedBlockForging ::
   HotKey.HotKey c m ->
   (SlotNo -> Absolute.KESPeriod) ->
   ShelleyLeaderCredentials c ->
-  BlockForging m (ShelleyBlock (Praos c) era)
+  MkBlockForging m (ShelleyBlock (Praos c) era)
 praosSharedBlockForging
-  hotKey
+  mkHotKey
   slotToPeriod
   ShelleyLeaderCredentials
     { shelleyLeaderCredentialsCanBeLeader = canBeLeader
     , shelleyLeaderCredentialsLabel = label
     } =
-    BlockForging
+    MkBlockForging
       { forgeLabel = label <> "_" <> T.pack (L.eraName @era)
-      , canBeLeader = canBeLeader
-      , updateForgeState = \_ curSlot _ ->
-          forgeStateUpdateInfoFromUpdateInfo
-            <$> HotKey.evolve hotKey (slotToPeriod curSlot)
-      , checkCanForge = \cfg curSlot _tickedChainDepState _isLeader ->
-          praosCheckCanForge
-            (configConsensus cfg)
-            curSlot
-      , forgeBlock = \cfg ->
-          forgeShelleyBlock
-            hotKey
-            canBeLeader
-            cfg
-      , finalize = HotKey.finalize hotKey
+      , blockForgingM = do
+          hotKey <- mkHotKey
+          pure BlockForging
+            { canBeLeader = canBeLeader
+            , updateForgeState = \_ curSlot _ ->
+                forgeStateUpdateInfoFromUpdateInfo
+                  <$> HotKey.evolve hotKey (slotToPeriod curSlot)
+            , checkCanForge = \cfg curSlot _tickedChainDepState _isLeader ->
+                praosCheckCanForge
+                  (configConsensus cfg)
+                  curSlot
+            , forgeBlock = \cfg ->
+                forgeShelleyBlock
+                  hotKey
+                  canBeLeader
+                  cfg
+            , finalize = HotKey.finalize hotKey
+            }
       }

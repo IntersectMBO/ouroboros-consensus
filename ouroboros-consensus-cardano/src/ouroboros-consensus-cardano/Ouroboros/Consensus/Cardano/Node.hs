@@ -980,9 +980,9 @@ protocolInfoCardano paramsCardano
   -- credentials. If there are multiple Shelley credentials, we merge the
   -- Byron credentials with the first Shelley one but still have separate
   -- threads for the remaining Shelley ones.
-  mkBlockForgings :: Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)]
+  mkBlockForgings :: Tracer.Tracer m KESAgentClientTrace -> [MkBlockForging m (CardanoBlock c)]
   mkBlockForgings tr = do
-    shelleyBased <- traverse (blockForgingShelleyBased tr) credssShelleyBased
+    let shelleyBased = blockForgingShelleyBased tr <$> credssShelleyBased
     let blockForgings :: [NonEmptyOptNP (BlockForging m) (CardanoEras c)]
         blockForgings = case (mBlockForgingByron, shelleyBased) of
           (Nothing, shelleys) -> shelleys
@@ -996,7 +996,7 @@ protocolInfoCardano paramsCardano
             merge (This1 x) = x
             merge (That1 y) = y
 
-    return $ hardForkBlockForging "Cardano" <$> blockForgings
+    hardForkBlockForging "Cardano" <$> blockForgings
 
   mBlockForgingByron :: Maybe (NonEmptyOptNP (BlockForging m) (CardanoEras c))
   mBlockForgingByron = do
@@ -1006,7 +1006,7 @@ protocolInfoCardano paramsCardano
   blockForgingShelleyBased ::
     Tracer.Tracer m KESAgentClientTrace ->
     ShelleyLeaderCredentials c ->
-    m (NonEmptyOptNP (BlockForging m) (CardanoEras c))
+    m (NonEmptyOptNP (MkBlockForging m) (CardanoEras c))
   blockForgingShelleyBased tr credentials = do
     let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
 

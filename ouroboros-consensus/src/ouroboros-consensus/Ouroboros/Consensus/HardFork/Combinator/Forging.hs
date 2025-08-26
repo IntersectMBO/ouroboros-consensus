@@ -83,16 +83,20 @@ hardForkBlockForging ::
   -- | Used as the 'forgeLabel', the labels of the given 'BlockForging's will
   -- be ignored.
   Text ->
-  NonEmptyOptNP (BlockForging m) xs ->
-  BlockForging m (HardForkBlock xs)
-hardForkBlockForging label blockForging =
-  BlockForging
+  NonEmptyOptNP (MkBlockForging m) xs ->
+  MkBlockForging m (HardForkBlock xs)
+hardForkBlockForging label mkBlockForging = do
+  MkBlockForging
     { forgeLabel = label
-    , canBeLeader = hardForkCanBeLeader blockForging
-    , updateForgeState = hardForkUpdateForgeState blockForging
-    , checkCanForge = hardForkCheckCanForge blockForging
-    , forgeBlock = hardForkForgeBlock blockForging
-    , finalize = hardForkFinalize blockForging
+    , blockForgingM = do
+        blockForging <- htraverse' blockForgingM mkBlockForging
+        pure BlockForging
+          { canBeLeader = hardForkCanBeLeader blockForging
+          , updateForgeState = hardForkUpdateForgeState blockForging
+          , checkCanForge = hardForkCheckCanForge blockForging
+          , forgeBlock = hardForkForgeBlock blockForging
+          , finalize = hardForkFinalize blockForging
+          }
     }
 
 hardForkCanBeLeader ::
