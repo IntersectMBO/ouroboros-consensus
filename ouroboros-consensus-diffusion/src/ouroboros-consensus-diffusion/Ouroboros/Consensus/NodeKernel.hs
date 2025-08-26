@@ -28,11 +28,11 @@ module Ouroboros.Consensus.NodeKernel
   ) where
 
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
+import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
   ( OutboundConnectionsState (..)
   )
-import Cardano.Network.Types (LedgerStateJudgement (..))
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
@@ -112,6 +112,11 @@ import Ouroboros.Consensus.Util.LeakyBucket
   )
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM
+
+import Cardano.Network.NodeToNode
+  ( ConnectionId
+  , MiniProtocolParameters (..)
+  )
 import Ouroboros.Network.AnchoredFragment
   ( AnchoredFragment
   , AnchoredSeq (..)
@@ -125,10 +130,6 @@ import Ouroboros.Network.BlockFetch.ClientState
 import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent (..)
   )
-import Ouroboros.Network.NodeToNode
-  ( ConnectionId
-  , MiniProtocolParameters (..)
-  )
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PublicPeerSelectionState
   )
@@ -141,7 +142,6 @@ import Ouroboros.Network.PeerSharing
   , ps_POLICY_PEER_SHARE_STICKY_TIME
   )
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
-import Ouroboros.Network.SizeInBytes
 import           Ouroboros.Network.TxSubmission.Inbound.V1
                      (TxSubmissionInitDelay, TxSubmissionMempoolWriter)
 import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
@@ -347,7 +347,7 @@ initNodeKernel
         setGetLoEFragment
           (readTVar varGsmState)
           (readTVar varLoEFragment)
-          (lgnkaLoEFragmentTVar varGetLoEFragment)
+          (lgnkaLoEFragmentTVar lgArgs)
 
         void $
           forkLinkedWatcher registry "NodeKernel.GDD" $
