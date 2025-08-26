@@ -29,7 +29,6 @@ module Ouroboros.Consensus.Protocol.Ledger.HotKey
   , HotKey (..)
   , KESEvolutionError (..)
   , KESEvolutionInfo
-  , finalize
   , getOCert
   , mkDynamicHotKey
   , mkEmptyHotKey
@@ -168,18 +167,10 @@ data HotKey c m = HotKey
   -- PRECONDITION: the key is not poisoned.
   --
   -- POSTCONDITION: the signature is in normal form.
-  , forget_ :: m ()
-  -- ^ Securely erase the key and release its memory. User code should use
-  -- 'finalize' instead (which forgets and then finalizes the 'HotKey').
-  , finalize_ :: m ()
-  -- ^ Release any resources held by the 'HotKey', except for the signing
-  -- key itself. User code should use 'finalize' instead.
+  , finalize :: m ()
+  -- ^ Release any resources held by the 'HotKey', including the signing key
+  -- itself. This should be called exactly once per 'HotKey' instance.
   }
-
--- | Release all resources held by the 'HotKey', including the signing key
--- itself. Use this exactly once per 'HotKey' instance.
-finalize :: Monad m => HotKey c m -> m ()
-finalize hotKey = forget_ hotKey >> finalize_ hotKey
 
 deriving via (OnlyCheckWhnfNamed "HotKey" (HotKey c m)) instance NoThunks (HotKey c m)
 
@@ -251,7 +242,6 @@ mkHotKeyAtEvolution evolution ocert initKey startPeriod maxKESEvolutions =
     (Just (ocert, initKey, evolution, startPeriod))
     maxKESEvolutions
     Nothing
-    (pure ())
 
 -- | Create a new 'HotKey' and initialize it to a poisoned state (containing no
 -- valid KES sign key).
@@ -260,7 +250,6 @@ mkEmptyHotKey ::
   (Crypto c, IOLike m) =>
   -- | Max KES evolutions
   Word64 ->
-  m () ->
   m (HotKey c m)
 mkEmptyHotKey maxKESEvolutions =
   mkDynamicHotKey maxKESEvolutions Nothing
@@ -295,7 +284,6 @@ mkDynamicHotKey ::
   -- | Max KES evolutions
   Word64 ->
   Maybe (KeyProducer c m) ->
-  m () ->
   m (HotKey c m)
 mkDynamicHotKey = mkHotKeyWith Nothing
 
@@ -308,9 +296,8 @@ mkHotKeyWith ::
   -- | Max KES evolutions
   Word64 ->
   Maybe (KeyProducer c m) ->
-  m () ->
   m (HotKey c m)
-mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
+mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay = do
   varKESState <- newMVar initKESState
 
   let set newOCert newKey evolution startPeriod =
@@ -328,9 +315,12 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
       keyThreadAsync <- async $ do
         labelThisThread "HotKey receiver"
         keyThread set unset
-      return (cancel keyThreadAsync >> finalizer)
+
+      -- 'cancel' cannot throw exceptions, so we don't need to use 'finally'
+      -- here
+      pure (cancel keyThreadAsync >> unset)
     Nothing ->
-      return finalizer
+      pure $ pure ()
 
   return
     HotKey
@@ -349,8 +339,7 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
               KESKey _ key -> do
                 let evolution = kesEvolution kesStateInfo
                 KES.signedKES () evolution toSign key
-      , forget_ = unset
-      , finalize_ = finalizer'
+      , finalize = finalizer'
       }
  where
   initKESState :: KESState c
