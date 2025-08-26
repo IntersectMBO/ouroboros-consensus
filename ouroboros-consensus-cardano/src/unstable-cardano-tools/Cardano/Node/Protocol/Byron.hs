@@ -7,10 +7,8 @@
 -- DUPLICATE -- adapted from: cardano-node/src/Cardano/Node/Protocol/Byron.hs
 
 module Cardano.Node.Protocol.Byron
-  ( mkSomeConsensusProtocolByron
-
-    -- * Errors
-  , ByronProtocolInstantiationError (..)
+  ( -- * Errors
+    ByronProtocolInstantiationError (..)
 
     -- * Reusable parts
   , readGenesis
@@ -19,14 +17,11 @@ module Cardano.Node.Protocol.Byron
 
 import Cardano.Api.Any
 import Cardano.Api.KeysByron
-import qualified Cardano.Api.Protocol.Types as Protocol
 import qualified Cardano.Chain.Genesis as Genesis
 import qualified Cardano.Chain.UTxO as UTxO
-import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Crypto.Hash as Crypto
 import qualified Cardano.Crypto.Hashing as Byron.Crypto
 import Cardano.Crypto.ProtocolMagic (RequiresNetworkMagic)
-import Cardano.Node.Protocol.Types
 import Cardano.Node.Types
 import Cardano.Prelude
 import Control.Monad.Trans.Except.Extra
@@ -39,62 +34,11 @@ import Control.Monad.Trans.Except.Extra
 import qualified Data.ByteString.Lazy as LB
 import Data.Text as Text (unpack)
 import Ouroboros.Consensus.Cardano
-import qualified Ouroboros.Consensus.Cardano as Consensus
 import Prelude hiding (show, (.))
 
 ------------------------------------------------------------------------------
 -- Byron protocol
 --
-
--- | Make 'SomeConsensusProtocol' using the Byron instance.
---
--- This lets us handle multiple protocols in a generic way.
---
--- This also serves a purpose as a sanity check that we have all the necessary
--- type class instances available.
-mkSomeConsensusProtocolByron ::
-  NodeByronProtocolConfiguration ->
-  Maybe ProtocolFilepaths ->
-  ExceptT ByronProtocolInstantiationError IO SomeConsensusProtocol
-mkSomeConsensusProtocolByron
-  NodeByronProtocolConfiguration
-    { npcByronGenesisFile
-    , npcByronGenesisFileHash
-    , npcByronReqNetworkMagic
-    , npcByronPbftSignatureThresh
-    , npcByronApplicationName
-    , npcByronApplicationVersion
-    , npcByronSupportedProtocolVersionMajor
-    , npcByronSupportedProtocolVersionMinor
-    , npcByronSupportedProtocolVersionAlt
-    }
-  files = do
-    genesisConfig <-
-      readGenesis
-        npcByronGenesisFile
-        npcByronGenesisFileHash
-        npcByronReqNetworkMagic
-
-    optionalLeaderCredentials <- readLeaderCredentials genesisConfig files
-
-    return $
-      SomeConsensusProtocol Protocol.ByronBlockType $
-        Protocol.ProtocolInfoArgsByron $
-          Consensus.ProtocolParamsByron
-            { byronGenesis = genesisConfig
-            , byronPbftSignatureThreshold =
-                PBftSignatureThreshold <$> npcByronPbftSignatureThresh
-            , byronProtocolVersion =
-                Update.ProtocolVersion
-                  npcByronSupportedProtocolVersionMajor
-                  npcByronSupportedProtocolVersionMinor
-                  npcByronSupportedProtocolVersionAlt
-            , byronSoftwareVersion =
-                Update.SoftwareVersion
-                  npcByronApplicationName
-                  npcByronApplicationVersion
-            , byronLeaderCredentials = optionalLeaderCredentials
-            }
 
 readGenesis ::
   GenesisFile ->

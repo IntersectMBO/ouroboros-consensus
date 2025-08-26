@@ -3,7 +3,7 @@ module Main (main) where
 import Cardano.Crypto.Init (cryptoInit)
 import Cardano.Tools.DBTruncater.Run
 import Cardano.Tools.DBTruncater.Types
-import DBAnalyser.Parsers (BlockType (..))
+import DBAnalyser.Parsers
 import qualified DBTruncater.Parsers as DBTruncater
 import Main.Utf8 (withStdTerminalHandles)
 import Options.Applicative
@@ -20,13 +20,9 @@ import Prelude hiding (truncate)
 main :: IO ()
 main = withStdTerminalHandles $ do
   cryptoInit
-  (conf, blocktype) <- getCommandLineConfig
-  case blocktype of
-    ByronBlock args -> truncate conf args
-    ShelleyBlock args -> truncate conf args
-    CardanoBlock args -> truncate conf args
+  uncurry truncate =<< getCommandLineConfig
 
-getCommandLineConfig :: IO (DBTruncaterConfig, BlockType)
+getCommandLineConfig :: IO (DBTruncaterConfig, CardanoBlockArgs)
 getCommandLineConfig = execParser opts
  where
   opts =
