@@ -184,6 +184,28 @@ const config = {
         additionalLanguages: ['haskell'],
       },
     }),
+
+  plugins: [
+    [
+      '@docusaurus/plugin-client-redirects',
+      {
+        redirects: [
+          {
+            from: '/docs/for-developers/utxo-hd/overview',
+            to: '/docs/references/miscellaneous/utxo-hd/',
+          },
+        ],
+        createRedirects(existingPath) {
+          if (existingPath.includes('/docs/references/miscellaneous/utxo-hd')) {
+            return [
+              existingPath.replace('/docs/references/miscellaneous/utxo-hd', '/docs/for-developers/utxo-hd'),
+            ];
+          }
+          return undefined;
+        },
+      },
+    ],
+  ],
 };
 
 module.exports = config;
