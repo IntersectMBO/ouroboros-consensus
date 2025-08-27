@@ -26,6 +26,7 @@ import Control.Monad
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.MemPack
+import qualified Data.Reflection as Reflection
 import Data.SOP.Index (Index (..))
 import Data.Void (Void, absurd)
 import Data.Word
@@ -39,6 +40,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Degenerate
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
+import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Query
@@ -99,7 +101,8 @@ instance SerialiseConstraintsHFC ByronBlock
 -- existing Byron blocks.
 instance SerialiseHFC '[ByronBlock] where
   encodeDiskHfcBlock (DegenCodecConfig ccfg) (DegenBlock b) =
-    encodeDisk ccfg b
+    Reflection.give HardFork.EraParamsWithoutPerasRoundLength $ -- Byron blocks for sure would not support Peras
+      encodeDisk ccfg b
   decodeDiskHfcBlock (DegenCodecConfig ccfg) =
     fmap DegenBlock <$> decodeDisk ccfg
   reconstructHfcPrefixLen _ =

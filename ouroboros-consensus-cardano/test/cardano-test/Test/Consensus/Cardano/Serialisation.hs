@@ -9,12 +9,14 @@ module Test.Consensus.Cardano.Serialisation (tests) where
 import qualified Codec.CBOR.Write as CBOR
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Constraint
+import qualified Data.Reflection as Reflection
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node ()
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node ()
 import Ouroboros.Consensus.HardFork.Combinator.Block
+import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Storage.Serialisation
@@ -27,27 +29,31 @@ import Test.Tasty.QuickCheck (Property, testProperty, (===))
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Serialisation.Roundtrip
 
+-- in these tests, we force the serialisation to ignore Peras for now to keep backward compatibility.
+-- TODO(geo2a): remove the calls to `Reflection.give` Peras-aware serialisation is supported on mainnet
 tests :: TestTree
 tests =
   testGroup
     "Cardano"
     [ testGroup "Examples roundtrip" $
-        examplesRoundtrip Cardano.Examples.codecConfig Cardano.Examples.examples
-    , roundtrip_all_skipping
-        result
-        testCodecCfg
-        dictNestedHdr
-        -- We would want to use this instead, but the generated blocks
-        -- do not quite validate yet or sometimes they are not
-        -- entirely coherent, so for now this is commented out.
-        --
-        -- It is also the case that some (conway in particular) blocks take a
-        -- very long time to validate or consume too much memory.
-        --
-        -- ( Just $
-        --     CDDLsForNodeToNode ("ntnblock.cddl", "serialisedCardanoBlock") ("ntnheader.cddl", "header")
-        -- )
-        Nothing
+        Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+          examplesRoundtrip Cardano.Examples.codecConfig Cardano.Examples.examples
+    , Reflection.give HardFork.EraParamsWithoutPerasRoundLength $
+        roundtrip_all_skipping
+          result
+          testCodecCfg
+          dictNestedHdr
+          -- We would want to use this instead, but the generated blocks
+          -- do not quite validate yet or sometimes they are not
+          -- entirely coherent, so for now this is commented out.
+          --
+          -- It is also the case that some (conway in particular) blocks take a
+          -- very long time to validate or consume too much memory.
+          --
+          -- ( Just $
+          --     CDDLsForNodeToNode ("ntnblock.cddl", "serialisedCardanoBlock") ("ntnheader.cddl", "header")
+          -- )
+          Nothing
     , testProperty "BinaryBlockInfo sanity check" prop_CardanoBinaryBlockInfo
     ]
  where

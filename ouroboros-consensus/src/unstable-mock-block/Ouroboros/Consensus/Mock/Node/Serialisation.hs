@@ -14,8 +14,10 @@ module Ouroboros.Consensus.Mock.Node.Serialisation
 
 import Codec.Serialise (Serialise, decode, encode, serialise)
 import qualified Data.ByteString.Lazy as Lazy
+import Data.Reflection (Given)
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
+import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
   ( AnnTip
   , defaultDecodeAnnTip
@@ -111,6 +113,7 @@ instance
   , Typeable ext
   , Serialise (MockLedgerConfig SimpleMockCrypto ext)
   , MockProtocolSpecific SimpleMockCrypto ext
+  , Given HardFork.EraParamsFormat
   ) =>
   SerialiseNodeToClientConstraints (MockBlock ext)
 

@@ -35,7 +35,9 @@ import Data.SOP.Strict
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.HardFork.History (Bound (..))
 import qualified Ouroboros.Consensus.HardFork.History as HF
+import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (..))
 import Test.QuickCheck
 
 {-------------------------------------------------------------------------------
@@ -121,6 +123,11 @@ genEraParams = do
   eraSlotLength <- slotLengthFromSec <$> choose (1, 5)
   eraSafeZone <- genSafeZone
   eraGenesisWin <- GenesisWindow <$> choose (1, 10)
+  -- we restrict Peras round length to divide the epoch size.
+  -- for testing purposes, we include Peras round length in every era.
+  eraPerasRoundLength <-
+    Just . PerasRoundLength
+      <$> choose (1, 10) `suchThat` (\x -> (unEpochSize eraEpochSize) `mod` x == 0)
   return HF.EraParams{..}
  where
   genSafeZone :: Gen HF.SafeZone
@@ -154,8 +161,15 @@ genShape eras = HF.Shape <$> erasMapStateM genParams eras (EpochNo 0)
 
 genSummary :: Eras xs -> Gen (HF.Summary xs)
 genSummary is =
-  HF.Summary <$> erasUnfoldAtMost genEraSummary is HF.initBound
+  HF.Summary <$> erasUnfoldAtMost genEraSummary is initBoundWithPeras
  where
+  -- for testing purposes, the initial era is Peras-enabled, which means
+  -- we only test Peras-enabled eras. It is rather difficult
+  -- to parameterise the test suite, as it requires also parameterise many non-test functions, like
+  -- 'HF.initBound', and leads to a huge diff. Therefore, we make the judgement call to
+  -- only test Peras-enabled eras.
+  initBoundWithPeras = HF.initBound{boundPerasRound = Just . PerasRoundNo $ 0}
+
   genEraSummary :: Era -> HF.Bound -> Gen (HF.EraSummary, HF.EraEnd)
   genEraSummary _era lo = do
     params <- genEraParams
