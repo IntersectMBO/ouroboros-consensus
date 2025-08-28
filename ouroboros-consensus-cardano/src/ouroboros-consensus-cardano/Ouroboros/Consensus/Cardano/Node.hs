@@ -55,14 +55,12 @@ import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Prelude (cborError)
-import qualified Cardano.Protocol.TPraos.OCert as Absolute
-  ( KESPeriod (..)
-  , ocertKESPeriod
-  )
+import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Exception (assert)
+import qualified Control.Tracer as Tracer
 import qualified Data.ByteString.Short as Short
 import Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
@@ -97,10 +95,11 @@ import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
-import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
+import Ouroboros.Consensus.Protocol.Praos.AgentClient
 import Ouroboros.Consensus.Protocol.Praos.Common
-  ( praosCanBeLeaderOpCert
+  ( PraosCanBeLeader (..)
+  , instantiatePraosCredentials
   )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
@@ -122,7 +121,6 @@ import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Assert
-import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   SerialiseHFC
@@ -569,10 +567,12 @@ data CardanoProtocolParams c = CardanoProtocolParams
 -- for mainnet (check against @'SL.gNetworkId' == 'SL.Mainnet'@).
 protocolInfoCardano ::
   forall c m.
-  (IOLike m, CardanoHardForkConstraints c) =>
+  ( CardanoHardForkConstraints c
+  , KESAgentContext c m
+  ) =>
   CardanoProtocolParams c ->
   ( ProtocolInfo (CardanoBlock c)
-  , m [BlockForging m (CardanoBlock c)]
+  , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)]
   )
 protocolInfoCardano paramsCardano
   | SL.Mainnet <- SL.sgNetworkId genesisShelley
@@ -585,7 +585,7 @@ protocolInfoCardano paramsCardano
             { pInfoConfig = cfg
             , pInfoInitLedger = initExtLedgerStateCardano
             }
-        , blockForging
+        , mkBlockForgings
         )
  where
   CardanoProtocolParams
@@ -980,9 +980,9 @@ protocolInfoCardano paramsCardano
   -- credentials. If there are multiple Shelley credentials, we merge the
   -- Byron credentials with the first Shelley one but still have separate
   -- threads for the remaining Shelley ones.
-  blockForging :: m [BlockForging m (CardanoBlock c)]
-  blockForging = do
-    shelleyBased <- traverse blockForgingShelleyBased credssShelleyBased
+  mkBlockForgings :: Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)]
+  mkBlockForgings tr = do
+    shelleyBased <- traverse (blockForgingShelleyBased tr) credssShelleyBased
     let blockForgings :: [NonEmptyOptNP (BlockForging m) (CardanoEras c)]
         blockForgings = case (mBlockForgingByron, shelleyBased) of
           (Nothing, shelleys) -> shelleys
@@ -1004,22 +1004,11 @@ protocolInfoCardano paramsCardano
     return $ byronBlockForging creds `OptNP.at` IZ
 
   blockForgingShelleyBased ::
+    Tracer.Tracer m KESAgentClientTrace ->
     ShelleyLeaderCredentials c ->
     m (NonEmptyOptNP (BlockForging m) (CardanoEras c))
-  blockForgingShelleyBased credentials = do
-    let ShelleyLeaderCredentials
-          { shelleyLeaderCredentialsInitSignKey = initSignKey
-          , shelleyLeaderCredentialsCanBeLeader = canBeLeader
-          } = credentials
-
-    hotKey <- do
-      let maxKESEvo :: Word64
-          maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
-
-          startPeriod :: Absolute.KESPeriod
-          startPeriod = Absolute.ocertKESPeriod $ praosCanBeLeaderOpCert canBeLeader
-
-      HotKey.mkHotKey @m @c initSignKey startPeriod maxKESEvo
+  blockForgingShelleyBased tr credentials = do
+    let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
 
     let slotToPeriod :: SlotNo -> Absolute.KESPeriod
         slotToPeriod (SlotNo slot) =
@@ -1027,6 +1016,15 @@ protocolInfoCardano paramsCardano
             Absolute.KESPeriod $
               fromIntegral $
                 slot `div` praosSlotsPerKESPeriod
+
+        maxKESEvo :: Word64
+        maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
+
+    hotKey <-
+      instantiatePraosCredentials
+        maxKESEvo
+        tr
+        (praosCanBeLeaderCredentialsSource canBeLeader)
 
     let tpraos ::
           forall era.
