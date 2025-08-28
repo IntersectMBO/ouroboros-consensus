@@ -9,8 +9,12 @@
 -- 'NoThunks' invariant. See 'newTVarWithInvariant' and
 -- 'newTVarWithInvariantIO'.
 --
--- Use the @checktvarinvariants@ cabal flag from the @strict-checked-vars@
--- package to enable or disable invariant checks at compile time.
+-- Due to their expensive nature, checks for the 'NoThunks' invariant are
+-- disabled by default and can be enabled at compile-time via the
+-- @expensive-invariants@ flag from the @ouroboros-consensus@ package. To
+-- disable invariant checks entirely (i.e., both 'NoThunks' and custom ones),
+-- use the @checktvarinvariants@ cabal flag from the @strict-checked-vars@
+-- package.
 --
 -- The exports of this module (should) mirror the exports of the
 -- "Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked" module from the
@@ -43,9 +47,7 @@ import Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked hiding
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked as Checked
 import GHC.Stack
 import NoThunks.Class (NoThunks (..))
-import Ouroboros.Consensus.Util.NormalForm.StrictMVar
-  ( noThunksInvariant
-  )
+import Ouroboros.Consensus.Util.NormalForm.Invariant (noThunksInvariant)
 
 {-------------------------------------------------------------------------------
   StrictTVar
