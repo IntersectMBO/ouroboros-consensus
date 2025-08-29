@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , SnapshotFailure (..)
   , SnapshotMetadata (..)
   , SnapshotPolicyArgs (..)
+  , TablesCodecVersion (..)
   , defaultSnapshotPolicyArgs
 
     -- * Codec
@@ -82,6 +83,7 @@ import Control.Monad.Except
 import Control.Tracer
 import Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.=))
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (Parser)
 import Data.Functor.Identity
 import qualified Data.List as List
 import Data.Maybe (isJust, mapMaybe)
@@ -162,9 +164,24 @@ data ReadSnapshotErr
     ReadMetadataError FsPath MetadataErr
   deriving (Eq, Show)
 
+data TablesCodecVersion = TablesCodecVersion1
+  deriving (Eq, Show)
+
+instance ToJSON TablesCodecVersion where
+  toJSON TablesCodecVersion1 = Aeson.Number 1
+
+instance FromJSON TablesCodecVersion where
+  parseJSON v = enforceVersion =<< parseJSON v
+
+enforceVersion :: Word8 -> Parser TablesCodecVersion
+enforceVersion v = case v of
+  1 -> pure TablesCodecVersion1
+  _ -> fail "Unknown or outdated tables codec version"
+
 data SnapshotMetadata = SnapshotMetadata
   { snapshotBackend :: SnapshotBackend
   , snapshotChecksum :: CRC
+  , snapshotTablesCodecVersion :: TablesCodecVersion
   }
   deriving (Eq, Show)
 
@@ -173,6 +190,7 @@ instance ToJSON SnapshotMetadata where
     Aeson.object
       [ "backend" .= snapshotBackend sm
       , "checksum" .= getCRC (snapshotChecksum sm)
+      , "tablesCodecVersion" .= toJSON (snapshotTablesCodecVersion sm)
       ]
 
 instance FromJSON SnapshotMetadata where
@@ -180,6 +198,7 @@ instance FromJSON SnapshotMetadata where
     SnapshotMetadata
       <$> o .: "backend"
       <*> fmap CRC (o .: "checksum")
+      <*> (parseJSON =<< (o .: "tablesCodecVersion"))
 
 data SnapshotBackend
   = UTxOHDMemSnapshot
