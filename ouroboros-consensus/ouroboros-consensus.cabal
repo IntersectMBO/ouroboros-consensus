@@ -285,7 +285,6 @@ library
     Ouroboros.Consensus.Util.Args
     Ouroboros.Consensus.Util.Assert
     Ouroboros.Consensus.Util.CBOR
-    Ouroboros.Consensus.Util.StreamingLedgerTables
     Ouroboros.Consensus.Util.CRC
     Ouroboros.Consensus.Util.CallStack
     Ouroboros.Consensus.Util.Condense
@@ -305,6 +304,7 @@ library
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.STM
+    Ouroboros.Consensus.Util.StreamingLedgerTables
     Ouroboros.Consensus.Util.Time
     Ouroboros.Consensus.Util.Versioned
 

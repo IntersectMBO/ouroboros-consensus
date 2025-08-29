@@ -98,10 +98,10 @@ library
     Ouroboros.Consensus.Cardano.Block
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
-    Ouroboros.Consensus.Cardano.StreamingLedgerTables
     Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
     Ouroboros.Consensus.Cardano.QueryHF
+    Ouroboros.Consensus.Cardano.StreamingLedgerTables
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
     Ouroboros.Consensus.Shelley.HFEras
@@ -138,9 +138,6 @@ library
     bytestring >=0.10 && <0.13,
     cardano-binary,
     cardano-crypto,
-    fs-api,
-    contra-tracer,
-    directory,
     cardano-crypto-class ^>=2.2,
     cardano-crypto-wrapper,
     cardano-ledger-allegra ^>=1.9,
@@ -153,8 +150,6 @@ library
     cardano-ledger-core ^>=1.19,
     cardano-ledger-dijkstra ^>=0.2,
     cardano-ledger-mary ^>=1.9,
-    temporary,
-    resource-registry,
     cardano-ledger-shelley ^>=1.17,
     cardano-prelude,
     cardano-protocol-tpraos ^>=1.4.1,
@@ -165,8 +160,10 @@ library
     contra-tracer,
     crypton,
     deepseq,
+    directory,
     filepath,
     formatting >=6.3 && <7.3,
+    fs-api,
     measures,
     mempack,
     microlens,
@@ -176,12 +173,14 @@ library
     ouroboros-consensus-protocol ^>=0.13,
     ouroboros-network-api ^>=0.16,
     random,
+    resource-registry,
     serialise ^>=0.2,
     singletons ^>=3.0,
     small-steps,
     sop-core ^>=0.5,
     sop-extras ^>=0.4,
     strict-sop-core ^>=0.1,
+    temporary,
     text,
     these ^>=1.2,
     validation,
@@ -703,10 +702,10 @@ executable snapshot-converter
   hs-source-dirs: app
   main-is: snapshot-converter.hs
   build-depends:
+    ansi-terminal,
     base,
-    bytestring,
     cardano-crypto-class,
-    contra-tracer,
+    directory,
     filepath,
     fs-api,
     mtl,
@@ -716,8 +715,8 @@ executable snapshot-converter
     ouroboros-consensus-cardano:unstable-cardano-tools,
     resource-registry,
     serialise,
-    sop-core,
-    temporary,
+    terminal-progress-bar,
+    text,
     with-utf8,
 
   other-modules:
