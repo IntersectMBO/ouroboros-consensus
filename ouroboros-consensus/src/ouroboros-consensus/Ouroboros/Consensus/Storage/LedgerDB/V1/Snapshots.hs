@@ -260,6 +260,7 @@ writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
     SnapshotMetadata
       { snapshotBackend = bsSnapshotBackend backingStore
       , snapshotChecksum = crc
+      , snapshotTablesCodecVersion = TablesCodecVersion1
       }
   bsCopy
     backingStore
