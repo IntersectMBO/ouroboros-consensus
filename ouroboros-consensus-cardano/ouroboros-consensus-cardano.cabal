@@ -98,6 +98,7 @@ library
     Ouroboros.Consensus.Cardano.Block
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
+    Ouroboros.Consensus.Cardano.StreamingLedgerTables
     Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
     Ouroboros.Consensus.Cardano.QueryHF
@@ -137,6 +138,9 @@ library
     bytestring >=0.10 && <0.13,
     cardano-binary,
     cardano-crypto,
+    fs-api,
+    contra-tracer,
+    directory,
     cardano-crypto-class ^>=2.2,
     cardano-crypto-wrapper,
     cardano-ledger-allegra ^>=1.9,
@@ -149,6 +153,8 @@ library
     cardano-ledger-core ^>=1.19,
     cardano-ledger-dijkstra ^>=0.2,
     cardano-ledger-mary ^>=1.9,
+    temporary,
+    resource-registry,
     cardano-ledger-shelley ^>=1.17,
     cardano-prelude,
     cardano-protocol-tpraos ^>=1.4.1,
@@ -159,6 +165,7 @@ library
     contra-tracer,
     crypton,
     deepseq,
+    filepath,
     formatting >=6.3 && <7.3,
     measures,
     mempack,
@@ -168,6 +175,7 @@ library
     ouroboros-consensus ^>=0.28,
     ouroboros-consensus-protocol ^>=0.13,
     ouroboros-network-api ^>=0.16,
+    random,
     serialise ^>=0.2,
     singletons ^>=3.0,
     small-steps,
