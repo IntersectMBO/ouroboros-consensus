@@ -14,7 +14,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
+module Ouroboros.Consensus.Storage.LedgerDB.V2 where
 
 import Control.Arrow ((>>>))
 import qualified Control.Monad as Monad (join, void)
@@ -46,17 +46,13 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
+import Ouroboros.Consensus.Storage.LedgerDB.Backends
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM (snapshotToStatePath)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Args
@@ -69,99 +65,6 @@ import System.FS.API
 import Prelude hiding (read)
 
 type SnapshotManagerV2 m blk = SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-
-mkInitDb ::
-  forall m blk.
-  ( LedgerSupportsProtocol blk
-  , IOLike m
-  , LedgerDbSerialiseConstraints blk
-  , HasHardForkHistory blk
-  , LedgerSupportsV2LedgerDB (LedgerState blk)
-  ) =>
-  Complete LedgerDbArgs m blk ->
-  HandleEnv m ->
-  ResolveBlock m blk ->
-  SnapshotManagerV2 m blk ->
-  InitDB (LedgerSeq' m blk) m blk
-mkInitDb args bss getBlock snapManager =
-  InitDB
-    { initFromGenesis = emptyF =<< lgrGenesis
-    , initFromSnapshot =
-        loadSnapshot (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS
-    , abortLedgerDbInit = \ls -> do
-        closeLedgerSeq ls
-        flip whenJust releaseLedgerDBResources $ case bss of
-          InMemoryHandleEnv -> Nothing
-          LSMHandleEnv lsmRes -> Just $ LedgerDBResourceKeys (sessionKey lsmRes) (blockIOKey lsmRes)
-    , initReapplyBlock = \a b c -> do
-        (x, y) <- reapplyThenPush lgrRegistry a b c
-        x
-        pure y
-    , currentTip = ledgerState . current
-    , pruneDb = \lseq -> do
-        let (rel, dbPrunedToImmDBTip) = pruneToImmTipOnly lseq
-        rel
-        pure dbPrunedToImmDBTip
-    , mkLedgerDb = \lseq -> do
-        varDB <- newTVarIO lseq
-        prevApplied <- newTVarIO Set.empty
-        lock <- RAWLock.new ()
-        forkers <- newTVarIO Map.empty
-        nextForkerKey <- newTVarIO (ForkerKey 0)
-        let env =
-              LedgerDBEnv
-                { ldbSeq = varDB
-                , ldbPrevApplied = prevApplied
-                , ldbForkers = forkers
-                , ldbNextForkerKey = nextForkerKey
-                , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
-                , ldbTracer = lgrTracer
-                , ldbCfg = lgrConfig
-                , ldbHasFS = lgrHasFS
-                , ldbResolveBlock = getBlock
-                , ldbQueryBatchSize = lgrQueryBatchSize
-                , ldbOpenHandlesLock = lock
-                , ldbResourceKeys = case bss of
-                    InMemoryHandleEnv -> Nothing
-                    LSMHandleEnv lsmRes -> Just $ LedgerDBResourceKeys (sessionKey lsmRes) (blockIOKey lsmRes)
-                }
-        h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb h snapManager
-    }
- where
-  LedgerDbArgs
-    { lgrConfig
-    , lgrGenesis
-    , lgrHasFS
-    , lgrSnapshotPolicyArgs
-    , lgrTracer
-    , lgrQueryBatchSize
-    , lgrRegistry
-    } = args
-
-  v2Tracer :: Tracer m V2.FlavorImplSpecificTrace
-  v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer
-
-  emptyF ::
-    ExtLedgerState blk ValuesMK ->
-    m (LedgerSeq' m blk)
-  emptyF st =
-    empty' st $ case bss of
-      InMemoryHandleEnv -> InMemory.newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
-      LSMHandleEnv lsmRes ->
-        \values -> do
-          table <-
-            LSM.tableFromValuesMK v2Tracer lgrRegistry (sessionResource lsmRes) (forgetLedgerTables st) values
-          LSM.newLSMLedgerTablesHandle v2Tracer lgrRegistry table
-
-  loadSnapshot ::
-    CodecConfig blk ->
-    SomeHasFS m ->
-    DiskSnapshot ->
-    m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
-  loadSnapshot ccfg fs ds = case bss of
-    InMemoryHandleEnv -> runExceptT $ InMemory.loadSnapshot v2Tracer lgrRegistry ccfg fs ds
-    LSMHandleEnv lsmRes -> runExceptT $ LSM.loadSnapshot v2Tracer lgrRegistry ccfg fs (sessionResource lsmRes) ds
 
 implMkLedgerDb ::
   forall m l blk.
@@ -239,8 +142,9 @@ mkInternals h snapManager =
             forkerPush frk st' >> atomically (forkerCommit frk) >> forkerClose frk
     , closeLedgerDB = do
         let LDBHandle tvar = h
-        getEnv h $ \env ->
-          whenJust (ldbResourceKeys env) releaseLedgerDBResources
+        getEnv h $ \env -> case ldbResources env of
+          Just (SomeBackendResources res) -> releaseResources (Proxy @blk) res
+          _ -> pure ()
         atomically (writeTVar tvar LedgerDBClosed)
     , getNumLedgerTablesHandles = getEnv h $ \env -> do
         l <- readTVarIO (ldbSeq env)
@@ -256,6 +160,11 @@ implIntTruncateSnapshots snapManager (SomeHasFS fs) = do
   snapshotsMapM_ snapManager $
     \pre -> withFile fs (snapshotToStatePath pre) (AppendMode AllowExisting) $
       \h -> hTruncate fs h 0
+
+-- | The path within the LedgerDB's filesystem to the file that contains the
+-- snapshot's serialized ledger state
+snapshotToStatePath :: DiskSnapshot -> FsPath
+snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
 
 implGetVolatileTip ::
   (MonadSTM m, GetTip l) =>
@@ -379,7 +288,7 @@ implTryTakeSnapshot snapManager env mTime nrBlocks =
 implTryFlush :: Applicative m => LedgerDBEnv m l blk -> m ()
 implTryFlush _ = pure ()
 
-implCloseDB :: IOLike m => LedgerDBHandle m l blk -> m ()
+implCloseDB :: forall m l blk. IOLike m => LedgerDBHandle m l blk -> m ()
 implCloseDB (LDBHandle varState) = do
   res <-
     atomically $
@@ -389,8 +298,10 @@ implCloseDB (LDBHandle varState) = do
         LedgerDBOpen env -> do
           writeTVar (ldbForkers env) Map.empty
           writeTVar varState LedgerDBClosed
-          pure (ldbResourceKeys env)
-  whenJust res releaseLedgerDBResources
+          pure (ldbResources env)
+  case res of
+    Just (SomeBackendResources resources) -> releaseResources (Proxy @blk) resources
+    Nothing -> pure ()
 
 {-------------------------------------------------------------------------------
   The LedgerDBEnv
@@ -450,7 +361,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   --
   --  * Modify 'ldbSeq' while holding a write lock, and then close the removed
   --    handles without any locking.
-  , ldbResourceKeys :: !(Maybe (LedgerDBResourceKeys m))
+  , ldbResources :: !(Maybe (SomeBackendResources m blk))
   -- ^ Resource keys used in the LSM backend so that the closing function used
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
@@ -466,21 +377,6 @@ deriving instance
   , NoThunks (LedgerCfg l)
   ) =>
   NoThunks (LedgerDBEnv m l blk)
-
-data LedgerDBResourceKeys m = LedgerDBResourceKeys
-  { sessionResourceKey :: ResourceKey m
-  , blockIOResourceKey :: ResourceKey m
-  }
-  deriving Generic
-
-deriving instance
-  IOLike m =>
-  NoThunks (LedgerDBResourceKeys m)
-
-releaseLedgerDBResources :: IOLike m => LedgerDBResourceKeys m -> m ()
-releaseLedgerDBResources l = do
-  Monad.void . release . sessionResourceKey $ l
-  Monad.void . release . blockIOResourceKey $ l
 
 {-------------------------------------------------------------------------------
   The LedgerDBHandle

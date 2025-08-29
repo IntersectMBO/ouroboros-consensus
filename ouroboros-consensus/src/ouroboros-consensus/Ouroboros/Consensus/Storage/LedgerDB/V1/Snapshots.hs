@@ -288,6 +288,7 @@ loadSnapshot ::
   , LedgerSupportsV1LedgerDB (LedgerState blk)
   , LedgerDbSerialiseConstraints blk
   ) =>
+  OpenBackingStore m (ExtLedgerState blk) ->
   Tracer m V1.FlavorImplSpecificTrace ->
   Complete BackingStoreArgs m ->
   CodecConfig blk ->
@@ -298,7 +299,7 @@ loadSnapshot ::
     (SnapshotFailure blk)
     m
     ((DbChangelog' blk, ResourceKey m, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
-loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') reg s = do
+loadSnapshot backingStoreBackend tracer bss ccfg fs@(SnapshotsFS fs') reg s = do
   (extLedgerSt, checksumAsRead) <-
     withExceptT (InitFailureRead . ReadSnapshotFailed) $
       readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
@@ -319,6 +320,10 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') reg s = do
     NotOrigin pt -> do
       (bsKey, backingStore) <-
         Trans.lift
-          (allocate reg (\_ -> restoreBackingStore tracer bss fs extLedgerSt (snapshotToTablesPath s)) bsClose)
+          ( allocate
+              reg
+              (\_ -> restoreBackingStore backingStoreBackend tracer bss fs extLedgerSt (snapshotToTablesPath s))
+              bsClose
+          )
       let chlog = empty extLedgerSt
       pure ((chlog, bsKey, backingStore), pt)

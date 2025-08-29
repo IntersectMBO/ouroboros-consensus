@@ -81,12 +81,13 @@ mkInitDb ::
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
   ) =>
+  OpenBackingStore m (ExtLedgerState blk) ->
   Complete LedgerDbArgs m blk ->
   Complete V1.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
   SnapshotManagerV1 m blk ->
   InitDB (DbChangelog' blk, ResourceKey m, BackingStore' m blk) m blk
-mkInitDb args bss getBlock snapManager =
+mkInitDb backingStoreBackend args bss getBlock snapManager =
   InitDB
     { initFromGenesis = do
         st <- lgrGenesis
@@ -95,12 +96,13 @@ mkInitDb args bss getBlock snapManager =
         (bsKey, backingStore) <-
           allocate
             lgrRegistry
-            (\_ -> newBackingStore bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st))
+            (\_ -> newBackingStore backingStoreBackend bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st))
             bsClose
         pure (chlog, bsKey, backingStore)
     , initFromSnapshot =
         runExceptT
           . loadSnapshot
+            backingStoreBackend
             bsTracer
             baArgs
             (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
@@ -150,7 +152,7 @@ mkInitDb args bss getBlock snapManager =
         pure $ implMkLedgerDb h snapManager
     }
  where
-  bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
+  bsTracer = LedgerDBFlavorImplEvent . undefined >$< lgrTracer
 
   LedgerDbArgs
     { lgrHasFS

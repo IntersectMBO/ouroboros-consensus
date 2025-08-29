@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Args
   ( BackingStoreArgs (..)
   , FlushFrequency (..)
   , LedgerDbFlavorArgs (..)
+  , LMDBLimits (..)
   , shouldFlush
   ) where
 
@@ -21,7 +22,6 @@ import Control.Monad.Primitive
 import qualified Data.SOP.Dict as Dict
 import Data.Word
 import GHC.Generics
-import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
 import Ouroboros.Consensus.Util.Args
 
 -- | The number of blocks in the immutable part of the chain that we have to see
@@ -51,6 +51,13 @@ data LedgerDbFlavorArgs f m = V1Args
 data BackingStoreArgs f m
   = LMDBBackingStoreArgs FilePath (HKD f LMDBLimits) (Dict.Dict MonadIOPrim m)
   | InMemoryBackingStoreArgs
+
+data LMDBLimits = LMDBLimits
+  { mapSize :: Int
+  , maxDatabases :: Int
+  , maxReaders :: Int
+  }
+  deriving (Eq, Show)
 
 class (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
 instance (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m

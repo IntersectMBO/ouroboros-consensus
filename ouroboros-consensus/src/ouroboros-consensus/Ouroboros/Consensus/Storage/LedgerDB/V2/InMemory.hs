@@ -9,6 +9,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -18,8 +19,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
-  ( -- * LedgerTablesHandle
-    newInMemoryLedgerTablesHandle
+  ( mkInMemoryInitDb
 
     -- * Snapshots
   , loadSnapshot
@@ -33,8 +33,10 @@ import Cardano.Binary as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (decode)
 import qualified Control.Monad as Monad
+import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Except
+import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
@@ -42,26 +44,31 @@ import Data.Functor.Identity
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import qualified Data.Set as Set
 import Data.String (fromString)
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
+import Ouroboros.Consensus.Storage.LedgerDB.Backends
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CBOR (readIncremental)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.NormalForm.StrictTVar ()
 import System.FS.API
 import System.FS.CRC
 import Prelude hiding (read)
@@ -84,6 +91,8 @@ guardClosed :: LedgerTablesHandleState l -> (LedgerTables l ValuesMK -> a) -> a
 guardClosed LedgerTablesHandleClosed _ = error $ show InMemoryClosedExn
 guardClosed (LedgerTablesHandleOpen st) f = f st
 
+data InMem
+
 newInMemoryLedgerTablesHandle ::
   forall m l.
   ( IOLike m
@@ -91,19 +100,19 @@ newInMemoryLedgerTablesHandle ::
   , CanUpgradeLedgerTables l
   , SerializeTablesWithHint l
   ) =>
-  Tracer m V2.FlavorImplSpecificTrace ->
+  Tracer m (Trace m InMem) ->
   SomeHasFS m ->
   LedgerTables l ValuesMK ->
   m (LedgerTablesHandle m l)
 newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   !tv <- newTVarIO (LedgerTablesHandleOpen l)
-  traceWith tracer V2.TraceLedgerTablesHandleCreate
+  traceWith tracer TraceLedgerTablesHandleCreate
   pure
     LedgerTablesHandle
       { close = do
           p <- atomically $ swapTVar tv LedgerTablesHandleClosed
           case p of
-            LedgerTablesHandleOpen{} -> traceWith tracer V2.TraceLedgerTablesHandleClose
+            LedgerTablesHandleOpen{} -> traceWith tracer TraceLedgerTablesHandleClose
             _ -> pure ()
       , duplicate = do
           hs <- readTVarIO tv
@@ -187,11 +196,6 @@ snapshotManager' ccfg tracer fs =
     , takeSnapshot = implTakeSnapshot ccfg tracer fs
     }
 
--- | The path within the LedgerDB's filesystem to the file that contains the
--- snapshot's serialized ledger state
-snapshotToStatePath :: DiskSnapshot -> FsPath
-snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
-
 writeSnapshot ::
   MonadThrow m =>
   SomeHasFS m ->
@@ -247,7 +251,7 @@ loadSnapshot ::
   , IOLike m
   , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
   ) =>
-  Tracer m V2.FlavorImplSpecificTrace ->
+  Tracer m (Trace m InMem) ->
   ResourceRegistry m ->
   CodecConfig blk ->
   SomeHasFS m ->
@@ -283,3 +287,107 @@ loadSnapshot tracer _rr ccfg fs ds = do
           InitFailureRead $
             ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle tracer fs))
+
+mkInMemoryInitDb ::
+  forall m blk.
+  ( LedgerSupportsProtocol blk
+  , IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , HasHardForkHistory blk
+  , LedgerSupportsV2LedgerDB (LedgerState blk)
+  ) =>
+  Complete LedgerDbArgs m blk ->
+  ResolveBlock m blk ->
+  SnapshotManagerV2 m blk ->
+  InitDB (LedgerSeq' m blk) m blk
+mkInMemoryInitDb args getBlock snapManager =
+  InitDB
+    { initFromGenesis = emptyF =<< lgrGenesis
+    , initFromSnapshot =
+        runExceptT
+          . loadSnapshot v2Tracer lgrRegistry (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS
+    , abortLedgerDbInit = closeLedgerSeq
+    , initReapplyBlock = \a b c -> do
+        (x, y) <- reapplyThenPush lgrRegistry a b c
+        x
+        pure y
+    , currentTip = ledgerState . current
+    , pruneDb = \lseq -> do
+        let (rel, dbPrunedToImmDBTip) = pruneToImmTipOnly lseq
+        rel
+        pure dbPrunedToImmDBTip
+    , mkLedgerDb = \lseq -> do
+        varDB <- newTVarIO lseq
+        prevApplied <- newTVarIO Set.empty
+        lock <- RAWLock.new ()
+        forkers <- newTVarIO Map.empty
+        nextForkerKey <- newTVarIO (ForkerKey 0)
+        let env =
+              LedgerDBEnv
+                { ldbSeq = varDB
+                , ldbPrevApplied = prevApplied
+                , ldbForkers = forkers
+                , ldbNextForkerKey = nextForkerKey
+                , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
+                , ldbTracer = lgrTracer
+                , ldbCfg = lgrConfig
+                , ldbHasFS = lgrHasFS
+                , ldbResolveBlock = getBlock
+                , ldbQueryBatchSize = lgrQueryBatchSize
+                , ldbOpenHandlesLock = lock
+                , ldbResources = Nothing
+                }
+        h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
+        pure $ implMkLedgerDb h snapManager
+    }
+ where
+  LedgerDbArgs
+    { lgrConfig
+    , lgrGenesis
+    , lgrHasFS
+    , lgrSnapshotPolicyArgs
+    , lgrTracer
+    , lgrQueryBatchSize
+    , lgrRegistry
+    } = args
+
+  v2Tracer :: Tracer m (Trace m InMem)
+  v2Tracer = LedgerDBFlavorImplEvent . SomeBackendTrace >$< lgrTracer
+
+  emptyF ::
+    ExtLedgerState blk ValuesMK ->
+    m (LedgerSeq' m blk)
+  emptyF st =
+    empty' st $ newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
+
+instance
+  ( LedgerSupportsProtocol blk
+  , IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , HasHardForkHistory blk
+  , LedgerSupportsV2LedgerDB (LedgerState blk)
+  ) =>
+  LedgerDBBackend m InMem blk
+  where
+  data Args m InMem = NoArgs
+  data Resources m InMem = NoResources
+  data Trace m InMem
+    = -- \| Created a new 'LedgerTablesHandle', potentially by duplicating an
+      -- existing one.
+      TraceLedgerTablesHandleCreate
+    | -- \| Closed a 'LedgerTablesHandle'.
+      TraceLedgerTablesHandleClose
+    deriving Show
+
+  type Db m blk = LedgerSeq' m blk
+  type St m blk = StateRef m (ExtLedgerState blk)
+
+  type N m InMem = m
+
+  openLedgerDB NoArgs getBlock =
+    pure (mkInMemoryInitDb args getBlock snapManager, snapManager)
+   where
+    snapManager = snapshotManager args
+    args = undefined
+
+  releaseResources _ NoResources = pure ()

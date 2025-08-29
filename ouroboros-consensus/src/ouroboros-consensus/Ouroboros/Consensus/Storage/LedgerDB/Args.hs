@@ -18,8 +18,6 @@
 -- | Arguments for LedgerDB initialization.
 module Ouroboros.Consensus.Storage.LedgerDB.Args
   ( LedgerDbArgs (..)
-  , LedgerDbBackendArgs (..)
-  , LedgerDbFlavorArgs (..)
   , QueryBatchSize (..)
   , defaultArgs
   , defaultQueryBatchSize
@@ -34,20 +32,11 @@ import NoThunks.Class
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Backends
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Util.Args
 import System.FS.API
-
-data LedgerDbBackendArgs m
-  = V1LMDB (Complete V1.LedgerDbFlavorArgs m)
-  | V2InMemory
-  | V2LSM
-      -- | The filepath **relative to the fast storage device** in which we will
-      -- open/create the LSM-tree database.
-      FilePath
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -61,11 +50,11 @@ type LedgerDbArgs ::
   Type
 data LedgerDbArgs f m blk = LedgerDbArgs
   { lgrSnapshotPolicyArgs :: SnapshotPolicyArgs
+  , lgrBackend :: SomeBackendArgs m blk
   , lgrGenesis :: HKD f (m (ExtLedgerState blk ValuesMK))
   , lgrHasFS :: HKD f (SomeHasFS m)
   , lgrConfig :: LedgerDbCfgF f (ExtLedgerState blk)
   , lgrTracer :: Tracer m (TraceEvent blk)
-  , lgrFlavorArgs :: LedgerDbFlavorArgs f m
   , lgrRegistry :: HKD f (ResourceRegistry m)
   , lgrQueryBatchSize :: QueryBatchSize
   , lgrStartSnapshot :: Maybe DiskSnapshot
@@ -81,21 +70,15 @@ defaultArgs ::
 defaultArgs =
   LedgerDbArgs
     { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
+    , lgrBackend = undefined
     , lgrGenesis = NoDefault
     , lgrHasFS = NoDefault
     , lgrConfig = LedgerDbCfg NoDefault NoDefault OmitLedgerEvents
     , lgrQueryBatchSize = DefaultQueryBatchSize
     , lgrTracer = nullTracer
-    , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
-      -- will be the default for end-users.
-      lgrFlavorArgs = LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
     , lgrRegistry = NoDefault
     , lgrStartSnapshot = Nothing
     }
-
-data LedgerDbFlavorArgs f m
-  = LedgerDbFlavorArgsV1 (V1.LedgerDbFlavorArgs f m)
-  | LedgerDbFlavorArgsV2 (V2.LedgerDbFlavorArgs f m)
 
 {-------------------------------------------------------------------------------
   QueryBatchSize
