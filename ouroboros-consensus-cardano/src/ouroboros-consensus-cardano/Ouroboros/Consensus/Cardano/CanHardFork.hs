@@ -466,6 +466,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                 LedgerTables
                   . DiffMK
                   . Diff.fromMapDeletes
+                  . coerceTxInMapKeys
                   . Map.map SL.upgradeTxOut
                   $ avvms
 
@@ -478,6 +479,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                   . withLedgerTables ls
                   . LedgerTables
                   . ValuesMK
+                  . coerceTxInMapKeys
                   $ avvms
 
               resultingState =
