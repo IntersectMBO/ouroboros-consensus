@@ -357,7 +357,7 @@ instance
           answerShelleyLookupQueries
             (injectLedgerTables idx)
             (ejectHardForkTxOutDefault idx)
-            (ejectCanonicalTxIn idx)
+            (coerce . ejectCanonicalTxIn idx)
       )
 
   answerBlockQueryHFTraverse =
@@ -365,7 +365,7 @@ instance
       ( \idx ->
           answerShelleyTraversingQueries
             (ejectHardForkTxOutDefault idx)
-            (ejectCanonicalTxIn idx)
+            (coerce . ejectCanonicalTxIn idx)
             (queryLedgerGetTraversingFilter @('[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]) idx)
       )
 
@@ -494,7 +494,7 @@ instance
   where
   newtype CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
     = ShelleyHFCTxIn
-    { getShelleyHFCTxIn :: SL.TxIn
+    { getShelleyHFCTxIn :: BigEndianTxIn
     }
     deriving stock (Show, Eq, Ord)
     deriving newtype (NoThunks, MemPack)

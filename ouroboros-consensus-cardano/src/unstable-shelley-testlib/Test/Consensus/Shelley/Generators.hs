@@ -1,9 +1,12 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -238,6 +241,8 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> (LedgerTables . ValuesMK <$> arbitrary)
+
+deriving newtype instance Arbitrary BigEndianTxIn
 
 instance CanMock proto era => Arbitrary (AnnTip (ShelleyBlock proto era)) where
   arbitrary =

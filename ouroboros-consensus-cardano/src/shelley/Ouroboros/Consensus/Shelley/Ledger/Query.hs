@@ -67,6 +67,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
 import Control.DeepSeq (NFData)
 import Data.Bifunctor (second)
+import Data.Coerce
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
@@ -554,9 +555,9 @@ instance
     hst = headerState ext
     st = shelleyLedgerState lst
 
-  answerBlockQueryLookup = answerShelleyLookupQueries id id id
+  answerBlockQueryLookup = answerShelleyLookupQueries id id coerce
 
-  answerBlockQueryTraverse = answerShelleyTraversingQueries id id shelleyQFTraverseTablesPredicate
+  answerBlockQueryTraverse = answerShelleyTraversingQueries id coerce shelleyQFTraverseTablesPredicate
 
   -- \| Is the given query supported by the given 'ShelleyNodeToClientVersion'?
   blockQueryIsSupportedOnVersion = \case
@@ -1242,7 +1243,7 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
     LedgerTables (ValuesMK values) <-
       LedgerDB.roforkerReadTables
         forker
-        (castLedgerTables $ injTables (LedgerTables $ KeysMK txins))
+        (castLedgerTables $ injTables (LedgerTables $ KeysMK $ coerceTxInSet txins))
     pure $
       SL.UTxO $
         Map.mapKeys ejTxIn $
