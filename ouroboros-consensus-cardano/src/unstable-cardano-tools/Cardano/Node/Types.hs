@@ -25,7 +25,7 @@ module Cardano.Node.Types
   , NodeConwayProtocolConfiguration (..)
   , NodeDijkstraProtocolConfiguration (..)
   , NodeHardForkProtocolConfiguration (..)
-  , NodeProtocolConfiguration (..)
+  , NodeProtocolConfigurationCardano (..)
   , NodeShelleyProtocolConfiguration (..)
   , VRFPrivateKeyFilePermissionError (..)
   , renderVRFPrivateKeyFilePermissionError
@@ -115,10 +115,8 @@ data ProtocolFilepaths
 newtype GenesisHash = GenesisHash (Crypto.Hash Crypto.Blake2b_256 Crypto.ByteString)
   deriving newtype (Eq, Show, ToJSON, FromJSON)
 
-data NodeProtocolConfiguration
-  = NodeProtocolConfigurationByron NodeByronProtocolConfiguration
-  | NodeProtocolConfigurationShelley NodeShelleyProtocolConfiguration
-  | NodeProtocolConfigurationCardano
+data NodeProtocolConfigurationCardano
+  = NodeProtocolConfigurationCardano
       NodeByronProtocolConfiguration
       NodeShelleyProtocolConfiguration
       NodeAlonzoProtocolConfiguration
@@ -229,11 +227,7 @@ data NodeHardForkProtocolConfiguration
   }
   deriving (Eq, Show)
 
-instance AdjustFilePaths NodeProtocolConfiguration where
-  adjustFilePaths f (NodeProtocolConfigurationByron pc) =
-    NodeProtocolConfigurationByron (adjustFilePaths f pc)
-  adjustFilePaths f (NodeProtocolConfigurationShelley pc) =
-    NodeProtocolConfigurationShelley (adjustFilePaths f pc)
+instance AdjustFilePaths NodeProtocolConfigurationCardano where
   adjustFilePaths f (NodeProtocolConfigurationCardano pcb pcs pca pcc pcd pch) =
     NodeProtocolConfigurationCardano
       (adjustFilePaths f pcb)

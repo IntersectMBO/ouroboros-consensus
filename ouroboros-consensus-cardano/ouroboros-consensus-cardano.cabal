@@ -505,9 +505,6 @@ library unstable-cardano-tools
   hs-source-dirs: src/unstable-cardano-tools
   exposed-modules:
     Cardano.Api.Any
-    Cardano.Api.Protocol.Types
-    Cardano.Node.Protocol
-    Cardano.Node.Protocol.Types
     Cardano.Node.Types
     Cardano.Tools.DBAnalyser.Analysis
     Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting
@@ -608,7 +605,6 @@ executable db-analyser
   build-depends:
     base,
     cardano-crypto-class,
-    cardano-crypto-wrapper,
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools},
@@ -666,7 +662,6 @@ executable db-truncater
   build-depends:
     base,
     cardano-crypto-class,
-    cardano-crypto-wrapper,
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools},
@@ -697,7 +692,6 @@ executable snapshot-converter
     base,
     bytestring,
     cardano-crypto-class,
-    cardano-crypto-wrapper,
     contra-tracer,
     filepath,
     fs-api,
