@@ -5,7 +5,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -46,6 +45,7 @@ import Ouroboros.Consensus.Ledger.Tables.Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Streaming
@@ -276,48 +276,6 @@ sinkLmdbS writeChunkSize bs copyTo hint s = do
         S.effects s'
       Just ((k, v), s'') ->
         go (n - 1) (Map.insert k v m) s''
-
-sinkLsmS ::
-  forall l m r.
-  ( MonadAsync m
-  , MonadMVar m
-  , MonadThrow (STM m)
-  , MonadMask m
-  , MonadST m
-  , MonadEvaluate m
-  , MemPack (TxIn l)
-  , IndexedMemPack (l EmptyMK) (TxOut l)
-  ) =>
-  Int ->
-  String ->
-  Session m ->
-  Sink l m r
-sinkLsmS writeChunkSize snapName session st s = do
-  tb :: UTxOTable m <- lift $ newTable session
-  r <- go tb writeChunkSize mempty s
-  lift $
-    saveSnapshot
-      (toSnapshotName snapName)
-      (SnapshotLabel $ T.pack "UTxO table")
-      tb
-  lift $ closeTable tb
-  pure (fmap (,Nothing) r)
- where
-  go tb 0 m s' = do
-    lift $
-      inserts tb $
-        V.fromList [(toTxInBytes (Proxy @l) k, toTxOutBytes st v, Nothing) | (k, v) <- m]
-    go tb writeChunkSize mempty s'
-  go tb n m s' = do
-    mbs <- S.uncons s'
-    case mbs of
-      Nothing -> do
-        lift $
-          inserts tb $
-            V.fromList
-              [(toTxInBytes (Proxy @l) k, toTxOutBytes st v, Nothing) | (k, v) <- m]
-        S.effects s'
-      Just (item, s'') -> go tb (n - 1) (item : m) s''
 
 sinkInMemoryS ::
   forall m l r.
