@@ -300,6 +300,7 @@ implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
       SnapshotMetadata
         { snapshotBackend = UTxOHDMemSnapshot
         , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
+        , snapshotTablesCodecVersion = TablesCodecVersion1
         }
 
 -- | Read snapshot from disk.

@@ -398,6 +398,7 @@ implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFs) suffix st =
       SnapshotMetadata
         { snapshotBackend = UTxOHDLSMSnapshot
         , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
+        , snapshotTablesCodecVersion = TablesCodecVersion1
         }
 
 -- | Delete snapshot from disk and also from the LSM tree database.
