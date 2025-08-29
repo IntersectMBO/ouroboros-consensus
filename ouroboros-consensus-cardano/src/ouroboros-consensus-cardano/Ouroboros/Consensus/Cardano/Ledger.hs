@@ -28,7 +28,6 @@ import Cardano.Ledger.Binary.Decoding hiding (Decoder)
 import Cardano.Ledger.Binary.Encoding hiding (Encoding)
 import qualified Cardano.Ledger.Conway.State as SL
 import Cardano.Ledger.Core (Era, eraDecoder, eraProtVerLow)
-import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.LedgerState as SL
   ( esLStateL
   , lsCertStateL
@@ -57,7 +56,8 @@ import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger
-  ( IsShelleyBlock
+  ( BigEndianTxIn
+  , IsShelleyBlock
   , ShelleyBlock
   , ShelleyCompatible
   , shelleyLedgerState
@@ -70,7 +70,7 @@ instance
   HasCanonicalTxIn (CardanoEras c)
   where
   newtype CanonicalTxIn (CardanoEras c) = CardanoTxIn
-    { getCardanoTxIn :: SL.TxIn
+    { getCardanoTxIn :: BigEndianTxIn
     }
     deriving stock (Show, Eq, Ord)
     deriving newtype NoThunks

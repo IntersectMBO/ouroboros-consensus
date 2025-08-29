@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyCase #-}
@@ -12,7 +13,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
+#if __GLASGOW_HASKELL__ < 908
+{-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
+#endif
 
 module Ouroboros.Consensus.Cardano.CanHardFork
   ( CardanoHardForkConstraints
@@ -92,7 +96,7 @@ import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util (eitherToMaybe)
+import Ouroboros.Consensus.Util (coerceMapKeys, eitherToMaybe)
 
 {-------------------------------------------------------------------------------
   CanHardFork
@@ -466,6 +470,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                 LedgerTables
                   . DiffMK
                   . Diff.fromMapDeletes
+                  . coerceMapKeys
                   . Map.map SL.upgradeTxOut
                   $ avvms
 
@@ -478,6 +483,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                   . withLedgerTables ls
                   . LedgerTables
                   . ValuesMK
+                  . coerceMapKeys
                   $ avvms
 
               resultingState =

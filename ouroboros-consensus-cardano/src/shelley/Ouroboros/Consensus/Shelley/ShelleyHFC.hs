@@ -425,7 +425,7 @@ instance
   HasCanonicalTxIn '[ShelleyBlock proto era]
   where
   newtype CanonicalTxIn '[ShelleyBlock proto era] = ShelleyBlockHFCTxIn
-    { getShelleyBlockHFCTxIn :: SL.TxIn
+    { getShelleyBlockHFCTxIn :: BigEndianTxIn
     }
     deriving stock (Show, Eq, Ord)
     deriving newtype (NoThunks, MemPack)
@@ -462,14 +462,14 @@ instance
   BlockSupportsHFLedgerQuery '[ShelleyBlock proto era]
   where
   answerBlockQueryHFLookup = \case
-    IZ -> answerShelleyLookupQueries (injectLedgerTables IZ) id (ejectCanonicalTxIn IZ)
+    IZ -> answerShelleyLookupQueries (injectLedgerTables IZ) id (coerce . ejectCanonicalTxIn IZ)
     IS idx -> case idx of {}
 
   answerBlockQueryHFTraverse = \case
     IZ ->
       answerShelleyTraversingQueries
         id
-        (ejectCanonicalTxIn IZ)
+        (coerce . ejectCanonicalTxIn IZ)
         (queryLedgerGetTraversingFilter @('[ShelleyBlock proto era]) IZ)
     IS idx -> case idx of {}
 
