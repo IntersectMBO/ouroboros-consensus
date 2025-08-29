@@ -287,7 +287,7 @@ main = withStdTerminalHandles $ do
         let crcOut = maybe inCRC (crcOfConcat inCRC) mCRCOut
 
         lift $ putStr "Generating new metadata file..." >> hFlush stdout
-        putMetadata outFilePath (SnapshotMetadata outBackend crcOut)
+        putMetadata outFilePath (SnapshotMetadata outBackend crcOut TablesCodecVersion1)
 
         lift $ putColored Green True "Done"
 
