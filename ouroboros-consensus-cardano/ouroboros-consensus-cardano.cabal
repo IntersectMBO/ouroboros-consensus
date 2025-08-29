@@ -698,21 +698,21 @@ executable snapshot-converter
   hs-source-dirs: app
   main-is: snapshot-converter.hs
   build-depends:
+    resource-registry,
+    terminal-progress-bar,
+    text,
     base,
-    bytestring,
     cardano-crypto-class,
-    contra-tracer,
+    directory,
     filepath,
     fs-api,
     mtl,
+    ansi-terminal,
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano,
     ouroboros-consensus-cardano:unstable-cardano-tools,
-    resource-registry,
     serialise,
-    sop-core,
-    temporary,
     with-utf8,
 
   other-modules:
