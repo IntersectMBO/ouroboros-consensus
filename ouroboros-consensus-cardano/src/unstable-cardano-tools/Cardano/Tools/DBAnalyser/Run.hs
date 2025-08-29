@@ -57,7 +57,6 @@ import Text.Printf (printf)
 openLedgerDB ::
   ( LedgerSupportsProtocol blk
   , InspectLedger blk
-  , LedgerDB.LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerDB.LedgerSupportsLedgerDB blk
   ) =>

@@ -73,7 +73,7 @@ mkInitDb ::
   , IOLike m
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
-  , LedgerSupportsInMemoryLedgerDB blk
+  , LedgerSupportsV2LedgerDB (LedgerState blk)
   ) =>
   Complete LedgerDbArgs m blk ->
   HandleEnv m ->
