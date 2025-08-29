@@ -281,6 +281,7 @@ library
     Ouroboros.Consensus.Util.Args
     Ouroboros.Consensus.Util.Assert
     Ouroboros.Consensus.Util.CBOR
+    Ouroboros.Consensus.Util.StreamingLedgerTables
     Ouroboros.Consensus.Util.CRC
     Ouroboros.Consensus.Util.CallStack
     Ouroboros.Consensus.Util.Condense
@@ -326,6 +327,7 @@ library
     deepseq,
     diff-containers >=1.2,
     filelock,
+    filepath,
     fingertree-rm >=1.0,
     fs-api ^>=0.4,
     hashable,
