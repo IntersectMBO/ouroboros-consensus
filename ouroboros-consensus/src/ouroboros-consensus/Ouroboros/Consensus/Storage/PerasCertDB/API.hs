@@ -1,12 +1,19 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB (..)
   , AddPerasCertResult (..)
+
+    -- * 'PerasCertSnapshot'
+  , PerasCertSnapshot (..)
+  , PerasCertTicketNo
+  , zeroPerasCertTicketNo
   ) where
 
+import Data.Word (Word64)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Peras.Weight
@@ -23,6 +30,7 @@ data PerasCertDB m blk = PerasCertDB
   --
   -- The 'Fingerprint' is updated every time a new certificate is added, but it
   -- stays the same when certificates are garbage-collected.
+  , getCertSnapshot :: STM m (PerasCertSnapshot blk)
   , garbageCollect :: SlotNo -> m ()
   -- ^ Garbage-collect state older than the given slot number.
   , closeDB :: m ()
@@ -31,3 +39,19 @@ data PerasCertDB m blk = PerasCertDB
 
 data AddPerasCertResult = AddedPerasCertToDB | PerasCertAlreadyInDB
   deriving stock (Show, Eq)
+
+-- TODO: also move the weight snapshot in here?
+data PerasCertSnapshot blk = PerasCertSnapshot
+  { containsCert :: PerasRoundNo -> Bool
+  -- ^ Do we have the certificate for this round?
+  , getCertsAfter :: PerasCertTicketNo -> [(PerasCert blk, PerasCertTicketNo)]
+  }
+
+-- TODO: Once we store historical certificates on disk, this should (also) track
+-- round numbers, as we only have ticket numbers for in-memory certs.
+newtype PerasCertTicketNo = PerasCertTicketNo Word64
+  deriving stock Show
+  deriving newtype (Eq, Ord, Enum, NoThunks)
+
+zeroPerasCertTicketNo :: PerasCertTicketNo
+zeroPerasCertTicketNo = PerasCertTicketNo 0
