@@ -23,9 +23,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 
     -- * Snapshots
   , loadSnapshot
+  , snapshotManager
   , snapshotToStatePath
-  , snapshotToTablePath
-  , takeSnapshot
+
+    -- * snapshot-converter
+  , implTakeSnapshot
   ) where
 
 import Cardano.Binary as CBOR
@@ -45,14 +47,18 @@ import Data.String (fromString)
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CBOR (readIncremental)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
@@ -139,7 +145,7 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
           guardClosed h $
             \values ->
               withFile hasFS (mkFsPath [snapshotName, "tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
-                fmap snd $
+                fmap (Just . snd) $
                   hPutAllCRC hasFS hf $
                     CBOR.toLazyByteString $
                       valuesMKEncoder hint values
@@ -152,13 +158,39 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   Snapshots
 -------------------------------------------------------------------------------}
 
+snapshotManager ::
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  ) =>
+  Complete LedgerDbArgs m blk ->
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
+snapshotManager args =
+  snapshotManager'
+    (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
+    (LedgerDBSnapshotEvent >$< lgrTracer args)
+    (lgrHasFS args)
+
+snapshotManager' ::
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  ) =>
+  CodecConfig blk ->
+  Tracer m (TraceSnapshotEvent blk) ->
+  SomeHasFS m ->
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
+snapshotManager' ccfg tracer fs =
+  SnapshotManager
+    { listSnapshots = defaultListSnapshots fs
+    , deleteSnapshot = defaultDeleteSnapshot fs tracer
+    , takeSnapshot = implTakeSnapshot ccfg tracer fs
+    }
+
 -- | The path within the LedgerDB's filesystem to the file that contains the
 -- snapshot's serialized ledger state
 snapshotToStatePath :: DiskSnapshot -> FsPath
 snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
-
-snapshotToTablePath :: DiskSnapshot -> FsPath
-snapshotToTablePath = mkFsPath . (\x -> [x, "tables", "tvar"]) . snapshotToDirName
 
 writeSnapshot ::
   MonadThrow m =>
@@ -174,10 +206,10 @@ writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
   writeSnapshotMetadata fs ds $
     SnapshotMetadata
       { snapshotBackend = UTxOHDMemSnapshot
-      , snapshotChecksum = crcOfConcat crc1 crc2
+      , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
       }
 
-takeSnapshot ::
+implTakeSnapshot ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
@@ -188,13 +220,13 @@ takeSnapshot ::
   Maybe String ->
   StateRef m (ExtLedgerState blk) ->
   m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ccfg tracer hasFS suffix st = do
+implTakeSnapshot ccfg tracer hasFS suffix st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
       let number = unSlotNo (realPointSlot t)
           snapshot = DiskSnapshot number suffix
-      diskSnapshots <- listSnapshots hasFS
+      diskSnapshots <- defaultListSnapshots hasFS
       if List.any (== DiskSnapshot number suffix) diskSnapshots
         then
           return Nothing
