@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-07-22T09:13:54Z
+  , hackage.haskell.org 2025-08-07T11:24:08Z
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2025-08-21T09:41:03Z
 
@@ -56,6 +56,11 @@ allow-newer:
     , fin:QuickCheck
     , bin:QuickCheck
 
+if impl (ghc >= 9.10)
+  allow-newer:
+    -- https://github.com/phadej/regression-simple/pull/14
+    , regression-simple:base
+
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
@@ -90,3 +95,10 @@ constraints:
   plutus-core < 1.51,
   plutus-ledger-api < 1.51,
   plutus-tx < 1.51,
+
+if os (windows)
+  source-repository-package
+    type: git
+    location: https://github.com/jasagredo/digest
+    tag: 329fc2a911878ffe47472751cb40aae20ab2c00a
+    --sha256: sha256-84f8dFee9EfWbQ5UTLZ9MrsZ3JVojNhzfTGmWof6wHU=

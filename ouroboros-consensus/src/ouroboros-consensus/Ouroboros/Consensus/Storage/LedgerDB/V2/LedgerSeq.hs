@@ -81,22 +81,49 @@ import Prelude hiding (read)
   LedgerTablesHandles
 -------------------------------------------------------------------------------}
 
+-- | The interface fulfilled by handles on both the InMemory and LSM handles.
 data LedgerTablesHandle m l = LedgerTablesHandle
   { close :: !(m ())
   , duplicate :: !(m (LedgerTablesHandle m l))
-  -- ^ It is expected that this operation takes constant time.
-  , read :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
-  , readRange :: !((Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
-  , readAll :: !(m (LedgerTables l ValuesMK))
+  -- ^ Create a copy of the handle.
+  --
+  -- When applying diffs to a table, we will first duplicate the handle, then
+  -- apply the diffs in the copy. It is expected that duplicating the handle
+  -- takes constant time.
+  , read :: !(l EmptyMK -> LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  -- ^ Read values for the given keys from the tables, and deserialize them as
+  -- if they were from the same era as the given ledger state.
+  , readRange :: !(l EmptyMK -> (Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  -- ^ Read the requested number of values, possibly starting from the given
+  -- key, from the tables, and deserialize them as if they were from the same
+  -- era as the given ledger state.
+  --
+  -- The returned value contains both the read values as well as the last key
+  -- retrieved. This is necessary because the LSM backend uses an alternative
+  -- serialization format and the last key in the returned Map might not be the
+  -- last key read.
+  --
+  -- The last key retrieved is part of the map too. It is intended to be fed
+  -- back into the next iteration of the range read. If the function returns
+  -- Nothing, it means the read returned no results, or in other words, we
+  -- reached the end of the ledger tables.
+  , readAll :: !(l EmptyMK -> m (LedgerTables l ValuesMK))
   -- ^ Costly read all operation, not to be used in Consensus but only in
-  -- snapshot-converter executable.
+  -- snapshot-converter executable. The values will be read as if they were from
+  -- the same era as the given ledger state.
   , pushDiffs :: !(forall mk. l mk -> l DiffMK -> m ())
   -- ^ Push some diffs into the ledger tables handle.
   --
   -- The first argument has to be the ledger state before applying
   -- the block, the second argument should be the ledger state after
   -- applying a block. See 'CanUpgradeLedgerTables'.
+  --
+  -- Note 'CanUpgradeLedgerTables' is only used in the InMemory backend.
   , takeHandleSnapshot :: !(l EmptyMK -> String -> m (Maybe CRC))
+  -- ^ Take a snapshot of a handle. The given ledger state is used to decide the
+  -- encoding of the values based on the current era.
+  --
+  -- It returns a CRC only on backends that support it, as the InMemory backend.
   , tablesSize :: !(m (Maybe Int))
   -- ^ Consult the size of the ledger tables in the database. This will return
   -- 'Nothing' in backends that do not support this operation.
@@ -168,8 +195,8 @@ empty ::
   , IOLike m
   ) =>
   l EmptyMK ->
-  LedgerTables l ValuesMK ->
-  (LedgerTables l ValuesMK -> m (LedgerTablesHandle m l)) ->
+  init ->
+  (init -> m (LedgerTablesHandle m l)) ->
   m (LedgerSeq m l)
 empty st tbs new = LedgerSeq . AS.Empty . StateRef st <$> new tbs
 
@@ -222,7 +249,7 @@ reapplyBlock evs cfg b _rr db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db
   newtbs <- duplicate tbs
-  vals <- read newtbs ks
+  vals <- read newtbs st ks
   let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
       newst = forgetLedgerTables st'
 
@@ -535,7 +562,7 @@ volatileStatesBimap f g =
 -- >>> instance LedgerTablesAreTrivial LS where convertMapKind (LS p) = LS p
 -- >>> s = [LS (Point Origin), LS (Point (At (Block 0 0))), LS (Point (At (Block 1 1))), LS (Point (At (Block 2 2))), LS (Point (At (Block 3 3)))]
 -- >>> [l0s, l1s, l2s, l3s, l4s] = s
--- >>> emptyHandle = LedgerTablesHandle (pure ()) (pure emptyHandle) (\_ -> undefined) (\_ -> undefined) (pure trivialLedgerTables) (\_ _ _ -> undefined) (\_ -> undefined) (pure Nothing)
+-- >>> emptyHandle = LedgerTablesHandle (pure ()) (pure emptyHandle) (\_ -> undefined) (\_ -> undefined) (\_ -> pure trivialLedgerTables) (\_ _ _ -> undefined) (\_ -> undefined) (pure Nothing)
 -- >>> [l0, l1, l2, l3, l4] = map (flip StateRef emptyHandle) s
 -- >>> instance GetTip LS where getTip (LS p) = p
 -- >>> instance Eq (LS EmptyMK) where LS p1 == LS p2 = p1 == p2
