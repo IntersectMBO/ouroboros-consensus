@@ -1331,17 +1331,12 @@ answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
         )
         vs
 
-  vnull :: ValuesMK k v -> Bool
-  vnull (ValuesMK vs) = Map.null vs
-
-  toMaxKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
-
   loop queryPredicate !prev !acc = do
-    extValues <- LedgerDB.roforkerRangeReadTables forker prev
-    if ltcollapse $ ltmap (K2 . vnull) extValues
-      then pure acc
-      else
+    (extValues, k) <- LedgerDB.roforkerRangeReadTables forker prev
+    case k of
+      Nothing -> pure acc
+      Just k' ->
         loop
           queryPredicate
-          (PreviousQueryWasUpTo $ toMaxKey extValues)
+          (PreviousQueryWasUpTo k')
           (combUtxo acc $ partial queryPredicate extValues)
