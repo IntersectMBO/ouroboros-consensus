@@ -56,3 +56,7 @@ package strict-stm
 
 package text-short
   flags: +asserts
+
+package strict-checked-vars
+  flags: +checktvarinvariants +checkmvarinvariants
+
