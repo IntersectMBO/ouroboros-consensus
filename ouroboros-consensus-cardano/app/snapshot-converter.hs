@@ -1,8 +1,10 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -30,11 +32,11 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as V1
 import Ouroboros.Consensus.Util.CRC
-import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.StreamingLedgerTables
+import Ouroboros.Consensus.Util.IOLike hiding (yield)
 import System.Console.ANSI
 import qualified System.Directory as D
 import System.Exit
@@ -215,24 +217,29 @@ instance StandardHash blk => Show (Error blk) where
       ["Error when reading entries in the UTxO tables: ", show df]
   show Cancelled = "Cancelled"
 
-data InEnv = InEnv
+data InEnv backend = InEnv
   { inState :: LedgerState (CardanoBlock StandardCrypto) EmptyMK
   , inFilePath :: FilePath
   , inStream ::
       LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
       ResourceRegistry IO ->
-      IO (YieldArgs (LedgerState (CardanoBlock StandardCrypto)) IO)
+      IO (SomeBackend YieldArgs)
   , inProgressMsg :: String
   , inCRC :: CRC
   , inSnapReadCRC :: Maybe CRC
   }
 
-data OutEnv = OutEnv
+data SomeBackend c where
+  SomeBackend ::
+    StreamingBackend IO backend (LedgerState (CardanoBlock StandardCrypto)) =>
+    c IO backend (LedgerState (CardanoBlock StandardCrypto)) -> SomeBackend c
+
+data OutEnv backend = OutEnv
   { outFilePath :: FilePath
   , outStream ::
       LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
       ResourceRegistry IO ->
-      IO (SinkArgs (LedgerState (CardanoBlock StandardCrypto)) IO)
+      IO (SomeBackend SinkArgs)
   , outDeleteExtra :: Maybe FilePath
   , outProgressMsg :: String
   , outBackend :: SnapshotBackend
@@ -354,7 +361,7 @@ main = withStdTerminalHandles $ do
         InEnv
           st
           fp
-          (fromInMemory (fp F.</> "tables"))
+          (\a b -> SomeBackend <$> fromInMemory (fp F.</> "tables") a b)
           ("InMemory@[" <> fp <> "]")
           c
           mtd
@@ -373,7 +380,7 @@ main = withStdTerminalHandles $ do
         InEnv
           st
           fp
-          (fromLMDB (fp F.</> "tables") defaultLMDBLimits)
+          (\a b -> SomeBackend <$> fromLMDB (fp F.</> "tables") defaultLMDBLimits a b)
           ("LMDB@[" <> fp <> "]")
           c
           mtd
@@ -392,7 +399,7 @@ main = withStdTerminalHandles $ do
         InEnv
           st
           fp
-          (fromLSM lsmDbPath (last $ splitDirectories fp))
+          (\a b -> SomeBackend <$> fromLSM lsmDbPath (last $ splitDirectories fp) a b)
           ("LSM@[" <> lsmDbPath <> "]")
           c
           mtd
@@ -410,7 +417,7 @@ main = withStdTerminalHandles $ do
       pure $
         OutEnv
           fp
-          (toInMemory (fp F.</> "tables"))
+          (\a b -> SomeBackend <$> toInMemory (fp F.</> "tables") a b)
           Nothing
           ("InMemory@[" <> fp <> "]")
           UTxOHDMemSnapshot
@@ -426,7 +433,7 @@ main = withStdTerminalHandles $ do
       pure $
         OutEnv
           fp
-          (toLMDB fp defaultLMDBLimits)
+          (\a b -> SomeBackend <$> toLMDB fp defaultLMDBLimits a b)
           Nothing
           ("LMDB@[" <> fp <> "]")
           UTxOHDLMDBSnapshot
@@ -442,10 +449,28 @@ main = withStdTerminalHandles $ do
       pure $
         OutEnv
           fp
-          (toLSM lsmDbPath (last $ splitDirectories fp))
+          (\a b -> SomeBackend <$> toLSM lsmDbPath (last $ splitDirectories fp) a b)
           (Just lsmDbPath)
           ("LSM@[" <> lsmDbPath <> "]")
           UTxOHDLSMSnapshot
+
+stream ::
+  LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+  ( LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+    ResourceRegistry IO ->
+    IO (SomeBackend YieldArgs)
+  ) ->
+  ( LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+    ResourceRegistry IO ->
+    IO (SomeBackend SinkArgs)
+  ) ->
+  ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)
+stream st mYieldArgs mSinkArgs =
+  ExceptT $
+    withRegistry $ \reg -> do
+      (SomeBackend (yArgs :: YieldArgs IO backend1 l)) <- mYieldArgs st reg
+      (SomeBackend (sArgs :: SinkArgs IO backend2 l)) <- mSinkArgs st reg
+      runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
 
 -- Helpers
 

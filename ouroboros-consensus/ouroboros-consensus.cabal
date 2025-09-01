@@ -295,7 +295,6 @@ library
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.STM
-    Ouroboros.Consensus.Util.StreamingLedgerTables
     Ouroboros.Consensus.Util.Time
     Ouroboros.Consensus.Util.Versioned
 
@@ -365,6 +364,69 @@ library
   x-docspec-extra-packages:
     directory
     latex-svg-image
+
+library ouroboros-consensus-lsm
+  import: common-lib
+  visibility: public
+  hs-source-dirs: src/ouroboros-consensus-lsm
+  exposed-modules:
+    Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
+
+  build-depends:
+    base >=4.14 && <4.22,
+    blockio,
+    random,
+    filepath,
+    cardano-binary,
+    containers >=0.5 && <0.8,
+    contra-tracer,
+    fs-api ^>=0.4,
+    ouroboros-consensus,
+    lsm-tree,
+    mempack,
+    mtl,
+    nothunks ^>=0.2,
+    primitive,
+    resource-registry ^>=0.1,
+    serialise ^>=0.2,
+    text,
+    transformers,
+    vector ^>=0.13,
+    streaming,
+
+  build-depends: text >=1.2.5.0 && <2.2
+
+library ouroboros-consensus-lmdb
+  import: common-lib
+  visibility: public
+  hs-source-dirs: src/ouroboros-consensus-lmdb
+  exposed-modules:
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
+
+  build-depends:
+    base >=4.14 && <4.22,
+    bytestring >=0.10 && <0.13,
+    cardano-lmdb >=0.4,
+    cardano-lmdb-simple ^>=0.8,
+    cardano-slotting,
+    containers >=0.5 && <0.8,
+    contra-tracer,
+    fs-api ^>=0.4,
+    io-classes ^>=1.8.0.1,
+    mempack,
+    sop-core,
+    nothunks ^>=0.2,
+    ouroboros-consensus,
+    rawlock ^>=0.1.1,
+    serialise ^>=0.2,
+    mtl,
+    streaming,
+    text,
+
+  build-depends: text >=1.2.5.0 && <2.2
+
 
 library unstable-consensus-testlib
   import: common-lib
@@ -745,7 +807,7 @@ test-suite storage-test
     mempack,
     mtl,
     nothunks,
-    ouroboros-consensus,
+    ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lsm, ouroboros-consensus-lmdb},
     ouroboros-network-api,
     ouroboros-network-mock,
     ouroboros-network-protocols,

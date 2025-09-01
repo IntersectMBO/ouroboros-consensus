@@ -36,11 +36,11 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
+import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.Args
+import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
-import Ouroboros.Consensus.Util.StreamingLedgerTables
 import System.Directory
 import System.FS.API
 import System.FS.IO
@@ -50,7 +50,7 @@ import System.Random
 
 type L = LedgerState (CardanoBlock StandardCrypto)
 
-fromInMemory :: FilePath -> L EmptyMK -> ResourceRegistry IO -> IO (YieldArgs L IO)
+fromInMemory :: FilePath -> L EmptyMK -> ResourceRegistry IO -> IO (YieldArgs IO V2.Mem L)
 fromInMemory fp (HardForkLedgerState (HardForkState idx)) _ =
   let
     np ::
@@ -94,7 +94,8 @@ fromInMemory fp (HardForkLedgerState (HardForkState idx)) _ =
           (eraDecoder @era decodeMemPack)
           (eraDecoder @era $ toCardanoTxOut <$> decShareCBOR certInterns)
 
-fromLMDB :: FilePath -> LMDB.LMDBLimits -> L EmptyMK -> ResourceRegistry IO -> IO (YieldArgs L IO)
+fromLMDB ::
+  FilePath -> LMDB.LMDBLimits -> L EmptyMK -> ResourceRegistry IO -> IO (YieldArgs IO LMDB.LMDB L)
 fromLMDB fp limits hint reg = do
   let (dbPath, snapName) = splitFileName fp
   tempDir <- getCanonicalTemporaryDirectory
@@ -118,14 +119,14 @@ fromLMDB fp limits hint reg = do
       )
       bsClose
   (_, bsvh) <- allocate reg (\_ -> bsValueHandle bs) bsvhClose
-  pure (YieldLMDB 1000 bsvh)
+  pure (LMDB.YieldLMDB 1000 bsvh)
 
 fromLSM ::
   FilePath ->
   String ->
   L EmptyMK ->
   ResourceRegistry IO ->
-  IO (YieldArgs L IO)
+  IO (YieldArgs IO LSM L)
 fromLSM fp snapName _ reg = do
   (_, SomeHasFSAndBlockIO hasFS blockIO) <- stdMkBlockIOFS fp reg
   salt <- fst . genWord64 <$> newStdGen
@@ -148,7 +149,7 @@ toLMDB ::
   LMDB.LMDBLimits ->
   L EmptyMK ->
   ResourceRegistry IO ->
-  IO (SinkArgs L IO)
+  IO (SinkArgs IO LMDB.LMDB L)
 toLMDB fp limits hint reg = do
   let (snapDir, snapName) = splitFileName fp
   tempDir <- getCanonicalTemporaryDirectory
@@ -168,13 +169,13 @@ toLMDB fp limits hint reg = do
             (InitFromValues (At 0) hint emptyLedgerTables)
       )
       bsClose
-  pure $ SinkLMDB 1000 (bsWrite bs) (\h -> bsCopy bs h (mkFsPath [snapName, "tables"]))
+  pure $ LMDB.SinkLMDB 1000 (bsWrite bs) (\h -> bsCopy bs h (mkFsPath [snapName, "tables"]))
 
 toInMemory ::
   FilePath ->
   L EmptyMK ->
   ResourceRegistry IO ->
-  IO (SinkArgs L IO)
+  IO (SinkArgs IO V2.Mem L)
 toInMemory fp (HardForkLedgerState (HardForkState idx)) _ = do
   currDir <- getCurrentDirectory
   let
@@ -208,7 +209,7 @@ toLSM ::
   String ->
   L EmptyMK ->
   ResourceRegistry IO ->
-  IO (SinkArgs L IO)
+  IO (SinkArgs IO LSM L)
 toLSM fp snapName _ reg = do
   removePathForcibly fp
   System.Directory.createDirectory fp

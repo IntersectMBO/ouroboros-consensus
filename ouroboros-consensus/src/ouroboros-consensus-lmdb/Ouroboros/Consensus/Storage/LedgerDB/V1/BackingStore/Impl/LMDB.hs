@@ -21,6 +21,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
   ( -- * Opening a database
     LMDBLimits (LMDBLimits, lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders)
   , newLMDBBackingStore
+  , Backend (..)
+  , Args (LMDBBackingStoreArgs)
+  , LMDB
+  , SinkArgs (SinkLMDB)
+  , YieldArgs (YieldLMDB)
 
     -- * Errors
   , LMDBErr (..)

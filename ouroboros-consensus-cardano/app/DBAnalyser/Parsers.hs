@@ -43,12 +43,7 @@ parseDBAnalyserConfig =
     <*> parseAnalysis
     <*> parseLimit
     <*> Foldable.asum
-      [ flag' V1InMem $
-          mconcat
-            [ long "v1-in-mem"
-            , help "use v1 in-memory backing store [deprecated]"
-            ]
-      , flag' V1LMDB $
+      [ flag' V1LMDB $
           mconcat
             [ long "lmdb"
             , help "use v1 LMDB backing store"

@@ -124,8 +124,6 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , LedgerDbSerialiseConstraints
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
   ( VolatileDB
@@ -727,8 +725,6 @@ deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
-  , Show V1.SomeBackendTrace
-  , Show V2.SomeBackendTrace
   ) =>
   Show (TraceEvent blk)
 

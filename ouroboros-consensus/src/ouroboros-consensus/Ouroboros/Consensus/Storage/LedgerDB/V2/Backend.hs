@@ -89,7 +89,10 @@ class NoThunks (Resources m backend) => Backend m backend blk where
 -------------------------------------------------------------------------------}
 
 data SomeBackendTrace where
-  SomeBackendTrace :: Trace m backend -> SomeBackendTrace
+  SomeBackendTrace :: Show (Trace m backend) => Trace m backend -> SomeBackendTrace
+
+instance Show SomeBackendTrace where
+  show (SomeBackendTrace tr) = show tr
 
 data SomeBackendArgs m blk where
   SomeBackendArgs :: Backend m backend blk => Args m backend -> SomeBackendArgs m blk

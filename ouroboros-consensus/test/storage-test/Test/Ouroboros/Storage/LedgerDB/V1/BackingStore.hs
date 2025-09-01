@@ -36,11 +36,9 @@ import Data.Typeable
 import Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike hiding
   ( MonadMask (..)
   , newMVar
@@ -80,19 +78,19 @@ tests =
     [ adjustOption (scaleQuickCheckTests 10) $
         testProperty "InMemory IO SimHasFS" $
           testWithIO $
-            setupBSEnv BS.InMemoryBackingStoreArgs setupSimHasFS (pure ())
+            setupBSEnv InMemory.InMemArgs setupSimHasFS (pure ())
     , adjustOption (scaleQuickCheckTests 10) $
         testProperty "InMemory IO IOHasFS" $
           testWithIO $ do
             (fp, cleanup) <- setupTempDir
-            setupBSEnv BS.InMemoryBackingStoreArgs (setupIOHasFS fp) cleanup
+            setupBSEnv InMemory.InMemArgs (setupIOHasFS fp) cleanup
     , adjustOption (scaleQuickCheckTests 2) $
         testProperty "LMDB IO IOHasFS" $
           testWithIO $ do
             (fp, cleanup) <- setupTempDir
             lmdbTmpDir <- (FilePath.</> "BS_LMDB") <$> Dir.getTemporaryDirectory
             setupBSEnv
-              (BS.LMDBBackingStoreArgs lmdbTmpDir (testLMDBLimits maxOpenValueHandles) Dict.Dict)
+              (LMDB.LMDBBackingStoreArgs lmdbTmpDir (testLMDBLimits maxOpenValueHandles) Dict.Dict)
               (setupIOHasFS fp)
               (cleanup >> Dir.removeDirectoryRecursive lmdbTmpDir)
     ]
@@ -142,8 +140,9 @@ setupTempDir = do
   pure (qsmTmpDir, liftIO $ Dir.removeDirectoryRecursive qsmTmpDir)
 
 setupBSEnv ::
+  BS.Backend m backend (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) =>
   IOLike m =>
-  Complete BS.BackingStoreArgs m ->
+  BS.Args m backend ->
   m (SomeHasFS m) ->
   m () ->
   m (BSEnv m K K' V D)

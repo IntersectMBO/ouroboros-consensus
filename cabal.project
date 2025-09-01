@@ -20,8 +20,6 @@ index-state:
 
 packages:
   ouroboros-consensus
-  ouroboros-consensus-lmdb
-  ouroboros-consensus-lsm
   ouroboros-consensus-cardano
   ouroboros-consensus-protocol
   ouroboros-consensus-diffusion

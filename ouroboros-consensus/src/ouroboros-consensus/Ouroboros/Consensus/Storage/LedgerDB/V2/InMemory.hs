@@ -17,6 +17,9 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
   ( Backend (..)
   , Args (InMemArgs)
+  , Mem
+  , YieldArgs (YieldInMemory)
+  , SinkArgs (SinkInMemory)
   ) where
 
 import Cardano.Binary as CBOR

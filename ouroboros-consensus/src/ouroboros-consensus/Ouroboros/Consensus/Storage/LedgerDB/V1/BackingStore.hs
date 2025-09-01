@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -66,7 +67,10 @@ data SomeBackendArgs m l where
   SomeBackendArgs :: Backend m backend l => Args m backend -> SomeBackendArgs m l
 
 data SomeBackendTrace where
-  SomeBackendTrace :: Trace m backend -> SomeBackendTrace
+  SomeBackendTrace :: Show (Trace m backend) => Trace m backend -> SomeBackendTrace
+
+instance Show SomeBackendTrace where
+  show (SomeBackendTrace tr) = show tr
 
 class Backend m backend l where
   data Args m backend

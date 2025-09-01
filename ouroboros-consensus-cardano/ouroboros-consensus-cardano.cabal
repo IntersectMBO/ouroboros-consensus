@@ -101,7 +101,6 @@ library
     Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
     Ouroboros.Consensus.Cardano.QueryHF
-    Ouroboros.Consensus.Cardano.StreamingLedgerTables
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
     Ouroboros.Consensus.Shelley.HFEras
@@ -587,7 +586,7 @@ library unstable-cardano-tools
     network,
     network-mux,
     nothunks,
-    ouroboros-consensus ^>=0.27,
+    ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lsm, ouroboros-consensus-lmdb} ^>=0.27,
     ouroboros-consensus-cardano,
     ouroboros-consensus-diffusion ^>=0.23,
     ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib} ^>=0.12,
@@ -702,15 +701,15 @@ executable snapshot-converter
   build-depends:
     ansi-terminal,
     base,
+    cardano-ledger-core, cardano-ledger-binary, cardano-ledger-shelley, cborg, contra-tracer, sop-core, sop-extras, strict-sop-core,
     cardano-crypto-class,
+    microlens, temporary, random,
     directory,
     filepath,
     fs-api,
     mtl,
     optparse-applicative,
-    ouroboros-consensus,
-    ouroboros-consensus-lsm,
-    ouroboros-consensus-lmdb,
+    ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lsm, ouroboros-consensus-lmdb},
     ouroboros-consensus-cardano,
     ouroboros-consensus-cardano:unstable-cardano-tools,
     resource-registry,
