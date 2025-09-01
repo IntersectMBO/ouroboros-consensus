@@ -2,29 +2,25 @@
 {-# LANGUAGE LambdaCase #-}
 
 module DBAnalyser.Parsers
-  ( BlockType (..)
-  , blockTypeParser
-  , parseCmdLine
+  ( parseCmdLine
+  , parseCardanoArgs
+  , CardanoBlockArgs
   ) where
 
-import Cardano.Crypto (RequiresNetworkMagic (..))
 import Cardano.Tools.DBAnalyser.Analysis
-import Cardano.Tools.DBAnalyser.Block.Byron
 import Cardano.Tools.DBAnalyser.Block.Cardano
-import Cardano.Tools.DBAnalyser.Block.Shelley
 import Cardano.Tools.DBAnalyser.Types
 import qualified Data.Foldable as Foldable
 import Options.Applicative
 import Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
 import Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
-import Ouroboros.Consensus.Shelley.Node (Nonce (..))
 
 {-------------------------------------------------------------------------------
   Parsing
 -------------------------------------------------------------------------------}
 
-parseCmdLine :: Parser (DBAnalyserConfig, BlockType)
-parseCmdLine = (,) <$> parseDBAnalyserConfig <*> blockTypeParser
+parseCmdLine :: Parser (DBAnalyserConfig, CardanoBlockArgs)
+parseCmdLine = (,) <$> parseDBAnalyserConfig <*> parseCardanoArgs
 
 parseDBAnalyserConfig :: Parser DBAnalyserConfig
 parseDBAnalyserConfig =
@@ -259,64 +255,11 @@ pMaybeOutputFile =
   Parse BlockType-specific arguments
 -------------------------------------------------------------------------------}
 
-data BlockType
-  = ByronBlock ByronBlockArgs
-  | ShelleyBlock ShelleyBlockArgs
-  | CardanoBlock CardanoBlockArgs
-
-blockTypeParser :: Parser BlockType
-blockTypeParser =
-  subparser $
-    mconcat
-      [ command
-          "byron"
-          (info (parseByronType <**> helper) (progDesc "Analyse a Byron-only DB"))
-      , command
-          "shelley"
-          (info (parseShelleyType <**> helper) (progDesc "Analyse a Shelley-only DB"))
-      , command
-          "cardano"
-          (info (parseCardanoType <**> helper) (progDesc "Analyse a Cardano DB"))
-      ]
-
-parseByronType :: Parser BlockType
-parseByronType = ByronBlock <$> parseByronArgs
-
-parseShelleyType :: Parser BlockType
-parseShelleyType = ShelleyBlock <$> parseShelleyArgs
-
-parseCardanoType :: Parser BlockType
-parseCardanoType = CardanoBlock <$> parseCardanoArgs
-
 parseCardanoArgs :: Parser CardanoBlockArgs
 parseCardanoArgs =
   CardanoBlockArgs
     <$> parseConfigFile
     <*> parsePBftSignatureThreshold
-
-parseShelleyArgs :: Parser ShelleyBlockArgs
-parseShelleyArgs =
-  ShelleyBlockArgs
-    <$> strOption
-      ( mconcat
-          [ long "configShelley"
-          , help "Path to config file"
-          , metavar "PATH"
-          ]
-      )
-    <*> Foldable.asum
-      [ Nonce <$> parseNonce
-      , pure NeutralNonce
-      ]
- where
-  parseNonce =
-    strOption
-      ( mconcat
-          [ long "nonce"
-          , help "Initial nonce, i.e., hash of the genesis config file"
-          , metavar "NONCE"
-          ]
-      )
 
 parseConfigFile :: Parser FilePath
 parseConfigFile =
@@ -337,27 +280,3 @@ parsePBftSignatureThreshold =
           , help "PBftSignatureThreshold"
           , metavar "THRESHOLD"
           ]
-
-parseByronArgs :: Parser ByronBlockArgs
-parseByronArgs =
-  ByronBlockArgs
-    <$> parseConfigFile
-    <*> flag
-      RequiresNoMagic
-      RequiresMagic
-      ( mconcat
-          [ long "requires-magic"
-          , help "The DB contains blocks from a testnet, requiring network magic, rather than mainnet"
-          ]
-      )
-    <*> optional
-      ( option
-          auto
-          ( mconcat
-              [ long "genesisHash"
-              , help "Expected genesis hash"
-              , metavar "HASH"
-              ]
-          )
-      )
-    <*> parsePBftSignatureThreshold

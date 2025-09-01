@@ -11,14 +11,12 @@
 
 module Cardano.Node.Protocol.Cardano
   ( mkConsensusProtocolCardano
-  , mkSomeConsensusProtocolCardano
 
     -- * Errors
   , CardanoProtocolInstantiationError (..)
   ) where
 
-import Cardano.Api.Any
-import Cardano.Api.Protocol.Types
+import Cardano.Api.Any (Error (..))
 import qualified Cardano.Chain.Update as Byron
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
@@ -27,7 +25,6 @@ import qualified Cardano.Node.Protocol.Byron as Byron
 import qualified Cardano.Node.Protocol.Conway as Conway
 import Cardano.Node.Protocol.Shelley (readGenesisAny)
 import qualified Cardano.Node.Protocol.Shelley as Shelley
-import Cardano.Node.Protocol.Types
 import Cardano.Node.Types
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Monad.Trans.Except.Extra (firstExceptT)
@@ -54,21 +51,6 @@ import Ouroboros.Consensus.Shelley.Crypto (StandardCrypto)
 --
 -- This also serves a purpose as a sanity check that we have all the necessary
 -- type class instances available.
-mkSomeConsensusProtocolCardano ::
-  NodeByronProtocolConfiguration ->
-  NodeShelleyProtocolConfiguration ->
-  NodeAlonzoProtocolConfiguration ->
-  NodeConwayProtocolConfiguration ->
-  NodeDijkstraProtocolConfiguration ->
-  NodeHardForkProtocolConfiguration ->
-  Maybe ProtocolFilepaths ->
-  ExceptT CardanoProtocolInstantiationError IO SomeConsensusProtocol
-mkSomeConsensusProtocolCardano nbpc nspc napc ncpc ndpc nhpc files = do
-  params <- mkConsensusProtocolCardano nbpc nspc napc ncpc ndpc nhpc files
-  return $!
-    SomeConsensusProtocol CardanoBlockType $
-      ProtocolInfoArgsCardano params
-
 mkConsensusProtocolCardano ::
   NodeByronProtocolConfiguration ->
   NodeShelleyProtocolConfiguration ->

@@ -66,11 +66,11 @@ data Config = Config
   -- ^ Path to the output snapshot
   }
 
-getCommandLineConfig :: IO (Config, BlockType)
+getCommandLineConfig :: IO (Config, CardanoBlockArgs)
 getCommandLineConfig =
   execParser $
     info
-      ((,) <$> parseConfig <*> blockTypeParser <**> helper)
+      ((,) <$> parseConfig <*> parseCardanoArgs <**> helper)
       (fullDesc <> progDesc "Utility for converting snapshots to and from UTxO-HD")
 
 parseConfig :: Parser Config
@@ -260,11 +260,7 @@ store _ _ _ _ = error "Malformed output path!"
 main :: IO ()
 main = withStdTerminalHandles $ do
   cryptoInit
-  (conf, blocktype) <- getCommandLineConfig
-  case blocktype of
-    ByronBlock args -> run conf args
-    ShelleyBlock args -> run conf args
-    CardanoBlock args -> run conf args
+  uncurry run =<< getCommandLineConfig
  where
   run conf args = do
     ccfg <- configCodec . pInfoConfig <$> mkProtocolInfo args
