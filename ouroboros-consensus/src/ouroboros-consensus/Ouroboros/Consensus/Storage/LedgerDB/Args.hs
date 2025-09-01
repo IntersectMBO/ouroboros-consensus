@@ -1,19 +1,9 @@
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 -- | Arguments for LedgerDB initialization.
 module Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -99,11 +89,11 @@ data LedgerDbBackendArgs m blk
   QueryBatchSize
 -------------------------------------------------------------------------------}
 
--- | The /maximum/ number of keys to read in a backing store range query.
+-- | The /maximum/ number of keys to read in a forker range query.
 --
 -- When performing a ledger state query that involves on-disk parts of the
 -- ledger state, we might have to read ranges of key-value pair data (e.g.,
--- UTxO) from disk using backing store range queries. Instead of reading all
+-- UTxO) from disk using forker range queries. Instead of reading all
 -- data in one go, we read it in batches. 'QueryBatchSize' determines the size
 -- of these batches.
 --

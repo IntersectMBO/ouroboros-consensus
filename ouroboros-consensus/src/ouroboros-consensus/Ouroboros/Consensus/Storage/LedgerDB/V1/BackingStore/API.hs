@@ -2,13 +2,10 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 -- | The 'BackingStore' is the component of the LedgerDB V1 implementation that
 -- stores a key-value map with the 'LedgerTable's at a specific slot on the
@@ -263,7 +260,7 @@ data RangeQuery keys = RangeQuery
   -- the changelog, which is extremely unlikely due to the random access
   -- pattern of the UTxO set.
   }
-  deriving stock (Show, Eq)
+  deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Statistics
@@ -284,7 +281,7 @@ data Statistics = Statistics
   , numEntries :: !Int
   -- ^ The total number of key-value pair entries that are stored.
   }
-  deriving stock (Show, Eq)
+  deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Tracing
