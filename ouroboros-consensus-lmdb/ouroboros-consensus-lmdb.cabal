@@ -1,8 +1,8 @@
 cabal-version: 3.0
-name: ouroboros-consensus-lsm
+name: ouroboros-consensus-lmdb
 version: 0.1.0.0
-synopsis: LSM LedgerDB V2 backend for ouroboros-consensus
-description: LSM LedgerDB V2 backend for ouroboros-consensus.
+synopsis: LMDB LedgerDB V1 backend for ouroboros-consensus
+description: LMDB LedgerDB V1 backend for ouroboros-consensus.
 license: Apache-2.0
 license-files:
   LICENSE
@@ -66,28 +66,28 @@ library
   import: common-lib
   hs-source-dirs: src
   exposed-modules:
-    Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
 
   build-depends:
     base >=4.14 && <4.22,
-    blockio,
-    random,
-    filepath,
-    cardano-binary,
+    bytestring >=0.10 && <0.13,
+    cardano-lmdb >=0.4,
+    cardano-lmdb-simple ^>=0.8,
+    cardano-slotting,
     containers >=0.5 && <0.8,
     contra-tracer,
     fs-api ^>=0.4,
-    ouroboros-consensus,
-    lsm-tree,
+    io-classes ^>=1.8.0.1,
     mempack,
-    mtl,
+    sop-core,
     nothunks ^>=0.2,
-    primitive,
-    resource-registry ^>=0.1,
+    ouroboros-consensus,
+    rawlock ^>=0.1.1,
     serialise ^>=0.2,
-    text,
-    transformers,
-    vector ^>=0.13,
+    mtl,
     streaming,
+    text,
 
   build-depends: text >=1.2.5.0 && <2.2

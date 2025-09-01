@@ -249,9 +249,6 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
     Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
     Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
     Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
@@ -314,8 +311,6 @@ library
     cardano-binary,
     cardano-crypto-class,
     cardano-ledger-core ^>=1.18,
-    cardano-lmdb >=0.4,
-    cardano-lmdb-simple ^>=0.8,
     cardano-prelude,
     cardano-slotting,
     cardano-strict-containers,

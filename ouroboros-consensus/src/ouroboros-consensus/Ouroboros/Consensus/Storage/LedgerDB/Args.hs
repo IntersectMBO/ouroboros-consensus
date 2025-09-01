@@ -19,7 +19,6 @@
 module Ouroboros.Consensus.Storage.LedgerDB.Args
   ( LedgerDbArgs (..)
   , LedgerDbBackendArgs (..)
-  , LedgerDbFlavorArgs (..)
   , QueryBatchSize (..)
   , defaultArgs
   , defaultQueryBatchSize
@@ -27,7 +26,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Args
 
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Functor.Identity
 import Data.Kind
 import Data.Word
 import GHC.Generics (Generic)
@@ -45,14 +43,6 @@ import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 
-data LedgerDbBackendArgs m
-  = V1LMDB (Complete V1.LedgerDbFlavorArgs m)
-  | V2InMemory
-  | V2LSM
-      -- | The filepath **relative to the fast storage device** in which we will
-      -- open/create the LSM-tree database.
-      FilePath
-
 {-------------------------------------------------------------------------------
   Arguments
 -------------------------------------------------------------------------------}
@@ -69,7 +59,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   , lgrHasFS :: HKD f (SomeHasFS m)
   , lgrConfig :: LedgerDbCfgF f (ExtLedgerState blk)
   , lgrTracer :: Tracer m (TraceEvent blk)
-  , lgrFlavorArgs :: LedgerDbFlavorArgs m blk
+  , lgrBackendArgs :: LedgerDbBackendArgs m blk
   , lgrRegistry :: HKD f (ResourceRegistry m)
   , lgrQueryBatchSize :: QueryBatchSize
   , lgrStartSnapshot :: Maybe DiskSnapshot
@@ -96,14 +86,14 @@ defaultArgs =
     , lgrTracer = nullTracer
     , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
       -- will be the default for end-users.
-      lgrFlavorArgs = LedgerDbFlavorArgsV2 $ V2.SomeBackendArgs InMemArgs
+      lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
     , lgrRegistry = NoDefault
     , lgrStartSnapshot = Nothing
     }
 
-data LedgerDbFlavorArgs m blk
-  = LedgerDbFlavorArgsV1 (V1.LedgerDbFlavorArgs Identity m)
-  | LedgerDbFlavorArgsV2 (V2.SomeBackendArgs m blk)
+data LedgerDbBackendArgs m blk
+  = LedgerDbBackendArgsV1 (V1.LedgerDbBackendArgs m (ExtLedgerState blk))
+  | LedgerDbBackendArgsV2 (V2.SomeBackendArgs m blk)
 
 {-------------------------------------------------------------------------------
   QueryBatchSize

@@ -68,33 +68,34 @@ openDB
   args
   stream
   replayGoal
-  getBlock = case lgrFlavorArgs args of
-    LedgerDbFlavorArgsV1 bss ->
-      let snapManager = V1.snapshotManager args
-          initDb =
-            V1.mkInitDb
-              args
-              bss
-              getBlock
-              snapManager
-       in doOpenDB args initDb snapManager stream replayGoal
-    LedgerDbFlavorArgsV2 (SomeBackendArgs bArgs) -> do
-      res <-
-        mkResources
-          (Proxy @blk)
-          (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
-          bArgs
-          (lgrRegistry args)
-          (lgrHasFS args)
-      let snapManager =
-            snapshotManager
-              (Proxy @blk)
-              res
-              (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
-              (LedgerDBSnapshotEvent >$< lgrTracer args)
-              (lgrHasFS args)
-      let initDb = V2.mkInitDb args getBlock snapManager res
-      doOpenDB args initDb snapManager stream replayGoal
+  getBlock =
+    case lgrBackendArgs args of
+      LedgerDbBackendArgsV1 bss ->
+        let snapManager = V1.snapshotManager args
+            initDb =
+              V1.mkInitDb
+                args
+                bss
+                getBlock
+                snapManager
+         in doOpenDB args initDb snapManager stream replayGoal
+      LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
+        res <-
+          mkResources
+            (Proxy @blk)
+            (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
+            bArgs
+            (lgrRegistry args)
+            (lgrHasFS args)
+        let snapManager =
+              snapshotManager
+                (Proxy @blk)
+                res
+                (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
+                (LedgerDBSnapshotEvent >$< lgrTracer args)
+                (lgrHasFS args)
+        let initDb = V2.mkInitDb args getBlock snapManager res
+        doOpenDB args initDb snapManager stream replayGoal
 
 {-------------------------------------------------------------------------------
   Opening a LedgerDB

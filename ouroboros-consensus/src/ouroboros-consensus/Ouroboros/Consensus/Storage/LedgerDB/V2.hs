@@ -72,7 +72,7 @@ mkInitDb ::
   ( LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
-  , LedgerDBBackend m backend blk
+  , Backend m backend blk
   , IOLike m
   ) =>
   Complete LedgerDbArgs m blk ->
@@ -133,7 +133,7 @@ mkInitDb args getBlock snapManager res = do
     , lgrRegistry
     } = args
 
-  v2Tracer :: Tracer m FlavorImplSpecificTrace
+  v2Tracer :: Tracer m LedgerDBV2Trace
   v2Tracer =
     LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer
 

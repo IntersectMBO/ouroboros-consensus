@@ -17,7 +17,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
-  ( LedgerDBBackend (..)
+  ( Backend (..)
   , Args (InMemArgs)
   ) where
 
@@ -96,7 +96,7 @@ newInMemoryLedgerTablesHandle ::
   , CanUpgradeLedgerTables l
   , SerializeTablesWithHint l
   ) =>
-  Tracer m FlavorImplSpecificTrace ->
+  Tracer m LedgerDBV2Trace ->
   SomeHasFS m ->
   LedgerTables l ValuesMK ->
   m (LedgerTablesHandle m l)
@@ -235,7 +235,7 @@ loadSnapshot ::
   , IOLike m
   , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
   ) =>
-  Tracer m FlavorImplSpecificTrace ->
+  Tracer m LedgerDBV2Trace ->
   ResourceRegistry m ->
   CodecConfig blk ->
   SomeHasFS m ->
@@ -280,7 +280,7 @@ instance
   , LedgerSupportsProtocol blk
   , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
   ) =>
-  LedgerDBBackend m Mem blk
+  Backend m Mem blk
   where
   data Args m Mem = InMemArgs
   newtype Resources m Mem = Resources (SomeHasFS m)
@@ -297,20 +297,21 @@ instance
   snapshotManager _ _ =
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory.snapshotManager
 
-  data YieldArgs m Mem blk
+instance IOLike m => StreamingBackend m Mem l where
+  data YieldArgs m Mem l
     = -- \| Yield an in-memory snapshot
       YieldInMemory
         -- \| How to make a SomeHasFS for @m@
         (MountPoint -> SomeHasFS m)
         -- \| The file path at which the HasFS has to be opened
         FilePath
-        (Decoders (ExtLedgerState blk))
+        (Decoders l)
 
-  data SinkArgs m Mem blk
+  data SinkArgs m Mem l
     = SinkInMemory
         Int
-        (TxIn (ExtLedgerState blk) -> Encoding)
-        (TxOut (ExtLedgerState blk) -> Encoding)
+        (TxIn l -> Encoding)
+        (TxOut l -> Encoding)
         (SomeHasFS m)
         FilePath
 
@@ -386,22 +387,22 @@ yieldInMemoryS ::
   (MonadThrow m, MonadST m) =>
   (MountPoint -> SomeHasFS m) ->
   FilePath ->
-  (forall s. Decoder s (TxIn (ExtLedgerState blk))) ->
-  (forall s. Decoder s (TxOut (ExtLedgerState blk))) ->
-  Yield m blk
+  (forall s. Decoder s (TxIn l)) ->
+  (forall s. Decoder s (TxOut l)) ->
+  Yield m l
 yieldInMemoryS mkFs (F.splitFileName -> (fp, fn)) decK decV _ k =
   streamingFile (mkFs $ MountPoint fp) (mkFsPath [fn]) $ \s -> do
     k $ yieldCborMapS decK decV s
 
 sinkInMemoryS ::
-  forall m blk.
+  forall m l.
   MonadThrow m =>
   Int ->
-  (TxIn (ExtLedgerState blk) -> Encoding) ->
-  (TxOut (ExtLedgerState blk) -> Encoding) ->
+  (TxIn l -> Encoding) ->
+  (TxOut l -> Encoding) ->
   SomeHasFS m ->
   FilePath ->
-  Sink m blk
+  Sink m l
 sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) fp _ s =
   ExceptT $ withFile fs (mkFsPath [fp]) (WriteMode MustBeNew) $ \hdl -> do
     let bs = toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)

@@ -8,22 +8,16 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
-  ( LedgerDBBackend (..)
+  ( Backend (..)
   , SomeBackendTrace (..)
   , SomeBackendArgs (..)
   , SomeResources (..)
-  , FlavorImplSpecificTrace (..)
-  , Yield
-  , Sink
-  , Decoders (..)
+  , LedgerDBV2Trace (..)
   ) where
 
-import Codec.CBOR.Decoding
-import Codec.CBOR.Read
 import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.ByteString (ByteString)
 import Data.Proxy
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -31,25 +25,23 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Streaming
 import System.FS.API
-import System.FS.CRC
 
 data SomeBackendTrace where
   SomeBackendTrace :: Trace m backend -> SomeBackendTrace
 
 data SomeBackendArgs m blk where
-  SomeBackendArgs :: LedgerDBBackend m backend blk => Args m backend -> SomeBackendArgs m blk
+  SomeBackendArgs :: Backend m backend blk => Args m backend -> SomeBackendArgs m blk
 
 data SomeResources m blk where
-  SomeResources :: LedgerDBBackend m backend blk => Resources m backend -> SomeResources m blk
+  SomeResources :: Backend m backend blk => Resources m backend -> SomeResources m blk
 
 instance NoThunks (SomeResources m blk) where
   wNoThunks ctxt (SomeResources res) = wNoThunks ctxt res
   noThunks ctxt (SomeResources res) = noThunks ctxt res
   showTypeOf _ = "SomeResources"
 
-class NoThunks (Resources m backend) => LedgerDBBackend m backend blk where
+class NoThunks (Resources m backend) => Backend m backend blk where
   data Args m backend
 
   data Resources m backend
@@ -58,7 +50,7 @@ class NoThunks (Resources m backend) => LedgerDBBackend m backend blk where
 
   mkResources ::
     Proxy blk ->
-    Tracer m FlavorImplSpecificTrace ->
+    Tracer m LedgerDBV2Trace ->
     Args m backend ->
     ResourceRegistry m ->
     SomeHasFS m ->
@@ -67,14 +59,14 @@ class NoThunks (Resources m backend) => LedgerDBBackend m backend blk where
   releaseResources :: Proxy blk -> Resources m backend -> m ()
 
   newHandleFromValues ::
-    Tracer m FlavorImplSpecificTrace ->
+    Tracer m LedgerDBV2Trace ->
     ResourceRegistry m ->
     Resources m backend ->
     ExtLedgerState blk ValuesMK ->
     m (LedgerTablesHandle m (ExtLedgerState blk))
 
   newHandleFromSnapshot ::
-    Tracer m FlavorImplSpecificTrace ->
+    Tracer m LedgerDBV2Trace ->
     ResourceRegistry m ->
     CodecConfig blk ->
     SomeHasFS m ->
@@ -90,39 +82,7 @@ class NoThunks (Resources m backend) => LedgerDBBackend m backend blk where
     SomeHasFS m ->
     SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
 
-  data YieldArgs m backend blk
-
-  data SinkArgs m backend blk
-
-  yield :: Proxy backend -> YieldArgs m backend blk -> Yield m blk
-
-  sink :: Proxy backend -> SinkArgs m backend blk -> Sink m blk
-
-type Yield m blk =
-  ExtLedgerState blk EmptyMK ->
-  ( ( Stream
-        (Of (TxIn (ExtLedgerState blk), TxOut (ExtLedgerState blk)))
-        (ExceptT DeserialiseFailure m)
-        (Stream (Of ByteString) m (Maybe CRC)) ->
-      ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
-    )
-  ) ->
-  ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
-
-type Sink m blk =
-  ExtLedgerState blk EmptyMK ->
-  Stream
-    (Of (TxIn (ExtLedgerState blk), TxOut (ExtLedgerState blk)))
-    (ExceptT DeserialiseFailure m)
-    (Stream (Of ByteString) m (Maybe CRC)) ->
-  ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
-
-data Decoders l
-  = Decoders
-      (forall s. Decoder s (TxIn l))
-      (forall s. Decoder s (TxOut l))
-
-data FlavorImplSpecificTrace
+data LedgerDBV2Trace
   = -- | Created a new 'LedgerTablesHandle', potentially by duplicating an
     -- existing one.
     TraceLedgerTablesHandleCreate
@@ -130,4 +90,4 @@ data FlavorImplSpecificTrace
     TraceLedgerTablesHandleClose
   | BackendTrace SomeBackendTrace
 
-deriving instance Show SomeBackendTrace => Show FlavorImplSpecificTrace
+deriving instance Show SomeBackendTrace => Show LedgerDBV2Trace

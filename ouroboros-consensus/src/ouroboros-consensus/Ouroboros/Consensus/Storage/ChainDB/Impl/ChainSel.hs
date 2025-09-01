@@ -1100,7 +1100,7 @@ chainSelection chainSelEnv rr chainDiffs =
         -- Just in case, explicitly yield to ensure that a capability (by
         -- default, the node uses just two) has the opportunity to switch
         -- to a ChainSync server thread.
-        yield
+        Ouroboros.Consensus.Util.IOLike.yield
       pure pipeliningResult
 
     -- \| Clear a tentative header that turned out to be invalid. Also, roll

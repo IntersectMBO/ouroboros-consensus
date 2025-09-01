@@ -39,7 +39,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   ( TraceEvent (..)
   )
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB (LedgerDbFlavorArgs)
+import Ouroboros.Consensus.Storage.LedgerDB (LedgerDbBackendArgs)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -174,7 +174,7 @@ completeChainDbArgs ::
   (RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile  FS, see 'NodeDatabasePaths'
   (RelativeMountPoint -> SomeHasFS m) ->
-  LedgerDbFlavorArgs m blk ->
+  LedgerDbBackendArgs m blk ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
   Complete ChainDbArgs m blk
@@ -211,7 +211,7 @@ completeChainDbArgs
                 LedgerDB.configLedgerDb
                   cdbsTopLevelConfig
                   (LedgerDB.ledgerDbCfgComputeLedgerEvents $ LedgerDB.lgrConfig (cdbLgrDbArgs defArgs))
-            , LedgerDB.lgrFlavorArgs = flavorArgs
+            , LedgerDB.lgrBackendArgs = flavorArgs
             , LedgerDB.lgrRegistry = registry
             }
       , cdbsArgs =

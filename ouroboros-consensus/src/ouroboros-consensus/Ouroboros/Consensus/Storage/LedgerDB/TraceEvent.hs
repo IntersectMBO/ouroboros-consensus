@@ -25,10 +25,11 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 -------------------------------------------------------------------------------}
 
 data FlavorImplSpecificTrace
-  = FlavorImplSpecificTraceV1 V1.FlavorImplSpecificTrace
-  | FlavorImplSpecificTraceV2 V2.FlavorImplSpecificTrace
+  = FlavorImplSpecificTraceV1 V1.SomeBackendTrace
+  | FlavorImplSpecificTraceV2 V2.LedgerDBV2Trace
 
-deriving instance Show V2.SomeBackendTrace => Show FlavorImplSpecificTrace
+deriving instance
+  (Show V1.SomeBackendTrace, Show V2.SomeBackendTrace) => Show FlavorImplSpecificTrace
 
 data TraceEvent blk
   = LedgerDBSnapshotEvent !(TraceSnapshotEvent blk)
@@ -38,5 +39,9 @@ data TraceEvent blk
   deriving Generic
 
 deriving instance
-  (StandardHash blk, InspectLedger blk, Show V2.SomeBackendTrace) =>
+  ( StandardHash blk
+  , InspectLedger blk
+  , Show V1.SomeBackendTrace
+  , Show V2.SomeBackendTrace
+  ) =>
   Show (TraceEvent blk)

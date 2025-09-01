@@ -154,22 +154,32 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
     -- * Snapshots
   , SnapCounters (..)
 
+    -- * Streaming
+  , StreamingBackend (..)
+  , Yield
+  , Sink
+  , Decoders (..)
+
     -- * Testing
   , TestInternals (..)
   , TestInternals'
   , WhereToTakeSnapshot (..)
   ) where
 
+import Codec.CBOR.Decoding
+import Codec.CBOR.Read
 import Codec.Serialise
 import qualified Control.Monad as Monad
 import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind
 import qualified Data.Map.Strict as Map
 import Data.MemPack
+import Data.Proxy
 import Data.Set (Set)
 import Data.Void (absurd)
 import Data.Word
@@ -195,6 +205,8 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
+import Streaming
+import System.FS.CRC
 
 {-------------------------------------------------------------------------------
   Main API
@@ -797,3 +809,40 @@ data LedgerDbPrune
     -- slot.
     LedgerDbPruneBeforeSlot SlotNo
   deriving Show
+
+{-------------------------------------------------------------------------------
+  Streaming
+-------------------------------------------------------------------------------}
+
+class StreamingBackend m backend l where
+  data YieldArgs m backend l
+
+  data SinkArgs m backend l
+
+  yield :: Proxy backend -> YieldArgs m backend l -> Yield m l
+
+  sink :: Proxy backend -> SinkArgs m backend l -> Sink m l
+
+type Yield m l =
+  l EmptyMK ->
+  ( ( Stream
+        (Of (TxIn l, TxOut l))
+        (ExceptT DeserialiseFailure m)
+        (Stream (Of ByteString) m (Maybe CRC)) ->
+      ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+    )
+  ) ->
+  ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
+
+type Sink m l =
+  l EmptyMK ->
+  Stream
+    (Of (TxIn l, TxOut l))
+    (ExceptT DeserialiseFailure m)
+    (Stream (Of ByteString) m (Maybe CRC)) ->
+  ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+
+data Decoders l
+  = Decoders
+      (forall s. Decoder s (TxIn l))
+      (forall s. Decoder s (TxOut l))

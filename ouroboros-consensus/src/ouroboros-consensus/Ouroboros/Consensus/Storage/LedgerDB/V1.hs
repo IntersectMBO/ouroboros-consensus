@@ -84,7 +84,7 @@ mkInitDb ::
   , LedgerSupportsLedgerDB blk
   ) =>
   Complete LedgerDbArgs m blk ->
-  Complete V1.LedgerDbFlavorArgs m ->
+  V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->
   ResolveBlock m blk ->
   SnapshotManagerV1 m blk ->
   InitDB (DbChangelog' blk, ResourceKey m, BackingStore' m blk) m blk

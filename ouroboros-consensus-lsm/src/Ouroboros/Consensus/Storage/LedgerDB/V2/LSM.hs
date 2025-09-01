@@ -23,11 +23,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( -- * LedgerTablesHandle
     newLSMLedgerTablesHandle
-  , tableFromValuesMK
   , UTxOTable
-
-    -- * Snapshots
-  , loadSnapshot
 
     -- * Re-exports
   , LSM.Entry (..)
@@ -37,6 +33,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   , LSM.openSession
   , LSM.closeSession
   , stdMkBlockIOFS
+  , mkLSMArgs
 
     -- * snapshot-converter
   , implTakeSnapshot
@@ -105,6 +102,8 @@ import qualified Streaming.Prelude as S
 import System.FS.API
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
+import System.FilePath (splitDirectories)
+import System.Random
 import Prelude hiding (read)
 
 -- | Type alias for convenience
@@ -211,7 +210,7 @@ instance LSM.SerialiseKey TxInBytes where
 tableFromValuesMK ::
   forall m l.
   (IOLike m, IndexedMemPack (l EmptyMK) (TxOut l), MemPack (TxIn l)) =>
-  Tracer m FlavorImplSpecificTrace ->
+  Tracer m LedgerDBV2Trace ->
   ResourceRegistry m ->
   Session m ->
   l EmptyMK ->
@@ -257,7 +256,7 @@ newLSMLedgerTablesHandle ::
   , HasLedgerTables l
   , IndexedMemPack (l EmptyMK) (TxOut l)
   ) =>
-  Tracer m FlavorImplSpecificTrace ->
+  Tracer m LedgerDBV2Trace ->
   ResourceRegistry m ->
   (ResourceKey m, UTxOTable m) ->
   m (LedgerTablesHandle m l)
@@ -431,7 +430,7 @@ loadSnapshot ::
   , LedgerSupportsProtocol blk
   , IOLike m
   ) =>
-  Tracer m FlavorImplSpecificTrace ->
+  Tracer m LedgerDBV2Trace ->
   ResourceRegistry m ->
   CodecConfig blk ->
   SomeHasFS m ->
@@ -483,10 +482,15 @@ stdMkBlockIOFS fastStoragePath rr = do
   pure (rk1, uncurry SomeHasFSAndBlockIO bio)
 
 {-------------------------------------------------------------------------------
-  InitDB
+  Backend
 -------------------------------------------------------------------------------}
 
 data LSM
+
+mkLSMArgs :: FilePath -> StdGen -> FilePath -> (Args IO LSM, StdGen)
+mkLSMArgs fp gen fastStorage =
+  let (lsmSalt, gen') = genWord64 gen
+   in (LSMArgs (mkFsPath $ splitDirectories fp) lsmSalt (stdMkBlockIOFS fastStorage), gen')
 
 instance
   ( LedgerSupportsProtocol blk
@@ -494,7 +498,7 @@ instance
   , LedgerDbSerialiseConstraints blk
   , HasLedgerTables (LedgerState blk)
   ) =>
-  LedgerDBBackend m LSM blk
+  Backend m LSM blk
   where
   data Args m LSM
     = LSMArgs
@@ -545,13 +549,20 @@ instance
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 
-  data YieldArgs m LSM blk
+instance
+  ( MemPack (TxIn l)
+  , IndexedMemPack (l EmptyMK) (TxOut l)
+  , IOLike m
+  ) =>
+  StreamingBackend m LSM l
+  where
+  data YieldArgs m LSM l
     = -- \| Yield an LSM snapshot
       YieldLSM
         Int
-        (LedgerTablesHandle m (ExtLedgerState blk))
+        (LedgerTablesHandle m l)
 
-  data SinkArgs m LSM blk
+  data SinkArgs m LSM l
     = SinkLSM
         -- \| Chunk size
         Int
@@ -577,8 +588,8 @@ instance IOLike m => NoThunks (Resources m LSM) where
 yieldLsmS ::
   Monad m =>
   Int ->
-  LedgerTablesHandle m (ExtLedgerState blk) ->
-  Yield m blk
+  LedgerTablesHandle m l ->
+  Yield m l
 yieldLsmS readChunkSize tb hint k = do
   r <- k (go (Nothing, readChunkSize))
   lift $ S.effects r
@@ -592,20 +603,20 @@ yieldLsmS readChunkSize tb hint k = do
         go (mx, readChunkSize)
 
 sinkLsmS ::
-  forall m blk.
+  forall m l.
   ( MonadAsync m
   , MonadMVar m
   , MonadThrow (STM m)
   , MonadMask m
   , MonadST m
   , MonadEvaluate m
-  , MemPack (TxIn (ExtLedgerState blk))
-  , IndexedMemPack (ExtLedgerState blk EmptyMK) (TxOut (ExtLedgerState blk))
+  , MemPack (TxIn l)
+  , IndexedMemPack (l EmptyMK) (TxOut l)
   ) =>
   Int ->
   String ->
   Session m ->
-  Sink m blk
+  Sink m l
 sinkLsmS writeChunkSize snapName session st s = do
   tb :: UTxOTable m <- lift $ LSM.newTable session
   r <- go tb writeChunkSize mempty s
@@ -620,7 +631,7 @@ sinkLsmS writeChunkSize snapName session st s = do
   go tb 0 m s' = do
     lift $
       LSM.inserts tb $
-        V.fromList [(toTxInBytes (Proxy @(ExtLedgerState blk)) k, toTxOutBytes st v, Nothing) | (k, v) <- m]
+        V.fromList [(toTxInBytes (Proxy @l) k, toTxOutBytes st v, Nothing) | (k, v) <- m]
     go tb writeChunkSize mempty s'
   go tb n m s' = do
     mbs <- S.uncons s'
@@ -629,6 +640,6 @@ sinkLsmS writeChunkSize snapName session st s = do
         lift $
           LSM.inserts tb $
             V.fromList
-              [(toTxInBytes (Proxy @(ExtLedgerState blk)) k, toTxOutBytes st v, Nothing) | (k, v) <- m]
+              [(toTxInBytes (Proxy @l) k, toTxOutBytes st v, Nothing) | (k, v) <- m]
         S.effects s'
       Just (item, s'') -> go tb (n - 1) (item : m) s''
