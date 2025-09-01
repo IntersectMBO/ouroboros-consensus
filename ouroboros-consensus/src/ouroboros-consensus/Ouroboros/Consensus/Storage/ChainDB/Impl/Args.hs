@@ -29,6 +29,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( GetLoEFragment
@@ -131,7 +132,11 @@ defaultSpecificArgs =
 -- and must therefore be set explicitly.
 defaultArgs ::
   forall m blk.
-  Monad m =>
+  ( IOLike m
+  , LedgerDB.LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  , LedgerDB.LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  ) =>
   Incomplete ChainDbArgs m blk
 defaultArgs =
   ChainDbArgs
@@ -169,7 +174,7 @@ completeChainDbArgs ::
   (RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile  FS, see 'NodeDatabasePaths'
   (RelativeMountPoint -> SomeHasFS m) ->
-  Complete LedgerDbFlavorArgs m ->
+  LedgerDbFlavorArgs m blk ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
   Complete ChainDbArgs m blk

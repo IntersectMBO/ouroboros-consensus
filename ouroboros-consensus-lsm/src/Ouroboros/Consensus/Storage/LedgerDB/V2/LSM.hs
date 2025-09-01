@@ -2,10 +2,13 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -25,8 +28,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
     -- * Snapshots
   , loadSnapshot
-  , snapshotToStatePath
-  , snapshotManager
 
     -- * Re-exports
   , LSM.Entry (..)
@@ -69,35 +70,38 @@ import Data.MemPack.Buffer
 import Data.MemPack.Error
 import qualified Data.Primitive.ByteArray as PBA
 import qualified Data.Set as Set
+import Data.String (fromString)
+import qualified Data.Text as T
 import qualified Data.Text as Text
+import Data.Typeable
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Primitive as VP
 import Data.Void
-import Database.LSMTree (Session, Table)
+import Database.LSMTree (Salt, Session, Table)
 import qualified Database.LSMTree as LSM
 import GHC.Exts
+import GHC.Generics
 import GHC.Stack
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
-import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (chunks)
-import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
+import qualified Streaming as S
+import qualified Streaming.Prelude as S
 import System.FS.API
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
@@ -207,7 +211,7 @@ instance LSM.SerialiseKey TxInBytes where
 tableFromValuesMK ::
   forall m l.
   (IOLike m, IndexedMemPack (l EmptyMK) (TxOut l), MemPack (TxIn l)) =>
-  Tracer m V2.FlavorImplSpecificTrace ->
+  Tracer m FlavorImplSpecificTrace ->
   ResourceRegistry m ->
   Session m ->
   l EmptyMK ->
@@ -219,7 +223,7 @@ tableFromValuesMK tracer rr session st (LedgerTables (ValuesMK values)) = do
       rr
       (\_ -> LSM.newTable session)
       ( \tb -> do
-          traceWith tracer V2.TraceLedgerTablesHandleClose
+          traceWith tracer TraceLedgerTablesHandleClose
           LSM.closeTable tb
       )
   mapM_ (go table) $ chunks 1000 $ Map.toList values
@@ -236,26 +240,11 @@ snapshotManager ::
   , LedgerSupportsProtocol blk
   ) =>
   Session m ->
-  Complete LedgerDbArgs m blk ->
-  SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManager session args =
-  snapshotManager'
-    session
-    (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
-    (LedgerDBSnapshotEvent >$< lgrTracer args)
-    (lgrHasFS args)
-
-snapshotManager' ::
-  ( IOLike m
-  , LedgerDbSerialiseConstraints blk
-  , LedgerSupportsProtocol blk
-  ) =>
-  Session m ->
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManager' session ccfg tracer fs =
+snapshotManager session ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = implDeleteSnapshot session fs tracer
@@ -268,12 +257,12 @@ newLSMLedgerTablesHandle ::
   , HasLedgerTables l
   , IndexedMemPack (l EmptyMK) (TxOut l)
   ) =>
-  Tracer m V2.FlavorImplSpecificTrace ->
+  Tracer m FlavorImplSpecificTrace ->
   ResourceRegistry m ->
   (ResourceKey m, UTxOTable m) ->
   m (LedgerTablesHandle m l)
 newLSMLedgerTablesHandle tracer rr (resKey, t) = do
-  traceWith tracer V2.TraceLedgerTablesHandleCreate
+  traceWith tracer TraceLedgerTablesHandleCreate
   pure
     LedgerTablesHandle
       { close = do
@@ -284,7 +273,7 @@ newLSMLedgerTablesHandle tracer rr (resKey, t) = do
               rr
               (\_ -> LSM.duplicate t)
               ( \t' -> do
-                  traceWith tracer V2.TraceLedgerTablesHandleClose
+                  traceWith tracer TraceLedgerTablesHandleClose
                   LSM.closeTable t'
               )
           newLSMLedgerTablesHandle tracer rr table
@@ -372,11 +361,6 @@ implPushDiffs t !st1 = do
   f (Diff.Insert v) = LSM.Insert (toTxOutBytes (forgetLedgerTables st1) v) Nothing
   f Diff.Delete = LSM.Delete
 
--- | The path within the LedgerDB's filesystem to the file that contains the
--- snapshot's serialized ledger state
-snapshotToStatePath :: DiskSnapshot -> FsPath
-snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
-
 implTakeSnapshot ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
@@ -447,7 +431,7 @@ loadSnapshot ::
   , LedgerSupportsProtocol blk
   , IOLike m
   ) =>
-  Tracer m V2.FlavorImplSpecificTrace ->
+  Tracer m FlavorImplSpecificTrace ->
   ResourceRegistry m ->
   CodecConfig blk ->
   SomeHasFS m ->
@@ -480,7 +464,7 @@ loadSnapshot tracer rr ccfg fs session ds = do
                   (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
             )
             ( \t -> do
-                traceWith tracer V2.TraceLedgerTablesHandleClose
+                traceWith tracer TraceLedgerTablesHandleClose
                 LSM.closeTable t
             )
       Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
@@ -489,11 +473,162 @@ loadSnapshot tracer rr ccfg fs session ds = do
       (,pt) <$> lift (empty extLedgerSt values (newLSMLedgerTablesHandle tracer rr))
 
 stdMkBlockIOFS ::
-  FilePath -> ResourceRegistry IO -> IO (ResourceKey IO, V2.SomeHasFSAndBlockIO IO)
+  FilePath -> ResourceRegistry IO -> IO (ResourceKey IO, SomeHasFSAndBlockIO IO)
 stdMkBlockIOFS fastStoragePath rr = do
   (rk1, bio) <-
     allocate
       rr
       (\_ -> ioHasBlockIO (MountPoint fastStoragePath) defaultIOCtxParams)
       (BIO.close . snd)
-  pure (rk1, uncurry V2.SomeHasFSAndBlockIO bio)
+  pure (rk1, uncurry SomeHasFSAndBlockIO bio)
+
+{-------------------------------------------------------------------------------
+  InitDB
+-------------------------------------------------------------------------------}
+
+data LSM
+
+instance
+  ( LedgerSupportsProtocol blk
+  , IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , HasLedgerTables (LedgerState blk)
+  ) =>
+  LedgerDBBackend m LSM blk
+  where
+  data Args m LSM
+    = LSMArgs
+        FsPath
+        -- \^ The file path relative to the fast storage directory in which the LSM
+        -- trees database will be located.
+        Salt
+        (ResourceRegistry m -> m (ResourceKey m, SomeHasFSAndBlockIO m))
+
+  data Resources m LSM = LSMResources
+    { sessionKey :: !(ResourceKey m)
+    , sessionResource :: !(Session m)
+    , blockIOKey :: !(ResourceKey m)
+    }
+    deriving Generic
+
+  data Trace m LSM
+    = LSMTreeTrace !LSM.LSMTreeTrace
+    deriving Show
+
+  mkResources _ trcr (LSMArgs path salt mkFS) reg _ = do
+    (rk1, SomeHasFSAndBlockIO fs blockio) <- mkFS reg
+    session <-
+      allocate
+        reg
+        ( \_ ->
+            LSM.openSession
+              (BackendTrace . SomeBackendTrace . LSMTreeTrace >$< trcr)
+              fs
+              blockio
+              salt
+              path
+        )
+        LSM.closeSession
+    pure (LSMResources (fst session) (snd session) rk1)
+
+  releaseResources _ l = do
+    Monad.void . release . sessionKey $ l
+    Monad.void . release . blockIOKey $ l
+
+  newHandleFromSnapshot trcr reg ccfg shfs res ds = do
+    loadSnapshot trcr reg ccfg shfs (sessionResource res) ds
+
+  newHandleFromValues trcr reg res st = do
+    table <-
+      tableFromValuesMK trcr reg (sessionResource res) (forgetLedgerTables st) (ltprj st)
+    newLSMLedgerTablesHandle trcr reg table
+
+  snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
+
+  data YieldArgs m LSM blk
+    = -- \| Yield an LSM snapshot
+      YieldLSM
+        Int
+        (LedgerTablesHandle m (ExtLedgerState blk))
+
+  data SinkArgs m LSM blk
+    = SinkLSM
+        -- \| Chunk size
+        Int
+        -- \| Snap name
+        String
+        (Session m)
+
+  yield _ (YieldLSM chunkSize hdl) = yieldLsmS chunkSize hdl
+
+  sink _ (SinkLSM chunkSize snapName session) = sinkLsmS chunkSize snapName session
+
+data SomeHasFSAndBlockIO m where
+  SomeHasFSAndBlockIO ::
+    (Eq h, Typeable h) => HasFS m h -> BIO.HasBlockIO m h -> SomeHasFSAndBlockIO m
+
+instance IOLike m => NoThunks (Resources m LSM) where
+  wNoThunks ctxt (LSMResources sk _ bk) = wNoThunks ctxt sk >> wNoThunks ctxt bk
+
+{-------------------------------------------------------------------------------
+  Streaming
+-------------------------------------------------------------------------------}
+
+yieldLsmS ::
+  Monad m =>
+  Int ->
+  LedgerTablesHandle m (ExtLedgerState blk) ->
+  Yield m blk
+yieldLsmS readChunkSize tb hint k = do
+  r <- k (go (Nothing, readChunkSize))
+  lift $ S.effects r
+ where
+  go p = do
+    (LedgerTables (ValuesMK values), mx) <- lift $ S.lift $ readRange tb hint p
+    if Map.null values
+      then pure $ pure Nothing
+      else do
+        S.each $ Map.toList values
+        go (mx, readChunkSize)
+
+sinkLsmS ::
+  forall m blk.
+  ( MonadAsync m
+  , MonadMVar m
+  , MonadThrow (STM m)
+  , MonadMask m
+  , MonadST m
+  , MonadEvaluate m
+  , MemPack (TxIn (ExtLedgerState blk))
+  , IndexedMemPack (ExtLedgerState blk EmptyMK) (TxOut (ExtLedgerState blk))
+  ) =>
+  Int ->
+  String ->
+  Session m ->
+  Sink m blk
+sinkLsmS writeChunkSize snapName session st s = do
+  tb :: UTxOTable m <- lift $ LSM.newTable session
+  r <- go tb writeChunkSize mempty s
+  lift $
+    LSM.saveSnapshot
+      (LSM.toSnapshotName snapName)
+      (LSM.SnapshotLabel $ T.pack "UTxO table")
+      tb
+  lift $ LSM.closeTable tb
+  pure (fmap (,Nothing) r)
+ where
+  go tb 0 m s' = do
+    lift $
+      LSM.inserts tb $
+        V.fromList [(toTxInBytes (Proxy @(ExtLedgerState blk)) k, toTxOutBytes st v, Nothing) | (k, v) <- m]
+    go tb writeChunkSize mempty s'
+  go tb n m s' = do
+    mbs <- S.uncons s'
+    case mbs of
+      Nothing -> do
+        lift $
+          LSM.inserts tb $
+            V.fromList
+              [(toTxInBytes (Proxy @(ExtLedgerState blk)) k, toTxOutBytes st v, Nothing) | (k, v) <- m]
+        S.effects s'
+      Just (item, s'') -> go tb (n - 1) (item : m) s''

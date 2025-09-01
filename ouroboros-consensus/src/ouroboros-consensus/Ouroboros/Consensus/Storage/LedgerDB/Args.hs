@@ -27,18 +27,22 @@ module Ouroboros.Consensus.Storage.LedgerDB.Args
 
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Functor.Identity
 import Data.Kind
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Util.Args
+import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 
 data LedgerDbBackendArgs m
@@ -65,7 +69,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   , lgrHasFS :: HKD f (SomeHasFS m)
   , lgrConfig :: LedgerDbCfgF f (ExtLedgerState blk)
   , lgrTracer :: Tracer m (TraceEvent blk)
-  , lgrFlavorArgs :: LedgerDbFlavorArgs f m
+  , lgrFlavorArgs :: LedgerDbFlavorArgs m blk
   , lgrRegistry :: HKD f (ResourceRegistry m)
   , lgrQueryBatchSize :: QueryBatchSize
   , lgrStartSnapshot :: Maybe DiskSnapshot
@@ -76,7 +80,11 @@ data LedgerDbArgs f m blk = LedgerDbArgs
 
 -- | Default arguments
 defaultArgs ::
-  Applicative m =>
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  ) =>
   Incomplete LedgerDbArgs m blk
 defaultArgs =
   LedgerDbArgs
@@ -88,14 +96,14 @@ defaultArgs =
     , lgrTracer = nullTracer
     , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
       -- will be the default for end-users.
-      lgrFlavorArgs = LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
+      lgrFlavorArgs = LedgerDbFlavorArgsV2 $ V2.SomeBackendArgs InMemArgs
     , lgrRegistry = NoDefault
     , lgrStartSnapshot = Nothing
     }
 
-data LedgerDbFlavorArgs f m
-  = LedgerDbFlavorArgsV1 (V1.LedgerDbFlavorArgs f m)
-  | LedgerDbFlavorArgsV2 (V2.LedgerDbFlavorArgs f m)
+data LedgerDbFlavorArgs m blk
+  = LedgerDbFlavorArgsV1 (V1.LedgerDbFlavorArgs Identity m)
+  | LedgerDbFlavorArgsV2 (V2.SomeBackendArgs m blk)
 
 {-------------------------------------------------------------------------------
   QueryBatchSize
