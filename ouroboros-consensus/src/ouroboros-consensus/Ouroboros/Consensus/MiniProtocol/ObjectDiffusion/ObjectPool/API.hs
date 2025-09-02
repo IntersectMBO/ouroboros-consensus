@@ -19,10 +19,6 @@ data ObjectPoolReader objectId object ticketNo m
   -- than the specified one. The number of returned objects is capped by the
   -- given Word64. Only the IDs and ticketNos of the objects are directly
   -- accessible; each actual object must be loaded through a monadic action.
-  --
-  -- TODO: This signature assume that we have all the IDs and ticketNos in
-  -- memory, but not the actual objects. This might change if IDs must be loaded
-  -- from disk too.
   }
 
 -- | Interface used by the inbound side of object diffusion when receiving
@@ -33,6 +29,6 @@ data ObjectPoolWriter objectId object m
   -- ^ Return the id of the specified object
   , opwAddObjects :: [object] -> m ()
   -- ^ Add a batch of objects to the objectPool.
-  , opwHasObject :: m (objectId -> Bool)
+  , opwHasObject :: STM m (objectId -> Bool)
   -- ^ Check if the object pool contains an object with the given id
   }
