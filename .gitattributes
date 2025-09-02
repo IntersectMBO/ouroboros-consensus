@@ -1,5 +1,5 @@
 # GitHub Linguist annotations.
 # https://github.com/github-linguist/linguist/blob/master/docs/overrides.md
 
-ouroboros-consensus-cardano/golden/**/* linguist-generated=true
+ouroboros-consensus-cardano/golden/**/* linguist-generated=true binary diff=cbor
 docs/website/yarn.lock linguist-generated=true
