@@ -69,7 +69,7 @@ protocolInfoMockPBFT params eraParams =
   BlockForging
 -------------------------------------------------------------------------------}
 --
-blockForgingMockPBFT :: Monad m => CoreNodeId -> [MkBlockForging m MockPBftBlock]
+blockForgingMockPBFT :: Monad m => CoreNodeId -> [BlockForging m MockPBftBlock]
 blockForgingMockPBFT nid = [pbftBlockForging canBeLeader]
  where
   canBeLeader :: PBftCanBeLeader PBftMockCrypto
@@ -95,30 +95,28 @@ pbftBlockForging ::
   , Monad m
   ) =>
   PBftCanBeLeader c' ->
-  MkBlockForging m (SimplePBftBlock c c')
+  BlockForging m (SimplePBftBlock c c')
 pbftBlockForging canBeLeader =
-  MkBlockForging
+  BlockForging
     { forgeLabel = "pbftBlockForging"
-    , blockForgingM = pure BlockForging
-        { canBeLeader
-        , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
-        , checkCanForge = \cfg slot tickedPBftState _isLeader ->
-            return $
-              pbftCheckCanForge
-                (configConsensus cfg)
-                canBeLeader
-                slot
-                tickedPBftState
-        , forgeBlock = \cfg slot bno lst txs proof ->
-            return $
-              forgeSimple
-                forgePBftExt
-                cfg
-                slot
-                bno
-                lst
-                (map txForgetValidated txs)
-                proof
-        , finalize = pure ()
-        }
+    , canBeLeader
+    , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
+    , checkCanForge = \cfg slot tickedPBftState _isLeader ->
+        return $
+          pbftCheckCanForge
+            (configConsensus cfg)
+            canBeLeader
+            slot
+            tickedPBftState
+    , forgeBlock = \cfg slot bno lst txs proof ->
+        return $
+          forgeSimple
+            forgePBftExt
+            cfg
+            slot
+            bno
+            lst
+            (map txForgetValidated txs)
+            proof
+    , finalize = pure ()
     }

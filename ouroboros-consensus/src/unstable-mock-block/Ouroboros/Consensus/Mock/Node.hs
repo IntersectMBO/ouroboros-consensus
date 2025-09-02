@@ -93,26 +93,24 @@ simpleBlockForging ::
   ) =>
   CanBeLeader (BlockProtocol (SimpleBlock c ext)) ->
   ForgeExt c ext ->
-  MkBlockForging m (SimpleBlock c ext)
+  BlockForging m (SimpleBlock c ext)
 simpleBlockForging aCanBeLeader aForgeExt =
-  MkBlockForging
+  BlockForging
     { forgeLabel = "simpleBlockForging"
-    , blockForgingM = pure BlockForging
-      { canBeLeader = aCanBeLeader
-      , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
-      , checkCanForge = \_ _ _ _ _ -> return ()
-      , forgeBlock = \cfg bno slot lst txs proof ->
-          return $
-            forgeSimple
-              aForgeExt
-              cfg
-              bno
-              slot
-              lst
-              (map txForgetValidated txs)
-              proof
-      , finalize = pure ()
-      }
+    , canBeLeader = aCanBeLeader
+    , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
+    , checkCanForge = \_ _ _ _ _ -> return ()
+    , forgeBlock = \cfg bno slot lst txs proof ->
+        return $
+          forgeSimple
+            aForgeExt
+            cfg
+            bno
+            slot
+            lst
+            (map txForgetValidated txs)
+            proof
+    , finalize = pure ()
     }
  where
   _ = keepRedundantConstraint (Proxy @(ForgeStateUpdateError (SimpleBlock c ext) ~ Void))

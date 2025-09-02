@@ -6,7 +6,7 @@ module Ouroboros.Consensus.Mock.Node.BFT
 
 import Cardano.Crypto.DSIGN
 import qualified Data.Map.Strict as Map
-import Ouroboros.Consensus.Block.Forging (MkBlockForging)
+import Ouroboros.Consensus.Block.Forging (BlockForging)
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
@@ -64,5 +64,5 @@ protocolInfoBft numCoreNodes nid securityParam eraParams =
   addrDist :: AddrDist
   addrDist = mkAddrDist numCoreNodes
 
-blockForgingBft :: Monad m => CoreNodeId -> [MkBlockForging m MockBftBlock]
+blockForgingBft :: Monad m => CoreNodeId -> [BlockForging m MockBftBlock]
 blockForgingBft nid = [simpleBlockForging nid forgeBftExt]

@@ -130,22 +130,20 @@ type instance ForgeStateUpdateError ByronBlock = Void
 byronBlockForging ::
   Monad m =>
   ByronLeaderCredentials ->
-  MkBlockForging m ByronBlock
+  BlockForging m ByronBlock
 byronBlockForging creds =
-  MkBlockForging
+  BlockForging
     { forgeLabel = blcLabel creds
-    , blockForgingM = pure BlockForging
-      { canBeLeader
-      , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
-      , checkCanForge = \cfg slot tickedPBftState _isLeader () ->
-          pbftCheckCanForge
-            (configConsensus cfg)
-            canBeLeader
-            slot
-            tickedPBftState
-      , forgeBlock = \cfg -> return ....: forgeByronBlock cfg
-      , finalize = pure ()
-      }
+    , canBeLeader
+    , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
+    , checkCanForge = \cfg slot tickedPBftState _isLeader () ->
+        pbftCheckCanForge
+          (configConsensus cfg)
+          canBeLeader
+          slot
+          tickedPBftState
+    , forgeBlock = \cfg -> return ....: forgeByronBlock cfg
+    , finalize = pure ()
     }
  where
   canBeLeader = mkPBftCanBeLeader creds
@@ -161,7 +159,7 @@ mkPBftCanBeLeader (ByronLeaderCredentials sk cert nid _) =
 blockForgingByron ::
   Monad m =>
   ProtocolParamsByron ->
-  [MkBlockForging m ByronBlock]
+  [BlockForging m ByronBlock]
 blockForgingByron
   ProtocolParamsByron
     { byronLeaderCredentials = mLeaderCreds
