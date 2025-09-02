@@ -259,6 +259,8 @@ data PerasVolatileCertState blk = PerasVolatileCertState
   -- ^ The boosted blocks by 'RoundNo' of all certificates currently in the db.
   , pvcsWeightByPoint :: !(PerasWeightSnapshot blk)
   -- ^ The weight of boosted blocks w.r.t. the certificates currently in the db.
+  --
+  -- INVARIANT: In sync with 'pvcsCerts'.
   , pvcsCertsByTicket :: !(Map PerasCertTicketNo (ValidatedPerasCert blk))
   -- ^ The certificates by 'PerasCertTicketNo'.
   --
