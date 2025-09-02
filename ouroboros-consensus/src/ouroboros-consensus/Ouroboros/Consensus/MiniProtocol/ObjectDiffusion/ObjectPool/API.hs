@@ -1,3 +1,28 @@
+-- | API for reading from and writing to object pools in the ObjectDiffusion
+-- miniprotocol.
+--
+-- The underlying object pool can be any database, such as a 'PerasCertDb' in
+-- Peras certificate diffusion.
+--
+-- 'ObjectPoolReader' is used on the outbound side of the protocol. Objects in
+-- the pool are ordered by a strictly increasing ticket number ('ticketNo'),
+-- which represents their time of arrival. Ticket numbers are local to each
+-- node, unlike object IDs, which are global. Object IDs are not used for
+-- ordering, since objects may arrive slightly out of order from peers.
+--
+-- To read from the pool, one requests objects with a ticket number strictly
+-- greater than the last known one. 'oprZeroTicketNo' provides an initial ticket
+-- number for the first request.
+--
+-- 'ObjectPoolWriter' is used on the inbound side of the protocol. It allows
+-- checking whether an object is already present (to avoid re-requesting it) and
+-- appending new objects. Ticket numbers are not part of the inbound interface,
+-- but are used internally: newly added objects always receive a ticket number
+-- strictly greater than those of older ones.
+--
+-- This API design is inspired by 'MempoolSnapshot' from the TX-submission
+-- miniprotocol, see:
+-- <https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/ouroboros-consensus/Ouroboros-Consensus-Mempool-API.html#t:MempoolSnapshot>
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   ( ObjectPoolReader (..)
   , ObjectPoolWriter (..)
