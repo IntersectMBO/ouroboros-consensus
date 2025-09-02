@@ -26,7 +26,6 @@ import Data.Maybe (fromMaybe)
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -49,8 +48,6 @@ data ForkerEnv m l blk = ForkerEnv
   -- ^ Local version of the LedgerSeq
   , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l))
   -- ^ This TVar is the same as the LedgerDB one
-  , foeSecurityParam :: !SecurityParam
-  -- ^ Config
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
   , foeResourcesToRelease :: !(RAWLock m (), ResourceKey m, StrictTVar m (m ()))
@@ -154,10 +151,7 @@ implForkerCommit env = do
           (olddb', toClose) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
           -- Join the prefix of the selection with the sequence in the forker
           newdb <- AS.join (const $ const True) olddb' lseq
-          -- Prune the resulting sequence to keep @k@ states
-          let (closePruned, s) = prune (LedgerDbPruneKeeping (foeSecurityParam env)) (LedgerSeq newdb)
-              closeDiscarded = do
-                closePruned
+          let closeDiscarded = do
                 -- Do /not/ close the anchor of @toClose@, as that is also the
                 -- tip of @olddb'@ which will be used in @newdb@.
                 case toClose of
@@ -166,7 +160,7 @@ implForkerCommit env = do
                 -- Finally, close the anchor of @lseq@ (which is a duplicate of
                 -- the head of @olddb'@).
                 close $ tables $ AS.anchor lseq
-          pure (closeDiscarded, s)
+          pure (closeDiscarded, LedgerSeq newdb)
       )
 
   -- We are discarding the previous value in the TVar because we had accumulated

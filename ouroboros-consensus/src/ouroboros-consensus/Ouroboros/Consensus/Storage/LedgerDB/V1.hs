@@ -19,6 +19,7 @@
 -- module will be gone.
 module Ouroboros.Consensus.Storage.LedgerDB.V1 (mkInitDb) where
 
+import Cardano.Ledger.BaseTypes.NonZero (NonZero (..))
 import Control.Arrow ((>>>))
 import Control.Monad
 import Control.Monad.Except
@@ -26,6 +27,7 @@ import Control.Monad.Trans (lift)
 import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Foldable as Foldable
+import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.Map (Map)
@@ -119,7 +121,6 @@ mkInitDb args bss getBlock =
               else pure chlog'
         pure (chlog'', r, bstore)
     , currentTip = \(ch, _, _) -> ledgerState . current $ ch
-    , pruneDb = \(ch, r, bs) -> pure (pruneToImmTipOnly ch, r, bs)
     , mkLedgerDb = \(db, ldbBackingStoreKey, ldbBackingStore) -> do
         (varDB, prevApplied) <-
           (,) <$> newTVarIO db <*> newTVarIO Set.empty
@@ -185,7 +186,7 @@ implMkLedgerDb h =
       , getForkerAtTarget = newForkerAtTarget h
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
-      , garbageCollect = getEnvSTM1 h implGarbageCollect
+      , garbageCollect = getEnv1 h implGarbageCollect
       , tryTakeSnapshot = getEnv2 h implTryTakeSnapshot
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
@@ -200,10 +201,15 @@ implGetVolatileTip ::
 implGetVolatileTip = fmap current . readTVar . ldbChangelog
 
 implGetImmutableTip ::
-  MonadSTM m =>
+  (MonadSTM m, GetTip l) =>
   LedgerDBEnv m l blk ->
   STM m (l EmptyMK)
-implGetImmutableTip = fmap anchor . readTVar . ldbChangelog
+implGetImmutableTip env =
+  -- The DbChangelog might contain more than k states if they have not yet
+  -- been garbage-collected.
+  fmap (AS.anchor . AS.anchorNewest (envMaxRollbacks env) . changelogStates)
+    . readTVar
+    $ ldbChangelog env
 
 implGetPastLedgerState ::
   ( MonadSTM m
@@ -214,7 +220,17 @@ implGetPastLedgerState ::
   , HeaderHash l ~ HeaderHash blk
   ) =>
   LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l EmptyMK))
-implGetPastLedgerState env point = getPastLedgerAt point <$> readTVar (ldbChangelog env)
+implGetPastLedgerState env point =
+  readTVar (ldbChangelog env) <&> \chlog -> do
+    -- The DbChangelog might contain more than k states if they have not yet
+    -- been garbage-collected, so make sure that the point is volatile (or the
+    -- immutable tip).
+    guard $
+      AS.withinBounds
+        (pointSlot point)
+        ((point ==) . castPoint . either getTip getTip)
+        (AS.anchorNewest (envMaxRollbacks env) (changelogStates chlog))
+    getPastLedgerAt point chlog
 
 implGetHeaderStateHistory ::
   ( MonadSTM m
@@ -237,6 +253,9 @@ implGetHeaderStateHistory env = do
   pure
     . HeaderStateHistory
     . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'
+    -- The DbChangelog might contain more than k states if they have not yet
+    -- been garbage-collected, so only take the corresponding suffix.
+    . AS.anchorNewest (envMaxRollbacks env)
     $ changelogStates ldb
 
 implValidate ::
@@ -274,10 +293,17 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
 
--- | Remove all points with a slot older than the given slot from the set of
--- previously applied points.
-implGarbageCollect :: MonadSTM m => LedgerDBEnv m l blk -> SlotNo -> STM m ()
-implGarbageCollect env slotNo =
+-- | Remove 'DbChangelog' states older than the given slot, and all points with
+-- a slot older than the given slot from the set of previously applied points.
+implGarbageCollect ::
+  ( MonadSTM m
+  , IsLedger (LedgerState blk)
+  , l ~ ExtLedgerState blk
+  ) =>
+  LedgerDBEnv m l blk -> SlotNo -> m ()
+implGarbageCollect env slotNo = atomically $ do
+  modifyTVar (ldbChangelog env) $
+    prune (LedgerDbPruneBeforeSlot slotNo)
   modifyTVar (ldbPrevApplied env) $
     Set.dropWhileAntitone ((< slotNo) . realPointSlot)
 
@@ -410,7 +436,7 @@ implIntPush ::
   LedgerDBEnv m l blk -> l DiffMK -> m ()
 implIntPush env st = do
   chlog <- readTVarIO $ ldbChangelog env
-  let chlog' = prune (LedgerDbPruneKeeping (ledgerDbCfgSecParam $ ldbCfg env)) $ extend st chlog
+  let chlog' = pruneToImmTipOnly $ extend st chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
 
 implIntReapplyThenPush ::
@@ -557,6 +583,10 @@ deriving instance
   , NoThunks (LedgerCfg l)
   ) =>
   NoThunks (LedgerDBEnv m l blk)
+
+-- | Return the security parameter @k@. Convenience function.
+envMaxRollbacks :: LedgerDBEnv m l blk -> Word64
+envMaxRollbacks = unNonZero . maxRollbacks . ledgerDbCfgSecParam . ldbCfg
 
 -- | Check if the LedgerDB is open, if so, executing the given function on the
 -- 'LedgerDBEnv', otherwise, throw a 'CloseDBError'.
@@ -729,27 +759,36 @@ acquireAtTarget ::
   ReadLocked m (Either GetForkerError (DbChangelog l))
 acquireAtTarget ldbEnv target = readLocked $ runExceptT $ do
   dblog <- lift $ readTVarIO (ldbChangelog ldbEnv)
+  -- The DbChangelog might contain more than k states if they have not yet
+  -- been garbage-collected.
+  let immTip :: Point blk
+      immTip = castPoint $ getTip $ AS.anchor $ AS.anchorNewest k $ changelogStates dblog
+
+      rollbackTo pt
+        | pointSlot pt < pointSlot immTip = throwError $ PointTooOld Nothing
+        | otherwise = case rollback pt dblog of
+            Nothing -> throwError PointNotOnChain
+            Just dblog' -> pure dblog'
   -- Get the prefix of the dblog ending in the specified target.
   case target of
     Right VolatileTip -> pure dblog
-    Right ImmutableTip -> pure $ rollbackToAnchor dblog
-    Right (SpecificPoint pt) -> do
-      let immTip = getTip $ anchor dblog
-      case rollback pt dblog of
-        Nothing
-          | pointSlot pt < pointSlot immTip -> throwError $ PointTooOld Nothing
-          | otherwise -> throwError PointNotOnChain
-        Just dblog' -> pure dblog'
-    Left n -> case rollbackN n dblog of
-      Nothing ->
+    Right ImmutableTip -> rollbackTo immTip
+    Right (SpecificPoint pt) -> rollbackTo pt
+    Left n -> do
+      let rollbackMax = maxRollback dblog `min` k
+      when (n > rollbackMax) $
         throwError $
           PointTooOld $
             Just
               ExceededRollback
-                { rollbackMaximum = maxRollback dblog
+                { rollbackMaximum = rollbackMax
                 , rollbackRequested = n
                 }
-      Just dblog' -> pure dblog'
+      case rollbackN n dblog of
+        Nothing -> error "unreachable"
+        Just dblog' -> pure dblog'
+ where
+  k = envMaxRollbacks ldbEnv
 
 {-------------------------------------------------------------------------------
   Make forkers from consistent views
@@ -761,6 +800,7 @@ newForker ::
   , LedgerSupportsProtocol blk
   , NoThunks (l EmptyMK)
   , GetTip l
+  , StandardHash l
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
@@ -776,7 +816,6 @@ newForker h ldbEnv rr dblog = readLocked $ do
           { foeBackingStoreValueHandle = forkerMVar
           , foeChangelog = dblogVar
           , foeSwitchVar = ldbChangelog ldbEnv
-          , foeSecurityParam = ledgerDbCfgSecParam $ ldbCfg ldbEnv
           , foeTracer =
               LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
           }
@@ -798,6 +837,7 @@ mkForker ::
   , HasHeader blk
   , HasLedgerTables l
   , GetTip l
+  , StandardHash l
   ) =>
   LedgerDBHandle m l blk ->
   QueryBatchSize ->
