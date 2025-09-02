@@ -553,7 +553,7 @@ data ChainSelMessage m blk
     ChainSelAddBlock !(BlockToAdd m blk)
   | -- | Add a Peras certificate
     ChainSelAddPerasCert
-      !(PerasCert blk)
+      !(ValidatedPerasCert blk)
       -- | Used for 'AddPerasCertPromise'.
       !(StrictTMVar m ())
   | -- | Reprocess blocks that have been postponed by the LoE.
@@ -609,7 +609,7 @@ addPerasCertToQueue ::
   (IOLike m, StandardHash blk) =>
   Tracer m (TraceAddPerasCertEvent blk) ->
   ChainSelQueue m blk ->
-  PerasCert blk ->
+  ValidatedPerasCert blk ->
   m (AddPerasCertPromise m)
 addPerasCertToQueue tracer ChainSelQueue{varChainSelQueue} cert = do
   varProcessed <- newEmptyTMVarIO
@@ -623,8 +623,7 @@ addPerasCertToQueue tracer ChainSelQueue{varChainSelQueue} cert = do
       { waitPerasCertProcessed = atomically $ takeTMVar varProcessed
       }
  where
-  addedToQueue =
-    AddedPerasCertToQueue (perasCertRound cert) (perasCertBoostedBlock cert)
+  addedToQueue = AddedPerasCertToQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
 
 -- | Try to add blocks again that were postponed due to the LoE.
 addReprocessLoEBlocks ::
