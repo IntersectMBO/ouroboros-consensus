@@ -194,6 +194,22 @@ const config = {
             from: '/docs/for-developers/utxo-hd/overview',
             to: '/docs/references/miscellaneous/utxo-hd/',
           },
+          {
+            from: '/docs/for-developers/utxo-hd/Overview/',
+            to: '/docs/references/miscellaneous/utxo-hd/',
+          },
+          {
+            from: '/docs/for-developers/PreflightGuide/',
+            to: '/docs/tutorials/preflight_guide/',
+          },
+          {
+            from: '/docs/for-developers/Glossary/',
+            to: '/docs/references/glossary/',
+          },
+          {
+            from: '/docs/for-developers/BootstrapPeersIER/',
+            to: '/docs/references/miscellaneous/bootstrap_peers_IER/',
+          },
         ],
         createRedirects(existingPath) {
           if (existingPath.includes('/docs/references/miscellaneous/utxo-hd')) {
