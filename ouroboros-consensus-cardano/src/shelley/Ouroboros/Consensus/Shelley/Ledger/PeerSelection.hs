@@ -10,6 +10,7 @@ module Ouroboros.Consensus.Shelley.Ledger.PeerSelection () where
 import Cardano.Ledger.BaseTypes
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.State as SL
 import Control.DeepSeq (force)
 import Data.Bifunctor (second)
 import Data.Foldable (toList)
@@ -50,7 +51,9 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
       , poolParams ::
         Map (SL.KeyHash 'SL.StakePool) SL.PoolParams
     (futurePoolParams, poolParams) =
-      (SL.psFutureStakePoolParams pstate, SL.psStakePoolParams pstate)
+      ( Map.mapWithKey SL.stakePoolStateToPoolParams futureStakePools
+      , Map.mapWithKey SL.stakePoolStateToPoolParams stakePools
+      )
      where
       pstate :: SL.PState era
       pstate =
@@ -59,6 +62,8 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
           . SL.esLState
           . SL.nesEs
           $ shelleyLedgerState
+      stakePools = SL.psStakePools pstate
+      futureStakePools = SL.psFutureStakePools pstate
 
     relayToLedgerRelayAccessPoint :: SL.StakePoolRelay -> Maybe LedgerRelayAccessPoint
     relayToLedgerRelayAccessPoint (SL.SingleHostAddr (SJust (Port port)) (SJust ipv4) _) =
