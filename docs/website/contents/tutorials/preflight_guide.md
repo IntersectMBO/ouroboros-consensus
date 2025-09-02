@@ -303,7 +303,7 @@ for Ungrindable Blockchains" by Kiayias et al](https://eprint.iacr.org/2021/1698
 [Magic Wormhole]: https://github.com/magic-wormhole/magic-wormhole
 [db-analyser]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/README.md#db-analyser
 [Cardano ledger]: https://github.com/IntersectMBO/cardano-ledger
-[Glossary]: https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary/
+[Glossary]: https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/glossary/
 [db-analyser snapshot]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/README.md#saving-a-snapshot
 [preflight epic]: https://github.com/IntersectMBO/ouroboros-consensus/issues/887
 [Ouroboros Praos paper]: https://iohk.io/en/research/library/papers/ouroboros-praos-an-adaptively-secure-semi-synchronous-proof-of-stake-protocol/
