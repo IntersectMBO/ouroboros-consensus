@@ -125,6 +125,8 @@ deriving anyclass instance ToExpr PerasWeight
 
 deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (PerasCert blk)
 
+deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (ValidatedPerasCert blk)
+
 {-------------------------------------------------------------------------------
   si-timers
 --------------------------------------------------------------------------------}

@@ -5,7 +5,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -52,7 +51,7 @@ instance StateModel Model where
   data Action Model a where
     OpenDB :: Action Model ()
     CloseDB :: Action Model ()
-    AddCert :: PerasCert TestBlock -> Action Model AddPerasCertResult
+    AddCert :: ValidatedPerasCert TestBlock -> Action Model AddPerasCertResult
     GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
     GarbageCollect :: SlotNo -> Action Model ()
 
@@ -67,9 +66,18 @@ instance StateModel Model where
     | otherwise = pure $ Some OpenDB
    where
     genAddCert = do
-      pcCertRound <- PerasRoundNo <$> arbitrary
-      pcCertBoostedBlock <- genPoint
-      pure $ AddCert PerasCert{pcCertRound, pcCertBoostedBlock}
+      roundNo <- PerasRoundNo <$> arbitrary
+      boostedBlock <- genPoint
+      pure $
+        AddCert
+          ValidatedPerasCert
+            { vpcCert =
+                PerasCert
+                  { pcCertRound = roundNo
+                  , pcCertBoostedBlock = boostedBlock
+                  }
+            , vpcCertBoost = boostPerCert
+            }
 
     genPoint :: Gen (Point TestBlock)
     genPoint =
@@ -97,7 +105,7 @@ instance StateModel Model where
         -- Do not add equivocating certificates.
         AddCert cert -> all p model.certs
          where
-          p cert' = perasCertRound cert /= perasCertRound cert' || cert == cert'
+          p cert' = getPerasCertRound cert /= getPerasCertRound cert' || cert == cert'
         GetWeightSnapshot -> True
         GarbageCollect _slot -> True
 

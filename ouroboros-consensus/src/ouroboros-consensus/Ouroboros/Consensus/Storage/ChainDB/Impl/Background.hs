@@ -647,7 +647,7 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
             ChainSelAddPerasCert cert _varProcessed ->
               traceWith cdbTracer $
                 TraceAddPerasCertEvent $
-                  PoppedPerasCertFromQueue (perasCertRound cert) (perasCertBoostedBlock cert)
+                  PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
           chainSelSync cdb message
           lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
       )

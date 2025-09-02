@@ -1,3 +1,6 @@
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE StandaloneDeriving #-}
+
 -- | Instantiate 'ObjectPoolReader' and 'ObjectPoolWriter' using Peras
 -- certificates from the 'PerasCertDB' (or the 'ChainDB' which is wrapping the
 -- 'PerasCertDB').
@@ -8,6 +11,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
   , makePerasCertPoolWriterFromChainDB
   ) where
 
+import GHC.Exception (throw)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -26,13 +30,13 @@ makePerasCertPoolReaderFromSnapshot ::
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromSnapshot getCertSnapshot =
   ObjectPoolReader
-    { oprObjectId = perasCertRound
+    { oprObjectId = getPerasCertRound
     , oprZeroTicketNo = PerasCertDB.zeroPerasCertTicketNo
     , oprObjectsAfter = \lastKnown limit -> do
         certSnapshot <- getCertSnapshot
         pure $
           take (fromIntegral limit) $
-            [ (ticketNo, perasCertRound cert, pure cert)
+            [ (ticketNo, getPerasCertRound cert, pure (getPerasCert cert))
             | (cert, ticketNo) <- PerasCertDB.getCertsAfter certSnapshot lastKnown
             ]
     }
@@ -48,9 +52,10 @@ makePerasCertPoolWriterFromCertDB ::
   PerasCertDB m blk -> ObjectPoolWriter PerasRoundNo (PerasCert blk) m
 makePerasCertPoolWriterFromCertDB perasCertDB =
   ObjectPoolWriter
-    { opwObjectId = perasCertRound
-    , opwAddObjects =
-        mapM_ $ PerasCertDB.addCert perasCertDB
+    { opwObjectId = getPerasCertRound
+    , opwAddObjects = \certs -> do
+        let validatedCerts = validatePerasCerts certs
+        mapM_ (PerasCertDB.addCert perasCertDB) validatedCerts
     , opwHasObject = do
         certSnapshot <- atomically $ PerasCertDB.getCertSnapshot perasCertDB
         pure $ PerasCertDB.containsCert certSnapshot
@@ -67,10 +72,32 @@ makePerasCertPoolWriterFromChainDB ::
   ChainDB m blk -> ObjectPoolWriter PerasRoundNo (PerasCert blk) m
 makePerasCertPoolWriterFromChainDB chainDB =
   ObjectPoolWriter
-    { opwObjectId = perasCertRound
-    , opwAddObjects =
-        mapM_ $ ChainDB.addPerasCertAsync chainDB
+    { opwObjectId = getPerasCertRound
+    , opwAddObjects = \certs -> do
+        let validatedCerts = validatePerasCerts certs
+        mapM_ (ChainDB.addPerasCertAsync chainDB) validatedCerts
     , opwHasObject = do
         certSnapshot <- atomically $ ChainDB.getPerasCertSnapshot chainDB
         pure $ PerasCertDB.containsCert certSnapshot
     }
+
+data PerasCertInboundException
+  = forall blk. PerasCertValidationError (PerasValidationErr blk)
+
+deriving instance Show PerasCertInboundException
+
+instance Exception PerasCertInboundException
+
+-- | Validate a list of 'PerasCert's, throwing a 'PerasCertInboundException' if
+-- any of them are invalid.
+validatePerasCerts ::
+  StandardHash blk =>
+  [PerasCert blk] ->
+  [ValidatedPerasCert blk]
+validatePerasCerts certs = do
+  let perasCfg = makePerasCfg Nothing
+  -- TODO replace the mocked-up Nothing with a real
+  -- 'BlockConfig' when all the plumbing is in place
+  case traverse (validatePerasCert perasCfg) certs of
+    Left validationErr -> throw (PerasCertValidationError validationErr)
+    Right validatedCerts -> validatedCerts
