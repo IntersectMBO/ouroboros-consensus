@@ -243,7 +243,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (SL.PState era)
+      SL.PState'
   GetStakeSnapshots ::
     Maybe (Set (SL.KeyHash 'SL.StakePool)) ->
     BlockQuery
@@ -425,22 +425,11 @@ instance
       GetStakePools ->
         SL.getPools st
       GetStakePoolParams poolids ->
-        SL.getPoolParameters st poolids
+        SL.psStakePoolParams $ SL.queryPoolState st $ Just poolids
       GetRewardInfoPools ->
         SL.getRewardInfoPools globals st
       GetPoolState mPoolIds ->
-        let certPState = view SL.certPStateL . SL.lsCertState . SL.esLState . SL.nesEs $ st
-         in case mPoolIds of
-              Just poolIds ->
-                SL.PState
-                  { SL.psStakePoolParams =
-                      Map.restrictKeys (SL.psStakePoolParams certPState) poolIds
-                  , SL.psFutureStakePoolParams =
-                      Map.restrictKeys (SL.psFutureStakePoolParams certPState) poolIds
-                  , SL.psRetiring = Map.restrictKeys (SL.psRetiring certPState) poolIds
-                  , SL.psDeposits = Map.restrictKeys (SL.psDeposits certPState) poolIds
-                  }
-              Nothing -> certPState
+        SL.queryPoolState st mPoolIds
       GetStakeSnapshots mPoolIds ->
         let SL.SnapShots
               { SL.ssStakeMark
