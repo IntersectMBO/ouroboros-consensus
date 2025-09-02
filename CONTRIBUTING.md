@@ -28,8 +28,8 @@ We have two types of documentation:
 When starting to work on Consensus, we recommend to take a look at the following
 resources:
 
- - [Preflight guide](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/PreflightGuide/)
- - [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary/)
+ - [Preflight guide](https://ouroboros-consensus.cardano.intersectmbo.org/docs/tutorials/preflight_guide/)
+ - [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/glossary/)
 
 When adding or improving documentation about the implementation, it is
 preferable to add haddock comments since they are closer to the code. However
@@ -336,7 +336,7 @@ package, we should release it to CHaP instead (see the
 [CHaP README](https://github.com/IntersectMBO/cardano-haskell-packages)
 for more).
 
-In general, we strive to avoid having `source-repository-package`s on our `main` branch. However, there are situations where we want to prevent pull requests from piling up while awaiting the release of upstream components[^1]. 
+In general, we strive to avoid having `source-repository-package`s on our `main` branch. However, there are situations where we want to prevent pull requests from piling up while awaiting the release of upstream components[^1].
 In these cases, we allow merging pull requests that contain `source-repository-package`s, provided the referenced commit is on the `main` branch of the upstream package.
 
 If you do add a temporary `source-repository-package` stanza, you need to

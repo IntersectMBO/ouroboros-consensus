@@ -23,7 +23,7 @@ Note on terminology:
 2.  From (1), the intersection between their chain and our chain must be within
     `k` blocks from our tip.
 3.  Since our fragment will be anchored `k` back, from (2) we get that the
-    intersection between their chain and our chain must lie on our fragment.   
+    intersection between their chain and our chain must lie on our fragment.
     (NOTE: In the case of corruption of volatile DB -- or being near genesis --
     our fragment may be shorter than `k`, but even in that case, the length of
     our fragment will dictate our maximum rollback.)
@@ -37,7 +37,7 @@ Note on terminology:
     fragment, which would mean that we would miss some blocks.
 
 Note that if both nodes are following the same chain and are up to date, the
-intersection will be the _tip_ of both fragments.    
+intersection will be the _tip_ of both fragments.
 
 ## Chain evolution
 
@@ -73,7 +73,7 @@ The scenario is something like this:
 
 ```
                                 k
-                           /~~~~~~~~~~\                                 
+                           /~~~~~~~~~~\
 
 ..................\........------------ our fragment
                    \
@@ -115,7 +115,7 @@ We get notified through the chain sync protocol about updates to their chain:
       our chain, so the new intersection point must /be/ the rollback point.
       If that rollback point lies on our fragment (and hence is within @k@),
       all is good; otherwise, we disconnect.
-  
+
     Notes:
     - We could additionally (and optionally) check that they do not roll
      back more than `k`, and if they do, treat them as adversarial (disconnect).
@@ -158,4 +158,4 @@ trim their fragment so that it is anchored at our anchor point.
   sufficient number of headers to determine if their chain is preferred over
   ours (this needs careful consideration when adopting genesis).
 
-[^glossary]: See the [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary/)
+[^glossary]: See the [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/glossary/)
