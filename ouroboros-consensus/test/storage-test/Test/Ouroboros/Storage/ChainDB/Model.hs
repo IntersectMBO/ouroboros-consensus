@@ -148,7 +148,7 @@ data Model blk = Model
   -- ^ The VolatileDB
   , immutableDbChain :: Chain blk
   -- ^ The ImmutableDB
-  , perasCerts :: Map PerasRoundNo (PerasCert blk)
+  , perasCerts :: Map PerasRoundNo (ValidatedPerasCert blk)
   , cps :: CPS.ChainProducerState blk
   , currentLedger :: ExtLedgerState blk EmptyMK
   , initLedger :: ExtLedgerState blk EmptyMK
@@ -381,8 +381,7 @@ getLoEFragment = loeFragment
 perasWeights :: StandardHash blk => Model blk -> PerasWeightSnapshot blk
 perasWeights =
   mkPerasWeightSnapshot
-    -- TODO make boost per cert configurable
-    . fmap (\c -> (perasCertBoostedBlock c, boostPerCert))
+    . fmap (\cert -> (getPerasCertBoostedBlock cert, getPerasCertBoost cert))
     . Map.elems
     . perasCerts
 
@@ -446,7 +445,7 @@ addPerasCert ::
   forall blk.
   (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
   TopLevelConfig blk ->
-  PerasCert blk ->
+  ValidatedPerasCert blk ->
   Model blk ->
   Model blk
 addPerasCert cfg cert m
@@ -457,7 +456,7 @@ addPerasCert cfg cert m
         cfg
         m{perasCerts = Map.insert certRound cert (perasCerts m)}
  where
-  certRound = perasCertRound cert
+  certRound = getPerasCertRound cert
 
 chainSelection ::
   forall blk.

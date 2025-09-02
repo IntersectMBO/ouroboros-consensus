@@ -24,7 +24,7 @@ import Ouroboros.Consensus.Peras.Weight
   )
 
 data Model blk = Model
-  { certs :: Set (PerasCert blk)
+  { certs :: Set (ValidatedPerasCert blk)
   , open :: Bool
   }
   deriving Generic
@@ -42,7 +42,7 @@ closeDB _ = Model{open = False, certs = Set.empty}
 
 addCert ::
   StandardHash blk =>
-  Model blk -> PerasCert blk -> Model blk
+  Model blk -> ValidatedPerasCert blk -> Model blk
 addCert model@Model{certs} cert =
   model{certs = Set.insert cert certs}
 
@@ -51,10 +51,12 @@ getWeightSnapshot ::
   Model blk -> PerasWeightSnapshot blk
 getWeightSnapshot Model{certs} =
   mkPerasWeightSnapshot
-    [(perasCertBoostedBlock cert, boostPerCert) | cert <- Set.toList certs]
+    [ (getPerasCertBoostedBlock cert, getPerasCertBoost cert)
+    | cert <- Set.toList certs
+    ]
 
 garbageCollect :: StandardHash blk => SlotNo -> Model blk -> Model blk
 garbageCollect slot model@Model{certs} =
   model{certs = Set.filter keepCert certs}
  where
-  keepCert cert = pointSlot (perasCertBoostedBlock cert) >= NotOrigin slot
+  keepCert cert = pointSlot (getPerasCertBoostedBlock cert) >= NotOrigin slot
