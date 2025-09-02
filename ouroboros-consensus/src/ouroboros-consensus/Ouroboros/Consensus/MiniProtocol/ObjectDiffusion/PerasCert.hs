@@ -7,6 +7,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
   , PerasCertPoolWriter
   , PerasCertDiffusionInboundPipelined
   , PerasCertDiffusionOutbound
+  , PerasCertDiffusion
   ) where
 
 import Ouroboros.Consensus.Block
@@ -16,6 +17,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
 import Ouroboros.Consensus.Storage.PerasCertDB.API
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound (ObjectDiffusionInboundPipelined)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (ObjectDiffusionOutbound)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Type (ObjectDiffusion, OutboundAgency)
 
 type TracePerasCertDiffusionInbound blk =
   TraceObjectDiffusionInbound PerasRoundNo (PerasCert blk)
@@ -34,3 +36,6 @@ type PerasCertDiffusionInboundPipelined blk m a =
 
 type PerasCertDiffusionOutbound blk m a =
   ObjectDiffusionOutbound PerasRoundNo (PerasCert blk) m a
+
+type PerasCertDiffusion blk =
+  ObjectDiffusion OutboundAgency PerasRoundNo (PerasCert blk)

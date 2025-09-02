@@ -85,10 +85,6 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block
   ( Serialised (..)
-  , decodePoint
-  , decodeTip
-  , encodePoint
-  , encodeTip
   )
 import Ouroboros.Network.BlockFetch
 import Ouroboros.Network.BlockFetch.Client
@@ -128,6 +124,10 @@ import Ouroboros.Network.Protocol.KeepAlive.Client
 import Ouroboros.Network.Protocol.KeepAlive.Codec
 import Ouroboros.Network.Protocol.KeepAlive.Server
 import Ouroboros.Network.Protocol.KeepAlive.Type
+import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
+  ( codecObjectDiffusion
+  , codecObjectDiffusionId
+  )
 import Ouroboros.Network.Protocol.PeerSharing.Client
   ( PeerSharingClient
   , peerSharingClientPeer
@@ -337,7 +337,7 @@ mkHandlers
 -------------------------------------------------------------------------------}
 
 -- | Node-to-node protocol codecs needed to run 'Handlers'.
-data Codecs blk addr e m bCS bSCS bBF bSBF bTX bKA bPS = Codecs
+data Codecs blk addr e m bCS bSCS bBF bSBF bTX bPCD bKA bPS = Codecs
   { cChainSyncCodec :: Codec (ChainSync (Header blk) (Point blk) (Tip blk)) e m bCS
   , cChainSyncCodecSerialised ::
       Codec (ChainSync (SerialisedHeader blk) (Point blk) (Tip blk)) e m bSCS
@@ -345,6 +345,7 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bKA bPS = Codecs
   , cBlockFetchCodecSerialised ::
       Codec (BlockFetch (Serialised blk) (Point blk)) e m bSBF
   , cTxSubmission2Codec :: Codec (TxSubmission2 (GenTxId blk) (GenTx blk)) e m bTX
+  , cPerasCertDiffusionCodec :: Codec (PerasCertDiffusion blk) e m bPCD
   , cKeepAliveCodec :: Codec KeepAlive e m bKA
   , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
   }
@@ -372,38 +373,45 @@ defaultCodecs ::
     ByteString
     ByteString
     ByteString
+    ByteString
 defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion =
   Codecs
     { cChainSyncCodec =
         codecChainSync
           enc
           dec
-          (encodePoint (encodeRawHash p))
-          (decodePoint (decodeRawHash p))
-          (encodeTip (encodeRawHash p))
-          (decodeTip (decodeRawHash p))
+          enc
+          dec
+          enc
+          dec
     , cChainSyncCodecSerialised =
         codecChainSync
           enc
           dec
-          (encodePoint (encodeRawHash p))
-          (decodePoint (decodeRawHash p))
-          (encodeTip (encodeRawHash p))
-          (decodeTip (decodeRawHash p))
+          enc
+          dec
+          enc
+          dec
     , cBlockFetchCodec =
         codecBlockFetch
           enc
           dec
-          (encodePoint (encodeRawHash p))
-          (decodePoint (decodeRawHash p))
+          enc
+          dec
     , cBlockFetchCodecSerialised =
         codecBlockFetch
           enc
           dec
-          (encodePoint (encodeRawHash p))
-          (decodePoint (decodeRawHash p))
+          enc
+          dec
     , cTxSubmission2Codec =
         codecTxSubmission2
+          enc
+          dec
+          enc
+          dec
+    , cPerasCertDiffusionCodec =
+        codecObjectDiffusion
           enc
           dec
           enc
@@ -412,9 +420,6 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion =
     , cPeerSharingCodec = codecPeerSharing (encAddr nodeToNodeVersion) (decAddr nodeToNodeVersion)
     }
  where
-  p :: Proxy blk
-  p = Proxy
-
   enc :: SerialiseNodeToNode blk a => a -> Encoding
   enc = encodeNodeToNode ccfg version
 
@@ -434,6 +439,7 @@ identityCodecs ::
     (AnyMessage (BlockFetch blk (Point blk)))
     (AnyMessage (BlockFetch (Serialised blk) (Point blk)))
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
+    (AnyMessage (PerasCertDiffusion blk))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
 identityCodecs =
@@ -443,6 +449,7 @@ identityCodecs =
     , cBlockFetchCodec = codecBlockFetchId
     , cBlockFetchCodecSerialised = codecBlockFetchId
     , cTxSubmission2Codec = codecTxSubmission2Id
+    , cPerasCertDiffusionCodec = codecObjectDiffusionId
     , cKeepAliveCodec = codecKeepAliveId
     , cPeerSharingCodec = codecPeerSharingId
     }
@@ -620,7 +627,7 @@ byteLimits =
 
 -- | Construct the 'NetworkApplication' for the node-to-node protocols
 mkApps ::
-  forall m addrNTN addrNTC blk e bCS bBF bTX bKA bPS.
+  forall m addrNTN addrNTC blk e bCS bBF bTX bPCD bKA bPS.
   ( IOLike m
   , MonadTimer m
   , Ord addrNTN
@@ -635,7 +642,7 @@ mkApps ::
   NodeKernel m addrNTN addrNTC blk ->
   StdGen ->
   Tracers m addrNTN blk e ->
-  (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bKA bPS) ->
+  (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bPCD bKA bPS) ->
   ByteLimits bCS bBF bTX bKA ->
   -- Chain-Sync timeouts for chain-sync client (using `Header blk`) as well as
   -- the server (`SerialisedHeader blk`).
