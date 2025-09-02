@@ -302,7 +302,13 @@ instance StateModel Model where
                   min
                     (fromIntegral . AS.length $ chain)
                     (BT.unNonZero $ maxRollbacks secParam)
-            numRollback <- QC.choose (0, maxRollback)
+            numRollback <-
+              frequency
+                [ (10, QC.choose (0, maxRollback))
+                , -- Sometimes generate invalid 'ValidateAndCommit's for
+                  -- negative testing.
+                  (1, QC.choose (maxRollback + 1, maxRollback + 5))
+                ]
             numNewBlocks <- QC.choose (numRollback, numRollback + 2)
             let
               chain' = case modelRollback numRollback model of
@@ -370,6 +376,9 @@ instance StateModel Model where
           chain' = AS.dropNewest (fromIntegral n) chain
   precondition _ Init{} = False
   precondition _ _ = True
+
+  validFailingAction Model{} ValidateAndCommit{} = True
+  validFailingAction _ _ = False
 
 {-------------------------------------------------------------------------------
   Mocked ChainDB
@@ -527,22 +536,29 @@ data Environment
       (IO NumOpenHandles)
       (IO ())
 
+data LedgerDBError = ErrorValidateExceededRollback
+
 instance RunModel Model (StateT Environment IO) where
+  type Error Model (StateT Environment IO) = LedgerDBError
+
   perform _ (Init secParam) _ = do
     Environment _ _ chainDb mkArgs fs _ cleanup <- get
     (ldb, testInternals, getNumOpenHandles) <- lift $ do
       let args = mkArgs secParam
       openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs
     put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup)
+    pure $ pure ()
   perform _ WipeLedgerDB _ = do
     Environment _ testInternals _ _ _ _ _ <- get
     lift $ wipeLedgerDB testInternals
+    pure $ pure ()
   perform _ GetState _ = do
     Environment ldb _ _ _ _ _ _ <- get
-    lift $ atomically $ (,) <$> getImmutableTip ldb <*> getVolatileTip ldb
+    lift $ fmap pure $ atomically $ (,) <$> getImmutableTip ldb <*> getVolatileTip ldb
   perform _ ForceTakeSnapshot _ = do
     Environment _ testInternals _ _ _ _ _ <- get
     lift $ takeSnapshotNOW testInternals TakeAtImmutableTip Nothing
+    pure $ pure ()
   perform _ (ValidateAndCommit n blks) _ = do
     Environment ldb _ chainDb _ _ _ _ <- get
     lift $ do
@@ -558,7 +574,8 @@ instance RunModel Model (StateT Environment IO) where
                 (reverse (map blockRealPoint blks) ++) . drop (fromIntegral n)
             atomically (forkerCommit forker)
             forkerClose forker
-          ValidateExceededRollBack{} -> error "Unexpected Rollback"
+            pure $ pure ()
+          ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
           ValidateLedgerError (AnnLedgerError forker _ _) -> forkerClose forker >> error "Unexpected ledger error"
   perform state@(Model _ secParam) (DropAndRestore n) lk = do
     Environment _ testInternals chainDb _ _ _ _ <- get
@@ -569,6 +586,7 @@ instance RunModel Model (StateT Environment IO) where
   perform _ TruncateSnapshots _ = do
     Environment _ testInternals _ _ _ _ _ <- get
     lift $ truncateSnapshots testInternals
+    pure $ pure ()
   perform UnInit _ _ = error "Uninitialized model created a command different than Init"
 
   monitoring _ (ValidateAndCommit n _) _ _ = tabulate "Rollback depths" [show n]
@@ -601,6 +619,11 @@ instance RunModel Model (StateT Environment IO) where
               ]
           pure $ volSt == vol && immSt == imm
   postcondition _ _ _ _ = pure True
+
+  postconditionOnFailure _ ValidateAndCommit{} _ res = case res of
+    Right () -> False <$ counterexamplePost "Unexpected success on invalid ValidateAndCommit"
+    Left ErrorValidateExceededRollback -> pure True
+  postconditionOnFailure _ _ _ _ = pure True
 
 {-------------------------------------------------------------------------------
   Additional checks
