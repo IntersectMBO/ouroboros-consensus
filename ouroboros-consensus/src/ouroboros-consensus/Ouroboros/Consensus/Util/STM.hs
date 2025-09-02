@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Util.STM
   ( -- * 'Watcher'
     Watcher (..)
   , forkLinkedWatcher
+  , forkLinkedWatcherAllocate
   , forkLinkedWatcherFinalize
   , withWatcher
 
@@ -181,6 +182,26 @@ forkLinkedWatcher ::
   m (Thread m Void)
 forkLinkedWatcher registry label watcher =
   forkLinkedThread registry label $ runWatcher watcher
+
+-- | Spawn a new thread that safely allocates a resource, then runs a 'Watcher'
+-- using the resource, finalizing the resource safely when the watcher
+-- terminates in any way.
+--
+-- The allocated resource and thread are both linked to the registry.
+forkLinkedWatcherAllocate ::
+  forall m r a fp.
+  (IOLike m, Eq fp, HasCallStack) =>
+  ResourceRegistry m ->
+  -- | Label for the thread
+  String ->
+  m r ->
+  (r -> m ()) ->
+  (r -> Watcher m a fp) ->
+  m (Thread m Void)
+forkLinkedWatcherAllocate registry label allocater finalizer f =
+  forkLinkedThread registry label $ do
+    (rk, r) <- allocate registry (const allocater) finalizer
+    runWatcher (f r) `finally` release rk
 
 -- | Spawn a new thread that runs a 'Watcher', executing a finalizer when the
 -- thread terminates.
