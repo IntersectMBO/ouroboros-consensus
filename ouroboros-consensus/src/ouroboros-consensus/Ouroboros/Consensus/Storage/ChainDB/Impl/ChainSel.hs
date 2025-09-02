@@ -328,7 +328,7 @@ addPerasCertAsync ::
   forall m blk.
   (IOLike m, HasHeader blk) =>
   ChainDbEnv m blk ->
-  PerasCert blk ->
+  ValidatedPerasCert blk ->
   m (AddPerasCertPromise m)
 addPerasCertAsync CDB{cdbTracer, cdbChainSelQueue} =
   addPerasCertToQueue (TraceAddPerasCertEvent >$< cdbTracer) cdbChainSelQueue
@@ -538,10 +538,10 @@ chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
   tracer = TraceAddPerasCertEvent >$< cdbTracer
 
   certRound :: PerasRoundNo
-  certRound = perasCertRound cert
+  certRound = getPerasCertRound cert
 
   boostedBlock :: Point blk
-  boostedBlock = perasCertBoostedBlock cert
+  boostedBlock = getPerasCertBoostedBlock cert
 
 -- | Return 'True' when the given header should be ignored when adding it
 -- because it is too old, i.e., we wouldn't be able to switch to a chain

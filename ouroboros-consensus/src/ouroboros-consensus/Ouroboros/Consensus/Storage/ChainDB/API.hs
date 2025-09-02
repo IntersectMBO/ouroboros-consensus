@@ -392,9 +392,9 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m (Maybe Statistics)
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
-  , addPerasCertAsync :: PerasCert blk -> m (AddPerasCertPromise m)
-  -- ^ TODO
-  , getPerasWeightSnapshot :: STM m (PerasWeightSnapshot blk)
+  , addPerasCertAsync :: ValidatedPerasCert blk -> m (AddPerasCertPromise m)
+  -- ^ TODO docs
+  , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ TODO
   , getPerasCertSnapshot :: STM m (PerasCertSnapshot blk)
   -- ^ TODO
@@ -530,7 +530,7 @@ newtype AddPerasCertPromise m = AddPerasCertPromise
   -- impossible).
   }
 
-addPerasCertSync :: IOLike m => ChainDB m blk -> PerasCert blk -> m ()
+addPerasCertSync :: IOLike m => ChainDB m blk -> ValidatedPerasCert blk -> m ()
 addPerasCertSync chainDB cert =
   waitPerasCertProcessed =<< addPerasCertAsync chainDB cert
 
