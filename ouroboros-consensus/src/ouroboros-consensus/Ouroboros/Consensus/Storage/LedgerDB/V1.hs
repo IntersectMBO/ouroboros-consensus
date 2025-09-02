@@ -73,6 +73,9 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
 
+type SnapshotManagerV1 m blk =
+  SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
+
 mkInitDb ::
   forall m blk.
   ( LedgerSupportsProtocol blk
@@ -84,8 +87,9 @@ mkInitDb ::
   Complete LedgerDbArgs m blk ->
   Complete V1.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
+  SnapshotManagerV1 m blk ->
   InitDB (DbChangelog' blk, ResourceKey m, BackingStore' m blk) m blk
-mkInitDb args bss getBlock =
+mkInitDb args bss getBlock snapManager =
   InitDB
     { initFromGenesis = do
         st <- lgrGenesis
@@ -105,7 +109,7 @@ mkInitDb args bss getBlock =
             (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
             lgrHasFS'
             lgrRegistry
-    , closeDb = \(_, r, _) -> void $ release r
+    , abortLedgerDbInit = \(_, r, _) -> void $ release r
     , initReapplyBlock = \cfg blk (chlog, r, bstore) -> do
         !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
         -- It's OK to flush without a lock here, since the `LedgerDB` has not
@@ -145,7 +149,7 @@ mkInitDb args bss getBlock =
                 , ldbResolveBlock = getBlock
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb h
+        pure $ implMkLedgerDb h snapManager
     }
  where
   bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
@@ -176,8 +180,9 @@ implMkLedgerDb ::
   , HasHardForkHistory blk
   ) =>
   LedgerDBHandle m l blk ->
+  SnapshotManagerV1 m blk ->
   (LedgerDB' m blk, TestInternals' m blk)
-implMkLedgerDb h =
+implMkLedgerDb h snapManager =
   ( LedgerDB
       { getVolatileTip = getEnvSTM h implGetVolatileTip
       , getImmutableTip = getEnvSTM h implGetImmutableTip
@@ -187,11 +192,11 @@ implMkLedgerDb h =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
-      , tryTakeSnapshot = getEnv2 h implTryTakeSnapshot
+      , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot snapManager)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
-  , mkInternals h
+  , mkInternals h snapManager
   )
 
 implGetVolatileTip ::
@@ -310,28 +315,26 @@ implGarbageCollect env slotNo = atomically $ do
 implTryTakeSnapshot ::
   ( l ~ ExtLedgerState blk
   , IOLike m
-  , LedgerDbSerialiseConstraints blk
-  , LedgerSupportsProtocol blk
   ) =>
-  LedgerDBEnv m l blk -> Maybe (Time, Time) -> Word64 -> m SnapCounters
-implTryTakeSnapshot env mTime nrBlocks =
+  SnapshotManagerV1 m blk ->
+  LedgerDBEnv m l blk ->
+  Maybe (Time, Time) ->
+  Word64 ->
+  m SnapCounters
+implTryTakeSnapshot snapManager env mTime nrBlocks =
   if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
     then do
       void $
         withReadLock
           (ldbLock env)
           ( takeSnapshot
-              (ldbChangelog env)
-              (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-              (LedgerDBSnapshotEvent >$< ldbTracer env)
-              (ldbHasFS env)
-              (ldbBackingStore env)
+              snapManager
               Nothing
+              (ldbChangelog env, ldbBackingStore env)
           )
       void $
         trimSnapshots
-          (LedgerDBSnapshotEvent >$< ldbTracer env)
-          (snapshotsFs $ ldbHasFS env)
+          snapManager
           (ldbSnapshotPolicy env)
       (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
     else
@@ -376,15 +379,16 @@ mkInternals ::
   , ApplyBlock (ExtLedgerState blk) blk
   ) =>
   LedgerDBHandle m (ExtLedgerState blk) blk ->
+  SnapshotManagerV1 m blk ->
   TestInternals' m blk
-mkInternals h =
+mkInternals h snapManager =
   TestInternals
-    { takeSnapshotNOW = getEnv2 h implIntTakeSnapshot
+    { takeSnapshotNOW = getEnv2 h (implIntTakeSnapshot snapManager)
+    , wipeLedgerDB = void $ destroySnapshots snapManager
+    , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
     , push = getEnv1 h implIntPush
     , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPush
-    , wipeLedgerDB = getEnv h $ void . destroySnapshots . snapshotsFs . ldbHasFS
     , closeLedgerDB = getEnv h $ void . release . ldbBackingStoreKey
-    , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
     , getNumLedgerTablesHandles = pure 0
     }
 
@@ -412,8 +416,12 @@ implIntTakeSnapshot ::
   , LedgerSupportsProtocol blk
   , l ~ ExtLedgerState blk
   ) =>
-  LedgerDBEnv m l blk -> WhereToTakeSnapshot -> Maybe String -> m ()
-implIntTakeSnapshot env whereTo suffix = do
+  SnapshotManagerV1 m blk ->
+  LedgerDBEnv m l blk ->
+  WhereToTakeSnapshot ->
+  Maybe String ->
+  m ()
+implIntTakeSnapshot snapManager env whereTo suffix = do
   when (whereTo == TakeAtVolatileTip) $ atomically $ modifyTVar (ldbChangelog env) pruneToImmTipOnly
   withWriteLock
     (ldbLock env)
@@ -421,12 +429,9 @@ implIntTakeSnapshot env whereTo suffix = do
   void $
     withReadLock (ldbLock env) $
       takeSnapshot
-        (ldbChangelog env)
-        (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-        (LedgerDBSnapshotEvent >$< ldbTracer env)
-        (ldbHasFS env)
-        (ldbBackingStore env)
+        snapManager
         suffix
+        (ldbChangelog env, ldbBackingStore env)
 
 implIntPush ::
   ( IOLike m
