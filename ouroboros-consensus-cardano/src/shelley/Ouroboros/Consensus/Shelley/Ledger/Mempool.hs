@@ -388,19 +388,19 @@ txInBlockSize ::
 txInBlockSize st (ShelleyTx _txid tx') =
   validateMaybe (maxTxSizeUTxO txsz limit) $ do
     guard $ txsz <= limit
-    Just $ IgnoringOverflow $ ByteSize32 $ fromIntegral txsz + perTxOverhead
+    Just $ IgnoringOverflow $ ByteSize32 $ txsz + perTxOverhead
  where
   txsz = tx' ^. sizeTxF
 
   pparams = getPParams $ tickedShelleyLedgerState st
-  limit = fromIntegral (pparams ^. L.ppMaxTxSizeL) :: Integer
+  limit = pparams ^. L.ppMaxTxSizeL
 
 class MaxTxSizeUTxO era where
   maxTxSizeUTxO ::
     -- | Actual transaction size
-    Integer ->
+    Word32 ->
     -- | Maximum transaction size
-    Integer ->
+    Word32 ->
     SL.ApplyTxError era
 
 instance MaxTxSizeUTxO ShelleyEra where
