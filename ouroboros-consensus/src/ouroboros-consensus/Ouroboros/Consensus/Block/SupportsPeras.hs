@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -16,6 +17,9 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasCert (..)
   ) where
 
+import Codec.Serialise (Serialise (..))
+import Codec.Serialise.Decoding (decodeListLenOf)
+import Codec.Serialise.Encoding (encodeListLen)
 import Data.Monoid (Sum (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -27,7 +31,7 @@ import Quiet (Quiet (..))
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving Show via Quiet PerasRoundNo
   deriving stock Generic
-  deriving newtype (Eq, Ord, NoThunks)
+  deriving newtype (Eq, Ord, NoThunks, Serialise)
 
 instance Condense PerasRoundNo where
   condense = show . unPerasRoundNo
@@ -66,3 +70,14 @@ instance StandardHash blk => BlockSupportsPeras blk where
 
   perasCertRound = pcCertRound
   perasCertBoostedBlock = pcCertBoostedBlock
+
+instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
+  encode PerasCert{pcCertRound, pcCertBoostedBlock} =
+    encodeListLen 2
+      <> encode pcCertRound
+      <> encode pcCertBoostedBlock
+  decode = do
+    decodeListLenOf 2
+    pcCertRound <- decode
+    pcCertBoostedBlock <- decode
+    pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
