@@ -52,7 +52,7 @@ makePerasCertPoolWriterFromCertDB perasCertDB =
     , opwAddObjects =
         mapM_ $ PerasCertDB.addCert perasCertDB
     , opwHasObject = do
-        certSnapshot <- atomically $ PerasCertDB.getCertSnapshot perasCertDB
+        certSnapshot <- PerasCertDB.getCertSnapshot perasCertDB
         pure $ PerasCertDB.containsCert certSnapshot
     }
 
@@ -71,6 +71,6 @@ makePerasCertPoolWriterFromChainDB chainDB =
     , opwAddObjects =
         mapM_ $ ChainDB.addPerasCertAsync chainDB
     , opwHasObject = do
-        certSnapshot <- atomically $ ChainDB.getPerasCertSnapshot chainDB
+        certSnapshot <- ChainDB.getPerasCertSnapshot chainDB
         pure $ PerasCertDB.containsCert certSnapshot
     }
