@@ -72,6 +72,7 @@ import Ouroboros.Consensus.Util hiding (Some)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
+import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import qualified System.Directory as Dir
 import System.FS.API
 import qualified System.FS.IO as FSIO
@@ -280,6 +281,9 @@ instance StateModel Model where
       Action Model (ExtLedgerState TestBlock EmptyMK, ExtLedgerState TestBlock EmptyMK)
     Init :: SecurityParam -> Action Model ()
     ValidateAndCommit :: Word64 -> [TestBlock] -> Action Model ()
+    -- \| This action is used only to observe the side effects of closing an
+    -- uncommitted forker, to ensure all handles are properly deallocated.
+    OpenAndCloseForker :: Action Model ()
 
   actionName WipeLedgerDB{} = "WipeLedgerDB"
   actionName TruncateSnapshots{} = "TruncateSnapshots"
@@ -288,6 +292,7 @@ instance StateModel Model where
   actionName GetState{} = "GetState"
   actionName Init{} = "Init"
   actionName ValidateAndCommit{} = "ValidateAndCommit"
+  actionName OpenAndCloseForker = "OpenAndCloseForker"
 
   arbitraryAction _ UnInit = Some . Init <$> QC.arbitrary
   arbitraryAction _ model@(Model chain secParam) =
@@ -322,6 +327,7 @@ instance StateModel Model where
         )
       , (1, pure $ Some WipeLedgerDB)
       , (1, pure $ Some TruncateSnapshots)
+      , (1, pure $ Some OpenAndCloseForker)
       ]
 
   initialState = UnInit
@@ -363,6 +369,7 @@ instance StateModel Model where
   nextState state WipeLedgerDB _var = state
   nextState state TruncateSnapshots _var = state
   nextState state (DropAndRestore n) _var = modelRollback n state
+  nextState state OpenAndCloseForker _var = state
   nextState UnInit _ _ = error "Uninitialized model created a command different than Init"
 
   precondition UnInit Init{} = True
@@ -583,6 +590,14 @@ instance RunModel Model (StateT Environment IO) where
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
       closeLedgerDB testInternals
     perform state (Init secParam) lk
+  perform _ OpenAndCloseForker _ = do
+    Environment ldb _ _ _ _ _ _ <- get
+    lift $ withRegistry $ \rr -> do
+      eFrk <- LedgerDB.getForkerAtTarget ldb rr VolatileTip
+      case eFrk of
+        Left err -> error $ "Impossible: can't acquire forker at tip: " <> show err
+        Right frk -> forkerClose frk
+    pure $ pure ()
   perform _ TruncateSnapshots _ = do
     Environment _ testInternals _ _ _ _ _ <- get
     lift $ truncateSnapshots testInternals
