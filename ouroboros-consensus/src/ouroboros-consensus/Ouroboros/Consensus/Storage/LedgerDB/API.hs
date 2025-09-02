@@ -193,7 +193,6 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
-import System.FS.API
 
 {-------------------------------------------------------------------------------
   Main API
@@ -465,7 +464,7 @@ data InitDB db m blk = InitDB
   -- ^ Create a DB from the genesis state
   , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
-  , closeDb :: !(db -> m ())
+  , abortLedgerDbInit :: !(db -> m ())
   -- ^ Closing the database, to be reopened again with a different snapshot or
   -- with the genesis state.
   , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
@@ -500,7 +499,7 @@ data InitDB db m blk = InitDB
 -- obtained in this way will (hopefully) share much of their memory footprint
 -- with their predecessors.
 initialize ::
-  forall m blk db.
+  forall m n blk db st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -508,27 +507,27 @@ initialize ::
   ) =>
   Tracer m (TraceReplayEvent blk) ->
   Tracer m (TraceSnapshotEvent blk) ->
-  SomeHasFS m ->
   LedgerDbCfg (ExtLedgerState blk) ->
   StreamAPI m blk blk ->
   Point blk ->
   InitDB db m blk ->
+  SnapshotManager m n blk st ->
   Maybe DiskSnapshot ->
   m (InitLog blk, db, Word64)
 initialize
   replayTracer
   snapTracer
-  hasFS
   cfg
   stream
   replayGoal
   dbIface
+  snapManager
   fromSnapshot =
     case fromSnapshot of
-      Nothing -> listSnapshots hasFS >>= tryNewestFirst id
+      Nothing -> listSnapshots snapManager >>= tryNewestFirst id
       Just snap -> tryNewestFirst id [snap]
    where
-    InitDB{initFromGenesis, initFromSnapshot, closeDb} = dbIface
+    InitDB{initFromGenesis, initFromSnapshot, abortLedgerDbInit} = dbIface
 
     tryNewestFirst ::
       (InitLog blk -> InitLog blk) ->
@@ -555,7 +554,7 @@ initialize
 
       case eDB of
         Left err -> do
-          closeDb initDb
+          abortLedgerDbInit initDb
           error $ "Invariant violation: invalid immutable chain " <> show err
         Right (db, replayed) -> return (acc InitFromGenesis, db, replayed)
     tryNewestFirst acc (s : ss) = do
@@ -579,7 +578,7 @@ initialize
           traceWith snapTracer $ InvalidSnapshot s err
           Monad.when (diskSnapshotIsTemporary s) $ do
             traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot hasFS s
+            deleteSnapshot snapManager s
           tryNewestFirst (acc . InitFailure s err) ss
 
         -- If we fail to use this snapshot for any other reason, delete it and
@@ -587,7 +586,7 @@ initialize
         Left err -> do
           Monad.when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $ do
             traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot hasFS s
+            deleteSnapshot snapManager s
           traceWith snapTracer . InvalidSnapshot s $ err
           tryNewestFirst (acc . InitFailure s err) ss
         Right (initDb, pt) -> do
@@ -606,8 +605,8 @@ initialize
           case eDB of
             Left err -> do
               traceWith snapTracer . InvalidSnapshot s $ err
-              Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot hasFS s
-              closeDb initDb
+              Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot snapManager s
+              abortLedgerDbInit initDb
               tryNewestFirst (acc . InitFailure s err) ss
             Right (db, replayed) -> return (acc (InitFromSnapshot s pt), db, replayed)
 

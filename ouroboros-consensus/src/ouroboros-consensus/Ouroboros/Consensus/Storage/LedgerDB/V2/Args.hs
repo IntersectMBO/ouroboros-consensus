@@ -1,29 +1,32 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Args
   ( FlavorImplSpecificTrace (..)
   , HandleArgs (..)
+  , HandleEnv (..)
   , LedgerDbFlavorArgs (..)
+  , LSMHandleArgs (..)
   ) where
 
-import Data.Void (Void)
-import GHC.Generics
-import NoThunks.Class
+import Data.Void
 
-data LedgerDbFlavorArgs f m = V2Args HandleArgs
+data LedgerDbFlavorArgs f m = V2Args (HandleArgs f m)
 
-data HandleArgs
+-- | The arguments that are needed to create a 'HandleEnv' for the different
+-- backends.
+data HandleArgs f m
   = InMemoryHandleArgs
-  | LSMHandleArgs Void
-  deriving (Generic, NoThunks)
+  | LSMHandleArgs (LSMHandleArgs f m)
+
+data LSMHandleArgs f m = LSMArgs Void
+
+-- | The environment used to create new handles
+data HandleEnv m
+  = InMemoryHandleEnv
+  | -- | The environment for creating LSM handles. It carries the 'Session'
+    -- together with its resource key and the resource key of the 'HasBlockIO'.
+    LSMHandleEnv !Void
 
 data FlavorImplSpecificTrace
   = -- | Created a new 'LedgerTablesHandle', potentially by duplicating an
