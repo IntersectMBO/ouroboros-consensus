@@ -1,6 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
@@ -10,47 +8,32 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Implementation of the 'LedgerTablesHandle' interface with LSM trees.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
-  ( -- * LedgerTablesHandle
-    newLSMLedgerTablesHandle
-  , UTxOTable
+  ( -- * Backend API
+    LSM
   , Backend (..)
   , Args (LSMArgs)
-  , LSM
-  , SinkArgs (SinkLSM)
-  , YieldArgs (YieldLSM)
-
-    -- * Re-exports
-  , LSM.Entry (..)
-  , LSM.RawBytes (..)
-  , LSM.Salt
-  , Session
-  , LSM.openSession
-  , LSM.closeSession
-  , stdMkBlockIOFS
   , mkLSMArgs
+  , stdMkBlockIOFS
 
-    -- * snapshot-converter
-  , implTakeSnapshot
-  , LSM.withNewSession
-  , toTxInBytes
-  , toTxOutBytes
-  , LSM.newSession
-  , LSM.toSnapshotName
-  , LSM.SnapshotLabel (LSM.SnapshotLabel)
-  , LSM.openTableFromSnapshot
-  , LSM.closeTable
-  , LSM.listSnapshots
+    -- * Streaming
+  , YieldArgs (YieldLSM)
+  , mkLSMYieldArgs
+  , SinkArgs (SinkLSM)
+  , mkLSMSinkArgs
+
+    -- * Exported for tests
+  , LSM.Salt
   , SomeHasFSAndBlockIO (..)
   ) where
 
@@ -73,7 +56,6 @@ import Data.MemPack.Buffer
 import Data.MemPack.Error
 import qualified Data.Primitive.ByteArray as PBA
 import qualified Data.Set as Set
-import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Typeable
@@ -108,7 +90,7 @@ import qualified Streaming.Prelude as S
 import System.FS.API
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
-import System.FilePath (splitDirectories)
+import System.FilePath (splitDirectories, splitFileName)
 import System.Random
 import Prelude hiding (read)
 
@@ -649,3 +631,69 @@ sinkLsmS writeChunkSize snapName session st s = do
               [(toTxInBytes (Proxy @l) k, toTxOutBytes st v, Nothing) | (k, v) <- m]
         S.effects s'
       Just (item, s'') -> go tb (n - 1) (item : m) s''
+
+-- | Create Yield arguments for LSM
+mkLSMYieldArgs ::
+  ( IOLike m
+  , HasLedgerTables l
+  , IndexedMemPack (l EmptyMK) (TxOut l)
+  ) =>
+  -- | The filepath in which the LSM database lives. Must not have a trailing slash!
+  FilePath ->
+  -- | The complete name of the snapshot to open, so @<slotno>[_<suffix>]@.
+  String ->
+  -- | Usually 'stdMkBlockIOFS'
+  (FilePath -> ResourceRegistry m -> m (a, SomeHasFSAndBlockIO m)) ->
+  -- | Usually 'newStdGen'
+  (m StdGen) ->
+  l EmptyMK ->
+  ResourceRegistry m ->
+  m (YieldArgs m LSM l)
+mkLSMYieldArgs fp snapName mkFS mkGen _ reg = do
+  (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkFS fp reg
+  salt <- fst . genWord64 <$> mkGen
+  (_, session) <-
+    allocate reg (\_ -> LSM.openSession nullTracer hasFS blockIO salt (mkFsPath [])) LSM.closeSession
+  tb <-
+    allocate
+      reg
+      ( \_ ->
+          LSM.openTableFromSnapshot
+            session
+            (LSM.toSnapshotName snapName)
+            (LSM.SnapshotLabel $ T.pack "UTxO table")
+      )
+      LSM.closeTable
+  YieldLSM 1000 <$> newLSMLedgerTablesHandle nullTracer reg tb
+
+-- | Create Sink arguments for LSM
+mkLSMSinkArgs ::
+  IOLike m =>
+  -- | The filepath in which the LSM database should be opened. Must not have a trailing slash!
+  FilePath ->
+  -- | The complete name of the snapshot to be created, so @<slotno>[_<suffix>]@.
+  String ->
+  -- | Usually 'stdMkBlockIOFS'
+  (FilePath -> ResourceRegistry m -> m (a, SomeHasFSAndBlockIO m)) ->
+  -- | Usually 'newStdGen'
+  (m StdGen) ->
+  l EmptyMK ->
+  ResourceRegistry m ->
+  m (SinkArgs m LSM l)
+mkLSMSinkArgs
+  (splitFileName -> (fp, lsmDir))
+  snapName
+  mkFS
+  mkGen
+  _
+  reg =
+    do
+      (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkFS fp reg
+      removeDirectoryRecursive hasFS lsmFsPath
+      createDirectory hasFS lsmFsPath
+      salt <- fst . genWord64 <$> mkGen
+      (_, session) <-
+        allocate reg (\_ -> LSM.newSession nullTracer hasFS blockIO salt lsmFsPath) LSM.closeSession
+      pure (SinkLSM 1000 snapName session)
+   where
+    lsmFsPath = mkFsPath [lsmDir]

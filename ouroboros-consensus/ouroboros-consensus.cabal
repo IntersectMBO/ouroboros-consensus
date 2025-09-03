@@ -375,24 +375,24 @@ library ouroboros-consensus-lsm
   build-depends:
     base >=4.14 && <4.22,
     blockio,
-    random,
-    filepath,
     cardano-binary,
     containers >=0.5 && <0.8,
     contra-tracer,
+    filepath,
     fs-api ^>=0.4,
-    ouroboros-consensus,
     lsm-tree,
     mempack,
     mtl,
     nothunks ^>=0.2,
+    ouroboros-consensus,
     primitive,
+    random,
     resource-registry ^>=0.1,
     serialise ^>=0.2,
+    streaming,
     text,
     transformers,
     vector ^>=0.13,
-    streaming,
 
   build-depends: text >=1.2.5.0 && <2.2
 
@@ -413,20 +413,23 @@ library ouroboros-consensus-lmdb
     cardano-slotting,
     containers >=0.5 && <0.8,
     contra-tracer,
+    directory,
+    filepath,
     fs-api ^>=0.4,
     io-classes ^>=1.8.0.1,
     mempack,
-    sop-core,
+    mtl,
     nothunks ^>=0.2,
     ouroboros-consensus,
     rawlock ^>=0.1.1,
+    resource-registry,
     serialise ^>=0.2,
-    mtl,
+    sop-core,
     streaming,
+    temporary,
     text,
 
   build-depends: text >=1.2.5.0 && <2.2
-
 
 library unstable-consensus-testlib
   import: common-lib
@@ -807,7 +810,7 @@ test-suite storage-test
     mempack,
     mtl,
     nothunks,
-    ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lsm, ouroboros-consensus-lmdb},
+    ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lmdb, ouroboros-consensus-lsm},
     ouroboros-network-api,
     ouroboros-network-mock,
     ouroboros-network-protocols,

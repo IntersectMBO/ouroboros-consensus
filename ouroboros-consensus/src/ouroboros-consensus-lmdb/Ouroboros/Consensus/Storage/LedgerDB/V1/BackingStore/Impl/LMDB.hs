@@ -4,11 +4,9 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
@@ -19,23 +17,19 @@
 -- | A 'BackingStore' implementation based on [LMDB](http://www.lmdb.tech/doc/).
 module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
   ( -- * Opening a database
-    LMDBLimits (LMDBLimits, lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders)
-  , newLMDBBackingStore
+    LMDB
   , Backend (..)
   , Args (LMDBBackingStoreArgs)
-  , LMDB
-  , SinkArgs (SinkLMDB)
+  , LMDBLimits (LMDBLimits, lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders)
+
+    -- * Streaming
   , YieldArgs (YieldLMDB)
+  , mkLMDBYieldArgs
+  , SinkArgs (SinkLMDB)
+  , mkLMDBSinkArgs
 
-    -- * Errors
+    -- * Exposed for testing
   , LMDBErr (..)
-
-    -- * Internals exposed for @snapshot-converter@
-  , DbSeqNo (..)
-  , LMDBMK (..)
-  , getDb
-  , initLMDBTable
-  , withDbSeqNoRWMaybeNull
   ) where
 
 import Cardano.Slotting.Slot (WithOrigin (At))
@@ -45,6 +39,7 @@ import Control.Monad (forM_, unless, void, when)
 import qualified Control.Monad.Class.MonadSTM as IOLike
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans (lift)
+import Control.ResourceRegistry
 import qualified Control.Tracer as Trace
 import Data.Bifunctor (first)
 import Data.Functor (($>), (<&>))
@@ -65,6 +60,7 @@ import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( SnapshotBackend (..)
@@ -89,8 +85,11 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
+import System.Directory
 import qualified System.FS.API as FS
 import System.FS.IO
+import qualified System.FilePath as FilePath
+import System.IO.Temp
 
 {-------------------------------------------------------------------------------
   Database definition
@@ -814,6 +813,9 @@ instance
       limits
       (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint fs)
 
+class (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
+instance (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
+
 {-------------------------------------------------------------------------------
   Streaming
 -------------------------------------------------------------------------------}
@@ -882,5 +884,71 @@ yieldLmdbS readChunkSize bsvh hint k = do
         S.each $ Map.toList values
         go (RangeQuery (Just . LedgerTables . KeysMK $ Set.singleton x) readChunkSize)
 
-class (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
-instance (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
+-- | Create Yield args for LMDB
+mkLMDBYieldArgs ::
+  forall l.
+  ( HasCallStack
+  , HasLedgerTables l
+  , MemPackIdx l EmptyMK ~ l EmptyMK
+  ) =>
+  FilePath ->
+  LMDBLimits ->
+  l EmptyMK ->
+  ResourceRegistry IO ->
+  IO (YieldArgs IO LMDB l)
+mkLMDBYieldArgs fp limits hint reg = do
+  let (dbPath, snapName) = FilePath.splitFileName fp
+  tempDir <- getCanonicalTemporaryDirectory
+  let lmdbTemp = tempDir FilePath.</> "lmdb_streaming_in"
+  removePathForcibly lmdbTemp
+  _ <-
+    allocate
+      reg
+      (\_ -> createDirectory lmdbTemp)
+      (\_ -> removePathForcibly lmdbTemp)
+  (_, bs) <-
+    allocate
+      reg
+      ( \_ -> do
+          newLMDBBackingStore
+            Trace.nullTracer
+            limits
+            (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint lmdbTemp)
+            (SnapshotsFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint dbPath)
+            (InitFromCopy hint (FS.mkFsPath [snapName]))
+      )
+      bsClose
+  (_, bsvh) <- allocate reg (\_ -> bsValueHandle bs) bsvhClose
+  pure (YieldLMDB 1000 bsvh)
+
+-- | Create Sink args for LMDB
+mkLMDBSinkArgs ::
+  forall l.
+  ( HasCallStack
+  , HasLedgerTables l
+  , MemPackIdx l EmptyMK ~ l EmptyMK
+  ) =>
+  FilePath ->
+  LMDBLimits ->
+  l EmptyMK ->
+  ResourceRegistry IO ->
+  IO (SinkArgs IO LMDB l)
+mkLMDBSinkArgs fp limits hint reg = do
+  let (snapDir, snapName) = FilePath.splitFileName fp
+  tempDir <- getCanonicalTemporaryDirectory
+  let lmdbTemp = tempDir FilePath.</> "lmdb_streaming_out"
+  removePathForcibly lmdbTemp
+  _ <- allocate reg (\_ -> createDirectory lmdbTemp) (\_ -> removePathForcibly lmdbTemp)
+  (_, bs) <-
+    allocate
+      reg
+      ( \_ ->
+          newLMDBBackingStore
+            Trace.nullTracer
+            limits
+            (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint lmdbTemp)
+            (SnapshotsFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint snapDir)
+            (InitFromValues (At 0) hint emptyLedgerTables)
+      )
+      bsClose
+  pure $ SinkLMDB 1000 (bsWrite bs) (\h -> bsCopy bs h (FS.mkFsPath [snapName, "tables"]))

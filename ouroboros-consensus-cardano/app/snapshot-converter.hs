@@ -35,6 +35,7 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as V1
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.IOLike hiding (yield)
 import System.Console.ANSI
@@ -47,6 +48,7 @@ import System.FilePath (splitDirectories)
 import qualified System.FilePath as F
 import System.IO
 import System.ProgressBar
+import System.Random
 
 data Format
   = Mem FilePath
@@ -361,7 +363,7 @@ main = withStdTerminalHandles $ do
         InEnv
           st
           fp
-          (\a b -> SomeBackend <$> fromInMemory (fp F.</> "tables") a b)
+          (\a b -> SomeBackend <$> mkInMemYieldArgs (fp F.</> "tables") a b)
           ("InMemory@[" <> fp <> "]")
           c
           mtd
@@ -380,7 +382,7 @@ main = withStdTerminalHandles $ do
         InEnv
           st
           fp
-          (\a b -> SomeBackend <$> fromLMDB (fp F.</> "tables") defaultLMDBLimits a b)
+          (\a b -> SomeBackend <$> V1.mkLMDBYieldArgs (fp F.</> "tables") defaultLMDBLimits a b)
           ("LMDB@[" <> fp <> "]")
           c
           mtd
@@ -399,7 +401,9 @@ main = withStdTerminalHandles $ do
         InEnv
           st
           fp
-          (\a b -> SomeBackend <$> fromLSM lsmDbPath (last $ splitDirectories fp) a b)
+          ( \a b ->
+              SomeBackend <$> mkLSMYieldArgs lsmDbPath (last $ splitDirectories fp) stdMkBlockIOFS newStdGen a b
+          )
           ("LSM@[" <> lsmDbPath <> "]")
           c
           mtd
@@ -417,7 +421,7 @@ main = withStdTerminalHandles $ do
       pure $
         OutEnv
           fp
-          (\a b -> SomeBackend <$> toInMemory (fp F.</> "tables") a b)
+          (\a b -> SomeBackend <$> mkInMemSinkArgs (fp F.</> "tables") a b)
           Nothing
           ("InMemory@[" <> fp <> "]")
           UTxOHDMemSnapshot
@@ -433,7 +437,7 @@ main = withStdTerminalHandles $ do
       pure $
         OutEnv
           fp
-          (\a b -> SomeBackend <$> toLMDB fp defaultLMDBLimits a b)
+          (\a b -> SomeBackend <$> V1.mkLMDBSinkArgs fp defaultLMDBLimits a b)
           Nothing
           ("LMDB@[" <> fp <> "]")
           UTxOHDLMDBSnapshot
@@ -449,7 +453,9 @@ main = withStdTerminalHandles $ do
       pure $
         OutEnv
           fp
-          (\a b -> SomeBackend <$> toLSM lsmDbPath (last $ splitDirectories fp) a b)
+          ( \a b ->
+              SomeBackend <$> mkLSMSinkArgs lsmDbPath (last $ splitDirectories fp) stdMkBlockIOFS newStdGen a b
+          )
           (Just lsmDbPath)
           ("LSM@[" <> lsmDbPath <> "]")
           UTxOHDLSMSnapshot
