@@ -51,13 +51,11 @@ import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec (codecObjectDiffusionId)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   ( ObjectDiffusionInboundPipelined
-  , objectDiffusionInboundClientPeerPipelined
-  , objectDiffusionInboundServerPeerPipelined
+  , objectDiffusionInboundPeerPipelined
   )
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound
   ( ObjectDiffusionOutbound
-  , objectDiffusionOutboundClientPeer
-  , objectDiffusionOutboundServerPeer
+  , objectDiffusionOutboundPeer
   )
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
   ( NumObjectIdsReq (..)
@@ -76,11 +74,8 @@ tests =
   testGroup
     "ObjectDiffusion.Smoke"
     [ testProperty
-        "ObjectDiffusion smoke test with mock objects (client inbound, server outbound)"
-        prop_smoke_init_inbound
-    , testProperty
-        "ObjectDiffusion smoke test with mock objects (client outbound, server inbound)"
-        prop_smoke_init_outbound
+        "ObjectDiffusion smoke test with mock objects"
+        prop_smoke
     ]
 
 {-------------------------------------------------------------------------------
@@ -185,8 +180,8 @@ instance Arbitrary ProtocolConstants where
 nodeToNodeVersion :: NodeToNodeVersion
 nodeToNodeVersion = NodeToNodeV_14
 
-prop_smoke_init_inbound :: ProtocolConstants -> ListWithUniqueIds SmokeObject idTy -> Property
-prop_smoke_init_inbound protocolConstants (ListWithUniqueIds objects) =
+prop_smoke :: ProtocolConstants -> ListWithUniqueIds SmokeObject idTy -> Property
+prop_smoke protocolConstants (ListWithUniqueIds objects) =
   prop_smoke_object_diffusion
     protocolConstants
     objects
@@ -199,7 +194,7 @@ prop_smoke_init_inbound protocolConstants (ListWithUniqueIds objects) =
       ((\x -> "Outbound (Server): " ++ show x) `contramap` tracer)
       codecObjectDiffusionId
       outboundChannel
-      (objectDiffusionOutboundServerPeer outbound)
+      (objectDiffusionOutboundPeer outbound)
       >> pure ()
 
   runInboundPeer inbound inboundChannel tracer =
@@ -207,33 +202,7 @@ prop_smoke_init_inbound protocolConstants (ListWithUniqueIds objects) =
       ((\x -> "Inbound (Client): " ++ show x) `contramap` tracer)
       codecObjectDiffusionId
       inboundChannel
-      (objectDiffusionInboundClientPeerPipelined inbound)
-      >> pure ()
-
-prop_smoke_init_outbound ::
-  ProtocolConstants -> ListWithUniqueIds SmokeObject SmokeObjectId -> Property
-prop_smoke_init_outbound protocolConstants (ListWithUniqueIds objects) =
-  prop_smoke_object_diffusion
-    protocolConstants
-    objects
-    runOutboundPeer
-    runInboundPeer
-    (mkMockPoolInterfaces objects)
- where
-  runOutboundPeer outbound outboundChannel tracer =
-    runPeer
-      ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer)
-      codecObjectDiffusionId
-      outboundChannel
-      (objectDiffusionOutboundClientPeer outbound)
-      >> pure ()
-
-  runInboundPeer inbound inboundChannel tracer =
-    runPipelinedPeer
-      ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer)
-      codecObjectDiffusionId
-      inboundChannel
-      (objectDiffusionInboundServerPeerPipelined inbound)
+      (objectDiffusionInboundPeerPipelined inbound)
       >> pure ()
 
 --- The core logic of the smoke test is shared between the generic smoke tests for ObjectDiffusion, and the ones specialised to PerasCert/PerasVote diffusion
@@ -251,14 +220,14 @@ prop_smoke_object_diffusion ::
   ( forall m.
     IOLike m =>
     ObjectDiffusionOutbound objectId object m () ->
-    Channel m (AnyMessage (ObjectDiffusion initAgency objectId object)) ->
+    Channel m (AnyMessage (ObjectDiffusion objectId object)) ->
     (Tracer m String) ->
     m ()
   ) ->
   ( forall m.
     IOLike m =>
     ObjectDiffusionInboundPipelined objectId object m () ->
-    (Channel m (AnyMessage (ObjectDiffusion initAgency objectId object))) ->
+    (Channel m (AnyMessage (ObjectDiffusion objectId object))) ->
     (Tracer m String) ->
     m ()
   ) ->
@@ -297,6 +266,7 @@ prop_smoke_object_diffusion
               )
               inboundPoolWriter
               nodeToNodeVersion
+              (readTVar controlMessage)
 
           outbound =
             objectDiffusionOutbound
@@ -304,7 +274,6 @@ prop_smoke_object_diffusion
               maxFifoSize
               outboundPoolReader
               nodeToNodeVersion
-              (readTVar controlMessage)
 
         withRegistry $ \reg -> do
           (outboundChannel, inboundChannel) <- createConnectedChannels

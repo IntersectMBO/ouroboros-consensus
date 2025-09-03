@@ -54,6 +54,7 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Hashable (Hashable)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
+import qualified Data.Set as Set
 import Data.Void (Void)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
@@ -125,8 +126,16 @@ import Ouroboros.Network.Protocol.KeepAlive.Codec
 import Ouroboros.Network.Protocol.KeepAlive.Server
 import Ouroboros.Network.Protocol.KeepAlive.Type
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
-  ( codecObjectDiffusion
+  ( byteLimitsObjectDiffusion
+  , codecObjectDiffusion
   , codecObjectDiffusionId
+  , timeLimitsObjectDiffusion
+  )
+import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
+  ( objectDiffusionInboundPeerPipelined
+  )
+import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound
+  ( objectDiffusionOutboundPeer
   )
 import Ouroboros.Network.Protocol.PeerSharing.Client
   ( PeerSharingClient
@@ -201,19 +210,15 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ConnectionId addr ->
       TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ()
-  , hPerasCertDiffusionInbound ::
-      NodeToNodeVersion ->
-      ConnectionId addr ->
-      PerasCertDiffusionInboundPipelined blk m ()
-  -- ^ TODO: We should pass 'hPerasCertDiffusionInbound' to the network
-  -- layer, as per https://github.com/tweag/cardano-peras/issues/78
-  , hPerasCertDiffusionOutbound ::
+  , hPerasCertDiffusionClient ::
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
+      PerasCertDiffusionInboundPipelined blk m ()
+  , hPerasCertDiffusionServer ::
+      NodeToNodeVersion ->
+      ConnectionId addr ->
       PerasCertDiffusionOutbound blk m ()
-  -- ^ TODO: We should pass 'hPerasCertDiffusionOutbound' to the network
-  -- layer, as per https://github.com/tweag/cardano-peras/issues/78
   , hKeepAliveClient ::
       NodeToNodeVersion ->
       ControlMessageSTM m ->
@@ -310,22 +315,22 @@ mkHandlers
             (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
             (getMempoolWriter getMempool)
             version
-      , hPerasCertDiffusionInbound = \version peer ->
+      , hPerasCertDiffusionClient = \version controlMessageSTM peer ->
           objectDiffusionInbound
             (contramap (TraceLabelPeer peer) (Node.perasCertDiffusionInboundTracer tracers))
             ( perasCertDiffusionMaxFifoLength miniProtocolParameters
-            , 10 -- TODO https://github.com/tweag/cardano-peras/issues/97
-            , 10 -- TODO https://github.com/tweag/cardano-peras/issues/97
+            , 10 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
+            , 10 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             )
             (makePerasCertPoolWriterFromChainDB $ getChainDB)
             version
-      , hPerasCertDiffusionOutbound = \version controlMessageSTM peer ->
+            controlMessageSTM
+      , hPerasCertDiffusionServer = \version peer ->
           objectDiffusionOutbound
             (contramap (TraceLabelPeer peer) (Node.perasCertDiffusionOutboundTracer tracers))
             (perasCertDiffusionMaxFifoLength miniProtocolParameters)
             (makePerasCertPoolReaderFromChainDB $ getChainDB)
             version
-            controlMessageSTM
       , hKeepAliveClient = \_version -> keepAliveClient (Node.keepAliveClientTracer tracers) keepAliveRng
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
@@ -472,6 +477,7 @@ data Tracers' peer ntnAddr blk e f = Tracers
       f (TraceLabelPeer peer (TraceSendRecv (BlockFetch (Serialised blk) (Point blk))))
   , tTxSubmission2Tracer ::
       f (TraceLabelPeer peer (TraceSendRecv (TxSubmission2 (GenTxId blk) (GenTx blk))))
+  , tPerasCertDiffusionTracer :: f (TraceLabelPeer peer (TraceSendRecv (PerasCertDiffusion blk)))
   , tKeepAliveTracer :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
   , tPeerSharingTracer :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
   }
@@ -484,6 +490,7 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f
       , tBlockFetchTracer = f tBlockFetchTracer
       , tBlockFetchSerialisedTracer = f tBlockFetchSerialisedTracer
       , tTxSubmission2Tracer = f tTxSubmission2Tracer
+      , tPerasCertDiffusionTracer = f tPerasCertDiffusionTracer
       , tKeepAliveTracer = f tKeepAliveTracer
       , tPeerSharingTracer = f tPeerSharingTracer
       }
@@ -504,6 +511,7 @@ nullTracers =
     , tBlockFetchTracer = nullTracer
     , tBlockFetchSerialisedTracer = nullTracer
     , tTxSubmission2Tracer = nullTracer
+    , tPerasCertDiffusionTracer = nullTracer
     , tKeepAliveTracer = nullTracer
     , tPeerSharingTracer = nullTracer
     }
@@ -525,6 +533,7 @@ showTracers tr =
     , tBlockFetchTracer = showTracing tr
     , tBlockFetchSerialisedTracer = showTracing tr
     , tTxSubmission2Tracer = showTracing tr
+    , tPerasCertDiffusionTracer = showTracing tr
     , tKeepAliveTracer = showTracing tr
     , tPeerSharingTracer = showTracing tr
     }
@@ -549,7 +558,7 @@ type ServerApp m addr bytes a =
 -- | Applications for the node-to-node protocols
 --
 -- See 'Network.Mux.Types.MuxApplication'
-data Apps m addr bCS bBF bTX bKA bPS a b = Apps
+data Apps m addr bCS bBF bTX bPCD bKA bPS a b = Apps
   { aChainSyncClient :: ClientApp m addr bCS a
   -- ^ Start a chain sync client that communicates with the given upstream
   -- node.
@@ -565,6 +574,10 @@ data Apps m addr bCS bBF bTX bKA bPS a b = Apps
   -- given upstream node.
   , aTxSubmission2Server :: ServerApp m addr bTX b
   -- ^ Start a transaction submission v2 server.
+  , aPerasCertDiffusionClient :: ClientApp m addr bPCD a
+  -- ^ Start a Peras cert diffusion client.
+  , aPerasCertDiffusionServer :: ServerApp m addr bPCD b
+  -- ^ Start a Peras cert diffusion server.
   , aKeepAliveClient :: ClientApp m addr bKA a
   -- ^ Start a keep-alive client.
   , aKeepAliveServer :: ServerApp m addr bKA b
@@ -580,7 +593,7 @@ data Apps m addr bCS bBF bTX bKA bPS a b = Apps
 --
 -- They don't depend on the instantiation of the protocol parameters (which
 -- block type is used, etc.), hence the use of 'RankNTypes'.
-data ByteLimits bCS bBF bTX bKA bPS = ByteLimits
+data ByteLimits bCS bBF bTX bPCD bKA bPS = ByteLimits
   { blChainSync ::
       forall header point tip.
       ProtocolSizeLimits
@@ -596,6 +609,11 @@ data ByteLimits bCS bBF bTX bKA bPS = ByteLimits
       ProtocolSizeLimits
         (TxSubmission2 txid tx)
         bTX
+  , blPerasCertDiffusion ::
+      forall blk.
+      ProtocolSizeLimits
+        (PerasCertDiffusion blk)
+        bPCD
   , blKeepAlive ::
       ProtocolSizeLimits
         KeepAlive
@@ -607,22 +625,24 @@ data ByteLimits bCS bBF bTX bKA bPS = ByteLimits
         bPS
   }
 
-noByteLimits :: ByteLimits bCS bBF bTX bKA bPS
+noByteLimits :: ByteLimits bCS bBF bTX bPCD bKA bPS
 noByteLimits =
   ByteLimits
     { blChainSync = byteLimitsChainSync (const 0)
     , blBlockFetch = byteLimitsBlockFetch (const 0)
     , blTxSubmission2 = byteLimitsTxSubmission2 (const 0)
+    , blPerasCertDiffusion = byteLimitsObjectDiffusion (const 0)
     , blKeepAlive = byteLimitsKeepAlive (const 0)
     , blPeerSharing = byteLimitsPeerSharing (const 0)
     }
 
-byteLimits :: ByteLimits ByteString ByteString ByteString ByteString ByteString
+byteLimits :: ByteLimits ByteString ByteString ByteString ByteString ByteString ByteString
 byteLimits =
   ByteLimits
     { blChainSync = byteLimitsChainSync size
     , blBlockFetch = byteLimitsBlockFetch size
     , blTxSubmission2 = byteLimitsTxSubmission2 size
+    , blPerasCertDiffusion = byteLimitsObjectDiffusion size
     , blKeepAlive = byteLimitsKeepAlive size
     , blPeerSharing = byteLimitsPeerSharing size
     }
@@ -650,7 +670,7 @@ mkApps ::
   StdGen ->
   Tracers m addrNTN blk e ->
   (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bPCD bKA bPS) ->
-  ByteLimits bCS bBF bTX bKA bPS ->
+  ByteLimits bCS bBF bTX bPCD bKA bPS ->
   -- Chain-Sync timeouts for chain-sync client (using `Header blk`) as well as
   -- the server (`SerialisedHeader blk`).
   (forall header. ProtocolTimeLimitsWithRnd (ChainSync header (Point blk) (Tip blk))) ->
@@ -658,7 +678,7 @@ mkApps ::
   CsClient.CSJConfig ->
   ReportPeerMetrics m (ConnectionId addrNTN) ->
   Handlers m addrNTN blk ->
-  Apps m addrNTN bCS bBF bTX bKA bPS NodeToNodeInitiatorResult ()
+  Apps m addrNTN bCS bBF bTX bPCD bKA bPS NodeToNodeInitiatorResult ()
 mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
   Apps{..}
  where
@@ -837,6 +857,51 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       channel
       (txSubmissionServerPeerPipelined (hTxSubmissionServer version them))
 
+  aPerasCertDiffusionClient ::
+    NodeToNodeVersion ->
+    ExpandedInitiatorContext addrNTN m ->
+    Channel m bPCD ->
+    m (NodeToNodeInitiatorResult, Maybe bPCD)
+  aPerasCertDiffusionClient
+    version
+    ExpandedInitiatorContext
+      { eicConnectionId = them
+      , eicControlMessage = controlMessageSTM
+      }
+    channel = do
+      labelThisThread "PerasCertDiffusionClient"
+      ((), trailing) <-
+        runPipelinedPeerWithLimits
+          (TraceLabelPeer them `contramap` tPerasCertDiffusionTracer)
+          (cPerasCertDiffusionCodec (mkCodecs version))
+          blPerasCertDiffusion
+          timeLimitsObjectDiffusion
+          channel
+          ( objectDiffusionInboundPeerPipelined
+              (hPerasCertDiffusionClient version controlMessageSTM them)
+          )
+      return (NoInitiatorResult, trailing)
+
+  aPerasCertDiffusionServer ::
+    NodeToNodeVersion ->
+    ResponderContext addrNTN ->
+    Channel m bPCD ->
+    m ((), Maybe bPCD)
+  aPerasCertDiffusionServer
+    version
+    ResponderContext{rcConnectionId = them}
+    channel = do
+      labelThisThread "PerasCertDiffusionServer"
+      runPeerWithLimits
+        (TraceLabelPeer them `contramap` tPerasCertDiffusionTracer)
+        (cPerasCertDiffusionCodec (mkCodecs version))
+        blPerasCertDiffusion
+        timeLimitsObjectDiffusion
+        channel
+        ( objectDiffusionOutboundPeer
+            (hPerasCertDiffusionServer version them)
+        )
+
   aKeepAliveClient ::
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN m ->
@@ -940,10 +1005,11 @@ initiator ::
   MiniProtocolParameters ->
   NodeToNodeVersion ->
   NodeToNodeVersionData ->
-  Apps m addr b b b b b a c ->
+  Apps m addr b b b b b b a c ->
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr b m a Void
 initiator miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
+    Set.empty -- TODO: change for a meaningful value
     miniProtocolParameters
     -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
     -- This is currently ok, as we might accept multiple connections from the
@@ -958,6 +1024,9 @@ initiator miniProtocolParameters version versionData Apps{..} =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aBlockFetchClient version ctx)))
         , txSubmissionProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aTxSubmission2Client version ctx)))
+        , perasCertDiffusionProtocol =
+            (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aPerasCertDiffusionClient version ctx)))
+        , perasVoteDiffusionProtocol = error "perasVoteDiffusionProtocol not implemented"
         , keepAliveProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aKeepAliveClient version ctx)))
         , peerSharingProtocol =
@@ -976,10 +1045,11 @@ initiatorAndResponder ::
   MiniProtocolParameters ->
   NodeToNodeVersion ->
   NodeToNodeVersionData ->
-  Apps m addr b b b b b a c ->
+  Apps m addr b b b b b b a c ->
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr b m a c
 initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
+    Set.empty -- TODO: change for a meaningful value
     miniProtocolParameters
     ( NodeToNodeProtocols
         { chainSyncProtocol =
@@ -997,6 +1067,12 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
                 (MiniProtocolCb (\initiatorCtx -> aTxSubmission2Client version initiatorCtx))
                 (MiniProtocolCb (\responderCtx -> aTxSubmission2Server version responderCtx))
             )
+        , perasCertDiffusionProtocol =
+            ( InitiatorAndResponderProtocol
+                (MiniProtocolCb (\initiatorCtx -> aPerasCertDiffusionClient version initiatorCtx))
+                (MiniProtocolCb (\responderCtx -> aPerasCertDiffusionServer version responderCtx))
+            )
+        , perasVoteDiffusionProtocol = error "perasVoteDiffusionProtocol not implemented"
         , keepAliveProtocol =
             ( InitiatorAndResponderProtocol
                 (MiniProtocolCb (\initiatorCtx -> aKeepAliveClient version initiatorCtx))

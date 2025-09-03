@@ -1796,6 +1796,7 @@ type LimitedApp' m addr blk =
     Lazy.ByteString
     Lazy.ByteString
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
+    (AnyMessage (PerasCertDiffusion blk))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
     NodeToNodeInitiatorResult

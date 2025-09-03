@@ -29,9 +29,9 @@ import Ouroboros.Network.Block (Point (..), SlotNo (SlotNo), StandardHash)
 import Ouroboros.Network.Point (Block (Block), WithOrigin (..))
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
-  ( objectDiffusionInboundServerPeerPipelined
+  ( objectDiffusionInboundPeerPipelined
   )
-import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionOutboundClientPeer)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionOutboundPeer)
 import Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   ( ListWithUniqueIds (..)
   , ProtocolConstants
@@ -101,14 +101,14 @@ prop_smoke protocolConstants (ListWithUniqueIds certs) =
       ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer)
       codecObjectDiffusionId
       outboundChannel
-      (objectDiffusionOutboundClientPeer outbound)
+      (objectDiffusionOutboundPeer outbound)
       >> pure ()
   runInboundPeer inbound inboundChannel tracer =
     runPipelinedPeer
       ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer)
       codecObjectDiffusionId
       inboundChannel
-      (objectDiffusionInboundServerPeerPipelined inbound)
+      (objectDiffusionInboundPeerPipelined inbound)
       >> pure ()
   mkPoolInterfaces ::
     forall m.
