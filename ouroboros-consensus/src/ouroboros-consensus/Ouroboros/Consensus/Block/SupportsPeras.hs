@@ -144,9 +144,6 @@ instance StandardHash blk => BlockSupportsPeras blk where
 instance ShowProxy blk => ShowProxy (PerasCert blk) where
   showProxy _ = "PerasCert " <> showProxy (Proxy @blk)
 
-instance ShowProxy blk => ShowProxy (PerasCert blk) where
-  showProxy _ = "PerasCert " <> showProxy (Proxy @blk)
-
 instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
   encode PerasCert{pcCertRound, pcCertBoostedBlock} =
     encodeListLen 2
