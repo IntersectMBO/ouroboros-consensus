@@ -178,7 +178,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- the PeerSharing protocol
   , getTracers :: Tracers m (ConnectionId addrNTN) addrNTC blk
   -- ^ The node's tracers
-  , setBlockForging :: [m (BlockForging m blk)] -> m ()
+  , setBlockForging :: [BlockForging m blk] -> m ()
   -- ^ Set block forging
   --
   -- When set with the empty list '[]' block forging will be disabled.
@@ -244,7 +244,7 @@ initNodeKernel
     , getDiffusionPipeliningSupport
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
-    blockForgingVar :: LazySTM.TMVar m [m (BlockForging m blk)] <- LazySTM.newTMVarIO []
+    blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
     st <- initInternalState args
@@ -375,7 +375,7 @@ initNodeKernel
    where
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
-      STM m [m (BlockForging m blk)] ->
+      STM m [BlockForging m blk] ->
       m Void
     blockForgingController st getBlockForging = go []
      where
@@ -493,30 +493,24 @@ forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
-  m (BlockForging m blk) ->
+  BlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} blockForgingM =
-  forkLinkedWatcherAllocate
+forkBlockForging IS{..} blockForging =
+  forkLinkedWatcherFinalize
     registry
     label
-    blockForgingM
-    finalize
-    ( \blockForging -> knownSlotWatcher btime $
-        \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go blockForging rr currentSlot)
+    ( knownSlotWatcher btime $
+        \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go rr currentSlot)
     )
+    (finalize blockForging)
  where
   label :: String
   label =
-    "NodeKernel.blockForging.{unnamed}"
+    "NodeKernel.blockForging." <> Text.unpack (forgeLabel blockForging)
 
-  blockForgingMLabel = do
-    bf <- blockForgingM
-    labelThisThread $ Text.unpack $ forgeLabel bf
-    pure bf
-
-  go :: BlockForging m blk -> ResourceRegistry m -> SlotNo -> WithEarlyExit m ()
-  go blockForging reg currentSlot = do
-    trace blockForging $ TraceStartLeadershipCheck currentSlot
+  go :: ResourceRegistry m -> SlotNo -> WithEarlyExit m ()
+  go reg currentSlot = do
+    trace $ TraceStartLeadershipCheck currentSlot
 
     -- Figure out which block to connect to
     --
@@ -531,10 +525,10 @@ forkBlockForging IS{..} blockForgingM =
       case eBlkCtx of
         Right blkCtx -> return blkCtx
         Left failure -> do
-          trace blockForging failure
+          trace failure
           exitEarly
 
-    trace blockForging $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
+    trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
 
     -- Get forker corresponding to bcPrevPoint
     --
@@ -546,13 +540,13 @@ forkBlockForging IS{..} blockForgingM =
     -- Remember to close this forker before exiting!
     forker <- case forkerEith of
       Left _ -> do
-        trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
+        trace $ TraceNoLedgerState currentSlot bcPrevPoint
         exitEarly
       Right forker -> pure forker
 
     unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
 
-    trace blockForging $ TraceLedgerState currentSlot bcPrevPoint
+    trace $ TraceLedgerState currentSlot bcPrevPoint
 
     -- We require the ticked ledger view in order to construct the ticked
     -- 'ChainDepState'.
@@ -571,13 +565,13 @@ forkBlockForging IS{..} blockForgingM =
           -- the ticked ledger state). However, we probably don't /want/ to
           -- produce a block in this case; we are most likely missing a blocks
           -- on our chain.
-          trace blockForging $ TraceNoLedgerView currentSlot err
+          trace $ TraceNoLedgerView currentSlot err
           lift $ roforkerClose forker
           exitEarly
         Right lv ->
           return lv
 
-    trace blockForging $ TraceLedgerView currentSlot
+    trace $ TraceLedgerView currentSlot
 
     -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
     -- only need the ticked 'ChainDepState' to check the whether we're a leader.
@@ -605,21 +599,21 @@ forkBlockForging IS{..} blockForgingM =
             tickedChainDepState
       case shouldForge of
         ForgeStateUpdateError err -> do
-          trace blockForging $ TraceForgeStateUpdateError currentSlot err
+          trace $ TraceForgeStateUpdateError currentSlot err
           lift $ roforkerClose forker
           exitEarly
         CannotForge cannotForge -> do
-          trace blockForging $ TraceNodeCannotForge currentSlot cannotForge
+          trace $ TraceNodeCannotForge currentSlot cannotForge
           lift $ roforkerClose forker
           exitEarly
         NotLeader -> do
-          trace blockForging $ TraceNodeNotLeader currentSlot
+          trace $ TraceNodeNotLeader currentSlot
           lift $ roforkerClose forker
           exitEarly
         ShouldForge p -> return p
 
     -- At this point we have established that we are indeed slot leader
-    trace blockForging $ TraceNodeIsLeader currentSlot
+    trace $ TraceNodeIsLeader currentSlot
 
     -- Tick the ledger state for the 'SlotNo' we're producing a block for
     let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
@@ -631,7 +625,7 @@ forkBlockForging IS{..} blockForgingM =
             (ledgerState unticked)
 
     _ <- evaluate tickedLedgerState
-    trace blockForging $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
+    trace $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
 
     -- Get a snapshot of the mempool that is consistent with the ledger
     --
@@ -666,7 +660,7 @@ forkBlockForging IS{..} blockForgingM =
     _ <- evaluate (length txs)
     _ <- evaluate mempoolHash
 
-    trace blockForging $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
+    trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
     -- Actually produce the block
     newBlock <-
@@ -680,7 +674,7 @@ forkBlockForging IS{..} blockForgingM =
           txs
           proof
 
-    trace blockForging $
+    trace $
       TraceForgedBlock
         currentSlot
         (ledgerTipPoint (ledgerState unticked))
@@ -710,9 +704,9 @@ forkBlockForging IS{..} blockForgingM =
                 <$> ChainDB.getIsInvalidBlock chainDB
         case isInvalid of
           Nothing ->
-            trace blockForging $ TraceDidntAdoptBlock currentSlot newBlock
+            trace $ TraceDidntAdoptBlock currentSlot newBlock
           Just reason -> do
-            trace blockForging $ TraceForgedInvalidBlock currentSlot newBlock reason
+            trace $ TraceForgedInvalidBlock currentSlot newBlock reason
             -- We just produced a block that is invalid according to the
             -- ledger in the ChainDB, while the mempool said it is valid.
             -- There is an inconsistency between the two!
@@ -736,10 +730,10 @@ forkBlockForging IS{..} blockForgingM =
       -- assert this here because the ability to extract transactions from a
       -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
       -- e.g., @DualBlock@.
-      trace blockForging $ TraceAdoptedBlock currentSlot newBlock txs
+      trace $ TraceAdoptedBlock currentSlot newBlock txs
 
-  trace :: BlockForging m blk -> TraceForgeEvent blk -> WithEarlyExit m ()
-  trace blockForging =
+  trace :: TraceForgeEvent blk -> WithEarlyExit m ()
+  trace =
     lift
       . traceWith (forgeTracer tracers)
       . TraceLabelCreds (forgeLabel blockForging)
