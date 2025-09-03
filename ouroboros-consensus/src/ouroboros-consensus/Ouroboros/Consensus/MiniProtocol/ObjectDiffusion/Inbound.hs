@@ -18,7 +18,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
   , NumObjectsProcessed (..)
   ) where
 
-import Cardano.Prelude (catMaybes)
+import Cardano.Prelude (catMaybes, (&))
 import Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
 import Control.Exception (assert)
 import Control.Monad (when)
@@ -37,8 +37,9 @@ import Data.Set qualified as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Network.TypedProtocol.Core (N (Z), Nat (..), natToInt)
-import NoThunks.Class (NoThunks (..), unsafeNoThunks)
+import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+import Ouroboros.Consensus.Util.NormalForm.Invariant (noThunksInvariant)
 import Ouroboros.Network.ControlMessage
 import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
@@ -54,14 +55,14 @@ newtype NumObjectsProcessed
 
 data TraceObjectDiffusionInbound objectId object
   = -- | Number of objects just about to be inserted.
-    TraceObjectDiffusionCollected Int
+    TraceObjectDiffusionInboundCollectedObjects Int
   | -- | Just processed object pass/fail breakdown.
-    TraceObjectDiffusionProcessed NumObjectsProcessed
+    TraceObjectDiffusionInboundAddedObjects NumObjectsProcessed
   | -- | Received a 'ControlMessage' from the outbound peer governor, and about
     -- to act on it.
-    TraceObjectDiffusionControlMessage ControlMessage
-  | TraceObjectInboundCanRequestMoreObjects Int
-  | TraceObjectInboundCannotRequestMoreObjects Int
+    TraceObjectDiffusionInboundRecvControlMessage ControlMessage
+  | TraceObjectDiffusionInboundCanRequestMoreObjects Int
+  | TraceObjectDiffusionInboundCannotRequestMoreObjects Int
   deriving (Eq, Show)
 
 data ObjectDiffusionInboundError
@@ -138,17 +139,17 @@ objectDiffusionInbound
   ObjectPoolWriter{..}
   _version
   controlMessageSTM =
-    ObjectDiffusionInboundPipelined $ do
-      continueWithStateM (go Zero) initialInboundSt
+    ObjectDiffusionInboundPipelined $!
+      checkState initialInboundSt & go Zero
    where
     canRequestMoreObjects :: InboundSt k object -> Bool
-    canRequestMoreObjects st =
+    canRequestMoreObjects !st =
       not (Set.null (canRequestNext st))
 
     -- Computes how many new IDs we can request so that receiving all of them
     -- won't make 'outstandingFifo' exceed 'maxFifoLength'.
     numIdsToReq :: InboundSt objectId object -> NumObjectIdsReq
-    numIdsToReq st =
+    numIdsToReq !st =
       maxNumIdsToReq
         `min` ( fromIntegral maxFifoLength
                   - (fromIntegral $ Seq.length $ outstandingFifo st)
@@ -165,14 +166,14 @@ objectDiffusionInbound
       (objectId -> Bool) ->
       [objectId] ->
       InboundSt objectId object
-    preAcknowledge st _ collectedIds | null collectedIds = st
-    preAcknowledge st poolHasObject collectedIds =
+    preAcknowledge !st _ collectedIds | null collectedIds = st
+    preAcknowledge !st poolHasObject collectedIds =
       let
         -- Divide the collected IDs in two parts: those that are already in the
         -- objectPool and those that are not.
         (alreadyObtained, notYetObtained) =
           List.partition
-            (\objectId -> poolHasObject objectId)
+            poolHasObject
             collectedIds
 
         -- The objects that we intentionally don't request, because they are
@@ -180,8 +181,10 @@ objectDiffusionInbound
         -- So we extend 'pendingObjects' with those objects (so of course they
         -- have no corresponding reply).
         pendingObjects' =
-          pendingObjects st
-            <> Map.fromList [(objectId, Nothing) | objectId <- alreadyObtained]
+          foldl'
+            (\accMap objectId -> Map.insert objectId Nothing accMap)
+            (pendingObjects st)
+            alreadyObtained
 
         -- We initially extend 'outstandingFifo' with the all the collected IDs
         -- (to properly mirror the server state).
@@ -202,28 +205,33 @@ objectDiffusionInbound
             (flip Map.delete)
             pendingObjects'
             objectIdsToAck
+
+        !st' =
+          st
+            { canRequestNext = canRequestNext st <> (Set.fromList notYetObtained)
+            , pendingObjects = pendingObjects''
+            , outstandingFifo = outstandingFifo''
+            , numToAckOnNextReq =
+                numToAckOnNextReq st
+                  + fromIntegral (Seq.length objectIdsToAck)
+            }
        in
-        st
-          { canRequestNext = canRequestNext st <> (Set.fromList notYetObtained)
-          , pendingObjects = pendingObjects''
-          , outstandingFifo = outstandingFifo''
-          , numToAckOnNextReq =
-              numToAckOnNextReq st
-                + fromIntegral (Seq.length objectIdsToAck)
-          }
+        st'
 
     go ::
       forall (n :: N).
       Nat n ->
-      StatefulM (InboundSt objectId object) n objectId object m
-    go n = StatefulM $ \st -> do
+      InboundSt objectId object ->
+      InboundStIdle n objectId object m ()
+    go n !st = WithEffect $ do
       -- Check whether we should continue engaging in the protocol.
       ctrlMsg <- atomically controlMessageSTM
-      traceWith tracer $ TraceObjectDiffusionControlMessage ctrlMsg
+      traceWith tracer $
+        TraceObjectDiffusionInboundRecvControlMessage ctrlMsg
       case ctrlMsg of
         -- The peer selection governor is asking us to terminate the connection.
         Terminate ->
-          pure $ terminateAfterDrain n
+          pure $! terminateAfterDrain n
         -- Otherwise, we can continue the protocol normally.
         _continue -> case n of
           -- We didn't pipeline any requests, so there are no replies in flight
@@ -234,15 +242,17 @@ objectDiffusionInbound
                 -- There are no replies in flight, but we do know some more objects
                 -- we can ask for, so lets ask for them and more objectIds in a
                 -- pipelined way.
-                traceWith tracer (TraceObjectInboundCanRequestMoreObjects (natToInt n))
-                pure $ continueWithState (goReqObjectsAndObjectIdsPipelined Zero) st
+                traceWith tracer $
+                  TraceObjectDiffusionInboundCanRequestMoreObjects (natToInt n)
+                pure $! checkState st & goReqObjectsAndObjectIdsPipelined Zero
               else do
                 -- There's no replies in flight, and we have no more objects we can
                 -- ask for so the only remaining thing to do is to ask for more
                 -- objectIds. Since this is the only thing to do now, we make this a
                 -- blocking call.
-                traceWith tracer (TraceObjectInboundCannotRequestMoreObjects (natToInt n))
-                pure $ continueWithState goReqObjectIdsBlocking st
+                traceWith tracer $
+                  TraceObjectDiffusionInboundCannotRequestMoreObjects (natToInt n)
+                pure $! checkState st & goReqObjectIdsBlocking
 
           -- We have pipelined some requests, so there are some replies in flight.
           Succ n' ->
@@ -252,13 +262,15 @@ objectDiffusionInbound
                 -- available, but there are objects to request too so we
                 -- should *not* block waiting for replies.
                 -- So we ask for new objects and objectIds in a pipelined way.
-                traceWith tracer (TraceObjectInboundCanRequestMoreObjects (natToInt n))
-                pure $
+                traceWith tracer $
+                  TraceObjectDiffusionInboundCanRequestMoreObjects (natToInt n)
+                pure $!
                   CollectPipelined
-                    (Just (continueWithState (goReqObjectsAndObjectIdsPipelined (Succ n')) st))
-                    (collectAndContinueWithState (goCollect n') st)
+                    (Just (checkState st & goReqObjectsAndObjectIdsPipelined (Succ n')))
+                    (\collected -> checkState st & goCollect n' collected)
               else do
-                traceWith tracer (TraceObjectInboundCannotRequestMoreObjects (natToInt n))
+                traceWith tracer $
+                  TraceObjectDiffusionInboundCannotRequestMoreObjects (natToInt n)
                 -- In this case we can theoretically only collect replies or request
                 -- new object IDs.
                 --
@@ -270,17 +282,19 @@ objectDiffusionInbound
                 -- requests.
                 --
                 -- So we instead block until we collect a reply.
-                pure $
+                pure $!
                   CollectPipelined
                     Nothing
-                    (collectAndContinueWithState (goCollect n') st)
+                    (\collected -> checkState st & goCollect n' collected)
 
     goCollect ::
       forall (n :: N).
       Nat n ->
-      StatefulCollect (InboundSt objectId object) n objectId object m
-    goCollect n = StatefulCollect $ \st collect -> case collect of
-      CollectObjectIds numIdsRequested collectedIds -> do
+      Collect objectId object ->
+      InboundSt objectId object ->
+      InboundStIdle n objectId object m ()
+    goCollect n collect !st = case collect of
+      CollectObjectIds numIdsRequested collectedIds -> WithEffect $ do
         let numCollectedIds = length collectedIds
             collectedIdsSet = Set.fromList collectedIds
 
@@ -304,12 +318,11 @@ objectDiffusionInbound
         -- calling 'preAcknowledge' which will also pre-emptively acknowledge the
         -- objectIds that we already have in the pool and thus don't need to
         -- request.
-        let st' = st{numIdsInFlight = numIdsInFlight st - numIdsRequested}
+        let !st' = st{numIdsInFlight = numIdsInFlight st - numIdsRequested}
         poolHasObject <- atomically $ opwHasObject
-        continueWithStateM
-          (go n)
-          (preAcknowledge st' poolHasObject collectedIds)
-      CollectObjects requestedIds collectedObjects -> do
+        let !st'' = preAcknowledge st' poolHasObject collectedIds
+        pure $! checkState st'' & go n
+      CollectObjects requestedIds collectedObjects -> WithEffect $ do
         let requestedIdsSet = Set.fromList requestedIds
             obtainedIdsSet = Set.fromList (opwObjectId <$> collectedObjects)
 
@@ -319,12 +332,14 @@ objectDiffusionInbound
           throwIO ProtocolErrorObjectNotRequested
 
         traceWith tracer $
-          TraceObjectDiffusionCollected (length collectedObjects)
+          TraceObjectDiffusionInboundCollectedObjects (length collectedObjects)
 
         -- We update 'pendingObjects' with the newly obtained objects
-        let newPendingObjects :: Map objectId (Maybe object)
-            newPendingObjects = Map.fromList [(opwObjectId obj, Just obj) | obj <- collectedObjects]
-            pendingObjects' = pendingObjects st <> newPendingObjects
+        let pendingObjects' =
+              foldl'
+                (\accMap object -> Map.insert (opwObjectId object) (Just object) accMap)
+                (pendingObjects st)
+                collectedObjects
 
             -- We then find the longest prefix of 'outstandingFifo' for which we have
             -- all the corresponding IDs in 'pendingObjects'.
@@ -348,138 +363,92 @@ objectDiffusionInbound
               catMaybes $
                 (((Map.!) pendingObjects') <$> toList objectIdsToAck)
 
-        -- TODO: Certificate / Vote validation
-
         opwAddObjects objectsToAck
         traceWith tracer $
-          TraceObjectDiffusionProcessed
+          TraceObjectDiffusionInboundAddedObjects
             (NumObjectsProcessed (fromIntegral $ length objectsToAck))
-        continueWithStateM
-          (go n)
-          st
-            { pendingObjects = pendingObjects''
-            , outstandingFifo = outstandingFifo'
-            , numToAckOnNextReq =
-                numToAckOnNextReq st
-                  + fromIntegral (Seq.length objectIdsToAck)
-            }
 
-    goReqObjectIdsBlocking :: Stateful (InboundSt objectId object) 'Z objectId object m
-    goReqObjectIdsBlocking = Stateful $ \st -> do
+        let !st' =
+              st
+                { pendingObjects = pendingObjects''
+                , outstandingFifo = outstandingFifo'
+                , numToAckOnNextReq =
+                    numToAckOnNextReq st
+                      + fromIntegral (Seq.length objectIdsToAck)
+                }
+        pure $! checkState st' & go n
+
+    goReqObjectIdsBlocking ::
+      InboundSt objectId object ->
+      InboundStIdle 'Z objectId object m ()
+    goReqObjectIdsBlocking !st =
       let numIdsToRequest = numIdsToReq st
-      -- We should only request new object IDs in a blocking way if we have
-      -- absolutely nothing else we can do.
-      assert
-        ( numIdsInFlight st == 0
-            && Seq.null (outstandingFifo st)
-            && Set.null (canRequestNext st)
-            && Map.null (pendingObjects st)
-        )
-        $ SendMsgRequestObjectIdsBlocking
-          (numToAckOnNextReq st)
-          numIdsToRequest
-          ( \neCollectedIds ->
-              collectAndContinueWithState
-                (goCollect Zero)
-                st
-                  { numToAckOnNextReq = 0
-                  , numIdsInFlight = numIdsToRequest
-                  }
-                (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
-          )
+          -- We should only request new object IDs in a blocking way if we have
+          -- absolutely nothing else we can do.
+          !st' =
+            st
+              { numToAckOnNextReq = 0
+              , numIdsInFlight = numIdsToRequest
+              }
+       in assert
+            ( numIdsInFlight st == 0
+                && Seq.null (outstandingFifo st)
+                && Set.null (canRequestNext st)
+                && Map.null (pendingObjects st)
+            )
+            $ SendMsgRequestObjectIdsBlocking
+              (numToAckOnNextReq st)
+              numIdsToRequest
+              ( \neCollectedIds ->
+                  checkState st' & goCollect Zero (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
+              )
 
     goReqObjectsAndObjectIdsPipelined ::
       forall (n :: N).
       Nat n ->
-      Stateful (InboundSt objectId object) n objectId object m
-    goReqObjectsAndObjectIdsPipelined n = Stateful $ \st -> do
+      InboundSt objectId object ->
+      InboundStIdle n objectId object m ()
+    goReqObjectsAndObjectIdsPipelined n !st =
       -- TODO: This implementation is deliberately naive, we pick in an
       -- arbitrary order. We may want to revisit this later.
       let (toRequest, canRequestNext') =
             Set.splitAt (fromIntegral maxNumObjectsToReq) (canRequestNext st)
-
-      SendMsgRequestObjectsPipelined
-        (toList toRequest)
-        ( continueWithStateM
-            (goReqObjectIdsPipelined (Succ n))
-            st{canRequestNext = canRequestNext'}
-        )
+          !st' = st{canRequestNext = canRequestNext'}
+       in SendMsgRequestObjectsPipelined
+            (toList toRequest)
+            (checkState st' & goReqObjectIdsPipelined (Succ n))
 
     goReqObjectIdsPipelined ::
       forall (n :: N).
       Nat n ->
-      StatefulM (InboundSt objectId object) n objectId object m
-    goReqObjectIdsPipelined n = StatefulM $ \st -> do
+      InboundSt objectId object ->
+      InboundStIdle n objectId object m ()
+    goReqObjectIdsPipelined n !st =
       let numIdsToRequest = numIdsToReq st
-
-      if numIdsToRequest <= 0
-        then continueWithStateM (go n) st
-        else
-          pure $
-            SendMsgRequestObjectIdsPipelined
-              (numToAckOnNextReq st)
-              numIdsToRequest
-              ( continueWithStateM
-                  (go (Succ n))
-                  st
-                    { numIdsInFlight =
-                        numIdsInFlight st
-                          + numIdsToRequest
-                    , numToAckOnNextReq = 0
-                    }
-              )
+       in if numIdsToRequest <= 0
+            then checkState st & go n
+            else
+              let !st' =
+                    st
+                      { numIdsInFlight =
+                          numIdsInFlight st
+                            + numIdsToRequest
+                      , numToAckOnNextReq = 0
+                      }
+               in SendMsgRequestObjectIdsPipelined
+                    (numToAckOnNextReq st)
+                    numIdsToRequest
+                    (checkState st' & go (Succ n))
 
     -- Ignore all outstanding replies to messages we pipelined ("drain"), and then
     -- terminate.
     terminateAfterDrain ::
       Nat n -> InboundStIdle n objectId object m ()
     terminateAfterDrain = \case
-      Zero -> SendMsgDone (pure ())
-      Succ n -> CollectPipelined Nothing $ \_ignoredMsg -> pure $ terminateAfterDrain n
+      Zero -> SendMsgDone ()
+      Succ n -> CollectPipelined Nothing $ \_ignoredMsg -> terminateAfterDrain n
 
--------------------------------------------------------------------------------
--- Utilities to deal with stateful continuations (copied from TX-submission)
--------------------------------------------------------------------------------
-
-newtype Stateful s n objectId object m = Stateful (s -> InboundStIdle n objectId object m ())
-
-newtype StatefulM s n objectId object m
-  = StatefulM (s -> m (InboundStIdle n objectId object m ()))
-
-newtype StatefulCollect s n objectId object m
-  = StatefulCollect (s -> Collect objectId object -> m (InboundStIdle n objectId object m ()))
-
--- | After checking that there are no unexpected thunks in the provided state,
--- pass it to the provided function.
---
--- See 'checkInvariant' and 'unsafeNoThunks'.
-continueWithState ::
-  NoThunks s =>
-  Stateful s n objectId object m ->
-  s ->
-  InboundStIdle n objectId object m ()
-continueWithState (Stateful f) !st =
-  checkInvariant (show <$> unsafeNoThunks st) (f st)
-
--- | A variant of 'continueWithState' to be more easily utilized with
--- 'inboundIdle' and 'inboundReqObjectIds'.
-continueWithStateM ::
-  NoThunks s =>
-  StatefulM s n objectId object m ->
-  s ->
-  m (InboundStIdle n objectId object m ())
-continueWithStateM (StatefulM f) !st =
-  checkInvariant (show <$> unsafeNoThunks st) (f st)
-{-# NOINLINE continueWithStateM #-}
-
--- | A variant of 'continueWithState' to be more easily utilized with
--- 'handleReply'.
-collectAndContinueWithState ::
-  NoThunks s =>
-  StatefulCollect s n objectId object m ->
-  s ->
-  Collect objectId object ->
-  m (InboundStIdle n objectId object m ())
-collectAndContinueWithState (StatefulCollect f) !st c =
-  checkInvariant (show <$> unsafeNoThunks st) (f st c)
-{-# NOINLINE collectAndContinueWithState #-}
+-- | Helper to ensure that the `InboundSt` is free of unexpected thunks and
+-- stays strict during the whole process
+checkState :: NoThunks s => s -> s
+checkState !st = checkInvariant (noThunksInvariant st) st
