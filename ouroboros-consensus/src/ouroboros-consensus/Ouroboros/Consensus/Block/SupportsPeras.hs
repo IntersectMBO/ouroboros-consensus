@@ -6,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -21,10 +22,12 @@ import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
 import Data.Monoid (Sum (..))
+import Data.Proxy (Proxy (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 import Quiet (Quiet (..))
 
@@ -35,6 +38,9 @@ newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
 
 instance Condense PerasRoundNo where
   condense = show . unPerasRoundNo
+
+instance ShowProxy PerasRoundNo where
+  showProxy _ = "PerasRoundNo"
 
 newtype PerasWeight = PerasWeight {unPerasWeight :: Word64}
   deriving Show via Quiet PerasWeight
@@ -70,6 +76,9 @@ instance StandardHash blk => BlockSupportsPeras blk where
 
   perasCertRound = pcCertRound
   perasCertBoostedBlock = pcCertBoostedBlock
+
+instance ShowProxy blk => ShowProxy (PerasCert blk) where
+  showProxy _ = "PerasCert " <> showProxy (Proxy @blk)
 
 instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
   encode PerasCert{pcCertRound, pcCertBoostedBlock} =
