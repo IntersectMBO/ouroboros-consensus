@@ -548,11 +548,12 @@ openLedgerDB flavArgs env cfg fs rr = do
           tracer
           flavArgs
           rr
+          Nothing
           DefaultQueryBatchSize
           Nothing
   (ldb, _, od) <- case lgrBackendArgs args of
     LedgerDbBackendArgsV1 bss ->
-      let snapManager = V1.snapshotManager args
+      let snapManager = V1.snapshotManager args bss
           initDb =
             V1.mkInitDb
               args
@@ -575,6 +576,7 @@ openLedgerDB flavArgs env cfg fs rr = do
               (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
               (LedgerDBSnapshotEvent >$< lgrTracer args)
               (lgrHasFS args)
+              (flip NonNativeSnapshotsFS (lgrHasFS args) <$> lgrNonNativeSnapshotsFS args)
       let initDb = V2.mkInitDb args getBlock snapManager res
       openDBInternal args initDb snapManager stream replayGoal
   withRegistry $ \reg -> do

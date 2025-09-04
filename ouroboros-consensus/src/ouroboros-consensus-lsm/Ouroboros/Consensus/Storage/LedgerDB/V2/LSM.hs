@@ -80,17 +80,19 @@ import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
+import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (chunks)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
-import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.IOLike hiding (yield)
 import Ouroboros.Consensus.Util.IndexedMemPack
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
 import System.FS.API
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
+import System.FS.CRC
 import System.FilePath (splitDirectories, splitFileName)
 import System.Random
 import Prelude hiding (read)
@@ -231,12 +233,13 @@ snapshotManager ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
+  Maybe (NonNativeSnapshotsFS m) ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManager session ccfg tracer fs =
+snapshotManager session ccfg tracer fs mNonNative =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = implDeleteSnapshot session fs tracer
-    , takeSnapshot = implTakeSnapshot ccfg tracer fs
+    , takeSnapshot = implTakeSnapshot ccfg tracer fs mNonNative
     }
 
 newLSMLedgerTablesHandle ::
@@ -357,22 +360,35 @@ implTakeSnapshot ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
+  Maybe (NonNativeSnapshotsFS m) ->
   Maybe String ->
   StateRef m (ExtLedgerState blk) ->
   m (Maybe (DiskSnapshot, RealPoint blk))
-implTakeSnapshot ccfg tracer hasFS suffix st = case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
-  Origin -> return Nothing
-  NotOrigin t -> do
-    let number = unSlotNo (realPointSlot t)
-        snapshot = DiskSnapshot number suffix
-    diskSnapshots <- defaultListSnapshots hasFS
-    if List.any (== DiskSnapshot number suffix) diskSnapshots
-      then
-        return Nothing
-      else do
-        encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
-          writeSnapshot hasFS (encodeDiskExtLedgerState ccfg) snapshot st
-        return $ Just (snapshot, t)
+implTakeSnapshot ccfg tracer shfs mNonNativeFS suffix st =
+  case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
+    Origin -> return Nothing
+    NotOrigin t -> do
+      let number = unSlotNo (realPointSlot t)
+          snapshot = DiskSnapshot number suffix
+      diskSnapshots <- defaultListSnapshots shfs
+      if List.any (== DiskSnapshot number suffix) diskSnapshots
+        then
+          return Nothing
+        else do
+          stateCRC <-
+            encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
+              writeSnapshot shfs (encodeDiskExtLedgerState ccfg) snapshot st
+          takeNonNativeSnapshot
+            (($ t) >$< tracer)
+            snapshot
+            (duplicate (tables st))
+            close
+            (\hdl -> yield (Proxy @LSM) (YieldLSM 1000 hdl) (state st))
+            (state st)
+            stateCRC
+            mNonNativeFS
+
+          return $ Just (snapshot, t)
 
 writeSnapshot ::
   MonadThrow m =>
@@ -380,7 +396,7 @@ writeSnapshot ::
   (ExtLedgerState blk EmptyMK -> Encoding) ->
   DiskSnapshot ->
   StateRef m (ExtLedgerState blk) ->
-  m ()
+  m CRC
 writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
   createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
   crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
@@ -391,6 +407,7 @@ writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
       , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
       , snapshotTablesCodecVersion = TablesCodecVersion1
       }
+  pure crc1
 
 -- | Delete snapshot from disk and also from the LSM tree database.
 implDeleteSnapshot ::

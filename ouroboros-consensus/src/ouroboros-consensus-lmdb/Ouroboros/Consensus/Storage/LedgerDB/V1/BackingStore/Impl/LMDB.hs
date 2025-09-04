@@ -969,3 +969,6 @@ mkLMDBSinkArgs fp limits hint reg = do
       )
       bsClose
   pure $ SinkLMDB 1000 (bsWrite bs) (\h -> bsCopy bs h (FS.mkFsPath [snapName, "tables"]))
+
+instance (Ord (TxIn l), GetTip l, Monad m) => StreamingBackendV1 m LMDB l where
+  yieldV1 _ vh = yield (Proxy @LMDB) (YieldLMDB 1000 vh)

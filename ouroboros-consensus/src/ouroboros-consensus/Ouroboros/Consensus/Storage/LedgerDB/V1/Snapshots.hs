@@ -155,14 +155,18 @@ import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend (NonNativeSnapshotsFS (..))
+import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory hiding (Args, snapshotManager)
 import Ouroboros.Consensus.Util.Args (Complete)
 import Ouroboros.Consensus.Util.Enclose
-import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.IOLike hiding (yield)
 import System.FS.API
+import System.FS.CRC
 
 snapshotManager ::
   ( IOLike m
@@ -170,27 +174,32 @@ snapshotManager ::
   , LedgerSupportsProtocol blk
   ) =>
   Complete LedgerDbArgs m blk ->
+  V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->
   SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
-snapshotManager args =
+snapshotManager args p =
   snapshotManager'
+    p
     (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
     (LedgerDBSnapshotEvent >$< lgrTracer args)
     (SnapshotsFS (lgrHasFS args))
+    (flip NonNativeSnapshotsFS (lgrHasFS args) <$> lgrNonNativeSnapshotsFS args)
 
 snapshotManager' ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   ) =>
+  V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SnapshotsFS m ->
+  Maybe (NonNativeSnapshotsFS m) ->
   SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
-snapshotManager' ccfg tracer sfs@(SnapshotsFS fs) =
+snapshotManager' p ccfg tracer sfs@(SnapshotsFS fs) mNNFS =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = defaultDeleteSnapshot fs tracer
-    , takeSnapshot = \suff (ldbVar, bs) -> implTakeSnapshot ldbVar ccfg tracer sfs bs suff
+    , takeSnapshot = \suff (ldbVar, bs) -> implTakeSnapshot p ldbVar ccfg tracer sfs mNNFS bs suff
     }
 
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
@@ -213,19 +222,22 @@ snapshotManager' ccfg tracer sfs@(SnapshotsFS fs) =
 --
 -- TODO: Should we delete the file if an error occurs during writing?
 implTakeSnapshot ::
+  forall m blk.
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   ) =>
+  V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->
   StrictTVar m (DbChangelog' blk) ->
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SnapshotsFS m ->
+  Maybe (NonNativeSnapshotsFS m) ->
   BackingStore' m blk ->
   -- | Override for snapshot numbering
   Maybe String ->
   ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
-implTakeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS) backingStore suffix = readLocked $ do
+implTakeSnapshot (V1.V1Args _ (V1.SomeBackendArgs (_ :: V1.Args m backend))) ldbvar ccfg tracer (SnapshotsFS hasFS) mNonNativeFS backingStore suffix = readLocked $ do
   state <- changelogLastFlushedState <$> readTVarIO ldbvar
   case pointToWithOriginRealPoint (castPoint (getTip state)) of
     Origin ->
@@ -238,8 +250,18 @@ implTakeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS) backingStore suffix = re
         then
           return Nothing
         else do
-          encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
-            writeSnapshot hasFS backingStore (encodeDiskExtLedgerState ccfg) snapshot state
+          stateCRC <-
+            encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
+              writeSnapshot hasFS backingStore (encodeDiskExtLedgerState ccfg) snapshot state
+          takeNonNativeSnapshot
+            (($ t) >$< tracer)
+            snapshot
+            (bsValueHandle backingStore)
+            bsvhClose
+            (\vh -> yieldV1 (Proxy @backend) vh state)
+            state
+            stateCRC
+            mNonNativeFS
           return $ Just (snapshot, t)
 
 -- | Write snapshot to disk
@@ -250,7 +272,7 @@ writeSnapshot ::
   (ExtLedgerState blk EmptyMK -> Encoding) ->
   DiskSnapshot ->
   ExtLedgerState blk EmptyMK ->
-  m ()
+  m CRC
 writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
   createDirectory hasFS (snapshotToDirPath snapshot)
   crc <- writeExtLedgerState fs encLedger (snapshotToStatePath snapshot) cs
@@ -266,6 +288,7 @@ writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
     backingStore
     cs
     (snapshotToTablesPath snapshot)
+  pure crc
 
 -- | The path within the LedgerDB's filesystem to the file that contains the
 -- snapshot's serialized ledger state
