@@ -1,8 +1,8 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -216,11 +216,11 @@ eventPerasRounNoToSlot chain@ArbitraryChain{..} =
     \case
       HF.NoPerasEnabled -> property True
       HF.PerasEnabled (startOfPerasRound, roundLength) ->
-          conjoin
-            [ eventTimeSlot
-                === (HF.addSlots eventTimeSlotInPerasRound startOfPerasRound)
-            , eventTimeSlotInPerasRound `lt` (unPerasRoundLength roundLength)
-            ]
+        conjoin
+          [ eventTimeSlot
+              === (HF.addSlots eventTimeSlotInPerasRound startOfPerasRound)
+          , eventTimeSlotInPerasRound `lt` (unPerasRoundLength roundLength)
+          ]
  where
   EventTime{..} = eventTime arbitraryEvent
 

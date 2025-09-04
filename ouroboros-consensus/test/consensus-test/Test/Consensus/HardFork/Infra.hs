@@ -25,7 +25,6 @@ module Test.Consensus.HardFork.Infra
   , genSummary
   ) where
 
-import Cardano.Ledger.BaseTypes (StrictMaybe (SJust))
 import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
 import Data.SOP.BasicFunctors

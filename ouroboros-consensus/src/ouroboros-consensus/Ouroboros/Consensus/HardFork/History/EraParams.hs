@@ -14,6 +14,7 @@ module Ouroboros.Consensus.HardFork.History.EraParams
     EraParams (..)
   , SafeZone (..)
   , PerasEnabled (..)
+  , PerasEnabledT (..)
   , fromPerasEnabled
 
     -- * Defaults
@@ -25,7 +26,8 @@ import Cardano.Ledger.BaseTypes (unNonZero)
 import Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
 import Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
 import Codec.Serialise (Serialise (..))
-import Control.Monad (void)
+import Control.Monad (ap, liftM, void)
+import Control.Monad.Trans.Class
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -170,6 +172,27 @@ fromPerasEnabled defaultValue =
   \case
     NoPerasEnabled -> defaultValue
     PerasEnabled value -> value
+
+-- | A 'MaybeT'-line monad transformer.
+--
+--   Used solely for the Peras-related hard fork combinator queries,
+--   see 'Ouroboros.Consensus.HardFork.History.Qry'.
+newtype PerasEnabledT m a = PerasEnabledT {runPerasEnabledT :: m (PerasEnabled a)}
+  deriving stock Functor
+
+instance (Functor m, Monad m) => Applicative (PerasEnabledT m) where
+  pure = PerasEnabledT . pure . PerasEnabled
+  (<*>) = ap
+
+instance Monad m => Monad (PerasEnabledT m) where
+  x >>= f = PerasEnabledT $ do
+    v <- runPerasEnabledT x
+    case v of
+      NoPerasEnabled -> pure NoPerasEnabled
+      PerasEnabled y -> runPerasEnabledT (f y)
+
+instance MonadTrans PerasEnabledT where
+  lift = PerasEnabledT . liftM PerasEnabled
 
 -- | Default 'EraParams'
 --

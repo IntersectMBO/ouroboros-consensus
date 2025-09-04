@@ -10,7 +10,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.HardFork.History.Qry
@@ -51,6 +50,7 @@ import Codec.Serialise (Serialise (..))
 import Control.Exception (throw)
 import Control.Monad (ap, guard, liftM, (>=>))
 import Control.Monad.Except ()
+import Control.Monad.Trans.Class
 import Data.Bifunctor
 import Data.Fixed (divMod')
 import Data.Foldable (toList)
@@ -303,12 +303,12 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     guard (e >= boundEpoch eraStart)
     return $ EpochInEra (countEpochs e (boundEpoch eraStart))
   go (EAbsToRelPerasRoundNo expr) =
-    whenPerasEnabled (boundPerasRound eraStart) $
-      \eraStartPerasRound -> do
-        absPerasRoundNo <- go expr
-        guard $ absPerasRoundNo >= eraStartPerasRound
-        let roundInEra = countPerasRounds absPerasRoundNo eraStartPerasRound
-        Just . PerasRoundNoInEra $ roundInEra
+    runPerasEnabledT $ do
+      eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+      absPerasRoundNo <- lift $ go expr
+      lift . guard $ absPerasRoundNo >= eraStartPerasRound
+      let roundInEra = countPerasRounds absPerasRoundNo eraStartPerasRound
+      pure . PerasRoundNoInEra $ roundInEra
 
   -- Convert relative to absolute
   --
@@ -334,20 +334,16 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
       absEpoch < boundEpoch end
         || absEpoch == boundEpoch end && getSlotInEpoch s == 0
     return absEpoch
-  go (ERelToAbsPerasRoundNo expr) = do
-    mbRelPerasRound <- go expr
-    case (boundPerasRound eraStart, mbRelPerasRound) of
-      (PerasEnabled eraStartPerasRound, PerasEnabled relPerasRound) -> do
-        let absPerasRound = addPerasRounds (getPerasRoundNoInEra relPerasRound) eraStartPerasRound
-        case eraEnd of
-          EraUnbounded -> pure . PerasEnabled $ absPerasRound
-          EraEnd end -> do
-            case boundPerasRound end of
-              NoPerasEnabled -> pure NoPerasEnabled
-              PerasEnabled eraEndPerasRound -> do
-                guard $ absPerasRound <= eraEndPerasRound
-                pure . PerasEnabled $ absPerasRound
-      _ -> pure NoPerasEnabled
+  go (ERelToAbsPerasRoundNo expr) = runPerasEnabledT $ do
+    eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+    relPerasRound <- PerasEnabledT $ go expr
+    let absPerasRound = addPerasRounds (getPerasRoundNoInEra relPerasRound) eraStartPerasRound
+    case eraEnd of
+      EraUnbounded -> pure absPerasRound
+      EraEnd end -> do
+        eraEndPerasRound <- PerasEnabledT . Just $ boundPerasRound end
+        lift . guard $ absPerasRound <= eraEndPerasRound
+        pure absPerasRound
 
   -- Convert between relative values
   --
@@ -365,12 +361,10 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
   go (ERelEpochToSlot expr) = do
     e <- go expr
     return $ SlotInEra (getEpochInEra e * epochSize)
-  go (ERelPerasRoundNoToSlot expr) = do
-    mbPerasRoundInEra <- go expr
-    case (eraPerasRoundLength, mbPerasRoundInEra) of
-      (PerasEnabled (PerasRoundLength perasRoundLength), PerasEnabled relPerasRoundNo) ->
-        pure . PerasEnabled $ SlotInEra (getPerasRoundNoInEra relPerasRoundNo * perasRoundLength)
-      _ -> pure NoPerasEnabled
+  go (ERelPerasRoundNoToSlot expr) = runPerasEnabledT $ do
+    (PerasRoundNoInEra relPerasRoundNo) <- PerasEnabledT $ go expr
+    (PerasRoundLength perasRoundLength) <- PerasEnabledT . Just $ eraPerasRoundLength
+    pure $ SlotInEra (relPerasRoundNo * perasRoundLength)
   go (ERelSlotToPerasRoundNo expr) = do
     s <- go expr
     whenPerasEnabled eraPerasRoundLength $
@@ -397,20 +391,16 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     guard $ s >= boundSlot eraStart
     guardEnd $ \end -> s < boundSlot end
     return eraGenesisWin
-  go (EPerasRoundLength expr) = do
-    case boundPerasRound eraStart of
-      NoPerasEnabled -> pure NoPerasEnabled
-      PerasEnabled eraStartPerasRound -> do
-        absPerasRound <- go expr
-        guard $ absPerasRound >= eraStartPerasRound
-        case eraEnd of
-          EraUnbounded -> pure eraPerasRoundLength
-          EraEnd end -> do
-            case boundPerasRound end of
-              NoPerasEnabled -> pure NoPerasEnabled
-              PerasEnabled eraEndPerasRound -> do
-                guard $ absPerasRound < eraEndPerasRound
-                pure eraPerasRoundLength
+  go (EPerasRoundLength expr) = runPerasEnabledT $ do
+    eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+    absPerasRound <- lift $ go expr
+    lift . guard $ absPerasRound >= eraStartPerasRound
+    case eraEnd of
+      EraUnbounded -> PerasEnabledT . Just $ eraPerasRoundLength
+      EraEnd end -> do
+        eraEndPerasRound <- PerasEnabledT . Just $ boundPerasRound end
+        lift . guard $ absPerasRound < eraEndPerasRound
+        PerasEnabledT . Just $ eraPerasRoundLength
 
 {-------------------------------------------------------------------------------
   PastHorizonException
@@ -603,36 +593,33 @@ epochToSize absEpoch =
 --
 -- Additionally returns the length of the round.
 perasRoundNoToSlot :: PerasRoundNo -> Qry (PerasEnabled (SlotNo, PerasRoundLength))
-perasRoundNoToSlot perasRoundNo = do
-  mbRelSlot <- qryFromExpr $ ERelPerasRoundNoToSlot (EAbsToRelPerasRoundNo (ELit perasRoundNo))
-  case mbRelSlot of
-    NoPerasEnabled -> pure NoPerasEnabled
-    PerasEnabled relSlot -> do
-      absSlot <- qryFromExpr $ ERelToAbsSlot (EPair (ELit relSlot) (ELit (TimeInSlot 0)))
-      roundLength <- qryFromExpr $ perasRoundNoPerasRoundLengthExpr perasRoundNo
-      pure ((absSlot,) <$> roundLength)
+perasRoundNoToSlot perasRoundNo = runPerasEnabledT $ do
+  relSlot <-
+    PerasEnabledT $ qryFromExpr (ERelPerasRoundNoToSlot (EAbsToRelPerasRoundNo (ELit perasRoundNo)))
+  absSlot <- lift $ qryFromExpr (ERelToAbsSlot (EPair (ELit relSlot) (ELit (TimeInSlot 0))))
+  roundLength <- PerasEnabledT $ qryFromExpr (perasRoundNoPerasRoundLengthExpr perasRoundNo)
+  pure (absSlot, roundLength)
 
 -- | Translate 'SlotNo' to its corresponding 'PerasRoundNo'
 --
 -- Additionally returns the relative slot within this round and how many
 -- slots are left in this round.
 slotToPerasRoundNo :: SlotNo -> Qry (PerasEnabled (PerasRoundNo, Word64, Word64))
-slotToPerasRoundNo absSlot = do
-  qryFromExpr (ERelSlotToPerasRoundNo (EAbsToRelSlot (ELit absSlot))) >>= \case
-    NoPerasEnabled -> pure NoPerasEnabled
-    PerasEnabled (relPerasRoundNo, slotInPerasRound) ->
-      qryFromExpr (ERelToAbsPerasRoundNo (ELit (PerasEnabled relPerasRoundNo))) >>= \case
-        NoPerasEnabled -> pure NoPerasEnabled
-        PerasEnabled absPerasRoundNo ->
-          qryFromExpr (perasRoundNoPerasRoundLengthExpr absPerasRoundNo) >>= \case
-            NoPerasEnabled -> pure NoPerasEnabled
-            PerasEnabled roundLength ->
-              pure $
-                PerasEnabled
-                  ( absPerasRoundNo
-                  , getSlotInPerasRound slotInPerasRound
-                  , unPerasRoundLength roundLength - getSlotInPerasRound slotInPerasRound
-                  )
+slotToPerasRoundNo absSlot = runPerasEnabledT $ do
+  (relPerasRoundNo, slotInPerasRound) <-
+    PerasEnabledT $
+      qryFromExpr (ERelSlotToPerasRoundNo (EAbsToRelSlot (ELit absSlot)))
+  absPerasRoundNo <-
+    PerasEnabledT $
+      qryFromExpr (ERelToAbsPerasRoundNo (ELit (PerasEnabled relPerasRoundNo)))
+  roundLength <-
+    PerasEnabledT $
+      qryFromExpr (perasRoundNoPerasRoundLengthExpr absPerasRoundNo)
+  pure $
+    ( absPerasRoundNo
+    , getSlotInPerasRound slotInPerasRound
+    , unPerasRoundLength roundLength - getSlotInPerasRound slotInPerasRound
+    )
 
 {-------------------------------------------------------------------------------
   Supporting expressions for the queries above
