@@ -176,6 +176,7 @@ module Ouroboros.Consensus.Ledger.Tables
   , SerializeTablesWithHint (..)
   , defaultDecodeTablesWithHint
   , defaultEncodeTablesWithHint
+  , defaultEncodeMemPackWithHint
   , valuesMKDecoder
   , valuesMKEncoder
 
@@ -322,6 +323,14 @@ class SerializeTablesWithHint l where
     SerializeTablesHint (LedgerTables l ValuesMK) ->
     LedgerTables l ValuesMK ->
     CBOR.Encoding
+  encodeTxInWithHint ::
+    SerializeTablesHint (LedgerTables l ValuesMK) ->
+    TxIn l ->
+    CBOR.Encoding
+  encodeTxOutWithHint ::
+    SerializeTablesHint (LedgerTables l ValuesMK) ->
+    TxOut l ->
+    CBOR.Encoding
   decodeTablesWithHint ::
     SerializeTablesHint (LedgerTables l ValuesMK) ->
     CBOR.Decoder s (LedgerTables l ValuesMK)
@@ -339,18 +348,21 @@ defaultEncodeTablesWithHint ::
   SerializeTablesHint (LedgerTables l ValuesMK) ->
   LedgerTables l ValuesMK ->
   CBOR.Encoding
-defaultEncodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
+defaultEncodeTablesWithHint h (LedgerTables (ValuesMK tbs)) =
   mconcat
     [ CBOR.encodeMapLen (fromIntegral $ Map.size tbs)
     , Map.foldMapWithKey
         ( \k v ->
             mconcat
-              [ CBOR.encodeBytes (packByteString k)
-              , CBOR.encodeBytes (packByteString v)
+              [ defaultEncodeMemPackWithHint h k
+              , defaultEncodeMemPackWithHint h v
               ]
         )
         tbs
     ]
+
+defaultEncodeMemPackWithHint :: MemPack a => p -> a -> CBOR.Encoding
+defaultEncodeMemPackWithHint _ k = CBOR.encodeBytes (packByteString k)
 
 defaultDecodeTablesWithHint ::
   (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l)) =>
@@ -414,8 +426,10 @@ instance IndexedMemPack (TrivialLedgerTables l EmptyMK) Void where
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
-instance SerializeTablesWithHint (TrivialLedgerTables l) where
+instance (MemPack (TxIn l), MemPack (TxOut l)) => SerializeTablesWithHint (TrivialLedgerTables l) where
   decodeTablesWithHint _ = do
     _ <- CBOR.decodeMapLen
     pure (LedgerTables $ ValuesMK Map.empty)
+  encodeTxInWithHint = defaultEncodeMemPackWithHint
+  encodeTxOutWithHint = defaultEncodeMemPackWithHint
   encodeTablesWithHint _ _ = CBOR.encodeMapLen 0

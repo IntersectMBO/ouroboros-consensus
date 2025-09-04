@@ -503,6 +503,8 @@ instance
     encOne :: Encoding
     encOne = toPlainEncoding (SL.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
 
+  encodeTxInWithHint _ = toPlainEncoding (SL.eraProtVerLow @era) . encodeMemPack
+  encodeTxOutWithHint _ = toPlainEncoding (SL.eraProtVerLow @era) . encodeMemPack
   decodeTablesWithHint ::
     forall s.
     LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK ->

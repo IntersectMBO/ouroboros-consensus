@@ -383,4 +383,6 @@ instance
 
 instance SerializeTablesWithHint (LedgerState blk) => SerializeTablesWithHint (ExtLedgerState blk) where
   decodeTablesWithHint st = castLedgerTables <$> decodeTablesWithHint (ledgerState st)
+  encodeTxInWithHint st = encodeTxInWithHint (ledgerState st)
+  encodeTxOutWithHint st = encodeTxOutWithHint (ledgerState st)
   encodeTablesWithHint st tbs = encodeTablesWithHint (ledgerState st) (castLedgerTables tbs)
