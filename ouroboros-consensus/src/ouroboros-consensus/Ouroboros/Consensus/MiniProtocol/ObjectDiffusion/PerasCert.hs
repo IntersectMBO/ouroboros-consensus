@@ -17,7 +17,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
 import Ouroboros.Consensus.Storage.PerasCertDB.API
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound (ObjectDiffusionInboundPipelined)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (ObjectDiffusionOutbound)
-import Ouroboros.Network.Protocol.ObjectDiffusion.Type (ObjectDiffusion, OutboundAgency)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Type (ObjectDiffusion)
 
 type TracePerasCertDiffusionInbound blk =
   TraceObjectDiffusionInbound PerasRoundNo (PerasCert blk)
@@ -38,4 +38,4 @@ type PerasCertDiffusionOutbound blk m a =
   ObjectDiffusionOutbound PerasRoundNo (PerasCert blk) m a
 
 type PerasCertDiffusion blk =
-  ObjectDiffusion OutboundAgency PerasRoundNo (PerasCert blk)
+  ObjectDiffusion PerasRoundNo (PerasCert blk)
