@@ -1,5 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE RankNTypes #-}
@@ -27,7 +28,6 @@ import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import qualified Ouroboros.Consensus.HardFork.History as HF
-import Ouroboros.Consensus.HardFork.History.EraParams (PerasEnabled (PerasEnabled))
 import Test.Consensus.HardFork.Infra
 import Test.QuickCheck
 import Test.Tasty
@@ -136,15 +136,16 @@ roundtripEpochSlot s@ArbitrarySummary{beforeHorizonEpoch = epoch} =
 
 roundtripPerasRoundSlot :: ArbitrarySummary -> Property
 roundtripPerasRoundSlot s@ArbitrarySummary{beforeHorizonPerasRoundNo = perasRoundNo} =
-  noPastHorizonException s $ do
-    (mbSlot, _roundLenght) <- HF.perasRoundNoToSlot perasRoundNo
-    case mbSlot of
+  noPastHorizonException s $
+    HF.perasRoundNoToSlot perasRoundNo >>= \case
       HF.NoPerasEnabled -> pure $ property True
-      HF.PerasEnabled slot -> do
-        perasRoundNo' <- HF.slotToPerasRoundNo slot
-        pure $
-          conjoin
-            [perasRoundNo' === PerasEnabled perasRoundNo]
+      HF.PerasEnabled (slot, _) -> do
+        HF.slotToPerasRoundNo slot >>= \case
+          HF.NoPerasEnabled -> pure $ property True
+          HF.PerasEnabled (perasRoundNo', _, _) ->
+            pure $
+              conjoin
+                [perasRoundNo' === perasRoundNo]
 
 reportsPastHorizon :: ArbitrarySummary -> Property
 reportsPastHorizon s@ArbitrarySummary{..} =

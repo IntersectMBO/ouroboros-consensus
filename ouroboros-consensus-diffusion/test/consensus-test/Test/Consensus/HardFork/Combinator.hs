@@ -18,7 +18,7 @@
 
 module Test.Consensus.HardFork.Combinator (tests) where
 
-import Cardano.Ledger.BaseTypes (StrictMaybe (..), nonZero, unNonZero)
+import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.SOP.BasicFunctors

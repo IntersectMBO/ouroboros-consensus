@@ -64,7 +64,7 @@ module Test.Ouroboros.Storage.TestBlock
   ) where
 
 import Cardano.Crypto.DSIGN
-import Cardano.Ledger.BaseTypes (StrictMaybe (..), unNonZero)
+import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (Serialise (decode, encode), serialise)

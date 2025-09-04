@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -25,7 +26,6 @@
 -- them to be).
 module Test.Consensus.HardFork.History (tests) where
 
-import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Cardano.Slotting.EpochInfo
 import Control.Exception (throw)
 import Control.Monad.Except
@@ -50,7 +50,6 @@ import Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
-import Ouroboros.Consensus.HardFork.History (PerasEnabled (NoPerasEnabled))
 import qualified Ouroboros.Consensus.HardFork.History as HF
 import Ouroboros.Consensus.Ledger.Tables.Combinators
 import Ouroboros.Consensus.Util (nTimes)
@@ -214,12 +213,14 @@ eventWallclockToSlot chain@ArbitraryChain{..} =
 eventPerasRounNoToSlot :: ArbitraryChain -> Property
 eventPerasRounNoToSlot chain@ArbitraryChain{..} =
   testSkeleton chain (HF.perasRoundNoToSlot eventTimePerasRoundNo) $
-    \(startOfPerasRound, roundLength) ->
-      conjoin
-        [ (HF.PerasEnabled eventTimeSlot)
-            === (HF.addSlots <$> HF.PerasEnabled eventTimeSlotInPerasRound <*> startOfPerasRound)
-        , (HF.PerasEnabled eventTimeSlotInPerasRound) `lt` (unPerasRoundLength <$> roundLength)
-        ]
+    \case
+      HF.NoPerasEnabled -> property True
+      HF.PerasEnabled (startOfPerasRound, roundLength) ->
+          conjoin
+            [ eventTimeSlot
+                === (HF.addSlots eventTimeSlotInPerasRound startOfPerasRound)
+            , eventTimeSlotInPerasRound `lt` (unPerasRoundLength roundLength)
+            ]
  where
   EventTime{..} = eventTime arbitraryEvent
 
