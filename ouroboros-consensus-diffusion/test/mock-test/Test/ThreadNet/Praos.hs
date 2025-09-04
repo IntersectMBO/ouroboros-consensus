@@ -171,7 +171,7 @@ prop_simple_praos_convergence
                     setupInitialNonce
                     evolvingStake
                 )
-                (blockForgingPraos numCoreNodes nid)
+                (fmap (fmap (MkBlockForging . pure)) $ blockForgingPraos numCoreNodes nid)
           , mkRekeyM = Nothing
           }
 

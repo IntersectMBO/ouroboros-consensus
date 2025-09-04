@@ -1481,7 +1481,7 @@ mkRekeyUpd ::
   Genesis.GeneratedSecrets ->
   CoreNodeId ->
   ProtocolInfo ByronBlock ->
-  m [BlockForging m ByronBlock] ->
+  m [MkBlockForging m ByronBlock] ->
   EpochNo ->
   Crypto.SignKeyDSIGN Crypto.ByronDSIGN ->
   m (Maybe (TestNodeInitialization m ByronBlock))
@@ -1496,7 +1496,7 @@ mkRekeyUpd genesisConfig genesisSecrets cid pInfo blockForging eno newSK = do
             TestNodeInitialization
               { tniCrucialTxs = [dlgTx (blcDlgCert creds')]
               , tniProtocolInfo = pInfo
-              , tniBlockForging = pure [blockForging']
+              , tniBlockForging = pure [MkBlockForging $ pure blockForging']
               }
  where
   bcfg = configBlock (pInfoConfig pInfo)

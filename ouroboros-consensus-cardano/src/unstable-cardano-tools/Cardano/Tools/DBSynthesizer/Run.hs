@@ -161,10 +161,9 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           flavargs
           $ ChainDB.defaultArgs
 
-    (forgersReleaseKey, forgers) <-
-      allocate registry
-        (const $ mkForgers nullTracer)
-        (mapM_ BlockForging.finalize)
+    mbfs <- mkForgers nullTracer
+    allocatedForgers <- traverse (\mbf -> allocate registry (const (BlockForging.mkBlockForging mbf)) BlockForging.finalize) mbfs
+    let forgers = snd <$> allocatedForgers
     let fCount = length forgers
     putStrLn $ "--> forger count: " ++ show fCount
     r <- if fCount > 0
@@ -184,7 +183,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
       else do
         putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
         pure $ ForgeResult 0
-    release forgersReleaseKey $> r
+    mapM_ (release . fst) allocatedForgers $> r
  where
   DBSynthesizerOptions
     { synthOpenMode

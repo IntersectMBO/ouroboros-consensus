@@ -70,7 +70,7 @@ import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Forging (BlockForging)
+import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.Cardano.CanHardFork
   ( crossEraForecastAcrossShelley
   , translateChainDepStateAcrossShelley
@@ -398,7 +398,7 @@ protocolInfoShelleyBasedHardFork ::
   TriggerHardFork ->
   ( ProtocolInfo (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
   , Tracer.Tracer m KESAgentClientTrace ->
-    m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
+    m [MkBlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
   )
 protocolInfoShelleyBasedHardFork
   protocolParamsShelleyBased
@@ -432,7 +432,7 @@ protocolInfoShelleyBasedHardFork
 
     protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
     blockForging1 ::
-      Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock proto1 era1)]
+      Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto1 era1)]
     (protocolInfo1, blockForging1) =
       protocolInfoTPraosShelleyBased
         protocolParamsShelleyBased
@@ -455,7 +455,7 @@ protocolInfoShelleyBasedHardFork
 
     protocolInfo2 :: ProtocolInfo (ShelleyBlock proto2 era2)
     blockForging2 ::
-      Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock proto2 era2)]
+      Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto2 era2)]
     (protocolInfo2, blockForging2) =
       protocolInfoTPraosShelleyBased
         ProtocolParamsShelleyBased

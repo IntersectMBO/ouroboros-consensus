@@ -35,7 +35,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import Lens.Micro
-import Ouroboros.Consensus.Block.Forging (BlockForging)
+import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Byron.Ledger (LedgerState (..))
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
@@ -519,7 +519,7 @@ mkProtocolCardanoAndHardForkTxs
           propPV
 
     protocolInfo :: ProtocolInfo (CardanoBlock c)
-    blockForging :: Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)]
+    blockForging :: Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
     (setByronProtVer -> protocolInfo, blockForging) =
       mkTestProtocolInfo
         (coreNodeId, coreNodeShelley)
