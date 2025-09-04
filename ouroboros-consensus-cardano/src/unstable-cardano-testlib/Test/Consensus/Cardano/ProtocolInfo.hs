@@ -33,7 +33,7 @@ import qualified Control.Tracer as Tracer
 import Data.Proxy (Proxy (..))
 import Data.SOP.Strict
 import Data.Word (Word64)
-import Ouroboros.Consensus.Block.Forging (BlockForging)
+import Ouroboros.Consensus.Block.Forging (BlockForging, MkBlockForging)
 import Ouroboros.Consensus.BlockchainTime (SlotLength)
 import Ouroboros.Consensus.Byron.Node
   ( ByronLeaderCredentials
@@ -262,7 +262,7 @@ mkTestProtocolInfo ::
   -- | Specification of the era to which the initial state should hard-fork to.
   CardanoHardForkTriggers ->
   ( ProtocolInfo (CardanoBlock c)
-  , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)]
+  , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
   )
 mkTestProtocolInfo
   (coreNodeId, coreNode)

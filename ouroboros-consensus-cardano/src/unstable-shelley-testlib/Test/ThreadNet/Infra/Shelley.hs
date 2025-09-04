@@ -470,7 +470,7 @@ mkProtocolShelley ::
   ProtVer ->
   CoreNode c ->
   ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
-  , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
+  , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
   )
 mkProtocolShelley genesis initialNonce protVer coreNode =
   protocolInfoShelley

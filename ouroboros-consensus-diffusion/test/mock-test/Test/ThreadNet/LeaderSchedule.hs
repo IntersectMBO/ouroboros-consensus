@@ -137,7 +137,7 @@ prop_simple_leader_schedule_convergence
                     schedule
                     emptyPraosEvolvingStake
                 )
-                (pure blockForgingPraosRule)
+                (pure $ fmap (MkBlockForging . pure) $ blockForgingPraosRule)
           , mkRekeyM = Nothing
           }
 
