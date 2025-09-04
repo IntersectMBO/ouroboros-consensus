@@ -20,11 +20,6 @@ import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as Seq
 import Data.Set qualified as Set
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-import Ouroboros.Network.ControlMessage
-  ( ControlMessage
-  , ControlMessageSTM
-  , timeoutWithControlMessage
-  )
 import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
@@ -41,7 +36,8 @@ data TraceObjectDiffusionOutbound objectId object
   | -- | The objects to be sent in the response.
     TraceObjectDiffusionOutboundSendMsgReplyObjects
       [object]
-  | TraceControlMessage ControlMessage
+  | -- | Received 'MsgDone'
+    TraceObjectDiffusionOutboundTerminated
   deriving Show
 
 data ObjectDiffusionOutboundError
@@ -90,9 +86,8 @@ objectDiffusionOutbound ::
   NumObjectsOutstanding ->
   ObjectPoolReader objectId object ticketNo m ->
   NodeToNodeVersion ->
-  ControlMessageSTM m ->
   ObjectDiffusionOutbound objectId object m ()
-objectDiffusionOutbound tracer maxFifoLength ObjectPoolReader{..} _version controlMessageSTM =
+objectDiffusionOutbound tracer maxFifoLength ObjectPoolReader{..} _version =
   ObjectDiffusionOutbound (pure (makeBundle $ OutboundSt Seq.empty oprZeroTicketNo))
  where
   makeBundle :: OutboundSt objectId object ticketNo -> OutboundStIdle objectId object m ()
@@ -100,6 +95,7 @@ objectDiffusionOutbound tracer maxFifoLength ObjectPoolReader{..} _version contr
     OutboundStIdle
       { recvMsgRequestObjectIds = recvMsgRequestObjectIds st
       , recvMsgRequestObjects = recvMsgRequestObjects st
+      , recvMsgDone = traceWith tracer TraceObjectDiffusionOutboundTerminated
       }
 
   updateStNewObjects ::
@@ -158,36 +154,32 @@ objectDiffusionOutbound tracer maxFifoLength ObjectPoolReader{..} _version contr
         unless (Seq.null outstandingFifo') $
           throwIO ProtocolErrorRequestBlocking
 
-        mbNewContent <- timeoutWithControlMessage controlMessageSTM $
-          do
-            newObjectsWithTicketNos <-
-              oprObjectsAfter
-                lastTicketNo
-                (fromIntegral numIdsToReq)
-            check (not $ null newObjectsWithTicketNos)
-            pure newObjectsWithTicketNos
+        newContent <- atomically $ do
+          newObjectsWithTicketNos <-
+            oprObjectsAfter
+              lastTicketNo
+              (fromIntegral numIdsToReq)
+          check (not $ null newObjectsWithTicketNos)
+          pure newObjectsWithTicketNos
 
-        case mbNewContent of
-          Nothing -> pure (SendMsgDone ())
-          Just newContent -> do
-            newObjectsWithTicketNos <- forM newContent $
-              \(ticketNo, _, getObject) -> do
-                object <- getObject
-                pure (object, ticketNo)
+        newObjectsWithTicketNos <- forM newContent $
+          \(ticketNo, _, getObject) -> do
+            object <- getObject
+            pure (object, ticketNo)
 
-            let !newIds = oprObjectId . fst <$> newObjectsWithTicketNos
-                st'' = updateStNewObjects st' newObjectsWithTicketNos
+        let !newIds = oprObjectId . fst <$> newObjectsWithTicketNos
+            st'' = updateStNewObjects st' newObjectsWithTicketNos
 
-            traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjectIds newIds)
+        traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjectIds newIds)
 
-            -- Assert objects is non-empty: we blocked until objects was
-            -- non-null, and we know numIdsToReq > 0, hence
-            -- `take numIdsToReq objects` is non-null.
-            assert (not $ null newObjectsWithTicketNos) $
-              pure $
-                SendMsgReplyObjectIds
-                  (BlockingReply (NonEmpty.fromList $ newIds))
-                  (makeBundle st'')
+        -- Assert objects is non-empty: we blocked until objects was
+        -- non-null, and we know numIdsToReq > 0, hence
+        -- `take numIdsToReq objects` is non-null.
+        assert (not $ null newObjectsWithTicketNos) $
+          pure $
+            SendMsgReplyObjectIds
+              (BlockingReply (NonEmpty.fromList $ newIds))
+              (makeBundle st'')
 
       -----------------------------------------------------------------------
       SingNonBlocking -> do
