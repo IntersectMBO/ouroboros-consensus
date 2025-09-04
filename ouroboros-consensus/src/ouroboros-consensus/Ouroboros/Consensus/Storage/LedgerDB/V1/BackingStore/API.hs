@@ -54,7 +54,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 
     -- * 🧪 Testing
   , bsRead
-  , bsReadAll
   ) where
 
 import Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
@@ -169,9 +168,6 @@ data BackingStoreValueHandle m keys key values = BackingStoreValueHandle
   -- itself is idempotent.
   , bsvhRangeRead :: !(ReadHint values -> RangeQuery keys -> m (values, Maybe key))
   -- ^ See 'RangeQuery'
-  , bsvhReadAll :: !(ReadHint values -> m values)
-  -- ^ Costly read all operation, not to be used in Consensus but only in
-  -- snapshot-converter executable.
   , bsvhRead :: !(ReadHint values -> keys -> m values)
   -- ^ Read the given keys from the handle
   --
@@ -206,7 +202,6 @@ castBackingStoreValueHandle f g h bsvh =
   BackingStoreValueHandle
     { bsvhAtSlot
     , bsvhClose
-    , bsvhReadAll = \rhint -> f <$> bsvhReadAll rhint
     , bsvhRangeRead = \rhint (RangeQuery prev count) ->
         fmap (second (fmap h) . first f) . bsvhRangeRead rhint $ RangeQuery (fmap g prev) count
     , bsvhRead = \rhint -> fmap f . bsvhRead rhint . g
@@ -215,7 +210,6 @@ castBackingStoreValueHandle f g h bsvh =
  where
   BackingStoreValueHandle
     { bsvhClose
-    , bsvhReadAll
     , bsvhAtSlot
     , bsvhRangeRead
     , bsvhRead
@@ -232,13 +226,6 @@ bsRead ::
 bsRead store rhint keys = withBsValueHandle store $ \vh -> do
   values <- bsvhRead vh rhint keys
   pure (bsvhAtSlot vh, values)
-
-bsReadAll ::
-  MonadThrow m =>
-  BackingStore m keys key values diff ->
-  ReadHint values ->
-  m values
-bsReadAll store rhint = withBsValueHandle store $ \vh -> bsvhReadAll vh rhint
 
 -- | A 'IOLike.bracket'ed 'bsValueHandle'
 withBsValueHandle ::
