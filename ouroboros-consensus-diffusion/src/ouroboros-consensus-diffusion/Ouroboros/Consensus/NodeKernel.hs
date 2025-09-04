@@ -505,8 +505,7 @@ forkBlockForging IS{..} blockForging =
     (finalize blockForging)
  where
   label :: String
-  label =
-    "NodeKernel.blockForging." <> Text.unpack (forgeLabel blockForging)
+  label = "NodeKernel.blockForging"
 
   go :: ResourceRegistry m -> SlotNo -> WithEarlyExit m ()
   go reg currentSlot = do
