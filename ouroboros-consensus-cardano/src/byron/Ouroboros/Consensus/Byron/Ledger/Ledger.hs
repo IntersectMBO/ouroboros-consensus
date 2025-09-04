@@ -56,7 +56,7 @@ import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Chain.Update.Validation.Endorsement as UPE
 import qualified Cardano.Chain.Update.Validation.Interface as UPI
 import qualified Cardano.Chain.ValidationMode as CC
-import Cardano.Ledger.BaseTypes (StrictMaybe (..), unNonZero)
+import Cardano.Ledger.BaseTypes (unNonZero)
 import Cardano.Ledger.Binary (fromByronCBOR, toByronCBOR)
 import Cardano.Ledger.Binary.Plain (encodeListLen, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
@@ -333,7 +333,7 @@ byronEraParams genesis =
     , eraSlotLength = fromByronSlotLength $ genesisSlotLength genesis
     , eraSafeZone = HardFork.StandardSafeZone (2 * k)
     , eraGenesisWin = GenesisWindow (2 * k)
-    , eraPerasRoundLength = SNothing -- Byron is not Peras-enabled
+    , eraPerasRoundLength = HardFork.NoPerasEnabled
     }
  where
   k = unNonZero $ maxRollbacks $ genesisSecurityParam genesis
@@ -346,7 +346,7 @@ byronEraParamsNeverHardForks genesis =
     , eraSlotLength = fromByronSlotLength $ genesisSlotLength genesis
     , eraSafeZone = HardFork.UnsafeIndefiniteSafeZone
     , eraGenesisWin = GenesisWindow (2 * Gen.unBlockCount (Gen.configK genesis))
-    , eraPerasRoundLength = SNothing -- Byron is not Peras-enabled
+    , eraPerasRoundLength = HardFork.NoPerasEnabled
     }
 
 instance HasHardForkHistory ByronBlock where

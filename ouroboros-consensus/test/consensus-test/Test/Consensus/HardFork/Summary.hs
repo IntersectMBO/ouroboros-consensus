@@ -22,12 +22,12 @@
 -- * Converting a Peras round number to a slot and then back should be an identity.
 module Test.Consensus.HardFork.Summary (tests) where
 
-import Cardano.Ledger.BaseTypes (strictMaybe)
 import Data.Time
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import qualified Ouroboros.Consensus.HardFork.History as HF
+import Ouroboros.Consensus.HardFork.History.EraParams (PerasEnabled (PerasEnabled))
 import Test.Consensus.HardFork.Infra
 import Test.QuickCheck
 import Test.Tasty
@@ -137,11 +137,14 @@ roundtripEpochSlot s@ArbitrarySummary{beforeHorizonEpoch = epoch} =
 roundtripPerasRoundSlot :: ArbitrarySummary -> Property
 roundtripPerasRoundSlot s@ArbitrarySummary{beforeHorizonPerasRoundNo = perasRoundNo} =
   noPastHorizonException s $ do
-    (slot, _roundLenght) <- HF.perasRoundNoToSlot perasRoundNo
-    perasRoundNo' <- HF.slotToPerasRoundNo slot
-    pure $
-      conjoin
-        [perasRoundNo' === perasRoundNo]
+    (mbSlot, _roundLenght) <- HF.perasRoundNoToSlot perasRoundNo
+    case mbSlot of
+      HF.NoPerasEnabled -> pure $ property True
+      HF.PerasEnabled slot -> do
+        perasRoundNo' <- HF.slotToPerasRoundNo slot
+        pure $
+          conjoin
+            [perasRoundNo' === PerasEnabled perasRoundNo]
 
 reportsPastHorizon :: ArbitrarySummary -> Property
 reportsPastHorizon s@ArbitrarySummary{..} =
@@ -222,7 +225,7 @@ instance Arbitrary ArbitrarySummary where
             beforeHorizonPerasRoundNo =
               HF.addPerasRounds
                 beforeHorizonPerasRounds
-                (strictMaybe defaultPerasRoundNo id $ HF.boundPerasRound summaryStart)
+                (HF.fromPerasEnabled defaultPerasRoundNo $ HF.boundPerasRound summaryStart)
         return
           ArbitrarySummary
             { arbitrarySummary = summary
@@ -248,8 +251,8 @@ instance Arbitrary ArbitrarySummary where
                 (HF.boundEpoch summaryStart)
             summaryPerasRounds =
               HF.countPerasRounds
-                (strictMaybe defaultPerasRoundNo id $ HF.boundPerasRound summaryEnd)
-                (strictMaybe defaultPerasRoundNo id $ HF.boundPerasRound summaryStart)
+                (HF.fromPerasEnabled defaultPerasRoundNo $ HF.boundPerasRound summaryEnd)
+                (HF.fromPerasEnabled defaultPerasRoundNo $ HF.boundPerasRound summaryStart)
             summaryTimeSpan :: NominalDiffTime
             summaryTimeSpan =
               diffRelTime
@@ -286,7 +289,7 @@ instance Arbitrary ArbitrarySummary where
             beforeHorizonPerasRoundNo =
               HF.addPerasRounds
                 beforeHorizonPerasRounds
-                (strictMaybe defaultPerasRoundNo id $ HF.boundPerasRound summaryStart)
+                (HF.fromPerasEnabled defaultPerasRoundNo $ HF.boundPerasRound summaryStart)
 
         -- Pick arbitrary values past the horizon
 
@@ -315,7 +318,7 @@ instance Arbitrary ArbitrarySummary where
             pastHorizonPerasRoundNo =
               HF.addPerasRounds
                 pastHorizonPerasRounds
-                (strictMaybe defaultPerasRoundNo id $ HF.boundPerasRound summaryEnd)
+                (HF.fromPerasEnabled defaultPerasRoundNo $ HF.boundPerasRound summaryEnd)
         return
           ArbitrarySummary
             { arbitrarySummary = summary

@@ -127,7 +127,7 @@ genEraParams = do
   -- we restrict Peras round length to divide the epoch size.
   -- for testing purposes, we include Peras round length in every era.
   eraPerasRoundLength <-
-    SJust . PerasRoundLength
+    HF.PerasEnabled . PerasRoundLength
       <$> choose (1, 10) `suchThat` (\x -> (unEpochSize eraEpochSize) `mod` x == 0)
   return HF.EraParams{..}
  where
@@ -169,7 +169,7 @@ genSummary is =
   -- to parameterise the test suite, as it requires also parameterise many non-test functions, like
   -- 'HF.initBound', and leads to a huge diff. Therefore, we make the judgement call to
   -- only test Peras-enabled eras.
-  initBoundWithPeras = HF.initBound{boundPerasRound = SJust . PerasRoundNo $ 0}
+  initBoundWithPeras = HF.initBound{boundPerasRound = HF.PerasEnabled . PerasRoundNo $ 0}
 
   genEraSummary :: Era -> HF.Bound -> Gen (HF.EraSummary, HF.EraEnd)
   genEraSummary _era lo = do

@@ -50,6 +50,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
+import Ouroboros.Consensus.HardFork.History (PerasEnabled (NoPerasEnabled))
 import qualified Ouroboros.Consensus.HardFork.History as HF
 import Ouroboros.Consensus.Ledger.Tables.Combinators
 import Ouroboros.Consensus.Util (nTimes)
@@ -215,8 +216,9 @@ eventPerasRounNoToSlot chain@ArbitraryChain{..} =
   testSkeleton chain (HF.perasRoundNoToSlot eventTimePerasRoundNo) $
     \(startOfPerasRound, roundLength) ->
       conjoin
-        [ eventTimeSlot === HF.addSlots eventTimeSlotInPerasRound startOfPerasRound
-        , eventTimeSlotInPerasRound `lt` unPerasRoundLength roundLength
+        [ (HF.PerasEnabled eventTimeSlot)
+            === (HF.addSlots <$> HF.PerasEnabled eventTimeSlotInPerasRound <*> startOfPerasRound)
+        , (HF.PerasEnabled eventTimeSlotInPerasRound) `lt` (unPerasRoundLength <$> roundLength)
         ]
  where
   EventTime{..} = eventTime arbitraryEvent
@@ -562,8 +564,8 @@ stepEventTime HF.EraParams{..} EventTime{..} =
   slotInPerasRound' :: Word64
   args@(perasRoundNo', slotInPerasRound') =
     case eraPerasRoundLength of
-      SNothing -> args
-      SJust (PerasRoundLength perasRoundLength) ->
+      HF.NoPerasEnabled -> args
+      HF.PerasEnabled (PerasRoundLength perasRoundLength) ->
         if succ eventTimeSlotInPerasRound == perasRoundLength
           then (succ eventTimePerasRoundNo, 0)
           else (eventTimePerasRoundNo, succ eventTimeSlotInPerasRound)

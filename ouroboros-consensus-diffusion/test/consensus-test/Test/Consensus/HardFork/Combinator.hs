@@ -79,6 +79,7 @@ import Test.Util.HardFork.Future
 import Test.Util.SanityCheck (prop_sanityChecks)
 import Test.Util.Slots (NumSlots (..))
 import Test.Util.Time (dawnOfTime)
+import Ouroboros.Consensus.HardFork.History.EraParams (PerasEnabled(PerasEnabled))
 
 tests :: TestTree
 tests =
@@ -164,7 +165,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         (History.StandardSafeZone (safeFromTipA k))
         (safeZoneB k)
       <*> pure (GenesisWindow ((unNonZero $ maxRollbacks k) * 2))
-      <*> pure (SJust defaultPerasRoundLength)
+      <*> pure (PerasEnabled defaultPerasRoundLength)
 
   shape :: History.Shape '[BlockA, BlockB]
   shape = History.Shape $ exactlyTwo eraParamsA eraParamsB

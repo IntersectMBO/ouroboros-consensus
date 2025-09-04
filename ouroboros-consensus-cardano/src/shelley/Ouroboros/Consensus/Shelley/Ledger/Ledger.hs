@@ -57,7 +57,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   ) where
 
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
-import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
@@ -170,7 +169,7 @@ shelleyEraParams genesis =
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.StandardSafeZone stabilityWindow
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , eraPerasRoundLength = SNothing -- Shelley is not Peras-enabled
+    , eraPerasRoundLength = HardFork.NoPerasEnabled
     }
  where
   stabilityWindow =
@@ -186,7 +185,7 @@ shelleyEraParamsNeverHardForks genesis =
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.UnsafeIndefiniteSafeZone
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , eraPerasRoundLength = SNothing -- Shelley is not Peras-enabled
+    , eraPerasRoundLength = HardFork.NoPerasEnabled
     }
  where
   stabilityWindow =

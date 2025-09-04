@@ -1,9 +1,9 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
@@ -13,13 +13,15 @@ module Ouroboros.Consensus.HardFork.History.EraParams
   ( -- * API
     EraParams (..)
   , SafeZone (..)
+  , PerasEnabled (..)
+  , fromPerasEnabled
 
     -- * Defaults
   , defaultEraParams
   ) where
 
 import Cardano.Binary (DecoderError (DecoderErrorCustom), cborError)
-import Cardano.Ledger.BaseTypes (StrictMaybe (..), unNonZero)
+import Cardano.Ledger.BaseTypes (unNonZero)
 import Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
 import Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
 import Codec.Serialise (Serialise (..))
@@ -137,11 +139,37 @@ data EraParams = EraParams
   , eraSlotLength :: !SlotLength
   , eraSafeZone :: !SafeZone
   , eraGenesisWin :: !GenesisWindow
-  , eraPerasRoundLength :: !(StrictMaybe PerasRoundLength)
+  , eraPerasRoundLength :: !(PerasEnabled PerasRoundLength)
   -- ^ Optional, as not every era will be Peras-enabled
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
+
+-- | A marker for era parameters that are Peras-specific
+--   and are not present in pre-Peras eras
+--
+-- NOTE: the 'Applicative' behaves like the one for 'Maybe'.
+data PerasEnabled a
+  = PerasEnabled !a
+  | NoPerasEnabled
+  deriving stock (Show, Eq, Ord, Generic, Functor)
+  deriving anyclass NoThunks
+
+instance Applicative PerasEnabled where
+  pure = PerasEnabled
+
+  PerasEnabled f <*> m = fmap f m
+  NoPerasEnabled <*> _m = NoPerasEnabled
+
+  PerasEnabled _m1 *> m2 = m2
+  NoPerasEnabled *> _m2 = NoPerasEnabled
+
+-- | A 'fromMaybe'-like eliminator for 'PerasEnabled'
+fromPerasEnabled :: a -> PerasEnabled a -> a
+fromPerasEnabled defaultValue =
+  \case
+    NoPerasEnabled -> defaultValue
+    PerasEnabled value -> value
 
 -- | Default 'EraParams'
 --
@@ -156,15 +184,13 @@ data EraParams = EraParams
 defaultEraParams :: SecurityParam -> SlotLength -> EraParams
 defaultEraParams (SecurityParam k) slotLength =
   EraParams
-    { eraEpochSize = EpochSize epochSize
+    { eraEpochSize = EpochSize (unNonZero k * 10)
     , eraSlotLength = slotLength
     , eraSafeZone = StandardSafeZone (unNonZero k * 2)
     , eraGenesisWin = GenesisWindow (unNonZero k * 2)
     , -- Peras is disabled by default
-      eraPerasRoundLength = SNothing
+      eraPerasRoundLength = NoPerasEnabled
     }
- where
-  epochSize = unNonZero k * 10
 
 -- | Zone in which it is guaranteed that no hard fork can take place
 data SafeZone
@@ -244,16 +270,16 @@ instance Serialise EraParams where
   encode EraParams{..} =
     mconcat $
       [ encodeListLen $ case eraPerasRoundLength of
-          SNothing -> 4
-          SJust{} -> 5
+          NoPerasEnabled -> 4
+          PerasEnabled{} -> 5
       , encode (unEpochSize eraEpochSize)
       , encode eraSlotLength
       , encode eraSafeZone
       , encode (unGenesisWindow eraGenesisWin)
       ]
         <> case eraPerasRoundLength of
-          SNothing -> []
-          SJust rl -> [encode (unPerasRoundLength rl)]
+          NoPerasEnabled -> []
+          PerasEnabled rl -> [encode (unPerasRoundLength rl)]
 
   decode = do
     len <- decodeListLen
@@ -262,8 +288,8 @@ instance Serialise EraParams where
     eraSafeZone <- decode
     eraGenesisWin <- GenesisWindow <$> decode
     eraPerasRoundLength <-
-      if
-        | len == 4 -> pure SNothing
-        | len == 5 -> SJust . PerasRoundLength <$> decode
-        | otherwise -> cborError (DecoderErrorCustom "EraParams" "unexpected list length")
+      case len of
+        4 -> pure NoPerasEnabled
+        5 -> PerasEnabled . PerasRoundLength <$> decode
+        _ -> cborError (DecoderErrorCustom "EraParams" "unexpected list length")
     return EraParams{..}
