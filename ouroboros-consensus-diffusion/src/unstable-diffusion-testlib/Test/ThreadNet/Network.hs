@@ -71,7 +71,6 @@ import Network.TypedProtocol.Codec
   )
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
-import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -1099,12 +1098,9 @@ runThreadNetwork
       nodeKernel <- initNodeKernel nodeKernelArgs
 
       mkBlockForgings <- mkBlockForging
-
-      blockForgings <- traverse (\mbf -> allocate registry (const $ BlockForging.mkBlockForging mbf) BlockForging.finalize) mkBlockForgings
-
-      let blockForging' =
-            map (\bf -> bf{forgeBlock = customForgeBlock bf}) (snd <$> blockForgings)
-      setBlockForging nodeKernel blockForging'
+      let mkBlockForgings' =
+            map (\(MkBlockForging bfM) -> MkBlockForging $ fmap (\bf -> bf{forgeBlock = customForgeBlock bf}) bfM) mkBlockForgings
+      setBlockForging nodeKernel mkBlockForgings'
 
       let mempool = getMempool nodeKernel
       let app =
