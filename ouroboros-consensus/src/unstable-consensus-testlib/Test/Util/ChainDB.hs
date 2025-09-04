@@ -133,6 +133,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrStartSnapshot = Nothing
+          , lgrNonNativeSnapshotsFS = Nothing
           }
     , cdbsArgs =
         ChainDbSpecificArgs

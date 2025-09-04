@@ -70,7 +70,10 @@ openDB
   getVolatileSuffix =
     case lgrBackendArgs args of
       LedgerDbBackendArgsV1 bss ->
-        let snapManager = V1.snapshotManager args
+        let snapManager =
+              V1.snapshotManager
+                args
+                bss
             initDb =
               V1.mkInitDb
                 args
@@ -94,6 +97,7 @@ openDB
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                 (LedgerDBSnapshotEvent >$< lgrTracer args)
                 (lgrHasFS args)
+                (flip NonNativeSnapshotsFS (lgrHasFS args) <$> lgrNonNativeSnapshotsFS args)
         let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
         doOpenDB args initDb snapManager stream replayGoal
 

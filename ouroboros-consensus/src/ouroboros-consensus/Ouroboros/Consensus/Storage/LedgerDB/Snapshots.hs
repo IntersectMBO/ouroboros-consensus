@@ -607,6 +607,8 @@ data TraceSnapshotEvent blk
     InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
   | -- | A snapshot was written to disk.
     TookSnapshot DiskSnapshot (RealPoint blk) EnclosingTimed
+  | -- | A non-native snapshot was written to disk.
+    TookNonNativeSnapshot DiskSnapshot (RealPoint blk) EnclosingTimed
   | -- | An old or invalid on-disk snapshot was deleted
     DeletedSnapshot DiskSnapshot
   deriving (Generic, Eq, Show)

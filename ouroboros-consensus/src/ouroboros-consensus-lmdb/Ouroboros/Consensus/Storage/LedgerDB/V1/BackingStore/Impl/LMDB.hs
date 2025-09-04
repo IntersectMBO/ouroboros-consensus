@@ -850,6 +850,7 @@ mkLMDBArgs ::
   ( MonadIOPrim m
   , HasLedgerTables (LedgerState blk)
   , IOLike m
+  , IsLedger (LedgerState blk)
   ) =>
   V1.FlushFrequency -> FilePath -> LMDBLimits -> a -> (LedgerDbBackendArgs m blk, a)
 mkLMDBArgs flushing lmdbPath limits =
@@ -998,3 +999,6 @@ mkLMDBSinkArgs fp limits hint reg = do
       )
       bsClose
   pure $ SinkLMDB 1000 (bsWrite bs) (\h -> bsCopy bs h (FS.mkFsPath [snapName, "tables"]))
+
+instance (Ord (TxIn l), GetTip l, Monad m) => StreamingBackendV1 m LMDB l where
+  yieldV1 _ vh = yield (Proxy @LMDB) (YieldLMDB 1000 vh)
