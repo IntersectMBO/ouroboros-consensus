@@ -572,7 +572,7 @@ protocolInfoCardano ::
   ) =>
   CardanoProtocolParams c ->
   ( ProtocolInfo (CardanoBlock c)
-  , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)]
+  , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
   )
 protocolInfoCardano paramsCardano
   | SL.Mainnet <- SL.sgNetworkId genesisShelley
@@ -585,7 +585,7 @@ protocolInfoCardano paramsCardano
             { pInfoConfig = cfg
             , pInfoInitLedger = initExtLedgerStateCardano
             }
-        , mkBlockForgings
+        , pure . mkBlockForgings
         )
  where
   CardanoProtocolParams
@@ -980,15 +980,15 @@ protocolInfoCardano paramsCardano
   -- credentials. If there are multiple Shelley credentials, we merge the
   -- Byron credentials with the first Shelley one but still have separate
   -- threads for the remaining Shelley ones.
-  mkBlockForgings :: Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)]
+  mkBlockForgings :: Tracer.Tracer m KESAgentClientTrace -> [MkBlockForging m (CardanoBlock c)]
   mkBlockForgings tr = do
-    shelleyBased <- traverse (blockForgingShelleyBased tr) credssShelleyBased
-    let blockForgings :: [NonEmptyOptNP (BlockForging m) (CardanoEras c)]
+    let shelleyBased = blockForgingShelleyBased tr <$> credssShelleyBased
+        blockForgings :: [m (NonEmptyOptNP (BlockForging m) (CardanoEras c))]
         blockForgings = case (mBlockForgingByron, shelleyBased) of
           (Nothing, shelleys) -> shelleys
           (Just byron, []) -> [byron]
           (Just byron, shelley : shelleys) ->
-            OptNP.zipWith merge byron shelley : shelleys
+            (OptNP.zipWith merge <$> byron <*> shelley) : shelleys
            where
             -- When merging Byron with Shelley-based eras, we should never
             -- merge two from the same era.
@@ -996,12 +996,17 @@ protocolInfoCardano paramsCardano
             merge (This1 x) = x
             merge (That1 y) = y
 
-    return $ hardForkBlockForging "Cardano" <$> blockForgings
+    let mkHardForkBlockForgings :: m (NonEmptyOptNP (BlockForging m) (CardanoEras c)) -> MkBlockForging m (CardanoBlock c)
+        mkHardForkBlockForgings mbfs = MkBlockForging $ do
+          bfs <- mbfs
+          mkBlockForging $ hardForkBlockForging (const "Cardano") (hmap (MkBlockForging . pure) bfs)
 
-  mBlockForgingByron :: Maybe (NonEmptyOptNP (BlockForging m) (CardanoEras c))
+    fmap mkHardForkBlockForgings blockForgings
+
+  mBlockForgingByron :: Maybe (m (NonEmptyOptNP (BlockForging m) (CardanoEras c)))
   mBlockForgingByron = do
     creds <- mCredsByron
-    return $ byronBlockForging creds `OptNP.at` IZ
+    return $ pure $ byronBlockForging creds `OptNP.at` IZ
 
   blockForgingShelleyBased ::
     Tracer.Tracer m KESAgentClientTrace ->

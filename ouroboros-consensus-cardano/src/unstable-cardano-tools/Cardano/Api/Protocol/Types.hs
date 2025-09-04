@@ -22,7 +22,7 @@ module Cardano.Api.Protocol.Types
 import Cardano.Chain.Slotting (EpochSlots)
 import qualified Control.Tracer as Tracer
 import Data.Bifunctor (bimap)
-import Ouroboros.Consensus.Block.Forging (BlockForging)
+import Ouroboros.Consensus.Block.Forging (MkBlockForging(..))
 import Ouroboros.Consensus.Byron.ByronHFC (ByronBlockHFC)
 import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Block
@@ -52,7 +52,7 @@ class (RunNode blk, IOLike m) => Protocol m blk where
   protocolInfo ::
     ProtocolInfoArgs m blk ->
     ( ProtocolInfo blk
-    , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m blk]
+    , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m blk]
     )
 
 -- | Node client support for each consensus protocol.
@@ -68,7 +68,7 @@ instance IOLike m => Protocol m ByronBlockHFC where
   data ProtocolInfoArgs m ByronBlockHFC = ProtocolInfoArgsByron ProtocolParamsByron
   protocolInfo (ProtocolInfoArgsByron params) =
     ( inject $ protocolInfoByron params
-    , \_ -> pure . map inject $ blockForgingByron params
+    , \_ -> pure . map (MkBlockForging . pure . inject) $ blockForgingByron params
     )
 
 instance

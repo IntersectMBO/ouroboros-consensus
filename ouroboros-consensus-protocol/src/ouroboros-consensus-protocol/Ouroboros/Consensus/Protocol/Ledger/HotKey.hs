@@ -320,6 +320,8 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay = do
       -- here
       pure (cancel keyThreadAsync >> unset)
     Nothing ->
+      -- we don't need to do anything here, since we haven't spawned any other
+      -- threads to communicate with the KES agent
       pure $ pure ()
 
   return

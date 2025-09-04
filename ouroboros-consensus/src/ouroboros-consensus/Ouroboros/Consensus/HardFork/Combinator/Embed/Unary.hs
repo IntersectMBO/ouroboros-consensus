@@ -521,6 +521,12 @@ instance Functor m => Isomorphic (BlockForging m) where
         . State.fromTZ
         . tickedHardForkChainDepStatePerEra
 
+instance Functor m => Isomorphic (MkBlockForging m) where
+  project (MkBlockForging blockForgingM) =
+    MkBlockForging $ project <$> blockForgingM
+  inject (MkBlockForging blockForgingM) =
+    MkBlockForging $ inject <$> blockForgingM
+
 instance Isomorphic ProtocolInfo where
   project ::
     forall blk.

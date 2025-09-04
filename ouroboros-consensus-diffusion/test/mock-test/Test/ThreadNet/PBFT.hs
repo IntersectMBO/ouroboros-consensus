@@ -128,7 +128,7 @@ prop_simple_pbft_convergence
                     params
                     (HardFork.defaultEraParams k slotLength)
                 )
-                (pure $ blockForgingMockPBFT nid)
+                (pure $ fmap (MkBlockForging . pure) $ blockForgingMockPBFT nid)
           , mkRekeyM = Nothing
           }
 

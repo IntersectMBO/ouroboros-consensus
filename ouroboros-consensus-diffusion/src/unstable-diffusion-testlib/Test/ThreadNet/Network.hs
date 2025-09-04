@@ -178,7 +178,7 @@ instance Show (ForgeEbbEnv blk) where
 type RekeyM m blk =
   CoreNodeId ->
   ProtocolInfo blk ->
-  m [BlockForging m blk] ->
+  m [MkBlockForging m blk] ->
   -- | The slot in which the node is rekeying
   SlotNo ->
   -- | Which epoch the slot is in
@@ -199,12 +199,12 @@ data TestNodeInitialization m blk = TestNodeInitialization
   -- that determines which transactions will be included in the block it's
   -- about to forge.
   , tniProtocolInfo :: ProtocolInfo blk
-  , tniBlockForging :: m [BlockForging m blk]
+  , tniBlockForging :: m [MkBlockForging m blk]
   }
 
 plainTestNodeInitialization ::
   ProtocolInfo blk ->
-  m [BlockForging m blk] ->
+  m [MkBlockForging m blk] ->
   TestNodeInitialization m blk
 plainTestNodeInitialization pInfo blockForging =
   TestNodeInitialization
@@ -507,20 +507,20 @@ runThreadNetwork
         loop ::
           SlotNo ->
           ProtocolInfo blk ->
-          m [BlockForging m blk] ->
+          m [MkBlockForging m blk] ->
           NodeRestart ->
           Map SlotNo NodeRestart ->
           m ()
-        loop s pInfo blockForging nr rs = do
+        loop s pInfo mkBlockForging nr rs = do
           -- a registry solely for the resources of this specific node instance
           (again, finalChain, finalLdgr) <- withRegistry $ \nodeRegistry -> do
             -- change the node's key and prepare a delegation transaction if
             -- the node is restarting because it just rekeyed
             tni' <- case (nr, mbRekeyM) of
               (NodeRekey, Just rekeyM) -> do
-                rekeyM coreNodeId pInfo blockForging s (pure . HFF.futureSlotToEpoch future)
+                rekeyM coreNodeId pInfo mkBlockForging s (pure . HFF.futureSlotToEpoch future)
               _ ->
-                pure $ plainTestNodeInitialization pInfo blockForging
+                pure $ plainTestNodeInitialization pInfo mkBlockForging
             let TestNodeInitialization
                   { tniCrucialTxs = crucialTxs'
                   , tniProtocolInfo = pInfo'
@@ -823,7 +823,7 @@ runThreadNetwork
       SlotNo ->
       ResourceRegistry m ->
       ProtocolInfo blk ->
-      m [BlockForging m blk] ->
+      m [MkBlockForging m blk] ->
       NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
@@ -1098,9 +1098,12 @@ runThreadNetwork
 
       nodeKernel <- initNodeKernel nodeKernelArgs
 
-      (_, blockForging) <- allocate registry (const mkBlockForging) (mapM_ BlockForging.finalize)
+      mkBlockForgings <- mkBlockForging
+
+      blockForgings <- traverse (\mbf -> allocate registry (const $ BlockForging.mkBlockForging mbf) BlockForging.finalize) mkBlockForgings
+
       let blockForging' =
-            map (\bf -> bf{forgeBlock = customForgeBlock bf}) blockForging
+            map (\bf -> bf{forgeBlock = customForgeBlock bf}) (snd <$> blockForgings)
       setBlockForging nodeKernel blockForging'
 
       let mempool = getMempool nodeKernel
