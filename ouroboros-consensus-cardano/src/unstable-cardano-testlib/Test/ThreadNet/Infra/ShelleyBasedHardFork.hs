@@ -70,7 +70,7 @@ import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Forging (BlockForging, MkBlockForging)
+import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.Cardano.CanHardFork
   ( crossEraForecastAcrossShelley
   , translateChainDepStateAcrossShelley
