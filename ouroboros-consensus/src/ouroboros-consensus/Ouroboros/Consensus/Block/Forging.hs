@@ -10,6 +10,7 @@
 
 module Ouroboros.Consensus.Block.Forging
   ( BlockForging (..)
+  , MkBlockForging (..)
   , CannotForge
   , ForgeStateInfo
   , ForgeStateUpdateError
@@ -149,6 +150,9 @@ data BlockForging m blk = BlockForging
   -- This method will be run once when the block forging thread
   -- terminates, whether cleanly or due to an exception.
   }
+
+newtype MkBlockForging m blk =
+  MkBlockForging { mkBlockForging :: m (BlockForging m blk) }
 
 data ShouldForge blk
   = -- | Before check whether we are a leader in this slot, we tried to update

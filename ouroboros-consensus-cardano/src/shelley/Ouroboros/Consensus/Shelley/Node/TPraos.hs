@@ -177,7 +177,7 @@ protocolInfoShelley ::
   ProtocolParamsShelleyBased c ->
   SL.ProtVer ->
   ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
-  , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
+  , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
   )
 protocolInfoShelley
   shelleyGenesis
@@ -199,7 +199,7 @@ protocolInfoTPraosShelleyBased ::
   -- | see 'shelleyProtVer', mutatis mutandi
   SL.ProtVer ->
   ( ProtocolInfo (ShelleyBlock (TPraos c) era)
-  , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock (TPraos c) era)]
+  , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) era)]
   )
 protocolInfoTPraosShelleyBased
   ProtocolParamsShelleyBased
@@ -213,14 +213,14 @@ protocolInfoTPraosShelleyBased
           { pInfoConfig = topLevelConfig
           , pInfoInitLedger = initExtLedgerState
           }
-      , \tr -> traverse (mkBlockForging tr) credentialss
+      , \tr -> pure $ mkBlockForging tr <$> credentialss
       )
    where
     mkBlockForging ::
       Tracer.Tracer m KESAgentClientTrace ->
       ShelleyLeaderCredentials c ->
-      m (BlockForging m (ShelleyBlock (TPraos c) era))
-    mkBlockForging tr credentials = do
+      MkBlockForging m (ShelleyBlock (TPraos c) era)
+    mkBlockForging tr credentials = MkBlockForging $ do
       let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
 
       hotKey :: HotKey c m <-
