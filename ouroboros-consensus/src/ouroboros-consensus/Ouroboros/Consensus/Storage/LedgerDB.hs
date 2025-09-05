@@ -63,12 +63,14 @@ openDB ::
   Point blk ->
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
+  GetVolatileSuffix m blk ->
   m (LedgerDB' m blk, Word64)
 openDB
   args
   stream
   replayGoal
-  getBlock = case lgrFlavorArgs args of
+  getBlock
+  getVolatileSuffix = case lgrFlavorArgs args of
     LedgerDbFlavorArgsV1 bss ->
       let snapManager = V1.snapshotManager args
           initDb =
@@ -77,6 +79,7 @@ openDB
               bss
               getBlock
               snapManager
+              getVolatileSuffix
        in doOpenDB args initDb snapManager stream replayGoal
     LedgerDbFlavorArgsV2 bss -> do
       (snapManager, bss') <- case bss of
@@ -88,6 +91,7 @@ openDB
               bss'
               getBlock
               snapManager
+              getVolatileSuffix
       doOpenDB args initDb snapManager stream replayGoal
 
 {-------------------------------------------------------------------------------

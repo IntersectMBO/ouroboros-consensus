@@ -19,7 +19,6 @@
 -- module will be gone.
 module Ouroboros.Consensus.Storage.LedgerDB.V1 (mkInitDb) where
 
-import Cardano.Ledger.BaseTypes.NonZero (NonZero (..))
 import Control.Arrow ((>>>))
 import Control.Monad
 import Control.Monad.Except
@@ -88,8 +87,9 @@ mkInitDb ::
   Complete V1.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
   SnapshotManagerV1 m blk ->
+  GetVolatileSuffix m blk ->
   InitDB (DbChangelog' blk, ResourceKey m, BackingStore' m blk) m blk
-mkInitDb args bss getBlock snapManager =
+mkInitDb args bss getBlock snapManager getVolatileSuffix =
   InitDB
     { initFromGenesis = do
         st <- lgrGenesis
@@ -147,6 +147,7 @@ mkInitDb args bss getBlock snapManager =
                 , ldbShouldFlush = shouldFlush flushFreq
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbResolveBlock = getBlock
+                , ldbGetVolatileSuffix = getVolatileSuffix
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -209,10 +210,11 @@ implGetImmutableTip ::
   (MonadSTM m, GetTip l) =>
   LedgerDBEnv m l blk ->
   STM m (l EmptyMK)
-implGetImmutableTip env =
+implGetImmutableTip env = do
+  volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix env
   -- The DbChangelog might contain more than k states if they have not yet
   -- been garbage-collected.
-  fmap (AS.anchor . AS.anchorNewest (envMaxRollbacks env) . changelogStates)
+  fmap (AS.anchor . volSuffix . changelogStates)
     . readTVar
     $ ldbChangelog env
 
@@ -225,7 +227,8 @@ implGetPastLedgerState ::
   , HeaderHash l ~ HeaderHash blk
   ) =>
   LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l EmptyMK))
-implGetPastLedgerState env point =
+implGetPastLedgerState env point = do
+  volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix env
   readTVar (ldbChangelog env) <&> \chlog -> do
     -- The DbChangelog might contain more than k states if they have not yet
     -- been garbage-collected, so make sure that the point is volatile (or the
@@ -234,7 +237,7 @@ implGetPastLedgerState env point =
       AS.withinBounds
         (pointSlot point)
         ((point ==) . castPoint . either getTip getTip)
-        (AS.anchorNewest (envMaxRollbacks env) (changelogStates chlog))
+        (volSuffix (changelogStates chlog))
     getPastLedgerAt point chlog
 
 implGetHeaderStateHistory ::
@@ -247,6 +250,7 @@ implGetHeaderStateHistory ::
   LedgerDBEnv m l blk -> STM m (HeaderStateHistory blk)
 implGetHeaderStateHistory env = do
   ldb <- readTVar (ldbChangelog env)
+  volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix env
   let currentLedgerState = ledgerState $ current ldb
       -- This summary can convert all tip slots of the ledger states in the
       -- @ledgerDb@ as these are not newer than the tip slot of the current
@@ -260,7 +264,7 @@ implGetHeaderStateHistory env = do
     . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'
     -- The DbChangelog might contain more than k states if they have not yet
     -- been garbage-collected, so only take the corresponding suffix.
-    . AS.anchorNewest (envMaxRollbacks env)
+    . volSuffix
     $ changelogStates ldb
 
 implValidate ::
@@ -576,6 +580,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- frequency that was provided when opening the LedgerDB.
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
+  , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
   }
   deriving Generic
 
@@ -588,10 +593,6 @@ deriving instance
   , NoThunks (LedgerCfg l)
   ) =>
   NoThunks (LedgerDBEnv m l blk)
-
--- | Return the security parameter @k@. Convenience function.
-envMaxRollbacks :: LedgerDBEnv m l blk -> Word64
-envMaxRollbacks = unNonZero . maxRollbacks . ledgerDbCfgSecParam . ldbCfg
 
 -- | Check if the LedgerDB is open, if so, executing the given function on the
 -- 'LedgerDBEnv', otherwise, throw a 'CloseDBError'.
@@ -764,10 +765,16 @@ acquireAtTarget ::
   ReadLocked m (Either GetForkerError (DbChangelog l))
 acquireAtTarget ldbEnv target = readLocked $ runExceptT $ do
   dblog <- lift $ readTVarIO (ldbChangelog ldbEnv)
+  volSuffix <- lift $ atomically $ getVolatileSuffix $ ldbGetVolatileSuffix ldbEnv
   -- The DbChangelog might contain more than k states if they have not yet
   -- been garbage-collected.
-  let immTip :: Point blk
-      immTip = castPoint $ getTip $ AS.anchor $ AS.anchorNewest k $ changelogStates dblog
+  let volStates = volSuffix $ changelogStates dblog
+
+      immTip :: Point blk
+      immTip = castPoint $ getTip $ AS.anchor volStates
+
+      rollbackMax :: Word64
+      rollbackMax = fromIntegral $ AS.length volStates
 
       rollbackTo pt
         | pointSlot pt < pointSlot immTip = throwError $ PointTooOld Nothing
@@ -780,7 +787,6 @@ acquireAtTarget ldbEnv target = readLocked $ runExceptT $ do
     Right ImmutableTip -> rollbackTo immTip
     Right (SpecificPoint pt) -> rollbackTo pt
     Left n -> do
-      let rollbackMax = maxRollback dblog `min` k
       when (n > rollbackMax) $
         throwError $
           PointTooOld $
@@ -792,8 +798,6 @@ acquireAtTarget ldbEnv target = readLocked $ runExceptT $ do
       case rollbackN n dblog of
         Nothing -> error "unreachable"
         Just dblog' -> pure dblog'
- where
-  k = envMaxRollbacks ldbEnv
 
 {-------------------------------------------------------------------------------
   Make forkers from consistent views

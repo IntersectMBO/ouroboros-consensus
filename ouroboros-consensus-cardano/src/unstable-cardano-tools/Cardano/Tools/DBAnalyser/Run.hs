@@ -76,6 +76,7 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
           bss
           (\_ -> error "no replay")
           snapManager
+          (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig lgrDbArgs)
       )
       snapManager
       emptyStream
@@ -93,6 +94,7 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
           bss'
           (\_ -> error "no replay")
           snapManager
+          (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig lgrDbArgs)
       )
       snapManager
       emptyStream
