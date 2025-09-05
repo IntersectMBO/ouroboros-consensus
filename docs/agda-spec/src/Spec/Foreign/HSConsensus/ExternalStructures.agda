@@ -140,12 +140,12 @@ instance
 
   HSLedgerInterface : LedgerInterface
   HSLedgerInterface = record
-    { NewEpochState      = ℕ
-    ; getPParams         = const $ record { maxHeaderSize = 1; maxBlockSize = 2; pv = 1 , 0 }
-    ; getEpoch           = const 1
-    ; getPoolDistr       = const ❴ 457 , (ℤ.+ 1 ℚ./ 3 , 568) ❵
-    ; adoptGenesisDelegs = _+_
-    ; _⊢_⇀⦇_,NEWEPOCH⦈_  = DummyNEWEPOCH
+    { NewEpochState         = ℕ
+    ; getPParams            = const $ record { maxHeaderSize = 1; maxBlockSize = 2; pv = 1 , 0 }
+    ; getEpoch              = const 1
+    ; getPoolDelegatedStake = const $ fromListᵐ ((457 , (10 , 568)) ∷ (111 , (10 , 222)) ∷ (333 , (10 , 444)) ∷ [])
+    ; adoptGenesisDelegs    = _+_
+    ; _⊢_⇀⦇_,NEWEPOCH⦈_     = DummyNEWEPOCH
     }
     where
       import Data.Integer.Base as ℤ using (+_)
