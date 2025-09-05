@@ -14,12 +14,16 @@ module Ouroboros.Consensus.Util.IndexedMemPack
   ( IndexedMemPack (..)
   , MemPack (..)
   , indexedPackByteString
+  , indexedPackByteArray
   , indexedUnpackError
+  , indexedUnpack
+  , indexedUnpackWithOffset
   ) where
 
 import qualified Control.Monad as Monad
-import Control.Monad.Trans.Fail (Fail, errorFail, failT)
+import Control.Monad.Trans.Fail (Fail, errorFail, failT, runFailAgg)
 import Data.Array.Byte (ByteArray (..))
+import Data.Bifunctor (first)
 import Data.ByteString
 import Data.MemPack
 import Data.MemPack.Buffer
@@ -52,6 +56,12 @@ indexedPackByteArray isPinned idx a =
     (indexedPackedByteCount idx a)
     (indexedPackM idx a)
 {-# INLINE indexedPackByteArray #-}
+
+indexedUnpack ::
+  forall idx a b.
+  (Buffer b, IndexedMemPack idx a, HasCallStack) => idx -> b -> Either SomeError a
+indexedUnpack idx = first fromMultipleErrors . runFailAgg . indexedUnpackFail idx
+{-# INLINEABLE indexedUnpack #-}
 
 indexedUnpackError ::
   forall idx a b. (Buffer b, IndexedMemPack idx a, HasCallStack) => idx -> b -> a
@@ -96,3 +106,23 @@ unpackFailNotFullyConsumed name consumedBytes len =
         , notFullyConsumedTypeName = name
         }
 {-# NOINLINE unpackFailNotFullyConsumed #-}
+
+indexedUnpackWithOffset ::
+  forall a b idx.
+  (IndexedMemPack idx a, Buffer b, HasCallStack) => idx -> b -> Int -> Either SomeError a
+indexedUnpackWithOffset idx b off = first fromMultipleErrors . runFailAgg $ do
+  let len = bufferByteCount b
+  (a, consumedBytes) <- do
+    res@(_, consumedBytes) <- runStateT (runUnpack (indexedUnpackM idx) b) off
+    Monad.when (consumedBytes > len) $ errorLeftOver (indexedTypeName @idx @a idx) consumedBytes len
+    pure res
+  Monad.when (consumedBytes /= len) $
+    failT $
+      toSomeError $
+        NotFullyConsumedError
+          { notFullyConsumedRead = consumedBytes
+          , notFullyConsumedAvailable = len
+          , notFullyConsumedTypeName = indexedTypeName @idx @a idx
+          }
+  pure a
+{-# INLINEABLE indexedUnpackWithOffset #-}
