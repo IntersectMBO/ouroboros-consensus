@@ -78,7 +78,12 @@ newCertDB certs = do
   db <- PerasCertDB.openDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
   mapM_
     ( \cert -> do
-        result <- PerasCertDB.addCert db cert
+        let validatedCert =
+              ValidatedPerasCert
+                { vpcCert = cert
+                , vpcCertBoost = boostPerCert
+                }
+        result <- PerasCertDB.addCert db validatedCert
         case result of
           AddedPerasCertToDB -> pure ()
           PerasCertAlreadyInDB -> throwIO (userError "Expected AddedPerasCertToDB, but cert was already in DB")
@@ -121,6 +126,6 @@ prop_smoke protocolConstants (ListWithUniqueIds certs) =
         getAllInboundPoolContent = do
           snap <- atomically $ PerasCertDB.getCertSnapshot inboundPool
           let rawContent = PerasCertDB.getCertsAfter snap (PerasCertDB.zeroPerasCertTicketNo)
-          pure $ fst <$> rawContent
+          pure $ getPerasCert . fst <$> rawContent
 
     return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)

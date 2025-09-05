@@ -144,7 +144,7 @@ implAddCert ::
   , StandardHash blk
   ) =>
   PerasCertDbEnv m blk ->
-  PerasCert blk ->
+  ValidatedPerasCert blk ->
   m AddPerasCertResult
 implAddCert env cert = do
   traceWith pcdbTracer $ AddingPerasCert roundNo boostedPt
@@ -169,7 +169,7 @@ implAddCert env cert = do
                   Map.insert roundNo cert pvcsCerts
               , -- Note that the same block might be boosted by multiple points.
                 pvcsWeightByPoint =
-                  addToPerasWeightSnapshot boostedPt boostPerCert pvcsWeightByPoint
+                  addToPerasWeightSnapshot boostedPt (getPerasCertBoost cert) pvcsWeightByPoint
               , pvcsCertsByTicket =
                   Map.insert pvcsLastTicketNo' cert pvcsCertsByTicket
               , pvcsLastTicketNo = pvcsLastTicketNo'
@@ -186,8 +186,8 @@ implAddCert env cert = do
     , pcdbVolatileState
     } = env
 
-  roundNo = perasCertRound cert
-  boostedPt = perasCertBoostedBlock cert
+  boostedPt = getPerasCertBoostedBlock cert
+  roundNo = getPerasCertRound cert
 
 implGetWeightSnapshot ::
   IOLike m =>
@@ -237,7 +237,7 @@ implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
         }
      where
       keepCert cert =
-        pointSlot (perasCertBoostedBlock cert) >= NotOrigin slot
+        pointSlot (getPerasCertBoostedBlock cert) >= NotOrigin slot
 
 {-------------------------------------------------------------------------------
   Implementation-internal types
@@ -246,13 +246,13 @@ implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
 -- | Volatile Peras certificate state, i.e. certificates that could influence
 -- chain selection by boosting a volatile block.
 data PerasVolatileCertState blk = PerasVolatileCertState
-  { pvcsCerts :: !(Map PerasRoundNo (PerasCert blk))
+  { pvcsCerts :: !(Map PerasRoundNo (ValidatedPerasCert blk))
   -- ^ The boosted blocks by 'RoundNo' of all certificates currently in the db.
   , pvcsWeightByPoint :: !(PerasWeightSnapshot blk)
   -- ^ The weight of boosted blocks w.r.t. the certificates currently in the db.
   --
   -- INVARIANT: In sync with 'pvcsCerts'.
-  , pvcsCertsByTicket :: !(Map PerasCertTicketNo (PerasCert blk))
+  , pvcsCertsByTicket :: !(Map PerasCertTicketNo (ValidatedPerasCert blk))
   -- ^ The certificates by 'PerasCertTicketNo'.
   --
   -- INVARIANT: In sync with 'pvcsCerts'.

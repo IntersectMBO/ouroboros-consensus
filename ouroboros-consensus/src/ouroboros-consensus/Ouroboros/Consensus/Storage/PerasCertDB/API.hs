@@ -21,7 +21,8 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 
 data PerasCertDB m blk = PerasCertDB
-  { addCert :: PerasCert blk -> m AddPerasCertResult
+  { addCert :: ValidatedPerasCert blk -> m AddPerasCertResult
+  -- ^ TODO docs
   , getWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Return the Peras weights in order compare the current selection against
   -- potential candidate chains, namely the weights for blocks not older than
@@ -44,7 +45,7 @@ data AddPerasCertResult = AddedPerasCertToDB | PerasCertAlreadyInDB
 data PerasCertSnapshot blk = PerasCertSnapshot
   { containsCert :: PerasRoundNo -> Bool
   -- ^ Do we have the certificate for this round?
-  , getCertsAfter :: PerasCertTicketNo -> [(PerasCert blk, PerasCertTicketNo)]
+  , getCertsAfter :: PerasCertTicketNo -> [(ValidatedPerasCert blk, PerasCertTicketNo)]
   }
 
 -- TODO: Once we store historical certificates on disk, this should (also) track

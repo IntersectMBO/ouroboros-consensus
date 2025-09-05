@@ -179,7 +179,7 @@ import Test.Util.WithEq
 -- | Commands
 data Cmd blk it flr
   = AddBlock blk
-  | AddPerasCert (PerasCert blk)
+  | AddPerasCert (ValidatedPerasCert blk)
   | GetCurrentChain
   | GetTipBlock
   | GetTipHeader
@@ -1044,19 +1044,22 @@ generator loe genBlock m@Model{..} =
 
   genAddBlock = AddBlock <$> genBlock m
 
-  genAddPerasCert :: Gen (PerasCert blk)
+  genAddPerasCert :: Gen (ValidatedPerasCert blk)
   genAddPerasCert = do
     -- TODO chain condition?
     blk <- genBlock m
-    let pcCertRound = case Model.maxPerasRoundNo dbModel of
+    let roundNo = case Model.maxPerasRoundNo dbModel of
           Nothing -> PerasRoundNo 0
           Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
-        cert =
-          PerasCert
-            { pcCertRound
-            , pcCertBoostedBlock = blockPoint blk
-            }
-    pure cert
+    pure $
+      ValidatedPerasCert
+        { vpcCert =
+            PerasCert
+              { pcCertRound = roundNo
+              , pcCertBoostedBlock = blockPoint blk
+              }
+        , vpcCertBoost = boostPerCert
+        }
 
   genBounds :: Gen (StreamFrom blk, StreamTo blk)
   genBounds =
