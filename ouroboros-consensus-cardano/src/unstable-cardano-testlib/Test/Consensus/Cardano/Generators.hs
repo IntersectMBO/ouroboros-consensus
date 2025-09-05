@@ -137,7 +137,8 @@ instance
     aux ::
       forall blk.
       SingleEraBlock blk =>
-      WrapHeaderHash blk -> K (OneEraHash (CardanoEras c)) blk
+      WrapHeaderHash blk ->
+      K (OneEraHash (CardanoEras c)) blk
     aux = K . OneEraHash . toShortRawHash (Proxy @blk) . unwrapHeaderHash
 
 instance
@@ -993,11 +994,11 @@ instance Arbitrary History.EraEnd where
       ]
 
 instance Arbitrary History.EraSummary where
-  arbitrary =
-    History.EraSummary
-      <$> arbitrary
-      <*> arbitrary
-      <*> arbitrary
+  -- Note: this generator may produce EraSummary with nonsensical bounds,
+  -- i.e. with existing PerasRoundNo at era start and Nothing for it at the end.
+  -- However, this does not create problems, and we thus choose to keep the generator
+  -- unconstrained.
+  arbitrary = History.EraSummary <$> arbitrary <*> arbitrary <*> arbitrary
 
 instance (Arbitrary a, SListI xs) => Arbitrary (NonEmpty xs a) where
   arbitrary = do
