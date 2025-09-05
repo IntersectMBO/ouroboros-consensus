@@ -71,7 +71,7 @@ parseOperationalCertFilePath =
   strOption
     ( long "shelley-operational-certificate"
         <> metavar "FILE"
-        <> help "Path to the delegation certificate"
+        <> help "Path to the delegation certificate (in JSON TextEnvelope format)"
         <> completer (bashCompleter "file")
     )
 
@@ -80,7 +80,7 @@ parseKesKeyFilePath =
   strOption
     ( long "shelley-kes-key"
         <> metavar "FILE"
-        <> help "Path to the KES signing key"
+        <> help "Path to the KES signing key (in JSON TextEnvelope format)"
         <> completer (bashCompleter "file")
     )
 
@@ -89,7 +89,7 @@ parseVrfKeyFilePath =
   strOption
     ( long "shelley-vrf-key"
         <> metavar "FILE"
-        <> help "Path to the VRF signing key"
+        <> help "Path to the VRF signing key (in JSON TextEnvelope format)"
         <> completer (bashCompleter "file")
     )
 
@@ -98,7 +98,7 @@ parseBulkFilePath =
   strOption
     ( long "bulk-credentials-file"
         <> metavar "FILE"
-        <> help "Path to the bulk credentials file"
+        <> help "Path to the bulk credentials file (a JSON file containing an array of arrays containing 3 TextEnvelope objects for the opcert, VRF Signing key, KES signing key)"
         <> completer (bashCompleter "file")
     )
 
