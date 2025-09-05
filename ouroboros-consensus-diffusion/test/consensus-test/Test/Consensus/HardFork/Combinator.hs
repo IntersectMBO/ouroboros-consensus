@@ -479,6 +479,8 @@ instance SerialiseHFC '[BlockA, BlockB]
 instance SerializeTablesWithHint (LedgerState (HardForkBlock '[BlockA, BlockB])) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
+  encodeTxInWithHint = defaultEncodeMemPackWithHint
+  encodeTxOutWithHint = defaultEncodeMemPackWithHint
 
 instance
   IndexedMemPack

@@ -78,6 +78,8 @@ instance
 instance (Ord k, MemPack k, MemPack v) => SerializeTablesWithHint (LedgerState (OTBlock k v)) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
+  encodeTxInWithHint = defaultEncodeMemPackWithHint
+  encodeTxOutWithHint = defaultEncodeMemPackWithHint
 
 {-------------------------------------------------------------------------------
   Stowable

@@ -35,6 +35,7 @@ import Data.Functor.Contravariant
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.String (fromString)
+import Data.Void
 import GHC.Generics
 import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
@@ -365,3 +366,12 @@ instance
   newBackingStoreInitialiser trcr InMemArgs =
     newInMemoryBackingStore
       (SomeBackendTrace . InMemoryBackingStoreTrace >$< trcr)
+
+instance StreamingBackend m Mem l where
+  data SinkArgs m Mem l = SinkArgs Void
+  data YieldArgs m Mem l = YieldArgs Void
+  yield _ (YieldArgs x) = absurd x
+  sink _ (SinkArgs x) = absurd x
+
+instance StreamingBackendV1 m Mem l where
+  yieldV1 _ _ = error "We do not support streaming canonical snapshots from a V1 InMemory backend"

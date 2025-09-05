@@ -75,7 +75,7 @@ openLedgerDB ::
 openLedgerDB args = do
   (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
     LedgerDB.LedgerDbBackendArgsV1 bss ->
-      let snapManager = LedgerDB.V1.snapshotManager args
+      let snapManager = LedgerDB.V1.snapshotManager args bss
           initDb =
             LedgerDB.V1.mkInitDb
               args
@@ -98,6 +98,11 @@ openLedgerDB args = do
               (configCodec . getExtLedgerCfg . LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig args)
               (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
               (LedgerDB.lgrHasFS args)
+              ( flip
+                  LedgerDB.V2.CanonicalSnapshotsFS
+                  (LedgerDB.lgrHasFS args)
+                  <$> LedgerDB.lgrCanonicalSnapshotsFS args
+              )
       let initDb = LedgerDB.V2.mkInitDb args (\_ -> pure (error "no stream")) snapManager res
       LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
   pure (ldb, od)

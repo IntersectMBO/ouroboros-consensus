@@ -367,6 +367,8 @@ instance
   where
   encodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
     toPlainEncoding (Core.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
+  encodeTxInWithHint _ = toPlainEncoding (Core.eraProtVerLow @era) . encodeMemPack
+  encodeTxOutWithHint _ = toPlainEncoding (Core.eraProtVerLow @era) . encodeMemPack
   decodeTablesWithHint st =
     let certInterns =
           internsFromMap $

@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
     -- * Initialization
   , newBackingStore
   , restoreBackingStore
+  , StreamingBackendV1 (..)
 
     -- * Tracing
   , SomeBackendTrace (..)
@@ -33,6 +34,7 @@ import Cardano.Slotting.Slot
 import Control.Tracer
 import Data.Proxy
 import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import System.FS.API
@@ -64,7 +66,8 @@ newBackingStore trcr (SomeBackendArgs bArgs) fs st tables =
   newBackingStoreInitialiser trcr bArgs fs (InitFromValues Origin st tables)
 
 data SomeBackendArgs m l where
-  SomeBackendArgs :: Backend m backend l => Args m backend -> SomeBackendArgs m l
+  SomeBackendArgs ::
+    (StreamingBackendV1 m backend l, Backend m backend l) => Args m backend -> SomeBackendArgs m l
 
 data SomeBackendTrace where
   SomeBackendTrace :: Show (Trace m backend) => Trace m backend -> SomeBackendTrace
@@ -88,3 +91,7 @@ class Backend m backend l where
     Args m backend ->
     SnapshotsFS m ->
     BackingStoreInitialiser m l
+
+-- | A refinement of 'StreamingBackend' that produces a 'Yield' from a 'BackingStoreValueHandle'.
+class StreamingBackend m backend l => StreamingBackendV1 m backend l where
+  yieldV1 :: Proxy backend -> LedgerBackingStoreValueHandle m l -> Yield m l
