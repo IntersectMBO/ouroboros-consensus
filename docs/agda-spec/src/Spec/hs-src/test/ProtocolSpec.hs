@@ -12,7 +12,7 @@ import Lib
 
 pd :: PoolDistr
 pd = MkHSMap
-  [ hk .->  (1 / 3 , hkv) ]
+  [ hk .->  (1 / 3 , hkv) , 111 .-> (1 / 3 , 222) , 333 .-> (1 / 3 , 444) ]
 
 pe :: PrtclEnv
 pe = MkPrtclEnv
