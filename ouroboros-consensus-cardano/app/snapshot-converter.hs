@@ -233,7 +233,6 @@ data OutEnv = OutEnv
       LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
       ResourceRegistry IO ->
       IO (SinkArgs (LedgerState (CardanoBlock StandardCrypto)) IO)
-  , outCreateExtra :: Maybe FilePath
   , outDeleteExtra :: Maybe FilePath
   , outProgressMsg :: String
   , outBackend :: SnapshotBackend
@@ -287,13 +286,12 @@ main = withStdTerminalHandles $ do
         let crcOut = maybe inCRC (crcOfConcat inCRC) mCRCOut
 
         lift $ putStr "Generating new metadata file..." >> hFlush stdout
-        putMetadata outFilePath (SnapshotMetadata outBackend crcOut)
+        putMetadata outFilePath (SnapshotMetadata outBackend crcOut TablesCodecVersion1)
 
         lift $ putColored Green True "Done"
 
   wipeOutputPaths OutEnv{..} = do
     wipePath outFilePath
-    lift $ maybe (pure ()) (D.createDirectory . (outFilePath F.</>)) outCreateExtra
     maybe
       (pure ())
       wipePath
@@ -356,7 +354,7 @@ main = withStdTerminalHandles $ do
         InEnv
           st
           fp
-          (fromInMemory (fp F.</> "tables" F.</> "tvar"))
+          (fromInMemory (fp F.</> "tables"))
           ("InMemory@[" <> fp <> "]")
           c
           mtd
@@ -412,8 +410,7 @@ main = withStdTerminalHandles $ do
       pure $
         OutEnv
           fp
-          (toInMemory (fp F.</> "tables" F.</> "tvar"))
-          (Just "tables")
+          (toInMemory (fp F.</> "tables"))
           Nothing
           ("InMemory@[" <> fp <> "]")
           UTxOHDMemSnapshot
@@ -431,7 +428,6 @@ main = withStdTerminalHandles $ do
           fp
           (toLMDB fp defaultLMDBLimits)
           Nothing
-          Nothing
           ("LMDB@[" <> fp <> "]")
           UTxOHDLMDBSnapshot
     LSM fp lsmDbPath -> do
@@ -447,7 +443,6 @@ main = withStdTerminalHandles $ do
         OutEnv
           fp
           (toLSM lsmDbPath (last $ splitDirectories fp))
-          Nothing
           (Just lsmDbPath)
           ("LSM@[" <> lsmDbPath <> "]")
           UTxOHDLSMSnapshot

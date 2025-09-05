@@ -98,8 +98,10 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( ShelleyLedgerConfig (shelleyLedgerGlobals)
+  ( BigEndianTxIn (..)
+  , ShelleyLedgerConfig (shelleyLedgerGlobals)
   , Ticked (TickedShelleyLedgerState, tickedShelleyLedgerState)
+  , coerceTxInSet
   , getPParams
   )
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
@@ -177,8 +179,9 @@ instance
 
   getTransactionKeySets (ShelleyTx _ tx) =
     LedgerTables $
-      KeysMK
-        (tx ^. bodyTxL . allInputsTxBodyF)
+      KeysMK $
+        coerceTxInSet
+          (tx ^. bodyTxL . allInputsTxBodyF)
 
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (txIdTx tx) tx

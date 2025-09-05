@@ -102,7 +102,7 @@ mkLedgerTables tx =
       Map.fromList $
         zip exampleTxIns exampleTxOuts
  where
-  exampleTxIns :: [SL.TxIn]
+  exampleTxIns :: [BigEndianTxIn]
   exampleTxIns = case toList (tx ^. (LC.bodyTxL . LC.allInputsTxBodyF)) of
     [] -> error "No transaction inputs were provided to construct the ledger tables"
     -- We require at least one transaction input (and one
@@ -112,7 +112,7 @@ mkLedgerTables tx =
     --
     -- Also all transactions in Cardano have at least one input for
     -- automatic replay protection.
-    xs -> xs
+    xs -> map BigEndianTxIn xs
 
   exampleTxOuts :: [LC.TxOut era]
   exampleTxOuts = case toList (tx ^. (LC.bodyTxL . LC.outputsTxBodyL)) of

@@ -137,11 +137,10 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
                     )
               )
       , takeHandleSnapshot = \hint snapshotName -> do
-          createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName, "tables"]
           h <- readTVarIO tv
           guardClosed h $
             \values ->
-              withFile hasFS (mkFsPath [snapshotName, "tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
+              withFile hasFS (mkFsPath [snapshotName, "tables"]) (WriteMode MustBeNew) $ \hf ->
                 fmap (Just . snd) $
                   hPutAllCRC hasFS hf $
                     CBOR.toLazyByteString $
@@ -204,6 +203,7 @@ writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
     SnapshotMetadata
       { snapshotBackend = UTxOHDMemSnapshot
       , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
+      , snapshotTablesCodecVersion = TablesCodecVersion1
       }
 
 implTakeSnapshot ::
@@ -271,7 +271,7 @@ loadSnapshot tracer _rr ccfg fs ds = do
               (valuesMKDecoder extLedgerSt)
               ( fsPathFromList $
                   fsPathToList (snapshotToDirPath ds)
-                    <> [fromString "tables", fromString "tvar"]
+                    <> [fromString "tables"]
               )
       let computedCRC = crcOfConcat checksumAsRead crcTables
       Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
