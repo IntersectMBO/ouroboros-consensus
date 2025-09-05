@@ -42,6 +42,8 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerDbBackendArgs)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -142,7 +144,7 @@ defaultArgs =
   ChainDbArgs
     ImmutableDB.defaultArgs
     VolatileDB.defaultArgs
-    LedgerDB.defaultArgs
+    (LedgerDB.defaultArgs $ LedgerDB.SomeBackendArgs InMemory.InMemArgs)
     defaultSpecificArgs
 
 ensureValidateAll ::

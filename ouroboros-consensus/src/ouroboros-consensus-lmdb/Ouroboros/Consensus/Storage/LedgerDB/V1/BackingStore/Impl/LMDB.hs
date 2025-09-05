@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
   , Backend (..)
   , Args (LMDBBackingStoreArgs)
   , LMDBLimits (LMDBLimits, lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders)
+  , mkLMDBArgs
 
     -- * Streaming
   , YieldArgs (YieldLMDB)
@@ -62,9 +63,11 @@ import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( SnapshotBackend (..)
   )
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge as Bridge
@@ -812,6 +815,20 @@ instance
       (SomeBackendTrace . OnDiskBackingStoreTrace >$< trcr)
       limits
       (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint fs)
+
+-- | Create arguments for initializing the LedgerDB using the LMDB backend.
+mkLMDBArgs ::
+  ( MonadIOPrim m
+  , HasLedgerTables (LedgerState blk)
+  , IOLike m
+  ) =>
+  V1.FlushFrequency -> FilePath -> LMDBLimits -> a -> (LedgerDbBackendArgs m blk, a)
+mkLMDBArgs flushing lmdbPath limits =
+  (,) $
+    LedgerDbBackendArgsV1 $
+      V1.V1Args flushing $
+        SomeBackendArgs $
+          LMDBBackingStoreArgs lmdbPath limits Dict.Dict
 
 class (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
 instance (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m

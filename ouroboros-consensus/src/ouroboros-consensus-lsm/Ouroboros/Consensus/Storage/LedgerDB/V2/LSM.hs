@@ -76,6 +76,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
@@ -475,10 +476,19 @@ stdMkBlockIOFS fastStoragePath rr = do
 
 data LSM
 
-mkLSMArgs :: FilePath -> StdGen -> FilePath -> (Args IO LSM, StdGen)
-mkLSMArgs fp gen fastStorage =
+-- | Create arguments for initializing the LedgerDB using the LSM-trees backend.
+mkLSMArgs ::
+  ( LedgerSupportsProtocol blk
+  , LedgerDbSerialiseConstraints blk
+  ) =>
+  Proxy blk -> FilePath -> FilePath -> StdGen -> (LedgerDbBackendArgs IO blk, StdGen)
+mkLSMArgs _ fp fastStorage gen =
   let (lsmSalt, gen') = genWord64 gen
-   in (LSMArgs (mkFsPath $ splitDirectories fp) lsmSalt (stdMkBlockIOFS fastStorage), gen')
+   in ( LedgerDbBackendArgsV2 $
+          SomeBackendArgs $
+            LSMArgs (mkFsPath $ splitDirectories fp) lsmSalt (stdMkBlockIOFS fastStorage)
+      , gen'
+      )
 
 instance
   ( LedgerSupportsProtocol blk

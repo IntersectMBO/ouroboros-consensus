@@ -173,11 +173,11 @@ import Ouroboros.Network.Protocol.ChainSync.Codec (timeLimitsChainSync)
 import Ouroboros.Network.RethrowPolicy
 import qualified SafeWildCards
 import System.Exit (ExitCode (..))
-import System.FS.API (SomeHasFS (..), mkFsPath)
+import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (..))
 import System.FS.IO (ioHasFS)
-import System.FilePath (splitDirectories, (</>))
-import System.Random (StdGen, genWord64, newStdGen, randomIO, split)
+import System.FilePath ((</>))
+import System.Random (StdGen, newStdGen, randomIO, split)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -1050,20 +1050,6 @@ stdLowLevelRunNodeArgsIO
         , llrnPublicPeerSelectionStateVar =
             Diffusion.dcPublicPeerSelectionVar srnDiffusionConfiguration
         , llrnLdbFlavorArgs = srnLedgerDbBackendArgs
-        -- case srnLedgerDbBackendArgs of
-        --   V1LMDB args -> LedgerDbFlavorArgsV1 args
-        --   V2InMemory -> LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
-        --   V2LSM path ->
-        --     LedgerDbFlavorArgsV2
-        --       ( V2.V2Args
-        --           ( V2.LSMHandleArgs
-        --               ( V2.LSMArgs
-        --                   (mkFsPath $ splitDirectories path)
-        --                   lsmSalt
-        --                   (LSM.stdMkBlockIOFS (nonImmutableDbPath srnDatabasePath))
-        --               )
-        --           )
-        --       )
         }
    where
     networkMagic :: NetworkMagic

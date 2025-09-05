@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
   , Mem
   , YieldArgs (YieldInMemory)
   , SinkArgs (SinkInMemory)
+  , mkInMemoryArgs
   ) where
 
 import Cardano.Binary as CBOR
@@ -57,6 +58,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
@@ -297,6 +299,16 @@ instance
     loadSnapshot trcr reg ccfg shfs ds
   snapshotManager _ _ =
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory.snapshotManager
+
+-- | Create arguments for initializing the LedgerDB using the InMemory backend.
+mkInMemoryArgs ::
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  ) =>
+  a -> (LedgerDbBackendArgs m blk, a)
+mkInMemoryArgs = (,) $ LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
 
 instance IOLike m => StreamingBackend m Mem l where
   data YieldArgs m Mem l

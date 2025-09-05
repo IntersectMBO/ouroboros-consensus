@@ -22,15 +22,12 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
-import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Util.Args
-import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 
 {-------------------------------------------------------------------------------
@@ -60,13 +57,10 @@ data LedgerDbArgs f m blk = LedgerDbArgs
 
 -- | Default arguments
 defaultArgs ::
-  ( IOLike m
-  , LedgerDbSerialiseConstraints blk
-  , LedgerSupportsProtocol blk
-  , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
-  ) =>
+  Applicative m =>
+  V2.SomeBackendArgs m blk ->
   Incomplete LedgerDbArgs m blk
-defaultArgs =
+defaultArgs backendArgs =
   LedgerDbArgs
     { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
     , lgrGenesis = NoDefault
@@ -76,7 +70,7 @@ defaultArgs =
     , lgrTracer = nullTracer
     , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
       -- will be the default for end-users.
-      lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
+      lgrBackendArgs = LedgerDbBackendArgsV2 backendArgs
     , lgrRegistry = NoDefault
     , lgrStartSnapshot = Nothing
     }

@@ -373,6 +373,7 @@ library ouroboros-consensus-lsm
     Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
   build-depends:
+    FailT,
     base >=4.14 && <4.22,
     blockio,
     cardano-binary,
