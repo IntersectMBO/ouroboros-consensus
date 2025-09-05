@@ -33,7 +33,7 @@ import qualified Control.Tracer as Tracer
 import Data.Proxy (Proxy (..))
 import Data.SOP.Strict
 import Data.Word (Word64)
-import Ouroboros.Consensus.Block.Forging (BlockForging, MkBlockForging)
+import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.BlockchainTime (SlotLength)
 import Ouroboros.Consensus.Byron.Node
   ( ByronLeaderCredentials
@@ -70,7 +70,6 @@ import Ouroboros.Consensus.Shelley.Node
   , ShelleyGenesis
   , ShelleyLeaderCredentials
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
 import qualified Test.Cardano.Ledger.Conway.Examples as Conway
 import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
