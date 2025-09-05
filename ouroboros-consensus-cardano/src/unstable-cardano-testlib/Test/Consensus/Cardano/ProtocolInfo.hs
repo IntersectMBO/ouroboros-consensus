@@ -29,10 +29,11 @@ import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Cardano.Slotting.Time as Time
+import qualified Control.Tracer as Tracer
 import Data.Proxy (Proxy (..))
 import Data.SOP.Strict
 import Data.Word (Word64)
-import Ouroboros.Consensus.Block.Forging (BlockForging)
+import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.BlockchainTime (SlotLength)
 import Ouroboros.Consensus.Byron.Node
   ( ByronLeaderCredentials
@@ -60,12 +61,15 @@ import Ouroboros.Consensus.Protocol.PBFT
   ( PBftParams
   , PBftSignatureThreshold (..)
   )
+import Ouroboros.Consensus.Protocol.Praos.AgentClient
+  ( KESAgentClientTrace
+  , KESAgentContext
+  )
 import Ouroboros.Consensus.Shelley.Node
   ( ProtocolParamsShelleyBased (..)
   , ShelleyGenesis
   , ShelleyLeaderCredentials
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
 import qualified Test.Cardano.Ledger.Conway.Examples as Conway
 import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
@@ -167,7 +171,7 @@ hardForkInto Conway =
 -- more details on how to specify a value of this type.
 mkSimpleTestProtocolInfo ::
   forall c.
-  CardanoHardForkConstraints c =>
+  (CardanoHardForkConstraints c, KESAgentContext c IO) =>
   -- | Network decentralization parameter.
   Shelley.DecentralizationParam ->
   SecurityParam ->
@@ -236,7 +240,9 @@ mkSimpleTestProtocolInfo
 -- | A more generalized version of 'mkSimpleTestProtocolInfo'.
 mkTestProtocolInfo ::
   forall m c.
-  (CardanoHardForkConstraints c, IOLike m) =>
+  ( CardanoHardForkConstraints c
+  , KESAgentContext c m
+  ) =>
   -- | Id of the node for which the protocol info will be elaborated.
   (CoreNodeId, Shelley.CoreNode c) ->
   -- | These nodes will be part of the initial delegation mapping, and funds
@@ -254,7 +260,9 @@ mkTestProtocolInfo ::
   SL.ProtVer ->
   -- | Specification of the era to which the initial state should hard-fork to.
   CardanoHardForkTriggers ->
-  (ProtocolInfo (CardanoBlock c), m [BlockForging m (CardanoBlock c)])
+  ( ProtocolInfo (CardanoBlock c)
+  , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
+  )
 mkTestProtocolInfo
   (coreNodeId, coreNode)
   shelleyGenesis

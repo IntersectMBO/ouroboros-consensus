@@ -33,7 +33,7 @@ data Rekeying m blk = forall opKey. Rekeying
   , rekeyUpd ::
       CoreNodeId ->
       ProtocolInfo blk ->
-      m [BlockForging m blk] ->
+      m [MkBlockForging m blk] ->
       EpochNo ->
       opKey ->
       m (Maybe (TestNodeInitialization m blk))
