@@ -374,4 +374,4 @@ instance StreamingBackend m Mem l where
   sink _ (SinkArgs x) = absurd x
 
 instance StreamingBackendV1 m Mem l where
-  yieldV1 _ _ = error "We do not support streaming non-native snapshots from a V1 InMemory backend"
+  yieldV1 _ _ = error "We do not support streaming canonical snapshots from a V1 InMemory backend"

@@ -13,7 +13,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args
   , completeChainDbArgs
   , defaultArgs
   , enableLedgerEvents
-  , enableNonNativeSnapshots
+  , enableCanonicalSnapshots
   , ensureValidateAll
   , updateQueryBatchSize
   , updateSnapshotPolicyArgs
@@ -264,9 +264,9 @@ enableLedgerEvents args =
             }
     }
 
-enableNonNativeSnapshots :: SomeHasFS m -> ChainDbArgs f m blk -> ChainDbArgs f m blk
-enableNonNativeSnapshots shfs args =
-  args{cdbLgrDbArgs = (cdbLgrDbArgs args){LedgerDB.lgrNonNativeSnapshotsFS = Just shfs}}
+enableCanonicalSnapshots :: SomeHasFS m -> ChainDbArgs f m blk -> ChainDbArgs f m blk
+enableCanonicalSnapshots shfs args =
+  args{cdbLgrDbArgs = (cdbLgrDbArgs args){LedgerDB.lgrCanonicalSnapshotsFS = Just shfs}}
 
 {-------------------------------------------------------------------------------
   Relative mount points

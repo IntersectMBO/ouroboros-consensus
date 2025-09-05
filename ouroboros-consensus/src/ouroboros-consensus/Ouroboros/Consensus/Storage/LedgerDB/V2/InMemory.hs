@@ -24,8 +24,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
   , SinkArgs (SinkInMemory)
   , mkInMemoryArgs
 
-    -- * Non-native snapshots
-  , takeNonNativeSnapshot
+    -- * Canonical snapshots
+  , takeCanonicalSnapshot
   ) where
 
 import Cardano.Binary as CBOR
@@ -176,13 +176,13 @@ snapshotManager ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  Maybe (NonNativeSnapshotsFS m) ->
+  Maybe (CanonicalSnapshotsFS m) ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManager ccfg tracer fs mNonNative =
+snapshotManager ccfg tracer fs mCanonical =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = defaultDeleteSnapshot fs tracer
-    , takeSnapshot = implTakeSnapshot ccfg tracer fs mNonNative
+    , takeSnapshot = implTakeSnapshot ccfg tracer fs mCanonical
     }
 
 -- | The path within the LedgerDB's filesystem to the file that contains the
@@ -216,11 +216,11 @@ implTakeSnapshot ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  Maybe (NonNativeSnapshotsFS m) ->
+  Maybe (CanonicalSnapshotsFS m) ->
   Maybe String ->
   StateRef m (ExtLedgerState blk) ->
   m (Maybe (DiskSnapshot, RealPoint blk))
-implTakeSnapshot ccfg tracer hasFS mNonNative suffix st = do
+implTakeSnapshot ccfg tracer hasFS mCanonical suffix st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
@@ -233,7 +233,7 @@ implTakeSnapshot ccfg tracer hasFS mNonNative suffix st = do
         else do
           encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
             writeSnapshot hasFS (encodeDiskExtLedgerState ccfg) snapshot st
-          takeNonNativeSnapshotInMemory (($ t) >$< tracer) mNonNative snapshot
+          takeCanonicalSnapshotInMemory (($ t) >$< tracer) mCanonical snapshot
           return $ Just (snapshot, t)
 
 -- | Read snapshot from disk.
@@ -452,7 +452,7 @@ sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) fp _ s =
       Just (item, s'') -> go tb crc (n - 1) (item : m) s''
 
 {-------------------------------------------------------------------------------
- Non-native snapshots
+ Canonical snapshots
 -------------------------------------------------------------------------------}
 
 -- | A 'Yield' which already was provided the ledger state.
@@ -466,11 +466,11 @@ type Yield' m l =
   ) ->
   ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
 
--- | Take a non-native snapshot, by providing a yielder that will stream the
+-- | Take a canonical snapshot, by providing a yielder that will stream the
 -- ledger table values.
 --
--- The @state@ file is copied into the non-native snapshot.
-takeNonNativeSnapshot ::
+-- The @state@ file is copied into the canonical snapshot.
+takeCanonicalSnapshot ::
   (IOLike m, SerializeTablesWithHint l) =>
   Tracer m (RealPoint blk -> TraceSnapshotEvent blk) ->
   DiskSnapshot ->
@@ -484,9 +484,9 @@ takeNonNativeSnapshot ::
   l EmptyMK ->
   -- | The CRC resulting from encoding the state
   CRC ->
-  Maybe (NonNativeSnapshotsFS m) ->
+  Maybe (CanonicalSnapshotsFS m) ->
   m ()
-takeNonNativeSnapshot
+takeCanonicalSnapshot
   tracer
   snapshot
   allocator
@@ -494,13 +494,13 @@ takeNonNativeSnapshot
   doYield
   st
   stateCRC
-  mNonNativeFS =
-    whenJust mNonNativeFS $
-      \( NonNativeSnapshotsFS
+  mCanonicalFS =
+    whenJust mCanonicalFS $
+      \( CanonicalSnapshotsFS
            nonNativeShfs@(SomeHasFS nonNativeFs)
            (SomeHasFS nativeFs)
          ) ->
-          encloseTimedWith (flip (TookNonNativeSnapshot snapshot) >$< tracer) $ do
+          encloseTimedWith (flip (TookCanonicalSnapshot snapshot) >$< tracer) $ do
             let snapFsPath = snapshotToDirPath snapshot
             createDirectoryIfMissing nonNativeFs True snapFsPath
             copyFile
@@ -544,20 +544,20 @@ copyFile (hfs1, fp1) (hfs2, fp2) = do
         Monad.void $ hPutBufSome hfs2 hout ba 0 bytesRead
         go ba hin hout
 
--- | Take a non-native snapshot from an InMemory snapshot
+-- | Take a canonical snapshot from an InMemory snapshot
 --
 -- This is implemented as a copy of the whole snapshot to the new directory.
-takeNonNativeSnapshotInMemory ::
+takeCanonicalSnapshotInMemory ::
   IOLike m =>
   Tracer m (RealPoint blk -> TraceSnapshotEvent blk) ->
-  Maybe (NonNativeSnapshotsFS m) ->
+  Maybe (CanonicalSnapshotsFS m) ->
   DiskSnapshot ->
   m ()
-takeNonNativeSnapshotInMemory tracer mNonNative snapshot =
+takeCanonicalSnapshotInMemory tracer mCanonical snapshot =
   whenJust
-    mNonNative
-    ( \(NonNativeSnapshotsFS (SomeHasFS nonNativeHasFS) (SomeHasFS nativeHasFS)) ->
-        encloseTimedWith (flip (TookNonNativeSnapshot snapshot) >$< tracer) $ do
+    mCanonical
+    ( \(CanonicalSnapshotsFS (SomeHasFS nonNativeHasFS) (SomeHasFS nativeHasFS)) ->
+        encloseTimedWith (flip (TookCanonicalSnapshot snapshot) >$< tracer) $ do
           let snapFsPath = snapshotToDirPath snapshot
           createDirectoryIfMissing nonNativeHasFS True snapFsPath
           let copy = \x ->

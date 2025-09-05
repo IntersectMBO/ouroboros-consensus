@@ -9,7 +9,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
   ( -- * Backend API
     Backend (..)
-  , NonNativeSnapshotsFS (..)
+  , CanonicalSnapshotsFS (..)
 
     -- * Existentials
   , SomeBackendTrace (..)
@@ -83,13 +83,13 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     CodecConfig blk ->
     Tracer m (TraceSnapshotEvent blk) ->
     SomeHasFS m ->
-    Maybe (NonNativeSnapshotsFS m) ->
+    Maybe (CanonicalSnapshotsFS m) ->
     SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
 
--- | Arguments required if non-native snapshots are enabled.
-data NonNativeSnapshotsFS m = NonNativeSnapshotsFS
-  { nnNonNativeHasFS :: SomeHasFS m
-  -- ^ The FS on which non-native snapshots are stored
+-- | Arguments required if canonical snapshots are enabled.
+data CanonicalSnapshotsFS m = CanonicalSnapshotsFS
+  { nnCanonicalHasFS :: SomeHasFS m
+  -- ^ The FS on which canonical snapshots are stored
   , nnNativeHasFS :: SomeHasFS m
   -- ^ The FS on which native snapshots are stored
   }

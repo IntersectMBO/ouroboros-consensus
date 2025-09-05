@@ -94,7 +94,7 @@ openDB
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                 (LedgerDBSnapshotEvent >$< lgrTracer args)
                 (lgrHasFS args)
-                (flip NonNativeSnapshotsFS (lgrHasFS args) <$> lgrNonNativeSnapshotsFS args)
+                (flip CanonicalSnapshotsFS (lgrHasFS args) <$> lgrCanonicalSnapshotsFS args)
         let initDb = V2.mkInitDb args getBlock snapManager res
         doOpenDB args initDb snapManager stream replayGoal
 
