@@ -516,6 +516,7 @@ openLedgerDB flavArgs env cfg fs = do
               bss
               getBlock
               snapManager
+              (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
        in openDBInternal args initDb snapManager stream replayGoal
     LedgerDbFlavorArgsV2 bss -> do
       (snapManager, bss') <- case bss of
@@ -527,6 +528,7 @@ openLedgerDB flavArgs env cfg fs = do
               bss'
               getBlock
               snapManager
+              (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
       openDBInternal args initDb snapManager stream replayGoal
   withRegistry $ \reg -> do
     vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
