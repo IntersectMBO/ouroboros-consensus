@@ -52,6 +52,7 @@ import Ouroboros.Consensus.Shelley.Node
   , ShelleyGenesis
   , protocolInfoShelley
   )
+import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
 import TextBuilder (decimal)
 
 -- | Usable for each Shelley-based era
@@ -70,7 +71,7 @@ instance
   blockTxSizes blk = case Shelley.shelleyBlockRaw blk of
     SL.Block _ body ->
       toList $
-        fmap (fromIntegral @Integer @SizeInBytes . view Core.sizeTxF) (body ^. Core.txSeqBlockBodyL)
+        fmap (SizeInBytes . view Core.sizeTxF) (body ^. Core.txSeqBlockBodyL)
 
   knownEBBs = const Map.empty
 
