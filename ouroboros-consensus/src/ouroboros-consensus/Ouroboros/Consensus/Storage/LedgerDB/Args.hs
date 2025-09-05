@@ -60,8 +60,8 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   , lgrTracer :: Tracer m (TraceEvent blk)
   , lgrBackendArgs :: LedgerDbBackendArgs m blk
   , lgrRegistry :: HKD f (ResourceRegistry m)
-  , lgrNonNativeSnapshotsFS :: Maybe (SomeHasFS m)
-  -- ^ If Just, enable non-native snapshots.
+  , lgrCanonicalSnapshotsFS :: Maybe (SomeHasFS m)
+  -- ^ If Just, enable canonical snapshots.
   , lgrQueryBatchSize :: QueryBatchSize
   , lgrStartSnapshot :: Maybe DiskSnapshot
   -- ^ If provided, the ledgerdb will start using said snapshot and fallback
@@ -87,7 +87,7 @@ defaultArgs backendArgs =
       lgrBackendArgs = LedgerDbBackendArgsV2 backendArgs
     , lgrRegistry = NoDefault
     , lgrStartSnapshot = Nothing
-    , lgrNonNativeSnapshotsFS = Nothing
+    , lgrCanonicalSnapshotsFS = Nothing
     }
 
 data LedgerDbBackendArgs m blk

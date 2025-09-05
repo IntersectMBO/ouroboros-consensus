@@ -160,7 +160,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
-import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend (NonNativeSnapshotsFS (..))
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend (CanonicalSnapshotsFS (..))
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory hiding (Args, snapshotManager)
 import Ouroboros.Consensus.Util.Args (Complete)
 import Ouroboros.Consensus.Util.Enclose
@@ -182,7 +182,7 @@ snapshotManager args p =
     (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
     (LedgerDBSnapshotEvent >$< lgrTracer args)
     (SnapshotsFS (lgrHasFS args))
-    (flip NonNativeSnapshotsFS (lgrHasFS args) <$> lgrNonNativeSnapshotsFS args)
+    (flip CanonicalSnapshotsFS (lgrHasFS args) <$> lgrCanonicalSnapshotsFS args)
 
 snapshotManager' ::
   ( IOLike m
@@ -193,7 +193,7 @@ snapshotManager' ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SnapshotsFS m ->
-  Maybe (NonNativeSnapshotsFS m) ->
+  Maybe (CanonicalSnapshotsFS m) ->
   SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
 snapshotManager' p ccfg tracer sfs@(SnapshotsFS fs) mNNFS =
   SnapshotManager
@@ -232,12 +232,12 @@ implTakeSnapshot ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SnapshotsFS m ->
-  Maybe (NonNativeSnapshotsFS m) ->
+  Maybe (CanonicalSnapshotsFS m) ->
   BackingStore' m blk ->
   -- | Override for snapshot numbering
   Maybe String ->
   ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
-implTakeSnapshot (V1.V1Args _ (V1.SomeBackendArgs (_ :: V1.Args m backend))) ldbvar ccfg tracer (SnapshotsFS hasFS) mNonNativeFS backingStore suffix = readLocked $ do
+implTakeSnapshot (V1.V1Args _ (V1.SomeBackendArgs (_ :: V1.Args m backend))) ldbvar ccfg tracer (SnapshotsFS hasFS) mCanonicalFS backingStore suffix = readLocked $ do
   state <- changelogLastFlushedState <$> readTVarIO ldbvar
   case pointToWithOriginRealPoint (castPoint (getTip state)) of
     Origin ->
@@ -253,7 +253,7 @@ implTakeSnapshot (V1.V1Args _ (V1.SomeBackendArgs (_ :: V1.Args m backend))) ldb
           stateCRC <-
             encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
               writeSnapshot hasFS backingStore (encodeDiskExtLedgerState ccfg) snapshot state
-          takeNonNativeSnapshot
+          takeCanonicalSnapshot
             (($ t) >$< tracer)
             snapshot
             (bsValueHandle backingStore)
@@ -261,7 +261,7 @@ implTakeSnapshot (V1.V1Args _ (V1.SomeBackendArgs (_ :: V1.Args m backend))) ldb
             (\vh -> yieldV1 (Proxy @backend) vh state)
             state
             stateCRC
-            mNonNativeFS
+            mCanonicalFS
           return $ Just (snapshot, t)
 
 -- | Write snapshot to disk

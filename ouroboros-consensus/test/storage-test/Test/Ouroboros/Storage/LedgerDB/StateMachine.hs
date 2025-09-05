@@ -577,7 +577,7 @@ openLedgerDB flavArgs env cfg fs rr = do
               (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
               (LedgerDBSnapshotEvent >$< lgrTracer args)
               (lgrHasFS args)
-              (flip NonNativeSnapshotsFS (lgrHasFS args) <$> lgrNonNativeSnapshotsFS args)
+              (flip CanonicalSnapshotsFS (lgrHasFS args) <$> lgrCanonicalSnapshotsFS args)
       let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
       openDBInternal args initDb snapManager stream replayGoal
   withRegistry $ \reg -> do

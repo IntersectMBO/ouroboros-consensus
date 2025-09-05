@@ -100,9 +100,9 @@ openLedgerDB args = do
               (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
               (LedgerDB.lgrHasFS args)
               ( flip
-                  LedgerDB.V2.NonNativeSnapshotsFS
+                  LedgerDB.V2.CanonicalSnapshotsFS
                   (LedgerDB.lgrHasFS args)
-                  <$> LedgerDB.lgrNonNativeSnapshotsFS args
+                  <$> LedgerDB.lgrCanonicalSnapshotsFS args
               )
       let initDb =
             LedgerDB.V2.mkInitDb

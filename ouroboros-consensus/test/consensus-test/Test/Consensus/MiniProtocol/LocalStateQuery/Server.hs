@@ -237,7 +237,7 @@ initLedgerDB s c = do
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrRegistry = reg
           , lgrStartSnapshot = Nothing
-          , lgrNonNativeSnapshotsFS = Nothing
+          , lgrCanonicalSnapshotsFS = Nothing
           }
   ldb <-
     fst

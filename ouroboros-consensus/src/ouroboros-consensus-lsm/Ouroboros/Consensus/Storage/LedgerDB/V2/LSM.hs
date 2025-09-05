@@ -201,13 +201,13 @@ snapshotManager ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  Maybe (NonNativeSnapshotsFS m) ->
+  Maybe (CanonicalSnapshotsFS m) ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManager session ccfg tracer fs mNonNative =
+snapshotManager session ccfg tracer fs mCanonical =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = implDeleteSnapshot session fs tracer
-    , takeSnapshot = implTakeSnapshot ccfg tracer fs mNonNative
+    , takeSnapshot = implTakeSnapshot ccfg tracer fs mCanonical
     }
 
 newLSMLedgerTablesHandle ::
@@ -333,11 +333,11 @@ implTakeSnapshot ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  Maybe (NonNativeSnapshotsFS m) ->
+  Maybe (CanonicalSnapshotsFS m) ->
   Maybe String ->
   StateRef m (ExtLedgerState blk) ->
   m (Maybe (DiskSnapshot, RealPoint blk))
-implTakeSnapshot ccfg tracer shfs mNonNativeFS suffix st =
+implTakeSnapshot ccfg tracer shfs mCanonicalFS suffix st =
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
@@ -351,7 +351,7 @@ implTakeSnapshot ccfg tracer shfs mNonNativeFS suffix st =
           stateCRC <-
             encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
               writeSnapshot shfs (encodeDiskExtLedgerState ccfg) snapshot st
-          takeNonNativeSnapshot
+          takeCanonicalSnapshot
             (($ t) >$< tracer)
             snapshot
             (duplicate (tables st))
@@ -359,7 +359,7 @@ implTakeSnapshot ccfg tracer shfs mNonNativeFS suffix st =
             (\hdl -> yield (Proxy @LSM) (YieldLSM 1000 hdl) (state st))
             (state st)
             stateCRC
-            mNonNativeFS
+            mCanonicalFS
 
           return $ Just (snapshot, t)
 
