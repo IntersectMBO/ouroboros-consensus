@@ -106,10 +106,6 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- back into the next iteration of the range read. If the function returns
   -- Nothing, it means the read returned no results, or in other words, we
   -- reached the end of the ledger tables.
-  , readAll :: !(l EmptyMK -> m (LedgerTables l ValuesMK))
-  -- ^ Costly read all operation, not to be used in Consensus but only in
-  -- snapshot-converter executable. The values will be read as if they were from
-  -- the same era as the given ledger state.
   , pushDiffs :: !(forall mk. l mk -> l DiffMK -> m ())
   -- ^ Push some diffs into the ledger tables handle.
   --

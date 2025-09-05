@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( -- * LedgerTablesHandle
     newLSMLedgerTablesHandle
   , tableFromValuesMK
+  , UTxOTable
 
     -- * Snapshots
   , loadSnapshot
@@ -38,6 +39,15 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
     -- * snapshot-converter
   , implTakeSnapshot
+  , LSM.withNewSession
+  , toTxInBytes
+  , toTxOutBytes
+  , LSM.newSession
+  , LSM.toSnapshotName
+  , LSM.SnapshotLabel (LSM.SnapshotLabel)
+  , LSM.openTableFromSnapshot
+  , LSM.closeTable
+  , LSM.listSnapshots
   ) where
 
 import Cardano.Binary as CBOR
@@ -300,11 +310,6 @@ newLSMLedgerTablesHandle tracer rr (resKey, t) = do
               Map.empty
             $ V.zip vec' res
       , readRange = implReadRange t
-      , readAll = \st ->
-          let readAll' m = do
-                (v, n) <- implReadRange t st (m, 100000)
-                maybe (pure v) (fmap (ltliftA2 unionValues v) . readAll' . Just) n
-           in readAll' Nothing
       , pushDiffs = const (implPushDiffs t)
       , takeHandleSnapshot = \_ snapshotName -> do
           LSM.saveSnapshot

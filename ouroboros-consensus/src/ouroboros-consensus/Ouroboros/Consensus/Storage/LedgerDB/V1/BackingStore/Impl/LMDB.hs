@@ -9,7 +9,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | A 'BackingStore' implementation based on [LMDB](http://www.lmdb.tech/doc/).
@@ -42,7 +41,6 @@ import Data.Functor.Contravariant ((>$<))
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
-import Data.Proxy
 import qualified Data.Set as Set
 import qualified Data.Text as Strict
 import qualified Database.LMDB.Simple as LMDB
@@ -157,19 +155,6 @@ getDb ::
   K2 String k v ->
   LMDB.Transaction mode (LMDBMK k v)
 getDb (K2 name) = LMDBMK name <$> LMDB.getDatabase (Just name)
-
-readAll ::
-  (Ord (TxIn l), MemPack (TxIn l), IndexedMemPack idx (TxOut l)) =>
-  Proxy l ->
-  idx ->
-  LMDBMK (TxIn l) (TxOut l) ->
-  LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l))
-readAll _ st (LMDBMK _ dbMK) =
-  ValuesMK
-    <$> Bridge.runCursorAsTransaction'
-      st
-      LMDB.Cursor.cgetAll
-      dbMK
 
 -- | @'rangeRead' rq dbMK@ performs a range read of @rqCount rq@
 -- values from database @dbMK@, starting from some key depending on @rqPrev rq@.
@@ -659,25 +644,11 @@ mkLMDBBackingStoreValueHandle db = do
           Trace.traceWith tracer API.BSVHStatted
           pure res
 
-    bsvhReadAll :: l EmptyMK -> m (LedgerTables l ValuesMK)
-    bsvhReadAll st =
-      Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
-        Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
-          Trace.traceWith tracer API.BSVHRangeReading
-          res <-
-            liftIO $
-              TrH.submitReadOnly trh $
-                let dbMK = getLedgerTables dbBackingTables
-                 in LedgerTables <$> readAll (Proxy @l) st dbMK
-          Trace.traceWith tracer API.BSVHRangeRead
-          pure res
-
     bsvh =
       API.BackingStoreValueHandle
         { API.bsvhAtSlot = initSlot
         , API.bsvhClose = bsvhClose
         , API.bsvhRead = bsvhRead
-        , API.bsvhReadAll = bsvhReadAll
         , API.bsvhRangeRead = bsvhRangeRead
         , API.bsvhStat = bsvhStat
         }

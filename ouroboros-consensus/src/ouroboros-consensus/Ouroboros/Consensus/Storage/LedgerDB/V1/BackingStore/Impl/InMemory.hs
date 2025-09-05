@@ -184,11 +184,6 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
                           pure $ rangeRead rq values
                         traceWith tracer $ BSValueHandleTrace Nothing BSVHRangeRead
                         pure r
-                    , bsvhReadAll = \_ ->
-                        atomically $ do
-                          guardClosed ref
-                          guardHandleClosed refHandleClosed
-                          pure values
                     , bsvhRead = \_ keys -> do
                         traceWith tracer $ BSValueHandleTrace Nothing BSVHReading
                         r <- atomically $ do

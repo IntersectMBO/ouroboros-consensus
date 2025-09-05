@@ -122,9 +122,6 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
                 let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
                  in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
             )
-      , readAll = \_ -> do
-          hs <- readTVarIO tv
-          guardClosed hs pure
       , pushDiffs = \st0 !diffs ->
           atomically $
             modifyTVar
