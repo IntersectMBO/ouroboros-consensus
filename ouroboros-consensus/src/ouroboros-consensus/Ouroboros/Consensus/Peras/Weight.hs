@@ -1,9 +1,16 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 -- | Data structure for tracking the weight of blocks due to Peras boosts.
 module Ouroboros.Consensus.Peras.Weight
@@ -30,9 +37,9 @@ module Ouroboros.Consensus.Peras.Weight
   , takeVolatileSuffix
   ) where
 
-import Data.Foldable as Foldable (foldl')
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.FingerTree.Strict (Measured (..), StrictFingerTree)
+import qualified Data.FingerTree.Strict as SFT
+import Data.Foldable as Foldable (foldl', toList)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -42,8 +49,20 @@ import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
 -- | Data structure for tracking the weight of blocks due to Peras boosts.
+--
+-- PRECONDITION: All boosted points tracked by this data structure must reside
+-- on a single linear chain, and no boosted point may be an EBB. Otherwise,
+-- queries on this data structure may return incorrect results.
+--
+-- TODO: This isn't true across cooldowns.
+--
+-- For Peras (assuming an honest majority), this is guaranteed by the voting
+-- rules, together with the fact that Peras is not to be used with blocks where
+-- EBBs (if they can even exist) may receive boosts.
 newtype PerasWeightSnapshot blk = PerasWeightSnapshot
-  { getPerasWeightSnapshot :: Map (Point blk) PerasWeight
+  { getPerasWeightSnapshot :: StrictFingerTree PWSMeasure (BoostedPoint blk)
+  -- ^ INVARIANT: The slots of the boosted points are strictly monotonically
+  -- increasing.
   }
   deriving stock Eq
   deriving Generic
@@ -52,12 +71,55 @@ newtype PerasWeightSnapshot blk = PerasWeightSnapshot
 instance StandardHash blk => Show (PerasWeightSnapshot blk) where
   show = show . perasWeightSnapshotToList
 
+data PWSMeasure = PWSMeasure
+  { slot :: !(WithOrigin SlotNo)
+  -- ^ The maximum slot of all boosted points.
+  , weight :: !PerasWeight
+  -- ^ The sum of all weight boosts.
+  , size :: !Int
+  -- ^ The number of boosted points.
+  }
+  deriving stock Show
+
+instance Semigroup PWSMeasure where
+  m0 <> m1 =
+    PWSMeasure
+      { slot = m0.slot `max` m1.slot
+      , weight = m0.weight <> m1.weight
+      , size = m0.size + m1.size
+      }
+
+instance Monoid PWSMeasure where
+  mempty =
+    PWSMeasure
+      { slot = Origin
+      , weight = mempty
+      , size = 0
+      }
+
+data BoostedPoint blk = BoostedPoint
+  { pt :: !(Point blk)
+  , weight :: !PerasWeight
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+instance Measured PWSMeasure (BoostedPoint blk) where
+  measure bp =
+    PWSMeasure
+      { slot = pointSlot bp.pt
+      , weight = bp.weight
+      , size = 1
+      }
+
 -- | An empty 'PerasWeightSnapshot' not containing any boosted blocks.
 emptyPerasWeightSnapshot :: PerasWeightSnapshot blk
-emptyPerasWeightSnapshot = PerasWeightSnapshot Map.empty
+emptyPerasWeightSnapshot = PerasWeightSnapshot SFT.empty
 
 -- | Create a weight snapshot from a list of boosted points with an associated
 -- weight. In case of duplicate points, their weights are combined.
+--
+-- PRECONDITION: The points lie on a singular linear chain.
 --
 -- >>> :{
 -- weights :: [(Point Blk, PerasWeight)]
@@ -98,10 +160,14 @@ mkPerasWeightSnapshot =
 -- >>> perasWeightSnapshotToList snap
 -- [(Point Origin,PerasWeight 3),(Point (At (Block {blockPointSlot = SlotNo 2, blockPointHash = "foo"})),PerasWeight 4),(Point (At (Block {blockPointSlot = SlotNo 3, blockPointHash = "bar"})),PerasWeight 2)]
 perasWeightSnapshotToList :: PerasWeightSnapshot blk -> [(Point blk, PerasWeight)]
-perasWeightSnapshotToList = Map.toAscList . getPerasWeightSnapshot
+perasWeightSnapshotToList (PerasWeightSnapshot ft) =
+  (\(BoostedPoint pt w) -> (pt, w)) <$> toList ft
 
 -- | Add weight for the given point to the 'PerasWeightSnapshot'. If the point
 -- already has some weight, it is added on top.
+--
+-- PRECONDITION: The point must lie on the same linear chain as the points
+-- already part of the 'PerasWeightSnapshot'.
 --
 -- >>> :{
 -- weights :: [(Point Blk, PerasWeight)]
@@ -129,7 +195,17 @@ addToPerasWeightSnapshot ::
   PerasWeightSnapshot blk ->
   PerasWeightSnapshot blk
 addToPerasWeightSnapshot pt weight =
-  PerasWeightSnapshot . Map.insertWith (<>) pt weight . getPerasWeightSnapshot
+  \(PerasWeightSnapshot ft) ->
+    let (l, r) = SFT.split (\m -> m.slot > pointSlot pt) ft
+     in PerasWeightSnapshot $ insert l <> r
+ where
+  insert l = case SFT.viewr l of
+    SFT.EmptyR -> SFT.singleton $ BoostedPoint pt weight
+    l' SFT.:> BoostedPoint pt' weight'
+      -- We already track some weight of @pt@.
+      | pt == pt' -> l' SFT.|> BoostedPoint pt' (weight <> weight')
+      -- Otherwise, insert @pt@ as a new boosted point.
+      | otherwise -> l SFT.|> BoostedPoint pt weight
 
 -- | Prune the given 'PerasWeightSnapshot' by removing the weight of all blocks
 -- strictly older than the given slot.
@@ -158,11 +234,8 @@ prunePerasWeightSnapshot ::
   SlotNo ->
   PerasWeightSnapshot blk ->
   PerasWeightSnapshot blk
-prunePerasWeightSnapshot slot =
-  PerasWeightSnapshot . Map.dropWhileAntitone isTooOld . getPerasWeightSnapshot
- where
-  isTooOld :: Point blk -> Bool
-  isTooOld pt = pointSlot pt < NotOrigin slot
+prunePerasWeightSnapshot slot (PerasWeightSnapshot ft) =
+  PerasWeightSnapshot $ SFT.dropUntil (\m -> m.slot >= NotOrigin slot) ft
 
 -- | Get the weight boost for a point, or @'mempty' :: 'PerasWeight'@ otherwise.
 --
@@ -187,8 +260,12 @@ weightBoostOfPoint ::
   forall blk.
   StandardHash blk =>
   PerasWeightSnapshot blk -> Point blk -> PerasWeight
-weightBoostOfPoint (PerasWeightSnapshot weightByPoint) pt =
-  Map.findWithDefault mempty pt weightByPoint
+weightBoostOfPoint (PerasWeightSnapshot ft) pt =
+  case SFT.viewr $ SFT.takeUntil (\m -> m.slot > pointSlot pt) ft of
+    SFT.EmptyR -> mempty
+    _ SFT.:> BoostedPoint pt' weight'
+      | pt == pt' -> weight'
+      | otherwise -> mempty
 
 -- | Get the weight boost for a fragment, ie the sum of all
 -- 'weightBoostOfPoint' for all points on the fragment (excluding the anchor).
@@ -234,11 +311,53 @@ weightBoostOfFragment ::
   PerasWeightSnapshot blk ->
   AnchoredFragment h ->
   PerasWeight
-weightBoostOfFragment weightSnap frag =
-  -- TODO think about whether this could be done in sublinear complexity
-  foldMap
-    (weightBoostOfPoint weightSnap . castPoint . blockPoint)
-    (AF.toOldestFirst frag)
+weightBoostOfFragment (PerasWeightSnapshot ft) = \case
+  AF.Empty{} -> mempty
+  frag@(oldestHdr AF.:< _) -> (measure boostingInfix).weight
+   where
+    -- /Not/ @'AF.lastSlot' frag@ as we want to ignore the anchor.
+    oldestSlot = NotOrigin $ blockSlot oldestHdr
+
+    -- The infix of @ft@ which only contains boosted points which are also on
+    -- @frag@ (via @isOnFrag@).
+    boostingInfix :: StrictFingerTree PWSMeasure (BoostedPoint blk)
+    boostingInfix = case SFT.viewr ft' of
+      SFT.EmptyR -> ft'
+      t SFT.:> bp
+        | isOnFrag bp.pt -> ft'
+        | otherwise -> go 0 (measure ft').size t
+     where
+      -- The suffix of @ft@ without boosted points which are too old to be on
+      -- @frag@.
+      ft' = SFT.dropUntil (\m -> m.slot >= oldestSlot) ft
+
+      -- Binary search on @ft'@ to find the longest prefix of @ft'@ where all
+      -- boosted points satisfy @isOnFrag@.
+      --
+      -- PRECONDITION: @0 <= lb < ub@.
+      go ::
+        -- @lb@: All boosted points of the size @lb@ prefix of @ft'@ satisfy
+        -- @isOnFrag@.
+        Int ->
+        -- @ub@: At least one boosted point of the size @ub@ prefix of @ft'@
+        -- does not satisfy @isOnFrag@.
+        Int ->
+        -- The size @ub - 1@ prefix of @ft'@.
+        StrictFingerTree PWSMeasure (BoostedPoint blk) ->
+        StrictFingerTree PWSMeasure (BoostedPoint blk)
+      go lb ub t
+        | lb == ub - 1 = t
+        | isOnFrag t'Pt = go mid ub t
+        | otherwise = go lb mid t'
+       where
+        mid = (lb + ub) `div` 2
+        (t', t'Pt) = case SFT.viewr $ SFT.takeUntil (\m -> m.size > mid) ft' of
+          t'' SFT.:> bp -> (t'', bp.pt)
+          -- @ft'@ is non-empty here, and we have @0 <= lb < mid@.
+          SFT.EmptyR -> error "unreachable"
+
+    isOnFrag :: Point blk -> Bool
+    isOnFrag pt = AF.pointOnFragment (castPoint pt) frag
 
 -- | Get the total weight for a fragment, ie the length plus the weight boost
 -- ('weightBoostOfFragment') of the fragment.
@@ -339,7 +458,7 @@ takeVolatileSuffix ::
   AnchoredFragment h ->
   AnchoredFragment h
 takeVolatileSuffix snap secParam frag
-  | Map.null $ getPerasWeightSnapshot snap =
+  | SFT.null snap.getPerasWeightSnapshot =
       -- Optimize the case where Peras is disabled.
       AF.anchorNewest (unPerasWeight k) frag
   | hasAtMostWeightK frag = frag
