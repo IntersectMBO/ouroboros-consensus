@@ -652,10 +652,12 @@ doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution o
 
   currentIssueNo :: Maybe Word64
   currentIssueNo
-    | Map.member hk ocertCounters = Map.lookup hk ocertCounters
-    | Set.member (coerceKeyRole hk) (Map.keysSet stakeDistribution) =
-        Just 0
-    | otherwise = Nothing
+    | r@Just {} <- Map.lookup hk ocertCounters
+      = r
+    | Set.member (coerceKeyRole hk) (Map.keysSet stakeDistribution)
+      = Just 0
+    | otherwise
+      = Nothing
 
 {-------------------------------------------------------------------------------
   CannotForge
