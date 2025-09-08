@@ -22,7 +22,7 @@ module Cardano.Api.Protocol.Types
 import Cardano.Chain.Slotting (EpochSlots)
 import qualified Control.Tracer as Tracer
 import Data.Bifunctor (bimap)
-import Ouroboros.Consensus.Block.Forging (MkBlockForging(..))
+import Ouroboros.Consensus.Block.Forging (MkBlockForging (..))
 import Ouroboros.Consensus.Byron.ByronHFC (ByronBlockHFC)
 import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Block

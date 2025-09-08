@@ -87,14 +87,15 @@ hardForkBlockForging ::
   MkBlockForging m (HardForkBlock xs)
 hardForkBlockForging labelF mkBlockForgings = MkBlockForging $ do
   blockForgings <- htraverse' mkBlockForging mkBlockForgings
-  pure BlockForging
-    { forgeLabel = labelF blockForgings
-    , canBeLeader = hardForkCanBeLeader blockForgings
-    , updateForgeState = hardForkUpdateForgeState blockForgings
-    , checkCanForge = hardForkCheckCanForge blockForgings
-    , forgeBlock = hardForkForgeBlock blockForgings
-    , finalize = hardForkFinalize blockForgings
-    }
+  pure
+    BlockForging
+      { forgeLabel = labelF blockForgings
+      , canBeLeader = hardForkCanBeLeader blockForgings
+      , updateForgeState = hardForkUpdateForgeState blockForgings
+      , checkCanForge = hardForkCheckCanForge blockForgings
+      , forgeBlock = hardForkForgeBlock blockForgings
+      , finalize = hardForkFinalize blockForgings
+      }
 
 hardForkCanBeLeader ::
   CanHardFork xs =>

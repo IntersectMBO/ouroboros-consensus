@@ -1099,7 +1099,9 @@ runThreadNetwork
 
       mkBlockForgings <- mkBlockForging
       let mkBlockForgings' =
-            map (\(MkBlockForging bfM) -> MkBlockForging $ fmap (\bf -> bf{forgeBlock = customForgeBlock bf}) bfM) mkBlockForgings
+            map
+              (\(MkBlockForging bfM) -> MkBlockForging $ fmap (\bf -> bf{forgeBlock = customForgeBlock bf}) bfM)
+              mkBlockForgings
       setBlockForging nodeKernel mkBlockForgings'
 
       let mempool = getMempool nodeKernel

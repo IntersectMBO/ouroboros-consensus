@@ -162,27 +162,31 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           $ ChainDB.defaultArgs
 
     mbfs <- mkForgers nullTracer
-    allocatedForgers <- traverse (\mbf -> allocate registry (const (BlockForging.mkBlockForging mbf)) BlockForging.finalize) mbfs
+    allocatedForgers <-
+      traverse
+        (\mbf -> allocate registry (const (BlockForging.mkBlockForging mbf)) BlockForging.finalize)
+        mbfs
     let forgers = snd <$> allocatedForgers
     let fCount = length forgers
     putStrLn $ "--> forger count: " ++ show fCount
-    r <- if fCount > 0
-      then do
-        putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
-        preOpenChainDB synthOpenMode confDbDir
-        let dbTracer = nullTracer
-        ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
-          slotNo <- do
-            tip <- atomically (ChainDB.getTipPoint chainDB)
-            pure $ case pointSlot tip of
-              Origin -> 0
-              At s -> succ s
+    r <-
+      if fCount > 0
+        then do
+          putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
+          preOpenChainDB synthOpenMode confDbDir
+          let dbTracer = nullTracer
+          ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
+            slotNo <- do
+              tip <- atomically (ChainDB.getTipPoint chainDB)
+              pure $ case pointSlot tip of
+                Origin -> 0
+                At s -> succ s
 
-          putStrLn $ "--> starting at: " ++ show slotNo
-          runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig $ genTxs pInfoConfig
-      else do
-        putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
-        pure $ ForgeResult 0
+            putStrLn $ "--> starting at: " ++ show slotNo
+            runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig $ genTxs pInfoConfig
+        else do
+          putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
+          pure $ ForgeResult 0
     mapM_ (release . fst) allocatedForgers $> r
  where
   DBSynthesizerOptions

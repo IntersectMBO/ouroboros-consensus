@@ -156,8 +156,8 @@ data BlockForging m blk = BlockForging
 -- HotKeys, that *MUST* be finalized when the 'BlockForging' is no longer in
 -- use. Users of this code must call the 'finalize' function on the returned 'BlockForging' at least once after terminating otherwise allocated resources
 -- may leak.
-newtype MkBlockForging m blk =
-  MkBlockForging { mkBlockForging :: m (BlockForging m blk) }
+newtype MkBlockForging m blk
+  = MkBlockForging {mkBlockForging :: m (BlockForging m blk)}
 
 data ShouldForge blk
   = -- | Before check whether we are a leader in this slot, we tried to update

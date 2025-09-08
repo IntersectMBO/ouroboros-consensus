@@ -996,7 +996,8 @@ protocolInfoCardano paramsCardano
             merge (This1 x) = x
             merge (That1 y) = y
 
-    let mkHardForkBlockForgings :: m (NonEmptyOptNP (BlockForging m) (CardanoEras c)) -> MkBlockForging m (CardanoBlock c)
+    let mkHardForkBlockForgings ::
+          m (NonEmptyOptNP (BlockForging m) (CardanoEras c)) -> MkBlockForging m (CardanoBlock c)
         mkHardForkBlockForgings mbfs = MkBlockForging $ do
           bfs <- mbfs
           mkBlockForging $ hardForkBlockForging (const "Cardano") (hmap (MkBlockForging . pure) bfs)
