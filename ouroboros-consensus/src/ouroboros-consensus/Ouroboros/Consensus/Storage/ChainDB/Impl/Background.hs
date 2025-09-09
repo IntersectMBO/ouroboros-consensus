@@ -46,6 +46,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Bifunctor
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import Data.Sequence.Strict (StrictSeq (..))
@@ -70,6 +71,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
@@ -78,6 +80,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (Watcher (..), blockUntilJust, forkLinkedWatcher)
 import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import System.Random
 
 {-------------------------------------------------------------------------------
   Launch background tasks
@@ -99,7 +102,7 @@ launchBgTasks cdb@CDB{..} = do
       addBlockRunner cdbChainSelFuse cdb
 
   ledgerDbTasksTrigger <- newLedgerDbTasksTrigger
-  !ledgerDbMaintenaceThread <-
+  !ledgerDbMaintenanceThread <-
     forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
       ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
 
@@ -117,7 +120,7 @@ launchBgTasks cdb@CDB{..} = do
     writeTVar cdbKillBgThreads $
       sequence_
         [ addBlockThread
-        , cancelThread ledgerDbMaintenaceThread
+        , cancelThread ledgerDbMaintenanceThread
         , gcThread
         , copyToImmutableDBThread
         ]
@@ -322,9 +325,19 @@ ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
     , wReader = blockUntilJust $ withOriginToMaybe <$> readTVar varSt
     , wNotify = \slotNo -> do
         LedgerDB.tryFlush cdbLedgerDB
-        LedgerDB.tryTakeSnapshot cdbLedgerDB
+        now <- getMonotonicTime
+        LedgerDB.tryTakeSnapshot cdbLedgerDB now mkRandomDelay
         LedgerDB.garbageCollect cdbLedgerDB slotNo
     }
+ where
+  mkRandomDelay :: LedgerDB.SnapshotDelayRange -> m DiffTime
+  mkRandomDelay sdr = atomically $ do
+    stateTVar cdbSnapshotDelayRNG (randomSnapshotDelay sdr)
+
+  randomSnapshotDelay :: LedgerDB.SnapshotDelayRange -> StdGen -> (DiffTime, StdGen)
+  randomSnapshotDelay sdr rng =
+    first fromInteger $
+      uniformR (floor (LedgerDB.minimumDelay sdr), floor (LedgerDB.maximumDelay sdr)) rng
 
 {-------------------------------------------------------------------------------
   Executing garbage collection
