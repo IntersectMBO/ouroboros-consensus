@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -75,6 +76,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 
     -- * Policy
   , SnapshotPolicy (..)
+  , SnapshotDelayRange (..)
   , SnapshotSelectorContext (..)
   , SnapshotFrequency (..)
   , SnapshotFrequencyArgs (..)
@@ -110,6 +112,7 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser)
 import Data.Functor.Identity
 import qualified Data.List as List
+import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (catMaybes, isJust, mapMaybe, maybeToList)
 import Data.Ord
 import Data.Set (Set)
@@ -533,8 +536,23 @@ data SnapshotPolicy = SnapshotPolicy
   -- sublist of 'sscSnapshotSlots'.
   --
   -- See also 'defaultSnapshotPolicy'
+  , onDiskSnapshotDelayRange :: SnapshotDelayRange
+  -- ^ Minimum and maximum durations of the random delay between requesting
+  -- a snapshot and taking that snapshot.
   }
   deriving NoThunks via OnlyCheckWhnf SnapshotPolicy
+
+-- | Range from which the randomised snapshot delay will be taken. The randomly
+-- chosen duration will be at least 'minimumDelay' and at most 'maximumDelay'.
+data SnapshotDelayRange = SnapshotDelayRange
+  { minimumDelay :: !DiffTime
+  -- ^ minimum acceptable delay between requesting a snapshot and taking the
+  -- snapshot
+  , maximumDelay :: !DiffTime
+  -- ^ maximum acceptable delay between requesting a snapshot and taking the
+  -- snapshot
+  }
+  deriving (Show, Eq, Generic, NoThunks)
 
 data SnapshotSelectorContext = SnapshotSelectorContext
   { sscTimeSinceLast :: Maybe DiffTime
@@ -582,6 +600,7 @@ data SnapshotFrequencyArgs = SnapshotFrequencyArgs
   -- ^ Ensure (if present) that at least this amount of time passes between
   -- writing snapshots. Setting this to a non-positive value disable the rate
   -- limit.
+  , sfaDelaySnapshotRange :: OverrideOrDefault SnapshotDelayRange
   }
   deriving stock (Show, Eq)
 
@@ -600,7 +619,7 @@ data SnapshotPolicyArgs = SnapshotPolicyArgs
 defaultSnapshotPolicyArgs :: SnapshotPolicyArgs
 defaultSnapshotPolicyArgs =
   SnapshotPolicyArgs
-    (SnapshotFrequency $ SnapshotFrequencyArgs UseDefault UseDefault UseDefault)
+    (SnapshotFrequency $ SnapshotFrequencyArgs UseDefault UseDefault UseDefault UseDefault)
     UseDefault
 
 -- | Default on-disk policy suitable to use with cardano-node
@@ -612,6 +631,7 @@ defaultSnapshotPolicy (SecurityParam k) args =
   SnapshotPolicy
     { onDiskNumSnapshots
     , onDiskSnapshotSelector
+    , onDiskSnapshotDelayRange
     }
  where
   SnapshotPolicyArgs
@@ -662,6 +682,16 @@ defaultSnapshotPolicy (SecurityParam k) args =
               | rateLimit > 0 = maybeToList . lastMaybe
               | otherwise = id
 
+  onDiskSnapshotDelayRange = case spaFrequency of
+    DisableSnapshots -> SnapshotDelayRange 0 0 -- snapshots are disabled, but we need to provide some value here
+    SnapshotFrequency sfa -> provideDefault (SnapshotDelayRange fiveMinutes tenMinutes) $ sfaDelaySnapshotRange sfa
+
+  fiveMinutes :: DiffTime
+  fiveMinutes = 5 * 60
+
+  tenMinutes :: DiffTime
+  tenMinutes = 10 * 60
+
   passesRateLimitCheck t = case spaFrequency of
     SnapshotFrequency SnapshotFrequencyArgs{sfaRateLimit} ->
       t >= provideDefault defRateLimit sfaRateLimit
@@ -680,6 +710,11 @@ defaultSnapshotPolicy (SecurityParam k) args =
 data TraceSnapshotEvent blk
   = -- | An on disk snapshot was skipped because it was invalid.
     InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
+  | -- | A delayed snapshot requested was issued at a timestamp,
+    --   with a delay and for ledger states at the specified slot numbers
+    SnapshotRequestDelayed Time DiffTime (NonEmpty SlotNo)
+  | -- | A snapshot request was completed
+    SnapshotRequestCompleted
   | -- | A snapshot was written to disk.
     TookSnapshot DiskSnapshot (RealPoint blk) EnclosingTimed
   | -- | An old or invalid on-disk snapshot was deleted

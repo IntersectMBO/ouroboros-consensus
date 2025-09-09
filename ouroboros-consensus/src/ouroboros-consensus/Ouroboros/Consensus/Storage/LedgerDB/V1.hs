@@ -25,6 +25,7 @@ import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (isJust, mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -122,7 +123,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
           (,) <$> newTVarIO db <*> newTVarIO Set.empty
         flushLock <- mkLedgerDBLock
         nextForkerKey <- newTVarIO (ForkerKey 0)
-        lastSnapshotWrite <- newTVarIO Nothing
+        lastSnapshotRequestedAt <- newTVarIO Nothing
         let env =
               LedgerDBEnv
                 { ldbChangelog = varDB
@@ -138,7 +139,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbResolveBlock = getBlock
                 , ldbGetVolatileSuffix = getVolatileSuffix
-                , ldbLastSnapshotWrite = lastSnapshotWrite
+                , ldbLastSnapshotRequestedAt = lastSnapshotRequestedAt
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -184,7 +185,7 @@ implMkLedgerDb h snapManager =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
-      , tryTakeSnapshot = getEnv h (implTryTakeSnapshot snapManager)
+      , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot snapManager)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -316,13 +317,15 @@ implTryTakeSnapshot ::
   ) =>
   SnapshotManagerV1 m blk ->
   LedgerDBEnv m l blk ->
+  m () ->
+  (SnapshotDelayRange -> m DiffTime) ->
   m ()
-implTryTakeSnapshot snapManager env = do
-  timeSinceLastWrite <- do
-    mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
-    forM mLastWrite $ \lastWrite -> do
-      now <- getMonotonicTime
-      pure $ now `diffTime` lastWrite
+implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
+  snapshotRequestTime <- getMonotonicTime
+  timeSinceLastSnapshot <- do
+    mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
+    forM mLastSnapshotRequested $ \lastSnapshotRequested -> do
+      pure $ snapshotRequestTime `diffTime` lastSnapshotRequested
   -- Get all states before the volatile suffix.
   immutableStates <- atomically $ do
     states <- changelogStates <$> readTVar (ldbChangelog env)
@@ -336,29 +339,43 @@ implTryTakeSnapshot snapManager env = do
         onDiskSnapshotSelector
           (ldbSnapshotPolicy env)
           SnapshotSelectorContext
-            { sscTimeSinceLast = timeSinceLastWrite
+            { sscTimeSinceLast = timeSinceLastSnapshot
             , sscSnapshotSlots = immutableSlots
             }
-  forM_ snapshotSlots $ \slot -> do
-    -- Prune the 'DbChangelog' such that the resulting anchor state has slot
-    -- number @slot@.
-    let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
-    atomically $ modifyTVar (ldbChangelog env) (prune pruneStrat)
-    -- Flush the LedgerDB such that we can take a snapshot for the new anchor
-    -- state due to the previous prune.
-    withWriteLock
-      (ldbLock env)
-      (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
-    -- Now, taking a snapshot (for the last flushed state) will do what we want.
-    void $
-      withReadLock (ldbLock env) $
-        takeSnapshot
-          snapManager
-          Nothing
-          (ldbChangelog env, ldbBackingStore env)
-    finished <- getMonotonicTime
-    atomically $ writeTVar (ldbLastSnapshotWrite env) (Just $! finished)
-    void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
+  case snapshotSlots of
+    [] -> pure ()
+    _ -> do
+      delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
+      let nonEmptySnapshotSlots =
+            case NonEmpty.nonEmpty $ snapshotSlots of
+              Nothing -> error "impossible: empty handles, see pattern-match above"
+              Just slots -> slots
+      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+        SnapshotRequestDelayed snapshotRequestTime delayBeforeSnapshotting nonEmptySnapshotSlots
+      threadDelay delayBeforeSnapshotting
+
+      forM_ snapshotSlots $ \slot -> do
+        -- Prune the 'DbChangelog' such that the resulting anchor state has slot
+        -- number @slot@.
+        let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
+        atomically $ modifyTVar (ldbChangelog env) (prune pruneStrat)
+        -- Flush the LedgerDB such that we can take a snapshot for the new anchor
+        -- state due to the previous prune.
+        withWriteLock
+          (ldbLock env)
+          (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
+        -- Now, taking a snapshot (for the last flushed state) will do what we want.
+        void $
+          withReadLock (ldbLock env) $
+            takeSnapshot
+              snapManager
+              Nothing
+              (ldbChangelog env, ldbBackingStore env)
+        atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
+        void $
+          trimSnapshots snapManager (ldbSnapshotPolicy env)
+      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+        SnapshotRequestCompleted
 
 -- If the DbChangelog in the LedgerDB can flush (based on the SnapshotPolicy
 -- with which this LedgerDB was opened), flush differences to the backing
@@ -576,8 +593,12 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLastSnapshotWrite :: !(StrictTVar m (Maybe Time))
-  -- ^ When did we finish writing the last snapshot.
+  , ldbLastSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
+  -- ^ The time at which the latest successfully-completed snapshot was
+  -- requested. Note that this is not the the last time any snapshot was
+  -- requested -- there may be later snapshot requests that have failed, or that
+  -- are currently in progress (but may be blocked by a snapshot delay or
+  -- working).
   }
   deriving Generic
 
