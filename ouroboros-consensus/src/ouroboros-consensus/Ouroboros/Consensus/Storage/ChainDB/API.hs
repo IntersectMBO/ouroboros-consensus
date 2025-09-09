@@ -94,7 +94,6 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , ReadOnlyForker'
   , Statistics
   )
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
