@@ -58,6 +58,7 @@ import qualified Ouroboros.Consensus.Node.GSM as GSM
 import Ouroboros.Consensus.Node.Genesis (setGetLoEFragment)
 import Ouroboros.Consensus.Node.GsmState
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
@@ -279,7 +280,7 @@ mkGsmEntryPoints varChainSyncHandles chainDB writeGsmState =
   GSM.realGsmEntryPoints
     (id, nullTracer)
     GSM.GsmView
-      { GSM.candidateOverSelection
+      { GSM.getCandidateOverSelection = pure candidateOverSelection
       , GSM.peerIsIdle = csIdling
       , GSM.equivalent = (==) `on` AF.headPoint
       , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
@@ -301,9 +302,12 @@ mkGsmEntryPoints varChainSyncHandles chainDB writeGsmState =
       Just{} ->
         -- precondition requires intersection
         GSM.WhetherCandidateIsBetter $
-          preferAnchoredCandidate (configBlock cfg) selection candFrag
+          preferAnchoredCandidate (configBlock cfg) weights selection candFrag
    where
     candFrag = csCandidate candidateState
+
+    -- TODO https://github.com/tweag/cardano-peras/issues/67
+    weights = emptyPerasWeightSnapshot
 
 forkGDD ::
   forall m.

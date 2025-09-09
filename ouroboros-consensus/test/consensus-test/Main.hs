@@ -16,6 +16,9 @@ import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.CSJ (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
+import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke (tests)
+import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke (tests)
+import qualified Test.Consensus.Peras.WeightSnapshot (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
 import Test.Tasty
@@ -36,6 +39,8 @@ tests =
     , Test.Consensus.MiniProtocol.BlockFetch.Client.tests
     , Test.Consensus.MiniProtocol.ChainSync.CSJ.tests
     , Test.Consensus.MiniProtocol.ChainSync.Client.tests
+    , Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke.tests
+    , Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke.tests
     , Test.Consensus.MiniProtocol.LocalStateQuery.Server.tests
     , testGroup
         "Mempool"
@@ -43,6 +48,7 @@ tests =
         , Test.Consensus.Mempool.Fairness.tests
         , Test.Consensus.Mempool.StateMachine.tests
         ]
+    , Test.Consensus.Peras.WeightSnapshot.tests
     , Test.Consensus.Util.MonadSTM.NormalForm.tests
     , Test.Consensus.Util.Versioned.tests
     , testGroup
