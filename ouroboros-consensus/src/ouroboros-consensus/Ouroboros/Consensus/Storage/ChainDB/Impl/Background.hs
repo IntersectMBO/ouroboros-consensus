@@ -96,7 +96,7 @@ launchBgTasks cdb@CDB{..} = do
       addBlockRunner cdbChainSelFuse cdb
 
   ledgerDbTasksTrigger <- newLedgerDbTasksTrigger
-  !ledgerDbMaintenaceThread <-
+  !ledgerDbMaintenanceThread <-
     forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
       ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
 
@@ -114,7 +114,7 @@ launchBgTasks cdb@CDB{..} = do
     writeTVar cdbKillBgThreads $
       sequence_
         [ addBlockThread
-        , cancelThread ledgerDbMaintenaceThread
+        , cancelThread ledgerDbMaintenanceThread
         , gcThread
         , copyToImmutableDBThread
         ]
