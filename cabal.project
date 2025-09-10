@@ -59,8 +59,8 @@ allow-newer:
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: af31396b2c19e4b8adf7d1155309500a22870e63
-  --sha256: sha256-HCC+FOGgyLwoBq4Nd8RCs9e3kbbmlhgdEvDXOZeY0BE=
+  tag: faa7a9dc347697b11d4da5b7818b1731e11aeeef
+  --sha256: sha256-RvnNYY76OhRuC/uP5Lr+HLEKWyMHCWxx+10HlPrH6mQ=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
@@ -71,7 +71,7 @@ source-repository-package
     eras/byron/ledger/executable-spec
     eras/byron/ledger/impl
     eras/conway/impl
-    eras/dijkstra
+    eras/dijkstra/impl
     eras/mary/impl
     eras/shelley/impl
     eras/shelley-ma/test-suite
