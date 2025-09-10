@@ -98,7 +98,8 @@ parseBulkFilePath =
   strOption
     ( long "bulk-credentials-file"
         <> metavar "FILE"
-        <> help "Path to the bulk credentials file (a JSON file containing an array of arrays containing 3 TextEnvelope objects for the opcert, VRF Signing key, KES signing key)"
+        <> help
+          "Path to the bulk credentials file (a JSON file containing an array of arrays containing 3 TextEnvelope objects for the opcert, VRF Signing key, KES signing key)"
         <> completer (bashCompleter "file")
     )
 
