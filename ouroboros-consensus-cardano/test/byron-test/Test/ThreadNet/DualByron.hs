@@ -153,14 +153,13 @@ setupTestOutput setup@SetupDualByron{..} =
     testConfig
     testConfigB
     TestConfigMB
-      { nodeInfo = \coreNodeId ->
-          uncurry
-            plainTestNodeInitialization
-            ( protocolInfoDualByron
-                setupGenesis
-                (setupParams setup)
-                [coreNodeId]
-            )
+      { nodeInfo = \coreNodeId -> do
+          let (pInfo, bfs) =
+                protocolInfoDualByron
+                  setupGenesis
+                  (setupParams setup)
+                  [coreNodeId]
+          plainTestNodeInitialization pInfo (fmap (fmap (MkBlockForging . pure)) bfs)
       , mkRekeyM = Nothing -- TODO
       }
  where

@@ -257,11 +257,11 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             }
       }
 
-  blockForging :: Monad m => [BlockForging m TestBlock]
+  blockForging :: Monad m => [MkBlockForging m TestBlock]
   blockForging =
-    [ hardForkBlockForging "Test" $
-        OptCons blockForgingA $
-          OptCons blockForgingB $
+    [ hardForkBlockForging (const "Test") $
+        OptCons (MkBlockForging $ pure blockForgingA) $
+          OptCons (MkBlockForging $ pure blockForgingB) $
             OptNil
     ]
 

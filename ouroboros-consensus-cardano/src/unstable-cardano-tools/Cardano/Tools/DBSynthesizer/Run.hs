@@ -32,7 +32,9 @@ import Data.Aeson as Aeson
   )
 import Data.Bool (bool)
 import Data.ByteString as BS (ByteString, readFile)
+import Data.Functor (($>))
 import qualified Data.Set as Set
+import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
 import Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
@@ -159,26 +161,33 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           flavargs
           $ ChainDB.defaultArgs
 
-    forgers <- blockForging
+    mbfs <- mkForgers nullTracer
+    allocatedForgers <-
+      traverse
+        (\mbf -> allocate registry (const (BlockForging.mkBlockForging mbf)) BlockForging.finalize)
+        mbfs
+    let forgers = snd <$> allocatedForgers
     let fCount = length forgers
     putStrLn $ "--> forger count: " ++ show fCount
-    if fCount > 0
-      then do
-        putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
-        preOpenChainDB synthOpenMode confDbDir
-        let dbTracer = nullTracer
-        ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
-          slotNo <- do
-            tip <- atomically (ChainDB.getTipPoint chainDB)
-            pure $ case pointSlot tip of
-              Origin -> 0
-              At s -> succ s
+    r <-
+      if fCount > 0
+        then do
+          putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
+          preOpenChainDB synthOpenMode confDbDir
+          let dbTracer = nullTracer
+          ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
+            slotNo <- do
+              tip <- atomically (ChainDB.getTipPoint chainDB)
+              pure $ case pointSlot tip of
+                Origin -> 0
+                At s -> succ s
 
-          putStrLn $ "--> starting at: " ++ show slotNo
-          runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig $ genTxs pInfoConfig
-      else do
-        putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
-        pure $ ForgeResult 0
+            putStrLn $ "--> starting at: " ++ show slotNo
+            runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig $ genTxs pInfoConfig
+        else do
+          putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
+          pure $ ForgeResult 0
+    mapM_ (release . fst) allocatedForgers $> r
  where
   DBSynthesizerOptions
     { synthOpenMode
@@ -188,7 +197,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
       { pInfoConfig
       , pInfoInitLedger
       }
-    , blockForging
+    , mkForgers
     ) = protocolInfoCardano runP
 
 preOpenChainDB :: DBSynthesizerOpenMode -> FilePath -> IO ()
