@@ -57,7 +57,6 @@ import Cardano.Crypto.VRF
   , seedSizeVRF
   )
 import qualified Cardano.Ledger.Allegra.Scripts as SL
-import Cardano.Ledger.Alonzo (AlonzoEra)
 import Cardano.Ledger.BaseTypes (boundRational, unNonZero)
 import Cardano.Ledger.Hashes
   ( EraIndependentTxBody
@@ -603,7 +602,7 @@ mkMASetDecentralizationParamTxs ::
   ( ShelleyBasedEra era
   , SL.AllegraEraTxBody era
   , SL.ShelleyEraTxBody era
-  , SL.AtMostEra AlonzoEra era
+  , SL.AtMostEra "Alonzo" era
   ) =>
   [CoreNode (ProtoCrypto proto)] ->
   -- | The proposed protocol version
