@@ -89,6 +89,7 @@ import Data.Functor.Classes (Eq1, Show1)
 import Data.Functor.Identity (Identity)
 import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
+import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Ord (Down (..))
@@ -176,10 +177,18 @@ import Test.Util.WithEq
   Abstract model
 -------------------------------------------------------------------------------}
 
+-- | A randomly generated value that gets persisted between steps, so that we
+-- can carry generator state forward between commands. See 'GenState' below for
+-- more details.
+newtype Persistent a = Persistent {unPersistent :: a}
+  deriving (Eq, Show, Functor)
+
 -- | Commands
 data Cmd blk it flr
-  = AddBlock blk
-  | AddPerasCert (ValidatedPerasCert blk)
+  = -- | Add a block, with (possibly) some gap blocks before it being created.
+    AddBlock blk (Persistent [blk])
+  | -- | Add a Peras cert for a block, with (possibly) some gap blocks before it being created.
+    AddPerasCert (ValidatedPerasCert blk) (Persistent [blk])
   | GetCurrentChain
   | GetTipBlock
   | GetTipHeader
@@ -405,8 +414,8 @@ run ::
   m (Success blk (TestIterator m blk) (TestFollower m blk))
 run cfg env@ChainDBEnv{varDB, ..} cmd =
   readTVarIO varDB >>= \st@ChainDBState{chainDB = chainDB@ChainDB{..}, internal} -> case cmd of
-    AddBlock blk -> Point <$> advanceAndAdd st blk
-    AddPerasCert cert -> Unit <$> addPerasCertSync chainDB cert
+    AddBlock blk _ -> Point <$> advanceAndAdd st blk
+    AddPerasCert cert _ -> Unit <$> addPerasCertSync chainDB cert
     GetCurrentChain -> Chain <$> atomically getCurrentChain
     GetTipBlock -> MbBlock <$> getTipBlock
     GetTipHeader -> MbHeader <$> getTipHeader
@@ -611,7 +620,7 @@ instance Eq IsValidResult where
       (Just _, Nothing) -> False
 
 {-------------------------------------------------------------------------------
-  Instantiating the semantics
+  Responses
 -------------------------------------------------------------------------------}
 
 -- | Responses are either successful termination or an error.
@@ -628,6 +637,26 @@ instance (TestConstraints blk, Eq it, Eq flr) => Eq (Resp blk it flr) where
   Resp (Right a) == Resp (Right a') = a == a'
   _ == _ = False
 
+{-------------------------------------------------------------------------------
+  Bitraversable instances
+-------------------------------------------------------------------------------}
+
+TH.deriveBifunctor ''Cmd
+TH.deriveBifoldable ''Cmd
+TH.deriveBitraversable ''Cmd
+
+TH.deriveBifunctor ''Success
+TH.deriveBifoldable ''Success
+TH.deriveBitraversable ''Success
+
+TH.deriveBifunctor ''Resp
+TH.deriveBifoldable ''Resp
+TH.deriveBitraversable ''Resp
+
+{-------------------------------------------------------------------------------
+  Instantiating the semantics
+-------------------------------------------------------------------------------}
+
 type DBModel blk = Model.Model blk
 
 -- We can't reuse 'run' because the 'ChainDB' API uses 'STM'. Instead, we call
@@ -640,8 +669,8 @@ runPure ::
   DBModel blk ->
   (Resp blk IteratorId FollowerId, DBModel blk)
 runPure cfg = \case
-  AddBlock blk -> ok Point $ update (add blk)
-  AddPerasCert cert -> ok Unit $ ((),) . update (Model.addPerasCert cfg cert)
+  AddBlock blk _ -> ok Point $ update (add blk)
+  AddPerasCert cert _ -> ok Unit $ ((),) . update (Model.addPerasCert cfg cert)
   GetCurrentChain -> ok Chain $ query (Model.volatileChain k getHeader)
   GetTipBlock -> ok MbBlock $ query Model.tipBlock
   GetTipHeader -> ok MbHeader $ query (fmap getHeader . Model.tipBlock)
@@ -729,22 +758,6 @@ flrs :: Bitraversable t => t it flr -> [flr]
 flrs = bifoldMap (const []) (: [])
 
 {-------------------------------------------------------------------------------
-  Bitraversable instances
--------------------------------------------------------------------------------}
-
-TH.deriveBifunctor ''Cmd
-TH.deriveBifoldable ''Cmd
-TH.deriveBitraversable ''Cmd
-
-TH.deriveBifunctor ''Success
-TH.deriveBifoldable ''Success
-TH.deriveBitraversable ''Success
-
-TH.deriveBifunctor ''Resp
-TH.deriveBifoldable ''Resp
-TH.deriveBitraversable ''Resp
-
-{-------------------------------------------------------------------------------
   Model
 -------------------------------------------------------------------------------}
 
@@ -760,12 +773,69 @@ type FollowerRef blk m r = Reference (Opaque (TestFollower m blk)) r
 -- | Mapping between iterator references and mocked followers
 type KnownFollowers blk m r = RefEnv (Opaque (TestFollower m blk)) FollowerId r
 
+-- | Generator state to be carried forward between commands
+--
+-- NOTE: some of our generators benefit from carrying state between commands.
+-- However, 'quickcheck-state-machine' does not provide much support for this,
+-- so we manually carry it around as part of the evolving SUT's model--even if
+-- it's technically not part of the actual model we are trying to test against.
+--
+-- TODO: Explore if this can be improved by tweaking the API of
+-- 'quickcheck-state-machine' to allow for the same functionality to exist
+-- under the hood.
+data GenState blk
+  = GenState
+  { seenBlocks :: Map (HeaderHash blk) blk
+  -- ^ Blocks that have been generated but not yet added to the ChainDB, e.g.,
+  -- gap blocks generated by 'genBlockAfterGap', or boosted blocks generated by
+  -- 'genAddPerasCert'. We don't want to discard these because they can be used
+  -- to fill gaps between existing blocks added via 'AddBlock', simulating
+  -- blocks and certificates arriving out of order.
+  }
+  deriving Generic
+
+deriving instance
+  ( ToExpr blk
+  , ToExpr (HeaderHash blk)
+  ) =>
+  ToExpr (GenState blk)
+
+deriving instance (Show blk, Show (HeaderHash blk)) => Show (GenState blk)
+
+emptyGenState :: GenState blk
+emptyGenState =
+  GenState
+    { seenBlocks = Map.empty
+    }
+
+-- | Use the extra state stored in a generated command to update a model's
+-- 'GenState' accordingly.
+updateGenState ::
+  HasHeader blk =>
+  At Cmd blk m r ->
+  GenState blk ->
+  GenState blk
+updateGenState cmd gs =
+  case unAt cmd of
+    AddBlock _ (Persistent blks) -> saveSeenBlocks blks gs
+    AddPerasCert _ (Persistent blks) -> saveSeenBlocks blks gs
+    _ -> gs
+ where
+  saveSeenBlocks blks gs' =
+    gs'
+      { seenBlocks =
+          Map.union
+            (Map.fromList [(blockHash blk, blk) | blk <- blks])
+            (seenBlocks gs')
+      }
+
 -- | Execution model
 data Model blk m r = Model
   { dbModel :: DBModel blk
   , knownIters :: KnownIters blk m r
   , knownFollowers :: KnownFollowers blk m r
   , modelConfig :: Opaque (TopLevelConfig blk)
+  , genState :: GenState blk
   }
   deriving Generic
 
@@ -784,6 +854,7 @@ initModel loe cfg initLedger =
     , knownIters = RE.empty
     , knownFollowers = RE.empty
     , modelConfig = QSM.Opaque cfg
+    , genState = emptyGenState
     }
 
 -- | Key property of the model is that we can go from real to mock responses
@@ -871,6 +942,7 @@ lockstep model@Model{..} cmd (At resp) =
     }
  where
   (mockResp, dbModel') = step model cmd
+  genState' = updateGenState cmd genState
   newIters = RE.fromList $ zip (iters resp) (iters mockResp)
   newFollowers = RE.fromList $ zip (flrs resp) (flrs mockResp)
   model' = case unAt cmd of
@@ -879,18 +951,21 @@ lockstep model@Model{..} cmd (At resp) =
     Close ->
       model
         { dbModel = dbModel'
+        , genState = genState'
         , knownIters = RE.empty
         , knownFollowers = RE.empty
         }
     WipeVolatileDB ->
       model
         { dbModel = dbModel'
+        , genState = genState'
         , knownIters = RE.empty
         , knownFollowers = RE.empty
         }
     _ ->
       model
         { dbModel = dbModel'
+        , genState = genState'
         , knownIters = knownIters `RE.union` newIters
         , knownFollowers = knownFollowers `RE.union` newFollowers
         }
@@ -899,14 +974,12 @@ lockstep model@Model{..} cmd (At resp) =
   Generator
 -------------------------------------------------------------------------------}
 
-type BlockGen blk m = Model blk m Symbolic -> Gen blk
-
 -- | Generate a 'Cmd'
 generator ::
   forall blk m.
   TestConstraints blk =>
   LoE () ->
-  BlockGen blk m ->
+  (Model blk m Symbolic -> Gen (blk, Persistent [blk])) ->
   Model blk m Symbolic ->
   Gen (At Cmd blk m Symbolic)
 generator loe genBlock m@Model{..} =
@@ -917,7 +990,7 @@ generator loe genBlock m@Model{..} =
               LoEDisabled -> 10
               -- The LoE does not yet support Peras.
               LoEEnabled () -> 0
-         in (freq, AddPerasCert <$> genAddPerasCert)
+         in (freq, genAddPerasCert)
       , (if empty then 1 else 10, return GetCurrentChain)
       , --    , (if empty then 1 else 10, return GetLedgerDB)
         (if empty then 1 else 10, return GetTipBlock)
@@ -973,7 +1046,7 @@ generator loe genBlock m@Model{..} =
   followers = RE.keys knownFollowers
 
   genRandomPoint :: Gen (RealPoint blk)
-  genRandomPoint = blockRealPoint <$> genBlock m
+  genRandomPoint = blockRealPoint . fst <$> genBlock m
 
   blocksInDB :: Map.Map (HeaderHash blk) blk
   blocksInDB = Model.blocks dbModel
@@ -994,7 +1067,7 @@ generator loe genBlock m@Model{..} =
             anchor <-
               elements $
                 AF.AnchorGenesis : fmap AF.anchorFromBlock immutableBlocks
-            blk <- genBlock m
+            (blk, _) <- genBlock m
             tip <-
               frequency
                 [ (1, pure $ Chain.headHash immutableChain)
@@ -1033,6 +1106,7 @@ generator loe genBlock m@Model{..} =
   genGetIsValid :: Gen (Cmd blk it flr)
   genGetIsValid =
     GetIsValid <$> genRealPoint
+
   genGetBlockComponent :: Gen (Cmd blk it flr)
   genGetBlockComponent = do
     pt <- genRealPoint
@@ -1041,26 +1115,42 @@ generator loe genBlock m@Model{..} =
         then GetGCedBlockComponent pt
         else GetBlockComponent pt
 
-  genAddBlock = AddBlock <$> genBlock m
+  genAddBlock :: Gen (Cmd blk it flr)
+  genAddBlock = do
+    (blk, gapBlks) <- genBlock m
+    pure $ AddBlock blk gapBlks
 
-  genAddPerasCert :: Gen (ValidatedPerasCert blk)
+  genAddPerasCert :: Gen (Cmd blk it flr)
   genAddPerasCert = do
     -- TODO should we be more strict on which blocks we add certs to?
     -- see https://github.com/tweag/cardano-peras/issues/124
-    blk <- genBlock m
+    (blk, gapBlks) <- genBlock m
     let roundNo = case Model.maxPerasRoundNo dbModel of
           Nothing -> PerasRoundNo 0
           Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
-    boost <- PerasWeight <$> choose (2, 4)
+    -- Generate an almost-always-valid boost, i.e., below the maximum rollback
+    let k = unPerasWeight (maxRollbackWeight secParam)
+    boost <-
+      PerasWeight
+        <$> frequency
+          [ (10, choose (1, k - 1))
+          , (1, choose (k, k + 1))
+          ]
+    -- Include the boosted block itself in the persisted seenBlocks
+    let seenBlks = fmap (blk :) gapBlks
+
     pure $
-      ValidatedPerasCert
-        { vpcCert =
-            PerasCert
-              { pcCertRound = roundNo
-              , pcCertBoostedBlock = blockPoint blk
-              }
-        , vpcCertBoost = boost
-        }
+      AddPerasCert
+        ( ValidatedPerasCert
+            { vpcCert =
+                PerasCert
+                  { pcCertRound = roundNo
+                  , pcCertBoostedBlock = blockPoint blk
+                  }
+            , vpcCertBoost = boost
+            }
+        )
+        seenBlks
 
   genBounds :: Gen (StreamFrom blk, StreamTo blk)
   genBounds =
@@ -1303,7 +1393,7 @@ sm ::
   TestConstraints blk =>
   LoE () ->
   ChainDBEnv IO blk ->
-  BlockGen blk IO ->
+  (Model blk IO Symbolic -> Gen (blk, Persistent [blk])) ->
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
   StateMachine
@@ -1487,21 +1577,25 @@ type Blk = TestBlock
 -- ChainDB, blocks are added /out of order/, while in the ImmutableDB, they
 -- must be added /in order/. This generator can thus not be reused for the
 -- ImmutableDB.
-genBlk :: ImmutableDB.ChunkInfo -> BlockGen Blk m
+genBlk :: ImmutableDB.ChunkInfo -> Model Blk m r -> Gen (TestBlock, Persistent [TestBlock])
 genBlk chunkInfo Model{..} =
   frequency
-    [ (if empty then 0 else 1, genAlreadyInChain)
-    , (5, genAppendToCurrentChain)
-    , (5, genFitsOnSomewhere)
-    , (3, genGap)
+    [ (if noBlocksInChainDB then 0 else 1, withoutGapBlocks genAlreadyInChain)
+    , (if noSavedGapBlocks then 0 else 20, withoutGapBlocks genGapBlock)
+    , (5, withoutGapBlocks genAppendToCurrentChain)
+    , (5, withoutGapBlocks genFitsOnSomewhere)
+    , (3, genBlockAfterGap)
     ]
  where
   blocksInChainDB = Model.blocks dbModel
+  noBlocksInChainDB = Map.null blocksInChainDB
+
+  savedGapBlocks = seenBlocks genState
+  noSavedGapBlocks = Map.null savedGapBlocks
+  withoutGapBlocks = fmap (,Persistent [])
+
   modelSupportsEBBs = ImmutableDB.chunkInfoSupportsEBBs chunkInfo
   canContainEBB = const modelSupportsEBBs -- TODO: we could be more precise
-  empty :: Bool
-  empty = Map.null blocksInChainDB
-
   genBody :: Gen TestBody
   genBody = do
     isValid <-
@@ -1534,20 +1628,28 @@ genBlk chunkInfo Model{..} =
     Nothing -> genFirstBlock
     Just _ -> genAlreadyInChain >>= genFitsOn
 
-  -- A block that doesn't fit onto a block in the ChainDB, but it creates a
-  -- gap of a couple of blocks between genesis or an existing block in the
-  -- ChainDB. We generate it by generating a few intermediary blocks first,
-  -- which we don't add. But the chance exists that we will generate them
-  -- again later on.
-  genGap :: Gen TestBlock
-  genGap = do
+  -- A block that doesn't fit onto a block in the ChainDB, but it creates a gap
+  -- of a couple of blocks between genesis or an existing block in the ChainDB.
+  -- We generate it by generating a few intermediary blocks first, which we
+  -- don't add just yet. These are in turn returned and stored as seen blocks
+  -- in the generator state of the model. We can sample from these later on to
+  -- (hopefully) fill the gaps.
+  genBlockAfterGap :: Gen (TestBlock, Persistent [TestBlock])
+  genBlockAfterGap = do
     gapSize <- choose (1, 3)
     start <- genFitsOnSomewhere
-    go gapSize start
+    go gapSize start []
    where
-    go :: Int -> TestBlock -> Gen TestBlock
-    go 0 b = return b
-    go n b = genFitsOn b >>= go (n - 1)
+    go :: Int -> TestBlock -> [TestBlock] -> Gen (TestBlock, Persistent [TestBlock])
+    go 0 tip gapBlks = return (tip, Persistent gapBlks)
+    go n tip gapBlks = do
+      tip' <- genFitsOn tip
+      go (n - 1) tip' (tip : gapBlks)
+
+  -- An intermediate gap block that was generated by 'genGap' but stored for
+  -- later in the model's generator state.
+  genGapBlock :: Gen TestBlock
+  genGapBlock = elements (Map.elems savedGapBlocks)
 
   -- Generate a block or EBB fitting on genesis
   genFirstBlock :: Gen TestBlock
