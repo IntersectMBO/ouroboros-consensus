@@ -1050,6 +1050,7 @@ generator loe genBlock m@Model{..} =
     let roundNo = case Model.maxPerasRoundNo dbModel of
           Nothing -> PerasRoundNo 0
           Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
+    boost <- PerasWeight <$> choose (2, 4)
     pure $
       ValidatedPerasCert
         { vpcCert =
@@ -1057,7 +1058,7 @@ generator loe genBlock m@Model{..} =
               { pcCertRound = roundNo
               , pcCertBoostedBlock = blockPoint blk
               }
-        , vpcCertBoost = boostPerCert
+        , vpcCertBoost = boost
         }
 
   genBounds :: Gen (StreamFrom blk, StreamTo blk)
