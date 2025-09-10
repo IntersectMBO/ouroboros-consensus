@@ -45,6 +45,9 @@ tests =
     [ adjustQuickCheckTests (* 100) $ testProperty "q-d" $ prop_qd
     ]
 
+perasTestCfg :: PerasCfg TestBlock
+perasTestCfg = makePerasCfg Nothing
+
 prop_qd :: Actions Model -> Property
 prop_qd actions = QC.monadic f $ property () <$ runActions actions
  where
@@ -82,7 +85,7 @@ instance StateModel Model where
                   { pcCertRound = roundNo
                   , pcCertBoostedBlock = boostedBlock
                   }
-            , vpcCertBoost = boostPerCert
+            , vpcCertBoost = perasCfgWeightBoost perasTestCfg
             }
 
     -- Generators are heavily skewed toward collisions, to get equivocating certificates

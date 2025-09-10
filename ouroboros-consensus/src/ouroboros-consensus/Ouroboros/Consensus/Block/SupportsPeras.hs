@@ -14,9 +14,9 @@
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
   , PerasWeight (..)
-  , boostPerCert
   , BlockSupportsPeras (..)
   , PerasCert (..)
+  , PerasCfg (..)
   , ValidatedPerasCert (..)
   , makePerasCfg
   , HasPerasCert (..)
