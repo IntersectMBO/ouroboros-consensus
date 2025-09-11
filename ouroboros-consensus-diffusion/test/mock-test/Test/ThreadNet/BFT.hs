@@ -103,6 +103,7 @@ prop_simple_bft_convergence
         , version = newestVersion (Proxy @MockBftBlock)
         }
 
+    testOutput :: TestOutput MockBftBlock
     testOutput =
       runTestNetwork
         testConfig
