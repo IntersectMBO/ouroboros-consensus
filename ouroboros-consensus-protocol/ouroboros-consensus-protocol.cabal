@@ -80,6 +80,7 @@ library
     io-classes ^>=1.8.0,
     io-sim,
     kes-agent,
+    kes-agent-crypto,
     mtl,
     network ^>=3.2.7,
     nothunks,
