@@ -264,6 +264,9 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+    Ouroboros.Consensus.Storage.PerasCertDB
+    Ouroboros.Consensus.Storage.PerasCertDB.API
+    Ouroboros.Consensus.Storage.PerasCertDB.Impl
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
     Ouroboros.Consensus.Storage.VolatileDB.API
