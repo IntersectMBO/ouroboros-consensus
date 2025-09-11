@@ -49,14 +49,3 @@ if impl (ghc >= 9.12)
   allow-newer:
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
-
-allow-newer:
-    -- https://github.com/phadej/vec/issues/121
-    , ral:QuickCheck
-    , fin:QuickCheck
-    , bin:QuickCheck
-
-constraints:
-  plutus-core < 1.51,
-  plutus-ledger-api < 1.51,
-  plutus-tx < 1.51,
