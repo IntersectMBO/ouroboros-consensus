@@ -55,8 +55,3 @@ allow-newer:
     , ral:QuickCheck
     , fin:QuickCheck
     , bin:QuickCheck
-
-constraints:
-  plutus-core < 1.51,
-  plutus-ledger-api < 1.51,
-  plutus-tx < 1.51,
