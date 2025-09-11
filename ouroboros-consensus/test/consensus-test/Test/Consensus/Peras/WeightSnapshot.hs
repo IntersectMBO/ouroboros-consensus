@@ -14,12 +14,14 @@
 -- and fragments.
 module Test.Consensus.Peras.WeightSnapshot (tests) where
 
+import Cardano.Ledger.BaseTypes (unNonZero)
 import Data.Containers.ListUtils (nubOrd)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
 import Data.Traversable (for)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -54,12 +56,26 @@ prop_perasWeightSnapshot testSetup =
               weightBoostOfFragmentReference frag =:= weightBoostOfFragment snap frag
           | frag <- tsFragments
           ]
+      , conjoin
+          [ conjoin
+              [ counterexample ("Incorrect volatile suffix for " <> condense frag) $
+                  takeVolatileSuffixReference frag =:= volSuffix
+              , counterexample ("Volatile suffix must be a suffix of" <> condense frag) $
+                  AF.headPoint frag =:= AF.headPoint volSuffix
+                    .&&. AF.withinFragmentBounds (AF.anchorPoint volSuffix) frag
+              , counterexample ("Volatile suffix of " <> condense frag <> " must contain at most k blocks") $
+                  AF.length volSuffix `le` fromIntegral (unNonZero (maxRollbacks tsSecParam))
+              ]
+          | frag <- tsFragments
+          , let volSuffix = takeVolatileSuffix snap tsSecParam frag
+          ]
       ]
  where
   TestSetup
     { tsWeights
     , tsPoints
     , tsFragments
+    , tsSecParam
     } = testSetup
 
   snap = mkPerasWeightSnapshot $ Map.toList tsWeights
@@ -73,12 +89,27 @@ prop_perasWeightSnapshot testSetup =
       (weightBoostOfPointReference . blockPoint)
       (AF.toOldestFirst frag)
 
+  takeVolatileSuffixReference ::
+    AnchoredFragment TestBlock -> AnchoredFragment TestBlock
+  takeVolatileSuffixReference frag =
+    head
+      [ suffix
+      | len <- reverse [0 .. AF.length frag]
+      , -- Consider suffixes of @frag@, longest first
+      let suffix = AF.anchorNewest (fromIntegral len) frag
+          weightBoost = weightBoostOfFragmentReference suffix
+          lengthWeight = PerasWeight (fromIntegral (AF.length suffix))
+          totalWeight = lengthWeight <> weightBoost
+      , totalWeight <= maxRollbackWeight tsSecParam
+      ]
+
 data TestSetup = TestSetup
   { tsWeights :: Map (Point TestBlock) PerasWeight
   , tsPoints :: [Point TestBlock]
   -- ^ Check the weight of these points.
   , tsFragments :: [AnchoredFragment TestBlock]
   -- ^ Check the weight of these fragments.
+  , tsSecParam :: SecurityParam
   }
   deriving stock Show
 
@@ -106,11 +137,13 @@ instance Arbitrary TestSetup where
       pure $
         AF.dropNewest nDropNewest $
           AF.anchorNewest (fromIntegral nTakeNewest) fullFrag
+    tsSecParam <- arbitrary
     pure
       TestSetup
         { tsWeights
         , tsPoints
         , tsFragments
+        , tsSecParam
         }
 
   shrink ts =
@@ -128,6 +161,9 @@ instance Arbitrary TestSetup where
       , [ ts{tsFragments = tsFragments'}
         | tsFragments' <- shrinkList (\_frag -> []) tsFragments
         ]
+      , [ ts{tsSecParam = tsSecParam'}
+        | tsSecParam' <- shrink tsSecParam
+        ]
       ]
    where
     w1 = PerasWeight 1
@@ -136,4 +172,5 @@ instance Arbitrary TestSetup where
       { tsWeights
       , tsPoints
       , tsFragments
+      , tsSecParam
       } = ts

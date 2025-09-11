@@ -285,7 +285,8 @@ getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
 getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe LedgerDB.Statistics)
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
 
-getPerasWeightSnapshot :: ChainDbEnv m blk -> STM m (PerasWeightSnapshot blk)
+getPerasWeightSnapshot ::
+  ChainDbEnv m blk -> STM m (WithFingerprint (PerasWeightSnapshot blk))
 getPerasWeightSnapshot CDB{..} = PerasCertDB.getWeightSnapshot cdbPerasCertDB
 
 getPerasCertSnapshot ::

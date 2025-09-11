@@ -41,6 +41,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerDbFlavorArgs)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -54,6 +55,7 @@ data ChainDbArgs f m blk = ChainDbArgs
   { cdbImmDbArgs :: ImmutableDB.ImmutableDbArgs f m blk
   , cdbVolDbArgs :: VolatileDB.VolatileDbArgs f m blk
   , cdbLgrDbArgs :: LedgerDB.LedgerDbArgs f m blk
+  , cdbPerasCertDbArgs :: PerasCertDB.PerasCertDbArgs f m blk
   , cdbsArgs :: ChainDbSpecificArgs f m blk
   }
 
@@ -138,6 +140,7 @@ defaultArgs =
     ImmutableDB.defaultArgs
     VolatileDB.defaultArgs
     LedgerDB.defaultArgs
+    PerasCertDB.defaultArgs
     defaultSpecificArgs
 
 ensureValidateAll ::
@@ -209,6 +212,10 @@ completeChainDbArgs
             , LedgerDB.lgrFlavorArgs = flavorArgs
             , LedgerDB.lgrRegistry = registry
             }
+      , cdbPerasCertDbArgs =
+          PerasCertDB.PerasCertDbArgs
+            { PerasCertDB.pcdbaTracer = PerasCertDB.pcdbaTracer (cdbPerasCertDbArgs defArgs)
+            }
       , cdbsArgs =
           (cdbsArgs defArgs)
             { cdbsRegistry = registry
@@ -226,6 +233,8 @@ updateTracer trcr args =
     { cdbImmDbArgs = (cdbImmDbArgs args){ImmutableDB.immTracer = TraceImmutableDBEvent >$< trcr}
     , cdbVolDbArgs = (cdbVolDbArgs args){VolatileDB.volTracer = TraceVolatileDBEvent >$< trcr}
     , cdbLgrDbArgs = (cdbLgrDbArgs args){LedgerDB.lgrTracer = TraceLedgerDBEvent >$< trcr}
+    , cdbPerasCertDbArgs =
+        (cdbPerasCertDbArgs args){PerasCertDB.pcdbaTracer = TracePerasCertDbEvent >$< trcr}
     , cdbsArgs = (cdbsArgs args){cdbsTracer = trcr}
     }
 
