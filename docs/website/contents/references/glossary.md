@@ -472,6 +472,19 @@ These kinds are maintained by the Networking layer:
 - [Public root peers](#public-root-peers).
 - [Shared peers](#shared-peers).
 
+## ;Peras ;weight ;boost
+
+Peras is an extension of Praos enabling faster settlement under optimistic conditions.
+To this end, Peras can result in a block `B` receiving a *boost*, which means that any chain containing `B` gets additional weight when being compared to other chains.
+
+Consider a chain fragment `F`:
+
+- Its ;*weight boost* is the sum of all boosts received by points on this fragment (excluding the anchor). Note that the same point can be boosted multiple times.
+
+- Its ;*total weight* is its tip block number plus its weight boost.
+
+Note that these notions are always relative to a particular anchor, so different chain fragments must have the same anchor when their total weight is to be compared.
+
 ## ;Phases
 
 Byron, Shelley, Goguen (current one as of August 2023), Basho, Voltaire.
