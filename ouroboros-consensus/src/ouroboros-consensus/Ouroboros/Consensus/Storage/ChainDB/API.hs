@@ -87,6 +87,7 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.LedgerDB
