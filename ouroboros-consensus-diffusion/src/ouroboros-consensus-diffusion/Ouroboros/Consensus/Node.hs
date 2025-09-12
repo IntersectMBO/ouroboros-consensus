@@ -649,6 +649,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       ByteString
       ByteString
       ByteString
+      ByteString
       NodeToNodeInitiatorResult
       ()
   mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNTN decAddrNTN version =
@@ -685,6 +686,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       NTN.Apps
         m
         addrNTN
+        ByteString
         ByteString
         ByteString
         ByteString
