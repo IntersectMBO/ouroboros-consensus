@@ -59,7 +59,7 @@ import Test.Consensus.Byron.Generators ()
 import Test.Consensus.Protocol.Serialisation.Generators ()
 import Test.Consensus.Shelley.Generators
 import Test.Consensus.Shelley.MockCrypto (CanMock)
-import Test.QuickCheck hiding (Some (..))
+import Test.QuickCheck (Arbitrary (..), Gen, choose, elements, frequency, oneof, vectorOf)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Serialisation.Roundtrip
   ( Coherent (..)

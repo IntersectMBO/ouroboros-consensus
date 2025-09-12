@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-08-05T11:23:47Z
+  , hackage.haskell.org 2025-09-11T01:58:40Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2025-08-21T09:41:03Z
+  , cardano-haskell-packages 2025-09-10T20:31:08Z
 
 packages:
   ouroboros-consensus
@@ -49,44 +49,3 @@ if impl (ghc >= 9.12)
   allow-newer:
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
-
-allow-newer:
-    -- https://github.com/phadej/vec/issues/121
-    , ral:QuickCheck
-    , fin:QuickCheck
-    , bin:QuickCheck
-
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/cardano-ledger
-  tag: faa7a9dc347697b11d4da5b7818b1731e11aeeef
-  --sha256: sha256-RvnNYY76OhRuC/uP5Lr+HLEKWyMHCWxx+10HlPrH6mQ=
-  subdir:
-    eras/allegra/impl
-    eras/alonzo/impl
-    eras/alonzo/test-suite
-    eras/babbage/impl
-    eras/byron/chain/executable-spec
-    eras/byron/crypto
-    eras/byron/ledger/executable-spec
-    eras/byron/ledger/impl
-    eras/conway/impl
-    eras/dijkstra/impl
-    eras/mary/impl
-    eras/shelley/impl
-    eras/shelley-ma/test-suite
-    eras/shelley/test-suite
-    libs/cardano-data
-    libs/cardano-ledger-api
-    libs/cardano-ledger-binary
-    libs/cardano-ledger-core
-    libs/cardano-protocol-tpraos
-    libs/non-integral
-    libs/set-algebra
-    libs/small-steps
-    libs/vector-map
-
-constraints:
-  plutus-core < 1.51,
-  plutus-ledger-api < 1.51,
-  plutus-tx < 1.51,
