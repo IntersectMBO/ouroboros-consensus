@@ -985,9 +985,9 @@ generator ::
 generator loe genBlock m@Model{..} =
   At
     <$> frequency
-      [ (30, genAddBlock)
+      [ (100, genAddBlock)
       , let freq = case loe of
-              LoEDisabled -> 10
+              LoEDisabled -> 100
               -- The LoE does not yet support Peras.
               LoEEnabled () -> 0
          in (freq, genAddPerasCert)
