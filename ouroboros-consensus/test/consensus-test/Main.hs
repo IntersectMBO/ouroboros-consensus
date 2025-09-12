@@ -17,6 +17,7 @@ import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.CSJ (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
+import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke (tests)
 import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke (tests)
 import qualified Test.Consensus.Peras.Cert.Inclusion (tests)
 import qualified Test.Consensus.Peras.Voting.Rules (tests)
@@ -44,6 +45,7 @@ tests =
     , Test.Consensus.MiniProtocol.ChainSync.CSJ.tests
     , Test.Consensus.MiniProtocol.ChainSync.Client.tests
     , Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke.tests
+    , Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke.tests
     , Test.Consensus.MiniProtocol.LocalStateQuery.Server.tests
     , testGroup
         "Mempool"
