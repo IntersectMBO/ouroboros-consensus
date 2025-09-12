@@ -676,6 +676,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       ByteString
       ByteString
       ByteString
+      ByteString
+      ByteString
       NodeToNodeInitiatorResult
       ()
   mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNTN decAddrNTN version =
@@ -712,6 +714,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       NTN.Apps
         m
         addrNTN
+        ByteString
+        ByteString
         ByteString
         ByteString
         ByteString
@@ -759,7 +763,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     version
                     (llrnVersionDataNTN version)
                     ( \versionData ->
-                        NTN.initiator miniProtocolParams version versionData
+                        NTN.initiator llrnFeatureFlags miniProtocolParams version versionData
                         -- Initiator side won't start responder side of Peer
                         -- Sharing protocol so we give a dummy implementation
                         -- here.
@@ -774,7 +778,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     version
                     (llrnVersionDataNTN version)
                     ( \versionData ->
-                        NTN.initiatorAndResponder miniProtocolParams version versionData $
+                        NTN.initiatorAndResponder llrnFeatureFlags miniProtocolParams version versionData $
                           ntnApps blockVersion
                     )
                 | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
