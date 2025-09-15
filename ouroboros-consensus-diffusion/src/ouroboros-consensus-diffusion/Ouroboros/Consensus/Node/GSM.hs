@@ -395,6 +395,11 @@ realGsmEntryPoints tracerArgs gsmView =
             == candidateOverSelection selection candidate
     check $ all ok candidates
 
+    -- STAGE 3 (Peras): All PerasCertDiffusion peers have sent us all of
+    -- their certificates
+    --
+    -- TODO implement this new criterion
+
     pure $
       GsmEventEnterCaughtUp
         (Map.size states)
