@@ -48,6 +48,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
 import Data.Maybe (isJust, mapMaybe)
 import Data.Proxy
 import qualified Data.Text as Text
@@ -72,6 +73,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   , ChainSyncClientHandleCollection (..)
   , ChainSyncState (..)
   , newChainSyncClientHandleCollection
+  , viewChainSyncState
   )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
@@ -149,7 +151,10 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
   )
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
+import System.Environment (lookupEnv)
+import System.IO.Unsafe (unsafePerformIO)
 import System.Random (StdGen)
+import Unsafe.Coerce
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -355,6 +360,12 @@ initNodeKernel
           blockFetchInterface
           fetchClientRegistry
           blockFetchConfiguration
+
+    void $
+      forkLinkedThread registry "NodeKernel.perasCertConjuring" $
+        runPerasCertConjuring
+          chainDB
+          (viewChainSyncState (cschcMap varChainSyncHandles) csCandidate)
 
     return
       NodeKernel
@@ -943,3 +954,57 @@ getImmTipSlot ::
 getImmTipSlot kernel =
   getTipSlot
     <$> ChainDB.getImmutableLedger (getChainDB kernel)
+
+{-------------------------------------------------------------------------------
+  Peras certificate conjuring (HACKY/TEMPORARY)
+-------------------------------------------------------------------------------}
+
+isPerasCertConjuringEnabled :: Bool
+isPerasCertConjuringEnabled = unsafePerformIO (lookupEnv "PERAS_CERT_CONJURING") == Just "1"
+{-# NOINLINE isPerasCertConjuringEnabled #-}
+
+runPerasCertConjuring ::
+  forall m blk peer.
+  IOLike m =>
+  ChainDB m blk ->
+  -- | The ChainSync fragments of all peers
+  STM m (Map peer (AnchoredFragment (HeaderWithTime blk))) ->
+  m ()
+runPerasCertConjuring chainDB _getChainSyncFragments
+  | not isPerasCertConjuringEnabled = pure ()
+  | UnsafeRefl <- unsafeEqualityProof @m @IO = do
+      -- We need to do two things:
+      --
+      --  1. Print the block tree from all ChainSync fragments (eg with an
+      --     indication per peer where their tip is), such that a user can
+      --     easily identify individual headers (eg block no + slot no +
+      --     shortened hash).
+      --
+      --     It should also print which blocks are boosted (+ weight).
+      --
+      --  2. Take in commands from the user to create a certificate for a
+      --     particular point for a particular round.
+      --
+      -- For example, this could be done by spawning a simple HTTP server.
+      forkShowBlockTree
+      forkHandleCertConjuring $ \(roundNo, boostedPt) ->
+        ChainDB.addPerasCertSync
+          chainDB
+          ValidatedPerasCert
+            { vpcCert =
+                PerasCert
+                  { pcCertRound = roundNo
+                  , pcCertBoostedBlock = boostedPt
+                  }
+            , -- TODO potentially make this part of the input/un-hardcode in
+              -- some other way
+              vpcCertBoost = PerasWeight 2
+            }
+ where
+  forkShowBlockTree :: IO ()
+  forkShowBlockTree =
+    -- This will use @getChainSyncFragments@.
+    fail "TODO"
+
+  forkHandleCertConjuring :: ((PerasRoundNo, Point blk) -> IO ()) -> IO ()
+  forkHandleCertConjuring _onInstruction = fail "TODO"
