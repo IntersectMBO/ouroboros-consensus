@@ -73,7 +73,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   , tests
   ) where
 
-import Cardano.Ledger.BaseTypes (NonZero (..), knownNonZeroBounded)
+import Cardano.Ledger.BaseTypes (NonZero (..), unsafeNonZero)
 import Codec.Serialise (Serialise)
 import Control.Monad (replicateM, void)
 import Control.ResourceRegistry
@@ -151,6 +151,7 @@ import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
 import Test.Ouroboros.Storage.Orphans ()
 import Test.Ouroboros.Storage.TestBlock
 import Test.QuickCheck hiding (forAll)
+import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Monadic as QC
 import Test.StateMachine
 import qualified Test.StateMachine.Labelling as C
@@ -1777,40 +1778,104 @@ genBlk chunkInfo Model{..} =
         )
       ]
 
+-- | Generate a random security parameter (k)
+--
+-- NOTE: after analysing the effect of varying the security parameter, we have
+-- observed a tension between:
+--
+-- 1) generating enough tests to trigger interesting weighted chain selection
+--    behavior such as switching to a shorter but heavier chain (note that the
+--    certificate boost is derived from k and must be large enough to overcome
+--    the weight of a longer chain). This corresponds to the
+--    'TagSwitchedToShorterChain' event from the @Tags@ table.
+--
+-- 2) generating enough tests exercising the ImmutableDB logic (the chain
+--    must have at least k blocks). This corresponds to the 'True' event from
+--    the @Chain length >= k@ table.
+--
+-- Here are some empirical results using fixed values of k:
+--
+-- @
+--  k    -> P(switching to shorter chain), P(building a chain with >= k blocks)
+--  k=2  -> ~1.3%, ~40%
+--  k=3  -> ~1.9%, ~20%
+--  k=4  -> ~2.4%, ~9%
+--  k=5  -> ~2.5%, ~3%
+--  k=10 -> ~3%,   ~0.05%
+-- @
+--
+-- From these results, we can see observe that the sweet spot between both
+-- desiderata appears to be around @k=2@ and @k=4@. So, we use a geometric
+-- distribution to bias the generation towards smaller security parameters,
+-- while still allowing arbitrary large ones to appear with decresing
+-- probability. Concretely, by instantiating a geometric distribution with
+-- parameter @p=0.5@ and shifting it to the right by 2, we obtain the following
+-- distribution:
+--
+-- @
+--  k    -> P(k)
+--  k=2  -> 50%
+--  k=3  -> 25%
+--  k=4  -> 12.5%
+--  k=5  -> 6.25%
+--  ...
+-- @
+--
+-- This way, roughly 87.5% of the generated security parameters will be between
+-- 2 and 4, while still allowing for larger values to appear from time to time.
+genSecurityParam :: Gen SecurityParam
+genSecurityParam =
+  SecurityParam
+    . unsafeNonZero
+    . fromIntegral
+    . (+ 2) -- shift to the right to avoid degenerate cases
+    <$> geometric 0.5 -- range in [0, +inf); mean = 1/p = 2
+ where
+  geometric :: Double -> Gen Int
+  geometric p
+    | p <= 0 || p > 1 = error "p must be in (0,1]"
+    | otherwise = do
+        u <- choose (0.0, 1.0)
+        let k = floor (log u / log (1 - p))
+        return k
+
 {-------------------------------------------------------------------------------
   Top-level tests
 -------------------------------------------------------------------------------}
 
-mkTestCfg :: ImmutableDB.ChunkInfo -> TopLevelConfig TestBlock
-mkTestCfg (ImmutableDB.UniformChunkSize chunkSize) =
-  mkTestConfig (SecurityParam $ knownNonZeroBounded @2) chunkSize
+mkTestCfg :: SecurityParam -> ImmutableDB.ChunkInfo -> TopLevelConfig TestBlock
+mkTestCfg k (ImmutableDB.UniformChunkSize chunkSize) =
+  mkTestConfig k chunkSize
 
 envUnused :: ChainDBEnv m blk
 envUnused = error "ChainDBEnv used during command generation"
 
 smUnused ::
   LoE () ->
+  SecurityParam ->
   ImmutableDB.ChunkInfo ->
   StateMachine (Model Blk IO) (At Cmd Blk IO) IO (At Resp Blk IO)
-smUnused loe chunkInfo =
+smUnused loe k chunkInfo =
   sm
     loe
     envUnused
     (genBlk chunkInfo)
-    (mkTestCfg chunkInfo)
+    (mkTestCfg k chunkInfo)
     testInitExtLedger
 
 prop_sequential :: LoE () -> SmallChunkInfo -> Property
 prop_sequential loe smallChunkInfo@(SmallChunkInfo chunkInfo) =
-  forAllCommands (smUnused loe chunkInfo) Nothing $
-    runCmdsLockstep loe smallChunkInfo
+  QC.forAll genSecurityParam $ \k ->
+    forAllCommands (smUnused loe k chunkInfo) Nothing $
+      runCmdsLockstep loe k smallChunkInfo
 
 runCmdsLockstep ::
   LoE () ->
+  SecurityParam ->
   SmallChunkInfo ->
   QSM.Commands (At Cmd Blk IO) (At Resp Blk IO) ->
   Property
-runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
+runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
   QC.monadicIO $ do
     let
       -- Current test case command names.
@@ -1818,15 +1883,15 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
       ctcCmdNames = fmap (show . cmdName . QSM.getCommand) $ QSM.unCommands cmds
 
     (hist, prop) <- QC.run $ test cmds
-    prettyCommands (smUnused loe chunkInfo) hist
+    prettyCommands (smUnused loe k chunkInfo) hist
       $ tabulate
         "Tags"
-        (map show $ tag (execCmds (QSM.initModel (smUnused loe chunkInfo)) cmds))
+        (map show $ tag (execCmds (QSM.initModel (smUnused loe k chunkInfo)) cmds))
       $ tabulate "Command sequence length" [show $ length ctcCmdNames]
       $ tabulate "Commands" ctcCmdNames
       $ prop
  where
-  testCfg = mkTestCfg chunkInfo
+  testCfg = mkTestCfg k chunkInfo
 
   test ::
     QSM.Commands (At Cmd Blk IO) (At Resp Blk IO) ->
@@ -1889,26 +1954,30 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
     fses <- atomically $ traverse readTMVar nodeDBs
     let
       modelChain = Model.currentChain $ dbModel model
+      secParam = unNonZero (maxRollbacks (configSecurityParam testCfg))
       prop =
         counterexample (show (configSecurityParam testCfg)) $
           counterexample ("Model chain: " <> condense modelChain) $
             counterexample ("TraceEvents: " <> unlines (map show trace)) $
               tabulate "Chain length" [show (Chain.length modelChain)] $
-                tabulate "TraceEvents" (map traceEventName trace) $
-                  res === Ok
-                    .&&. prop_trace testCfg (dbModel model) trace
-                    .&&. counterexample
-                      "ImmutableDB is leaking file handles"
-                      (Mock.numOpenHandles (nodeDBsImm fses) === 0)
-                    .&&. counterexample
-                      "VolatileDB is leaking file handles"
-                      (Mock.numOpenHandles (nodeDBsVol fses) === 0)
-                    .&&. counterexample
-                      "LedgerDB is leaking file handles"
-                      (Mock.numOpenHandles (nodeDBsLgr fses) === 0)
-                    .&&. counterexample
-                      "There were registered clean-up actions"
-                      (remainingCleanups === 0)
+                tabulate "Security Parameter (k)" [show secParam] $
+                  tabulate "Chain length >= k" [show (Chain.length modelChain >= fromIntegral secParam)] $
+                    tabulate "TraceEvents" (map traceEventName trace) $
+                      res
+                        === Ok
+                        .&&. prop_trace testCfg (dbModel model) trace
+                        .&&. counterexample
+                          "ImmutableDB is leaking file handles"
+                          (Mock.numOpenHandles (nodeDBsImm fses) === 0)
+                        .&&. counterexample
+                          "VolatileDB is leaking file handles"
+                          (Mock.numOpenHandles (nodeDBsVol fses) === 0)
+                        .&&. counterexample
+                          "LedgerDB is leaking file handles"
+                          (Mock.numOpenHandles (nodeDBsLgr fses) === 0)
+                        .&&. counterexample
+                          "There were registered clean-up actions"
+                          (remainingCleanups === 0)
     return (hist, prop)
 
 prop_trace :: TopLevelConfig Blk -> DBModel Blk -> [TraceEvent Blk] -> Property
