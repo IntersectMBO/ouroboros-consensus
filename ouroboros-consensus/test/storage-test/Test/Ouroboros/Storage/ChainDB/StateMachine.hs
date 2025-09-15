@@ -73,7 +73,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   , tests
   ) where
 
-import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
+import Cardano.Ledger.BaseTypes (unNonZero, unsafeNonZero)
 import Codec.Serialise (Serialise)
 import Control.Monad (replicateM, void)
 import Control.ResourceRegistry
@@ -151,6 +151,7 @@ import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
 import Test.Ouroboros.Storage.Orphans ()
 import Test.Ouroboros.Storage.TestBlock
 import Test.QuickCheck hiding (forAll)
+import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Monadic as QC
 import Test.StateMachine
 import qualified Test.StateMachine.Labelling as C
@@ -1710,40 +1711,59 @@ genBlk chunkInfo Model{..} =
         )
       ]
 
+genSecurityParam :: Gen SecurityParam
+genSecurityParam =
+  SecurityParam
+    . unsafeNonZero
+    . fromIntegral
+    . (+ 2) -- shift to the right to avoid degenerate cases
+    <$> geometric 0.5 -- range in [0, +inf); mean = 1/p = 2
+ where
+  geometric :: Double -> Gen Int
+  geometric p
+    | p <= 0 || p > 1 = error "p must be in (0,1]"
+    | otherwise = do
+        u <- choose (0.0, 1.0)
+        let k = floor (log u / log (1 - p))
+        return k
+
 {-------------------------------------------------------------------------------
   Top-level tests
 -------------------------------------------------------------------------------}
 
-mkTestCfg :: ImmutableDB.ChunkInfo -> TopLevelConfig TestBlock
-mkTestCfg (ImmutableDB.UniformChunkSize chunkSize) =
-  mkTestConfig (SecurityParam $ knownNonZeroBounded @2) chunkSize
+mkTestCfg :: SecurityParam -> ImmutableDB.ChunkInfo -> TopLevelConfig TestBlock
+mkTestCfg k (ImmutableDB.UniformChunkSize chunkSize) =
+  mkTestConfig k chunkSize
 
 envUnused :: ChainDBEnv m blk
 envUnused = error "ChainDBEnv used during command generation"
 
 smUnused ::
   LoE () ->
+  SecurityParam ->
   ImmutableDB.ChunkInfo ->
   StateMachine (Model Blk IO) (At Cmd Blk IO) IO (At Resp Blk IO)
-smUnused loe chunkInfo =
+smUnused loe k chunkInfo =
   sm
     loe
     envUnused
     (genBlk chunkInfo)
-    (mkTestCfg chunkInfo)
+    (mkTestCfg k chunkInfo)
     testInitExtLedger
 
 prop_sequential :: LoE () -> SmallChunkInfo -> Property
 prop_sequential loe smallChunkInfo@(SmallChunkInfo chunkInfo) =
-  forAllCommands (smUnused loe chunkInfo) Nothing $
-    runCmdsLockstep loe smallChunkInfo
+  QC.forAll genSecurityParam $ \k ->
+    forAllCommands (smUnused loe k chunkInfo) Nothing $
+      runCmdsLockstep loe k smallChunkInfo
 
 runCmdsLockstep ::
   LoE () ->
+  SecurityParam ->
   SmallChunkInfo ->
   QSM.Commands (At Cmd Blk IO) (At Resp Blk IO) ->
   Property
-runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
+runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
   QC.monadicIO $ do
     let
       -- Current test case command names.
@@ -1751,15 +1771,15 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
       ctcCmdNames = fmap (show . cmdName . QSM.getCommand) $ QSM.unCommands cmds
 
     (hist, prop) <- QC.run $ test cmds
-    prettyCommands (smUnused loe chunkInfo) hist
+    prettyCommands (smUnused loe k chunkInfo) hist
       $ tabulate
         "Tags"
-        (map show $ tag (execCmds (QSM.initModel (smUnused loe chunkInfo)) cmds))
+        (map show $ tag (execCmds (QSM.initModel (smUnused loe k chunkInfo)) cmds))
       $ tabulate "Command sequence length" [show $ length ctcCmdNames]
       $ tabulate "Commands" ctcCmdNames
       $ prop
  where
-  testCfg = mkTestCfg chunkInfo
+  testCfg = mkTestCfg k chunkInfo
 
   test ::
     QSM.Commands (At Cmd Blk IO) (At Resp Blk IO) ->
@@ -1822,26 +1842,30 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
     fses <- atomically $ traverse readTMVar nodeDBs
     let
       modelChain = Model.currentChain $ dbModel model
+      secParam = unNonZero (maxRollbacks (configSecurityParam testCfg))
       prop =
         counterexample (show (configSecurityParam testCfg)) $
           counterexample ("Model chain: " <> condense modelChain) $
             counterexample ("TraceEvents: " <> unlines (map show trace)) $
               tabulate "Chain length" [show (Chain.length modelChain)] $
-                tabulate "TraceEvents" (map traceEventName trace) $
-                  res === Ok
-                    .&&. prop_trace testCfg (dbModel model) trace
-                    .&&. counterexample
-                      "ImmutableDB is leaking file handles"
-                      (Mock.numOpenHandles (nodeDBsImm fses) === 0)
-                    .&&. counterexample
-                      "VolatileDB is leaking file handles"
-                      (Mock.numOpenHandles (nodeDBsVol fses) === 0)
-                    .&&. counterexample
-                      "LedgerDB is leaking file handles"
-                      (Mock.numOpenHandles (nodeDBsLgr fses) === 0)
-                    .&&. counterexample
-                      "There were registered clean-up actions"
-                      (remainingCleanups === 0)
+                tabulate "Security Parameter (k)" [show secParam] $
+                  tabulate "Chain length >= k" [show (Chain.length modelChain >= fromIntegral secParam)] $
+                    tabulate "TraceEvents" (map traceEventName trace) $
+                      res
+                        === Ok
+                        .&&. prop_trace testCfg (dbModel model) trace
+                        .&&. counterexample
+                          "ImmutableDB is leaking file handles"
+                          (Mock.numOpenHandles (nodeDBsImm fses) === 0)
+                        .&&. counterexample
+                          "VolatileDB is leaking file handles"
+                          (Mock.numOpenHandles (nodeDBsVol fses) === 0)
+                        .&&. counterexample
+                          "LedgerDB is leaking file handles"
+                          (Mock.numOpenHandles (nodeDBsLgr fses) === 0)
+                        .&&. counterexample
+                          "There were registered clean-up actions"
+                          (remainingCleanups === 0)
     return (hist, prop)
 
 prop_trace :: TopLevelConfig Blk -> DBModel Blk -> [TraceEvent Blk] -> Property
