@@ -1045,7 +1045,8 @@ generator loe genBlock m@Model{..} =
 
   genAddPerasCert :: Gen (ValidatedPerasCert blk)
   genAddPerasCert = do
-    -- TODO chain condition?
+    -- TODO should we be more strict on which blocks we add certs to?
+    -- see https://github.com/tweag/cardano-peras/issues/124
     blk <- genBlock m
     let roundNo = case Model.maxPerasRoundNo dbModel of
           Nothing -> PerasRoundNo 0

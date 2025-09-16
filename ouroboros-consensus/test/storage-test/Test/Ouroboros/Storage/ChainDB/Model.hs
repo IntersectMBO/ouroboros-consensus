@@ -1086,6 +1086,7 @@ garbageCollect secParam m@Model{..} =
   m
     { volatileDbBlocks = Map.filter (not . collectable) volatileDbBlocks
     -- TODO garbage collection Peras certs?
+    -- See https://github.com/tweag/cardano-peras/issues/121
     }
  where
   -- TODO what about iterators that will stream garbage collected blocks?
@@ -1125,6 +1126,8 @@ closeDB m@Model{..} =
 reopen :: Model blk -> Model blk
 reopen m = m{isOpen = True}
 
+-- TODO: update to account for persisted Peras certificates.
+-- see https://github.com/tweag/cardano-peras/issues/122
 wipeVolatileDB ::
   forall blk.
   (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
@@ -1137,14 +1140,7 @@ wipeVolatileDB cfg m =
   m' =
     (closeDB m)
       { volatileDbBlocks = Map.empty
-      , -- TODO: Currently, the SUT has no persistence of Peras certs across
-        -- restarts, but this will change. There are at least two options:
-        --
-        --  * Change this command to mean "wipe volatile state" (including
-        --    volatile certificates)
-        --
-        --  * Add a separate "Wipe volatile certs".
-        perasCerts = Map.empty
+      , perasCerts = Map.empty
       , cps = CPS.switchFork newChain (cps m)
       , currentLedger = newLedger
       , invalid = Map.empty

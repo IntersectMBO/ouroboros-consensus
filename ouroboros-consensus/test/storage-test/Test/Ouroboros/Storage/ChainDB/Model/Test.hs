@@ -107,6 +107,7 @@ prop_alwaysPickPreferredChain bt p =
     candFragment = Chain.toAnchoredFragment (getHeader <$> candidate)
 
     -- TODO test with non-trivial weights
+    -- see https://github.com/tweag/cardano-peras/issues/123
     weights :: PerasWeightSnapshot TestBlock
     weights = emptyPerasWeightSnapshot
 

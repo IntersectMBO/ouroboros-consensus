@@ -393,11 +393,11 @@ data ChainDB m blk = ChainDB
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
   , addPerasCertAsync :: ValidatedPerasCert blk -> m (AddPerasCertPromise m)
-  -- ^ TODO docs
+  -- ^ Asynchronously insert a certificate to the DB.
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
-  -- ^ TODO
+  -- ^ Get the weight snapshot from the DB.
   , getPerasCertSnapshot :: STM m (PerasCertSnapshot blk)
-  -- ^ TODO
+  -- ^ Get the certificate snapshot from the DB.
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --
