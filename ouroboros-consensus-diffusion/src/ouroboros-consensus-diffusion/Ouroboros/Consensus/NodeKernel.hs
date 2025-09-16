@@ -11,6 +11,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.NodeKernel
   ( -- * Node kernel
@@ -24,7 +25,8 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
-  ) where
+  )
+where
 
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
@@ -43,12 +45,13 @@ import Control.Tracer
 import Data.Bifunctor (second)
 import Data.Data (Typeable)
 import Data.Foldable (traverse_)
-import Data.Function (on)
+import Data.Function (on, (&))
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, mapMaybe)
 import Data.Proxy
 import qualified Data.Text as Text
@@ -56,6 +59,15 @@ import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.CertConjuring
+  ( ChainTip (..)
+  , Peer (..)
+  , RawHeaderHash
+  , ServerBlock (..)
+  , ServerCallbacks (..)
+  , ServerState (..)
+  )
+import qualified Ouroboros.Consensus.CertConjuring as CertConjuring
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
@@ -91,6 +103,7 @@ import Ouroboros.Consensus.Node.Genesis
   )
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
+import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
@@ -107,7 +120,7 @@ import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
 import Ouroboros.Consensus.Util.EarlyExit
-import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.IOLike hiding (newMVar, putMVar, readMVar)
 import Ouroboros.Consensus.Util.LeakyBucket
   ( atomicallyWithMonotonicTime
   )
@@ -129,6 +142,8 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
 import Ouroboros.Network.NodeToNode
   ( ConnectionId
   , MiniProtocolParameters (..)
+  , RemoteAddress
+  , remoteAddress
   )
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PublicPeerSelectionState
@@ -141,6 +156,7 @@ import Ouroboros.Network.PeerSharing
   , ps_POLICY_PEER_SHARE_MAX_PEERS
   , ps_POLICY_PEER_SHARE_STICKY_TIME
   )
+import Ouroboros.Network.Point (Block (..), WithOrigin (..), at)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
 import Ouroboros.Network.SizeInBytes
 import Ouroboros.Network.TxSubmission.Inbound
@@ -153,7 +169,7 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
 import System.Environment (lookupEnv)
 import System.IO.Unsafe (unsafePerformIO)
-import System.Random (StdGen)
+import System.Random (StdGen, randomRIO)
 import Unsafe.Coerce
 
 {-------------------------------------------------------------------------------
@@ -281,8 +297,8 @@ initNodeKernel
                       case AF.intersectionPoint headers (csCandidate state) of
                         Nothing -> GSM.CandidateDoesNotIntersect
                         Just{} ->
-                          GSM.WhetherCandidateIsBetter $ -- precondition requires intersection
-                            preferAnchoredCandidate
+                          GSM.WhetherCandidateIsBetter $
+                            preferAnchoredCandidate -- precondition requires intersection
                               (configBlock cfg)
                               (forgetFingerprint weights)
                               headers
@@ -401,7 +417,8 @@ initNodeKernel
 
 castTraceFetchDecision ::
   forall remotePeer blk.
-  TraceDecisionEvent remotePeer (HeaderWithTime blk) -> TraceDecisionEvent remotePeer (Header blk)
+  TraceDecisionEvent remotePeer (HeaderWithTime blk) ->
+  TraceDecisionEvent remotePeer (Header blk)
 castTraceFetchDecision = \case
   PeersFetch xs -> PeersFetch (map (fmap (second (map castPoint))) xs) -- [TraceLabelPeer peer (FetchDecision [Point header])]
   PeerStarvedUs peer -> PeerStarvedUs peer
@@ -409,7 +426,8 @@ castTraceFetchDecision = \case
 castTraceFetchClientState ::
   forall blk.
   HasHeader (Header blk) =>
-  TraceFetchClientState (HeaderWithTime blk) -> TraceFetchClientState (Header blk)
+  TraceFetchClientState (HeaderWithTime blk) ->
+  TraceFetchClientState (Header blk)
 castTraceFetchClientState = mapTraceFetchClientState hwtHeader
 
 {-------------------------------------------------------------------------------
@@ -709,7 +727,8 @@ forkBlockForging IS{..} blockForging =
         isInvalid <-
           lift $
             atomically $
-              ($ blockHash newBlock) . forgetFingerprint
+              ($ blockHash newBlock)
+                . forgetFingerprint
                 <$> ChainDB.getIsInvalidBlock chainDB
         case isInvalid of
           Nothing ->
@@ -761,7 +780,8 @@ data BlockContext blk = BlockContext
 -- | Create the 'BlockContext' from the header of the previous block
 blockContextFromPrevHeader ::
   HasHeader (Header blk) =>
-  Header blk -> BlockContext blk
+  Header blk ->
+  BlockContext blk
 blockContextFromPrevHeader hdr =
   -- Recall that an EBB has the same block number as its predecessor, so this
   -- @succ@ is even correct when @hdr@ is an EBB.
@@ -887,7 +907,8 @@ getMempoolWriter mempool =
   Inbound.TxSubmissionMempoolWriter
     { Inbound.txId = txId
     , mempoolAddTxs = \txs ->
-        map (txId . txForgetValidated) . mapMaybe mempoolTxAddedToMaybe
+        map (txId . txForgetValidated)
+          . mapMaybe mempoolTxAddedToMaybe
           <$> addTxs mempool txs
     }
 
@@ -960,51 +981,145 @@ getImmTipSlot kernel =
 -------------------------------------------------------------------------------}
 
 isPerasCertConjuringEnabled :: Bool
-isPerasCertConjuringEnabled = unsafePerformIO (lookupEnv "PERAS_CERT_CONJURING") == Just "1"
+isPerasCertConjuringEnabled =
+  unsafePerformIO (lookupEnv "PERAS_CERT_CONJURING") == Just "1"
 {-# NOINLINE isPerasCertConjuringEnabled #-}
 
+-- TODO: remove this and embed the static files in the binary
+perasCertConjuringStaticFiles :: Maybe FilePath
+perasCertConjuringStaticFiles =
+  unsafePerformIO (lookupEnv "PERAS_CERT_CONJURING_STATIC_FILES")
+{-# NOINLINE perasCertConjuringStaticFiles #-}
+
 runPerasCertConjuring ::
-  forall m blk peer.
-  IOLike m =>
+  forall m blk peer. -- (m~IO, peer~ConnectionId RemoteAddress)
+  (IOLike m, ConvertRawHash blk, GetPrevHash blk) =>
   ChainDB m blk ->
-  -- | The ChainSync fragments of all peers
   STM m (Map peer (AnchoredFragment (HeaderWithTime blk))) ->
   m ()
-runPerasCertConjuring chainDB _getChainSyncFragments
+runPerasCertConjuring chainDB getChainSyncFragments
   | not isPerasCertConjuringEnabled = pure ()
-  | UnsafeRefl <- unsafeEqualityProof @m @IO = do
-      -- We need to do two things:
-      --
-      --  1. Print the block tree from all ChainSync fragments (eg with an
-      --     indication per peer where their tip is), such that a user can
-      --     easily identify individual headers (eg block no + slot no +
-      --     shortened hash).
-      --
-      --     It should also print which blocks are boosted (+ weight).
-      --
-      --  2. Take in commands from the user to create a certificate for a
-      --     particular point for a particular round.
-      --
-      -- For example, this could be done by spawning a simple HTTP server.
-      forkShowBlockTree
-      forkHandleCertConjuring $ \(roundNo, boostedPt) ->
-        ChainDB.addPerasCertSync
-          chainDB
-          ValidatedPerasCert
-            { vpcCert =
-                PerasCert
-                  { pcCertRound = roundNo
-                  , pcCertBoostedBlock = boostedPt
-                  }
-            , -- TODO potentially make this part of the input/un-hardcode in
-              -- some other way
-              vpcCertBoost = PerasWeight 2
-            }
+  | otherwise = unsafeCast1 @m @IO $ do
+      -- Randomize the port to avoid bind collisions between nodes
+      port <- randomRIO (9000, 9999) :: IO Int -- Hacky
+      putStrLn $ "========================================"
+      putStrLn $ "Serving files at: http://localhost:" <> show port
+      putStrLn $ "========================================"
+      -- Retrieve the static files directory
+      let static = maybe "." id perasCertConjuringStaticFiles
+      -- Spawn the main server thread
+      CertConjuring.forkServer static port $
+        CertConjuring.emptyServerCallbacks
+          { onUpdateServerState = onUpdateServerState
+          , onCertConjuring = onCertConjuring
+          }
  where
-  forkShowBlockTree :: IO ()
-  forkShowBlockTree =
-    -- This will use @getChainSyncFragments@.
-    fail "TODO"
+  onUpdateServerState ::
+    ServerState ->
+    STM m (ServerState, IO ())
+  onUpdateServerState st
+    | not isPerasCertConjuringEnabled = pure (st, pure ())
+    | otherwise = unsafeCast1 @m @IO $ unsafeCast @peer @(ConnectionId RemoteAddress) $ do
+        -- Query our own chain and the chains of all connected peers
+        ourChain <- ChainDB.getCurrentChainWithTime chainDB
+        peerChains <- getChainSyncFragments
+        weights <- forgetFingerprint <$> ChainDB.getPerasWeightSnapshot chainDB
+        -- Chain blocks (both ours and the ones received from peers)
+        let chains = ourChain : Map.elems peerChains
+        let blocks = concatMap (fragmentToServerBlocks weights) chains
+        -- Chain tips (both ours and the ones received from peers)
+        let toPeer = Peer . show . remoteAddress
+        let toOurTip = OurTip . fragmentTipHash
+        let toTheirTip peer chain = TheirTip (toPeer peer) (fragmentTipHash chain)
+        let tips = toOurTip ourChain : (uncurry toTheirTip <$> Map.toList peerChains)
+        -- Chain anchor (ours only)
+        let anchor = fragmentAnchorHash ourChain
 
-  forkHandleCertConjuring :: ((PerasRoundNo, Point blk) -> IO ()) -> IO ()
-  forkHandleCertConjuring _onInstruction = fail "TODO"
+        return
+          ( foldr CertConjuring.addBlock st blocks
+              & CertConjuring.setTips tips
+              & CertConjuring.setAnchor anchor
+          , pure ()
+          )
+
+  onCertConjuring ::
+    ServerBlock ->
+    PerasWeight ->
+    ServerState ->
+    STM m (ServerState, IO ())
+  onCertConjuring blk boost st
+    | not isPerasCertConjuringEnabled = pure (st, pure ())
+    | otherwise = unsafeCast1 @m @IO $ do
+        -- Reconstruct a point from the block's hash and slot
+        let roundNo = sbRound st
+        let slotNo = sbSlot blk
+        let hash = CertConjuring.reifyHeaderHash (Proxy @blk) (sbHash blk)
+        let point = AF.Point (at (Block slotNo hash))
+        -- Create a bogus certificate out of thin air
+        let validatedCert =
+              ValidatedPerasCert
+                { vpcCert =
+                    PerasCert
+                      { pcCertRound = roundNo
+                      , pcCertBoostedBlock = point
+                      }
+                , vpcCertBoost = boost
+                }
+        -- IO action to add the certificate to the ChainDB outside this transaction.
+        -- NOTE: this is circumvent `Chain.addPerasCertSync` running on IO instead of STM
+        let addPerasCert = do
+              putStrLn $ "========================================"
+              putStrLn $ "Adding Peras cert to block " <> show (sbNumber blk)
+              ChainDB.addPerasCertSync chainDB validatedCert
+                `catch` \(e :: SomeException) -> do
+                  putStrLn $ "Failed to add Peras cert:"
+                  putStrLn $ show e
+              putStrLn $ "========================================"
+
+        return
+          ( CertConjuring.incRound st
+          , addPerasCert
+          )
+
+  fragmentToServerBlocks ::
+    PerasWeightSnapshot blk ->
+    AnchoredFragment (HeaderWithTime blk) ->
+    [ServerBlock]
+  fragmentToServerBlocks weights fragment =
+    [ CertConjuring.ServerBlock
+        { sbHash = CertConjuring.reflectHeaderHash (Proxy @blk) (headerHash hdr)
+        , sbParent = case headerPrevHash hdr of
+            GenesisHash -> Nothing
+            BlockHash hash -> Just (CertConjuring.reflectHeaderHash (Proxy @blk) hash)
+        , sbNumber = blockNo hdr
+        , sbSlot = blockSlot hdr
+        , sbBoost = weightBoostOfPoint weights (headerPoint hdr)
+        }
+    | hdr <- hwtHeader <$> AF.toOldestFirst fragment
+    ]
+
+  fragmentAnchorHash ::
+    AnchoredFragment (HeaderWithTime blk) ->
+    Maybe RawHeaderHash
+  fragmentAnchorHash fragment =
+    case AF.getPoint (AF.anchorPoint fragment) of
+      Origin -> Nothing
+      At (Block _ hash) -> Just (CertConjuring.reflectHeaderHash (Proxy @blk) hash)
+
+  fragmentTipHash ::
+    AnchoredFragment (HeaderWithTime blk) ->
+    Maybe RawHeaderHash
+  fragmentTipHash fragment =
+    case AF.headHash fragment of
+      GenesisHash -> Nothing
+      BlockHash hash -> Just (CertConjuring.reflectHeaderHash (Proxy @blk) hash)
+
+  unsafeCast :: forall f g a. (f ~ g => a) -> a
+  unsafeCast a =
+    case unsafeEqualityProof @f @g of
+      UnsafeRefl -> a
+
+  unsafeCast1 :: forall f g a. (forall x. f x ~ g x => a) -> a
+  unsafeCast1 a =
+    case unsafeEqualityProof @f @g of
+      UnsafeRefl -> a

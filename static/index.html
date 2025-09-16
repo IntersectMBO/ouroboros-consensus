@@ -1,0 +1,284 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  body {
+    font: 18px monospace;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  h1 {
+    text-align: left;
+    margin-left: 30px;
+  }
+
+  .tooltip {
+    font: 14px monospace;
+    position: absolute;
+    padding: 6px 10px;
+    background: #222;
+    color: #fff;
+    border-radius: 4px;
+    pointer-events: none;
+    white-space: pre;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+</style>
+<body>
+  <h1>Peras Block Tree Visualization</h1>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js"></script>
+  <script type="module">
+    // ---------------------------
+    // Constants and helpers
+
+    const boostPerCert = 2;
+
+    function shortHash(hash) {
+      return hash.slice(0, 6);
+    }
+
+    function followers(blkNo, state) {
+      return state.tips.filter((tip) => tip.block === blkNo).map((f) => f.peer);
+    }
+
+    // ---------------------------
+    // API Calls
+
+    async function fetchState() {
+      try {
+        const res = await fetch("/state");
+        if (res.ok) {
+          console.log("Fetched state");
+          return await res.json();
+        } else {
+          console.log("Could not fetch state", res.status);
+          return { blocks: {}, tips: [], anchor: null };
+        }
+      } catch (e) {
+        console.log("Could not fetch state", e);
+        return { blocks: {}, tips: [], anchor: null };
+      }
+    }
+
+    async function boostBlock(block, boost) {
+      try {
+        const res = await fetch(`/boost/${block.hash}/${boost}`);
+        if (res.ok) {
+          console.log(
+            `Requested boosting block ${shortHash(block.hash)} by ${boost}`,
+          );
+        } else {
+          console.log("Could not boost block", res.status);
+        }
+      } catch (e) {
+        console.log("Could not boost block", e);
+      }
+    }
+
+    // ---------------------------
+    // D3 Visualization
+
+    function createBlockHierarchy(blocks, anchor) {
+      const nodes = {};
+
+      Object.values(blocks)
+        .sort((a, b) => b.slot - a.slot)
+        .forEach((node) => {
+          nodes[node.hash] = { ...node, children: [] };
+        });
+
+      let root = null;
+      let foundAnchor = false;
+      Object.values(nodes).forEach((node) => {
+        if (node.parent) {
+          if (nodes[node.parent]) {
+            nodes[node.parent].children.push(node);
+            if (anchor && node.hash === anchor) {
+              foundAnchor = true;
+              root = nodes[node.parent];
+            } else if (!foundAnchor) {
+              root = node;
+            }
+          } else {
+            console.log(`Missing parent for block ${node.number}`);
+          }
+        }
+      });
+
+      return d3.hierarchy(root);
+    }
+
+    function renderTooltip(block, state) {
+      const tooltip = [
+        `Number:    ${block.number}`,
+        `Hash:      ${shortHash(block.hash)}`,
+        `Parent:    ${shortHash(block.parent)}`,
+        `Slot:      ${block.slot}`,
+        `Boost:     ${block.boost}`,
+      ];
+      let blockFollowers = followers(block.hash, state);
+      if (blockFollowers.length) {
+        tooltip.push("<br><br>Followers:");
+        tooltip.push(blockFollowers.join("<br>"));
+      }
+      return tooltip.join("<br>");
+    }
+
+    function renderBlockLabel(block, state) {
+      let blockFollowers = followers(block.hash, state);
+      if (blockFollowers.length) {
+        return `👥${blockFollowers.length}`;
+      } else if (block.hash === state.anchor) {
+        return `⚓${block.number}`;
+      } else {
+        return "";
+      }
+    }
+
+    function renderBlockColor(block, state) {
+      let blockFollowers = followers(block.hash, state);
+      let anchor = state.anchor ? state.blocks[state.anchor] : null;
+
+      if (anchor && block.hash == anchor.hash) {
+        return "#f00"; // red anchor block
+      }
+      if (block.boost > 0 && anchor && block.number < anchor.number) {
+        return "#740"; // brown boosted block behind anchor
+      }
+      if (block.boost > 0) {
+        return "#0f0"; // bright green boosted block ahead of anchor
+      }
+      if (blockFollowers.length) {
+        return "#00f"; // dark blue followed block behind anchor
+      }
+
+      return "#555"; // gray normal block
+    }
+
+    async function updateLayout(svg, layout, state) {
+      const root = createBlockHierarchy(state.blocks, state.anchor);
+      layout(root);
+
+      // Hide tooltip on update
+      d3.select("#tooltip").style("opacity", 0);
+
+      // LINKS
+      const link = svg
+        .selectAll(".link")
+        .data(root.links(), (d) => d.target.data.name);
+
+      const linkEnter = link
+        .enter()
+        .append("path")
+        .attr("class", "link")
+        .attr("fill", "none")
+        .attr("stroke", "#000")
+        .attr("stroke-width", 2)
+        .attr(
+          "d",
+          d3
+            .linkHorizontal()
+            .x((d) => d.y)
+            .y((d) => d.x),
+        );
+
+      const linkMerge = link.merge(link).attr(
+        "d",
+        d3
+          .linkHorizontal()
+          .x((d) => d.y)
+          .y((d) => d.x),
+      );
+
+      link.exit().remove();
+
+      // NODES
+      const node = svg
+        .selectAll(".node")
+        .data(root.descendants(), (d) => d.data.name);
+
+      const nodeEnter = node.enter().append("g").attr("class", "node");
+      nodeEnter
+        .append("circle")
+        .attr("fill", "#555")
+        .attr("stroke", "#000")
+        .attr("stroke-width", 2)
+        .attr("r", (d) => 10);
+      nodeEnter
+        .append("text")
+        .attr("x", -10)
+        .attr("dy", 30)
+        .text((d) => renderBlockLabel(d.data, state));
+      nodeEnter
+        .on("click", async (event, d) => {
+          await boostBlock(d.data, boostPerCert);
+        })
+        .on("mouseover", (event, d) => {
+          d3.select("#tooltip")
+            .style("opacity", 1)
+            .html(renderTooltip(d.data, state));
+        })
+        .on("mousemove", () => {
+          d3.select("#tooltip")
+            .style("left", event.pageX + 10 + "px")
+            .style("top", event.pageY - 10 + "px");
+        })
+        .on("mouseout", () => {
+          d3.select("#tooltip").style("opacity", 0);
+        });
+
+      const nodeMerge = node
+        .merge(nodeEnter)
+        .attr("transform", (d) => `translate(${d.y},${d.x})`);
+      nodeMerge
+        .select("circle")
+        .attr("r", (d) => 10 + 2 * boostPerCert * d.data.boost)
+        .attr("fill", (d) => renderBlockColor(d.data, state));
+      nodeMerge
+        .select("text")
+        .attr("dy", (d) => 30 + 2 * boostPerCert * d.data.boost)
+        .text((d) => renderBlockLabel(d.data, state));
+      nodeMerge.raise();
+
+      node.exit().remove();
+    }
+
+    // ---------------------------
+
+    const width = 1200;
+    const height = 600;
+    const margin = 80;
+
+    const svg = d3
+      .select("body")
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height)
+      .append("g")
+      .attr("transform", `translate(${margin}, ${margin})`);
+
+    const treeLayout = d3
+      .tree()
+      .size([height - 2 * margin, width - 2 * margin])
+      .separation((a, b) => {
+        return a.parent === b.parent ? 5 : 10;
+      });
+
+    let state = await fetchState();
+    updateLayout(svg, treeLayout, state);
+
+    setInterval(async () => {
+      const oldState = state;
+      state = await fetchState();
+      if (!_.isEqual(state, oldState)) {
+        console.log("State changed, updating layout");
+        await updateLayout(svg, treeLayout, state);
+      }
+    }, 100);
+
+    // ---------------------------
+  </script>
+  <div id="tooltip" class="tooltip"></div>
+</body>
