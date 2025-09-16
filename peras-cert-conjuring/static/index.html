@@ -1,0 +1,152 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  .tooltip {
+    position: absolute;
+    padding: 6px 10px;
+    background: #333;
+    color: #fff;
+    border-radius: 4px;
+    pointer-events: none;
+    font-size: 12px;
+    font-family: monospace;
+    white-space: pre;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+</style>
+<body>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script type="module">
+    // ---------------------------
+
+    async function fetchState() {
+      return await fetch("/state").then((res) => res.json());
+    }
+
+    async function boostBlock(block, boost) {
+      console.log("Boosting block", block, "with boost", boost);
+      await fetch(`/boost/${block.hash}/${boost}`);
+    }
+
+    // ---------------------------
+
+    async function updateLayout(svg, layout, state) {
+      const root = d3.hierarchy(state.chain);
+      layout(root);
+
+      // LINKS
+      const link =
+        svg
+        .selectAll(".link")
+        .data(root.links(), (d) => d.target.data.name);
+
+      const linkEnter =
+        link
+        .enter()
+        .append("path")
+        .attr("class", "link")
+        .attr("fill", "none")
+        .attr("stroke", "#999")
+
+      const linkMerge =
+        link
+        .merge(link)
+        .attr("d", d3.linkHorizontal().x((d) => d.y).y((d) => d.x));
+
+      link.exit().remove();
+
+      // NODES
+      const node =
+        svg
+        .selectAll(".node")
+        .data(root.descendants(), (d) => d.data.name);
+
+      const nodeEnter =
+        node
+        .enter()
+        .append("g")
+        .attr("class", "node")
+      nodeEnter
+        .append("circle")
+        .attr("fill", "#555")
+        .attr("r", (d) => 10);
+      nodeEnter
+        .append("text")
+        .attr("x", 10)
+        .attr("dy", -5)
+        .text((d) => d.data.block.hash);
+      nodeEnter
+        .on("click", async (event, d) => {
+          await boostBlock(d.data.block, 1);
+        })
+        .on("mouseover", (event, d) => {
+          d3
+          .select("#tooltip")
+          .style("opacity", 1)
+          // .text(JSON.stmringify(d.data.block));
+          .html(
+            [ `Block:  ${d.data.block.hash}`
+            , `Parent: ${d.data.block.parent}`
+            , `Slot:   ${d.data.block.slot}`
+            , `Boost:  ${d.data.block.boost}`
+            ].join("<br>")
+          )
+
+        })
+        .on("mousemove", () => {
+          d3
+          .select("#tooltip")
+          .style("left", event.pageX + 10 + "px")
+          .style("top", event.pageY - 10 + "px");
+        })
+        .on("mouseout", () => {
+          d3
+          .select("#tooltip")
+          .style("opacity", 0);
+        });
+
+      const nodeMerge =
+        node
+        .merge(nodeEnter)
+        .attr("transform", (d) => `translate(${d.y},${d.x})`)
+      nodeMerge
+        .select("text")
+        .attr("x", (d) => 10 + 4 * d.data.block.boost)
+        .attr("dy", (d) => -5 - 4 * d.data.block.boost);
+      nodeMerge
+        .select("circle")
+        .attr("r", (d) => 10 + 5 * d.data.block.boost);
+      nodeMerge
+        .raise()
+
+      node.exit().remove();
+    }
+
+    // ---------------------------
+
+    const width = 800;
+    const height = 800;
+
+    const svg = d3
+      .select("body")
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height)
+      .append("g")
+      .attr("transform", "translate(40,40)");
+
+    const treeLayout = d3.tree().size([height - 80, width - 160]);
+
+    let state = await fetchState();
+    updateLayout(svg, treeLayout, state);
+
+    setInterval(async () => {
+      state = await fetchState();
+      await updateLayout(svg, treeLayout, state);
+    }, 1000);
+
+    // ---------------------------
+  </script>
+  <div id="tooltip" class="tooltip"></div>
+</body>
