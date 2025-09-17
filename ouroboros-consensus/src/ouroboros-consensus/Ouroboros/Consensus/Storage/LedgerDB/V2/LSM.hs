@@ -109,8 +109,8 @@ toTxOutBytes st txout =
    in TxOutBytes $ LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
 
 fromTxOutBytes :: IndexedMemPack (l EmptyMK) (TxOut l) => l EmptyMK -> TxOutBytes -> TxOut l
-fromTxOutBytes st (TxOutBytes (LSM.RawBytes (VP.force -> (VP.Vector _ _ barr)))) =
-  case indexedUnpackLeftOver' st barr of
+fromTxOutBytes st (TxOutBytes (LSM.RawBytes vec)) =
+  case indexedUnpackEither st vec of
     Left err ->
       error $
         unlines
@@ -118,7 +118,7 @@ fromTxOutBytes st (TxOutBytes (LSM.RawBytes (VP.force -> (VP.Vector _ _ barr))))
           , "This will likely result in a restart-crash loop."
           , "The error: " <> show err
           ]
-    Right (v, _) -> v
+    Right v -> v
 
 instance LSM.SerialiseValue TxOutBytes where
   serialiseValue = unTxOutBytes
@@ -138,8 +138,8 @@ toTxInBytes _ txin =
    in TxInBytes $ LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
 
 fromTxInBytes :: MemPack (TxIn l) => Proxy l -> TxInBytes -> TxIn l
-fromTxInBytes _ (TxInBytes (LSM.RawBytes (VP.force -> (VP.Vector _ _ barr)))) =
-  case unpackLeftOver' barr of
+fromTxInBytes _ (TxInBytes (LSM.RawBytes vec)) =
+  case unpackEither vec of
     Left err ->
       error $
         unlines
@@ -147,7 +147,7 @@ fromTxInBytes _ (TxInBytes (LSM.RawBytes (VP.force -> (VP.Vector _ _ barr)))) =
           , "This will likely result in a restart-crash loop."
           , "The error: " <> show err
           ]
-    Right (v, _) -> v
+    Right v -> v
 
 instance LSM.SerialiseKey TxInBytes where
   serialiseKey = unTxInBytes
