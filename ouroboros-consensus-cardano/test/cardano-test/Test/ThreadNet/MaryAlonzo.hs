@@ -14,7 +14,7 @@ module Test.ThreadNet.MaryAlonzo (tests) where
 
 import Cardano.Ledger.Alonzo.Genesis (AlonzoGenesis)
 import qualified Cardano.Ledger.Api.Transition as L
-import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
+import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.BaseTypes as SL
   ( Version
   , getVersion
@@ -34,18 +34,12 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import Lens.Micro
-import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Cardano.Condense ()
 import Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
 import Ouroboros.Consensus.Config.SecurityParam
-import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
-  ( isHardForkNodeToNodeEnabled
-  )
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
-import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
-import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
@@ -57,6 +51,7 @@ import Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck
+import Test.ThreadNet.EraCrossingInfra (DualBlock, TestSetup (..))
 import Test.ThreadNet.General
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.Infra.ShelleyBasedHardFork
@@ -71,86 +66,12 @@ import Test.ThreadNet.TxGen.Mary ()
 import Test.ThreadNet.Util.Expectations (NumBlocks (..))
 import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
 import Test.ThreadNet.Util.NodeRestarts (noRestarts)
-import Test.ThreadNet.Util.NodeToNodeVersion (genVersionFiltered)
 import Test.ThreadNet.Util.Seed (runGen)
 import qualified Test.Util.BoolProps as BoolProps
 import Test.Util.HardFork.Future (EraSize (..), Future (..))
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Slots (NumSlots (..))
 import Test.Util.TestEnv
-
-type MaryAlonzoBlock =
-  ShelleyBasedHardForkBlock (TPraos MockCrypto) MaryEra (TPraos MockCrypto) AlonzoEra
-
--- | The varying data of this test
---
--- Note: The Shelley nodes in this test all join, propose an update, and endorse
--- it literally as soon as possible. Therefore, if the test reaches the end of
--- the first epoch, the proposal will be adopted.
-data TestSetup = TestSetup
-  { setupD :: Shelley.DecentralizationParam
-  , setupHardFork :: Bool
-  -- ^ whether the proposal should trigger a hard fork or not
-  , setupInitialNonce :: SL.Nonce
-  -- ^ the initial Shelley 'SL.ticknStateEpochNonce'
-  --
-  -- We vary it to ensure we explore different leader schedules.
-  , setupK :: SecurityParam
-  , setupPartition :: Partition
-  , setupSlotLength :: SlotLength
-  , setupTestConfig :: TestConfig
-  , setupVersion :: (NodeToNodeVersion, BlockNodeToNodeVersion MaryAlonzoBlock)
-  }
-  deriving Show
-
-instance Arbitrary TestSetup where
-  arbitrary = do
-    setupD <-
-      arbitrary
-        -- The decentralization parameter cannot be 0 in the first
-        -- Shelley epoch, since stake pools can only be created and
-        -- delegated to via Shelley transactions.
-        `suchThat` ((/= 0) . Shelley.decentralizationParamToRational)
-    setupK <- SecurityParam <$> choose (8, 10) `suchThatMap` nonZero
-    -- If k < 8, common prefix violations become too likely in
-    -- Praos mode for thin overlay schedules (ie low d), even for
-    -- f=0.2.
-
-    setupInitialNonce <- genNonce
-
-    setupSlotLength <- arbitrary
-
-    let epochSize = EpochSize $ shelleyEpochSize setupK
-    setupTestConfig <-
-      genTestConfig
-        setupK
-        (epochSize, epochSize)
-    let TestConfig{numCoreNodes, numSlots} = setupTestConfig
-
-    setupHardFork <- frequency [(49, pure True), (1, pure False)]
-
-    -- TODO How reliable is the Byron-based partition duration logic when
-    -- reused for Shelley?
-    setupPartition <- genPartition numCoreNodes numSlots setupK
-
-    setupVersion <-
-      genVersionFiltered
-        isHardForkNodeToNodeEnabled
-        (Proxy @MaryAlonzoBlock)
-
-    pure
-      TestSetup
-        { setupD
-        , setupHardFork
-        , setupInitialNonce
-        , setupK
-        , setupPartition
-        , setupSlotLength
-        , setupTestConfig
-        , setupVersion
-        }
-
--- TODO shrink
 
 tests :: TestTree
 tests =
@@ -167,7 +88,7 @@ tests =
     Nightly -> tree
     _ -> adjustQuickCheckTests (`div` 10) tree
 
-prop_simple_allegraAlonzo_convergence :: TestSetup -> Property
+prop_simple_allegraAlonzo_convergence :: TestSetup MaryEra AlonzoEra -> Property
 prop_simple_allegraAlonzo_convergence
   TestSetup
     { setupD
@@ -244,7 +165,7 @@ prop_simple_allegraAlonzo_convergence
         , version = setupVersion
         }
 
-    testOutput :: TestOutput MaryAlonzoBlock
+    testOutput :: TestOutput (DualBlock MaryEra AlonzoEra)
     testOutput =
       runTestNetwork
         setupTestConfig
