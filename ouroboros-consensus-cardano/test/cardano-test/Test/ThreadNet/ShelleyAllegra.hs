@@ -14,7 +14,7 @@
 module Test.ThreadNet.ShelleyAllegra (tests) where
 
 import qualified Cardano.Ledger.Api.Transition as L
-import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
+import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
@@ -29,23 +29,20 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import Lens.Micro ((^.))
-import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Cardano.Condense ()
 import Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
 import Ouroboros.Consensus.Config.SecurityParam
-import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
-  ( isHardForkNodeToNodeEnabled
-  )
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
-import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
+import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
   ( ProtocolParamsShelleyBased (..)
   , ShelleyGenesis (..)
+  , protocolInfoTPraosShelleyBased
   )
 import Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import Test.QuickCheck
@@ -65,7 +62,6 @@ import Test.ThreadNet.TxGen.Shelley
 import Test.ThreadNet.Util.Expectations (NumBlocks (..))
 import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
 import Test.ThreadNet.Util.NodeRestarts (noRestarts)
-import Test.ThreadNet.Util.NodeToNodeVersion (genVersionFiltered)
 import Test.ThreadNet.Util.Seed (runGen)
 import qualified Test.Util.BoolProps as BoolProps
 import Test.Util.HardFork.Future (EraSize (..), Future (..))
@@ -73,93 +69,21 @@ import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Slots (NumSlots (..))
 import Test.Util.TestEnv
 
-type ShelleyAllegraBlock =
-  ShelleyBasedHardForkBlock (TPraos MockCrypto) ShelleyEra (TPraos MockCrypto) AllegraEra
-
--- | The varying data of this test
---
--- Note: The Shelley nodes in this test all join, propose an update, and endorse
--- it literally as soon as possible. Therefore, if the test reaches the end of
--- the first epoch, the proposal will be adopted.
-data TestSetup = TestSetup
-  { setupD :: Shelley.DecentralizationParam
-  , setupHardFork :: Bool
-  -- ^ whether the proposal should trigger a hard fork or not
-  , setupInitialNonce :: SL.Nonce
-  -- ^ the initial Shelley 'SL.ticknStateEpochNonce'
-  --
-  -- We vary it to ensure we explore different leader schedules.
-  , setupK :: SecurityParam
-  , setupPartition :: Partition
-  , setupSlotLength :: SlotLength
-  , setupTestConfig :: TestConfig
-  , setupVersion :: (NodeToNodeVersion, BlockNodeToNodeVersion ShelleyAllegraBlock)
-  }
-  deriving Show
-
-instance Arbitrary TestSetup where
-  arbitrary = do
-    setupD <-
-      arbitrary
-        -- The decentralization parameter cannot be 0 in the first
-        -- Shelley epoch, since stake pools can only be created and
-        -- delegated to via Shelley transactions.
-        `suchThat` ((/= 0) . Shelley.decentralizationParamToRational)
-    setupK <- SecurityParam <$> choose (8, 10) `suchThatMap` nonZero
-    -- If k < 8, common prefix violations become too likely in
-    -- Praos mode for thin overlay schedules (ie low d), even for
-    -- f=0.2.
-
-    setupInitialNonce <- genNonce
-
-    setupSlotLength <- arbitrary
-
-    let epochSize = EpochSize $ shelleyEpochSize setupK
-    setupTestConfig <-
-      genTestConfig
-        setupK
-        (epochSize, epochSize)
-    let TestConfig{numCoreNodes, numSlots} = setupTestConfig
-
-    setupHardFork <- frequency [(49, pure True), (1, pure False)]
-
-    -- TODO How reliable is the Byron-based partition duration logic when
-    -- reused for Shelley?
-    setupPartition <- genPartition numCoreNodes numSlots setupK
-
-    setupVersion <-
-      genVersionFiltered
-        isHardForkNodeToNodeEnabled
-        (Proxy @ShelleyAllegraBlock)
-
-    pure
-      TestSetup
-        { setupD
-        , setupHardFork
-        , setupInitialNonce
-        , setupK
-        , setupPartition
-        , setupSlotLength
-        , setupTestConfig
-        , setupVersion
-        }
-
--- TODO shrink
-
 tests :: TestTree
 tests =
-  testGroup "ShelleyAllegra ThreadNet" $
-    [ let name = "simple convergence"
-       in askTestEnv $ adjustTestMode $ testProperty name $ \setup ->
-            prop_simple_shelleyAllegra_convergence setup
+  testGroup
+    "ShelleyAllegra ThreadNet"
+    [ askTestEnv $
+        adjustTestEnv $
+          testProperty "simple convergence" prop_simple_shelleyAllegra_convergence
     ]
  where
-  adjustTestMode :: TestTree -> TestEnv -> TestTree
-  adjustTestMode tree = \case
+  adjustTestEnv :: TestTree -> TestEnv -> TestTree
+  adjustTestEnv tree = \case
     Nightly -> tree
     _ -> adjustQuickCheckTests (`div` 10) tree
 
-prop_simple_shelleyAllegra_convergence :: TestSetup -> Property
+prop_simple_shelleyAllegra_convergence :: TestSetup TPraos ShelleyEra AllegraEra -> Property
 prop_simple_shelleyAllegra_convergence
   TestSetup
     { setupD
@@ -245,7 +169,7 @@ prop_simple_shelleyAllegra_convergence
         , version = setupVersion
         }
 
-    testOutput :: TestOutput ShelleyAllegraBlock
+    testOutput :: TestOutput (DualBlock TPraos ShelleyEra AllegraEra)
     testOutput =
       runTestNetwork
         setupTestConfig
@@ -264,11 +188,15 @@ prop_simple_shelleyAllegra_convergence
                     TriggerHardForkAtVersion $ SL.getVersion majorVersion2
                   (protocolInfo, blockForging) =
                     protocolInfoShelleyBasedHardFork
+                      protocolInfoTPraosShelleyBased
+                      protocolInfoTPraosShelleyBased
                       protocolParamsShelleyBased
+                      TPraos.tpraosParams
+                      TPraos.tpraosParams
                       (SL.ProtVer majorVersion1 0)
                       (SL.ProtVer majorVersion2 0)
                       ( L.mkTransitionConfig L.NoGenesis $
-                          L.mkShelleyTransitionConfig genesisShelley
+                          L.mkShelleyTransitionConfig shelleyGenesis
                       )
                       hardForkTrigger
                in TestNodeInitialization
@@ -306,8 +234,8 @@ prop_simple_shelleyAllegra_convergence
     maxLovelaceSupply =
       fromIntegral (length coreNodes) * Shelley.initialLovelacePerCoreNode
 
-    genesisShelley :: ShelleyGenesis
-    genesisShelley =
+    shelleyGenesis :: ShelleyGenesis
+    shelleyGenesis =
       Shelley.mkGenesisConfig
         (SL.ProtVer majorVersion1 0)
         setupK
@@ -321,7 +249,7 @@ prop_simple_shelleyAllegra_convergence
     -- the Shelley ledger is designed to use a fixed epoch size, so this test
     -- does not randomize it
     epochSize :: EpochSize
-    epochSize = sgEpochLength genesisShelley
+    epochSize = sgEpochLength shelleyGenesis
 
     firstEraSize :: EraSize
     firstEraSize = EraSize numFirstEraEpochs
@@ -361,7 +289,7 @@ prop_simple_shelleyAllegra_convergence
       secondEraOverlaySlots
         numSlots
         (NumSlots numFirstEraSlots)
-        (sgProtocolParams genesisShelley ^. SL.ppDG)
+        (sgProtocolParams shelleyGenesis ^. SL.ppDG)
         epochSize
 
     numFirstEraSlots :: Word64
