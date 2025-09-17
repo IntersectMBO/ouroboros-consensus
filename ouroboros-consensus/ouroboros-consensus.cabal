@@ -75,6 +75,7 @@ library
     Ouroboros.Consensus.Block.RealPoint
     Ouroboros.Consensus.Block.SupportsDiffusionPipelining
     Ouroboros.Consensus.Block.SupportsMetrics
+    Ouroboros.Consensus.Block.SupportsPeras
     Ouroboros.Consensus.Block.SupportsProtocol
     Ouroboros.Consensus.Block.SupportsSanityCheck
     Ouroboros.Consensus.BlockchainTime
@@ -182,6 +183,11 @@ library
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
     Ouroboros.Consensus.Node.GsmState
     Ouroboros.Consensus.Node.InitStorage
     Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -189,6 +195,8 @@ library
     Ouroboros.Consensus.Node.Run
     Ouroboros.Consensus.Node.Serialisation
     Ouroboros.Consensus.NodeId
+    Ouroboros.Consensus.Peras.SelectView
+    Ouroboros.Consensus.Peras.Weight
     Ouroboros.Consensus.Protocol.Abstract
     Ouroboros.Consensus.Protocol.BFT
     Ouroboros.Consensus.Protocol.LeaderSchedule
@@ -254,6 +262,9 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+    Ouroboros.Consensus.Storage.PerasCertDB
+    Ouroboros.Consensus.Storage.PerasCertDB.API
+    Ouroboros.Consensus.Storage.PerasCertDB.Impl
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
     Ouroboros.Consensus.Storage.VolatileDB.API
@@ -587,6 +598,9 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ChainSync.CSJ
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
+    Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke
+    Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
+    Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Versioned
 
@@ -713,6 +727,9 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog
     Test.Ouroboros.Storage.LedgerDB.V1.LMDB
     Test.Ouroboros.Storage.Orphans
+    Test.Ouroboros.Storage.PerasCertDB
+    Test.Ouroboros.Storage.PerasCertDB.Model
+    Test.Ouroboros.Storage.PerasCertDB.StateMachine
     Test.Ouroboros.Storage.TestBlock
     Test.Ouroboros.Storage.VolatileDB
     Test.Ouroboros.Storage.VolatileDB.Mock
@@ -828,6 +845,19 @@ benchmark ChainSync-client-bench
     typed-protocols-examples,
     unstable-consensus-testlib,
     with-utf8,
+
+benchmark PerasCertDB-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: bench/PerasCertDB-bench
+  main-is: Main.hs
+  other-modules:
+  build-depends:
+    base,
+    ouroboros-consensus,
+    ouroboros-network-api,
+    tasty-bench,
+    unstable-consensus-testlib,
 
 test-suite doctest
   import: common-test

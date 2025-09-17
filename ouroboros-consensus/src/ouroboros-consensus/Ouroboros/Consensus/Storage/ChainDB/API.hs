@@ -25,6 +25,10 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , addBlockWaitWrittenToDisk
   , addBlock_
 
+    -- * Adding a Peras certificate
+  , AddPerasCertPromise (..)
+  , addPerasCertSync
+
     -- * Trigger chain selection
   , ChainSelectionPromise (..)
   , triggerChainSelection
@@ -83,6 +87,7 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.LedgerDB
@@ -90,6 +95,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , ReadOnlyForker'
   , Statistics
   )
+import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -394,6 +400,12 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m (Maybe Statistics)
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
+  , addPerasCertAsync :: ValidatedPerasCert blk -> m (AddPerasCertPromise m)
+  -- ^ TODO docs
+  , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
+  -- ^ TODO
+  , getPerasCertSnapshot :: STM m (PerasCertSnapshot blk)
+  -- ^ TODO
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --
@@ -512,6 +524,23 @@ newtype ChainSelectionPromise m = ChainSelectionPromise
 triggerChainSelection :: IOLike m => ChainDB m blk -> m ()
 triggerChainSelection chainDB =
   waitChainSelectionPromise =<< chainSelAsync chainDB
+
+{-------------------------------------------------------------------------------
+  Adding a Peras certificate
+-------------------------------------------------------------------------------}
+
+newtype AddPerasCertPromise m = AddPerasCertPromise
+  { waitPerasCertProcessed :: m ()
+  -- ^ Wait until the Peras certificate has been processed (which potentially
+  -- includes switching to a different chain). If the PerasCertDB did already
+  -- contain a certificate for this round, the certificate is ignored (as the
+  -- two certificates must be identical because certificate equivocation is
+  -- impossible).
+  }
+
+addPerasCertSync :: IOLike m => ChainDB m blk -> ValidatedPerasCert blk -> m ()
+addPerasCertSync chainDB cert =
+  waitPerasCertProcessed =<< addPerasCertAsync chainDB cert
 
 {-------------------------------------------------------------------------------
   Serialised block/header with its point

@@ -1,4 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -7,12 +8,14 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Test.Ouroboros.Storage.ChainDB.Unit (tests) where
 
+import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Control.Monad (replicateM, unless, void)
 import Control.Monad.Except
@@ -35,6 +38,7 @@ import Ouroboros.Consensus.Config
   ( TopLevelConfig
   , configSecurityParam
   )
+import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -243,8 +247,9 @@ runModelIO :: API.LoE () -> ModelM TestBlock a -> IO ()
 runModelIO loe expr = toAssertion (runModel newModel topLevelConfig expr)
  where
   chunkInfo = ImmutableDB.simpleChunkInfo 100
+  k = SecurityParam (knownNonZeroBounded @2)
   newModel = Model.empty loe testInitExtLedger
-  topLevelConfig = mkTestCfg chunkInfo
+  topLevelConfig = mkTestCfg k chunkInfo
 
 -- | Helper function to run the test against the actual chain database and
 -- translate to something that HUnit likes.
@@ -252,7 +257,8 @@ runSystemIO :: SystemM TestBlock IO a -> IO ()
 runSystemIO expr = runSystem withChainDbEnv expr >>= toAssertion
  where
   chunkInfo = ImmutableDB.simpleChunkInfo 100
-  topLevelConfig = mkTestCfg chunkInfo
+  k = SecurityParam (knownNonZeroBounded @2)
+  topLevelConfig = mkTestCfg k chunkInfo
   withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertMapKind testInitExtLedger
 
 newtype TestFailure = TestFailure String deriving Show

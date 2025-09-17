@@ -87,6 +87,7 @@ import Ouroboros.Consensus.Block
   , EpochNo (EpochNo)
   , SlotNo (SlotNo)
   )
+import Ouroboros.Consensus.Config (SecurityParam)
 import Ouroboros.Consensus.Storage.ChainDB
   ( ChainType (TentativeChain)
   , LoE
@@ -142,8 +143,9 @@ pattern Command cmd rsp xs =
 
 quickCheckCmdsLockStep ::
   LoE () ->
+  SecurityParam ->
   SmallChunkInfo ->
   Commands (StateMachine.At Cmd TestBlock IO) (StateMachine.At Resp TestBlock IO) ->
   IO ()
-quickCheckCmdsLockStep loe chunkInfo cmds =
-  quickCheck $ runCmdsLockstep loe chunkInfo cmds
+quickCheckCmdsLockStep loe k chunkInfo cmds =
+  quickCheck $ runCmdsLockstep loe k chunkInfo cmds

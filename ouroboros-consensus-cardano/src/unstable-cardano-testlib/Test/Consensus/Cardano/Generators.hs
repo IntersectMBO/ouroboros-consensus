@@ -875,11 +875,11 @@ instance Arbitrary History.EraEnd where
       ]
 
 instance Arbitrary History.EraSummary where
-  arbitrary =
-    History.EraSummary
-      <$> arbitrary
-      <*> arbitrary
-      <*> arbitrary
+  -- Note: this generator may produce EraSummary with nonsensical bounds,
+  -- i.e. with existing PerasRoundNo at era start and Nothing for it at the end.
+  -- However, we only use this generator to check that the serialisation roundtrips,
+  -- and the internal structure of EraSummary is irrelevant for that.
+  arbitrary = History.EraSummary <$> arbitrary <*> arbitrary <*> arbitrary
 
 instance (Arbitrary a, SListI xs) => Arbitrary (NonEmpty xs a) where
   arbitrary = do

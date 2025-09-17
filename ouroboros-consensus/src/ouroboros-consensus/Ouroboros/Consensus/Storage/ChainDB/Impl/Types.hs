@@ -55,6 +55,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainSelMessage (..)
   , ChainSelQueue -- opaque
   , addBlockToAdd
+  , addPerasCertToQueue
   , addReprocessLoEBlocks
   , closeChainSelQueue
   , getChainSelMessage
@@ -66,6 +67,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
+  , TraceAddPerasCertEvent (..)
   , TraceChainSelStarvationEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
@@ -83,7 +85,6 @@ import Control.ResourceRegistry
 import Control.Tracer
 import Data.Foldable (traverse_)
 import Data.Map.Strict (Map)
-import Data.Maybe (mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
@@ -99,10 +100,12 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
+  , AddPerasCertPromise (..)
   , ChainDbError (..)
   , ChainSelectionPromise (..)
   , ChainType
@@ -124,6 +127,8 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , LedgerDbSerialiseConstraints
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
   ( VolatileDB
@@ -349,6 +354,7 @@ data ChainDbEnv m blk = CDB
   , cdbChainSelStarvation :: !(StrictTVar m ChainSelStarvation)
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
+  , cdbPerasCertDB :: !(PerasCertDB m blk)
   }
   deriving Generic
 
@@ -545,6 +551,11 @@ data BlockToAdd m blk = BlockToAdd
 data ChainSelMessage m blk
   = -- | Add a new block
     ChainSelAddBlock !(BlockToAdd m blk)
+  | -- | Add a Peras certificate
+    ChainSelAddPerasCert
+      !(ValidatedPerasCert blk)
+      -- | Used for 'AddPerasCertPromise'.
+      !(StrictTMVar m ())
   | -- | Reprocess blocks that have been postponed by the LoE.
     ChainSelReprocessLoEBlocks
       -- | Used for 'ChainSelectionPromise'.
@@ -592,6 +603,27 @@ addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish
       { blockWrittenToDisk = readTMVar varBlockWrittenToDisk
       , blockProcessed = readTMVar varBlockProcessed
       }
+
+-- | Add a Peras certificate to the background queue.
+addPerasCertToQueue ::
+  (IOLike m, StandardHash blk) =>
+  Tracer m (TraceAddPerasCertEvent blk) ->
+  ChainSelQueue m blk ->
+  ValidatedPerasCert blk ->
+  m (AddPerasCertPromise m)
+addPerasCertToQueue tracer ChainSelQueue{varChainSelQueue} cert = do
+  varProcessed <- newEmptyTMVarIO
+  traceWith tracer $ addedToQueue RisingEdge
+  queueSize <- atomically $ do
+    writeTBQueue varChainSelQueue $ ChainSelAddPerasCert cert varProcessed
+    lengthTBQueue varChainSelQueue
+  traceWith tracer $ addedToQueue $ FallingEdgeWith $ fromIntegral queueSize
+  pure
+    AddPerasCertPromise
+      { waitPerasCertProcessed = atomically $ takeTMVar varProcessed
+      }
+ where
+  addedToQueue = AddedPerasCertToQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
 
 -- | Try to add blocks again that were postponed due to the LoE.
 addReprocessLoEBlocks ::
@@ -647,6 +679,7 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
       let pt = blockRealPoint block
       traceWith starvationTracer $ ChainSelStarvation (FallingEdgeWith pt)
       atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
+    ChainSelAddPerasCert{} -> pure ()
     ChainSelReprocessLoEBlocks{} -> pure ()
 
 -- TODO Can't use tryReadTBQueue from io-classes because it is broken for IOSim
@@ -657,18 +690,15 @@ tryReadTBQueue' q = (Just <$> readTBQueue q) `orElse` pure Nothing
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
 closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
-  as <- mapMaybe blockAdd <$> flushTBQueue queue
-  traverse_
-    ( \a ->
-        tryPutTMVar
-          (varBlockProcessed a)
-          (FailedToAddBlock "Queue flushed")
-    )
-    as
+  traverse_ deliverPromise =<< flushTBQueue queue
  where
-  blockAdd = \case
-    ChainSelAddBlock ab -> Just ab
-    ChainSelReprocessLoEBlocks _ -> Nothing
+  deliverPromise = \case
+    ChainSelAddBlock ab ->
+      tryPutTMVar (varBlockProcessed ab) (FailedToAddBlock "Queue flushed")
+    ChainSelAddPerasCert _cert varProcessed ->
+      tryPutTMVar varProcessed ()
+    ChainSelReprocessLoEBlocks varProcessed ->
+      tryPutTMVar varProcessed ()
 
 -- | To invoke when the given 'ChainSelMessage' has been processed by ChainSel.
 -- This is used to remove the respective point from the multiset of points in
@@ -681,6 +711,8 @@ processedChainSelMessage ::
 processedChainSelMessage ChainSelQueue{varChainSelPoints} = \case
   ChainSelAddBlock BlockToAdd{blockToAdd = blk} ->
     modifyTVar varChainSelPoints $ MultiSet.delete (blockRealPoint blk)
+  ChainSelAddPerasCert{} ->
+    pure ()
   ChainSelReprocessLoEBlocks{} ->
     pure ()
 
@@ -722,8 +754,10 @@ data TraceEvent blk
   | TraceLedgerDBEvent (LedgerDB.TraceEvent blk)
   | TraceImmutableDBEvent (ImmutableDB.TraceEvent blk)
   | TraceVolatileDBEvent (VolatileDB.TraceEvent blk)
+  | TracePerasCertDbEvent (PerasCertDB.TraceEvent blk)
   | TraceLastShutdownUnclean
   | TraceChainSelStarvationEvent (TraceChainSelStarvationEvent blk)
+  | TraceAddPerasCertEvent (TraceAddPerasCertEvent blk)
   deriving Generic
 
 deriving instance
@@ -802,21 +836,23 @@ data SelectionChangedInfo blk = SelectionChangedInfo
   -- Due to the Ouroboros Genesis (Limit on Eagerness), chain selection can also
   -- be triggered without any particular trigger block, in which case this is
   -- 'Nothing'.
-  , newTipSelectView :: SelectView (BlockProtocol blk)
-  -- ^ The 'SelectView' of the new tip. It is guaranteed that
+  , newSuffixSelectView :: WeightedSelectView (BlockProtocol blk)
+  -- ^ The 'WeightedSelectView' of the suffix of our new selection that was not
+  -- already present in the old selection. It is guaranteed that
   --
-  -- > Just newTipSelectView > oldTipSelectView
-  -- True
-  , oldTipSelectView :: Maybe (SelectView (BlockProtocol blk))
-  -- ^ The 'SelectView' of the old, previous tip. This can be 'Nothing' when
-  -- the previous chain/tip was Genesis.
+  -- > preferCandidate cfg
+  -- >   (withEmptyFragmentFromMaybe oldSuffixSelectView)
+  -- >   newSuffixSelectView
+  , oldSuffixSelectView :: Maybe (WeightedSelectView (BlockProtocol blk))
+  -- ^ The 'WeightedSelectView' of the orphaned suffix of our old selection.
+  -- This is 'Nothing' when we extended our selection.
   }
   deriving Generic
 
 deriving stock instance
-  (Show (SelectView (BlockProtocol blk)), StandardHash blk) => Show (SelectionChangedInfo blk)
+  (Show (TiebreakerView (BlockProtocol blk)), StandardHash blk) => Show (SelectionChangedInfo blk)
 deriving stock instance
-  (Eq (SelectView (BlockProtocol blk)), StandardHash blk) => Eq (SelectionChangedInfo blk)
+  (Eq (TiebreakerView (BlockProtocol blk)), StandardHash blk) => Eq (SelectionChangedInfo blk)
 
 -- | Trace type for the various events that occur when adding a block.
 data TraceAddBlockEvent blk
@@ -1031,4 +1067,27 @@ data TraceIteratorEvent blk
 -- The point in the trace is the block that finished the starvation.
 newtype TraceChainSelStarvationEvent blk
   = ChainSelStarvation (Enclosing' (RealPoint blk))
+  deriving (Generic, Eq, Show)
+
+data TraceAddPerasCertEvent blk
+  = -- | The Peras certificate from the given round boosting the given block was
+    -- added to the queue. The size of the queue is included.
+    AddedPerasCertToQueue PerasRoundNo (Point blk) (Enclosing' Word)
+  | -- | The Peras certificate from the given round boosting the given block was
+    -- popped from the queue.
+    PoppedPerasCertFromQueue PerasRoundNo (Point blk)
+  | -- | The Peras certificate from the given round boosting the given block was
+    -- too old, ie its slot was older than the current immutable slot (the third
+    -- argument).
+    IgnorePerasCertTooOld PerasRoundNo (Point blk) (Point blk)
+  | -- | The Peras certificate from the given round boosts a block on the
+    -- current selection.
+    PerasCertBoostsCurrentChain PerasRoundNo (Point blk)
+  | -- | The Peras certificate from the given round boosts the Genesis point.
+    PerasCertBoostsGenesis PerasRoundNo
+  | -- | The Peras certificate from the given round boosts a block that we have
+    -- not (yet) received.
+    PerasCertBoostsBlockNotYetReceived PerasRoundNo (Point blk)
+  | -- | Perform chain selection for a block boosted by a Peras certificate.
+    ChainSelectionForBoostedBlock PerasRoundNo (Point blk)
   deriving (Generic, Eq, Show)

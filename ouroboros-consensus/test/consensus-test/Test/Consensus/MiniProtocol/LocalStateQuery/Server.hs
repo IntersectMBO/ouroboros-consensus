@@ -37,6 +37,7 @@ import Ouroboros.Consensus.Ledger.Query (Query (..))
 import Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.BFT
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream hiding
@@ -100,7 +101,7 @@ prop_localStateQueryServer ::
 prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain actualOutcome
  where
   chain :: Chain TestBlock
-  chain = treePreferredChain bt
+  chain = treePreferredChain emptyPerasWeightSnapshot bt
 
   points :: [Target (Point TestBlock)]
   points =
