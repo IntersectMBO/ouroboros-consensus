@@ -211,9 +211,9 @@ empty' ::
   , HasLedgerTables l
   ) =>
   l ValuesMK ->
-  (LedgerTables l ValuesMK -> m (LedgerTablesHandle m l)) ->
+  (l ValuesMK -> m (LedgerTablesHandle m l)) ->
   m (LedgerSeq m l)
-empty' st = empty (forgetLedgerTables st) (ltprj st)
+empty' st = empty (forgetLedgerTables st) st
 
 -- | Close all 'LedgerTablesHandle' in this 'LedgerSeq', in particular that on
 -- the anchor.
