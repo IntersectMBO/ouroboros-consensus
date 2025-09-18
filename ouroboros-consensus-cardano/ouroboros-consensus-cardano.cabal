@@ -101,7 +101,6 @@ library
     Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
     Ouroboros.Consensus.Cardano.QueryHF
-    Ouroboros.Consensus.Cardano.StreamingLedgerTables
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
     Ouroboros.Consensus.Shelley.HFEras
@@ -160,10 +159,7 @@ library
     contra-tracer,
     crypton,
     deepseq,
-    directory,
-    filepath,
     formatting >=6.3 && <7.3,
-    fs-api,
     measures,
     mempack,
     microlens,
@@ -172,15 +168,12 @@ library
     ouroboros-consensus ^>=0.28,
     ouroboros-consensus-protocol ^>=0.13,
     ouroboros-network-api ^>=0.16,
-    random,
-    resource-registry,
     serialise ^>=0.2,
     singletons ^>=3.0,
     small-steps,
     sop-core ^>=0.5,
     sop-extras ^>=0.4,
     strict-sop-core ^>=0.1,
-    temporary,
     text,
     these ^>=1.2,
     validation,
