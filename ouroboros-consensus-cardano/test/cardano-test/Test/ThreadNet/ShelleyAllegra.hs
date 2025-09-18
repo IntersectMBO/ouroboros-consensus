@@ -69,14 +69,15 @@ import Test.Util.TestEnv
 
 tests :: TestTree
 tests =
-  testGroup "ShelleyAllegra ThreadNet" $
-    [ let name = "simple convergence"
-       in askTestEnv $ adjustTestMode $ testProperty name $ \setup ->
-            prop_simple_shelleyAllegra_convergence setup
+  testGroup
+    "ShelleyAllegra ThreadNet"
+    [ askTestEnv $
+        adjustTestEnv $
+          testProperty "simple convergence" prop_simple_shelleyAllegra_convergence
     ]
  where
-  adjustTestMode :: TestTree -> TestEnv -> TestTree
-  adjustTestMode tree = \case
+  adjustTestEnv :: TestTree -> TestEnv -> TestTree
+  adjustTestEnv tree = \case
     Nightly -> tree
     _ -> adjustQuickCheckTests (`div` 10) tree
 
@@ -189,7 +190,7 @@ prop_simple_shelleyAllegra_convergence
                       (SL.ProtVer majorVersion1 0)
                       (SL.ProtVer majorVersion2 0)
                       ( L.mkTransitionConfig L.NoGenesis $
-                          L.mkShelleyTransitionConfig genesisShelley
+                          L.mkShelleyTransitionConfig shelleyGenesis
                       )
                       hardForkTrigger
                in TestNodeInitialization
@@ -227,8 +228,8 @@ prop_simple_shelleyAllegra_convergence
     maxLovelaceSupply =
       fromIntegral (length coreNodes) * Shelley.initialLovelacePerCoreNode
 
-    genesisShelley :: ShelleyGenesis
-    genesisShelley =
+    shelleyGenesis :: ShelleyGenesis
+    shelleyGenesis =
       Shelley.mkGenesisConfig
         (SL.ProtVer majorVersion1 0)
         setupK
@@ -242,7 +243,7 @@ prop_simple_shelleyAllegra_convergence
     -- the Shelley ledger is designed to use a fixed epoch size, so this test
     -- does not randomize it
     epochSize :: EpochSize
-    epochSize = sgEpochLength genesisShelley
+    epochSize = sgEpochLength shelleyGenesis
 
     firstEraSize :: EraSize
     firstEraSize = EraSize numFirstEraEpochs
@@ -282,7 +283,7 @@ prop_simple_shelleyAllegra_convergence
       secondEraOverlaySlots
         numSlots
         (NumSlots numFirstEraSlots)
-        (sgProtocolParams genesisShelley ^. SL.ppDG)
+        (sgProtocolParams shelleyGenesis ^. SL.ppDG)
         epochSize
 
     numFirstEraSlots :: Word64

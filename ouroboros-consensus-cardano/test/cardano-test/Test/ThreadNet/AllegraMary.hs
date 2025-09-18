@@ -71,7 +71,9 @@ tests :: TestTree
 tests =
   testGroup
     "AllegraMary ThreadNet"
-    [ askTestEnv $ adjustTestEnv $ testProperty "simple convergence" prop_simple_allegraMary_convergence
+    [ askTestEnv $
+        adjustTestEnv $
+          testProperty "simple convergence" prop_simple_allegraMary_convergence
     ]
  where
   adjustTestEnv :: TestTree -> TestEnv -> TestTree

@@ -77,14 +77,13 @@ tests :: TestTree
 tests =
   testGroup
     "MaryAlonzo ThreadNet"
-    [ let name = "simple convergence"
-       in askTestEnv $
-            adjustTestMode $
-              testProperty name prop_simple_allegraAlonzo_convergence
+    [ askTestEnv $
+        adjustTestEnv $
+          testProperty "simple convergence" prop_simple_allegraAlonzo_convergence
     ]
  where
-  adjustTestMode :: TestTree -> TestEnv -> TestTree
-  adjustTestMode tree = \case
+  adjustTestEnv :: TestTree -> TestEnv -> TestTree
+  adjustTestEnv tree = \case
     Nightly -> tree
     _ -> adjustQuickCheckTests (`div` 10) tree
 
