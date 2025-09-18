@@ -156,7 +156,7 @@ jobs:
 
     - name: Test
       if: matrix.test-set == 'all'
-      run: cabal test all -j --test-show-details=streaming
+      run: cabal test all -j --test-show-details=streaming --test-options '--hide-successes'
 
     - name: Test (NoThunks-safe tests only)
       if: matrix.test-set == 'no-thunks-safe'
