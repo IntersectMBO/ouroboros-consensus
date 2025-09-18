@@ -53,7 +53,6 @@ module Ouroboros.Consensus.Node
   , pattern DoDiskSnapshotChecksum
   , pattern NoDoDiskSnapshotChecksum
   , ChainSyncIdleTimeout (..)
-  , LedgerDbBackendArgs (..)
 
     -- * Internal helpers
   , mkNodeKernelArgs
@@ -127,8 +126,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -176,11 +173,11 @@ import Ouroboros.Network.Protocol.ChainSync.Codec (timeLimitsChainSync)
 import Ouroboros.Network.RethrowPolicy
 import qualified SafeWildCards
 import System.Exit (ExitCode (..))
-import System.FS.API (SomeHasFS (..), mkFsPath)
+import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (..))
 import System.FS.IO (ioHasFS)
-import System.FilePath (splitDirectories, (</>))
-import System.Random (StdGen, genWord64, newStdGen, randomIO, split)
+import System.FilePath ((</>))
+import System.Random (StdGen, newStdGen, randomIO, split)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -320,7 +317,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
   , llrnMaxClockSkew :: InFutureCheck.ClockSkew
   -- ^ Maximum clock skew
   , llrnPublicPeerSelectionStateVar :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
-  , llrnLdbFlavorArgs :: Complete LedgerDbFlavorArgs m
+  , llrnLdbFlavorArgs :: LedgerDbBackendArgs m blk
   -- ^ The flavor arguments
   }
 
@@ -378,7 +375,7 @@ data
   , -- Ad hoc values to replace default ChainDB configurations
     srnSnapshotPolicyArgs :: SnapshotPolicyArgs
   , srnQueryBatchSize :: QueryBatchSize
-  , srnLedgerDbBackendArgs :: LedgerDbBackendArgs m
+  , srnLedgerDbBackendArgs :: LedgerDbBackendArgs m blk
   }
 
 {-------------------------------------------------------------------------------
@@ -819,7 +816,7 @@ openChainDB ::
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile FS, see 'NodeDatabasePaths'
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
-  Complete LedgerDbFlavorArgs m ->
+  LedgerDbBackendArgs m blk ->
   -- | A set of default arguments (possibly modified from 'defaultArgs')
   Incomplete ChainDbArgs m blk ->
   -- | Customise the 'ChainDbArgs'
@@ -1007,7 +1004,7 @@ stdLowLevelRunNodeArgsIO
     }
   $(SafeWildCards.fields 'StdRunNodeArgs) = do
     llrnBfcSalt <- stdBfcSaltIO
-    (lsmSalt, llrnRng) <- genWord64 <$> newStdGen
+    llrnRng <- newStdGen
     pure
       LowLevelRunNodeArgs
         { llrnBfcSalt
@@ -1052,21 +1049,7 @@ stdLowLevelRunNodeArgsIO
             InFutureCheck.defaultClockSkew
         , llrnPublicPeerSelectionStateVar =
             Diffusion.dcPublicPeerSelectionVar srnDiffusionConfiguration
-        , llrnLdbFlavorArgs =
-            case srnLedgerDbBackendArgs of
-              V1LMDB args -> LedgerDbFlavorArgsV1 args
-              V2InMemory -> LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
-              V2LSM path ->
-                LedgerDbFlavorArgsV2
-                  ( V2.V2Args
-                      ( V2.LSMHandleArgs
-                          ( V2.LSMArgs
-                              (mkFsPath $ splitDirectories path)
-                              lsmSalt
-                              (LSM.stdMkBlockIOFS (nonImmutableDbPath srnDatabasePath))
-                          )
-                      )
-                  )
+        , llrnLdbFlavorArgs = srnLedgerDbBackendArgs
         }
    where
     networkMagic :: NetworkMagic
