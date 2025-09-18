@@ -45,7 +45,8 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Stream hiding
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Args
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
 import Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -231,7 +232,7 @@ initLedgerDB s c = do
           , lgrHasFS = SomeHasFS $ simHasFS fs
           , lgrGenesis = return testInitExtLedger
           , lgrTracer = nullTracer
-          , lgrFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency InMemoryBackingStoreArgs
+          , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrRegistry = reg
