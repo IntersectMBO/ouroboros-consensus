@@ -2,11 +2,13 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeData #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | An implementation of a 'BackingStore' using a TVar. This is the
@@ -14,6 +16,8 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory
   ( -- * Constructor
     newInMemoryBackingStore
+  , Backend (..)
+  , Args (InMemArgs)
 
     -- * Errors
   , InMemoryBackingStoreExn (..)
@@ -28,6 +32,7 @@ import Control.Monad (join, unless, void, when)
 import Control.Monad.Class.MonadThrow (catch)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString.Lazy as BSL
+import Data.Functor.Contravariant
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.String (fromString)
@@ -38,7 +43,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( SnapshotBackend (..)
   )
-import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
+import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
   , IOLike
@@ -343,3 +348,26 @@ instance Show InMemoryBackingStoreInitExn where
       <> show p
       <> ".\nPre-UTxO-HD and LMDB implementations are incompatible with the In-Memory \
          \ implementation. Please delete your ledger database directory."
+
+type data Mem
+
+instance
+  ( IOLike m
+  , HasLedgerTables l
+  , CanUpgradeLedgerTables l
+  , SerializeTablesWithHint l
+  ) =>
+  Backend m Mem l
+  where
+  data Args m Mem = InMemArgs
+  data Trace m Mem
+    = InMemoryBackingStoreInitialise
+    | InMemoryBackingStoreTrace BackingStoreTrace
+    deriving (Eq, Show)
+
+  isRightBackendForSnapshot _ _ UTxOHDMemSnapshot = True
+  isRightBackendForSnapshot _ _ _ = False
+
+  newBackingStoreInitialiser trcr InMemArgs =
+    newInMemoryBackingStore
+      (SomeBackendTrace . InMemoryBackingStoreTrace >$< trcr)
