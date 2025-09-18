@@ -23,6 +23,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
   ( HasTxs
@@ -39,11 +40,11 @@ import Ouroboros.Consensus.Storage.LedgerDB (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as LedgerDB.V2
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.Args
@@ -60,6 +61,7 @@ import Text.Printf (printf)
 -------------------------------------------------------------------------------}
 
 openLedgerDB ::
+  forall blk.
   ( LedgerSupportsProtocol blk
   , InspectLedger blk
   , HasHardForkHistory blk
@@ -70,59 +72,42 @@ openLedgerDB ::
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV1 bss} = do
-  let snapManager = V1.snapshotManager lgrDbArgs
-  (ledgerDB, _, intLedgerDB) <-
-    LedgerDB.openDBInternal
-      lgrDbArgs
-      ( LedgerDB.V1.mkInitDb
-          lgrDbArgs
-          bss
-          (\_ -> error "no replay")
-          snapManager
-          (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig lgrDbArgs)
-      )
-      snapManager
-      emptyStream
-      genesisPoint
-  pure (ledgerDB, intLedgerDB)
-openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV2 args} = do
-  (snapManager, bss') <- case args of
-    V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager lgrDbArgs, V2.InMemoryHandleEnv)
-    V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path salt mkFS)) -> do
-      (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (LedgerDB.lgrRegistry lgrDbArgs)
-      session <-
-        allocate
-          (LedgerDB.lgrRegistry lgrDbArgs)
-          ( \_ ->
-              LSM.openSession
-                ( LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 . V2.LSMTrace
-                    >$< LedgerDB.lgrTracer lgrDbArgs
-                )
-                fs'
-                blockio
-                salt
-                path
-          )
-          LSM.closeSession
-      pure
-        ( LSM.snapshotManager (snd session) lgrDbArgs
-        , V2.LSMHandleEnv (V2.LSMResources (fst session) (snd session) rk1)
-        )
-  (ledgerDB, _, intLedgerDB) <-
-    LedgerDB.openDBInternal
-      lgrDbArgs
-      ( LedgerDB.V2.mkInitDb
-          lgrDbArgs
-          bss'
-          (\_ -> error "no replay")
-          snapManager
-          (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig lgrDbArgs)
-      )
-      snapManager
-      emptyStream
-      genesisPoint
-  pure (ledgerDB, intLedgerDB)
+openLedgerDB args = do
+  (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
+    LedgerDB.LedgerDbBackendArgsV1 bss ->
+      let snapManager = LedgerDB.V1.snapshotManager args
+          initDb =
+            LedgerDB.V1.mkInitDb
+              args
+              bss
+              (\_ -> pure (error "no stream"))
+              snapManager
+              (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
+       in LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+    LedgerDB.LedgerDbBackendArgsV2 (LedgerDB.V2.SomeBackendArgs bArgs) -> do
+      res <-
+        LedgerDB.V2.mkResources
+          (Proxy @blk)
+          (LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 >$< LedgerDB.lgrTracer args)
+          bArgs
+          (LedgerDB.lgrRegistry args)
+          (LedgerDB.lgrHasFS args)
+      let snapManager =
+            LedgerDB.V2.snapshotManager
+              (Proxy @blk)
+              res
+              (configCodec . getExtLedgerCfg . LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig args)
+              (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
+              (LedgerDB.lgrHasFS args)
+      let initDb =
+            LedgerDB.V2.mkInitDb
+              args
+              (\_ -> pure (error "no stream"))
+              snapManager
+              (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
+              res
+      LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+  pure (ldb, od)
 
 emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
 emptyStream = ImmutableDB.StreamAPI $ \_ k -> k $ Right $ pure ImmutableDB.NoMoreItems
@@ -158,32 +143,23 @@ analyse dbaConfig args =
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
-          V1InMem ->
-            LedgerDB.LedgerDbFlavorArgsV1
-              ( LedgerDB.V1.V1Args
-                  LedgerDB.V1.DisableFlushing
-                  LedgerDB.V1.InMemoryBackingStoreArgs
-              )
           V1LMDB ->
-            LedgerDB.LedgerDbFlavorArgsV1
-              ( LedgerDB.V1.V1Args
-                  LedgerDB.V1.DisableFlushing
-                  ( LedgerDB.V1.LMDBBackingStoreArgs
-                      "lmdb"
-                      defaultLMDBLimits
-                      Dict.Dict
-                  )
-              )
+            LedgerDB.LedgerDbBackendArgsV1
+              $ LedgerDB.V1.V1Args
+                LedgerDB.V1.DisableFlushing
+              $ LedgerDB.V1.SomeBackendArgs
+              $ LMDB.LMDBBackingStoreArgs
+                "lmdb"
+                defaultLMDBLimits
+                Dict.Dict
           V2InMem ->
-            LedgerDB.LedgerDbFlavorArgsV2
-              (LedgerDB.V2.V2Args LedgerDB.V2.InMemoryHandleArgs)
+            LedgerDB.LedgerDbBackendArgsV2 $
+              LedgerDB.V2.SomeBackendArgs InMemory.InMemArgs
           V2LSM ->
-            LedgerDB.LedgerDbFlavorArgsV2
-              ( LedgerDB.V2.V2Args
-                  ( LedgerDB.V2.LSMHandleArgs
-                      (LedgerDB.V2.LSMArgs (mkFsPath ["lsm"]) lsmSalt (LSM.stdMkBlockIOFS dbDir))
-                  )
-              )
+            LedgerDB.LedgerDbBackendArgsV2 $
+              LedgerDB.V2.SomeBackendArgs $
+                LSM.LSMArgs (mkFsPath ["lsm"]) lsmSalt (LSM.stdMkBlockIOFS dbDir)
+
         args' =
           ChainDB.completeChainDbArgs
             registry
