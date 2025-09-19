@@ -31,6 +31,8 @@ data ShelleyNodeToClientVersion
     ShelleyNodeToClientVersion13
   | -- | Support SRV in GetBigLedgerPeerSnapshot
     ShelleyNodeToClientVersion14
+    -- | New queries introduced: QueryDRepsDelegations
+  | ShelleyNodeToClientVersion15
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 ledgerPeerSnapshotSupportsSRV :: ShelleyNodeToClientVersion -> LedgerPeerSnapshotSRVSupport
@@ -58,6 +60,7 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
       , (NodeToClientV_20, ShelleyNodeToClientVersion12)
       , (NodeToClientV_21, ShelleyNodeToClientVersion13)
       , (NodeToClientV_22, ShelleyNodeToClientVersion14)
+      , (NodeToClientV_23, ShelleyNodeToClientVersion15)
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
