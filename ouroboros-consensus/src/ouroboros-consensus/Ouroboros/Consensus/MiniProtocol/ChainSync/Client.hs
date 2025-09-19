@@ -124,6 +124,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Ju
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import Ouroboros.Consensus.Node.GsmState (GsmState (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
@@ -1833,7 +1834,12 @@ checkTime cfgEnv dynEnv intEnv =
   checkPreferTheirsOverOurs kis
     | -- Precondition is fulfilled as ourFrag and theirFrag intersect by
       -- construction.
-      preferAnchoredCandidate (configBlock cfg) ourFrag theirFrag =
+      preferAnchoredCandidate
+        (configBlock cfg)
+        -- TODO: remove this entire check, see https://github.com/tweag/cardano-peras/issues/64
+        emptyPerasWeightSnapshot
+        ourFrag
+        theirFrag =
         pure ()
     | otherwise =
         throwSTM $

@@ -71,6 +71,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
@@ -399,6 +400,7 @@ garbageCollectBlocks CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
+  PerasCertDB.garbageCollect cdbPerasCertDB slotNo
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 
 {-------------------------------------------------------------------------------
@@ -632,6 +634,8 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
                   varBlockProcessed
                   (FailedToAddBlock "Failed to add block synchronously")
               pure ()
+            ChainSelAddPerasCert _cert varProcessed ->
+              void $ tryPutTMVar varProcessed ()
           closeChainSelQueue cdbChainSelQueue
       )
       ( \message -> do
@@ -640,6 +644,10 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
               trace PoppedReprocessLoEBlocksFromQueue
             ChainSelAddBlock BlockToAdd{blockToAdd} ->
               trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
+            ChainSelAddPerasCert cert _varProcessed ->
+              traceWith cdbTracer $
+                TraceAddPerasCertEvent $
+                  PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
           chainSelSync cdb message
           lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
       )
