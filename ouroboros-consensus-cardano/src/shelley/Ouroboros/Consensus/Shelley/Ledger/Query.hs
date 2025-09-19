@@ -364,6 +364,12 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery (ShelleyBlock proto era) QFNoTables SL.PoolDistr
   GetMaxMajorProtocolVersion ::
     BlockQuery (ShelleyBlock proto era) QFNoTables MaxMajorProtVer
+  GetDRepDelegations ::
+    Set SL.DRep ->
+    BlockQuery
+      (ShelleyBlock proto era)
+      QFNoTables
+      (Map SL.DRep (Set (SL.Credential 'SL.Staking)))
 
 -- WARNING: please add new queries to the end of the list and stick to this
 -- order in all other pattern matches on queries. This helps in particular
@@ -534,6 +540,8 @@ instance
           . configConsensus
           . getExtLedgerCfg
           $ cfg
+      GetDRepDelegations dreps ->
+        SL.queryDRepDelegations st dreps
    where
     lcfg = configLedger $ getExtLedgerCfg cfg
     globals = shelleyLedgerGlobals lcfg
@@ -593,6 +601,7 @@ instance
     GetPoolDistr2{} -> (>= v13)
     GetStakeDistribution2{} -> (>= v13)
     GetMaxMajorProtocolVersion -> (>= v13)
+    GetDRepDelegations {} -> (>= v15)
    where
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
@@ -603,6 +612,7 @@ instance
     v11 = ShelleyNodeToClientVersion11
     v12 = ShelleyNodeToClientVersion12
     v13 = ShelleyNodeToClientVersion13
+    v15 = ShelleyNodeToClientVersion15
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetLedgerTip GetLedgerTip =
@@ -762,6 +772,12 @@ instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetStakeDistribution2{} _ = Nothing
   sameDepIndex2 GetMaxMajorProtocolVersion{} GetMaxMajorProtocolVersion{} = Just Refl
   sameDepIndex2 GetMaxMajorProtocolVersion{} _ = Nothing
+  sameDepIndex2 (GetDRepDelegations dreps) (GetDRepDelegations dreps')
+    | dreps == dreps' =
+        Just Refl
+    | otherwise =
+        Nothing
+  sameDepIndex2 GetDRepDelegations{} _ = Nothing
 
 deriving instance Eq (BlockQuery (ShelleyBlock proto era) fp result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) fp result)
@@ -807,6 +823,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
     GetPoolDistr2{} -> show
     GetStakeDistribution2{} -> show
     GetMaxMajorProtocolVersion{} -> show
+    GetDRepDelegations {} -> show
 
 {-------------------------------------------------------------------------------
   Auxiliary
@@ -931,6 +948,8 @@ encodeShelleyQuery query = case query of
     CBOR.encodeListLen 1 <> CBOR.encodeWord8 37
   GetMaxMajorProtocolVersion ->
     CBOR.encodeListLen 1 <> CBOR.encodeWord8 38
+  GetDRepDelegations dreps ->
+    CBOR.encodeListLen 2 <> CBOR.encodeWord8 39 <> LC.toEraCBOR @era dreps
 
 decodeShelleyQuery ::
   forall era proto.
@@ -1005,6 +1024,7 @@ decodeShelleyQuery = do
     (2, 36) -> SomeBlockQuery . GetPoolDistr2 <$> fromCBOR
     (1, 37) -> return $ SomeBlockQuery GetStakeDistribution2
     (1, 38) -> return $ SomeBlockQuery GetMaxMajorProtocolVersion
+    (2, 39) -> SomeBlockQuery . GetDRepDelegations <$> LC.fromEraCBOR @era
     _ -> failmsg "invalid"
 
 encodeShelleyResult ::
@@ -1054,6 +1074,7 @@ encodeShelleyResult v query = case query of
   GetPoolDistr2{} -> LC.toEraCBOR @era
   GetStakeDistribution2{} -> LC.toEraCBOR @era
   GetMaxMajorProtocolVersion -> toCBOR
+  GetDRepDelegations {} -> LC.toEraCBOR @era
 
 decodeShelleyResult ::
   forall proto era fp result.
@@ -1102,6 +1123,7 @@ decodeShelleyResult v query = case query of
   GetPoolDistr2{} -> LC.fromEraCBOR @era
   GetStakeDistribution2 -> LC.fromEraCBOR @era
   GetMaxMajorProtocolVersion -> fromCBOR
+  GetDRepDelegations {} -> LC.fromEraCBOR @era
 
 currentPParamsEnDecoding ::
   forall era s.
