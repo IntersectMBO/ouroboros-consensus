@@ -28,11 +28,11 @@ let
         ghcOptions = [ "-Werror" ];
       }))
       {
-        # Options related to tasty-golden:
+        # Options related to tasty and tasty-golden:
         packages.ouroboros-consensus-cardano.components.tests =
           lib.listToAttrs (builtins.map
             (n: lib.nameValuePair "${n}-test" {
-              testFlags = lib.mkForce [ "--no-create" ];
+              testFlags = lib.mkForce [ "--no-create --hide-successes" ];
               extraSrcFiles = [ "golden/${n}/**/*" ];
             }) [ "byron" "shelley" "cardano" ]);
       }
