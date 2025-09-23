@@ -3,4 +3,5 @@ depend:
   standard-library
   standard-library-classes
   standard-library-meta
+  abstract-set-theory
 include: .

@@ -14,9 +14,8 @@ module Ledger.Prelude where
 open import Prelude public
 
 open import Ledger.Prelude.Base public
+open import Ledger.Prelude.Instances public
 
-open import Data.Maybe.Properties.Ext public
-open import Data.Product.Ext public
 open import Interface.ComputationalRelation public
 open import Interface.HasAdd public
 open import Interface.HasAdd.Instance public
@@ -30,11 +29,10 @@ open import Interface.ToBool public
 open import Ledger.Interface.HasCoin public
 open import MyDebugOptions public
 open import Tactic.Premises public
+open import Class.CommutativeMonoid public
 
-open import Ledger.Set renaming (∅ to ∅ˢ; ❴_❵ to ❴_❵ˢ) public
-open import Interface.HasSingleton th public
-open import Interface.HasEmptySet public
-open import Interface.HasEmptySet.Instances th public
+open import abstract-set-theory.FiniteSetTheory public
+  renaming (_⊆_ to _⊆ˢ_)
 
 dec-de-morgan : ∀{P Q : Type} → ⦃ P ⁇ ⦄ → ¬ (P × Q) → ¬ P ⊎ ¬ Q
 dec-de-morgan ⦃ ⁇ no ¬p ⦄ ¬pq = inj₁ ¬p

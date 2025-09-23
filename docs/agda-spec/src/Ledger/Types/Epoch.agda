@@ -2,7 +2,7 @@
 
 module Ledger.Types.Epoch where
 
-open import Ledger.Prelude hiding (compare; Rel)
+open import Ledger.Prelude hiding (compare)
 
 open import Agda.Builtin.FromNat
 open import Algebra using (Semiring)

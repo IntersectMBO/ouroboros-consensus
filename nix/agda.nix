@@ -48,7 +48,23 @@ let
     buildInputs = [ agdaStdlib agdaStdlibClasses ];
   };
 
-  deps = [ agdaStdlib agdaStdlibClasses agdaStdlibMeta ];
+  agdaSets = customAgda.agdaPackages.mkDerivation {
+    inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
+    pname = "agda-sets";
+    version = "+";
+    src = pkgs.fetchFromGitHub {
+      owner = "input-output-hk";
+      repo = "agda-sets";
+      rev = "31512b000317a577230e9ba5081b693801104851";
+      sha256 = "1yj8a8r17y1pld87329cjvmfnha7ih5zan3wccc3sq661apr17l8";
+    };
+    meta = { };
+    libraryFile = "abstract-set-theory.agda-lib";
+    everythingFile = "src/abstract-set-theory.agda";
+    buildInputs = [ agdaStdlib agdaStdlibClasses agdaStdlibMeta ];
+  };
+
+  deps = [ agdaStdlib agdaStdlibClasses agdaStdlibMeta agdaSets ];
   agdaWithPkgs = p: customAgda.agda.withPackages { pkgs = p; };
 
   attrs = pkgs.recurseIntoAttrs rec {
