@@ -42,6 +42,7 @@ import Cardano.Ledger.Binary
   , DecCBOR (decCBOR)
   , EncCBOR (..)
   , ToCBOR (..)
+  , encodedSigKESSizeExpr
   , serialize'
   , unCBORGroup
   )
@@ -224,7 +225,11 @@ instance Crypto crypto => DecCBOR (HeaderRaw crypto) where
 instance Crypto crypto => DecCBOR (Annotator (HeaderRaw crypto)) where
   decCBOR = pure <$> decCBOR
 
-instance Crypto c => EncCBOR (Header c)
+instance Crypto c => EncCBOR (Header c) where
+  encodedSizeExpr size proxy =
+    1
+      + encodedSizeExpr size (headerBody <$> proxy)
+      + encodedSigKESSizeExpr (KES.getSig . headerSig <$> proxy)
 
 deriving via
   Mem (HeaderRaw crypto)
