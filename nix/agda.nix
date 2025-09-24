@@ -19,12 +19,12 @@ let
   agdaStdlibClasses = customAgda.agdaPackages.mkDerivation {
     inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
     pname = "agda-stdlib-classes";
-    version = "2.1.1";
+    version = "2.3";
     src = pkgs.fetchFromGitHub {
       owner = "agda";
       repo = "agda-stdlib-classes";
-      rev = "73f4da05aeea040fea4587629f9fd83a8f04e656";
-      hash = "sha256-Uj3bmgMtdBJYGW7K+0rqxexm6M47odBuWyRo0aoYmZg=";
+      rev = "v2.3";
+      sha256 = "0bbgc3nf1b2v3wljrq7974z38apzzsdhfzc1fdmm4fsmnpglmb1m";
     };
     meta = { };
     libraryFile = "agda-stdlib-classes.agda-lib";
@@ -35,16 +35,16 @@ let
   agdaStdlibMeta = customAgda.agdaPackages.mkDerivation {
     inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
     pname = "agda-stdlib-meta";
-    version = "2.1.1";
+    version = "2.3";
     src = pkgs.fetchFromGitHub {
       owner = "agda";
       repo = "agda-stdlib-meta";
-      rev = "v2.1.1";
-      hash = "sha256-qOoThYMG0dzjKvwmzzVZmGcerfb++MApbaGRzLEq3/4=";
+      rev = "v2.3";
+      sha256 = "1n41cfkahg2zzfm113dkqlh5m07rvm9jjh8ps50qi3cpkz203gla";
     };
     meta = { };
     libraryFile = "agda-stdlib-meta.agda-lib";
-    everythingFile = "Main.agda";
+    everythingFile = "standard-library-meta.agda";
     buildInputs = [ agdaStdlib agdaStdlibClasses ];
   };
 
@@ -64,7 +64,23 @@ let
     buildInputs = [ agdaStdlib agdaStdlibClasses agdaStdlibMeta ];
   };
 
-  deps = [ agdaStdlib agdaStdlibClasses agdaStdlibMeta agdaSets ];
+  agdaIOGPrelude = customAgda.agdaPackages.mkDerivation {
+    inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
+    pname = "agda-prelude";
+    version = "2.0";
+    src = pkgs.fetchFromGitHub {
+      repo = "iog-agda-prelude";
+      owner = "input-output-hk";
+      rev = "e25670dcea694f321cbcd7a0bb704b82d5d7b266";
+      sha256 = "1r2g7akia33yis8kgw398w0z484zry1q26739wcq6dfdyw7zb8v7";
+    };
+    meta = { };
+    libraryFile = "iog-prelude.agda-lib";
+    everythingFile = "src/Everything.agda";
+    buildInputs = [ agdaStdlib agdaStdlibClasses agdaStdlibMeta ];
+  };
+
+  deps = [ agdaStdlib agdaStdlibClasses agdaStdlibMeta agdaSets agdaIOGPrelude ];
   agdaWithPkgs = p: customAgda.agda.withPackages { pkgs = p; };
 
   attrs = pkgs.recurseIntoAttrs rec {

@@ -7,8 +7,8 @@
 
 module Tactic.GenError where
 
-open import MetaPrelude
-open import Meta
+open import Meta.Prelude
+open import Meta.Init
 
 open import Class.Functor
 open import Class.Monad
@@ -34,10 +34,6 @@ instance
   _ = ContextMonad-MonadTC
 
 open ClauseExprM
-
-private
-  liftTC : {A : Set} → R.TC A → TC A
-  liftTC x = λ r → applyExtContext (r .TCEnv.localContext) x
 
 genError' : ITactic
 genError' = inDebugPath "genError" do

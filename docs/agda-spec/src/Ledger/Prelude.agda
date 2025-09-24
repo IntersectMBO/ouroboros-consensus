@@ -26,7 +26,7 @@ open import Interface.IsCommutativeMonoid public
 open import Class.ToBool public
 open import Ledger.Interface.HasCoin public
 open import MyDebugOptions public
-open import Tactic.Premises public
+open import Prelude.STS.GenPremises public
 open import Class.CommutativeMonoid public
 
 open import abstract-set-theory.FiniteSetTheory public
