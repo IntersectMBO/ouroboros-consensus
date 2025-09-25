@@ -83,6 +83,7 @@ library
     Ouroboros.Consensus.Block.RealPoint
     Ouroboros.Consensus.Block.SupportsDiffusionPipelining
     Ouroboros.Consensus.Block.SupportsMetrics
+    Ouroboros.Consensus.Block.SupportsPeras
     Ouroboros.Consensus.Block.SupportsProtocol
     Ouroboros.Consensus.Block.SupportsSanityCheck
     Ouroboros.Consensus.BlockchainTime
@@ -197,6 +198,7 @@ library
     Ouroboros.Consensus.Node.Run
     Ouroboros.Consensus.Node.Serialisation
     Ouroboros.Consensus.NodeId
+    Ouroboros.Consensus.Peras.Weight
     Ouroboros.Consensus.Protocol.Abstract
     Ouroboros.Consensus.Protocol.BFT
     Ouroboros.Consensus.Protocol.LeaderSchedule
@@ -596,6 +598,7 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ChainSync.CSJ
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
+    Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Versioned
 
@@ -826,6 +829,19 @@ benchmark ChainSync-client-bench
     typed-protocols:examples,
     unstable-consensus-testlib,
     with-utf8,
+
+benchmark PerasCertDB-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: bench/PerasCertDB-bench
+  main-is: Main.hs
+  other-modules:
+  build-depends:
+    base,
+    ouroboros-consensus,
+    ouroboros-network-api,
+    tasty-bench,
+    unstable-consensus-testlib,
 
 test-suite doctest
   import: common-test
