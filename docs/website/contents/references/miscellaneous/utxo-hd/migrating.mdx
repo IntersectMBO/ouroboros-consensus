@@ -142,7 +142,7 @@ follows:
 </Tabs>
 </div>
 
-## Convert the existing Ledger snapshots with `snapshot-converter`
+## Upgrading a Ledger snapshots from 10.4.x to 10.5.x
 
 :::warning
 
@@ -157,8 +157,29 @@ chain from Genesis, however this can take some hours.
 
 We provide the `snapshot-converter` tool which can load a snapshot in the Legacy
 format and write it either in the in-memory or on-disk formats for
-UTxO-HD. Supposing you have copied a legacy snapshot to
-`<tmpdir>/snapshots/<slotno>` you can run the following command:
+UTxO-HD.
+
+:::info
+
+On cardano-node 10.6 there was a change in serialization unrelated to the
+UTxO-HD changes. This means that going from 10.4.x to 10.5.x can benefit from
+this doing a quick conversion using `snapshot-converter` as explained here, but
+it won't work when the target is 10.6 or newer. Such a format update can
+only be done via a replay of the chain.
+
+The `snapshot-converter` tool still exists in the repository and will convert
+between the different UTxO-HD formats but it will no longer be able to load a
+snapshot older than 10.6, and therefore it won't be able to "upgrade" a Legacy
+snapshot to a UTxO-HD snapshot anymore.
+
+For this reason, the process below is only useful for upgrading from 10.4.x to
+10.5.x, and **it must be performed with the `snapshot-converter` version that
+was released with nodes 10.5.x**.
+
+:::
+
+Supposing you have copied a legacy snapshot to `<tmpdir>/snapshots/<slotno>` you
+can run the following command:
 
 <div class="tabsblock">
 <Tabs>
