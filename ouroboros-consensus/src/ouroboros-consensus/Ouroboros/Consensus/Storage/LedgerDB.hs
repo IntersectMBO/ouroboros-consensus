@@ -17,8 +17,8 @@ module Ouroboros.Consensus.Storage.LedgerDB
   , openDBInternal
   ) where
 
+import Control.ResourceRegistry
 import Data.Functor.Contravariant ((>$<))
-import Data.Void
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
@@ -35,6 +35,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -83,7 +84,24 @@ openDB
     LedgerDbFlavorArgsV2 bss -> do
       (snapManager, bss') <- case bss of
         V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
-        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs x)) -> absurd x
+        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path salt mkFS)) -> do
+          (rk1, V2.SomeHasFSAndBlockIO fs blockio) <- mkFS (lgrRegistry args)
+          session <-
+            allocate
+              (lgrRegistry args)
+              ( \_ ->
+                  LSM.openSession
+                    (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 . V2.LSMTrace >$< lgrTracer args)
+                    fs
+                    blockio
+                    salt
+                    path
+              )
+              LSM.closeSession
+          pure
+            ( LSM.snapshotManager (snd session) args
+            , V2.LSMHandleEnv (V2.LSMResources (fst session) (snd session) rk1)
+            )
       let initDb =
             V2.mkInitDb
               args

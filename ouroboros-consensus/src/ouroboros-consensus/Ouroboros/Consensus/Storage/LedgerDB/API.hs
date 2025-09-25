@@ -304,7 +304,7 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: ExtLedgerState blk DiffMK -> m ()
+  , push :: l DiffMK -> m ()
   -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
   --
   -- This does not modify the set of previously applied points.
@@ -728,12 +728,6 @@ data TraceReplayProgressEvent blk
   Updating ledger tables
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsInMemoryLedgerDB l =
-  (CanUpgradeLedgerTables l, SerializeTablesWithHint l)
-
-type LedgerSupportsV1LedgerDB l =
-  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
-
 -- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
 -- update ledger tables to the latest era. For unary blocks this is a no-op, but
 -- for the Cardano block, we will need to upgrade all TxOuts in memory.
@@ -768,20 +762,26 @@ instance
     LedgerTables (ValuesMK (Map.map absurd mk))
 
 {-------------------------------------------------------------------------------
-  Supporting On-Disk backing stores
+  LedgerDB constraints
 -------------------------------------------------------------------------------}
+
+type LedgerSupportsInMemoryLedgerDB l =
+  (CanUpgradeLedgerTables l, SerializeTablesWithHint l)
 
 type LedgerSupportsLMDBLedgerDB l =
   (IndexedMemPack (l EmptyMK) (TxOut l), MemPackIdx l EmptyMK ~ l EmptyMK)
 
+type LedgerSupportsV1LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
+
 type LedgerSupportsV2LedgerDB l =
-  (LedgerSupportsInMemoryLedgerDB l)
+  (LedgerSupportsInMemoryLedgerDB l, MemPack (TxIn l))
 
 type LedgerSupportsLedgerDB blk = LedgerSupportsLedgerDB' (LedgerState blk) blk
 
 type LedgerSupportsLedgerDB' l blk =
-  ( LedgerSupportsLMDBLedgerDB l
-  , LedgerSupportsInMemoryLedgerDB l
+  ( LedgerSupportsV1LedgerDB l
+  , LedgerSupportsV2LedgerDB l
   , LedgerDbSerialiseConstraints blk
   )
 
