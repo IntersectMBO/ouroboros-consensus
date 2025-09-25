@@ -5,7 +5,7 @@
 -- genErrors: match on a negated conjunction and return the string of that type
 --------------------------------------------------------------------------------
 
-module Tactic.GenError where
+module stdlib-meta.Tactic.GenError where
 
 open import Meta.Prelude
 open import Meta.Init

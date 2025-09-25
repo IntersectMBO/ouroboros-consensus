@@ -1,6 +1,6 @@
 {-# OPTIONS --safe #-}
 -- {-# OPTIONS -v tactic.premises:100 #-}
-module Tactic.Premises where
+module stdlib-meta.Tactic.Premises where
 
 open import Prelude hiding (Type)
 open import PreludeMeta

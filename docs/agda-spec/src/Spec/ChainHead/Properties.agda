@@ -17,7 +17,7 @@ module Spec.ChainHead.Properties
   (rs     : _) (open RationalExtStructure rs)
   where
 
-open import Tactic.GenError
+open import stdlib-meta.Tactic.GenError
 open import Ledger.Prelude
 open import Ledger.PParams using (PParams; ProtVer)
 open import Spec.TickForecast crypto es li

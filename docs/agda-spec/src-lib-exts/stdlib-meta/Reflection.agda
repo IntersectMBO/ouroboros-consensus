@@ -1,5 +1,5 @@
 {-# OPTIONS --safe #-}
-module Reflection.Ext where
+module stdlib-meta.Reflection where
 
 open import Prelude hiding (Type)
 open import PreludeMeta

@@ -17,7 +17,7 @@ module Spec.Protocol.Properties
 
 open import Data.Rational as ℚ using (1ℚ)
 open import Ledger.Prelude
-open import Tactic.GenError
+open import stdlib-meta.Tactic.GenError
 open import Spec.Protocol crypto nonces es bs af rs
 open import Spec.BaseTypes crypto using (OCertCounters; PoolDistr)
 open import Spec.UpdateNonce crypto nonces es
