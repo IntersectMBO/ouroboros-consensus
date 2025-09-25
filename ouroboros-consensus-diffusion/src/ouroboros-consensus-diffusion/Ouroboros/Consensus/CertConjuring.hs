@@ -124,6 +124,12 @@ addBlock blk st =
     { ssBlocks = Map.insert (sbHash blk) blk (ssBlocks st)
     }
 
+setBlockWeight :: RawHeaderHash -> PerasWeight -> ServerState -> ServerState
+setBlockWeight hash boost st =
+  st
+    { ssBlocks = Map.adjust (\b -> b{sbBoost = boost}) hash (ssBlocks st)
+    }
+
 setAnchor :: Maybe RawHeaderHash -> ServerState -> ServerState
 setAnchor mbHash st = st{ssAnchor = mbHash}
 

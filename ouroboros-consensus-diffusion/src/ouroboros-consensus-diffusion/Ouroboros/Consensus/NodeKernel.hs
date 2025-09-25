@@ -45,7 +45,7 @@ import Control.Tracer
 import Data.Bifunctor (second)
 import Data.Data (Typeable)
 import Data.Foldable (traverse_)
-import Data.Function (on, (&))
+import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
@@ -56,7 +56,7 @@ import Data.Maybe (isJust, mapMaybe)
 import Data.Proxy
 import qualified Data.Text as Text
 import Data.Void (Void)
-import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
+import Ouroboros.Consensus.Block hiding (blockMatchesHeader, toRawHash, fromRawHash)
 import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.CertConjuring
@@ -1001,7 +1001,7 @@ runPerasCertConjuring chainDB getChainSyncFragments
   | not isPerasCertConjuringEnabled = pure ()
   | otherwise = unsafeCast1 @m @IO $ do
       -- Randomize the port to avoid bind collisions between nodes
-      port <- randomRIO (9000, 9999) :: IO Int -- Hacky
+      port <- randomRIO (9000, 9999) :: IO Int -- hacky
       putStrLn $ "========================================"
       putStrLn $ "Serving files at: http://localhost:" <> show port
       putStrLn $ "========================================"
@@ -1014,46 +1014,46 @@ runPerasCertConjuring chainDB getChainSyncFragments
           , onCertConjuring = onCertConjuring
           }
  where
-  onUpdateServerState ::
-    ServerState ->
-    STM m (ServerState, IO ())
+  onUpdateServerState :: ServerState -> STM m (ServerState, IO ())
   onUpdateServerState st
     | not isPerasCertConjuringEnabled = pure (st, pure ())
     | otherwise = unsafeCast1 @m @IO $ unsafeCast @peer @(ConnectionId RemoteAddress) $ do
         -- Query our own chain and the chains of all connected peers
         ourChain <- ChainDB.getCurrentChainWithTime chainDB
         peerChains <- getChainSyncFragments
-        weights <- forgetFingerprint <$> ChainDB.getPerasWeightSnapshot chainDB
         -- Chain blocks (both ours and the ones received from peers)
         let chains = ourChain : Map.elems peerChains
-        let blocks = concatMap (fragmentToServerBlocks weights) chains
+        let blocks = concatMap fragmentToServerBlocks chains
+        let addBlocks = flip (foldr CertConjuring.addBlock)
+        -- Block weights (using our own Peras cert weights snapshot)
+        weights <- forgetFingerprint <$> ChainDB.getPerasWeightSnapshot chainDB
+        let setWeightMaybe = maybe (const id) CertConjuring.setBlockWeight . pointRawHash
+        let setWeights = flip (foldr (uncurry setWeightMaybe))
         -- Chain tips (both ours and the ones received from peers)
         let toPeer = Peer . show . remoteAddress
         let toOurTip = OurTip . fragmentTipHash
         let toTheirTip peer chain = TheirTip (toPeer peer) (fragmentTipHash chain)
         let tips = toOurTip ourChain : (uncurry toTheirTip <$> Map.toList peerChains)
-        -- Chain anchor (ours only)
-        let anchor = fragmentAnchorHash ourChain
+        -- Chain anchor hash (ours only)
+        let anchorHash = fragmentAnchorHash ourChain
 
         return
-          ( foldr CertConjuring.addBlock st blocks
-              & CertConjuring.setTips tips
-              & CertConjuring.setAnchor anchor
+          ( CertConjuring.setTips tips $
+              CertConjuring.setAnchor anchorHash $
+                setWeights (perasWeightSnapshotToList weights) $
+                  addBlocks blocks $
+                    st
           , pure ()
           )
 
-  onCertConjuring ::
-    ServerBlock ->
-    PerasWeight ->
-    ServerState ->
-    STM m (ServerState, IO ())
+  onCertConjuring :: ServerBlock -> PerasWeight -> ServerState -> STM m (ServerState, IO ())
   onCertConjuring blk boost st
     | not isPerasCertConjuringEnabled = pure (st, pure ())
     | otherwise = unsafeCast1 @m @IO $ do
         -- Reconstruct a point from the block's hash and slot
         let roundNo = sbRound st
         let slotNo = sbSlot blk
-        let hash = CertConjuring.reifyHeaderHash (Proxy @blk) (sbHash blk)
+        let hash = fromRawHash (sbHash blk)
         let point = AF.Point (at (Block slotNo hash))
         -- Create a bogus certificate out of thin air
         let validatedCert =
@@ -1081,45 +1081,46 @@ runPerasCertConjuring chainDB getChainSyncFragments
           , addPerasCert
           )
 
-  fragmentToServerBlocks ::
-    PerasWeightSnapshot blk ->
-    AnchoredFragment (HeaderWithTime blk) ->
-    [ServerBlock]
-  fragmentToServerBlocks weights fragment =
+  fragmentToServerBlocks :: AnchoredFragment (HeaderWithTime blk) -> [ServerBlock]
+  fragmentToServerBlocks fragment =
     [ CertConjuring.ServerBlock
-        { sbHash = CertConjuring.reflectHeaderHash (Proxy @blk) (headerHash hdr)
+        { sbHash = toRawHash (headerHash hdr)
         , sbParent = case headerPrevHash hdr of
             GenesisHash -> Nothing
-            BlockHash hash -> Just (CertConjuring.reflectHeaderHash (Proxy @blk) hash)
+            BlockHash hash -> Just (toRawHash hash)
         , sbNumber = blockNo hdr
         , sbSlot = blockSlot hdr
-        , sbBoost = weightBoostOfPoint weights (headerPoint hdr)
+        , sbBoost = PerasWeight 0 -- will be updated in a separate step
         }
     | hdr <- hwtHeader <$> AF.toOldestFirst fragment
     ]
 
-  fragmentAnchorHash ::
-    AnchoredFragment (HeaderWithTime blk) ->
-    Maybe RawHeaderHash
+  pointRawHash :: Point blk -> Maybe RawHeaderHash
+  pointRawHash point =
+    case AF.getPoint point of
+      Origin -> Nothing
+      At (Block _ hash) -> Just (toRawHash hash)
+
+  fragmentAnchorHash :: AnchoredFragment (HeaderWithTime blk) -> Maybe RawHeaderHash
   fragmentAnchorHash fragment =
     case AF.getPoint (AF.anchorPoint fragment) of
       Origin -> Nothing
-      At (Block _ hash) -> Just (CertConjuring.reflectHeaderHash (Proxy @blk) hash)
+      At (Block _ hash) -> Just (toRawHash hash)
 
-  fragmentTipHash ::
-    AnchoredFragment (HeaderWithTime blk) ->
-    Maybe RawHeaderHash
+  fragmentTipHash :: AnchoredFragment (HeaderWithTime blk) -> Maybe RawHeaderHash
   fragmentTipHash fragment =
     case AF.headHash fragment of
       GenesisHash -> Nothing
-      BlockHash hash -> Just (CertConjuring.reflectHeaderHash (Proxy @blk) hash)
+      BlockHash hash -> Just (toRawHash hash)
+
+  toRawHash :: HeaderHash blk -> RawHeaderHash
+  toRawHash = CertConjuring.reflectHeaderHash (Proxy @blk)
+
+  fromRawHash :: RawHeaderHash -> HeaderHash blk
+  fromRawHash = CertConjuring.reifyHeaderHash (Proxy @blk)
 
   unsafeCast :: forall f g a. (f ~ g => a) -> a
-  unsafeCast a =
-    case unsafeEqualityProof @f @g of
-      UnsafeRefl -> a
+  unsafeCast a = case unsafeEqualityProof @f @g of UnsafeRefl -> a
 
   unsafeCast1 :: forall f g a. (forall x. f x ~ g x => a) -> a
-  unsafeCast1 a =
-    case unsafeEqualityProof @f @g of
-      UnsafeRefl -> a
+  unsafeCast1 a = case unsafeEqualityProof @f @g of UnsafeRefl -> a
