@@ -2,7 +2,7 @@
 
 open import Agda.Primitive renaming (Set to Type)
 
-module Data.Rational.Ext where
+module stdlib.Data.Rational.Ext where
 
 open import Function using (_∘_; _$_)
 open import Data.Rational hiding (show)

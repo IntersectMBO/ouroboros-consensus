@@ -14,7 +14,7 @@ import Spec.Foreign.HSTypes as F
 open import Spec.Foreign.Util public
 
 open import Data.Rational using (ℚ; mkℚ; 0ℚ; 1ℚ; ½; Positive; positive; _<_) renaming (_≤_ to _≤ℚ_)
-open import Data.Rational.Ext using (InPosUnitInterval)
+open import stdlib.Data.Rational.Ext using (InPosUnitInterval)
 open import Data.Integer using (_≤_; _<_)
 
 ½-positive : Positive ½
