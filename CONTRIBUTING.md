@@ -409,6 +409,8 @@ The core contributors to consensus codebase are:
 
 -   [Georgy Lukyanov](https://github.com/geo2a)
 
+-   [Drazen Popovic](https://github.com/bladyjoker)
+
 # Code of conduct
 
 See [Cardano engineering
