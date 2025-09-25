@@ -377,6 +377,7 @@ test-suite shelley-test
     contra-tracer,
     filepath,
     measures,
+    mempack,
     microlens,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-consensus-cardano,
