@@ -557,6 +557,34 @@ instance
           )
           tbs
 
+  encodeTxInWithHint (HardForkLedgerState (HardForkState idx)) txin =
+    let
+      np =
+        (Fn $ const $ K $ encOne (Proxy @era1))
+          :* (Fn $ const $ K $ encOne (Proxy @era2))
+          :* Nil
+     in
+      hcollapse $ hap np $ Telescope.tip idx
+   where
+    encOne :: forall era. SL.Era era => Proxy era -> Encoding
+    encOne _ =
+      toPlainEncoding (SL.eraProtVerLow @era) $ encodeMemPack (getShelleyHFCTxIn txin)
+
+  encodeTxOutWithHint (HardForkLedgerState (HardForkState idx)) txout0 =
+    let
+      np =
+        (Fn $ const $ K $ encOne (Proxy @era1))
+          :* (Fn $ const $ K $ encOne (Proxy @era2))
+          :* Nil
+     in
+      hcollapse $ hap np $ Telescope.tip idx
+   where
+    encOne :: forall era. SL.Era era => Proxy era -> Encoding
+    encOne _ =
+      toPlainEncoding (SL.eraProtVerLow @era) $ case txout0 of
+        Z txout -> encodeMemPack $ unwrapTxOut txout
+        S (Z txout) -> encodeMemPack $ unwrapTxOut txout
+
   decodeTablesWithHint ::
     forall s.
     LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK ->

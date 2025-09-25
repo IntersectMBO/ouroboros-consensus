@@ -541,6 +541,8 @@ instance IndexedMemPack (LedgerState (SimpleBlock c ext) EmptyMK) Mock.TxOut whe
 instance SerializeTablesWithHint (LedgerState (SimpleBlock c ext)) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
+  encodeTxInWithHint = defaultEncodeMemPackWithHint
+  encodeTxOutWithHint = defaultEncodeMemPackWithHint
 
 instance HasLedgerTables (LedgerState (SimpleBlock c ext)) where
   projectLedgerTables = simpleLedgerTables

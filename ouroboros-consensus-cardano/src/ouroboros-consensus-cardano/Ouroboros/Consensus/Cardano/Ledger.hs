@@ -214,6 +214,48 @@ instance
       toPlainEncoding (eraProtVerLow @era) $
         encodeMap encodeMemPack (eliminateCardanoTxOut (const encodeMemPack)) tbs
 
+  encodeTxInWithHint (HardForkLedgerState (HardForkState idx)) txin =
+    let
+      -- These could be made into a CAF to avoid recomputing it, but
+      -- it is only used in serialization so it is not critical.
+      np =
+        (Fn $ const $ K $ Codec.CBOR.Encoding.encodeMapLen 0)
+          :* (Fn $ const $ K $ encOne (Proxy @ShelleyEra))
+          :* (Fn $ const $ K $ encOne (Proxy @AllegraEra))
+          :* (Fn $ const $ K $ encOne (Proxy @MaryEra))
+          :* (Fn $ const $ K $ encOne (Proxy @AlonzoEra))
+          :* (Fn $ const $ K $ encOne (Proxy @BabbageEra))
+          :* (Fn $ const $ K $ encOne (Proxy @ConwayEra))
+          :* (Fn $ const $ K $ encOne (Proxy @DijkstraEra))
+          :* Nil
+     in
+      hcollapse $ hap np $ Telescope.tip idx
+   where
+    encOne :: forall era. Era era => Proxy era -> Encoding
+    encOne _ =
+      toPlainEncoding (eraProtVerLow @era) $ encodeMemPack txin
+
+  encodeTxOutWithHint (HardForkLedgerState (HardForkState idx)) txout =
+    let
+      -- These could be made into a CAF to avoid recomputing it, but
+      -- it is only used in serialization so it is not critical.
+      np =
+        (Fn $ const $ K $ Codec.CBOR.Encoding.encodeMapLen 0)
+          :* (Fn $ const $ K $ encOne (Proxy @ShelleyEra))
+          :* (Fn $ const $ K $ encOne (Proxy @AllegraEra))
+          :* (Fn $ const $ K $ encOne (Proxy @MaryEra))
+          :* (Fn $ const $ K $ encOne (Proxy @AlonzoEra))
+          :* (Fn $ const $ K $ encOne (Proxy @BabbageEra))
+          :* (Fn $ const $ K $ encOne (Proxy @ConwayEra))
+          :* (Fn $ const $ K $ encOne (Proxy @DijkstraEra))
+          :* Nil
+     in
+      hcollapse $ hap np $ Telescope.tip idx
+   where
+    encOne :: forall era. Era era => Proxy era -> Encoding
+    encOne _ =
+      toPlainEncoding (eraProtVerLow @era) $ eliminateCardanoTxOut (const encodeMemPack) txout
+
   decodeTablesWithHint ::
     forall s.
     LedgerState (HardForkBlock (CardanoEras c)) EmptyMK ->

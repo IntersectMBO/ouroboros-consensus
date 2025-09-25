@@ -359,6 +359,7 @@ data
   , srnChainDbValidateOverride :: Bool
   -- ^ If @True@, validate the ChainDB on init no matter what
   , srnDatabasePath :: NodeDatabasePaths
+  , srnCanonicalSnapshotsPath :: Maybe FilePath
   -- ^ Location of the DBs
   , srnDiffusionArguments :: Cardano.Diffusion.CardanoNodeArguments m
   , srnDiffusionConfiguration :: Cardano.Diffusion.CardanoConfiguration m
@@ -1062,6 +1063,10 @@ stdLowLevelRunNodeArgsIO
       ChainDB.updateSnapshotPolicyArgs srnSnapshotPolicyArgs
         . ChainDB.updateQueryBatchSize srnQueryBatchSize
         . ChainDB.updateTracer srnTraceChainDB
+        . maybe
+          id
+          (\fp -> ChainDB.enableCanonicalSnapshots (SomeHasFS $ ioHasFS $ MountPoint fp))
+          srnCanonicalSnapshotsPath
         . ( if not srnChainDbValidateOverride
               then id
               else ChainDB.ensureValidateAll

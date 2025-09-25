@@ -365,7 +365,7 @@ main = withStdTerminalHandles $ do
         InEnv
           st
           fp
-          (\a b -> SomeBackend <$> mkInMemYieldArgs (fp F.</> "tables" F.</> "tvar") a b)
+          (\a b -> SomeBackend <$> mkInMemYieldArgs (fp F.</> "tables") a b)
           ("InMemory@[" <> fp <> "]")
           c
           mtd
@@ -423,7 +423,7 @@ main = withStdTerminalHandles $ do
       pure $
         OutEnv
           fp
-          (\a b -> SomeBackend <$> mkInMemSinkArgs (fp F.</> "tables" F.</> "tvar") a b)
+          (\a b -> SomeBackend <$> mkInMemSinkArgs (fp F.</> "tables") a b)
           (Just "tables")
           (Nothing)
           ("InMemory@[" <> fp <> "]")

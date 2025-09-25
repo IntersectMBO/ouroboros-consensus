@@ -10,17 +10,22 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
-  ( Backend (..)
+  ( -- * API
+    Backend (..)
   , Args (InMemArgs)
   , Mem
   , YieldArgs (YieldInMemory)
   , SinkArgs (SinkInMemory)
   , mkInMemoryArgs
+
+    -- * Canonical snapshots
+  , takeCanonicalSnapshot
   ) where
 
 import Cardano.Binary as CBOR
@@ -47,7 +52,7 @@ import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.MemPack
-import Data.String (fromString)
+import qualified Data.Primitive.ByteArray as PBA
 import Data.Void
 import GHC.Generics
 import NoThunks.Class
@@ -62,6 +67,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.CBOR (readIncremental)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
@@ -148,11 +154,10 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
                     )
               )
       , takeHandleSnapshot = \hint snapshotName -> do
-          createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName, "tables"]
           h <- readTVarIO tv
           guardClosed h $
             \values ->
-              withFile hasFS (mkFsPath [snapshotName, "tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
+              withFile hasFS (mkFsPath [snapshotName, "tables"]) (WriteMode MustBeNew) $ \hf ->
                 fmap (Just . snd) $
                   hPutAllCRC hasFS hf $
                     CBOR.toLazyByteString $
@@ -174,12 +179,13 @@ snapshotManager ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
+  Maybe (CanonicalSnapshotsFS m) ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManager ccfg tracer fs =
+snapshotManager ccfg tracer fs mCanonical =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = defaultDeleteSnapshot fs tracer
-    , takeSnapshot = implTakeSnapshot ccfg tracer fs
+    , takeSnapshot = implTakeSnapshot ccfg tracer fs mCanonical
     }
 
 -- | The path within the LedgerDB's filesystem to the file that contains the
@@ -213,10 +219,11 @@ implTakeSnapshot ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
+  Maybe (CanonicalSnapshotsFS m) ->
   Maybe String ->
   StateRef m (ExtLedgerState blk) ->
   m (Maybe (DiskSnapshot, RealPoint blk))
-implTakeSnapshot ccfg tracer hasFS suffix st = do
+implTakeSnapshot ccfg tracer hasFS mCanonical suffix st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
@@ -229,6 +236,7 @@ implTakeSnapshot ccfg tracer hasFS suffix st = do
         else do
           encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
             writeSnapshot hasFS (encodeDiskExtLedgerState ccfg) snapshot st
+          takeCanonicalSnapshotInMemory (($ t) >$< tracer) mCanonical snapshot
           return $ Just (snapshot, t)
 
 -- | Read snapshot from disk.
@@ -268,10 +276,7 @@ loadSnapshot tracer _rr ccfg fs ds = do
               fs
               Identity
               (valuesMKDecoder extLedgerSt)
-              ( fsPathFromList $
-                  fsPathToList (snapshotToDirPath ds)
-                    <> [fromString "tables", fromString "tvar"]
-              )
+              (snapshotToDirPath ds </> mkFsPath ["tables"])
       let computedCRC = crcOfConcat checksumAsRead crcTables
       Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
         throwE $
@@ -448,3 +453,120 @@ sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) fp _ s =
         let !crc1 = updateCRC bs crc
         (,crc1) <$> S.effects s'
       Just (item, s'') -> go tb crc (n - 1) (item : m) s''
+
+{-------------------------------------------------------------------------------
+ Canonical snapshots
+-------------------------------------------------------------------------------}
+
+-- | A 'Yield' which already was provided the ledger state.
+type Yield' m l =
+  ( ( Stream
+        (Of (TxIn l, TxOut l))
+        (ExceptT DeserialiseFailure m)
+        (Stream (Of ByteString) m (Maybe CRC)) ->
+      ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+    )
+  ) ->
+  ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
+
+-- | Take a canonical snapshot, by providing a yielder that will stream the
+-- ledger table values.
+--
+-- The @state@ file is copied into the canonical snapshot.
+takeCanonicalSnapshot ::
+  (IOLike m, SerializeTablesWithHint l) =>
+  Tracer m (RealPoint blk -> TraceSnapshotEvent blk) ->
+  DiskSnapshot ->
+  -- | Allocate any resources needed (such as 'LedgerTablesHandle's)
+  m a ->
+  -- | Free the resources
+  (a -> m ()) ->
+  -- | Create a yield with the allocated resources
+  (a -> Yield' m l) ->
+  -- | The state for encoding the tables
+  l EmptyMK ->
+  -- | The CRC resulting from encoding the state
+  CRC ->
+  Maybe (CanonicalSnapshotsFS m) ->
+  m ()
+takeCanonicalSnapshot
+  tracer
+  snapshot
+  allocator
+  freer
+  doYield
+  st
+  stateCRC
+  mCanonicalFS =
+    whenJust mCanonicalFS $
+      \( CanonicalSnapshotsFS
+           nonNativeShfs@(SomeHasFS nonNativeFs)
+           (SomeHasFS nativeFs)
+         ) ->
+          encloseTimedWith (flip (TookCanonicalSnapshot snapshot) >$< tracer) $ do
+            let snapFsPath = snapshotToDirPath snapshot
+            createDirectoryIfMissing nonNativeFs True snapFsPath
+            copyFile
+              (nativeFs, snapFsPath </> mkFsPath ["state"])
+              (nonNativeFs, snapFsPath </> mkFsPath ["state"])
+            eCRCs <- withRegistry $ \rr -> do
+              (rk, hdl) <- allocate rr (\_ -> allocator) freer
+              eCRCs <-
+                runExceptT
+                  $ doYield
+                    hdl
+                  $ sink
+                    (Proxy @Mem)
+                    (SinkInMemory 1000 (encodeTxInWithHint st) (encodeTxOutWithHint st) nonNativeShfs "tables")
+                    st
+              Monad.void $ release rk
+              pure eCRCs
+            case eCRCs of
+              Right (_, Just tablesCRC) ->
+                writeSnapshotMetadata nonNativeShfs snapshot $
+                  SnapshotMetadata
+                    { snapshotBackend = UTxOHDMemSnapshot
+                    , snapshotChecksum = crcOfConcat stateCRC tablesCRC
+                    , snapshotTablesCodecVersion = TablesCodecVersion1
+                    }
+              _ -> pure ()
+
+-- | A HasFS utility that copies files from one HasFS to another.
+copyFile :: IOLike m => (HasFS m h1, FsPath) -> (HasFS m h2, FsPath) -> m ()
+copyFile (hfs1, fp1) (hfs2, fp2) = do
+  ba <- PBA.newByteArray defaultChunkSize
+  withFile hfs1 fp1 ReadMode $ \hdlIn ->
+    withFile hfs2 fp2 (WriteMode MustBeNew) $ \hdlOut ->
+      go ba hdlIn hdlOut
+ where
+  go ba hin hout = do
+    bytesRead <- hGetBufSome hfs1 hin ba 0 (fromIntegral defaultChunkSize)
+    if bytesRead == 0
+      then pure ()
+      else do
+        Monad.void $ hPutBufSome hfs2 hout ba 0 bytesRead
+        go ba hin hout
+
+-- | Take a canonical snapshot from an InMemory snapshot
+--
+-- This is implemented as a copy of the whole snapshot to the new directory.
+takeCanonicalSnapshotInMemory ::
+  IOLike m =>
+  Tracer m (RealPoint blk -> TraceSnapshotEvent blk) ->
+  Maybe (CanonicalSnapshotsFS m) ->
+  DiskSnapshot ->
+  m ()
+takeCanonicalSnapshotInMemory tracer mCanonical snapshot =
+  whenJust
+    mCanonical
+    ( \(CanonicalSnapshotsFS (SomeHasFS nonNativeHasFS) (SomeHasFS nativeHasFS)) ->
+        encloseTimedWith (flip (TookCanonicalSnapshot snapshot) >$< tracer) $ do
+          let snapFsPath = snapshotToDirPath snapshot
+          createDirectoryIfMissing nonNativeHasFS True snapFsPath
+          let copy = \x ->
+                copyFile
+                  (nativeHasFS, snapFsPath </> x)
+                  (nonNativeHasFS, snapFsPath </> x)
+          mapM_ (copy . mkFsPath . (: []))
+            =<< listDirectory nativeHasFS snapFsPath
+    )
