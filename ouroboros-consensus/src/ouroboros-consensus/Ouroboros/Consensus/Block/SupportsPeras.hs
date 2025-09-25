@@ -32,6 +32,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
+import Data.Maybe (fromMaybe)
 import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
 import Data.Word (Word64)
@@ -41,6 +42,9 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 import Quiet (Quiet (..))
+import System.Environment (lookupEnv)
+import System.IO.Unsafe (unsafePerformIO)
+import Text.Read (readMaybe)
 
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving Show via Quiet PerasRoundNo
@@ -64,7 +68,9 @@ instance Condense PerasWeight where
 
 -- | TODO this will become a Ledger protocol parameter
 boostPerCert :: PerasWeight
-boostPerCert = PerasWeight 15
+boostPerCert = PerasWeight <$> fromMaybe 15 $ do
+  readMaybe =<< unsafePerformIO (lookupEnv "PERAS_CERT_BOOST")
+{-# NOINLINE boostPerCert #-}
 
 -- TODO using 'Validated' for extra safety? Or some @.Unsafe@ module?
 data ValidatedPerasCert blk = ValidatedPerasCert
