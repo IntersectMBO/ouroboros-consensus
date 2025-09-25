@@ -20,6 +20,8 @@ This package also contains a few executables:
 
 * `app/immdb-server.hs`: serve an immutable DB via ChainSync and BlockFetch.
 
+* `app/snapshot-converter.hs`: converts snapshots among different storage formats.
+
 ### Assertions
 
 Our top level `cabal.project` enables assertions in both our local packages
@@ -378,3 +380,23 @@ To point a node to a running ImmDB server, use a topology file like
   ]
 }
 ```
+
+
+## snapshot-converter
+
+## About
+
+This tool converts snapshots among the different backends supported by the node.
+
+## Running the tool
+
+Invoking the tool follows the same simple pattern always:
+
+```sh
+cabal run snapshot-converter -- <IN> <OUT> --config /path/to/cardano/config.json
+```
+
+The `<IN>` and `<OUT>` parameters depend on the input and output format, receiving options:
+- `--mem-in PATH`/`--mem-out PATH` for InMemory
+- `--lmdb-in PATH`/`--lmdb-out PATH` for LMDB
+- `--lsm-database-in DB_PATH --lsm-snapshot-in PATH`/`--lsm-database-out DB_PATH --lsm-snapshot-out PATH` for LSM-trees.
