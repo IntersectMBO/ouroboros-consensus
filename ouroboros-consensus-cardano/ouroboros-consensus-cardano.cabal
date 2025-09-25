@@ -455,6 +455,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.Translation
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
+    Test.ThreadNet.EraCrossingInfra
     Test.ThreadNet.MaryAlonzo
     Test.ThreadNet.ShelleyAllegra
 
