@@ -478,6 +478,9 @@ A slight refinement of [Praos](#ouroboros-praos).
 ## ;Ouroboros Praos
 
 The protocol underlying the latest Cardano era.
+It was the first proof-of-stake protocol designed and formally proven to provide security against fully-adaptive corruption in a setting that tolerates adversarial message delays (up to Δ slots).
+Praos implements slot leader election using stake distribution and Verifiable Random Functions (VRF), and honest parties converge to a unique chain view primarily by following the longest chain rule.
+The name "Praos" means "mellow" or "gentle," derived from the protocol's use of deliberately inserted empty slots to facilitate synchronization in the semi-synchronous environment.
 
 ## ;Peer kinds
 
