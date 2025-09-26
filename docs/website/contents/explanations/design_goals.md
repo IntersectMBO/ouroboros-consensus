@@ -6,7 +6,7 @@ The components that make up `ouroboros-consensus` were designed with the followi
 
 The design must support different consensus algorithms, requiring abstraction over the specific choice of consensus protocol.
 From the project's inception, it was evident that multiple protocols would be required.
-The Byron era of Cardano utilizes the PBFT protocol, while the Shelley era transitioned to TPraos, and Praos has been used since the Babbage era.
+The [Byron era](../references/glossary#byron-era) of Cardano utilizes the [PBFT](../references/glossary#permissive-bft-pbft) protocol, while the [Shelley era](../references/glossary#shelley-based-eras) transitioned to [TPraos](../references/glossary#tpraos), and [Praos](../references/glossary#ouroboros-praos) has been used since the [Babbage](../references/glossary#babbage-era) era.
 The consensus component must support not only the current era but also past eras, requiring the ability to compose protocols.
 Additionally, we must ensure support for integrating new consensus protocols.
 
@@ -46,7 +46,7 @@ Abstraction is considered good engineering practice, enhancing clarity, reducing
 
 Given the complexity and scale of the consensus layer codebase, it is essential to divide it into smaller, manageable components that can be understood and modified independently.
 Composability is a key technique employed to achieve this.
-A prime example is the Hard Fork Combinator (HFC), which enables the combination of different consensus protocols (such as BFT and Praos) and ledgers (such as Byron and Shelley) into a unified composite protocol or ledger for the hybrid chain.
+A prime example is the [Hard Fork Combinator](../references/glossary#hard-fork-combinator) (HFC), which enables the combination of different consensus protocols (such as BFT and Praos) and ledgers (such as Byron and Shelley) into a unified composite protocol or ledger for the hybrid chain.
 
 ## Predictable Performance
 
