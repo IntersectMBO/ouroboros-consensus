@@ -593,6 +593,11 @@ Some entity that maintains/controls one or multiple stake pools.
 
 The process of becoming synchronized with the system, either from scratch or due to a temporary restart/crash/local network outage.
 
+## ;TPraos
+
+TPraos (Transitional Praos) is a Proof-of-Stake consensus protocol used in the early decentralized eras of Cardano (specifically Shelley, Allegra, and Mary).
+It was designed to manage the transition from the initial federated system by using a decentralization parameter (`d`) which controls the ratio of slots produced by legacy bootstrap keys (OBFT slots) versus those produced by stake pools selected via Ouroboros Praos, allowing for a smooth shift toward full decentralization.
+
 ## ;Transactions
 
 If a slot has multiple leaders or if the leader of a slot hadn't received the latest block, then they will issue multiple blocks that all claim to have the same predecessor.A [block body](#header-and-body) is just a sequence of transactions.
