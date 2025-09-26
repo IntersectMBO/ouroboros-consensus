@@ -43,6 +43,22 @@ The order of entries in the `items` list determines their placement in the sideb
 
 # Building the website
 
+If you use `nix`, you can enter a shell with a `yarn` installation by running:
+
+
+```
+nix develop .#website
+```
+
+To omit the `.website` part in `nix develop`, you can add an `.envrc` file in `docs/website` containing:
+
+```
+use flake .#website
+```
+
+
+If you don't use `nix`, please refer to the `yarn` installation instructions online.
+
 To install the required packages for the documentation site, run:
 
 ```
