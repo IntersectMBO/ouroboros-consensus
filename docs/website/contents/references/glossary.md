@@ -31,6 +31,12 @@ Security analyses typically assume the worst-case, ie the behavior of all advers
 
 A chain fragment always has an anchor point, which is the predecessor of the oldest header/block on the fragment.
 
+## ;Babbage era
+
+The Babbage era is a major phase of the Cardano blockchain, identified as a [Shelley-based era](#shelley-based-eras), that succeeded the Alonzo era.
+On mainnet, it corresponds to least major protocol version 7 and ends when the version increments past 8.
+It uses the Ouroboros [Praos](#ouroboros-praos) consensus protocol.
+
 ## ;Block
 
 In some slots, the protocol allows a block-producing node to contribute to the chain; it does so by minting a new block.
