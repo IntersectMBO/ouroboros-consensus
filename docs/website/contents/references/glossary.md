@@ -492,6 +492,13 @@ These kinds are maintained by the Networking layer:
 - [Public root peers](#public-root-peers).
 - [Shared peers](#shared-peers).
 
+## ;Permissive BFT (PBFT)
+
+Ouroboros Permissive BFT (PBFT) is a simple, deterministic, Byzantine Fault Tolerant (BFT) consensus protocol derived from Ouroboros-BFT, typically designed to ensure consistency and liveness against `t < n/3` Byzantine faults.
+The protocol is deemed "permissive" because it relaxes the strict requirement that blocks must be signed according to a predetermined round-robin schedule.
+Instead, blocks are merely required to be signed by any of the known core nodes.
+However, this permissiveness is still bounded: the protocol limits the number of signatures a given node can contribute within a window of blocks.
+
 ## ;Phases
 
 Byron, Shelley, Goguen (current one as of August 2023), Basho, Voltaire.
