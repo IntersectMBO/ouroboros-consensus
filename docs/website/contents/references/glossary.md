@@ -266,6 +266,12 @@ There is one at each era change but they can also happen within the same era; th
 Intra-era hard forks are mostly ledger related, for instance to fix a bug of (de)serialisation of transactions, or to add a new smart contract feature.
 Recently, hard forks have been given names: Vasil is the hard fork from Alonzo to Babbage; Valentine is an intra-era hard fork within Babbage.
 
+## ;Hard-fork combinator
+
+The Hard-fork Combinator (HFC) is a core architectural component of the Consensus layer designed to enable sequential composition of multiple blockchain eras (eg Byron, Shelley, Allegra, Babbage, etc.) so they can be managed as a single, unified chain type.
+It is responsible for handling the complex logistics of transitions, including providing the necessary context for the underlying ledgers.
+It facilitates the necessary translations between successive eras, such as translating the ledger state and chain dependency state during an era boundary
+
 ## ;Header-body split
 
 The [stability window](#stability-window) enables the engineering design of nodes exchanging chains of headers before exchanging chains of the corresponding blocks.
