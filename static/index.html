@@ -1,38 +1,19 @@
 <!doctype html>
-<meta charset="utf-8" />
-<style>
-  body {
-    font: 18px monospace;
-    margin: 0;
-    overflow: hidden;
-  }
-
-  h1 {
-    text-align: left;
-    margin-left: 30px;
-  }
-
-  .tooltip {
-    font: 14px monospace;
-    position: absolute;
-    padding: 6px 10px;
-    background: #222;
-    color: #fff;
-    border-radius: 4px;
-    pointer-events: none;
-    white-space: pre;
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-</style>
-<body>
-  <h1>Peras Block Tree Visualization</h1>
+<head>
+  <meta charset="utf-8" />
+  <title>Peras Block Tree Visualization</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:ital,wght@0,100..900;1,100..900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap" rel="stylesheet">
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js"></script>
   <script type="module">
     // ---------------------------
     // Constants and helpers
 
+    const width = 1200;
+    const height = 600;
+    const margin = 80;
     const boostPerCert = 2;
 
     function shortHash(hash) {
@@ -247,12 +228,12 @@
 
     // ---------------------------
 
-    const width = 1200;
-    const height = 600;
-    const margin = 80;
+    document.querySelectorAll(".boost").forEach((el) => {
+      el.innerText = boostPerCert;
+    });
 
     const svg = d3
-      .select("body")
+      .select("#graph")
       .append("svg")
       .attr("width", width)
       .attr("height", height)
@@ -280,5 +261,167 @@
 
     // ---------------------------
   </script>
+  <style>
+    body {
+      font-family: "Roboto Condensed", monospace;
+      font-weight: 400;
+      font-size: 18px;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    h1 {
+      text-align: center;
+    }
+
+    td {
+      margin-left: 20px;
+      margin-right: 20px;
+    }
+
+    .centered {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .tooltip {
+      font: 14px monospace;
+      position: absolute;
+      padding: 6px 10px;
+      background: #222;
+      color: #fff;
+      border-radius: 4px;
+      pointer-events: none;
+      white-space: pre;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+  </style>
+</head>
+<body>
+  <h1>Peras Block Tree Visualization</h1>
+  <table class="centered">
+    <tr class="centered">
+      <td>
+        <span style="color: green;"><i>Click on a block to boost it by <span class="boost"></i></span></span>
+      </td>
+    </tr>
+  </table>
+  <div id="graph" class="centered"></div>
+  <table class="centered">
+    <tr class="centered">
+      <td>
+        <b>Legend</b>
+      </td>
+    </tr>
+    <tr class="centered">
+      <td>
+        <span>
+          <svg width="20" height="20">
+            <circle
+              cx="10"
+              cy="10"
+              r="8"
+              fill="#0f0"
+              stroke="#000"
+              stroke-width="2"
+            />
+          </svg>
+          <span>boosted block</span>
+        </span>
+      </td>
+      <td>
+        <span>
+          <svg width="20" height="20">
+            <circle
+              cx="10"
+              cy="10"
+              r="8"
+              fill="#740"
+              stroke="#000"
+              stroke-width="2"
+            />
+          </svg>
+          <span>old boosted block</span>
+        </span>
+      </td>
+      <td>
+        <span>
+          <svg width="20" height="20">
+            <circle
+              cx="10"
+              cy="10"
+              r="8"
+              fill="#00f"
+              stroke="#000"
+              stroke-width="2"
+            />
+          </svg>
+          <span>chain tip block</span>
+        </span>
+      </td>
+      <td>
+        <span>
+          <svg width="20" height="20">
+            <circle
+              cx="10"
+              cy="10"
+              r="8"
+              fill="#f00"
+              stroke="#000"
+              stroke-width="2"
+            />
+          </svg>
+          <span>immutable anchor block (local node)</span>
+        </span>
+      </td>
+      <td>
+        <span>
+          <svg width="20" height="20">
+            <circle
+              cx="10"
+              cy="10"
+              r="8"
+              fill="#555"
+              stroke="#000"
+              stroke-width="2"
+            />
+          </svg>
+          <span>normal block</span>
+        </span>
+      </td>
+    </tr>
+    <tr class="centered">
+      <td>
+        <span>⚓ anchor block number</span>
+      </td>
+      <td>
+        <span>👥 number of tip followers</span>
+      </td>
+    </tr>
+  </table>
+  <br />
+  <table class="centered">
+    <tr class="centered">
+      <td>
+        <b>Parameters</b>
+      </td>
+    </tr>
+    <tr class="centered">
+      <td>
+        <span>security parameter (k) = 10</span>
+      </td>
+      <td>
+        <span>active slot coefficient (f) = 0.05</span>
+      </td>
+      <td>
+        <span>slot length = 0.2s</span>
+      </td>
+      <td>
+        <span>certificate boost = <span class="boost"></span></span>
+      </td>
+    </tr>
+  </table>
   <div id="tooltip" class="tooltip"></div>
 </body>
