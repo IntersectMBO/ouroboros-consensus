@@ -540,7 +540,7 @@ data Apps m addr bCS bBF bTX bKA bPS a b = Apps
 --
 -- They don't depend on the instantiation of the protocol parameters (which
 -- block type is used, etc.), hence the use of 'RankNTypes'.
-data ByteLimits bCS bBF bTX bKA = ByteLimits
+data ByteLimits bCS bBF bTX bKA bPS = ByteLimits
   { blChainSync ::
       forall header point tip.
       ProtocolSizeLimits
@@ -560,24 +560,31 @@ data ByteLimits bCS bBF bTX bKA = ByteLimits
       ProtocolSizeLimits
         KeepAlive
         bKA
+  , blPeerSharing ::
+      forall addr.
+      ProtocolSizeLimits
+        (PeerSharing addr)
+        bPS
   }
 
-noByteLimits :: ByteLimits bCS bBF bTX bKA
+noByteLimits :: ByteLimits bCS bBF bTX bKA bPS
 noByteLimits =
   ByteLimits
     { blChainSync = byteLimitsChainSync (const 0)
     , blBlockFetch = byteLimitsBlockFetch (const 0)
     , blTxSubmission2 = byteLimitsTxSubmission2 (const 0)
     , blKeepAlive = byteLimitsKeepAlive (const 0)
+    , blPeerSharing = byteLimitsPeerSharing (const 0)
     }
 
-byteLimits :: ByteLimits ByteString ByteString ByteString ByteString
+byteLimits :: ByteLimits ByteString ByteString ByteString ByteString ByteString
 byteLimits =
   ByteLimits
     { blChainSync = byteLimitsChainSync size
     , blBlockFetch = byteLimitsBlockFetch size
     , blTxSubmission2 = byteLimitsTxSubmission2 size
     , blKeepAlive = byteLimitsKeepAlive size
+    , blPeerSharing = byteLimitsPeerSharing size
     }
  where
   size :: ByteString -> Word
@@ -603,7 +610,7 @@ mkApps ::
   StdGen ->
   Tracers m addrNTN blk e ->
   (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bKA bPS) ->
-  ByteLimits bCS bBF bTX bKA ->
+  ByteLimits bCS bBF bTX bKA bPS ->
   -- Chain-Sync timeouts for chain-sync client (using `Header blk`) as well as
   -- the server (`SerialisedHeader blk`).
   (forall header. ProtocolTimeLimitsWithRnd (ChainSync header (Point blk) (Tip blk))) ->
@@ -831,7 +838,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     runPeerWithLimits
       (TraceLabelPeer them `contramap` tKeepAliveTracer)
       (cKeepAliveCodec (mkCodecs version))
-      (byteLimitsKeepAlive (const 0)) -- TODO: Real Bytelimits, see #1727
+      blKeepAlive
       timeLimitsKeepAlive
       channel
       $ keepAliveServerPeer
@@ -857,7 +864,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
             runPeerWithLimits
               (TraceLabelPeer them `contramap` tPeerSharingTracer)
               (cPeerSharingCodec (mkCodecs version))
-              (byteLimitsPeerSharing (const 0))
+              blPeerSharing
               timeLimitsPeerSharing
               channel
               (peerSharingClientPeer psClient)
@@ -873,7 +880,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     runPeerWithLimits
       (TraceLabelPeer them `contramap` tPeerSharingTracer)
       (cPeerSharingCodec (mkCodecs version))
-      (byteLimitsPeerSharing (const 0))
+      blPeerSharing
       timeLimitsPeerSharing
       channel
       $ peerSharingServerPeer
