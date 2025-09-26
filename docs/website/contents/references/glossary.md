@@ -64,6 +64,11 @@ A valid block satisfies the ledger rules in the context of the ledger state that
 
 Trusted honest caught-up peers that are used for syncing before a Genesis-capable node is released. By default, these are public root peers.
 
+## ;Byron era
+
+The Byron era refers to the first implementation of the Cardano blockchain, which was introduced in September 2017.
+On the [first implementation](https://github.com/input-output-hk/cardano-sl) it used the Ouroboros Classic consensus protocol. In the current Haskell implementation, the Byron Era uses the Permissive Ouroboros BFT consensus protocol, which is backwards compatible with the Ouroboros Classic protocol, relying on seven federated nodes for block production.
+
 ## ;Chain
 
 A sequence of blocks.
