@@ -505,6 +505,14 @@ Consider a chain fragment `F`:
 
 Note that these notions are always relative to a particular anchor, so different chain fragments must have the same anchor when their total weight is to be compared.
 
+## ;Permissive BFT (PBFT)
+
+Ouroboros Permissive BFT (PBFT) is a simple, deterministic, Byzantine Fault Tolerant (BFT) consensus protocol derived from Ouroboros-BFT, typically designed to ensure consistency and liveness against `t < n/3` Byzantine faults.
+The protocol is deemed "permissive" because it relaxes the strict requirement that blocks must be signed according to a predetermined round-robin schedule.
+Instead, blocks are merely required to be signed by any of the known core nodes.
+However, this permissiveness is still bounded: the protocol limits the number of signatures a given node can contribute within a window of blocks.
+
+
 ## ;Phases
 
 Byron, Shelley, Goguen (current one as of August 2023), Basho, Voltaire.
