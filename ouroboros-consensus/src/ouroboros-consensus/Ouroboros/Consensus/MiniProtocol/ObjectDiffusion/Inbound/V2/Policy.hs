@@ -20,7 +20,7 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsToReq (..))
 --
 -- * `ObjectDecisionPolicy`
 -- * `maximumIngressQueue` for `object-submission` mini-protocol, see
---   `Ouroboros.Consensus.MiniProtocol.NodeToNode.objectSubmissionProtocolLimits`
+--   `Ouroboros.Consensus.MiniProtocol.NodeToNode.objectDiffusionProtocolLimits`
 max_OBJECT_SIZE :: SizeInBytes
 max_OBJECT_SIZE = 65_540
 
@@ -58,7 +58,7 @@ defaultObjectDecisionPolicy :: ObjectDecisionPolicy
 defaultObjectDecisionPolicy =
   ObjectDecisionPolicy
     { maxNumObjectIdsToRequest = 3
-    , maxUnacknowledgedObjectIds = 10 -- must be the same as objectSubmissionMaxUnacked
+    , maxUnacknowledgedObjectIds = 10 -- must be the same as objectDiffusionMaxUnacked
     , objectsSizeInflightPerPeer = max_OBJECT_SIZE * 6
     , maxObjectsSizeInflight = max_OBJECT_SIZE * 20
     , objectInflightMultiplicity = 2

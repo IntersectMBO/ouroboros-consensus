@@ -145,11 +145,11 @@ instance
 -- `Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.Decision.pickObjectsToDownload`, we also
 -- recalculate `referenceCounts` and only keep live `objectId`s in other maps (e.g.
 -- `availableObjectIds`, `bufferedObjects`, `unknownObjects`).
-data SharedObjectState peeraddr objectId object = SharedObjectState
-  { peerObjectStates :: !(Map peeraddr (PeerObjectState objectId object))
+data SharedObjectState peerAddr objectId object = SharedObjectState
+  { peerObjectStates :: !(Map peerAddr (PeerObjectState objectId object))
   -- ^ Map of peer states.
   --
-  -- /Invariant:/ for peeraddr's which are registered using `withPeer`,
+  -- /Invariant:/ for peerAddr's which are registered using `withPeer`,
   -- there's always an entry in this map even if the set of `objectId`s is
   -- empty.
   , inflightObjects :: !(Map objectId Int)
@@ -217,12 +217,12 @@ data SharedObjectState peeraddr objectId object = SharedObjectState
   deriving (Eq, Show, Generic)
 
 instance
-  ( NoThunks peeraddr
+  ( NoThunks peerAddr
   , NoThunks object
   , NoThunks objectId
   , NoThunks StdGen
   ) =>
-  NoThunks (SharedObjectState peeraddr objectId object)
+  NoThunks (SharedObjectState peerAddr objectId object)
 
 --
 -- Decisions
@@ -296,9 +296,9 @@ emptyObjectDecision =
     }
 
 -- | ObjectLogic tracer.
-data TraceObjectLogic peeraddr objectId object
-  = TraceSharedObjectState String (SharedObjectState peeraddr objectId object)
-  | TraceObjectDecisions (Map peeraddr (ObjectDecision objectId object))
+data TraceObjectLogic peerAddr objectId object
+  = TraceSharedObjectState String (SharedObjectState peerAddr objectId object)
+  | TraceObjectDecisions (Map peerAddr (ObjectDecision objectId object))
   deriving Show
 
 data ProcessedObjectCount = ProcessedObjectCount
@@ -367,7 +367,7 @@ data ObjectDiffusionCounters
 
 mkObjectDiffusionCounters ::
   Ord objectId =>
-  SharedObjectState peeraddr objectId object ->
+  SharedObjectState peerAddr objectId object ->
   ObjectDiffusionCounters
 mkObjectDiffusionCounters
   SharedObjectState

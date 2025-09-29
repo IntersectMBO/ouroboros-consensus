@@ -52,11 +52,11 @@ import System.Random (StdGen)
 --
 
 acknowledgeObjectIds ::
-  forall peeraddr object objectId.
+  forall peerAddr object objectId.
   Ord objectId =>
   HasCallStack =>
   ObjectDecisionPolicy ->
-  SharedObjectState peeraddr objectId object ->
+  SharedObjectState peerAddr objectId object ->
   PeerObjectState objectId object ->
   -- | number of objectId to acknowledge, requests, objects which we can submit to the
   -- objectpool, objectIds to acknowledge with multiplicities, updated PeerObjectState.
@@ -234,11 +234,11 @@ updateRefCounts referenceCounts (RefCountDiff diff) =
     diff
 
 tickTimedObjects ::
-  forall peeraddr object objectId.
+  forall peerAddr object objectId.
   Ord objectId =>
   Time ->
-  SharedObjectState peeraddr objectId object ->
-  SharedObjectState peeraddr objectId object
+  SharedObjectState peerAddr objectId object ->
+  SharedObjectState peerAddr objectId object
 tickTimedObjects
   now
   st@SharedObjectState
@@ -289,12 +289,12 @@ tickTimedObjects
 -- | Insert received `objectId`s and return the number of objectIds to be acknowledged
 -- and the updated `SharedObjectState`.
 receivedObjectIdsImpl ::
-  forall peeraddr object objectId.
-  (Ord objectId, Ord peeraddr, HasCallStack) =>
+  forall peerAddr object objectId.
+  (Ord objectId, Ord peerAddr, HasCallStack) =>
   -- | check if objectId is in the objectpool, ref
   -- 'objectpoolHasObject'
   (objectId -> Bool) ->
-  peeraddr ->
+  peerAddr ->
   -- | number of requests to subtract from
   -- `requestedObjectIdsInflight`
   NumObjectIdsToReq ->
@@ -302,11 +302,11 @@ receivedObjectIdsImpl ::
   StrictSeq objectId ->
   -- | received `objectId`s with sizes
   Map objectId SizeInBytes ->
-  SharedObjectState peeraddr objectId object ->
-  SharedObjectState peeraddr objectId object
+  SharedObjectState peerAddr objectId object ->
+  SharedObjectState peerAddr objectId object
 receivedObjectIdsImpl
   objectpoolHasObject
-  peeraddr
+  peerAddr
   reqNo
   objectIdsSeq
   objectIdsMap
@@ -318,7 +318,7 @@ receivedObjectIdsImpl
     -- using `alterF` so the update of `PeerObjectState` is done in one lookup
     case Map.alterF
       (fmap Just . fn . fromJust)
-      peeraddr
+      peerAddr
       peerObjectStates of
       (st', peerObjectStates') ->
         st'{peerObjectStates = peerObjectStates'}
@@ -327,7 +327,7 @@ receivedObjectIdsImpl
     -- updated `SharedObjectState`.
     fn ::
       PeerObjectState objectId object ->
-      ( SharedObjectState peeraddr objectId object
+      ( SharedObjectState peerAddr objectId object
       , PeerObjectState objectId object
       )
     fn
@@ -405,36 +405,36 @@ const_MAX_OBJECT_SIZE_DISCREPENCY :: SizeInBytes
 const_MAX_OBJECT_SIZE_DISCREPENCY = 32
 
 collectObjectsImpl ::
-  forall peeraddr object objectId.
-  ( Ord peeraddr
+  forall peerAddr object objectId.
+  ( Ord peerAddr
   , Ord objectId
   , Show objectId
   , Typeable objectId
   ) =>
   -- | compute object size
   (object -> SizeInBytes) ->
-  peeraddr ->
+  peerAddr ->
   -- | requested objectIds
   Map objectId SizeInBytes ->
   -- | received objects
   Map objectId object ->
-  SharedObjectState peeraddr objectId object ->
+  SharedObjectState peerAddr objectId object ->
   -- | Return list of `objectId` which sizes didn't match or a new state.
   -- If one of the `object` has wrong size, we return an error.  The
   -- mini-protocol will throw, which will clean the state map from this peer.
   Either
     ObjectDiffusionProtocolError
-    (SharedObjectState peeraddr objectId object)
+    (SharedObjectState peerAddr objectId object)
 collectObjectsImpl
   objectSize
-  peeraddr
+  peerAddr
   requestedObjectIdsMap
   receivedObjects
   st@SharedObjectState{peerObjectStates} =
     -- using `alterF` so the update of `PeerObjectState` is done in one lookup
     case Map.alterF
       (fmap Just . fn . fromJust)
-      peeraddr
+      peerAddr
       peerObjectStates of
       (Right st', peerObjectStates') ->
         Right st'{peerObjectStates = peerObjectStates'}
@@ -447,7 +447,7 @@ collectObjectsImpl
       PeerObjectState objectId object ->
       ( Either
           [(objectId, SizeInBytes, SizeInBytes)]
-          (SharedObjectState peeraddr objectId object)
+          (SharedObjectState peerAddr objectId object)
       , PeerObjectState objectId object
       )
     fn ps =
@@ -565,13 +565,13 @@ collectObjectsImpl
 -- Monadic public API
 --
 
-type SharedObjectStateVar m peeraddr objectId object =
-  StrictTVar m (SharedObjectState peeraddr objectId object)
+type SharedObjectStateVar m peerAddr objectId object =
+  StrictTVar m (SharedObjectState peerAddr objectId object)
 
 newSharedObjectStateVar ::
   MonadSTM m =>
   StdGen ->
-  m (SharedObjectStateVar m peeraddr objectId object)
+  m (SharedObjectStateVar m peerAddr objectId object)
 newSharedObjectStateVar rng =
   newTVarIO
     SharedObjectState
@@ -588,12 +588,12 @@ newSharedObjectStateVar rng =
 -- | Acknowledge `objectId`s, return the number of `objectIds` to be acknowledged to the
 -- remote side.
 receivedObjectIds ::
-  forall m peeraddr idx object objectId.
-  (MonadSTM m, Ord objectId, Ord peeraddr) =>
-  Tracer m (TraceObjectLogic peeraddr objectId object) ->
-  SharedObjectStateVar m peeraddr objectId object ->
+  forall m peerAddr idx object objectId.
+  (MonadSTM m, Ord objectId, Ord peerAddr) =>
+  Tracer m (TraceObjectLogic peerAddr objectId object) ->
+  SharedObjectStateVar m peerAddr objectId object ->
   STM m (ObjectPoolSnapshot objectId object idx) ->
-  peeraddr ->
+  peerAddr ->
   -- | number of requests to subtract from
   -- `requestedObjectIdsInflight`
   NumObjectIdsToReq ->
@@ -602,28 +602,28 @@ receivedObjectIds ::
   -- | received `objectId`s with sizes
   Map objectId SizeInBytes ->
   m ()
-receivedObjectIds tracer sharedVar getObjectPoolSnapshot peeraddr reqNo objectIdsSeq objectIdsMap = do
+receivedObjectIds tracer sharedVar getObjectPoolSnapshot peerAddr reqNo objectIdsSeq objectIdsMap = do
   st <- atomically $ do
     ObjectPoolSnapshot{objectpoolHasObject} <- getObjectPoolSnapshot
     stateTVar
       sharedVar
-      ((\a -> (a, a)) . receivedObjectIdsImpl objectpoolHasObject peeraddr reqNo objectIdsSeq objectIdsMap)
+      ((\a -> (a, a)) . receivedObjectIdsImpl objectpoolHasObject peerAddr reqNo objectIdsSeq objectIdsMap)
   traceWith tracer (TraceSharedObjectState "receivedObjectIds" st)
 
 -- | Include received `object`s in `SharedObjectState`.  Return number of `objectIds`
 -- to be acknowledged and list of `object` to be added to the objectpool.
 collectObjects ::
-  forall m peeraddr object objectId.
+  forall m peerAddr object objectId.
   ( MonadSTM m
   , Ord objectId
-  , Ord peeraddr
+  , Ord peerAddr
   , Show objectId
   , Typeable objectId
   ) =>
-  Tracer m (TraceObjectLogic peeraddr objectId object) ->
+  Tracer m (TraceObjectLogic peerAddr objectId object) ->
   (object -> SizeInBytes) ->
-  SharedObjectStateVar m peeraddr objectId object ->
-  peeraddr ->
+  SharedObjectStateVar m peerAddr objectId object ->
+  peerAddr ->
   -- | set of requested objectIds with their announced size
   Map objectId SizeInBytes ->
   -- | received objects
@@ -631,10 +631,10 @@ collectObjects ::
   -- | number of objectIds to be acknowledged and objects to be added to the
   -- objectpool
   m (Maybe ObjectDiffusionProtocolError)
-collectObjects tracer objectSize sharedVar peeraddr objectIdsRequested objectsMap = do
+collectObjects tracer objectSize sharedVar peerAddr objectIdsRequested objectsMap = do
   r <- atomically $ do
     st <- readTVar sharedVar
-    case collectObjectsImpl objectSize peeraddr objectIdsRequested objectsMap st of
+    case collectObjectsImpl objectSize peerAddr objectIdsRequested objectsMap st of
       r@(Right st') ->
         writeTVar sharedVar st'
           $> r

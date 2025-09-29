@@ -46,14 +46,14 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 
 -- | Communication channels between `ObjectDiffusion` client mini-protocol and
 -- decision logic.
-newtype ObjectChannels m peeraddr objectId object = ObjectChannels
-  { objectChannelMap :: Map peeraddr (StrictMVar m (ObjectDecision objectId object))
+newtype ObjectChannels m peerAddr objectId object = ObjectChannels
+  { objectChannelMap :: Map peerAddr (StrictMVar m (ObjectDecision objectId object))
   }
 
-type ObjectChannelsVar m peeraddr objectId object =
-  StrictMVar m (ObjectChannels m peeraddr objectId object)
+type ObjectChannelsVar m peerAddr objectId object =
+  StrictMVar m (ObjectChannels m peerAddr objectId object)
 
-newObjectChannelsVar :: MonadMVar m => m (ObjectChannelsVar m peeraddr objectId object)
+newObjectChannelsVar :: MonadMVar m => m (ObjectChannelsVar m peerAddr objectId object)
 newObjectChannelsVar = newMVar (ObjectChannels Map.empty)
 
 newtype ObjectObjectPoolSem m = ObjectObjectPoolSem (TSem m)
@@ -94,7 +94,7 @@ data ObjectObjectPoolResult = ObjectAccepted | ObjectRejected
 -- `SharedObjectStateVar` and `PeerObjectStateVar`s,  which exposes `PeerObjectStateAPI`.
 -- `PeerObjectStateAPI` is only safe inside the  `withPeer` scope.
 withPeer ::
-  forall object peeraddr objectId idx m a.
+  forall object peerAddr objectId idx m a.
   ( MonadMask m
   , MonadMVar m
   , MonadSTM m
@@ -102,18 +102,18 @@ withPeer ::
   , Ord objectId
   , Show objectId
   , Typeable objectId
-  , Ord peeraddr
-  , Show peeraddr
+  , Ord peerAddr
+  , Show peerAddr
   ) =>
-  Tracer m (TraceObjectLogic peeraddr objectId object) ->
-  ObjectChannelsVar m peeraddr objectId object ->
+  Tracer m (TraceObjectLogic peerAddr objectId object) ->
+  ObjectChannelsVar m peerAddr objectId object ->
   ObjectObjectPoolSem m ->
   ObjectDecisionPolicy ->
-  SharedObjectStateVar m peeraddr objectId object ->
+  SharedObjectStateVar m peerAddr objectId object ->
   ObjectDiffusionObjectPoolReader objectId object idx m ->
   ObjectDiffusionObjectPoolWriter objectId object idx m ->
   (object -> SizeInBytes) ->
-  peeraddr ->
+  peerAddr ->
   --  ^ new peer
 
   -- | callback which gives access to `PeerObjectStateAPI`
@@ -128,7 +128,7 @@ withPeer
   ObjectDiffusionObjectPoolReader{objectpoolGetSnapshot}
   ObjectDiffusionObjectPoolWriter{objectpoolAddObjects}
   objectSize
-  peeraddr
+  peerAddr
   io =
     bracket
       ( do
@@ -144,7 +144,7 @@ withPeer
                             let !chann'' = fromMaybe chann mbChann
                              in (chann'', Just chann'')
                         )
-                        peeraddr
+                        peerAddr
                         objectChannelMap
                 return
                   ( ObjectChannels{objectChannelMap = objectChannelMap'}
@@ -166,18 +166,18 @@ withPeer
           modifyMVar_
             channelsVar
             \ObjectChannels{objectChannelMap} ->
-              return ObjectChannels{objectChannelMap = Map.delete peeraddr objectChannelMap}
+              return ObjectChannels{objectChannelMap = Map.delete peerAddr objectChannelMap}
       )
       io
    where
     registerPeer ::
-      SharedObjectState peeraddr objectId object ->
-      SharedObjectState peeraddr objectId object
+      SharedObjectState peerAddr objectId object ->
+      SharedObjectState peerAddr objectId object
     registerPeer st@SharedObjectState{peerObjectStates} =
       st
         { peerObjectStates =
             Map.insert
-              peeraddr
+              peerAddr
               PeerObjectState
                 { availableObjectIds = Map.empty
                 , requestedObjectIdsInflight = 0
@@ -196,8 +196,8 @@ withPeer
     -- TODO: this function needs to be tested!
     -- Issue: https://github.com/IntersectMBO/ouroboros-network/issues/5151
     unregisterPeer ::
-      SharedObjectState peeraddr objectId object ->
-      SharedObjectState peeraddr objectId object
+      SharedObjectState peerAddr objectId object ->
+      SharedObjectState peerAddr objectId object
     unregisterPeer
       st@SharedObjectState
         { peerObjectStates
@@ -226,10 +226,10 @@ withPeer
           ) =
             Map.alterF
               ( \case
-                  Nothing -> error ("ObjectDiffusion.withPeer: invariant violation for peer " ++ show peeraddr)
+                  Nothing -> error ("ObjectDiffusion.withPeer: invariant violation for peer " ++ show peerAddr)
                   Just a -> (a, Nothing)
               )
-              peeraddr
+              peerAddr
               peerObjectStates
 
         referenceCounts' =
@@ -336,8 +336,8 @@ withPeer
       updateBufferedObject ::
         Time ->
         ObjectObjectPoolResult ->
-        SharedObjectState peeraddr objectId object ->
-        SharedObjectState peeraddr objectId object
+        SharedObjectState peerAddr objectId object ->
+        SharedObjectState peerAddr objectId object
       updateBufferedObject
         _
         ObjectRejected
@@ -356,7 +356,7 @@ withPeer
               objectId
               inSubmissionToObjectPoolObjects
 
-          peerObjectStates' = Map.update fn peeraddr peerObjectStates
+          peerObjectStates' = Map.update fn peerAddr peerObjectStates
            where
             fn ps = Just $! ps{toObjectPoolObjects = Map.delete objectId (toObjectPoolObjects ps)}
       updateBufferedObject
@@ -397,7 +397,7 @@ withPeer
 
           bufferedObjects' = Map.insert objectId (Just object) bufferedObjects
 
-          peerObjectStates' = Map.update fn peeraddr peerObjectStates
+          peerObjectStates' = Map.update fn peerAddr peerObjectStates
            where
             fn ps = Just $! ps{toObjectPoolObjects = Map.delete objectId (toObjectPoolObjects ps)}
 
@@ -411,7 +411,7 @@ withPeer
         tracer
         sharedStateVar
         objectpoolGetSnapshot
-        peeraddr
+        peerAddr
         numObjectIdsToReq
         objectIdsSeq
         objectIdsMap
@@ -423,7 +423,7 @@ withPeer
       -- \^ received objects
       m (Maybe ObjectDiffusionProtocolError)
     handleReceivedObjects objectIds objects =
-      collectObjects tracer objectSize sharedStateVar peeraddr objectIds objects
+      collectObjects tracer objectSize sharedStateVar peerAddr objectIds objects
 
     -- Update `score` & `scoreTs` fields of `PeerObjectState`, return the new
     -- updated `score`.
@@ -435,13 +435,13 @@ withPeer
       m Double
     countRejectedObjects _ n
       | n < 0 =
-          error ("ObjectDiffusion.countRejectedObjects: invariant violation for peer " ++ show peeraddr)
+          error ("ObjectDiffusion.countRejectedObjects: invariant violation for peer " ++ show peerAddr)
     countRejectedObjects now n = atomically $ stateTVar sharedStateVar $ \st ->
-      let (result, peerObjectStates') = Map.alterF fn peeraddr (peerObjectStates st)
+      let (result, peerObjectStates') = Map.alterF fn peerAddr (peerObjectStates st)
        in (result, st{peerObjectStates = peerObjectStates'})
      where
       fn :: Maybe (PeerObjectState objectId object) -> (Double, Maybe (PeerObjectState objectId object))
-      fn Nothing = error ("ObjectDiffusion.withPeer: invariant violation for peer " ++ show peeraddr)
+      fn Nothing = error ("ObjectDiffusion.withPeer: invariant violation for peer " ++ show peerAddr)
       fn (Just ps) = (score ps', Just $! ps')
        where
         ps' = updateRejects policy now n ps
@@ -467,15 +467,15 @@ updateRejects
           }
 
 drainRejectionThread ::
-  forall m peeraddr objectId object.
+  forall m peerAddr objectId object.
   ( MonadDelay m
   , MonadSTM m
   , MonadThread m
   , Ord objectId
   ) =>
-  Tracer m (TraceObjectLogic peeraddr objectId object) ->
+  Tracer m (TraceObjectLogic peerAddr objectId object) ->
   ObjectDecisionPolicy ->
-  SharedObjectStateVar m peeraddr objectId object ->
+  SharedObjectStateVar m peerAddr objectId object ->
   m Void
 drainRejectionThread tracer policy sharedStateVar = do
   labelThisThread "object-rejection-drain"
@@ -511,21 +511,21 @@ drainRejectionThread tracer policy sharedStateVar = do
       else go nextDrain
 
 decisionLogicThread ::
-  forall m peeraddr objectId object.
+  forall m peerAddr objectId object.
   ( MonadDelay m
   , MonadMVar m
   , MonadSTM m
   , MonadMask m
   , MonadFork m
-  , Ord peeraddr
+  , Ord peerAddr
   , Ord objectId
-  , Hashable peeraddr
+  , Hashable peerAddr
   ) =>
-  Tracer m (TraceObjectLogic peeraddr objectId object) ->
+  Tracer m (TraceObjectLogic peerAddr objectId object) ->
   Tracer m ObjectDiffusionCounters ->
   ObjectDecisionPolicy ->
-  ObjectChannelsVar m peeraddr objectId object ->
-  SharedObjectStateVar m peeraddr objectId object ->
+  ObjectChannelsVar m peerAddr objectId object ->
+  SharedObjectStateVar m peerAddr objectId object ->
   m Void
 decisionLogicThread tracer counterTracer policy objectChannelsVar sharedStateVar = do
   labelThisThread "object-decision"
@@ -573,21 +573,21 @@ decisionLogicThread tracer counterTracer policy objectChannelsVar sharedStateVar
 
 -- | Run `decisionLogicThread` and `drainRejectionThread`.
 decisionLogicThreads ::
-  forall m peeraddr objectId object.
+  forall m peerAddr objectId object.
   ( MonadDelay m
   , MonadMVar m
   , MonadMask m
   , MonadAsync m
   , MonadFork m
-  , Ord peeraddr
+  , Ord peerAddr
   , Ord objectId
-  , Hashable peeraddr
+  , Hashable peerAddr
   ) =>
-  Tracer m (TraceObjectLogic peeraddr objectId object) ->
+  Tracer m (TraceObjectLogic peerAddr objectId object) ->
   Tracer m ObjectDiffusionCounters ->
   ObjectDecisionPolicy ->
-  ObjectChannelsVar m peeraddr objectId object ->
-  SharedObjectStateVar m peeraddr objectId object ->
+  ObjectChannelsVar m peerAddr objectId object ->
+  SharedObjectStateVar m peerAddr objectId object ->
   m Void
 decisionLogicThreads tracer counterTracer policy objectChannelsVar sharedStateVar =
   uncurry (<>)
