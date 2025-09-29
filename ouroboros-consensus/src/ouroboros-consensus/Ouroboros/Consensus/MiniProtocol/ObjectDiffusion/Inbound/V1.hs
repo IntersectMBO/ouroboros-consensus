@@ -11,7 +11,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
+module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1
   ( objectDiffusionInbound
   , TraceObjectDiffusionInbound (..)
   , ObjectDiffusionInboundError (..)
