@@ -8,7 +8,7 @@
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
   ( -- * ObjectDiffusion Inbound client
-    objectSubmissionInboundV2
+    objectDiffusionInbound
 
     -- * PeerObjectAPI
   , withPeer
@@ -48,7 +48,7 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 -- there are object's to download it pipelines two requests: first for object's second
 -- for objectId's. If there are no object's to download, it either sends a blocking or
 -- non-blocking request for objectId's.
-objectSubmissionInboundV2 ::
+objectDiffusionInbound ::
   forall objectId object idx m.
   ( MonadDelay m
   , MonadThrow m
@@ -59,7 +59,7 @@ objectSubmissionInboundV2 ::
   ObjectDiffusionObjectPoolWriter objectId object idx m ->
   PeerObjectAPI m objectId object ->
   ObjectDiffusionServerPipelined objectId object m ()
-objectSubmissionInboundV2
+objectDiffusionInbound
   tracer
   initDelay
   ObjectDiffusionObjectPoolWriter{objectId}

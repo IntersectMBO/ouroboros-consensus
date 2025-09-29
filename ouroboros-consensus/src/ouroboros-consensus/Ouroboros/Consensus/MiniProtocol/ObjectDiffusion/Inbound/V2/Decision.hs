@@ -39,23 +39,23 @@ import System.Random (random)
 
 -- | Make download decisions.
 makeDecisions ::
-  forall peeraddr objectId object.
-  ( Ord peeraddr
+  forall peerAddr objectId object.
+  ( Ord peerAddr
   , Ord objectId
-  , Hashable peeraddr
+  , Hashable peerAddr
   ) =>
   -- | decision policy
   ObjectDecisionPolicy ->
   -- | decision context
-  SharedObjectState peeraddr objectId object ->
+  SharedObjectState peerAddr objectId object ->
   -- | list of available peers.
   --
   -- This is a subset of `peerObjectStates` of peers which either:
   -- * can be used to download a `object`,
   -- * can acknowledge some `objectId`s.
-  Map peeraddr (PeerObjectState objectId object) ->
-  ( SharedObjectState peeraddr objectId object
-  , Map peeraddr (ObjectDecision objectId object)
+  Map peerAddr (PeerObjectState objectId object) ->
+  ( SharedObjectState peerAddr objectId object
+  , Map peerAddr (ObjectDecision objectId object)
   )
 makeDecisions policy st =
   let (salt, rng') = random (peerRng st)
@@ -66,28 +66,28 @@ makeDecisions policy st =
  where
   fn ::
     forall a.
-    (a, [(peeraddr, ObjectDecision objectId object)]) ->
-    (a, Map peeraddr (ObjectDecision objectId object))
+    (a, [(peerAddr, ObjectDecision objectId object)]) ->
+    (a, Map peerAddr (ObjectDecision objectId object))
   fn (a, as) = (a, Map.fromList as)
 
 -- | Order peers by how useful the OBJECTs they have provided are.
 --
 -- OBJECTs delivered late will fail to apply because they were included in
 -- a recently adopted block. Peers can race against each other by setting
--- `objectInflightMultiplicity` to > 1. In case of a tie a hash of the peeraddr
+-- `objectInflightMultiplicity` to > 1. In case of a tie a hash of the peerAddr
 -- is used as a tie breaker. Since every invocation use a new salt a given
--- peeraddr does not have an advantage over time.
+-- peerAddr does not have an advantage over time.
 orderByRejections ::
-  Hashable peeraddr =>
+  Hashable peerAddr =>
   Int ->
-  Map peeraddr (PeerObjectState objectId object) ->
-  [(peeraddr, PeerObjectState objectId object)]
+  Map peerAddr (PeerObjectState objectId object) ->
+  [(peerAddr, PeerObjectState objectId object)]
 orderByRejections salt =
-  List.sortOn (\(peeraddr, ps) -> (score ps, hashWithSalt salt peeraddr))
+  List.sortOn (\(peerAddr, ps) -> (score ps, hashWithSalt salt peerAddr))
     . Map.toList
 
 -- | Internal state of `pickObjectsToDownload` computation.
-data St peeraddr objectId object
+data St peerAddr objectId object
   = St
   { stInflightSize :: !SizeInBytes
   -- ^ size of all `object`s in-flight.
@@ -113,17 +113,17 @@ data St peeraddr objectId object
 -- * each object can be downloaded simultaneously from at most
 --   `objectInflightMultiplicity` peers.
 pickObjectsToDownload ::
-  forall peeraddr objectId object.
-  ( Ord peeraddr
+  forall peerAddr objectId object.
+  ( Ord peerAddr
   , Ord objectId
   ) =>
   -- | decision policy
   ObjectDecisionPolicy ->
   -- | shared state
-  SharedObjectState peeraddr objectId object ->
-  [(peeraddr, PeerObjectState objectId object)] ->
-  ( SharedObjectState peeraddr objectId object
-  , [(peeraddr, ObjectDecision objectId object)]
+  SharedObjectState peerAddr objectId object ->
+  [(peerAddr, PeerObjectState objectId object)] ->
+  ( SharedObjectState peerAddr objectId object
+  , [(peerAddr, ObjectDecision objectId object)]
   )
 pickObjectsToDownload
   policy@ObjectDecisionPolicy
@@ -139,7 +139,7 @@ pickObjectsToDownload
     , inSubmissionToObjectPoolObjects
     , referenceCounts
     } =
-    -- outer fold: fold `[(peeraddr, PeerObjectState objectId object)]`
+    -- outer fold: fold `[(peerAddr, PeerObjectState objectId object)]`
     List.mapAccumR
       accumFn
       -- initial state
@@ -152,10 +152,10 @@ pickObjectsToDownload
       >>> gn
    where
     accumFn ::
-      St peeraddr objectId object ->
-      (peeraddr, PeerObjectState objectId object) ->
-      ( St peeraddr objectId object
-      , ( (peeraddr, PeerObjectState objectId object)
+      St peerAddr objectId object ->
+      (peerAddr, PeerObjectState objectId object) ->
+      ( St peerAddr objectId object
+      , ( (peerAddr, PeerObjectState objectId object)
         , ObjectDecision objectId object
         )
       )
@@ -166,7 +166,7 @@ pickObjectsToDownload
         , stAcknowledged
         , stInSubmissionToObjectPoolObjects
         }
-      ( peeraddr
+      ( peerAddr
         , peerObjectState@PeerObjectState
             { availableObjectIds
             , unknownObjects
@@ -200,7 +200,7 @@ pickObjectsToDownload
                             , stInSubmissionToObjectPoolObjects = stInSubmissionToObjectPoolObjects'
                             }
                         ,
-                          ( (peeraddr, peerObjectState')
+                          ( (peerAddr, peerObjectState')
                           , ObjectDecision
                               { objectIdsToAcknowledge = numObjectIdsToAck
                               , objectIdsToRequest = numObjectIdsToReq
@@ -219,7 +219,7 @@ pickObjectsToDownload
                         -- to in-flight size limits
                         ( st
                         ,
-                          ( (peeraddr, peerObjectState')
+                          ( (peerAddr, peerObjectState')
                           , emptyObjectDecision
                           )
                         )
@@ -312,7 +312,7 @@ pickObjectsToDownload
                             , stInSubmissionToObjectPoolObjects = stInSubmissionToObjectPoolObjects'
                             }
                         ,
-                          ( (peeraddr, peerObjectState'')
+                          ( (peerAddr, peerObjectState'')
                           , ObjectDecision
                               { objectIdsToAcknowledge = numObjectIdsToAck
                               , objectPipelineObjectIds =
@@ -334,17 +334,17 @@ pickObjectsToDownload
                             , stInSubmissionToObjectPoolObjects = stInSubmissionToObjectPoolObjects'
                             }
                         ,
-                          ( (peeraddr, peerObjectState'')
+                          ( (peerAddr, peerObjectState'')
                           , emptyObjectDecision{objectsToRequest = objectsToRequestMap}
                           )
                         )
 
     gn ::
-      ( St peeraddr objectId object
-      , [((peeraddr, PeerObjectState objectId object), ObjectDecision objectId object)]
+      ( St peerAddr objectId object
+      , [((peerAddr, PeerObjectState objectId object), ObjectDecision objectId object)]
       ) ->
-      ( SharedObjectState peeraddr objectId object
-      , [(peeraddr, ObjectDecision objectId object)]
+      ( SharedObjectState peerAddr objectId object
+      , [(peerAddr, ObjectDecision objectId object)]
       )
     gn
       ( St
@@ -426,12 +426,12 @@ pickObjectsToDownload
 
 -- | Filter peers which can either download a `object` or acknowledge `objectId`s.
 filterActivePeers ::
-  forall peeraddr objectId object.
+  forall peerAddr objectId object.
   Ord objectId =>
   HasCallStack =>
   ObjectDecisionPolicy ->
-  SharedObjectState peeraddr objectId object ->
-  Map peeraddr (PeerObjectState objectId object)
+  SharedObjectState peerAddr objectId object ->
+  Map peerAddr (PeerObjectState objectId object)
 filterActivePeers
   policy@ObjectDecisionPolicy
     { maxUnacknowledgedObjectIds
