@@ -67,7 +67,7 @@ oc = MkOCert
   , ocΣ   = ocΣ'
   }
   where
-    encodedOc = 0 -- since encode (ocVkₕ , ocN , ocC₀) = 0
+    encodedOc = 0 -- since encode (ocVkₕ , ocN , ocC₀) = 0 due to mock serialization
     ocΣ'      = externalFunctions.extSignDSIG coldSk encodedOc
 
 bhb :: BHBody
@@ -91,7 +91,7 @@ bh = MkBHeader
   , bhSig  = bhSig'
   }
   where
-    encodedBhb = 0 -- since encode bhb = 0
+    encodedBhb = 0 -- since encode bhb = 0 due to mock serialization
     bhSig'     = externalFunctions.extSignKES skf period encodedBhb
 
 hk :: KeyHashS
@@ -99,7 +99,7 @@ hk = succ (bhbIssuerVk bhb) -- i.e., hash (bhbIssuerVk bhb)
 
 -- NOTE: Why should this test succeed? Here's the explanation:
 --
--- hk = hash bhbIssuerVk = succ bhbIssuerVk
+-- hk = hash bhbIssuerVk = succ bhbIssuerVk (due to mock hashing)
 -- kp = kesPeriod bhbSlot = kesPeriod 0 = 0 / SlotsPerKESPeriodᶜ = 0 / 5 = 0
 -- t = kp -ᵏ ocC₀ = 0 - 0 = 0
 --

@@ -27,6 +27,11 @@ import qualified Data.ByteString.Char8 as BC
 import Data.Either (isRight)
 import Data.Maybe (fromMaybe)
 
+-- NOTE:
+-- We allow the use of the "unsafe" APIs (e.g. `unsoundPureSignKES`) since the functions in
+-- this file are only for the purposes of conformance testing.
+
+
 -- Hashes
 
 integerToHash :: forall h a. HashAlgorithm h => Integer -> Maybe (Hash h a)
