@@ -20,10 +20,10 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
   , newObjectChannelsVar
   , ObjectObjectPoolSem
   , newObjectObjectPoolSem
-  , SharedObjectStateVar
-  , newSharedObjectStateVar
-  , ObjectDecisionPolicy (..)
-  , defaultObjectDecisionPolicy
+  , DecisionGlobalStateVar
+  , newDecisionGlobalStateVar
+  , PeerDecisionPolicy (..)
+  , defaultPeerDecisionPolicy
   ) where
 
 import Control.Exception (assert)
@@ -44,19 +44,19 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 
 -- | A object-submission inbound side (server, sic!).
 --
--- The server blocks on receiving `ObjectDecision` from the decision logic. If
+-- The server blocks on receiving `PeerDecision` from the decision logic. If
 -- there are object's to download it pipelines two requests: first for object's second
 -- for objectId's. If there are no object's to download, it either sends a blocking or
 -- non-blocking request for objectId's.
 objectDiffusionInbound ::
-  forall objectId object idx m.
+  forall objectId object ticketNo m.
   ( MonadDelay m
   , MonadThrow m
   , Ord objectId
   ) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   ObjectDiffusionInitDelay ->
-  ObjectDiffusionObjectPoolWriter objectId object idx m ->
+  ObjectDiffusionObjectPoolWriter objectId object ticketNo m ->
   PeerObjectAPI m objectId object ->
   ObjectDiffusionServerPipelined objectId object m ()
 objectDiffusionInbound
@@ -64,7 +64,7 @@ objectDiffusionInbound
   initDelay
   ObjectDiffusionObjectPoolWriter{objectId}
   PeerObjectAPI
-    { readObjectDecision
+    { readPeerDecision
     , handleReceivedObjectIds
     , handleReceivedObjects
     , submitObjectToObjectPool
@@ -79,11 +79,11 @@ objectDiffusionInbound
       m (ServerStIdle Z objectId object m ())
     serverIdle = do
       -- Block on next decision.
-      object@ObjectDecision
+      object@PeerDecision
         { objectsToRequest = objectsToRequest
         , objectsToObjectPool = ObjectsToObjectPool{listOfObjectsToObjectPool}
         } <-
-        readObjectDecision
+        readPeerDecision
       traceWith tracer (TraceObjectInboundDecision object)
 
       let !collected = length listOfObjectsToObjectPool
@@ -106,9 +106,9 @@ objectDiffusionInbound
 
     -- Pipelined request of objects
     serverReqObjects ::
-      ObjectDecision objectId object ->
+      PeerDecision objectId object ->
       m (ServerStIdle Z objectId object m ())
-    serverReqObjects object@ObjectDecision{objectsToRequest = objectsToRequest} =
+    serverReqObjects object@PeerDecision{objectsToRequest = objectsToRequest} =
       pure $
         SendMsgRequestObjectsPipelined
           objectsToRequest
@@ -117,11 +117,11 @@ objectDiffusionInbound
     serverReqObjectIds ::
       forall (n :: N).
       Nat n ->
-      ObjectDecision objectId object ->
+      PeerDecision objectId object ->
       m (ServerStIdle n objectId object m ())
     serverReqObjectIds
       n
-      ObjectDecision{objectIdsToRequest = 0} =
+      PeerDecision{objectIdsToRequest = 0} =
         case n of
           Zero -> serverIdle
           Succ _ -> handleReplies n
@@ -131,7 +131,7 @@ objectDiffusionInbound
       -- the client side wouldn't have a chance to terminate the
       -- mini-protocol.
       Zero
-      ObjectDecision
+      PeerDecision
         { objectIdsToAcknowledge = objectIdsToAck
         , objectPipelineObjectIds = False
         , objectIdsToRequest = objectIdsToReq
@@ -153,7 +153,7 @@ objectDiffusionInbound
             )
     serverReqObjectIds
       n@Zero
-      ObjectDecision
+      PeerDecision
         { objectIdsToAcknowledge = objectIdsToAck
         , objectPipelineObjectIds = True
         , objectIdsToRequest = objectIdsToReq
@@ -165,7 +165,7 @@ objectDiffusionInbound
             (handleReplies (Succ n))
     serverReqObjectIds
       n@Succ{}
-      ObjectDecision
+      PeerDecision
         { objectIdsToAcknowledge = objectIdsToAck
         , objectPipelineObjectIds
         , objectIdsToRequest = objectIdsToReq

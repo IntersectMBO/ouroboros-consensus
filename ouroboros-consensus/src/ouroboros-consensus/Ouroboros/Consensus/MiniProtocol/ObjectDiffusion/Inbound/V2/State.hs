@@ -7,10 +7,10 @@
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
   ( -- * Core API
-    SharedObjectState (..)
-  , PeerObjectState (..)
-  , SharedObjectStateVar
-  , newSharedObjectStateVar
+    DecisionGlobalState (..)
+  , DecisionPeerState (..)
+  , DecisionGlobalStateVar
+  , newDecisionGlobalStateVar
   , receivedObjectIds
   , collectObjects
   , acknowledgeObjectIds
@@ -38,13 +38,14 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromJust, maybeToList)
 import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as StrictSeq
+import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Typeable (Typeable)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API (ObjectPoolSnapshot (..), SizeInBytes (..))
-import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsToAck (..))
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API (SizeInBytes (..), ObjectPoolWriter (opwHasObject))
+import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsAck (..))
 import System.Random (StdGen)
 
 --
@@ -55,28 +56,28 @@ acknowledgeObjectIds ::
   forall peerAddr object objectId.
   Ord objectId =>
   HasCallStack =>
-  ObjectDecisionPolicy ->
-  SharedObjectState peerAddr objectId object ->
-  PeerObjectState objectId object ->
+  PeerDecisionPolicy ->
+  DecisionGlobalState peerAddr objectId object ->
+  DecisionPeerState objectId object ->
   -- | number of objectId to acknowledge, requests, objects which we can submit to the
-  -- objectpool, objectIds to acknowledge with multiplicities, updated PeerObjectState.
-  ( NumObjectIdsToAck
-  , NumObjectIdsToReq
+  -- objectpool, objectIds to acknowledge with multiplicities, updated DecisionPeerState.
+  ( NumObjectIdsAck
+  , NumObjectIdsReq
   , ObjectsToObjectPool objectId object
   , RefCountDiff objectId
-  , PeerObjectState objectId object
+  , DecisionPeerState objectId object
   )
 {-# INLINE acknowledgeObjectIds #-}
 acknowledgeObjectIds
   policy
   sharedObjectState
-  ps@PeerObjectState
+  ps@DecisionPeerState
     { availableObjectIds
-    , unknownObjects
-    , requestedObjectIdsInflight
-    , downloadedObjects
+    , requestedButNotReceived
+    , numIdsInFlight
+    , pendingObjects
     , score
-    , toObjectPoolObjects
+    , toPoolObjects
     } =
     -- We can only acknowledge objectIds when we can request new ones, since
     -- a `MsgRequestObjectIds` for 0 objectIds is a protocol error.
@@ -87,15 +88,15 @@ acknowledgeObjectIds
         , ObjectsToObjectPool objectsToObjectPool
         , refCountDiff
         , ps
-            { unacknowledgedObjectIds = unacknowledgedObjectIds'
+            { outstandingFifo = outstandingFifo'
             , availableObjectIds = availableObjectIds'
-            , unknownObjects = unknownObjects'
-            , requestedObjectIdsInflight =
-                requestedObjectIdsInflight
+            , requestedButNotReceived = requestedButNotReceived'
+            , numIdsInFlight =
+                numIdsInFlight
                   + objectIdsToRequest
-            , downloadedObjects = downloadedObjects'
+            , pendingObjects = pendingObjects'
             , score = score'
-            , toObjectPoolObjects = toObjectPoolObjects'
+            , toPoolObjects = toPoolObjects'
             }
         )
       else
@@ -103,31 +104,31 @@ acknowledgeObjectIds
         , 0
         , ObjectsToObjectPool objectsToObjectPool
         , RefCountDiff Map.empty
-        , ps{toObjectPoolObjects = toObjectPoolObjects'}
+        , ps{toPoolObjects = toPoolObjects'}
         )
    where
-    -- Split `unacknowledgedObjectIds'` into the longest prefix of `objectId`s which
+    -- Split `outstandingFifo'` into the longest prefix of `objectId`s which
     -- can be acknowledged and the unacknowledged `objectId`s.
-    (objectIdsToRequest, acknowledgedObjectIds, unacknowledgedObjectIds') =
+    (objectIdsToRequest, acknowledgedObjectIds, outstandingFifo') =
       splitAcknowledgedObjectIds policy sharedObjectState ps
 
     objectsToObjectPool =
       [ (objectId, object)
       | objectId <- toList toObjectPoolObjectIds
-      , objectId `Map.notMember` bufferedObjects sharedObjectState
-      , object <- maybeToList $ objectId `Map.lookup` downloadedObjects
+      , objectId `Map.notMember` globalObtainedButNotAckedObjects sharedObjectState
+      , object <- maybeToList $ objectId `Map.lookup` pendingObjects
       ]
     (toObjectPoolObjectIds, _) =
-      StrictSeq.spanl (`Map.member` downloadedObjects) acknowledgedObjectIds
+      StrictSeq.spanl (`Map.member` pendingObjects) acknowledgedObjectIds
 
     objectsToObjectPoolMap = Map.fromList objectsToObjectPool
 
-    toObjectPoolObjects' = toObjectPoolObjects <> objectsToObjectPoolMap
+    toPoolObjects' = toPoolObjects <> objectsToObjectPoolMap
 
-    (downloadedObjects', ackedDownloadedObjects) = Map.partitionWithKey (\objectId _ -> objectId `Set.member` liveSet) downloadedObjects
+    (pendingObjects', ackedDownloadedObjects) = Map.partitionWithKey (\objectId _ -> objectId `Set.member` liveSet) pendingObjects
     -- latexObjects: transactions which were downloaded by another peer before we
     -- downloaded them; it relies on that `objectToObjectPool` filters out
-    -- `bufferedObjects`.
+    -- `globalObtainedButNotAckedObjects`.
     lateObjects =
       Map.filterWithKey
         (\objectId _ -> objectId `Map.notMember` objectsToObjectPoolMap)
@@ -135,17 +136,17 @@ acknowledgeObjectIds
     score' = score + fromIntegral (Map.size lateObjects)
 
     -- the set of live `objectIds`
-    liveSet = Set.fromList (toList unacknowledgedObjectIds')
+    liveSet = Set.fromList (toList outstandingFifo')
 
     availableObjectIds' =
       availableObjectIds
         `Map.restrictKeys` liveSet
 
     -- We remove all acknowledged `objectId`s which are not in
-    -- `unacknowledgedObjectIds''`, but also return the unknown set before any
-    -- modifications (which is used to compute `unacknowledgedObjectIds''`
+    -- `outstandingFifo''`, but also return the unknown set before any
+    -- modifications (which is used to compute `outstandingFifo''`
     -- above).
-    unknownObjects' = unknownObjects `Set.intersection` liveSet
+    requestedButNotReceived' = requestedButNotReceived `Set.intersection` liveSet
 
     refCountDiff =
       RefCountDiff $
@@ -158,7 +159,7 @@ acknowledgeObjectIds
       fn Nothing = Just 1
       fn (Just n) = Just $! n + 1
 
-    objectIdsToAcknowledge :: NumObjectIdsToAck
+    objectIdsToAcknowledge :: NumObjectIdsAck
     objectIdsToAcknowledge = fromIntegral $ StrictSeq.length acknowledgedObjectIds
 
 -- | Split unacknowledged objectIds into acknowledged and unacknowledged parts, also
@@ -166,47 +167,47 @@ acknowledgeObjectIds
 splitAcknowledgedObjectIds ::
   Ord objectId =>
   HasCallStack =>
-  ObjectDecisionPolicy ->
-  SharedObjectState peer objectId object ->
-  PeerObjectState objectId object ->
+  PeerDecisionPolicy ->
+  DecisionGlobalState peer objectId object ->
+  DecisionPeerState objectId object ->
   -- | number of objectIds to request, acknowledged objectIds, unacknowledged objectIds
-  (NumObjectIdsToReq, StrictSeq.StrictSeq objectId, StrictSeq.StrictSeq objectId)
+  (NumObjectIdsReq, StrictSeq.StrictSeq objectId, StrictSeq.StrictSeq objectId)
 splitAcknowledgedObjectIds
-  ObjectDecisionPolicy
+  PeerDecisionPolicy
     { maxUnacknowledgedObjectIds
-    , maxNumObjectIdsToRequest
+    , maxNumObjectIdsRequest
     }
-  SharedObjectState
-    { bufferedObjects
+  DecisionGlobalState
+    { globalObtainedButNotAckedObjects
     }
-  PeerObjectState
-    { unacknowledgedObjectIds
-    , unknownObjects
-    , downloadedObjects
-    , requestedObjectsInflight
-    , requestedObjectIdsInflight
+  DecisionPeerState
+    { outstandingFifo
+    , requestedButNotReceived
+    , pendingObjects
+    , inFlight
+    , numIdsInFlight
     } =
-    (objectIdsToRequest, acknowledgedObjectIds', unacknowledgedObjectIds')
+    (objectIdsToRequest, acknowledgedObjectIds', outstandingFifo')
    where
-    (acknowledgedObjectIds', unacknowledgedObjectIds') =
+    (acknowledgedObjectIds', outstandingFifo') =
       StrictSeq.spanl
         ( \objectId ->
-            ( objectId `Map.member` bufferedObjects
-                || objectId `Set.member` unknownObjects
-                || objectId `Map.member` downloadedObjects
+            ( objectId `Map.member` globalObtainedButNotAckedObjects
+                || objectId `Set.member` requestedButNotReceived
+                || objectId `Map.member` pendingObjects
             )
-              && objectId `Set.notMember` requestedObjectsInflight
+              && objectId `Set.notMember` inFlight
         )
-        unacknowledgedObjectIds
-    numOfUnacked = StrictSeq.length unacknowledgedObjectIds
+        outstandingFifo
+    numOfUnacked = StrictSeq.length outstandingFifo
     numOfAcked = StrictSeq.length acknowledgedObjectIds'
-    unackedAndRequested = fromIntegral numOfUnacked + requestedObjectIdsInflight
+    unackedAndRequested = fromIntegral numOfUnacked + numIdsInFlight
 
     objectIdsToRequest =
       assert (unackedAndRequested <= maxUnacknowledgedObjectIds) $
-        assert (requestedObjectIdsInflight <= maxNumObjectIdsToRequest) $
+        assert (numIdsInFlight <= maxNumObjectIdsRequest) $
           (maxUnacknowledgedObjectIds - unackedAndRequested + fromIntegral numOfAcked)
-            `min` (maxNumObjectIdsToRequest - requestedObjectIdsInflight)
+            `min` (maxNumObjectIdsRequest - numIdsInFlight)
 
 -- | `RefCountDiff` represents a map of `objectId` which can be acknowledged
 -- together with their multiplicities.
@@ -237,17 +238,17 @@ tickTimedObjects ::
   forall peerAddr object objectId.
   Ord objectId =>
   Time ->
-  SharedObjectState peerAddr objectId object ->
-  SharedObjectState peerAddr objectId object
+  DecisionGlobalState peerAddr objectId object ->
+  DecisionGlobalState peerAddr objectId object
 tickTimedObjects
   now
-  st@SharedObjectState
-    { timedObjects
+  st@DecisionGlobalState
+    { globalRententionTimeouts
     , referenceCounts
-    , bufferedObjects
+    , globalObtainedButNotAckedObjects
     } =
-    let (expiredObjects', timedObjects') =
-          case Map.splitLookup now timedObjects of
+    let (expiredObjects', globalRententionTimeouts') =
+          case Map.splitLookup now globalRententionTimeouts of
             (expired, Just objectIds, timed) ->
               ( expired -- Map.split doesn't include the `now` entry in the map
               , Map.insert now objectIds timed
@@ -257,11 +258,11 @@ tickTimedObjects
         refDiff = Map.foldl' fn Map.empty expiredObjects'
         referenceCounts' = updateRefCounts referenceCounts (RefCountDiff refDiff)
         liveSet = Map.keysSet referenceCounts'
-        bufferedObjects' = bufferedObjects `Map.restrictKeys` liveSet
+        globalObtainedButNotAckedObjects' = globalObtainedButNotAckedObjects `Map.restrictKeys` liveSet
      in st
-          { timedObjects = timedObjects'
+          { globalRententionTimeouts = globalRententionTimeouts'
           , referenceCounts = referenceCounts'
-          , bufferedObjects = bufferedObjects'
+          , globalObtainedButNotAckedObjects = globalObtainedButNotAckedObjects'
           }
    where
     fn ::
@@ -287,7 +288,7 @@ tickTimedObjects
 --
 
 -- | Insert received `objectId`s and return the number of objectIds to be acknowledged
--- and the updated `SharedObjectState`.
+-- and the updated `DecisionGlobalState`.
 receivedObjectIdsImpl ::
   forall peerAddr object objectId.
   (Ord objectId, Ord peerAddr, HasCallStack) =>
@@ -296,45 +297,45 @@ receivedObjectIdsImpl ::
   (objectId -> Bool) ->
   peerAddr ->
   -- | number of requests to subtract from
-  -- `requestedObjectIdsInflight`
-  NumObjectIdsToReq ->
+  -- `numIdsInFlight`
+  NumObjectIdsReq ->
   -- | sequence of received `objectIds`
   StrictSeq objectId ->
   -- | received `objectId`s with sizes
-  Map objectId SizeInBytes ->
-  SharedObjectState peerAddr objectId object ->
-  SharedObjectState peerAddr objectId object
+  Set objectId ->
+  DecisionGlobalState peerAddr objectId object ->
+  DecisionGlobalState peerAddr objectId object
 receivedObjectIdsImpl
   objectpoolHasObject
   peerAddr
   reqNo
   objectIdsSeq
-  objectIdsMap
-  st@SharedObjectState
-    { peerObjectStates
-    , bufferedObjects
+  objectIdsSet
+  st@DecisionGlobalState
+    { peerStates
+    , globalObtainedButNotAckedObjects
     , referenceCounts
     } =
-    -- using `alterF` so the update of `PeerObjectState` is done in one lookup
+    -- using `alterF` so the update of `DecisionPeerState` is done in one lookup
     case Map.alterF
       (fmap Just . fn . fromJust)
       peerAddr
-      peerObjectStates of
-      (st', peerObjectStates') ->
-        st'{peerObjectStates = peerObjectStates'}
+      peerStates of
+      (st', peerStates') ->
+        st'{peerStates = peerStates'}
    where
-    -- update `PeerObjectState` and return number of `objectId`s to acknowledged and
-    -- updated `SharedObjectState`.
+    -- update `DecisionPeerState` and return number of `objectId`s to acknowledged and
+    -- updated `DecisionGlobalState`.
     fn ::
-      PeerObjectState objectId object ->
-      ( SharedObjectState peerAddr objectId object
-      , PeerObjectState objectId object
+      DecisionPeerState objectId object ->
+      ( DecisionGlobalState peerAddr objectId object
+      , DecisionPeerState objectId object
       )
     fn
-      ps@PeerObjectState
+      ps@DecisionPeerState
         { availableObjectIds
-        , requestedObjectIdsInflight
-        , unacknowledgedObjectIds
+        , numIdsInFlight
+        , outstandingFifo
         } =
         (st', ps')
        where
@@ -344,33 +345,31 @@ receivedObjectIdsImpl
 
         -- Divide the new objectIds in two: those that are already in the objectpool
         -- and those that are not. We'll request some objects from the latter.
-        (ignoredObjectIds, availableObjectIdsMap) =
-          Map.partitionWithKey
-            (\objectId _ -> objectpoolHasObject objectId)
-            objectIdsMap
+        (ignoredObjectIds, availableObjectIdsSet) =
+          Set.partition objectpoolHasObject objectIdsSet
 
         -- Add all `objectIds` from `availableObjectIdsMap` which are not
         -- unacknowledged or already buffered. Unacknowledged objectIds must have
         -- already been added to `availableObjectIds` map before.
         availableObjectIds' =
-          Map.foldlWithKey
-            (\m objectId sizeInBytes -> Map.insert objectId sizeInBytes m)
+          Set.foldl
+            (\m objectId -> Set.insert objectId m)
             availableObjectIds
-            ( Map.filterWithKey
-                ( \objectId _ ->
-                    objectId `notElem` unacknowledgedObjectIds
-                      && objectId `Map.notMember` bufferedObjects
+            ( Set.filter
+                ( \objectId ->
+                    objectId `notElem` outstandingFifo
+                      && objectId `Map.notMember` globalObtainedButNotAckedObjects
                 )
-                availableObjectIdsMap
+                availableObjectIdsSet
             )
 
-        -- Add received objectIds to `unacknowledgedObjectIds`.
-        unacknowledgedObjectIds' = unacknowledgedObjectIds <> objectIdsSeq
+        -- Add received objectIds to `outstandingFifo`.
+        outstandingFifo' = outstandingFifo <> objectIdsSeq
 
         -- Add ignored `objects` to buffered ones.
-        -- Note: we prefer to keep the `object` if it's already in `bufferedObjects`.
-        bufferedObjects' =
-          bufferedObjects
+        -- Note: we prefer to keep the `object` if it's already in `globalObtainedButNotAckedObjects`.
+        globalObtainedButNotAckedObjects' =
+          globalObtainedButNotAckedObjects
             <> Map.map (const Nothing) ignoredObjectIds
 
         referenceCounts' =
@@ -387,16 +386,16 @@ receivedObjectIdsImpl
 
         st' =
           st
-            { bufferedObjects = bufferedObjects'
+            { globalObtainedButNotAckedObjects = globalObtainedButNotAckedObjects'
             , referenceCounts = referenceCounts'
             }
         ps' =
           assert
-            (requestedObjectIdsInflight >= reqNo)
+            (numIdsInFlight >= reqNo)
             ps
               { availableObjectIds = availableObjectIds'
-              , unacknowledgedObjectIds = unacknowledgedObjectIds'
-              , requestedObjectIdsInflight = requestedObjectIdsInflight - reqNo
+              , outstandingFifo = outstandingFifo'
+              , numIdsInFlight = numIdsInFlight - reqNo
               }
 
 -- | We check advertised sizes up in a fuzzy way.  The advertised and received
@@ -418,37 +417,37 @@ collectObjectsImpl ::
   Map objectId SizeInBytes ->
   -- | received objects
   Map objectId object ->
-  SharedObjectState peerAddr objectId object ->
+  DecisionGlobalState peerAddr objectId object ->
   -- | Return list of `objectId` which sizes didn't match or a new state.
   -- If one of the `object` has wrong size, we return an error.  The
   -- mini-protocol will throw, which will clean the state map from this peer.
   Either
     ObjectDiffusionProtocolError
-    (SharedObjectState peerAddr objectId object)
+    (DecisionGlobalState peerAddr objectId object)
 collectObjectsImpl
   objectSize
   peerAddr
   requestedObjectIdsMap
   receivedObjects
-  st@SharedObjectState{peerObjectStates} =
-    -- using `alterF` so the update of `PeerObjectState` is done in one lookup
+  st@DecisionGlobalState{peerStates} =
+    -- using `alterF` so the update of `DecisionPeerState` is done in one lookup
     case Map.alterF
       (fmap Just . fn . fromJust)
       peerAddr
-      peerObjectStates of
-      (Right st', peerObjectStates') ->
-        Right st'{peerObjectStates = peerObjectStates'}
+      peerStates of
+      (Right st', peerStates') ->
+        Right st'{peerStates = peerStates'}
       (Left e, _) ->
         Left $ ProtocolErrorObjectSizeError e
    where
-    -- Update `PeerObjectState` and partially update `SharedObjectState` (except of
-    -- `peerObjectStates`).
+    -- Update `DecisionPeerState` and partially update `DecisionGlobalState` (except of
+    -- `peerStates`).
     fn ::
-      PeerObjectState objectId object ->
+      DecisionPeerState objectId object ->
       ( Either
           [(objectId, SizeInBytes, SizeInBytes)]
-          (SharedObjectState peerAddr objectId object)
-      , PeerObjectState objectId object
+          (DecisionGlobalState peerAddr objectId object)
+      , DecisionPeerState objectId object
       )
     fn ps =
       case wrongSizedObjects of
@@ -488,21 +487,18 @@ collectObjectsImpl
 
       requestedObjectIds = Map.keysSet requestedObjectIdsMap
       notReceived = requestedObjectIds Set.\\ Map.keysSet receivedObjects
-      downloadedObjects' = downloadedObjects ps <> receivedObjects
-      -- Add not received objects to `unknownObjects` before acknowledging objectIds.
-      unknownObjects' = unknownObjects ps <> notReceived
+      pendingObjects' = pendingObjects ps <> receivedObjects
+      -- Add not received objects to `requestedButNotReceived` before acknowledging objectIds.
+      requestedButNotReceived' = requestedButNotReceived ps <> notReceived
 
-      requestedObjectsInflight' =
-        assert (requestedObjectIds `Set.isSubsetOf` requestedObjectsInflight ps) $
-          requestedObjectsInflight ps Set.\\ requestedObjectIds
+      inFlight' =
+        assert (requestedObjectIds `Set.isSubsetOf` inFlight ps) $
+          inFlight ps Set.\\ requestedObjectIds
 
       requestedSize = fold $ availableObjectIds ps `Map.restrictKeys` requestedObjectIds
-      requestedObjectsInflightSize' =
-        assert (requestedObjectsInflightSize ps >= requestedSize) $
-          requestedObjectsInflightSize ps - requestedSize
 
       -- subtract requested from in-flight
-      inflightObjects'' =
+      globalInFlightObjects'' =
         Map.merge
           (Map.mapMaybeMissing \_ x -> Just x)
           (Map.mapMaybeMissing \_ _ -> assert False Nothing)
@@ -514,21 +510,16 @@ collectObjectsImpl
                       then Just z
                       else Nothing
           )
-          (inflightObjects st)
+          (globalInFlightObjects st)
           (Map.fromSet (const 1) requestedObjectIds)
-
-      inflightObjectsSize'' =
-        assert (inflightObjectsSize st >= requestedSize) $
-          inflightObjectsSize st - requestedSize
 
       st' =
         st
-          { inflightObjects = inflightObjects''
-          , inflightObjectsSize = inflightObjectsSize''
+          { globalInFlightObjects = globalInFlightObjects''
           }
 
       --
-      -- Update PeerObjectState
+      -- Update DecisionPeerState
       --
 
       -- Remove the downloaded `objectId`s from the availableObjectIds map, this
@@ -536,81 +527,79 @@ collectObjectsImpl
       -- once we collect the `objectId`s. Also restrict keys to `liveSet`.
       --
       -- NOTE: we could remove `notReceived` from `availableObjectIds`; and
-      -- possibly avoid using `unknownObjects` field at all.
+      -- possibly avoid using `requestedButNotReceived` field at all.
       --
       availableObjectIds'' =
         availableObjectIds ps
           `Map.withoutKeys` requestedObjectIds
 
       -- Remove all acknowledged `objectId`s from unknown set, but only those
-      -- which are not present in `unacknowledgedObjectIds'`
-      unknownObjects'' =
-        unknownObjects'
+      -- which are not present in `outstandingFifo'`
+      requestedButNotReceived'' =
+        requestedButNotReceived'
           `Set.intersection` live
        where
         -- We cannot use `liveSet` as `unknown <> notReceived` might
         -- contain `objectIds` which are in `liveSet` but are not `live`.
-        live = Set.fromList (toList (unacknowledgedObjectIds ps))
+        live = Set.fromList (toList (outstandingFifo ps))
 
       ps'' =
         ps
           { availableObjectIds = availableObjectIds''
-          , unknownObjects = unknownObjects''
-          , requestedObjectsInflightSize = requestedObjectsInflightSize'
-          , requestedObjectsInflight = requestedObjectsInflight'
-          , downloadedObjects = downloadedObjects'
+          , requestedButNotReceived = requestedButNotReceived''
+          , inFlight = inFlight'
+          , pendingObjects = pendingObjects'
           }
 
 --
 -- Monadic public API
 --
 
-type SharedObjectStateVar m peerAddr objectId object =
-  StrictTVar m (SharedObjectState peerAddr objectId object)
+type DecisionGlobalStateVar m peerAddr objectId object =
+  StrictTVar m (DecisionGlobalState peerAddr objectId object)
 
-newSharedObjectStateVar ::
+newDecisionGlobalStateVar ::
   MonadSTM m =>
   StdGen ->
-  m (SharedObjectStateVar m peerAddr objectId object)
-newSharedObjectStateVar rng =
+  m (DecisionGlobalStateVar m peerAddr objectId object)
+newDecisionGlobalStateVar rng =
   newTVarIO
-    SharedObjectState
-      { peerObjectStates = Map.empty
-      , inflightObjects = Map.empty
-      , inflightObjectsSize = 0
-      , bufferedObjects = Map.empty
+    DecisionGlobalState
+      { peerStates = Map.empty
+      , globalInFlightObjects = Map.empty
+      , globalObtainedButNotAckedObjects = Map.empty
       , referenceCounts = Map.empty
-      , timedObjects = Map.empty
-      , inSubmissionToObjectPoolObjects = Map.empty
-      , peerRng = rng
+      , globalRententionTimeouts = Map.empty
+      , globalToPoolObjects = Map.empty
+      , orderRng = rng
       }
 
 -- | Acknowledge `objectId`s, return the number of `objectIds` to be acknowledged to the
 -- remote side.
 receivedObjectIds ::
-  forall m peerAddr idx object objectId.
+  forall m peerAddr ticketNo object objectId.
   (MonadSTM m, Ord objectId, Ord peerAddr) =>
   Tracer m (TraceObjectLogic peerAddr objectId object) ->
-  SharedObjectStateVar m peerAddr objectId object ->
-  STM m (ObjectPoolSnapshot objectId object idx) ->
+  DecisionGlobalStateVar m peerAddr objectId object ->
+  ObjectPoolWriter objectId object m ->
   peerAddr ->
   -- | number of requests to subtract from
-  -- `requestedObjectIdsInflight`
-  NumObjectIdsToReq ->
+  -- `numIdsInFlight`
+  NumObjectIdsReq ->
   -- | sequence of received `objectIds`
   StrictSeq objectId ->
   -- | received `objectId`s with sizes
   Map objectId SizeInBytes ->
   m ()
-receivedObjectIds tracer sharedVar getObjectPoolSnapshot peerAddr reqNo objectIdsSeq objectIdsMap = do
+receivedObjectIds tracer sharedVar objectPoolWriter peerAddr reqNo objectIdsSeq objectIdsMap = do
   st <- atomically $ do
-    ObjectPoolSnapshot{objectpoolHasObject} <- getObjectPoolSnapshot
+    hasObject <- opwHasObject objectPoolWriter
     stateTVar
       sharedVar
-      ((\a -> (a, a)) . receivedObjectIdsImpl objectpoolHasObject peerAddr reqNo objectIdsSeq objectIdsMap)
-  traceWith tracer (TraceSharedObjectState "receivedObjectIds" st)
+      ((\a -> (a, a)) . receivedObjectIdsImpl hasObject peerAddr reqNo objectIdsSeq objectIdsMap)
+  traceWith tracer (TraceDecisionGlobalState "receivedObjectIds" st)
 
--- | Include received `object`s in `SharedObjectState`.  Return number of `objectIds`
+-- | Include received `object`s in `DecisionGlobalState`.  Return number of `objectIds`
 -- to be acknowledged and list of `object` to be added to the objectpool.
 collectObjects ::
   forall m peerAddr object objectId.
@@ -622,7 +611,7 @@ collectObjects ::
   ) =>
   Tracer m (TraceObjectLogic peerAddr objectId object) ->
   (object -> SizeInBytes) ->
-  SharedObjectStateVar m peerAddr objectId object ->
+  DecisionGlobalStateVar m peerAddr objectId object ->
   peerAddr ->
   -- | set of requested objectIds with their announced size
   Map objectId SizeInBytes ->
@@ -641,6 +630,6 @@ collectObjects tracer objectSize sharedVar peerAddr objectIdsRequested objectsMa
       r@Left{} -> pure r
   case r of
     Right st ->
-      traceWith tracer (TraceSharedObjectState "collectObjects" st)
+      traceWith tracer (TraceDecisionGlobalState "collectObjects" st)
         $> Nothing
     Left e -> return (Just e)

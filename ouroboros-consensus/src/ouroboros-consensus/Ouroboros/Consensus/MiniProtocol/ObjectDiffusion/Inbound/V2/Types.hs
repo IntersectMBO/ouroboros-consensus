@@ -11,16 +11,16 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
-  ( -- * PeerObjectState
-    PeerObjectState (..)
+  ( -- * DecisionPeerState
+    DecisionPeerState (..)
 
-    -- * SharedObjectState
-  , SharedObjectState (..)
+    -- * DecisionGlobalState
+  , DecisionGlobalState (..)
 
     -- * Decisions
   , ObjectsToObjectPool (..)
-  , ObjectDecision (..)
-  , emptyObjectDecision
+  , PeerDecision (..)
+  , emptyPeerDecision
   , TraceObjectLogic (..)
   , ObjectDiffusionInitDelay (..)
   , defaultObjectDiffusionInitDelay
@@ -66,34 +66,30 @@ data ObjectDiffusionLogicVersion
   deriving (Eq, Show, Enum, Bounded)
 
 --
--- PeerObjectState, SharedObjectState
+-- DecisionPeerState, DecisionGlobalState
 --
 
-data PeerObjectState objectId object = PeerObjectState
-  { unacknowledgedObjectIds :: !(StrictSeq objectId)
+data DecisionPeerState objectId object = DecisionPeerState
+  { outstandingFifo :: !(StrictSeq objectId)
   -- ^ Those transactions (by their identifier) that the client has told
   -- us about, and which we have not yet acknowledged. This is kept in
   -- the order in which the client gave them to us. This is the same order
   -- in which we submit them to the objectpool (or for this example, the final
   -- result order). It is also the order we acknowledge in.
-  , availableObjectIds :: !(Map objectId SizeInBytes)
+  , availableObjectIds :: !(Set objectId)
   -- ^ Set of known transaction ids which can be requested from this peer.
-  , requestedObjectIdsInflight :: !NumObjectIdsToReq
+  , numIdsInFlight :: !NumObjectIdsReq
   -- ^ The number of transaction identifiers that we have requested but
   -- which have not yet been replied to. We need to track this it keep
   -- our requests within the limit on the number of unacknowledged objectIds.
-  , requestedObjectsInflightSize :: !SizeInBytes
-  -- ^ The size in bytes of transactions that we have requested but which
-  -- have not yet been replied to. We need to track this to keep our
-  -- requests within the `maxObjectsSizeInflight` limit.
-  , requestedObjectsInflight :: !(Set objectId)
+  , inFlight :: !(Set objectId)
   -- ^ The set of requested `objectId`s.
-  , unknownObjects :: !(Set objectId)
-  -- ^ A subset of `unacknowledgedObjectIds` which were unknown to the peer
+  , requestedButNotReceived :: !(Set objectId)
+  -- ^ A subset of `outstandingFifo` which were unknown to the peer
   -- (i.e. requested but not received). We need to track these `objectId`s
   -- since they need to be acknowledged.
   --
-  -- We track these `objectId` per peer, rather than in `bufferedObjects` map,
+  -- We track these `objectId` per peer, rather than in `globalObtainedButNotAckedObjects` map,
   -- since that could potentially lead to corrupting the node, not being
   -- able to download a `object` which is needed & available from other nodes.
   , score :: !Double
@@ -102,16 +98,16 @@ data PeerObjectState objectId object = PeerObjectState
   -- zero.
   , scoreTs :: !Time
   -- ^ Timestamp for the last time `score` was drained.
-  , downloadedObjects :: !(Map objectId object)
+  , pendingObjects :: !(Map objectId object)
   -- ^ A set of OBJECTs downloaded from the peer. They are not yet
   -- acknowledged and haven't been sent to the objectpool yet.
   --
   -- Life cycle of entries:
   -- * added when a object is downloaded (see `collectObjectsImpl`)
-  -- * follows `unacknowledgedObjectIds` (see `acknowledgeObjectIds`)
-  , toObjectPoolObjects :: !(Map objectId object)
+  -- * follows `outstandingFifo` (see `acknowledgeObjectIds`)
+  , toPoolObjects :: !(Map objectId object)
   -- ^ A set of OBJECTs on their way to the objectpool.
-  -- Tracked here so that we can cleanup `inSubmissionToObjectPoolObjects` if the
+  -- Tracked here so that we can cleanup `globalToPoolObjects` if the
   -- peer dies.
   --
   -- Life cycle of entries:
@@ -125,62 +121,60 @@ instance
   ( NoThunks objectId
   , NoThunks object
   ) =>
-  NoThunks (PeerObjectState objectId object)
+  NoThunks (DecisionPeerState objectId object)
 
 -- | Shared state of all `ObjectDiffusion` clients.
 --
--- New `objectId` enters `unacknowledgedObjectIds` it is also added to `availableObjectIds`
+-- New `objectId` enters `outstandingFifo` it is also added to `availableObjectIds`
 -- and `referenceCounts` (see `acknowledgeObjectIdsImpl`).
 --
 -- When a `objectId` id is selected to be downloaded, it's added to
--- `requestedObjectsInflightSize` (see
+-- `inFlightSize` (see
 -- `Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.Decision.pickObjectsToDownload`).
 --
--- When the request arrives, the `objectId` is removed from `inflightObjects`.  It
--- might be added to `unknownObjects` if the server didn't have that `objectId`, or
--- it's added to `bufferedObjects` (see `collectObjectsImpl`).
+-- When the request arrives, the `objectId` is removed from `globalInFlightObjects`.  It
+-- might be added to `requestedButNotReceived` if the server didn't have that `objectId`, or
+-- it's added to `globalObtainedButNotAckedObjects` (see `collectObjectsImpl`).
 --
 -- Whenever we choose `objectId` to acknowledge (either in `acknowledobjectsIdsImpl`,
 -- `collectObjectsImpl` or
 -- `Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.Decision.pickObjectsToDownload`, we also
 -- recalculate `referenceCounts` and only keep live `objectId`s in other maps (e.g.
--- `availableObjectIds`, `bufferedObjects`, `unknownObjects`).
-data SharedObjectState peerAddr objectId object = SharedObjectState
-  { peerObjectStates :: !(Map peerAddr (PeerObjectState objectId object))
+-- `availableObjectIds`, `globalObtainedButNotAckedObjects`, `requestedButNotReceived`).
+data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
+  { peerStates :: !(Map peerAddr (DecisionPeerState objectId object))
   -- ^ Map of peer states.
   --
   -- /Invariant:/ for peerAddr's which are registered using `withPeer`,
   -- there's always an entry in this map even if the set of `objectId`s is
   -- empty.
-  , inflightObjects :: !(Map objectId Int)
+  , globalInFlightObjects :: !(Map objectId Int)
   -- ^ Set of transactions which are in-flight (have already been
   -- requested) together with multiplicities (from how many peers it is
   -- currently in-flight)
   --
   -- This set can intersect with `availableObjectIds`.
-  , inflightObjectsSize :: !SizeInBytes
-  -- ^ Overall size of all `object`s in-flight.
-  , bufferedObjects :: !(Map objectId (Maybe object))
+  , globalObtainedButNotAckedObjects :: !(Map objectId (Maybe object))
   -- ^ Map of `object` which:
   --
   --    * were downloaded and added to the objectpool,
   --    * are already in the objectpool (`Nothing` is inserted in that case),
   --
   -- We only keep live `objectId`, e.g. ones which `objectId` is unacknowledged by
-  -- at least one peer or has a `timedObjects` entry.
+  -- at least one peer or has a `globalRententionTimeouts` entry.
   --
   -- /Note:/ `objectId`s which `object` were unknown by a peer are tracked
-  -- separately in `unknownObjects`.
+  -- separately in `requestedButNotReceived`.
   --
   -- /Note:/ previous implementation also needed to explicitly track
   -- `objectId`s which were already acknowledged, but are still unacknowledged.
   -- In this implementation, this is done using reference counting.
   --
   -- This map is useful to acknowledge `objectId`s, it's basically taking the
-  -- longest prefix which contains entries in `bufferedObjects` or `unknownObjects`.
+  -- longest prefix which contains entries in `globalObtainedButNotAckedObjects` or `requestedButNotReceived`.
   , referenceCounts :: !(Map objectId Int)
-  -- ^ We track reference counts of all unacknowledged and timedObjects objectIds.
-  -- Once the count reaches 0, a object is removed from `bufferedObjects`.
+  -- ^ We track reference counts of all unacknowledged and globalRententionTimeouts objectIds.
+  -- Once the count reaches 0, a object is removed from `globalObtainedButNotAckedObjects`.
   --
   -- The `bufferedObject` map contains a subset of `objectId` which
   -- `referenceCounts` contains.
@@ -188,11 +182,11 @@ data SharedObjectState peerAddr objectId object = SharedObjectState
   -- /Invariants:/
   --
   --    * the objectId count is equal to multiplicity of objectId in all
-  --      `unacknowledgedObjectIds` sequences;
-  --    * @Map.keysSet bufferedObjects `Set.isSubsetOf` Map.keysSet referenceCounts@;
+  --      `outstandingFifo` sequences;
+  --    * @Map.keysSet globalObtainedButNotAckedObjects `Set.isSubsetOf` Map.keysSet referenceCounts@;
   --    * all counts are positive integers.
-  , timedObjects :: !(Map Time [objectId])
-  -- ^ A set of timeouts for objectIds that have been added to bufferedObjects after being
+  , globalRententionTimeouts :: !(Map Time [objectId])
+  -- ^ A set of timeouts for objectIds that have been added to globalObtainedButNotAckedObjects after being
   -- inserted into the objectpool.
   --
   -- We need these short timeouts to avoid re-downloading a `object`.  We could
@@ -200,18 +194,18 @@ data SharedObjectState peerAddr objectId object = SharedObjectState
   -- continent presents us it again.
   --
   -- Every objectId entry has a reference count in `referenceCounts`.
-  , inSubmissionToObjectPoolObjects :: !(Map objectId Int)
+  , globalToPoolObjects :: !(Map objectId Int)
   -- ^ A set of objectIds that have been downloaded by a peer and are on their
   -- way to the objectpool. We won't issue further fetch-requests for OBJECTs in
   -- this state.  We track these objects to not re-download them from another
   -- peer.
   --
   -- * We subtract from the counter when a given object is added or rejected by
-  --   the objectpool or do that for all objects in `toObjectPoolObjects` when a peer is
+  --   the objectpool or do that for all objects in `toPoolObjects` when a peer is
   --   unregistered.
   -- * We add to the counter when a given object is selected to be added to the
   --   objectpool in `pickObjectsToDownload`.
-  , peerRng :: !StdGen
+  , orderRng :: !StdGen
   -- ^ Rng used to randomly order peers
   }
   deriving (Eq, Show, Generic)
@@ -222,7 +216,7 @@ instance
   , NoThunks objectId
   , NoThunks StdGen
   ) =>
-  NoThunks (SharedObjectState peerAddr objectId object)
+  NoThunks (DecisionGlobalState peerAddr objectId object)
 
 --
 -- Decisions
@@ -242,10 +236,10 @@ newtype ObjectsToObjectPool objectId object = ObjectsToObjectPool {listOfObjects
 -- (e.g. it won't be returned by `filterActivePeers`) for longer, and thus the
 -- expensive `makeDecision` computation will not need to take that peer into
 -- account.
-data ObjectDecision objectId object = ObjectDecision
-  { objectIdsToAcknowledge :: !NumObjectIdsToAck
+data PeerDecision objectId object = PeerDecision
+  { objectIdsToAcknowledge :: !NumObjectIdsAck
   -- ^ objectId's to acknowledge
-  , objectIdsToRequest :: !NumObjectIdsToReq
+  , objectIdsToRequest :: !NumObjectIdsReq
   -- ^ number of objectId's to request
   , objectPipelineObjectIds :: !Bool
   -- ^ the object-submission protocol only allows to pipeline `objectId`'s requests
@@ -260,23 +254,23 @@ data ObjectDecision objectId object = ObjectDecision
 -- | A non-commutative semigroup instance.
 --
 -- /note:/ this instance must be consistent with `pickObjectsToDownload` and how
--- `PeerObjectState` is updated.  It is designed to work with `TMergeVar`s.
-instance Ord objectId => Semigroup (ObjectDecision objectId object) where
-  ObjectDecision
+-- `DecisionPeerState` is updated.  It is designed to work with `TMergeVar`s.
+instance Ord objectId => Semigroup (PeerDecision objectId object) where
+  PeerDecision
     { objectIdsToAcknowledge
     , objectIdsToRequest
     , objectPipelineObjectIds = _ignored
     , objectsToRequest
     , objectsToObjectPool
     }
-    <> ObjectDecision
+    <> PeerDecision
       { objectIdsToAcknowledge = objectIdsToAcknowledge'
       , objectIdsToRequest = objectIdsToRequest'
       , objectPipelineObjectIds = objectPipelineObjectIds'
       , objectsToRequest = objectsToRequest'
       , objectsToObjectPool = objectsToObjectPool'
       } =
-      ObjectDecision
+      PeerDecision
         { objectIdsToAcknowledge = objectIdsToAcknowledge + objectIdsToAcknowledge'
         , objectIdsToRequest = objectIdsToRequest + objectIdsToRequest'
         , objectPipelineObjectIds = objectPipelineObjectIds'
@@ -285,9 +279,9 @@ instance Ord objectId => Semigroup (ObjectDecision objectId object) where
         }
 
 -- | A no-op decision.
-emptyObjectDecision :: ObjectDecision objectId object
-emptyObjectDecision =
-  ObjectDecision
+emptyPeerDecision :: PeerDecision objectId object
+emptyPeerDecision =
+  PeerDecision
     { objectIdsToAcknowledge = 0
     , objectIdsToRequest = 0
     , objectPipelineObjectIds = False
@@ -297,8 +291,8 @@ emptyObjectDecision =
 
 -- | ObjectLogic tracer.
 data TraceObjectLogic peerAddr objectId object
-  = TraceSharedObjectState String (SharedObjectState peerAddr objectId object)
-  | TraceObjectDecisions (Map peerAddr (ObjectDecision objectId object))
+  = TraceDecisionGlobalState String (DecisionGlobalState peerAddr objectId object)
+  | TracePeerDecisions (Map peerAddr (PeerDecision objectId object))
   deriving Show
 
 data ProcessedObjectCount = ProcessedObjectCount
@@ -314,7 +308,7 @@ data ProcessedObjectCount = ProcessedObjectCount
 -- submission logic requires.
 --
 -- This is provided to the object submission logic by the consensus layer.
-data ObjectDiffusionObjectPoolWriter objectId object idx m
+data ObjectDiffusionObjectPoolWriter objectId object ticketNo m
   = ObjectDiffusionObjectPoolWriter
   { objectId :: object -> objectId
   -- ^ Compute the transaction id from a transaction.
@@ -347,14 +341,14 @@ data TraceObjectDiffusionInbound objectId object
 
     -- | Server received 'MsgDone'
     TraceObjectInboundTerminated
-  | TraceObjectInboundDecision (ObjectDecision objectId object)
+  | TraceObjectInboundDecision (PeerDecision objectId object)
   deriving (Eq, Show)
 
 data ObjectDiffusionCounters
   = ObjectDiffusionCounters
   { numOfOutstandingObjectIds :: Int
   -- ^ objectIds which are not yet downloaded.  This is a diff of keys sets of
-  -- `referenceCounts` and a sum of `bufferedObjects` and
+  -- `referenceCounts` and a sum of `globalObtainedButNotAckedObjects` and
   -- `inbubmissionToObjectPoolObjects` maps.
   , numOfBufferedObjects :: Int
   -- ^ number of all buffered objects (downloaded or not available)
@@ -367,24 +361,24 @@ data ObjectDiffusionCounters
 
 mkObjectDiffusionCounters ::
   Ord objectId =>
-  SharedObjectState peerAddr objectId object ->
+  DecisionGlobalState peerAddr objectId object ->
   ObjectDiffusionCounters
 mkObjectDiffusionCounters
-  SharedObjectState
-    { inflightObjects
-    , bufferedObjects
+  DecisionGlobalState
+    { globalInFlightObjects
+    , globalObtainedButNotAckedObjects
     , referenceCounts
-    , inSubmissionToObjectPoolObjects
+    , globalToPoolObjects
     } =
     ObjectDiffusionCounters
       { numOfOutstandingObjectIds =
           Set.size $
             Map.keysSet referenceCounts
-              Set.\\ Map.keysSet bufferedObjects
-              Set.\\ Map.keysSet inSubmissionToObjectPoolObjects
-      , numOfBufferedObjects = Map.size bufferedObjects
-      , numOfInSubmissionToObjectPoolObjects = Map.size inSubmissionToObjectPoolObjects
-      , numOfObjectIdsInflight = getSum $ foldMap Sum inflightObjects
+              Set.\\ Map.keysSet globalObtainedButNotAckedObjects
+              Set.\\ Map.keysSet globalToPoolObjects
+      , numOfBufferedObjects = Map.size globalObtainedButNotAckedObjects
+      , numOfInSubmissionToObjectPoolObjects = Map.size globalToPoolObjects
+      , numOfObjectIdsInflight = getSum $ foldMap Sum globalInFlightObjects
       }
 
 data ObjectDiffusionProtocolError
