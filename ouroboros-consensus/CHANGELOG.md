@@ -2,6 +2,137 @@
 
 # Changelog entries
 
+<a id='changelog-0.28.0.0'></a>
+## 0.28.0.0 -- 2025-09-29
+
+### Patch
+
+- Changed ChainSel to reprocess LoE-delayed blocks even when LoE is disabled.
+
+- Changed GDD to trigger chain selection when caught-up. In certain edge cases,
+  this enables the node to promptly select a better chain right after concluding
+  that it is caught-up.
+
+- Changed the V2 LedgerDB `LedgerTablesHandle`s to actually be closed in all
+  cases. With the current (only) backend (in-memory), this doesn't matter, but
+  on-disk backends (like LSM trees) need this.
+
+- Fix serialization of `TriggerHardForkNotDuringThisExecution`.
+
+- LedgerDB.V2: prevent race condition when creating snapshots.
+
+- The backing store of the V1 LedgerDB was only tracked in the
+  resource registry if we were starting from Genesis. Now the backing
+  store will be properly tracked in the resource registry even when we
+  start from a snapshot.
+
+- Closing the LedgerDB will no longer release all the open forkers,
+  but instead invalidate them by emptying the ldbForkers map, so that
+  the only possible operation that could be performed is closing them
+  in the LedgerDB clients, such as ChainSel or the forging loop.
+
+- Closing the forker is idempotent, and it was performed both when
+  calling `forkerClose` as well as when the resource registry of the
+  LedgerDB client was going out of scope. Now, `forkerClose` will
+  release the resource from the registry so this won't run twice.
+
+- The mempool will now carry its own forker instead of acquiring one on each
+  revalidation. This particularly implies that the mempool will no longer
+  re-sync under the hood while trying to add a transaction, and only the
+  background thread will perform such a re-sync.
+
+- The mempool now has its own registry in which it allocates forkers. The
+  background thread was moved to this inner registry such that it can access the
+  mempool internal registry, but an action to cancel it will still live in the
+  outer registry, to ensure the thread is closed before we attempt to close the
+  mempool internal registry. Otherwise we would run into a race condition if the
+  background thread would attempt a resync while the internal registry was being
+  closed.
+
+- Changed ChainSel reprocessing of blocks postponed by the Limited of Eagerness
+  (Genesis), which in particular should be more efficient.
+
+### Non-Breaking
+
+- Only open BackingStore ValueHandles in V1 when we perform a UTxO operation.
+
+- Support `NodeToClientV_22`.
+- Using `io-classes-1.8.0.1`
+
+- Ensure uncommitted forkers do not leak Ledger tables handles.
+
+- Gate `NoThunks` invariant checks behind the `expensive-invariants` build to allow for:
+  + No invariant checking in production
+  + Cheap (domain-specific) invariant checking in regular CI
+  + Cheap and expensive invariant checking in nightly CI
+
+### Breaking
+
+- Use new mlocked KES API to represent KES sign keys internally. This ensures
+  that KES keys are securely erased when replaced with a newer evolution or a
+  fresh key, and that they will not spill to disk or swap. See
+  https://github.com/IntersectMBO/cardano-base/pull/255.
+- Add `finalize` method to `BlockForging`, and use it where necessary to clean
+  up when a block forging thread terminates (see `forkLinkedWatcherFinalize`)
+
+- LedgerDB: added new trace events (enabling new tests).
+
+- Delete `Ouroboros.Consensus.HardFork.Combinator.Compat`
+
+- ChainDB internals: changed type of `FollowerHandle.fhSwitchFork`.
+
+- Removed `getLedgerTablesAtFor` from the ChainDB API. Clients now have to
+  actually open a forker and manage it.
+
+- Changed pruning of immutable ledger states to happen on LedgerDB garbage
+  collection instead of directly on every block adoption. This is purely an
+  internal refactoring (with breaking API changes) supporting predictable ledger
+  snapshotting.
+
+- Avoid maintaining volatile ledger states during ledger replay, making it
+  slightly more efficient.
+
+- Changed `SelectView` to be a data type instead of an associated type of
+  `ConsensusProtocol`, which is the combination of a `BlockNo` and a
+  `TiebreakerView`, which is a new associated type of `ConsensusProtocol`. This
+  makes it explicit that `ouroboros-consensus` is targeting longest chain
+  protocols.
+
+  - Removed `PBftSelectView`, use `SelectView PBft` instead.
+
+  - Removed `HardForkSelectView`, use `SelectView (HardForkProtocol xs)` instead.
+
+- Changed `AddedReprocessLoEBlocksToQueue` to take an `Enclosing' Word` (the queue size), just like `AddedBlockToQueue`.
+
+- `PoppedBlockFromQueue` no longer takes an `Enclosing`. `PoppedBlockFromQueue RisingEdge` is replaced by `PoppingFromQueue`.
+
+- Using `LedgerRelayAccessPoint` rather than `RelayAccessPoint` in `Ouroboros.Consensus.Ledger.SupportsPeerSelection`.
+
+- Changed `SelectionChangedInfo.newTipTrigger` (contained in tracing types) to
+  be a `Maybe` to accurately reflect Ouroboros Genesis-related (Limit on
+  Eagerness) triggered chain selection.
+
+- Renamed `IgnoreBlockOlderThanK` to `IgnoreBlockOlderThanImmTip` for future-proofing.
+- Renamed and simplified `olderThanK` to `olderThanImmTip`.
+
+- LedgerDB: generalized over the criterion used to determine which states are
+  volatile/immutable, in preparation for Ouroboros Peras.
+
+  Concretely, `LedgerDB.openDB` takes a new argument, `GetVolatileSuffix m blk`.
+  For Praos behavior, use `praosGetVolatileSuffix`.
+
+- `forkerRangeRead` now returns also the maximal key found in the backend.
+
+- Group snapshot management functions in the new datatype `SnapshotManager`.
+
+- Delete `LedgerSupportsOnDiskLedgerDB` constraint and created `LedgerSupports(V1|V2)LedgerDB`.
+
+- Introduce `Ouroboros.Consensus.Block.SupportsPeras` with types related to Peras.
+  - All new types are re-exported through `Ouroboros.Consensus.Block`.
+- Introduce `Ouroboros.Consensus.Peras.Weight` with weight computation related types and functions for chains and fragments.
+- Introduce a new benchmark suite `PerasCertDB-bench`
+- Add property tests and benchmarks for weight computation on chain and fragments
+
 <a id='changelog-0.27.0.0'></a>
 ## 0.27.0.0 -- 2025-05-15
 
