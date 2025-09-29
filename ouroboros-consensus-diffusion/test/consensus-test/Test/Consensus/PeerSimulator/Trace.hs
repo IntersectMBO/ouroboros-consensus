@@ -418,14 +418,16 @@ traceChainDBEventTestBlockWith tracer = \case
         trace $ "Switched to a fork; now: " ++ terseHFragment newFragment
       StoreButDontChange point ->
         trace $ "Did not select block due to LoE: " ++ terseRealPoint point
-      IgnoreBlockOlderThanK point ->
-        trace $ "Ignored block older than k: " ++ terseRealPoint point
+      IgnoreBlockOlderThanImmTip point ->
+        trace $ "Ignored block older than imm tip: " ++ terseRealPoint point
       ChainSelectionLoEDebug curChain (LoEEnabled loeFrag0) -> do
         trace $ "Current chain: " ++ terseHFragment curChain
         trace $ "LoE fragment: " ++ terseHFragment loeFrag0
       ChainSelectionLoEDebug _ LoEDisabled ->
         pure ()
-      AddedReprocessLoEBlocksToQueue ->
+      AddedReprocessLoEBlocksToQueue RisingEdge ->
+        trace $ "Requesting ChainSel run..."
+      AddedReprocessLoEBlocksToQueue FallingEdgeWith{} ->
         trace $ "Requested ChainSel run"
       _ -> pure ()
   ChainDB.TraceChainSelStarvationEvent (ChainDB.ChainSelStarvation RisingEdge) ->

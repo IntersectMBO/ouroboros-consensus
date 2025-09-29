@@ -26,7 +26,6 @@ import Data.Maybe (fromMaybe)
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -49,8 +48,6 @@ data ForkerEnv m l blk = ForkerEnv
   -- ^ Local version of the LedgerSeq
   , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l))
   -- ^ This TVar is the same as the LedgerDB one
-  , foeSecurityParam :: !SecurityParam
-  -- ^ Config
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
   , foeResourcesToRelease :: !(RAWLock m (), ResourceKey m, StrictTVar m (m ()))
@@ -75,7 +72,8 @@ implForkerReadTables ::
 implForkerReadTables env ks = do
   traceWith (foeTracer env) ForkerReadTablesStart
   lseq <- readTVarIO (foeLedgerSeq env)
-  tbs <- read (tables $ currentHandle lseq) ks
+  let stateRef = currentHandle lseq
+  tbs <- read (tables stateRef) ks
   traceWith (foeTracer env) ForkerReadTablesEnd
   pure tbs
 
@@ -84,16 +82,17 @@ implForkerRangeReadTables ::
   QueryBatchSize ->
   ForkerEnv m l blk ->
   RangeQueryPrevious l ->
-  m (LedgerTables l ValuesMK)
+  m (LedgerTables l ValuesMK, Maybe (TxIn l))
 implForkerRangeReadTables qbs env rq0 = do
   traceWith (foeTracer env) ForkerRangeReadTablesStart
   ldb <- readTVarIO $ foeLedgerSeq env
   let n = fromIntegral $ defaultQueryBatchSize qbs
+      stateRef = currentHandle ldb
   case rq0 of
     NoPreviousQuery -> readRange (tables $ currentHandle ldb) (Nothing, n)
-    PreviousQueryWasFinal -> pure $ LedgerTables emptyMK
+    PreviousQueryWasFinal -> pure (LedgerTables emptyMK, Nothing)
     PreviousQueryWasUpTo k -> do
-      tbs <- readRange (tables $ currentHandle ldb) (Just k, n)
+      tbs <- readRange (tables stateRef) (Just k, n)
       traceWith (foeTracer env) ForkerRangeReadTablesEnd
       pure tbs
 
@@ -154,10 +153,7 @@ implForkerCommit env = do
           (olddb', toClose) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
           -- Join the prefix of the selection with the sequence in the forker
           newdb <- AS.join (const $ const True) olddb' lseq
-          -- Prune the resulting sequence to keep @k@ states
-          let (closePruned, s) = prune (LedgerDbPruneKeeping (foeSecurityParam env)) (LedgerSeq newdb)
-              closeDiscarded = do
-                closePruned
+          let closeDiscarded = do
                 -- Do /not/ close the anchor of @toClose@, as that is also the
                 -- tip of @olddb'@ which will be used in @newdb@.
                 case toClose of
@@ -165,8 +161,19 @@ implForkerCommit env = do
                   _ AS.:< closeOld' -> closeLedgerSeq (LedgerSeq closeOld')
                 -- Finally, close the anchor of @lseq@ (which is a duplicate of
                 -- the head of @olddb'@).
+                --
+                -- Note if the resource registry used to create the Forker is
+                -- ephemeral as the one created on each Chain selection or each
+                -- Forging loop iteration, this first duplicated state will be
+                -- closed by the resource registry closing down, so this will be
+                -- a double release, which is fine. We prefer keeping this
+                -- action just in case some client passes a registry that
+                -- outlives the forker.
+                --
+                -- The rest of the states in the forker will be closed via
+                -- @foeResourcesToRelease@ instead of via the registry.
                 close $ tables $ AS.anchor lseq
-          pure (closeDiscarded, s)
+          pure (closeDiscarded, LedgerSeq newdb)
       )
 
   -- We are discarding the previous value in the TVar because we had accumulated

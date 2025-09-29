@@ -59,13 +59,6 @@ import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
   ( RewardProvenance
   )
 import qualified Cardano.Ledger.State as SL
-import Cardano.Ledger.UMap
-  ( UMap (..)
-  , rdReward
-  , umElemDRep
-  , umElemRDPair
-  , umElemSPool
-  )
 import Cardano.Protocol.Crypto (Crypto)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -103,6 +96,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
+  , ledgerPeerSnapshotSupportsSRV
   )
 import Ouroboros.Consensus.Shelley.Ledger.PeerSelection ()
 import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
@@ -249,7 +243,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (SL.PState era)
+      SL.QueryPoolStateResult
   GetStakeSnapshots ::
     Maybe (Set (SL.KeyHash 'SL.StakePool)) ->
     BlockQuery
@@ -311,7 +305,11 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     Set (SL.Credential 'HotCommitteeRole) ->
     Set SL.MemberStatus ->
     BlockQuery (ShelleyBlock proto era) QFNoTables SL.CommitteeMembersState
-  -- | Not supported in eras before Conway.
+  -- | The argument specifies the credential of each account whose delegatee
+  -- should be returned. When it's empty, the full map of delegatees is
+  -- returned.
+  --
+  -- Not supported in eras before Conway.
   GetFilteredVoteDelegatees ::
     CG.ConwayEraGov era =>
     Set (SL.Credential 'SL.Staking) ->
@@ -427,22 +425,11 @@ instance
       GetStakePools ->
         SL.getPools st
       GetStakePoolParams poolids ->
-        SL.getPoolParameters st poolids
+        SL.queryPoolParameters st poolids
       GetRewardInfoPools ->
         SL.getRewardInfoPools globals st
       GetPoolState mPoolIds ->
-        let certPState = view SL.certPStateL . SL.lsCertState . SL.esLState . SL.nesEs $ st
-         in case mPoolIds of
-              Just poolIds ->
-                SL.PState
-                  { SL.psStakePoolParams =
-                      Map.restrictKeys (SL.psStakePoolParams certPState) poolIds
-                  , SL.psFutureStakePoolParams =
-                      Map.restrictKeys (SL.psFutureStakePoolParams certPState) poolIds
-                  , SL.psRetiring = Map.restrictKeys (SL.psRetiring certPState) poolIds
-                  , SL.psDeposits = Map.restrictKeys (SL.psDeposits certPState) poolIds
-                  }
-              Nothing -> certPState
+        SL.queryPoolState st mPoolIds
       GetStakeSnapshots mPoolIds ->
         let SL.SnapShots
               { SL.ssStakeMark
@@ -832,25 +819,21 @@ getFilteredDelegationsAndRewardAccounts ::
   SL.NewEpochState era ->
   Set (SL.Credential 'SL.Staking) ->
   (Delegations, Map (SL.Credential 'Staking) Coin)
-getFilteredDelegationsAndRewardAccounts ss creds =
-  (filteredDelegations, filteredRwdAcnts)
- where
-  UMap umElems _ = SL.dsUnified $ getDState ss
-  umElemsRestricted = Map.restrictKeys umElems creds
-
-  filteredDelegations = Map.mapMaybe umElemSPool umElemsRestricted
-  filteredRwdAcnts =
-    Map.mapMaybe (fmap (fromCompact . rdReward) . umElemRDPair) umElemsRestricted
+getFilteredDelegationsAndRewardAccounts = SL.queryStakePoolDelegsAndRewards
 
 getFilteredVoteDelegatees ::
-  SL.EraCertState era =>
+  (SL.EraCertState era, CG.ConwayEraAccounts era) =>
   SL.NewEpochState era ->
   Set (SL.Credential 'SL.Staking) ->
   VoteDelegatees
-getFilteredVoteDelegatees ss creds = Map.mapMaybe umElemDRep umElemsRestricted
+getFilteredVoteDelegatees ss creds
+  | Set.null creds =
+      Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMap
+  | otherwise =
+      Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMapRestricted
  where
-  UMap umElems _ = SL.dsUnified $ getDState ss
-  umElemsRestricted = Map.restrictKeys umElems creds
+  accountsMap = getDState ss ^. SL.accountsL . SL.accountsMapL
+  accountsMapRestricted = Map.restrictKeys accountsMap creds
 
 {-------------------------------------------------------------------------------
   Serialisation
@@ -1061,7 +1044,7 @@ encodeShelleyResult v query = case query of
   GetProposals{} -> LC.toEraCBOR @era
   GetRatifyState{} -> LC.toEraCBOR @era
   GetFuturePParams{} -> LC.toEraCBOR @era
-  GetBigLedgerPeerSnapshot -> toCBOR
+  GetBigLedgerPeerSnapshot -> encodeLedgerPeerSnapshot (ledgerPeerSnapshotSupportsSRV v)
   QueryStakePoolDefaultVote{} -> toCBOR
   GetPoolDistr2{} -> LC.toEraCBOR @era
   GetStakeDistribution2{} -> LC.toEraCBOR @era
@@ -1109,7 +1092,7 @@ decodeShelleyResult v query = case query of
   GetProposals{} -> LC.fromEraCBOR @era
   GetRatifyState{} -> LC.fromEraCBOR @era
   GetFuturePParams{} -> LC.fromEraCBOR @era
-  GetBigLedgerPeerSnapshot -> fromCBOR
+  GetBigLedgerPeerSnapshot -> decodeLedgerPeerSnapshot (ledgerPeerSnapshotSupportsSRV v)
   QueryStakePoolDefaultVote{} -> fromCBOR
   GetPoolDistr2{} -> LC.fromEraCBOR @era
   GetStakeDistribution2 -> LC.fromEraCBOR @era
@@ -1337,17 +1320,12 @@ answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
         )
         vs
 
-  vnull :: ValuesMK k v -> Bool
-  vnull (ValuesMK vs) = Map.null vs
-
-  toMaxKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
-
   loop queryPredicate !prev !acc = do
-    extValues <- LedgerDB.roforkerRangeReadTables forker prev
-    if ltcollapse $ ltmap (K2 . vnull) extValues
-      then pure acc
-      else
+    (extValues, k) <- LedgerDB.roforkerRangeReadTables forker prev
+    case k of
+      Nothing -> pure acc
+      Just k' ->
         loop
           queryPredicate
-          (PreviousQueryWasUpTo $ toMaxKey extValues)
+          (PreviousQueryWasUpTo k')
           (combUtxo acc $ partial queryPredicate extValues)

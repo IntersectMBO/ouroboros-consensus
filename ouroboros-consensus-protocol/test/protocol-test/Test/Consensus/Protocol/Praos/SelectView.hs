@@ -17,6 +17,8 @@ import Codec.Serialise (encode)
 import Control.Monad
 import Data.Containers.ListUtils (nubOrdOn)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
 import Test.Cardano.Ledger.Binary.Arbitrary ()
 import Test.Ouroboros.Consensus.Protocol
@@ -29,29 +31,32 @@ import Test.Util.TestEnv
 tests :: TestTree
 tests =
   testGroup
-    "PraosChainSelectView"
+    "Praos SelectView"
     [ adjustQuickCheckTests (* 50)
       -- Use a small max size by default in order to have a decent chance to
       -- trigger the actual tiebreaker cases.
       $
         adjustQuickCheckMaxSize (`div` 10) $
-          tests_chainOrder (Proxy @(PraosChainSelectView StandardCrypto))
+          tests_chainOrder (Proxy @(SelectView (Praos StandardCrypto)))
     ]
 
-instance Crypto c => Arbitrary (PraosChainSelectView c) where
+instance Crypto c => Arbitrary (SelectView (Praos c)) where
   arbitrary = do
     size <- fromIntegral <$> getSize
-    csvChainLength <- BlockNo <$> choose (1, size)
-    csvSlotNo <- SlotNo <$> choose (1, size)
-    csvIssuer <- elements knownIssuers
-    csvIssueNo <- choose (1, 10)
+    svBlockNo <- BlockNo <$> choose (1, size)
+    ptvSlotNo <- SlotNo <$> choose (1, size)
+    ptvIssuer <- elements knownIssuers
+    ptvIssueNo <- choose (1, 10)
     pure
-      PraosChainSelectView
-        { csvChainLength
-        , csvSlotNo
-        , csvIssuer
-        , csvIssueNo
-        , csvTieBreakVRF = mkVRFFor csvIssuer csvSlotNo
+      SelectView
+        { svBlockNo = svBlockNo
+        , svTiebreakerView =
+            PraosTiebreakerView
+              { ptvSlotNo
+              , ptvIssuer
+              , ptvIssueNo
+              , ptvTieBreakVRF = mkVRFFor ptvIssuer ptvSlotNo
+              }
         }
    where
     -- We want to draw from the same small set of issuer identities in order to
@@ -78,7 +83,7 @@ instance Crypto c => Arbitrary (PraosChainSelectView c) where
      where
       SL.KeyHash issuerHash = SL.hashKey issuer
 
--- | 'ChainOrderConfig' 'PraosChainSelectView'
+-- | @'ChainOrderConfig' ('SelectView' 'Praos')@
 instance Arbitrary VRFTiebreakerFlavor where
   arbitrary =
     oneof

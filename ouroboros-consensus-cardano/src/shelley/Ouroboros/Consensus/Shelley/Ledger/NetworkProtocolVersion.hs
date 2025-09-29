@@ -4,11 +4,13 @@
 module Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
   , ShelleyNodeToNodeVersion (..)
+  , ledgerPeerSnapshotSupportsSRV
   ) where
 
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Shelley.Ledger.Block
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type (LedgerPeerSnapshotSRVSupport (..))
 
 data ShelleyNodeToNodeVersion = ShelleyNodeToNodeVersion1
   deriving (Show, Eq, Ord, Enum, Bounded)
@@ -27,7 +29,14 @@ data ShelleyNodeToClientVersion
     ShelleyNodeToClientVersion12
   | -- | New encoder for PParams, CompactGenesis
     ShelleyNodeToClientVersion13
+  | -- | Support SRV in GetBigLedgerPeerSnapshot
+    ShelleyNodeToClientVersion14
   deriving (Show, Eq, Ord, Enum, Bounded)
+
+ledgerPeerSnapshotSupportsSRV :: ShelleyNodeToClientVersion -> LedgerPeerSnapshotSRVSupport
+ledgerPeerSnapshotSupportsSRV v
+  | v < ShelleyNodeToClientVersion14 = LedgerPeerSnapshotDoesntSupportSRV
+  | otherwise = LedgerPeerSnapshotSupportsSRV
 
 instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
   type BlockNodeToNodeVersion (ShelleyBlock proto era) = ShelleyNodeToNodeVersion
@@ -38,6 +47,7 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
   supportedNodeToNodeVersions _ =
     Map.fromList
       [ (NodeToNodeV_14, ShelleyNodeToNodeVersion1)
+      , (NodeToNodeV_15, ShelleyNodeToNodeVersion1)
       ]
   supportedNodeToClientVersions _ =
     Map.fromList
@@ -47,6 +57,7 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
       , (NodeToClientV_19, ShelleyNodeToClientVersion11)
       , (NodeToClientV_20, ShelleyNodeToClientVersion12)
       , (NodeToClientV_21, ShelleyNodeToClientVersion13)
+      , (NodeToClientV_22, ShelleyNodeToClientVersion14)
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault

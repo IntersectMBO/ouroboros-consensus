@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -19,11 +20,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
     launchBgTasks
 
     -- * Copying blocks from the VolatileDB to the ImmutableDB
-  , copyAndSnapshotRunner
   , copyToImmutableDB
 
     -- * Executing garbage collection
-  , garbageCollect
+  , garbageCollectBlocks
 
     -- * Scheduling garbage collections
   , GcParams (..)
@@ -41,7 +41,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   , addBlockRunner
   ) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
 import Control.Monad (forM_, forever, void)
 import Control.Monad.Trans.Class (lift)
@@ -57,7 +56,6 @@ import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -69,14 +67,15 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   ( chainSelSync
   )
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.Enclose (Enclosing' (..))
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
 import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -100,17 +99,30 @@ launchBgTasks cdb@CDB{..} replayed = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
+
+  ledgerDbTasksTrigger <- newLedgerDbTasksTrigger replayed
+  !ledgerDbMaintenaceThread <-
+    forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
+      ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
+
   gcSchedule <- newGcSchedule
   !gcThread <-
-    launch "ChainDB.gcScheduleRunner" $
+    launch "ChainDB.gcBlocksScheduleRunner" $
       gcScheduleRunner gcSchedule $
-        garbageCollect cdb
-  !copyAndSnapshotThread <-
-    launch "ChainDB.copyAndSnapshotRunner" $
-      copyAndSnapshotRunner cdb gcSchedule replayed cdbCopyFuse
+        garbageCollectBlocks cdb
+
+  !copyToImmutableDBThread <-
+    launch "ChainDB.copyToImmutableDBRunner" $
+      copyToImmutableDBRunner cdb ledgerDbTasksTrigger gcSchedule cdbCopyFuse
+
   atomically $
     writeTVar cdbKillBgThreads $
-      sequence_ [addBlockThread, gcThread, copyAndSnapshotThread]
+      sequence_
+        [ addBlockThread
+        , cancelThread ledgerDbMaintenaceThread
+        , gcThread
+        , copyToImmutableDBThread
+        ]
  where
   launch :: String -> m Void -> m (m ())
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
@@ -119,10 +131,11 @@ launchBgTasks cdb@CDB{..} replayed = do
   Copying blocks from the VolatileDB to the ImmutableDB
 -------------------------------------------------------------------------------}
 
--- | Copy the blocks older than @k@ from the VolatileDB to the ImmutableDB.
+-- | Copy the blocks older than the immutable tip from the VolatileDB to the
+-- ImmutableDB.
 --
--- These headers of these blocks can be retrieved by dropping the @k@ most
--- recent blocks from the fragment stored in 'cdbChain'.
+-- The headers of these blocks can be retrieved by considering headers in
+-- 'cdbChain' that are not also in 'getCurrentChain' (a suffix of 'cdbChain').
 --
 -- The copied blocks are removed from the fragment stored in 'cdbChain'.
 --
@@ -140,10 +153,11 @@ copyToImmutableDB ::
   ) =>
   ChainDbEnv m blk ->
   Electric m (WithOrigin SlotNo)
-copyToImmutableDB CDB{..} = electric $ do
+copyToImmutableDB cdb@CDB{..} = electric $ do
   toCopy <- atomically $ do
     curChain <- icWithoutTime <$> readTVar cdbChain
-    let nbToCopy = max 0 (AF.length curChain - fromIntegral (unNonZero k))
+    curChainVolSuffix <- Query.getCurrentChain cdb
+    let nbToCopy = max 0 $ AF.length curChain - AF.length curChainVolSuffix
         toCopy :: [Point blk]
         toCopy =
           map headerPoint $
@@ -152,10 +166,10 @@ copyToImmutableDB CDB{..} = electric $ do
     return toCopy
 
   if null toCopy
-    -- This can't happen in practice, as we're only called when the fragment
-    -- is longer than @k@. However, in the tests, we will be calling this
-    -- function manually, which means it might be called when there are no
-    -- blocks to copy.
+    -- This can't happen in practice, as we're only called when there are new
+    -- immutable blocks. However, in the tests, we will be calling this function
+    -- manually, which means it might be called when there are no blocks to
+    -- copy.
     then trace NoBlocksToCopyToImmutableDB
     else forM_ toCopy $ \pt -> do
       let hash = case pointHash pt of
@@ -180,7 +194,6 @@ copyToImmutableDB CDB{..} = electric $ do
   -- Get the /possibly/ updated tip of the ImmutableDB
   atomically $ ImmutableDB.getTipSlot cdbImmutableDB
  where
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
   trace = traceWith (contramap TraceCopyToImmutableDBEvent cdbTracer)
 
   -- \| Remove the header corresponding to the given point from the beginning
@@ -199,22 +212,20 @@ copyToImmutableDB CDB{..} = electric $ do
       _ -> error "header to remove not on the current chain"
 
 {-------------------------------------------------------------------------------
-  Snapshotting
+  Copy to ImmutableDB
 -------------------------------------------------------------------------------}
 
--- | Copy blocks from the VolatileDB to ImmutableDB and take snapshots of the
--- LedgerDB
+-- | Copy blocks from the VolatileDB to ImmutableDB and trigger further tasks in
+-- other threads.
 --
--- We watch the chain for changes. Whenever the chain is longer than @k@, then
--- the headers older than @k@ are copied from the VolatileDB to the ImmutableDB
--- (using 'copyToImmutableDB'). Once that is complete,
+-- Wait until the current chain ('cdbChain') is longer than its volatile suffix
+-- ('getCurrentChain'). When this occurs, it indicates that new blocks have
+-- become immutable. These newly immutable blocks are then copied from the
+-- VolatileDB to the ImmutableDB (using 'copyToImmutableDB'). Once that is
+-- complete,
 --
--- * We periodically take a snapshot of the LedgerDB (depending on its config).
---   When enough blocks (depending on its config) have been replayed during
---   startup, a snapshot of the replayed LedgerDB will be written to disk at the
---   start of this function. NOTE: After this initial snapshot we do not take a
---   snapshot of the LedgerDB until the chain has changed again, irrespective of
---   the LedgerDB policy.
+-- * Trigger LedgerDB maintenance tasks, namely flushing, taking snapshots and
+--   garbage collection.
 --
 -- * Schedule GC of the VolatileDB ('scheduleGC') for the 'SlotNo' of the most
 --   recent block that was copied.
@@ -229,50 +240,40 @@ copyToImmutableDB CDB{..} = electric $ do
 -- GC can happen, when we restart the node and schedule the /next/ GC, it will
 -- /imply/ any previously scheduled GC, since GC is driven by slot number
 -- ("garbage collect anything older than @x@").
-copyAndSnapshotRunner ::
+copyToImmutableDBRunner ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
   ) =>
   ChainDbEnv m blk ->
+  LedgerDbTasksTrigger m ->
   GcSchedule m ->
-  -- | Number of immutable blocks replayed on ledger DB startup
-  Word64 ->
   Fuse m ->
   m Void
-copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
+copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule fuse = do
   -- this first flush will persist the differences that come from the initial
   -- chain selection.
   LedgerDB.tryFlush cdbLedgerDB
-  loop =<< LedgerDB.tryTakeSnapshot cdbLedgerDB Nothing replayed
+  forever copyAndTrigger
  where
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
-
-  loop :: LedgerDB.SnapCounters -> m Void
-  loop counters = do
-    let LedgerDB.SnapCounters
-          { prevSnapshotTime
-          , ntBlocksSinceLastSnap
-          } = counters
-
-    -- Wait for the chain to grow larger than @k@
+  copyAndTrigger :: m ()
+  copyAndTrigger = do
+    -- Wait for 'cdbChain' to become longer than 'getCurrentChain'.
     numToWrite <- atomically $ do
       curChain <- icWithoutTime <$> readTVar cdbChain
-      check $ fromIntegral (AF.length curChain) > unNonZero k
-      return $ fromIntegral (AF.length curChain) - unNonZero k
+      curChainVolSuffix <- Query.getCurrentChain cdb
+      let numToWrite = AF.length curChain - AF.length curChainVolSuffix
+      check $ numToWrite > 0
+      return $ fromIntegral numToWrite
 
     -- Copy blocks to ImmutableDB
     --
     -- This is a synchronous operation: when it returns, the blocks have been
     -- copied to disk (though not flushed, necessarily).
-    withFuse fuse (copyToImmutableDB cdb) >>= scheduleGC'
+    gcSlotNo <- withFuse fuse (copyToImmutableDB cdb)
 
-    LedgerDB.tryFlush cdbLedgerDB
-
-    now <- getMonotonicTime
-    let ntBlocksSinceLastSnap' = ntBlocksSinceLastSnap + numToWrite
-
-    loop =<< LedgerDB.tryTakeSnapshot cdbLedgerDB ((,now) <$> prevSnapshotTime) ntBlocksSinceLastSnap'
+    triggerLedgerDbTasks ledgerDbTasksTrigger gcSlotNo numToWrite
+    scheduleGC' gcSlotNo
 
   scheduleGC' :: WithOrigin SlotNo -> m ()
   scheduleGC' Origin = return ()
@@ -287,14 +288,102 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
       gcSchedule
 
 {-------------------------------------------------------------------------------
+  LedgerDB maintenance tasks
+-------------------------------------------------------------------------------}
+
+-- | Trigger for the LedgerDB maintenance tasks, namely whenever the immutable
+-- DB tip slot advances when we finish copying blocks to it.
+newtype LedgerDbTasksTrigger m
+  = LedgerDbTasksTrigger (StrictTVar m LedgerDbTaskState)
+
+data LedgerDbTaskState = LedgerDbTaskState
+  { ldbtsImmTip :: !(WithOrigin SlotNo)
+  , ldbtsPrevSnapshotTime :: !(Maybe Time)
+  , ldbtsBlocksSinceLastSnapshot :: !Word64
+  }
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+newLedgerDbTasksTrigger ::
+  IOLike m =>
+  -- | Number of blocks replayed.
+  Word64 ->
+  m (LedgerDbTasksTrigger m)
+newLedgerDbTasksTrigger replayed = LedgerDbTasksTrigger <$> newTVarIO st
+ where
+  st =
+    LedgerDbTaskState
+      { ldbtsImmTip = Origin
+      , ldbtsPrevSnapshotTime = Nothing
+      , ldbtsBlocksSinceLastSnapshot = replayed
+      }
+
+triggerLedgerDbTasks ::
+  forall m.
+  IOLike m =>
+  LedgerDbTasksTrigger m ->
+  -- | New tip of the ImmutableDB.
+  WithOrigin SlotNo ->
+  -- | Number of blocks written to the ImmutableDB.
+  Word64 ->
+  m ()
+triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) immTip numWritten =
+  atomically $ modifyTVar varSt $ \st ->
+    st
+      { ldbtsImmTip = immTip
+      , ldbtsBlocksSinceLastSnapshot = ldbtsBlocksSinceLastSnapshot st + numWritten
+      }
+
+-- | Run LedgerDB maintenance tasks when 'LedgerDbTasksTrigger' changes.
+--
+--  * Flushing of differences.
+--  * Taking snapshots.
+--  * Garbage collection.
+ledgerDbTaskWatcher ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  LedgerDbTasksTrigger m ->
+  Watcher m LedgerDbTaskState (WithOrigin SlotNo)
+ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
+  Watcher
+    { wFingerprint = ldbtsImmTip
+    , wInitial = Nothing
+    , wReader = readTVar varSt
+    , wNotify =
+        \LedgerDbTaskState
+           { ldbtsImmTip
+           , ldbtsBlocksSinceLastSnapshot = blocksSinceLast
+           , ldbtsPrevSnapshotTime = prevSnapTime
+           } ->
+            whenJust (withOriginToMaybe ldbtsImmTip) $ \slotNo -> do
+              LedgerDB.tryFlush cdbLedgerDB
+
+              now <- getMonotonicTime
+              LedgerDB.SnapCounters
+                { prevSnapshotTime
+                , ntBlocksSinceLastSnap
+                } <-
+                LedgerDB.tryTakeSnapshot
+                  cdbLedgerDB
+                  ((,now) <$> prevSnapTime)
+                  blocksSinceLast
+              atomically $ modifyTVar varSt $ \st ->
+                st
+                  { ldbtsBlocksSinceLastSnapshot =
+                      ldbtsBlocksSinceLastSnapshot st - blocksSinceLast + ntBlocksSinceLastSnap
+                  , ldbtsPrevSnapshotTime = prevSnapshotTime
+                  }
+
+              LedgerDB.garbageCollect cdbLedgerDB slotNo
+    }
+
+{-------------------------------------------------------------------------------
   Executing garbage collection
 -------------------------------------------------------------------------------}
 
 -- | Trigger a garbage collection for blocks older than the given 'SlotNo' on
 -- the VolatileDB.
---
--- Also removes the corresponding cached "previously applied points" from the
--- LedgerDB.
 --
 -- This is thread-safe as the VolatileDB locks itself while performing a GC.
 --
@@ -305,11 +394,10 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
 --
 -- TODO will a long GC be a bottleneck? It will block any other calls to
 -- @putBlock@ and @getBlock@.
-garbageCollect :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
-garbageCollect CDB{..} slotNo = do
+garbageCollectBlocks :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
+garbageCollectBlocks CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
   atomically $ do
-    LedgerDB.garbageCollect cdbLedgerDB slotNo
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 
@@ -524,7 +612,7 @@ addBlockRunner ::
   m Void
 addBlockRunner fuse cdb@CDB{..} = forever $ do
   let trace = traceWith cdbTracer . TraceAddBlockEvent
-  trace $ PoppedBlockFromQueue RisingEdge
+  trace PoppingFromQueue
   -- if the `chainSelSync` does not complete because it was killed by an async
   -- exception (or it errored), notify the blocked thread
   withFuse fuse $
@@ -551,10 +639,7 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
             ChainSelReprocessLoEBlocks _ ->
               trace PoppedReprocessLoEBlocksFromQueue
             ChainSelAddBlock BlockToAdd{blockToAdd} ->
-              trace $
-                PoppedBlockFromQueue $
-                  FallingEdgeWith $
-                    blockRealPoint blockToAdd
+              trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
           chainSelSync cdb message
           lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
       )

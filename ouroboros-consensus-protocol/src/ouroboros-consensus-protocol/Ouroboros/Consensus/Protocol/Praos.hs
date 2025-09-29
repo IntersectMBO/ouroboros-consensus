@@ -187,25 +187,23 @@ forgePraosFields
   PraosCanBeLeader
     { praosCanBeLeaderColdVerKey
     , praosCanBeLeaderSignKeyVRF
-    , praosCanBeLeaderOpCert
     }
   PraosIsLeader{praosIsLeaderVrfRes}
   mkToSign = do
+    ocert <- HotKey.getOCert hotKey
+    let signedFields =
+          PraosToSign
+            { praosToSignIssuerVK = praosCanBeLeaderColdVerKey
+            , praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
+            , praosToSignVrfRes = praosIsLeaderVrfRes
+            , praosToSignOCert = ocert
+            }
+        toSign = mkToSign signedFields
     signature <- HotKey.sign hotKey toSign
     return
       PraosFields
         { praosSignature = signature
         , praosToSign = toSign
-        }
-   where
-    toSign = mkToSign signedFields
-
-    signedFields =
-      PraosToSign
-        { praosToSignIssuerVK = praosCanBeLeaderColdVerKey
-        , praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
-        , praosToSignVrfRes = praosIsLeaderVrfRes
-        , praosToSignOCert = praosCanBeLeaderOpCert
         }
 
 {-------------------------------------------------------------------------------
@@ -392,7 +390,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PraosState
   type IsLeader (Praos c) = PraosIsLeader c
   type CanBeLeader (Praos c) = PraosCanBeLeader c
-  type SelectView (Praos c) = PraosChainSelectView c
+  type TiebreakerView (Praos c) = PraosTiebreakerView c
   type LedgerView (Praos c) = Views.LedgerView
   type ValidationErr (Praos c) = PraosValidationErr c
   type ValidateView (Praos c) = PraosValidateView c

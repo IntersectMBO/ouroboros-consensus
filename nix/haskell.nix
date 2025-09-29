@@ -2,6 +2,7 @@ inputs: final: prev:
 
 let
   inherit (prev) lib;
+  fs = lib.fileset;
   inherit (final) haskell-nix;
 
   forAllProjectPackages = cfg: args@{ config, lib, ... }: {
@@ -27,11 +28,11 @@ let
         ghcOptions = [ "-Werror" ];
       }))
       {
-        # Options related to tasty-golden:
+        # Options related to tasty and tasty-golden:
         packages.ouroboros-consensus-cardano.components.tests =
           lib.listToAttrs (builtins.map
             (n: lib.nameValuePair "${n}-test" {
-              testFlags = lib.mkForce [ "--no-create" ];
+              testFlags = lib.mkForce [ "--no-create --hide-successes" ];
               extraSrcFiles = [ "golden/${n}/**/*" ];
             }) [ "byron" "shelley" "cardano" ]);
       }
@@ -74,4 +75,30 @@ let
 in
 {
   inherit hsPkgs;
+
+  cabal-docspec-check = final.stdenv.mkDerivation {
+    name = "cabal-docspec-check";
+
+    src = fs.toSource {
+      root = ./..;
+      fileset = fs.unions [
+        (fs.fileFilter (f: f.hasExt "cabal" || f.hasExt "hs") ./..)
+      ];
+    };
+
+    nativeBuildInputs = [
+      final.fd
+      final.cabal-docspec
+      (hsPkgs.ghcWithPackages
+        (ps: [ ps.latex-svg-image ] ++ lib.filter (p: p ? components.library)
+          (lib.attrValues (haskell-nix.haskellLib.selectProjectPackages ps))))
+      final.texliveFull
+    ];
+
+    buildPhase = ''
+      export CABAL_DIR=$(mktemp -d)
+      touch $CABAL_DIR/config $out
+      cabal-docspec --no-cabal-plan $(fd -e cabal --exact-depth 2)
+    '';
+  };
 }

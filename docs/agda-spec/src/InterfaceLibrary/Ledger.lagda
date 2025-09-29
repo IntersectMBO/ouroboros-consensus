@@ -12,7 +12,7 @@ module InterfaceLibrary.Ledger
   where
 
 open import Ledger.PParams using (PParams)
-open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr)
+open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDelegatedStake)
 
 \end{code}
 
@@ -22,12 +22,12 @@ record LedgerInterface : Type₁ where
   field
 \end{code}
 \begin{code}
-    NewEpochState      : Type
-    getPParams         : NewEpochState → PParams
-    getEpoch           : NewEpochState → Epoch
-    getPoolDistr       : NewEpochState → PoolDistr
-    adoptGenesisDelegs : NewEpochState → Slot → NewEpochState
-    _⊢_⇀⦇_,NEWEPOCH⦈_  : ⊤ → NewEpochState → Epoch → NewEpochState → Type
+    NewEpochState         : Type
+    getPParams            : NewEpochState → PParams
+    getEpoch              : NewEpochState → Epoch
+    getPoolDelegatedStake : NewEpochState → PoolDelegatedStake
+    adoptGenesisDelegs    : NewEpochState → Slot → NewEpochState
+    _⊢_⇀⦇_,NEWEPOCH⦈_     : ⊤ → NewEpochState → Epoch → NewEpochState → Type
 \end{code}
 \begin{code}[hide]
     ⦃ Computational-NEWEPOCH ⦄ : Computational _⊢_⇀⦇_,NEWEPOCH⦈_ String

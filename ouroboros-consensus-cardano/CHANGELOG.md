@@ -2,6 +2,57 @@
 
 # Changelog entries
 
+<a id='changelog-0.26.0.0'></a>
+## 0.26.0.0 -- 2025-09-29
+
+### Patch
+
+- Adapted to changes related to `SelectView`.
+
+  Concretely, this changes the structure of `SelectView (BlockProtocol (CardanoBlock c))`, but it still contains the same data as before.
+
+- Bump `cardano-protocol-tpraos` to 1.4.1
+
+- Use the new `queryPoolState` ledger state query from ledger instead of extracting it from `NewEpochState`.
+
+- Fix LedgerTables deserialization for Byron snapshots.
+
+### Non-Breaking
+
+- Move `BlockProtocol (ShelleyBlock proto era)` instance to `Ouroboros.Consensus.Shelley.Ledger.Block`
+
+- Vendor Ledger's serialization of `PParams` and `ShelleyGenesis` prior to `ShelleyNodeToClientVersion12`.
+
+- Added `ShelleyNodeToClientVersion14` which adds SRV support in `GetBigLedgerPeerSnapshot` query.
+- Added `CardanoNodeToClientVersion18` which maps to `ShelleyNodeToClientVersion14`.
+
+### Breaking
+
+- Use new mlocked KES API for all internal KES sign key handling.
+- Add finalizers to all block forgings (required by `ouroboros-consensus`).
+- Change `ShelleyLeaderCredentials` to not contain the KES sign key itself
+  anymore. Instead, the `CanBeLeader` data structure now contains a
+  `praosCanBeLeaderCredentialsSource` field, which specifies how to obtain the
+  actual credentials (OpCert and KES SignKey).
+
+- Define new Node-To-Client versions `CardanoNodeToClientVersion17`, `ShelleyNodeToClientVersion13`.
+
+- Deprecate `GetPoolDistr` in favor of `GetPoolDistr2` (new in `NodeToClientV_21`).
+- Deprecate `GetStakeDistribution` in favor of `GetStakeDistribution2` (new in `NodeToClientV_21`).
+
+- Expose new query `GetMaxMajorProtocolVersion` as a Shelley query, for getting
+  the max known protocol version for a node.
+
+- Add Dijkstra era
+- Add dependency on the new Dijkstra Ledger package:
+  - `cardano-ledger-dijkstra`: `^>=0.1`
+
+- Delete the now unnecessary `Ouroboros.Consensus.Shelley.Eras.WrapTx` newtype wrapper.
+
+- Return full map instead of empty map from GetFilteredVoteDelegatees in the case where an empty set is passed.
+
+- `Tx Size` is now a `Word32` instead of an `Integer`, therefore `maxTxSizeUTxO` changed to expect `Word32`s.
+
 <a id='changelog-0.25.1.0'></a>
 ## 0.25.1.0 -- 2025-05-15
 
@@ -38,7 +89,7 @@
 ### Breaking
 
 - Implement the UTxO-HD feature. See the documentation in [the
-  webpage](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/utxo-hd/Overview/).
+  webpage](https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/miscellaneous/utxo-hd/).
   Fill in the UTxO-HD type families and instances for Shelley based blocks, the
   Byron block and the Cardano block.
 

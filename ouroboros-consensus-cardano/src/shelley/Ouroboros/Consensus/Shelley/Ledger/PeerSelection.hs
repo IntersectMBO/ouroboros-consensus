@@ -10,6 +10,7 @@ module Ouroboros.Consensus.Shelley.Ledger.PeerSelection () where
 import Cardano.Ledger.BaseTypes
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.State as SL
 import Control.DeepSeq (force)
 import Data.Bifunctor (second)
 import Data.Foldable (toList)
@@ -29,14 +30,14 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
 instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto era) where
   getPeers ShelleyLedgerState{shelleyLedgerState} =
     catMaybes
-      [ (poolStake,) <$> Map.lookup stakePool poolRelayAccessPoints
+      [ (poolStake,) <$> Map.lookup stakePool poolLedgerRelayAccessPoints
       | (stakePool, poolStake) <- orderByStake poolDistr
       ]
    where
     poolDistr :: SL.PoolDistr
     poolDistr = SL.nesPd shelleyLedgerState
 
-    -- \| Sort stake pools by descending stake
+    -- Sort stake pools by descending stake
     orderByStake ::
       SL.PoolDistr ->
       [(SL.KeyHash 'SL.StakePool, PoolStake)]
@@ -46,55 +47,54 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
         . Map.toList
         . SL.unPoolDistr
 
-    futurePoolParams
-      , poolParams ::
-        Map (SL.KeyHash 'SL.StakePool) SL.PoolParams
-    (futurePoolParams, poolParams) =
-      (SL.psFutureStakePoolParams pstate, SL.psStakePoolParams pstate)
-     where
-      pstate :: SL.PState era
-      pstate =
-        view SL.certPStateL
-          . SL.lsCertState
-          . SL.esLState
-          . SL.nesEs
-          $ shelleyLedgerState
-
-    relayToRelayAccessPoint :: SL.StakePoolRelay -> Maybe RelayAccessPoint
-    relayToRelayAccessPoint (SL.SingleHostAddr (SJust (Port port)) (SJust ipv4) _) =
-      Just $ RelayAccessAddress (IPv4 ipv4) (fromIntegral port)
-    relayToRelayAccessPoint
+    relayToLedgerRelayAccessPoint :: SL.StakePoolRelay -> Maybe LedgerRelayAccessPoint
+    relayToLedgerRelayAccessPoint (SL.SingleHostAddr (SJust (Port port)) (SJust ipv4) _) =
+      Just $ LedgerRelayAccessAddress (IPv4 ipv4) (fromIntegral port)
+    relayToLedgerRelayAccessPoint
       ( SL.SingleHostAddr
           (SJust (Port port))
           SNothing
           (SJust ipv6)
         ) =
-        Just $ RelayAccessAddress (IPv6 ipv6) (fromIntegral port)
-    relayToRelayAccessPoint (SL.SingleHostName (SJust (Port port)) dnsName) =
-      Just $ RelayAccessDomain (encodeUtf8 $ dnsToText dnsName) (fromIntegral port)
-    relayToRelayAccessPoint _ =
-      -- This could be an unsupported relay (SRV records) or an unusable
-      -- relay such as a relay with an IP address but without a port number.
-      Nothing
+        Just $ LedgerRelayAccessAddress (IPv6 ipv6) (fromIntegral port)
+    -- no IP address or no port number
+    relayToLedgerRelayAccessPoint (SL.SingleHostAddr SNothing _ _) = Nothing
+    relayToLedgerRelayAccessPoint (SL.SingleHostAddr _ SNothing _) = Nothing
+    relayToLedgerRelayAccessPoint (SL.SingleHostName (SJust (Port port)) dnsName) =
+      Just $ LedgerRelayAccessDomain (encodeUtf8 $ dnsToText dnsName) (fromIntegral port)
+    -- srv support: either `SingleHostName` without port number or
+    -- `MultiHostName`
+    relayToLedgerRelayAccessPoint (SL.SingleHostName SNothing dnsName) =
+      Just $ LedgerRelayAccessSRVDomain (encodeUtf8 $ dnsToText dnsName)
+    relayToLedgerRelayAccessPoint (SL.MultiHostName dnsName) =
+      Just $ LedgerRelayAccessSRVDomain (encodeUtf8 $ dnsToText dnsName)
 
-    -- \| Note that a stake pool can have multiple registered relays
-    pparamsRelayAccessPoints ::
-      (RelayAccessPoint -> StakePoolRelay) ->
-      SL.PoolParams ->
+    -- Note that a stake pool can have multiple registered relays
+    pparamsLedgerRelayAccessPoints ::
+      (LedgerRelayAccessPoint -> StakePoolRelay) ->
+      SL.StakePoolState ->
       Maybe (NonEmpty StakePoolRelay)
-    pparamsRelayAccessPoints injStakePoolRelay =
+    pparamsLedgerRelayAccessPoints injStakePoolRelay =
       NE.nonEmpty
         . force
-        . mapMaybe (fmap injStakePoolRelay . relayToRelayAccessPoint)
+        . mapMaybe (fmap injStakePoolRelay . relayToLedgerRelayAccessPoint)
         . toList
-        . SL.ppRelays
+        . SL.spsRelays
 
-    -- \| Combine the stake pools registered in the future and the current pool
+    -- Combine the stake pools registered in the future and the current pool
     -- parameters, and remove duplicates.
-    poolRelayAccessPoints ::
+    poolLedgerRelayAccessPoints ::
       Map (SL.KeyHash 'SL.StakePool) (NonEmpty StakePoolRelay)
-    poolRelayAccessPoints =
+    poolLedgerRelayAccessPoints =
       Map.unionWith
         (\futureRelays currentRelays -> NE.nub (futureRelays <> currentRelays))
-        (Map.mapMaybe (pparamsRelayAccessPoints FutureRelay) futurePoolParams)
-        (Map.mapMaybe (pparamsRelayAccessPoints CurrentRelay) poolParams)
+        (Map.mapMaybe (pparamsLedgerRelayAccessPoints FutureRelay) (SL.psStakePools pstate))
+        (Map.mapMaybe (pparamsLedgerRelayAccessPoints CurrentRelay) (SL.psFutureStakePools pstate))
+
+    pstate :: SL.PState era
+    pstate =
+      view SL.certPStateL
+        . SL.lsCertState
+        . SL.esLState
+        . SL.nesEs
+        $ shelleyLedgerState

@@ -12,7 +12,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Mempool
   , ConwayMeasure (..)
   , fromExUnits
   )
-import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
+import Test.Cardano.Ledger.Alonzo.Binary.Twiddle ()
 import Test.Tasty
 import Test.Tasty.QuickCheck
 

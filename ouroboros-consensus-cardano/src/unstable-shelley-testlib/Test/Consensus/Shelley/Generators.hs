@@ -4,24 +4,19 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.Shelley.Generators (SomeResult (..)) where
 
-import Cardano.Ledger.Core (TranslationContext, toTxSeq)
-import Cardano.Ledger.Genesis
+import Cardano.Ledger.Core (TranslationContext)
 import qualified Cardano.Ledger.Shelley.API as SL
-import Cardano.Ledger.Shelley.Translation
 import Cardano.Ledger.State (InstantStake)
 import Cardano.Protocol.Crypto (Crypto)
-import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Cardano.Slotting.EpochInfo
 import Control.Monad (replicateM)
 import Data.Coerce (coerce)
-import Generic.Random (genericArbitraryU)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -86,7 +81,7 @@ instance
   where
   arbitrary = mkShelleyBlock <$> blk
    where
-    blk = SL.Block <$> arbitrary <*> (toTxSeq @era <$> arbitrary)
+    blk = SL.Block <$> arbitrary <*> arbitrary
 
 -- | This uses a different upstream generator to ensure the header and block
 -- body relate as expected.
@@ -302,20 +297,6 @@ arbitraryGlobalsWithFixedEpochInfo =
 
 arbitraryFixedEpochInfo :: Monad m => Gen (EpochInfo m)
 arbitraryFixedEpochInfo = fixedEpochInfo <$> arbitrary <*> arbitrary
-
-instance Arbitrary (NoGenesis era) where
-  arbitrary = pure NoGenesis
-
-instance Arbitrary FromByronTranslationContext where
-  arbitrary = FromByronTranslationContext <$> arbitrary <*> arbitrary <*> arbitrary
-
-{-------------------------------------------------------------------------------
-  Generators for cardano-ledger-specs
--------------------------------------------------------------------------------}
-
-instance Arbitrary SL.ChainDepState where
-  arbitrary = genericArbitraryU
-  shrink = genericShrink
 
 {-------------------------------------------------------------------------------
   Versioned generators for serialisation

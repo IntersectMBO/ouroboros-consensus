@@ -257,11 +257,11 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             }
       }
 
-  blockForging :: Monad m => [BlockForging m TestBlock]
+  blockForging :: Monad m => [MkBlockForging m TestBlock]
   blockForging =
-    [ hardForkBlockForging "Test" $
-        OptCons blockForgingA $
-          OptCons blockForgingB $
+    [ hardForkBlockForging (const "Test") $
+        OptCons (MkBlockForging $ pure blockForgingA) $
+          OptCons (MkBlockForging $ pure blockForgingB) $
             OptNil
     ]
 
@@ -441,7 +441,7 @@ instance CanHardFork '[BlockA, BlockB] where
       , translateChainDepState = PCons chainDepState_AtoB PNil
       , crossEraForecast = PCons forecast_AtoB PNil
       }
-  hardForkChainSel = Tails.mk2 CompareBlockNo
+  hardForkChainSel = Tails.mk2 NoTiebreakerAcrossEras
   hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
 
   hardForkInjTxMeasure = \case

@@ -26,9 +26,6 @@ import Ouroboros.Consensus.Protocol.Abstract
   )
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.Protocol.ChainSync.Codec
-  ( ChainSyncTimeout (..)
-  )
 import Ouroboros.Network.Protocol.Limits (shortWait)
 import qualified Test.Consensus.BlockTree as BT
 import Test.Consensus.PointSchedule
@@ -48,8 +45,10 @@ import qualified Test.Ouroboros.Consensus.ChainGenerator.Honest as H
 import Test.Ouroboros.Consensus.ChainGenerator.Params
 import Test.Ouroboros.Consensus.ChainGenerator.Slot (S)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
+import Test.Ouroboros.Consensus.QuickCheck.Extras
+  ( unsafeMapSuchThatJust
+  )
 import qualified Test.QuickCheck as QC
-import Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import Test.QuickCheck.Random (QCGen)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestBlock hiding (blockTree)

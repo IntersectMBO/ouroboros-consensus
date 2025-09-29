@@ -66,11 +66,11 @@ data Config = Config
   -- ^ Path to the output snapshot
   }
 
-getCommandLineConfig :: IO (Config, BlockType)
+getCommandLineConfig :: IO (Config, CardanoBlockArgs)
 getCommandLineConfig =
   execParser $
     info
-      ((,) <$> parseConfig <*> blockTypeParser <**> helper)
+      ((,) <$> parseConfig <*> parseCardanoArgs <**> helper)
       (fullDesc <> progDesc "Utility for converting snapshots to and from UTxO-HD")
 
 parseConfig :: Parser Config
@@ -166,8 +166,7 @@ checkSnapshotFileStructure m p (SomeHasFS fs) = case m of
 
 load ::
   forall blk.
-  ( LedgerDbSerialiseConstraints blk
-  , CanStowLedgerTables (LedgerState blk)
+  ( CanStowLedgerTables (LedgerState blk)
   , LedgerSupportsProtocol blk
   , LedgerSupportsLedgerDB blk
   ) =>
@@ -218,8 +217,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
 load _ _ _ _ = error "Malformed input path!"
 
 store ::
-  ( LedgerDbSerialiseConstraints blk
-  , CanStowLedgerTables (LedgerState blk)
+  ( CanStowLedgerTables (LedgerState blk)
   , LedgerSupportsProtocol blk
   , LedgerSupportsLedgerDB blk
   ) =>
@@ -242,7 +240,7 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
     Mem -> do
       lseq <- V2.empty state tbs $ V2.newInMemoryLedgerTablesHandle nullTracer fs
       let h = V2.currentHandle lseq
-      Monad.void $ V2.takeSnapshot ccfg nullTracer fs suffix h
+      Monad.void $ V2.implTakeSnapshot ccfg nullTracer fs suffix h
     LMDB -> do
       chlog <- newTVarIO (V1.empty state)
       lock <- V1.mkLedgerDBLock
@@ -254,17 +252,13 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
           (V1.SnapshotsFS fs)
           (V1.InitFromValues (pointSlot $ getTip state) state tbs)
       Monad.void $ V1.withReadLock lock $ do
-        V1.takeSnapshot chlog ccfg nullTracer (V1.SnapshotsFS fs) bs suffix
+        V1.implTakeSnapshot chlog ccfg nullTracer (V1.SnapshotsFS fs) bs suffix
 store _ _ _ _ = error "Malformed output path!"
 
 main :: IO ()
 main = withStdTerminalHandles $ do
   cryptoInit
-  (conf, blocktype) <- getCommandLineConfig
-  case blocktype of
-    ByronBlock args -> run conf args
-    ShelleyBlock args -> run conf args
-    CardanoBlock args -> run conf args
+  uncurry run =<< getCommandLineConfig
  where
   run conf args = do
     ccfg <- configCodec . pInfoConfig <$> mkProtocolInfo args

@@ -15,7 +15,7 @@ This package contains:
 
 * `tutorials`: a collection of tutorials that are helpful for understanding the
   abstract structure of the consensus protocol. The structure of these is
-  explained [here](../docs/website/contents/for-developers/AbstractProtocol.md).
+  explained [here](../docs/website/contents/tutorials/instantiating_consensus.md).
 
 * `mock-block`: definition of a simple mock ledger used for testing.
 

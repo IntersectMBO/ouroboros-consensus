@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: ouroboros-consensus-protocol
-version: 0.12.0.0
+version: 0.13.0.0
 synopsis: Cardano consensus protocols
 description: Cardano consensus protocols.
 license: Apache-2.0
@@ -56,6 +56,7 @@ library
     Ouroboros.Consensus.Protocol.Ledger.HotKey
     Ouroboros.Consensus.Protocol.Ledger.Util
     Ouroboros.Consensus.Protocol.Praos
+    Ouroboros.Consensus.Protocol.Praos.AgentClient
     Ouroboros.Consensus.Protocol.Praos.Common
     Ouroboros.Consensus.Protocol.Praos.Header
     Ouroboros.Consensus.Protocol.Praos.VRF
@@ -63,6 +64,7 @@ library
     Ouroboros.Consensus.Protocol.TPraos
 
   build-depends:
+    Win32-network ^>=0.2,
     base >=4.14 && <4.22,
     bytestring,
     cardano-binary,
@@ -74,9 +76,17 @@ library
     cardano-slotting,
     cborg,
     containers,
+    contra-tracer ^>=0.1.0,
+    io-classes ^>=1.8.0,
+    io-sim,
+    kes-agent <1,
+    kes-agent-crypto <1,
     mtl,
+    network ^>=3.2.7,
     nothunks,
-    ouroboros-consensus >=0.23 && <0.28,
+    ouroboros-consensus >=0.23 && <0.29,
+    ouroboros-network-framework ^>=0.19,
+    ouroboros-network-testing ^>=0.8,
     serialise,
     text,
 
@@ -120,7 +130,7 @@ test-suite protocol-test
     cardano-crypto-class ^>=2.2,
     cardano-ledger-binary:testlib,
     cardano-ledger-core >=1.17 && <1.19,
-    cardano-protocol-tpraos ^>=1.4,
+    cardano-protocol-tpraos ^>=1.4.1,
     containers,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-consensus-protocol,

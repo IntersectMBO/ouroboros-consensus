@@ -1,11 +1,12 @@
 tx =
-  base.ns7<byron.transaction,
+  base.ns8<byron.transaction,
            serialisedShelleyTx<shelley.transaction>,
            serialisedShelleyTx<allegra.transaction>,
            serialisedShelleyTx<mary.transaction>,
            serialisedShelleyTx<alonzo.transaction>,
            serialisedShelleyTx<babbage.transaction>,
-           serialisedShelleyTx<conway.transaction>>
+           serialisedShelleyTx<conway.transaction>,
+           serialisedShelleyTx<dijkstra.transaction>>
 
 serialisedShelleyTx<era> = #6.24(bytes .cbor era)
 
@@ -20,4 +21,5 @@ byron.transaction = [0, [byron.tx, [+ byron.twit]]] / [1, any] / [2, any] / [3, 
 ;# include alonzo as alonzo
 ;# include babbage as babbage
 ;# include conway as conway
+;# include dijkstra as dijkstra
 ;# import base as base

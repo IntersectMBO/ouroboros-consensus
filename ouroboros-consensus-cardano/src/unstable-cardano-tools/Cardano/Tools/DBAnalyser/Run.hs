@@ -17,6 +17,7 @@ import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), nullTracer)
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
+import Data.Void
 import qualified Debug.Trace as Debug
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -38,8 +39,10 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as LedgerDB.V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -54,7 +57,6 @@ import Text.Printf (printf)
 openLedgerDB ::
   ( LedgerSupportsProtocol blk
   , InspectLedger blk
-  , LedgerDB.LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerDB.LedgerSupportsLedgerDB blk
   ) =>
@@ -64,6 +66,7 @@ openLedgerDB ::
     , LedgerDB.TestInternals' IO blk
     )
 openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV1 bss} = do
+  let snapManager = LedgerDB.V1.snapshotManager lgrDbArgs
   (ledgerDB, _, intLedgerDB) <-
     LedgerDB.openDBInternal
       lgrDbArgs
@@ -71,19 +74,28 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
           lgrDbArgs
           bss
           (\_ -> error "no replay")
+          snapManager
+          (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig lgrDbArgs)
       )
+      snapManager
       emptyStream
       genesisPoint
   pure (ledgerDB, intLedgerDB)
 openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV2 args} = do
+  (snapManager, bss') <- case args of
+    LedgerDB.V2.V2Args LedgerDB.V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager lgrDbArgs, LedgerDB.V2.InMemoryHandleEnv)
+    LedgerDB.V2.V2Args (LedgerDB.V2.LSMHandleArgs (LedgerDB.V2.LSMArgs x)) -> absurd x
   (ledgerDB, _, intLedgerDB) <-
     LedgerDB.openDBInternal
       lgrDbArgs
       ( LedgerDB.V2.mkInitDb
           lgrDbArgs
-          args
+          bss'
           (\_ -> error "no replay")
+          snapManager
+          (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig lgrDbArgs)
       )
+      snapManager
       emptyStream
       genesisPoint
   pure (ledgerDB, intLedgerDB)

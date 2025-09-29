@@ -12,6 +12,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -132,7 +133,7 @@ import Ouroboros.Network.PeerSelection.PeerMetric (nullMetric)
 import Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
 import Ouroboros.Network.Protocol.KeepAlive.Type
-import Ouroboros.Network.Protocol.Limits (waitForever)
+import Ouroboros.Network.Protocol.Limits (ProtocolTimeLimitsWithRnd (..), waitForever)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import Ouroboros.Network.Protocol.TxSubmission2.Type
@@ -176,7 +177,7 @@ instance Show (ForgeEbbEnv blk) where
 type RekeyM m blk =
   CoreNodeId ->
   ProtocolInfo blk ->
-  m [BlockForging m blk] ->
+  m [MkBlockForging m blk] ->
   -- | The slot in which the node is rekeying
   SlotNo ->
   -- | Which epoch the slot is in
@@ -197,12 +198,12 @@ data TestNodeInitialization m blk = TestNodeInitialization
   -- that determines which transactions will be included in the block it's
   -- about to forge.
   , tniProtocolInfo :: ProtocolInfo blk
-  , tniBlockForging :: m [BlockForging m blk]
+  , tniBlockForging :: m [MkBlockForging m blk]
   }
 
 plainTestNodeInitialization ::
   ProtocolInfo blk ->
-  m [BlockForging m blk] ->
+  m [MkBlockForging m blk] ->
   TestNodeInitialization m blk
 plainTestNodeInitialization pInfo blockForging =
   TestNodeInitialization
@@ -505,20 +506,20 @@ runThreadNetwork
         loop ::
           SlotNo ->
           ProtocolInfo blk ->
-          m [BlockForging m blk] ->
+          m [MkBlockForging m blk] ->
           NodeRestart ->
           Map SlotNo NodeRestart ->
           m ()
-        loop s pInfo blockForging nr rs = do
+        loop s pInfo mkBlockForging nr rs = do
           -- a registry solely for the resources of this specific node instance
           (again, finalChain, finalLdgr) <- withRegistry $ \nodeRegistry -> do
             -- change the node's key and prepare a delegation transaction if
             -- the node is restarting because it just rekeyed
             tni' <- case (nr, mbRekeyM) of
               (NodeRekey, Just rekeyM) -> do
-                rekeyM coreNodeId pInfo blockForging s (pure . HFF.futureSlotToEpoch future)
+                rekeyM coreNodeId pInfo mkBlockForging s (pure . HFF.futureSlotToEpoch future)
               _ ->
-                pure $ plainTestNodeInitialization pInfo blockForging
+                pure $ plainTestNodeInitialization pInfo mkBlockForging
             let TestNodeInitialization
                   { tniCrucialTxs = crucialTxs'
                   , tniProtocolInfo = pInfo'
@@ -703,7 +704,7 @@ runThreadNetwork
         let emptySt = emptySt'
             doRangeQuery = roforkerRangeReadTables forker
         fullLedgerSt <- fmap ledgerState $ do
-          fullUTxO <- doRangeQuery NoPreviousQuery
+          (fullUTxO, _) <- doRangeQuery NoPreviousQuery
           pure $! withLedgerTables emptySt fullUTxO
         roforkerClose forker
         -- Combine the node's seed with the current slot number, to make sure
@@ -821,7 +822,7 @@ runThreadNetwork
       SlotNo ->
       ResourceRegistry m ->
       ProtocolInfo blk ->
-      m [BlockForging m blk] ->
+      m [MkBlockForging m blk] ->
       NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
@@ -829,7 +830,7 @@ runThreadNetwork
         ( NodeKernel m NodeId Void blk
         , LimitedApp m NodeId blk
         )
-    forkNode coreNodeId clock joinSlot registry pInfo blockForging nodeInfo txs0 = do
+    forkNode coreNodeId clock joinSlot registry pInfo mkBlockForging nodeInfo txs0 = do
       let ProtocolInfo{..} = pInfo
 
       let NodeInfo
@@ -1034,7 +1035,9 @@ runThreadNetwork
 
       let rng = case seed of
             Seed s -> mkStdGen s
-          (kaRng, psRng) = split rng
+          (kaRng, rng') = split rng
+          (gsmRng, rng'') = split rng'
+          (psRng, chainSyncRng) = split rng''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1073,7 +1076,7 @@ runThreadNetwork
                     }
               , gsmArgs =
                   GSM.GsmNodeKernelArgs
-                    { gsmAntiThunderingHerd = kaRng
+                    { gsmAntiThunderingHerd = gsmRng
                     , gsmDurationUntilTooOld = Nothing
                     , gsmMarkerFileView =
                         GSM.MarkerFileView
@@ -1094,10 +1097,12 @@ runThreadNetwork
 
       nodeKernel <- initNodeKernel nodeKernelArgs
 
-      blockForging' <-
-        map (\bf -> bf{forgeBlock = customForgeBlock bf})
-          <$> blockForging
-      setBlockForging nodeKernel blockForging'
+      mkBlockForgings <- mkBlockForging
+      let mkBlockForgings' =
+            map
+              (\(MkBlockForging bfM) -> MkBlockForging $ fmap (\bf -> bf{forgeBlock = customForgeBlock bf}) bfM)
+              mkBlockForgings
+      setBlockForging nodeKernel mkBlockForgings'
 
       let mempool = getMempool nodeKernel
       let app =
@@ -1105,18 +1110,12 @@ runThreadNetwork
               nodeKernel
               -- these tracers report every message sent/received by this
               -- node
+              chainSyncRng
               nullDebugProtocolTracers
               (customNodeToNodeCodecs pInfoConfig)
               NTN.noByteLimits
               -- see #1882, tests that can't cope with timeouts.
-              ( pure $
-                  NTN.ChainSyncTimeout
-                    { canAwaitTimeout = waitForever
-                    , intersectTimeout = waitForever
-                    , mustReplyTimeout = waitForever
-                    , idleTimeout = waitForever
-                    }
-              )
+              (ProtocolTimeLimitsWithRnd $ \_state -> (waitForever,))
               CSClient.ChainSyncLoPBucketDisabled
               CSClient.CSJDisabled
               nullMetric

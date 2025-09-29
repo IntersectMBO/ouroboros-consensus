@@ -33,7 +33,6 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , getBlock
   , getBlockByPoint
   , getBlockComponentByPoint
-  , getDbChangelog
   , getIsValid
   , getLoEFragment
   , getMaxSlotNo
@@ -84,11 +83,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , wipeVolatileDB
   ) where
 
-import Cardano.Ledger.BaseTypes
-  ( knownNonZeroBounded
-  , nonZeroOr
-  , unNonZero
-  )
+import Cardano.Ledger.BaseTypes (unNonZero)
 import Codec.Serialise (Serialise, serialise)
 import Control.Monad (unless)
 import Control.Monad.Except (runExcept)
@@ -127,13 +122,8 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   , UnknownRange (..)
   , validBounds
   )
-import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
+import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanImmTip)
 import Ouroboros.Consensus.Storage.Common ()
-import Ouroboros.Consensus.Storage.LedgerDB.API
-  ( LedgerDbCfgF (..)
-  , LedgerDbPrune (..)
-  )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
 import Ouroboros.Consensus.Util.IOLike (MonadSTM)
@@ -375,35 +365,6 @@ isValid ::
   Maybe Bool
 isValid = flip getIsValid
 
-getDbChangelog ::
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk)) =>
-  TopLevelConfig blk ->
-  Model blk ->
-  DbChangelog.DbChangelog' blk
-getDbChangelog cfg m@Model{..} =
-  DbChangelog.prune tip
-    . DbChangelog.reapplyThenPushMany' ledgerDbCfg blks
-    $ DbChangelog.empty initLedger
- where
-  blks = Chain.toOldestFirst $ currentChain m
-
-  k = configSecurityParam cfg
-
-  ledgerDbCfg =
-    LedgerDbCfg
-      { ledgerDbCfgSecParam = k
-      , ledgerDbCfg = ExtLedgerCfg cfg
-      , ledgerDbCfgComputeLedgerEvents = OmitLedgerEvents
-      }
-
-  tip =
-    case maxActualRollback k m of
-      0 -> LedgerDbPruneAll
-      n ->
-        -- Since we know that @`n`@ is not zero, it is impossible for `nonZeroOr`
-        -- to return a `Nothing` and the final result to have default value of @`1`@.
-        LedgerDbPruneKeeping $ SecurityParam $ nonZeroOr n $ knownNonZeroBounded @1
-
 getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
 getLoEFragment = loeFragment
 
@@ -454,7 +415,7 @@ addBlock cfg blk m
   ignoreBlock =
     -- If the block is as old as the tip of the ImmutableDB, i.e. older
     -- than @k@, we ignore it, as we can never switch to it.
-    olderThanK hdr (headerToIsEBB hdr) immBlockNo
+    olderThanImmTip hdr immBlockNo
       ||
       -- If it's an invalid block we've seen before, ignore it.
       Map.member (blockHash blk) (invalid m)
@@ -842,14 +803,7 @@ validate cfg Model{initLedger, invalid} chain =
           ledger
           (invalid <> mkInvalid b e)
       -- Valid block according to the ledger
-      Right ledger'
-        -- But the block has been recorded as an invalid block. It must be
-        -- that it exceeded the clock skew in the past.
-        | Map.member (blockHash b) invalid ->
-            ValidatedChain validPrefix ledger invalid
-        -- This is the good path
-        | otherwise ->
-            go (convertMapKind ledger') (validPrefix :> b) bs'
+      Right ledger' -> go (convertMapKind ledger') (validPrefix :> b) bs'
 
 chains ::
   forall blk.

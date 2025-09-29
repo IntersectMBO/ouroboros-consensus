@@ -18,6 +18,7 @@ hsPkgs.shellFor {
     pkgs.fourmolu
     pkgs.cuddle
     pkgs.cddlc
+    pkgs.pretty-simple
 
     # release management
     pkgs.scriv

@@ -139,7 +139,7 @@ data Err
 class
   ( EmptyValues vs
   , ApplyDiff vs d
-  , LookupKeysRange ks vs
+  , LookupKeysRange ks k vs
   , LookupKeys ks vs
   , ValuesLength vs
   , MakeDiff vs d
@@ -151,6 +151,7 @@ class
   , MakeSerializeTablesHint vs
   , Show ks
   , Show vs
+  , Show k
   , Show d
   , Show (BS.InitHint vs)
   , Show (BS.WriteHint d)
@@ -158,6 +159,7 @@ class
   , Show (SerializeTablesHint vs)
   , Eq ks
   , Eq vs
+  , Eq k
   , Eq d
   , Eq (BS.InitHint vs)
   , Eq (BS.WriteHint d)
@@ -165,13 +167,14 @@ class
   , Eq (SerializeTablesHint vs)
   , Typeable ks
   , Typeable vs
+  , Typeable k
   , Typeable d
   , Typeable (BS.InitHint vs)
   , Typeable (BS.WriteHint d)
   , Typeable (BS.ReadHint vs)
   , Typeable (SerializeTablesHint vs)
   ) =>
-  HasOps ks vs d
+  HasOps ks k vs d
 
 class EmptyValues vs where
   emptyValues :: vs
@@ -179,8 +182,8 @@ class EmptyValues vs where
 class ApplyDiff vs d where
   applyDiff :: vs -> d -> vs
 
-class LookupKeysRange ks vs where
-  lookupKeysRange :: Maybe ks -> Int -> vs -> vs
+class LookupKeysRange ks k vs where
+  lookupKeysRange :: Maybe ks -> Int -> vs -> (vs, Maybe k)
 
 class LookupKeys ks vs where
   lookupKeys :: ks -> vs -> vs
@@ -216,7 +219,7 @@ class MakeSerializeTablesHint vs where
 -------------------------------------------------------------------------------}
 
 -- | State within which the mock runs.
-newtype MockMonad ks vs d a
+newtype MockMonad ks k vs d a
   = MockMonad (ExceptT Err (State (Mock vs)) a)
   deriving stock Functor
   deriving newtype
@@ -227,7 +230,7 @@ newtype MockMonad ks vs d a
     )
 
 runMockMonad ::
-  MockMonad ks vs d a ->
+  MockMonad ks k vs d a ->
   Mock vs ->
   (Either Err a, Mock vs)
 runMockMonad (MockMonad t) = runState . runExceptT $ t
@@ -398,11 +401,11 @@ mBSVHClose vh = do
 
 -- | Perform a range read on a backing store value handle.
 mBSVHRangeRead ::
-  (MonadState (Mock vs) m, MonadError Err m, LookupKeysRange ks vs) =>
+  (MonadState (Mock vs) m, MonadError Err m, LookupKeysRange ks k vs) =>
   ValueHandle vs ->
   BS.ReadHint vs ->
   BS.RangeQuery ks ->
-  m vs
+  m (vs, Maybe k)
 mBSVHRangeRead vh _ BS.RangeQuery{BS.rqPrev, BS.rqCount} = do
   mGuardBSClosed
   mGuardBSVHClosed vh

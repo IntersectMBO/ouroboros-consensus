@@ -117,7 +117,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbSerialiseConstraints
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
-  , LedgerSupportsOnDiskLedgerDB
+  , LedgerSupportsLMDBLedgerDB
+  , LedgerSupportsV1LedgerDB
+  , LedgerSupportsV2LedgerDB
   , ResolveBlock
   , currentPoint
 
@@ -193,7 +195,6 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
-import System.FS.API
 
 {-------------------------------------------------------------------------------
   Main API
@@ -251,9 +252,15 @@ data LedgerDB m l blk = LedgerDB
   -- back as many blocks as the passed @Word64@.
   , getPrevApplied :: STM m (Set (RealPoint blk))
   -- ^ Get the references to blocks that have previously been applied.
-  , garbageCollect :: SlotNo -> STM m ()
-  -- ^ Garbage collect references to old blocks that have been previously
-  -- applied and committed.
+  , garbageCollect :: SlotNo -> m ()
+  -- ^ Garbage collect references to old state that is older than the given
+  -- slot.
+  --
+  -- Concretely, this affects:
+  --
+  --  * Ledger states (and potentially underlying handles for on-disk storage).
+  --
+  --  * The set of previously applied points.
   , tryTakeSnapshot ::
       l ~ ExtLedgerState blk =>
       Maybe (Time, Time) ->
@@ -298,7 +305,14 @@ data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
   , push :: ExtLedgerState blk DiffMK -> m ()
+  -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
+  --
+  -- This does not modify the set of previously applied points.
   , reapplyThenPushNOW :: blk -> m ()
+  -- ^ Apply block to the tip ledger state (using reapplication), and prune the
+  -- 'LedgerDB' to its immutable tip.
+  --
+  -- This does not modify the set of previously applied points.
   , truncateSnapshots :: m ()
   , closeLedgerDB :: m ()
   , getNumLedgerTablesHandles :: m Word64
@@ -452,15 +466,14 @@ data InitDB db m blk = InitDB
   -- ^ Create a DB from the genesis state
   , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
-  , closeDb :: !(db -> m ())
+  , abortLedgerDbInit :: !(db -> m ())
   -- ^ Closing the database, to be reopened again with a different snapshot or
   -- with the genesis state.
   , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
-  -- ^ Reapply a block from the immutable DB when initializing the DB.
+  -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
+  -- LedgerDB such that there are no volatile states.
   , currentTip :: !(db -> LedgerState blk EmptyMK)
   -- ^ Getting the current tip for tracing the Ledger Events.
-  , pruneDb :: !(db -> m db)
-  -- ^ Prune the database so that no immutable states are considered volatile.
   , mkLedgerDb ::
       !(db -> m (LedgerDB m (ExtLedgerState blk) blk, TestInternals m (ExtLedgerState blk) blk))
   -- ^ Create a LedgerDB from the initialized data structures from previous
@@ -488,7 +501,7 @@ data InitDB db m blk = InitDB
 -- obtained in this way will (hopefully) share much of their memory footprint
 -- with their predecessors.
 initialize ::
-  forall m blk db.
+  forall m n blk db st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -496,27 +509,27 @@ initialize ::
   ) =>
   Tracer m (TraceReplayEvent blk) ->
   Tracer m (TraceSnapshotEvent blk) ->
-  SomeHasFS m ->
   LedgerDbCfg (ExtLedgerState blk) ->
   StreamAPI m blk blk ->
   Point blk ->
   InitDB db m blk ->
+  SnapshotManager m n blk st ->
   Maybe DiskSnapshot ->
   m (InitLog blk, db, Word64)
 initialize
   replayTracer
   snapTracer
-  hasFS
   cfg
   stream
   replayGoal
   dbIface
+  snapManager
   fromSnapshot =
     case fromSnapshot of
-      Nothing -> listSnapshots hasFS >>= tryNewestFirst id
+      Nothing -> listSnapshots snapManager >>= tryNewestFirst id
       Just snap -> tryNewestFirst id [snap]
    where
-    InitDB{initFromGenesis, initFromSnapshot, closeDb} = dbIface
+    InitDB{initFromGenesis, initFromSnapshot, abortLedgerDbInit} = dbIface
 
     tryNewestFirst ::
       (InitLog blk -> InitLog blk) ->
@@ -543,15 +556,9 @@ initialize
 
       case eDB of
         Left err -> do
-          closeDb initDb
+          abortLedgerDbInit initDb
           error $ "Invariant violation: invalid immutable chain " <> show err
-        Right (db, replayed) -> do
-          db' <- pruneDb dbIface db
-          return
-            ( acc InitFromGenesis
-            , db'
-            , replayed
-            )
+        Right (db, replayed) -> return (acc InitFromGenesis, db, replayed)
     tryNewestFirst acc (s : ss) = do
       eInitDb <- initFromSnapshot s
       case eInitDb of
@@ -573,7 +580,7 @@ initialize
           traceWith snapTracer $ InvalidSnapshot s err
           Monad.when (diskSnapshotIsTemporary s) $ do
             traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot hasFS s
+            deleteSnapshot snapManager s
           tryNewestFirst (acc . InitFailure s err) ss
 
         -- If we fail to use this snapshot for any other reason, delete it and
@@ -581,7 +588,7 @@ initialize
         Left err -> do
           Monad.when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $ do
             traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot hasFS s
+            deleteSnapshot snapManager s
           traceWith snapTracer . InvalidSnapshot s $ err
           tryNewestFirst (acc . InitFailure s err) ss
         Right (initDb, pt) -> do
@@ -600,12 +607,10 @@ initialize
           case eDB of
             Left err -> do
               traceWith snapTracer . InvalidSnapshot s $ err
-              Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot hasFS s
-              closeDb initDb
+              Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot snapManager s
+              abortLedgerDbInit initDb
               tryNewestFirst (acc . InitFailure s err) ss
-            Right (db, replayed) -> do
-              db' <- pruneDb dbIface db
-              return (acc (InitFromSnapshot s pt), db', replayed)
+            Right (db, replayed) -> return (acc (InitFromSnapshot s pt), db, replayed)
 
     replayTracer' =
       decorateReplayTracerWithGoal
@@ -723,7 +728,11 @@ data TraceReplayProgressEvent blk
   Updating ledger tables
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsInMemoryLedgerDB blk = (CanUpgradeLedgerTables (LedgerState blk))
+type LedgerSupportsInMemoryLedgerDB l =
+  (CanUpgradeLedgerTables l, SerializeTablesWithHint l)
+
+type LedgerSupportsV1LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
 
 -- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
 -- update ledger tables to the latest era. For unary blocks this is a no-op, but
@@ -762,12 +771,18 @@ instance
   Supporting On-Disk backing stores
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsOnDiskLedgerDB blk =
-  (IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk)))
+type LedgerSupportsLMDBLedgerDB l =
+  (IndexedMemPack (l EmptyMK) (TxOut l), MemPackIdx l EmptyMK ~ l EmptyMK)
 
-type LedgerSupportsLedgerDB blk =
-  ( LedgerSupportsOnDiskLedgerDB blk
-  , LedgerSupportsInMemoryLedgerDB blk
+type LedgerSupportsV2LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l)
+
+type LedgerSupportsLedgerDB blk = LedgerSupportsLedgerDB' (LedgerState blk) blk
+
+type LedgerSupportsLedgerDB' l blk =
+  ( LedgerSupportsLMDBLedgerDB l
+  , LedgerSupportsInMemoryLedgerDB l
+  , LedgerDbSerialiseConstraints blk
   )
 
 {-------------------------------------------------------------------------------
@@ -775,10 +790,10 @@ type LedgerSupportsLedgerDB blk =
 -------------------------------------------------------------------------------}
 
 -- | Options for prunning the LedgerDB
---
--- Rather than using a plain `Word64` we use this to be able to distinguish that
--- we are indeed using
---   1. @0@ in places where it is necessary
---   2. the security parameter as is, in other places
-data LedgerDbPrune = LedgerDbPruneAll | LedgerDbPruneKeeping SecurityParam
+data LedgerDbPrune
+  = -- | Prune all states, keeping only the current tip.
+    LedgerDbPruneAll
+  | -- | Prune such that all (non-anchor) states are not older than the given
+    -- slot.
+    LedgerDbPruneBeforeSlot SlotNo
   deriving Show

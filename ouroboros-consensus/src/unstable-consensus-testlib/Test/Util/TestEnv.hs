@@ -1,7 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 
--- | A @tasty@ command-line option for enabling nightly tests
+-- | This module provides @tasty@ command-line options for enabling nightly tests
+--   and controlling test output verbosity
 module Test.Util.TestEnv
   ( TestEnv (..)
   , adjustQuickCheckMaxSize
@@ -17,6 +18,7 @@ import Main.Utf8 (withStdTerminalHandles)
 import Options.Applicative (metavar)
 import Test.Tasty
 import Test.Tasty.Ingredients
+import Test.Tasty.Ingredients.Basic (HideSuccesses (..))
 import Test.Tasty.Ingredients.Rerun
 import Test.Tasty.Options
 import Test.Tasty.QuickCheck
@@ -28,11 +30,14 @@ defaultMainWithTestEnv testConfig testTree = do
   cryptoInit
   withStdTerminalHandles $
     defaultMainWithIngredients
-      [rerunningTests (testEnvIngredient : defaultIngredients)]
+      [rerunningTests (hideSuccessIngredient : testEnvIngredient : defaultIngredients)]
       (withTestEnv testConfig testTree)
  where
   testEnvIngredient :: Ingredient
   testEnvIngredient = includingOptions [Option (Proxy :: Proxy TestEnv)]
+
+  hideSuccessIngredient :: Ingredient
+  hideSuccessIngredient = includingOptions [Option (Proxy :: Proxy HideSuccesses)]
 
 -- | Set the appropriate options for the test environment
 withTestEnv :: TestEnvConfig -> TestTree -> TestTree

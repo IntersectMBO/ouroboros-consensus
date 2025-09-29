@@ -18,6 +18,7 @@ module Ouroboros.Consensus.Storage.LedgerDB
   ) where
 
 import Data.Functor.Contravariant ((>$<))
+import Data.Void
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
@@ -27,9 +28,13 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -39,7 +44,6 @@ openDB ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerDbSerialiseConstraints blk
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
@@ -58,33 +62,43 @@ openDB ::
   Point blk ->
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
+  GetVolatileSuffix m blk ->
   m (LedgerDB' m blk, Word64)
 openDB
   args
   stream
   replayGoal
-  getBlock = case lgrFlavorArgs args of
+  getBlock
+  getVolatileSuffix = case lgrFlavorArgs args of
     LedgerDbFlavorArgsV1 bss ->
-      let initDb =
+      let snapManager = V1.snapshotManager args
+          initDb =
             V1.mkInitDb
               args
               bss
               getBlock
-       in doOpenDB args initDb stream replayGoal
-    LedgerDbFlavorArgsV2 bss ->
+              snapManager
+              getVolatileSuffix
+       in doOpenDB args initDb snapManager stream replayGoal
+    LedgerDbFlavorArgsV2 bss -> do
+      (snapManager, bss') <- case bss of
+        V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
+        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs x)) -> absurd x
       let initDb =
             V2.mkInitDb
               args
-              bss
+              bss'
               getBlock
-       in doOpenDB args initDb stream replayGoal
+              snapManager
+              getVolatileSuffix
+      doOpenDB args initDb snapManager stream replayGoal
 
 {-------------------------------------------------------------------------------
   Opening a LedgerDB
 -------------------------------------------------------------------------------}
 
 doOpenDB ::
-  forall m blk db.
+  forall m n blk db st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -92,11 +106,12 @@ doOpenDB ::
   ) =>
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
+  SnapshotManager m n blk st ->
   StreamAPI m blk blk ->
   Point blk ->
   m (LedgerDB' m blk, Word64)
-doOpenDB args initDb stream replayGoal =
-  f <$> openDBInternal args initDb stream replayGoal
+doOpenDB args initDb snapManager stream replayGoal =
+  f <$> openDBInternal args initDb snapManager stream replayGoal
  where
   f (ldb, replayCounter, _) = (ldb, replayCounter)
 
@@ -109,20 +124,21 @@ openDBInternal ::
   ) =>
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
+  SnapshotManager m n blk st ->
   StreamAPI m blk blk ->
   Point blk ->
   m (LedgerDB' m blk, Word64, TestInternals' m blk)
-openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb stream replayGoal = do
+openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal = do
   createDirectoryIfMissing fs True (mkFsPath [])
   (_initLog, db, replayCounter) <-
     initialize
       replayTracer
       snapTracer
-      lgrHasFS
       lgrConfig
       stream
       replayGoal
       initDb
+      snapManager
       lgrStartSnapshot
   (ledgerDb, internal) <- mkLedgerDb initDb db
   return (ledgerDb, replayCounter, internal)
@@ -130,7 +146,6 @@ openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb stream replay
   LedgerDbArgs
     { lgrConfig
     , lgrTracer
-    , lgrHasFS
     , lgrStartSnapshot
     } = args
 

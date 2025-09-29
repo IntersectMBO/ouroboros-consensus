@@ -28,8 +28,8 @@ We have two types of documentation:
 When starting to work on Consensus, we recommend to take a look at the following
 resources:
 
- - [Preflight guide](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/PreflightGuide/)
- - [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary/)
+ - [Preflight guide](https://ouroboros-consensus.cardano.intersectmbo.org/docs/tutorials/preflight_guide/)
+ - [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/glossary/)
 
 When adding or improving documentation about the implementation, it is
 preferable to add haddock comments since they are closer to the code. However
@@ -90,7 +90,7 @@ EOF
 
 An alternative to using `nix` is to set up the development
 environment yourself. Follow [these
-instructions](https://developers.cardano.org/docs/get-started/cardano-node/installing-cardano-node/)
+instructions](https://developers.cardano.org/docs/operate-a-stake-pool/node-operations/installing-cardano-node/#building-via-cabal)
 to properly configure your system.
 
 # Building the project
@@ -181,12 +181,11 @@ This section contain guidelines on what to check when making a pull request.
 - When bumping version bounds on the dependencies *it is not necessary* to
   increase the package version number. See [this
   section](#updating-the-dependencies-bounds).
-- When you want to create a changelog entry, follow [this and the following
-  section](docs/website/contents/for-developers/ReleaseProcess.md#installing-scriv).
+- When you want to create a changelog entry, follow [this and the following section](docs/website/contents/howtos/contributing/how_to_make_a_release.md#installing-scriv).
 
 ## Following our git process
 
-Our [git process](docs/website/contents/for-developers/GitProcess.md) describes
+Our [git process](docs/website/contents/howtos/contributing/consensus_git_process.md) describes
 the `git` practices we encourage when working with the code in this repository.
 
 ## Updating the documentation
@@ -197,7 +196,7 @@ documentation (see [this section](#documentation)).
 ## Following the style guide
 
 We have a [Haskell style
-guide](docs/website/contents/for-developers/StyleGuide.md) that should be
+guide](docs/website/contents/howtos/contributing/style_guide.md) that should be
 followed when writing code in Consensus. Our style guide is not set in stone,
 and improvements are always welcome.
 
@@ -252,12 +251,12 @@ frustrations later on in the process.
 
 We maintain a changelog. If your pull request requires a changelog entry, please
 follow [these
-instructions](docs/website/contents/for-developers/ReleaseProcess.md#adding-a-changelog-fragment).
+instructions](docs/website/contents/howtos/contributing/how_to_make_a_release.md#adding-a-changelog-fragment).
 Even if your change doesn't require a changelog fragment, create an empty one as
 CI will reject your change otherwise. We made this choice to ensure authors of
 PRs would always take a moment to consider whether a changelog fragment should
 be added for their PR. For more information see [our release
-process](docs/website/contents/for-developers/ReleaseProcess.md).
+process](docs/website/contents/howtos/contributing/how_to_make_a_release.md).
 
 When creating a pull-request (PR), it is **crucial** that the PR:
 
@@ -337,6 +336,9 @@ package, we should release it to CHaP instead (see the
 [CHaP README](https://github.com/IntersectMBO/cardano-haskell-packages)
 for more).
 
+In general, we strive to avoid having `source-repository-package`s on our `main` branch. However, there are situations where we want to prevent pull requests from piling up while awaiting the release of upstream components[^1].
+In these cases, we allow merging pull requests that contain `source-repository-package`s, provided the referenced commit is on the `main` branch of the upstream package.
+
 If you do add a temporary `source-repository-package` stanza, you need to
 provide a `--sha256` comment in `cabal.project` so that Nix knows the hash
 of the content. There are two relatively straightforward ways to do this:
@@ -407,6 +409,8 @@ The core contributors to consensus codebase are:
 
 -   [Georgy Lukyanov](https://github.com/geo2a)
 
+-   [Drazen Popovic](https://github.com/bladyjoker)
+
 # Code of conduct
 
 See [Cardano engineering
@@ -415,3 +419,5 @@ code of conduct.
 
 [haddock-site]: https://haskell-haddock.readthedocs.io/latest/
 [chap]: https://github.com/IntersectMBO/cardano-haskell-packages
+
+[^1]: [#1376](https://github.com/IntersectMBO/ouroboros-consensus/pull/1376) provides an example of an integration pull request that incorporated changes from several others that were waiting on the release of upstream packages. The resulting pull request was extremely tedious to review, making the process more error-prone than reviewing a shorter one due to its sheer size.

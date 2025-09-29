@@ -14,9 +14,12 @@ module Ouroboros.Consensus.HardFork.Combinator.Forging
   , hardForkBlockForging
   ) where
 
+import Control.Monad (void)
 import Data.Functor.Product
 import Data.Maybe (fromMaybe)
+import Data.SOP (Top)
 import Data.SOP.BasicFunctors
+import Data.SOP.Constraint (All)
 import Data.SOP.Functors (Product2 (..))
 import Data.SOP.InPairs (InPairs)
 import qualified Data.SOP.InPairs as InPairs
@@ -79,17 +82,20 @@ hardForkBlockForging ::
   (CanHardFork xs, Monad m) =>
   -- | Used as the 'forgeLabel', the labels of the given 'BlockForging's will
   -- be ignored.
-  Text ->
-  NonEmptyOptNP (BlockForging m) xs ->
-  BlockForging m (HardForkBlock xs)
-hardForkBlockForging label blockForging =
-  BlockForging
-    { forgeLabel = label
-    , canBeLeader = hardForkCanBeLeader blockForging
-    , updateForgeState = hardForkUpdateForgeState blockForging
-    , checkCanForge = hardForkCheckCanForge blockForging
-    , forgeBlock = hardForkForgeBlock blockForging
-    }
+  (NonEmptyOptNP (BlockForging m) xs -> Text) ->
+  NonEmptyOptNP (MkBlockForging m) xs ->
+  MkBlockForging m (HardForkBlock xs)
+hardForkBlockForging labelF mkBlockForgings = MkBlockForging $ do
+  blockForgings <- htraverse' mkBlockForging mkBlockForgings
+  pure
+    BlockForging
+      { forgeLabel = labelF blockForgings
+      , canBeLeader = hardForkCanBeLeader blockForgings
+      , updateForgeState = hardForkUpdateForgeState blockForgings
+      , checkCanForge = hardForkCheckCanForge blockForgings
+      , forgeBlock = hardForkForgeBlock blockForgings
+      , finalize = hardForkFinalize blockForgings
+      }
 
 hardForkCanBeLeader ::
   CanHardFork xs =>
@@ -97,6 +103,12 @@ hardForkCanBeLeader ::
 hardForkCanBeLeader =
   SomeErasCanBeLeader
     . hmap (WrapCanBeLeader . canBeLeader)
+
+hardForkFinalize ::
+  (Monad m, All Top xs) =>
+  NonEmptyOptNP (BlockForging m) xs -> m ()
+hardForkFinalize blockForging =
+  void $ htraverse_ finalize blockForging
 
 -- | POSTCONDITION: the returned 'ForgeStateUpdateInfo' is from the same era as
 -- the ticked 'ChainDepState'.

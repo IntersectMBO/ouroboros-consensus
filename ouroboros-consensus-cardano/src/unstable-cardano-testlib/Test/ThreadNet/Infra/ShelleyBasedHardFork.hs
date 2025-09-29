@@ -48,13 +48,14 @@ import Cardano.Ledger.Binary.Encoding
   , encodeMemPack
   , toPlainEncoding
   )
+import qualified Cardano.Ledger.Conway.State as SL
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import qualified Cardano.Ledger.UMap as SL
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
 import Control.Monad.Except (runExcept)
+import qualified Control.Tracer as Tracer
 import Data.Coerce
 import qualified Data.Map.Strict as Map
 import Data.MemPack
@@ -69,7 +70,7 @@ import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Forging (BlockForging)
+import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.Cardano.CanHardFork
   ( crossEraForecastAcrossShelley
   , translateChainDepStateAcrossShelley
@@ -89,15 +90,17 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Protocol.Praos.AgentClient
+  ( KESAgentClientTrace
+  , KESAgentContext
+  )
 import Ouroboros.Consensus.Protocol.TPraos
-import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (eitherToMaybe)
-import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Test.ThreadNet.TxGen
 import Test.ThreadNet.TxGen.Shelley ()
@@ -186,7 +189,7 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , TranslateTxMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
   , SL.TranslateEra era2 SL.NewEpochState
-  , SL.TranslateEra era2 WrapTx
+  , SL.TranslateEra era2 SL.Tx
   , SL.TranslationError era2 SL.NewEpochState ~ Void
   , -- At the moment, fix the protocols together
     ProtoCrypto proto1 ~ ProtoCrypto proto2
@@ -271,7 +274,7 @@ instance
         , translateTxOutWith = SL.upgradeTxOut
         }
 
-  hardForkChainSel = Tails.mk2 CompareSameSelectView
+  hardForkChainSel = Tails.mk2 SameTiebreakerAcrossEras
 
   hardForkInjectTxs =
     InPairs.mk2 $
@@ -385,14 +388,17 @@ instance
 
 protocolInfoShelleyBasedHardFork ::
   forall m proto1 era1 proto2 era2.
-  (IOLike m, ShelleyBasedHardForkConstraints proto1 era1 proto2 era2) =>
+  ( KESAgentContext (ProtoCrypto proto2) m
+  , ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+  ) =>
   ProtocolParamsShelleyBased (ProtoCrypto proto1) ->
   SL.ProtVer ->
   SL.ProtVer ->
   L.TransitionConfig era2 ->
   TriggerHardFork ->
   ( ProtocolInfo (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
-  , m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
+  , Tracer.Tracer m KESAgentClientTrace ->
+    m [MkBlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
   )
 protocolInfoShelleyBasedHardFork
   protocolParamsShelleyBased
@@ -425,7 +431,8 @@ protocolInfoShelleyBasedHardFork
     genesis = transCfg2 ^. L.tcShelleyGenesisL
 
     protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
-    blockForging1 :: m [BlockForging m (ShelleyBlock proto1 era1)]
+    blockForging1 ::
+      Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto1 era1)]
     (protocolInfo1, blockForging1) =
       protocolInfoTPraosShelleyBased
         protocolParamsShelleyBased
@@ -447,7 +454,8 @@ protocolInfoShelleyBasedHardFork
     -- Era 2
 
     protocolInfo2 :: ProtocolInfo (ShelleyBlock proto2 era2)
-    blockForging2 :: m [BlockForging m (ShelleyBlock proto2 era2)]
+    blockForging2 ::
+      Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto2 era2)]
     (protocolInfo2, blockForging2) =
       protocolInfoTPraosShelleyBased
         ProtocolParamsShelleyBased
@@ -593,8 +601,8 @@ instance
                   . SL.esLStateL
                   . SL.lsCertStateL
                   . SL.certDStateL
-                  . SL.dsUnifiedL
-                  . SL.umElemsL
+                  . SL.accountsL
+                  . SL.accountsMapL
        in LedgerTables . ValuesMK
             <$> SL.eraDecoder @era
               (decodeMap (ShelleyHFCTxIn <$> decodeMemPack) (toShelleyTxOut <$> decShareCBOR certInterns))

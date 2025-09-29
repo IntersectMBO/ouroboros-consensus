@@ -18,7 +18,8 @@ import MAlonzo.Code.Spec.Foreign.HSConsensus.Protocol                          a
 import MAlonzo.Code.Spec.Foreign.HSConsensus.TickForecast                      as X
   (tickfStep, NewEpochState)
 import MAlonzo.Code.Spec.Foreign.HSConsensus.ChainHead                         as X
-  (ChainHeadEnv, ChainHeadState(..), LastAppliedBlock(..), chainheadStep)
+  (ChainHeadEnv, ChainHeadState(..), LastAppliedBlock(..), chainheadStep,
+   chainheadDebug)
 import MAlonzo.Code.Spec.Foreign.HSConsensus.BaseTypes                         as X
   (Slot, Epoch, KeyHashS, KeyHashV)
 import MAlonzo.Code.Spec.Foreign.ExternalFunctions                             as X

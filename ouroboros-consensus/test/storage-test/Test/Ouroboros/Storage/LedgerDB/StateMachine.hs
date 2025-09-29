@@ -48,6 +48,7 @@ import qualified Data.List as L
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.SOP.Dict as Dict
+import Data.Void
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -63,15 +64,18 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
   ( LedgerDbFlavorArgs
   )
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Args hiding
   ( LedgerDbFlavorArgs
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import Ouroboros.Consensus.Util hiding (Some)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
+import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import qualified System.Directory as Dir
 import System.FS.API
 import qualified System.FS.IO as FSIO
@@ -85,7 +89,7 @@ import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel
 import Test.Tasty
-import Test.Tasty.QuickCheck
+import Test.Tasty.QuickCheck (frequency, tabulate, testProperty)
 import Test.Util.TestBlock hiding
   ( TestBlock
   , TestBlockCodecConfig
@@ -280,6 +284,9 @@ instance StateModel Model where
       Action Model (ExtLedgerState TestBlock EmptyMK, ExtLedgerState TestBlock EmptyMK)
     Init :: SecurityParam -> Action Model ()
     ValidateAndCommit :: Word64 -> [TestBlock] -> Action Model ()
+    -- \| This action is used only to observe the side effects of closing an
+    -- uncommitted forker, to ensure all handles are properly deallocated.
+    OpenAndCloseForker :: Action Model ()
 
   actionName WipeLedgerDB{} = "WipeLedgerDB"
   actionName TruncateSnapshots{} = "TruncateSnapshots"
@@ -288,6 +295,7 @@ instance StateModel Model where
   actionName GetState{} = "GetState"
   actionName Init{} = "Init"
   actionName ValidateAndCommit{} = "ValidateAndCommit"
+  actionName OpenAndCloseForker = "OpenAndCloseForker"
 
   arbitraryAction _ UnInit = Some . Init <$> QC.arbitrary
   arbitraryAction _ model@(Model chain secParam) =
@@ -302,7 +310,13 @@ instance StateModel Model where
                   min
                     (fromIntegral . AS.length $ chain)
                     (BT.unNonZero $ maxRollbacks secParam)
-            numRollback <- QC.choose (0, maxRollback)
+            numRollback <-
+              frequency
+                [ (10, QC.choose (0, maxRollback))
+                , -- Sometimes generate invalid 'ValidateAndCommit's for
+                  -- negative testing.
+                  (1, QC.choose (maxRollback + 1, maxRollback + 5))
+                ]
             numNewBlocks <- QC.choose (numRollback, numRollback + 2)
             let
               chain' = case modelRollback numRollback model of
@@ -316,6 +330,7 @@ instance StateModel Model where
         )
       , (1, pure $ Some WipeLedgerDB)
       , (1, pure $ Some TruncateSnapshots)
+      , (1, pure $ Some OpenAndCloseForker)
       ]
 
   initialState = UnInit
@@ -357,6 +372,7 @@ instance StateModel Model where
   nextState state WipeLedgerDB _var = state
   nextState state TruncateSnapshots _var = state
   nextState state (DropAndRestore n) _var = modelRollback n state
+  nextState state OpenAndCloseForker _var = state
   nextState UnInit _ _ = error "Uninitialized model created a command different than Init"
 
   precondition UnInit Init{} = True
@@ -370,6 +386,9 @@ instance StateModel Model where
           chain' = AS.dropNewest (fromIntegral n) chain
   precondition _ Init{} = False
   precondition _ _ = True
+
+  validFailingAction Model{} ValidateAndCommit{} = True
+  validFailingAction _ _ = False
 
 {-------------------------------------------------------------------------------
   Mocked ChainDB
@@ -490,19 +509,27 @@ openLedgerDB flavArgs env cfg fs = do
           Nothing
   (ldb, _, od) <- case flavArgs of
     LedgerDbFlavorArgsV1 bss ->
-      let initDb =
+      let snapManager = V1.snapshotManager args
+          initDb =
             V1.mkInitDb
               args
               bss
               getBlock
-       in openDBInternal args initDb stream replayGoal
-    LedgerDbFlavorArgsV2 bss ->
+              snapManager
+              (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
+       in openDBInternal args initDb snapManager stream replayGoal
+    LedgerDbFlavorArgsV2 bss -> do
+      (snapManager, bss') <- case bss of
+        V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
+        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs x)) -> absurd x
       let initDb =
             V2.mkInitDb
               args
-              bss
+              bss'
               getBlock
-       in openDBInternal args initDb stream replayGoal
+              snapManager
+              (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
+      openDBInternal args initDb snapManager stream replayGoal
   withRegistry $ \reg -> do
     vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
     case vr of
@@ -527,22 +554,29 @@ data Environment
       (IO NumOpenHandles)
       (IO ())
 
+data LedgerDBError = ErrorValidateExceededRollback
+
 instance RunModel Model (StateT Environment IO) where
+  type Error Model (StateT Environment IO) = LedgerDBError
+
   perform _ (Init secParam) _ = do
     Environment _ _ chainDb mkArgs fs _ cleanup <- get
     (ldb, testInternals, getNumOpenHandles) <- lift $ do
       let args = mkArgs secParam
       openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs
     put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup)
+    pure $ pure ()
   perform _ WipeLedgerDB _ = do
     Environment _ testInternals _ _ _ _ _ <- get
     lift $ wipeLedgerDB testInternals
+    pure $ pure ()
   perform _ GetState _ = do
     Environment ldb _ _ _ _ _ _ <- get
-    lift $ atomically $ (,) <$> getImmutableTip ldb <*> getVolatileTip ldb
+    lift $ fmap pure $ atomically $ (,) <$> getImmutableTip ldb <*> getVolatileTip ldb
   perform _ ForceTakeSnapshot _ = do
     Environment _ testInternals _ _ _ _ _ <- get
     lift $ takeSnapshotNOW testInternals TakeAtImmutableTip Nothing
+    pure $ pure ()
   perform _ (ValidateAndCommit n blks) _ = do
     Environment ldb _ chainDb _ _ _ _ <- get
     lift $ do
@@ -558,7 +592,8 @@ instance RunModel Model (StateT Environment IO) where
                 (reverse (map blockRealPoint blks) ++) . drop (fromIntegral n)
             atomically (forkerCommit forker)
             forkerClose forker
-          ValidateExceededRollBack{} -> error "Unexpected Rollback"
+            pure $ pure ()
+          ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
           ValidateLedgerError (AnnLedgerError forker _ _) -> forkerClose forker >> error "Unexpected ledger error"
   perform state@(Model _ secParam) (DropAndRestore n) lk = do
     Environment _ testInternals chainDb _ _ _ _ <- get
@@ -566,9 +601,18 @@ instance RunModel Model (StateT Environment IO) where
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
       closeLedgerDB testInternals
     perform state (Init secParam) lk
+  perform _ OpenAndCloseForker _ = do
+    Environment ldb _ _ _ _ _ _ <- get
+    lift $ withRegistry $ \rr -> do
+      eFrk <- LedgerDB.getForkerAtTarget ldb rr VolatileTip
+      case eFrk of
+        Left err -> error $ "Impossible: can't acquire forker at tip: " <> show err
+        Right frk -> forkerClose frk
+    pure $ pure ()
   perform _ TruncateSnapshots _ = do
     Environment _ testInternals _ _ _ _ _ <- get
     lift $ truncateSnapshots testInternals
+    pure $ pure ()
   perform UnInit _ _ = error "Uninitialized model created a command different than Init"
 
   monitoring _ (ValidateAndCommit n _) _ _ = tabulate "Rollback depths" [show n]
@@ -601,6 +645,11 @@ instance RunModel Model (StateT Environment IO) where
               ]
           pure $ volSt == vol && immSt == imm
   postcondition _ _ _ _ = pure True
+
+  postconditionOnFailure _ ValidateAndCommit{} _ res = case res of
+    Right () -> False <$ counterexamplePost "Unexpected success on invalid ValidateAndCommit"
+    Left ErrorValidateExceededRollback -> pure True
+  postconditionOnFailure _ _ _ _ = pure True
 
 {-------------------------------------------------------------------------------
   Additional checks

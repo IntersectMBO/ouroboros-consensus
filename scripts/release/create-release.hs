@@ -187,8 +187,7 @@ findChangeSeverity frag = do
     Left markdownError -> do
       liftIO $ putStrLn $ "Failed to parse markdown file " <> frag <> ":"
       error $ show markdownError
-    Right (Headings Nothing) ->
-      error $ "Couldn't find any change severity headers in " <> frag <> ", exiting!"
+    Right (Headings Nothing) -> pure Patch
     Right (Headings (Just (Max sev))) -> pure sev
 
 collectSeverities :: Fold (FilePath, Maybe ChangeSeverity, [FilePath]) (Map FilePath (Maybe ChangeSeverity))

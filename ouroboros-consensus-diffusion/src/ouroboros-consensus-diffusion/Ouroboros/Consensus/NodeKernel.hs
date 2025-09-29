@@ -24,6 +24,7 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
+  , toConsensusMode
   ) where
 
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
@@ -177,7 +178,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- the PeerSharing protocol
   , getTracers :: Tracers m (ConnectionId addrNTN) addrNTC blk
   -- ^ The node's tracers
-  , setBlockForging :: [BlockForging m blk] -> m ()
+  , setBlockForging :: [MkBlockForging m blk] -> m ()
   -- ^ Set block forging
   --
   -- When set with the empty list '[]' block forging will be disabled.
@@ -243,7 +244,7 @@ initNodeKernel
     , getDiffusionPipeliningSupport
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
-    blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
+    blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
     st <- initInternalState args
@@ -374,7 +375,7 @@ initNodeKernel
    where
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
-      STM m [BlockForging m blk] ->
+      STM m [MkBlockForging m blk] ->
       m Void
     blockForgingController st getBlockForging = go []
      where
@@ -389,7 +390,7 @@ castTraceFetchDecision ::
   forall remotePeer blk.
   TraceDecisionEvent remotePeer (HeaderWithTime blk) -> TraceDecisionEvent remotePeer (Header blk)
 castTraceFetchDecision = \case
-  PeersFetch xs -> PeersFetch (map (fmap (second (map castPoint))) xs) -- [TraceLabelPeer peer (FetchDecision [Point header])]
+  PeersFetch xs -> PeersFetch (map (fmap (second (map castPoint))) xs)
   PeerStarvedUs peer -> PeerStarvedUs peer
 
 castTraceFetchClientState ::
@@ -482,30 +483,39 @@ initInternalState
     peerSharingRegistry <- newPeerSharingRegistry
 
     return IS{..}
-   where
-    toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
-    toConsensusMode = \case
-      LoEAndGDDDisabled -> PraosMode
-      LoEAndGDDEnabled _ -> GenesisMode
+
+toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
+toConsensusMode = \case
+  LoEAndGDDDisabled -> PraosMode
+  LoEAndGDDEnabled _ -> GenesisMode
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
-  BlockForging m blk ->
+  MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} blockForging =
-  forkLinkedWatcher registry threadLabel $
-    knownSlotWatcher btime $
-      \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go rr currentSlot)
+forkBlockForging IS{..} (MkBlockForging blockForgingM) =
+  forkLinkedWatcherAllocate
+    registry
+    label
+    blockForgingMLabel
+    finalize
+    ( \bf -> knownSlotWatcher btime $
+        \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go bf rr currentSlot)
+    )
  where
-  threadLabel :: String
-  threadLabel =
-    "NodeKernel.blockForging." <> Text.unpack (forgeLabel blockForging)
+  label :: String
+  label = "NodeKernel.blockForging"
 
-  go :: ResourceRegistry m -> SlotNo -> WithEarlyExit m ()
-  go reg currentSlot = do
-    trace $ TraceStartLeadershipCheck currentSlot
+  blockForgingMLabel = do
+    bf <- blockForgingM
+    labelThisThread $ Text.unpack $ forgeLabel bf
+    pure bf
+
+  go :: BlockForging m blk -> ResourceRegistry m -> SlotNo -> WithEarlyExit m ()
+  go blockForging reg currentSlot = do
+    trace blockForging $ TraceStartLeadershipCheck currentSlot
 
     -- Figure out which block to connect to
     --
@@ -520,10 +530,10 @@ forkBlockForging IS{..} blockForging =
       case eBlkCtx of
         Right blkCtx -> return blkCtx
         Left failure -> do
-          trace failure
+          trace blockForging failure
           exitEarly
 
-    trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
+    trace blockForging $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
 
     -- Get forker corresponding to bcPrevPoint
     --
@@ -535,13 +545,13 @@ forkBlockForging IS{..} blockForging =
     -- Remember to close this forker before exiting!
     forker <- case forkerEith of
       Left _ -> do
-        trace $ TraceNoLedgerState currentSlot bcPrevPoint
+        trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
         exitEarly
       Right forker -> pure forker
 
     unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
 
-    trace $ TraceLedgerState currentSlot bcPrevPoint
+    trace blockForging $ TraceLedgerState currentSlot bcPrevPoint
 
     -- We require the ticked ledger view in order to construct the ticked
     -- 'ChainDepState'.
@@ -560,13 +570,13 @@ forkBlockForging IS{..} blockForging =
           -- the ticked ledger state). However, we probably don't /want/ to
           -- produce a block in this case; we are most likely missing a blocks
           -- on our chain.
-          trace $ TraceNoLedgerView currentSlot err
+          trace blockForging $ TraceNoLedgerView currentSlot err
           lift $ roforkerClose forker
           exitEarly
         Right lv ->
           return lv
 
-    trace $ TraceLedgerView currentSlot
+    trace blockForging $ TraceLedgerView currentSlot
 
     -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
     -- only need the ticked 'ChainDepState' to check the whether we're a leader.
@@ -594,21 +604,21 @@ forkBlockForging IS{..} blockForging =
             tickedChainDepState
       case shouldForge of
         ForgeStateUpdateError err -> do
-          trace $ TraceForgeStateUpdateError currentSlot err
+          trace blockForging $ TraceForgeStateUpdateError currentSlot err
           lift $ roforkerClose forker
           exitEarly
         CannotForge cannotForge -> do
-          trace $ TraceNodeCannotForge currentSlot cannotForge
+          trace blockForging $ TraceNodeCannotForge currentSlot cannotForge
           lift $ roforkerClose forker
           exitEarly
         NotLeader -> do
-          trace $ TraceNodeNotLeader currentSlot
+          trace blockForging $ TraceNodeNotLeader currentSlot
           lift $ roforkerClose forker
           exitEarly
         ShouldForge p -> return p
 
     -- At this point we have established that we are indeed slot leader
-    trace $ TraceNodeIsLeader currentSlot
+    trace blockForging $ TraceNodeIsLeader currentSlot
 
     -- Tick the ledger state for the 'SlotNo' we're producing a block for
     let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
@@ -620,7 +630,7 @@ forkBlockForging IS{..} blockForging =
             (ledgerState unticked)
 
     _ <- evaluate tickedLedgerState
-    trace $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
+    trace blockForging $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
 
     -- Get a snapshot of the mempool that is consistent with the ledger
     --
@@ -655,7 +665,7 @@ forkBlockForging IS{..} blockForging =
     _ <- evaluate (length txs)
     _ <- evaluate mempoolHash
 
-    trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
+    trace blockForging $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
     -- Actually produce the block
     newBlock <-
@@ -669,7 +679,7 @@ forkBlockForging IS{..} blockForging =
           txs
           proof
 
-    trace $
+    trace blockForging $
       TraceForgedBlock
         currentSlot
         (ledgerTipPoint (ledgerState unticked))
@@ -699,9 +709,9 @@ forkBlockForging IS{..} blockForging =
                 <$> ChainDB.getIsInvalidBlock chainDB
         case isInvalid of
           Nothing ->
-            trace $ TraceDidntAdoptBlock currentSlot newBlock
+            trace blockForging $ TraceDidntAdoptBlock currentSlot newBlock
           Just reason -> do
-            trace $ TraceForgedInvalidBlock currentSlot newBlock reason
+            trace blockForging $ TraceForgedInvalidBlock currentSlot newBlock reason
             -- We just produced a block that is invalid according to the
             -- ledger in the ChainDB, while the mempool said it is valid.
             -- There is an inconsistency between the two!
@@ -725,10 +735,10 @@ forkBlockForging IS{..} blockForging =
       -- assert this here because the ability to extract transactions from a
       -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
       -- e.g., @DualBlock@.
-      trace $ TraceAdoptedBlock currentSlot newBlock txs
+      trace blockForging $ TraceAdoptedBlock currentSlot newBlock txs
 
-  trace :: TraceForgeEvent blk -> WithEarlyExit m ()
-  trace =
+  trace :: BlockForging m blk -> TraceForgeEvent blk -> WithEarlyExit m ()
+  trace blockForging =
     lift
       . traceWith (forgeTracer tracers)
       . TraceLabelCreds (forgeLabel blockForging)
@@ -899,7 +909,7 @@ getPeersFromCurrentLedger ::
   (IOLike m, LedgerSupportsPeerSelection blk) =>
   NodeKernel m addrNTN addrNTC blk ->
   (LedgerState blk EmptyMK -> Bool) ->
-  STM m (Maybe [(PoolStake, NonEmpty RelayAccessPoint)])
+  STM m (Maybe [(PoolStake, NonEmpty LedgerRelayAccessPoint)])
 getPeersFromCurrentLedger kernel p = do
   immutableLedger <-
     ledgerState <$> ChainDB.getImmutableLedger (getChainDB kernel)
@@ -920,7 +930,7 @@ getPeersFromCurrentLedgerAfterSlot ::
   ) =>
   NodeKernel m addrNTN addrNTC blk ->
   SlotNo ->
-  STM m (Maybe [(PoolStake, NonEmpty RelayAccessPoint)])
+  STM m (Maybe [(PoolStake, NonEmpty LedgerRelayAccessPoint)])
 getPeersFromCurrentLedgerAfterSlot kernel slotNo =
   getPeersFromCurrentLedger kernel afterSlotNo
  where

@@ -16,7 +16,6 @@
 --   schedule determining slots to be produced by BFT
 module Ouroboros.Consensus.Protocol.TPraos
   ( MaxMajorProtVer (..)
-  , PraosChainSelectView (..)
   , TPraos
   , TPraosFields (..)
   , TPraosIsLeader (..)
@@ -143,22 +142,21 @@ forgeTPraosFields ::
   (TPraosToSign c -> toSign) ->
   m (TPraosFields c toSign)
 forgeTPraosFields hotKey PraosCanBeLeader{..} TPraosIsLeader{..} mkToSign = do
+  ocert <- HotKey.getOCert hotKey
+  let signedFields =
+        TPraosToSign
+          { tpraosToSignIssuerVK = praosCanBeLeaderColdVerKey
+          , tpraosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
+          , tpraosToSignEta = tpraosIsLeaderEta
+          , tpraosToSignLeader = tpraosIsLeaderProof
+          , tpraosToSignOCert = ocert
+          }
+      toSign = mkToSign signedFields
   signature <- HotKey.sign hotKey toSign
   return
     TPraosFields
       { tpraosSignature = signature
       , tpraosToSign = toSign
-      }
- where
-  toSign = mkToSign signedFields
-
-  signedFields =
-    TPraosToSign
-      { tpraosToSignIssuerVK = praosCanBeLeaderColdVerKey
-      , tpraosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
-      , tpraosToSignEta = tpraosIsLeaderEta
-      , tpraosToSignLeader = tpraosIsLeaderProof
-      , tpraosToSignOCert = praosCanBeLeaderOpCert
       }
 
 -- | Because we are using the executable spec, rather than implementing the
@@ -308,7 +306,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type ChainDepState (TPraos c) = TPraosState
   type IsLeader (TPraos c) = TPraosIsLeader c
   type CanBeLeader (TPraos c) = PraosCanBeLeader c
-  type SelectView (TPraos c) = PraosChainSelectView c
+  type TiebreakerView (TPraos c) = PraosTiebreakerView c
   type LedgerView (TPraos c) = SL.LedgerView
   type ValidationErr (TPraos c) = SL.ChainTransitionError c
   type ValidateView (TPraos c) = TPraosValidateView c

@@ -96,7 +96,6 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Network.TypedProtocol.Core
-import NoThunks.Class (unsafeNoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
@@ -691,12 +690,10 @@ checkKnownIntersectionInvariants ::
   ( HasHeader blk
   , HasHeader (Header blk)
   , HasAnnTip blk
-  , ConsensusProtocol (BlockProtocol blk)
   ) =>
-  ConsensusConfig (BlockProtocol blk) ->
   KnownIntersectionState blk ->
   Either String ()
-checkKnownIntersectionInvariants cfg kis
+checkKnownIntersectionInvariants kis
   -- 'theirHeaderStateHistory' invariant
   | let HeaderStateHistory snapshots = theirHeaderStateHistory
         historyTips :: [WithOrigin (AnnTip blk)]
@@ -723,19 +720,6 @@ checkKnownIntersectionInvariants cfg kis
           , show fragmentAnchorPoint
           ]
   -- 'ourFrag' invariants
-  | let nbHeaders = AF.length ourFrag
-        ourAnchorPoint = AF.anchorPoint ourFrag
-  , nbHeaders < fromIntegral (unNonZero k)
-  , ourAnchorPoint /= GenesisPoint =
-      throwError $
-        unwords
-          [ "ourFrag contains fewer than k headers and not close to genesis:"
-          , show nbHeaders
-          , "vs"
-          , show k
-          , "with anchor"
-          , show ourAnchorPoint
-          ]
   | let ourFragAnchor = AF.anchorPoint ourFrag
         theirFragAnchor = AF.anchorPoint theirFrag
   , ourFragAnchor /= castPoint theirFragAnchor =
@@ -761,8 +745,6 @@ checkKnownIntersectionInvariants cfg kis
   | otherwise =
       return ()
  where
-  SecurityParam k = protocolSecurityParam cfg
-
   KnownIntersectionState
     { mostRecentIntersection
     , ourFrag
@@ -774,14 +756,12 @@ assertKnownIntersectionInvariants ::
   ( HasHeader blk
   , HasHeader (Header blk)
   , HasAnnTip blk
-  , ConsensusProtocol (BlockProtocol blk)
   , HasCallStack
   ) =>
-  ConsensusConfig (BlockProtocol blk) ->
   KnownIntersectionState blk ->
   KnownIntersectionState blk
-assertKnownIntersectionInvariants cfg kis =
-  assertWithMsg (checkKnownIntersectionInvariants cfg kis) kis
+assertKnownIntersectionInvariants kis =
+  assertWithMsg (checkKnownIntersectionInvariants kis) kis
 
 {-------------------------------------------------------------------------------
   The ChainSync client definition
@@ -892,8 +872,7 @@ chainSyncClient cfgEnv dynEnv =
             (ForkTooDeep GenesisPoint)
  where
   ConfigEnv
-    { cfg
-    , chainDbView
+    { chainDbView
     , tracer
     } = cfgEnv
 
@@ -995,7 +974,7 @@ chainSyncClient cfgEnv dynEnv =
                   -- we will /never/ adopt them, which is handled in the "no
                   -- more intersection case".
                   StillIntersects () $
-                    assertKnownIntersectionInvariants (configConsensus cfg) $
+                    assertKnownIntersectionInvariants $
                       KnownIntersectionState
                         { mostRecentIntersection = castPoint intersection
                         , ourFrag = ourFrag'
@@ -1158,7 +1137,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                 (ourTipFromChain ourFrag)
                 theirTip
       let kis =
-            assertKnownIntersectionInvariants (configConsensus cfg) $
+            assertKnownIntersectionInvariants $
               KnownIntersectionState
                 { mostRecentIntersection = intersection
                 , ourFrag
@@ -1234,7 +1213,6 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
   ConfigEnv
     { mkPipelineDecision0
     , tracer
-    , cfg
     , historicityCheck
     } = cfgEnv
 
@@ -1622,9 +1600,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         else mostRecentIntersection
 
                     kis' =
-                      assertKnownIntersectionInvariants
-                        (configConsensus cfg)
-                        $ KnownIntersectionState
+                      assertKnownIntersectionInvariants $
+                        KnownIntersectionState
                           { mostRecentIntersection = mostRecentIntersection'
                           , ourFrag = ourFrag
                           , theirFrag = theirFrag'
@@ -1961,7 +1938,7 @@ checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
   traceWith (tracer cfgEnv) $ TraceValidatedHeader hdr
 
   pure $
-    assertKnownIntersectionInvariants (configConsensus cfg) $
+    assertKnownIntersectionInvariants $
       KnownIntersectionState
         { mostRecentIntersection = mostRecentIntersection'
         , ourFrag = ourFrag
@@ -2190,7 +2167,7 @@ continueWithState ::
   Stateful m blk s st ->
   m (Consensus st blk m)
 continueWithState !s (Stateful f) =
-  checkInvariant (show <$> unsafeNoThunks s) $ f s
+  checkInvariant (noThunksInvariant s) $ f s
 
 {-------------------------------------------------------------------------------
   Return value

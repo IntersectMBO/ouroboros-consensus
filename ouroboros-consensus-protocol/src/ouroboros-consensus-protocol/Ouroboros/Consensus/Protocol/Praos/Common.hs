@@ -2,8 +2,13 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Various things common to iterations of the Praos protocol.
@@ -11,31 +16,39 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   ( MaxMajorProtVer (..)
   , HasMaxMajorProtVer (..)
   , PraosCanBeLeader (..)
-  , PraosChainSelectView (..)
+  , PraosTiebreakerView (..)
   , VRFTiebreakerFlavor (..)
 
     -- * node support
+  , PraosCredentialsSource (..)
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
+  , instantiatePraosCredentials
   ) where
 
+import qualified Cardano.Crypto.KES.Class as KES
+import Cardano.Crypto.VRF
 import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.KESAgent.KES.Crypto as Agent
 import Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Ledger.Binary (FromCBOR, ToCBOR)
-import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
+import Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
-import Cardano.Protocol.Crypto (Crypto, VRF)
+import Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
-import Cardano.Slotting.Block (BlockNo)
 import Cardano.Slotting.Slot (SlotNo)
+import qualified Control.Tracer as Tracer
 import Data.Function (on)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (Down))
+import Data.Void
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks)
+import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
+import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
+import Ouroboros.Consensus.Protocol.Praos.AgentClient
 
 -- | The maximum major protocol version.
 --
@@ -66,13 +79,13 @@ newtype MaxMajorProtVer = MaxMajorProtVer
 class HasMaxMajorProtVer proto where
   protoMaxMajorPV :: ConsensusConfig proto -> MaxMajorProtVer
 
--- | View of the tip of a header fragment for chain selection.
-data PraosChainSelectView c = PraosChainSelectView
-  { csvChainLength :: BlockNo
-  , csvSlotNo :: SlotNo
-  , csvIssuer :: SL.VKey 'SL.BlockIssuer
-  , csvIssueNo :: Word64
-  , csvTieBreakVRF :: VRF.OutputVRF (VRF c)
+-- | View of the tip of a header fragment for deciding between chains of equal
+-- length.
+data PraosTiebreakerView c = PraosTiebreakerView
+  { ptvSlotNo :: SlotNo
+  , ptvIssuer :: SL.VKey 'SL.BlockIssuer
+  , ptvIssueNo :: Word64
+  , ptvTieBreakVRF :: VRF.OutputVRF (VRF c)
   }
   deriving (Show, Eq, Generic, NoThunks)
 
@@ -107,13 +120,12 @@ data VRFTiebreakerFlavor
 -- Used to implement the 'Ord' and 'ChainOrder' instances for Praos.
 comparePraos ::
   VRFTiebreakerFlavor ->
-  PraosChainSelectView c ->
-  PraosChainSelectView c ->
+  PraosTiebreakerView c ->
+  PraosTiebreakerView c ->
   Ordering
 comparePraos tiebreakerFlavor =
-  (compare `on` csvChainLength)
-    <> when' issueNoArmed (compare `on` csvIssueNo)
-    <> when' vrfArmed (compare `on` Down . csvTieBreakVRF)
+  when' issueNoArmed (compare `on` ptvIssueNo)
+    <> when' vrfArmed (compare `on` Down . ptvTieBreakVRF)
  where
   -- When the predicate @p@ returns 'True', use the given comparison function,
   -- otherwise, no preference.
@@ -127,14 +139,14 @@ comparePraos tiebreakerFlavor =
   -- Only compare the issue numbers when the issuers and slots are identical.
   -- Note that this case implies the VRFs also coincide.
   issueNoArmed v1 v2 =
-    csvSlotNo v1 == csvSlotNo v2
-      && csvIssuer v1 == csvIssuer v2
+    ptvSlotNo v1 == ptvSlotNo v2
+      && ptvIssuer v1 == ptvIssuer v2
 
   -- Whether to do a VRF comparison.
   vrfArmed v1 v2 = case tiebreakerFlavor of
     UnrestrictedVRFTiebreaker -> True
     RestrictedVRFTiebreaker maxDist ->
-      slotDist (csvSlotNo v1) (csvSlotNo v2) <= maxDist
+      slotDist (ptvSlotNo v1) (ptvSlotNo v2) <= maxDist
 
   slotDist :: SlotNo -> SlotNo -> SlotNo
   slotDist s t
@@ -142,34 +154,30 @@ comparePraos tiebreakerFlavor =
     | s >= t = s - t
     | otherwise = t - s
 
--- | We order between chains as follows:
+-- | We order between chains of equal length as follows:
 --
--- 1. By chain length, with longer chains always preferred.
---
--- 2. If the tip of each chain was issued by the same agent and they have the
+-- 1. If the tip of each chain was issued by the same agent and they have the
 --    same slot number, prefer the chain whose tip has the highest ocert issue
 --    number.
 --
--- 3. By a VRF value from the chain tip, with lower values preferred. See
+-- 2. By a VRF value from the chain tip, with lower values preferred. See
 --    @pTieBreakVRFValue@ for which one is used.
 --
 -- IMPORTANT: This is not a complete picture of the Praos chain order, do also
 -- consult the documentation of 'ChainOrder'.
-instance Crypto c => Ord (PraosChainSelectView c) where
+instance Crypto c => Ord (PraosTiebreakerView c) where
   compare = comparePraos UnrestrictedVRFTiebreaker
 
 -- | IMPORTANT: This is not a 'SimpleChainOrder'; rather, there are
--- 'PraosChainSelectView's @a, b@ such that @a < b@, but @'not' $
+-- 'PraosTiebreakerView's @a, b@ such that @a < b@, but @'not' $
 -- 'preferCandidate' cfg a b@, namely for @cfg = 'RestrictedVRFTiebreaker'@.
 --
 -- === Rules
 --
--- Concretely, we have @'preferCandidate' cfg ours cand@ based on the following
--- lexicographical criteria:
+-- Concretely, we have @'preferCandidate' cfg ours cand@ (where @ours@ and
+-- @cand@ have equal length) based on the following lexicographical criteria:
 --
--- 1. Chain length, with longer chains always preferred.
---
--- 2. If the tip of each chain was issued by the same agent and had the same
+-- 1. If the tip of each chain was issued by the same agent and had the same
 --    slot number, then we prefer the candidate if it has a higher ocert issue
 --    number.
 --
@@ -177,7 +185,7 @@ instance Crypto c => Ord (PraosChainSelectView c) where
 --     the VRF is a deterministic function of the issuer VRF key, the slot and
 --     the epoch nonce, and VRFs are collision-resistant.
 --
--- 3. Depending on the 'VRFTiebreakerFlavor':
+-- 2. Depending on the 'VRFTiebreakerFlavor':
 --
 --     * If 'UnrestrictedVRFTiebreaker': Compare via a VRF value from the chain
 --       tip, with lower values preferred. See @pTieBreakVRFValue@ for which one
@@ -190,8 +198,7 @@ instance Crypto c => Ord (PraosChainSelectView c) where
 --
 -- When using @cfg = 'RestrictedVRFTiebreaker' maxDist@, the chain order is not
 -- transitive. As an example, suppose @maxDist = 5@ and consider three
--- 'PraosChainSelectView's with the same chain length and pairwise different
--- issuers and, as well as
+-- 'PraosTiebreakerView's with pairwise different issuers and, as well as
 --
 -- +------+---+---+---+
 -- |      | a | b | c |
@@ -206,10 +213,7 @@ instance Crypto c => Ord (PraosChainSelectView c) where
 --
 -- === Rationale for the rules
 --
--- 1. The abstract Consensus layer requires that we first compare based on chain
---    length (see __Chain extension precedence__ in 'ChainOrder').
---
--- 2. Consider the scenario where the hot key of a block issuer was compromised,
+-- 1. Consider the scenario where the hot key of a block issuer was compromised,
 --    and the attacker is now minting blocks using that identity. The actual
 --    block issuer can use their cold key to issue a new hot key with a higher
 --    opcert issue number and set up a new pool. Due to this tiebreaker rule,
@@ -224,7 +228,7 @@ instance Crypto c => Ord (PraosChainSelectView c) where
 --     Specification for Delegation and Incentives in Cardano" by Kant et al for
 --     more context.
 --
--- 3. The main motivation to do VRF comparisons is to avoid the "Frankfurt
+-- 2. The main motivation to do VRF comparisons is to avoid the "Frankfurt
 --    problem":
 --
 --     With only the first two rules for the chain order, almost all blocks with
@@ -244,22 +248,70 @@ instance Crypto c => Ord (PraosChainSelectView c) where
 --
 --     See 'VRFTiebreakerFlavor' for more context on the exact conditions under
 --     which the VRF comparison takes place.
-instance Crypto c => ChainOrder (PraosChainSelectView c) where
-  type ChainOrderConfig (PraosChainSelectView c) = VRFTiebreakerFlavor
+instance Crypto c => ChainOrder (PraosTiebreakerView c) where
+  type ChainOrderConfig (PraosTiebreakerView c) = VRFTiebreakerFlavor
 
   preferCandidate cfg ours cand = comparePraos cfg ours cand == LT
 
 data PraosCanBeLeader c = PraosCanBeLeader
-  { praosCanBeLeaderOpCert :: !(OCert.OCert c)
-  -- ^ Certificate delegating rights from the stake pool cold key (or
-  -- genesis stakeholder delegate cold key) to the online KES key.
-  , praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer)
+  { praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer)
   -- ^ Stake pool cold key or genesis stakeholder delegate cold key.
-  , praosCanBeLeaderSignKeyVRF :: !(VRF.SignKeyVRF (VRF c))
+  , praosCanBeLeaderSignKeyVRF :: !(SignKeyVRF (VRF c))
+  , praosCanBeLeaderCredentialsSource :: !(PraosCredentialsSource c)
+  -- ^ How to obtain KES credentials (ocert + sign key)
   }
   deriving Generic
 
-instance Crypto c => NoThunks (PraosCanBeLeader c)
+instance
+  (NoThunks (SignKeyVRF (VRF c)), NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) =>
+  NoThunks (PraosCanBeLeader c)
+
+-- | Defines a method for obtaining Praos credentials (opcert + KES signing
+-- key).
+data PraosCredentialsSource c where
+  -- | Pass an opcert and sign key directly. This uses
+  -- 'KES.UnsoundPureSignKeyKES', which does not provide mlocking guarantees,
+  -- violating the rule that KES secrets must never be stored on disk, but
+  -- allows the sign key to be loaded from a local file. This method is
+  -- provided for backwards compatibility.
+  PraosCredentialsUnsound ::
+    OCert.OCert c -> KES.UnsoundPureSignKeyKES (KES c) -> PraosCredentialsSource c
+  -- | Connect to a KES agent listening on a service socket at the given path.
+  PraosCredentialsAgent ::
+    Agent.DSIGN (ACrypto c) ~ DSIGN => Void -> FilePath -> PraosCredentialsSource c
+
+instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c) where
+  wNoThunks ctxt = \case
+    PraosCredentialsUnsound oca k ->
+      allNoThunks
+        [ noThunks ctxt oca
+        , noThunks ctxt k
+        ]
+    PraosCredentialsAgent _ fp -> noThunks ctxt fp
+
+  showTypeOf _ = "PraosCredentialsSource"
+
+instantiatePraosCredentials ::
+  forall m c.
+  KESAgentContext c m =>
+  Word64 ->
+  Tracer.Tracer m KESAgentClientTrace ->
+  PraosCredentialsSource c ->
+  m (HotKey.HotKey c m)
+instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsUnsound ocert skUnsound) = do
+  sk <- KES.unsoundPureSignKeyKESToSoundSignKeyKES skUnsound
+  let startPeriod :: OCert.KESPeriod
+      startPeriod = OCert.ocertKESPeriod ocert
+
+  HotKey.mkHotKey
+    ocert
+    sk
+    startPeriod
+    maxKESEvolutions
+instantiatePraosCredentials maxKESEvolutions tr (PraosCredentialsAgent _ path) = do
+  HotKey.mkDynamicHotKey
+    maxKESEvolutions
+    (Just $ runKESAgentClient tr path)
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces

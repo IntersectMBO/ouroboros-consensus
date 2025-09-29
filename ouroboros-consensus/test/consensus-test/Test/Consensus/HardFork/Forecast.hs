@@ -57,8 +57,22 @@ import Ouroboros.Consensus.Ledger.Tables.Combinators (K2 (..))
 import Ouroboros.Consensus.Util (Some (..), repeatedly, splits)
 import Test.Consensus.HardFork.Infra
 import Test.QuickCheck
+  ( Arbitrary (..)
+  , Gen
+  , Property
+  , choose
+  , conjoin
+  , counterexample
+  , elements
+  , oneof
+  , property
+  , shrinkList
+  , sized
+  , tabulate
+  , (===)
+  )
 import Test.Tasty
-import Test.Tasty.QuickCheck
+import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.QuickCheck
 
 tests :: TestTree

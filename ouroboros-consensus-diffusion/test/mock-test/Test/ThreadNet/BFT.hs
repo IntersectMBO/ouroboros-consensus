@@ -116,6 +116,6 @@ prop_simple_bft_convergence
                     k
                     (HardFork.defaultEraParams k slotLength)
                 )
-                (pure $ blockForgingBft nid)
+                (pure $ fmap (MkBlockForging . pure) $ blockForgingBft nid)
           , mkRekeyM = Nothing
           }

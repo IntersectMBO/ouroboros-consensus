@@ -1,5 +1,6 @@
-telescope7<byron, shelley, allegra, mary, alonzo, babbage, conway>
-  = [pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<conway>] /
+telescope8<byron, shelley, allegra, mary, alonzo, babbage, conway, dijkstra>
+  = [pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<dijkstra>] /
+    [pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<conway>] /
     [pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<babbage>] /
     [pastEra, pastEra, pastEra, pastEra, currentEra<alonzo>] /
     [pastEra, pastEra, pastEra, currentEra<mary>] /
@@ -7,8 +8,9 @@ telescope7<byron, shelley, allegra, mary, alonzo, babbage, conway>
     [pastEra, currentEra<shelley>] /
     [currentEra<byron>]
 
-ns7<byron, shelley, allegra, mary, alonzo, babbage, conway>
-  = [6, conway] /
+ns8<byron, shelley, allegra, mary, alonzo, babbage, conway, dijkstra>
+  = [7, dijkstra] /
+    [6, conway] /
     [5, babbage] /
     [4, alonzo] /
     [3, mary] /
@@ -29,7 +31,6 @@ slotno = word64
 stake = rational
 
 withOrigin<v> = [] / [v]
-withOriginTH<v> = [0] / [1, v]
 
 ;; Collections
 either<x, y> = [0, x] / [1, y]

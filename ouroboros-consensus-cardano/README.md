@@ -68,21 +68,6 @@ A block with the corresponding slot number must exist in the ImmutableDB.
 For certain analyses, a snapshot at that slot number must exist in `DB_PATH/ledger/SLOT_NUMBER_db-analyser` - where `SLOT_NUMBER` is the value provided by the user with the `--analyse-from` flag.
 The user can use snapshots created by the node or they can create their own snapshots via db-analyser - see the `--store-ledger` command
 
-#### COMMAND
-
-There are three options: `byron`, `shelley`, `cardano`. When in doubt which one to use, use `cardano`.
-
-* `byron`
-
-User should run this if they are dealing with Byron only chain. When the command is `byron` then user must provide `--configByron PATH` pointing to a byron configuration file.
-
-* `shelley`
-
-User should run this if they are dealing with Shelley only chain (neither Byron nor Allegra or any other era that comes after). When the command is `shelley` then user must provide `--configShelley PATH` pointing to a shelley configuration file. They may also provide `--genesisHash HASH` and `--threshold THRESHOLD`
-
-* `cardano`
-User should run this if they are dealing with a `cardano` chain.
-
 #### --num-blocks-to-process
 
 ```
@@ -215,7 +200,7 @@ Suppose we have a local chain database in reachable from `$NODE_HOME`, and we
 want to take a snapshot of the ledger state for slot `100`. Then we can run:
 
 ```sh
-cabal run exe:db-analyser -- cardano \
+cabal run exe:db-analyser -- \
     --config $NODE_HOME/configuration/cardano/mainnet-config.json \
     --db $NODE_HOME/mainnet/db \
     --store-ledger 100
@@ -225,7 +210,7 @@ If we had a previous snapshot of the ledger state, say corresponding to slot
 `50`, it is possible to tell `db-analyser` to start from this snapshot:
 
 ```sh
-cabal run exe:db-analyser -- cardano \
+cabal run exe:db-analyser -- \
     --config $NODE_HOME/configuration/cardano/mainnet-config.json \
     --db $NODE_HOME/mainnet/db \
     --analyse-from 50 \
@@ -238,7 +223,7 @@ To benchmark the ledger operations, using the setup mentioned in the foregoing
 examples, one could run the tool as follows:
 
 ```sh
-cabal run exe:db-analyser -- cardano
+cabal run exe:db-analyser -- \
     --config $NODE_HOME/configuration/cardano/mainnet-config.json \
     --db $NODE_HOME/mainnet/db \
     --analyse-from 100 \
@@ -250,7 +235,7 @@ The benchmarking command can be combined with `--num-blocks-to-process` to
 specify the application of how many blocks we want to process. Eg:
 
 ```sh
-cabal run exe:db-analyser -- cardano
+cabal run exe:db-analyser -- \
     --config $NODE_HOME/configuration/cardano/mainnet-config.json \
     --db $NODE_HOME/mainnet/db \
     --analyse-from 100 \
@@ -284,7 +269,7 @@ First, run the following command for both of your ChainDBs:
 
 ```
 db-analyser --analyse-from 1234 --db /path/to/dbX --show-slot-block-no \
-  cardano --config /path/to/config.json | cut -d ' ' -f 2- > dbX.log
+  --config /path/to/config.json | cut -d ' ' -f 2- > dbX.log
 ```
 
 Note that specificying `--analyse-from` is optional; it means that you are

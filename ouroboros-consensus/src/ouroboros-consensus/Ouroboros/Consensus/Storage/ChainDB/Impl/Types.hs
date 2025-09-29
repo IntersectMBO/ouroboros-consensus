@@ -602,10 +602,13 @@ addReprocessLoEBlocks ::
 addReprocessLoEBlocks tracer ChainSelQueue{varChainSelQueue} = do
   varProcessed <- newEmptyTMVarIO
   let waitUntilRan = atomically $ readTMVar varProcessed
-  traceWith tracer $ AddedReprocessLoEBlocksToQueue
-  atomically $
+  traceWith tracer $ AddedReprocessLoEBlocksToQueue RisingEdge
+  queueSize <- atomically $ do
     writeTBQueue varChainSelQueue $
       ChainSelReprocessLoEBlocks varProcessed
+    lengthTBQueue varChainSelQueue
+  traceWith tracer $
+    AddedReprocessLoEBlocksToQueue (FallingEdgeWith (fromIntegral queueSize))
   return $ ChainSelectionPromise waitUntilRan
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
@@ -619,7 +622,7 @@ getChainSelMessage ::
   ChainSelQueue m blk ->
   m (ChainSelMessage m blk)
 getChainSelMessage starvationTracer starvationVar chainSelQueue =
-  atomically (tryReadTBQueue' queue) >>= \case
+  atomically (tryReadTBQueue queue) >>= \case
     Just msg -> pure msg
     Nothing -> do
       startStarvationMeasure
@@ -645,11 +648,6 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
       traceWith starvationTracer $ ChainSelStarvation (FallingEdgeWith pt)
       atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
     ChainSelReprocessLoEBlocks{} -> pure ()
-
--- TODO Can't use tryReadTBQueue from io-classes because it is broken for IOSim
--- (but not for IO). https://github.com/input-output-hk/io-sim/issues/195
-tryReadTBQueue' :: MonadSTM m => TBQueue m a -> STM m (Maybe a)
-tryReadTBQueue' q = (Just <$> readTBQueue q) `orElse` pure Nothing
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
@@ -785,7 +783,7 @@ data SelectionChangedInfo blk = SelectionChangedInfo
   , newTipSlotInEpoch :: Word64
   -- ^ The slot in the epoch, i.e., the relative slot number, of the new
   -- tip.
-  , newTipTrigger :: RealPoint blk
+  , newTipTrigger :: Maybe (RealPoint blk)
   -- ^ The new tip of the current chain ('newTipPoint') is the result of
   -- performing chain selection for a /trigger/ block ('newTipTrigger').
   -- In most cases, we add a new block to the tip of the current chain, in
@@ -795,6 +793,10 @@ data SelectionChangedInfo blk = SelectionChangedInfo
   -- chain being A and having a disconnected C lying around, adding B will
   -- result in A -> B -> C as the new chain. The trigger B /= the new tip
   -- C.
+  --
+  -- Due to the Ouroboros Genesis (Limit on Eagerness), chain selection can also
+  -- be triggered without any particular trigger block, in which case this is
+  -- 'Nothing'.
   , newTipSelectView :: SelectView (BlockProtocol blk)
   -- ^ The 'SelectView' of the new tip. It is guaranteed that
   --
@@ -813,9 +815,8 @@ deriving stock instance
 
 -- | Trace type for the various events that occur when adding a block.
 data TraceAddBlockEvent blk
-  = -- | A block with a 'BlockNo' more than @k@ back than the current tip was
-    -- ignored.
-    IgnoreBlockOlderThanK (RealPoint blk)
+  = -- | A block with a 'BlockNo' not newer than the immutable tip was ignored.
+    IgnoreBlockOlderThanImmTip (RealPoint blk)
   | -- | A block that is already in the Volatile DB was ignored.
     IgnoreBlockAlreadyInVolatileDB (RealPoint blk)
   | -- | A block that is know to be invalid was ignored.
@@ -823,12 +824,15 @@ data TraceAddBlockEvent blk
   | -- | The block was added to the queue and will be added to the ChainDB by
     -- the background thread. The size of the queue is included.
     AddedBlockToQueue (RealPoint blk) (Enclosing' Word)
+  | -- | Popping a new message for the chain selection background thread from
+    -- the queue.
+    PoppingFromQueue
   | -- | The block popped from the queue and will imminently be added to the
     -- ChainDB.
-    PoppedBlockFromQueue (Enclosing' (RealPoint blk))
+    PoppedBlockFromQueue (RealPoint blk)
   | -- | A message was added to the queue that requests that ChainSel reprocess
-    -- blocks that were postponed by the LoE.
-    AddedReprocessLoEBlocksToQueue
+    -- blocks that were postponed by the LoE. The size of the queue is included.
+    AddedReprocessLoEBlocksToQueue (Enclosing' Word)
   | -- | ChainSel will reprocess blocks that were postponed by the LoE.
     PoppedReprocessLoEBlocksFromQueue
   | -- | A block was added to the Volatile DB

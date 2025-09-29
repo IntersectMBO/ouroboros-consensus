@@ -42,7 +42,7 @@ let
       haskell96 = mkHaskellJobsFor pkgs.hsPkgs;
     } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
       formattingLinting = import ./formatting-linting.nix pkgs;
-      inherit (pkgs) consensus-pdfs agda-spec;
+      inherit (pkgs) cabal-docspec-check consensus-pdfs agda-spec;
 
       # also test newer GHCs, but only on Linux to reduce CI load
       haskell910 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc910;

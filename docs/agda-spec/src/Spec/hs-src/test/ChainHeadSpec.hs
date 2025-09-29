@@ -99,7 +99,10 @@ chs' = MkChainHeadState
     ne = (e₁ ≠ e₂) = (1 ≠ 1) = False
     pp = getPParams forecast = getPParams 126 = { maxHeaderSize = 1; maxBlockSize = 2; pv = (1 , 0) }
     nₚₕ = prevHashToNonce (lastAppliedHash lab) = prevHashToNonce 2 = 0
-    pd = getPoolDistr forecast = getPoolDistr 126 = ❴ 457 , (1 / 3 , 568) ❵
+    pd = extractPoolDistr (getPoolDelegatedStake forecast)
+       = extractPoolDistr (getPoolDelegatedStake 126)
+       = extractPoolDistr ({(457 , (10 , 568)), (111 , (10 , 222)), (333 , (10 , 444))})
+       = {(457 , (1 / 3 , 568)), (111 , (1 / 3 , 222)), (333 , (1 / 3 , 444))}
     lab′ = Just ⟦ blockNo , slot , headerHash bh ⟧ℓ = Just ⟦ 1 , 2 , 2 ⟧ℓ
 
   then
@@ -134,3 +137,6 @@ spec = do
   describe "chainheadStep" $ do
     it "chainheadStep results in the expected state" $
       chainheadStep dummyExternalFunctions che chs bh @?= Success chs'
+-- NOTE: Uncomment to run the debug version.
+--  describe (unpack $ chainheadDebug dummyExternalFunctions che chs bh) $ do
+--    it "shows its argument" True

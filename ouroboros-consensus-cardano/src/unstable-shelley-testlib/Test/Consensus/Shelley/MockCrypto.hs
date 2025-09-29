@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -13,10 +14,14 @@ module Test.Consensus.Shelley.MockCrypto
   , MockCrypto
   ) where
 
+import Cardano.Crypto.DSIGN (MockDSIGN)
 import Cardano.Crypto.KES (MockKES)
 import qualified Cardano.Crypto.KES as KES (Signable)
 import Cardano.Crypto.Util (SignableRepresentation)
 import Cardano.Crypto.VRF (MockVRF)
+import qualified Cardano.KESAgent.KES.Crypto as Agent
+import qualified Cardano.KESAgent.Processes.ServiceClient as Agent
+import qualified Cardano.KESAgent.Protocols.VersionedProtocol as Agent
 import Cardano.Ledger.BaseTypes (Seed)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
@@ -29,6 +34,9 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import Ouroboros.Consensus.Protocol.Praos.AgentClient
+  ( AgentCrypto (..)
+  )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras (ShelleyEra)
 import Ouroboros.Consensus.Shelley.Ledger
@@ -80,4 +88,18 @@ type CanMock proto era =
   , Arbitrary (StashedAVVMAddresses era)
   , Arbitrary (Core.GovState era)
   , Arbitrary (SL.CertState era)
+  , Arbitrary (Core.BlockBody era)
   )
+
+instance Agent.NamedCrypto MockCrypto where
+  cryptoName _ = Agent.CryptoName "Mock"
+
+instance Agent.ServiceClientDrivers MockCrypto where
+  availableServiceClientDrivers = []
+
+instance Agent.Crypto MockCrypto where
+  type KES MockCrypto = MockKES 10
+  type DSIGN MockCrypto = MockDSIGN
+
+instance AgentCrypto MockCrypto where
+  type ACrypto MockCrypto = MockCrypto

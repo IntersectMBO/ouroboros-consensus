@@ -53,7 +53,7 @@ jobs:
       CABAL: "3.12.1.0"
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Check CDDLs up-to-date with Blueprints
       continue-on-error: true
@@ -156,7 +156,7 @@ jobs:
 
     - name: Test
       if: matrix.test-set == 'all'
-      run: cabal test all -j --test-show-details=streaming
+      run: cabal test all -j --test-show-details=streaming --test-options '--hide-successes'
 
     - name: Test (NoThunks-safe tests only)
       if: matrix.test-set == 'no-thunks-safe'
@@ -212,7 +212,7 @@ jobs:
         ghc: ["9.6.7", "9.10.2"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest
@@ -220,7 +220,7 @@ jobs:
         use-sodium-vrf: false
 
     - name: Download benchmark executables
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
 
@@ -289,9 +289,9 @@ jobs:
     strategy:
        fail-fast: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 18
           cache: yarn
@@ -308,7 +308,7 @@ jobs:
           cp -r --no-preserve=mode,ownership result/ static/pdfs
 
       - name: Download haddocks
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: haddocks
 
@@ -323,7 +323,7 @@ jobs:
       - name: Build website
         run: yarn build
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: ./docs/website/build
 

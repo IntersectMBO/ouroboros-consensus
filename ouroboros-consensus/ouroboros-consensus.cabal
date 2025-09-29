@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: ouroboros-consensus
-version: 0.27.0.0
+version: 0.28.0.0
 synopsis: Consensus layer for the Ouroboros blockchain protocol
 description: Consensus layer for the Ouroboros blockchain protocol.
 license: Apache-2.0
@@ -28,6 +28,11 @@ flag asserts
   manual: False
   default: False
 
+flag expensive-invariants
+  description: Enable checks for expensive invariants
+  manual: True
+  default: False
+
 common common-lib
   default-language: Haskell2010
   ghc-options:
@@ -45,6 +50,9 @@ common common-lib
   if flag(asserts)
     ghc-options: -fno-ignore-asserts
     cpp-options: -DENABLE_ASSERTIONS
+
+  if flag(expensive-invariants)
+    cpp-options: -DENABLE_EXPENSIVE_INVARIANTS
 
 common common-test
   import: common-lib
@@ -75,6 +83,7 @@ library
     Ouroboros.Consensus.Block.RealPoint
     Ouroboros.Consensus.Block.SupportsDiffusionPipelining
     Ouroboros.Consensus.Block.SupportsMetrics
+    Ouroboros.Consensus.Block.SupportsPeras
     Ouroboros.Consensus.Block.SupportsProtocol
     Ouroboros.Consensus.Block.SupportsSanityCheck
     Ouroboros.Consensus.BlockchainTime
@@ -189,6 +198,7 @@ library
     Ouroboros.Consensus.Node.Run
     Ouroboros.Consensus.Node.Serialisation
     Ouroboros.Consensus.NodeId
+    Ouroboros.Consensus.Peras.Weight
     Ouroboros.Consensus.Protocol.Abstract
     Ouroboros.Consensus.Protocol.BFT
     Ouroboros.Consensus.Protocol.LeaderSchedule
@@ -284,6 +294,7 @@ library
     Ouroboros.Consensus.Util.LeakyBucket
     Ouroboros.Consensus.Util.MonadSTM.NormalForm
     Ouroboros.Consensus.Util.MonadSTM.StrictSVar
+    Ouroboros.Consensus.Util.NormalForm.Invariant
     Ouroboros.Consensus.Util.NormalForm.StrictMVar
     Ouroboros.Consensus.Util.NormalForm.StrictTVar
     Ouroboros.Consensus.Util.Orphans
@@ -316,18 +327,18 @@ library
     diff-containers >=1.2,
     filelock,
     fingertree-rm >=1.0,
-    fs-api ^>=0.3,
+    fs-api ^>=0.4,
     hashable,
-    io-classes ^>=1.5,
+    io-classes:{io-classes, si-timers, strict-mvar, strict-stm} ^>=1.8.0.1,
     measures,
     mempack,
     monoid-subclasses,
     mtl,
     multiset ^>=0.3,
     nothunks ^>=0.2,
-    ouroboros-network-api ^>=0.14,
+    ouroboros-network-api ^>=0.16,
     ouroboros-network-mock ^>=0.1,
-    ouroboros-network-protocols ^>=0.14,
+    ouroboros-network-protocols ^>=0.15,
     primitive,
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
@@ -335,7 +346,6 @@ library
     resource-registry ^>=0.1,
     semialign >=1.1,
     serialise ^>=0.2,
-    si-timers ^>=1.5,
     singletons,
     small-steps ^>=1.1,
     sop-core ^>=0.5,
@@ -343,15 +353,13 @@ library
     streaming,
     strict >=0.1 && <0.6,
     strict-checked-vars ^>=0.2,
-    strict-mvar ^>=1.5,
     strict-sop-core ^>=0.1,
-    strict-stm ^>=1.5,
     text,
     these ^>=1.2,
     time,
     transformers,
     transformers-base,
-    typed-protocols ^>=0.3,
+    typed-protocols ^>=1.0,
     vector ^>=0.13,
 
   x-docspec-extra-packages:
@@ -379,7 +387,8 @@ library unstable-consensus-testlib
     Test.Ouroboros.Consensus.ChainGenerator.Some
     Test.Ouroboros.Consensus.DiffusionPipelining
     Test.Ouroboros.Consensus.Protocol
-    Test.QuickCheck.Extras
+    Test.Ouroboros.Consensus.QuickCheck.Extras
+    Test.Ouroboros.Storage.TestBlock
     Test.Util.BoolProps
     Test.Util.ChainDB
     Test.Util.ChainUpdates
@@ -446,10 +455,11 @@ library unstable-consensus-testlib
     directory,
     file-embed,
     filepath,
-    fs-api ^>=0.3,
-    fs-sim ^>=0.3,
+    fs-api ^>=0.4,
+    fs-sim ^>=0.4,
     generics-sop,
-    io-classes,
+    hashable,
+    io-classes:{io-classes, si-timers, strict-mvar, strict-stm},
     io-sim,
     mempack,
     mtl,
@@ -466,12 +476,9 @@ library unstable-consensus-testlib
     random,
     resource-registry,
     serialise,
-    si-timers,
     sop-core,
     sop-extras,
-    strict-mvar,
     strict-sop-core,
-    strict-stm,
     tasty,
     tasty-golden,
     tasty-hunit,
@@ -520,7 +527,7 @@ library unstable-mock-block
     cardano-binary,
     cardano-crypto-class,
     cardano-ledger-core,
-    cardano-slotting:{cardano-slotting, testlib},
+    cardano-slotting,
     cborg,
     containers,
     deepseq,
@@ -545,9 +552,9 @@ library unstable-mempool-test-utils
     base,
     contra-tracer,
     deepseq,
+    io-classes:strict-stm,
     ouroboros-consensus,
     resource-registry,
-    strict-stm,
 
 library unstable-tutorials
   import: common-lib
@@ -591,6 +598,7 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ChainSync.CSJ
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
+    Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Versioned
 
@@ -611,10 +619,10 @@ test-suite consensus-test
     deepseq,
     diff-containers,
     fingertree-rm,
-    fs-api ^>=0.3,
+    fs-api ^>=0.4,
     fs-sim,
     hashable,
-    io-classes,
+    io-classes:{io-classes, si-timers, strict-mvar, strict-stm},
     io-sim,
     measures,
     mtl,
@@ -632,12 +640,9 @@ test-suite consensus-test
     random,
     resource-registry,
     serialise,
-    si-timers,
     sop-core,
     sop-extras,
-    strict-mvar,
     strict-sop-core,
-    strict-stm,
     tasty,
     tasty-hunit,
     tasty-quickcheck,
@@ -645,9 +650,7 @@ test-suite consensus-test
     transformers,
     transformers-base,
     tree-diff,
-    typed-protocols ^>=0.3,
-    typed-protocols-examples,
-    typed-protocols-stateful,
+    typed-protocols:{examples, stateful, typed-protocols} ^>=1,
     unstable-consensus-testlib,
     unstable-mock-block,
 
@@ -717,7 +720,6 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog
     Test.Ouroboros.Storage.LedgerDB.V1.LMDB
     Test.Ouroboros.Storage.Orphans
-    Test.Ouroboros.Storage.TestBlock
     Test.Ouroboros.Storage.VolatileDB
     Test.Ouroboros.Storage.VolatileDB.Mock
     Test.Ouroboros.Storage.VolatileDB.Model
@@ -728,10 +730,8 @@ test-suite storage-test
     aeson,
     base,
     bifunctors,
-    binary,
     bytestring,
     cardano-binary,
-    cardano-crypto-class ^>=2.2,
     cardano-ledger-binary:testlib,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-slotting:{cardano-slotting, testlib},
@@ -743,11 +743,10 @@ test-suite storage-test
     diff-containers,
     directory,
     filepath,
-    fs-api ^>=0.3,
-    fs-sim ^>=0.3,
+    fs-api ^>=0.4,
+    fs-sim ^>=0.4,
     generics-sop,
-    hashable,
-    io-classes,
+    io-classes:{io-classes, strict-mvar, strict-stm},
     io-sim,
     mempack,
     mtl,
@@ -755,16 +754,15 @@ test-suite storage-test
     ouroboros-consensus,
     ouroboros-network-api,
     ouroboros-network-mock,
+    ouroboros-network-protocols,
     pretty-show,
     quickcheck-dynamic,
-    quickcheck-lockstep <0.7,
+    quickcheck-lockstep ^>=0.8,
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     random,
     resource-registry,
     serialise,
     sop-core,
-    strict-mvar,
-    strict-stm,
     tasty,
     tasty-hunit,
     tasty-quickcheck,
@@ -828,9 +826,22 @@ benchmark ChainSync-client-bench
     ouroboros-network-protocols,
     resource-registry,
     time,
-    typed-protocols-examples,
+    typed-protocols:examples,
     unstable-consensus-testlib,
     with-utf8,
+
+benchmark PerasCertDB-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: bench/PerasCertDB-bench
+  main-is: Main.hs
+  other-modules:
+  build-depends:
+    base,
+    ouroboros-consensus,
+    ouroboros-network-api,
+    tasty-bench,
+    unstable-consensus-testlib,
 
 test-suite doctest
   import: common-test

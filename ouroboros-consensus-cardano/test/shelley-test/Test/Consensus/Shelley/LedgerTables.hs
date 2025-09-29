@@ -21,10 +21,11 @@ import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
+import Test.Cardano.Ledger.Alonzo.Binary.Twiddle ()
 import Test.Cardano.Ledger.Babbage.Arbitrary ()
-import Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
+import Test.Cardano.Ledger.Babbage.Binary.Twiddle ()
 import Test.Cardano.Ledger.Conway.Arbitrary ()
+import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Consensus.Shelley.Generators ()
 import Test.Consensus.Shelley.MockCrypto (CanMock)
 import Test.LedgerTables
