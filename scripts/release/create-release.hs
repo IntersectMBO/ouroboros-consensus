@@ -97,10 +97,11 @@ main = withStdTerminalHandles $ sh do
 --   dependencies are located BEFORE that package in the list!
 packages :: [(FilePath, [FilePath])]
 packages =
-  [ ("ouroboros-consensus", [])
-  , ("ouroboros-consensus-diffusion", ["ouroboros-consensus"])
+  [ ("sop-extras", [])
+  , ("ouroboros-consensus", ["sop-extras"])
+  , ("ouroboros-consensus-diffusion", ["sop-extras", "ouroboros-consensus"])
   , ("ouroboros-consensus-protocol", ["ouroboros-consensus"])
-  , ("ouroboros-consensus-cardano", ["ouroboros-consensus", "ouroboros-consensus-protocol"])
+  , ("ouroboros-consensus-cardano", ["sop-extras", "ouroboros-consensus", "ouroboros-consensus-protocol"])
   ]
 
 helpDescription :: Description
