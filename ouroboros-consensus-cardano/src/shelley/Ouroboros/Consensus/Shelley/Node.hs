@@ -43,6 +43,7 @@ import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
+import Ouroboros.Consensus.Shelley.Node.Common (validateGenesis)
 import Ouroboros.Consensus.Shelley.Node.DiffusionPipelining ()
 import Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import Ouroboros.Consensus.Shelley.Node.TPraos
