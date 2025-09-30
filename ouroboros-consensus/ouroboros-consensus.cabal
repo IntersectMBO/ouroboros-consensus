@@ -349,7 +349,7 @@ library
     singletons,
     small-steps ^>=1.1,
     sop-core ^>=0.5,
-    sop-extras ^>=0.4,
+    sop-extras ^>=0.4.1,
     streaming,
     strict >=0.1 && <0.6,
     strict-checked-vars ^>=0.2,
