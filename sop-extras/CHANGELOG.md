@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.4.1.0'></a>
+## 0.4.1.0 -- 2025-09-30
+
+### Non-Breaking
+
+- Add `ctraverse`, `traverse_`, and `HTraverse_` to `OptNP`
+
 <a id='changelog-0.4.0.0'></a>
 ## 0.4.0.0 -- 2025-04-16
 
