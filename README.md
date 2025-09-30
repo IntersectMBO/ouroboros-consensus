@@ -4,7 +4,7 @@
 [![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.24.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-diffusion-0.24.0.0/)
 [![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.13.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-protocol-0.13.0.0/)
 [![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.26.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-cardano-0.26.0.0/)
-[![sop-extras](https://img.shields.io/badge/sop--extras-0.4.0.0-blue)](https://chap.intersectmbo.org/package/sop-extras-0.4.0.0/)
+[![sop-extras](https://img.shields.io/badge/sop--extras-0.4.1.0-blue)](https://chap.intersectmbo.org/package/sop-extras-0.4.1.0/)
 [![strict-sop-core](https://img.shields.io/badge/strict--sop--core-0.1.3.0-blue)](https://chap.intersectmbo.org/package/strict-sop-core-0.1.3.0/)
 
 
