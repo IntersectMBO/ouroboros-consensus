@@ -728,13 +728,17 @@ executable snapshot-converter
 
   main-is: snapshot-converter.hs
   build-depends:
+    fsnotify,
     base,
     cardano-crypto-class,
     mtl,
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:{unstable-cardano-tools, ouroboros-consensus-cardano, snapshot-conversion},
+    text,
     with-utf8,
+    filepath,
+    aeson
 
   other-modules:
     DBAnalyser.Parsers
