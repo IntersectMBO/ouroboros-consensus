@@ -200,7 +200,6 @@ library unstable-snapshot-conversion
     fs-api,
     microlens,
     mtl,
-    optparse-applicative,
     ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lmdb, ouroboros-consensus-lsm},
     ouroboros-consensus-cardano,
     random,
@@ -728,6 +727,7 @@ executable snapshot-converter
 
   main-is: snapshot-converter.hs
   build-depends:
+    fsnotify,
     base,
     cardano-crypto-class,
     mtl,
@@ -735,6 +735,7 @@ executable snapshot-converter
     ouroboros-consensus,
     ouroboros-consensus-cardano:{unstable-cardano-tools, ouroboros-consensus-cardano, snapshot-conversion},
     with-utf8,
+    filepath
 
   other-modules:
     DBAnalyser.Parsers

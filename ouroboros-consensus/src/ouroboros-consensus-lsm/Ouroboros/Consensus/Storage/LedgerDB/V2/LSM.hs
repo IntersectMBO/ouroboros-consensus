@@ -96,7 +96,7 @@ import System.FS.API
 import System.FS.API.Lazy (hGetAll, hPutAll)
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
-import System.FilePath (splitDirectories, splitFileName)
+import System.FilePath (splitDirectories)
 import System.Random
 import Prelude hiding (read)
 
@@ -786,7 +786,7 @@ mkLSMYieldArgs ::
   -- | The filepath in which the LSM database lives. Must not have a trailing slash!
   FilePath ->
   -- | The complete name of the snapshot to open, so @<slotno>[_<suffix>]@.
-  String ->
+  DiskSnapshot ->
   -- | Usually 'stdMkBlockIOFS'
   (FilePath -> ResourceRegistry m -> m (a, SomeHasFSAndBlockIO m)) ->
   -- | Usually 'newStdGen'
@@ -794,8 +794,8 @@ mkLSMYieldArgs ::
   l EmptyMK ->
   ResourceRegistry m ->
   m (YieldArgs m LSM l)
-mkLSMYieldArgs fp snapName mkFS mkGen _ reg = do
-  (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkFS fp reg
+mkLSMYieldArgs lsmDbPath ds mkFS mkGen _ reg = do
+  (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkFS lsmDbPath reg
   salt <- fst . genWord64 <$> mkGen
   (_, session) <-
     allocate reg (\_ -> LSM.openSession nullTracer hasFS blockIO salt (mkFsPath [])) LSM.closeSession
@@ -805,7 +805,7 @@ mkLSMYieldArgs fp snapName mkFS mkGen _ reg = do
       ( \_ ->
           LSM.openTableFromSnapshot
             session
-            (LSM.toSnapshotName snapName)
+            (LSM.toSnapshotName (snapshotToDirName ds))
             (LSM.SnapshotLabel $ T.pack "UTxO table")
       )
       LSM.closeTable
@@ -814,12 +814,14 @@ mkLSMYieldArgs fp snapName mkFS mkGen _ reg = do
 -- | Create Sink arguments for LSM
 mkLSMSinkArgs ::
   IOLike m =>
-  -- | The filepath in which the LSM database should be opened. Must not have a trailing slash!
+  -- | The filepath in which the LSM database should be opened.
   FilePath ->
+  -- | The name for the lsm database
+  FsPath ->
   -- | The filepath to the snapshot to be created, so @.../.../ledger/<slotno>[_<suffix>]@.
-  FilePath ->
+  DiskSnapshot ->
   -- | Usually 'ioHasFS'
-  (MountPoint -> SomeHasFS m) ->
+  SomeHasFS m ->
   -- | Usually 'stdMkBlockIOFS'
   (FilePath -> ResourceRegistry m -> m (a, SomeHasFSAndBlockIO m)) ->
   -- | Usually 'newStdGen'
@@ -828,21 +830,19 @@ mkLSMSinkArgs ::
   ResourceRegistry m ->
   m (SinkArgs m LSM l)
 mkLSMSinkArgs
-  (splitFileName -> (fp, lsmDir))
-  snapFP
-  mkFs
+  lsmDbParentPath
+  lsmDbPath
+  ds
+  snapFs
   mkBlockIOFS
   mkGen
   _
   reg =
     do
-      (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkBlockIOFS fp reg
-      removeDirectoryRecursive hasFS lsmFsPath
-      createDirectory hasFS lsmFsPath
+      (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkBlockIOFS lsmDbParentPath reg
+      removeDirectoryRecursive hasFS lsmDbPath
+      createDirectory hasFS lsmDbPath
       salt <- fst . genWord64 <$> mkGen
       (_, session) <-
-        allocate reg (\_ -> LSM.newSession nullTracer hasFS blockIO salt lsmFsPath) LSM.closeSession
-      let snapFS = mkFs (MountPoint snapFP)
-      pure (SinkLSM 1000 snapFS (fromJust $ snapshotFromPath $ last $ splitDirectories snapFP) session)
-   where
-    lsmFsPath = mkFsPath [lsmDir]
+        allocate reg (\_ -> LSM.newSession nullTracer hasFS blockIO salt lsmDbPath) LSM.closeSession
+      pure (SinkLSM 1000 snapFs ds session)

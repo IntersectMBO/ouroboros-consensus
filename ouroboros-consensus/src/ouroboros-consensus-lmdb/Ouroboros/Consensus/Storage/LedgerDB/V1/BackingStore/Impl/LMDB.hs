@@ -69,7 +69,9 @@ import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-  ( SnapshotBackend (..)
+  ( DiskSnapshot
+  , SnapshotBackend (..)
+  , snapshotToDirPath
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
@@ -939,13 +941,13 @@ mkLMDBYieldArgs ::
   , HasLedgerTables l
   , MemPackIdx l EmptyMK ~ l EmptyMK
   ) =>
-  FilePath ->
+  FS.SomeHasFS IO ->
+  DiskSnapshot ->
   LMDBLimits ->
   l EmptyMK ->
   ResourceRegistry IO ->
   IO (YieldArgs IO LMDB l)
-mkLMDBYieldArgs fp limits hint reg = do
-  let (dbPath, snapName) = FilePath.splitFileName fp
+mkLMDBYieldArgs fs ds limits hint reg = do
   tempDir <- getCanonicalTemporaryDirectory
   let lmdbTemp = tempDir FilePath.</> "lmdb_streaming_in"
   removePathForcibly lmdbTemp
@@ -962,8 +964,8 @@ mkLMDBYieldArgs fp limits hint reg = do
             Trace.nullTracer
             limits
             (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint lmdbTemp)
-            (SnapshotsFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint dbPath)
-            (InitFromCopy hint (FS.mkFsPath [snapName]))
+            (SnapshotsFS fs)
+            (InitFromCopy hint (snapshotToTablesPath ds))
       )
       bsClose
   (_, bsvh) <- allocate reg (\_ -> bsValueHandle bs) bsvhClose
@@ -976,13 +978,13 @@ mkLMDBSinkArgs ::
   , HasLedgerTables l
   , MemPackIdx l EmptyMK ~ l EmptyMK
   ) =>
-  FilePath ->
+  FS.SomeHasFS IO ->
+  DiskSnapshot ->
   LMDBLimits ->
   l EmptyMK ->
   ResourceRegistry IO ->
   IO (SinkArgs IO LMDB l)
-mkLMDBSinkArgs fp limits hint reg = do
-  let (snapDir, snapName) = FilePath.splitFileName fp
+mkLMDBSinkArgs fs ds limits hint reg = do
   tempDir <- getCanonicalTemporaryDirectory
   let lmdbTemp = tempDir FilePath.</> "lmdb_streaming_out"
   removePathForcibly lmdbTemp
@@ -995,8 +997,12 @@ mkLMDBSinkArgs fp limits hint reg = do
             Trace.nullTracer
             limits
             (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint lmdbTemp)
-            (SnapshotsFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint snapDir)
+            (SnapshotsFS fs)
             (InitFromValues (At 0) hint emptyLedgerTables)
       )
       bsClose
-  pure $ SinkLMDB 1000 (bsWrite bs) (\h -> bsCopy bs h (FS.mkFsPath [snapName, "tables"]))
+  pure $
+    SinkLMDB 1000 (bsWrite bs) (\h -> bsCopy bs h (snapshotToTablesPath ds))
+
+snapshotToTablesPath :: DiskSnapshot -> FS.FsPath
+snapshotToTablesPath ds = snapshotToDirPath ds FS.</> FS.mkFsPath ["tables"]

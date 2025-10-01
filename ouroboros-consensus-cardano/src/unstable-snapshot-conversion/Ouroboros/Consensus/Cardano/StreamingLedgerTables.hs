@@ -29,15 +29,15 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2
-import System.Directory
 import System.FS.API
-import System.FS.IO
 
 type L = LedgerState (CardanoBlock StandardCrypto)
 
-mkInMemYieldArgs :: FilePath -> L EmptyMK -> ResourceRegistry IO -> IO (YieldArgs IO V2.Mem L)
-mkInMemYieldArgs fp (HardForkLedgerState (HardForkState idx)) _ =
+mkInMemYieldArgs ::
+  SomeHasFS IO -> DiskSnapshot -> L EmptyMK -> ResourceRegistry IO -> YieldArgs IO V2.Mem L
+mkInMemYieldArgs fs ds (HardForkLedgerState (HardForkState idx)) _ =
   let
     np ::
       NP
@@ -54,11 +54,10 @@ mkInMemYieldArgs fp (HardForkLedgerState (HardForkState idx)) _ =
         :* (Fn $ K . fromEra DijkstraTxOut . unFlip . currentState)
         :* Nil
    in
-    pure $
-      YieldInMemory
-        (SomeHasFS . ioHasFS)
-        fp
-        (hcollapse $ hap np $ Telescope.tip idx)
+    YieldInMemory
+      fs
+      ds
+      (hcollapse $ hap np $ Telescope.tip idx)
  where
   fromEra ::
     forall proto era.
@@ -81,12 +80,12 @@ mkInMemYieldArgs fp (HardForkLedgerState (HardForkState idx)) _ =
           (eraDecoder @era $ toCardanoTxOut <$> decShareCBOR certInterns)
 
 mkInMemSinkArgs ::
-  FilePath ->
+  SomeHasFS IO ->
+  DiskSnapshot ->
   L EmptyMK ->
   ResourceRegistry IO ->
-  IO (SinkArgs IO V2.Mem L)
-mkInMemSinkArgs fp (HardForkLedgerState (HardForkState idx)) _ = do
-  currDir <- getCurrentDirectory
+  SinkArgs IO V2.Mem L
+mkInMemSinkArgs fs ds (HardForkLedgerState (HardForkState idx)) _ =
   let
     np =
       (Fn $ const $ K $ encOne (Proxy @ByronEra))
@@ -98,12 +97,14 @@ mkInMemSinkArgs fp (HardForkLedgerState (HardForkState idx)) _ = do
         :* (Fn $ const $ K $ encOne (Proxy @ConwayEra))
         :* (Fn $ const $ K $ encOne (Proxy @DijkstraEra))
         :* Nil
-  pure $
-    uncurry
-      (SinkInMemory 1000)
-      (hcollapse $ hap np $ Telescope.tip idx)
-      (SomeHasFS $ ioHasFS $ MountPoint currDir)
-      fp
+    (encTxIn, encTxOut) = hcollapse $ hap np $ Telescope.tip idx
+   in
+    SinkInMemory
+      1000
+      encTxIn
+      encTxOut
+      fs
+      ds
  where
   encOne ::
     forall era.
