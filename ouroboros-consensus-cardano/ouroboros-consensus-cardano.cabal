@@ -185,8 +185,10 @@ library unstable-snapshot-conversion
   hs-source-dirs: src/unstable-snapshot-conversion
   other-modules:
     Ouroboros.Consensus.Cardano.StreamingLedgerTables
+
   exposed-modules:
     Ouroboros.Consensus.Cardano.SnapshotConversion
+
   build-depends:
     ansi-terminal,
     base,
@@ -199,7 +201,6 @@ library unstable-snapshot-conversion
     fs-api,
     microlens,
     mtl,
-    optparse-applicative,
     ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lmdb, ouroboros-consensus-lsm},
     ouroboros-consensus-cardano,
     random,
@@ -210,7 +211,6 @@ library unstable-snapshot-conversion
     strict-sop-core,
     terminal-progress-bar,
     text,
-
 
 library unstable-byronspec
   import: common-lib
@@ -725,17 +725,21 @@ executable immdb-server
 executable snapshot-converter
   import: common-exe
   hs-source-dirs: app
-
   main-is: snapshot-converter.hs
   build-depends:
     base,
     cardano-crypto-class,
+    filepath,
+    fsnotify,
     mtl,
     optparse-applicative,
     ouroboros-consensus,
-    ouroboros-consensus-cardano:{unstable-cardano-tools, ouroboros-consensus-cardano, snapshot-conversion},
+    ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools, unstable-snapshot-conversion},
     with-utf8,
 
+  if impl(ghc <9.12)
+    build-depends:
+      text
   other-modules:
     DBAnalyser.Parsers
 
