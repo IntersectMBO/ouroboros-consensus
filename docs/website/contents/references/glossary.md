@@ -31,6 +31,12 @@ Security analyses typically assume the worst-case, ie the behavior of all advers
 
 A chain fragment always has an anchor point, which is the predecessor of the oldest header/block on the fragment.
 
+## ;Babbage era
+
+The Babbage era is a major phase of the Cardano blockchain, identified as a [Shelley-based era](#shelley-based-eras), that succeeded the Alonzo era.
+On mainnet, it corresponds to least major protocol version 7 and ends when the version increments past 8.
+It uses the Ouroboros [Praos](#ouroboros-praos) consensus protocol.
+
 ## ;Block
 
 In some slots, the protocol allows a block-producing node to contribute to the chain; it does so by minting a new block.
@@ -57,6 +63,11 @@ A valid block satisfies the ledger rules in the context of the ledger state that
 ## ;Bootstrap peers
 
 Trusted honest caught-up peers that are used for syncing before a Genesis-capable node is released. By default, these are public root peers.
+
+## ;Byron era
+
+The Byron era refers to the first implementation of the Cardano blockchain, which was introduced in September 2017.
+On the [first implementation](https://github.com/input-output-hk/cardano-sl) it used the Ouroboros Classic consensus protocol. In the current Haskell implementation, the Byron Era uses the Permissive Ouroboros BFT consensus protocol, which is backwards compatible with the Ouroboros Classic protocol, relying on seven federated nodes for block production.
 
 ## ;Chain
 
@@ -254,6 +265,12 @@ Moments in the life of a chain where old nodes cannot validate new blocks.
 There is one at each era change but they can also happen within the same era; they are then called “intra-era” hard forks.
 Intra-era hard forks are mostly ledger related, for instance to fix a bug of (de)serialisation of transactions, or to add a new smart contract feature.
 Recently, hard forks have been given names: Vasil is the hard fork from Alonzo to Babbage; Valentine is an intra-era hard fork within Babbage.
+
+## ;Hard-fork combinator
+
+The Hard-fork Combinator (HFC) is a core architectural component of the Consensus layer designed to enable sequential composition of multiple blockchain eras (eg Byron, Shelley, Allegra, Babbage, etc.) so they can be managed as a single, unified chain type.
+It is responsible for handling the complex logistics of transitions, including providing the necessary context for the underlying ledgers.
+It facilitates the necessary translations between successive eras, such as translating the ledger state and chain dependency state during an era boundary
 
 ## ;Header-body split
 
@@ -461,6 +478,9 @@ A slight refinement of [Praos](#ouroboros-praos).
 ## ;Ouroboros Praos
 
 The protocol underlying the latest Cardano era.
+It was the first proof-of-stake protocol designed and formally proven to provide security against fully-adaptive corruption in a setting that tolerates adversarial message delays (up to Δ slots).
+Praos implements slot leader election using stake distribution and Verifiable Random Functions (VRF), and honest parties converge to a unique chain view primarily by following the longest chain rule.
+The name "Praos" means "mellow" or "gentle," derived from the protocol's use of deliberately inserted empty slots to facilitate synchronization in the semi-synchronous environment.
 
 ## ;Peer kinds
 
@@ -484,6 +504,14 @@ Consider a chain fragment `F`:
 - Its ;*total weight* is its tip block number plus its weight boost.
 
 Note that these notions are always relative to a particular anchor, so different chain fragments must have the same anchor when their total weight is to be compared.
+
+## ;Permissive BFT (PBFT)
+
+Ouroboros Permissive BFT (PBFT) is a simple, deterministic, Byzantine Fault Tolerant (BFT) consensus protocol derived from Ouroboros-BFT, typically designed to ensure consistency and liveness against `t < n/3` Byzantine faults.
+The protocol is deemed "permissive" because it relaxes the strict requirement that blocks must be signed according to a predetermined round-robin schedule.
+Instead, blocks are merely required to be signed by any of the known core nodes.
+However, this permissiveness is still bounded: the protocol limits the number of signatures a given node can contribute within a window of blocks.
+
 
 ## ;Phases
 
@@ -564,6 +592,11 @@ Some entity that maintains/controls one or multiple stake pools.
 ## ;Syncing
 
 The process of becoming synchronized with the system, either from scratch or due to a temporary restart/crash/local network outage.
+
+## ;TPraos
+
+TPraos (Transitional Praos) is a Proof-of-Stake consensus protocol used in the early decentralized eras of Cardano (specifically Shelley, Allegra, and Mary).
+It was designed to manage the transition from the initial federated system by using a decentralization parameter (`d`) which controls the ratio of slots produced by legacy bootstrap keys (OBFT slots) versus those produced by stake pools selected via Ouroboros Praos, allowing for a smooth shift toward full decentralization.
 
 ## ;Transactions
 
