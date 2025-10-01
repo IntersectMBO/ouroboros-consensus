@@ -2,6 +2,7 @@
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
   ( PeerDecisionPolicy (..)
+  , NumObjects
   , defaultPeerDecisionPolicy
 
     -- * Re-exports
@@ -26,9 +27,9 @@ data PeerDecisionPolicy = PeerDecisionPolicy
     -- Configuration of object decision logic.
     --
 
-    objectsSizeInflightPerPeer :: !NumObjects
+    objectsNumInflightPerPeer :: !NumObjects
   -- ^ a limit of objects in-flight from a single peer, plus or minus 1.
-  , maxObjectsSizeInflight :: !NumObjects
+  , maxObjectsNumInflight :: !NumObjects
   -- ^ a limit of object size in-flight from all peers, plus or minus 1
   , objectInflightMultiplicity :: !Int
   -- ^ from how many peers download the `objectId` simultaneously
@@ -49,8 +50,8 @@ defaultPeerDecisionPolicy =
   PeerDecisionPolicy
     { maxNumObjectIdsRequest = 3
     , maxUnacknowledgedObjectIds = 10 -- must be the same as objectDiffusionMaxUnacked
-    , objectsSizeInflightPerPeer = NumObjects 6
-    , maxObjectsSizeInflight = NumObjects 20
+    , objectsNumInflightPerPeer = NumObjects 6
+    , maxObjectsNumInflight = NumObjects 20
     , objectInflightMultiplicity = 2
     , globalObtainedButNotAckedObjectsMinLifetime = 2
     , scoreRate = 0.1
