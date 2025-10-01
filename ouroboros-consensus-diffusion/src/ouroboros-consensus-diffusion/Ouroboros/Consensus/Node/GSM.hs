@@ -97,7 +97,7 @@ data CandidateVersusSelection
     WhetherCandidateIsBetter !Bool
   deriving (Eq, Show)
 
-data GsmView m upstreamPeer selection chainSyncState = GsmView
+data GsmView m upstreamPeer selection peerState = GsmView
   { antiThunderingHerd :: Maybe StdGen
   -- ^ An initial seed used to randomly increase 'minCaughtUpDuration' by up
   -- to 15% every transition from Syncing to CaughtUp, in order to avoid a
@@ -108,13 +108,13 @@ data GsmView m upstreamPeer selection chainSyncState = GsmView
       STM
         m
         ( selection ->
-          chainSyncState ->
+          peerState ->
           CandidateVersusSelection
         )
   -- ^ Whether the candidate from the @chainSyncState@ is preferable to the
   -- selection. This can depend on external state (Peras certificates boosting
   -- blocks).
-  , peerIsIdle :: chainSyncState -> Bool
+  , peerIsIdle :: peerState -> Bool
   , durationUntilTooOld :: Maybe (selection -> m DurationFromNow)
   -- ^ How long from now until the selection will be so old that the node
   -- should exit the @CaughtUp@ state
@@ -123,10 +123,8 @@ data GsmView m upstreamPeer selection chainSyncState = GsmView
   , equivalent :: selection -> selection -> Bool
   -- ^ Whether the two selections are equivalent for the purpose of the
   -- Genesis State Machine
-  , getChainSyncStates ::
-      STM m (Map.Map upstreamPeer (StrictTVar m chainSyncState))
-  -- ^ The current ChainSync state with the latest candidates from the
-  -- upstream peers
+  , getPeerStates :: STM m (Map.Map upstreamPeer (StrictTVar m peerState))
+  -- ^ The current peer state with the latest candidates from the upstream peers
   , getCurrentSelection :: STM m selection
   -- ^ The node's current selection
   , minCaughtUpDuration :: NominalDiffTime
@@ -244,7 +242,7 @@ realGsmEntryPoints tracerArgs gsmView =
     , peerIsIdle
     , durationUntilTooOld
     , equivalent
-    , getChainSyncStates
+    , getPeerStates
     , getCurrentSelection
     , minCaughtUpDuration
     , setCaughtUpPersistentMark
@@ -370,8 +368,10 @@ realGsmEntryPoints tracerArgs gsmView =
 
   blockUntilCaughtUp :: STM m (TraceGsmEvent tracedSelection)
   blockUntilCaughtUp = do
-    -- STAGE 1: all ChainSync clients report no subsequent headers
-    varsState <- getChainSyncStates
+    -- STAGE 1: all peers are idle, which means that
+    --   * all ChainSync clients report no subsequent headers, and
+    --   * all PerasCertDiffusion clients report no subsequent certificates
+    varsState <- getPeerStates
     states <- traverse StrictSTM.readTVar varsState
     check $
       not (Map.null states)

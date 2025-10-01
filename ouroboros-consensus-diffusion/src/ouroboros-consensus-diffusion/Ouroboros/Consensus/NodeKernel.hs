@@ -289,7 +289,7 @@ initNodeKernel
                       <&> \wd (_headers, lst) ->
                         GSM.getDurationUntilTooOld wd (getTipSlot lst)
                 , GSM.equivalent = (==) `on` (AF.headPoint . fst)
-                , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
+                , GSM.getPeerStates = fmap cschState <$> cschcMap varChainSyncHandles
                 , GSM.getCurrentSelection = do
                     headers <- ChainDB.getCurrentChainWithTime chainDB
                     extLedgerState <- ChainDB.getCurrentLedger chainDB
