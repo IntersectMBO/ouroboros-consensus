@@ -4,6 +4,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
   ( -- * Core API
@@ -137,10 +138,7 @@ acknowledgeObjectIds
 
     -- the set of live `objectIds`
     liveSet = Set.fromList (toList outstandingFifo')
-
-    availableObjectIds' =
-      availableObjectIds
-        `Map.restrictKeys` liveSet
+    availableObjectIds' = availableObjectIds `Set.intersection` liveSet
 
     -- We remove all acknowledged `objectId`s which are not in
     -- `outstandingFifo''`, but also return the unknown set before any
@@ -370,7 +368,7 @@ receivedObjectIdsImpl
         -- Note: we prefer to keep the `object` if it's already in `globalObtainedButNotAckedObjects`.
         globalObtainedButNotAckedObjects' =
           globalObtainedButNotAckedObjects
-            <> Map.map (const Nothing) ignoredObjectIds
+            <> Map.fromList ((, Nothing) <$> Set.toList ignoredObjectIds)
 
         referenceCounts' =
           Foldable.foldl'
@@ -495,8 +493,6 @@ collectObjectsImpl
         assert (requestedObjectIds `Set.isSubsetOf` inFlight ps) $
           inFlight ps Set.\\ requestedObjectIds
 
-      requestedSize = fold $ availableObjectIds ps `Map.restrictKeys` requestedObjectIds
-
       -- subtract requested from in-flight
       globalInFlightObjects'' =
         Map.merge
@@ -529,9 +525,7 @@ collectObjectsImpl
       -- NOTE: we could remove `notReceived` from `availableObjectIds`; and
       -- possibly avoid using `requestedButNotReceived` field at all.
       --
-      availableObjectIds'' =
-        availableObjectIds ps
-          `Map.withoutKeys` requestedObjectIds
+      availableObjectIds'' = availableObjectIds ps `Set.difference` requestedObjectIds
 
       -- Remove all acknowledged `objectId`s from unknown set, but only those
       -- which are not present in `outstandingFifo'`
@@ -588,15 +582,15 @@ receivedObjectIds ::
   NumObjectIdsReq ->
   -- | sequence of received `objectIds`
   StrictSeq objectId ->
-  -- | received `objectId`s with sizes
-  Map objectId SizeInBytes ->
+  -- | received `objectId`s
+  Set objectId ->
   m ()
-receivedObjectIds tracer sharedVar objectPoolWriter peerAddr reqNo objectIdsSeq objectIdsMap = do
+receivedObjectIds tracer sharedVar objectPoolWriter peerAddr reqNo objectIdsSeq objectIds = do
   st <- atomically $ do
     hasObject <- opwHasObject objectPoolWriter
     stateTVar
       sharedVar
-      ((\a -> (a, a)) . receivedObjectIdsImpl hasObject peerAddr reqNo objectIdsSeq objectIdsMap)
+      ((\a -> (a, a)) . receivedObjectIdsImpl hasObject peerAddr reqNo objectIdsSeq objectIds)
   traceWith tracer (TraceDecisionGlobalState "receivedObjectIds" st)
 
 -- | Include received `object`s in `DecisionGlobalState`.  Return number of `objectIds`

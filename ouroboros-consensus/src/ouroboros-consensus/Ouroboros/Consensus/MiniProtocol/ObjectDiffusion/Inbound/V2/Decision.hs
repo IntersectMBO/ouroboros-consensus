@@ -89,8 +89,8 @@ orderByRejections salt =
 -- | Internal state of `pickObjectsToDownload` computation.
 data St peerAddr objectId object
   = St
-  { stInflightSize :: !SizeInBytes
-  -- ^ size of all `object`s in-flight.
+  { stInflightNum :: !NumObjects
+  -- ^ number of all `object`s in-flight.
   , stInflight :: !(Map objectId Int)
   -- ^ `objectId`s in-flight.
   , stAcknowledged :: !(Map objectId Int)
@@ -107,9 +107,9 @@ data St peerAddr objectId object
 -- * pick objects from the set of available object's (in `objectId` order, note these sets
 --   might be different for different peers).
 -- * pick objects until the peers in-flight limit (we can go over the limit by one object)
---   (`objectsSizeInflightPerPeer` limit)
+--   (`objectsNumInflightPerPeer` limit)
 -- * pick objects until the overall in-flight limit (we can go over the limit by one object)
---   (`maxObjectsSizeInflight` limit)
+--   (`maxObjectsNumInflight` limit)
 -- * each object can be downloaded simultaneously from at most
 --   `objectInflightMultiplicity` peers.
 pickObjectsToDownload ::
@@ -127,14 +127,13 @@ pickObjectsToDownload ::
   )
 pickObjectsToDownload
   policy@PeerDecisionPolicy
-    { objectsSizeInflightPerPeer
-    , maxObjectsSizeInflight
+    { objectsNumInflightPerPeer
+    , maxObjectsNumInflight
     , objectInflightMultiplicity
     }
   sharedState@DecisionGlobalState
     { peerStates
     , globalInFlightObjects
-    , globalInFlightObjectsSize
     , globalObtainedButNotAckedObjects
     , globalToPoolObjects
     , referenceCounts
@@ -145,7 +144,7 @@ pickObjectsToDownload
       -- initial state
       St
         { stInflight = globalInFlightObjects
-        , stInflightSize = globalInFlightObjectsSize
+        , stInflightNum = globalInFlightObjectsNum
         , stAcknowledged = Map.empty
         , stInSubmissionToObjectPoolObjects = Map.keysSet globalToPoolObjects
         }
@@ -162,7 +161,7 @@ pickObjectsToDownload
     accumFn
       st@St
         { stInflight
-        , stInflightSize
+        , stInflightNum
         , stAcknowledged
         , stInSubmissionToObjectPoolObjects
         }
@@ -171,15 +170,14 @@ pickObjectsToDownload
             { availableObjectIds
             , requestedButNotReceived
             , inFlight
-            , inFlightSize
             }
         ) =
-        let sizeInflightAll :: SizeInBytes
-            sizeInflightOther :: SizeInBytes
+        let sizeInflightAll :: NumObjects
+            sizeInflightOther :: NumObjects
 
-            sizeInflightAll = stInflightSize
-            sizeInflightOther = sizeInflightAll - inFlightSize
-         in if sizeInflightAll >= maxObjectsSizeInflight
+            sizeInflightAll = stInflightNum
+            sizeInflightOther = sizeInflightAll - Set.size inFlight
+         in if sizeInflightAll >= maxObjectsNumInflight
               then
                 let ( numObjectIdsToAck
                       , numObjectIdsToReq
@@ -224,23 +222,23 @@ pickObjectsToDownload
                           )
                         )
               else
-                let inFlightSize' :: SizeInBytes
-                    objectsToRequestMap :: Map objectId SizeInBytes
+                let inFlightNum' :: NumObjects
+                    objectsToRequestMap :: Set objectId
 
-                    (inFlightSize', objectsToRequestMap) =
+                    (inFlightNum', objectsToRequestMap) =
                       -- inner fold: fold available `objectId`s
                       --
                       -- Note: although `Map.foldrWithKey` could be used here, it
                       -- does not allow to short circuit the fold, unlike
                       -- `foldWithState`.
                       foldWithState
-                        ( \(objectId, (objectSize, inflightMultiplicity)) sizeInflight ->
+                        ( \(objectId, (_objectSize, inflightMultiplicity)) sizeInflight ->
                             if -- note that we pick `objectId`'s as long the `s` is
-                            -- smaller or equal to `objectsSizeInflightPerPeer`.
-                            sizeInflight <= objectsSizeInflightPerPeer
+                            -- smaller or equal to `objectsNumInflightPerPeer`.
+                            sizeInflight <= objectsNumInflightPerPeer
                               -- overall `object`'s in-flight must be smaller than
-                              -- `maxObjectsSizeInflight`
-                              && sizeInflight + sizeInflightOther <= maxObjectsSizeInflight
+                              -- `maxObjectsNumInflight`
+                              && sizeInflight + sizeInflightOther <= maxObjectsNumInflight
                               -- the transaction must not be downloaded from more
                               -- than `objectInflightMultiplicity` peers simultaneously
                               && inflightMultiplicity < objectInflightMultiplicity
@@ -261,26 +259,20 @@ pickObjectsToDownload
                               stInflight
                               -- remove `object`s which were already downloaded by some
                               -- other peer or are in-flight or unknown by this peer.
-                              `Map.withoutKeys` ( Map.keysSet globalObtainedButNotAckedObjects
+                              `Set.unions` ( Map.keysSet globalObtainedButNotAckedObjects
                                                     <> inFlight
                                                     <> requestedButNotReceived
                                                     <> stInSubmissionToObjectPoolObjects
                                                 )
                         )
-                        inFlightSize
+                        inFlightNum
                     -- pick from `objectId`'s which are available from that given
                     -- peer.  Since we are folding a dictionary each `objectId`
                     -- will be selected only once from a given peer (at least
                     -- in each round).
 
                     objectsToRequest = Map.keysSet objectsToRequestMap
-                    peerObjectState' =
-                      peerObjectState
-                        { inFlightSize = inFlightSize'
-                        , inFlight =
-                            inFlight
-                              <> objectsToRequest
-                        }
+                    peerObjectState' = peerObjectState {inFlight = inFlight <> objectsToRequest}
 
                     ( numObjectIdsToAck
                       , numObjectIdsToReq
@@ -307,7 +299,7 @@ pickObjectsToDownload
                         -- we can request `objectId`s & `object`s
                         ( St
                             { stInflight = stInflight'
-                            , stInflightSize = sizeInflightOther + inFlightSize'
+                            , stInflightNum = undefined
                             , stAcknowledged = stAcknowledged'
                             , stInSubmissionToObjectPoolObjects = stInSubmissionToObjectPoolObjects'
                             }
@@ -330,7 +322,6 @@ pickObjectsToDownload
                         -- there are no `objectId`s to request, only `object`s.
                         ( st
                             { stInflight = stInflight'
-                            , stInflightSize = sizeInflightOther + inFlightSize'
                             , stInSubmissionToObjectPoolObjects = stInSubmissionToObjectPoolObjects'
                             }
                         ,
@@ -349,7 +340,6 @@ pickObjectsToDownload
     gn
       ( St
           { stInflight
-          , stInflightSize
           , stAcknowledged
           }
         , as
@@ -381,7 +371,6 @@ pickObjectsToDownload
          in ( sharedState
                 { peerStates = peerStates'
                 , globalInFlightObjects = stInflight
-                , globalInFlightObjectsSize = stInflightSize
                 , globalObtainedButNotAckedObjects = globalObtainedButNotAckedObjects'
                 , referenceCounts = referenceCounts'
                 , globalToPoolObjects = globalToPoolObjects'
@@ -424,7 +413,7 @@ pickObjectsToDownload
               objectId
               x
 
--- | Filter peers which can either download a `object` or acknowledge `objectId`s.
+-- | Filter peers which can either download an `object` or acknowledge `objectId`s.
 filterActivePeers ::
   forall peerAddr objectId object.
   Ord objectId =>
@@ -435,23 +424,15 @@ filterActivePeers ::
 filterActivePeers
   policy@PeerDecisionPolicy
     { maxUnacknowledgedObjectIds
-    , objectsSizeInflightPerPeer
-    , maxObjectsSizeInflight
     , objectInflightMultiplicity
     }
   sharedObjectState@DecisionGlobalState
     { peerStates
     , globalObtainedButNotAckedObjects
     , globalInFlightObjects
-    , globalInFlightObjectsSize
     , globalToPoolObjects
     }
-    | globalInFlightObjectsSize > maxObjectsSizeInflight =
-        -- we might be able to request objectIds, we cannot download objects
-        Map.filter fn peerStates
-    | otherwise =
-        -- we might be able to request objectIds or objects.
-        Map.filter gn peerStates
+  = Map.filter gn peerStates
    where
     unrequestable =
       Map.keysSet (Map.filter (>= objectInflightMultiplicity) globalInFlightObjects)
@@ -478,7 +459,6 @@ filterActivePeers
         { outstandingFifo
         , numIdsInFlight
         , inFlight
-        , inFlightSize
         , availableObjectIds
         , requestedButNotReceived
         } =
@@ -486,16 +466,15 @@ filterActivePeers
             && numIdsInFlight + numOfUnacked <= maxUnacknowledgedObjectIds
             && objectIdsToRequest > 0
         )
-          || (underSizeLimit && not (Map.null downloadable))
+          || (not (Set.null downloadable))
        where
         numOfUnacked = fromIntegral (StrictSeq.length outstandingFifo)
-        underSizeLimit = inFlightSize <= objectsSizeInflightPerPeer
         downloadable =
           availableObjectIds
-            `Map.withoutKeys` inFlight
-            `Map.withoutKeys` requestedButNotReceived
-            `Map.withoutKeys` unrequestable
-            `Map.withoutKeys` Map.keysSet globalToPoolObjects
+            `Set.difference` inFlight
+            `Set.difference` requestedButNotReceived
+            `Set.difference` unrequestable
+            `Set.difference` Map.keysSet globalToPoolObjects
 
         -- Split `outstandingFifo'` into the longest prefix of `objectId`s which
         -- can be acknowledged and the unacknowledged `objectId`s.
