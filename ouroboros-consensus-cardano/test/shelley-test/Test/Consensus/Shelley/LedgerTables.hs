@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -11,6 +12,9 @@
 module Test.Consensus.Shelley.LedgerTables (tests) where
 
 import qualified Cardano.Ledger.Api.Era as L
+import qualified Cardano.Ledger.BaseTypes as L
+import qualified Cardano.Ledger.Shelley.API.Types as L
+import Data.MemPack
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -29,12 +33,15 @@ import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Consensus.Shelley.Generators ()
 import Test.Consensus.Shelley.MockCrypto (CanMock)
 import Test.LedgerTables
+import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests =
   testGroup "LedgerTables"
+    . (testProperty "Serializing BigEndianTxIn preserves order" testBigEndianTxInPreservesOrder :)
+    . (testProperty "Serializing TxIn fails to preserve order" (expectFailure testTxInPreservesOrder) :)
     . hcollapse
     . hcmap (Proxy @TestLedgerTables) (K . f)
     $ (hpure Proxy :: NP Proxy (CardanoShelleyEras StandardCrypto))
@@ -74,3 +81,15 @@ instance
   Arbitrary (LedgerTables (LedgerState (ShelleyBlock proto era)) ValuesMK)
   where
   arbitrary = projectLedgerTables . unstowLedgerTables <$> arbitrary
+
+testBigEndianTxInPreservesOrder :: L.TxId -> L.TxIx -> L.TxIx -> Property
+testBigEndianTxInPreservesOrder txid txix1 txix2 =
+  let b1 = packByteString (BigEndianTxIn $ L.TxIn txid txix1)
+      b2 = packByteString (BigEndianTxIn $ L.TxIn txid txix2)
+   in counterexample (show b1 <> " " <> show b2) $ compare b1 b2 === compare txix1 txix2
+
+testTxInPreservesOrder :: L.TxId -> L.TxIx -> L.TxIx -> Property
+testTxInPreservesOrder txid txix1 txix2 =
+  let b1 = packByteString (L.TxIn txid txix1)
+      b2 = packByteString (L.TxIn txid txix2)
+   in counterexample (show b1 <> " " <> show b2) $ compare b1 b2 === compare txix1 txix2
