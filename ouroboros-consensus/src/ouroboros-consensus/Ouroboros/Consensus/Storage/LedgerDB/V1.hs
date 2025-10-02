@@ -1,16 +1,13 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -83,7 +80,7 @@ mkInitDb ::
   , LedgerSupportsLedgerDB blk
   ) =>
   Complete LedgerDbArgs m blk ->
-  Complete V1.LedgerDbFlavorArgs m ->
+  V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->
   ResolveBlock m blk ->
   SnapshotManagerV1 m blk ->
   GetVolatileSuffix m blk ->
@@ -379,7 +376,6 @@ mkInternals ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , ApplyBlock (ExtLedgerState blk) blk
   ) =>
   LedgerDBHandle m (ExtLedgerState blk) blk ->
   SnapshotManagerV1 m blk ->

@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Snapshots
 --
@@ -154,7 +155,6 @@ import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
@@ -283,8 +283,8 @@ loadSnapshot ::
   , LedgerSupportsV1LedgerDB (LedgerState blk)
   , LedgerDbSerialiseConstraints blk
   ) =>
-  Tracer m V1.FlavorImplSpecificTrace ->
-  Complete BackingStoreArgs m ->
+  Tracer m V1.SomeBackendTrace ->
+  SomeBackendArgs m (ExtLedgerState blk) ->
   CodecConfig blk ->
   SnapshotsFS m ->
   ResourceRegistry m ->
@@ -293,18 +293,18 @@ loadSnapshot ::
     (SnapshotFailure blk)
     m
     ((DbChangelog' blk, ResourceKey m, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
-loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') reg s = do
+loadSnapshot tracer bArgs@(SomeBackendArgs bss) ccfg fs@(SnapshotsFS fs') reg s = do
   (extLedgerSt, checksumAsRead) <-
     withExceptT (InitFailureRead . ReadSnapshotFailed) $
       readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
   snapshotMeta <-
     withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath s)) $
       loadSnapshotMetadata fs' s
-  case (bss, snapshotBackend snapshotMeta) of
-    (InMemoryBackingStoreArgs, UTxOHDMemSnapshot) -> pure ()
-    (LMDBBackingStoreArgs _ _ _, UTxOHDLMDBSnapshot) -> pure ()
-    (_, _) ->
-      throwError $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch
+  Monad.unless
+    (isRightBackendForSnapshot (Proxy @(ExtLedgerState blk)) bss (snapshotBackend snapshotMeta))
+    $ throwError
+    $ InitFailureRead
+    $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch
   Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
     throwError $
       InitFailureRead $
@@ -314,6 +314,10 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') reg s = do
     NotOrigin pt -> do
       (bsKey, backingStore) <-
         Trans.lift
-          (allocate reg (\_ -> restoreBackingStore tracer bss fs extLedgerSt (snapshotToTablesPath s)) bsClose)
+          ( allocate
+              reg
+              (\_ -> restoreBackingStore tracer bArgs fs extLedgerSt (snapshotToTablesPath s))
+              bsClose
+          )
       let chlog = empty extLedgerSt
       pure ((chlog, bsKey, backingStore), pt)

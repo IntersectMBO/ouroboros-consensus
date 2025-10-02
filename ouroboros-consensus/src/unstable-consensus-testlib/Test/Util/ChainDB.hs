@@ -14,7 +14,6 @@ module Test.Util.ChainDB
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
-import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
   , configCodec
@@ -22,7 +21,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
-import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
   )
@@ -31,7 +30,8 @@ import Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.Args
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
@@ -84,10 +84,9 @@ mkTestChunkInfo = simpleChunkInfo . eraEpochSize . tblcHardForkParams . topLevel
 
 -- | Creates a default set of of arguments for ChainDB tests.
 fromMinimalChainDbArgs ::
-  ( MonadThrow m
-  , MonadSTM m
-  , ConsensusProtocol (BlockProtocol blk)
-  , PrimMonad m
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , LedgerSupportsLedgerDB blk
   ) =>
   MinimalChainDbArgs m blk -> Complete ChainDbArgs m blk
 fromMinimalChainDbArgs MinimalChainDbArgs{..} =
@@ -131,7 +130,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , lgrTracer = nullTracer
           , lgrRegistry = mcdbRegistry
           , lgrConfig = configLedgerDb mcdbTopLevelConfig OmitLedgerEvents
-          , lgrFlavorArgs = LedgerDbFlavorArgsV2 (V2Args InMemoryHandleArgs)
+          , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrStartSnapshot = Nothing
           }
