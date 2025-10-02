@@ -45,6 +45,11 @@
       url = "github:phadej/gentle-introduction";
       flake = false;
     };
+    # === vvv TEMPORARY vvv ===
+    peras-demo = {
+      url = "github:tweag/cardano-peras/demo";
+    };
+    # === ^^^ TEMPORARY ^^^ ===
   };
   outputs = inputs:
     let
@@ -90,7 +95,11 @@
             packages = [ pkgs.nodejs pkgs.yarn ];
           };
         };
-        inherit hydraJobs;
+        # === vvv TEMPORARY vvv ===
+        hydraJobs = hydraJobs // {
+          peras-demo.required = inputs.peras-demo.packages.${system}.demo;
+        };
+        # === ^^^ TEMPORARY ^^^ ===
         legacyPackages = pkgs;
         packages = hydraJobs.native.haskell96.exesNoAsserts;
       }
