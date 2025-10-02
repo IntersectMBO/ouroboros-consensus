@@ -306,6 +306,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
       getMaxSlotNo = ChainDB.getMaxSlotNo chainDB
       addBlockAsync = ChainDB.addBlockAsync chainDB
       getChainSelStarvation = ChainDB.getChainSelStarvation chainDB
+      getPerasWeightSnapshot = ChainDB.getPerasWeightSnapshot chainDB
     pure BlockFetchClientInterface.ChainDbView{..}
    where
     cdbTracer = Tracer \case
