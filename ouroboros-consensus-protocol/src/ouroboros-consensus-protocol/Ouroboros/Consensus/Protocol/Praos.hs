@@ -91,7 +91,6 @@ import Data.Functor.Identity (runIdentity)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
-import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -650,10 +649,12 @@ doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution o
 
   currentIssueNo :: Maybe Word64
   currentIssueNo
-    | Map.member hk ocertCounters = Map.lookup hk ocertCounters
-    | Set.member (coerceKeyRole hk) (Map.keysSet stakeDistribution) =
+    | r@Just{} <- Map.lookup hk ocertCounters =
+        r
+    | Map.member (coerceKeyRole hk) stakeDistribution =
         Just 0
-    | otherwise = Nothing
+    | otherwise =
+        Nothing
 
 {-------------------------------------------------------------------------------
   CannotForge
