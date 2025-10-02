@@ -203,12 +203,12 @@ prop_simple_allegraAlonzo_convergence
                         if not setupHardFork
                           then []
                           else
-                            fmap GenTxShelley1 $
-                              Shelley.mkMASetDecentralizationParamTxs
+                            -- a single transation to update the protocol version
+                            fmap GenTxShelley1 . (: []) $
+                              Shelley.mkUpdateProtVerTxAllegra
                                 coreNodes
                                 (SL.ProtVer majorVersion2 0)
                                 (SlotNo $ unNumSlots numSlots) -- never expire
-                                setupD -- unchanged
                     , tniProtocolInfo = protocolInfo
                     , tniBlockForging = blockForging nullTracer
                     }
