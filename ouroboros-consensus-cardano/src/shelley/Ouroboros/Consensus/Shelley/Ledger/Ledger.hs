@@ -629,8 +629,8 @@ applyHelper f cfg blk stBefore = do
       globals
       tickedShelleyLedgerState
       ( let b = shelleyBlockRaw blk
-            h' = mkHeaderView (SL.bheader b)
-         in SL.Block h' (SL.bbody b)
+            h' = mkHeaderView (SL.blockHeader b)
+         in SL.Block h' (SL.blockBody b)
       )
 
   let track ::
