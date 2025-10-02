@@ -41,7 +41,7 @@ import Database.LMDB.Simple.Cursor (CursorM)
 import qualified Database.LMDB.Simple.Cursor as Cursor
 import qualified Database.LMDB.Simple.Internal as Internal
 import Foreign (Storable (peek, poke), castPtr)
-import GHC.Ptr (Ptr (..))
+import GHC.Exts
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 instance Buffer MDB_val where
@@ -50,6 +50,15 @@ instance Buffer MDB_val where
 
   buffer (MDB_val _ (Ptr addr#)) _ f = f addr#
   {-# INLINE buffer #-}
+
+  mkBuffer ba# =
+    MDB_val
+      (fromIntegral (I# (sizeofByteArray# ba#)))
+      (Ptr (byteArrayContents# ba#))
+  {-# INLINE mkBuffer #-}
+
+  bufferHasToBePinned = True
+  {-# INLINE bufferHasToBePinned #-}
 
 {-------------------------------------------------------------------------------
   Internal: peek and poke

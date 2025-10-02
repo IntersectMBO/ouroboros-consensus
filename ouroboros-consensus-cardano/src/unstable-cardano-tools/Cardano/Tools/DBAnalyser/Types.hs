@@ -49,7 +49,7 @@ newtype NumberOfBlocks = NumberOfBlocks {unNumberOfBlocks :: Word64}
 
 data Limit = Limit Int | Unlimited
 
-data LedgerDBBackend = V1InMem | V1LMDB | V2InMem
+data LedgerDBBackend = V1InMem | V1LMDB | V2InMem | V2LSM
 
 -- | The extent of the ChainDB on-disk files validation. This is completely
 -- unrelated to validation of the ledger rules.

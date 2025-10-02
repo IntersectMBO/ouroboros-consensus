@@ -46,7 +46,7 @@ parseDBAnalyserConfig =
       [ flag' V1InMem $
           mconcat
             [ long "v1-in-mem"
-            , help "use v1 in-memory backing store"
+            , help "use v1 in-memory backing store [deprecated]"
             ]
       , flag' V1LMDB $
           mconcat
@@ -55,8 +55,13 @@ parseDBAnalyserConfig =
             ]
       , flag' V2InMem $
           mconcat
-            [ long "v2-in-mem"
+            [ long "in-mem"
             , help "use v2 in-memory backend"
+            ]
+      , flag' V2LSM $
+          mconcat
+            [ long "lsm"
+            , help "use v2 LSM backend"
             ]
       ]
 

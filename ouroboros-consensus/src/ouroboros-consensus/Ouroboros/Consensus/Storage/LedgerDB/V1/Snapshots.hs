@@ -266,11 +266,6 @@ writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
     cs
     (snapshotToTablesPath snapshot)
 
--- | The path within the LedgerDB's filesystem to the file that contains the
--- snapshot's serialized ledger state
-snapshotToStatePath :: DiskSnapshot -> FsPath
-snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
-
 -- | The path within the LedgerDB's filesystem to the directory that contains a
 -- snapshot's backing store
 snapshotToTablesPath :: DiskSnapshot -> FsPath

@@ -165,7 +165,7 @@ mkShelleyBlock ::
 mkShelleyBlock raw =
   ShelleyBlock
     { shelleyBlockRaw = raw
-    , shelleyBlockHeaderHash = pHeaderHash $ SL.bheader raw
+    , shelleyBlockHeaderHash = pHeaderHash $ SL.blockHeader raw
     }
 
 class
@@ -200,7 +200,7 @@ instance
 instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
   getHeader (ShelleyBlock rawBlk hdrHash) =
     ShelleyHeader
-      { shelleyHeaderRaw = SL.bheader rawBlk
+      { shelleyHeaderRaw = SL.blockHeader rawBlk
       , shelleyHeaderHash = hdrHash
       }
 
