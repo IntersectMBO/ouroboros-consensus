@@ -89,9 +89,13 @@ in
     nativeBuildInputs = [
       final.fd
       final.cabal-docspec
-      (hsPkgs.ghcWithPackages
-        (ps: [ ps.latex-svg-image ] ++ lib.filter (p: p ? components.library)
-          (lib.attrValues (haskell-nix.haskellLib.selectProjectPackages ps))))
+      (hsPkgs.shellFor {
+        withHoogle = false;
+        exactDeps = true;
+        packages = _: [ ];
+        additional = (ps: [ ps.latex-svg-image ] ++ lib.filter (p: p ? components.library)
+          (lib.attrValues (haskell-nix.haskellLib.selectProjectPackages ps)));
+      }).ghc
       final.texliveFull
     ];
 
