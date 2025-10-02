@@ -1,73 +1,125 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
+import Cardano.Tools.DBAnalyser.Block.Cardano (configFile)
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
-import Codec.Serialise
-import qualified Control.Monad as Monad
+import Control.Concurrent
+import Control.Exception
+import Control.Monad (forever, void)
 import Control.Monad.Except
-import Control.Monad.Trans (lift)
-import Control.ResourceRegistry
 import DBAnalyser.Parsers
-import Data.Bifunctor
-import Data.Char (toLower)
-import qualified Data.Text.Lazy as T
+import qualified Data.Aeson as Aeson
+import qualified Data.List as L
+import qualified Data.Text as Text
+import qualified Debug.Trace as Debug
+import GHC.TypeLits (Symbol)
 import Main.Utf8
 import Options.Applicative
 import Options.Applicative.Help (Doc, line)
-import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Cardano.Block
-import Ouroboros.Consensus.Cardano.StreamingLedgerTables
-import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Basics
-import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Node.ProtocolInfo
-import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Cardano.SnapshotConversion
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as V1
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
-import Ouroboros.Consensus.Util.CRC
-import Ouroboros.Consensus.Util.IOLike hiding (yield)
-import System.Console.ANSI
-import qualified System.Directory as D
 import System.Exit
-import System.FS.API
-import System.FS.CRC
-import System.FS.IO
-import System.FilePath (splitDirectories)
-import qualified System.FilePath as F
-import System.IO
-import System.ProgressBar
-import System.Random
+import System.FSNotify
+import System.FilePath
 
-data Format
-  = Mem FilePath
-  | LMDB FilePath
-  | LSM FilePath FilePath
-  deriving (Show, Read)
+-- | FilePaths annotated with the purpose
+newtype FilePath' (s :: Symbol) = FP {rawFilePath :: FilePath}
 
-data Config = Config
-  { from :: Format
-  -- ^ Which format the input snapshot is in
-  , to :: Format
-  -- ^ Which format the output snapshot must be in
-  }
+instance Show (FilePath' s) where
+  show = rawFilePath
+
+data Config
+  = -- | Run in daemon mode, with an output directory
+    DaemonConfig (FilePath' "OutDir")
+  | -- | Run in normal mode
+    NoDaemonConfig
+      -- | Which format the input snapshot is in
+      Format
+      -- | Which format the output snapshot must be in
+      Format
+
+-- | Information inferred from the config file
+data FromConfigFile
+  = FromConfigFile
+      -- | The input format once supplied with a particular snapshot
+      (FilePath' "Snapshot" -> Format)
+      -- | The directory of snapshots, to be watched by inotify
+      (FilePath' "Snapshots")
+
+main :: IO ()
+main = withStdTerminalHandles $ do
+  cryptoInit
+  (conf, args) <- getCommandLineConfig
+  pInfo <- mkProtocolInfo args
+  FromConfigFile inFormat ledgerDbPath <- getFormatFromConfig (FP $ configFile args)
+  case conf of
+    NoDaemonConfig f t -> do
+      eRes <- runExceptT (convertSnapshot True pInfo f t)
+      case eRes of
+        Left err -> do
+          putStrLn $ show err
+          exitFailure
+        Right () -> exitSuccess
+    DaemonConfig outDir -> do
+      withManager $ \manager -> do
+        putStrLn $ "Watching " <> show ledgerDbPath
+        void $
+          watchTree
+            manager
+            (rawFilePath ledgerDbPath)
+            ( \case
+                CloseWrite ep _ IsFile -> "meta" `L.isSuffixOf` ep
+                _ -> False
+            )
+            ( \case
+                CloseWrite ep _ IsFile -> do
+                  case reverse $ splitDirectories ep of
+                    (_ : snapName@(snapshotFromPath -> Just{}) : _) -> do
+                      putStrLn $ "Converting snapshot " <> ep <> " to " <> (rawFilePath outDir </> snapName)
+                      res <-
+                        runExceptT $
+                          convertSnapshot
+                            False
+                            pInfo
+                            (inFormat (FP @"Snapshot" $ takeDirectory ep))
+                            (Mem $ rawFilePath outDir </> snapName)
+                      case res of
+                        Left err ->
+                          putStrLn $ show err
+                        Right () ->
+                          putStrLn "Done"
+                    _ -> pure ()
+                _ -> pure ()
+            )
+        forever $ threadDelay 1000000
+
+{-------------------------------------------------------------------------------
+  Optparse-applicative
+-------------------------------------------------------------------------------}
 
 getCommandLineConfig :: IO (Config, CardanoBlockArgs)
 getCommandLineConfig =
   execParser $
     info
-      ((,) <$> (Config <$> parseConfig In <*> parseConfig Out) <*> parseCardanoArgs <**> helper)
+      ( (,)
+          <$> ( (NoDaemonConfig <$> parseConfig In <*> parseConfig Out)
+                  <|> ( switch (short 'd' <> long "daemon")
+                          *> (DaemonConfig . FP <$> parsePath "output-dir" "Directory for outputting snapshots")
+                      )
+              )
+          <*> parseCardanoArgs <**> helper
+      )
       ( fullDesc
           <> header "Utility for converting snapshots among the different snapshot formats used by cardano-node."
           <> progDescDoc programDescription
@@ -168,402 +220,114 @@ parsePath optName strHelp =
         ]
     )
 
-data Error blk
-  = SnapshotError (SnapshotFailure blk)
-  | BadDirectoryName FilePath
-  | WrongSlotDirectoryName FilePath SlotNo
-  | InvalidMetadata String
-  | BackendMismatch SnapshotBackend SnapshotBackend
-  | CRCMismatch CRC CRC
-  | ReadTablesError DeserialiseFailure
-  | Cancelled
-  deriving Exception
+{-------------------------------------------------------------------------------
+  Parsing the configuration file
+-------------------------------------------------------------------------------}
 
-instance StandardHash blk => Show (Error blk) where
-  show (SnapshotError err) =
-    "Couldn't deserialize the snapshot. Are you running the same node version that created the snapshot? "
-      <> show err
-  show (BadDirectoryName fp) =
-    mconcat
-      [ "Filepath "
-      , fp
-      , " is not an snapshot. The last fragment on the path should be"
-      , " named after the slot number of the state it contains and an"
-      , " optional suffix, such as `163470034` or `163470034_my-suffix`."
-      ]
-  show (InvalidMetadata s) = "Metadata is invalid: " <> s
-  show (BackendMismatch b1 b2) =
-    mconcat
-      [ "Mismatched backend in snapshot. Reading as "
-      , show b1
-      , " but snapshot is "
-      , show b2
-      ]
-  show (WrongSlotDirectoryName fp sl) =
-    mconcat
-      [ "The name of the snapshot (\""
-      , fp
-      , "\") does not correspond to the slot number of the state ("
-      , (show . unSlotNo $ sl)
-      , ")."
-      ]
-  show (CRCMismatch c1 c2) =
-    mconcat
-      [ "The input snapshot seems corrupted. Metadata has CRC "
-      , show c1
-      , " but reading it gives CRC "
-      , show c2
-      ]
-  show (ReadTablesError df) =
-    mconcat
-      ["Error when reading entries in the UTxO tables: ", show df]
-  show Cancelled = "Cancelled"
+instance Aeson.FromJSON FromConfigFile where
+  parseJSON = Aeson.withObject "CardanoConfigFile" $ \o -> do
+    DBPaths imm vol <- Aeson.parseJSON (Aeson.Object o)
+    inFmt <- ($ vol) <$> Aeson.parseJSON (Aeson.Object o)
+    pure $ FromConfigFile inFmt imm
 
-data InEnv backend = InEnv
-  { inState :: LedgerState (CardanoBlock StandardCrypto) EmptyMK
-  , inFilePath :: FilePath
-  , inStream ::
-      LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-      ResourceRegistry IO ->
-      IO (SomeBackend YieldArgs)
-  , inProgressMsg :: String
-  , inCRC :: CRC
-  , inSnapReadCRC :: Maybe CRC
-  }
+data DBPaths = DBPaths (FilePath' "Snapshots") (FilePath' "Volatile")
 
-data SomeBackend c where
-  SomeBackend ::
-    StreamingBackend IO backend (LedgerState (CardanoBlock StandardCrypto)) =>
-    c IO backend (LedgerState (CardanoBlock StandardCrypto)) -> SomeBackend c
-
-data OutEnv backend = OutEnv
-  { outFilePath :: FilePath
-  , outStream ::
-      LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-      ResourceRegistry IO ->
-      IO (SomeBackend SinkArgs)
-  , outCreateExtra :: Maybe FilePath
-  , outDeleteExtra :: Maybe FilePath
-  , outProgressMsg :: String
-  , outBackend :: SnapshotBackend
-  }
-
-main :: IO ()
-main = withStdTerminalHandles $ do
-  eRes <- runExceptT main'
-  case eRes of
-    Left err -> do
-      putStrLn $ show err
-      exitFailure
-    Right () -> exitSuccess
- where
-  main' = do
-    lift $ cryptoInit
-    (conf, args) <- lift $ getCommandLineConfig
-    ccfg <- lift $ configCodec . pInfoConfig <$> mkProtocolInfo args
-
-    InEnv{..} <- getInEnv ccfg (from conf)
-
-    o@OutEnv{..} <- getOutEnv inState (to conf)
-
-    wipeOutputPaths o
-
-    lift $ putStr "Copying state file..." >> hFlush stdout
-    lift $ D.copyFile (inFilePath F.</> "state") (outFilePath F.</> "state")
-    lift $ putColored Green True "Done"
-
-    lift $ putStr "Streaming ledger tables..." >> hFlush stdout >> saveCursor
-
-    tid <- lift $ niceAnimatedProgressBar inProgressMsg outProgressMsg
-
-    eRes <- lift $ runExceptT (stream inState inStream outStream)
-
-    case eRes of
-      Left err -> throwError $ ReadTablesError err
-      Right (mCRCIn, mCRCOut) -> do
-        lift $ maybe (pure ()) cancel tid
-        lift $ clearLine >> restoreCursor >> cursorUp 1 >> putColored Green True "Done"
-        let crcIn = maybe inCRC (crcOfConcat inCRC) mCRCIn
-        maybe
-          ( lift $
-              putColored Yellow True "The metadata file is missing, the snapshot is not guaranteed to be correct!"
-          )
-          ( \cs ->
-              Monad.when (cs /= crcIn) $ throwError $ CRCMismatch cs crcIn
-          )
-          inSnapReadCRC
-
-        let crcOut = maybe inCRC (crcOfConcat inCRC) mCRCOut
-
-        lift $ putStr "Generating new metadata file..." >> hFlush stdout
-        putMetadata outFilePath (SnapshotMetadata outBackend crcOut TablesCodecVersion1)
-
-        lift $ putColored Green True "Done"
-
-  wipeOutputPaths OutEnv{..} = do
-    wipePath outFilePath
-    lift $ maybe (pure ()) (D.createDirectory . (outFilePath F.</>)) outCreateExtra
-    maybe
-      (pure ())
-      wipePath
-      outDeleteExtra
-
-  getState ccfg fp@(pathToHasFS -> fs) = do
-    eState <- lift $ do
-      putStr $ "Reading ledger state from " <> (fp F.</> "state") <> "..."
-      hFlush stdout
-      runExceptT (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (mkFsPath ["state"]))
-    case eState of
-      Left err ->
-        throwError . SnapshotError . InitFailureRead @(CardanoBlock StandardCrypto) . ReadSnapshotFailed $
-          err
-      Right st -> lift $ do
-        putColored Green True " Done"
-        pure . first ledgerState $ st
-
-  getMetadata fp bknd = do
-    (fs, ds) <- toDiskSnapshot fp
-    mtd <-
-      lift $ runExceptT $ loadSnapshotMetadata fs ds
-    (,ds)
-      <$> either
-        ( \case
-            MetadataFileDoesNotExist -> pure Nothing
-            MetadataInvalid s -> throwError $ InvalidMetadata s
-            MetadataBackendMismatch -> error "impossible"
-        )
-        ( \mtd' -> do
-            if bknd /= snapshotBackend mtd'
-              then throwError $ BackendMismatch bknd (snapshotBackend mtd')
-              else pure $ Just $ snapshotChecksum mtd'
-        )
-        mtd
-
-  putMetadata fp bknd = do
-    (fs, ds) <- toDiskSnapshot fp
-    lift $ writeSnapshotMetadata fs ds bknd
-
-  getInEnv ccfg = \case
-    Mem fp -> do
-      (mtd, ds) <- getMetadata fp UTxOHDMemSnapshot
-      (st, c) <- getState ccfg fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              ( withOrigin
-                  ( error
-                      "Impossible! the snapshot seems to be at Genesis but cardano-node would never create such an snapshot!"
-                  )
-                  id
-                  $ pointSlot (getTip st)
-              )
-        )
-
-      pure $
-        InEnv
-          st
-          fp
-          (\a b -> SomeBackend <$> mkInMemYieldArgs (fp F.</> "tables" F.</> "tvar") a b)
-          ("InMemory@[" <> fp <> "]")
-          c
-          mtd
-    LMDB fp -> do
-      (mtd, ds) <- getMetadata fp UTxOHDLMDBSnapshot
-      (st, c) <- getState ccfg fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              (withOrigin undefined id $ pointSlot (getTip st))
-        )
-
-      pure $
-        InEnv
-          st
-          fp
-          (\a b -> SomeBackend <$> V1.mkLMDBYieldArgs (fp F.</> "tables") defaultLMDBLimits a b)
-          ("LMDB@[" <> fp <> "]")
-          c
-          mtd
-    LSM fp lsmDbPath -> do
-      (mtd, ds) <- getMetadata fp UTxOHDLSMSnapshot
-      (st, c) <- getState ccfg fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              (withOrigin undefined id $ pointSlot (getTip st))
-        )
-
-      pure $
-        InEnv
-          st
-          fp
-          ( \a b ->
-              SomeBackend <$> mkLSMYieldArgs lsmDbPath (last $ splitDirectories fp) stdMkBlockIOFS newStdGen a b
-          )
-          ("LSM@[" <> lsmDbPath <> "]")
-          c
-          mtd
-
-  getOutEnv st = \case
-    Mem fp -> do
-      (_, ds) <- toDiskSnapshot fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              (withOrigin undefined id $ pointSlot (getTip st))
-        )
-      pure $
-        OutEnv
-          fp
-          (\a b -> SomeBackend <$> mkInMemSinkArgs (fp F.</> "tables" F.</> "tvar") a b)
-          (Just "tables")
-          (Nothing)
-          ("InMemory@[" <> fp <> "]")
-          UTxOHDMemSnapshot
-    LMDB fp -> do
-      (_, ds) <- toDiskSnapshot fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              (withOrigin undefined id $ pointSlot (getTip st))
-        )
-      pure $
-        OutEnv
-          fp
-          (\a b -> SomeBackend <$> V1.mkLMDBSinkArgs fp defaultLMDBLimits a b)
-          Nothing
-          Nothing
-          ("LMDB@[" <> fp <> "]")
-          UTxOHDLMDBSnapshot
-    LSM fp lsmDbPath -> do
-      (_, ds) <- toDiskSnapshot fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              (withOrigin undefined id $ pointSlot (getTip st))
-        )
-      pure $
-        OutEnv
-          fp
-          ( \a b ->
-              SomeBackend <$> mkLSMSinkArgs lsmDbPath (last $ splitDirectories fp) stdMkBlockIOFS newStdGen a b
-          )
-          Nothing
-          (Just lsmDbPath)
-          ("LSM@[" <> lsmDbPath <> "]")
-          UTxOHDLSMSnapshot
-
-stream ::
-  LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-  ( LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-    ResourceRegistry IO ->
-    IO (SomeBackend YieldArgs)
-  ) ->
-  ( LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-    ResourceRegistry IO ->
-    IO (SomeBackend SinkArgs)
-  ) ->
-  ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)
-stream st mYieldArgs mSinkArgs =
-  ExceptT $
-    withRegistry $ \reg -> do
-      (SomeBackend (yArgs :: YieldArgs IO backend1 l)) <- mYieldArgs st reg
-      (SomeBackend (sArgs :: SinkArgs IO backend2 l)) <- mSinkArgs st reg
-      runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
-
--- Helpers
-
--- UI
-niceAnimatedProgressBar :: String -> String -> IO (Maybe (Async IO ()))
-niceAnimatedProgressBar inMsg outMsg = do
-  stdoutSupportsANSI <- hNowSupportsANSI stdout
-  if stdoutSupportsANSI
-    then do
-      putStrLn ""
-      pb <-
-        newProgressBar
-          defStyle{stylePrefix = msg (T.pack inMsg), stylePostfix = msg (T.pack outMsg)}
-          10
-          (Progress 1 100 ())
-
-      fmap Just $
-        async $
-          let loop = do
-                threadDelay 0.2
-                updateProgress pb (\prg -> prg{progressDone = (progressDone prg + 4) `mod` 100})
-           in Monad.forever loop
-    else pure Nothing
-
-putColored :: Color -> Bool -> String -> IO ()
-putColored c b s = do
-  stdoutSupportsANSI <- hNowSupportsANSI stdout
-  Monad.when stdoutSupportsANSI $ setSGR [SetColor Foreground Vivid c]
-  if b
-    then
-      putStrLn s
-    else
-      putStr s
-  Monad.when stdoutSupportsANSI $ setSGR [Reset]
-  hFlush stdout
-
-askForConfirmation ::
-  ExceptT (Error (CardanoBlock StandardCrypto)) IO a ->
-  String ->
-  ExceptT (Error (CardanoBlock StandardCrypto)) IO a
-askForConfirmation act infoMsg = do
-  lift $ putColored Yellow False $ "I'm going to " <> infoMsg <> ". Continue? (Y/n) "
-  answer <- lift $ getLine
-  case map toLower answer of
-    "y" -> act
-    _ -> throwError Cancelled
-
--- | Ask before deleting
-wipePath :: FilePath -> ExceptT (Error (CardanoBlock StandardCrypto)) IO ()
-wipePath fp = do
-  exists <- lift $ D.doesDirectoryExist fp
-  ( if exists
-      then flip askForConfirmation ("wipe the path " <> fp)
-      else id
-    )
-    (lift $ D.removePathForcibly fp >> D.createDirectoryIfMissing True fp)
-
-toDiskSnapshot ::
-  FilePath -> ExceptT (Error (CardanoBlock StandardCrypto)) IO (SomeHasFS IO, DiskSnapshot)
-toDiskSnapshot fp@(F.splitFileName . maybeRemoveTrailingSlash -> (snapPath, snapName)) =
-  maybe
-    (throwError $ BadDirectoryName fp)
-    (pure . (pathToHasFS snapPath,))
-    $ snapshotFromPath snapName
-
--- | Given a filepath pointing to a snapshot (with or without a trailing slash), produce:
+-- | Possible database locations:
 --
--- * A HasFS at the snapshot directory
-pathToHasFS :: FilePath -> SomeHasFS IO
-pathToHasFS (maybeRemoveTrailingSlash -> path) =
-  SomeHasFS $ ioHasFS $ MountPoint path
+--  (1) Provided as flag: we would need to receive that same flag. For simplicity we will ban this scenario for now, requiring users to put the path in the config file.
+--
+--  (2) Not provided: we default to "mainnet"
+--
+--  (3) Provided in the config file:
+--
+--    (1) One database path: we use that one
+--
+--        @@
+--        "DatabasePath": "some/path"
+--        @@
+--
+--    (2) Multiple databases paths: we use the immutable one
+--
+--        @@
+--        "DatabasePath": {
+--          "ImmutableDbPath": "some/path",
+--          "VolatileDbPath": "some/other/path",
+--        }
+--        @@
+instance Aeson.FromJSON DBPaths where
+  parseJSON = Aeson.withObject "CardanoConfigFile" $ \o -> do
+    pncDatabase <- o Aeson..:? "DatabasePath"
+    (imm, vol) <- case pncDatabase of
+      Nothing -> pure ("mainnet", "mainnet") -- (2)
+      Just p@(Aeson.Object{}) ->
+        Aeson.withObject
+          "NodeDatabasePaths"
+          (\o' -> (,) <$> o' Aeson..: "ImmutableDbPath" <*> o' Aeson..: "VolatileDbPath") -- (3.2)
+          p
+      Just (Aeson.String s) ->
+        let
+          s' = Text.unpack s
+         in
+          pure (s', s') -- (3.1)
+      _ -> fail "NodeDatabasePaths must be an object or a string"
+    pure $ DBPaths (FP $ imm </> "ledger") (FP vol)
 
-maybeRemoveTrailingSlash :: String -> String
-maybeRemoveTrailingSlash s = case last s of
-  '/' -> init s
-  '\\' -> init s
-  _ -> s
+-- | Possible formats
+--
+--  (1) Nothing provided: we use InMemory
+--
+--  (2) Provided in config file:
+--
+--    (1) "V2InMem": we use InMemory
+--
+--        @@
+--        "LedgerDB": {
+--          "Backend": "V2InMem"
+--        }
+--        @@
+--
+--    (2) "V1LMDB": we use LMDB
+--
+--        @@
+--        "LedgerDB": {
+--          "Backend": "V1LMDB"
+--        }
+--        @@
+--
+--    (3) "V2LSM"
+--        LSM database locations:
+--        (1) Nothing provided: we use "lsm" in the volatile directory
+--
+--        @@
+--        "LedgerDB": {
+--          "Backend": "V2LSM"
+--        }
+--        @@
+--
+--        (2) Provided in file: we use that one
+--
+--        @@
+--        "LedgerDB": {
+--          "Backend": "V2LSM",
+--          "LSMDatabasePath": "some/path"
+--        }
+--        @@
+instance Aeson.FromJSON (FilePath' "Volatile" -> FilePath' "Snapshot" -> Format) where
+  parseJSON = Aeson.withObject "CardanoConfigFile" $ \o -> do
+    ldb <- Debug.traceShowId <$> o Aeson..:? "LedgerDB"
+    case ldb of
+      Nothing -> pure $ const $ Mem . rawFilePath -- (1)
+      Just ldb' -> do
+        bkd <- ldb' Aeson..:? "Backend"
+        case bkd :: Maybe String of
+          Just "V1LMDB" -> pure $ const $ LMDB . rawFilePath -- (2.2)
+          Just "V2LSM" -> do
+            mDbPath <- ldb' Aeson..:? "LSMDatabasePath"
+            case mDbPath of
+              Nothing -> pure $ \v -> flip LSM (rawFilePath v </> "lsm") . rawFilePath -- (2.3.1)
+              Just dbPath -> pure $ const $ flip LSM dbPath . rawFilePath -- (2.3.2)
+          _ -> pure $ const $ Mem . rawFilePath -- (2.1)
 
-defaultLMDBLimits :: V1.LMDBLimits
-defaultLMDBLimits =
-  V1.LMDBLimits
-    { V1.lmdbMapSize = 16 * 1024 * 1024 * 1024
-    , V1.lmdbMaxDatabases = 10
-    , V1.lmdbMaxReaders = 16
-    }
+getFormatFromConfig :: FilePath' "ConfigFile" -> IO FromConfigFile
+getFormatFromConfig (FP configPath) =
+  either (throwIO . userError) pure =<< Aeson.eitherDecodeFileStrict' configPath
