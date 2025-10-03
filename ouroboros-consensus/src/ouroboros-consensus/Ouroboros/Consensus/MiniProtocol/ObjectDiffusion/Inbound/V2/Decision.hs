@@ -93,10 +93,10 @@ data DecisionInternalState peerAddr objectId object
   -- ^ number of all `object`s in-flight.
   , disObjectsInflightMultiplicities :: !(Map objectId Int)
   -- ^ `objectId`s in-flight.
-  , disObjectsAckedMultiplicities :: !(Map objectId Int)
+  , disIdsToAckMultiplicities :: !(Map objectId Int)
   -- ^ acknowledged `objectId` with multiplicities.  It is used to update
   -- `dgsObjectReferenceCounts`.
-  , disObjectsOwtPoolds :: Set objectId
+  , disObjectsOwtPoolIds :: Set objectId
   -- ^ objects on their way to the objectpool. Used to prevent issueing new
   -- fetch requests for them.
   }
@@ -144,9 +144,10 @@ pickObjectsToDownload
       -- initial state
       DecisionInternalState
         { disObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities
-        , disNumObjectsInflight = dgsObjectsInflightMultiplicitiesNum
-        , disObjectsAckedMultiplicities = Map.empty
-        , disObjectsOwtPoolds = Map.keysSet dgsObjectsOwtPool
+        , disNumObjectsInflight = fromIntegral $ Map.foldl' (+) 0 dgsObjectsInflightMultiplicities
+              -- Thomas: not sure here if we must count disctinct objects in flight, or total number of objects in flight (considering multiplicities)
+        , disIdsToAckMultiplicities = Map.empty
+        , disObjectsOwtPoolIds = Map.keysSet dgsObjectsOwtPool
         }
       >>> gn
    where
@@ -162,40 +163,39 @@ pickObjectsToDownload
       st@DecisionInternalState
         { disObjectsInflightMultiplicities
         , disNumObjectsInflight
-        , disObjectsAckedMultiplicities
-        , disObjectsOwtPoolds
+        , disIdsToAckMultiplicities
+        , disObjectsOwtPoolIds
         }
       ( peerAddr
         , peerObjectState@DecisionPeerState
             { dpsIdsAvailable
-            , dpsObjectsRequestedButNotReceivedIds
             , dpsObjectsInflightIds
             }
         ) =
-        let sizeInflightAll :: NumObjects
-            sizeInflightOther :: NumObjects
+        let sizeInflightAll :: NumObjectsReq
+            sizeInflightOther :: NumObjectsReq
 
             sizeInflightAll = disNumObjectsInflight
-            sizeInflightOther = sizeInflightAll - Set.size dpsObjectsInflightIds
+            sizeInflightOther = sizeInflightAll - fromIntegral (Set.size dpsObjectsInflightIds)
          in if sizeInflightAll >= dpMaxNumObjectsInflightTotal
               then
                 let ( numObjectIdsToAck
                       , numObjectIdsToReq
-                      , pdObjectsOwtPool@[(objectId, object)]{listOf[(objectId, object)]}
-                      , RefCountDiff{objectIdsToAck}
+                      , pdObjectsOwtPool
+                      , RefCountDiff{rcdIdsToAckMultiplicities}
                       , peerObjectState'
                       ) = acknowledgeObjectIds policy sharedState peerObjectState
 
-                    disObjectsAckedMultiplicities' = Map.unionWith (+) disObjectsAckedMultiplicities objectIdsToAck
-                    disObjectsOwtPoolds' =
-                      disObjectsOwtPoolds
-                        <> Set.fromList (map fst listOf[(objectId, object)])
+                    disIdsToAckMultiplicities' = Map.unionWith (+) disIdsToAckMultiplicities rcdIdsToAckMultiplicities
+                    disObjectsOwtPoolIds' =
+                      disObjectsOwtPoolIds
+                        <> Map.keysSet pdObjectsOwtPool
                  in if dpsNumIdsInflight peerObjectState' > 0
                       then
                         -- we have objectIds to request
                         ( st
-                            { disObjectsAckedMultiplicities = disObjectsAckedMultiplicities'
-                            , disObjectsOwtPoolds = disObjectsOwtPoolds'
+                            { disIdsToAckMultiplicities = disIdsToAckMultiplicities'
+                            , disObjectsOwtPoolIds = disObjectsOwtPoolIds'
                             }
                         ,
                           ( (peerAddr, peerObjectState')
@@ -207,7 +207,7 @@ pickObjectsToDownload
                                     . StrictSeq.null
                                     . dpsOutstandingFifo
                                     $ peerObjectState'
-                              , pdObjectsToReqIds = Map.empty
+                              , pdObjectsToReqIds = Set.empty
                               , pdObjectsOwtPool = pdObjectsOwtPool
                               }
                           )
@@ -222,7 +222,7 @@ pickObjectsToDownload
                           )
                         )
               else
-                let dpsObjectsInflightIdsNum' :: NumObjects
+                let dpsObjectsInflightIdsNum' :: NumObjectsReq
                     pdObjectsToReqIdsMap :: Set objectId
 
                     (dpsObjectsInflightIdsNum', pdObjectsToReqIdsMap) =
@@ -262,7 +262,7 @@ pickObjectsToDownload
                               `Set.unions` ( Map.keysSet dgsObjectsPending
                                                     <> dpsObjectsInflightIds
                                                     <> dpsObjectsRequestedButNotReceivedIds
-                                                    <> disObjectsOwtPoolds
+                                                    <> disObjectsOwtPoolIds
                                                 )
                         )
                         dpsObjectsInflightIdsNum
@@ -276,12 +276,12 @@ pickObjectsToDownload
 
                     ( numObjectIdsToAck
                       , numObjectIdsToReq
-                      , pdObjectsOwtPool@[(objectId, object)]{listOf[(objectId, object)]}
-                      , RefCountDiff{objectIdsToAck}
+                      , pdObjectsOwtPool
+                      , RefCountDiff{rcdIdsToAckMultiplicities}
                       , peerObjectState''
                       ) = acknowledgeObjectIds policy sharedState peerObjectState'
 
-                    disObjectsAckedMultiplicities' = Map.unionWith (+) disObjectsAckedMultiplicities objectIdsToAck
+                    disIdsToAckMultiplicities' = Map.unionWith (+) disIdsToAckMultiplicities rcdIdsToAckMultiplicities
 
                     stInflightDelta :: Map objectId Int
                     stInflightDelta = Map.fromSet (\_ -> 1) pdObjectsToReqIds
@@ -291,17 +291,17 @@ pickObjectsToDownload
                     disObjectsInflightMultiplicities' :: Map objectId Int
                     disObjectsInflightMultiplicities' = Map.unionWith (+) stInflightDelta disObjectsInflightMultiplicities
 
-                    disObjectsOwtPoolds' =
-                      disObjectsOwtPoolds
-                        <> Set.fromList (map fst listOf[(objectId, object)])
+                    disObjectsOwtPoolIds' =
+                      disObjectsOwtPoolIds
+                        <> Set.fromList (map fst pdObjectsOwtPool)
                  in if dpsNumIdsInflight peerObjectState'' > 0
                       then
                         -- we can request `objectId`s & `object`s
                         ( DecisionInternalState
                             { disObjectsInflightMultiplicities = disObjectsInflightMultiplicities'
                             , disNumObjectsInflight = undefined
-                            , disObjectsAckedMultiplicities = disObjectsAckedMultiplicities'
-                            , disObjectsOwtPoolds = disObjectsOwtPoolds'
+                            , disIdsToAckMultiplicities = disIdsToAckMultiplicities'
+                            , disObjectsOwtPoolIds = disObjectsOwtPoolIds'
                             }
                         ,
                           ( (peerAddr, peerObjectState'')
@@ -322,7 +322,7 @@ pickObjectsToDownload
                         -- there are no `objectId`s to request, only `object`s.
                         ( st
                             { disObjectsInflightMultiplicities = disObjectsInflightMultiplicities'
-                            , disObjectsOwtPoolds = disObjectsOwtPoolds'
+                            , disObjectsOwtPoolIds = disObjectsOwtPoolIds'
                             }
                         ,
                           ( (peerAddr, peerObjectState'')
@@ -340,7 +340,7 @@ pickObjectsToDownload
     gn
       ( DecisionInternalState
           { disObjectsInflightMultiplicities
-          , disObjectsAckedMultiplicities
+          , disIdsToAckMultiplicities
           }
         , as
         ) =
@@ -358,7 +358,7 @@ pickObjectsToDownload
                       else Nothing
                 )
                 dgsObjectReferenceCounts
-                disObjectsAckedMultiplicities
+                disIdsToAckMultiplicities
 
             liveSet = Map.keysSet dgsObjectReferenceCounts'
 
@@ -382,10 +382,9 @@ pickObjectsToDownload
                       { pdIdsToAck = 0
                       , pdIdsToReq = 0
                       , pdObjectsToReqIds
-                      , pdObjectsOwtPool = [(objectId, object)]{listOf[(objectId, object)]}
-                      }
+                      , pdObjectsOwtPool }
                         | null pdObjectsToReqIds
-                        , null listOf[(objectId, object)] ->
+                        , Map.null pdObjectsOwtPool ->
                             Nothing
                     _ -> Just (a, b)
                 )
@@ -398,7 +397,7 @@ pickObjectsToDownload
           (a, PeerDecision objectId object) ->
           Map objectId Int
         updateInSubmissionToObjectPoolObjects m (_, PeerDecision{pdObjectsOwtPool}) =
-          List.foldl' fn m (listOf[(objectId, object)] pdObjectsOwtPool)
+          List.foldl' fn m (Map.toList pdObjectsOwtPool)
          where
           fn ::
             Map objectId Int ->
@@ -460,7 +459,6 @@ filterActivePeers
         , dpsNumIdsInflight
         , dpsObjectsInflightIds
         , dpsIdsAvailable
-        , dpsObjectsRequestedButNotReceivedIds
         } =
         ( dpsNumIdsInflight == 0
             && dpsNumIdsInflight + numOfUnacked <= dpMaxNumObjectsOutstanding

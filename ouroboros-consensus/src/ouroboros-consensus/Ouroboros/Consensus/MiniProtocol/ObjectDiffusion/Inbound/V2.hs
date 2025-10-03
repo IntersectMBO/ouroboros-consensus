@@ -81,7 +81,7 @@ objectDiffusionInbound
       -- Block on next decision.
       object@PeerDecision
         { pdObjectsToReqIds = pdObjectsToReqIds
-        , pdObjectsOwtPool = [(objectId, object)]{listOf[(objectId, object)]}
+        , pdObjectsOwtPool = pdObjectsOwtPool
         } <-
         readPeerDecision
       traceWith tracer (TraceObjectInboundDecision object)

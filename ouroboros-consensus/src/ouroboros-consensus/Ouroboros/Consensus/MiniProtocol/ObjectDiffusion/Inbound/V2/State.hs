@@ -64,7 +64,8 @@ acknowledgeObjectIds ::
   -- objectpool, objectIds to acknowledge with multiplicities, updated DecisionPeerState.
   ( NumObjectIdsAck
   , NumObjectIdsReq
-  , [(objectId, object)]
+  , Map objectId object
+  -- ^ objectsOwtPool
   , RefCountDiff objectId
   , DecisionPeerState objectId object
   )
@@ -74,7 +75,6 @@ acknowledgeObjectIds
   sharedObjectState
   ps@DecisionPeerState
     { dpsIdsAvailable
-    , dpsObjectsRequestedButNotReceivedIds
     , dpsNumIdsInflight
     , dpsObjectsPending
     , dpsScore
@@ -86,12 +86,11 @@ acknowledgeObjectIds
       then
         ( pdIdsToAck
         , pdIdsToReq
-        , [(objectId, object)] pdObjectsOwtPool
+        , objectsOwtPool
         , refCountDiff
         , ps
             { dpsOutstandingFifo = dpsOutstandingFifo'
             , dpsIdsAvailable = dpsIdsAvailable'
-            , dpsObjectsRequestedButNotReceivedIds = dpsObjectsRequestedButNotReceivedIds'
             , dpsNumIdsInflight =
                 dpsNumIdsInflight
                   + pdIdsToReq
@@ -103,7 +102,7 @@ acknowledgeObjectIds
       else
         ( 0
         , 0
-        , [(objectId, object)] pdObjectsOwtPool
+        , objectsOwtPool
         , RefCountDiff Map.empty
         , ps{dpsObjectsOwtPool = dpsObjectsOwtPool'}
         )
@@ -113,7 +112,7 @@ acknowledgeObjectIds
     (pdIdsToReq, acknowledgedObjectIds, dpsOutstandingFifo') =
       splitAcknowledgedObjectIds policy sharedObjectState ps
 
-    pdObjectsOwtPool =
+    objectsOwtPoolList =
       [ (objectId, object)
       | objectId <- toList toObjectPoolObjectIds
       , objectId `Map.notMember` dgsObjectsPending sharedObjectState
@@ -122,9 +121,9 @@ acknowledgeObjectIds
     (toObjectPoolObjectIds, _) =
       StrictSeq.spanl (`Map.member` dpsObjectsPending) acknowledgedObjectIds
 
-    pdObjectsOwtPoolMap = Map.fromList pdObjectsOwtPool
+    objectsOwtPool = Map.fromList objectsOwtPoolList
 
-    dpsObjectsOwtPool' = dpsObjectsOwtPool <> pdObjectsOwtPoolMap
+    dpsObjectsOwtPool' = dpsObjectsOwtPool <> objectsOwtPool
 
     (dpsObjectsPending', ackedDownloadedObjects) = Map.partitionWithKey (\objectId _ -> objectId `Set.member` liveSet) dpsObjectsPending
     -- latexObjects: objects which were downloaded by another peer before we
@@ -132,7 +131,7 @@ acknowledgeObjectIds
     -- `dgsObjectsPending`.
     lateObjects =
       Map.filterWithKey
-        (\objectId _ -> objectId `Map.notMember` pdObjectsOwtPoolMap)
+        (\objectId _ -> objectId `Map.notMember` objectsOwtPool)
         ackedDownloadedObjects
     dpsScore' = dpsScore + fromIntegral (Map.size lateObjects)
 
@@ -144,7 +143,6 @@ acknowledgeObjectIds
     -- `dpsOutstandingFifo''`, but also return the unknown set before any
     -- modifications (which is used to compute `dpsOutstandingFifo''`
     -- above).
-    dpsObjectsRequestedButNotReceivedIds' = dpsObjectsRequestedButNotReceivedIds `Set.intersection` liveSet
 
     refCountDiff =
       RefCountDiff $
@@ -180,7 +178,6 @@ splitAcknowledgedObjectIds
     }
   DecisionPeerState
     { dpsOutstandingFifo
-    , dpsObjectsRequestedButNotReceivedIds
     , dpsObjectsPending
     , dpsObjectsInflightIds
     , dpsNumIdsInflight
@@ -210,7 +207,7 @@ splitAcknowledgedObjectIds
 -- | `RefCountDiff` represents a map of `objectId` which can be acknowledged
 -- together with their multiplicities.
 newtype RefCountDiff objectId = RefCountDiff
-  { objectIdsToAck :: Map objectId Int
+  { rcdIdsToAckMultiplicities :: Map objectId Int
   }
 
 updateRefCounts ::
@@ -540,7 +537,6 @@ collectObjectsImpl
       ps'' =
         ps
           { dpsIdsAvailable = dpsIdsAvailable''
-          , dpsObjectsRequestedButNotReceivedIds = dpsObjectsRequestedButNotReceivedIds''
           , dpsObjectsInflightIds = dpsObjectsInflightIds'
           , dpsObjectsPending = dpsObjectsPending'
           }
