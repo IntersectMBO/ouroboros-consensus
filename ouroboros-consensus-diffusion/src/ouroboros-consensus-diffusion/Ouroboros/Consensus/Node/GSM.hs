@@ -56,8 +56,6 @@ import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
 import qualified Ouroboros.Consensus.Ledger.Basics as L
 import Ouroboros.Consensus.Node.GsmState
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
-import Ouroboros.Consensus.Util.NormalForm.StrictTVar (StrictTVar)
-import qualified Ouroboros.Consensus.Util.NormalForm.StrictTVar as StrictSTM
 import System.FS.API
   ( HasFS
   , createDirectoryIfMissing
@@ -97,7 +95,7 @@ data CandidateVersusSelection
     WhetherCandidateIsBetter !Bool
   deriving (Eq, Show)
 
-data GsmView m upstreamPeer selection chainSyncState = GsmView
+data GsmView m upstreamPeer selection peerState = GsmView
   { antiThunderingHerd :: Maybe StdGen
   -- ^ An initial seed used to randomly increase 'minCaughtUpDuration' by up
   -- to 15% every transition from Syncing to CaughtUp, in order to avoid a
@@ -108,13 +106,13 @@ data GsmView m upstreamPeer selection chainSyncState = GsmView
       STM
         m
         ( selection ->
-          chainSyncState ->
+          peerState ->
           CandidateVersusSelection
         )
   -- ^ Whether the candidate from the @chainSyncState@ is preferable to the
   -- selection. This can depend on external state (Peras certificates boosting
   -- blocks).
-  , peerIsIdle :: chainSyncState -> Bool
+  , peerIsIdle :: peerState -> Bool
   , durationUntilTooOld :: Maybe (selection -> m DurationFromNow)
   -- ^ How long from now until the selection will be so old that the node
   -- should exit the @CaughtUp@ state
@@ -123,10 +121,8 @@ data GsmView m upstreamPeer selection chainSyncState = GsmView
   , equivalent :: selection -> selection -> Bool
   -- ^ Whether the two selections are equivalent for the purpose of the
   -- Genesis State Machine
-  , getChainSyncStates ::
-      STM m (Map.Map upstreamPeer (StrictTVar m chainSyncState))
-  -- ^ The current ChainSync state with the latest candidates from the
-  -- upstream peers
+  , getPeerStates :: STM m (Map.Map upstreamPeer peerState)
+  -- ^ The current peer state with the latest candidates from the upstream peers
   , getCurrentSelection :: STM m selection
   -- ^ The node's current selection
   , minCaughtUpDuration :: NominalDiffTime
@@ -244,7 +240,7 @@ realGsmEntryPoints tracerArgs gsmView =
     , peerIsIdle
     , durationUntilTooOld
     , equivalent
-    , getChainSyncStates
+    , getPeerStates
     , getCurrentSelection
     , minCaughtUpDuration
     , setCaughtUpPersistentMark
@@ -370,12 +366,13 @@ realGsmEntryPoints tracerArgs gsmView =
 
   blockUntilCaughtUp :: STM m (TraceGsmEvent tracedSelection)
   blockUntilCaughtUp = do
-    -- STAGE 1: all ChainSync clients report no subsequent headers
-    varsState <- getChainSyncStates
-    states <- traverse StrictSTM.readTVar varsState
+    -- STAGE 1: all peers are idle, which means that
+    --   * all ChainSync clients report no subsequent headers, and
+    --   * all PerasCertDiffusion clients report no subsequent certificates
+    peerStates <- getPeerStates
     check $
-      not (Map.null states)
-        && all peerIsIdle states
+      not (Map.null peerStates)
+        && all peerIsIdle peerStates
 
     -- STAGE 2: no candidate is better than the node's current
     -- selection
@@ -388,16 +385,15 @@ realGsmEntryPoints tracerArgs gsmView =
     -- block; general Praos reasoning ensures that won't take particularly
     -- long.
     selection <- getCurrentSelection
-    candidates <- traverse StrictSTM.readTVar varsState
     candidateOverSelection <- getCandidateOverSelection
     let ok candidate =
           WhetherCandidateIsBetter False
             == candidateOverSelection selection candidate
-    check $ all ok candidates
+    check $ all ok peerStates
 
     pure $
       GsmEventEnterCaughtUp
-        (Map.size states)
+        (Map.size peerStates)
         (cnvSelection selection)
 
   -- STAGE 3: the previous stages weren't so slow that the idler
