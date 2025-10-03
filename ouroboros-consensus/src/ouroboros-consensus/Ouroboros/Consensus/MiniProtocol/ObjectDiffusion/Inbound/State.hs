@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -9,25 +10,32 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
   ( ObjectDiffusionInboundState (..)
   , ObjectDiffusionInboundHandle (..)
   , ObjectDiffusionInboundHandleCollection (..)
+  , ObjectDiffusionInboundStateView (..)
   , newObjectDiffusionInboundHandleCollection
+  , bracketObjectDiffusionInbound
   )
 where
 
+import Control.Monad.Class.MonadThrow (bracket)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (BlockSupportsProtocol, HasHeader, Header)
+import Ouroboros.Consensus.MiniProtocol.Util.Idling (Idling (..))
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike (..)
   , MonadSTM (..)
   , StrictTVar
   , modifyTVar
   , newTVar
+  , newTVarIO
   , readTVar
   )
 
 -- | An ObjectDiffusion inbound client state that's used by other components.
+--
+-- NOTE: 'blk' is not needed for now, but we keep it for future use.
 data ObjectDiffusionInboundState blk = ObjectDiffusionInboundState
   { odisIdling :: !Bool
   -- ^ Whether we have received all objects from a peer
@@ -82,3 +90,47 @@ newObjectDiffusionInboundHandleCollection = do
       , odihcRemoveAllHandles =
           modifyTVar handlesMap (const mempty)
       }
+
+-- | Interface for the ObjectDiffusion client to its state allocated by
+-- 'bracketChainSyncClient'.
+data ObjectDiffusionInboundStateView m = ObjectDiffusionInboundStateView
+  { odisvIdling :: !(Idling m)
+  }
+  deriving stock Generic
+
+bracketObjectDiffusionInbound ::
+  forall m peer blk a.
+  (IOLike m, HasHeader blk, NoThunks (Header blk)) =>
+  ObjectDiffusionInboundHandleCollection peer m blk ->
+  peer ->
+  (ObjectDiffusionInboundStateView m -> m a) ->
+  m a
+bracketObjectDiffusionInbound handles peer body =
+  mkObjectDiffusionInboundState >>= \odiState ->
+    bracket
+      (acquireContext odiState)
+      releaseContext
+      body
+ where
+  acquireContext odiState = atomically $ do
+    odihcAddHandle handles peer $
+      ObjectDiffusionInboundHandle
+        { odihState = odiState
+        }
+    return
+      ObjectDiffusionInboundStateView
+        { odisvIdling =
+            Idling
+              { idlingStart = atomically $ modifyTVar odiState $ \s -> s{odisIdling = True}
+              , idlingStop = atomically $ modifyTVar odiState $ \s -> s{odisIdling = False}
+              }
+        }
+
+  releaseContext _ = atomically $ do
+    odihcRemoveHandle handles peer
+
+  mkObjectDiffusionInboundState =
+    newTVarIO
+      ObjectDiffusionInboundState
+        { odisIdling = False
+        }

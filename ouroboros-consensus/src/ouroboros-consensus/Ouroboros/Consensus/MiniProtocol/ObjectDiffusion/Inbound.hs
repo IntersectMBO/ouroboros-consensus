@@ -38,7 +38,11 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Network.TypedProtocol.Core (N (Z), Nat (..), natToInt)
 import NoThunks.Class (NoThunks (..), unsafeNoThunks)
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+  ( ObjectDiffusionInboundStateView (..)
+  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+import Ouroboros.Consensus.MiniProtocol.Util.Idling qualified as Idling
 import Ouroboros.Network.ControlMessage
 import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
@@ -131,13 +135,15 @@ objectDiffusionInbound ::
   ObjectPoolWriter objectId object m ->
   NodeToNodeVersion ->
   ControlMessageSTM m ->
+  ObjectDiffusionInboundStateView m ->
   ObjectDiffusionInboundPipelined objectId object m ()
 objectDiffusionInbound
   tracer
   (maxFifoLength, maxNumIdsToReq, maxNumObjectsToReq)
   ObjectPoolWriter{..}
   _version
-  controlMessageSTM =
+  controlMessageSTM
+  state =
     ObjectDiffusionInboundPipelined $ do
       continueWithStateM (go Zero) initialInboundSt
    where
@@ -242,6 +248,8 @@ objectDiffusionInbound
                 -- objectIds. Since this is the only thing to do now, we make this a
                 -- blocking call.
                 traceWith tracer (TraceObjectInboundCannotRequestMoreObjects (natToInt n))
+                -- Before blocking, signal to the protocol client that we are idling
+                Idling.idlingStart (odisvIdling state)
                 pure $ continueWithState goReqObjectIdsBlocking st
 
           -- We have pipelined some requests, so there are some replies in flight.
@@ -378,7 +386,9 @@ objectDiffusionInbound
         $ SendMsgRequestObjectIdsBlocking
           (numToAckOnNextReq st)
           numIdsToRequest
-          ( \neCollectedIds ->
+          ( \neCollectedIds -> do
+              -- We just got some new object id's, so we are no longer idling
+              Idling.idlingStop (odisvIdling state)
               collectAndContinueWithState
                 (goCollect Zero)
                 st
