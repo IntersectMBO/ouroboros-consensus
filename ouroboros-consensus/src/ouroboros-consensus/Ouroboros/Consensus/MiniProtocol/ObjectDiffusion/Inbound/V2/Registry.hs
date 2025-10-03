@@ -78,7 +78,7 @@ data PeerObjectAPI m objectId object = PeerObjectAPI
       -- \^ requested objectIds
       Map objectId object ->
       -- \^ received objects
-      m (Maybe ObjectDiffusionProtocolError)
+      m (Maybe ObjectDiffusionInboundError)
   -- ^ handle received objects
   , submitObjectToObjectPool ::
       Tracer m (TraceObjectDiffusionInbound objectId object) ->
@@ -105,10 +105,10 @@ withPeer ::
   , Ord peerAddr
   , Show peerAddr
   ) =>
-  Tracer m (TraceObjectLogic peerAddr objectId object) ->
+  Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   ObjectChannelsVar m peerAddr objectId object ->
   ObjectObjectPoolSem m ->
-  PeerDecisionPolicy ->
+  DecisionPolicy ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   ObjectDiffusionObjectPoolReader objectId object ticketNo m ->
   ObjectDiffusionObjectPoolWriter objectId object ticketNo m ->
@@ -123,7 +123,7 @@ withPeer
   tracer
   channelsVar
   (ObjectObjectPoolSem objectpoolSem)
-  policy@PeerDecisionPolicy{globalObtainedButNotAckedObjectsMinLifetime}
+  policy@DecisionPolicy{dpMinObtainedButNotAckedObjectsLifetime}
   sharedStateVar
   ObjectDiffusionObjectPoolReader{objectpoolGetSnapshot}
   ObjectDiffusionObjectPoolWriter{objectpoolAddObjects}
@@ -173,24 +173,24 @@ withPeer
     registerPeer ::
       DecisionGlobalState peerAddr objectId object ->
       DecisionGlobalState peerAddr objectId object
-    registerPeer st@DecisionGlobalState{peerStates} =
+    registerPeer st@DecisionGlobalState{dgsPeerStates} =
       st
-        { peerStates =
+        { dgsPeerStates =
             Map.insert
               peerAddr
               DecisionPeerState
-                { availableObjectIds = Map.empty
-                , numIdsInFlight = 0
-                , inFlightSize = 0
-                , inFlight = Set.empty
-                , outstandingFifo = StrictSeq.empty
-                , requestedButNotReceived = Set.empty
-                , score = 0
-                , scoreTs = Time 0
-                , pendingObjects = Map.empty
-                , toPoolObjects = Map.empty
+                { dpsIdsAvailable = Map.empty
+                , dpsNumIdsInflight = 0
+                , dpsObjectsInflightIdsSize = 0
+                , dpsObjectsInflightIds = Set.empty
+                , dpsOutstandingFifo = StrictSeq.empty
+                , dpsObjectsRequestedButNotReceivedIds = Set.empty
+                , dpsScore = 0
+                , dpsScoreLastUpdatedAt = Time 0
+                , dpsObjectsPending = Map.empty
+                , dpsObjectsOwtPool = Map.empty
                 }
-              peerStates
+              dgsPeerStates
         }
 
     -- TODO: this function needs to be tested!
@@ -200,29 +200,29 @@ withPeer
       DecisionGlobalState peerAddr objectId object
     unregisterPeer
       st@DecisionGlobalState
-        { peerStates
-        , globalObtainedButNotAckedObjects
-        , referenceCounts
-        , globalInFlightObjects
-        , globalInFlightObjectsSize
-        , globalToPoolObjects
+        { dgsPeerStates
+        , dgsObjectsPending
+        , dgsObjectReferenceCounts
+        , dgsObjectsInflightMultiplicities
+        , dgsObjectsInflightMultiplicitiesSize
+        , dgsObjectsOwtPool
         } =
         st
-          { peerStates = peerStates'
-          , globalObtainedButNotAckedObjects = globalObtainedButNotAckedObjects'
-          , referenceCounts = referenceCounts'
-          , globalInFlightObjects = globalInFlightObjects'
-          , globalInFlightObjectsSize = globalInFlightObjectsSize'
-          , globalToPoolObjects = globalToPoolObjects'
+          { dgsPeerStates = dgsPeerStates'
+          , dgsObjectsPending = dgsObjectsPending'
+          , dgsObjectReferenceCounts = dgsObjectReferenceCounts'
+          , dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
+          , dgsObjectsInflightMultiplicitiesSize = dgsObjectsInflightMultiplicitiesSize'
+          , dgsObjectsOwtPool = dgsObjectsOwtPool'
           }
        where
         ( DecisionPeerState
-            { outstandingFifo
-            , inFlight
-            , inFlightSize
-            , toPoolObjects
+            { dpsOutstandingFifo
+            , dpsObjectsInflightIds
+            , dpsObjectsInflightIdsSize
+            , dpsObjectsOwtPool
             }
-          , peerStates'
+          , dgsPeerStates'
           ) =
             Map.alterF
               ( \case
@@ -230,38 +230,38 @@ withPeer
                   Just a -> (a, Nothing)
               )
               peerAddr
-              peerStates
+              dgsPeerStates
 
-        referenceCounts' =
+        dgsObjectReferenceCounts' =
           Foldable.foldl'
             ( flip $ Map.update \cnt ->
                 if cnt > 1
                   then Just $! pred cnt
                   else Nothing
             )
-            referenceCounts
-            outstandingFifo
+            dgsObjectReferenceCounts
+            dpsOutstandingFifo
 
-        liveSet = Map.keysSet referenceCounts'
+        liveSet = Map.keysSet dgsObjectReferenceCounts'
 
-        globalObtainedButNotAckedObjects' =
-          globalObtainedButNotAckedObjects
+        dgsObjectsPending' =
+          dgsObjectsPending
             `Map.restrictKeys` liveSet
 
-        globalInFlightObjects' = Foldable.foldl' purgeInflightObjects globalInFlightObjects inFlight
-        globalInFlightObjectsSize' = globalInFlightObjectsSize - inFlightSize
+        dgsObjectsInflightMultiplicities' = Foldable.foldl' purgeInflightObjects dgsObjectsInflightMultiplicities dpsObjectsInflightIds
+        dgsObjectsInflightMultiplicitiesSize' = dgsObjectsInflightMultiplicitiesSize - dpsObjectsInflightIdsSize
 
         -- When we unregister a peer, we need to subtract all objects in the
-        -- `toPoolObjects`, as they will not be submitted to the objectpool.
-        globalToPoolObjects' =
+        -- `dpsObjectsOwtPool`, as they will not be submitted to the objectpool.
+        dgsObjectsOwtPool' =
           Foldable.foldl'
             ( flip $ Map.update \cnt ->
                 if cnt > 1
                   then Just $! pred cnt
                   else Nothing
             )
-            globalToPoolObjects
-            (Map.keysSet toPoolObjects)
+            dgsObjectsOwtPool
+            (Map.keysSet dpsObjectsOwtPool)
 
         purgeInflightObjects m objectId = Map.alter fn objectId m
          where
@@ -293,7 +293,7 @@ withPeer
       addObject = do
         mpSnapshot <- atomically objectpoolGetSnapshot
 
-        -- Note that checking if the objectpool contains a OBJECT before
+        -- Note that checking if the objectpool contains a object before
         -- spending several ms attempting to add it to the pool has
         -- been judged immoral.
         if objectpoolHasObject mpSnapshot objectId
@@ -342,64 +342,64 @@ withPeer
         _
         ObjectRejected
         st@DecisionGlobalState
-          { peerStates
-          , globalToPoolObjects
+          { dgsPeerStates
+          , dgsObjectsOwtPool
           } =
           st
-            { peerStates = peerStates'
-            , globalToPoolObjects = globalToPoolObjects'
+            { dgsPeerStates = dgsPeerStates'
+            , dgsObjectsOwtPool = dgsObjectsOwtPool'
             }
          where
-          globalToPoolObjects' =
+          dgsObjectsOwtPool' =
             Map.update
               (\case 1 -> Nothing; n -> Just $! pred n)
               objectId
-              globalToPoolObjects
+              dgsObjectsOwtPool
 
-          peerStates' = Map.update fn peerAddr peerStates
+          dgsPeerStates' = Map.update fn peerAddr dgsPeerStates
            where
-            fn ps = Just $! ps{toPoolObjects = Map.delete objectId (toPoolObjects ps)}
+            fn ps = Just $! ps{dpsObjectsOwtPool = Map.delete objectId (dpsObjectsOwtPool ps)}
       updateBufferedObject
         now
         ObjectAccepted
         st@DecisionGlobalState
-          { peerStates
-          , globalObtainedButNotAckedObjects
-          , referenceCounts
-          , globalRententionTimeouts
-          , globalToPoolObjects
+          { dgsPeerStates
+          , dgsObjectsPending
+          , dgsObjectReferenceCounts
+          , dgsRententionTimeouts
+          , dgsObjectsOwtPool
           } =
           st
-            { peerStates = peerStates'
-            , globalObtainedButNotAckedObjects = globalObtainedButNotAckedObjects'
-            , globalRententionTimeouts = globalRententionTimeouts'
-            , referenceCounts = referenceCounts'
-            , globalToPoolObjects = globalToPoolObjects'
+            { dgsPeerStates = dgsPeerStates'
+            , dgsObjectsPending = dgsObjectsPending'
+            , dgsRententionTimeouts = dgsRententionTimeouts'
+            , dgsObjectReferenceCounts = dgsObjectReferenceCounts'
+            , dgsObjectsOwtPool = dgsObjectsOwtPool'
             }
          where
-          globalToPoolObjects' =
+          dgsObjectsOwtPool' =
             Map.update
               (\case 1 -> Nothing; n -> Just $! pred n)
               objectId
-              globalToPoolObjects
+              dgsObjectsOwtPool
 
-          globalRententionTimeouts' = Map.alter fn (addTime globalObtainedButNotAckedObjectsMinLifetime now) globalRententionTimeouts
+          dgsRententionTimeouts' = Map.alter fn (addTime dpMinObtainedButNotAckedObjectsLifetime now) dgsRententionTimeouts
            where
             fn :: Maybe [objectId] -> Maybe [objectId]
             fn Nothing = Just [objectId]
             fn (Just objectIds) = Just $! (objectId : objectIds)
 
-          referenceCounts' = Map.alter fn objectId referenceCounts
+          dgsObjectReferenceCounts' = Map.alter fn objectId dgsObjectReferenceCounts
            where
             fn :: Maybe Int -> Maybe Int
             fn Nothing = Just 1
             fn (Just n) = Just $! succ n
 
-          globalObtainedButNotAckedObjects' = Map.insert objectId (Just object) globalObtainedButNotAckedObjects
+          dgsObjectsPending' = Map.insert objectId (Just object) dgsObjectsPending
 
-          peerStates' = Map.update fn peerAddr peerStates
+          dgsPeerStates' = Map.update fn peerAddr dgsPeerStates
            where
-            fn ps = Just $! ps{toPoolObjects = Map.delete objectId (toPoolObjects ps)}
+            fn ps = Just $! ps{dpsObjectsOwtPool = Map.delete objectId (dpsObjectsOwtPool ps)}
 
     handleReceivedObjectIds ::
       NumObjectIdsReq ->
@@ -421,12 +421,12 @@ withPeer
       -- \^ requested objectIds with their announced size
       Map objectId object ->
       -- \^ received objects
-      m (Maybe ObjectDiffusionProtocolError)
+      m (Maybe ObjectDiffusionInboundError)
     handleReceivedObjects objectIds objects =
       collectObjects tracer objectSize sharedStateVar peerAddr objectIds objects
 
-    -- Update `score` & `scoreTs` fields of `DecisionPeerState`, return the new
-    -- updated `score`.
+    -- Update `dpsScore` & `dpsScoreLastUpdatedAt` fields of `DecisionPeerState`, return the new
+    -- updated `dpsScore`.
     --
     -- PRECONDITION: the `Double` argument is non-negative.
     countRejectedObjects ::
@@ -437,33 +437,33 @@ withPeer
       | n < 0 =
           error ("ObjectDiffusion.countRejectedObjects: invariant violation for peer " ++ show peerAddr)
     countRejectedObjects now n = atomically $ stateTVar sharedStateVar $ \st ->
-      let (result, peerStates') = Map.alterF fn peerAddr (peerStates st)
-       in (result, st{peerStates = peerStates'})
+      let (result, dgsPeerStates') = Map.alterF fn peerAddr (dgsPeerStates st)
+       in (result, st{dgsPeerStates = dgsPeerStates'})
      where
       fn :: Maybe (DecisionPeerState objectId object) -> (Double, Maybe (DecisionPeerState objectId object))
       fn Nothing = error ("ObjectDiffusion.withPeer: invariant violation for peer " ++ show peerAddr)
-      fn (Just ps) = (score ps', Just $! ps')
+      fn (Just ps) = (dpsScore ps', Just $! ps')
        where
         ps' = updateRejects policy now n ps
 
 updateRejects ::
-  PeerDecisionPolicy ->
+  DecisionPolicy ->
   Time ->
   Double ->
   DecisionPeerState objectId object ->
   DecisionPeerState objectId object
-updateRejects _ now 0 pts | score pts == 0 = pts{scoreTs = now}
+updateRejects _ now 0 pts | dpsScore pts == 0 = pts{dpsScoreLastUpdatedAt = now}
 updateRejects
-  PeerDecisionPolicy{scoreRate, scoreMax}
+  DecisionPolicy{dpScoreDrainRate, dpScoreMaxRejections}
   now
   n
-  pts@DecisionPeerState{score, scoreTs} =
-    let duration = diffTime now scoreTs
-        !drain = realToFrac duration * scoreRate
-        !drained = max 0 $ score - drain
+  pts@DecisionPeerState{dpsScore, dpsScoreLastUpdatedAt} =
+    let duration = diffTime now dpsScoreLastUpdatedAt
+        !drain = realToFrac duration * dpScoreDrainRate
+        !drained = max 0 $ dpsScore - drain
      in pts
-          { score = min scoreMax $ drained + n
-          , scoreTs = now
+          { dpsScore = min dpScoreMaxRejections $ drained + n
+          , dpsScoreLastUpdatedAt = now
           }
 
 drainRejectionThread ::
@@ -473,8 +473,8 @@ drainRejectionThread ::
   , MonadThread m
   , Ord objectId
   ) =>
-  Tracer m (TraceObjectLogic peerAddr objectId object) ->
-  PeerDecisionPolicy ->
+  Tracer m (TraceDecisionLogic peerAddr objectId object) ->
+  DecisionPolicy ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   m Void
 drainRejectionThread tracer policy sharedStateVar = do
@@ -494,13 +494,13 @@ drainRejectionThread tracer policy sharedStateVar = do
       st <- readTVar sharedStateVar
       let ptss =
             if now > nextDrain
-              then Map.map (updateRejects policy now 0) (peerStates st)
-              else peerStates st
+              then Map.map (updateRejects policy now 0) (dgsPeerStates st)
+              else dgsPeerStates st
           st' =
             tickTimedObjects
               now
               st
-                { peerStates = ptss
+                { dgsPeerStates = ptss
                 }
       writeTVar sharedStateVar st'
       return st'
@@ -521,9 +521,9 @@ decisionLogicThread ::
   , Ord objectId
   , Hashable peerAddr
   ) =>
-  Tracer m (TraceObjectLogic peerAddr objectId object) ->
+  Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   Tracer m ObjectDiffusionCounters ->
-  PeerDecisionPolicy ->
+  DecisionPolicy ->
   ObjectChannelsVar m peerAddr objectId object ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   m Void
@@ -557,7 +557,7 @@ decisionLogicThread tracer counterTracer policy objectChannelsVar sharedStateVar
           objectChannelMap
           decisions
       )
-    traceWith counterTracer (mkObjectDiffusionCounters st)
+    traceWith counterTracer (makeObjectDiffusionCounters st)
     go
 
   -- Variant of modifyMVar_ that puts a default value if the MVar is empty.
@@ -583,9 +583,9 @@ decisionLogicThreads ::
   , Ord objectId
   , Hashable peerAddr
   ) =>
-  Tracer m (TraceObjectLogic peerAddr objectId object) ->
+  Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   Tracer m ObjectDiffusionCounters ->
-  PeerDecisionPolicy ->
+  DecisionPolicy ->
   ObjectChannelsVar m peerAddr objectId object ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   m Void
