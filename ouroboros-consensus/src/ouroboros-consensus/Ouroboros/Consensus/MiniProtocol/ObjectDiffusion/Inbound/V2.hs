@@ -22,8 +22,8 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
   , newObjectObjectPoolSem
   , DecisionGlobalStateVar
   , newDecisionGlobalStateVar
-  , PeerDecisionPolicy (..)
-  , defaultPeerDecisionPolicy
+  , DecisionPolicy (..)
+  , defaultDecisionPolicy
   ) where
 
 import Control.Exception (assert)
@@ -80,27 +80,27 @@ objectDiffusionInbound
     serverIdle = do
       -- Block on next decision.
       object@PeerDecision
-        { objectsToRequest = objectsToRequest
-        , objectsToObjectPool = ObjectsToObjectPool{listOfObjectsToObjectPool}
+        { pdObjectsToReqIds = pdObjectsToReqIds
+        , pdObjectsOwtPool = [(objectId, object)]{listOf[(objectId, object)]}
         } <-
         readPeerDecision
       traceWith tracer (TraceObjectInboundDecision object)
 
-      let !collected = length listOfObjectsToObjectPool
+      let !collected = length listOf[(objectId, object)]
 
-      -- Only attempt to add OBJECTs if we have some work to do
+      -- Only attempt to add objects if we have some work to do
       when (collected > 0) $ do
         -- submitObjectToObjectPool traces:
         -- \* `TraceObjectDiffusionProcessed`,
         -- \* `TraceObjectInboundAddedToObjectPool`, and
         -- \* `TraceObjectInboundRejectedFromObjectPool`
         -- events.
-        mapM_ (uncurry $ submitObjectToObjectPool tracer) listOfObjectsToObjectPool
+        mapM_ (uncurry $ submitObjectToObjectPool tracer) listOf[(objectId, object)]
 
       -- TODO:
       -- We can update the state so that other `object-submission` servers will
       -- not try to add these objects to the objectpool.
-      if Map.null objectsToRequest
+      if Map.null pdObjectsToReqIds
         then serverReqObjectIds Zero object
         else serverReqObjects object
 
@@ -108,10 +108,10 @@ objectDiffusionInbound
     serverReqObjects ::
       PeerDecision objectId object ->
       m (ServerStIdle Z objectId object m ())
-    serverReqObjects object@PeerDecision{objectsToRequest = objectsToRequest} =
+    serverReqObjects object@PeerDecision{pdObjectsToReqIds = pdObjectsToReqIds} =
       pure $
         SendMsgRequestObjectsPipelined
-          objectsToRequest
+          pdObjectsToReqIds
           (serverReqObjectIds (Succ Zero) object)
 
     serverReqObjectIds ::
@@ -121,7 +121,7 @@ objectDiffusionInbound
       m (ServerStIdle n objectId object m ())
     serverReqObjectIds
       n
-      PeerDecision{objectIdsToRequest = 0} =
+      PeerDecision{pdIdsToReq = 0} =
         case n of
           Zero -> serverIdle
           Succ _ -> handleReplies n
@@ -132,9 +132,9 @@ objectDiffusionInbound
       -- mini-protocol.
       Zero
       PeerDecision
-        { objectIdsToAcknowledge = objectIdsToAck
-        , objectPipelineObjectIds = False
-        , objectIdsToRequest = objectIdsToReq
+        { pdIdsToAck = objectIdsToAck
+        , pdCanPipelineIdsReq = False
+        , pdIdsToReq = objectIdsToReq
         } =
         pure $
           SendMsgRequestObjectIdsBlocking
@@ -154,9 +154,9 @@ objectDiffusionInbound
     serverReqObjectIds
       n@Zero
       PeerDecision
-        { objectIdsToAcknowledge = objectIdsToAck
-        , objectPipelineObjectIds = True
-        , objectIdsToRequest = objectIdsToReq
+        { pdIdsToAck = objectIdsToAck
+        , pdCanPipelineIdsReq = True
+        , pdIdsToReq = objectIdsToReq
         } =
         pure $
           SendMsgRequestObjectIdsPipelined
@@ -166,13 +166,13 @@ objectDiffusionInbound
     serverReqObjectIds
       n@Succ{}
       PeerDecision
-        { objectIdsToAcknowledge = objectIdsToAck
-        , objectPipelineObjectIds
-        , objectIdsToRequest = objectIdsToReq
+        { pdIdsToAck = objectIdsToAck
+        , pdCanPipelineIdsReq
+        , pdIdsToReq = objectIdsToReq
         } =
         -- it is impossible that we have had `object`'s to request (Succ{} - is an
         -- evidence for that), but no unacknowledged `objectId`s.
-        assert objectPipelineObjectIds $
+        assert pdCanPipelineIdsReq $
           pure $
             SendMsgRequestObjectIdsPipelined
               objectIdsToAck
