@@ -6,14 +6,14 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
-  ( ObjectChannels (..)
-  , ObjectChannelsVar
-  , ObjectObjectPoolSem
+  ( PeerDecisionChannels (..)
+  , PeerDecisionChannelsVar
+  , ObjectPoolSem
   , DecisionGlobalStateVar
   , newDecisionGlobalStateVar
-  , newObjectChannelsVar
-  , newObjectObjectPoolSem
-  , PeerObjectAPI (..)
+  , newPeerDecisionChannelsVar
+  , newObjectPoolSem
+  , InboundPeerAPI (..)
   , decisionLogicThreads
   , withPeer
   ) where
@@ -44,55 +44,35 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 
--- | Communication channels between `ObjectDiffusion` client mini-protocol and
--- decision logic.
-newtype ObjectChannels m peerAddr objectId object = ObjectChannels
-  { objectChannelMap :: Map peerAddr (StrictMVar m (PeerDecision objectId object))
-  }
+-- | Communication channels between `ObjectDiffusion` mini-protocol inbound side
+-- and decision logic.
+type PeerDecisionChannels m peerAddr objectId object =
+  Map peerAddr (StrictMVar m (PeerDecision objectId object))
 
-type ObjectChannelsVar m peerAddr objectId object =
-  StrictMVar m (ObjectChannels m peerAddr objectId object)
+type PeerDecisionChannelsVar m peerAddr objectId object =
+  StrictMVar m (PeerDecisionChannels m peerAddr objectId object)
 
-newObjectChannelsVar :: MonadMVar m => m (ObjectChannelsVar m peerAddr objectId object)
-newObjectChannelsVar = newMVar (ObjectChannels Map.empty)
+newPeerDecisionChannelsVar ::
+  MonadMVar m => m (PeerDecisionChannelsVar m peerAddr objectId object)
+newPeerDecisionChannelsVar = newMVar (PeerDecisionChannels Map.empty)
 
-newtype ObjectObjectPoolSem m = ObjectObjectPoolSem (TSem m)
+-- | Semaphore to guard access to the ObjectPool
+newtype ObjectPoolSem m = ObjectPoolSem (TSem m)
 
-newObjectObjectPoolSem :: MonadSTM m => m (ObjectObjectPoolSem m)
-newObjectObjectPoolSem = ObjectObjectPoolSem <$> atomically (newTSem 1)
+newObjectPoolSem :: MonadSTM m => m (ObjectPoolSem m)
+newObjectPoolSem = ObjectPoolSem <$> atomically (newTSem 1)
 
--- | API to access `DecisionPeerState` inside `DecisionPeerStateVar`.
-data PeerObjectAPI m objectId object = PeerObjectAPI
+data InboundPeerAPI m objectId object = InboundPeerAPI
   { readPeerDecision :: m (PeerDecision objectId object)
   -- ^ a blocking action which reads `PeerDecision`
-  , handleReceivedObjectIds ::
-      NumObjectIdsReq ->
-      StrictSeq objectId ->
-      -- \^ received objectIds
-      Map objectId SizeInBytes ->
-      -- \^ received sizes of advertised object's
-      m ()
-  -- ^ handle received objectIds
-  , handleReceivedObjects ::
-      Map objectId SizeInBytes ->
-      -- \^ requested objectIds
-      Map objectId object ->
-      -- \^ received objects
-      m (Maybe ObjectDiffusionInboundError)
-  -- ^ handle received objects
-  , submitObjectToObjectPool ::
-      Tracer m (TraceObjectDiffusionInbound objectId object) ->
-      objectId ->
-      object ->
-      m ()
-  -- ^ submit the given (objectId, object) to the objectpool.
+  , handleReceivedIds :: [objectId] -> m ()
+  , handleReceivedObjects :: [object] -> m ()
+  , submitObjectsToPool :: [object] -> m ()
   }
 
-data ObjectObjectPoolResult = ObjectAccepted | ObjectRejected
-
 -- | A bracket function which registers / de-registers a new peer in
--- `DecisionGlobalStateVar` and `DecisionPeerStateVar`s,  which exposes `DecisionPeerStateAPI`.
--- `DecisionPeerStateAPI` is only safe inside the  `withPeer` scope.
+-- `DecisionGlobalStateVar` and `PeerDecisionChannelsVar`s, which exposes `InboundPeerAPI`.
+-- `InboundPeerAPI` is only safe inside the `withPeer` scope.
 withPeer ::
   forall object peerAddr objectId ticketNo m a.
   ( MonadMask m
@@ -106,74 +86,93 @@ withPeer ::
   , Show peerAddr
   ) =>
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
-  ObjectChannelsVar m peerAddr objectId object ->
-  ObjectObjectPoolSem m ->
+  PeerDecisionChannelsVar m peerAddr objectId object ->
+  ObjectPoolSem m ->
   DecisionPolicy ->
   DecisionGlobalStateVar m peerAddr objectId object ->
-  ObjectDiffusionObjectPoolReader objectId object ticketNo m ->
-  ObjectDiffusionObjectPoolWriter objectId object ticketNo m ->
-  (object -> SizeInBytes) ->
+  ObjectPoolReader objectId object ticketNo m ->
+  ObjectPoolWriter objectId object ticketNo m ->
+  -- | new peer
   peerAddr ->
-  --  ^ new peer
-
-  -- | callback which gives access to `DecisionPeerStateAPI`
-  (PeerObjectAPI m objectId object -> m a) ->
+  -- | callback which gives access to `InboundPeerAPI`
+  (InboundPeerAPI m objectId object -> m a) ->
   m a
 withPeer
-  tracer
-  channelsVar
-  (ObjectObjectPoolSem objectpoolSem)
+  decisionTracer
+  decisionChannelsVar
+  (ObjectPoolSem poolSem)
   policy@DecisionPolicy{dpMinObtainedButNotAckedObjectsLifetime}
-  sharedStateVar
-  ObjectDiffusionObjectPoolReader{objectpoolGetSnapshot}
-  ObjectDiffusionObjectPoolWriter{objectpoolAddObjects}
-  objectSize
+  globalStateVar
+  ObjectPoolReader{}
+  ObjectPoolWriter{opwAddObjects}
   peerAddr
-  io =
-    bracket
-      ( do
-          -- create a communication channel
-          !peerObjectAPI <-
+  withApi =
+    bracket registerPeerAndCreateAPI unregisterPeer withAPI
+  where
+    registerPeerAndCreateAPI :: m (InboundPeerAPI m objectId object)
+    registerPeerAndCreateAPI = do
+          -- create the API for this peer, obtaining a channel for it in the process
+          !inboundPeerAPI <-
             modifyMVar
-              channelsVar
-              \ObjectChannels{objectChannelMap} -> do
-                chann <- newEmptyMVar
-                let (chann', objectChannelMap') =
-                      Map.alterF
-                        ( \mbChann ->
-                            let !chann'' = fromMaybe chann mbChann
-                             in (chann'', Just chann'')
-                        )
-                        peerAddr
-                        objectChannelMap
+              decisionChannelsVar
+              \peerToChannel -> do
+                -- We get a channel for this peer, and register it in peerToChannel.
+                (chan', peerToChannel') <-
+                  case peerToChannel Map.!? peerAddr of
+                    -- Checks if a channel already exists for this peer, in case we reuse it
+                    Just chan -> return (chan, peerToChannel)
+                    -- Otherwise create a new channel and register it
+                    Nothing -> do
+                      chan <- newEmptyMVar
+                      return (chan, Map.insert peerAddr chan peerToChannel)
                 return
-                  ( ObjectChannels{objectChannelMap = objectChannelMap'}
-                  , PeerObjectAPI
-                      { readPeerDecision = takeMVar chann'
-                      , handleReceivedObjectIds
-                      , handleReceivedObjects
-                      , submitObjectToObjectPool
+                  ( peerToChannel'
+                  , InboundPeerAPI
+                      { readPeerDecision = takeMVar chan'
+                      , handleReceivedIds =
+                          collectIds
+                            decisionTracer
+                            globalStateVar
+                            objectpoolGetSnapshot
+                            peerAddr
+                            numObjectIdsToReq
+                            objectIdsSeq
+                            objectIdsMap
+                      , handleReceivedObjects =
+                          collectObjects
+                            decisionTracer
+                            objectSize
+                            globalStateVar
+                            peerAddr
+                            objectIds
+                            objects
+                      , submitObjectsToPool
                       }
                   )
+          -- register the peer in the global state now
+          atomically $ modifyTVar globalStateVar registerPeerGlobalState
+          -- initialization is complete for this peer, it can proceed and
+          -- interact through its given API
+          return inboundPeerAPI
+      where
 
-          atomically $ modifyTVar sharedStateVar registerPeer
-          return peerObjectAPI
-      )
+    unregisterPeer :: InboundPeerAPI m objectId object -> m ()
+    unregisterPeer _ =
       -- the handler is a short blocking operation, thus we need to use
       -- `uninterruptibleMask_`
-      ( \_ -> uninterruptibleMask_ do
-          atomically $ modifyTVar sharedStateVar unregisterPeer
+      uninterruptibleMask_ do
+          -- unregister the peer from the global state
+          atomically $ modifyTVar globalStateVar unregisterPeerGlobalState
+          -- remove the channel of this peer from the global channel map
           modifyMVar_
-            channelsVar
-            \ObjectChannels{objectChannelMap} ->
-              return ObjectChannels{objectChannelMap = Map.delete peerAddr objectChannelMap}
-      )
-      io
-   where
-    registerPeer ::
+            decisionChannelsVar
+            \peerToChannel ->
+              return $ Map.delete peerAddr peerToChannel
+
+    registerPeerGlobalState ::
       DecisionGlobalState peerAddr objectId object ->
       DecisionGlobalState peerAddr objectId object
-    registerPeer st@DecisionGlobalState{dgsPeerStates} =
+    registerPeerGlobalState st@DecisionGlobalState{dgsPeerStates} =
       st
         { dgsPeerStates =
             Map.insert
@@ -195,10 +194,10 @@ withPeer
 
     -- TODO: this function needs to be tested!
     -- Issue: https://github.com/IntersectMBO/ouroboros-network/issues/5151
-    unregisterPeer ::
+    unregisterPeerGlobalState ::
       DecisionGlobalState peerAddr objectId object ->
       DecisionGlobalState peerAddr objectId object
-    unregisterPeer
+    unregisterPeerGlobalState
       st@DecisionGlobalState
         { dgsPeerStates
         , dgsObjectsPending
@@ -268,183 +267,26 @@ withPeer
           fn (Just n) | n > 1 = Just $! pred n
           fn _ = Nothing
 
-    --
-    -- PeerObjectAPI
-    --
-
-    submitObjectToObjectPool ::
-      Tracer m (TraceObjectDiffusionInbound objectId object) -> objectId -> object -> m ()
-    submitObjectToObjectPool objectTracer objectId object =
-      bracket_
-        (atomically $ waitTSem objectpoolSem)
-        (atomically $ signalTSem objectpoolSem)
-        $ do
-          start <- getMonotonicTime
-          res <- addObject
-          end <- getMonotonicTime
-          atomically $ modifyTVar sharedStateVar (updateBufferedObject end res)
-          let duration = end `diffTime` start
-          case res of
-            ObjectAccepted -> traceWith objectTracer (TraceObjectInboundAddedToObjectPool [objectId] duration)
-            ObjectRejected -> traceWith objectTracer (TraceObjectInboundRejectedFromObjectPool [objectId] duration)
-     where
-      -- add the object to the objectpool
-      addObject :: m ObjectObjectPoolResult
-      addObject = do
-        mpSnapshot <- atomically objectpoolGetSnapshot
-
-        -- Note that checking if the objectpool contains a object before
-        -- spending several ms attempting to add it to the pool has
-        -- been judged immoral.
-        if objectpoolHasObject mpSnapshot objectId
-          then do
-            !now <- getMonotonicTime
-            !s <- countRejectedObjects now 1
-            traceWith objectTracer $
-              TraceObjectDiffusionProcessed
-                ProcessedObjectCount
-                  { pobjectcAccepted = 0
-                  , pobjectcRejected = 1
-                  , pobjectcScore = s
-                  }
-            return ObjectRejected
-          else do
-            acceptedObjects <- objectpoolAddObjects [object]
-            end <- getMonotonicTime
-            if null acceptedObjects
-              then do
-                !s <- countRejectedObjects end 1
-                traceWith objectTracer $
-                  TraceObjectDiffusionProcessed
-                    ProcessedObjectCount
-                      { pobjectcAccepted = 0
-                      , pobjectcRejected = 1
-                      , pobjectcScore = s
-                      }
-                return ObjectRejected
-              else do
-                !s <- countRejectedObjects end 0
-                traceWith objectTracer $
-                  TraceObjectDiffusionProcessed
-                    ProcessedObjectCount
-                      { pobjectcAccepted = 1
-                      , pobjectcRejected = 0
-                      , pobjectcScore = s
-                      }
-                return ObjectAccepted
-
-      updateBufferedObject ::
-        Time ->
-        ObjectObjectPoolResult ->
-        DecisionGlobalState peerAddr objectId object ->
-        DecisionGlobalState peerAddr objectId object
-      updateBufferedObject
-        _
-        ObjectRejected
-        st@DecisionGlobalState
-          { dgsPeerStates
-          , dgsObjectsOwtPool
-          } =
-          st
-            { dgsPeerStates = dgsPeerStates'
-            , dgsObjectsOwtPool = dgsObjectsOwtPool'
-            }
-         where
-          dgsObjectsOwtPool' =
-            Map.update
-              (\case 1 -> Nothing; n -> Just $! pred n)
-              objectId
-              dgsObjectsOwtPool
-
-          dgsPeerStates' = Map.update fn peerAddr dgsPeerStates
-           where
-            fn ps = Just $! ps{dpsObjectsOwtPool = Map.delete objectId (dpsObjectsOwtPool ps)}
-      updateBufferedObject
-        now
-        ObjectAccepted
-        st@DecisionGlobalState
-          { dgsPeerStates
-          , dgsObjectsPending
-          , dgsObjectReferenceCounts
-          , dgsRententionTimeouts
-          , dgsObjectsOwtPool
-          } =
-          st
-            { dgsPeerStates = dgsPeerStates'
-            , dgsObjectsPending = dgsObjectsPending'
-            , dgsRententionTimeouts = dgsRententionTimeouts'
-            , dgsObjectReferenceCounts = dgsObjectReferenceCounts'
-            , dgsObjectsOwtPool = dgsObjectsOwtPool'
-            }
-         where
-          dgsObjectsOwtPool' =
-            Map.update
-              (\case 1 -> Nothing; n -> Just $! pred n)
-              objectId
-              dgsObjectsOwtPool
-
-          dgsRententionTimeouts' = Map.alter fn (addTime dpMinObtainedButNotAckedObjectsLifetime now) dgsRententionTimeouts
-           where
-            fn :: Maybe [objectId] -> Maybe [objectId]
-            fn Nothing = Just [objectId]
-            fn (Just objectIds) = Just $! (objectId : objectIds)
-
-          dgsObjectReferenceCounts' = Map.alter fn objectId dgsObjectReferenceCounts
-           where
-            fn :: Maybe Int -> Maybe Int
-            fn Nothing = Just 1
-            fn (Just n) = Just $! succ n
-
-          dgsObjectsPending' = Map.insert objectId (Just object) dgsObjectsPending
-
-          dgsPeerStates' = Map.update fn peerAddr dgsPeerStates
-           where
-            fn ps = Just $! ps{dpsObjectsOwtPool = Map.delete objectId (dpsObjectsOwtPool ps)}
-
-    handleReceivedObjectIds ::
-      NumObjectIdsReq ->
-      StrictSeq objectId ->
-      Map objectId SizeInBytes ->
-      m ()
-    handleReceivedObjectIds numObjectIdsToReq objectIdsSeq objectIdsMap =
-      receivedObjectIds
-        tracer
-        sharedStateVar
-        objectpoolGetSnapshot
-        peerAddr
-        numObjectIdsToReq
-        objectIdsSeq
-        objectIdsMap
-
-    handleReceivedObjects ::
-      Map objectId SizeInBytes ->
-      -- \^ requested objectIds with their announced size
-      Map objectId object ->
-      -- \^ received objects
-      m (Maybe ObjectDiffusionInboundError)
-    handleReceivedObjects objectIds objects =
-      collectObjects tracer objectSize sharedStateVar peerAddr objectIds objects
-
-    -- Update `dpsScore` & `dpsScoreLastUpdatedAt` fields of `DecisionPeerState`, return the new
-    -- updated `dpsScore`.
-    --
-    -- PRECONDITION: the `Double` argument is non-negative.
-    countRejectedObjects ::
-      Time ->
-      Double ->
-      m Double
-    countRejectedObjects _ n
-      | n < 0 =
-          error ("ObjectDiffusion.countRejectedObjects: invariant violation for peer " ++ show peerAddr)
-    countRejectedObjects now n = atomically $ stateTVar sharedStateVar $ \st ->
-      let (result, dgsPeerStates') = Map.alterF fn peerAddr (dgsPeerStates st)
-       in (result, st{dgsPeerStates = dgsPeerStates'})
-     where
-      fn :: Maybe (DecisionPeerState objectId object) -> (Double, Maybe (DecisionPeerState objectId object))
-      fn Nothing = error ("ObjectDiffusion.withPeer: invariant violation for peer " ++ show peerAddr)
-      fn (Just ps) = (dpsScore ps', Just $! ps')
-       where
-        ps' = updateRejects policy now n ps
+-- Update `dpsScore` & `dpsScoreLastUpdatedAt` fields of `DecisionPeerState`, return the new
+-- updated `dpsScore`.
+--
+-- PRECONDITION: the `Double` argument is non-negative.
+countRejectedObjects ::
+  Time ->
+  Double ->
+  m Double
+countRejectedObjects _ n
+  | n < 0 =
+      error ("ObjectDiffusion.countRejectedObjects: invariant violation for peer " ++ show peerAddr)
+countRejectedObjects now n = atomically $ stateTVar globalStateVar $ \st ->
+  let (result, dgsPeerStates') = Map.alterF fn peerAddr (dgsPeerStates st)
+    in (result, st{dgsPeerStates = dgsPeerStates'})
+  where
+  fn :: Maybe (DecisionPeerState objectId object) -> (Double, Maybe (DecisionPeerState objectId object))
+  fn Nothing = error ("ObjectDiffusion.withPeer: invariant violation for peer " ++ show peerAddr)
+  fn (Just ps) = (dpsScore ps', Just $! ps')
+    where
+    ps' = updateRejects policy now n ps
 
 updateRejects ::
   DecisionPolicy ->
@@ -477,7 +319,7 @@ drainRejectionThread ::
   DecisionPolicy ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   m Void
-drainRejectionThread tracer policy sharedStateVar = do
+drainRejectionThread decisionTracer policy globalStateVar = do
   labelThisThread "object-rejection-drain"
   now <- getMonotonicTime
   go $ addTime drainInterval now
@@ -491,7 +333,7 @@ drainRejectionThread tracer policy sharedStateVar = do
 
     !now <- getMonotonicTime
     st'' <- atomically $ do
-      st <- readTVar sharedStateVar
+      st <- readTVar globalStateVar
       let ptss =
             if now > nextDrain
               then Map.map (updateRejects policy now 0) (dgsPeerStates st)
@@ -502,9 +344,9 @@ drainRejectionThread tracer policy sharedStateVar = do
               st
                 { dgsPeerStates = ptss
                 }
-      writeTVar sharedStateVar st'
+      writeTVar globalStateVar st'
       return st'
-    traceWith tracer (TraceDecisionGlobalState "drainRejectionThread" st'')
+    traceWith decisionTracer (TraceDecisionGlobalState "drainRejectionThread" st'')
 
     if now > nextDrain
       then go $ addTime drainInterval now
@@ -524,10 +366,10 @@ decisionLogicThread ::
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   Tracer m ObjectDiffusionCounters ->
   DecisionPolicy ->
-  ObjectChannelsVar m peerAddr objectId object ->
+  PeerDecisionChannelsVar m peerAddr objectId object ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   m Void
-decisionLogicThread tracer counterTracer policy objectChannelsVar sharedStateVar = do
+decisionLogicThread decisionTracer counterTracer policy objectChannelsVar globalStateVar = do
   labelThisThread "object-decision"
   go
  where
@@ -538,23 +380,23 @@ decisionLogicThread tracer counterTracer policy objectChannelsVar sharedStateVar
     threadDelay _DECISION_LOOP_DELAY
 
     (decisions, st) <- atomically do
-      sharedObjectState <- readTVar sharedStateVar
+      sharedObjectState <- readTVar globalStateVar
       let activePeers = filterActivePeers policy sharedObjectState
 
       -- block until at least one peer is active
       check (not (Map.null activePeers))
 
       let (sharedState, decisions) = makeDecisions policy sharedObjectState activePeers
-      writeTVar sharedStateVar sharedState
+      writeTVar globalStateVar sharedState
       return (decisions, sharedState)
-    traceWith tracer (TraceDecisionGlobalState "decisionLogicThread" st)
-    traceWith tracer (TracePeerDecisions decisions)
-    ObjectChannels{objectChannelMap} <- readMVar objectChannelsVar
+    traceWith decisionTracer (TraceDecisionGlobalState "decisionLogicThread" st)
+    traceWith decisionTracer (TracePeerDecisions decisions)
+    PeerDecisionChannels{peerToChannel} <- readMVar objectChannelsVar
     traverse_
       (\(mvar, d) -> modifyMVarWithDefault_ mvar d (\d' -> pure (d' <> d)))
       ( Map.intersectionWith
           (,)
-          objectChannelMap
+          peerToChannel
           decisions
       )
     traceWith counterTracer (makeObjectDiffusionCounters st)
@@ -586,13 +428,13 @@ decisionLogicThreads ::
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   Tracer m ObjectDiffusionCounters ->
   DecisionPolicy ->
-  ObjectChannelsVar m peerAddr objectId object ->
+  PeerDecisionChannelsVar m peerAddr objectId object ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   m Void
-decisionLogicThreads tracer counterTracer policy objectChannelsVar sharedStateVar =
+decisionLogicThreads decisionTracer counterTracer policy objectChannelsVar globalStateVar =
   uncurry (<>)
-    <$> drainRejectionThread tracer policy sharedStateVar
-      `concurrently` decisionLogicThread tracer counterTracer policy objectChannelsVar sharedStateVar
+    <$> drainRejectionThread decisionTracer policy globalStateVar
+      `concurrently` decisionLogicThread decisionTracer counterTracer policy objectChannelsVar globalStateVar
 
 -- `5ms` delay
 _DECISION_LOOP_DELAY :: DiffTime

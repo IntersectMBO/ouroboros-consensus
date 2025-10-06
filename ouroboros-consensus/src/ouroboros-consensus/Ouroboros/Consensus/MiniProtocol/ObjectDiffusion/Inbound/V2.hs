@@ -10,16 +10,16 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
   ( -- * ObjectDiffusion Inbound client
     objectDiffusionInbound
 
-    -- * PeerObjectAPI
+    -- * InboundPeerAPI
   , withPeer
-  , PeerObjectAPI
+  , InboundPeerAPI
 
     -- * Supporting types
   , module V2
-  , ObjectChannelsVar
-  , newObjectChannelsVar
-  , ObjectObjectPoolSem
-  , newObjectObjectPoolSem
+  , PeerDecisionChannelsVar
+  , newPeerDecisionChannelsVar
+  , ObjectPoolSem
+  , newObjectPoolSem
   , DecisionGlobalStateVar
   , newDecisionGlobalStateVar
   , DecisionPolicy (..)
@@ -56,18 +56,18 @@ objectDiffusionInbound ::
   ) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   ObjectDiffusionInitDelay ->
-  ObjectDiffusionObjectPoolWriter objectId object ticketNo m ->
-  PeerObjectAPI m objectId object ->
+  ObjectPoolWriter objectId object ticketNo m ->
+  InboundPeerAPI m objectId object ->
   ObjectDiffusionServerPipelined objectId object m ()
 objectDiffusionInbound
   tracer
   initDelay
-  ObjectDiffusionObjectPoolWriter{objectId}
-  PeerObjectAPI
+  ObjectPoolWriter{objectId}
+  InboundPeerAPI
     { readPeerDecision
-    , handleReceivedObjectIds
+    , handleReceivedIds
     , handleReceivedObjects
-    , submitObjectToObjectPool
+    , submitObjectToPool
     } =
     ObjectDiffusionServerPipelined $ do
       case initDelay of
@@ -90,12 +90,12 @@ objectDiffusionInbound
 
       -- Only attempt to add objects if we have some work to do
       when (collected > 0) $ do
-        -- submitObjectToObjectPool traces:
+        -- submitObjectToPool traces:
         -- \* `TraceObjectDiffusionProcessed`,
         -- \* `TraceObjectInboundAddedToObjectPool`, and
         -- \* `TraceObjectInboundRejectedFromObjectPool`
         -- events.
-        mapM_ (uncurry $ submitObjectToObjectPool tracer) listOf[(objectId, object)]
+        mapM_ (uncurry $ submitObjectToPool tracer) listOf[(objectId, object)]
 
       -- TODO:
       -- We can update the state so that other `object-submission` servers will
@@ -148,7 +148,7 @@ objectDiffusionInbound
                     objectIdsMap = Map.fromList objectIds'
                 unless (StrictSeq.length objectIdsSeq <= fromIntegral objectIdsToReq) $
                   throwIO ProtocolErrorObjectIdsNotRequested
-                handleReceivedObjectIds objectIdsToReq objectIdsSeq objectIdsMap
+                handleReceivedIds objectIdsToReq objectIdsSeq objectIdsMap
                 serverIdle
             )
     serverReqObjectIds
@@ -206,7 +206,7 @@ objectDiffusionInbound
             objectIdsMap = Map.fromList objectIds
         unless (StrictSeq.length objectIdsSeq <= fromIntegral objectIdsToReq) $
           throwIO ProtocolErrorObjectIdsNotRequested
-        handleReceivedObjectIds objectIdsToReq objectIdsSeq objectIdsMap
+        handleReceivedIds objectIdsToReq objectIdsSeq objectIdsMap
         k
       CollectObjects objectIds objects -> do
         let requested = Map.keysSet objectIds
