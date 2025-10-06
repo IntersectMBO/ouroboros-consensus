@@ -196,6 +196,8 @@ library
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
+    Ouroboros.Consensus.MiniProtocol.Util
+    Ouroboros.Consensus.MiniProtocol.Util.Idling
     Ouroboros.Consensus.Node.GsmState
     Ouroboros.Consensus.Node.InitStorage
     Ouroboros.Consensus.Node.NetworkProtocolVersion
