@@ -178,14 +178,12 @@ withPeer
     unregisterPeerGlobalState
       st@DecisionGlobalState
         { dgsPeerStates
-        , dgsObjectsPending
         , dgsObjectsLiveMultiplicities
         , dgsObjectsInflightMultiplicities
         , dgsObjectsOwtPoolMultiplicities
         } =
         st
           { dgsPeerStates = dgsPeerStates'
-          , dgsObjectsPending = dgsObjectsPending'
           , dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
           , dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
           , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
@@ -221,11 +219,6 @@ withPeer
             decreaseCount
             dgsObjectsLiveMultiplicities
             dpsOutstandingFifo
-
-        -- Update dgsObjectsPending map to only contain live objects
-        -- (to reflect the new state of dgsObjectsLiveMultiplicities).
-        liveSet = Map.keysSet dgsObjectsLiveMultiplicities'
-        dgsObjectsPending' = Map.restrictKeys dgsObjectsPending liveSet
 
         -- Update dgsInflightMultiplicities map by decreasing the count
         -- of objects that were in-flight for this peer.

@@ -1,11 +1,6 @@
-{-# LANGUAGE ImportQualifiedPost #-}
-
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
   ( DecisionPolicy (..)
   , defaultDecisionPolicy
-
-    -- * Re-exports
-  , NumObjectIdsReq (..)
   ) where
 
 import Control.Monad.Class.MonadTime.SI
@@ -26,7 +21,7 @@ data DecisionPolicy = DecisionPolicy
   -- ^ from how many peers download the `objectId` simultaneously
   , dpMinObtainedButNotAckedObjectsLifetime :: !DiffTime
   -- ^ how long objects that have been added to the objectpool will be
-  -- kept in the `dgsObjectsPending` cache.
+  -- kept in the `dgsObjectsLiveMultiplicities` cache.
   }
   deriving Show
 

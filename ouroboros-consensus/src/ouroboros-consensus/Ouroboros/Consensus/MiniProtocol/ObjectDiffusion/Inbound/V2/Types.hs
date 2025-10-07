@@ -82,13 +82,6 @@ data DecisionPeerState objectId object = DecisionPeerState
   -- ^ A subset of `dpsOutstandingFifo` which were unknown to the peer
   -- (i.e. requested but not received). We need to track these `objectId`s
   -- since they need to be acknowledged.
-  --
-  -- We track these `objectId` per peer, rather than in `dgsObjectsPending` map,
-  -- since that could potentially lead to corrupting the node, not being
-  -- able to download a `object` which is needed & available from other nodes.
-  -- TODO: for object diffusion, every requested object must be received, so
-  -- we don't need to track this. But we should disconnect if the peer hasn't
-  -- sent us exactly the requested object.
   , dpsObjectsPending :: !(Map objectId object)
   -- ^ A set of objects downloaded from the peer. They are not yet
   -- acknowledged and haven't been sent to the objectpool yet.
@@ -119,13 +112,13 @@ instance
 -- New `objectId` enters `dpsOutstandingFifo` it is also added to `dpsIdsAvailable`
 -- and `dgsObjectsLiveMultiplicities` (see `acknowledgeObjectIdsImpl`).
 --
--- When the requested object arrives, the corresponding entry is removed from `dgsObjectsInflightMultiplicities` and it is added to `dgsObjectsPending` (see `handleReceivedObjectsImpl`).
+-- When the requested object arrives, the corresponding entry is removed from `dgsObjectsInflightMultiplicities`.
 --
 -- Whenever we choose an `objectId` to acknowledge (either in `acknowledObjectsIds`,
 -- `handleReceivedObjectsImpl` or
 -- `pickObjectsToDownload`, we also
 -- recalculate `dgsObjectsLiveMultiplicities` and only keep live `objectId`s in other maps (e.g.
--- `dpsIdsAvailable`, `dgsObjectsPending`).
+-- `dpsIdsAvailable`).
 data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   { dgsPeerStates :: !(Map peerAddr (DecisionPeerState objectId object))
   -- ^ Map of peer states.
@@ -139,39 +132,18 @@ data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   -- currently in-flight)
   --
   -- This can intersect with `dpsIdsAvailable`.
-  , dgsObjectsPending :: !(Map objectId (Maybe object))
-  -- ^ Map of `object` which:
-  --
-  --    * were downloaded and added to the objectpool,
-  --    * are already in the objectpool (`Nothing` is inserted in that case),
-  --
-  -- We only keep live `objectId`, e.g. ones which `objectId` is unacknowledged by
-  -- at least one peer or has a `dgsRententionTimeouts` entry.
-  --
-  -- /Note:/ previous implementation also needed to explicitly track
-  -- `objectId`s which were already acknowledged, but are still unacknowledged.
-  -- In this implementation, this is done using reference counting.
-  --
-  -- This map is useful to acknowledge `objectId`s: it's basically taking the
-  -- longest prefix which contains entries in `dgsObjectsPending`
   , dgsObjectsLiveMultiplicities :: !(Map objectId ObjectMultiplicity)
-  -- ^ We track reference counts of all unacknowledged and dgsRententionTimeouts objectIds.
-  -- Once the count reaches 0, a object is removed from `dgsObjectsPending`.
+  -- ^ We track counts of live objects.
+  -- An object is added to the live map when it is inflight, and is only removed
+  -- after the retention timeout expires.
   --
-  -- The `dgsObjectsOwtPoolMultiplicities` map contains a subset of `objectId` which
-  -- `dgsObjectsLiveMultiplicities` contains.
+  -- The value for any key must be always non-zero (strictly positive).
   --
-  -- /Invariants:/
-  --
-  --    * the objectId count is equal to multiplicity of objectId in all
-  --      `dpsOutstandingFifo` sequences;
-  --    * @Map.keysSet dgsObjectsPending `Set.isSubsetOf` Map.keysSet dgsObjectsLiveMultiplicities@;
-  --    * all counts are positive integers.
+  -- The `dgsObjectsOwtPoolMultiplicities` map contains a subset of `dgsObjectsLiveMultiplicities`.
   , dgsRententionTimeouts :: !(Map Time [objectId])
-  -- ^ A set of timeouts for objectIds that have been added to dgsObjectsPending after being
-  -- inserted into the objectpool.
+  -- ^ Objects are kept live for a bit longer after having been added to the objectpool.
   --
-  -- We need these short timeouts to avoid re-downloading a `object`.  We could
+  -- We need these short timeouts to avoid re-downloading a `object`. We could
   -- acknowledge this `objectId` to all peers, when a peer from another
   -- continent presents us it again.
   --
@@ -200,6 +172,16 @@ instance
   ) =>
   NoThunks (DecisionGlobalState peerAddr objectId object)
 
+-- | Merge dpsIdsAvailable from all peers of the global state.
+dgsIdsAvailable :: Ord objectId => DecisionGlobalState peerAddr objectId object -> Set objectId
+dgsIdsAvailable DecisionGlobalState{dgsPeerStates} =
+  Set.unions (dpsIdsAvailable <$> (Map.elems dgsPeerStates))
+
+-- | Merge dpsObjectsPending from all peers of the global state.
+dgsObjectsPending :: Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId object
+dgsObjectsPending DecisionGlobalState{dgsPeerStates} =
+  Map.unions (dpsObjectsPending <$> (Map.elems dgsPeerStates))
+
 --
 -- Decisions
 --
@@ -225,7 +207,7 @@ data PeerDecision objectId object = PeerDecision
   -- if we have non-acknowledged `objectId`s.
   , pdObjectsToReqIds :: !(Set objectId)
   -- ^ objectId's to download.
-  , pdObjectsOwtPool :: !(Map objectId object)
+  , pdObjectsToPool :: !(Set objectId)
   -- ^ list of `object`s to submit to the objectpool.
   }
   deriving (Show, Eq)
@@ -240,21 +222,21 @@ instance Ord objectId => Semigroup (PeerDecision objectId object) where
     , pdIdsToReq
     , pdCanPipelineIdsReq = _ignored
     , pdObjectsToReqIds
-    , pdObjectsOwtPool
+    , pdObjectsToPool
     }
     <> PeerDecision
       { pdIdsToAck = pdIdsToAck'
       , pdIdsToReq = pdIdsToReq'
       , pdCanPipelineIdsReq = pdCanPipelineIdsReq'
       , pdObjectsToReqIds = pdObjectsToReqIds'
-      , pdObjectsOwtPool = pdObjectsOwtPool'
+      , pdObjectsToPool = pdObjectsToPool'
       } =
       PeerDecision
         { pdIdsToAck = pdIdsToAck + pdIdsToAck'
         , pdIdsToReq = pdIdsToReq + pdIdsToReq'
         , pdCanPipelineIdsReq = pdCanPipelineIdsReq'
         , pdObjectsToReqIds = pdObjectsToReqIds <> pdObjectsToReqIds'
-        , pdObjectsOwtPool = pdObjectsOwtPool <> pdObjectsOwtPool'
+        , pdObjectsToPool = pdObjectsToPool <> pdObjectsToPool'
         }
 instance Ord objectId => Monoid (PeerDecision objectId object) where
   mempty = PeerDecision
@@ -262,7 +244,7 @@ instance Ord objectId => Monoid (PeerDecision objectId object) where
     , pdIdsToReq = 0
     , pdCanPipelineIdsReq = False
     , pdObjectsToReqIds = Set.empty
-    , pdObjectsOwtPool = Map.empty
+    , pdObjectsToPool = Set.empty
     }
 
 -- | ObjectLogic tracer.
@@ -273,15 +255,17 @@ data TraceDecisionLogic peerAddr objectId object
 
 data ObjectDiffusionCounters
   = ObjectDiffusionCounters
-  { odcNumObjectsAvailable :: Int
-  -- ^ objectIds which are not yet downloaded.  This is a diff of keys sets of
-  -- `dgsObjectsLiveMultiplicities` and a sum of `dgsObjectsPending` and
-  -- `inbubmissionToObjectPoolObjects` maps.
-  , odcNumObjectsInFlight :: Int
+  { odcDistinctNumObjectsAvailable :: Int
+  -- ^ objectIds which are not yet downloaded.
+  , odcNumDistinctObjectsLive :: Int
+  -- ^ number of distinct live objects
+  , odcNumDistinctObjectsInflight :: Int
+  -- ^ number of distinct in-flight objects.
+  , odcNumTotalObjectsInflight :: Int
   -- ^ number of all in-flight objects.
-  , odcNumObjectsPending :: Int
-  -- ^ number of all buffered objects (downloaded or not available)
-  , odcNumObjectsOwtPool :: Int
+  , odcNumDistinctObjectsPending :: Int
+  -- ^ number of distinct pending objects (downloaded but not acked)
+  , odcNumDistinctObjectsOwtPool :: Int
   -- ^ number of distinct objects which are waiting to be added to the
   -- objectpool (each peer need to acquire the semaphore to effectively add
   -- them to the pool)
@@ -293,21 +277,18 @@ makeObjectDiffusionCounters ::
   DecisionGlobalState peerAddr objectId object ->
   ObjectDiffusionCounters
 makeObjectDiffusionCounters
-  DecisionGlobalState
+  dgs@DecisionGlobalState
     { dgsObjectsInflightMultiplicities
-    , dgsObjectsPending
     , dgsObjectsLiveMultiplicities
     , dgsObjectsOwtPoolMultiplicities
     } =
     ObjectDiffusionCounters
-      { odcNumObjectsAvailable =
-          Set.size $
-            Map.keysSet dgsObjectsLiveMultiplicities
-              Set.\\ Map.keysSet dgsObjectsPending
-              Set.\\ Map.keysSet dgsObjectsOwtPoolMultiplicities
-      , odcNumObjectsPending = Map.size dgsObjectsPending
-      , odcNumObjectsOwtPool = Map.size dgsObjectsOwtPoolMultiplicities
-      , odcNumObjectsInFlight = fromIntegral $ mconcat (Map.elems dgsObjectsInflightMultiplicities)
+      { odcDistinctNumObjectsAvailable = Set.size $ dgsIdsAvailable dgs
+      , odcNumDistinctObjectsLive = Map.size dgsObjectsLiveMultiplicities
+      , odcNumDistinctObjectsInflight = Map.size dgsObjectsInflightMultiplicities
+      , odcNumTotalObjectsInflight = fromIntegral $ mconcat (Map.elems dgsObjectsInflightMultiplicities)
+      , odcNumDistinctObjectsPending = Map.size $ dgsObjectsPending dgs
+      , odcNumDistinctObjectsOwtPool = Map.size dgsObjectsOwtPoolMultiplicities
       }
 
 data ObjectDiffusionInitDelay
@@ -350,6 +331,7 @@ data TraceObjectDiffusionInbound objectId object
     TraceObjectDiffusionInboundRecvControlMessage ControlMessage
   | TraceObjectDiffusionInboundCanRequestMoreObjects Int
   | TraceObjectDiffusionInboundCannotRequestMoreObjects Int
+  | TraceObjectDiffusionInboundDecisionReceived (PeerDecision objectId object)
   deriving (Eq, Show)
 
 data ObjectDiffusionInboundError

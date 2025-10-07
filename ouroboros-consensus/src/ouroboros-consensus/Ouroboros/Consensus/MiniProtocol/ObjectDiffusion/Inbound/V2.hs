@@ -38,9 +38,10 @@ import qualified Data.Set as Set
 import Network.TypedProtocol
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State (newDecisionGlobalStateVar)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types as V2
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 
 -- | A object-submission inbound side (server, sic!).
 --
@@ -56,37 +57,37 @@ objectDiffusionInbound ::
   ) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   ObjectDiffusionInitDelay ->
-  ObjectPoolWriter objectId object ticketNo m ->
+  ObjectPoolWriter objectId object m ->
   InboundPeerAPI m objectId object ->
-  ObjectDiffusionServerPipelined objectId object m ()
+  ObjectDiffusionInboundPipelined objectId object m ()
 objectDiffusionInbound
   tracer
   initDelay
-  ObjectPoolWriter{objectId}
+  ObjectPoolWriter{}
   InboundPeerAPI
     { readPeerDecision
     , handleReceivedIds
     , handleReceivedObjects
-    , submitObjectToPool
+    , submitObjectsToPool
     } =
-    ObjectDiffusionServerPipelined $ do
+    ObjectDiffusionInboundPipelined $ do
       case initDelay of
         ObjectDiffusionInitDelay delay -> threadDelay delay
         NoObjectDiffusionInitDelay -> return ()
       serverIdle
    where
     serverIdle ::
-      m (ServerStIdle Z objectId object m ())
+      m (InboundStIdle Z objectId object m ())
     serverIdle = do
       -- Block on next decision.
       object@PeerDecision
         { pdObjectsToReqIds = pdObjectsToReqIds
-        , pdObjectsOwtPool = pdObjectsOwtPool
+        , pdObjectsToPool = pdObjectsToPool
         } <-
         readPeerDecision
-      traceWith tracer (TraceObjectInboundDecision object)
+      traceWith tracer (TraceObjectDiffusionInboundDecisionReceived object)
 
-      let !collected = length listOf[(objectId, object)]
+      let !collected = length undefined
 
       -- Only attempt to add objects if we have some work to do
       when (collected > 0) $ do
@@ -95,30 +96,30 @@ objectDiffusionInbound
         -- \* `TraceObjectInboundAddedToObjectPool`, and
         -- \* `TraceObjectInboundRejectedFromObjectPool`
         -- events.
-        mapM_ (uncurry $ submitObjectToPool tracer) listOf[(objectId, object)]
+        mapM_ undefined undefined  -- (uncurry $ submitObjectsToPool undefined) undefined
 
       -- TODO:
       -- We can update the state so that other `object-submission` servers will
       -- not try to add these objects to the objectpool.
-      if Map.null pdObjectsToReqIds
+      if Set.null pdObjectsToReqIds
         then serverReqObjectIds Zero object
         else serverReqObjects object
 
     -- Pipelined request of objects
     serverReqObjects ::
       PeerDecision objectId object ->
-      m (ServerStIdle Z objectId object m ())
+      m (InboundStIdle Z objectId object m ())
     serverReqObjects object@PeerDecision{pdObjectsToReqIds = pdObjectsToReqIds} =
       pure $
         SendMsgRequestObjectsPipelined
-          pdObjectsToReqIds
+          (Set.toList pdObjectsToReqIds)
           (serverReqObjectIds (Succ Zero) object)
 
     serverReqObjectIds ::
       forall (n :: N).
       Nat n ->
       PeerDecision objectId object ->
-      m (ServerStIdle n objectId object m ())
+      m (InboundStIdle n objectId object m ())
     serverReqObjectIds
       n
       PeerDecision{pdIdsToReq = 0} =
@@ -141,14 +142,14 @@ objectDiffusionInbound
             objectIdsToAck
             objectIdsToReq
             -- Our result if the client terminates the protocol
-            (traceWith tracer TraceObjectInboundTerminated)
+            -- (traceWith tracer TraceObjectDiffusionInboundTerminated)
             ( \objectIds -> do
                 let objectIds' = NonEmpty.toList objectIds
-                    objectIdsSeq = StrictSeq.fromList $ fst <$> objectIds'
+                    receivedIdsSeq = StrictSeq.fromList $ fst <$> objectIds'
                     objectIdsMap = Map.fromList objectIds'
-                unless (StrictSeq.length objectIdsSeq <= fromIntegral objectIdsToReq) $
+                when (StrictSeq.length receivedIdsSeq > fromIntegral objectIdsToReq) $
                   throwIO ProtocolErrorObjectIdsNotRequested
-                handleReceivedIds objectIdsToReq objectIdsSeq objectIdsMap
+                handleReceivedIds objectIdsToReq receivedIdsSeq objectIdsMap
                 serverIdle
             )
     serverReqObjectIds
@@ -182,7 +183,7 @@ objectDiffusionInbound
     handleReplies ::
       forall (n :: N).
       Nat (S n) ->
-      m (ServerStIdle (S n) objectId object m ())
+      m (InboundStIdle (S n) objectId object m ())
     handleReplies (Succ n'@Succ{}) =
       pure $
         CollectPipelined
@@ -196,27 +197,27 @@ objectDiffusionInbound
 
     handleReply ::
       forall (n :: N).
-      m (ServerStIdle n objectId object m ()) ->
+      m (InboundStIdle n objectId object m ()) ->
       -- continuation
       Collect objectId object ->
-      m (ServerStIdle n objectId object m ())
+      m (InboundStIdle n objectId object m ())
     handleReply k = \case
       CollectObjectIds objectIdsToReq objectIds -> do
-        let objectIdsSeq = StrictSeq.fromList $ fst <$> objectIds
+        let receivedIdsSeq = StrictSeq.fromList $ fst <$> objectIds
             objectIdsMap = Map.fromList objectIds
-        unless (StrictSeq.length objectIdsSeq <= fromIntegral objectIdsToReq) $
+        unless (StrictSeq.length receivedIdsSeq <= fromIntegral objectIdsToReq) $
           throwIO ProtocolErrorObjectIdsNotRequested
-        handleReceivedIds objectIdsToReq objectIdsSeq objectIdsMap
+        handleReceivedIds objectIdsToReq receivedIdsSeq objectIdsMap
         k
       CollectObjects objectIds objects -> do
         let requested = Map.keysSet objectIds
-            received = Map.fromList [(objectId object, object) | object <- objects]
+            received = Map.fromList undefined
 
         unless (Map.keysSet received `Set.isSubsetOf` requested) $
           throwIO ProtocolErrorObjectNotRequested
 
         mbe <- handleReceivedObjects objectIds received
-        traceWith tracer $ TraceObjectDiffusionCollected (objectId `map` objects)
+        traceWith tracer $ TraceObjectDiffusionCollected (getId `map` objects)
         case mbe of
           -- one of `object`s had a wrong size
           Just e ->

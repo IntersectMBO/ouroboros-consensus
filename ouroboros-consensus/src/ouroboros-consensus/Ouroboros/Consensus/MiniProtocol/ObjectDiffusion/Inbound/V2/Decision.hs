@@ -96,7 +96,7 @@ data DecisionInternalState peerAddr objectId object
   , disIdsToAckMultiplicities :: !(Map objectId ObjectMultiplicity)
   -- ^ acknowledged `objectId` with multiplicities.  It is used to update
   -- `dgsObjectsLiveMultiplicities`.
-  , disObjectsOwtPoolIds :: Map objectId object
+  , disObjectsOwtPoolIds :: Set objectId
   -- ^ objects on their way to the objectpool. Used to prevent issueing new
   -- fetch requests for them.
   }
@@ -134,7 +134,6 @@ pickObjectsToDownload
   sharedState@DecisionGlobalState
     { dgsPeerStates
     , dgsObjectsInflightMultiplicities
-    , dgsObjectsPending
     , dgsObjectsOwtPoolMultiplicities
     , dgsObjectsLiveMultiplicities
     } =
@@ -147,7 +146,7 @@ pickObjectsToDownload
         , disNumObjectsInflight = fromIntegral $ Map.foldl' (+) 0 dgsObjectsInflightMultiplicities
               -- Thomas: not sure here if we must count disctinct objects in flight, or total number of objects in flight (considering multiplicities)
         , disIdsToAckMultiplicities = Map.empty
-        , disObjectsOwtPoolIds = dgsObjectsOwtPoolMultiplicities
+        , disObjectsOwtPoolIds = Map.keysSet dgsObjectsOwtPoolMultiplicities
         }
       >>> gn
    where
@@ -181,7 +180,7 @@ pickObjectsToDownload
               then
                 let ( numObjectIdsToAck
                       , numObjectIdsToReq
-                      , pdObjectsOwtPool
+                      , pdObjectsToPool
                       , RefCountDiff{rcdIdsToAckMultiplicities}
                       , peerObjectState'
                       ) = acknowledgeObjectIds decisionPolicy sharedState peerObjectState
@@ -189,7 +188,7 @@ pickObjectsToDownload
                     disIdsToAckMultiplicities' = Map.unionWith (+) disIdsToAckMultiplicities rcdIdsToAckMultiplicities
                     disObjectsOwtPoolIds' =
                       disObjectsOwtPoolIds
-                        <> Map.keysSet pdObjectsOwtPool
+                        <> Map.keysSet pdObjectsToPool
                  in if dpsNumIdsInflight peerObjectState' > 0
                       then
                         -- we have objectIds to request
@@ -208,7 +207,7 @@ pickObjectsToDownload
                                     . dpsOutstandingFifo
                                     $ peerObjectState'
                               , pdObjectsToReqIds = Set.empty
-                              , pdObjectsOwtPool = pdObjectsOwtPool
+                              , pdObjectsToPool = pdObjectsToPool
                               }
                           )
                         )
@@ -259,7 +258,7 @@ pickObjectsToDownload
                               disObjectsInflightMultiplicities
                               -- remove `object`s which were already downloaded by some
                               -- other peer or are in-flight or unknown by this peer.
-                              `Set.unions` ( Map.keysSet dgsObjectsPending
+                              `Set.unions` ( Map.keysSet dgsObjectsLiveMultiplicities
                                                     <> dpsObjectsInflightIds
                                                     <> dpsObjectsRequestedButNotReceivedIds
                                                     <> disObjectsOwtPoolIds
@@ -276,7 +275,7 @@ pickObjectsToDownload
 
                     ( numObjectIdsToAck
                       , numObjectIdsToReq
-                      , pdObjectsOwtPool
+                      , pdObjectsToPool
                       , RefCountDiff{rcdIdsToAckMultiplicities}
                       , peerObjectState''
                       ) = acknowledgeObjectIds decisionPolicy sharedState peerObjectState'
@@ -293,7 +292,7 @@ pickObjectsToDownload
 
                     disObjectsOwtPoolIds' =
                       disObjectsOwtPoolIds
-                        <> Set.fromList (map fst pdObjectsOwtPool)
+                        <> Set.fromList (map fst pdObjectsToPool)
                  in if dpsNumIdsInflight peerObjectState'' > 0
                       then
                         -- we can request `objectId`s & `object`s
@@ -314,7 +313,7 @@ pickObjectsToDownload
                                     $ peerObjectState''
                               , pdIdsToReq = numObjectIdsToReq
                               , pdObjectsToReqIds = pdObjectsToReqIdsMap
-                              , pdObjectsOwtPool = pdObjectsOwtPool
+                              , pdObjectsToPool = pdObjectsToPool
                               }
                           )
                         )
@@ -360,18 +359,11 @@ pickObjectsToDownload
                 dgsObjectsLiveMultiplicities
                 disIdsToAckMultiplicities
 
-            liveSet = Map.keysSet dgsObjectsLiveMultiplicities'
-
-            dgsObjectsPending' =
-              dgsObjectsPending
-                `Map.restrictKeys` liveSet
-
             dgsObjectsOwtPoolMultiplicities' =
               List.foldl' updateInSubmissionToObjectPoolObjects dgsObjectsOwtPoolMultiplicities as
          in ( sharedState
                 { dgsPeerStates = dgsPeerStates'
                 , dgsObjectsInflightMultiplicities = disObjectsInflightMultiplicities
-                , dgsObjectsPending = dgsObjectsPending'
                 , dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
                 , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
                 }
@@ -382,9 +374,9 @@ pickObjectsToDownload
                       { pdIdsToAck = 0
                       , pdIdsToReq = 0
                       , pdObjectsToReqIds
-                      , pdObjectsOwtPool }
+                      , pdObjectsToPool }
                         | null pdObjectsToReqIds
-                        , Map.null pdObjectsOwtPool ->
+                        , Map.null pdObjectsToPool ->
                             Nothing
                     _ -> Just (a, b)
                 )
@@ -396,8 +388,8 @@ pickObjectsToDownload
           Map objectId Int ->
           (a, PeerDecision objectId object) ->
           Map objectId Int
-        updateInSubmissionToObjectPoolObjects m (_, PeerDecision{pdObjectsOwtPool}) =
-          List.foldl' fn m (Map.toList pdObjectsOwtPool)
+        updateInSubmissionToObjectPoolObjects m (_, PeerDecision{pdObjectsToPool}) =
+          List.foldl' fn m (Map.toList pdObjectsToPool)
          where
           fn ::
             Map objectId Int ->
@@ -427,7 +419,6 @@ filterActivePeers
     }
   globalState@DecisionGlobalState
     { dgsPeerStates
-    , dgsObjectsPending
     , dgsObjectsInflightMultiplicities
     , dgsObjectsOwtPoolMultiplicities
     }
@@ -435,7 +426,7 @@ filterActivePeers
    where
     unrequestable =
       Map.keysSet (Map.filter (>= dpMaxObjectInflightMultiplicity) dgsObjectsInflightMultiplicities)
-        <> Map.keysSet dgsObjectsPending
+        <> Map.keysSet dgsObjectsLiveMultiplicities
 
     fn :: DecisionPeerState objectId object -> Bool
     fn
@@ -507,3 +498,180 @@ foldWithState f = foldr cons nil
 
   nil :: s -> (s, Map b c)
   nil = \ !s -> (s, Map.empty)
+
+--
+-- Pure public API
+--
+
+acknowledgeObjectIds ::
+  forall peerAddr object objectId.
+  Ord objectId =>
+  HasCallStack =>
+  DecisionPolicy ->
+  DecisionGlobalState peerAddr objectId object ->
+  DecisionPeerState objectId object ->
+  -- | number of objectId to acknowledge, requests, objects which we can submit to the
+  -- objectpool, objectIds to acknowledge with multiplicities, updated DecisionPeerState.
+  ( NumObjectIdsAck
+  , NumObjectIdsReq
+  , Map objectId object
+  -- ^ objectsOwtPool
+  , RefCountDiff objectId
+  , DecisionPeerState objectId object
+  )
+{-# INLINE acknowledgeObjectIds #-}
+acknowledgeObjectIds
+  decisionPolicy
+  globalState
+  ps@DecisionPeerState
+    { dpsIdsAvailable
+    , dpsNumIdsInflight
+    , dpsObjectsPending
+    , dpsObjectsOwtPool
+    } =
+    -- We can only acknowledge objectIds when we can request new ones, since
+    -- a `MsgRequestObjectIds` for 0 objectIds is a protocol error.
+    if pdIdsToReq > 0
+      then
+        ( pdIdsToAck
+        , pdIdsToReq
+        , objectsOwtPool
+        , refCountDiff
+        , ps
+            { dpsOutstandingFifo = dpsOutstandingFifo'
+            , dpsIdsAvailable = dpsIdsAvailable'
+            , dpsNumIdsInflight =
+                dpsNumIdsInflight
+                  + pdIdsToReq
+            , dpsObjectsPending = dpsObjectsPending'
+            , dpsObjectsOwtPool = dpsObjectsOwtPool'
+            }
+        )
+      else
+        ( 0
+        , 0
+        , objectsOwtPool
+        , RefCountDiff Map.empty
+        , ps{dpsObjectsOwtPool = dpsObjectsOwtPool'}
+        )
+   where
+    -- Split `dpsOutstandingFifo'` into the longest prefix of `objectId`s which
+    -- can be acknowledged and the unacknowledged `objectId`s.
+    (pdIdsToReq, acknowledgedObjectIds, dpsOutstandingFifo') =
+      splitAcknowledgedObjectIds decisionPolicy globalState ps
+
+    objectsOwtPoolList =
+      [ (objectId, object)
+      | objectId <- toList toObjectPoolObjectIds
+      , objectId `Map.notMember` dgsObjectsLiveMultiplicities globalState
+      , object <- maybeToList $ objectId `Map.lookup` dpsObjectsPending
+      ]
+    (toObjectPoolObjectIds, _) =
+      StrictSeq.spanl (`Map.member` dpsObjectsPending) acknowledgedObjectIds
+
+    objectsOwtPool = Map.fromList objectsOwtPoolList
+
+    dpsObjectsOwtPool' = dpsObjectsOwtPool <> objectsOwtPool
+
+    (dpsObjectsPending', ackedDownloadedObjects) = Map.partitionWithKey (\objectId _ -> objectId `Set.member` liveSet) dpsObjectsPending
+    -- lateObjects: objects which were downloaded by another peer before we
+    -- downloaded them; it relies on that `objectToObjectPool` filters out
+    -- `dgsObjectsPending`.
+    lateObjects =
+      Map.filterWithKey
+        (\objectId _ -> objectId `Map.notMember` objectsOwtPool)
+        ackedDownloadedObjects
+
+    -- the set of live `objectIds`
+    liveSet = Set.fromList (toList dpsOutstandingFifo')
+    dpsIdsAvailable' = dpsIdsAvailable `Set.intersection` liveSet
+
+    -- We remove all acknowledged `objectId`s which are not in
+    -- `dpsOutstandingFifo''`, but also return the unknown set before any
+    -- modifications (which is used to compute `dpsOutstandingFifo''`
+    -- above).
+
+    refCountDiff =
+      RefCountDiff $
+        foldr
+          (Map.alter fn)
+          Map.empty
+          acknowledgedObjectIds
+     where
+      fn :: Maybe Int -> Maybe Int
+      fn Nothing = Just 1
+      fn (Just n) = Just $! n + 1
+
+    pdIdsToAck :: NumObjectIdsAck
+    pdIdsToAck = fromIntegral $ StrictSeq.length acknowledgedObjectIds
+
+-- | Split unacknowledged objectIds into acknowledged and unacknowledged parts, also
+-- return number of objectIds which can be requested.
+splitAcknowledgedObjectIds ::
+  Ord objectId =>
+  HasCallStack =>
+  DecisionPolicy ->
+  DecisionGlobalState peer objectId object ->
+  DecisionPeerState objectId object ->
+  -- | number of objectIds to request, acknowledged objectIds, unacknowledged objectIds
+  (NumObjectIdsReq, StrictSeq.StrictSeq objectId, StrictSeq.StrictSeq objectId)
+splitAcknowledgedObjectIds
+  DecisionPolicy
+    { dpMaxNumObjectsOutstanding
+    , dpMaxNumObjectIdsReq
+    }
+  DecisionGlobalState
+    { dgsObjectsLiveMultiplicities
+    }
+  DecisionPeerState
+    { dpsOutstandingFifo
+    , dpsObjectsPending
+    , dpsObjectsInflightIds
+    , dpsNumIdsInflight
+    } =
+    (pdIdsToReq, acknowledgedObjectIds', dpsOutstandingFifo')
+   where
+    (acknowledgedObjectIds', dpsOutstandingFifo') =
+      StrictSeq.spanl
+        ( \objectId ->
+            ( objectId `Map.member` dgsObjectsLiveMultiplicities
+                || objectId `Set.member` dpsObjectsRequestedButNotReceivedIds
+                || objectId `Map.member` dpsObjectsPending
+            )
+              && objectId `Set.notMember` dpsObjectsInflightIds
+        )
+        dpsOutstandingFifo
+    numOfUnacked = StrictSeq.length dpsOutstandingFifo
+    numOfAcked = StrictSeq.length acknowledgedObjectIds'
+    unackedAndRequested = fromIntegral numOfUnacked + dpsNumIdsInflight
+
+    pdIdsToReq =
+      assert (unackedAndRequested <= dpMaxNumObjectsOutstanding) $
+        assert (dpsNumIdsInflight <= dpMaxNumObjectIdsReq) $
+          (dpMaxNumObjectsOutstanding - unackedAndRequested + fromIntegral numOfAcked)
+            `min` (dpMaxNumObjectIdsReq - dpsNumIdsInflight)
+
+-- | `RefCountDiff` represents a map of `objectId` which can be acknowledged
+-- together with their multiplicities.
+newtype RefCountDiff objectId = RefCountDiff
+  { rcdIdsToAckMultiplicities :: Map objectId Int
+  }
+
+updateRefCounts ::
+  Ord objectId =>
+  Map objectId Int ->
+  RefCountDiff objectId ->
+  Map objectId Int
+updateRefCounts dgsObjectsLiveMultiplicities (RefCountDiff diff) =
+  Map.merge
+    (Map.mapMaybeMissing \_ x -> Just x)
+    (Map.mapMaybeMissing \_ _ -> Nothing)
+    ( Map.zipWithMaybeMatched \_ x y ->
+        assert
+          (x >= y)
+          if x > y
+            then Just $! x - y
+            else Nothing
+    )
+    dgsObjectsLiveMultiplicities
+    diff
