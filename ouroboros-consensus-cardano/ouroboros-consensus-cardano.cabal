@@ -36,6 +36,28 @@ flag asserts
   manual: False
   default: False
 
+flag fat-foreign-dylib
+  description:
+    Enable foreign library compilation.
+    Notice this requires a GHC compiled with fPIC.
+
+    ```
+    git clone git@gitlab.haskell.org:ghc/ghc
+    cd ghc
+    git submodule update --init --recursive
+    ./boot
+    CFLAGS=-fPIC ./configure
+    CFLAGS=-fPIC ./hadrian/build -j --docs=none binary-dist "*.*.ghc.hs.opts += -fPIC \
+                                                             *.*.ghc.c.opts += -fPIC \
+                                                             *.*.cc.c.opts += -fPIC"
+    ghcup install ghc -u "file:///.../ghc/_build/bindist/ghc-x.y.z-x86_64-unknown-linux.tar.xz" x.y.z-fpic
+    echo "package *\n  ghc-options: -fPIC" >> cabal.project.local
+    cabal build -w ghc-x.y.z-fpic -ffat-foreign-dylib ...
+    ```
+
+  manual: True
+  default: False
+
 common common-lib
   default-language: Haskell2010
   ghc-options:
@@ -185,9 +207,12 @@ library snapshot-conversion
   hs-source-dirs: src/snapshot-conversion
   other-modules:
     Ouroboros.Consensus.Cardano.StreamingLedgerTables
+
   exposed-modules:
     Ouroboros.Consensus.Cardano.SnapshotConversion
+
   build-depends:
+    aeson,
     ansi-terminal,
     base,
     cardano-ledger-binary,
@@ -211,6 +236,32 @@ library snapshot-conversion
     terminal-progress-bar,
     text,
 
+foreign-library snapshot-conversion-ffi
+  import: common-lib
+  type: native-shared
+  hs-source-dirs: external
+  c-sources:
+    external/entry.c
+    external/fini_array_shim.c
+
+  other-modules: Ouroboros.Consensus.Cardano.SnapshotConversion.External
+  ghc-options:
+    -static
+    -threaded
+    -fPIC
+
+  build-depends:
+    base,
+    cardano-ledger-byron,
+    filepath,
+    mtl,
+    ouroboros-consensus,
+    ouroboros-consensus-cardano,
+    snapshot-conversion,
+    strict-sop-core,
+
+  if !flag(fat-foreign-dylib)
+    buildable: False
 
 library unstable-byronspec
   import: common-lib
@@ -727,20 +778,17 @@ executable immdb-server
 executable snapshot-converter
   import: common-exe
   hs-source-dirs: app
-
   main-is: snapshot-converter.hs
   build-depends:
-    fsnotify,
     base,
     cardano-crypto-class,
+    filepath,
+    fsnotify,
     mtl,
     optparse-applicative,
     ouroboros-consensus,
-    ouroboros-consensus-cardano:{unstable-cardano-tools, ouroboros-consensus-cardano, snapshot-conversion},
-    text,
+    ouroboros-consensus-cardano:{ouroboros-consensus-cardano, snapshot-conversion, unstable-cardano-tools},
     with-utf8,
-    filepath,
-    aeson
 
   other-modules:
     DBAnalyser.Parsers

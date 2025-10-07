@@ -1,6 +1,9 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -16,6 +19,9 @@ module Ouroboros.Consensus.Cardano.SnapshotConversion
   ( Format (..)
   , parseFormat
   , convertSnapshot
+  , getFormatFromConfig
+  , FromConfigFile (..)
+  , FilePath' (..)
   ) where
 
 import Codec.Serialise
@@ -24,18 +30,19 @@ import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import Control.ResourceRegistry
+import qualified Data.Aeson as Aeson
 import Data.Bifunctor
 import Data.Char (toLower)
-import qualified Data.Text.Lazy as T
+import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
+import GHC.TypeLits (Symbol)
 import Options.Applicative
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node ()
 import Ouroboros.Consensus.Cardano.StreamingLedgerTables
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as V1
@@ -197,11 +204,11 @@ data SomeBackend c where
 
 convertSnapshot ::
   Bool ->
-  ProtocolInfo (CardanoBlock StandardCrypto) ->
+  CodecConfig (CardanoBlock StandardCrypto) ->
   Format ->
   Format ->
   ExceptT (Error (CardanoBlock StandardCrypto)) IO ()
-convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
+convertSnapshot interactive ccfg from to = do
   InEnv{..} <- getInEnv
 
   o@OutEnv{..} <- getOutEnv inState
@@ -438,7 +445,7 @@ niceAnimatedProgressBar inMsg outMsg = do
       putStrLn ""
       pb <-
         newProgressBar
-          defStyle{stylePrefix = msg (T.pack inMsg), stylePostfix = msg (T.pack outMsg)}
+          defStyle{stylePrefix = msg (TL.pack inMsg), stylePostfix = msg (TL.pack outMsg)}
           10
           (Progress 1 100 ())
 
@@ -516,3 +523,129 @@ defaultLMDBLimits =
     , V1.lmdbMaxDatabases = 10
     , V1.lmdbMaxReaders = 16
     }
+
+{-------------------------------------------------------------------------------
+  Parsing the configuration file
+-------------------------------------------------------------------------------}
+
+instance Aeson.FromJSON FromConfigFile where
+  parseJSON = Aeson.withObject "CardanoConfigFile" $ \o -> do
+    DBPaths imm vol <- Aeson.parseJSON (Aeson.Object o)
+    inFmt <- ($ vol) <$> Aeson.parseJSON (Aeson.Object o)
+    pure $ FromConfigFile inFmt imm
+
+data DBPaths = DBPaths (FilePath' "Snapshots") (FilePath' "Volatile")
+
+-- | Possible database locations:
+--
+--  (1) Provided as flag: we would need to receive that same flag. For simplicity we will ban this scenario for now, requiring users to put the path in the config file.
+--
+--  (2) Not provided: we default to "mainnet"
+--
+--  (3) Provided in the config file:
+--
+--    (1) One database path: we use that one
+--
+--        @@
+--        "DatabasePath": "some/path"
+--        @@
+--
+--    (2) Multiple databases paths: we use the immutable one
+--
+--        @@
+--        "DatabasePath": {
+--          "ImmutableDbPath": "some/path",
+--          "VolatileDbPath": "some/other/path",
+--        }
+--        @@
+instance Aeson.FromJSON DBPaths where
+  parseJSON = Aeson.withObject "CardanoConfigFile" $ \o -> do
+    pncDatabase <- o Aeson..:? "DatabasePath"
+    (imm, vol) <- case pncDatabase of
+      Nothing -> pure ("mainnet", "mainnet") -- (2)
+      Just p@(Aeson.Object{}) ->
+        Aeson.withObject
+          "NodeDatabasePaths"
+          (\o' -> (,) <$> o' Aeson..: "ImmutableDbPath" <*> o' Aeson..: "VolatileDbPath") -- (3.2)
+          p
+      Just (Aeson.String s) ->
+        let
+          s' = T.unpack s
+         in
+          pure (s', s') -- (3.1)
+      _ -> fail "NodeDatabasePaths must be an object or a string"
+    pure $ DBPaths (FP $ imm F.</> "ledger") (FP vol)
+
+-- | Possible formats
+--
+--  (1) Nothing provided: we use InMemory
+--
+--  (2) Provided in config file:
+--
+--    (1) "V2InMem": we use InMemory
+--
+--        @@
+--        "LedgerDB": {
+--          "Backend": "V2InMem"
+--        }
+--        @@
+--
+--    (2) "V1LMDB": we use LMDB
+--
+--        @@
+--        "LedgerDB": {
+--          "Backend": "V1LMDB"
+--        }
+--        @@
+--
+--    (3) "V2LSM"
+--        LSM database locations:
+--        (1) Nothing provided: we use "lsm" in the volatile directory
+--
+--        @@
+--        "LedgerDB": {
+--          "Backend": "V2LSM"
+--        }
+--        @@
+--
+--        (2) Provided in file: we use that one
+--
+--        @@
+--        "LedgerDB": {
+--          "Backend": "V2LSM",
+--          "LSMDatabasePath": "some/path"
+--        }
+--        @@
+instance Aeson.FromJSON (FilePath' "Volatile" -> FilePath' "Snapshot" -> Format) where
+  parseJSON = Aeson.withObject "CardanoConfigFile" $ \o -> do
+    ldb <- o Aeson..:? "LedgerDB"
+    case ldb of
+      Nothing -> pure $ const $ Mem . rawFilePath -- (1)
+      Just ldb' -> do
+        bkd <- ldb' Aeson..:? "Backend"
+        case bkd :: Maybe String of
+          Just "V1LMDB" -> pure $ const $ LMDB . rawFilePath -- (2.2)
+          Just "V2LSM" -> do
+            mDbPath <- ldb' Aeson..:? "LSMDatabasePath"
+            case mDbPath of
+              Nothing -> pure $ \v -> flip LSM (rawFilePath v F.</> "lsm") . rawFilePath -- (2.3.1)
+              Just dbPath -> pure $ const $ flip LSM dbPath . rawFilePath -- (2.3.2)
+          _ -> pure $ const $ Mem . rawFilePath -- (2.1)
+
+getFormatFromConfig :: FilePath' "ConfigFile" -> IO FromConfigFile
+getFormatFromConfig (FP configPath) =
+  either (throwIO . userError) pure =<< Aeson.eitherDecodeFileStrict' configPath
+
+-- | FilePaths annotated with the purpose
+newtype FilePath' (s :: Symbol) = FP {rawFilePath :: FilePath}
+
+instance Show (FilePath' s) where
+  show = rawFilePath
+
+-- | Information inferred from the config file
+data FromConfigFile
+  = FromConfigFile
+      -- | The input format once supplied with a particular snapshot
+      (FilePath' "Snapshot" -> Format)
+      -- | The directory of snapshots, to be watched by inotify
+      (FilePath' "Snapshots")
