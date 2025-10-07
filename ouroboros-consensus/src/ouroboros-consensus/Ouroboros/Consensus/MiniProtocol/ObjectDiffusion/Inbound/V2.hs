@@ -91,7 +91,7 @@ objectDiffusionInbound
       -- Only attempt to add objects if we have some work to do
       when (collected > 0) $ do
         -- submitObjectToPool traces:
-        -- \* `TraceObjectDiffusionProcessed`,
+        -- \* `TraceObjectDiffusionInboundAddedObjects`,
         -- \* `TraceObjectInboundAddedToObjectPool`, and
         -- \* `TraceObjectInboundRejectedFromObjectPool`
         -- events.

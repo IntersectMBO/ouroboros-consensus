@@ -10,6 +10,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 
 import Control.Monad.Class.MonadTime.SI
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq (..), NumObjectsOutstanding, NumObjectsReq (..))
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types (ObjectMultiplicity)
 
 -- | Policy for making decisions
 data DecisionPolicy = DecisionPolicy
@@ -21,17 +22,11 @@ data DecisionPolicy = DecisionPolicy
   -- ^ a limit of objects in-flight from a single peer, plus or minus 1.
   , dpMaxNumObjectsInflightTotal :: !NumObjectsReq
   -- ^ a limit of object size in-flight from all peers, plus or minus 1
-  , dpMaxObjectInflightMultiplicity :: !Int
+  , dpMaxObjectInflightMultiplicity :: !ObjectMultiplicity
   -- ^ from how many peers download the `objectId` simultaneously
   , dpMinObtainedButNotAckedObjectsLifetime :: !DiffTime
   -- ^ how long objects that have been added to the objectpool will be
   -- kept in the `dgsObjectsPending` cache.
-  , dpScoreDrainRate :: !Double
-  -- ^ rate at which "rejected" objects drain. Unit: object/seconds.
-  -- TODO: still relevant?
-  , dpScoreMaxRejections :: !Double
-  -- ^ Maximum number of "rejections". Unit: seconds
-  -- TODO: still relevant?
   }
   deriving Show
 
@@ -44,6 +39,4 @@ defaultDecisionPolicy =
     , dpMaxNumObjectsInflightTotal = NumObjectsReq 20
     , dpMaxObjectInflightMultiplicity = 2
     , dpMinObtainedButNotAckedObjectsLifetime = 2
-    , dpScoreDrainRate = 0.1
-    , dpScoreMaxRejections = 15 * 60
     }

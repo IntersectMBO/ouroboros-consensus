@@ -5,6 +5,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
   ( -- * Core API
@@ -12,9 +13,9 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
   , DecisionPeerState (..)
   , DecisionGlobalStateVar
   , newDecisionGlobalStateVar
-  , collectIds
-  , collectObjects
-  , submitObjectToPool
+  , handleReceivedIds
+  , handleReceivedObjects
+  , submitObjectsToPool
   , acknowledgeObjectIds
   , splitAcknowledgedObjectIds
   , tickTimedObjects
@@ -23,8 +24,8 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
     -- * Internals, only exported for testing purposes:
   , RefCountDiff (..)
   , updateRefCounts
-  , collectIdsImpl
-  , collectObjectsImpl
+  , handleReceivedIdsImpl
+  , handleReceivedObjectsImpl
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -46,7 +47,7 @@ import Data.Typeable (Typeable)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API (SizeInBytes (..), ObjectPoolWriter (opwHasObject))
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API (SizeInBytes (..), ObjectPoolWriter (opwHasObject, opwObjectId))
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsAck (..))
 import System.Random (StdGen)
 
@@ -72,13 +73,12 @@ acknowledgeObjectIds ::
   )
 {-# INLINE acknowledgeObjectIds #-}
 acknowledgeObjectIds
-  policy
-  sharedObjectState
+  decisionPolicy
+  globalState
   ps@DecisionPeerState
     { dpsIdsAvailable
     , dpsNumIdsInflight
     , dpsObjectsPending
-    , dpsScore
     , dpsObjectsOwtPool
     } =
     -- We can only acknowledge objectIds when we can request new ones, since
@@ -96,7 +96,6 @@ acknowledgeObjectIds
                 dpsNumIdsInflight
                   + pdIdsToReq
             , dpsObjectsPending = dpsObjectsPending'
-            , dpsScore = dpsScore'
             , dpsObjectsOwtPool = dpsObjectsOwtPool'
             }
         )
@@ -111,12 +110,12 @@ acknowledgeObjectIds
     -- Split `dpsOutstandingFifo'` into the longest prefix of `objectId`s which
     -- can be acknowledged and the unacknowledged `objectId`s.
     (pdIdsToReq, acknowledgedObjectIds, dpsOutstandingFifo') =
-      splitAcknowledgedObjectIds policy sharedObjectState ps
+      splitAcknowledgedObjectIds decisionPolicy globalState ps
 
     objectsOwtPoolList =
       [ (objectId, object)
       | objectId <- toList toObjectPoolObjectIds
-      , objectId `Map.notMember` dgsObjectsPending sharedObjectState
+      , objectId `Map.notMember` dgsObjectsPending globalState
       , object <- maybeToList $ objectId `Map.lookup` dpsObjectsPending
       ]
     (toObjectPoolObjectIds, _) =
@@ -134,7 +133,6 @@ acknowledgeObjectIds
       Map.filterWithKey
         (\objectId _ -> objectId `Map.notMember` objectsOwtPool)
         ackedDownloadedObjects
-    dpsScore' = dpsScore + fromIntegral (Map.size lateObjects)
 
     -- the set of live `objectIds`
     liveSet = Set.fromList (toList dpsOutstandingFifo')
@@ -216,7 +214,7 @@ updateRefCounts ::
   Map objectId Int ->
   RefCountDiff objectId ->
   Map objectId Int
-updateRefCounts dgsObjectReferenceCounts (RefCountDiff diff) =
+updateRefCounts dgsObjectsLiveMultiplicities (RefCountDiff diff) =
   Map.merge
     (Map.mapMaybeMissing \_ x -> Just x)
     (Map.mapMaybeMissing \_ _ -> Nothing)
@@ -227,7 +225,7 @@ updateRefCounts dgsObjectReferenceCounts (RefCountDiff diff) =
             then Just $! x - y
             else Nothing
     )
-    dgsObjectReferenceCounts
+    dgsObjectsLiveMultiplicities
     diff
 
 tickTimedObjects ::
@@ -240,7 +238,7 @@ tickTimedObjects
   now
   st@DecisionGlobalState
     { dgsRententionTimeouts
-    , dgsObjectReferenceCounts
+    , dgsObjectsLiveMultiplicities
     , dgsObjectsPending
     } =
     let (expiredObjects', dgsRententionTimeouts') =
@@ -252,12 +250,12 @@ tickTimedObjects
             (expired, Nothing, timed) ->
               (expired, timed)
         refDiff = Map.foldl' fn Map.empty expiredObjects'
-        dgsObjectReferenceCounts' = updateRefCounts dgsObjectReferenceCounts (RefCountDiff refDiff)
-        liveSet = Map.keysSet dgsObjectReferenceCounts'
+        dgsObjectsLiveMultiplicities' = updateRefCounts dgsObjectsLiveMultiplicities (RefCountDiff refDiff)
+        liveSet = Map.keysSet dgsObjectsLiveMultiplicities'
         dgsObjectsPending' = dgsObjectsPending `Map.restrictKeys` liveSet
      in st
           { dgsRententionTimeouts = dgsRententionTimeouts'
-          , dgsObjectReferenceCounts = dgsObjectReferenceCounts'
+          , dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
           , dgsObjectsPending = dgsObjectsPending'
           }
    where
@@ -285,11 +283,11 @@ tickTimedObjects
 
 -- | Insert received `objectId`s and return the number of objectIds to be acknowledged
 -- and the updated `DecisionGlobalState`.
-collectIdsImpl ::
+handleReceivedIdsImpl ::
   forall peerAddr object objectId.
   (Ord objectId, Ord peerAddr, HasCallStack) =>
   -- | check if objectId is in the objectpool, ref
-  -- 'objectpoolHasObject'
+  -- 'opwHasObject'
   (objectId -> Bool) ->
   peerAddr ->
   -- | number of requests to subtract from
@@ -301,8 +299,8 @@ collectIdsImpl ::
   Set objectId ->
   DecisionGlobalState peerAddr objectId object ->
   DecisionGlobalState peerAddr objectId object
-collectIdsImpl
-  objectpoolHasObject
+handleReceivedIdsImpl
+  opwHasObject
   peerAddr
   reqNo
   objectIdsSeq
@@ -310,7 +308,7 @@ collectIdsImpl
   st@DecisionGlobalState
     { dgsPeerStates
     , dgsObjectsPending
-    , dgsObjectReferenceCounts
+    , dgsObjectsLiveMultiplicities
     } =
     -- using `alterF` so the update of `DecisionPeerState` is done in one lookup
     case Map.alterF
@@ -342,7 +340,7 @@ collectIdsImpl
         -- Divide the new objectIds in two: those that are already in the objectpool
         -- and those that are not. We'll request some objects from the latter.
         (ignoredObjectIds, dpsIdsAvailableSet) =
-          Set.partition objectpoolHasObject objectIdsSet
+          Set.partition opwHasObject objectIdsSet
 
         -- Add all `objectIds` from `dpsIdsAvailableMap` which are not
         -- unacknowledged or already buffered. Unacknowledged objectIds must have
@@ -368,7 +366,7 @@ collectIdsImpl
           dgsObjectsPending
             <> Map.fromList ((, Nothing) <$> Set.toList ignoredObjectIds)
 
-        dgsObjectReferenceCounts' =
+        dgsObjectsLiveMultiplicities' =
           Foldable.foldl'
             ( flip $
                 Map.alter
@@ -377,13 +375,13 @@ collectIdsImpl
                       Just cnt -> Just $! succ cnt
                   )
             )
-            dgsObjectReferenceCounts
+            dgsObjectsLiveMultiplicities
             objectIdsSeq
 
         st' =
           st
             { dgsObjectsPending = dgsObjectsPending'
-            , dgsObjectReferenceCounts = dgsObjectReferenceCounts'
+            , dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
             }
         ps' =
           assert
@@ -399,7 +397,7 @@ collectIdsImpl
 const_MAX_OBJECT_SIZE_DISCREPENCY :: SizeInBytes
 const_MAX_OBJECT_SIZE_DISCREPENCY = 32
 
-collectObjectsImpl ::
+handleReceivedObjectsImpl ::
   forall peerAddr object objectId.
   ( Ord peerAddr
   , Ord objectId
@@ -420,7 +418,7 @@ collectObjectsImpl ::
   Either
     ObjectDiffusionInboundError
     (DecisionGlobalState peerAddr objectId object)
-collectObjectsImpl
+handleReceivedObjectsImpl
   objectSize
   peerAddr
   requestedObjectIdsMap
@@ -559,15 +557,15 @@ newDecisionGlobalStateVar rng =
       { dgsPeerStates = Map.empty
       , dgsObjectsInflightMultiplicities = Map.empty
       , dgsObjectsPending = Map.empty
-      , dgsObjectReferenceCounts = Map.empty
+      , dgsObjectsLiveMultiplicities = Map.empty
       , dgsRententionTimeouts = Map.empty
-      , dgsObjectsOwtPool = Map.empty
+      , dgsObjectsOwtPoolMultiplicities = Map.empty
       , dgsRng = rng
       }
 
 -- | Acknowledge `objectId`s, return the number of `objectIds` to be acknowledged to the
 -- remote side.
-collectIds ::
+handleReceivedIds ::
   forall m peerAddr ticketNo object objectId.
   (MonadSTM m, Ord objectId, Ord peerAddr) =>
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
@@ -582,17 +580,17 @@ collectIds ::
   -- | received `objectId`s
   Set objectId ->
   m ()
-collectIds tracer sharedVar objectPoolWriter peerAddr reqNo objectIdsSeq objectIds = do
+handleReceivedIds tracer sharedVar objectPoolWriter peerAddr reqNo objectIdsSeq objectIds = do
   st <- atomically $ do
     hasObject <- opwHasObject objectPoolWriter
     stateTVar
       sharedVar
-      ((\a -> (a, a)) . collectIdsImpl hasObject peerAddr reqNo objectIdsSeq objectIds)
-  traceWith tracer (TraceDecisionGlobalState "collectIds" st)
+      ((\a -> (a, a)) . handleReceivedIdsImpl hasObject peerAddr reqNo objectIdsSeq objectIds)
+  traceWith tracer (TraceDecisionLogicGlobalStateUpdated "handleReceivedIds" st)
 
 -- | Include received `object`s in `DecisionGlobalState`.  Return number of `objectIds`
 -- to be acknowledged and list of `object` to be added to the objectpool.
-collectObjects ::
+handleReceivedObjects ::
   forall m peerAddr object objectId.
   ( MonadSTM m
   , Ord objectId
@@ -611,145 +609,85 @@ collectObjects ::
   -- | number of objectIds to be acknowledged and objects to be added to the
   -- objectpool
   m (Maybe ObjectDiffusionInboundError)
-collectObjects tracer objectSize sharedVar peerAddr objectIdsRequested objectsMap = do
+handleReceivedObjects tracer objectSize sharedVar peerAddr objectIdsRequested objectsMap = do
   r <- atomically $ do
     st <- readTVar sharedVar
-    case collectObjectsImpl objectSize peerAddr objectIdsRequested objectsMap st of
+    case handleReceivedObjectsImpl objectSize peerAddr objectIdsRequested objectsMap st of
       r@(Right st') ->
         writeTVar sharedVar st'
           $> r
       r@Left{} -> pure r
   case r of
     Right st ->
-      traceWith tracer (TraceDecisionGlobalState "collectObjects" st)
+      traceWith tracer (TraceDecisionLogicGlobalStateUpdated "handleReceivedObjects" st)
         $> Nothing
     Left e -> return (Just e)
 
-submitObjectToPool ::
-  Tracer m (TraceObjectDiffusionInbound objectId object) -> objectId -> object -> m ()
-submitObjectToPool objectTracer objectId object =
+submitObjectsToPool ::
+  Tracer m (TraceObjectDiffusionInbound objectId object) -> ObjectPoolWriter objectId object m -> [object] -> m ()
+submitObjectsToPool tracer objectPoolWriter objects =
   bracket_
     (atomically $ waitTSem poolSem)
     (atomically $ signalTSem poolSem)
     $ do
-      start <- getMonotonicTime
-      res <- addObject
-      end <- getMonotonicTime
-      atomically $ modifyTVar globalStateVar (updateBufferedObject end res)
-      let duration = end `diffTime` start
-      case res of
-        ObjectAccepted -> traceWith objectTracer (TraceObjectInboundAddedToObjectPool [objectId] duration)
-        ObjectRejected -> traceWith objectTracer (TraceObjectInboundRejectedFromObjectPool [objectId] duration)
+      opwAddObjects objectPoolWriter objects
+      now <- getMonotonicTime
+      traceWith tracer (TraceObjectDiffusionInboundSubmittedObjects (NumObjectsProcessed $ length objects))
+      atomically $
+        let getId = opwObjectId objectPoolWriter in
+        modifyTVar globalStateVar $ \globalState ->
+          foldl' (\st object -> updateObjectsOwtPool now (getId object) object st) globalState
   where
-  -- add the object to the objectpool
-  addObject :: m ObjectObjectPoolResult
-  addObject = do
-    mpSnapshot <- atomically objectpoolGetSnapshot
+    updateObjectsOwtPool ::
+      Time ->
+      objectId ->
+      object ->
+      DecisionGlobalState peerAddr objectId object ->
+      DecisionGlobalState peerAddr objectId object
+    updateObjectsOwtPool
+      now
+      objectId
+      st@DecisionGlobalState
+        { dgsPeerStates
+        , dgsObjectsPending
+        , dgsObjectsLiveMultiplicities
+        , dgsRententionTimeouts
+        , dgsObjectsOwtPoolMultiplicities
+        } =
+        st
+          { dgsPeerStates = dgsPeerStates'
+          , dgsObjectsPending = dgsObjectsPending'
+          , dgsRententionTimeouts = dgsRententionTimeouts'
+          , dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
+          , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
+          }
+        where
+        dgsObjectsOwtPoolMultiplicities' =
+          Map.update
+            (\case 1 -> Nothing; n -> Just $! pred n)
+            objectId
+            dgsObjectsOwtPoolMultiplicities
 
-    -- Note that checking if the objectpool contains a object before
-    -- spending several ms attempting to add it to the pool has
-    -- been judged immoral.
-    if objectpoolHasObject mpSnapshot objectId
-      then do
-        !now <- getMonotonicTime
-        !s <- countRejectedObjects now 1
-        traceWith objectTracer $
-          TraceObjectDiffusionProcessed
-            ProcessedObjectCount
-              { pobjectcAccepted = 0
-              , pobjectcRejected = 1
-              , pobjectcScore = s
-              }
-        return ObjectRejected
-      else do
-        acceptedObjects <- objectpoolAddObjects [object]
-        end <- getMonotonicTime
-        if null acceptedObjects
-          then do
-            !s <- countRejectedObjects end 1
-            traceWith objectTracer $
-              TraceObjectDiffusionProcessed
-                ProcessedObjectCount
-                  { pobjectcAccepted = 0
-                  , pobjectcRejected = 1
-                  , pobjectcScore = s
-                  }
-            return ObjectRejected
-          else do
-            !s <- countRejectedObjects end 0
-            traceWith objectTracer $
-              TraceObjectDiffusionProcessed
-                ProcessedObjectCount
-                  { pobjectcAccepted = 1
-                  , pobjectcRejected = 0
-                  , pobjectcScore = s
-                  }
-            return ObjectAccepted
+        dgsRententionTimeouts' =
+          Map.alter
+            (\case Nothing -> Just [objectId]; Just objectIds -> Just (objectId : objectIds))
+            (addTime dpMinObtainedButNotAckedObjectsLifetime now)
+            dgsRententionTimeouts
 
-  updateBufferedObject ::
-    Time ->
-    ObjectObjectPoolResult ->
-    DecisionGlobalState peerAddr objectId object ->
-    DecisionGlobalState peerAddr objectId object
-  updateBufferedObject
-    _
-    ObjectRejected
-    st@DecisionGlobalState
-      { dgsPeerStates
-      , dgsObjectsOwtPool
-      } =
-      st
-        { dgsPeerStates = dgsPeerStates'
-        , dgsObjectsOwtPool = dgsObjectsOwtPool'
-        }
-      where
-      dgsObjectsOwtPool' =
-        Map.update
-          (\case 1 -> Nothing; n -> Just $! pred n)
+        dgsObjectsLiveMultiplicities' =
+          Map.alter
+            (\case Nothing -> Just 1; Just n -> Just $! succ n)
+            objectId
+            dgsObjectsLiveMultiplicities
+
+        dgsObjectsPending' =
+          Map.insert
           objectId
-          dgsObjectsOwtPool
+          (Just object)
+          dgsObjectsPending
 
-      dgsPeerStates' = Map.update fn peerAddr dgsPeerStates
-        where
-        fn ps = Just $! ps{dpsObjectsOwtPool = Map.delete objectId (dpsObjectsOwtPool ps)}
-  updateBufferedObject
-    now
-    ObjectAccepted
-    st@DecisionGlobalState
-      { dgsPeerStates
-      , dgsObjectsPending
-      , dgsObjectReferenceCounts
-      , dgsRententionTimeouts
-      , dgsObjectsOwtPool
-      } =
-      st
-        { dgsPeerStates = dgsPeerStates'
-        , dgsObjectsPending = dgsObjectsPending'
-        , dgsRententionTimeouts = dgsRententionTimeouts'
-        , dgsObjectReferenceCounts = dgsObjectReferenceCounts'
-        , dgsObjectsOwtPool = dgsObjectsOwtPool'
-        }
-      where
-      dgsObjectsOwtPool' =
-        Map.update
-          (\case 1 -> Nothing; n -> Just $! pred n)
-          objectId
-          dgsObjectsOwtPool
-
-      dgsRententionTimeouts' = Map.alter fn (addTime dpMinObtainedButNotAckedObjectsLifetime now) dgsRententionTimeouts
-        where
-        fn :: Maybe [objectId] -> Maybe [objectId]
-        fn Nothing = Just [objectId]
-        fn (Just objectIds) = Just $! (objectId : objectIds)
-
-      dgsObjectReferenceCounts' = Map.alter fn objectId dgsObjectReferenceCounts
-        where
-        fn :: Maybe Int -> Maybe Int
-        fn Nothing = Just 1
-        fn (Just n) = Just $! succ n
-
-      dgsObjectsPending' = Map.insert objectId (Just object) dgsObjectsPending
-
-      dgsPeerStates' = Map.update fn peerAddr dgsPeerStates
-        where
-        fn ps = Just $! ps{dpsObjectsOwtPool = Map.delete objectId (dpsObjectsOwtPool ps)}
+        dgsPeerStates' =
+          Map.update
+          (\ps -> Just $! ps{dpsObjectsPending = Map.insert objectId object (dpsObjectsPending ps)})
+          peerAddr
+          dgsPeerStates
