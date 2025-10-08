@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
   , module Ouroboros.Consensus.Storage.LedgerDB.Forker
   ) where
 
+import qualified Control.Monad as Monad
 import Control.RAWLock hiding (read)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -52,6 +53,9 @@ data ForkerEnv m l blk = ForkerEnv
   -- ^ Config
   , foeResourcesToRelease :: !(RAWLock m (), ResourceKey m, StrictTVar m (m ()))
   -- ^ Release the resources
+  , foeInitialHandleKey :: !(ResourceKey m)
+  -- ^ Resource key for the initial handle to ensure it is released. See
+  -- comments in 'implForkerCommit'.
   }
   deriving Generic
 
@@ -160,19 +164,12 @@ implForkerCommit env = do
                   AS.Empty _ -> pure ()
                   _ AS.:< closeOld' -> closeLedgerSeq (LedgerSeq closeOld')
                 -- Finally, close the anchor of @lseq@ (which is a duplicate of
-                -- the head of @olddb'@).
-                --
-                -- Note if the resource registry used to create the Forker is
-                -- ephemeral as the one created on each Chain selection or each
-                -- Forging loop iteration, this first duplicated state will be
-                -- closed by the resource registry closing down, so this will be
-                -- a double release, which is fine. We prefer keeping this
-                -- action just in case some client passes a registry that
-                -- outlives the forker.
-                --
-                -- The rest of the states in the forker will be closed via
-                -- @foeResourcesToRelease@ instead of via the registry.
-                close $ tables $ AS.anchor lseq
+                -- the head of @olddb'@). To close this handle, we have to
+                -- release the 'foeInitialHandleKey' as that one is registered
+                -- on the registry used to open the forker. Releasing it will
+                -- call 'close' on the handle which will call 'release' on the key
+                -- for the handle.
+                Monad.void $ release foeInitialHandleKey
           pure (closeDiscarded, LedgerSeq newdb)
       )
 
@@ -186,6 +183,7 @@ implForkerCommit env = do
     { foeLedgerSeq
     , foeSwitchVar
     , foeResourcesToRelease
+    , foeInitialHandleKey
     } = env
 
   theImpossible =
