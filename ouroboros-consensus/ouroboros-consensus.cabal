@@ -67,6 +67,8 @@ library
   import: common-lib
   hs-source-dirs: src/ouroboros-consensus
   exposed-modules:
+    LeiosDemoOnlyTestFetch
+    LeiosDemoOnlyTestNotify
     Ouroboros.Consensus.Block
     Ouroboros.Consensus.Block.Abstract
     Ouroboros.Consensus.Block.EBB
@@ -353,6 +355,7 @@ library
     transformers,
     transformers-base,
     typed-protocols ^>=0.3,
+    typed-protocols-cborg ^>=0.3,
     vector ^>=0.13,
 
   x-docspec-extra-packages:
