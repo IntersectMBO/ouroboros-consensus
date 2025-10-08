@@ -439,7 +439,9 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
     Reopen -> Unit <$> reopen env
     PersistBlks -> ignore <$> persistBlks DoNotGarbageCollect internal
     PersistBlksThenGC -> ignore <$> persistBlks GarbageCollect internal
-    UpdateLedgerSnapshots -> ignore <$> intTryTakeSnapshot internal
+    UpdateLedgerSnapshots -> do
+      now <- getMonotonicTime
+      ignore <$> intTryTakeSnapshot internal now
     WipeVolatileDB -> Point <$> wipeVolatileDB st
  where
   mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True

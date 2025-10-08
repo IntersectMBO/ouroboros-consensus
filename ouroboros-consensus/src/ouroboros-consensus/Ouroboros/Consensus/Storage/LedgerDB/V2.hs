@@ -172,7 +172,7 @@ implMkLedgerDb h snapManager =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
-      , tryTakeSnapshot = getEnv h (implTryTakeSnapshot snapManager)
+      , tryTakeSnapshot = getEnv1 h (implTryTakeSnapshot snapManager)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -354,12 +354,12 @@ implTryTakeSnapshot ::
   ) =>
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
   LedgerDBEnv m l blk ->
+  Time ->
   m ()
-implTryTakeSnapshot snapManager env = do
+implTryTakeSnapshot snapManager env now = do
   timeSinceLastWrite <- do
     mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
     for mLastWrite $ \lastWrite -> do
-      now <- getMonotonicTime
       pure $ now `diffTime` lastWrite
   RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
     lseq@(LedgerSeq immutableStates) <- atomically $ do
@@ -530,6 +530,15 @@ getEnv (LDBHandle varState) f =
   readTVarIO varState >>= \case
     LedgerDBOpen env -> f env
     LedgerDBClosed -> throwIO $ ClosedDBError @blk prettyCallStack
+
+-- | Variant 'of 'getEnv' for functions taking one argument.
+getEnv1 ::
+  (IOLike m, HasCallStack, HasHeader blk) =>
+  LedgerDBHandle m l blk ->
+  (LedgerDBEnv m l blk -> a -> m r) ->
+  a ->
+  m r
+getEnv1 h f a = getEnv h (`f` a)
 
 -- | Variant 'of 'getEnv' for functions taking five arguments.
 getEnv5 ::

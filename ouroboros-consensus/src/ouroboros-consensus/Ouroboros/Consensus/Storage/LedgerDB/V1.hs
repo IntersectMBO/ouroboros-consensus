@@ -193,7 +193,7 @@ implMkLedgerDb h snapManager =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
-      , tryTakeSnapshot = getEnv h (implTryTakeSnapshot snapManager)
+      , tryTakeSnapshot = getEnv1 h (implTryTakeSnapshot snapManager)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -324,12 +324,12 @@ implTryTakeSnapshot ::
   ) =>
   SnapshotManagerV1 m blk ->
   LedgerDBEnv m l blk ->
+  Time ->
   m ()
-implTryTakeSnapshot snapManager env = do
+implTryTakeSnapshot snapManager env now = do
   timeSinceLastWrite <- do
     mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
     forM mLastWrite $ \lastWrite -> do
-      now <- getMonotonicTime
       pure $ now `diffTime` lastWrite
   -- Get all states before the volatile suffix.
   immutableStates <- atomically $ do

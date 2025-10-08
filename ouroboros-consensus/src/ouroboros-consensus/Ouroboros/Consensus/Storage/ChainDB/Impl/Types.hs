@@ -380,7 +380,7 @@ data Internal m blk = Internal
   -- returned. This can be used for a garbage collection on the VolatileDB.
   , intGarbageCollect :: SlotNo -> m ()
   -- ^ Perform garbage collection for blocks <= the given 'SlotNo'.
-  , intTryTakeSnapshot :: m ()
+  , intTryTakeSnapshot :: Time -> m ()
   -- ^ Write a new LedgerDB snapshot to disk and remove the oldest one(s).
   , intAddBlockRunner :: m Void
   -- ^ Start the loop that adds blocks to the ChainDB retrieved from the
