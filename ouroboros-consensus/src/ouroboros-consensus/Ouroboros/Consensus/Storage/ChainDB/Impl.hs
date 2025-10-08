@@ -312,7 +312,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , intGarbageCollect = \slot -> getEnv h $ \e -> do
                 Background.garbageCollectBlocks e slot
                 LedgerDB.garbageCollect (cdbLedgerDB e) slot
-            , intTryTakeSnapshot = getEnv h $ \env' ->
+            , intTryTakeSnapshot = \_now _mkDelay -> getEnv h $ \env' ->
                 void $
                   LedgerDB.tryTakeSnapshot
                     (cdbLedgerDB env')
