@@ -452,6 +452,11 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
         when (blockSlot blk > slotNo) $ issueWarning blk
         when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
         LedgerDB.tryFlush initLedgerDB
+        LedgerDB.garbageCollect initLedgerDB
+          . fromWithOrigin 0
+          . pointSlot
+          . getTip
+          =<< IOLike.atomically (LedgerDB.getImmutableTip initLedgerDB)
         return (continue blk, ())
       Left err -> do
         traceWith tracer $ LedgerErrorEvent (blockPoint blk) err
