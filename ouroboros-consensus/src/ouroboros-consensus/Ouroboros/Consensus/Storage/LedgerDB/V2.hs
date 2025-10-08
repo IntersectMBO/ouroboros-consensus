@@ -781,6 +781,7 @@ newForker h ldbEnv rr (st, rk) = do
           , foeSwitchVar = ldbSeq ldbEnv
           , foeTracer = tr
           , foeResourcesToRelease = (ldbOpenHandlesLock ldbEnv, k, toRelease)
+          , foeInitialHandleKey = rk
           }
   atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
   pure $
