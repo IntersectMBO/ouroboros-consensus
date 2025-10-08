@@ -20,6 +20,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
 
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Exception (assert)
+import Control.Monad (when)
 import Control.Monad.Class.MonadTime.SI
 import Control.Tracer (Tracer, traceWith)
 import Data.Foldable qualified as Foldable
@@ -30,7 +31,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromJust)
 import Data.Sequence qualified as Seq
 import Data.Sequence.Strict (StrictSeq, fromStrict)
-import Data.Set (Set)
+import Data.Set ((\\))
 import Data.Set qualified as Set
 import Data.Typeable (Typeable)
 import GHC.Stack (HasCallStack)
@@ -127,11 +128,7 @@ handleReceivedObjectsImpl ::
   forall peerAddr object objectId.
   ( Ord peerAddr
   , Ord objectId
-  , Show objectId
-  , Typeable objectId
   ) =>
-  -- | compute object size
-  (object -> SizeInBytes) ->
   peerAddr ->
   -- | requested objectIds
   Map objectId SizeInBytes ->
@@ -145,75 +142,54 @@ handleReceivedObjectsImpl ::
     ObjectDiffusionInboundError
     (DecisionGlobalState peerAddr objectId object)
 handleReceivedObjectsImpl
-  objectSize
   peerAddr
   requestedObjectIdsMap
   receivedObjects
   st@DecisionGlobalState
     { dgsPeerStates
+    , dgsObjectsInflightMultiplicities
     } = do
     
     let
       peerState@DecisionPeerState
-        { dpsOutstandingFifo
-        , dpsIdsAvailable
+        { dpsIdsAvailable
         , dpsObjectsInflightIds
         , dpsObjectsPending
-        , dpsNumIdsInflight
         } =
         findWithDefault
           (error "ObjectDiffusion.handleReceivedIdsImpl: the peer should appear in dgsPeerStates")
           peerAddr
           dgsPeerStates
-    -- using `alterF` so the update of `DecisionPeerState` is done in one lookup
-    -- case Map.alterF
-    --   (fmap Just . fn . fromJust)
-    --   peerAddr
-    --   dgsPeerStates of
-    --   (st', dgsPeerStates') ->
-    --     st'{dgsPeerStates = dgsPeerStates'}
-    -- Update `DecisionPeerState` and partially update `DecisionGlobalState` (except of
-    -- `dgsPeerStates`).
-    -- fn ::
-    --   DecisionPeerState objectId object ->
-    --   ( (DecisionGlobalState peerAddr objectId object)
-    --   , DecisionPeerState objectId object
-    --   )
-    -- fn ps =
-    --     ( st'
-    --     , ps''
-    --     )
-    --   where
       requestedObjectIds = Map.keysSet requestedObjectIdsMap
-      notReceived = requestedObjectIds Set.\\ Map.keysSet receivedObjects
+      receivedObjectIds = Map.keysSet receivedObjects
+    when (not $ Set.null $ requestedObjectIds \\ receivedObjectIds) $
+      Left ProtocolErrorObjectMissing
+    when (not $ Set.null $ receivedObjectIds \\ requestedObjectIds) $
+      Left ProtocolErrorObjectNotRequested
+    -- past that point we know that `requestedObjectIds` == `receivedObjectIds`
+    let
       dpsObjectsPending' = dpsObjectsPending <> receivedObjects
-      -- TODO: raise error if requested object has not been received
 
       -- subtract requested from in-flight
       dpsObjectsInflightIds' =
         assert (requestedObjectIds `Set.isSubsetOf` dpsObjectsInflightIds) $
-          dpsObjectsInflightIds Set.\\ requestedObjectIds
+          dpsObjectsInflightIds \\ requestedObjectIds
 
       dgsObjectsInflightMultiplicities' =
-        Map.merge
-          (Map.mapMaybeMissing \_ x -> Just x)
-          (Map.mapMaybeMissing \_ _ -> assert False Nothing)
-          ( Map.zipWithMaybeMatched \_ x y ->
-              assert
-                (x >= y)
-                let z = x - y
-                 in if z > 0
-                      then Just z
-                      else Nothing
+        Map.foldrWithKey
+          (\objectId count m ->
+            if objectId `Set.member` requestedObjectIds && count > 1
+              then Map.insert objectId (count-1) m
+              else m
           )
-          (dgsObjectsInflightMultiplicities st)
-          (Map.fromSet (const 1) requestedObjectIds)
+          Map.empty
+          dgsObjectsInflightMultiplicities
 
       -- Update DecisionPeerState
       --
       -- Remove the downloaded `objectId`s from the dpsIdsAvailable map, this
-      -- guarantees that we won't attempt to download the `objectIds` from this peer
-      -- once we collect the `objectId`s. Also restrict keys to `liveSet`.
+      -- guarantees that we won't attempt to download the `objectIds` from
+      -- this peer twice.
       dpsIdsAvailable'' = dpsIdsAvailable `Set.difference` requestedObjectIds
 
       peerState' =
