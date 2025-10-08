@@ -205,13 +205,6 @@ withPeer
               peerAddr
               dgsPeerStates
         
-        decreaseCount :: Map objectId ObjectMultiplicity -> objectId -> Map objectId ObjectMultiplicity
-        decreaseCount mmap objectId =
-          Map.update
-            (\n -> if n > 1 then Just $! pred n else Nothing)
-            objectId
-            mmap
-
         -- Update the dgsObjectsLiveMultiplicities map by decreasing the count of each
         -- objectId which is part of the dpsOutstandingFifo of this peer.
         dgsObjectsLiveMultiplicities' =

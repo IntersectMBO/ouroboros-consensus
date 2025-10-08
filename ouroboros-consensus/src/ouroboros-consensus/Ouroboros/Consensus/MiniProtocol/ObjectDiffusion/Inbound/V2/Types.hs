@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -33,6 +34,10 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
   , NumObjectsProcessed (..)
   , TraceObjectDiffusionInbound (..)
   , ObjectDiffusionInboundError (..)
+
+    -- * Helpers for ObjectMultiplicity maps
+  , increaseCount
+  , decreaseCount
   ) where
 
 import Control.Exception (Exception (..))
@@ -321,6 +326,23 @@ newtype ObjectMultiplicity
   deriving (Monoid)    via (Sum Word64)
   deriving (Show)      via (Quiet ObjectMultiplicity)
 
+increaseCount :: Ord k => Map k ObjectMultiplicity -> k -> Map k ObjectMultiplicity
+increaseCount mmap k =
+  Map.alter
+    (\case
+      Nothing -> Just $! 1
+      Just cnt -> Just $! succ cnt
+    )
+    k
+    mmap
+
+decreaseCount :: Ord k => Map k ObjectMultiplicity -> k -> Map k ObjectMultiplicity
+decreaseCount mmap k =
+  Map.update
+    (\n -> if n > 1 then Just $! pred n else Nothing)
+    k
+    mmap
+
 data TraceObjectDiffusionInbound objectId object
   = -- | Number of objects just about to be inserted.
     TraceObjectDiffusionInboundCollectedObjects Int
@@ -339,14 +361,17 @@ data ObjectDiffusionInboundError
   | ProtocolErrorObjectIdsNotRequested
   | ProtocolErrorObjectIdAlreadyKnown
   | ProtocolErrorObjectIdsDuplicate
+  | ProtocolErrorObjectMissing
   deriving Show
 
 instance Exception ObjectDiffusionInboundError where
   displayException ProtocolErrorObjectNotRequested =
-    "The peer replied with a object we did not ask for."
+    "The peer replied with an object we did not ask for."
   displayException ProtocolErrorObjectIdsNotRequested =
     "The peer replied with more objectIds than we asked for."
   displayException ProtocolErrorObjectIdAlreadyKnown =
     "The peer replied with an objectId that it has already sent us previously."
   displayException ProtocolErrorObjectIdsDuplicate =
     "The peer replied with a batch of objectIds containing a duplicate."
+  displayException ProtocolErrorObjectMissing =
+    "The peer did not deliver an object for which it claimed to have an id."

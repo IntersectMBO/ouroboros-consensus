@@ -22,15 +22,14 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Exception (assert)
 import Control.Monad.Class.MonadTime.SI
 import Control.Tracer (Tracer, traceWith)
-import Data.Foldable (toList)
 import Data.Foldable qualified as Foldable
 import Data.Functor (($>))
 import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map, findWithDefault)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromJust)
-import Data.Sequence.Strict (StrictSeq)
-import Data.Sequence.Strict qualified as StrictSeq
+import Data.Sequence qualified as Seq
+import Data.Sequence.Strict (StrictSeq, fromStrict)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Typeable (Typeable)
@@ -43,18 +42,9 @@ import System.Random (StdGen)
 
 data SizeInBytes
 
-strictSeqPartition :: (a -> Bool) -> StrictSeq a -> (StrictSeq a, StrictSeq a)
-strictSeqPartition p xs = go xs StrictSeq.empty StrictSeq.empty
-  where
-    go StrictSeq.Empty trues falses = (trues, falses)
-    go (y StrictSeq.:<| ys) trues falses
-      | p y =
-          go ys (trues StrictSeq.:|> y) falses
-      | otherwise =
-          go ys trues (falses StrictSeq.:|> y)
-
 -- | Insert received `objectId`s and return the number of objectIds to be acknowledged with next request
 -- and the updated `DecisionGlobalState`.
+-- TODO: check for possible errors in the peer response, raise exception if it happened
 handleReceivedIdsImpl ::
   forall peerAddr object objectId.
   (Ord objectId, Ord peerAddr, HasCallStack) =>
@@ -78,62 +68,60 @@ handleReceivedIdsImpl
     { dgsPeerStates
     , dgsObjectsLiveMultiplicities
     } =
-    let peerState =
-          findWithDefault
-            (error "ObjectDiffusion.handleReceivedIdsImpl: the peer should appear in dgsPeerStates")
-            peerAddr
-            dgsPeerStates
-    
-        -- Divide the new objectIds in two: those that are already in the objectpool
-        -- and those that are not. We'll request some objects from the latter.
-        (idsAlreadyInPoolSeq, newIdsAvailableSeq) =
-          strictSeqPartition hasObject receivedIdsSeq
+    st
+      { dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
+      , dgsPeerStates = dgsPeerStates'
+      }
+    where
+      peerState@DecisionPeerState
+        { dpsOutstandingFifo
+        , dpsIdsAvailable
+        , dpsNumIdsInflight
+        } =
+        findWithDefault
+          (error "ObjectDiffusion.handleReceivedIdsImpl: the peer should appear in dgsPeerStates")
+          peerAddr
+          dgsPeerStates
+  
+      -- Divide the new objectIds in two: those that are already in the objectpool
+      -- and those that are not. We'll request some objects from the latter.
+      newIdsAvailableSeq =
+        Seq.filter (not . hasObject) $ fromStrict receivedIdsSeq
 
-        -- TODO: Stopped there
+      -- Add all `objectIds` from `dpsIdsAvailableMap` which are not
+      -- unacknowledged or already buffered. Unacknowledged objectIds must have
+      -- already been added to `dpsIdsAvailable` map before.
+      dpsIdsAvailable' =
+        Foldable.foldl'
+          (\m objectId -> Set.insert objectId m)
+          dpsIdsAvailable
+          ( Seq.filter
+              ( \objectId ->
+                  objectId `notElem` dpsOutstandingFifo
+                    && objectId `Map.notMember` dgsObjectsLiveMultiplicities
+              )
+              newIdsAvailableSeq
+          )
 
-        -- Add all `objectIds` from `dpsIdsAvailableMap` which are not
-        -- unacknowledged or already buffered. Unacknowledged objectIds must have
-        -- already been added to `dpsIdsAvailable` map before.
-        dpsIdsAvailable' =
-          StrictSeq.foldl'
-            (\m objectId -> Set.insert objectId m)
-            dpsIdsAvailable
-            ( Set.filter
-                ( \objectId ->
-                    objectId `notElem` dpsOutstandingFifo
-                      && objectId `Map.notMember` dgsObjectsLiveMultiplicities
-                )
-                newIdsAvailableSeq
-            )
+      -- Add received objectIds to `dpsOutstandingFifo`.
+      dpsOutstandingFifo' = dpsOutstandingFifo <> receivedIdsSeq
 
-        -- Add received objectIds to `dpsOutstandingFifo`.
-        dpsOutstandingFifo' = dpsOutstandingFifo <> receivedIdsSeq
+      dgsObjectsLiveMultiplicities' =
+        Foldable.foldl'
+          decreaseCount
+          dgsObjectsLiveMultiplicities
+          receivedIdsSeq
 
-        dgsObjectsLiveMultiplicities' =
-          Foldable.foldl'
-            ( flip $
-                Map.alter
-                  ( \case
-                      Nothing -> Just $! 1
-                      Just cnt -> Just $! succ cnt
-                  )
-            )
-            dgsObjectsLiveMultiplicities
-            receivedIdsSeq
-
-        st' =
-          st
-            { dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
+      peerState' =
+        assert
+          (dpsNumIdsInflight >= numIdsInitiallyRequested)
+          peerState
+            { dpsIdsAvailable = dpsIdsAvailable'
+            , dpsOutstandingFifo = dpsOutstandingFifo'
+            , dpsNumIdsInflight = dpsNumIdsInflight - numIdsInitiallyRequested
             }
-        ps' =
-          assert
-            (dpsNumIdsInflight >= numIdsInitiallyRequested)
-            ps
-              { dpsIdsAvailable = dpsIdsAvailable'
-              , dpsOutstandingFifo = dpsOutstandingFifo'
-              , dpsNumIdsInflight = dpsNumIdsInflight - numIdsInitiallyRequested
-              }
-       in undefined
+      
+      dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
 
 handleReceivedObjectsImpl ::
   forall peerAddr object objectId.
@@ -161,74 +149,52 @@ handleReceivedObjectsImpl
   peerAddr
   requestedObjectIdsMap
   receivedObjects
-  st@DecisionGlobalState{dgsPeerStates} =
+  st@DecisionGlobalState
+    { dgsPeerStates
+    } = do
+    
+    let
+      peerState@DecisionPeerState
+        { dpsOutstandingFifo
+        , dpsIdsAvailable
+        , dpsObjectsInflightIds
+        , dpsObjectsPending
+        , dpsNumIdsInflight
+        } =
+        findWithDefault
+          (error "ObjectDiffusion.handleReceivedIdsImpl: the peer should appear in dgsPeerStates")
+          peerAddr
+          dgsPeerStates
     -- using `alterF` so the update of `DecisionPeerState` is done in one lookup
-    case Map.alterF
-      (fmap Just . fn . fromJust)
-      peerAddr
-      dgsPeerStates of
-      (Right st', dgsPeerStates') ->
-        Right st'{dgsPeerStates = dgsPeerStates'}
-      (Left e, _) ->
-        Left $ ProtocolErrorObjectSizeError e
-   where
+    -- case Map.alterF
+    --   (fmap Just . fn . fromJust)
+    --   peerAddr
+    --   dgsPeerStates of
+    --   (st', dgsPeerStates') ->
+    --     st'{dgsPeerStates = dgsPeerStates'}
     -- Update `DecisionPeerState` and partially update `DecisionGlobalState` (except of
     -- `dgsPeerStates`).
-    fn ::
-      DecisionPeerState objectId object ->
-      ( Either
-          [(objectId, SizeInBytes, SizeInBytes)]
-          (DecisionGlobalState peerAddr objectId object)
-      , DecisionPeerState objectId object
-      )
-    fn ps =
-      case wrongSizedObjects of
-        [] ->
-          ( Right st'
-          , ps''
-          )
-        _ ->
-          ( Left wrongSizedObjects
-          , ps
-          )
-     where
-      wrongSizedObjects :: [(objectId, SizeInBytes, SizeInBytes)]
-      wrongSizedObjects =
-        map (\(a, (b, c)) -> (a, b, c))
-          . Map.toList
-          $ Map.merge
-            Map.dropMissing
-            Map.dropMissing
-            ( Map.zipWithMaybeMatched \_ receivedSize advertisedSize ->
-                if receivedSize `checkObjectSize` advertisedSize
-                  then Nothing
-                  else Just (receivedSize, advertisedSize)
-            )
-            (objectSize `Map.map` receivedObjects)
-            requestedObjectIdsMap
-
-      checkObjectSize ::
-        SizeInBytes ->
-        SizeInBytes ->
-        Bool
-      checkObjectSize received advertised
-        | received > advertised =
-            received - advertised <= const_MAX_OBJECT_SIZE_DISCREPENCY
-        | otherwise =
-            advertised - received <= const_MAX_OBJECT_SIZE_DISCREPENCY
-
+    -- fn ::
+    --   DecisionPeerState objectId object ->
+    --   ( (DecisionGlobalState peerAddr objectId object)
+    --   , DecisionPeerState objectId object
+    --   )
+    -- fn ps =
+    --     ( st'
+    --     , ps''
+    --     )
+    --   where
       requestedObjectIds = Map.keysSet requestedObjectIdsMap
       notReceived = requestedObjectIds Set.\\ Map.keysSet receivedObjects
-      dpsObjectsPending' = dpsObjectsPending ps <> receivedObjects
-      -- Add not received objects to `dpsObjectsRequestedButNotReceivedIds` before acknowledging objectIds.
-      dpsObjectsRequestedButNotReceivedIds' = dpsObjectsRequestedButNotReceivedIds ps <> notReceived
-
-      dpsObjectsInflightIds' =
-        assert (requestedObjectIds `Set.isSubsetOf` dpsObjectsInflightIds ps) $
-          dpsObjectsInflightIds ps Set.\\ requestedObjectIds
+      dpsObjectsPending' = dpsObjectsPending <> receivedObjects
+      -- TODO: raise error if requested object has not been received
 
       -- subtract requested from in-flight
-      dgsObjectsInflightMultiplicities'' =
+      dpsObjectsInflightIds' =
+        assert (requestedObjectIds `Set.isSubsetOf` dpsObjectsInflightIds) $
+          dpsObjectsInflightIds Set.\\ requestedObjectIds
+
+      dgsObjectsInflightMultiplicities' =
         Map.merge
           (Map.mapMaybeMissing \_ x -> Just x)
           (Map.mapMaybeMissing \_ _ -> assert False Nothing)
@@ -243,40 +209,26 @@ handleReceivedObjectsImpl
           (dgsObjectsInflightMultiplicities st)
           (Map.fromSet (const 1) requestedObjectIds)
 
-      st' =
-        st
-          { dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities''
-          }
-
-      --
       -- Update DecisionPeerState
       --
-
       -- Remove the downloaded `objectId`s from the dpsIdsAvailable map, this
       -- guarantees that we won't attempt to download the `objectIds` from this peer
       -- once we collect the `objectId`s. Also restrict keys to `liveSet`.
-      --
-      -- NOTE: we could remove `notReceived` from `dpsIdsAvailable`; and
-      -- possibly avoid using `dpsObjectsRequestedButNotReceivedIds` field at all.
-      --
-      dpsIdsAvailable'' = dpsIdsAvailable ps `Set.difference` requestedObjectIds
+      dpsIdsAvailable'' = dpsIdsAvailable `Set.difference` requestedObjectIds
 
-      -- Remove all acknowledged `objectId`s from unknown set, but only those
-      -- which are not present in `dpsOutstandingFifo'`
-      dpsObjectsRequestedButNotReceivedIds'' =
-        dpsObjectsRequestedButNotReceivedIds'
-          `Set.intersection` live
-       where
-        -- We cannot use `liveSet` as `unknown <> notReceived` might
-        -- contain `objectIds` which are in `liveSet` but are not `live`.
-        live = Set.fromList (toList (dpsOutstandingFifo ps))
-
-      ps'' =
-        ps
+      peerState' =
+        peerState
           { dpsIdsAvailable = dpsIdsAvailable''
           , dpsObjectsInflightIds = dpsObjectsInflightIds'
           , dpsObjectsPending = dpsObjectsPending'
           }
+
+      dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
+
+    pure $ st
+      { dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
+      , dgsPeerStates = dgsPeerStates'
+      }
 
 --
 -- Monadic public API
