@@ -320,7 +320,8 @@ ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
     , wReader = blockUntilJust $ withOriginToMaybe <$> readTVar varSt
     , wNotify = \slotNo -> do
         LedgerDB.tryFlush cdbLedgerDB
-        LedgerDB.tryTakeSnapshot cdbLedgerDB
+        now <- getMonotonicTime
+        LedgerDB.tryTakeSnapshot cdbLedgerDB now
         LedgerDB.garbageCollect cdbLedgerDB slotNo
     }
 

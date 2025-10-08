@@ -267,6 +267,7 @@ data LedgerDB m l blk = LedgerDB
   --  * The set of previously applied points.
   , tryTakeSnapshot ::
       l ~ ExtLedgerState blk =>
+      Time ->
       m ()
   -- ^ If the provided arguments indicate so (based on the SnapshotPolicy with
   -- which this LedgerDB was opened), take a snapshot and delete stale ones.
