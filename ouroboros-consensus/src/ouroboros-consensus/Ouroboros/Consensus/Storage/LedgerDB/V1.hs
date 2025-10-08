@@ -190,7 +190,7 @@ implMkLedgerDb h =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
-      , tryTakeSnapshot = getEnv h implTryTakeSnapshot
+      , tryTakeSnapshot = getEnv1 h implTryTakeSnapshot
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -316,12 +316,13 @@ implTryTakeSnapshot ::
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   ) =>
-  LedgerDBEnv m l blk -> m ()
-implTryTakeSnapshot env = do
+  LedgerDBEnv m l blk ->
+  Time ->
+  m ()
+implTryTakeSnapshot env now = do
   timeSinceLastWrite <- do
     mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
     forM mLastWrite $ \lastWrite -> do
-      now <- getMonotonicTime
       pure $ now `diffTime` lastWrite
   chlog <- readTVarIO $ ldbChangelog env
   let immutableStates =

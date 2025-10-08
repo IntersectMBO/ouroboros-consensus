@@ -176,7 +176,7 @@ implMkLedgerDb h bss =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
-      , tryTakeSnapshot = getEnv h (implTryTakeSnapshot bss)
+      , tryTakeSnapshot = \t -> getEnv h (implTryTakeSnapshot t bss)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -375,14 +375,14 @@ implTryTakeSnapshot ::
   , LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
   ) =>
+  Time ->
   HandleArgs ->
   LedgerDBEnv m l blk ->
   m ()
-implTryTakeSnapshot bss env = do
+implTryTakeSnapshot now bss env = do
   timeSinceLastWrite <- do
     mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
     for mLastWrite $ \lastWrite -> do
-      now <- getMonotonicTime
       pure $ now `diffTime` lastWrite
   RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
     lseq <- readTVarIO $ ldbSeq env
