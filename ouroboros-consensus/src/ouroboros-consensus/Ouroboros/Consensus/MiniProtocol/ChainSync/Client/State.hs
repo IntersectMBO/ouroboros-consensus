@@ -37,6 +37,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
 import Ouroboros.Consensus.Node.GsmState (GsmState)
+import Ouroboros.Consensus.Node.NetworkProtocolVersion (NodeToNodeVersion)
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , NoThunks (..)
@@ -74,6 +75,11 @@ data ChainSyncState blk = ChainSyncState
   -- processing it further, and the latest slot may refer to a header beyond
   -- the forecast horizon while the candidate fragment isn't extended yet, to
   -- signal to GDD that the density is known up to this slot.
+  , csNodeToNodeVersion :: !NodeToNodeVersion
+  -- ^ Negotiated version of the protocol with the peer.
+  --
+  -- This is used to determine later on whether other mini-protocols are
+  -- expected to run in parallel with this one.
   }
   deriving stock Generic
 

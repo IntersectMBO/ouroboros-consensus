@@ -192,6 +192,7 @@ prop_densityDisconnectStatic =
       { csCandidate = frag
       , csLatestSlot = SJust (AF.headSlot frag)
       , csIdling = False
+      , csNodeToNodeVersion = maxBound
       }
   gen = do
     gt <- genChains (QC.choose (1, 4))
@@ -431,6 +432,7 @@ evolveBranches EvolvingPeers{k, sgen, peers = initialPeers, fullTree} =
             { csCandidate = attachTimeUsingTestConfig csCandidate
             , csIdling = False
             , csLatestSlot = SJust (AF.headSlot csCandidate)
+            , csNodeToNodeVersion = maxBound
             }
       -- Run GDD.
       (loeFrag, suffixes) =
