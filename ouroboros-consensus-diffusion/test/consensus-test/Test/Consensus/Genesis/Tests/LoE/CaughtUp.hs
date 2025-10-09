@@ -283,7 +283,7 @@ mkGsmEntryPoints varChainSyncHandles chainDB writeGsmState =
       { GSM.getCandidateOverSelection = pure candidateOverSelection
       , GSM.peerIsIdle = csIdling
       , GSM.equivalent = (==) `on` AF.headPoint
-      , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
+      , GSM.getPeerStates = traverse readTVar =<< fmap cschState <$> cschcMap varChainSyncHandles
       , GSM.getCurrentSelection = ChainDB.getCurrentChain chainDB
       , -- Make sure that we stay in CaughtUp for the duration of the test once we
         -- have entered it.
