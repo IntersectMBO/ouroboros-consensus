@@ -1045,6 +1045,7 @@ runThreadNetwork
               { tracers
               , registry
               , cfg = pInfoConfig
+              , featureFlags = mempty
               , btime
               , chainDB
               , initChainDB = nodeInitChainDB
