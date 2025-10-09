@@ -1,0 +1,41 @@
+flowchart TD
+    A(dpsNumIdsInFlight)
+    B(dpsOutstandingFifo)
+    C(dpsObjectsAvailableIds)
+    D(dpsObjectsInflightIds)
+    E(dpsObjectsPending)
+    F(dpsObjectsOwtPool)
+
+    G(dgsObjectsLiveMultiplicities)
+    H(dgsObjectsInflightMultiplicities)
+    I(dgsObjectsOwtPoolMultiplicities)
+
+    EA{requestIds}
+    EA-->|count| A
+
+    EB{receiveIds}
+    A --> EB
+    EB -->|ids| B
+    EB -->|ids| C
+
+    EC{requestObjects}
+    C --> EC
+    EC -->|ids| D
+    EC --> |count| G
+    EC -->|count| H
+
+    ED{receiveObjects}
+    D --> ED
+    H --> ED
+    ED -->|objects| E
+
+    EE{acknowledgeIds}
+    B --> EE
+    E --> EE
+    EE -->|objects| F
+    EE -->|count| I
+
+    EF{Added to pool}
+    F --> EF
+    G --> EF
+    I --> EF

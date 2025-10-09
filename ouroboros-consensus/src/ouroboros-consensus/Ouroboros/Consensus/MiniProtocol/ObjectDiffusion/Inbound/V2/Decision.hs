@@ -167,7 +167,7 @@ pickObjectsToDownload
         }
       ( peerAddr
         , peerObjectState@DecisionPeerState
-            { dpsIdsAvailable
+            { dpsObjectsAvailableIds
             , dpsObjectsInflightIds
             }
         ) =
@@ -247,14 +247,14 @@ pickObjectsToDownload
                               else Nothing
                         )
                         ( Map.assocs $
-                            -- merge `dpsIdsAvailable` with `disObjectsInflightMultiplicities`, so we don't
+                            -- merge `dpsObjectsAvailableIds` with `disObjectsInflightMultiplicities`, so we don't
                             -- need to lookup into `disObjectsInflightMultiplicities` on every `objectId` which
-                            -- is in `dpsIdsAvailable`.
+                            -- is in `dpsObjectsAvailableIds`.
                             Map.merge
                               (Map.mapMaybeMissing \_objectId -> Just . (,0))
                               Map.dropMissing
                               (Map.zipWithMatched \_objectId -> (,))
-                              dpsIdsAvailable
+                              dpsObjectsAvailableIds
                               disObjectsInflightMultiplicities
                               -- remove `object`s which were already downloaded by some
                               -- other peer or are in-flight or unknown by this peer.
@@ -449,7 +449,7 @@ filterActivePeers
         { dpsOutstandingFifo
         , dpsNumIdsInflight
         , dpsObjectsInflightIds
-        , dpsIdsAvailable
+        , dpsObjectsAvailableIds
         } =
         ( dpsNumIdsInflight == 0
             && dpsNumIdsInflight + numOfUnacked <= dpMaxNumObjectsOutstanding
@@ -459,7 +459,7 @@ filterActivePeers
        where
         numOfUnacked = fromIntegral (StrictSeq.length dpsOutstandingFifo)
         downloadable =
-          dpsIdsAvailable
+          dpsObjectsAvailableIds
             `Set.difference` dpsObjectsInflightIds
             `Set.difference` dpsObjectsRequestedButNotReceivedIds
             `Set.difference` unrequestable
@@ -524,7 +524,7 @@ acknowledgeObjectIds
   decisionPolicy
   globalState
   ps@DecisionPeerState
-    { dpsIdsAvailable
+    { dpsObjectsAvailableIds
     , dpsNumIdsInflight
     , dpsObjectsPending
     , dpsObjectsOwtPool
@@ -539,7 +539,7 @@ acknowledgeObjectIds
         , refCountDiff
         , ps
             { dpsOutstandingFifo = dpsOutstandingFifo'
-            , dpsIdsAvailable = dpsIdsAvailable'
+            , dpsObjectsAvailableIds = dpsObjectsAvailableIds'
             , dpsNumIdsInflight =
                 dpsNumIdsInflight
                   + pdIdsToReq
@@ -584,7 +584,7 @@ acknowledgeObjectIds
 
     -- the set of live `objectIds`
     liveSet = Set.fromList (toList dpsOutstandingFifo')
-    dpsIdsAvailable' = dpsIdsAvailable `Set.intersection` liveSet
+    dpsObjectsAvailableIds' = dpsObjectsAvailableIds `Set.intersection` liveSet
 
     -- We remove all acknowledged `objectId`s which are not in
     -- `dpsOutstandingFifo''`, but also return the unknown set before any

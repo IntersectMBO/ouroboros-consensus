@@ -76,7 +76,7 @@ handleReceivedIdsImpl
     where
       peerState@DecisionPeerState
         { dpsOutstandingFifo
-        , dpsIdsAvailable
+        , dpsObjectsAvailableIds
         , dpsNumIdsInflight
         } =
         findWithDefault
@@ -89,13 +89,13 @@ handleReceivedIdsImpl
       newIdsAvailableSeq =
         Seq.filter (not . hasObject) $ fromStrict receivedIdsSeq
 
-      -- Add all `objectIds` from `dpsIdsAvailableMap` which are not
+      -- Add all `objectIds` from `dpsObjectsAvailableIdsMap` which are not
       -- unacknowledged or already buffered. Unacknowledged objectIds must have
-      -- already been added to `dpsIdsAvailable` map before.
-      dpsIdsAvailable' =
+      -- already been added to `dpsObjectsAvailableIds` map before.
+      dpsObjectsAvailableIds' =
         Foldable.foldl'
           (\m objectId -> Set.insert objectId m)
-          dpsIdsAvailable
+          dpsObjectsAvailableIds
           ( Seq.filter
               ( \objectId ->
                   objectId `notElem` dpsOutstandingFifo
@@ -117,7 +117,7 @@ handleReceivedIdsImpl
         assert
           (dpsNumIdsInflight >= numIdsInitiallyRequested)
           peerState
-            { dpsIdsAvailable = dpsIdsAvailable'
+            { dpsObjectsAvailableIds = dpsObjectsAvailableIds'
             , dpsOutstandingFifo = dpsOutstandingFifo'
             , dpsNumIdsInflight = dpsNumIdsInflight - numIdsInitiallyRequested
             }
@@ -152,7 +152,7 @@ handleReceivedObjectsImpl
     
     let
       peerState@DecisionPeerState
-        { dpsIdsAvailable
+        { dpsObjectsAvailableIds
         , dpsObjectsInflightIds
         , dpsObjectsPending
         } =
@@ -187,14 +187,14 @@ handleReceivedObjectsImpl
 
       -- Update DecisionPeerState
       --
-      -- Remove the downloaded `objectId`s from the dpsIdsAvailable map, this
+      -- Remove the downloaded `objectId`s from the dpsObjectsAvailableIds map, this
       -- guarantees that we won't attempt to download the `objectIds` from
       -- this peer twice.
-      dpsIdsAvailable'' = dpsIdsAvailable `Set.difference` requestedObjectIds
+      dpsObjectsAvailableIds'' = dpsObjectsAvailableIds `Set.difference` requestedObjectIds
 
       peerState' =
         peerState
-          { dpsIdsAvailable = dpsIdsAvailable''
+          { dpsObjectsAvailableIds = dpsObjectsAvailableIds''
           , dpsObjectsInflightIds = dpsObjectsInflightIds'
           , dpsObjectsPending = dpsObjectsPending'
           }
@@ -223,7 +223,6 @@ newDecisionGlobalStateVar rng =
       { dgsPeerStates = Map.empty
       , dgsObjectsInflightMultiplicities = Map.empty
       , dgsObjectsLiveMultiplicities = Map.empty
-      , dgsRententionTimeouts = Map.empty
       , dgsObjectsOwtPoolMultiplicities = Map.empty
       , dgsRng = rng
       }
@@ -316,12 +315,10 @@ submitObjectsToPool tracer objectPoolWriter objects =
       st@DecisionGlobalState
         { dgsPeerStates
         , dgsObjectsLiveMultiplicities
-        , dgsRententionTimeouts
         , dgsObjectsOwtPoolMultiplicities
         } =
         st
           { dgsPeerStates = dgsPeerStates'
-          , dgsRententionTimeouts = dgsRententionTimeouts'
           , dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
           , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
           }
@@ -331,12 +328,6 @@ submitObjectsToPool tracer objectPoolWriter objects =
             (\case 1 -> Nothing; n -> Just $! pred n)
             objectId
             dgsObjectsOwtPoolMultiplicities
-
-        dgsRententionTimeouts' =
-          Map.alter
-            (\case Nothing -> Just [objectId]; Just objectIds -> Just (objectId : objectIds))
-            (addTime dpMinObtainedButNotAckedObjectsLifetime now)
-            dgsRententionTimeouts
 
         dgsObjectsLiveMultiplicities' =
           Map.alter

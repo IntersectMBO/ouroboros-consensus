@@ -69,18 +69,18 @@ import Quiet (Quiet (..))
 -- speaking of objects (i.e. after they have been requested) but identify them
 -- by their IDs for this field purpose.
 data DecisionPeerState objectId object = DecisionPeerState
-  { dpsOutstandingFifo :: !(StrictSeq objectId)
+  { dpsNumIdsInflight :: !NumObjectIdsReq
+  -- ^ The number of object identifiers that we have requested but
+  -- which have not yet been replied to. We need to track this it keep
+  -- our requests within the limit on the number of unacknowledged objectIds.
+  , dpsOutstandingFifo :: !(StrictSeq objectId)
   -- ^ Those objects (by their identifier) that the client has told
   -- us about, and which we have not yet acknowledged. This is kept in
   -- the order in which the client gave them to us. This is the same order
   -- in which we submit them to the objectpool. It is also the order
   -- in which we acknowledge them.
-  , dpsIdsAvailable :: !(Set objectId)
+  , dpsObjectsAvailableIds :: !(Set objectId)
   -- ^ Set of known object ids which can be requested from this peer.
-  , dpsNumIdsInflight :: !NumObjectIdsReq
-  -- ^ The number of object identifiers that we have requested but
-  -- which have not yet been replied to. We need to track this it keep
-  -- our requests within the limit on the number of unacknowledged objectIds.
   , dpsObjectsInflightIds :: !(Set objectId)
   -- ^ The set of requested objects (by their ids).
   -- , dpsObjectsRequestedButNotReceivedIds :: !(Set objectId)
@@ -114,7 +114,7 @@ instance
 
 -- | Shared state of all `ObjectDiffusion` clients.
 --
--- New `objectId` enters `dpsOutstandingFifo` it is also added to `dpsIdsAvailable`
+-- New `objectId` enters `dpsOutstandingFifo` it is also added to `dpsObjectsAvailableIds`
 -- and `dgsObjectsLiveMultiplicities` (see `acknowledgeObjectIdsImpl`).
 --
 -- When the requested object arrives, the corresponding entry is removed from `dgsObjectsInflightMultiplicities`.
@@ -123,7 +123,7 @@ instance
 -- `handleReceivedObjectsImpl` or
 -- `pickObjectsToDownload`, we also
 -- recalculate `dgsObjectsLiveMultiplicities` and only keep live `objectId`s in other maps (e.g.
--- `dpsIdsAvailable`).
+-- `dpsObjectsAvailableIds`).
 data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   { dgsPeerStates :: !(Map peerAddr (DecisionPeerState objectId object))
   -- ^ Map of peer states.
@@ -131,12 +131,6 @@ data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   -- /Invariant:/ for peerAddr's which are registered using `withPeer`,
   -- there's always an entry in this map even if the set of `objectId`s is
   -- empty.
-  , dgsObjectsInflightMultiplicities :: !(Map objectId ObjectMultiplicity)
-  -- ^ Map from object ids of objects which are in-flight (have already been
-  -- requested) to their multiplicities (from how many peers it is
-  -- currently in-flight)
-  --
-  -- This can intersect with `dpsIdsAvailable`.
   , dgsObjectsLiveMultiplicities :: !(Map objectId ObjectMultiplicity)
   -- ^ We track counts of live objects.
   -- An object is added to the live map when it is inflight, and is only removed
@@ -145,14 +139,12 @@ data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   -- The value for any key must be always non-zero (strictly positive).
   --
   -- The `dgsObjectsOwtPoolMultiplicities` map contains a subset of `dgsObjectsLiveMultiplicities`.
-  , dgsRententionTimeouts :: !(Map Time [objectId])
-  -- ^ Objects are kept live for a bit longer after having been added to the objectpool.
+  , dgsObjectsInflightMultiplicities :: !(Map objectId ObjectMultiplicity)
+  -- ^ Map from object ids of objects which are in-flight (have already been
+  -- requested) to their multiplicities (from how many peers it is
+  -- currently in-flight)
   --
-  -- We need these short timeouts to avoid re-downloading a `object`. We could
-  -- acknowledge this `objectId` to all peers, when a peer from another
-  -- continent presents us it again.
-  --
-  -- Every objectId entry has a reference count in `dgsObjectsLiveMultiplicities`.
+  -- This can intersect with `dpsObjectsAvailableIds`.
   , dgsObjectsOwtPoolMultiplicities :: !(Map objectId ObjectMultiplicity)
   -- ^ A set of objectIds that have been downloaded by a peer and are on their
   -- way to the objectpool. We won't issue further fetch-requests for objects in
@@ -177,15 +169,20 @@ instance
   ) =>
   NoThunks (DecisionGlobalState peerAddr objectId object)
 
--- | Merge dpsIdsAvailable from all peers of the global state.
-dgsIdsAvailable :: Ord objectId => DecisionGlobalState peerAddr objectId object -> Set objectId
-dgsIdsAvailable DecisionGlobalState{dgsPeerStates} =
-  Set.unions (dpsIdsAvailable <$> (Map.elems dgsPeerStates))
+-- | Merge dpsObjectsAvailableIds from all peers of the global state.
+dgsObjectsAvailableIds :: Ord objectId => DecisionGlobalState peerAddr objectId object -> Set objectId
+dgsObjectsAvailableIds DecisionGlobalState{dgsPeerStates} =
+  Set.unions (dpsObjectsAvailableIds <$> (Map.elems dgsPeerStates))
 
 -- | Merge dpsObjectsPending from all peers of the global state.
 dgsObjectsPending :: Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId object
 dgsObjectsPending DecisionGlobalState{dgsPeerStates} =
   Map.unions (dpsObjectsPending <$> (Map.elems dgsPeerStates))
+
+-- | Merge dpsObjectsOwtPool from all peers of the global state.
+dgsObjectsOwtPool :: Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId object
+dgsObjectsOwtPool DecisionGlobalState{dgsPeerStates} =
+  Map.unions (dpsObjectsOwtPool <$> (Map.elems dgsPeerStates))
 
 --
 -- Decisions
@@ -288,7 +285,7 @@ makeObjectDiffusionCounters
     , dgsObjectsOwtPoolMultiplicities
     } =
     ObjectDiffusionCounters
-      { odcDistinctNumObjectsAvailable = Set.size $ dgsIdsAvailable dgs
+      { odcDistinctNumObjectsAvailable = Set.size $ dgsObjectsAvailableIds dgs
       , odcNumDistinctObjectsLive = Map.size dgsObjectsLiveMultiplicities
       , odcNumDistinctObjectsInflight = Map.size dgsObjectsInflightMultiplicities
       , odcNumTotalObjectsInflight = fromIntegral $ mconcat (Map.elems dgsObjectsInflightMultiplicities)

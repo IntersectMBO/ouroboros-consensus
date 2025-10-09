@@ -160,7 +160,7 @@ withPeer
             Map.insert
               peerAddr
               DecisionPeerState
-                { dpsIdsAvailable = Set.empty
+                { dpsObjectsAvailableIds = Set.empty
                 , dpsNumIdsInflight = 0
                 , dpsObjectsInflightIds = Set.empty
                 , dpsOutstandingFifo = StrictSeq.empty
