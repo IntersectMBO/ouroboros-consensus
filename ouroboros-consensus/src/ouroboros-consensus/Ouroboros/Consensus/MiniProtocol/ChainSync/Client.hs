@@ -385,6 +385,7 @@ bracketChainSyncClient
           { csCandidate = AF.Empty AF.AnchorGenesis
           , csLatestSlot = SNothing
           , csIdling = False
+          , csNodeToNodeVersion = version
           }
 
     withCSJCallbacks ::

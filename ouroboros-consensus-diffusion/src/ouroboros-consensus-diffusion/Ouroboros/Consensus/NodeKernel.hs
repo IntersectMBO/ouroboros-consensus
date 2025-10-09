@@ -27,7 +27,7 @@ module Ouroboros.Consensus.NodeKernel
   , toConsensusMode
   ) where
 
-import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import Cardano.Base.FeatureFlags (CardanoFeatureFlag (..))
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
