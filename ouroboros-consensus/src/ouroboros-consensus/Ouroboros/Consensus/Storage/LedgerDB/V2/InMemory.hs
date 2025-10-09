@@ -24,13 +24,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
     -- * Snapshots
   , loadSnapshot
   , snapshotManager
-  , snapshotToStatePath
 
     -- * snapshot-converter
   , implTakeSnapshot
   ) where
 
-import Cardano.Binary as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (decode)
 import qualified Control.Monad as Monad
@@ -101,59 +99,138 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   traceWith tracer V2.TraceLedgerTablesHandleCreate
   pure
     LedgerTablesHandle
-      { close = do
-          p <- atomically $ swapTVar tv LedgerTablesHandleClosed
-          case p of
-            LedgerTablesHandleOpen{} -> traceWith tracer V2.TraceLedgerTablesHandleClose
-            _ -> pure ()
-      , duplicate = do
-          hs <- readTVarIO tv
-          !x <- guardClosed hs $ newInMemoryLedgerTablesHandle tracer someFS
-          pure x
-      , read = \keys -> do
-          hs <- readTVarIO tv
-          guardClosed
-            hs
-            (pure . flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys)
-      , readRange = \(f, t) -> do
-          hs <- readTVarIO tv
-          guardClosed
-            hs
-            ( \(LedgerTables (ValuesMK m)) ->
-                let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
-                 in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
-            )
-      , readAll = do
-          hs <- readTVarIO tv
-          guardClosed hs pure
-      , pushDiffs = \st0 !diffs ->
-          atomically $
-            modifyTVar
-              tv
-              ( \r ->
-                  guardClosed
-                    r
-                    ( LedgerTablesHandleOpen
-                        . flip
-                          (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d)))
-                          (projectLedgerTables diffs)
-                        . upgradeTables st0 diffs
-                    )
-              )
-      , takeHandleSnapshot = \hint snapshotName -> do
-          createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName, "tables"]
-          h <- readTVarIO tv
-          guardClosed h $
-            \values ->
-              withFile hasFS (mkFsPath [snapshotName, "tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
-                fmap (Just . snd) $
-                  hPutAllCRC hasFS hf $
-                    CBOR.toLazyByteString $
-                      valuesMKEncoder hint values
-      , tablesSize = do
-          hs <- readTVarIO tv
-          guardClosed hs (pure . Just . Map.size . getValuesMK . getLedgerTables)
+      { close = implClose tracer tv
+      , duplicate = implDuplicate tracer tv someFS
+      , read = implRead tv
+      , readRange = implReadRange tv
+      , readAll = implReadAll tv
+      , pushDiffs = implPushDiffs tv
+      , takeHandleSnapshot = implTakeHandleSnapshot tv hasFS
+      , tablesSize = implTablesSize tv
       }
+
+{-# INLINE implClose #-}
+{-# INLINE implDuplicate #-}
+{-# INLINE implRead #-}
+{-# INLINE implReadRange #-}
+{-# INLINE implReadAll #-}
+{-# INLINE implPushDiffs #-}
+{-# INLINE implTakeHandleSnapshot #-}
+{-# INLINE implTablesSize #-}
+
+implClose ::
+  IOLike m =>
+  Tracer m V2.FlavorImplSpecificTrace ->
+  StrictTVar m (LedgerTablesHandleState l) ->
+  m ()
+implClose tracer tv = do
+  p <- atomically $ swapTVar tv LedgerTablesHandleClosed
+  case p of
+    LedgerTablesHandleOpen{} -> traceWith tracer V2.TraceLedgerTablesHandleClose
+    _ -> pure ()
+
+implDuplicate ::
+  ( IOLike m
+  , HasLedgerTables l
+  , CanUpgradeLedgerTables l
+  , SerializeTablesWithHint l
+  ) =>
+  Tracer m V2.FlavorImplSpecificTrace ->
+  StrictTVar m (LedgerTablesHandleState l) ->
+  SomeHasFS m ->
+  m (LedgerTablesHandle m l)
+implDuplicate tracer tv someFS = do
+  hs <- readTVarIO tv
+  !x <- guardClosed hs $ newInMemoryLedgerTablesHandle tracer someFS
+  pure x
+
+implRead ::
+  ( IOLike m
+  , HasLedgerTables l
+  ) =>
+  StrictTVar m (LedgerTablesHandleState l) ->
+  l EmptyMK ->
+  LedgerTables l KeysMK ->
+  m (LedgerTables l ValuesMK)
+implRead tv _ keys = do
+  hs <- readTVarIO tv
+  guardClosed
+    hs
+    (pure . flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys)
+
+implReadRange ::
+  (IOLike m, HasLedgerTables l) =>
+  StrictTVar m (LedgerTablesHandleState l) ->
+  l EmptyMK ->
+  (Maybe (TxIn l), Int) ->
+  m (LedgerTables l ValuesMK, Maybe (TxIn l))
+implReadRange tv _ (f, t) = do
+  hs <- readTVarIO tv
+  guardClosed
+    hs
+    ( \(LedgerTables (ValuesMK m)) ->
+        let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
+         in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
+    )
+
+implReadAll ::
+  IOLike m =>
+  StrictTVar m (LedgerTablesHandleState l) ->
+  l EmptyMK ->
+  m (LedgerTables l ValuesMK)
+implReadAll tv _ = do
+  hs <- readTVarIO tv
+  guardClosed hs pure
+
+implPushDiffs ::
+  ( IOLike m
+  , HasLedgerTables l
+  , CanUpgradeLedgerTables l
+  ) =>
+  StrictTVar m (LedgerTablesHandleState l) ->
+  l mk1 ->
+  l DiffMK ->
+  m ()
+implPushDiffs tv st0 !diffs =
+  atomically $
+    modifyTVar
+      tv
+      ( \r ->
+          guardClosed
+            r
+            ( LedgerTablesHandleOpen
+                . flip
+                  (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d)))
+                  (projectLedgerTables diffs)
+                . upgradeTables st0 diffs
+            )
+      )
+
+implTakeHandleSnapshot ::
+  (IOLike m, SerializeTablesWithHint l) =>
+  StrictTVar m (LedgerTablesHandleState l) ->
+  HasFS m h ->
+  l EmptyMK ->
+  String ->
+  m (Maybe CRC)
+implTakeHandleSnapshot tv hasFS hint snapshotName = do
+  createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName, "tables"]
+  h <- readTVarIO tv
+  guardClosed h $
+    \values ->
+      withFile hasFS (mkFsPath [snapshotName, "tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
+        fmap (Just . snd) $
+          hPutAllCRC hasFS hf $
+            CBOR.toLazyByteString $
+              valuesMKEncoder hint values
+
+implTablesSize ::
+  IOLike m =>
+  StrictTVar m (LedgerTablesHandleState l) ->
+  m (Maybe Int)
+implTablesSize tv = do
+  hs <- readTVarIO tv
+  guardClosed hs (pure . Just . Map.size . getValuesMK . getLedgerTables)
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -188,28 +265,7 @@ snapshotManager' ccfg tracer fs =
     , takeSnapshot = implTakeSnapshot ccfg tracer fs
     }
 
--- | The path within the LedgerDB's filesystem to the file that contains the
--- snapshot's serialized ledger state
-snapshotToStatePath :: DiskSnapshot -> FsPath
-snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
-
-writeSnapshot ::
-  MonadThrow m =>
-  SomeHasFS m ->
-  (ExtLedgerState blk EmptyMK -> Encoding) ->
-  DiskSnapshot ->
-  StateRef m (ExtLedgerState blk) ->
-  m ()
-writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
-  createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
-  crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
-  crc2 <- takeHandleSnapshot (tables st) (state st) $ snapshotToDirName ds
-  writeSnapshotMetadata fs ds $
-    SnapshotMetadata
-      { snapshotBackend = UTxOHDMemSnapshot
-      , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
-      }
-
+{-# INLINE implTakeSnapshot #-}
 implTakeSnapshot ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
@@ -221,20 +277,30 @@ implTakeSnapshot ::
   Maybe String ->
   StateRef m (ExtLedgerState blk) ->
   m (Maybe (DiskSnapshot, RealPoint blk))
-implTakeSnapshot ccfg tracer hasFS suffix st = do
+implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
       let number = unSlotNo (realPointSlot t)
           snapshot = DiskSnapshot number suffix
-      diskSnapshots <- defaultListSnapshots hasFS
+      diskSnapshots <- defaultListSnapshots shfs
       if List.any (== DiskSnapshot number suffix) diskSnapshots
         then
           return Nothing
         else do
           encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
-            writeSnapshot hasFS (encodeDiskExtLedgerState ccfg) snapshot st
+            writeSnapshot snapshot
           return $ Just (snapshot, t)
+ where
+  writeSnapshot ds = do
+    createDirectoryIfMissing hasFS True $ snapshotToDirPath ds
+    crc1 <- writeExtLedgerState shfs (encodeDiskExtLedgerState ccfg) (snapshotToStatePath ds) $ state st
+    crc2 <- takeHandleSnapshot (tables st) (state st) $ snapshotToDirName ds
+    writeSnapshotMetadata shfs ds $
+      SnapshotMetadata
+        { snapshotBackend = UTxOHDMemSnapshot
+        , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
+        }
 
 -- | Read snapshot from disk.
 --

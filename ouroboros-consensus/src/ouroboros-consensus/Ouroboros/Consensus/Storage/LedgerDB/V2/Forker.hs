@@ -77,7 +77,7 @@ implForkerReadTables env ks = do
   traceWith (foeTracer env) ForkerReadTablesStart
   lseq <- readTVarIO (foeLedgerSeq env)
   let stateRef = currentHandle lseq
-  tbs <- read (tables stateRef) ks
+  tbs <- read (tables stateRef) (state stateRef) ks
   traceWith (foeTracer env) ForkerReadTablesEnd
   pure tbs
 
@@ -93,10 +93,10 @@ implForkerRangeReadTables qbs env rq0 = do
   let n = fromIntegral $ defaultQueryBatchSize qbs
       stateRef = currentHandle ldb
   case rq0 of
-    NoPreviousQuery -> readRange (tables $ currentHandle ldb) (Nothing, n)
+    NoPreviousQuery -> readRange (tables stateRef) (state stateRef) (Nothing, n)
     PreviousQueryWasFinal -> pure (LedgerTables emptyMK, Nothing)
     PreviousQueryWasUpTo k -> do
-      tbs <- readRange (tables stateRef) (Just k, n)
+      tbs <- readRange (tables stateRef) (state stateRef) (Just k, n)
       traceWith (foeTracer env) ForkerRangeReadTablesEnd
       pure tbs
 

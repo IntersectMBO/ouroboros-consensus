@@ -217,7 +217,7 @@ instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
   extractTxs =
     map mkShelleyTx
       . blockBodyToTxList
-      . SL.bbody
+      . SL.blockBody
       . shelleyBlockRaw
    where
     blockBodyToTxList :: BlockBody era -> [Tx era]

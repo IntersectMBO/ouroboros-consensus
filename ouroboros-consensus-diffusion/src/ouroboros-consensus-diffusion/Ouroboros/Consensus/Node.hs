@@ -53,6 +53,7 @@ module Ouroboros.Consensus.Node
   , pattern DoDiskSnapshotChecksum
   , pattern NoDoDiskSnapshotChecksum
   , ChainSyncIdleTimeout (..)
+  , LedgerDbBackendArgs (..)
 
     -- * Internal helpers
   , mkNodeKernelArgs
@@ -126,6 +127,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -173,11 +176,11 @@ import Ouroboros.Network.Protocol.ChainSync.Codec (timeLimitsChainSync)
 import Ouroboros.Network.RethrowPolicy
 import qualified SafeWildCards
 import System.Exit (ExitCode (..))
-import System.FS.API (SomeHasFS (..))
+import System.FS.API (SomeHasFS (..), mkFsPath)
 import System.FS.API.Types (MountPoint (..))
 import System.FS.IO (ioHasFS)
-import System.FilePath ((</>))
-import System.Random (StdGen, newStdGen, randomIO, split)
+import System.FilePath (splitDirectories, (</>))
+import System.Random (StdGen, genWord64, newStdGen, randomIO, split)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -375,7 +378,7 @@ data
   , -- Ad hoc values to replace default ChainDB configurations
     srnSnapshotPolicyArgs :: SnapshotPolicyArgs
   , srnQueryBatchSize :: QueryBatchSize
-  , srnLdbFlavorArgs :: Complete LedgerDbFlavorArgs m
+  , srnLedgerDbBackendArgs :: LedgerDbBackendArgs m
   }
 
 {-------------------------------------------------------------------------------
@@ -1004,7 +1007,7 @@ stdLowLevelRunNodeArgsIO
     }
   $(SafeWildCards.fields 'StdRunNodeArgs) = do
     llrnBfcSalt <- stdBfcSaltIO
-    llrnRng <- newStdGen
+    (lsmSalt, llrnRng) <- genWord64 <$> newStdGen
     pure
       LowLevelRunNodeArgs
         { llrnBfcSalt
@@ -1050,7 +1053,20 @@ stdLowLevelRunNodeArgsIO
         , llrnPublicPeerSelectionStateVar =
             Diffusion.dcPublicPeerSelectionVar srnDiffusionConfiguration
         , llrnLdbFlavorArgs =
-            srnLdbFlavorArgs
+            case srnLedgerDbBackendArgs of
+              V1LMDB args -> LedgerDbFlavorArgsV1 args
+              V2InMemory -> LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
+              V2LSM path ->
+                LedgerDbFlavorArgsV2
+                  ( V2.V2Args
+                      ( V2.LSMHandleArgs
+                          ( V2.LSMArgs
+                              (mkFsPath $ splitDirectories path)
+                              lsmSalt
+                              (LSM.stdMkBlockIOFS (nonImmutableDbPath srnDatabasePath))
+                          )
+                      )
+                  )
         }
    where
     networkMagic :: NetworkMagic
