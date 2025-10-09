@@ -31,6 +31,7 @@ import NoThunks.Class
   , OnlyCheckWhnfNamed (..)
   , allNoThunks
   )
+import Ouroboros.Consensus.Node.NetworkProtocolVersion (NodeToNodeVersion)
 import Ouroboros.Network.Util.ShowProxy
 import System.FS.API (SomeHasFS)
 import System.FS.API.Types (FsPath, Handle)
@@ -84,6 +85,9 @@ instance NoThunks a => NoThunks (K a b) where
 instance NoThunks a => NoThunks (MultiSet a) where
   showTypeOf _ = "MultiSet"
   wNoThunks ctxt = wNoThunks ctxt . MultiSet.toMap
+
+-- NOTE: fixed in https://github.com/IntersectMBO/ouroboros-network/pull/5214
+instance NoThunks NodeToNodeVersion
 
 {-------------------------------------------------------------------------------
   fs-api
