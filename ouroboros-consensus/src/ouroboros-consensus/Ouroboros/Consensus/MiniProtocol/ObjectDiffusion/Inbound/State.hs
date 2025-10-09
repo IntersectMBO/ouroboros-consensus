@@ -24,6 +24,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (BlockSupportsProtocol, HasHeader, Header)
 import Ouroboros.Consensus.MiniProtocol.Util.Idling (Idling (..))
+import Ouroboros.Consensus.Node.NetworkProtocolVersion (NodeToNodeVersion)
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike (..)
   , MonadSTM (..)
@@ -39,7 +40,12 @@ import Ouroboros.Consensus.Util.IOLike
 -- NOTE: 'blk' is not needed for now, but we keep it for future use.
 data ObjectDiffusionInboundState blk = ObjectDiffusionInboundState
   { odisIdling :: !Bool
-  -- ^ Whether we have received all objects from a peer
+  -- ^ Whether the client is currently idling
+  , odisNodeToNodeVersion :: !NodeToNodeVersion
+  -- ^ Negotiated version of the protocol with the peer.
+  --
+  -- This is used to determine later on whether other mini-protocols are
+  -- expected to run in parallel with this one.
   }
   deriving stock Generic
 
@@ -49,8 +55,12 @@ deriving anyclass instance
   ) =>
   NoThunks (ObjectDiffusionInboundState blk)
 
-initObjectDiffusionInboundState :: ObjectDiffusionInboundState blk
-initObjectDiffusionInboundState = ObjectDiffusionInboundState{odisIdling = True}
+initObjectDiffusionInboundState :: NodeToNodeVersion -> ObjectDiffusionInboundState blk
+initObjectDiffusionInboundState version =
+  ObjectDiffusionInboundState
+    { odisIdling = True
+    , odisNodeToNodeVersion = version
+    }
 
 -- | An interface to an ObjectDiffusion inbound client that's used by other components.
 data ObjectDiffusionInboundHandle m blk = ObjectDiffusionInboundHandle
@@ -101,12 +111,13 @@ data ObjectDiffusionInboundStateView m = ObjectDiffusionInboundStateView
 bracketObjectDiffusionInbound ::
   forall m peer blk a.
   (IOLike m, HasHeader blk, NoThunks (Header blk)) =>
+  NodeToNodeVersion ->
   ObjectDiffusionInboundHandleCollection peer m blk ->
   peer ->
   (ObjectDiffusionInboundStateView m -> m a) ->
   m a
-bracketObjectDiffusionInbound handles peer body = do
-  odiState <- newTVarIO initObjectDiffusionInboundState
+bracketObjectDiffusionInbound version handles peer body = do
+  odiState <- newTVarIO (initObjectDiffusionInboundState version)
   bracket (acquireContext odiState) releaseContext body
  where
   acquireContext odiState = atomically $ do
