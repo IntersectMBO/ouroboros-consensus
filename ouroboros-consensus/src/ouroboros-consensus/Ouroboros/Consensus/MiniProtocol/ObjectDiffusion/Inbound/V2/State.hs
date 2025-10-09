@@ -31,7 +31,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromJust)
 import Data.Sequence qualified as Seq
 import Data.Sequence.Strict (StrictSeq, fromStrict)
-import Data.Set ((\\))
+import Data.Set ((\\), Set)
 import Data.Set qualified as Set
 import Data.Typeable (Typeable)
 import GHC.Stack (HasCallStack)
@@ -131,77 +131,63 @@ handleReceivedObjectsImpl ::
   ) =>
   peerAddr ->
   -- | requested objectIds
-  Map objectId SizeInBytes ->
+  Set objectId ->
   -- | received objects
   Map objectId object ->
   DecisionGlobalState peerAddr objectId object ->
-  -- | Return list of `objectId` which sizes didn't match or a new state.
-  -- If one of the `object` has wrong size, we return an error.  The
-  -- mini-protocol will throw, which will clean the state map from this peer.
-  Either
-    ObjectDiffusionInboundError
-    (DecisionGlobalState peerAddr objectId object)
+  DecisionGlobalState peerAddr objectId object
 handleReceivedObjectsImpl
   peerAddr
-  requestedObjectIdsMap
-  receivedObjects
+  objectsRequestedIds
+  objectsReceived
   st@DecisionGlobalState
     { dgsPeerStates
     , dgsObjectsInflightMultiplicities
     } = do
-    
     let
       peerState@DecisionPeerState
-        { dpsObjectsAvailableIds
-        , dpsObjectsInflightIds
+        { dpsObjectsInflightIds
         , dpsObjectsPending
         } =
         findWithDefault
-          (error "ObjectDiffusion.handleReceivedIdsImpl: the peer should appear in dgsPeerStates")
+          (error "ObjectDiffusion.handleReceivedObjectsImpl: the peer should appear in dgsPeerStates")
           peerAddr
           dgsPeerStates
-      requestedObjectIds = Map.keysSet requestedObjectIdsMap
-      receivedObjectIds = Map.keysSet receivedObjects
-    when (not $ Set.null $ requestedObjectIds \\ receivedObjectIds) $
-      Left ProtocolErrorObjectMissing
-    when (not $ Set.null $ receivedObjectIds \\ requestedObjectIds) $
-      Left ProtocolErrorObjectNotRequested
-    -- past that point we know that `requestedObjectIds` == `receivedObjectIds`
+    -- TODO: error handling should be done by the client before using the API
+    -- past that point we assume
+    -- assert (objectsRequestedIds `Set.isSubsetOf` dpsObjectsInflightIds) $
+    -- assert (Map.keysSet objectsReceived == objectsRequestedIds) $ do
     let
-      dpsObjectsPending' = dpsObjectsPending <> receivedObjects
+      dpsObjectsPending' = dpsObjectsPending <> objectsReceived
 
       -- subtract requested from in-flight
       dpsObjectsInflightIds' =
-        assert (requestedObjectIds `Set.isSubsetOf` dpsObjectsInflightIds) $
-          dpsObjectsInflightIds \\ requestedObjectIds
+        dpsObjectsInflightIds \\ objectsRequestedIds
 
       dgsObjectsInflightMultiplicities' =
-        Map.foldrWithKey
-          (\objectId count m ->
-            if objectId `Set.member` requestedObjectIds && count > 1
-              then Map.insert objectId (count-1) m
-              else m
-          )
-          Map.empty
+        Foldable.foldl'
+          decreaseCount
           dgsObjectsInflightMultiplicities
+          objectsRequestedIds
 
       -- Update DecisionPeerState
       --
       -- Remove the downloaded `objectId`s from the dpsObjectsAvailableIds map, this
       -- guarantees that we won't attempt to download the `objectIds` from
       -- this peer twice.
-      dpsObjectsAvailableIds'' = dpsObjectsAvailableIds `Set.difference` requestedObjectIds
+      -- TODO: this is wrong, it should be done earlier when the request for objects is emitted
+      -- aka in when the decision for this peer is emitted/read?
+      -- dpsObjectsAvailableIds'' = dpsObjectsAvailableIds `Set.difference` objectsRequestedIds
 
       peerState' =
         peerState
-          { dpsObjectsAvailableIds = dpsObjectsAvailableIds''
-          , dpsObjectsInflightIds = dpsObjectsInflightIds'
+          { dpsObjectsInflightIds = dpsObjectsInflightIds'
           , dpsObjectsPending = dpsObjectsPending'
           }
 
       dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
 
-    pure $ st
+    st
       { dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
       , dgsPeerStates = dgsPeerStates'
       }
@@ -253,8 +239,8 @@ handleReceivedIds tracer globalStateVar objectPoolWriter peerAddr numIdsInitiall
          in (globalState', globalState') )
   traceWith tracer (TraceDecisionLogicGlobalStateUpdated "handleReceivedIds" globalState')
 
--- | Include received `object`s in `DecisionGlobalState`.  Return number of `objectIds`
--- to be acknowledged and list of `object` to be added to the objectpool.
+-- | Wrapper around `handleReceivedObjectsImpl` that updates and traces the
+-- global state TVar.
 handleReceivedObjects ::
   forall m peerAddr object objectId.
   ( MonadSTM m
@@ -264,29 +250,22 @@ handleReceivedObjects ::
   , Typeable objectId
   ) =>
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
-  (object -> SizeInBytes) ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   peerAddr ->
-  -- | set of requested objectIds with their announced size
-  Map objectId SizeInBytes ->
+  -- | set of requested objectIds
+  Set objectId ->
   -- | received objects
   Map objectId object ->
   -- | number of objectIds to be acknowledged and objects to be added to the
   -- objectpool
-  m (Maybe ObjectDiffusionInboundError)
-handleReceivedObjects tracer objectSize globalStateVar peerAddr objectIdsRequested objectsMap = do
-  r <- atomically $ do
-    st <- readTVar globalStateVar
-    case handleReceivedObjectsImpl objectSize peerAddr objectIdsRequested objectsMap st of
-      r@(Right st') ->
-        writeTVar globalStateVar st'
-          $> r
-      r@Left{} -> pure r
-  case r of
-    Right st ->
-      traceWith tracer (TraceDecisionLogicGlobalStateUpdated "handleReceivedObjects" st)
-        $> Nothing
-    Left e -> return (Just e)
+  m ()
+handleReceivedObjects tracer globalStateVar peerAddr objectsRequestedIds objectsReceived = do
+  globalState' <- atomically $ do
+    stateTVar
+      globalStateVar
+      ( \globalState -> let globalState' = handleReceivedObjectsImpl peerAddr objectsRequestedIds objectsReceived globalState
+         in (globalState', globalState') )
+  traceWith tracer (TraceDecisionLogicGlobalStateUpdated "handleReceivedObjects" globalState')
 
 submitObjectsToPool ::
   Tracer m (TraceObjectDiffusionInbound objectId object) -> ObjectPoolWriter objectId object m -> [object] -> m ()
