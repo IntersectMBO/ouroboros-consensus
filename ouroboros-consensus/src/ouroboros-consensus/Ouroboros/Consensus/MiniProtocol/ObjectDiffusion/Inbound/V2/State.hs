@@ -1,11 +1,8 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE BangPatterns #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
   ( -- * Core API
@@ -19,29 +16,22 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
+import Control.Concurrent.Class.MonadSTM.TSem
 import Control.Exception (assert)
-import Control.Monad (when)
-import Control.Monad.Class.MonadTime.SI
 import Control.Tracer (Tracer, traceWith)
 import Data.Foldable qualified as Foldable
-import Data.Functor (($>))
-import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map, findWithDefault)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromJust)
 import Data.Sequence qualified as Seq
 import Data.Sequence.Strict (StrictSeq, fromStrict)
-import Data.Set ((\\), Set)
+import Data.Set ((\\))
 import Data.Set qualified as Set
-import Data.Typeable (Typeable)
 import GHC.Stack (HasCallStack)
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API (ObjectPoolWriter (opwHasObject, opwObjectId))
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API (ObjectPoolWriter (..))
+import Ouroboros.Consensus.Util.IOLike (MonadMask, MonadMVar, bracket_)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq)
 import System.Random (StdGen)
-
-data SizeInBytes
 
 -- | Insert received `objectId`s and return the number of objectIds to be acknowledged with next request
 -- and the updated `DecisionGlobalState`.
@@ -130,21 +120,28 @@ handleReceivedObjectsImpl ::
   , Ord objectId
   ) =>
   peerAddr ->
-  -- | requested objectIds
-  Set objectId ->
   -- | received objects
   Map objectId object ->
   DecisionGlobalState peerAddr objectId object ->
   DecisionGlobalState peerAddr objectId object
 handleReceivedObjectsImpl
   peerAddr
-  objectsRequestedIds
   objectsReceived
   st@DecisionGlobalState
     { dgsPeerStates
     , dgsObjectsInflightMultiplicities
-    } = do
-    let
+    } =
+    -- TODO: error handling should be done by the client before using the API
+    -- past that point we assume:
+    -- assert (objectsRequestedIds `Set.isSubsetOf` dpsObjectsInflightIds) $
+    -- assert (objectsReceivedIds == objectsRequestedIds) $
+    st
+      { dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
+      , dgsPeerStates = dgsPeerStates'
+      }
+    where
+      objectsReceivedIds = Map.keysSet objectsReceived
+
       peerState@DecisionPeerState
         { dpsObjectsInflightIds
         , dpsObjectsPending
@@ -153,22 +150,18 @@ handleReceivedObjectsImpl
           (error "ObjectDiffusion.handleReceivedObjectsImpl: the peer should appear in dgsPeerStates")
           peerAddr
           dgsPeerStates
-    -- TODO: error handling should be done by the client before using the API
-    -- past that point we assume
-    -- assert (objectsRequestedIds `Set.isSubsetOf` dpsObjectsInflightIds) $
-    -- assert (Map.keysSet objectsReceived == objectsRequestedIds) $ do
-    let
+
       dpsObjectsPending' = dpsObjectsPending <> objectsReceived
 
       -- subtract requested from in-flight
       dpsObjectsInflightIds' =
-        dpsObjectsInflightIds \\ objectsRequestedIds
+        dpsObjectsInflightIds \\ objectsReceivedIds
 
       dgsObjectsInflightMultiplicities' =
         Foldable.foldl'
           decreaseCount
           dgsObjectsInflightMultiplicities
-          objectsRequestedIds
+          objectsReceivedIds
 
       -- Update DecisionPeerState
       --
@@ -177,7 +170,7 @@ handleReceivedObjectsImpl
       -- this peer twice.
       -- TODO: this is wrong, it should be done earlier when the request for objects is emitted
       -- aka in when the decision for this peer is emitted/read?
-      -- dpsObjectsAvailableIds'' = dpsObjectsAvailableIds `Set.difference` objectsRequestedIds
+      -- dpsObjectsAvailableIds'' = dpsObjectsAvailableIds `Set.difference` objectsReceivedIds
 
       peerState' =
         peerState
@@ -186,11 +179,6 @@ handleReceivedObjectsImpl
           }
 
       dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
-
-    st
-      { dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
-      , dgsPeerStates = dgsPeerStates'
-      }
 
 --
 -- Monadic public API
@@ -246,73 +234,81 @@ handleReceivedObjects ::
   ( MonadSTM m
   , Ord objectId
   , Ord peerAddr
-  , Show objectId
-  , Typeable objectId
   ) =>
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   peerAddr ->
-  -- | set of requested objectIds
-  Set objectId ->
   -- | received objects
   Map objectId object ->
-  -- | number of objectIds to be acknowledged and objects to be added to the
-  -- objectpool
   m ()
-handleReceivedObjects tracer globalStateVar peerAddr objectsRequestedIds objectsReceived = do
+handleReceivedObjects tracer globalStateVar peerAddr objectsReceived = do
   globalState' <- atomically $ do
     stateTVar
       globalStateVar
-      ( \globalState -> let globalState' = handleReceivedObjectsImpl peerAddr objectsRequestedIds objectsReceived globalState
+      ( \globalState -> let globalState' = handleReceivedObjectsImpl peerAddr objectsReceived globalState
          in (globalState', globalState') )
   traceWith tracer (TraceDecisionLogicGlobalStateUpdated "handleReceivedObjects" globalState')
 
 submitObjectsToPool ::
-  Tracer m (TraceObjectDiffusionInbound objectId object) -> ObjectPoolWriter objectId object m -> [object] -> m ()
-submitObjectsToPool tracer objectPoolWriter objects =
+  forall m peerAddr object objectId.
+  ( Ord objectId
+  , Ord peerAddr
+  , MonadMask m
+  , MonadMVar m
+  , MonadSTM m
+  ) =>
+  Tracer m (TraceObjectDiffusionInbound objectId object) ->
+  ObjectPoolSem m ->
+  DecisionGlobalStateVar m peerAddr objectId object ->
+  ObjectPoolWriter objectId object m ->
+  peerAddr ->
+  [object] ->
+  m ()
+submitObjectsToPool
+  tracer
+  (ObjectPoolSem poolSem)
+  globalStateVar
+  objectPoolWriter
+  peerAddr
+  objects =
   bracket_
     (atomically $ waitTSem poolSem)
     (atomically $ signalTSem poolSem)
     $ do
       opwAddObjects objectPoolWriter objects
-      now <- getMonotonicTime
-      traceWith tracer (TraceObjectDiffusionInboundSubmittedObjects (NumObjectsProcessed $ length objects))
+      traceWith tracer $
+        TraceObjectDiffusionInboundCollectedObjects $
+        NumObjectsProcessed $ fromIntegral $ length objects
       atomically $
         let getId = opwObjectId objectPoolWriter in
         modifyTVar globalStateVar $ \globalState ->
-          foldl' (\st object -> updateObjectsOwtPool now (getId object) object st) globalState
+          Foldable.foldl'
+            (\st object -> updateObjectsOwtPool (getId object) object st)
+            globalState
+            objects
   where
     updateObjectsOwtPool ::
-      Time ->
       objectId ->
       object ->
       DecisionGlobalState peerAddr objectId object ->
       DecisionGlobalState peerAddr objectId object
     updateObjectsOwtPool
-      now
       objectId
+      object
       st@DecisionGlobalState
-        { dgsPeerStates
-        , dgsObjectsLiveMultiplicities
+        { dgsObjectsLiveMultiplicities
         , dgsObjectsOwtPoolMultiplicities
+        , dgsPeerStates
         } =
         st
-          { dgsPeerStates = dgsPeerStates'
-          , dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
+          { dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
           , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
+          , dgsPeerStates = dgsPeerStates'
           }
         where
-        dgsObjectsOwtPoolMultiplicities' =
-          Map.update
-            (\case 1 -> Nothing; n -> Just $! pred n)
-            objectId
-            dgsObjectsOwtPoolMultiplicities
+        dgsObjectsOwtPoolMultiplicities' = decreaseCount dgsObjectsOwtPoolMultiplicities objectId
 
-        dgsObjectsLiveMultiplicities' =
-          Map.alter
-            (\case Nothing -> Just 1; Just n -> Just $! succ n)
-            objectId
-            dgsObjectsLiveMultiplicities
+        dgsObjectsLiveMultiplicities' = increaseCount dgsObjectsLiveMultiplicities objectId
 
         dgsPeerStates' =
           Map.update

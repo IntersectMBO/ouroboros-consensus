@@ -38,8 +38,14 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
     -- * Helpers for ObjectMultiplicity maps
   , increaseCount
   , decreaseCount
+
+    -- * Object pool semaphore
+  , ObjectPoolSem (..)
+  , newObjectPoolSem
   ) where
 
+import Control.Concurrent.Class.MonadSTM.Strict (MonadSTM, atomically)
+import Control.Concurrent.Class.MonadSTM.TSem (TSem, newTSem)
 import Control.Exception (Exception (..))
 import Control.Monad.Class.MonadTime.SI
 import Data.Map.Strict (Map)
@@ -57,10 +63,15 @@ import Ouroboros.Network.ControlMessage (ControlMessage)
 import Control.DeepSeq (NFData)
 import Quiet (Quiet (..))
 
+-- | Semaphore to guard access to the ObjectPool
+newtype ObjectPoolSem m = ObjectPoolSem (TSem m)
+
+newObjectPoolSem :: MonadSTM m => m (ObjectPoolSem m)
+newObjectPoolSem = ObjectPoolSem <$> atomically (newTSem 1)
+
 --
 -- DecisionPeerState, DecisionGlobalState
 --
-
 
 -- | In all the fields' names,
 -- If "Ids" appears at the beginning of a name field, it means we refer to IDs
@@ -342,7 +353,7 @@ decreaseCount mmap k =
 
 data TraceObjectDiffusionInbound objectId object
   = -- | Number of objects just about to be inserted.
-    TraceObjectDiffusionInboundCollectedObjects Int
+    TraceObjectDiffusionInboundCollectedObjects NumObjectsProcessed
   | -- | Just processed object pass/fail breakdown.
     TraceObjectDiffusionInboundAddedObjects Int
   | -- | Received a 'ControlMessage' from the outbound peer governor, and about

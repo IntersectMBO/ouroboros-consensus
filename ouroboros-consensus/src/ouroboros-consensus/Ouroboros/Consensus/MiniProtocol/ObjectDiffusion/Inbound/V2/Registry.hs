@@ -19,7 +19,6 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
 
 import Control.Concurrent.Class.MonadMVar.Strict
 import Control.Concurrent.Class.MonadSTM.Strict
-import Control.Concurrent.Class.MonadSTM.TSem
 import Control.Monad.Class.MonadFork
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTime.SI
@@ -31,7 +30,6 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set qualified as Set
-import Data.Typeable (Typeable)
 import Data.Void (Void)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
@@ -53,17 +51,11 @@ newPeerDecisionChannelsVar ::
   MonadMVar m => m (PeerDecisionChannelsVar m peerAddr objectId object)
 newPeerDecisionChannelsVar = newMVar (Map.empty)
 
--- | Semaphore to guard access to the ObjectPool
-newtype ObjectPoolSem m = ObjectPoolSem (TSem m)
-
-newObjectPoolSem :: MonadSTM m => m (ObjectPoolSem m)
-newObjectPoolSem = ObjectPoolSem <$> atomically (newTSem 1)
-
 data InboundPeerAPI m objectId object = InboundPeerAPI
   { readPeerDecision :: m (PeerDecision objectId object)
   -- ^ a blocking action which reads `PeerDecision`
-  , handleReceivedIds :: [objectId] -> m ()
-  , handleReceivedObjects :: [object] -> m ()
+  , handleReceivedIds :: StrictSeq.StrictSeq objectId -> m ()
+  , handleReceivedObjects :: Map objectId object -> m ()
   , submitObjectsToPool :: [object] -> m ()
   }
 
@@ -75,14 +67,12 @@ withPeer ::
   ( MonadMask m
   , MonadMVar m
   , MonadSTM m
-  , MonadMonotonicTime m
   , Ord objectId
-  , Show objectId
-  , Typeable objectId
   , Ord peerAddr
   , Show peerAddr
   ) =>
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
+  Tracer m (TraceObjectDiffusionInbound objectId object) ->
   PeerDecisionChannelsVar m peerAddr objectId object ->
   ObjectPoolSem m ->
   DecisionPolicy ->
@@ -96,8 +86,9 @@ withPeer ::
   m a
 withPeer
   decisionTracer
+  objectDiffusionTracer
   decisionChannelsVar
-  (ObjectPoolSem poolSem)
+  objectPoolSem
   decisionPolicy
   globalStateVar
   objectPoolReader
@@ -127,8 +118,21 @@ withPeer
                   , InboundPeerAPI
                       { readPeerDecision = takeMVar chan'
                       , handleReceivedIds = State.handleReceivedIds
+                          decisionTracer
+                          globalStateVar
+                          objectPoolWriter
+                          peerAddr
+                          (error "TODO: provide the number of requested IDs")
                       , handleReceivedObjects = State.handleReceivedObjects
+                          decisionTracer
+                          globalStateVar
+                          peerAddr
                       , submitObjectsToPool = State.submitObjectsToPool
+                          objectDiffusionTracer
+                          objectPoolSem
+                          globalStateVar
+                          objectPoolWriter
+                          peerAddr
                       }
                   )
           -- register the peer in the global state now
@@ -235,6 +239,7 @@ decisionLogicThread ::
   , MonadMVar m
   , MonadSTM m
   , MonadFork m
+  , MonadMask m
   , Ord peerAddr
   , Ord objectId
   , Hashable peerAddr
@@ -284,7 +289,7 @@ decisionLogicThread decisionTracer countersTracer decisionPolicy decisionChannel
     traceWith countersTracer (makeObjectDiffusionCounters globalState')
 
 -- Variant of modifyMVar_ that puts a default value if the MVar is empty.
-modifyMVarWithDefault_ :: StrictMVar m a -> a -> (a -> m a) -> m ()
+modifyMVarWithDefault_ :: (MonadMask m, MonadMVar m) => StrictMVar m a -> a -> (a -> m a) -> m ()
 modifyMVarWithDefault_ m d io =
   mask $ \restore -> do
     mbA <- tryTakeMVar m
