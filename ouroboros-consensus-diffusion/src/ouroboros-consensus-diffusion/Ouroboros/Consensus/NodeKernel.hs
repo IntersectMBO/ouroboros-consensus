@@ -27,6 +27,7 @@ module Ouroboros.Consensus.NodeKernel
   , toConsensusMode
   ) where
 
+import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
@@ -51,6 +52,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust, mapMaybe)
 import Data.Proxy
+import Data.Set (Set)
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -195,6 +197,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   { tracers :: Tracers m (ConnectionId addrNTN) addrNTC blk
   , registry :: ResourceRegistry m
   , cfg :: TopLevelConfig blk
+  , featureFlags :: Set CardanoFeatureFlag
   , btime :: BlockchainTime m
   , chainDB :: ChainDB m blk
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
