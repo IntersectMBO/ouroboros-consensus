@@ -356,7 +356,7 @@ main = withStdTerminalHandles $ do
         InEnv
           st
           fp
-          (fromInMemory (fp F.</> "tables" F.</> "tvar"))
+          (fromInMemory (fp F.</> "tables"))
           ("InMemory@[" <> fp <> "]")
           c
           mtd
@@ -412,7 +412,7 @@ main = withStdTerminalHandles $ do
       pure $
         OutEnv
           fp
-          (toInMemory (fp F.</> "tables" F.</> "tvar"))
+          (toInMemory (fp F.</> "tables"))
           (Just "tables")
           (Nothing)
           ("InMemory@[" <> fp <> "]")
