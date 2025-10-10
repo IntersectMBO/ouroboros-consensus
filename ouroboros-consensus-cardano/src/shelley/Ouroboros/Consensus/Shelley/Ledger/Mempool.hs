@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -14,7 +15,10 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
+#if __GLASGOW_HASKELL__ < 908
+{-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
+#endif
 
 -- | Shelley mempool integration
 --
@@ -98,12 +102,13 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( ShelleyLedgerConfig (shelleyLedgerGlobals)
+  ( BigEndianTxIn (..)
+  , ShelleyLedgerConfig (shelleyLedgerGlobals)
   , Ticked (TickedShelleyLedgerState, tickedShelleyLedgerState)
   , getPParams
   )
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
-import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 
@@ -177,8 +182,9 @@ instance
 
   getTransactionKeySets (ShelleyTx _ tx) =
     LedgerTables $
-      KeysMK
-        (tx ^. bodyTxL . allInputsTxBodyF)
+      KeysMK $
+        coerceSet
+          (tx ^. bodyTxL . allInputsTxBodyF)
 
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (txIdTx tx) tx

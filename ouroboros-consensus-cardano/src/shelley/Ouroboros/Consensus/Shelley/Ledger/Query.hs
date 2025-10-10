@@ -18,7 +18,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
+#if __GLASGOW_HASKELL__ < 908
+{-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
+#endif
 
 module Ouroboros.Consensus.Shelley.Ledger.Query
   ( BlockQuery (..)
@@ -67,6 +70,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
 import Control.DeepSeq (NFData)
 import Data.Bifunctor (second)
+import Data.Coerce
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
@@ -105,7 +109,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
   ( Serialised (..)
@@ -543,9 +547,9 @@ instance
     hst = headerState ext
     st = shelleyLedgerState lst
 
-  answerBlockQueryLookup = answerShelleyLookupQueries id id id
+  answerBlockQueryLookup = answerShelleyLookupQueries id id coerce
 
-  answerBlockQueryTraverse = answerShelleyTraversingQueries id id shelleyQFTraverseTablesPredicate
+  answerBlockQueryTraverse = answerShelleyTraversingQueries id coerce shelleyQFTraverseTablesPredicate
 
   -- \| Is the given query supported by the given 'ShelleyNodeToClientVersion'?
   blockQueryIsSupportedOnVersion = \case
@@ -1231,7 +1235,7 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
     LedgerTables (ValuesMK values) <-
       LedgerDB.roforkerReadTables
         forker
-        (castLedgerTables $ injTables (LedgerTables $ KeysMK txins))
+        (castLedgerTables $ injTables (LedgerTables $ KeysMK $ coerceSet txins))
     pure $
       SL.UTxO $
         Map.mapKeys ejTxIn $

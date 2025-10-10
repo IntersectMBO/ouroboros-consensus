@@ -19,7 +19,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
+#if __GLASGOW_HASKELL__ < 908
+{-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
+#endif
 
 module Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( LedgerState (..)
@@ -54,10 +57,11 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
 
     -- * Low-level UTxO manipulations
   , slUtxoL
+  , BigEndianTxIn (..)
   ) where
 
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
-import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
+import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
   ( decShareCBOR
@@ -97,7 +101,7 @@ import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
-import Data.Coerce (coerce)
+import Data.Coerce
 import Data.Functor.Identity
 import Data.MemPack
 import qualified Data.Text as T
@@ -130,6 +134,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , mkHeaderView
   )
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR
   ( decodeWithOrigin
   , encodeWithOrigin
@@ -317,7 +322,34 @@ shelleyLedgerTipPoint = shelleyTipToPoint . shelleyLedgerTip
 
 instance ShelleyCompatible proto era => UpdateLedger (ShelleyBlock proto era)
 
-type instance TxIn (LedgerState (ShelleyBlock proto era)) = SL.TxIn
+-- | The only purpose of this type is to modify the MemPack instance to use big
+-- endian serialization. This is necessary to ensure streaming functions of the
+-- UTxO set preserve the order of the entries, as otherwise we would get
+-- different sortings if sorting via the Serialized form and the Haskell Ord
+-- instance.
+--
+-- TODO: fix this in the Ledger. See cardano-ledger#5336.
+newtype BigEndianTxIn = BigEndianTxIn {getOriginalTxIn :: SL.TxIn}
+  deriving newtype (Eq, Show, Ord, NoThunks)
+
+newtype BigEndianTxIx = BigEndianTxIx {getOriginalTxIx :: SL.TxIx}
+
+instance MemPack BigEndianTxIx where
+  typeName = "BigEndianTxIx"
+  packedByteCount = packedByteCount . getOriginalTxIx
+  packM (BigEndianTxIx (SL.TxIx w)) = packM (byteSwap16 w)
+  unpackM = BigEndianTxIx . SL.TxIx . byteSwap16 <$> unpackM
+
+instance MemPack BigEndianTxIn where
+  typeName = "BigEndianTxIn"
+  packedByteCount = packedByteCount . getOriginalTxIn
+  packM (BigEndianTxIn (SL.TxIn txid txix)) = do
+    packM txid
+    packM (BigEndianTxIx txix)
+  unpackM = do
+    BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
+
+type instance TxIn (LedgerState (ShelleyBlock proto era)) = BigEndianTxIn
 type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
 
 instance
@@ -397,7 +429,7 @@ instance
       , shelleyLedgerTables = emptyLedgerTables
       }
    where
-    (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO m
+    (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys m)
     ShelleyLedgerState
       { shelleyLedgerTip
       , shelleyLedgerState
@@ -409,7 +441,7 @@ instance
       { shelleyLedgerTip = shelleyLedgerTip
       , shelleyLedgerState = shelleyLedgerState'
       , shelleyLedgerTransition = shelleyLedgerTransition
-      , shelleyLedgerTables = LedgerTables (ValuesMK (SL.unUTxO tbs))
+      , shelleyLedgerTables = LedgerTables (ValuesMK (coerceMapKeys $ SL.unUTxO tbs))
       }
    where
     (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
@@ -432,7 +464,7 @@ instance
       }
    where
     (_, tickedShelleyLedgerState') =
-      tickedShelleyLedgerState `slUtxoL` SL.UTxO tbs
+      tickedShelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys tbs)
     TickedShelleyLedgerState
       { untickedShelleyLedgerTip
       , tickedShelleyLedgerTransition
@@ -445,7 +477,7 @@ instance
       { untickedShelleyLedgerTip = untickedShelleyLedgerTip
       , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
       , tickedShelleyLedgerState = tickedShelleyLedgerState'
-      , tickedShelleyLedgerTables = LedgerTables (ValuesMK (SL.unUTxO tbs))
+      , tickedShelleyLedgerTables = LedgerTables (ValuesMK (coerceMapKeys (SL.unUTxO tbs)))
       }
    where
     (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
@@ -583,6 +615,7 @@ instance
   getBlockKeySets =
     LedgerTables
       . KeysMK
+      . coerceSet
       . Core.neededTxInsForBlock
       . shelleyBlockRaw
 

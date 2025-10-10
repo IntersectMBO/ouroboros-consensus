@@ -41,7 +41,6 @@ import Data.Functor.Identity
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
-import Data.String (fromString)
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -214,11 +213,11 @@ implTakeHandleSnapshot ::
   String ->
   m (Maybe CRC)
 implTakeHandleSnapshot tv hasFS hint snapshotName = do
-  createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName, "tables"]
+  createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName]
   h <- readTVarIO tv
   guardClosed h $
     \values ->
-      withFile hasFS (mkFsPath [snapshotName, "tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
+      withFile hasFS (mkFsPath [snapshotName, "tables"]) (WriteMode MustBeNew) $ \hf ->
         fmap (Just . snd) $
           hPutAllCRC hasFS hf $
             CBOR.toLazyByteString $
@@ -300,6 +299,7 @@ implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
       SnapshotMetadata
         { snapshotBackend = UTxOHDMemSnapshot
         , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
+        , snapshotTablesCodecVersion = TablesCodecVersion1
         }
 
 -- | Read snapshot from disk.
@@ -339,10 +339,7 @@ loadSnapshot tracer _rr ccfg fs ds = do
               fs
               Identity
               (valuesMKDecoder extLedgerSt)
-              ( fsPathFromList $
-                  fsPathToList (snapshotToDirPath ds)
-                    <> [fromString "tables", fromString "tvar"]
-              )
+              (snapshotToDirPath ds </> mkFsPath ["tables"])
       let computedCRC = crcOfConcat checksumAsRead crcTables
       Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
         throwE $

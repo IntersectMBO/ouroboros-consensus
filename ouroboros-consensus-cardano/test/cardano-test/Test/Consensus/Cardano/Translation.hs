@@ -1,4 +1,5 @@
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -10,7 +11,10 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
+#if __GLASGOW_HASKELL__ < 908
+{-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
+#endif
 
 module Test.Consensus.Cardano.Translation (tests) where
 
@@ -27,7 +31,6 @@ import Cardano.Ledger.Shelley.API
   , translateCompactTxOutByronToShelley
   , translateTxIdByronToShelley
   )
-import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.LedgerState
   ( esLState
   , lsUTxOState
@@ -67,7 +70,8 @@ import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
-  ( ShelleyBlock
+  ( BigEndianTxIn (..)
+  , ShelleyBlock
   , ShelleyLedgerConfig
   , mkShelleyLedgerConfig
   , shelleyLedgerState
@@ -75,6 +79,7 @@ import Ouroboros.Consensus.Shelley.Ledger
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util
 import Test.Cardano.Ledger.Alonzo.Binary.Twiddle ()
 import Test.Cardano.Ledger.Babbage.Binary.Twiddle ()
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
@@ -272,7 +277,7 @@ byronUtxosAreInsertsInShelleyUtxoDiff srcLedgerState destLedgerState =
  where
   toNextUtxoDiff ::
     LedgerState ByronBlock mk ->
-    Diff.Diff SL.TxIn (Core.TxOut ShelleyEra)
+    Diff.Diff BigEndianTxIn (Core.TxOut ShelleyEra)
   toNextUtxoDiff ledgerState =
     let
       Byron.UTxO utxo = Byron.cvsUtxo $ byronLedgerState ledgerState
@@ -281,13 +286,13 @@ byronUtxosAreInsertsInShelleyUtxoDiff srcLedgerState destLedgerState =
      in
       Diff.Diff $ Map.map valFn $ Map.mapKeys keyFn utxo
 
-  translateTxInByronToShelley :: Byron.TxIn -> TxIn
+  translateTxInByronToShelley :: Byron.TxIn -> BigEndianTxIn
   translateTxInByronToShelley byronTxIn =
     let
       Byron.TxInUtxo txId txIx = byronTxIn
       shelleyTxId' = translateTxIdByronToShelley txId
      in
-      TxIn shelleyTxId' (TxIx txIx)
+      BigEndianTxIn $ TxIn shelleyTxId' (TxIx txIx)
 
 shelleyAvvmAddressesAreDeletesInUtxoDiff ::
   LedgerState (ShelleyBlock Proto ShelleyEra) EmptyMK ->
@@ -298,9 +303,9 @@ shelleyAvvmAddressesAreDeletesInUtxoDiff srcLedgerState destLedgerState =
  where
   toNextUtxoDiff ::
     LedgerState (ShelleyBlock Proto ShelleyEra) EmptyMK ->
-    Diff.Diff SL.TxIn (Core.TxOut AllegraEra)
+    Diff.Diff BigEndianTxIn (Core.TxOut AllegraEra)
   toNextUtxoDiff = avvmAddressesToUtxoDiff . stashedAVVMAddresses . shelleyLedgerState
-  avvmAddressesToUtxoDiff (UTxO m) = Diff.Diff $ Map.map (\_ -> Diff.Delete) m
+  avvmAddressesToUtxoDiff (UTxO m) = Diff.Diff $ coerceMapKeys $ Map.map (\_ -> Diff.Delete) m
 
 utxoTablesAreEmpty ::
   LedgerState (ShelleyBlock srcProto srcEra) EmptyMK ->
@@ -329,7 +334,7 @@ nonEmptyAvvmAddresses ledgerState =
 
 extractUtxoDiff ::
   LedgerState (ShelleyBlock proto era) DiffMK ->
-  Diff SL.TxIn (Core.TxOut era)
+  Diff BigEndianTxIn (Core.TxOut era)
 extractUtxoDiff shelleyLedgerState =
   let DiffMK tables = getLedgerTables $ shelleyLedgerTables shelleyLedgerState
    in tables
