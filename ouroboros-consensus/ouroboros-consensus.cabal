@@ -265,6 +265,9 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
     Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+    Ouroboros.Consensus.Storage.PerasCertDB
+    Ouroboros.Consensus.Storage.PerasCertDB.API
+    Ouroboros.Consensus.Storage.PerasCertDB.Impl
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
     Ouroboros.Consensus.Storage.VolatileDB.API
@@ -723,6 +726,9 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog
     Test.Ouroboros.Storage.LedgerDB.V1.LMDB
     Test.Ouroboros.Storage.Orphans
+    Test.Ouroboros.Storage.PerasCertDB
+    Test.Ouroboros.Storage.PerasCertDB.Model
+    Test.Ouroboros.Storage.PerasCertDB.StateMachine
     Test.Ouroboros.Storage.VolatileDB
     Test.Ouroboros.Storage.VolatileDB.Mock
     Test.Ouroboros.Storage.VolatileDB.Model
