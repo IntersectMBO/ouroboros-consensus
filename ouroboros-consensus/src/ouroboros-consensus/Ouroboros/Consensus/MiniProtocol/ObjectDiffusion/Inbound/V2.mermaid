@@ -11,31 +11,42 @@ flowchart TD
     I(dgsObjectsOwtPoolMultiplicities)
 
     EA{requestIds}
-    EA-->|count| A
+    EA-->|+count| A
 
-    EB{receiveIds}
-    A --> EB
-    EB -->|ids| B
-    EB -->|ids| C
+    EB{handleReceiveIds}
+    A -->|-count| EB
+    EB -->|+ids| B
+    IN1@{ shape: lin-cyl, label: "ids" } --o EB
+    EB -->|+ids| C
 
     EC{requestObjects}
-    C --> EC
-    EC -->|ids| D
-    EC --> |count| G
-    EC -->|count| H
+    C -->|-ids| EC
+    EC -->|+ids| D
+    EC --> |+count| G
+    EC -->|+count| H
 
-    ED{receiveObjects}
-    D --> ED
-    H --> ED
+    ED{handleReceiveObjects}
+    D -->|-ids| ED
+    H -->|-count| ED
+    IN2@{ shape: lin-cyl, label: "objects" } --o ED
     ED -->|objects| E
 
     EE{acknowledgeIds}
-    B --> EE
-    E --> EE
-    EE -->|objects| F
-    EE -->|count| I
+    B -->|-ids| EE
+    
+    EF{submitToPool}
+    EE -.->|ids| EF
+    E -->|-objects| EF
+    EF -->|+objects| F
+    EF -->|+count| I
 
-    EF{Added to pool}
-    F --> EF
-    G --> EF
-    I --> EF
+    EG{Added to pool}
+    F -->|-objects| EG
+    G -->|-count| EG
+    I -->|-count| EG
+
+    EZ{makeDecision}
+
+    EZ -.->|count| EA
+    EZ -.->|ids| EC
+    EZ -.->|ids| EE

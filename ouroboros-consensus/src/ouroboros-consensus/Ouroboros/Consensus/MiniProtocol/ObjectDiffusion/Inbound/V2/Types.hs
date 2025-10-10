@@ -15,6 +15,10 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 
     -- * DecisionGlobalState
   , DecisionGlobalState (..)
+  , dgsObjectsAvailableIds
+  , dgsObjectsPending
+  , dgsObjectsOwtPool
+  , dgsObjectsPendingOrOwtPoolMultiplicities
   , DecisionGlobalStateVar
   , newDecisionGlobalStateVar
 
@@ -52,6 +56,7 @@ import Control.Exception (Exception (..))
 import Control.Monad.Class.MonadTime.SI
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Map.Merge.Strict qualified as Map
 import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
 import Data.Set (Set)
@@ -196,6 +201,16 @@ dgsObjectsPending DecisionGlobalState{dgsPeerStates} =
 dgsObjectsOwtPool :: Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId object
 dgsObjectsOwtPool DecisionGlobalState{dgsPeerStates} =
   Map.unions (dpsObjectsOwtPool <$> (Map.elems dgsPeerStates))
+
+nonZeroCountMapDiff :: (Ord k) => Map k ObjectMultiplicity -> Map k ObjectMultiplicity -> Map k ObjectMultiplicity
+nonZeroCountMapDiff = Map.merge
+  Map.preserveMissing
+  Map.dropMissing
+  (Map.zipWithMaybeMatched (\_ count1 count2 -> let c = count1 - count2 in if c > 0 then Just c else Nothing))
+
+dgsObjectsPendingOrOwtPoolMultiplicities :: Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId ObjectMultiplicity
+dgsObjectsPendingOrOwtPoolMultiplicities DecisionGlobalState{dgsObjectsLiveMultiplicities, dgsObjectsInflightMultiplicities} =
+  nonZeroCountMapDiff dgsObjectsLiveMultiplicities dgsObjectsInflightMultiplicities
 
 type DecisionGlobalStateVar m peerAddr objectId object =
   StrictTVar m (DecisionGlobalState peerAddr objectId object)

@@ -20,6 +20,7 @@ import Control.Tracer (Tracer, traceWith)
 import Data.Foldable qualified as Foldable
 import Data.Map.Strict (Map, findWithDefault)
 import Data.Map.Strict qualified as Map
+import Data.Map.Merge.Strict qualified as Map
 import Data.Sequence qualified as Seq
 import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as StrictSeq
@@ -57,16 +58,16 @@ handleReceivedIdsImpl
   peerAddr
   numIdsInitiallyRequested
   receivedIdsSeq
-  st@DecisionGlobalState
+  globalState@DecisionGlobalState
     { dgsPeerStates
-    , dgsObjectsLiveMultiplicities
     } =
-    st
+    globalState
       { dgsPeerStates = dgsPeerStates'
       }
     where
       peerState@DecisionPeerState
         { dpsOutstandingFifo
+        , dpsObjectsInflightIds
         , dpsObjectsAvailableIds
         , dpsNumIdsInflight
         } =
@@ -79,9 +80,8 @@ handleReceivedIdsImpl
       newObjectsAvailableIds =
         Set.filter (\objectId ->
           (not . hasObject $ objectId) -- object isn't already in the object pool
-            && objectId `notElem` dpsOutstandingFifo -- object hasn't been advertised before by the outbound peer (this covers the cases where the object would be in flight, or already downloaded but no acknowledged yet, by the current peer)
-               -- TODO; the condition below is problematic because it would prevent requesting an object from two different peers if the first one has already requested it (i.e. it is in flight)!
-            && objectId `Map.notMember` dgsObjectsLiveMultiplicities -- the object is not currently in flight or further in the processing from another peer
+            && objectId `Set.notMember` dpsObjectsInflightIds -- object isn't in flight from current peer
+            && objectId `Map.notMember` (dgsObjectsPendingOrOwtPoolMultiplicities globalState) -- the object has not been successfully downloaded from another peer
           ) $ strictSeqToSet $ receivedIdsSeq
 
       dpsObjectsAvailableIds' =
@@ -240,23 +240,60 @@ submitObjectsToPool
   globalStateVar
   objectPoolWriter
   peerAddr
-  objects =
+  objects = do
+  let getId = opwObjectId objectPoolWriter
+
+  -- Move objects from `pending` to `owtPool` state
+  atomically $ modifyTVar globalStateVar $ \globalState ->
+      Foldable.foldl'
+        (\st object -> updateStateWhenObjectOwtPool (getId object) st)
+        globalState
+        objects
+
   bracket_
     (atomically $ waitTSem poolSem)
     (atomically $ signalTSem poolSem)
     $ do
+      -- When the lock over the object pool is obtained
       opwAddObjects objectPoolWriter objects
       traceWith tracer $
         TraceObjectDiffusionInboundCollectedObjects $
         NumObjectsProcessed $ fromIntegral $ length objects
-      atomically $
-        let getId = opwObjectId objectPoolWriter in
-        modifyTVar globalStateVar $ \globalState ->
+
+      -- Move objects from `owtPool` to `inPool` state
+      atomically $ modifyTVar globalStateVar $ \globalState ->
           Foldable.foldl'
             (\st object -> updateStateWhenObjectAddedToPool (getId object) st)
             globalState
             objects
   where
+    updateStateWhenObjectOwtPool ::
+      objectId ->
+      DecisionGlobalState peerAddr objectId object ->
+      DecisionGlobalState peerAddr objectId object
+    updateStateWhenObjectOwtPool
+      objectId
+      st@DecisionGlobalState
+        { dgsObjectsOwtPoolMultiplicities
+        , dgsPeerStates
+        } =
+        st
+          { dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
+          , dgsPeerStates = dgsPeerStates'
+          }
+        where
+        dgsObjectsOwtPoolMultiplicities' = increaseCount dgsObjectsOwtPoolMultiplicities objectId
+
+        dgsPeerStates' =
+          Map.adjust
+          (\ps@DecisionPeerState{dpsObjectsOwtPool, dpsObjectsPending} ->
+            let object = case Map.lookup objectId dpsObjectsPending of
+                            Just obj -> obj
+                            Nothing -> error "ObjectDiffusion.updateStateWhenObjectOwtPool: the object should be in dpsObjectsPending"
+            in ps{dpsObjectsPending = Map.delete objectId dpsObjectsPending, dpsObjectsOwtPool = Map.insert objectId object dpsObjectsOwtPool})
+          peerAddr
+          dgsPeerStates
+
     updateStateWhenObjectAddedToPool ::
       objectId ->
       DecisionGlobalState peerAddr objectId object ->
