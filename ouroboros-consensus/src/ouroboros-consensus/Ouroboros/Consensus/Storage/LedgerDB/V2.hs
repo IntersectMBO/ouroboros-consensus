@@ -1,11 +1,8 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -46,16 +43,13 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Args
@@ -70,24 +64,30 @@ import Prelude hiding (read)
 type SnapshotManagerV2 m blk = SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
 
 mkInitDb ::
-  forall m blk.
+  forall m blk backend.
   ( LedgerSupportsProtocol blk
-  , IOLike m
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
-  , LedgerSupportsV2LedgerDB (LedgerState blk)
+  , Backend m backend blk
+  , IOLike m
   ) =>
   Complete LedgerDbArgs m blk ->
-  HandleEnv m ->
   ResolveBlock m blk ->
   SnapshotManagerV2 m blk ->
   GetVolatileSuffix m blk ->
+  Resources m backend ->
   InitDB (LedgerSeq' m blk) m blk
-mkInitDb args bss getBlock snapManager getVolatileSuffix =
+mkInitDb args getBlock snapManager getVolatileSuffix res = do
   InitDB
     { initFromGenesis = emptyF =<< lgrGenesis
     , initFromSnapshot =
-        loadSnapshot (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS
+        runExceptT
+          . newHandleFromSnapshot
+            v2Tracer
+            lgrRegistry
+            (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
+            lgrHasFS
+            res
     , abortLedgerDbInit = closeLedgerSeq
     , initReapplyBlock = \a b c -> do
         (x, y) <- reapplyThenPush lgrRegistry a b c
@@ -114,9 +114,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbOpenHandlesLock = lock
                 , ldbGetVolatileSuffix = getVolatileSuffix
-                , ldbResourceKeys = case bss of
-                    InMemoryHandleEnv -> Nothing
-                    LSMHandleEnv lsmRes -> Just $ LedgerDBResourceKeys (sessionKey lsmRes) (blockIOKey lsmRes)
+                , ldbResourceKeys = SomeResources res
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -132,29 +130,14 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
     , lgrRegistry
     } = args
 
-  v2Tracer :: Tracer m V2.FlavorImplSpecificTrace
-  v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer
+  v2Tracer :: Tracer m LedgerDBV2Trace
+  v2Tracer =
+    LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer
 
   emptyF ::
     ExtLedgerState blk ValuesMK ->
     m (LedgerSeq' m blk)
-  emptyF st =
-    empty' st $ case bss of
-      InMemoryHandleEnv -> InMemory.newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
-      LSMHandleEnv lsmRes ->
-        \values -> do
-          table <-
-            LSM.tableFromValuesMK v2Tracer lgrRegistry (sessionResource lsmRes) (forgetLedgerTables st) values
-          LSM.newLSMLedgerTablesHandle v2Tracer lgrRegistry table
-
-  loadSnapshot ::
-    CodecConfig blk ->
-    SomeHasFS m ->
-    DiskSnapshot ->
-    m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
-  loadSnapshot ccfg fs ds = case bss of
-    InMemoryHandleEnv -> runExceptT $ InMemory.loadSnapshot v2Tracer lgrRegistry ccfg fs ds
-    LSMHandleEnv lsmRes -> runExceptT $ LSM.loadSnapshot v2Tracer lgrRegistry ccfg fs (sessionResource lsmRes) ds
+  emptyF st = empty' st $ newHandleFromValues v2Tracer lgrRegistry res
 
 implMkLedgerDb ::
   forall m l blk.
@@ -235,7 +218,8 @@ mkInternals h snapManager =
     , closeLedgerDB = do
         let LDBHandle tvar = h
         getEnv h $ \env ->
-          whenJust (ldbResourceKeys env) releaseLedgerDBResources
+          case ldbResourceKeys env of
+            SomeResources res -> releaseResources (Proxy @blk) res
         atomically (writeTVar tvar LedgerDBClosed)
     , getNumLedgerTablesHandles = getEnv h $ \env -> do
         l <- readTVarIO (ldbSeq env)
@@ -387,7 +371,7 @@ implTryTakeSnapshot snapManager env mTime nrBlocks =
 implTryFlush :: Applicative m => LedgerDBEnv m l blk -> m ()
 implTryFlush _ = pure ()
 
-implCloseDB :: IOLike m => LedgerDBHandle m l blk -> m ()
+implCloseDB :: forall m l blk. IOLike m => LedgerDBHandle m l blk -> m ()
 implCloseDB (LDBHandle varState) = do
   res <-
     atomically $
@@ -397,8 +381,8 @@ implCloseDB (LDBHandle varState) = do
         LedgerDBOpen env -> do
           writeTVar (ldbForkers env) Map.empty
           writeTVar varState LedgerDBClosed
-          pure (ldbResourceKeys env)
-  whenJust res releaseLedgerDBResources
+          pure (Just $ ldbResourceKeys env)
+  whenJust res (\(SomeResources res') -> releaseResources (Proxy @blk) res')
 
 {-------------------------------------------------------------------------------
   The LedgerDBEnv
@@ -458,7 +442,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   --
   --  * Modify 'ldbSeq' while holding a write lock, and then close the removed
   --    handles without any locking. See e.g. 'implGarbageCollect'.
-  , ldbResourceKeys :: !(Maybe (LedgerDBResourceKeys m))
+  , ldbResourceKeys :: !(SomeResources m blk)
   -- ^ Resource keys used in the LSM backend so that the closing function used
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
@@ -473,23 +457,9 @@ deriving instance
   , NoThunks (TxIn l)
   , NoThunks (TxOut l)
   , NoThunks (LedgerCfg l)
+  , NoThunks (SomeResources m blk)
   ) =>
   NoThunks (LedgerDBEnv m l blk)
-
-data LedgerDBResourceKeys m = LedgerDBResourceKeys
-  { sessionResourceKey :: ResourceKey m
-  , blockIOResourceKey :: ResourceKey m
-  }
-  deriving Generic
-
-deriving instance
-  IOLike m =>
-  NoThunks (LedgerDBResourceKeys m)
-
-releaseLedgerDBResources :: IOLike m => LedgerDBResourceKeys m -> m ()
-releaseLedgerDBResources l = do
-  Monad.void . release . sessionResourceKey $ l
-  Monad.void . release . blockIOResourceKey $ l
 
 {-------------------------------------------------------------------------------
   The LedgerDBHandle
@@ -512,6 +482,7 @@ deriving instance
   , NoThunks (TxIn l)
   , NoThunks (TxOut l)
   , NoThunks (LedgerCfg l)
+  , NoThunks (SomeResources m blk)
   ) =>
   NoThunks (LedgerDBState m l blk)
 

@@ -1,8 +1,6 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
 
 -- | See "Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API" for the
@@ -17,8 +15,6 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
   ( -- * API
 
-  --
-
     -- | Most of the documentation on the behaviour of the 'BackingStore' lives
     -- in this module.
     module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
@@ -28,29 +24,18 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
   , restoreBackingStore
 
     -- * Tracing
-  , FlavorImplSpecificTrace (..)
-  , FlavorImplSpecificTraceInMemory (..)
-  , FlavorImplSpecificTraceOnDisk (..)
-
-    -- * Testing
-  , newBackingStoreInitialiser
+  , SomeBackendTrace (..)
+  , SomeBackendArgs (..)
+  , Backend (..)
   ) where
 
 import Cardano.Slotting.Slot
 import Control.Tracer
-import Data.Functor.Contravariant
-import Data.SOP.Dict (Dict (..))
-import GHC.Stack (HasCallStack)
+import Data.Proxy
 import Ouroboros.Consensus.Ledger.Basics
-import Ouroboros.Consensus.Storage.LedgerDB.API
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Args
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import Ouroboros.Consensus.Util.Args
-import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
-import System.FS.IO
 
 type BackingStoreInitialiser m l =
   InitFrom (LedgerTables l ValuesMK) ->
@@ -58,73 +43,48 @@ type BackingStoreInitialiser m l =
 
 -- | Overwrite the 'BackingStore' tables with the snapshot's tables
 restoreBackingStore ::
-  ( IOLike m
-  , HasLedgerTables l
-  , HasCallStack
-  , LedgerSupportsV1LedgerDB l
-  ) =>
-  Tracer m FlavorImplSpecificTrace ->
-  Complete BackingStoreArgs m ->
+  Tracer m SomeBackendTrace ->
+  SomeBackendArgs m l ->
   SnapshotsFS m ->
   l EmptyMK ->
   FsPath ->
   m (LedgerBackingStore m l)
-restoreBackingStore trcr bss fs st loadPath =
-  newBackingStoreInitialiser trcr bss fs (InitFromCopy st loadPath)
+restoreBackingStore trcr (SomeBackendArgs bArgs) fs st loadPath =
+  newBackingStoreInitialiser trcr bArgs fs (InitFromCopy st loadPath)
 
 -- | Create a 'BackingStore' from the given initial tables.
 newBackingStore ::
-  ( IOLike m
-  , HasLedgerTables l
-  , HasCallStack
-  , LedgerSupportsV1LedgerDB l
-  ) =>
-  Tracer m FlavorImplSpecificTrace ->
-  Complete BackingStoreArgs m ->
+  Tracer m SomeBackendTrace ->
+  SomeBackendArgs m l ->
   SnapshotsFS m ->
   l EmptyMK ->
   LedgerTables l ValuesMK ->
   m (LedgerBackingStore m l)
-newBackingStore trcr bss fs st tables =
-  newBackingStoreInitialiser trcr bss fs (InitFromValues Origin st tables)
+newBackingStore trcr (SomeBackendArgs bArgs) fs st tables =
+  newBackingStoreInitialiser trcr bArgs fs (InitFromValues Origin st tables)
 
-newBackingStoreInitialiser ::
-  forall m l.
-  ( IOLike m
-  , HasLedgerTables l
-  , HasCallStack
-  , LedgerSupportsV1LedgerDB l
-  ) =>
-  Tracer m FlavorImplSpecificTrace ->
-  Complete BackingStoreArgs m ->
-  SnapshotsFS m ->
-  BackingStoreInitialiser m l
-newBackingStoreInitialiser trcr bss =
-  case bss of
-    LMDBBackingStoreArgs fs limits Dict ->
-      LMDB.newLMDBBackingStore
-        (FlavorImplSpecificTraceOnDisk . OnDiskBackingStoreTrace >$< trcr)
-        limits
-        (LiveLMDBFS $ SomeHasFS $ ioHasFS $ MountPoint fs)
-    InMemoryBackingStoreArgs ->
-      InMemory.newInMemoryBackingStore
-        (FlavorImplSpecificTraceInMemory . InMemoryBackingStoreTrace >$< trcr)
+data SomeBackendArgs m l where
+  SomeBackendArgs :: Backend m backend l => Args m backend -> SomeBackendArgs m l
 
-{-------------------------------------------------------------------------------
-  Tracing
--------------------------------------------------------------------------------}
+data SomeBackendTrace where
+  SomeBackendTrace :: Show (Trace m backend) => Trace m backend -> SomeBackendTrace
 
-data FlavorImplSpecificTrace
-  = FlavorImplSpecificTraceInMemory FlavorImplSpecificTraceInMemory
-  | FlavorImplSpecificTraceOnDisk FlavorImplSpecificTraceOnDisk
-  deriving (Eq, Show)
+instance Show SomeBackendTrace where
+  show (SomeBackendTrace tr) = show tr
 
-data FlavorImplSpecificTraceInMemory
-  = InMemoryBackingStoreInitialise
-  | InMemoryBackingStoreTrace BackingStoreTrace
-  deriving (Eq, Show)
+class Backend m backend l where
+  data Args m backend
 
-data FlavorImplSpecificTraceOnDisk
-  = OnDiskBackingStoreInitialise LMDB.LMDBLimits
-  | OnDiskBackingStoreTrace BackingStoreTrace
-  deriving (Eq, Show)
+  data Trace m backend
+
+  isRightBackendForSnapshot ::
+    Proxy l ->
+    Args m backend ->
+    SnapshotBackend ->
+    Bool
+
+  newBackingStoreInitialiser ::
+    Tracer m SomeBackendTrace ->
+    Args m backend ->
+    SnapshotsFS m ->
+    BackingStoreInitialiser m l

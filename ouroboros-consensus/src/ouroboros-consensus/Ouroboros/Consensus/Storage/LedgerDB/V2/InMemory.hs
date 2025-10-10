@@ -1,67 +1,77 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
-  ( -- * LedgerTablesHandle
-    newInMemoryLedgerTablesHandle
-
-    -- * Snapshots
-  , loadSnapshot
-  , snapshotManager
-
-    -- * snapshot-converter
-  , implTakeSnapshot
+  ( Backend (..)
+  , Args (InMemArgs)
+  , Mem
+  , YieldArgs (YieldInMemory)
+  , SinkArgs (SinkInMemory)
+  , mkInMemoryArgs
   ) where
 
+import Cardano.Binary as CBOR
+import Cardano.Slotting.Slot
+import Codec.CBOR.Read
 import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (decode)
+import Control.Monad (replicateM_, unless)
 import qualified Control.Monad as Monad
-import Control.Monad.Trans (lift)
+import Control.Monad.Class.MonadST
+import Control.Monad.Class.MonadSTM
+import Control.Monad.Class.MonadThrow
+import Control.Monad.Except
+import Control.Monad.State.Strict (execStateT)
 import Control.Monad.Trans.Except
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import Data.ByteString.Builder.Extra (defaultChunkSize)
 import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import Data.MemPack
+import Data.Void
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CBOR (readIncremental)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
+import Streaming
+import qualified Streaming as S
+import qualified Streaming.Prelude as S
 import System.FS.API
 import System.FS.CRC
+import qualified System.FilePath as F
 import Prelude hiding (read)
 
 {-------------------------------------------------------------------------------
@@ -89,13 +99,13 @@ newInMemoryLedgerTablesHandle ::
   , CanUpgradeLedgerTables l
   , SerializeTablesWithHint l
   ) =>
-  Tracer m V2.FlavorImplSpecificTrace ->
+  Tracer m LedgerDBV2Trace ->
   SomeHasFS m ->
   LedgerTables l ValuesMK ->
   m (LedgerTablesHandle m l)
 newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   !tv <- newTVarIO (LedgerTablesHandleOpen l)
-  traceWith tracer V2.TraceLedgerTablesHandleCreate
+  traceWith tracer TraceLedgerTablesHandleCreate
   pure
     LedgerTablesHandle
       { close = implClose tracer tv
@@ -119,13 +129,13 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
 
 implClose ::
   IOLike m =>
-  Tracer m V2.FlavorImplSpecificTrace ->
+  Tracer m LedgerDBV2Trace ->
   StrictTVar m (LedgerTablesHandleState l) ->
   m ()
 implClose tracer tv = do
   p <- atomically $ swapTVar tv LedgerTablesHandleClosed
   case p of
-    LedgerTablesHandleOpen{} -> traceWith tracer V2.TraceLedgerTablesHandleClose
+    LedgerTablesHandleOpen{} -> traceWith tracer TraceLedgerTablesHandleClose
     _ -> pure ()
 
 implDuplicate ::
@@ -134,7 +144,7 @@ implDuplicate ::
   , CanUpgradeLedgerTables l
   , SerializeTablesWithHint l
   ) =>
-  Tracer m V2.FlavorImplSpecificTrace ->
+  Tracer m LedgerDBV2Trace ->
   StrictTVar m (LedgerTablesHandleState l) ->
   SomeHasFS m ->
   m (LedgerTablesHandle m l)
@@ -240,24 +250,11 @@ snapshotManager ::
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   ) =>
-  Complete LedgerDbArgs m blk ->
-  SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManager args =
-  snapshotManager'
-    (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
-    (LedgerDBSnapshotEvent >$< lgrTracer args)
-    (lgrHasFS args)
-
-snapshotManager' ::
-  ( IOLike m
-  , LedgerDbSerialiseConstraints blk
-  , LedgerSupportsProtocol blk
-  ) =>
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManager' ccfg tracer fs =
+snapshotManager ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = defaultDeleteSnapshot fs tracer
@@ -313,7 +310,7 @@ loadSnapshot ::
   , IOLike m
   , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
   ) =>
-  Tracer m V2.FlavorImplSpecificTrace ->
+  Tracer m LedgerDBV2Trace ->
   ResourceRegistry m ->
   CodecConfig blk ->
   SomeHasFS m ->
@@ -346,3 +343,173 @@ loadSnapshot tracer _rr ccfg fs ds = do
           InitFailureRead $
             ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle tracer fs))
+
+type data Mem
+
+instance
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  ) =>
+  Backend m Mem blk
+  where
+  data Args m Mem = InMemArgs
+  newtype Resources m Mem = Resources (SomeHasFS m)
+    deriving newtype NoThunks
+  newtype Trace m Mem = NoTrace Void
+    deriving newtype Show
+
+  mkResources _ _ _ _ = pure . Resources
+  releaseResources _ _ = pure ()
+  newHandleFromValues tracer _ (Resources shfs) =
+    newInMemoryLedgerTablesHandle tracer shfs . ltprj
+  newHandleFromSnapshot trcr reg ccfg shfs _ ds =
+    loadSnapshot trcr reg ccfg shfs ds
+  snapshotManager _ _ =
+    Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory.snapshotManager
+
+-- | Create arguments for initializing the LedgerDB using the InMemory backend.
+mkInMemoryArgs ::
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  ) =>
+  a -> (LedgerDbBackendArgs m blk, a)
+mkInMemoryArgs = (,) $ LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
+
+instance IOLike m => StreamingBackend m Mem l where
+  data YieldArgs m Mem l
+    = -- \| Yield an in-memory snapshot
+      YieldInMemory
+        -- \| How to make a SomeHasFS for @m@
+        (MountPoint -> SomeHasFS m)
+        -- \| The file path at which the HasFS has to be opened
+        FilePath
+        (Decoders l)
+
+  data SinkArgs m Mem l
+    = SinkInMemory
+        Int
+        (TxIn l -> Encoding)
+        (TxOut l -> Encoding)
+        (SomeHasFS m)
+        FilePath
+
+  yield _ (YieldInMemory mkFs fp (Decoders decK decV)) =
+    yieldInMemoryS mkFs fp decK decV
+
+  sink _ (SinkInMemory chunkSize encK encV shfs fp) =
+    sinkInMemoryS chunkSize encK encV shfs fp
+
+{-------------------------------------------------------------------------------
+  Streaming
+-------------------------------------------------------------------------------}
+
+streamingFile ::
+  forall m.
+  MonadThrow m =>
+  SomeHasFS m ->
+  FsPath ->
+  ( Stream (Of ByteString) m (Maybe CRC) ->
+    ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+  ) ->
+  ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
+streamingFile (SomeHasFS fs') path cont =
+  ExceptT $ withFile fs' path ReadMode $ \hdl ->
+    runExceptT $ cont (getBS hdl initCRC) >>= noRemainingBytes
+ where
+  getBS h !crc = do
+    bs <- S.lift $ hGetSome fs' h (fromIntegral defaultChunkSize)
+    if BS.null bs
+      then pure (Just crc)
+      else do
+        S.yield bs
+        getBS h $! updateCRC bs crc
+
+  noRemainingBytes s =
+    lift (S.uncons s) >>= \case
+      Nothing -> lift $ S.effects s
+      Just (BS.null -> True, s') -> noRemainingBytes s'
+      Just _ -> throwError $ DeserialiseFailure 0 "Remaining bytes"
+
+yieldCborMapS ::
+  forall m a b.
+  MonadST m =>
+  (forall s. Decoder s a) ->
+  (forall s. Decoder s b) ->
+  Stream (Of ByteString) m (Maybe CRC) ->
+  Stream (Of (a, b)) (ExceptT DeserialiseFailure m) (Stream (Of ByteString) m (Maybe CRC))
+yieldCborMapS decK decV = execStateT $ do
+  hoist lift (decodeCbor decodeListLen >> decodeCbor decodeMapLenOrIndef) >>= \case
+    Nothing -> go
+    Just n -> replicateM_ n yieldKV
+ where
+  yieldKV = do
+    kv <- hoist lift $ decodeCbor $ (,) <$> decK <*> decV
+    lift $ S.yield kv
+
+  go = do
+    doBreak <- hoist lift $ decodeCbor decodeBreakOr
+    unless doBreak $ yieldKV *> go
+
+  decodeCbor dec =
+    StateT $ \s -> go' s =<< lift (stToIO (deserialiseIncremental dec))
+   where
+    go' s = \case
+      Partial k ->
+        lift (S.next s) >>= \case
+          Right (bs, s') -> go' s' =<< lift (stToIO (k (Just bs)))
+          Left r -> go' (pure r) =<< lift (stToIO (k Nothing))
+      Codec.CBOR.Read.Done bs _off a -> pure (a, S.yield bs *> s)
+      Codec.CBOR.Read.Fail _bs _off err -> throwError err
+
+yieldInMemoryS ::
+  (MonadThrow m, MonadST m) =>
+  (MountPoint -> SomeHasFS m) ->
+  FilePath ->
+  (forall s. Decoder s (TxIn l)) ->
+  (forall s. Decoder s (TxOut l)) ->
+  Yield m l
+yieldInMemoryS mkFs (F.splitFileName -> (fp, fn)) decK decV _ k =
+  streamingFile (mkFs $ MountPoint fp) (mkFsPath [fn]) $ \s -> do
+    k $ yieldCborMapS decK decV s
+
+sinkInMemoryS ::
+  forall m l.
+  MonadThrow m =>
+  Int ->
+  (TxIn l -> Encoding) ->
+  (TxOut l -> Encoding) ->
+  SomeHasFS m ->
+  FilePath ->
+  Sink m l
+sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) fp _ s =
+  ExceptT $ withFile fs (mkFsPath [fp]) (WriteMode MustBeNew) $ \hdl -> do
+    let bs = toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)
+    let !crc0 = updateCRC bs initCRC
+    void $ hPutSome fs hdl bs
+    e <- runExceptT $ go hdl crc0 writeChunkSize mempty s
+    case e of
+      Left err -> pure $ Left err
+      Right (r, crc1) -> do
+        let bs1 = toStrictByteString encodeBreak
+        void $ hPutSome fs hdl bs1
+        let !crc2 = updateCRC bs1 crc1
+        pure $ Right (fmap (,Just crc2) r)
+ where
+  go tb !crc 0 m s' = do
+    let bs = toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- reverse m]
+    lift $ void $ hPutSome fs tb bs
+    let !crc1 = updateCRC bs crc
+    go tb crc1 writeChunkSize mempty s'
+  go tb !crc n m s' = do
+    mbs <- S.uncons s'
+    case mbs of
+      Nothing -> do
+        let bs = toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- reverse m]
+        lift $ void $ hPutSome fs tb bs
+        let !crc1 = updateCRC bs crc
+        (,crc1) <$> S.effects s'
+      Just (item, s'') -> go tb crc (n - 1) (item : m) s''

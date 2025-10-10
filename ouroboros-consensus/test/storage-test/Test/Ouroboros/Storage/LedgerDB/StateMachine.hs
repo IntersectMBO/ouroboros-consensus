@@ -16,6 +16,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -61,18 +62,17 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
-  ( LedgerDbFlavorArgs
+  ( LedgerDbBackendArgs
   )
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as V1.InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
-import Ouroboros.Consensus.Storage.LedgerDB.V2.Args hiding
-  ( LedgerDbFlavorArgs
-  )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util hiding (Some)
-import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -176,7 +176,7 @@ initialEnvironment fsOps getDiskDir mkTestArguments cdb rr = do
 -------------------------------------------------------------------------------}
 
 data TestArguments m = TestArguments
-  { argFlavorArgs :: !(Complete LedgerDbFlavorArgs m)
+  { argFlavorArgs :: !(LedgerDbBackendArgs m TestBlock)
   , argLedgerDbCfg :: !(LedgerDbCfg (ExtLedgerState TestBlock))
   }
 
@@ -212,7 +212,8 @@ inMemV1TestArguments ::
   TestArguments IO
 inMemV1TestArguments secParam _ _ =
   TestArguments
-    { argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing InMemoryBackingStoreArgs
+    { argFlavorArgs =
+        LedgerDbBackendArgsV1 $ V1Args DisableFlushing $ V1.SomeBackendArgs V1.InMemory.InMemArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -223,7 +224,7 @@ inMemV2TestArguments ::
   TestArguments IO
 inMemV2TestArguments secParam _ _ =
   TestArguments
-    { argFlavorArgs = LedgerDbFlavorArgsV2 $ V2Args InMemoryHandleArgs
+    { argFlavorArgs = LedgerDbBackendArgsV2 $ SomeBackendArgs V2.InMemory.InMemArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -235,10 +236,9 @@ lsmTestArguments ::
 lsmTestArguments secParam salt fp =
   TestArguments
     { argFlavorArgs =
-        LedgerDbFlavorArgsV2 $
-          V2Args $
-            LSMHandleArgs $
-              LSMArgs (mkFsPath $ FilePath.splitDirectories fp) salt (LSM.stdMkBlockIOFS fp)
+        LedgerDbBackendArgsV2 $
+          SomeBackendArgs $
+            LSM.LSMArgs (mkFsPath $ FilePath.splitDirectories fp) salt (LSM.stdMkBlockIOFS fp)
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -250,9 +250,10 @@ lmdbTestArguments ::
 lmdbTestArguments secParam _ fp =
   TestArguments
     { argFlavorArgs =
-        LedgerDbFlavorArgsV1 $
+        LedgerDbBackendArgsV1 $
           V1Args DisableFlushing $
-            LMDBBackingStoreArgs fp (testLMDBLimits 16) Dict.Dict
+            V1.SomeBackendArgs $
+              LMDB.LMDBBackingStoreArgs fp (testLMDBLimits 16) Dict.Dict
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -527,7 +528,7 @@ blockNotFound =
 -------------------------------------------------------------------------------}
 
 openLedgerDB ::
-  Complete LedgerDbFlavorArgs IO ->
+  LedgerDbBackendArgs IO TestBlock ->
   ChainDB IO ->
   LedgerDbCfg (ExtLedgerState TestBlock) ->
   SomeHasFS IO ->
@@ -549,8 +550,8 @@ openLedgerDB flavArgs env cfg fs rr = do
           rr
           DefaultQueryBatchSize
           Nothing
-  (ldb, _, od) <- case flavArgs of
-    LedgerDbFlavorArgsV1 bss ->
+  (ldb, _, od) <- case lgrBackendArgs args of
+    LedgerDbBackendArgsV1 bss ->
       let snapManager = V1.snapshotManager args
           initDb =
             V1.mkInitDb
@@ -560,34 +561,22 @@ openLedgerDB flavArgs env cfg fs rr = do
               snapManager
               (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
        in openDBInternal args initDb snapManager stream replayGoal
-    LedgerDbFlavorArgsV2 bss -> do
-      (snapManager, bss') <- case bss of
-        V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
-        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path salt mkFS)) -> do
-          (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (lgrRegistry args)
-          session <-
-            allocate
-              (lgrRegistry args)
-              ( \_ ->
-                  LSM.openSession
-                    (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 . V2.LSMTrace >$< lgrTracer args)
-                    fs'
-                    blockio
-                    salt
-                    path
-              )
-              LSM.closeSession
-          pure
-            ( LSM.snapshotManager (snd session) args
-            , V2.LSMHandleEnv (V2.LSMResources (fst session) (snd session) rk1)
-            )
-      let initDb =
-            V2.mkInitDb
-              args
-              bss'
-              getBlock
-              snapManager
-              (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
+    LedgerDbBackendArgsV2 (V2.SomeBackendArgs bArgs) -> do
+      res <-
+        mkResources
+          (Proxy @TestBlock)
+          (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
+          bArgs
+          (lgrRegistry args)
+          (lgrHasFS args)
+      let snapManager =
+            V2.snapshotManager
+              (Proxy @TestBlock)
+              res
+              (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
+              (LedgerDBSnapshotEvent >$< lgrTracer args)
+              (lgrHasFS args)
+      let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
       openDBInternal args initDb snapManager stream replayGoal
   withRegistry $ \reg -> do
     vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
@@ -623,6 +612,7 @@ instance RunModel Model (StateT Environment IO) where
     Environment _ _ chainDb mkArgs fs _ cleanup rr <- get
     (ldb, testInternals, getNumOpenHandles) <- lift $ do
       let args = mkArgs secParam salt
+      -- TODO after a drop and restore we restart the db but the session has been closed below where I wrote blahblahblah
       openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs rr
     put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup rr)
     pure $ pure ()
@@ -659,6 +649,7 @@ instance RunModel Model (StateT Environment IO) where
     Environment _ testInternals chainDb _ _ _ _ _ <- get
     lift $ do
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
+      -- blahblahblah
       closeLedgerDB testInternals
     perform state (Init secParam salt) lk
   perform _ OpenAndCloseForker _ = do

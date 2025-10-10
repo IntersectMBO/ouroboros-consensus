@@ -3,38 +3,46 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeData #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | A 'BackingStore' implementation based on [LMDB](http://www.lmdb.tech/doc/).
 module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
   ( -- * Opening a database
-    LMDBLimits (LMDBLimits, lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders)
-  , newLMDBBackingStore
+    LMDB
+  , Backend (..)
+  , Args (LMDBBackingStoreArgs)
+  , LMDBLimits (LMDBLimits, lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders)
+  , mkLMDBArgs
 
-    -- * Errors
+    -- * Streaming
+  , YieldArgs (YieldLMDB)
+  , mkLMDBYieldArgs
+  , SinkArgs (SinkLMDB)
+  , mkLMDBSinkArgs
+
+    -- * Exposed for testing
   , LMDBErr (..)
-
-    -- * Internals exposed for @snapshot-converter@
-  , DbSeqNo (..)
-  , LMDBMK (..)
-  , getDb
-  , initLMDBTable
-  , withDbSeqNoRWMaybeNull
   ) where
 
-import Cardano.Slotting.Slot (SlotNo, WithOrigin (At))
+import Cardano.Slotting.Slot (WithOrigin (At))
 import qualified Codec.Serialise as S (Serialise (..))
 import qualified Control.Concurrent.Class.MonadSTM.TVar as IOLike
 import Control.Monad (forM_, unless, void, when)
 import qualified Control.Monad.Class.MonadSTM as IOLike
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import Control.Monad.Trans (lift)
+import Control.ResourceRegistry
 import qualified Control.Tracer as Trace
 import Data.Bifunctor (first)
 import Data.Functor (($>), (<&>))
@@ -43,6 +51,7 @@ import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.Proxy
+import qualified Data.SOP.Dict as Dict
 import qualified Data.Set as Set
 import qualified Data.Text as Strict
 import qualified Database.LMDB.Simple as LMDB
@@ -52,11 +61,17 @@ import qualified Database.LMDB.Simple.Internal as LMDB.Internal
 import qualified Database.LMDB.Simple.TransactionHandle as TrH
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import Ouroboros.Consensus.Ledger.Tables
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
+import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( SnapshotBackend (..)
   )
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
+import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge as Bridge
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
@@ -70,10 +85,17 @@ import Ouroboros.Consensus.Util.IOLike
   , IOLike
   , MonadCatch (..)
   , MonadThrow (..)
+  , PrimState
   , bracket
   )
 import Ouroboros.Consensus.Util.IndexedMemPack
+import qualified Streaming as S
+import qualified Streaming.Prelude as S
+import System.Directory
 import qualified System.FS.API as FS
+import System.FS.IO
+import qualified System.FilePath as FilePath
+import System.IO.Temp
 
 {-------------------------------------------------------------------------------
   Database definition
@@ -793,3 +815,187 @@ prettyPrintLMDBErr = \case
   LMDBErrNotADir path ->
     "The path " <> show path <> " should be a directory but it is a file instead."
   LMDBErrClosed -> "The database has been closed."
+
+{-------------------------------------------------------------------------------
+  Backend
+-------------------------------------------------------------------------------}
+
+type data LMDB
+
+instance
+  ( HasLedgerTables l
+  , MonadIO m
+  , IOLike m
+  , MemPackIdx l EmptyMK ~ l EmptyMK
+  ) =>
+  Backend m LMDB l
+  where
+  data Args m LMDB
+    = LMDBBackingStoreArgs FilePath LMDBLimits (Dict.Dict MonadIOPrim m)
+  data Trace m LMDB
+    = OnDiskBackingStoreInitialise LMDB.Limits
+    | OnDiskBackingStoreTrace BackingStoreTrace
+    deriving (Eq, Show)
+
+  isRightBackendForSnapshot _ _ UTxOHDLMDBSnapshot = True
+  isRightBackendForSnapshot _ _ _ = False
+
+  newBackingStoreInitialiser trcr (LMDBBackingStoreArgs fs limits Dict.Dict) =
+    newLMDBBackingStore
+      (SomeBackendTrace . OnDiskBackingStoreTrace >$< trcr)
+      limits
+      (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint fs)
+
+-- | Create arguments for initializing the LedgerDB using the LMDB backend.
+mkLMDBArgs ::
+  ( MonadIOPrim m
+  , HasLedgerTables (LedgerState blk)
+  , IOLike m
+  ) =>
+  V1.FlushFrequency -> FilePath -> LMDBLimits -> a -> (LedgerDbBackendArgs m blk, a)
+mkLMDBArgs flushing lmdbPath limits =
+  (,) $
+    LedgerDbBackendArgsV1 $
+      V1.V1Args flushing $
+        SomeBackendArgs $
+          LMDBBackingStoreArgs lmdbPath limits Dict.Dict
+
+class (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
+instance (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
+
+{-------------------------------------------------------------------------------
+  Streaming
+-------------------------------------------------------------------------------}
+
+instance (Ord (TxIn l), GetTip l, Monad m) => StreamingBackend m LMDB l where
+  data SinkArgs m LMDB l
+    = SinkLMDB
+        -- \| Chunk size
+        Int
+        -- \| bsWrite
+        ( SlotNo ->
+          (l EmptyMK, l EmptyMK) ->
+          LedgerTables l DiffMK ->
+          m ()
+        )
+        (l EmptyMK -> m ())
+
+  data YieldArgs m LMDB l
+    = YieldLMDB
+        Int
+        (LedgerBackingStoreValueHandle m l)
+
+  yield _ (YieldLMDB chunkSize valueHandle) = yieldLmdbS chunkSize valueHandle
+  sink _ (SinkLMDB chunkSize write copy) = sinkLmdbS chunkSize write copy
+
+sinkLmdbS ::
+  forall m l.
+  (Ord (TxIn l), GetTip l, Monad m) =>
+  Int ->
+  (SlotNo -> (l EmptyMK, l EmptyMK) -> LedgerTables l DiffMK -> m ()) ->
+  (l EmptyMK -> m ()) ->
+  Sink m l
+sinkLmdbS writeChunkSize bs copyTo hint s = do
+  r <- go writeChunkSize mempty s
+  lift $ copyTo hint
+  pure (fmap (,Nothing) r)
+ where
+  sl = withOrigin (error "unreachable") id $ pointSlot $ getTip hint
+
+  go 0 m s' = do
+    lift $ bs sl (hint, hint) (LedgerTables $ DiffMK $ Diff.fromMapInserts m)
+    go writeChunkSize mempty s'
+  go n m s' = do
+    mbs <- S.uncons s'
+    case mbs of
+      Nothing -> do
+        lift $ bs sl (hint, hint) (LedgerTables $ DiffMK $ Diff.fromMapInserts m)
+        S.effects s'
+      Just ((k, v), s'') ->
+        go (n - 1) (Map.insert k v m) s''
+
+yieldLmdbS ::
+  Monad m =>
+  Int ->
+  LedgerBackingStoreValueHandle m l ->
+  Yield m l
+yieldLmdbS readChunkSize bsvh hint k = do
+  r <- k (go (RangeQuery Nothing readChunkSize))
+  lift $ S.effects r
+ where
+  go p = do
+    (LedgerTables (ValuesMK values), mx) <- lift $ S.lift $ bsvhRangeRead bsvh hint p
+    case mx of
+      Nothing -> pure $ pure Nothing
+      Just x -> do
+        S.each $ Map.toList values
+        go (RangeQuery (Just . LedgerTables . KeysMK $ Set.singleton x) readChunkSize)
+
+-- | Create Yield args for LMDB
+mkLMDBYieldArgs ::
+  forall l.
+  ( HasCallStack
+  , HasLedgerTables l
+  , MemPackIdx l EmptyMK ~ l EmptyMK
+  ) =>
+  FilePath ->
+  LMDBLimits ->
+  l EmptyMK ->
+  ResourceRegistry IO ->
+  IO (YieldArgs IO LMDB l)
+mkLMDBYieldArgs fp limits hint reg = do
+  let (dbPath, snapName) = FilePath.splitFileName fp
+  tempDir <- getCanonicalTemporaryDirectory
+  let lmdbTemp = tempDir FilePath.</> "lmdb_streaming_in"
+  removePathForcibly lmdbTemp
+  _ <-
+    allocate
+      reg
+      (\_ -> createDirectory lmdbTemp)
+      (\_ -> removePathForcibly lmdbTemp)
+  (_, bs) <-
+    allocate
+      reg
+      ( \_ -> do
+          newLMDBBackingStore
+            Trace.nullTracer
+            limits
+            (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint lmdbTemp)
+            (SnapshotsFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint dbPath)
+            (InitFromCopy hint (FS.mkFsPath [snapName]))
+      )
+      bsClose
+  (_, bsvh) <- allocate reg (\_ -> bsValueHandle bs) bsvhClose
+  pure (YieldLMDB 1000 bsvh)
+
+-- | Create Sink args for LMDB
+mkLMDBSinkArgs ::
+  forall l.
+  ( HasCallStack
+  , HasLedgerTables l
+  , MemPackIdx l EmptyMK ~ l EmptyMK
+  ) =>
+  FilePath ->
+  LMDBLimits ->
+  l EmptyMK ->
+  ResourceRegistry IO ->
+  IO (SinkArgs IO LMDB l)
+mkLMDBSinkArgs fp limits hint reg = do
+  let (snapDir, snapName) = FilePath.splitFileName fp
+  tempDir <- getCanonicalTemporaryDirectory
+  let lmdbTemp = tempDir FilePath.</> "lmdb_streaming_out"
+  removePathForcibly lmdbTemp
+  _ <- allocate reg (\_ -> createDirectory lmdbTemp) (\_ -> removePathForcibly lmdbTemp)
+  (_, bs) <-
+    allocate
+      reg
+      ( \_ ->
+          newLMDBBackingStore
+            Trace.nullTracer
+            limits
+            (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint lmdbTemp)
+            (SnapshotsFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint snapDir)
+            (InitFromValues (At 0) hint emptyLedgerTables)
+      )
+      bsClose
+  pure $ SinkLMDB 1000 (bsWrite bs) (\h -> bsCopy bs h (FS.mkFsPath [snapName, "tables"]))

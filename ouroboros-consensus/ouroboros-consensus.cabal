@@ -251,19 +251,15 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
     Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
     Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
     Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
     Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
     Ouroboros.Consensus.Storage.LedgerDB.V2
-    Ouroboros.Consensus.Storage.LedgerDB.V2.Args
+    Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
     Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
-    Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
     Ouroboros.Consensus.Storage.PerasCertDB
     Ouroboros.Consensus.Storage.PerasCertDB.API
@@ -304,7 +300,6 @@ library
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.STM
-    Ouroboros.Consensus.Util.StreamingLedgerTables
     Ouroboros.Consensus.Util.Time
     Ouroboros.Consensus.Util.Versioned
 
@@ -316,13 +311,10 @@ library
     base16-bytestring,
     bimap >=0.4 && <0.6,
     binary >=0.8 && <0.11,
-    blockio,
     bytestring >=0.10 && <0.13,
     cardano-binary,
     cardano-crypto-class,
     cardano-ledger-core ^>=1.19,
-    cardano-lmdb >=0.4,
-    cardano-lmdb-simple ^>=0.8,
     cardano-prelude,
     cardano-slotting,
     cardano-strict-containers,
@@ -337,7 +329,6 @@ library
     fs-api ^>=0.4,
     hashable,
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm} ^>=1.8.0.1,
-    lsm-tree,
     measures,
     mempack,
     monoid-subclasses,
@@ -378,6 +369,71 @@ library
   x-docspec-extra-packages:
     directory
     latex-svg-image
+
+library ouroboros-consensus-lsm
+  import: common-lib
+  visibility: public
+  hs-source-dirs: src/ouroboros-consensus-lsm
+  exposed-modules:
+    Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
+
+  build-depends:
+    base >=4.14 && <4.22,
+    blockio,
+    containers >=0.5 && <0.8,
+    contra-tracer,
+    filepath,
+    fs-api ^>=0.4,
+    lsm-tree,
+    mempack,
+    mtl,
+    nothunks ^>=0.2,
+    ouroboros-consensus,
+    primitive,
+    random,
+    resource-registry ^>=0.1,
+    serialise ^>=0.2,
+    streaming,
+    text,
+    transformers,
+    vector ^>=0.13,
+
+  build-depends: text >=1.2.5.0 && <2.2
+
+library ouroboros-consensus-lmdb
+  import: common-lib
+  visibility: public
+  hs-source-dirs: src/ouroboros-consensus-lmdb
+  exposed-modules:
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
+
+  build-depends:
+    base >=4.14 && <4.22,
+    bytestring >=0.10 && <0.13,
+    cardano-lmdb >=0.4,
+    cardano-lmdb-simple ^>=0.8,
+    cardano-slotting,
+    containers >=0.5 && <0.8,
+    contra-tracer,
+    directory,
+    filepath,
+    fs-api ^>=0.4,
+    io-classes ^>=1.8.0.1,
+    mempack,
+    mtl,
+    nothunks ^>=0.2,
+    ouroboros-consensus,
+    rawlock ^>=0.1.1,
+    resource-registry,
+    serialise ^>=0.2,
+    sop-core,
+    streaming,
+    temporary,
+    text,
+
+  build-depends: text >=1.2.5.0 && <2.2
 
 library unstable-consensus-testlib
   import: common-lib
@@ -762,7 +818,7 @@ test-suite storage-test
     mempack,
     mtl,
     nothunks,
-    ouroboros-consensus,
+    ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lmdb, ouroboros-consensus-lsm},
     ouroboros-network-api,
     ouroboros-network-mock,
     ouroboros-network-protocols,
