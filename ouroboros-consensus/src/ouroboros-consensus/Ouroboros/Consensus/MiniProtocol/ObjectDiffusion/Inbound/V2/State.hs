@@ -8,8 +8,6 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
   ( -- * Core API
     DecisionGlobalState (..)
   , DecisionPeerState (..)
-  , DecisionGlobalStateVar
-  , newDecisionGlobalStateVar
   , handleReceivedIds
   , handleReceivedObjects
   , submitObjectsToPool
@@ -23,8 +21,9 @@ import Data.Foldable qualified as Foldable
 import Data.Map.Strict (Map, findWithDefault)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
-import Data.Sequence.Strict (StrictSeq, fromStrict)
-import Data.Set ((\\))
+import Data.Sequence.Strict (StrictSeq)
+import Data.Sequence.Strict qualified as StrictSeq
+import Data.Set ((\\), Set)
 import Data.Set qualified as Set
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
@@ -32,6 +31,9 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API (ObjectPo
 import Ouroboros.Consensus.Util.IOLike (MonadMask, MonadMVar, bracket_)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq)
 import System.Random (StdGen)
+
+strictSeqToSet :: Ord a => StrictSeq a -> Set a
+strictSeqToSet = Foldable.foldl' (flip Set.insert) Set.empty
 
 -- | Insert received `objectId`s and return the number of objectIds to be acknowledged with next request
 -- and the updated `DecisionGlobalState`.
@@ -60,8 +62,7 @@ handleReceivedIdsImpl
     , dgsObjectsLiveMultiplicities
     } =
     st
-      { dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
-      , dgsPeerStates = dgsPeerStates'
+      { dgsPeerStates = dgsPeerStates'
       }
     where
       peerState@DecisionPeerState
@@ -74,34 +75,20 @@ handleReceivedIdsImpl
           peerAddr
           dgsPeerStates
   
-      -- Divide the new objectIds in two: those that are already in the objectpool
-      -- and those that are not. We'll request some objects from the latter.
-      newIdsAvailableSeq =
-        Seq.filter (not . hasObject) $ fromStrict receivedIdsSeq
+      -- Filter out objects we are not interesting in downloading
+      newObjectsAvailableIds =
+        Set.filter (\objectId ->
+          (not . hasObject $ objectId) -- object isn't already in the object pool
+            && objectId `notElem` dpsOutstandingFifo -- object hasn't been advertised before by the outbound peer (this covers the cases where the object would be in flight, or already downloaded but no acknowledged yet, by the current peer)
+               -- TODO; the condition below is problematic because it would prevent requesting an object from two different peers if the first one has already requested it (i.e. it is in flight)!
+            && objectId `Map.notMember` dgsObjectsLiveMultiplicities -- the object is not currently in flight or further in the processing from another peer
+          ) $ strictSeqToSet $ receivedIdsSeq
 
-      -- Add all `objectIds` from `dpsObjectsAvailableIdsMap` which are not
-      -- unacknowledged or already buffered. Unacknowledged objectIds must have
-      -- already been added to `dpsObjectsAvailableIds` map before.
       dpsObjectsAvailableIds' =
-        Foldable.foldl'
-          (\m objectId -> Set.insert objectId m)
-          dpsObjectsAvailableIds
-          ( Seq.filter
-              ( \objectId ->
-                  objectId `notElem` dpsOutstandingFifo
-                    && objectId `Map.notMember` dgsObjectsLiveMultiplicities
-              )
-              newIdsAvailableSeq
-          )
+        dpsObjectsAvailableIds `Set.union` newObjectsAvailableIds
 
       -- Add received objectIds to `dpsOutstandingFifo`.
       dpsOutstandingFifo' = dpsOutstandingFifo <> receivedIdsSeq
-
-      dgsObjectsLiveMultiplicities' =
-        Foldable.foldl'
-          decreaseCount
-          dgsObjectsLiveMultiplicities
-          receivedIdsSeq
 
       peerState' =
         assert
@@ -183,23 +170,6 @@ handleReceivedObjectsImpl
 --
 -- Monadic public API
 --
-
-type DecisionGlobalStateVar m peerAddr objectId object =
-  StrictTVar m (DecisionGlobalState peerAddr objectId object)
-
-newDecisionGlobalStateVar ::
-  MonadSTM m =>
-  StdGen ->
-  m (DecisionGlobalStateVar m peerAddr objectId object)
-newDecisionGlobalStateVar rng =
-  newTVarIO
-    DecisionGlobalState
-      { dgsPeerStates = Map.empty
-      , dgsObjectsInflightMultiplicities = Map.empty
-      , dgsObjectsLiveMultiplicities = Map.empty
-      , dgsObjectsOwtPoolMultiplicities = Map.empty
-      , dgsRng = rng
-      }
 
 -- | Wrapper around `handleReceivedIdsImpl`.
 -- Obtain the `hasObject` function atomically from the STM context and
@@ -283,18 +253,16 @@ submitObjectsToPool
         let getId = opwObjectId objectPoolWriter in
         modifyTVar globalStateVar $ \globalState ->
           Foldable.foldl'
-            (\st object -> updateObjectsOwtPool (getId object) object st)
+            (\st object -> updateStateWhenObjectAddedToPool (getId object) st)
             globalState
             objects
   where
-    updateObjectsOwtPool ::
+    updateStateWhenObjectAddedToPool ::
       objectId ->
-      object ->
       DecisionGlobalState peerAddr objectId object ->
       DecisionGlobalState peerAddr objectId object
-    updateObjectsOwtPool
+    updateStateWhenObjectAddedToPool
       objectId
-      object
       st@DecisionGlobalState
         { dgsObjectsLiveMultiplicities
         , dgsObjectsOwtPoolMultiplicities
@@ -307,11 +275,10 @@ submitObjectsToPool
           }
         where
         dgsObjectsOwtPoolMultiplicities' = decreaseCount dgsObjectsOwtPoolMultiplicities objectId
-
-        dgsObjectsLiveMultiplicities' = increaseCount dgsObjectsLiveMultiplicities objectId
+        dgsObjectsLiveMultiplicities' = decreaseCount dgsObjectsLiveMultiplicities objectId
 
         dgsPeerStates' =
-          Map.update
-          (\ps -> Just $! ps{dpsObjectsPending = Map.insert objectId object (dpsObjectsPending ps)})
+          Map.adjust
+          (\ps@DecisionPeerState{dpsObjectsOwtPool} -> ps{dpsObjectsOwtPool = Map.delete objectId dpsObjectsOwtPool})
           peerAddr
           dgsPeerStates

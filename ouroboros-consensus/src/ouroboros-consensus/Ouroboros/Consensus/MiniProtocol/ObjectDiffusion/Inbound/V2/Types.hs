@@ -15,6 +15,8 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 
     -- * DecisionGlobalState
   , DecisionGlobalState (..)
+  , DecisionGlobalStateVar
+  , newDecisionGlobalStateVar
 
     -- * Decisions
   , PeerDecision (..)
@@ -44,7 +46,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
   , newObjectPoolSem
   ) where
 
-import Control.Concurrent.Class.MonadSTM.Strict (MonadSTM, atomically)
+import Control.Concurrent.Class.MonadSTM.Strict (MonadSTM, atomically, StrictTVar, newTVarIO)
 import Control.Concurrent.Class.MonadSTM.TSem (TSem, newTSem)
 import Control.Exception (Exception (..))
 import Control.Monad.Class.MonadTime.SI
@@ -194,6 +196,23 @@ dgsObjectsPending DecisionGlobalState{dgsPeerStates} =
 dgsObjectsOwtPool :: Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId object
 dgsObjectsOwtPool DecisionGlobalState{dgsPeerStates} =
   Map.unions (dpsObjectsOwtPool <$> (Map.elems dgsPeerStates))
+
+type DecisionGlobalStateVar m peerAddr objectId object =
+  StrictTVar m (DecisionGlobalState peerAddr objectId object)
+
+newDecisionGlobalStateVar ::
+  MonadSTM m =>
+  StdGen ->
+  m (DecisionGlobalStateVar m peerAddr objectId object)
+newDecisionGlobalStateVar rng =
+  newTVarIO
+    DecisionGlobalState
+      { dgsPeerStates = Map.empty
+      , dgsObjectsInflightMultiplicities = Map.empty
+      , dgsObjectsLiveMultiplicities = Map.empty
+      , dgsObjectsOwtPoolMultiplicities = Map.empty
+      , dgsRng = rng
+      }
 
 --
 -- Decisions
