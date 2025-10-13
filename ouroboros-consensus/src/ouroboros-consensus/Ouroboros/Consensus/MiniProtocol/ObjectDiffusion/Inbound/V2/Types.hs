@@ -67,6 +67,7 @@ import Data.Word (Word64)
 import Ouroboros.Network.ControlMessage (ControlMessage)
 import Control.DeepSeq (NFData)
 import Quiet (Quiet (..))
+import qualified Data.Sequence.Strict as StrictSeq
 
 -- | Semaphore to guard access to the ObjectPool
 newtype ObjectPoolSem m = ObjectPoolSem (TSem m)
@@ -103,13 +104,6 @@ data DecisionPeerState objectId object = DecisionPeerState
   -- ^ A subset of `dpsOutstandingFifo` which were unknown to the peer
   -- (i.e. requested but not received). We need to track these `objectId`s
   -- since they need to be acknowledged.
-  , dpsObjectsPending :: !(Map objectId object)
-  -- ^ A set of objects downloaded from the peer. They are not yet
-  -- acknowledged and haven't been sent to the objectpool yet.
-  --
-  -- Life cycle of entries:
-  -- * added when a object is downloaded in `onReceivedObjectsImpl`
-  -- * removed by `acknowledgeObjectIds` (to properly follow `dpsOutstandingFifo`)
   , dpsObjectsOwtPool :: !(Map objectId object)
   -- ^ A set of objects on their way to the objectpool.
   -- Tracked here so that we can cleanup `dgsObjectsOwtPoolMultiplicities` if the
@@ -143,14 +137,9 @@ data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   --
   -- This can intersect with some `dpsObjectsAvailableIds`.
   -- The value for any key must be always non-zero (strictly positive).
-  , dgsObjectsPendingMultiplicities :: !(Map objectId ObjectMultiplicity)
-  -- ^ Map from ids of objects which have already been downloaded and validated
-  --  but not yet acknowledged, to their multiplicities
-  --
-  -- The value for any key must be always non-zero (strictly positive).
   , dgsObjectsOwtPoolMultiplicities :: !(Map objectId ObjectMultiplicity)
   -- ^ Map from ids of objects which have already been downloaded, validated,
-  -- acknowledged, and are on their way to the objectpool (waiting for the lock)
+  -- and are on their way to the objectpool (waiting for the lock)
   -- to their multiplicities
   --
   -- * We subtract from the counter when a given object is added to the
@@ -193,7 +182,6 @@ newDecisionGlobalStateVar rng =
     DecisionGlobalState
       { dgsPeerStates = Map.empty
       , dgsObjectsInflightMultiplicities = Map.empty
-      , dgsObjectsPendingMultiplicities = Map.empty
       , dgsObjectsOwtPoolMultiplicities = Map.empty
       , dgsRng = rng
       }
@@ -223,8 +211,6 @@ data PeerDecision objectId object = PeerDecision
   -- if we have non-acknowledged `objectId`s.
   , pdObjectsToReqIds :: !(Set objectId)
   -- ^ objectId's to download.
-  , pdObjectsToSubmitToPoolIds :: !(StrictSeq objectId)
-  -- ^ list of `object`s to submit to the objectpool.
   }
   deriving (Show, Eq)
 
@@ -238,21 +224,18 @@ instance Ord objectId => Semigroup (PeerDecision objectId object) where
     , pdIdsToReq
     , pdCanPipelineIdsReq = _ignored
     , pdObjectsToReqIds
-    , pdObjectsToSubmitToPoolIds
     }
     <> PeerDecision
       { pdIdsToAck = pdIdsToAck'
       , pdIdsToReq = pdIdsToReq'
       , pdCanPipelineIdsReq = pdCanPipelineIdsReq'
       , pdObjectsToReqIds = pdObjectsToReqIds'
-      , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds'
       } =
       PeerDecision
         { pdIdsToAck = pdIdsToAck + pdIdsToAck'
         , pdIdsToReq = pdIdsToReq + pdIdsToReq'
         , pdCanPipelineIdsReq = pdCanPipelineIdsReq'
         , pdObjectsToReqIds = pdObjectsToReqIds <> pdObjectsToReqIds'
-        , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds <> pdObjectsToSubmitToPoolIds'
         }
 instance Ord objectId => Monoid (PeerDecision objectId object) where
   mempty = PeerDecision
@@ -260,7 +243,6 @@ instance Ord objectId => Monoid (PeerDecision objectId object) where
     , pdIdsToReq = 0
     , pdCanPipelineIdsReq = False
     , pdObjectsToReqIds = Set.empty
-    , pdObjectsToSubmitToPoolIds = Set.empty
     }
 
 -- | ObjectLogic tracer.
@@ -277,8 +259,6 @@ data ObjectDiffusionCounters
   -- ^ number of distinct in-flight objects.
   , odcNumTotalObjectsInflight :: Int
   -- ^ number of all in-flight objects.
-  , odcNumDistinctObjectsPending :: Int
-  -- ^ number of distinct pending objects (downloaded but not acked)
   , odcNumDistinctObjectsOwtPool :: Int
   -- ^ number of distinct objects which are waiting to be added to the
   -- objectpool (each peer need to acquire the semaphore to effectively add
@@ -293,14 +273,12 @@ makeObjectDiffusionCounters ::
 makeObjectDiffusionCounters
   dgs@DecisionGlobalState
     { dgsObjectsInflightMultiplicities
-    , dgsObjectsPendingMultiplicities
     , dgsObjectsOwtPoolMultiplicities
     } =
     ObjectDiffusionCounters
       { odcNumDistinctObjectsAvailable = Map.size $ dgsObjectsAvailableMultiplicities dgs
       , odcNumDistinctObjectsInflight = Map.size dgsObjectsInflightMultiplicities
       , odcNumTotalObjectsInflight = fromIntegral $ mconcat (Map.elems dgsObjectsInflightMultiplicities)
-      , odcNumDistinctObjectsPending = Map.size dgsObjectsPendingMultiplicities
       , odcNumDistinctObjectsOwtPool = Map.size dgsObjectsOwtPoolMultiplicities
       }
 

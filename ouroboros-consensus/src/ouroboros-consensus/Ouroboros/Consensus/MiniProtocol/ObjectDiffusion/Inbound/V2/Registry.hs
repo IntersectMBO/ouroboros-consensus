@@ -191,7 +191,6 @@ withPeer
                 , dpsNumIdsInflight = 0
                 , dpsObjectsInflightIds = Set.empty
                 , dpsOutstandingFifo = StrictSeq.empty
-                , dpsObjectsPending = Map.empty
                 , dpsObjectsOwtPool = Map.empty
                 }
               dgsPeerStates
@@ -206,20 +205,17 @@ withPeer
       st@DecisionGlobalState
         { dgsPeerStates
         , dgsObjectsInflightMultiplicities
-        , dgsObjectsPendingMultiplicities
         , dgsObjectsOwtPoolMultiplicities
         } =
         st
           { dgsPeerStates = dgsPeerStates'
           , dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
-          , dgsObjectsPendingMultiplicities = dgsObjectsPendingMultiplicities'
           , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
           }
        where
         -- First extract the DPS of the specified peer from the DGS
         ( DecisionPeerState
             { dpsObjectsInflightIds
-            , dpsObjectsPending
             , dpsObjectsOwtPool
             }
           , dgsPeerStates'
@@ -239,14 +235,6 @@ withPeer
             decreaseCount
             dgsObjectsInflightMultiplicities
             dpsObjectsInflightIds
-
-        -- Update the dgsObjectsPendingMultiplicities map by decreasing the count of each
-        -- objectId which is part of the dpsObjectsPending of this peer.
-        dgsObjectsPendingMultiplicities' =
-          Foldable.foldl'
-            decreaseCount
-            dgsObjectsPendingMultiplicities
-            (Map.keysSet dpsObjectsPending)
 
         -- Finally, we need to update dgsObjectsOwtPoolMultiplicities by decreasing the count of
         -- each objectId which is part of the dpsObjectsOwtPool of this peer.

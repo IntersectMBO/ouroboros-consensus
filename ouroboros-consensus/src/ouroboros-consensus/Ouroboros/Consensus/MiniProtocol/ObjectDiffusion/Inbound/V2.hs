@@ -43,14 +43,12 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State qualifi
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types as V2
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+import Ouroboros.Network.ControlMessage (ControlMessageSTM, ControlMessage (..))
 
 
--- | A object-submission inbound side (server, sic!).
+-- | A object-submission inbound side (client).
 --
--- The server blocks on receiving `PeerDecision` from the decision logic. If
--- there are object's to download it pipelines two requests: first for object's second
--- for objectId's. If there are no object's to download, it either sends a blocking or
--- non-blocking request for objectId's.
+-- The goIdle' function blocks on receiving `PeerDecision` from the decision logic. 
 objectDiffusionInbound ::
   forall objectId object ticketNo m.
   ( MonadDelay m
@@ -59,15 +57,17 @@ objectDiffusionInbound ::
   ) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   ObjectDiffusionInitDelay ->
-  ObjectPoolWriter objectId object m ->
+  ControlMessageSTM m ->
   PeerStateAPI m objectId object ->
   ObjectDiffusionInboundPipelined objectId object m ()
 objectDiffusionInbound
   tracer
   initDelay
-  ObjectPoolWriter{}
+  controlMessage
   PeerStateAPI
     { psaReadDecision
+    , psaOnRequestIds
+    , psaOnRequestObjects
     , psaOnReceivedIds
     , psaOnReceivedObjects
     , psaSubmitObjectsToPool
@@ -76,59 +76,104 @@ objectDiffusionInbound
       case initDelay of
         ObjectDiffusionInitDelay delay -> threadDelay delay
         NoObjectDiffusionInitDelay -> return ()
-      serverIdle
+      (goIdle Zero)
    where
-    serverIdle ::
+    goIdle :: forall (n :: N).
+      Nat n ->
       m (InboundStIdle Z objectId object m ())
-    serverIdle = do
+    goIdle n = do
+      ctrlMsg <- atomically controlMessageSTM
+      traceWith tracer $ TraceObjectDiffusionInboundReceivedControlMessage ctrlMsg
+      case ctrlMsg of
+        -- The peer selection governor is asking us to terminate the connection.
+        Terminate ->
+          pure $ terminateAfterDrain n
+        -- Otherwise, we can continue the protocol normally.
+        _continue -> goIdle'
+    goIdle' :: forall (n :: N).
+      Nat n ->
+      m (InboundStIdle Z objectId object m ())
+    goIdle' n = do
       -- Block on next decision.
-      object@PeerDecision
-        { pdObjectsToReqIds = pdObjectsToReqIds
+      decision@PeerDecision
+        { pdIdsToAck
+        , pdIdsToReq
+        , pdObjectsToReqIds
+        , pdCanPipelineIdsReq
         , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds
         } <-
         psaReadDecision
-      traceWith tracer (TraceObjectDiffusionInboundReceivedDecision object)
+      traceWith tracer (TraceObjectDiffusionInboundReceivedDecision decision)
 
-      let !collected = length undefined
+      when (not StrictSeq.null pdObjectsToSubmitToPoolIds) $ do
+        psaSubmitObjectsToPool pdObjectsToSubmitToPoolIds
 
-      -- Only attempt to add objects if we have some work to do
-      when (collected > 0) $ do
-        -- submitObjectToPool traces:
-        -- \* `TraceObjectDiffusionInboundAddedObjects`,
-        -- \* `TraceObjectInboundAddedToObjectPool`, and
-        -- \* `TraceObjectInboundRejectedFromObjectPool`
-        -- events.
-        mapM_ undefined undefined  -- (uncurry $ submitObjectsToPool undefined) undefined
+      let shouldRequestMoreObjects = not $ Set.null pdObjectsToReqIds
 
-      -- TODO:
-      -- We can update the state so that other `object-submission` servers will
-      -- not try to add these objects to the objectpool.
+      case n of
+        -- We didn't pipeline any requests, so there are no replies in flight
+        -- (nothing to collect)
+        Zero ->
+          if shouldRequestMoreObjects
+            then do
+              -- There are no replies in flight, but we do know some more objects
+              -- we can ask for, so lets ask for them and more objectIds in a
+              -- pipelined way.
+              traceWith tracer (TraceObjectDiffusionInboundCanRequestMoreObjects (natToInt n))
+              goReqObjectsAndIdsPipelined Zero decision
+            else do
+              -- There's no replies in flight, and we have no more objects we can
+              -- ask for so the only remaining thing to do is to ask for more
+              -- objectIds. Since this is the only thing to do now, we make this a
+              -- blocking call.
+              traceWith tracer (TraceObjectDiffusionInboundCannotRequestMoreObjects (natToInt n))
+              goReqIdsBlocking decision
+        
+        -- We have pipelined some requests, so there are some replies in flight.
+        n@(Succ _) ->
+          if shouldRequestMoreObjects
+            then do
+              -- We have replies in flight and we should eagerly collect them if
+              -- available, but there are objects to request too so we
+              -- should *not* block waiting for replies.
+              -- So we ask for new objects and objectIds in a pipelined way.
+              pure $ CollectPipelined
+                -- if no replies are available immediately, we continue with
+                (Just (goReqObjectsIdsPipelined n decision))
+                -- if one reply is available, we go collect it.
+                -- We will continue to goIdle after; so in practice we will loop
+                -- until all immediately available replies have been collected
+                -- before requesting objects and ids in a pipelined fashion
+                (goCollect n decision)
+            else do
+              
+
       if Set.null pdObjectsToReqIds
-        then serverReqObjectIds Zero object
-        else serverReqObjects object
+        then goReqObjectIds Zero object
+        else goReqObjects object
 
     -- Pipelined request of objects
-    serverReqObjects ::
+    goReqObjects ::
       PeerDecision objectId object ->
       m (InboundStIdle Z objectId object m ())
-    serverReqObjects object@PeerDecision{pdObjectsToReqIds = pdObjectsToReqIds} =
+    goReqObjects object@PeerDecision{pdObjectsToReqIds = pdObjectsToReqIds} =
       pure $
         SendMsgRequestObjectsPipelined
           (Set.toList pdObjectsToReqIds)
-          (serverReqObjectIds (Succ Zero) object)
+          (goReqObjectIds (Succ Zero) object)
 
-    serverReqObjectIds ::
+    goReqObjectIds ::
       forall (n :: N).
       Nat n ->
       PeerDecision objectId object ->
       m (InboundStIdle n objectId object m ())
-    serverReqObjectIds
+    goReqObjectIds
       n
       PeerDecision{pdIdsToReq = 0} =
         case n of
-          Zero -> serverIdle
+          Zero -> goIdle
           Succ _ -> handleReplies n
-    serverReqObjectIds
+    goReqObjectIds
       -- if there are no unacknowledged objectIds, the protocol requires sending
       -- a blocking `MsgRequestObjectIds` request.  This is important, as otherwise
       -- the client side wouldn't have a chance to terminate the
@@ -152,9 +197,9 @@ objectDiffusionInbound
                 when (StrictSeq.length receivedIdsSeq > fromIntegral objectIdsToReq) $
                   throwIO ProtocolErrorObjectIdsNotRequested
                 onReceivedIds objectIdsToReq receivedIdsSeq objectIdsMap
-                serverIdle
+                goIdle
             )
-    serverReqObjectIds
+    goReqObjectIds
       n@Zero
       PeerDecision
         { pdIdsToAck = objectIdsToAck
@@ -166,7 +211,7 @@ objectDiffusionInbound
             objectIdsToAck
             objectIdsToReq
             (handleReplies (Succ n))
-    serverReqObjectIds
+    goReqObjectIds
       n@Succ{}
       PeerDecision
         { pdIdsToAck = objectIdsToAck
@@ -195,7 +240,7 @@ objectDiffusionInbound
       pure $
         CollectPipelined
           Nothing
-          (handleReply serverIdle)
+          (handleReply goIdle)
 
     handleReply ::
       forall (n :: N).

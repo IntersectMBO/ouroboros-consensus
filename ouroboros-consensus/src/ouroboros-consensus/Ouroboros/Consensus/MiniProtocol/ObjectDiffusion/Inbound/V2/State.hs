@@ -12,7 +12,6 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
   , onRequestObjects
   , onReceivedIds
   , onReceivedObjects
-  , submitObjectsToPool
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -22,7 +21,6 @@ import Control.Tracer (Tracer, traceWith)
 import Data.Foldable qualified as Foldable
 import Data.Map.Strict (Map, findWithDefault)
 import Data.Map.Strict qualified as Map
-import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set ((\\), Set)
 import Data.Set qualified as Set
@@ -180,8 +178,6 @@ onReceivedIdsImpl
   receivedIds
   globalState@DecisionGlobalState
     { dgsPeerStates
-    , dgsObjectsPendingMultiplicities
-    , dgsObjectsOwtPoolMultiplicities
     } =
     globalState
       { dgsPeerStates = dgsPeerStates'
@@ -203,8 +199,15 @@ onReceivedIdsImpl
         Set.filter (\objectId ->
           (not . hasObject $ objectId) -- object isn't already in the object pool
             && objectId `Set.notMember` dpsObjectsInflightIds -- object isn't in flight from current peer
-            && objectId `Map.notMember` dgsObjectsPendingMultiplicities -- the object has not been successfully downloaded from another peer
-            && objectId `Map.notMember` dgsObjectsOwtPoolMultiplicities -- (either pending ack or owt pool)
+
+            -- We keep as "available" objects that have already been downloaded
+            -- from other peers but haven't been added to the object pool yet.
+            -- (aka. are in dpsObjectsOwtPool).
+            -- That's because if a peer disconnects while the objects are pending
+            -- or owt pool, they will be lost forever, and other peers won't be
+            -- able to re-request them.
+            -- See discussion:
+            -- https://moduscreate.slack.com/archives/C0937JQQ1F0/p1760343643030879?thread_ts=1760105747.965519&cid=C0937JQQ1F0
           ) $ Set.fromList receivedIds
 
       dpsObjectsAvailableIds' =
@@ -235,6 +238,8 @@ onReceivedIdsImpl
 onReceivedObjects ::
   forall m peerAddr object objectId.
   ( MonadSTM m
+  , MonadMask m
+  , MonadMVar m
   , Ord objectId
   , Ord peerAddr
   ) =>
@@ -242,12 +247,14 @@ onReceivedObjects ::
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   ObjectPoolWriter objectId object m ->
+  ObjectPoolSem m ->
   peerAddr ->
   -- | received objects
   [object] ->
   m ()
-onReceivedObjects odTracer tracer globalStateVar objectPoolWriter peerAddr objectsReceived = do
+onReceivedObjects odTracer tracer globalStateVar objectPoolWriter poolSem peerAddr objectsReceived = do
   let getId = opwObjectId objectPoolWriter
+  let objectsReceivedMap = Map.fromList $ (\obj -> (getId obj, obj)) <$> objectsReceived
 
   globalState' <- atomically $ do
     stateTVar
@@ -256,11 +263,19 @@ onReceivedObjects odTracer tracer globalStateVar objectPoolWriter peerAddr objec
         let globalState' =
               onReceivedObjectsImpl
                 peerAddr
-                (Map.fromList $ (\obj -> (getId obj, obj)) <$> objectsReceived)
+                objectsReceivedMap
                 globalState
          in (globalState', globalState'))
   traceWith odTracer (TraceObjectDiffusionInboundReceivedObjects (length objectsReceived))
   traceWith tracer (TraceDecisionLogicGlobalStateUpdated "onReceivedObjects" globalState')
+  submitObjectsToPool
+    odTracer
+    tracer
+    globalStateVar
+    objectPoolWriter
+    poolSem
+    peerAddr
+    objectsReceivedMap
 
 onReceivedObjectsImpl ::
   forall peerAddr object objectId.
@@ -278,11 +293,11 @@ onReceivedObjectsImpl
   st@DecisionGlobalState
     { dgsPeerStates
     , dgsObjectsInflightMultiplicities
-    , dgsObjectsPendingMultiplicities
+    , dgsObjectsOwtPoolMultiplicities
     } =
     st
       { dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
-      , dgsObjectsPendingMultiplicities = dgsObjectsPendingMultiplicities'
+      , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
       , dgsPeerStates = dgsPeerStates'
       }
     where
@@ -290,7 +305,7 @@ onReceivedObjectsImpl
 
       peerState@DecisionPeerState
         { dpsObjectsInflightIds
-        , dpsObjectsPending
+        , dpsObjectsOwtPool
         } =
         findWithDefault
           (error "ObjectDiffusion.onReceivedObjectsImpl: the peer should appear in dgsPeerStates")
@@ -307,18 +322,18 @@ onReceivedObjectsImpl
           dgsObjectsInflightMultiplicities
           objectsReceivedIds
       
-      dpsObjectsPending' = dpsObjectsPending <> objectsReceived
+      dpsObjectsOwtPool' = dpsObjectsOwtPool <> objectsReceived
 
-      dgsObjectsPendingMultiplicities' =
+      dgsObjectsOwtPoolMultiplicities' =
         Foldable.foldl'
           increaseCount
-          dgsObjectsPendingMultiplicities
+          dgsObjectsOwtPoolMultiplicities
           objectsReceivedIds
 
       peerState' =
         peerState
           { dpsObjectsInflightIds = dpsObjectsInflightIds'
-          , dpsObjectsPending = dpsObjectsPending'
+          , dpsObjectsOwtPool = dpsObjectsOwtPool'
           }
 
       dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
@@ -338,7 +353,7 @@ submitObjectsToPool ::
   ObjectPoolWriter objectId object m ->
   ObjectPoolSem m ->
   peerAddr ->
-  StrictSeq objectId ->
+  Map objectId object ->
   m ()
 submitObjectsToPool
   odTracer
@@ -347,20 +362,8 @@ submitObjectsToPool
   objectPoolWriter
   (ObjectPoolSem poolSem)
   peerAddr
-  objectIds = do
+  objects = do
   let getId = opwObjectId objectPoolWriter
-
-  -- Move objects from `pending` to `owtPool` state
-  (globalState', objects) <- atomically $ stateTVar globalStateVar $ \globalState ->
-      let (globalState', objects) =
-            Foldable.foldl'
-              (\(st, acc) objectId ->
-                let (st', object) = updateStateWhenObjectOwtPool objectId st
-                 in (st', object : acc))
-              (globalState, [])
-              objectIds
-      in ((globalState', objects), globalState')
-  traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "submitObjectsToPool.updateStateWhenObjectOwtPool" globalState')
 
   bracket_
     (atomically $ waitTSem poolSem)
@@ -368,7 +371,7 @@ submitObjectsToPool
     $ do
 
       -- When the lock over the object pool is obtained
-      opwAddObjects objectPoolWriter objects
+      opwAddObjects objectPoolWriter (Map.elems objects)
       traceWith odTracer $
         TraceObjectDiffusionInboundAddedObjects $ length objects
 
@@ -381,50 +384,8 @@ submitObjectsToPool
                 objects
          in (globalState', globalState')
       traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "submitObjectsToPool.updateStateWhenObjectAddedToPool" globalState')
+
   where
-    updateStateWhenObjectOwtPool ::
-      objectId ->
-      DecisionGlobalState peerAddr objectId object ->
-      (DecisionGlobalState peerAddr objectId object, object)
-    updateStateWhenObjectOwtPool
-      objectId
-      st@DecisionGlobalState
-        { dgsObjectsPendingMultiplicities
-        , dgsObjectsOwtPoolMultiplicities
-        , dgsPeerStates
-        } =
-        (st
-          { dgsObjectsPendingMultiplicities = dgsObjectsPendingMultiplicities'
-          , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
-          , dgsPeerStates = dgsPeerStates'
-          }, object)
-        where
-        
-        dgsObjectsPendingMultiplicities' = decreaseCount dgsObjectsPendingMultiplicities objectId
-        dgsObjectsOwtPoolMultiplicities' = increaseCount dgsObjectsOwtPoolMultiplicities objectId
-
-        peerState@DecisionPeerState{dpsObjectsPending, dpsObjectsOwtPool} =
-          findWithDefault
-            (error "ObjectDiffusion.submitObjectsToPool: the peer should appear in dgsPeerStates")
-            peerAddr
-            dgsPeerStates
-
-        object = findWithDefault
-          (error "ObjectDiffusion.submitObjectsToPool: the object should appear in dpsObjectsPending")
-          objectId
-          dpsObjectsPending
-        
-        peerState' = peerState
-          { dpsObjectsPending = Map.delete objectId dpsObjectsPending
-          , dpsObjectsOwtPool = Map.insert objectId object dpsObjectsOwtPool
-          }
-
-        dgsPeerStates' =
-          Map.insert
-          peerAddr
-          peerState'
-          dgsPeerStates
-
     updateStateWhenObjectAddedToPool ::
       objectId ->
       DecisionGlobalState peerAddr objectId object ->

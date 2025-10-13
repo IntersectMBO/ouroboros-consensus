@@ -3,11 +3,9 @@ flowchart TD
     B(dpsOutstandingFifo)
     C(dpsObjectsAvailableIds)
     D(dpsObjectsInflightIds)
-    E(dpsObjectsPending)
     F(dpsObjectsOwtPool)
 
     H(dgsObjectsInflightMultiplicities)
-    G(dgsObjectsPendingMultiplicities)
     I(dgsObjectsOwtPoolMultiplicities)
 
     EA{requestIds}
@@ -24,24 +22,18 @@ flowchart TD
     EC -->|+ids| D
     EC -->|+count| H
 
-    ED{handleReceiveObjects}
+    ED{handleReceiveObjects / submitToPool}
     D -->|-ids| ED
     H -->|-count| ED
     IN2@{ shape: lin-cyl, label: "objects" } --o ED
-    ED -->|+objects| E
-    ED -->|+count| G
+    ED -->|+objects| F
+    ED -->|+count| I
 
     EE{makeDecisionPreAcknowledge}
     B -->|-ids| EE
+    C -->|-ids| EE
     EE -.->|readDecision : pdIdsToAck + pdIdsToReq + pdCanPipelineIdsReq/| EA
     EE -.->|readDecision : pdObjectsToReqIds| EC
-    EE -.->|readDecision : pdObjectsToSubmitToPoolIds| EF
-
-    EF{submitToPool}
-    E -->|-objects| EF
-    G -->|-count| EF
-    EF -->|+objects| F
-    EF -->|+count| I
 
     EG{Added to pool}
     F -->|-objects| EG

@@ -135,7 +135,6 @@ pickObjectsToDownload
     { dgsPeerStates
     , dgsObjectsInflightMultiplicities
     , dgsObjectsOwtPoolMultiplicities
-    , dgsObjectsPendingMultiplicities
     } =
     -- outer fold: fold `[(peerAddr, DecisionPeerState objectId object)]`
     List.mapAccumR
