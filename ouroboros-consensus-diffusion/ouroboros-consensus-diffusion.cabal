@@ -63,6 +63,7 @@ library
     Ouroboros.Consensus.Node.Exit
     Ouroboros.Consensus.Node.ExitPolicy
     Ouroboros.Consensus.Node.GSM
+    Ouroboros.Consensus.Node.GSM.PeerState
     Ouroboros.Consensus.Node.Genesis
     Ouroboros.Consensus.Node.Recovery
     Ouroboros.Consensus.Node.RethrowPolicy
@@ -98,8 +99,10 @@ library
     random,
     resource-registry ^>=0.2,
     safe-wild-cards ^>=1.0,
+    semialign,
     serialise ^>=0.2,
     text,
+    these,
     time,
     transformers,
     typed-protocols:{stateful, typed-protocols},
