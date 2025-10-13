@@ -48,12 +48,12 @@ IMMDB_SERVER_PID=$!
 echo "ImmDB server started with PID: $IMMDB_SERVER_PID"
 
 ##
-## Run cardano-node
+## Run cardano-node (node-0)
 ##
 pushd "$CARDANO_NODE_PATH" > /dev/null
 
-echo "Creating topology.json in $(pwd)"
-cat << EOF > topology.json
+echo "Creating topology-node-0.json in $(pwd)"
+cat << EOF > topology-node-0.json
 {
   "bootstrapPeers": [],
   "localRoots": [
@@ -73,16 +73,18 @@ cat << EOF > topology.json
 }
 EOF
 
+mkdir -p "$TMP_DIR/node-0/db"
+
 CARDANO_NODE_CMD_CORE="cabal run -- cardano-node run \
     --config $CLUSTER_RUN_DATA/node-0/config.json \
-    --topology topology.json \
-    --database-path $TMP_DIR/db \
-    --socket-path node.socket \
+    --topology topology-node-0.json \
+    --database-path $TMP_DIR/node-0/db \
+    --socket-path node-0.socket \
     --host-addr 0.0.0.0 --port 3002"
 
-echo "Command: $CARDANO_NODE_CMD_CORE &> $TMP_DIR/cardano-node.log &"
+echo "Command: $CARDANO_NODE_CMD_CORE &> $TMP_DIR/cardano-node-0.log &"
 
-$CARDANO_NODE_CMD_CORE &> "$TMP_DIR/cardano-node.log" &
+$CARDANO_NODE_CMD_CORE &> "$TMP_DIR/cardano-node-0.log" &
 
 CARDANO_NODE_PID=$!
 
