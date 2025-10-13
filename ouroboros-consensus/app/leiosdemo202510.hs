@@ -266,6 +266,8 @@ encodeEB ebItems =
 
 msgLeiosBlockTxsRequest :: DB.Database -> Word64 -> ByteString -> [(Word16, Word64)] -> IO ()
 msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
+    when (not $ let idxs = map fst bitmaps in and $ zipWith (<) idxs (tail idxs)) $ do
+        die "Offsets not strictly ascending"
     let nextOffset = \case
             [] -> Nothing
             (idx, bitmap) : k -> case popOffset bitmap of
