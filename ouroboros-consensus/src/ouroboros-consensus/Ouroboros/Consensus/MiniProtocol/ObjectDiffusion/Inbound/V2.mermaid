@@ -6,8 +6,8 @@ flowchart TD
     E(dpsObjectsPending)
     F(dpsObjectsOwtPool)
 
-    G(dgsObjectsLiveMultiplicities)
     H(dgsObjectsInflightMultiplicities)
+    G(dgsObjectsPendingMultiplicities)
     I(dgsObjectsOwtPoolMultiplicities)
 
     EA{requestIds}
@@ -22,14 +22,14 @@ flowchart TD
     EC{requestObjects}
     C -->|-ids| EC
     EC -->|+ids| D
-    EC --> |+count| G
     EC -->|+count| H
 
     ED{handleReceiveObjects}
     D -->|-ids| ED
     H -->|-count| ED
     IN2@{ shape: lin-cyl, label: "objects" } --o ED
-    ED -->|objects| E
+    ED -->|+objects| E
+    ED -->|+count| G
 
     EE{acknowledgeIds}
     B -->|-ids| EE
@@ -37,12 +37,12 @@ flowchart TD
     EF{submitToPool}
     EE -.->|ids| EF
     E -->|-objects| EF
+    G -->|-count| EF
     EF -->|+objects| F
     EF -->|+count| I
 
     EG{Added to pool}
     F -->|-objects| EG
-    G -->|-count| EG
     I -->|-count| EG
 
     EZ{makeDecision}

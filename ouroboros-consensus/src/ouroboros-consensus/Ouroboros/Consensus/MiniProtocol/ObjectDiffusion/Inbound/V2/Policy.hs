@@ -3,7 +3,6 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
   , defaultDecisionPolicy
   ) where
 
-import Control.Monad.Class.MonadTime.SI
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq (..), NumObjectsOutstanding, NumObjectsReq (..))
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types (ObjectMultiplicity)
 
@@ -19,9 +18,6 @@ data DecisionPolicy = DecisionPolicy
   -- ^ a limit of object size in-flight from all peers, plus or minus 1
   , dpMaxObjectInflightMultiplicity :: !ObjectMultiplicity
   -- ^ from how many peers download the `objectId` simultaneously
-  , dpMinObtainedButNotAckedObjectsLifetime :: !DiffTime
-  -- ^ how long objects that have been added to the objectpool will be
-  -- kept in the `dgsObjectsLiveMultiplicities` cache.
   }
   deriving Show
 
@@ -30,8 +26,7 @@ defaultDecisionPolicy =
   DecisionPolicy
     { dpMaxNumObjectIdsReq = 3
     , dpMaxNumObjectsOutstanding = 10 -- must be the same as objectDiffusionMaxUnacked
-    , dpMaxNumObjectsInflightPerPeer = NumObjectsReq 6
-    , dpMaxNumObjectsInflightTotal = NumObjectsReq 20
+    , dpMaxNumObjectsInflightPerPeer = 6
+    , dpMaxNumObjectsInflightTotal = 20
     , dpMaxObjectInflightMultiplicity = 2
-    , dpMinObtainedButNotAckedObjectsLifetime = 2
     }

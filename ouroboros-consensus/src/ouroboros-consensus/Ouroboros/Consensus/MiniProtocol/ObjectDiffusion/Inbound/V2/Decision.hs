@@ -94,8 +94,8 @@ data DecisionInternalState peerAddr objectId object
   , disObjectsInflightMultiplicities :: !(Map objectId ObjectMultiplicity)
   -- ^ `objectId`s in-flight.
   , disIdsToAckMultiplicities :: !(Map objectId ObjectMultiplicity)
-  -- ^ acknowledged `objectId` with multiplicities.  It is used to update
-  -- `dgsObjectsLiveMultiplicities`.
+  -- ^ acknowledged `objectId` with multiplicities. It is used to update
+  -- `dgsObjectsPendingMultiplicities`.
   , disObjectsOwtPoolIds :: Set objectId
   -- ^ objects on their way to the objectpool. Used to prevent issueing new
   -- fetch requests for them.
@@ -135,7 +135,7 @@ pickObjectsToDownload
     { dgsPeerStates
     , dgsObjectsInflightMultiplicities
     , dgsObjectsOwtPoolMultiplicities
-    , dgsObjectsLiveMultiplicities
+    , dgsObjectsPendingMultiplicities
     } =
     -- outer fold: fold `[(peerAddr, DecisionPeerState objectId object)]`
     List.mapAccumR
@@ -258,7 +258,7 @@ pickObjectsToDownload
                               disObjectsInflightMultiplicities
                               -- remove `object`s which were already downloaded by some
                               -- other peer or are in-flight or unknown by this peer.
-                              `Set.unions` ( Map.keysSet dgsObjectsLiveMultiplicities
+                              `Set.unions` ( Map.keysSet dgsObjectsPendingMultiplicities
                                                     <> dpsObjectsInflightIds
                                                     <> dpsObjectsRequestedButNotReceivedIds
                                                     <> disObjectsOwtPoolIds
@@ -347,7 +347,7 @@ pickObjectsToDownload
               Map.fromList ((\(a, _) -> a) <$> as)
                 <> dgsPeerStates
 
-            dgsObjectsLiveMultiplicities' =
+            dgsObjectsPendingMultiplicities' =
               Map.merge
                 (Map.mapMaybeMissing \_ x -> Just x)
                 (Map.mapMaybeMissing \_ _ -> assert False Nothing)
@@ -356,7 +356,7 @@ pickObjectsToDownload
                       then Just $! x - y
                       else Nothing
                 )
-                dgsObjectsLiveMultiplicities
+                dgsObjectsPendingMultiplicities
                 disIdsToAckMultiplicities
 
             dgsObjectsOwtPoolMultiplicities' =
@@ -364,7 +364,7 @@ pickObjectsToDownload
          in ( sharedState
                 { dgsPeerStates = dgsPeerStates'
                 , dgsObjectsInflightMultiplicities = disObjectsInflightMultiplicities
-                , dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
+                , dgsObjectsPendingMultiplicities = dgsObjectsPendingMultiplicities'
                 , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
                 }
             , -- exclude empty results
@@ -426,7 +426,7 @@ filterActivePeers
    where
     unrequestable =
       Map.keysSet (Map.filter (>= dpMaxObjectInflightMultiplicity) dgsObjectsInflightMultiplicities)
-        <> Map.keysSet dgsObjectsLiveMultiplicities
+        <> Map.keysSet dgsObjectsPendingMultiplicities
 
     fn :: DecisionPeerState objectId object -> Bool
     fn
@@ -563,7 +563,7 @@ acknowledgeObjectIds
     objectsOwtPoolList =
       [ (objectId, object)
       | objectId <- toList toObjectPoolObjectIds
-      , objectId `Map.notMember` dgsObjectsLiveMultiplicities globalState
+      , objectId `Map.notMember` dgsObjectsPendingMultiplicities globalState
       , object <- maybeToList $ objectId `Map.lookup` dpsObjectsPending
       ]
     (toObjectPoolObjectIds, _) =
@@ -621,7 +621,7 @@ splitAcknowledgedObjectIds
     , dpMaxNumObjectIdsReq
     }
   DecisionGlobalState
-    { dgsObjectsLiveMultiplicities
+    { dgsObjectsPendingMultiplicities
     }
   DecisionPeerState
     { dpsOutstandingFifo
@@ -634,7 +634,7 @@ splitAcknowledgedObjectIds
     (acknowledgedObjectIds', dpsOutstandingFifo') =
       StrictSeq.spanl
         ( \objectId ->
-            ( objectId `Map.member` dgsObjectsLiveMultiplicities
+            ( objectId `Map.member` dgsObjectsPendingMultiplicities
                 || objectId `Set.member` dpsObjectsRequestedButNotReceivedIds
                 || objectId `Map.member` dpsObjectsPending
             )
@@ -662,7 +662,7 @@ updateRefCounts ::
   Map objectId Int ->
   RefCountDiff objectId ->
   Map objectId Int
-updateRefCounts dgsObjectsLiveMultiplicities (RefCountDiff diff) =
+updateRefCounts dgsObjectsPendingMultiplicities (RefCountDiff diff) =
   Map.merge
     (Map.mapMaybeMissing \_ x -> Just x)
     (Map.mapMaybeMissing \_ _ -> Nothing)
@@ -673,5 +673,5 @@ updateRefCounts dgsObjectsLiveMultiplicities (RefCountDiff diff) =
             then Just $! x - y
             else Nothing
     )
-    dgsObjectsLiveMultiplicities
+    dgsObjectsPendingMultiplicities
     diff

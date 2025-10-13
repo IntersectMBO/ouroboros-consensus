@@ -33,7 +33,6 @@ import Data.Set qualified as Set
 import Data.Void (Void)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State (DecisionGlobalStateVar)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State qualified as State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
@@ -89,9 +88,9 @@ withPeer
   objectDiffusionTracer
   decisionChannelsVar
   objectPoolSem
-  decisionPolicy
+  _decisionPolicy
   globalStateVar
-  objectPoolReader
+  _objectPoolReader
   objectPoolWriter
   peerAddr
   withAPI =
@@ -118,20 +117,24 @@ withPeer
                   , InboundPeerAPI
                       { readPeerDecision = takeMVar chan'
                       , handleReceivedIds = State.handleReceivedIds
+                          objectDiffusionTracer
                           decisionTracer
                           globalStateVar
                           objectPoolWriter
                           peerAddr
                           (error "TODO: provide the number of requested IDs")
                       , handleReceivedObjects = State.handleReceivedObjects
+                          objectDiffusionTracer
                           decisionTracer
                           globalStateVar
+                          objectPoolWriter
                           peerAddr
                       , submitObjectsToPool = State.submitObjectsToPool
                           objectDiffusionTracer
-                          objectPoolSem
+                          decisionTracer
                           globalStateVar
                           objectPoolWriter
+                          objectPoolSem
                           peerAddr
                       }
                   )
@@ -182,21 +185,21 @@ withPeer
     unregisterPeerGlobalState
       st@DecisionGlobalState
         { dgsPeerStates
-        , dgsObjectsLiveMultiplicities
         , dgsObjectsInflightMultiplicities
+        , dgsObjectsPendingMultiplicities
         , dgsObjectsOwtPoolMultiplicities
         } =
         st
           { dgsPeerStates = dgsPeerStates'
-          , dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
           , dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
+          , dgsObjectsPendingMultiplicities = dgsObjectsPendingMultiplicities'
           , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
           }
        where
         -- First extract the DPS of the specified peer from the DGS
         ( DecisionPeerState
-            { dpsOutstandingFifo
-            , dpsObjectsInflightIds
+            { dpsObjectsInflightIds
+            , dpsObjectsPending
             , dpsObjectsOwtPool
             }
           , dgsPeerStates'
@@ -208,14 +211,6 @@ withPeer
               )
               peerAddr
               dgsPeerStates
-        
-        -- Update the dgsObjectsLiveMultiplicities map by decreasing the count of each
-        -- objectId which is part of the dpsOutstandingFifo of this peer.
-        dgsObjectsLiveMultiplicities' =
-          Foldable.foldl'
-            decreaseCount
-            dgsObjectsLiveMultiplicities
-            dpsOutstandingFifo
 
         -- Update dgsInflightMultiplicities map by decreasing the count
         -- of objects that were in-flight for this peer.
@@ -224,6 +219,14 @@ withPeer
             decreaseCount
             dgsObjectsInflightMultiplicities
             dpsObjectsInflightIds
+
+        -- Update the dgsObjectsPendingMultiplicities map by decreasing the count of each
+        -- objectId which is part of the dpsObjectsPending of this peer.
+        dgsObjectsPendingMultiplicities' =
+          Foldable.foldl'
+            decreaseCount
+            dgsObjectsPendingMultiplicities
+            (Map.keysSet dpsObjectsPending)
 
         -- Finally, we need to update dgsObjectsOwtPoolMultiplicities by decreasing the count of
         -- each objectId which is part of the dpsObjectsOwtPool of this peer.

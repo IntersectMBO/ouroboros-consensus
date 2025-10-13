@@ -20,8 +20,6 @@ import Control.Tracer (Tracer, traceWith)
 import Data.Foldable qualified as Foldable
 import Data.Map.Strict (Map, findWithDefault)
 import Data.Map.Strict qualified as Map
-import Data.Map.Merge.Strict qualified as Map
-import Data.Sequence qualified as Seq
 import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set ((\\), Set)
@@ -31,14 +29,38 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API (ObjectPoolWriter (..))
 import Ouroboros.Consensus.Util.IOLike (MonadMask, MonadMVar, bracket_)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq)
-import System.Random (StdGen)
 
 strictSeqToSet :: Ord a => StrictSeq a -> Set a
 strictSeqToSet = Foldable.foldl' (flip Set.insert) Set.empty
 
--- | Insert received `objectId`s and return the number of objectIds to be acknowledged with next request
--- and the updated `DecisionGlobalState`.
--- TODO: check for possible errors in the peer response, raise exception if it happened
+-- | Wrapper around `handleReceivedIdsImpl`.
+-- Obtain the `hasObject` function atomically from the STM context and
+-- updates and traces the global state TVar.
+handleReceivedIds ::
+  forall m peerAddr object objectId.
+  (MonadSTM m, Ord objectId, Ord peerAddr) =>
+  Tracer m (TraceObjectDiffusionInbound objectId object) ->
+  Tracer m (TraceDecisionLogic peerAddr objectId object) ->
+  DecisionGlobalStateVar m peerAddr objectId object ->
+  ObjectPoolWriter objectId object m ->
+  peerAddr ->
+  -- | number of requests to subtract from
+  -- `dpsNumIdsInflight`
+  NumObjectIdsReq ->
+  -- | sequence of received `objectIds`
+  StrictSeq objectId ->
+  -- | received `objectId`s
+  m ()
+handleReceivedIds odTracer decisionTracer globalStateVar objectPoolWriter peerAddr numIdsInitiallyRequested receivedIdsSeq = do
+  globalState' <- atomically $ do
+    hasObject <- opwHasObject objectPoolWriter
+    stateTVar
+      globalStateVar
+      ( \globalState -> let globalState' = handleReceivedIdsImpl hasObject peerAddr numIdsInitiallyRequested receivedIdsSeq globalState
+         in (globalState', globalState') )
+  traceWith odTracer (TraceObjectDiffusionInboundReceivedIds (StrictSeq.length receivedIdsSeq))
+  traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "handleReceivedIds" globalState')
+
 handleReceivedIdsImpl ::
   forall peerAddr object objectId.
   (Ord objectId, Ord peerAddr, HasCallStack) =>
@@ -49,7 +71,7 @@ handleReceivedIdsImpl ::
   -- | number of requests to subtract from
   -- `dpsNumIdsInflight`
   NumObjectIdsReq ->
-  -- | sequence of received `objectIds`
+  -- | sequence of received `objectId`s
   StrictSeq objectId ->
   DecisionGlobalState peerAddr objectId object ->
   DecisionGlobalState peerAddr objectId object
@@ -60,6 +82,8 @@ handleReceivedIdsImpl
   receivedIdsSeq
   globalState@DecisionGlobalState
     { dgsPeerStates
+    , dgsObjectsPendingMultiplicities
+    , dgsObjectsOwtPoolMultiplicities
     } =
     globalState
       { dgsPeerStates = dgsPeerStates'
@@ -81,7 +105,8 @@ handleReceivedIdsImpl
         Set.filter (\objectId ->
           (not . hasObject $ objectId) -- object isn't already in the object pool
             && objectId `Set.notMember` dpsObjectsInflightIds -- object isn't in flight from current peer
-            && objectId `Map.notMember` (dgsObjectsPendingOrOwtPoolMultiplicities globalState) -- the object has not been successfully downloaded from another peer
+            && objectId `Map.notMember` dgsObjectsPendingMultiplicities -- the object has not been successfully downloaded from another peer
+            && objectId `Map.notMember` dgsObjectsOwtPoolMultiplicities -- (either pending ack or owt pool)
           ) $ strictSeqToSet $ receivedIdsSeq
 
       dpsObjectsAvailableIds' =
@@ -101,6 +126,37 @@ handleReceivedIdsImpl
       
       dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
 
+-- | Wrapper around `handleReceivedObjectsImpl` that updates and traces the
+-- global state TVar.
+--
+-- Error handling should be done by the client before using the API.
+-- In particular we assume:
+-- assert (objectsRequestedIds `Set.isSubsetOf` dpsObjectsInflightIds)
+--
+-- IMPORTANT: We also assume that every object has been *validated* before being passed to this function.
+handleReceivedObjects ::
+  forall m peerAddr object objectId.
+  ( MonadSTM m
+  , Ord objectId
+  , Ord peerAddr
+  ) =>
+  Tracer m (TraceObjectDiffusionInbound objectId object) ->
+  Tracer m (TraceDecisionLogic peerAddr objectId object) ->
+  DecisionGlobalStateVar m peerAddr objectId object ->
+  ObjectPoolWriter objectId object m ->
+  peerAddr ->
+  -- | received objects
+  Map objectId object ->
+  m ()
+handleReceivedObjects odTracer tracer globalStateVar _objectPoolWriter peerAddr objectsReceived = do
+  globalState' <- atomically $ do
+    stateTVar
+      globalStateVar
+      ( \globalState -> let globalState' = handleReceivedObjectsImpl peerAddr objectsReceived globalState
+         in (globalState', globalState') )
+  traceWith odTracer (TraceObjectDiffusionInboundReceivedObjects (Map.size objectsReceived))
+  traceWith tracer (TraceDecisionLogicGlobalStateUpdated "handleReceivedObjects" globalState')
+
 handleReceivedObjectsImpl ::
   forall peerAddr object objectId.
   ( Ord peerAddr
@@ -117,13 +173,11 @@ handleReceivedObjectsImpl
   st@DecisionGlobalState
     { dgsPeerStates
     , dgsObjectsInflightMultiplicities
+    , dgsObjectsPendingMultiplicities
     } =
-    -- TODO: error handling should be done by the client before using the API
-    -- past that point we assume:
-    -- assert (objectsRequestedIds `Set.isSubsetOf` dpsObjectsInflightIds) $
-    -- assert (objectsReceivedIds == objectsRequestedIds) $
     st
       { dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
+      , dgsObjectsPendingMultiplicities = dgsObjectsPendingMultiplicities'
       , dgsPeerStates = dgsPeerStates'
       }
     where
@@ -138,8 +192,6 @@ handleReceivedObjectsImpl
           peerAddr
           dgsPeerStates
 
-      dpsObjectsPending' = dpsObjectsPending <> objectsReceived
-
       -- subtract requested from in-flight
       dpsObjectsInflightIds' =
         dpsObjectsInflightIds \\ objectsReceivedIds
@@ -149,15 +201,14 @@ handleReceivedObjectsImpl
           decreaseCount
           dgsObjectsInflightMultiplicities
           objectsReceivedIds
+      
+      dpsObjectsPending' = dpsObjectsPending <> objectsReceived
 
-      -- Update DecisionPeerState
-      --
-      -- Remove the downloaded `objectId`s from the dpsObjectsAvailableIds map, this
-      -- guarantees that we won't attempt to download the `objectIds` from
-      -- this peer twice.
-      -- TODO: this is wrong, it should be done earlier when the request for objects is emitted
-      -- aka in when the decision for this peer is emitted/read?
-      -- dpsObjectsAvailableIds'' = dpsObjectsAvailableIds `Set.difference` objectsReceivedIds
+      dgsObjectsPendingMultiplicities' =
+        Foldable.foldl'
+          increaseCount
+          dgsObjectsPendingMultiplicities
+          objectsReceivedIds
 
       peerState' =
         peerState
@@ -166,58 +217,6 @@ handleReceivedObjectsImpl
           }
 
       dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
-
---
--- Monadic public API
---
-
--- | Wrapper around `handleReceivedIdsImpl`.
--- Obtain the `hasObject` function atomically from the STM context and
--- updates and traces the global state TVar.
-handleReceivedIds ::
-  forall m peerAddr object objectId.
-  (MonadSTM m, Ord objectId, Ord peerAddr) =>
-  Tracer m (TraceDecisionLogic peerAddr objectId object) ->
-  DecisionGlobalStateVar m peerAddr objectId object ->
-  ObjectPoolWriter objectId object m ->
-  peerAddr ->
-  -- | number of requests to subtract from
-  -- `dpsNumIdsInflight`
-  NumObjectIdsReq ->
-  -- | sequence of received `objectIds`
-  StrictSeq objectId ->
-  -- | received `objectId`s
-  m ()
-handleReceivedIds tracer globalStateVar objectPoolWriter peerAddr numIdsInitiallyRequested receivedIdsSeq = do
-  globalState' <- atomically $ do
-    hasObject <- opwHasObject objectPoolWriter
-    stateTVar
-      globalStateVar
-      ( \globalState -> let globalState' = handleReceivedIdsImpl hasObject peerAddr numIdsInitiallyRequested receivedIdsSeq globalState
-         in (globalState', globalState') )
-  traceWith tracer (TraceDecisionLogicGlobalStateUpdated "handleReceivedIds" globalState')
-
--- | Wrapper around `handleReceivedObjectsImpl` that updates and traces the
--- global state TVar.
-handleReceivedObjects ::
-  forall m peerAddr object objectId.
-  ( MonadSTM m
-  , Ord objectId
-  , Ord peerAddr
-  ) =>
-  Tracer m (TraceDecisionLogic peerAddr objectId object) ->
-  DecisionGlobalStateVar m peerAddr objectId object ->
-  peerAddr ->
-  -- | received objects
-  Map objectId object ->
-  m ()
-handleReceivedObjects tracer globalStateVar peerAddr objectsReceived = do
-  globalState' <- atomically $ do
-    stateTVar
-      globalStateVar
-      ( \globalState -> let globalState' = handleReceivedObjectsImpl peerAddr objectsReceived globalState
-         in (globalState', globalState') )
-  traceWith tracer (TraceDecisionLogicGlobalStateUpdated "handleReceivedObjects" globalState')
 
 submitObjectsToPool ::
   forall m peerAddr object objectId.
@@ -228,27 +227,32 @@ submitObjectsToPool ::
   , MonadSTM m
   ) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
-  ObjectPoolSem m ->
+  Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   ObjectPoolWriter objectId object m ->
+  ObjectPoolSem m ->
   peerAddr ->
   [object] ->
   m ()
 submitObjectsToPool
-  tracer
-  (ObjectPoolSem poolSem)
+  odTracer
+  decisionTracer
   globalStateVar
   objectPoolWriter
+  (ObjectPoolSem poolSem)
   peerAddr
   objects = do
   let getId = opwObjectId objectPoolWriter
 
   -- Move objects from `pending` to `owtPool` state
-  atomically $ modifyTVar globalStateVar $ \globalState ->
-      Foldable.foldl'
-        (\st object -> updateStateWhenObjectOwtPool (getId object) st)
-        globalState
-        objects
+  globalState' <- atomically $ stateTVar globalStateVar $ \globalState ->
+      let globalState' =
+            Foldable.foldl'
+              (\st object -> updateStateWhenObjectOwtPool (getId object) st)
+              globalState
+              objects
+      in (globalState', globalState')
+  traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "submitObjectsToPool.updateStateWhenObjectOwtPool" globalState')
 
   bracket_
     (atomically $ waitTSem poolSem)
@@ -256,16 +260,18 @@ submitObjectsToPool
     $ do
       -- When the lock over the object pool is obtained
       opwAddObjects objectPoolWriter objects
-      traceWith tracer $
-        TraceObjectDiffusionInboundCollectedObjects $
-        NumObjectsProcessed $ fromIntegral $ length objects
+      traceWith odTracer $
+        TraceObjectDiffusionInboundAddedObjects $ length objects
 
       -- Move objects from `owtPool` to `inPool` state
-      atomically $ modifyTVar globalStateVar $ \globalState ->
-          Foldable.foldl'
-            (\st object -> updateStateWhenObjectAddedToPool (getId object) st)
-            globalState
-            objects
+      globalState' <- atomically $ stateTVar globalStateVar $ \globalState ->
+        let globalState' =
+              Foldable.foldl'
+                (\st object -> updateStateWhenObjectAddedToPool (getId object) st)
+                globalState
+                objects
+         in (globalState', globalState')
+      traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "submitObjectsToPool.updateStateWhenObjectAddedToPool" globalState')
   where
     updateStateWhenObjectOwtPool ::
       objectId ->
@@ -274,14 +280,17 @@ submitObjectsToPool
     updateStateWhenObjectOwtPool
       objectId
       st@DecisionGlobalState
-        { dgsObjectsOwtPoolMultiplicities
+        { dgsObjectsPendingMultiplicities
+        , dgsObjectsOwtPoolMultiplicities
         , dgsPeerStates
         } =
         st
-          { dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
+          { dgsObjectsPendingMultiplicities = dgsObjectsPendingMultiplicities'
+          , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
           , dgsPeerStates = dgsPeerStates'
           }
         where
+        dgsObjectsPendingMultiplicities' = decreaseCount dgsObjectsPendingMultiplicities objectId
         dgsObjectsOwtPoolMultiplicities' = increaseCount dgsObjectsOwtPoolMultiplicities objectId
 
         dgsPeerStates' =
@@ -301,18 +310,15 @@ submitObjectsToPool
     updateStateWhenObjectAddedToPool
       objectId
       st@DecisionGlobalState
-        { dgsObjectsLiveMultiplicities
-        , dgsObjectsOwtPoolMultiplicities
+        { dgsObjectsOwtPoolMultiplicities
         , dgsPeerStates
         } =
         st
-          { dgsObjectsLiveMultiplicities = dgsObjectsLiveMultiplicities'
-          , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
+          { dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
           , dgsPeerStates = dgsPeerStates'
           }
         where
         dgsObjectsOwtPoolMultiplicities' = decreaseCount dgsObjectsOwtPoolMultiplicities objectId
-        dgsObjectsLiveMultiplicities' = decreaseCount dgsObjectsLiveMultiplicities objectId
 
         dgsPeerStates' =
           Map.adjust

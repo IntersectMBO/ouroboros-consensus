@@ -85,7 +85,7 @@ objectDiffusionInbound
         , pdObjectsToPool = pdObjectsToPool
         } <-
         readPeerDecision
-      traceWith tracer (TraceObjectDiffusionInboundDecisionReceived object)
+      traceWith tracer (TraceObjectDiffusionInboundReceivedDecision object)
 
       let !collected = length undefined
 
