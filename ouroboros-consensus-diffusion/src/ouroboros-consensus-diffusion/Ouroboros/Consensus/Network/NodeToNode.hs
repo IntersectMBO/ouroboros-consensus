@@ -39,6 +39,7 @@ module Ouroboros.Consensus.Network.NodeToNode
   , initiatorAndResponder
   ) where
 
+import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
@@ -54,7 +55,7 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Hashable (Hashable)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
-import qualified Data.Set as Set
+import Data.Set (Set)
 import Data.Void (Void)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
@@ -1002,14 +1003,15 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
 -- on the protocol version, but it eventually may; this is why @_version@ is
 -- currently unused.
 initiator ::
+  Set CardanoFeatureFlag ->
   MiniProtocolParameters ->
   NodeToNodeVersion ->
   NodeToNodeVersionData ->
   Apps m addr b b b b b b a c ->
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr b m a Void
-initiator miniProtocolParameters version versionData Apps{..} =
+initiator featureFlags miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
-    Set.empty -- TODO: change for a meaningful value
+    featureFlags
     miniProtocolParameters
     -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
     -- This is currently ok, as we might accept multiple connections from the
@@ -1026,7 +1028,8 @@ initiator miniProtocolParameters version versionData Apps{..} =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aTxSubmission2Client version ctx)))
         , perasCertDiffusionProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aPerasCertDiffusionClient version ctx)))
-        , perasVoteDiffusionProtocol = error "perasVoteDiffusionProtocol not implemented"
+        , perasVoteDiffusionProtocol =
+            error "perasVoteDiffusionProtocol not implemented"
         , keepAliveProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aKeepAliveClient version ctx)))
         , peerSharingProtocol =
@@ -1042,14 +1045,15 @@ initiator miniProtocolParameters version versionData Apps{..} =
 -- on the protocol version, but it eventually may; this is why @_version@ is
 -- currently unused.
 initiatorAndResponder ::
+  Set CardanoFeatureFlag ->
   MiniProtocolParameters ->
   NodeToNodeVersion ->
   NodeToNodeVersionData ->
   Apps m addr b b b b b b a c ->
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr b m a c
-initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
+initiatorAndResponder featureFlags miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
-    Set.empty -- TODO: change for a meaningful value
+    featureFlags
     miniProtocolParameters
     ( NodeToNodeProtocols
         { chainSyncProtocol =
@@ -1072,7 +1076,8 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
                 (MiniProtocolCb (\initiatorCtx -> aPerasCertDiffusionClient version initiatorCtx))
                 (MiniProtocolCb (\responderCtx -> aPerasCertDiffusionServer version responderCtx))
             )
-        , perasVoteDiffusionProtocol = error "perasVoteDiffusionProtocol not implemented"
+        , perasVoteDiffusionProtocol =
+            error "perasVoteDiffusionProtocol not implemented"
         , keepAliveProtocol =
             ( InitiatorAndResponderProtocol
                 (MiniProtocolCb (\initiatorCtx -> aKeepAliveClient version initiatorCtx))
