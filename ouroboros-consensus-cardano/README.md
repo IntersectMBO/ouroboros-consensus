@@ -371,16 +371,25 @@ The ChainSync miniprotocol will terminate with an exception when it receives a `
 To point a node to a running ImmDB server, use a topology file like
 ```json
 {
-  "Producers": [
+  "bootstrapPeers": [],
+  "localRoots": [
     {
-      "addr": "127.0.0.1",
-      "port": 3001,
+      "accessPoints": [
+        {
+          "address": "127.0.0.1",
+          "port": 3001
+        }
+      ],
+      "advertise": false,
+      "trustable": true,
       "valency": 1
     }
-  ]
+  ],
+  "publicRoots": []
 }
 ```
 
+See https://developers.cardano.org/docs/operate-a-stake-pool/node-operations/topology/ for more details.
 
 ## snapshot-converter
 
