@@ -842,3 +842,27 @@ test-suite doctest
   build-depends:
     base,
     latex-svg-image,
+
+common common-exe
+  import: common-lib
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N -I0 -A16m"
+
+executable leiosdemo202510
+  import: common-exe
+  hs-source-dirs: app
+  main-is: leiosdemo202510.hs
+  build-depends:
+    aeson,
+    base,
+    base16-bytestring,
+    bytestring,
+    cardano-binary,
+    cardano-crypto-class,
+    cborg,
+    direct-sqlite,
+    directory,
+    random,
+    vector,
