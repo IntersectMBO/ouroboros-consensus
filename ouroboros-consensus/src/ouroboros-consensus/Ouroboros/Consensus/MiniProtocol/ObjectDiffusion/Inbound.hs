@@ -38,7 +38,11 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Network.TypedProtocol.Core (N (Z), Nat (..), natToInt)
 import NoThunks.Class (NoThunks (..))
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+  ( ObjectDiffusionInboundStateView (..)
+  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+import Ouroboros.Consensus.MiniProtocol.Util.Idling qualified as Idling
 import Ouroboros.Consensus.Util.NormalForm.Invariant (noThunksInvariant)
 import Ouroboros.Network.ControlMessage
 import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
@@ -63,6 +67,8 @@ data TraceObjectDiffusionInbound objectId object
     TraceObjectDiffusionInboundRecvControlMessage ControlMessage
   | TraceObjectDiffusionInboundCanRequestMoreObjects Int
   | TraceObjectDiffusionInboundCannotRequestMoreObjects Int
+  | TraceObjectDiffusionInboundStartedIdling
+  | TraceObjectDiffusionInboundStoppedIdling
   deriving (Eq, Show)
 
 data ObjectDiffusionInboundError
@@ -132,13 +138,15 @@ objectDiffusionInbound ::
   ObjectPoolWriter objectId object m ->
   NodeToNodeVersion ->
   ControlMessageSTM m ->
+  ObjectDiffusionInboundStateView m ->
   ObjectDiffusionInboundPipelined objectId object m ()
 objectDiffusionInbound
   tracer
   (maxFifoLength, maxNumIdsToReq, maxNumObjectsToReq)
   ObjectPoolWriter{..}
   _version
-  controlMessageSTM =
+  controlMessageSTM
+  state =
     ObjectDiffusionInboundPipelined $!
       checkState initialInboundSt & go Zero
    where
@@ -252,6 +260,13 @@ objectDiffusionInbound
                 -- blocking call.
                 traceWith tracer $
                   TraceObjectDiffusionInboundCannotRequestMoreObjects (natToInt n)
+                -- Before blocking, signal to the protocol client that we are idling
+                --
+                -- NOTE this change of state should be made explicit:
+                -- https://github.com/tweag/cardano-peras/issues/144
+                Idling.idlingStart (odisvIdling state)
+                traceWith tracer $
+                  TraceObjectDiffusionInboundStartedIdling
                 pure $! checkState st & goReqObjectIdsBlocking
 
           -- We have pipelined some requests, so there are some replies in flight.
@@ -400,7 +415,16 @@ objectDiffusionInbound
               (numToAckOnNextReq st)
               numIdsToRequest
               ( \neCollectedIds ->
-                  checkState st' & goCollect Zero (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
+                  WithEffect $ do
+                    -- We just got some new object id's, so we are no longer idling
+                    --
+                    -- NOTE this change of state should be made explicit:
+                    -- https://github.com/tweag/cardano-peras/issues/144
+                    Idling.idlingStop (odisvIdling state)
+                    traceWith tracer $
+                      TraceObjectDiffusionInboundStoppedIdling
+                    pure $
+                      checkState st' & goCollect Zero (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
               )
 
     goReqObjectsAndObjectIdsPipelined ::
