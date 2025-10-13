@@ -215,14 +215,11 @@ sql_insert_ebClosures =
     "INSERT INTO ebClosures (ebPoint, txOffset, txCborBytes) VALUES (?, ?, ?)\n\
     \"
 
-sql_lookup_ebPoints :: String
-sql_lookup_ebPoints =
-    "SELECT id FROM ebPoints WHERE ebSlot = ? AND ebHash = ?\n\
-    \"
-
 sql_lookup_ebClosures :: Int -> String
 sql_lookup_ebClosures n =
-    "SELECT txOffset, txCborBytes FROM ebClosures WHERE ebPoint = ? AND txOffset IN (" ++ hooks ++ ") ORDER BY txOffset\n\
+    "SELECT ebClosures.txOffset, ebClosures.txCborBytes FROM ebClosures\n\
+    \INNER JOIN ebPoints ON ebClosures.ebPoint = ebPoints.id\n\
+    \WHERE ebPoints.ebSlot = ? AND ebPoints.ebHash = ? AND ebClosures.txOffset IN (" ++ hooks ++ ") ORDER BY ebClosures.txOffset\n\
     \"
   where
     hooks = intercalate ", " (replicate n "?")
@@ -276,18 +273,11 @@ msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
                 Just (i, bitmap') ->
                     Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
         offsets = unfoldr nextOffset bitmaps
-    -- find ebPoint (TODO combine this step via a JOIN?)
-    stmt_lookup_ebPoint <- withDieJust $ DB.prepare db (fromString sql_lookup_ebPoints)
-    withDie $ DB.bindInt64 stmt_lookup_ebPoint 1 (fromIntegral ebSlot)
-    withDie $ DB.bindBlob  stmt_lookup_ebPoint 2 ebHash
-    ebPoint <- withDie (DB.stepNoCB stmt_lookup_ebPoint) >>= \case
-        DB.Done -> die "No such EB"
-        DB.Row -> DB.columnInt64 stmt_lookup_ebPoint 0
-    withDieDone $ DB.stepNoCB stmt_lookup_ebPoint
     -- get the txs
     stmt_lookup_ebClosures <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures (length offsets)
-    withDie $ DB.bindInt64 stmt_lookup_ebClosures 1 ebPoint
-    forM_ ([(2 :: DB.ParamIndex) ..] `zip` offsets) $ \(i, offset) -> do
+    withDie $ DB.bindInt64 stmt_lookup_ebClosures 1 (fromIntegral ebSlot)
+    withDie $ DB.bindBlob  stmt_lookup_ebClosures 2 ebHash
+    forM_ ([(3 :: DB.ParamIndex) ..] `zip` offsets) $ \(i, offset) -> do
         withDie $ DB.bindInt64 stmt_lookup_ebClosures i (fromIntegral offset)
     acc <- (\f -> foldM f [] offsets) $ \acc offset -> do
         withDie (DB.stepNoCB stmt_lookup_ebClosures) >>= \case
