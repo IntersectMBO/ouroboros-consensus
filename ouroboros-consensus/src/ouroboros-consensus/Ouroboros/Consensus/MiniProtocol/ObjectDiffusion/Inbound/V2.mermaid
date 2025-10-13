@@ -31,11 +31,13 @@ flowchart TD
     ED -->|+objects| E
     ED -->|+count| G
 
-    EE{acknowledgeIds}
+    EE{makeDecisionPreAcknowledge}
     B -->|-ids| EE
-    
+    EE -.->|readDecision : pdIdsToAck + pdIdsToReq + pdCanPipelineIdsReq/| EA
+    EE -.->|readDecision : pdObjectsToReqIds| EC
+    EE -.->|readDecision : pdObjectsToSubmitToPoolIds| EF
+
     EF{submitToPool}
-    EE -.->|ids| EF
     E -->|-objects| EF
     G -->|-count| EF
     EF -->|+objects| F
@@ -44,9 +46,3 @@ flowchart TD
     EG{Added to pool}
     F -->|-objects| EG
     I -->|-count| EG
-
-    EZ{makeDecision}
-
-    EZ -.->|count| EA
-    EZ -.->|ids| EC
-    EZ -.->|ids| EE

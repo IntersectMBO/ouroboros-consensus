@@ -12,7 +12,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
   , DecisionGlobalStateVar
   , newPeerDecisionChannelsVar
   , newObjectPoolSem
-  , InboundPeerAPI (..)
+  , PeerStateAPI (..)
   , withPeer
   , decisionLogicThread
   ) where
@@ -28,6 +28,7 @@ import Data.Foldable as Foldable (foldl', traverse_)
 import Data.Hashable
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set qualified as Set
 import Data.Void (Void)
@@ -37,6 +38,8 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State qualifi
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Control.Monad (forever)
+import Data.Set (Set)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq)
 
 -- | Communication channels between `ObjectDiffusion` mini-protocol inbound side
 -- and decision logic.
@@ -50,17 +53,22 @@ newPeerDecisionChannelsVar ::
   MonadMVar m => m (PeerDecisionChannelsVar m peerAddr objectId object)
 newPeerDecisionChannelsVar = newMVar (Map.empty)
 
-data InboundPeerAPI m objectId object = InboundPeerAPI
-  { readPeerDecision :: m (PeerDecision objectId object)
+data PeerStateAPI m objectId object = PeerStateAPI
+  { psaReadDecision :: m (PeerDecision objectId object)
   -- ^ a blocking action which reads `PeerDecision`
-  , handleReceivedIds :: StrictSeq.StrictSeq objectId -> m ()
-  , handleReceivedObjects :: Map objectId object -> m ()
-  , submitObjectsToPool :: [object] -> m ()
+  , psaOnRequestIds :: NumObjectIdsReq -> m ()
+  , psaOnRequestObjects :: Set objectId -> m ()
+  , psaSubmitObjectsToPool :: StrictSeq objectId -> m ()
+  , psaOnReceivedIds :: [objectId] -> m ()
+    -- ^ Error handling should have been done before calling this
+  , psaOnReceivedObjects :: [object] -> m ()
+    -- ^ Error handling should have been done before calling this
+    -- Also every object should have been validated!
   }
 
 -- | A bracket function which registers / de-registers a new peer in
--- `DecisionGlobalStateVar` and `PeerDecisionChannelsVar`s, which exposes `InboundPeerAPI`.
--- `InboundPeerAPI` is only safe inside the `withPeer` scope.
+-- `DecisionGlobalStateVar` and `PeerDecisionChannelsVar`s, which exposes `PeerStateAPI`.
+-- `PeerStateAPI` is only safe inside the `withPeer` scope.
 withPeer ::
   forall object peerAddr objectId ticketNo m a.
   ( MonadMask m
@@ -80,8 +88,8 @@ withPeer ::
   ObjectPoolWriter objectId object m ->
   -- | new peer
   peerAddr ->
-  -- | callback which gives access to `InboundPeerAPI`
-  (InboundPeerAPI m objectId object -> m a) ->
+  -- | callback which gives access to `PeerStateAPI`
+  (PeerStateAPI m objectId object -> m a) ->
   m a
 withPeer
   decisionTracer
@@ -96,7 +104,7 @@ withPeer
   withAPI =
     bracket registerPeerAndCreateAPI unregisterPeer withAPI
   where
-    registerPeerAndCreateAPI :: m (InboundPeerAPI m objectId object)
+    registerPeerAndCreateAPI :: m (PeerStateAPI m objectId object)
     registerPeerAndCreateAPI = do
           -- create the API for this peer, obtaining a channel for it in the process
           !inboundPeerAPI <-
@@ -114,27 +122,39 @@ withPeer
                       return (chan, Map.insert peerAddr chan peerToChannel)
                 return
                   ( peerToChannel'
-                  , InboundPeerAPI
-                      { readPeerDecision = takeMVar chan'
-                      , handleReceivedIds = State.handleReceivedIds
+                  , PeerStateAPI
+                      { psaReadDecision = takeMVar chan'
+                      , psaOnRequestIds = State.onRequestIds
+                          objectDiffusionTracer
+                          decisionTracer
+                          globalStateVar
+                          objectPoolWriter
+                          peerAddr
+                      , psaOnRequestObjects = State.onRequestObjects
+                          objectDiffusionTracer
+                          decisionTracer
+                          globalStateVar
+                          objectPoolWriter
+                          peerAddr
+                      , psaSubmitObjectsToPool = State.submitObjectsToPool
+                          objectDiffusionTracer
+                          decisionTracer
+                          globalStateVar
+                          objectPoolWriter
+                          objectPoolSem
+                          peerAddr
+                      , psaOnReceivedIds = State.onReceivedIds
                           objectDiffusionTracer
                           decisionTracer
                           globalStateVar
                           objectPoolWriter
                           peerAddr
                           (error "TODO: provide the number of requested IDs")
-                      , handleReceivedObjects = State.handleReceivedObjects
+                      , psaOnReceivedObjects = State.onReceivedObjects
                           objectDiffusionTracer
                           decisionTracer
                           globalStateVar
                           objectPoolWriter
-                          peerAddr
-                      , submitObjectsToPool = State.submitObjectsToPool
-                          objectDiffusionTracer
-                          decisionTracer
-                          globalStateVar
-                          objectPoolWriter
-                          objectPoolSem
                           peerAddr
                       }
                   )
@@ -145,7 +165,7 @@ withPeer
           return inboundPeerAPI
       where
 
-    unregisterPeer :: InboundPeerAPI m objectId object -> m ()
+    unregisterPeer :: PeerStateAPI m objectId object -> m ()
     unregisterPeer _ =
       -- the handler is a short blocking operation, thus we need to use
       -- `uninterruptibleMask_`

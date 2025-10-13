@@ -108,7 +108,7 @@ data DecisionPeerState objectId object = DecisionPeerState
   -- acknowledged and haven't been sent to the objectpool yet.
   --
   -- Life cycle of entries:
-  -- * added when a object is downloaded in `handleReceivedObjectsImpl`
+  -- * added when a object is downloaded in `onReceivedObjectsImpl`
   -- * removed by `acknowledgeObjectIds` (to properly follow `dpsOutstandingFifo`)
   , dpsObjectsOwtPool :: !(Map objectId object)
   -- ^ A set of objects on their way to the objectpool.
@@ -223,7 +223,7 @@ data PeerDecision objectId object = PeerDecision
   -- if we have non-acknowledged `objectId`s.
   , pdObjectsToReqIds :: !(Set objectId)
   -- ^ objectId's to download.
-  , pdObjectsToPool :: !(Set objectId)
+  , pdObjectsToSubmitToPoolIds :: !(StrictSeq objectId)
   -- ^ list of `object`s to submit to the objectpool.
   }
   deriving (Show, Eq)
@@ -238,21 +238,21 @@ instance Ord objectId => Semigroup (PeerDecision objectId object) where
     , pdIdsToReq
     , pdCanPipelineIdsReq = _ignored
     , pdObjectsToReqIds
-    , pdObjectsToPool
+    , pdObjectsToSubmitToPoolIds
     }
     <> PeerDecision
       { pdIdsToAck = pdIdsToAck'
       , pdIdsToReq = pdIdsToReq'
       , pdCanPipelineIdsReq = pdCanPipelineIdsReq'
       , pdObjectsToReqIds = pdObjectsToReqIds'
-      , pdObjectsToPool = pdObjectsToPool'
+      , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds'
       } =
       PeerDecision
         { pdIdsToAck = pdIdsToAck + pdIdsToAck'
         , pdIdsToReq = pdIdsToReq + pdIdsToReq'
         , pdCanPipelineIdsReq = pdCanPipelineIdsReq'
         , pdObjectsToReqIds = pdObjectsToReqIds <> pdObjectsToReqIds'
-        , pdObjectsToPool = pdObjectsToPool <> pdObjectsToPool'
+        , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds <> pdObjectsToSubmitToPoolIds'
         }
 instance Ord objectId => Monoid (PeerDecision objectId object) where
   mempty = PeerDecision
@@ -260,7 +260,7 @@ instance Ord objectId => Monoid (PeerDecision objectId object) where
     , pdIdsToReq = 0
     , pdCanPipelineIdsReq = False
     , pdObjectsToReqIds = Set.empty
-    , pdObjectsToPool = Set.empty
+    , pdObjectsToSubmitToPoolIds = Set.empty
     }
 
 -- | ObjectLogic tracer.
@@ -352,7 +352,9 @@ decreaseCount mmap k =
     mmap
 
 data TraceObjectDiffusionInbound objectId object
-  = TraceObjectDiffusionInboundReceivedIds Int
+  = TraceObjectDiffusionInboundRequestedIds Int
+  | TraceObjectDiffusionInboundRequestedObjects Int
+  | TraceObjectDiffusionInboundReceivedIds Int
   | TraceObjectDiffusionInboundReceivedObjects Int
   | TraceObjectDiffusionInboundAddedObjects Int
   | -- | Received a 'ControlMessage' from the outbound peer governor, and about

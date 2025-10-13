@@ -5,14 +5,15 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
   ( -- * ObjectDiffusion Inbound client
     objectDiffusionInbound
 
-    -- * InboundPeerAPI
+    -- * PeerStateAPI
   , withPeer
-  , InboundPeerAPI
+  , PeerStateAPI
 
     -- * Supporting types
   , module V2
@@ -38,10 +39,11 @@ import qualified Data.Set as Set
 import Network.TypedProtocol
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State (newDecisionGlobalStateVar)
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State qualified as State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types as V2
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+
 
 -- | A object-submission inbound side (server, sic!).
 --
@@ -58,17 +60,17 @@ objectDiffusionInbound ::
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   ObjectDiffusionInitDelay ->
   ObjectPoolWriter objectId object m ->
-  InboundPeerAPI m objectId object ->
+  PeerStateAPI m objectId object ->
   ObjectDiffusionInboundPipelined objectId object m ()
 objectDiffusionInbound
   tracer
   initDelay
   ObjectPoolWriter{}
-  InboundPeerAPI
-    { readPeerDecision
-    , handleReceivedIds
-    , handleReceivedObjects
-    , submitObjectsToPool
+  PeerStateAPI
+    { psaReadDecision
+    , psaOnReceivedIds
+    , psaOnReceivedObjects
+    , psaSubmitObjectsToPool
     } =
     ObjectDiffusionInboundPipelined $ do
       case initDelay of
@@ -82,9 +84,9 @@ objectDiffusionInbound
       -- Block on next decision.
       object@PeerDecision
         { pdObjectsToReqIds = pdObjectsToReqIds
-        , pdObjectsToPool = pdObjectsToPool
+        , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds
         } <-
-        readPeerDecision
+        psaReadDecision
       traceWith tracer (TraceObjectDiffusionInboundReceivedDecision object)
 
       let !collected = length undefined
@@ -149,7 +151,7 @@ objectDiffusionInbound
                     objectIdsMap = Map.fromList objectIds'
                 when (StrictSeq.length receivedIdsSeq > fromIntegral objectIdsToReq) $
                   throwIO ProtocolErrorObjectIdsNotRequested
-                handleReceivedIds objectIdsToReq receivedIdsSeq objectIdsMap
+                onReceivedIds objectIdsToReq receivedIdsSeq objectIdsMap
                 serverIdle
             )
     serverReqObjectIds
@@ -207,7 +209,7 @@ objectDiffusionInbound
             objectIdsMap = Map.fromList objectIds
         unless (StrictSeq.length receivedIdsSeq <= fromIntegral objectIdsToReq) $
           throwIO ProtocolErrorObjectIdsNotRequested
-        handleReceivedIds objectIdsToReq receivedIdsSeq objectIdsMap
+        onReceivedIds objectIdsToReq receivedIdsSeq objectIdsMap
         k
       CollectObjects objectIds objects -> do
         let requested = Map.keysSet objectIds
@@ -216,7 +218,7 @@ objectDiffusionInbound
         unless (Map.keysSet received `Set.isSubsetOf` requested) $
           throwIO ProtocolErrorObjectNotRequested
 
-        mbe <- handleReceivedObjects objectIds received
+        mbe <- onReceivedObjects objectIds received
         traceWith tracer $ TraceObjectDiffusionCollected (getId `map` objects)
         case mbe of
           -- one of `object`s had a wrong size

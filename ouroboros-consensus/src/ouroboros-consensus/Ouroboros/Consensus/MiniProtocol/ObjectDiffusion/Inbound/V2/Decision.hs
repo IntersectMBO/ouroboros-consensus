@@ -180,7 +180,7 @@ pickObjectsToDownload
               then
                 let ( numObjectIdsToAck
                       , numObjectIdsToReq
-                      , pdObjectsToPool
+                      , pdObjectsToSubmitToPoolIds
                       , RefCountDiff{rcdIdsToAckMultiplicities}
                       , peerObjectState'
                       ) = acknowledgeObjectIds decisionPolicy sharedState peerObjectState
@@ -188,7 +188,7 @@ pickObjectsToDownload
                     disIdsToAckMultiplicities' = Map.unionWith (+) disIdsToAckMultiplicities rcdIdsToAckMultiplicities
                     disObjectsOwtPoolIds' =
                       disObjectsOwtPoolIds
-                        <> Map.keysSet pdObjectsToPool
+                        <> Map.keysSet pdObjectsToSubmitToPoolIds
                  in if dpsNumIdsInflight peerObjectState' > 0
                       then
                         -- we have objectIds to request
@@ -207,7 +207,7 @@ pickObjectsToDownload
                                     . dpsOutstandingFifo
                                     $ peerObjectState'
                               , pdObjectsToReqIds = Set.empty
-                              , pdObjectsToPool = pdObjectsToPool
+                              , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds
                               }
                           )
                         )
@@ -275,7 +275,7 @@ pickObjectsToDownload
 
                     ( numObjectIdsToAck
                       , numObjectIdsToReq
-                      , pdObjectsToPool
+                      , pdObjectsToSubmitToPoolIds
                       , RefCountDiff{rcdIdsToAckMultiplicities}
                       , peerObjectState''
                       ) = acknowledgeObjectIds decisionPolicy sharedState peerObjectState'
@@ -292,7 +292,7 @@ pickObjectsToDownload
 
                     disObjectsOwtPoolIds' =
                       disObjectsOwtPoolIds
-                        <> Set.fromList (map fst pdObjectsToPool)
+                        <> Set.fromList (map fst pdObjectsToSubmitToPoolIds)
                  in if dpsNumIdsInflight peerObjectState'' > 0
                       then
                         -- we can request `objectId`s & `object`s
@@ -313,7 +313,7 @@ pickObjectsToDownload
                                     $ peerObjectState''
                               , pdIdsToReq = numObjectIdsToReq
                               , pdObjectsToReqIds = pdObjectsToReqIdsMap
-                              , pdObjectsToPool = pdObjectsToPool
+                              , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds
                               }
                           )
                         )
@@ -374,9 +374,9 @@ pickObjectsToDownload
                       { pdIdsToAck = 0
                       , pdIdsToReq = 0
                       , pdObjectsToReqIds
-                      , pdObjectsToPool }
+                      , pdObjectsToSubmitToPoolIds }
                         | null pdObjectsToReqIds
-                        , Map.null pdObjectsToPool ->
+                        , Map.null pdObjectsToSubmitToPoolIds ->
                             Nothing
                     _ -> Just (a, b)
                 )
@@ -388,8 +388,8 @@ pickObjectsToDownload
           Map objectId Int ->
           (a, PeerDecision objectId object) ->
           Map objectId Int
-        updateInSubmissionToObjectPoolObjects m (_, PeerDecision{pdObjectsToPool}) =
-          List.foldl' fn m (Map.toList pdObjectsToPool)
+        updateInSubmissionToObjectPoolObjects m (_, PeerDecision{pdObjectsToSubmitToPoolIds}) =
+          List.foldl' fn m (Map.toList pdObjectsToSubmitToPoolIds)
          where
           fn ::
             Map objectId Int ->
