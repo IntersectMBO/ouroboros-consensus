@@ -202,11 +202,11 @@ newDecisionGlobalStateVar rng =
 -- expensive `makeDecision` computation will not need to take that peer into
 -- account.
 data PeerDecision objectId object = PeerDecision
-  { pdIdsToAck :: !NumObjectIdsAck
+  { pdNumIdsToAck :: !NumObjectIdsAck
   -- ^ objectId's to acknowledge
-  , pdIdsToReq :: !NumObjectIdsReq
+  , pdNumIdsToReq :: !NumObjectIdsReq
   -- ^ number of objectId's to request
-  , pdCanPipelineIdsReq :: !Bool
+  , pdCanPipelineIdsRequests :: !Bool
   -- ^ the object-submission protocol only allows to pipeline `objectId`'s requests
   -- if we have non-acknowledged `objectId`s.
   , pdObjectsToReqIds :: !(Set objectId)
@@ -220,28 +220,28 @@ data PeerDecision objectId object = PeerDecision
 -- `DecisionPeerState` is updated.  It is designed to work with `TMergeVar`s.
 instance Ord objectId => Semigroup (PeerDecision objectId object) where
   PeerDecision
-    { pdIdsToAck
-    , pdIdsToReq
-    , pdCanPipelineIdsReq = _ignored
+    { pdNumIdsToAck
+    , pdNumIdsToReq
+    , pdCanPipelineIdsRequests = _ignored
     , pdObjectsToReqIds
     }
     <> PeerDecision
-      { pdIdsToAck = pdIdsToAck'
-      , pdIdsToReq = pdIdsToReq'
-      , pdCanPipelineIdsReq = pdCanPipelineIdsReq'
+      { pdNumIdsToAck = pdNumIdsToAck'
+      , pdNumIdsToReq = pdNumIdsToReq'
+      , pdCanPipelineIdsRequests = pdCanPipelineIdsRequests'
       , pdObjectsToReqIds = pdObjectsToReqIds'
       } =
       PeerDecision
-        { pdIdsToAck = pdIdsToAck + pdIdsToAck'
-        , pdIdsToReq = pdIdsToReq + pdIdsToReq'
-        , pdCanPipelineIdsReq = pdCanPipelineIdsReq'
+        { pdNumIdsToAck = pdNumIdsToAck + pdNumIdsToAck'
+        , pdNumIdsToReq = pdNumIdsToReq + pdNumIdsToReq'
+        , pdCanPipelineIdsRequests = pdCanPipelineIdsRequests'
         , pdObjectsToReqIds = pdObjectsToReqIds <> pdObjectsToReqIds'
         }
 instance Ord objectId => Monoid (PeerDecision objectId object) where
   mempty = PeerDecision
-    { pdIdsToAck = 0
-    , pdIdsToReq = 0
-    , pdCanPipelineIdsReq = False
+    { pdNumIdsToAck = 0
+    , pdNumIdsToReq = 0
+    , pdCanPipelineIdsRequests = False
     , pdObjectsToReqIds = Set.empty
     }
 

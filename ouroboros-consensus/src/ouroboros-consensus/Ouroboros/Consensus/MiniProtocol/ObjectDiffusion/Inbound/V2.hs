@@ -44,6 +44,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types as V2
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Network.ControlMessage (ControlMessageSTM, ControlMessage (..))
+import Control.Concurrent.Class.MonadSTM (atomically)
 
 
 -- | A object-submission inbound side (client).
@@ -63,14 +64,13 @@ objectDiffusionInbound ::
 objectDiffusionInbound
   tracer
   initDelay
-  controlMessage
+  controlMessageSTM
   PeerStateAPI
     { psaReadDecision
     , psaOnRequestIds
     , psaOnRequestObjects
     , psaOnReceivedIds
     , psaOnReceivedObjects
-    , psaSubmitObjectsToPool
     } =
     ObjectDiffusionInboundPipelined $ do
       case initDelay of
@@ -96,11 +96,10 @@ objectDiffusionInbound
     goIdle' n = do
       -- Block on next decision.
       decision@PeerDecision
-        { pdIdsToAck
-        , pdIdsToReq
+        { pdNumIdsToAck
+        , pdNumIdsToReq
         , pdObjectsToReqIds
-        , pdCanPipelineIdsReq
-        , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds
+        , pdCanPipelineIdsRequests
         } <-
         psaReadDecision
       traceWith tracer (TraceObjectDiffusionInboundReceivedDecision decision)
@@ -145,12 +144,12 @@ objectDiffusionInbound
                 -- until all immediately available replies have been collected
                 -- before requesting objects and ids in a pipelined fashion
                 (goCollect n decision)
-            else do
+            else do undefined
               
 
       if Set.null pdObjectsToReqIds
-        then goReqObjectIds Zero object
-        else goReqObjects object
+        then goReqObjectIds Zero undefined
+        else goReqObjects undefined
 
     -- Pipelined request of objects
     goReqObjects ::
@@ -169,7 +168,7 @@ objectDiffusionInbound
       m (InboundStIdle n objectId object m ())
     goReqObjectIds
       n
-      PeerDecision{pdIdsToReq = 0} =
+      PeerDecision{pdNumIdsToReq = 0} =
         case n of
           Zero -> goIdle
           Succ _ -> handleReplies n
@@ -180,9 +179,9 @@ objectDiffusionInbound
       -- mini-protocol.
       Zero
       PeerDecision
-        { pdIdsToAck = objectIdsToAck
-        , pdCanPipelineIdsReq = False
-        , pdIdsToReq = objectIdsToReq
+        { pdNumIdsToAck = objectIdsToAck
+        , pdCanPipelineIdsRequests = False
+        , pdNumIdsToReq = objectIdsToReq
         } =
         pure $
           SendMsgRequestObjectIdsBlocking
@@ -202,9 +201,9 @@ objectDiffusionInbound
     goReqObjectIds
       n@Zero
       PeerDecision
-        { pdIdsToAck = objectIdsToAck
-        , pdCanPipelineIdsReq = True
-        , pdIdsToReq = objectIdsToReq
+        { pdNumIdsToAck = objectIdsToAck
+        , pdCanPipelineIdsRequests = True
+        , pdNumIdsToReq = objectIdsToReq
         } =
         pure $
           SendMsgRequestObjectIdsPipelined
@@ -214,13 +213,13 @@ objectDiffusionInbound
     goReqObjectIds
       n@Succ{}
       PeerDecision
-        { pdIdsToAck = objectIdsToAck
-        , pdCanPipelineIdsReq
-        , pdIdsToReq = objectIdsToReq
+        { pdNumIdsToAck = objectIdsToAck
+        , pdCanPipelineIdsRequests
+        , pdNumIdsToReq = objectIdsToReq
         } =
         -- it is impossible that we have had `object`'s to request (Succ{} - is an
         -- evidence for that), but no unacknowledged `objectId`s.
-        assert pdCanPipelineIdsReq $
+        assert pdCanPipelineIdsRequests $
           pure $
             SendMsgRequestObjectIdsPipelined
               objectIdsToAck

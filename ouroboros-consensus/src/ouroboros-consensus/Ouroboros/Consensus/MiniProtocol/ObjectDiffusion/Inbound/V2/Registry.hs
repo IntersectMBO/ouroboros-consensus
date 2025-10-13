@@ -58,8 +58,7 @@ data PeerStateAPI m objectId object = PeerStateAPI
   -- ^ a blocking action which reads `PeerDecision`
   , psaOnRequestIds :: NumObjectIdsReq -> m ()
   , psaOnRequestObjects :: Set objectId -> m ()
-  , psaSubmitObjectsToPool :: StrictSeq objectId -> m ()
-  , psaOnReceivedIds :: [objectId] -> m ()
+  , psaOnReceivedIds :: NumObjectIdsReq -> [objectId] -> m ()
     -- ^ Error handling should have been done before calling this
   , psaOnReceivedObjects :: [object] -> m ()
     -- ^ Error handling should have been done before calling this
@@ -70,7 +69,7 @@ data PeerStateAPI m objectId object = PeerStateAPI
 -- `DecisionGlobalStateVar` and `PeerDecisionChannelsVar`s, which exposes `PeerStateAPI`.
 -- `PeerStateAPI` is only safe inside the `withPeer` scope.
 withPeer ::
-  forall object peerAddr objectId ticketNo m a.
+  forall object peerAddr objectId m a.
   ( MonadMask m
   , MonadMVar m
   , MonadSTM m
@@ -81,11 +80,10 @@ withPeer ::
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   PeerDecisionChannelsVar m peerAddr objectId object ->
-  ObjectPoolSem m ->
   DecisionPolicy ->
   DecisionGlobalStateVar m peerAddr objectId object ->
-  ObjectPoolReader objectId object ticketNo m ->
   ObjectPoolWriter objectId object m ->
+  ObjectPoolSem m ->
   -- | new peer
   peerAddr ->
   -- | callback which gives access to `PeerStateAPI`
@@ -95,11 +93,10 @@ withPeer
   decisionTracer
   objectDiffusionTracer
   decisionChannelsVar
-  objectPoolSem
   _decisionPolicy
   globalStateVar
-  _objectPoolReader
   objectPoolWriter
+  objectPoolSem
   peerAddr
   withAPI =
     bracket registerPeerAndCreateAPI unregisterPeer withAPI
@@ -136,25 +133,18 @@ withPeer
                           globalStateVar
                           objectPoolWriter
                           peerAddr
-                      , psaSubmitObjectsToPool = State.submitObjectsToPool
-                          objectDiffusionTracer
-                          decisionTracer
-                          globalStateVar
-                          objectPoolWriter
-                          objectPoolSem
-                          peerAddr
                       , psaOnReceivedIds = State.onReceivedIds
                           objectDiffusionTracer
                           decisionTracer
                           globalStateVar
                           objectPoolWriter
                           peerAddr
-                          (error "TODO: provide the number of requested IDs")
                       , psaOnReceivedObjects = State.onReceivedObjects
                           objectDiffusionTracer
                           decisionTracer
                           globalStateVar
                           objectPoolWriter
+                          objectPoolSem
                           peerAddr
                       }
                   )
@@ -257,11 +247,12 @@ decisionLogicThread ::
   ) =>
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   Tracer m ObjectDiffusionCounters ->
+  ObjectPoolWriter objectId object m ->
   DecisionPolicy ->
   PeerDecisionChannelsVar m peerAddr objectId object ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   m Void
-decisionLogicThread decisionTracer countersTracer decisionPolicy decisionChannelsVar globalStateVar = do
+decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject} decisionPolicy decisionChannelsVar globalStateVar = do
   labelThisThread "ObjectDiffusionInbound.decisionLogicThread"
   forever $ do
     -- We rate limit the decision making process, it could overwhelm the CPU
@@ -269,16 +260,13 @@ decisionLogicThread decisionTracer countersTracer decisionPolicy decisionChannel
     threadDelay _DECISION_LOOP_DELAY
 
     -- Make decisions and update the global state var accordingly
-    (decisions, globalState') <- atomically $ do
-      globalState <- readTVar globalStateVar
-      let activePeers = filterActivePeers decisionPolicy globalState
-
-      -- block until at least one peer is active
-      check (not (Map.null activePeers))
-
-      let (globalState', decisions) = makeDecisions decisionPolicy globalState activePeers
-      writeTVar globalStateVar globalState'
-      return (decisions, globalState')
+    (globalState', decisions) <- atomically $ do
+      hasObject <- opwHasObject
+      stateTVar
+        globalStateVar
+        \globalState ->
+          let (globalState', decisions) = makeDecisions hasObject decisionPolicy globalState
+           in ((globalState', decisions), globalState')
 
     traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "decisionLogicThread" globalState')
     traceWith decisionTracer (TraceDecisionLogicDecisionsMade decisions)

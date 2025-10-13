@@ -30,12 +30,13 @@ import Data.Maybe (mapMaybe)
 import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set (Set)
 import Data.Set qualified as Set
+import Data.Foldable qualified as Foldable
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
-import System.Random (random)
+import System.Random (random, StdGen)
 
 -- | Make download decisions.
 makeDecisions ::
@@ -44,47 +45,215 @@ makeDecisions ::
   , Ord objectId
   , Hashable peerAddr
   ) =>
+  (objectId -> Bool) ->
   -- | decision decisionPolicy
   DecisionPolicy ->
   -- | decision context
   DecisionGlobalState peerAddr objectId object ->
-  -- | list of available peers.
-  --
-  -- This is a subset of `dgsPeerStates` of peers which either:
-  -- * can be used to download a `object`,
-  -- * can acknowledge some `objectId`s.
-  Map peerAddr (DecisionPeerState objectId object) ->
   ( DecisionGlobalState peerAddr objectId object
   , Map peerAddr (PeerDecision objectId object)
   )
-makeDecisions decisionPolicy st =
-  let (salt, rng') = random (dgsRng st)
-      st' = st{dgsRng = rng'}
-   in fn
-        . pickObjectsToDownload decisionPolicy st'
-        . orderByRejections salt
- where
-  fn ::
-    forall a.
-    (a, [(peerAddr, PeerDecision objectId object)]) ->
-    (a, Map peerAddr (PeerDecision objectId object))
-  fn (a, as) = (a, Map.fromList as)
+makeDecisions hasObject decisionPolicy globalState =
+  -- We do it in two steps, because pre-acknowledging will remove objects from dpsObjectsAvailableIds sets of each peer,
+  -- that the pickObjectsToReq function will use to decide which objects can be requested.
+  let (globalState', ackAndRequestIdsDecisions) = preAcknowledge hasObject decisionPolicy globalState
+      (globalState'', objectsToReqSets) = pickObjectsToReq hasObject decisionPolicy globalState'
+    in (globalState'', Map.intersectionWith (\decision objectsToReqIds -> decision{ pdObjectsToReqIds = objectsToReqIds }) ackAndRequestIdsDecisions objectsToReqSets)
 
--- | Order peers by how useful the objects they have provided are.
---
--- objects delivered late will fail to apply because they were included in
--- a recently adopted block. Peers can race against each other by setting
--- `dpMaxObjectInflightMultiplicity` to > 1. In case of a tie a hash of the peerAddr
--- is used as a tie breaker. Since every invocation use a new salt a given
--- peerAddr does not have an advantage over time.
-orderByRejections ::
-  Hashable peerAddr =>
-  Int ->
-  Map peerAddr (DecisionPeerState objectId object) ->
-  [(peerAddr, DecisionPeerState objectId object)]
-orderByRejections salt =
-  List.sortOn (\(peerAddr, ps) -> hashWithSalt salt peerAddr)
-    . Map.toList
+-- | We pre-acknowledge the longest prefix of outstandingFifo of each peer that match the following criteria:
+-- * either the object is owt pool for the peer who has downloaded it
+-- * or the object is already in pool
+preAcknowledge ::
+  forall peerAddr objectId object.
+  ( Ord peerAddr
+  , Ord objectId
+  ) =>
+  (objectId -> Bool) ->
+  DecisionPolicy ->
+  DecisionGlobalState peerAddr objectId object ->
+  ( DecisionGlobalState peerAddr objectId object
+  , Map peerAddr (PeerDecision objectId object)
+  )
+preAcknowledge poolHasObject decisionPolicy globalState@DecisionGlobalState{dgsPeerStates} =
+  -- We use `Map.mapAccumWithKey` to traverse the peer states and both update
+  -- the peer states and accumulate ack decisions made along the way.
+  let (decisions, dgsPeerStates') =
+        Map.mapAccumWithKey preAcknowledgeForPeer Map.empty dgsPeerStates
+   in ( globalState{dgsPeerStates = dgsPeerStates'}
+      , decisions
+      )
+
+  where
+  preAcknowledgeForPeer ::
+    -- | Accumulator containing decisions already made for other peers
+    -- It's a map in which we need to insert the new decision into
+    Map peerAddr (PeerDecision objectId object) ->
+    peerAddr ->
+    DecisionPeerState objectId object ->
+    (Map peerAddr (PeerDecision objectId object), DecisionPeerState objectId object)
+  preAcknowledgeForPeer decisionsAcc peerAddr peerState@DecisionPeerState{dpsOutstandingFifo, dpsObjectsAvailableIds, dpsObjectsOwtPool} =
+    let 
+        -- we isolate the longest prefix of outstandingFifo that matches our ack criteria (see above in preAcknowledge doc)
+        (idsToAck, dpsOutstandingFifo') =
+          StrictSeq.spanl
+            (\objectId -> poolHasObject objectId || objectId `Map.member` dpsObjectsOwtPool)
+            dpsOutstandingFifo
+
+        -- we remove the acknowledged ids from dpsObjectsAvailableIds if they were present
+        -- we need to do that because objects that were advertised by this corresponding outbound peer
+        -- but never downloaded because we already have them in pool were consequently never removed
+        -- from dpsObjectsAvailableIds by onRequestObjects
+        dpsObjectsAvailableIds' =
+          Foldable.foldl' (\set objectId -> Set.delete objectId set) dpsObjectsAvailableIds idsToAck
+
+
+        pdNumIdsToAck = fromIntegral $ StrictSeq.length idsToAck
+
+        -- should this be incremental or overwrite the previous value in the semigroup instance?
+        pdNumIdsToReq =
+    --         numOfUnacked = StrictSeq.length dpsOutstandingFifo
+    -- numOfAcked = StrictSeq.length acknowledgedObjectIds'
+    -- unackedAndRequested = fromIntegral numOfUnacked + dpsNumIdsInflight
+
+    -- pdNumIdsToReq =
+    --   assert (unackedAndRequested <= dpMaxNumObjectsOutstanding) $
+    --     assert (dpsNumIdsInflight <= dpMaxNumObjectIdsReq) $
+    --       (dpMaxNumObjectsOutstanding - unackedAndRequested + fromIntegral numOfAcked)
+    --         `min` (dpMaxNumObjectIdsReq - dpsNumIdsInflight)
+            undefined -- TODO
+        
+        pdCanPipelineIdsRequests = not . StrictSeq.null $ dpsOutstandingFifo'
+
+        peerDecision = PeerDecision
+          { pdNumIdsToAck
+          , pdNumIdsToReq
+          , pdCanPipelineIdsRequests
+          , pdObjectsToReqIds = Set.empty -- we don't decide this here
+          }
+
+        peerState' = peerState
+          { dpsOutstandingFifo = dpsOutstandingFifo'
+          , dpsObjectsAvailableIds = dpsObjectsAvailableIds'
+          }
+
+     in (Map.insert peerAddr peerDecision decisionsAcc, peerState')
+
+orderPeers :: Map peerAddr (DecisionPeerState objectId object) -> StdGen -> ([(peerAddr, DecisionPeerState objectId object)], StdGen)
+orderPeers = undefined
+
+-- TODO: be careful about additive semigroup instance of PeerDecision
+-- e.g. what if an object is first available and picked to download, but the download request isn't emitted yet
+-- then the object is received from another peer, so we can ack it from our peer on the next makeDecision call
+-- So later when the download request actually takes place, we don't need the object anymore, and it will no
+-- longer be part of dpsObjectsAvailableIds of the peer! But also no longer in the FIFO
+-- So if the requestIds doing the ack has been made before the requestObject, then the server
+-- won't be able to serve the object.
+
+-- | This function could just be pure if it hadn't be for the rng used to order peers
+pickObjectsToReq ::
+  forall peerAddr objectId object.
+  ( Ord peerAddr
+  , Ord objectId
+  , Hashable peerAddr
+  ) =>
+  (objectId -> Bool) ->
+  DecisionPolicy ->
+  DecisionGlobalState peerAddr objectId object ->
+  (DecisionGlobalState peerAddr objectId object
+  , Map peerAddr (Set objectId))
+pickObjectsToReq poolHasObject DecisionPolicy{dpMaxNumObjectsInflightPerPeer, dpMaxNumObjectsInflightTotal,dpMaxObjectInflightMultiplicity} globalState@DecisionGlobalState{dgsRng, dgsPeerStates, dgsObjectsInflightMultiplicities, dgsObjectsOwtPoolMultiplicities} =
+  -- objects that are inflight or owtPool for a given peer are no longer in dpsObjectsAvailableIds of this peer
+  -- so we only need to filter out dpsObjectsAvailableIds by removing the objects that are already in pool
+
+  let objectsExpectedSoonMultiplicities = Map.unionWith (+) dgsObjectsInflightMultiplicities dgsObjectsOwtPoolMultiplicities
+
+      (orderedPeers, dgsRng') = orderPeers dgsPeerStates dgsRng
+
+      -- We want to map each objectId to the sorted list of peers that can provide it (and from which we should download them preferably)
+      -- For each peer we also indicate how many objects it has in flight at the moment
+      -- We filter out here the objects that are already in pool
+      objectsToSortedProviders :: Map objectId [(peerAddr, NumObjectsReq)]
+      objectsToSortedProviders =
+        -- We iterate over each peer and the corresponding dpsObjectsAvailableIds
+        Foldable.foldl'
+          ( \accMap (peerAddr, DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds}) ->
+              -- For each peer, we iterate over dpsObjectsAvailableIds filtered from the objects that are already in pool
+              Foldable.foldl'
+                (\accMap' objectId -> Map.insertWith (++) objectId [(peerAddr, fromIntegral $ Set.size dpsObjectsInflightIds)] accMap')
+                accMap
+                (Set.filter (not . poolHasObject) dpsObjectsAvailableIds)
+          )
+          Map.empty
+          orderedPeers
+      
+      totalNumObjectsInflight :: NumObjectsReq
+      totalNumObjectsInflight = fromIntegral $ Map.foldl' (+) 0 dgsObjectsInflightMultiplicities
+      
+      -- Now we combine these maps for easy fold
+      objectsToProvidersAndExpectedMultiplicities :: Map objectId ([(peerAddr, NumObjectsReq)], ObjectMultiplicity)
+      objectsToProvidersAndExpectedMultiplicities =
+        Map.merge
+          -- if an objectId is missing from objectsExpectedSoonMultiplicities, then its expected multiplicity is 0
+          (Map.mapMissing \_ providers -> (providers, 0))
+          -- if an objectId is missing from objectsToSortedProviders, then we don't care about it
+          Map.dropMissing
+          -- Combine in a tuple the list of providers and the expected multiplicity
+          (Map.zipWithMatched \_ providers expectedMultiplicity -> (providers, expectedMultiplicity))
+          objectsToSortedProviders
+          objectsExpectedSoonMultiplicities
+      
+      St{peersToObjectsToReq} =
+        -- We iterate over each objectId and the corresponding (providers, expectedMultiplicity)
+        Map.foldlWithKey'
+          ( \st objectId (providers, expectedMultiplicity) ->
+              -- reset the objectMultiplicity counter for each new objectId
+              let st' = st{objectMultiplicity = 0}
+
+              in Foldable.foldl'
+                    (howToFoldProviderList objectId expectedMultiplicity)
+                    st'
+                    providers
+          )
+          St{
+              totalNumObjectsToReq = 0
+            , objectMultiplicity = 0
+            , peersToObjectsToReq = Map.empty
+          }
+          objectsToProvidersAndExpectedMultiplicities
+
+      -- This function decides whether or not we should select a given peer as provider for the current objectId
+      -- it takes into account if we are expecting to obtain the object from other sources (either inflight/owt pool already, or if the object will be requested from already selected peers in this given round)
+      howToFoldProviderList :: objectId -> ObjectMultiplicity -> St peerAddr objectId -> (peerAddr, NumObjectsReq) -> St peerAddr objectId
+      howToFoldProviderList objectId expectedMultiplicity st@St{totalNumObjectsToReq, objectMultiplicity, peersToObjectsToReq} (peerAddr, numObjectsInFlight) =
+        let -- see what has already been attributed to this peer
+            objectsToReq = Map.findWithDefault Set.empty peerAddr peersToObjectsToReq
+
+            shouldSelect =
+              -- We should not go over the multiplicity limit per object
+              objectMultiplicity + expectedMultiplicity < dpMaxObjectInflightMultiplicity
+              -- We should not go over the total number of objects inflight limit
+              && totalNumObjectsInflight + totalNumObjectsToReq < dpMaxNumObjectsInflightTotal
+              -- We should not go over the per-peer number of objects inflight limit
+              && numObjectsInFlight + (fromIntegral $ Set.size objectsToReq) < dpMaxNumObjectsInflightPerPeer
+          
+          in if shouldSelect
+              then
+                -- We increase both global count and per-object count, and we add the object to the peer's set
+                St
+                  { totalNumObjectsToReq = totalNumObjectsToReq + 1
+                  , objectMultiplicity = objectMultiplicity + 1
+                  , peersToObjectsToReq = Map.insert peerAddr (Set.insert objectId objectsToReq) peersToObjectsToReq
+                  }
+                -- Or we keep the state as is if we don't select this peer
+              else st
+
+   in (globalState{dgsRng = dgsRng'}, peersToObjectsToReq)
+
+data St peerAddr objectId = St { totalNumObjectsToReq :: !NumObjectsReq, objectMultiplicity :: ObjectMultiplicity, peersToObjectsToReq :: Map peerAddr (Set objectId) }
+
+-------------------------------------------------------------------------------
+-- OLD STUFF ONLY HERE FOR REFERENCE
+-------------------------------------------------------------------------------
 
 -- | Internal state of `pickObjectsToDownload` computation.
 data DecisionInternalState peerAddr objectId object
@@ -198,15 +367,14 @@ pickObjectsToDownload
                         ,
                           ( (peerAddr, peerObjectState')
                           , PeerDecision
-                              { pdIdsToAck = numObjectIdsToAck
-                              , pdIdsToReq = numObjectIdsToReq
-                              , pdCanPipelineIdsReq =
+                              { pdNumIdsToAck = numObjectIdsToAck
+                              , pdNumIdsToReq = numObjectIdsToReq
+                              , pdCanPipelineIdsRequests =
                                   not
                                     . StrictSeq.null
                                     . dpsOutstandingFifo
                                     $ peerObjectState'
                               , pdObjectsToReqIds = Set.empty
-                              , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds
                               }
                           )
                         )
@@ -304,15 +472,14 @@ pickObjectsToDownload
                         ,
                           ( (peerAddr, peerObjectState'')
                           , PeerDecision
-                              { pdIdsToAck = numObjectIdsToAck
-                              , pdCanPipelineIdsReq =
+                              { pdNumIdsToAck = numObjectIdsToAck
+                              , pdCanPipelineIdsRequests =
                                   not
                                     . StrictSeq.null
                                     . dpsOutstandingFifo
                                     $ peerObjectState''
-                              , pdIdsToReq = numObjectIdsToReq
+                              , pdNumIdsToReq = numObjectIdsToReq
                               , pdObjectsToReqIds = pdObjectsToReqIdsMap
-                              , pdObjectsToSubmitToPoolIds = pdObjectsToSubmitToPoolIds
                               }
                           )
                         )
@@ -363,17 +530,16 @@ pickObjectsToDownload
          in ( sharedState
                 { dgsPeerStates = dgsPeerStates'
                 , dgsObjectsInflightMultiplicities = disObjectsInflightMultiplicities
-                , dgsObjectsPendingMultiplicities = dgsObjectsPendingMultiplicities'
                 , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
                 }
             , -- exclude empty results
               mapMaybe
                 ( \((a, _), b) -> case b of
                     PeerDecision
-                      { pdIdsToAck = 0
-                      , pdIdsToReq = 0
+                      { pdNumIdsToAck = 0
+                      , pdNumIdsToReq = 0
                       , pdObjectsToReqIds
-                      , pdObjectsToSubmitToPoolIds }
+                       }
                         | null pdObjectsToReqIds
                         , Map.null pdObjectsToSubmitToPoolIds ->
                             Nothing
@@ -387,7 +553,7 @@ pickObjectsToDownload
           Map objectId Int ->
           (a, PeerDecision objectId object) ->
           Map objectId Int
-        updateInSubmissionToObjectPoolObjects m (_, PeerDecision{pdObjectsToSubmitToPoolIds}) =
+        updateInSubmissionToObjectPoolObjects m (_, PeerDecision{}) =
           List.foldl' fn m (Map.toList pdObjectsToSubmitToPoolIds)
          where
           fn ::
@@ -435,11 +601,11 @@ filterActivePeers
         dpsNumIdsInflight == 0
           -- if a peer has objectIds in-flight, we cannot request more objectIds or objects.
           && dpsNumIdsInflight + numOfUnacked <= dpMaxNumObjectsOutstanding
-          && pdIdsToReq > 0
+          && pdNumIdsToReq > 0
        where
         -- Split `dpsOutstandingFifo'` into the longest prefix of `objectId`s which
         -- can be acknowledged and the unacknowledged `objectId`s.
-        (pdIdsToReq, _, unackedObjectIds) = splitAcknowledgedObjectIds decisionPolicy globalState peerObjectState
+        (pdNumIdsToReq, _, unackedObjectIds) = splitAcknowledgedObjectIds decisionPolicy globalState peerObjectState
         numOfUnacked = fromIntegral (StrictSeq.length unackedObjectIds)
 
     gn :: DecisionPeerState objectId object -> Bool
@@ -452,7 +618,7 @@ filterActivePeers
         } =
         ( dpsNumIdsInflight == 0
             && dpsNumIdsInflight + numOfUnacked <= dpMaxNumObjectsOutstanding
-            && pdIdsToReq > 0
+            && pdNumIdsToReq > 0
         )
           || (not (Set.null downloadable))
        where
@@ -466,7 +632,7 @@ filterActivePeers
 
         -- Split `dpsOutstandingFifo'` into the longest prefix of `objectId`s which
         -- can be acknowledged and the unacknowledged `objectId`s.
-        (pdIdsToReq, _, _) = splitAcknowledgedObjectIds decisionPolicy globalState peerObjectState
+        (pdNumIdsToReq, _, _) = splitAcknowledgedObjectIds decisionPolicy globalState peerObjectState
 
 --
 -- Auxiliary functions
@@ -525,15 +691,14 @@ acknowledgeObjectIds
   ps@DecisionPeerState
     { dpsObjectsAvailableIds
     , dpsNumIdsInflight
-    , dpsObjectsPending
     , dpsObjectsOwtPool
     } =
     -- We can only acknowledge objectIds when we can request new ones, since
     -- a `MsgRequestObjectIds` for 0 objectIds is a protocol error.
-    if pdIdsToReq > 0
+    if pdNumIdsToReq > 0
       then
-        ( pdIdsToAck
-        , pdIdsToReq
+        ( pdNumIdsToAck
+        , pdNumIdsToReq
         , objectsOwtPool
         , refCountDiff
         , ps
@@ -541,8 +706,7 @@ acknowledgeObjectIds
             , dpsObjectsAvailableIds = dpsObjectsAvailableIds'
             , dpsNumIdsInflight =
                 dpsNumIdsInflight
-                  + pdIdsToReq
-            , dpsObjectsPending = dpsObjectsPending'
+                  + pdNumIdsToReq
             , dpsObjectsOwtPool = dpsObjectsOwtPool'
             }
         )
@@ -556,7 +720,7 @@ acknowledgeObjectIds
    where
     -- Split `dpsOutstandingFifo'` into the longest prefix of `objectId`s which
     -- can be acknowledged and the unacknowledged `objectId`s.
-    (pdIdsToReq, acknowledgedObjectIds, dpsOutstandingFifo') =
+    (pdNumIdsToReq, acknowledgedObjectIds, dpsOutstandingFifo') =
       splitAcknowledgedObjectIds decisionPolicy globalState ps
 
     objectsOwtPoolList =
@@ -601,8 +765,8 @@ acknowledgeObjectIds
       fn Nothing = Just 1
       fn (Just n) = Just $! n + 1
 
-    pdIdsToAck :: NumObjectIdsAck
-    pdIdsToAck = fromIntegral $ StrictSeq.length acknowledgedObjectIds
+    pdNumIdsToAck :: NumObjectIdsAck
+    pdNumIdsToAck = fromIntegral $ StrictSeq.length acknowledgedObjectIds
 
 -- | Split unacknowledged objectIds into acknowledged and unacknowledged parts, also
 -- return number of objectIds which can be requested.
@@ -620,15 +784,14 @@ splitAcknowledgedObjectIds
     , dpMaxNumObjectIdsReq
     }
   DecisionGlobalState
-    { dgsObjectsPendingMultiplicities
+    {
     }
   DecisionPeerState
     { dpsOutstandingFifo
-    , dpsObjectsPending
     , dpsObjectsInflightIds
     , dpsNumIdsInflight
     } =
-    (pdIdsToReq, acknowledgedObjectIds', dpsOutstandingFifo')
+    (pdNumIdsToReq, acknowledgedObjectIds', dpsOutstandingFifo')
    where
     (acknowledgedObjectIds', dpsOutstandingFifo') =
       StrictSeq.spanl
@@ -644,7 +807,7 @@ splitAcknowledgedObjectIds
     numOfAcked = StrictSeq.length acknowledgedObjectIds'
     unackedAndRequested = fromIntegral numOfUnacked + dpsNumIdsInflight
 
-    pdIdsToReq =
+    pdNumIdsToReq =
       assert (unackedAndRequested <= dpMaxNumObjectsOutstanding) $
         assert (dpsNumIdsInflight <= dpMaxNumObjectIdsReq) $
           (dpMaxNumObjectsOutstanding - unackedAndRequested + fromIntegral numOfAcked)

@@ -194,24 +194,12 @@ onReceivedIdsImpl
           peerAddr
           dgsPeerStates
   
-      -- Filter out objects we are not interesting in downloading
-      newObjectsAvailableIds =
-        Set.filter (\objectId ->
-          (not . hasObject $ objectId) -- object isn't already in the object pool
-            && objectId `Set.notMember` dpsObjectsInflightIds -- object isn't in flight from current peer
-
-            -- We keep as "available" objects that have already been downloaded
-            -- from other peers but haven't been added to the object pool yet.
-            -- (aka. are in dpsObjectsOwtPool).
-            -- That's because if a peer disconnects while the objects are pending
-            -- or owt pool, they will be lost forever, and other peers won't be
-            -- able to re-request them.
-            -- See discussion:
-            -- https://moduscreate.slack.com/archives/C0937JQQ1F0/p1760343643030879?thread_ts=1760105747.965519&cid=C0937JQQ1F0
-          ) $ Set.fromList receivedIds
-
+      -- Actually we don't need to filter out availableIds, because
+      -- makeDecisions is the only reader of dpsObjectsAvailableIds
+      -- and will filter it when needed with the actualized state of the object
+      -- pool.
       dpsObjectsAvailableIds' =
-        dpsObjectsAvailableIds `Set.union` newObjectsAvailableIds
+        dpsObjectsAvailableIds `Set.union` Set.fromList receivedIds
 
       -- Add received objectIds to `dpsOutstandingFifo`.
       dpsOutstandingFifo' = dpsOutstandingFifo <> StrictSeq.fromList receivedIds
