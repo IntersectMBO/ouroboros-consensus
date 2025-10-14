@@ -19,6 +19,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
 
 import Control.Concurrent.Class.MonadMVar.Strict
 import Control.Concurrent.Class.MonadSTM.Strict
+import Control.Monad (forever)
 import Control.Monad.Class.MonadFork
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTime.SI
@@ -30,6 +31,7 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as StrictSeq
+import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Void (Void)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
@@ -37,9 +39,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State qualified as State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-import Control.Monad (forever)
-import Data.Set (Set)
-import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq, NumObjectIdsAck)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsAck, NumObjectIdsReq)
 
 -- | Communication channels between `ObjectDiffusion` mini-protocol inbound side
 -- and decision logic.
@@ -59,10 +59,10 @@ data PeerStateAPI m objectId object = PeerStateAPI
   , psaOnRequestIds :: NumObjectIdsAck -> NumObjectIdsReq -> m ()
   , psaOnRequestObjects :: Set objectId -> m ()
   , psaOnReceivedIds :: NumObjectIdsReq -> [objectId] -> m ()
-    -- ^ Error handling should have been done before calling this
+  -- ^ Error handling should have been done before calling this
   , psaOnReceivedObjects :: [object] -> m ()
-    -- ^ Error handling should have been done before calling this
-    -- Also every object should have been validated!
+  -- ^ Error handling should have been done before calling this
+  -- Also every object should have been validated!
   }
 
 -- | A bracket function which registers / de-registers a new peer in
@@ -100,73 +100,77 @@ withPeer
   peerAddr
   withAPI =
     bracket registerPeerAndCreateAPI unregisterPeer withAPI
-  where
+   where
     registerPeerAndCreateAPI :: m (PeerStateAPI m objectId object)
     registerPeerAndCreateAPI = do
-          -- create the API for this peer, obtaining a channel for it in the process
-          !inboundPeerAPI <-
-            modifyMVar
-              decisionChannelsVar
-              \peerToChannel -> do
-                -- We get a channel for this peer, and register it in peerToChannel.
-                (chan', peerToChannel') <-
-                  case peerToChannel Map.!? peerAddr of
-                    -- Checks if a channel already exists for this peer, in case we reuse it
-                    Just chan -> return (chan, peerToChannel)
-                    -- Otherwise create a new channel and register it
-                    Nothing -> do
-                      chan <- newEmptyMVar
-                      return (chan, Map.insert peerAddr chan peerToChannel)
-                return
-                  ( peerToChannel'
-                  , PeerStateAPI
-                      { psaReadDecision = takeMVar chan'
-                      , psaOnRequestIds = State.onRequestIds
-                          objectDiffusionTracer
-                          decisionTracer
-                          globalStateVar
-                          objectPoolWriter
-                          peerAddr
-                      , psaOnRequestObjects = State.onRequestObjects
-                          objectDiffusionTracer
-                          decisionTracer
-                          globalStateVar
-                          objectPoolWriter
-                          peerAddr
-                      , psaOnReceivedIds = State.onReceiveIds
-                          objectDiffusionTracer
-                          decisionTracer
-                          globalStateVar
-                          objectPoolWriter
-                          peerAddr
-                      , psaOnReceivedObjects = State.onReceiveObjects
-                          objectDiffusionTracer
-                          decisionTracer
-                          globalStateVar
-                          objectPoolWriter
-                          objectPoolSem
-                          peerAddr
-                      }
-                  )
-          -- register the peer in the global state now
-          atomically $ modifyTVar globalStateVar registerPeerGlobalState
-          -- initialization is complete for this peer, it can proceed and
-          -- interact through its given API
-          return inboundPeerAPI
-      where
+      -- create the API for this peer, obtaining a channel for it in the process
+      !inboundPeerAPI <-
+        modifyMVar
+          decisionChannelsVar
+          \peerToChannel -> do
+            -- We get a channel for this peer, and register it in peerToChannel.
+            (chan', peerToChannel') <-
+              case peerToChannel Map.!? peerAddr of
+                -- Checks if a channel already exists for this peer, in case we reuse it
+                Just chan -> return (chan, peerToChannel)
+                -- Otherwise create a new channel and register it
+                Nothing -> do
+                  chan <- newEmptyMVar
+                  return (chan, Map.insert peerAddr chan peerToChannel)
+            return
+              ( peerToChannel'
+              , PeerStateAPI
+                  { psaReadDecision = takeMVar chan'
+                  , psaOnRequestIds =
+                      State.onRequestIds
+                        objectDiffusionTracer
+                        decisionTracer
+                        globalStateVar
+                        objectPoolWriter
+                        peerAddr
+                  , psaOnRequestObjects =
+                      State.onRequestObjects
+                        objectDiffusionTracer
+                        decisionTracer
+                        globalStateVar
+                        objectPoolWriter
+                        peerAddr
+                  , psaOnReceivedIds =
+                      State.onReceiveIds
+                        objectDiffusionTracer
+                        decisionTracer
+                        globalStateVar
+                        objectPoolWriter
+                        peerAddr
+                  , psaOnReceivedObjects =
+                      State.onReceiveObjects
+                        objectDiffusionTracer
+                        decisionTracer
+                        globalStateVar
+                        objectPoolWriter
+                        objectPoolSem
+                        peerAddr
+                  }
+              )
+      -- register the peer in the global state now
+      atomically $ modifyTVar globalStateVar registerPeerGlobalState
+      -- initialization is complete for this peer, it can proceed and
+      -- interact through its given API
+      return inboundPeerAPI
+     where
 
     unregisterPeer :: PeerStateAPI m objectId object -> m ()
     unregisterPeer _ =
       -- the handler is a short blocking operation, thus we need to use
       -- `uninterruptibleMask_`
       uninterruptibleMask_ do
-          -- unregister the peer from the global state
-          atomically $ modifyTVar globalStateVar unregisterPeerGlobalState
-          -- remove the channel of this peer from the global channel map
-          modifyMVar_
-            decisionChannelsVar
-            \peerToChannel ->
-              return $ Map.delete peerAddr peerToChannel
+        -- unregister the peer from the global state
+        atomically $ modifyTVar globalStateVar unregisterPeerGlobalState
+        -- remove the channel of this peer from the global channel map
+        modifyMVar_
+          decisionChannelsVar
+          \peerToChannel ->
+            return $ Map.delete peerAddr peerToChannel
 
     registerPeerGlobalState ::
       DecisionGlobalState peerAddr objectId object ->
@@ -212,7 +216,12 @@ withPeer
           ) =
             Map.alterF
               ( \case
-                  Nothing -> error ("ObjectDiffusion.withPeer: can't unregister peer " ++ show peerAddr ++ " because it isn't registered")
+                  Nothing ->
+                    error
+                      ( "ObjectDiffusion.withPeer: can't unregister peer "
+                          ++ show peerAddr
+                          ++ " because it isn't registered"
+                      )
                   Just a -> (a, Nothing)
               )
               peerAddr
@@ -280,7 +289,7 @@ decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject}
     -- Send the decisions to the corresponding peers
     -- Note that decisions are incremental, so we merge the old one to the new one (using the semigroup instance) if there is an old one
     traverse_ (uncurry putMVar) peerToChannelAndDecision
-      
+
     traceWith countersTracer (makeObjectDiffusionCounters globalState')
 
 -- `5ms` delay

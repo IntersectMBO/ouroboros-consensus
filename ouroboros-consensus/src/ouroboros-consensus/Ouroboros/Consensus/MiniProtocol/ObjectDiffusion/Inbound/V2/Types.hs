@@ -1,13 +1,13 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingVia #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
   ( -- * DecisionPeerState
@@ -48,26 +48,26 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
   , newObjectPoolSem
   ) where
 
-import Control.Concurrent.Class.MonadSTM.Strict (MonadSTM, atomically, StrictTVar, newTVarIO)
+import Control.Concurrent.Class.MonadSTM.Strict (MonadSTM, StrictTVar, atomically, newTVarIO)
 import Control.Concurrent.Class.MonadSTM.TSem (TSem, newTSem)
+import Control.DeepSeq (NFData)
 import Control.Exception (Exception (..))
 import Control.Monad.Class.MonadTime.SI
+import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Map.Merge.Strict qualified as Map
 import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
+import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set (Set)
 import Data.Set qualified as Set
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
-import Ouroboros.Network.Protocol.ObjectDiffusion.Type
-import System.Random (StdGen)
-import Data.Word (Word64)
 import Ouroboros.Network.ControlMessage (ControlMessage)
-import Control.DeepSeq (NFData)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 import Quiet (Quiet (..))
-import qualified Data.Sequence.Strict as StrictSeq
+import System.Random (StdGen)
 
 -- | Semaphore to guard access to the ObjectPool
 newtype ObjectPoolSem m = ObjectPoolSem (TSem m)
@@ -158,17 +158,22 @@ instance
   NoThunks (DecisionGlobalState peerAddr objectId object)
 
 -- | Merge dpsObjectsAvailableIds from all peers of the global state.
-dgsObjectsAvailableMultiplicities :: Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId ObjectMultiplicity
+dgsObjectsAvailableMultiplicities ::
+  Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId ObjectMultiplicity
 dgsObjectsAvailableMultiplicities DecisionGlobalState{dgsPeerStates} =
   Map.unionsWith
     (+)
-    ( Map.fromSet (const 1) . dpsObjectsAvailableIds <$> Map.elems dgsPeerStates)
+    (Map.fromSet (const 1) . dpsObjectsAvailableIds <$> Map.elems dgsPeerStates)
 
-nonZeroCountMapDiff :: (Ord k) => Map k ObjectMultiplicity -> Map k ObjectMultiplicity -> Map k ObjectMultiplicity
-nonZeroCountMapDiff = Map.merge
-  Map.preserveMissing
-  Map.dropMissing
-  (Map.zipWithMaybeMatched (\_ count1 count2 -> let c = count1 - count2 in if c > 0 then Just c else Nothing))
+nonZeroCountMapDiff ::
+  Ord k => Map k ObjectMultiplicity -> Map k ObjectMultiplicity -> Map k ObjectMultiplicity
+nonZeroCountMapDiff =
+  Map.merge
+    Map.preserveMissing
+    Map.dropMissing
+    ( Map.zipWithMaybeMatched
+        (\_ count1 count2 -> let c = count1 - count2 in if c > 0 then Just c else Nothing)
+    )
 
 type DecisionGlobalStateVar m peerAddr objectId object =
   StrictTVar m (DecisionGlobalState peerAddr objectId object)
@@ -267,9 +272,9 @@ newtype NumObjectsProcessed
   }
   deriving (Eq, Ord, NFData, Generic)
   deriving newtype (Num, Enum, Real, Integral, Bounded, NoThunks)
-  deriving (Semigroup) via (Sum Word64)
-  deriving (Monoid)    via (Sum Word64)
-  deriving (Show)      via (Quiet NumObjectsProcessed)
+  deriving Semigroup via (Sum Word64)
+  deriving Monoid via (Sum Word64)
+  deriving Show via (Quiet NumObjectsProcessed)
 
 newtype ObjectMultiplicity
   = ObjectMultiplicity
@@ -277,16 +282,16 @@ newtype ObjectMultiplicity
   }
   deriving (Eq, Ord, NFData, Generic)
   deriving newtype (Num, Enum, Real, Integral, Bounded, NoThunks)
-  deriving (Semigroup) via (Sum Word64)
-  deriving (Monoid)    via (Sum Word64)
-  deriving (Show)      via (Quiet ObjectMultiplicity)
+  deriving Semigroup via (Sum Word64)
+  deriving Monoid via (Sum Word64)
+  deriving Show via (Quiet ObjectMultiplicity)
 
 increaseCount :: Ord k => Map k ObjectMultiplicity -> k -> Map k ObjectMultiplicity
 increaseCount mmap k =
   Map.alter
-    (\case
-      Nothing -> Just $! 1
-      Just cnt -> Just $! succ cnt
+    ( \case
+        Nothing -> Just $! 1
+        Just cnt -> Just $! succ cnt
     )
     k
     mmap

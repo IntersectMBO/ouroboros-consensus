@@ -3,8 +3,12 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
   , defaultDecisionPolicy
   ) where
 
-import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq (..), NumObjectsOutstanding, NumObjectsReq (..))
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types (ObjectMultiplicity)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Type
+  ( NumObjectIdsReq (..)
+  , NumObjectsOutstanding
+  , NumObjectsReq (..)
+  )
 
 -- | Policy for making decisions
 data DecisionPolicy = DecisionPolicy
@@ -12,7 +16,7 @@ data DecisionPolicy = DecisionPolicy
   -- ^ a maximal number of objectIds requested at once.
   , dpMaxNumObjectsOutstanding :: !NumObjectsOutstanding
   -- ^ maximal number of dpsOutstandingFifo.
-  ,  dpMaxNumObjectsInflightPerPeer :: !NumObjectsReq
+  , dpMaxNumObjectsInflightPerPeer :: !NumObjectsReq
   -- ^ a limit of objects in-flight from a single peer, plus or minus 1.
   , dpMaxNumObjectsInflightTotal :: !NumObjectsReq
   -- ^ a limit of object size in-flight from all peers, plus or minus 1

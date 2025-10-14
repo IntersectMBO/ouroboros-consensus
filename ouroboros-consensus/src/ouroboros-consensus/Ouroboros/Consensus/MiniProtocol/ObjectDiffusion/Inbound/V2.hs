@@ -1,11 +1,11 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE ImportQualifiedPost #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
   ( -- * ObjectDiffusion Inbound client
@@ -27,29 +27,28 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
   , defaultDecisionPolicy
   ) where
 
+import Control.Concurrent.Class.MonadSTM (atomically)
 import Control.Exception (assert)
 import Control.Monad (unless, when)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTimer.SI
 import Control.Tracer (Tracer, traceWith)
-import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map.Strict as Map
-import qualified Data.Sequence.Strict as StrictSeq
-import qualified Data.Set as Set
+import Data.List.NonEmpty qualified as NonEmpty
+import Data.Map.Strict qualified as Map
+import Data.Sequence.Strict qualified as StrictSeq
+import Data.Set qualified as Set
 import Network.TypedProtocol
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State qualified as State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types as V2
-import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-import Ouroboros.Network.ControlMessage (ControlMessageSTM, ControlMessage (..))
-import Control.Concurrent.Class.MonadSTM (atomically)
-
+import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 
 -- | A object-submission inbound side (client).
 --
--- The goIdle' function blocks on receiving `PeerDecision` from the decision logic. 
+-- The goIdle' function blocks on receiving `PeerDecision` from the decision logic.
 objectDiffusionInbound ::
   forall objectId object ticketNo m.
   ( MonadDelay m
@@ -78,7 +77,8 @@ objectDiffusionInbound
         NoObjectDiffusionInitDelay -> return ()
       (goIdle Zero)
    where
-    goIdle :: forall (n :: N).
+    goIdle ::
+      forall (n :: N).
       Nat n ->
       m (InboundStIdle Z objectId object m ())
     goIdle n = do
@@ -90,7 +90,8 @@ objectDiffusionInbound
           pure $ terminateAfterDrain n
         -- Otherwise, we can continue the protocol normally.
         _continue -> goIdle'
-    goIdle' :: forall (n :: N).
+    goIdle' ::
+      forall (n :: N).
       Nat n ->
       m (InboundStIdle Z objectId object m ())
     goIdle' n = do
@@ -127,7 +128,7 @@ objectDiffusionInbound
               -- blocking call.
               traceWith tracer (TraceObjectDiffusionInboundCannotRequestMoreObjects (natToInt n))
               goReqIdsBlocking decision
-        
+
         -- We have pipelined some requests, so there are some replies in flight.
         n@(Succ _) ->
           if shouldRequestMoreObjects
@@ -136,16 +137,16 @@ objectDiffusionInbound
               -- available, but there are objects to request too so we
               -- should *not* block waiting for replies.
               -- So we ask for new objects and objectIds in a pipelined way.
-              pure $ CollectPipelined
-                -- if no replies are available immediately, we continue with
-                (Just (goReqObjectsIdsPipelined n decision))
-                -- if one reply is available, we go collect it.
-                -- We will continue to goIdle after; so in practice we will loop
-                -- until all immediately available replies have been collected
-                -- before requesting objects and ids in a pipelined fashion
-                (goCollect n decision)
+              pure $
+                CollectPipelined
+                  -- if no replies are available immediately, we continue with
+                  (Just (goReqObjectsIdsPipelined n decision))
+                  -- if one reply is available, we go collect it.
+                  -- We will continue to goIdle after; so in practice we will loop
+                  -- until all immediately available replies have been collected
+                  -- before requesting objects and ids in a pipelined fashion
+                  (goCollect n decision)
             else do undefined
-              
 
       if Set.null pdObjectsToReqIds
         then goReqObjectIds Zero undefined
