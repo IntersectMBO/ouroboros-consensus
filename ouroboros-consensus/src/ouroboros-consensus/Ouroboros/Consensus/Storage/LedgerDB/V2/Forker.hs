@@ -19,8 +19,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
   , module Ouroboros.Consensus.Storage.LedgerDB.Forker
   ) where
 
-import qualified Control.Monad as Monad
-import Control.RAWLock hiding (read)
+import Control.RAWLock (RAWLock)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Maybe (fromMaybe)
@@ -49,13 +48,22 @@ data ForkerEnv m l blk = ForkerEnv
   -- ^ Local version of the LedgerSeq
   , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l))
   -- ^ This TVar is the same as the LedgerDB one
+  , foeLedgerDbRegistry :: !(ResourceRegistry m)
+  -- ^ The registry in the LedgerDB to move handles to in case we commit the
+  -- forker.
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
-  , foeResourcesToRelease :: !(RAWLock m (), ResourceKey m, StrictTVar m (m ()))
-  -- ^ Release the resources
+  , foeResourceRegistry :: !(ResourceRegistry m)
+  -- ^ The registry local to the forker
   , foeInitialHandleKey :: !(ResourceKey m)
   -- ^ Resource key for the initial handle to ensure it is released. See
   -- comments in 'implForkerCommit'.
+  , foeCleanup :: !(StrictTVar m (m ()))
+  -- ^ An action to run on cleanup. If the forker was not committed this will be
+  -- the trivial action. Otherwise it will move the required handles to the
+  -- LedgerDB and release the discarded ones.
+  , foeLedgerDbLock :: !(RAWLock m ())
+  -- ^ 'ldbOpenHandlesLock'.
   }
   deriving Generic
 
@@ -127,17 +135,15 @@ implForkerPush env newState = do
       st = forgetLedgerTables newState
 
   bracketOnError
-    (duplicate (tables $ currentHandle lseq))
-    close
-    ( \newtbs -> do
+    (duplicate (tables $ currentHandle lseq) (foeResourceRegistry env))
+    (release . fst)
+    ( \(_, newtbs) -> do
         pushDiffs newtbs st0 newState
 
         let lseq' = extend (StateRef st newtbs) lseq
 
         traceWith (foeTracer env) ForkerPushEnd
-        atomically $ do
-          writeTVar (foeLedgerSeq env) lseq'
-          modifyTVar ((\(_, _, r) -> r) $ foeResourcesToRelease env) (>> close newtbs)
+        atomically $ writeTVar (foeLedgerSeq env) lseq'
     )
 
 implForkerCommit ::
@@ -148,42 +154,39 @@ implForkerCommit env = do
   LedgerSeq lseq <- readTVar foeLedgerSeq
   let intersectionSlot = getTipSlot $ state $ AS.anchor lseq
   let predicate = (== getTipHash (state (AS.anchor lseq))) . getTipHash . state
-  closeDiscarded <- do
+  transfer <-
     stateTVar
       foeSwitchVar
       ( \(LedgerSeq olddb) -> fromMaybe theImpossible $ do
           -- Split the selection at the intersection point. The snd component will
           -- have to be closed.
-          (olddb', toClose) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
+          (toKeepBase, toCloseLdb) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
+          (toCloseForker, toKeepTip) <-
+            AS.splitAfterMeasure intersectionSlot (either predicate predicate) lseq
           -- Join the prefix of the selection with the sequence in the forker
-          newdb <- AS.join (const $ const True) olddb' lseq
-          let closeDiscarded = do
+          newdb <- AS.join (const $ const True) toKeepBase toKeepTip
+          let transferCommitted = do
                 -- Do /not/ close the anchor of @toClose@, as that is also the
                 -- tip of @olddb'@ which will be used in @newdb@.
-                case toClose of
+                case toCloseLdb of
                   AS.Empty _ -> pure ()
                   _ AS.:< closeOld' -> closeLedgerSeq (LedgerSeq closeOld')
-                -- Finally, close the anchor of @lseq@ (which is a duplicate of
-                -- the head of @olddb'@). To close this handle, we have to
-                -- release the 'foeInitialHandleKey' as that one is registered
-                -- on the registry used to open the forker. Releasing it will
-                -- call 'close' on the handle which will call 'release' on the key
-                -- for the handle.
-                Monad.void $ release foeInitialHandleKey
-          pure (closeDiscarded, LedgerSeq newdb)
-      )
+                closeLedgerSeq (LedgerSeq toCloseForker)
 
-  -- We are discarding the previous value in the TVar because we had accumulated
-  -- actions for closing the states pushed to the forker. As we are committing
-  -- those we have to close the ones discarded in this function and forget about
-  -- those releasing actions.
-  writeTVar ((\(_, _, r) -> r) $ foeResourcesToRelease) closeDiscarded
+                -- All the other remaining handles are transferred to the LedgerDB registry
+                keys <- ingestRegistry foeResourceRegistry foeLedgerDbRegistry
+                mapM_ (\(k, v) -> transfer (tables v) k) $ zip keys (AS.toOldestFirst toKeepTip)
+
+          pure (transferCommitted, LedgerSeq newdb)
+      )
+  writeTVar foeCleanup transfer
  where
   ForkerEnv
     { foeLedgerSeq
     , foeSwitchVar
-    , foeResourcesToRelease
-    , foeInitialHandleKey
+    , foeResourceRegistry
+    , foeLedgerDbRegistry
+    , foeCleanup
     } = env
 
   theImpossible =
