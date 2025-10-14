@@ -41,7 +41,6 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
     -- * Helpers for ObjectMultiplicity maps
   , increaseCount
   , decreaseCount
-  , nonZeroCountMapDiff
 
     -- * Object pool semaphore
   , ObjectPoolSem (..)
@@ -164,16 +163,6 @@ dgsObjectsAvailableMultiplicities DecisionGlobalState{dgsPeerStates} =
   Map.unionsWith
     (+)
     (Map.fromSet (const 1) . dpsObjectsAvailableIds <$> Map.elems dgsPeerStates)
-
-nonZeroCountMapDiff ::
-  Ord k => Map k ObjectMultiplicity -> Map k ObjectMultiplicity -> Map k ObjectMultiplicity
-nonZeroCountMapDiff =
-  Map.merge
-    Map.preserveMissing
-    Map.dropMissing
-    ( Map.zipWithMaybeMatched
-        (\_ count1 count2 -> let c = count1 - count2 in if c > 0 then Just c else Nothing)
-    )
 
 type DecisionGlobalStateVar m peerAddr objectId object =
   StrictTVar m (DecisionGlobalState peerAddr objectId object)
