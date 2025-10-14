@@ -280,37 +280,31 @@ encodeEB bytesToLen hashToBytes ebItems =
 --
 -- The @[a]@ is less than 1024 long.
 --
--- Each 'V.Vector' is exactly 1024.
-data X a = X [V.Vector a] !Word16 [a]
-
-emptyX :: X a
-emptyX = X [] 0 []
-
-pushX :: a -> X a -> X a
-pushX x (X vs n xs) =
-    if n < 1024 then X vs (n+1) (x : xs) else
-    X (V.fromList (reverse xs) : vs) 1 [x]
-
--- | helper for msgLeiosBlockRequest
-newtype Y a = Y [V.Vector a]
+-- Each 'V.Vector' is exactly 1024 long.
+data X a = X !Word16 [a] [V.Vector a]
   deriving (Functor, Foldable)
 
-finalizeX :: X a -> Y a
-finalizeX (X vs _n xs) = Y $ reverse $ V.fromList (reverse xs) : vs
+emptyX :: X a
+emptyX = X 0 [] []
+
+pushX :: X a -> a -> X a
+pushX (X n xs vs) x =
+    if n < 1024 then X (n+1) (x : xs) vs else
+    X 1 [x] (V.fromList xs : vs)
 
 msgLeiosBlockRequest :: DB.Database -> Word64 -> ByteString -> IO ()
 msgLeiosBlockRequest db ebSlot ebHash = do
     -- get the EB items
-    stmt_lookup_ebBodies <- withDieJust $ DB.prepare db (fromString sql_lookup_ebBodies)
+    stmt_lookup_ebBodies <- withDieJust $ DB.prepare db (fromString sql_lookup_ebBodies_DESC)
     withDie $ DB.bindInt64 stmt_lookup_ebBodies 1 (fromIntegral ebSlot)
     withDie $ DB.bindBlob  stmt_lookup_ebBodies 2 ebHash
     let loop !acc = do
             withDie (DB.stepNoCB stmt_lookup_ebBodies) >>= \case
-                DB.Done -> pure $ finalizeX acc
+                DB.Done -> pure acc
                 DB.Row -> do
                     txHash <- DB.columnBlob stmt_lookup_ebBodies 0
                     txSizeInBytes <- DB.columnInt64 stmt_lookup_ebBodies 1
-                    loop $ pushX (txSizeInBytes, txHash) acc
+                    loop $ pushX acc (txSizeInBytes, txHash)
     y <- loop emptyX
     -- combine the EB items
     BS.putStr
@@ -319,12 +313,14 @@ msgLeiosBlockRequest db ebSlot ebHash = do
       $ encodeEB fromIntegral id y
     putStrLn ""
 
-sql_lookup_ebBodies :: String
-sql_lookup_ebBodies =
+-- | It's DESCending because the accumulator within the 'msgLeiosBlockRequest'
+-- logic naturally reverses it
+sql_lookup_ebBodies_DESC :: String
+sql_lookup_ebBodies_DESC =
     "SELECT ebBodies.txHash, ebBodies.txSizeInBytes FROM ebBodies\n\
     \INNER JOIN ebPoints ON ebBodies.ebPoint = ebPoints.id\n\
     \WHERE ebPoints.ebSlot = ? AND ebPoints.ebHash = ?\n\
-    \ORDER BY ebBodies.txOffset\n\
+    \ORDER BY ebBodies.txOffset DESC\n\
     \"
 
 msgLeiosBlockTxsRequest :: DB.Database -> Word64 -> ByteString -> [(Word16, Word64)] -> IO ()
