@@ -116,10 +116,10 @@ instance Arbitrary TestSetup where
 -- See the @'Arbitrary' 'Test.ThreadNet.DualByron.SetupDualByron'@ instance.
 genTestSetup :: SecurityParam -> NumCoreNodes -> NumSlots -> SlotLength -> Gen TestSetup
 genTestSetup k numCoreNodes numSlots setupSlotLength = do
-    setupEBBs    <- arbitrary
-    initSeed     <- arbitrary
-    nodeTopology <- genNodeTopology numCoreNodes
-    txLogicVersion <- elements [minBound..maxBound]
+  setupEBBs    <- arbitrary
+  initSeed     <- arbitrary
+  nodeTopology <- genNodeTopology numCoreNodes
+  txLogicVersion <- elements [minBound..maxBound]
 
   let testConfig =
         TestConfig

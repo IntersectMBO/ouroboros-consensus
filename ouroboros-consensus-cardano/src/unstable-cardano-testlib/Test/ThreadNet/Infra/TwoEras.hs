@@ -142,9 +142,9 @@ genTestConfig k (EpochSize epochSize1, EpochSize epochSize2) = do
         Topo.unionNodeTopology oddTopo $
           topo0
 
-    txLogicVersion <- elements [minBound..maxBound]
+  txLogicVersion <- elements [minBound..maxBound]
 
-    pure TestConfig
+  pure TestConfig
       { initSeed
       , nodeTopology
       , numCoreNodes = NumCoreNodes ncn
