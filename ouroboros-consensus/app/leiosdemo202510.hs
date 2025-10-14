@@ -10,7 +10,9 @@ module Main (main) where
 
 import           Cardano.Binary (serialize')
 import qualified Cardano.Crypto.Hash as Hash
+import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
+import qualified Codec.CBOR.Read as CBOR
 import           Control.Monad (foldM, when)
 import qualified Data.Aeson as JSON
 import qualified Data.Bits as Bits
@@ -54,6 +56,14 @@ main = getArgs >>= \case
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
         msgLeiosBlockRequest db ebSlot ebHash
+    ["MsgLeiosBlock", dbPath, ebPointStr, ebSlotStr, ebPath]
+      | ".db" `isSuffixOf` dbPath
+      , ".bin" `isSuffixOf` ebPath
+      , Just ebPoint <- readMaybe ebPointStr
+      , Just ebSlot <- readMaybe ebSlotStr
+      -> do
+        db <- withDieMsg $ DB.open (fromString dbPath)
+        msgLeiosBlock db ebPoint ebSlot ebPath
     "MsgLeiosBlockTxsRequest" : dbPath : ebSlotStr : ebHashStr : bitmapChunkStrs
       | ".db" `isSuffixOf` dbPath
       , Just ebSlot <- readMaybe ebSlotStr
@@ -65,6 +75,7 @@ main = getArgs >>= \case
     _ -> die "Either $0 generate myDatabase.db myManifest.json\n\
              \    OR $0 MsgLeiosBlockRequest myDatabase.db ebSlot ebHash(hex)\n\
              \    OR $0 MsgLeiosBlockTxsRequest myDatabase.db ebSlot ebHash(hex) index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
+             \    OR $0 MsgLeiosBlock myDatabase.db ebPoint(int) ebSlot myEb.bin\n\
              \"
 
 parseBitmaps :: [String] -> Maybe [(Word16, Word64)]
@@ -260,19 +271,31 @@ withDieJust io =
 
 -----
 
-encodeEbItem :: (b -> Word16) -> (h -> ByteString) -> (b, h) -> CBOR.Encoding
-encodeEbItem bytesToLen hashToBytes (txCborBytes, txHash) =
-    CBOR.encodeListLen 2
- <> CBOR.encodeBytes (hashToBytes txHash)
+encodeEbPair :: (b -> Word16) -> (h -> ByteString) -> (b, h) -> CBOR.Encoding
+encodeEbPair bytesToLen hashToBytes (txCborBytes, txHash) =
+    CBOR.encodeBytes (hashToBytes txHash)
  <> CBOR.encodeWord16 (bytesToLen txCborBytes)
 
 encodeEB :: Foldable f => (b -> Word16) -> (h -> ByteString) -> f (b, h) -> CBOR.Encoding
-encodeEB bytesToLen hashToBytes ebItems =
-    CBOR.encodeListLenIndef
+encodeEB bytesToLen hashToBytes ebPairs =
+    CBOR.encodeMapLenIndef
  <> foldr
-        (\x r -> encodeEbItem bytesToLen hashToBytes x <> r)
+        (\x r -> encodeEbPair bytesToLen hashToBytes x <> r)
         CBOR.encodeBreak
-        ebItems
+        ebPairs
+
+decodeEbPair :: CBOR.Decoder s (ByteString, Word16)
+decodeEbPair =
+    (,) <$> CBOR.decodeBytes <*> CBOR.decodeWord16
+
+_decodeEB :: CBOR.Decoder s (X (ByteString, Word16))
+_decodeEB =
+    CBOR.decodeMapLenIndef
+ *> CBOR.decodeSequenceLenIndef
+       pushX
+       emptyX
+       id
+       decodeEbPair
 
 -----
 
@@ -443,3 +466,43 @@ sql_lookup_ebClosures_DESC n =
     \"
   where
     hooks = intercalate ", " (replicate n "?")
+
+-----
+
+msgLeiosBlock :: DB.Database -> Int -> Word64 -> FilePath -> IO ()
+msgLeiosBlock db ebPoint ebSlot ebPath = do
+    ebBytes <- BS.readFile ebPath
+    let ebHash :: Hash.Hash HASH ByteString
+        ebHash = Hash.castHash $ Hash.hashWith id ebBytes
+    stmt_insert_ebPoints <- withDieJust $ DB.prepare db (fromString sql_insert_ebPoints)
+    stmt_insert_ebBodies <- withDieJust $ DB.prepare db (fromString sql_insert_ebBodies)
+    withDieMsg $ DB.exec db (fromString "BEGIN")
+    -- INSERT INTO ebPoints
+    withDie $ DB.bindInt64    stmt_insert_ebPoints 1 (fromIntegral ebSlot)
+    withDie $ DB.bindBlob     stmt_insert_ebPoints 2 (Hash.hashToBytes ebHash)
+    withDie $ DB.bindInt64    stmt_insert_ebPoints 3 (fromIntegral ebPoint)
+    withDieDone $ DB.stepNoCB stmt_insert_ebPoints
+    withDie $ DB.reset        stmt_insert_ebPoints
+    -- decode incrementally and simultaneously INSERT INTO ebBodies
+    let decodeBreakOrEbPair = do
+            stop <- CBOR.decodeBreakOr
+            if stop then pure Nothing else Just <$> decodeEbPair
+    let go1 txOffset bytes = do
+            (bytes', next) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes decodeBreakOrEbPair bytes
+            go2 txOffset bytes' next
+        go2 txOffset bytes = \case
+            Just (txHashBytes, txSizeInBytes) -> do
+                withDie $ DB.bindInt64    stmt_insert_ebBodies 1 (fromIntegral ebPoint)
+                withDie $ DB.bindInt64    stmt_insert_ebBodies 2 txOffset
+                withDie $ DB.bindBlob     stmt_insert_ebBodies 3 txHashBytes
+                withDie $ DB.bindInt64    stmt_insert_ebBodies 4 (fromIntegral txSizeInBytes)
+                withDieDone $ DB.stepNoCB stmt_insert_ebBodies
+                withDie $ DB.reset        stmt_insert_ebBodies
+                go1 (txOffset + 1) bytes
+            Nothing
+              | not (BSL.null bytes) -> die "Incomplete EB decode"
+              | otherwise -> pure ()
+    (ebBytes2, ()) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes CBOR.decodeMapLenIndef $ BSL.fromStrict ebBytes
+    go1 0 ebBytes2
+    -- finalize the EB
+    withDieMsg $ DB.exec db (fromString "COMMIT")
