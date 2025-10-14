@@ -214,37 +214,6 @@ data PeerDecision objectId object = PeerDecision
   }
   deriving (Show, Eq)
 
--- | A non-commutative semigroup instance.
---
--- /note:/ this instance must be consistent with `pickObjectsToDownload` and how
--- `DecisionPeerState` is updated.  It is designed to work with `TMergeVar`s.
-instance Ord objectId => Semigroup (PeerDecision objectId object) where
-  PeerDecision
-    { pdNumIdsToAck
-    , pdNumIdsToReq
-    , pdCanPipelineIdsRequests = _ignored
-    , pdObjectsToReqIds
-    }
-    <> PeerDecision
-      { pdNumIdsToAck = pdNumIdsToAck'
-      , pdNumIdsToReq = pdNumIdsToReq'
-      , pdCanPipelineIdsRequests = pdCanPipelineIdsRequests'
-      , pdObjectsToReqIds = pdObjectsToReqIds'
-      } =
-      PeerDecision
-        { pdNumIdsToAck = pdNumIdsToAck + pdNumIdsToAck'
-        , pdNumIdsToReq = pdNumIdsToReq + pdNumIdsToReq'
-        , pdCanPipelineIdsRequests = pdCanPipelineIdsRequests'
-        , pdObjectsToReqIds = pdObjectsToReqIds <> pdObjectsToReqIds'
-        }
-instance Ord objectId => Monoid (PeerDecision objectId object) where
-  mempty = PeerDecision
-    { pdNumIdsToAck = 0
-    , pdNumIdsToReq = 0
-    , pdCanPipelineIdsRequests = False
-    , pdObjectsToReqIds = Set.empty
-    }
-
 -- | ObjectLogic tracer.
 data TraceDecisionLogic peerAddr objectId object
   = TraceDecisionLogicGlobalStateUpdated String (DecisionGlobalState peerAddr objectId object)

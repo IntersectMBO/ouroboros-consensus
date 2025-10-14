@@ -10,8 +10,8 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
   , DecisionPeerState (..)
   , onRequestIds
   , onRequestObjects
-  , onReceivedIds
-  , onReceivedObjects
+  , onReceiveIds
+  , onReceiveObjects
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -28,7 +28,7 @@ import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API (ObjectPoolWriter (..))
 import Ouroboros.Consensus.Util.IOLike (MonadMask, MonadMVar, bracket_)
-import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq, NumObjectIdsAck)
 
 onRequestIds ::
   forall m peerAddr object objectId.
@@ -38,29 +38,34 @@ onRequestIds ::
   DecisionGlobalStateVar m peerAddr objectId object ->
   ObjectPoolWriter objectId object m ->
   peerAddr ->
+  NumObjectIdsAck ->
   -- | number of requests to req
   NumObjectIdsReq ->
   m ()
-onRequestIds odTracer decisionTracer globalStateVar _objectPoolWriter peerAddr numIdsToReq = do
+onRequestIds odTracer decisionTracer globalStateVar _objectPoolWriter peerAddr numIdsToAck numIdsToReq = do
   globalState' <- atomically $ do
     stateTVar
       globalStateVar
       ( \globalState ->
-          let globalState' = onRequestIdsImpl peerAddr numIdsToReq globalState
+          let globalState' = onRequestIdsImpl peerAddr numIdsToAck numIdsToReq globalState
            in (globalState', globalState') )
   traceWith odTracer (TraceObjectDiffusionInboundRequestedIds (fromIntegral numIdsToReq))
   traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "onRequestIds" globalState')
 
+-- Acknowledgment is done when a requestIds is made.
+-- That's why we update the dpsOutstandingFifo and dpsObjectsAvailableIds here.
 onRequestIdsImpl ::
   forall peerAddr object objectId.
   (Ord objectId, Ord peerAddr, HasCallStack) =>
   peerAddr ->
+  NumObjectIdsAck ->
   -- | number of requests to req
   NumObjectIdsReq ->
   DecisionGlobalState peerAddr objectId object ->
   DecisionGlobalState peerAddr objectId object
 onRequestIdsImpl
   peerAddr
+  numIdsToAck
   numIdsToReq
   globalState@DecisionGlobalState
     { dgsPeerStates
@@ -71,7 +76,25 @@ onRequestIdsImpl
     where
       dgsPeerStates' =
         Map.adjust
-          (\ps@DecisionPeerState{dpsNumIdsInflight} -> ps{dpsNumIdsInflight = dpsNumIdsInflight + numIdsToReq})
+          (\ps@DecisionPeerState{dpsNumIdsInflight, dpsOutstandingFifo, dpsObjectsAvailableIds} ->
+                    -- we isolate the longest prefix of outstandingFifo that matches our ack criteria (see above in computeAck doc)
+            let -- We compute the ids to ack and new state of the FIFO based on the number of ids to ack given by the decision logic 
+                (idsToAck, dpsOutstandingFifo') =
+                  StrictSeq.splitAt
+                    (fromIntegral numIdsToAck)
+                    dpsOutstandingFifo
+
+                -- We remove the acknowledged ids from dpsObjectsAvailableIds if they were present.
+                -- We need to do that because objects that were advertised by this corresponding outbound peer
+                -- but never downloaded because we already have them in pool were consequently never removed
+                -- from dpsObjectsAvailableIds by onRequestObjects
+                dpsObjectsAvailableIds' =
+                  Foldable.foldl' (\set objectId -> Set.delete objectId set) dpsObjectsAvailableIds idsToAck
+                
+             in ps{dpsNumIdsInflight = dpsNumIdsInflight + numIdsToReq
+                  , dpsOutstandingFifo = dpsOutstandingFifo'
+                  , dpsObjectsAvailableIds = dpsObjectsAvailableIds'}
+          )
           peerAddr
           dgsPeerStates
 
@@ -129,10 +152,10 @@ onRequestObjectsImpl
           peerAddr
           dgsPeerStates
 
--- | Wrapper around `onReceivedIdsImpl`.
+-- | Wrapper around `onReceiveIdsImpl`.
 -- Obtain the `hasObject` function atomically from the STM context and
 -- updates and traces the global state TVar.
-onReceivedIds ::
+onReceiveIds ::
   forall m peerAddr object objectId.
   (MonadSTM m, Ord objectId, Ord peerAddr) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
@@ -147,17 +170,17 @@ onReceivedIds ::
   [objectId] ->
   -- | received `objectId`s
   m ()
-onReceivedIds odTracer decisionTracer globalStateVar objectPoolWriter peerAddr numIdsInitiallyRequested receivedIds = do
+onReceiveIds odTracer decisionTracer globalStateVar objectPoolWriter peerAddr numIdsInitiallyRequested receivedIds = do
   globalState' <- atomically $ do
     hasObject <- opwHasObject objectPoolWriter
     stateTVar
       globalStateVar
-      ( \globalState -> let globalState' = onReceivedIdsImpl hasObject peerAddr numIdsInitiallyRequested receivedIds globalState
+      ( \globalState -> let globalState' = onReceiveIdsImpl hasObject peerAddr numIdsInitiallyRequested receivedIds globalState
          in (globalState', globalState') )
   traceWith odTracer (TraceObjectDiffusionInboundReceivedIds (length receivedIds))
-  traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "onReceivedIds" globalState')
+  traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "onReceiveIds" globalState')
 
-onReceivedIdsImpl ::
+onReceiveIdsImpl ::
   forall peerAddr object objectId.
   (Ord objectId, Ord peerAddr, HasCallStack) =>
   -- | check if objectId is in the objectpool, ref
@@ -171,7 +194,7 @@ onReceivedIdsImpl ::
   [objectId] ->
   DecisionGlobalState peerAddr objectId object ->
   DecisionGlobalState peerAddr objectId object
-onReceivedIdsImpl
+onReceiveIdsImpl
   hasObject
   peerAddr
   numIdsInitiallyRequested
@@ -190,7 +213,7 @@ onReceivedIdsImpl
         , dpsNumIdsInflight
         } =
         findWithDefault
-          (error "ObjectDiffusion.onReceivedIdsImpl: the peer should appear in dgsPeerStates")
+          (error "ObjectDiffusion.onReceiveIdsImpl: the peer should appear in dgsPeerStates")
           peerAddr
           dgsPeerStates
   
@@ -215,7 +238,7 @@ onReceivedIdsImpl
       
       dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
 
--- | Wrapper around `onReceivedObjectsImpl` that updates and traces the
+-- | Wrapper around `onReceiveObjectsImpl` that updates and traces the
 -- global state TVar.
 --
 -- Error handling should be done by the client before using the API.
@@ -223,7 +246,7 @@ onReceivedIdsImpl
 -- assert (objectsRequestedIds `Set.isSubsetOf` dpsObjectsInflightIds)
 --
 -- IMPORTANT: We also assume that every object has been *validated* before being passed to this function.
-onReceivedObjects ::
+onReceiveObjects ::
   forall m peerAddr object objectId.
   ( MonadSTM m
   , MonadMask m
@@ -240,7 +263,7 @@ onReceivedObjects ::
   -- | received objects
   [object] ->
   m ()
-onReceivedObjects odTracer tracer globalStateVar objectPoolWriter poolSem peerAddr objectsReceived = do
+onReceiveObjects odTracer tracer globalStateVar objectPoolWriter poolSem peerAddr objectsReceived = do
   let getId = opwObjectId objectPoolWriter
   let objectsReceivedMap = Map.fromList $ (\obj -> (getId obj, obj)) <$> objectsReceived
 
@@ -249,13 +272,13 @@ onReceivedObjects odTracer tracer globalStateVar objectPoolWriter poolSem peerAd
       globalStateVar
       ( \globalState ->
         let globalState' =
-              onReceivedObjectsImpl
+              onReceiveObjectsImpl
                 peerAddr
                 objectsReceivedMap
                 globalState
          in (globalState', globalState'))
   traceWith odTracer (TraceObjectDiffusionInboundReceivedObjects (length objectsReceived))
-  traceWith tracer (TraceDecisionLogicGlobalStateUpdated "onReceivedObjects" globalState')
+  traceWith tracer (TraceDecisionLogicGlobalStateUpdated "onReceiveObjects" globalState')
   submitObjectsToPool
     odTracer
     tracer
@@ -265,7 +288,7 @@ onReceivedObjects odTracer tracer globalStateVar objectPoolWriter poolSem peerAd
     peerAddr
     objectsReceivedMap
 
-onReceivedObjectsImpl ::
+onReceiveObjectsImpl ::
   forall peerAddr object objectId.
   ( Ord peerAddr
   , Ord objectId
@@ -275,7 +298,7 @@ onReceivedObjectsImpl ::
   Map objectId object ->
   DecisionGlobalState peerAddr objectId object ->
   DecisionGlobalState peerAddr objectId object
-onReceivedObjectsImpl
+onReceiveObjectsImpl
   peerAddr
   objectsReceived
   st@DecisionGlobalState
@@ -296,7 +319,7 @@ onReceivedObjectsImpl
         , dpsObjectsOwtPool
         } =
         findWithDefault
-          (error "ObjectDiffusion.onReceivedObjectsImpl: the peer should appear in dgsPeerStates")
+          (error "ObjectDiffusion.onReceiveObjectsImpl: the peer should appear in dgsPeerStates")
           peerAddr
           dgsPeerStates
 

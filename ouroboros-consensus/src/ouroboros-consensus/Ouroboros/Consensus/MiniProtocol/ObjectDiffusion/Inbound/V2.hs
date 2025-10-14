@@ -195,7 +195,7 @@ objectDiffusionInbound
                     objectIdsMap = Map.fromList objectIds'
                 when (StrictSeq.length receivedIdsSeq > fromIntegral objectIdsToReq) $
                   throwIO ProtocolErrorObjectIdsNotRequested
-                onReceivedIds objectIdsToReq receivedIdsSeq objectIdsMap
+                onReceiveIds objectIdsToReq receivedIdsSeq objectIdsMap
                 goIdle
             )
     goReqObjectIds
@@ -253,7 +253,7 @@ objectDiffusionInbound
             objectIdsMap = Map.fromList objectIds
         unless (StrictSeq.length receivedIdsSeq <= fromIntegral objectIdsToReq) $
           throwIO ProtocolErrorObjectIdsNotRequested
-        onReceivedIds objectIdsToReq receivedIdsSeq objectIdsMap
+        onReceiveIds objectIdsToReq receivedIdsSeq objectIdsMap
         k
       CollectObjects objectIds objects -> do
         let requested = Map.keysSet objectIds
@@ -262,7 +262,7 @@ objectDiffusionInbound
         unless (Map.keysSet received `Set.isSubsetOf` requested) $
           throwIO ProtocolErrorObjectNotRequested
 
-        mbe <- onReceivedObjects objectIds received
+        mbe <- onReceiveObjects objectIds received
         traceWith tracer $ TraceObjectDiffusionCollected (getId `map` objects)
         case mbe of
           -- one of `object`s had a wrong size

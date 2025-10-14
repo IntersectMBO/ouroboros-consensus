@@ -39,7 +39,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Control.Monad (forever)
 import Data.Set (Set)
-import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq)
+import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsReq, NumObjectIdsAck)
 
 -- | Communication channels between `ObjectDiffusion` mini-protocol inbound side
 -- and decision logic.
@@ -56,7 +56,7 @@ newPeerDecisionChannelsVar = newMVar (Map.empty)
 data PeerStateAPI m objectId object = PeerStateAPI
   { psaReadDecision :: m (PeerDecision objectId object)
   -- ^ a blocking action which reads `PeerDecision`
-  , psaOnRequestIds :: NumObjectIdsReq -> m ()
+  , psaOnRequestIds :: NumObjectIdsAck -> NumObjectIdsReq -> m ()
   , psaOnRequestObjects :: Set objectId -> m ()
   , psaOnReceivedIds :: NumObjectIdsReq -> [objectId] -> m ()
     -- ^ Error handling should have been done before calling this
@@ -133,13 +133,13 @@ withPeer
                           globalStateVar
                           objectPoolWriter
                           peerAddr
-                      , psaOnReceivedIds = State.onReceivedIds
+                      , psaOnReceivedIds = State.onReceiveIds
                           objectDiffusionTracer
                           decisionTracer
                           globalStateVar
                           objectPoolWriter
                           peerAddr
-                      , psaOnReceivedObjects = State.onReceivedObjects
+                      , psaOnReceivedObjects = State.onReceiveObjects
                           objectDiffusionTracer
                           decisionTracer
                           globalStateVar
@@ -279,24 +279,9 @@ decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject}
             decisions
     -- Send the decisions to the corresponding peers
     -- Note that decisions are incremental, so we merge the old one to the new one (using the semigroup instance) if there is an old one
-    traverse_
-      (\(chan, newDecision) ->
-        modifyMVarWithDefault_
-          chan newDecision (\oldDecision -> pure (oldDecision <> newDecision)))
-      peerToChannelAndDecision
-
+    traverse_ (uncurry putMVar) peerToChannelAndDecision
+      
     traceWith countersTracer (makeObjectDiffusionCounters globalState')
-
--- Variant of modifyMVar_ that puts a default value if the MVar is empty.
-modifyMVarWithDefault_ :: (MonadMask m, MonadMVar m) => StrictMVar m a -> a -> (a -> m a) -> m ()
-modifyMVarWithDefault_ m d io =
-  mask $ \restore -> do
-    mbA <- tryTakeMVar m
-    case mbA of
-      Just a -> do
-        a' <- restore (io a) `onException` putMVar m a
-        putMVar m a'
-      Nothing -> putMVar m d
 
 -- `5ms` delay
 _DECISION_LOOP_DELAY :: DiffTime

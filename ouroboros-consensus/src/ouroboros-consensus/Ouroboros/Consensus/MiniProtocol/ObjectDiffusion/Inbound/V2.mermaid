@@ -8,30 +8,30 @@ flowchart TD
     H(dgsObjectsInflightMultiplicities)
     I(dgsObjectsOwtPoolMultiplicities)
 
-    EA{requestIds}
+    EA{onRequestIds}
     EA-->|+count| A
+    B -->|-ids| EA
+    C -->|-ids| EA
 
-    EB{handleReceiveIds}
+    EB{onReceiveIds}
     A -->|-count| EB
     EB -->|+ids| B
     IN1@{ shape: lin-cyl, label: "ids" } --o EB
     EB -->|+ids| C
 
-    EC{requestObjects}
+    EC{onRequestObjects}
     C -->|-ids| EC
     EC -->|+ids| D
     EC -->|+count| H
 
-    ED{handleReceiveObjects / submitToPool}
+    ED{onReceiveObjects / submitToPool}
     D -->|-ids| ED
     H -->|-count| ED
     IN2@{ shape: lin-cyl, label: "objects" } --o ED
     ED -->|+objects| F
     ED -->|+count| I
 
-    EE{makeDecisionPreAcknowledge}
-    B -->|-ids| EE
-    C -->|-ids| EE
+    EE{makeDecisions}
     EE -.->|readDecision : pdIdsToAck + pdIdsToReq + pdCanPipelineIdsReq/| EA
     EE -.->|readDecision : pdObjectsToReqIds| EC
 
