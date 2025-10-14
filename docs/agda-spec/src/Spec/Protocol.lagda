@@ -19,7 +19,7 @@ Its state is shown in Figure~\ref{fig:ts-types:prtcl} and consists of
 \end{itemize}
 
 \begin{code}[hide]
-{-# OPTIONS --safe #-}
+-- {-# OPTIONS --safe #-}
 
 open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
@@ -27,25 +27,35 @@ open import Ledger.Crypto
 open import Ledger.Script
 open import Ledger.Types.Epoch
 open import Data.Rational.Ext
+open import Ledger.Prelude
+import Spec.VDF
 
 module Spec.Protocol
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
   (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
-  (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
-  (af     : _) (open AbstractFunctions af)
   (rs     : _) (open RationalExtStructure rs)
-  (grindingf : Nonce → Nonce)
+  -- TODO instantiate thes with correct VDF setup!
+  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
+  (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
+  -- TODO implement nonce combination with epoch number
+  (combinEIN : Epoch → Nonce → Nonce)
+  -- TODO temporary parameters (required because of UpdateNonce)
+  (G : Set) 
+  (_*ᵍ_ : G × G → G) 
+  (idᵍ : G) 
+  (defaultNonce : Nonce)
+  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce ) (open BlockStructure bs)
+  (af     : _) (open AbstractFunctions af)
   where
 
 open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
-open import Spec.OperationalCertificate crypto nonces es ss bs af
-open import Spec.UpdateNonce crypto nonces es grindingf
+open import Spec.OperationalCertificate crypto nonces es ss setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce bs af
 open import Spec.BaseTypes crypto using (OCertCounters)
 open import Data.Rational as ℚ using (ℚ; 0ℚ; 1ℚ)
-open import Ledger.Prelude
 open Ledger.Prelude.ℤ using (pos)
+open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce
 
 \end{code}
 
@@ -57,12 +67,13 @@ open Ledger.Prelude.ℤ using (pos)
 record PrtclEnv : Type where
 \end{code}
 \begin{code}[hide]
-  constructor ⟦_,_⟧ᵖᵉ
+  constructor ⟦_,_,_⟧ᵖᵉ
   field
 \end{code}
 \begin{code}  
     pd  : PoolDistr -- pool stake distribution
     η₀  : Nonce     -- epoch nonce
+    sₗ   : Slot
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Protocol states}
@@ -76,8 +87,8 @@ record PrtclState : Type where
 \end{code}
 \begin{code}
     cs     : OCertCounters -- operational certificate issues numbers
-    pre-ηc : Nonce         -- pre-nonce
-    ηv     : Nonce         -- evolving nonce
+    2ago-ηstate : UpdateNonceState -- Nonce state 2 epochs ago
+    1ago-ηstate : UpdateNonceState -- Nonce state 1 epoch ago
     ηc     : Nonce         -- candidate nonce
 \end{code}
 \end{AgdaSuppressSpace}
@@ -185,8 +196,10 @@ The function \afun{vrfChecks} has the following predicate failures:
 private variable
   pd                              : PoolDistr
   cs cs′                          : OCertCounters
-  pre-ηc pre-ηc′ ηv ηc ηv′ ηc′ η₀ : Nonce
+  pre-ηc pre-ηc′ ηv ηc ηv′ ηc′ η₀ : Nonce 
+  2ago-ηstate  1ago-ηstate 1ago-ηstate' 2ago-ηstate' : UpdateNonceState 
   bh                              : BHeader
+  sₗ : Slot
 
 data _⊢_⇀⦇_,PRTCL⦈_ where
 \end{code}
@@ -195,11 +208,11 @@ data _⊢_⇀⦇_,PRTCL⦈_ where
     let (bhb , σ) = bh; open BHBody bhb
         η = hBNonce bhb
     in
-    ∙ ⟦ η ⟧ᵘᵉ ⊢ ⟦ pre-ηc , ηv , ηc ⟧ᵘˢ ⇀⦇ slot ,UPDN⦈ ⟦ pre-ηc′ , ηv′ , ηc′ ⟧ᵘˢ
+    ∙ (sₗ , slot) ⊢ ( 2ago-ηstate , 1ago-ηstate , ηc ) ⇀⦇ (sₗ , phalanxCommand2ago , phalanxCommand1ago) ,UPDN⦈ ( 2ago-ηstate' , 1ago-ηstate' , ηc′ ) -- environment was ⟦ η ⟧ᵘᵉ before
     ∙ dom (pd ˢ) ⊢ cs ⇀⦇ bh ,OCERT⦈ cs′
-    ∙ vrfChecks η₀ pd ActiveSlotCoeff bhb
+    -- ∙ vrfChecks η₀ pd ActiveSlotCoeff bhb -- commented out because VDF checks instead done in the UPDN rule
     ────────────────────────────────
-    ⟦ pd , η₀ ⟧ᵖᵉ ⊢ ⟦ cs , pre-ηc , ηv , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , pre-ηc′ , ηv′ , ηc′ ⟧ᵖˢ
+    ⟦ pd , η₀ , sₗ ⟧ᵖᵉ ⊢ ⟦ cs , 2ago-ηstate , 1ago-ηstate , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , 2ago-ηstate' , 1ago-ηstate' , ηc′ ⟧ᵖˢ
 \end{code}
 \caption{Protocol transition system rules}
 \label{fig:ts-rules:prtcl}

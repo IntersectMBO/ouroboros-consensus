@@ -38,6 +38,15 @@ buildList82-length = refl
 allN : AttestedOutputsM
 allN = buildList82 , buildList82-length
 
+atIndex' : ℕ → List (Maybe (G × G)) → Maybe (G × G)
+atIndex' zero (a ∷ b) = a
+atIndex' zero [] = nothing
+atIndex' (suc n) [] = nothing
+atIndex' (suc n) (a ∷ b) = atIndex' n b
+
+atIndex : ℕ → AttestedOutputsM → Maybe (G × G)
+atIndex a b = atIndex' a (proj₁ b)
+
 updateListAt : ∀ {A : Set} → ℕ → A → List A → List A
 updateListAt _ _ [] = []
 updateListAt zero newVal (_ ∷ xs) = newVal ∷ xs

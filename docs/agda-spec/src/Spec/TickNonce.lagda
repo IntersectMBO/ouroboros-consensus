@@ -8,7 +8,7 @@ and the previous epoch's last block header hash as a nonce \afld{ηph}.
 Its state consists of the epoch nonce \afld{η₀} and the previous epoch's last block header hash nonce \afld{ηh}.
 
 \begin{code}[hide]
-{-# OPTIONS --safe #-}
+-- {-# OPTIONS --safe #-}
 
 open import Ledger.Crypto
 open import Ledger.Script

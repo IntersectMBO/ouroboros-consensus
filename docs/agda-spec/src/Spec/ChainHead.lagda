@@ -22,35 +22,46 @@ state is shown in Figure~\ref{fig:ts-types:chainhead} and it consists of the fol
 \end{itemize}
 
 \begin{code}[hide]
-{-# OPTIONS --safe #-}
+-- {-# OPTIONS --safe #-}
 
 open import InterfaceLibrary.Ledger
 open import Spec.BaseTypes using (Nonces)
-open import Spec.BlockDefinitions
+open import Spec.BlockDefinitions 
 open import Ledger.Crypto
 open import Ledger.Script
 open import Ledger.Types.Epoch
 open import Data.Rational.Ext
+import Spec.VDF
+open import Ledger.Prelude
 
 module Spec.ChainHead
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
   (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
-  (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
-  (af     : _) (open AbstractFunctions af)
   (li     : LedgerInterface crypto es ss) (let open LedgerInterface li)
   (rs     : _) (open RationalExtStructure rs)  
-  (grindingf : Nonce → Nonce)
+  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
+  (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
+  -- TODO implement nonce combination with epoch number
+  (combinEIN : Epoch → Nonce → Nonce)
+  -- TODO temporary parameters (required because of UpdateNonce)
+  (G : Set) 
+  (_*ᵍ_ : G × G → G) 
+  (idᵍ : G) 
+  (defaultNonce : Nonce)
+  (defaultSlot : Slot)
+  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce) (open BlockStructure bs)
+  (af     : _) (open AbstractFunctions af)
   where
 
 open import Spec.BaseTypes crypto using (OCertCounters)
 open import Spec.TickForecast crypto es ss li
 open import Spec.TickNonce crypto es nonces
-open import Spec.Protocol crypto nonces es ss bs af rs grindingf
+open import Spec.Protocol crypto nonces es ss rs setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce bs af
 open import Ledger.PParams crypto es ss using (PParams; ProtVer)
 open import Ledger.Prelude
-
+open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce 
 \end{code}
 
 \begin{figure*}[h]
@@ -105,6 +116,10 @@ chainChecks maxpv (maxBHSize , maxBBSize , protocolVersion) bh =
     m = proj₁ protocolVersion
     open BHBody (proj₁ bh)
 
+getLastSlot : Maybe LastAppliedBlock → Slot 
+getLastSlot nothing = defaultSlot
+getLastSlot (just lab) = lab .LastAppliedBlock.sℓ
+
 lastAppliedHash : Maybe LastAppliedBlock → Maybe HashHeader
 lastAppliedHash nothing               = nothing
 lastAppliedHash (just ⟦ _ , _ , h ⟧ℓ) = just h
@@ -144,6 +159,8 @@ private variable
   η₀ pre-ηc pre-ηc′ ηv ηc ηh η₀′ ηv′ ηc′ ηh′ : Nonce
   lab                                        : Maybe LastAppliedBlock
   bh                                         : BHeader
+  sig1ago sig2ago : UpdateNonceCommand
+  2ago-ηstate  1ago-ηstate 1ago-ηstate' 2ago-ηstate' : UpdateNonceState 
 
 data _⊢_⇀⦇_,CHAINHEAD⦈_ where
 \end{code}
@@ -157,12 +174,13 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
         nₚₕ  = prevHashToNonce (lastAppliedHash lab)
         pd   = getPoolDistr forecast
         lab′ = just ⟦ blockNo , slot , headerHash bh ⟧ℓ
+        sₗ = getLastSlot lab 
     in
     ∙ prtlSeqChecks lab bh
     ∙ _ ⊢ nes ⇀⦇ slot ,TICKF⦈ forecast
     ∙ chainChecks MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh
     ∙ ⟦ ηc , nₚₕ ⟧ᵗᵉ ⊢ ⟦ η₀ , ηh ⟧ᵗˢ ⇀⦇ ne ,TICKN⦈ ⟦ η₀′ , ηh′ ⟧ᵗˢ
-    ∙ ⟦ pd , η₀′ ⟧ᵖᵉ ⊢ ⟦ cs , pre-ηc , ηv , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , pre-ηc′ , ηv′ , ηc′ ⟧ᵖˢ
+    ∙ ⟦ pd , η₀′ , sₗ ⟧ᵖᵉ ⊢ ⟦ cs , 2ago-ηstate , 1ago-ηstate , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , 2ago-ηstate' , 1ago-ηstate' , ηc′ ⟧ᵖˢ
     ────────────────────────────────
     nes ⊢ ⟦ cs  , η₀  , pre-ηc , ηv  , ηc  , ηh  , lab  ⟧ᶜˢ ⇀⦇ bh ,CHAINHEAD⦈
           ⟦ cs′ , η₀′ , pre-ηc′ , ηv′ , ηc′ , ηh′ , lab′ ⟧ᶜˢ

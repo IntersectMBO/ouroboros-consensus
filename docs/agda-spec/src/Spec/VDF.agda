@@ -24,7 +24,8 @@ record VDF {G : Set} : Type where
     _*ᵍ_ : G × G → G -- Group operation used for VDF evaluation (e.g., modular exponentiation)
     idᵍ : G
     isG : isGroup (G) idᵍ _*ᵍ_ 
-    Δ : List Bool -- (G,Δ,⋅)←VDF.Setup(λ,Δchallenge)
+    Δ : Nonce -- (G,Δ,⋅)←VDF.Setup(λ,Δchallenge)
+    iterationsFromDuration : ℕ → ℕ
     evaluate : G → ℕ → G -- y←VDF.Evaluate(x,I)
     prove : G → G → ℕ → G -- π←VDF.Prove(x,y,I)
     verify : G → G → ℕ → G → Bool -- {0,1}←VDF.Verify(x,y,I,π)
@@ -32,7 +33,7 @@ record VDF {G : Set} : Type where
     init : ℕ → Nonce → G × G × G -- (Accx,Accy,α)←VDF.Aggregation.Init(λ,pre-ηe)
     aggUpdate : ℕ → (G × G ) → (G × G × G ) → G × G × G -- (Accx,Accy,α)←VDF.Aggregation.Update(λ,(xi,yi),(Accx,Accy,α))
     aggProve : (G × G × G ) → ℕ → G -- π←VDF.Aggregation.Prove((Accx,Accy,_α),I)
-    aggVerify : (G × G × G ) → ℕ → G → Bool -- {0,1}←VDF.Aggregation.Verify((Accx,Accy,_α),I,π)
+    aggVerify : (G × G × ℕ) → ℕ → G → Bool -- {0,1}←VDF.Aggregation.Verify((Accx,Accy,_α),I,π)
 
 
     

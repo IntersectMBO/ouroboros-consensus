@@ -11,8 +11,8 @@ the candidate nonce \afld{ηc} and the evolving nonce \afld{ηv}.
 -- {-# OPTIONS --safe #-}
 
 open import Ledger.Crypto
-open import Ledger.Types.Epoch using (EpochStructure)
 open import Spec.BaseTypes using (Nonces)
+open import Ledger.Types.Epoch using (EpochStructure )
 import Spec.VDF
 open import Ledger.Prelude
 open import Relation.Binary.PropositionalEquality using (inspect; [_])
@@ -21,19 +21,19 @@ module Spec.UpdateNonce
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
-  -- TODO these are introduced at the hard fork transition? no fix it
-  (sP : ℕ) -- The security parameter, defining the size (in bits) of the VDF discriminant.
-  (Ip : ℕ) -- The per-interval VDF iteration count, computed from TΦ and evenly distributed across 82 computation intervals.
   -- TODO instantiate thes with correct VDF setup!
-  -- TODO change List Bool type to something?
-  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : List Bool) → Set )
+  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
   (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
-  -- TODO implement
-  (combinEIN : ℕ → Nonce → List Bool)
+  -- TODO implement nonce combination with epoch number
+  (combinEIN : Epoch → Nonce → Nonce)
+  -- TODO temporary! the group G should always be obtained from the Initialized state!
+  (G : Set) 
+  (_*ᵍ_ : G × G → G) 
+  (idᵍ : G) 
+  (defaultNonce : Nonce)
   where
 
 open module VDF' = Spec.VDF crypto nonces
-
 
 \end{code}
 
@@ -46,390 +46,465 @@ open module VDF' = Spec.VDF crypto nonces
 getInterval : Slot → ℕ
 getInterval s = 0
 
+
+-- TODO define/find
+nextSlot : Slot → Slot
+nextSlot s = s
+
 record Parametrized : Type where
   constructor ⟦_,_⟧ᵖ
   field
     securityParameter : ℕ -- The security parameter, defining the size (in bits) of the VDF discriminant.
     I : ℕ -- The per-interval VDF iteration count, computed from TΦ and evenly distributed across 82 computation intervals.
 
+record parametrize : Type where
+  constructor ⟦_,_⟧ᵖⁱ
+  field
+    lambda : ℕ
+    TΦ : ℕ
+
 record Initialized : Type where
   constructor ⟦_,_,_,_⟧ⁱ
   field
     parametrized : Parametrized
-    discriminant : ℤ -- Epoch-specific VDF discriminant
-    epochIdₑ : ℕ -- Numerical identifier for epoch e TODO pprolly dont need this
+    discriminant : ℤ -- Epoch-specific VDF discriminant TODO this is Δ
+    epochIdₑ : Epoch -- Numerical identifier for epoch e - the epoch in which initialization happened??
+    pre-ηₑ : Nonce 
+    
+  Gr = setupVDFGroup (parametrized .Parametrized.securityParameter) (combinEIN epochIdₑ pre-ηₑ)  -- VDF group used for exponentiation
+  VDFG = setupVDF Gr
+
+-- module _  where 
+
+-- TODO this is temporary - G needs to come from initialization/parametrization
+-- remove this, and replace all G's with some function getting it from the state
+VDFg = setupVDF G
+open import Spec.OutsVec crypto nonces G
+
+record initialize : Type where
+  constructor ⟦_⟧ⁱⁱ
+  field
+    -- commented out fields in this record and others represent ones that are in the state machine diagram in the CIP, but are actually redundant
+    -- parametrizedState : Parametrized 
+    -- epochIdₑ : ℕ 
     pre-ηₑ : Nonce
-    
-  G = setupVDFGroup (parametrized .Parametrized.securityParameter) (combinEIN epochIdₑ pre-ηₑ)  -- VDF group used for exponentiation
-  VDFG = setupVDF G 
 
--- TODO temporary! the group should always be obtained from the Initialized state!
--- remove module here, and replace all G's with some function getting it from the state
-module _ {G : Set} {_*ᵍ_ : G × G → G} {idᵍ : G} where 
+record AwaitingComputationPhase  : Type where
+  constructor ⟦_⟧ᵃᶜᵖ
+  field
+    initializedState : Initialized 
+    -- currentSlot : Slot this info is always coming from the current block
 
-  -- TODO also temporary!
-  VDFg = setupVDF G
-  open import Spec.OutsVec crypto nonces G
-
-  record initialize : Type where
-    constructor ⟦_⟧ⁱⁱ
-    field
-      -- parametrizedState : Parametrized -- TODO always has to be the same as the existing parametrized state (or else need to re-parametrize!)
-      epochIdₑ : ℕ -- Numerical identifier for epoch e TODO pprolly dont need this
-
-  record AwaitingComputationPhase  : Type where
-    constructor ⟦_⟧ᵃᶜᵖ
-    field
-      initializedState : Initialized 
-      -- currentSlot : Slot this info is always coming from the current block
-
-  record tickInitState  : Type where
-    constructor ⟦_,_⟧ᵗⁱˢ
-    field
-      initializedStateParam : Initialized 
-      -- currentSlot : Maybe Slot 
-
-  data AwaitingOrProvided : Set where
-    awaiting  : AwaitingOrProvided 
-    provided : AwaitingOrProvided
+data AwaitingOrProvided : Set where
+  awaiting  : AwaitingOrProvided 
+  provided : AwaitingOrProvided
 
 
-  -- represents states : AwaitingAttestedOutput AttestedOutputProvided AwaitingMissingAttestedOutput AttestedMissingOutputProvided 
-  record AwaitingProvided  (awaitingOrProvided : AwaitingOrProvided) (missing : Bool) : Type where
-    constructor ⟦_,_⟧ᵃᵖ
-    field
-      initializedState : Initialized 
-      -- currentSlot : Slot 
-      attestedOutputs : AttestedOutputsM 
+-- represents states : AwaitingAttestedOutput AttestedOutputProvided AwaitingMissingAttestedOutput AttestedMissingOutputProvided 
+record AwaitingProvided  (awaitingOrProvided : AwaitingOrProvided) (missing : Bool) : Type where
+  constructor ⟦_,_⟧ᵃᵖ
+  field
+    initializedState : Initialized 
+    -- currentSlot : Slot 
+    attestedOutputs : AttestedOutputsM 
 
-  record provideAttestedOutput  : Type where
-    constructor ⟦_⟧ᵖᵃᵒ
-    field
-      -- awaitingAttestedOutputState : AwaitingProvided  awaiting  TODO this is not necessary 
-      φᵢ : G × G
-
-  -- record tickAwaitingAttested  (awaitingOrProvided : AwaitingOrProvided) : Type where
-  --   constructor ⟦_,_⟧ᵗᵃᵃ
-  --   field
-  --     awaitingProvidedState : AwaitingProvided  awaitingOrProvided
-  --     φᵢₘ : Maybe (G × G)
-
-  -- record tickMissingProvided  : Type where
-  --   constructor ⟦_⟧ᵗᵐᵖ
-  --   field
-  --     missingAttestedOutputProvidedState : AwaitingProvided  provided
-
-  record provideMissingAttestedOutput  : Type where
-    constructor ⟦_⟧ᵖᵐᵒ
-    field
-      -- awaitingMissingAttestedOutputState : AwaitingProvided  awaiting  probably dont need it
-      φᵢ : G × G
-
-  record Closed  : Type where
-    constructor ⟦_,_,_,_⟧ᶜᵈ
-    field
-      initialized : Initialized 
-      attestedOutputs : AttestedOutputsM --  [(y,π)]82
-      aggregatedOutput : G × G × G --  (x,y,π)
-      ηₑ : Nonce
-
-  record UngracefullyClosed  : Type where
-    constructor ⟦_,_,_⟧ᵘᶜ
-    field
-      initialized : Initialized 
-      attestedOutputs : AttestedOutputsM --  [(y,π)]82
-      pre-ηₑ : Nonce
-
-  record AwaitingGracefulClosure  : Type where
-    constructor ⟦_,_⟧ᵃᵍᶜ
-    field
-      initialized : Initialized 
-      -- currentSlot : Slot 
-      attestedOutputs : AttestedOutputsM --  [(y,π)]82
-
-  record close  : Type where
-    constructor ⟦_⟧ᶜ
-    field
-      -- awaitingGracefulClosureState : AwaitingGracefulClosure  -- dont need this probably
-      φᵢ : G × G
-
-  -- record tickAwaitingGracefulClosure  (awaitingOrProvided : AwaitingOrProvided) : Type where
-  --   constructor ⟦_⟧ᵗᵃᵍᶜ
-  --   field
-  --     awaitingGracefulClosureState : AwaitingProvided  awaiting
-
-  data UpdateNonceCommand  : Type where
-    iInitialize : initialize → UpdateNonceCommand
-    -- iTickInitState : tickInitState  → UpdateNonceCommand
-    iProvideAttestedOutput : (a : AwaitingOrProvided) → provideAttestedOutput  → UpdateNonceCommand
-    -- iTickAwaitingAttested : (a : AwaitingOrProvided) → tickAwaitingAttested  a → UpdateNonceCommand
-    -- iTickMissingProvided : tickMissingProvided  → UpdateNonceCommand 
-    iProvideMissingAttestedOutput : provideMissingAttestedOutput  → UpdateNonceCommand 
-    iClose : close  → UpdateNonceCommand 
-    -- iTickAwaitingGracefulClosure : (a : AwaitingOrProvided) → tickAwaitingGracefulClosure  a → UpdateNonceCommand 
-    iTick : UpdateNonceCommand
-
-  UpdateNonceSignal = Slot × UpdateNonceCommand
-
-  data isPhase : Type where 
-    isIGP : isPhase -- isWithinInitializationGracePhase
-    isCP : isPhase -- isWithinComputationPhase
-    isWithinCurrentInterval : isPhase 
-    isWithinNextInterval : isPhase
-    isWithinCatchUpPhase : isPhase 
-    isClosable : isPhase
-    isUngracefullyClosable : isPhase
-
-  -- TODO define this correctly
-  getPhase : Slot → Initialized → isPhase
-  getPhase s inl = isIGP
-
-  -- TODO define
-  mkInput : Nonce → ℕ → G
-  mkInput pre-ηₑ i = idᵍ
-
-
-  record UpdateNonceEnv : Type where
-    constructor ⟦_⟧ᵘᵉ
-    field
-      η : Nonce -- new nonce
-  \end{code}
-  \end{AgdaSuppressSpace}
-  \emph{Update Nonce states}
-  \begin{AgdaSuppressSpace}
-  \begin{code}
-  data UpdateNonceState  : Type where
-    sParametrized : Parametrized → UpdateNonceState
-    sInitialized : Initialized  → UpdateNonceState
-    sAwaitingComputationPhase : AwaitingComputationPhase → UpdateNonceState
-    sAwaitingProvided : (a : AwaitingOrProvided) → (missing : Bool) → AwaitingProvided a missing → UpdateNonceState
-    sClosed : Closed  → UpdateNonceState
-    sAwaitingGracefulClosure : AwaitingGracefulClosure  → UpdateNonceState
-    sUngracefullyClosed : UngracefullyClosed  → UpdateNonceState
-    -- constructor ⟦_,_,_⟧ᵘˢ
-    -- field
-      -- pre-ηc : Nonce -- evolving phi-nonce TODO rename
-      -- ηv : Nonce -- evolving eta-nonce TODO rename
-      -- ηc : Nonce -- candidate eta-nonce
-  \end{code}
-  \end{AgdaSuppressSpace}
-  \emph{Update Nonce transitions}
-  \begin{code}[hide]
-
-  data
-  \end{code}
-  \begin{code}
-    _⊢_⇀⦇_,UPDN⦈_ : UpdateNonceEnv → UpdateNonceState  → UpdateNonceSignal  → UpdateNonceState  → Type
-  \end{code}
-  \end{AgdaAlign}
-  \caption{Update Nonce transition system types}
-  \label{fig:ts-types:updnonce}
-  \end{figure*}
-
-  The transition rule \aarg{UPDN} takes the slot \aarg{s} as signal and is shown in 
-  Figure~\ref{fig:ts-rules:updatenonce}. There are
-  three different cases for \aarg{UPDN}, all three of which always evolve the evolving nonce \aarg{ηv}
-  by combining it with the VRF result \aarg{η} from the block header :
-
-  \begin{itemize}
-  \item[(i)] \aarg{New-PreN}, where \aarg{s} is exactly the \aarg{RandomnessStabilisationWindowPlusOne}
-  slots until the start of the next epoch. A new pre-nonce is set equal to the (evolved) evolving nonce.
-  The candidate nonce is set to the value of the current pre-nonce updated by the anti-griding function.
-
-  \item[(ii)] \aarg{Update-All}, where \aarg{s} is not yet
-  \aarg{RandomnessStabilisationWindowPlusOne}\footnote{Note that in pre-Conway eras \stabilityWindow
-  was used instead of \aarg{RandomnessStabilisationWindowPlusOne}.} slots from the beginning
-  of the next epoch. The pre-nonce \aarg{pre-ηc}
-  is evolved by the anti-gringing function \aarg{grindingf}.
-  The candidate nonce \aarg{ηc} also transitions to
-  \aarg{grindingf~pre-ηc}. The reason for this is that even
-  though the candidate nonce is frozen sometime during the epoch, we want these two
-  nonces to be equal during this (first) part of a new epoch. 
-
-  \item[(iii)] \aarg{Keep-PreN}, where \aarg{s} is strictly less than the \aarg{RandomnessStabilisationWindowPlusOne}
-  slots before the start of the next epoch. The pre-nonce \aarg{pre-ηc} is updated by 
-  the anti-grinding function to \aarg{grindingf~pre-ηc}. The candidate nonce \aarg{ηc} remains fixed.
-  \end{itemize}
-
-  \begin{figure*}[h]
-  \begin{code}[hide]
-  private variable
-    s : Slot
-    spr : ℕ -- VDF discriminant size
-    cnt : ℕ
-    ei ei' : ℕ
-    pz ps : Parametrized
-    a b c : G
-    ds : ℤ
-    η ηv ηc pre-ηc pre-ηₑ ηₑ : Nonce
-    inl : Initialized
+record provideAttestedOutput  : Type where
+  constructor ⟦_⟧ᵖᵃᵒ
+  field
+    -- awaitingAttestedOutputState : AwaitingProvided  awaiting  
     φᵢ : G × G
-    xᵢ yᵢ πᵢ : G
-    I : G
-    pins pins' : AttestedOutputsM
-    m : Bool
 
-    -- make this operate on intervals not slots TODO
-    -- 3 k/f 
-    -- intervals = 12 (hours) * numSecondsInHour
-    -- slotToIntervalIndex s = s / 120
-    -- convert RandomnessStabilisationWindowPlusOne to intervals also
-    -- 9 k/f - beginning of computation phase 
-    
-  -- TODO parametrize transition probably should be the hard for transition spec?
-  -- TODO  initialize-pr , ... , tick-ic rules all need the update process for the Nonce to continue as in the previous Ouroboros version 
-  -- TODO state must always have SOME epoch nonce!
-  -- TODO List Bool should be Nonce
+record provideMissingAttestedOutput  : Type where
+  constructor ⟦_⟧ᵖᵐᵒ
+  field
+    -- awaitingMissingAttestedOutputState : AwaitingProvided  awaiting 
+    φᵢ : G × G
 
-  data _⊢_⇀⦇_,UPDN⦈_ where
-    -- Update-Both :
-    --   ∙ s + RandomnessStabilisationWindow < firstSlot (sucᵉ (epoch s))
-    --   ────────────────────────────────
-    --   ⟦ η ⟧ᵘᵉ ⊢ ⟦ ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ ηv ⋆ η , ηv ⋆ η ⟧ᵘˢ
+record Closed  : Type where
+  constructor ⟦_,_,_,_⟧ᶜᵈ
+  field
+    initialized : Initialized 
+    attestedOutputs : AttestedOutputsM --  [(y,π)]82
+    aggregatedOutput : G × G × G --  (x,y,π)
+    ηₑ : Nonce
 
-    -- Only-Evolve :
-    --   ∙ s + RandomnessStabilisationWindow ≥ firstSlot (sucᵉ (epoch s))
-    --   ────────────────────────────────
-    --   ⟦ η ⟧ᵘᵉ ⊢ ⟦ ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ ηv ⋆ η , ηc ⟧ᵘˢ
+record UngracefullyClosed  : Type where
+  constructor ⟦_,_,_⟧ᵘᶜ
+  field
+    initialized : Initialized 
+    attestedOutputs : AttestedOutputsM --  [(y,π)]82
+    pre-ηₑ : Nonce
 
-    initialize-pr : 
-      ∙ true ≡ true 
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ (sParametrized ps ) ⇀⦇ (s , iInitialize ⟦ ei ⟧ⁱⁱ)  ,UPDN⦈ (sInitialized ⟦ ps , ds , ei , pre-ηₑ ⟧ⁱ)
+record AwaitingGracefulClosure  : Type where
+  constructor ⟦_,_⟧ᵃᵍᶜ
+  field
+    initialized : Initialized 
+    -- currentSlot : Slot 
+    attestedOutputs : AttestedOutputsM --  [(y,π)]82
 
-    -- TODO how is I used here at all?
-    initialize-cl : 
-      ∙ true ≡ true 
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sClosed ⟦ ⟦ ps , ds , ei , pre-ηₑ ⟧ⁱ , pins , ( a , b , c ) , ηₑ ⟧ᶜᵈ ) ⇀⦇ (s , iInitialize ⟦ ei ⟧ⁱⁱ)  ,UPDN⦈ (sInitialized ⟦ ps , ds , ei , pre-ηₑ ⟧ⁱ)
+record close  : Type where
+  constructor ⟦_⟧ᶜ
+  field
+    -- awaitingGracefulClosureState : AwaitingGracefulClosure  
+    φ : G × G
 
-    tick-i : 
-      ∙ true ≡ true 
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ (sInitialized inl ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ )
-      
-    tick-igp : 
-      ∙ isIGP ≡ getPhase s inl
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ )
-      
-    tick-ic : -- TODO allN is an empty vector of outputs, is this right? not in the CIP
-      ∙ isCP ≡ getPhase s inl
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingProvided awaiting false ⟦ inl , allN ⟧ᵃᵖ )
+data UpdateNonceCommand  : Type where
+  iNothing : UpdateNonceCommand
+  iParametrize : parametrize → UpdateNonceCommand
+  iInitialize : initialize → UpdateNonceCommand
+  iProvideAttestedOutput : (a : AwaitingOrProvided) → provideAttestedOutput  → UpdateNonceCommand
+  iProvideMissingAttestedOutput : provideMissingAttestedOutput  → UpdateNonceCommand 
+  iClose : close  → UpdateNonceCommand 
+  iTick : UpdateNonceCommand
 
-    -- works for missing and non-missing
-    provideOut : -- TODO allN is an empty vector of outputs, is this right? not in the CIP
-      let i = getInterval s
-          xᵢ = mkInput pre-ηₑ i -- TODO what is b“challenge"||bin(e)?? fix
-          pins' = unsafeUpdateAt82 i xᵢ (proj₁ φᵢ) pins
-      in
-      ∙ (VDFg .VDF.verify) xᵢ (proj₁ φᵢ) (inl .Initialized.parametrized .Parametrized.I) (proj₂ φᵢ) ≡ true
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting m ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , (iProvideAttestedOutput awaiting ⟦ φᵢ ⟧ᵖᵃᵒ ))  ,UPDN⦈ ( sAwaitingProvided provided m ⟦ inl , pins' ⟧ᵃᵖ )    
+UpdateNonceSignal = Slot × UpdateNonceCommand
+
+data isPhase : Type where 
+  isIGP : isPhase -- isWithinInitializationGracePhase
+  isCP : isPhase -- isWithinComputationPhase
+  isWithinCurrentInterval : isPhase 
+  isWithinNextInterval : isPhase
+  isWithinCatchUpPhase : isPhase 
+  isClosable : isPhase
+  isUngracefullyClosable : isPhase
+
+-- TODO define this correctly
+getPhase : Slot → Initialized → isPhase
+getPhase s inl = isIGP
+
+-- TODO define
+mkInput : Epoch → ℕ → ℕ → Nonce → ℕ → Maybe (G × G) → Maybe G
+mkInput e I l pn i g = nothing
+
+-- TODO define
+computeNonce : G → Nonce
+computeNonce y = defaultNonce
+
+UpdateNonceEnv = Slot × Slot
+
+-- record UpdateNonceEnv : Type where
+--   constructor ⟦_⟧ᵘᵉ
+--   field
+--     η : Nonce -- new nonce
+\end{code}
+\end{AgdaSuppressSpace}
+\emph{Update Nonce states}
+\begin{AgdaSuppressSpace}
+\begin{code}
+data UpdateNonceState  : Type where
+  sPrePhalanx : UpdateNonceState
+  sParametrized : Parametrized → UpdateNonceState
+  sInitialized : Initialized  → UpdateNonceState
+  sAwaitingComputationPhase : AwaitingComputationPhase → UpdateNonceState
+  sAwaitingProvided : (a : AwaitingOrProvided) → (missing : Bool) → AwaitingProvided a missing → UpdateNonceState
+  sClosed : Closed  → UpdateNonceState
+  sAwaitingGracefulClosure : AwaitingGracefulClosure  → UpdateNonceState
+  sUngracefullyClosed : UngracefullyClosed  → UpdateNonceState
+
+-- TODO define
+getInlNonce : UpdateNonceState → Maybe Nonce
+getInlNonce inl = nothing
+\end{code}
+\end{AgdaSuppressSpace}
+\emph{Update Nonce transitions}
+\begin{code}[hide]
+
+data
+\end{code}
+\begin{code}
+  _⊢_⇀⦇_,UPDNONESTREAM⦈_ : UpdateNonceEnv → UpdateNonceState  → UpdateNonceSignal  → UpdateNonceState  → Type
+\end{code}
+\end{AgdaAlign}
+\caption{Update Nonce transition system types}
+\label{fig:ts-types:updnonce}
+\end{figure*} 
+
+The transition rule \aarg{UPDN} takes the slot \aarg{s} as signal and is shown in 
+Figure~\ref{fig:ts-rules:updatenonce}. There are
+three different cases for \aarg{UPDN}, all three of which always evolve the evolving nonce \aarg{ηv}
+by combining it with the VRF result \aarg{η} from the block header :
+
+\begin{itemize}
+\item[(i)] \aarg{New-PreN}, where \aarg{s} is exactly the \aarg{RandomnessStabilisationWindowPlusOne}
+slots until the start of the next epoch. A new pre-nonce is set equal to the (evolved) evolving nonce.
+The candidate nonce is set to the value of the current pre-nonce updated by the anti-griding function.
+
+\item[(ii)] \aarg{Update-All}, where \aarg{s} is not yet
+\aarg{RandomnessStabilisationWindowPlusOne}\footnote{Note that in pre-Conway eras \stabilityWindow
+was used instead of \aarg{RandomnessStabilisationWindowPlusOne}.} slots from the beginning
+of the next epoch. The pre-nonce \aarg{pre-ηc}
+is evolved by the anti-gringing function \aarg{grindingf}.
+The candidate nonce \aarg{ηc} also transitions to
+\aarg{grindingf~pre-ηc}. The reason for this is that even
+though the candidate nonce is frozen sometime during the epoch, we want these two
+nonces to be equal during this (first) part of a new epoch. 
+
+\item[(iii)] \aarg{Keep-PreN}, where \aarg{s} is strictly less than the \aarg{RandomnessStabilisationWindowPlusOne}
+slots before the start of the next epoch. The pre-nonce \aarg{pre-ηc} is updated by 
+the anti-grinding function to \aarg{grindingf~pre-ηc}. The candidate nonce \aarg{ηc} remains fixed.
+\end{itemize}
+
+\begin{figure*}[h]
+\begin{code}[hide]
+private variable
+  -- sₗ is the slot from before the block was applied (when last block was applied)
+  -- sₙ is the slot of the current block being applied 
+  -- s keeps track of processing intermediate slots when tick rules are being applied
+  s sₗ sₙ : Slot 
+  spr : ℕ -- VDF discriminant size
+  cnt : ℕ
+  TΦ lam : ℕ
+  pz ps : Parametrized
+  p : parametrize
+  a b c : G
+  ds : ℤ
+  η ηv ηc pre-ηc pre-ηₑ ηₑ candidate-η : Nonce
+  inl : Initialized
+  φᵢ φ : G × G
+  xᵢ yᵢ πᵢ x y : G
+  I : G
+  pins pins' : AttestedOutputsM
+  m : Bool
+  mx : Maybe G
+  newState : UpdateNonceState
+  sig1ago sig2ago sig : UpdateNonceCommand
+  2ago-ηstate  1ago-ηstate 1ago-ηstate' 2ago-ηstate' : UpdateNonceState 
+
+  -- 3 k/f 
+  -- intervals = 12 (hours) * numSecondsInHour
+  -- slotToIntervalIndex s = s / 120
+  -- convert RandomnessStabilisationWindowPlusOne to intervals also
+  -- 9 k/f - beginning of computation phase 
   
-    tick-ci-p : 
-      ∙ getPhase s inl ≡ isWithinCurrentInterval
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ )
-      
-    tick-ni-p : 
-      ∙ getPhase s inl ≡ isWithinNextInterval
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ )
-      
-    tick-cup-p :
-      ∙ getPhase s inl ≡ isWithinCatchUpPhase
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ )
 
-    tick-ci-a : 
-      ∙ getPhase s inl ≡ isWithinCurrentInterval
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ )
-      
-    tick-cu-a : 
-      ∙ getPhase s inl ≡ isWithinCatchUpPhase
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ )
-      
-    tick-ic-a :
-      ∙ getPhase s inl ≡ isClosable
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ )
+-- TODO ⟦ η ⟧ᵘᵉ is not used anywhere - do we want to use the block nonce for extra randomness somewhere?
 
-    tick-cu-mp : 
-      ∙ getPhase s inl ≡ isWithinCurrentInterval
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ )
-      
-    tick-ni-mp : 
-      ∙ getPhase s inl ≡ isWithinNextInterval
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ )
-      
-    tick-ic-mp : 
-      ∙ getPhase s inl ≡ isClosable
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ )
-      
-    tick-uc-mp : 
-      ∙ getPhase s inl ≡ isUngracefullyClosable
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ )
+data _⊢_⇀⦇_,UPDNONESTREAM⦈_ where
 
-    tick-ci-m : 
-      ∙ getPhase s inl ≡ isWithinCurrentInterval
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ )
-      
-    tick-c-m : 
-      ∙ getPhase s inl ≡ isClosable
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ )
-      
-    tick-uc-m : 
-      ∙ getPhase s inl ≡ isUngracefullyClosable
-      ────────────────────────────────
-      ⟦ η ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDN⦈ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) 
-  \end{code}
-  \caption{Update Nonce transition system rules}
-  \label{fig:ts-rules:updatenonce}
-  \end{figure*}
+  parametrize-r : 
+    let 
+      I = (VDFg .VDF.iterationsFromDuration TΦ ) / 82
+    in
+    ∙ ( sₗ , sₙ ) ⊢ (sParametrized ⟦ lam , TΦ ⟧ᵖ ) ⇀⦇ (s , sig) ,UPDNONESTREAM⦈ newState
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ sPrePhalanx ⇀⦇ (s , iParametrize ⟦ lam , TΦ ⟧ᵖⁱ)  ,UPDNONESTREAM⦈ (sParametrized ⟦ lam , I ⟧ᵖ )
 
--- xi=Hash(b“challenge"||bin(e)||pre-ηe||bin(i))
--- attestedOutputs[i]↢ϕi
--- Ensure ϕ i is valid by verifying: VDF.Verify ( ( G , Δ , ⋅ ) , x i , y i , I , π i )
+  initialize-pr : 
+    ∙ ( sₗ , sₙ ) ⊢ ( sInitialized ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ ) ⇀⦇ (s , sig) ,UPDNONESTREAM⦈ newState
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ (sParametrized ps ) ⇀⦇ (s , iInitialize ⟦ pre-ηₑ ⟧ⁱⁱ)  ,UPDNONESTREAM⦈ newState 
 
--- AwaitingComputationPhase{initialized↢initialiinitializedzedState,currentSlot↢0}
---   Δ challenge ← Hash ( bin ( epochId e ) | pre- η e ) 
---   ( G , Δ , ⋅ ) ← VDF.Setup ( λ , Δ challenge ) 
---   Returned State 
---   Initialized { parametrized ↢ ( λ , I ) , group ↢ G , discriminant ↢ Δ , operation ↢ ⋅ , epochId e ↢ epochId e , pre- η e ↢ pre- η e }
+  initialize-cl : 
+    ∙ ( sₗ , sₙ ) ⊢ ( sInitialized ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ ) ⇀⦇ ( s , sig) ,UPDNONESTREAM⦈ newState 
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sClosed ⟦ ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ , pins , ( a , b , c ) , ηₑ ⟧ᶜᵈ ) ⇀⦇ (s , iInitialize ⟦ pre-ηₑ ⟧ⁱⁱ)  ,UPDNONESTREAM⦈ newState -- (sInitialized ⟦ ps , ds , (epoch s) , pre-ηₑ ⟧ⁱ)
 
+  tick-i : -- (1) <- this number is used to enumerate "tick"-type rules 
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ (sInitialized inl ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ )
+    
+  tick-igp : -- (2) TODO getPhase depends only on slot number (and k, which is - or does it come from ledger params? make a note about how much changes if this changes)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState      
+    ∙ isIGP ≡ getPhase s inl
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ )
+    
+  tick-ic : -- (3) 
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting false ⟦ inl , allN ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState   
+    ∙ isCP ≡ getPhase s inl
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingProvided awaiting false ⟦ inl , allN ⟧ᵃᵖ )
 
---     -- [ new-pre-nonce ] -> [ new-pre-nonce ; vda-function new-pre-nonce ]
---     -- applies at : one slot right before candidate becomes fixed
---     -- new pre-nonce from evolving nonce 
---     -- candidate nonce set to final update of current pre-nonce
---       ∙ slotToIntervalIndex s ≡ ? -- interval = 0
---       ────────────────────────────────
---       ⟦ η ⟧ᵘᵉ ⊢ ⟦ pre-ηc , ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ securityParameter , I , ηv ⋆ η , ηv ⋆ η , grindingf pre-ηc ⟧ᵘˢ
+  -- works for missing and non-missing
+  provideOut :
+    let i = getInterval s -- TODO what is this? should it just be I
+        I = inl .Initialized.parametrized .Parametrized.I
+        lam = inl .Initialized.parametrized .Parametrized.securityParameter
+        mxᵢ = mkInput (epoch sₙ) I lam pre-ηₑ i (atIndex i pins) -- TODO fix this - what is b“challenge"||bin(e)?? fix
+        pins' = unsafeUpdateAt82 i xᵢ (proj₁ φᵢ) pins
+    in
+    ∙ (VDFg .VDF.verify) xᵢ (proj₁ φᵢ) I (proj₂ φᵢ) ≡ true
+    ∙ mxᵢ ≡ just xᵢ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided m ⟦ inl , pins' ⟧ᵃᵖ ) ⇀⦇ ( s , sig ) ,UPDNONESTREAM⦈ newState
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting m ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , (iProvideAttestedOutput awaiting ⟦ φᵢ ⟧ᵖᵃᵒ ))  ,UPDNONESTREAM⦈ newState -- ( sAwaitingProvided provided m ⟦ inl , pins' ⟧ᵃᵖ )    
 
---     -- applies at : all other slots before candidate is fixed
---     -- pre-nonce updated with grindingf
---     -- candidate nonce set the same as pre-nonce
---     Update-All :
---       ∙ s + RandomnessStabilisationWindowPlusOne < firstSlot (sucᵉ (epoch s))
---       ────────────────────────────────
---       ⟦ η ⟧ᵘᵉ ⊢ ⟦ pre-ηc , ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ grindingf pre-ηc ∷ pre-ηc , ηv ⋆ η , grindingf pre-ηc ⟧ᵘˢ
+  tick-ci-p : -- (4)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState  
+    ∙ getPhase s inl ≡ isWithinCurrentInterval
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ )
+    
+  tick-ni-p : -- (5)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState  
+    ∙ getPhase s inl ≡ isWithinNextInterval
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ )
+    
+  tick-cup-p : --(6)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ getPhase s inl ≡ isWithinCatchUpPhase
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ )
 
---     -- applies at : within RandomnessStabilisationWindowPlusOne of next epoch
---     -- pre-nonce updated with grindingf
---     -- candidate nonce kept constant
---     Keep-PreN :
---       ∙ s + RandomnessStabilisationWindowPlusOne > firstSlot (sucᵉ (epoch s))
---       ────────────────────────────────
---       ⟦ η ⟧ᵘᵉ ⊢ ⟦ pre-ηc , ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ grindingf pre-ηc , ηv ⋆ η , ηc ⟧ᵘˢ 
+  tick-ci-a : -- (7)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ getPhase s inl ≡ isWithinCurrentInterval
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ )
+    
+  tick-cu-a : -- (8)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ getPhase s inl ≡ isWithinCatchUpPhase
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ )
+    
+  tick-ic-a : -- (9)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ getPhase s inl ≡ isClosable
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ )
 
+  tick-cu-mp : -- (10)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ getPhase s inl ≡ isWithinCurrentInterval
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ )
+    
+  tick-ni-mp : -- (11)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ getPhase s inl ≡ isWithinNextInterval
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ )
+    
+  tick-ic-mp : -- (12)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ getPhase s inl ≡ isClosable
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ )
+    
+  tick-uc-mp : --(13)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ getPhase s inl ≡ isUngracefullyClosable
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ )
 
+  tick-ci-m : -- (14)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ getPhase s inl ≡ isWithinCurrentInterval
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ )
+    
+  tick-c-m : -- (15)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ getPhase s inl ≡ isClosable
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ )
+    
+  tick-uc-m : -- (16)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ getPhase s inl ≡ isUngracefullyClosable
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) 
+
+  close-rule : 
+    let 
+      y = proj₁ φᵢ
+      ηₑ = computeNonce y -- η e = Hash ( 256 ) ( y ) — Apply the SHA-256 hash function to y 
+      lam = inl .Initialized.parametrized .Parametrized.securityParameter
+      i = getInterval s -- TODO what is this? should it just be I
+      I = inl .Initialized.parametrized .Parametrized.I
+      mx = mkInput (epoch sₙ) I lam pre-ηₑ i (atIndex 82 pins) -- TODO how do you actually calculate this? where do you get the input from which x is calculated
+      π = proj₂ φ
+    in 
+    ∙ mx ≡ just x
+    ∙ (VDFg .VDF.aggVerify) (x , y , lam) I π ≡ true -- VDF.Aggregation.Verify((G,Δ,⋅),λ,x,y,attestedOutputs,π) TODO lambda should be third? should we have attestedOutputs instead of I? 
+    ∙ ( sₗ , sₙ ) ⊢ ( sClosed  ⟦ inl , pins , (x , y , π) , ηₑ ⟧ᶜᵈ ) ⇀⦇ ( s , sig ) ,UPDNONESTREAM⦈ newState
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ ) ⇀⦇ (s , iClose  ⟦ φ ⟧ᶜ )  ,UPDNONESTREAM⦈ newState
+
+  tick-gcl : -- (17)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ getPhase s inl ≡ isUngracefullyClosable
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) 
+
+  tick-ngcl : -- (18)
+    ∙ s > sₙ
+    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ getPhase s inl ≢ isUngracefullyClosable
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ ( sAwaitingGracefulClosure ⟦ inl , pins ⟧ᵃᵍᶜ )
+
+\end{code}
+\caption{Update Nonce transition system rules}
+\label{fig:ts-rules:updatenonce}
+\end{figure*}
+
+\begin{figure*}[h]
+\begin{code}
+UpdateNonce3EpochState = UpdateNonceState × UpdateNonceState × Nonce
+
+data
+  _⊢_⇀⦇_,UPDN⦈_ : UpdateNonceEnv → UpdateNonce3EpochState  → Slot × UpdateNonceCommand × UpdateNonceCommand  → UpdateNonce3EpochState  → Type
+\end{code}
+\end{AgdaAlign}
+\caption{Update Nonce transition system types}
+\label{fig:ts-types:updnonce}
+\end{figure*}
+
+\begin{figure*}[h]
+\begin{code}[hide]
+data _⊢_⇀⦇_,UPDN⦈_ where 
+
+  -- TODO : are initialize and parametrize done within the same transition? right now, parametrize calls neither initialize nor tick
+  -- initialize 2-epochs ago phalanx cycle 
+  -- nothing in 1-epoch ago 
+  -- candidate nonce always exists
+  begin-phalanx : 
+    ∙ (( sₗ , sₙ ) ⊢ sPrePhalanx ⇀⦇ (s , sig2ago)  ,UPDNONESTREAM⦈  ( sParametrized ps ))
+    ∙ (( sₗ , sₙ ) ⊢ sPrePhalanx ⇀⦇ ( s , iNothing )  ,UPDNONESTREAM⦈ sPrePhalanx )
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( 2ago-ηstate , sPrePhalanx , candidate-η ) ⇀⦇ (s , sig2ago , iNothing )  ,UPDN⦈  ( ( sParametrized ps ) , sPrePhalanx , candidate-η )
+
+  -- initialize new state from 1 epoch ago
+  -- rotate 2-epoch ago state into 1-epoch ago 
+  -- get new candidate nonce from 1 epoch ago 
+  switch-nonces : 
+    let 
+      mηₑ = getInlNonce 1ago-ηstate' 
+    in
+    ∙ (( sₗ , sₙ ) ⊢ 2ago-ηstate ⇀⦇ (s , sig2ago)  ,UPDNONESTREAM⦈  ( sInitialized inl ))
+    ∙ (( sₗ , sₙ ) ⊢ 1ago-ηstate ⇀⦇ ( s , iClose  ⟦ φ ⟧ᶜ )  ,UPDNONESTREAM⦈ 1ago-ηstate' )
+    ∙ (mηₑ ≡ just candidate-η)
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( 2ago-ηstate , 1ago-ηstate , η ) ⇀⦇ (s , sig2ago , iClose  ⟦ φ ⟧ᶜ )  ,UPDN⦈  ( ( sInitialized inl ) , 2ago-ηstate' , candidate-η )
+
+  update-noswitch : 
+    ∙ ( sₗ , sₙ ) ⊢ 2ago-ηstate ⇀⦇ (s , sig2ago)  ,UPDNONESTREAM⦈  2ago-ηstate'
+    ∙ ( sₗ , sₙ ) ⊢ 1ago-ηstate ⇀⦇ (s , sig1ago)  ,UPDNONESTREAM⦈  1ago-ηstate'
+    ────────────────────────────────
+    ( sₗ , sₙ ) ⊢ ( 2ago-ηstate , 1ago-ηstate , candidate-η ) ⇀⦇ (s , sig2ago , sig1ago)  ,UPDN⦈  ( 2ago-ηstate' , 1ago-ηstate' , candidate-η )
+
+\end{code}
+\caption{Update Nonce transition system rules}
+\label{fig:ts-rules:updatenonce}
+\end{figure*}
