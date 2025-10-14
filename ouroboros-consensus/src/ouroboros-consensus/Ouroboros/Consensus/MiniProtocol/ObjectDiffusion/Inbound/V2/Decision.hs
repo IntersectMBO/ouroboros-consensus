@@ -134,17 +134,14 @@ orderPeers ::
   Map peerAddr (DecisionPeerState objectId object) ->
   StdGen ->
   ([(peerAddr, DecisionPeerState objectId object)], StdGen)
-orderPeers = undefined
+orderPeers = undefined  -- TODO
 
--- TODO: be careful about additive semigroup instance of PeerDecision
--- e.g. what if an object is first available and picked to download, but the download request isn't emitted yet
--- then the object is received from another peer, so we can ack it from our peer on the next makeDecision call
--- So later when the download request actually takes place, we don't need the object anymore, and it will no
--- longer be part of dpsObjectsAvailableIds of the peer! But also no longer in the FIFO
--- So if the requestIds doing the ack has been made before the requestObject, then the server
--- won't be able to serve the object.
-
--- pdNumIdsToAck should probably be additive, because we can't recompute/recover how many ids were pre-acked before (as they have been removed from the FIFO and from dpsObjectsAvailableIds)
+data DownloadPickState peerAddr objectId
+  = DownloadPickState
+  { totalNumObjectsToReq :: !NumObjectsReq
+  , objectMultiplicity :: ObjectMultiplicity
+  , peersToObjectsToReq :: Map peerAddr (Set objectId)
+  }
 
 -- | This function could just be pure if it hadn't be for the rng used to order peers
 pickObjectsToReq ::
@@ -281,10 +278,3 @@ pickObjectsToReq poolHasObject DecisionPolicy
             }
         -- Or we keep the state as is if we don't select this peer
         else st
-
-data DownloadPickState peerAddr objectId
-  = DownloadPickState
-  { totalNumObjectsToReq :: !NumObjectsReq
-  , objectMultiplicity :: ObjectMultiplicity
-  , peersToObjectsToReq :: Map peerAddr (Set objectId)
-  }

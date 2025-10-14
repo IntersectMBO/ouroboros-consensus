@@ -198,14 +198,17 @@ newDecisionGlobalStateVar rng =
 -- | Decision made by the decision logic.  Each peer will receive a 'Decision'.
 --
 -- /note:/ it is rather non-standard to represent a choice between requesting
--- `objectId`s and `object`'s as a product rather than a sum type.  The client will
+-- `objectId`s and `object`'s as a product rather than a sum type. The client will
 -- need to download `object`s first and then send a request for more objectIds (and
--- acknowledge some `objectId`s).   Due to pipelining each client will request
--- decision from the decision logic quite often (every two pipelined requests),
--- but with this design a decision once taken will make the peer non-active
+-- acknowledge some `objectId`s). Due to pipelining each client will request
+-- decision from the decision logic quite often (every two pipelined requests).
+--
+-- TODO: in the previous design, we prefiltered active peers before calling
+-- `makeDecision`, so that a decision once taken would make the peer non-active
 -- (e.g. it won't be returned by `filterActivePeers`) for longer, and thus the
--- expensive `makeDecision` computation will not need to take that peer into
--- account.
+-- expensive `makeDecision` computation would not need to take that peer into
+-- account. This is no longer the case, but we could reintroduce this optimization
+-- if needed.
 data PeerDecision objectId object = PeerDecision
   { pdNumIdsToAck :: !NumObjectIdsAck
   -- ^ objectId's to acknowledge
