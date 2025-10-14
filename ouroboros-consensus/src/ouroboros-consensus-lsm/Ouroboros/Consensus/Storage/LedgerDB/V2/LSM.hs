@@ -25,6 +25,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     LSM
   , Backend (..)
   , Args (LSMArgs)
+  , Trace (LSMTreeTrace)
+  , LSM.LSMTreeTrace (..)
   , mkLSMArgs
   , stdMkBlockIOFS
 
@@ -571,7 +573,7 @@ instance
     }
     deriving Generic
 
-  data Trace m LSM
+  data Trace LSM
     = LSMTreeTrace !LSM.LSMTreeTrace
     deriving Show
 
