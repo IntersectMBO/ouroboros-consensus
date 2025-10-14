@@ -232,24 +232,6 @@ sql_insert_ebClosures =
     "INSERT INTO ebClosures (ebPoint, txOffset, txCborBytes) VALUES (?, ?, ?)\n\
     \"
 
-sql_lookup_ebBodies :: String
-sql_lookup_ebBodies =
-    "SELECT ebBodies.txHash, ebBodies.txSizeInBytes FROM ebBodies\n\
-    \INNER JOIN ebPoints ON ebBodies.ebPoint = ebPoints.id\n\
-    \WHERE ebPoints.ebSlot = ? AND ebPoints.ebHash = ?\n\
-    \ORDER BY ebBodies.txOffset\n\
-    \"
-
-sql_lookup_ebClosures :: Int -> String
-sql_lookup_ebClosures n =
-    "SELECT ebClosures.txOffset, ebClosures.txCborBytes FROM ebClosures\n\
-    \INNER JOIN ebPoints ON ebClosures.ebPoint = ebPoints.id\n\
-    \WHERE ebPoints.ebSlot = ? AND ebPoints.ebHash = ? AND ebClosures.txOffset IN (" ++ hooks ++ ")\n\
-    \ORDER BY ebClosures.txOffset\n\
-    \"
-  where
-    hooks = intercalate ", " (replicate n "?")
-
 -----
 
 withDiePoly :: Show b => (e -> b) -> IO (Either e a) -> IO a
@@ -337,6 +319,14 @@ msgLeiosBlockRequest db ebSlot ebHash = do
       $ encodeEB fromIntegral id y
     putStrLn ""
 
+sql_lookup_ebBodies :: String
+sql_lookup_ebBodies =
+    "SELECT ebBodies.txHash, ebBodies.txSizeInBytes FROM ebBodies\n\
+    \INNER JOIN ebPoints ON ebBodies.ebPoint = ebPoints.id\n\
+    \WHERE ebPoints.ebSlot = ? AND ebPoints.ebHash = ?\n\
+    \ORDER BY ebBodies.txOffset\n\
+    \"
+
 msgLeiosBlockTxsRequest :: DB.Database -> Word64 -> ByteString -> [(Word16, Word64)] -> IO ()
 msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
     when (not $ let idxs = map fst bitmaps in and $ zipWith (<) idxs (tail idxs)) $ do
@@ -391,3 +381,13 @@ popOffset = \case
     w -> let zs = Bits.countLeadingZeros w
          in
          Just (zs, Bits.clearBit w (63 - zs))
+
+sql_lookup_ebClosures :: Int -> String
+sql_lookup_ebClosures n =
+    "SELECT ebClosures.txOffset, ebClosures.txCborBytes FROM ebClosures\n\
+    \INNER JOIN ebPoints ON ebClosures.ebPoint = ebPoints.id\n\
+    \WHERE ebPoints.ebSlot = ? AND ebPoints.ebHash = ? AND ebClosures.txOffset IN (" ++ hooks ++ ")\n\
+    \ORDER BY ebClosures.txOffset\n\
+    \"
+  where
+    hooks = intercalate ", " (replicate n "?")
