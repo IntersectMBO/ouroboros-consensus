@@ -306,12 +306,12 @@ msgLeiosBlockRequest db ebSlot ebHash = do
                     txHash <- DB.columnBlob stmt_lookup_ebBodies 0
                     txSizeInBytes <- DB.columnInt64 stmt_lookup_ebBodies 1
                     loop $ pushX acc (txSizeInBytes, txHash)
-    y <- loop emptyX
+    acc <- loop emptyX
     -- combine the EB items
     BS.putStr
       $ BS16.encode
       $ serialize'
-      $ encodeEB fromIntegral id y
+      $ encodeEB fromIntegral id acc
     putStrLn ""
 
 -- | It's DESCending because the accumulator within the 'msgLeiosBlockRequest'
@@ -331,31 +331,33 @@ msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
         let maxEbByteSize = 12500000 :: Int
             minTxByteSize = 55
             idxLimit = (maxEbByteSize `div` minTxByteSize) `div` 64
+        when (any (== 0) $ map snd bitmaps) $ do
+            die "A bitmap is zero"
         when (flip any idxs (> fromIntegral idxLimit)) $ do
-            die "An offset exceeds the theoretical limit"
+            die $ "An offset exceeds the theoretical limit " <> show idxLimit
         when (not $ and $ zipWith (<) idxs (tail idxs)) $ do
             die "Offsets not strictly ascending"
     let numOffsets = sum $ map (Bits.popCount . snd) bitmaps
-    let nextOffset = \case
+    let nextOffsetDESC = \case
             [] -> Nothing
-            (idx, bitmap) : k -> case popOffset bitmap of
-                Nothing           -> nextOffset k
+            (idx, bitmap) : k -> case (popRightmostOffset `asTypeOf` popLeftmostOffset) bitmap of
+                Nothing           -> nextOffsetDESC k
                 Just (i, bitmap') ->
                     Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
-        offsets = unfoldr nextOffset bitmaps
+        offsets = unfoldr nextOffsetDESC (reverse bitmaps)
     -- get the txs, at most 'maxBatchSize' at a time
     --
     -- TODO Better workaround for requests of many txs?
-    stmt_lookup_ebClosuresMAIN <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures (maxBatchSize `min` numOffsets)
+    stmt_lookup_ebClosuresMAIN <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures_DESC (maxBatchSize `min` numOffsets)
     withDie $ DB.bindInt64 stmt_lookup_ebClosuresMAIN 1 (fromIntegral ebSlot)
     withDie $ DB.bindBlob  stmt_lookup_ebClosuresMAIN 2 ebHash
     withDieMsg $ DB.exec db (fromString "BEGIN")
-    acc <- (\f -> foldM f [] (batches offsets)) $ \acc batch -> do
+    acc <- (\f -> foldM f emptyX (batches offsets)) $ \acc batch -> do
         stmt <-
           if numOffsets <= maxBatchSize || length batch == maxBatchSize then pure stmt_lookup_ebClosuresMAIN else do
             -- this can only be reached for the last batch
             withDie $ DB.finalize stmt_lookup_ebClosuresMAIN
-            stmt_lookup_ebClosuresTIDY <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures (numOffsets `mod` maxBatchSize)
+            stmt_lookup_ebClosuresTIDY <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures_DESC (numOffsets `mod` maxBatchSize)
             withDie $ DB.bindInt64 stmt_lookup_ebClosuresTIDY 1 (fromIntegral ebSlot)
             withDie $ DB.bindBlob  stmt_lookup_ebClosuresTIDY 2 ebHash
             pure stmt_lookup_ebClosuresTIDY
@@ -369,7 +371,7 @@ msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
                     txOffset <- DB.columnInt64 stmt 0
                     txCborBytes <- DB.columnBlob stmt 1
                     when (txOffset /= fromIntegral offset) $ die $ "Missing offset: " <> show offset
-                    pure (txCborBytes : acc')
+                    pure $ pushX acc' txCborBytes
         withDie $ DB.reset stmt
         pure acc'
     withDieMsg $ DB.exec db (fromString "COMMIT")
@@ -377,28 +379,48 @@ msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
     BS.putStr
       $ BS16.encode
       $ serialize'
-      $ CBOR.encodeListLenIndef <> foldr (\bs r -> CBOR.encodePreEncoded bs <> r) CBOR.encodeBreak (reverse acc)
+      $ CBOR.encodeListLenIndef <> foldr (\bs r -> CBOR.encodePreEncoded bs <> r) CBOR.encodeBreak acc
     putStrLn ""
 
 {- | For example
 @
-  print $ unfoldr popOffset 0
-  print $ unfoldr popOffset 1
-  print $ unfoldr popOffset (2^(34 :: Int))
-  print $ unfoldr popOffset (2^(63 :: Int) + 2^(62 :: Int) + 8)
+  print $ unfoldr popLeftmostOffset 0
+  print $ unfoldr popLeftmostOffset 1
+  print $ unfoldr popLeftmostOffset (2^(34 :: Int))
+  print $ unfoldr popLeftmostOffset (2^(63 :: Int) + 2^(62 :: Int) + 8)
   []
   [63]
   [29]
   [0,1,60]
 @
 -}
-popOffset :: Word64 -> Maybe (Int, Word64)
-{-# INLINE popOffset #-}
-popOffset = \case
+popLeftmostOffset :: Word64 -> Maybe (Int, Word64)
+{-# INLINE popLeftmostOffset #-}
+popLeftmostOffset = \case
     0 -> Nothing
     w -> let zs = Bits.countLeadingZeros w
          in
          Just (zs, Bits.clearBit w (63 - zs))
+
+{- | For example
+@
+  print $ unfoldr popRightmostOffset 0
+  print $ unfoldr popRightmostOffset 1
+  print $ unfoldr popRightmostOffset (2^(34 :: Int))
+  print $ unfoldr popRightmostOffset (2^(63 :: Int) + 2^(62 :: Int) + 8)
+  []
+  [63]
+  [29]
+  [60,1,0]
+@
+-}
+popRightmostOffset :: Word64 -> Maybe (Int, Word64)
+{-# INLINE popRightmostOffset #-}
+popRightmostOffset = \case
+    0 -> Nothing
+    w -> let zs = Bits.countTrailingZeros w
+         in
+         Just (63 - zs, Bits.clearBit w zs)
 
 -- | Never request more than this many txs simultaneously
 --
@@ -410,12 +432,14 @@ maxBatchSize = 1024
 batches :: [a] -> [[a]]
 batches xs = if null xs then [] else take maxBatchSize xs : batches (drop maxBatchSize xs)
 
-sql_lookup_ebClosures :: Int -> String
-sql_lookup_ebClosures n =
+-- | It's DESCending because the accumulator within the
+-- 'msgLeiosBlockTxsRequest' logic naturally reverses it
+sql_lookup_ebClosures_DESC :: Int -> String
+sql_lookup_ebClosures_DESC n =
     "SELECT ebClosures.txOffset, ebClosures.txCborBytes FROM ebClosures\n\
     \INNER JOIN ebPoints ON ebClosures.ebPoint = ebPoints.id\n\
     \WHERE ebPoints.ebSlot = ? AND ebPoints.ebHash = ? AND ebClosures.txOffset IN (" ++ hooks ++ ")\n\
-    \ORDER BY ebClosures.txOffset\n\
+    \ORDER BY ebClosures.txOffset DESC\n\
     \"
   where
     hooks = intercalate ", " (replicate n "?")
