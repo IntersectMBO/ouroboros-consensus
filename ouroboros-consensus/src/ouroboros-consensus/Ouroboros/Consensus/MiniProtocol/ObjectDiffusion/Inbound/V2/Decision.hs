@@ -149,6 +149,8 @@ orderPeers = undefined
 -- So if the requestIds doing the ack has been made before the requestObject, then the server
 -- won't be able to serve the object.
 
+-- pdNumIdsToAck should probably be additive, because we can't recompute/recover how many ids were pre-acked before (as they have been removed from the FIFO and from dpsObjectsAvailableIds)
+
 -- | This function could just be pure if it hadn't be for the rng used to order peers
 pickObjectsToReq ::
   forall peerAddr objectId object.
@@ -162,14 +164,9 @@ pickObjectsToReq ::
   (DecisionGlobalState peerAddr objectId object
   , Map peerAddr (Set objectId))
 pickObjectsToReq poolHasObject DecisionPolicy{dpMaxNumObjectsInflightPerPeer, dpMaxNumObjectsInflightTotal,dpMaxObjectInflightMultiplicity} globalState@DecisionGlobalState{dgsRng, dgsPeerStates, dgsObjectsInflightMultiplicities, dgsObjectsOwtPoolMultiplicities} =
-  -- objects that are inflight or owtPool for a given peer are no longer in dpsObjectsAvailableIds of this peer
-  -- so we only need to filter out dpsObjectsAvailableIds by removing the objects that are already in pool
+  let (orderedPeers, dgsRng') = orderPeers dgsPeerStates dgsRng
 
-  let objectsExpectedSoonMultiplicities = Map.unionWith (+) dgsObjectsInflightMultiplicities dgsObjectsOwtPoolMultiplicities
-
-      (orderedPeers, dgsRng') = orderPeers dgsPeerStates dgsRng
-
-      -- We want to map each objectId to the sorted list of peers that can provide it (and from which we should download them preferably)
+      -- We want to map each objectId to the sorted list of peers that can provide it
       -- For each peer we also indicate how many objects it has in flight at the moment
       -- We filter out here the objects that are already in pool
       objectsToSortedProviders :: Map objectId [(peerAddr, NumObjectsReq)]
@@ -185,11 +182,13 @@ pickObjectsToReq poolHasObject DecisionPolicy{dpMaxNumObjectsInflightPerPeer, dp
           )
           Map.empty
           orderedPeers
-      
-      totalNumObjectsInflight :: NumObjectsReq
-      totalNumObjectsInflight = fromIntegral $ Map.foldl' (+) 0 dgsObjectsInflightMultiplicities
-      
-      -- Now we combine these maps for easy fold
+
+      -- We also want to know for each objects how many peers have it in the inflight or owtPool,
+      -- meaning that we should receive them soon.
+      objectsExpectedSoonMultiplicities :: Map objectId ObjectMultiplicity
+      objectsExpectedSoonMultiplicities = Map.unionWith (+) dgsObjectsInflightMultiplicities dgsObjectsOwtPoolMultiplicities
+
+      -- Now we join objectsToSortedProviders and objectsExpectedSoonMultiplicities maps on objectId for easy fold
       objectsToProvidersAndExpectedMultiplicities :: Map objectId ([(peerAddr, NumObjectsReq)], ObjectMultiplicity)
       objectsToProvidersAndExpectedMultiplicities =
         Map.merge
@@ -202,6 +201,7 @@ pickObjectsToReq poolHasObject DecisionPolicy{dpMaxNumObjectsInflightPerPeer, dp
           objectsToSortedProviders
           objectsExpectedSoonMultiplicities
       
+      -- Now we compute the actual attribution of downloads for peers
       St{peersToObjectsToReq} =
         -- We iterate over each objectId and the corresponding (providers, expectedMultiplicity)
         Map.foldlWithKey'
@@ -209,8 +209,11 @@ pickObjectsToReq poolHasObject DecisionPolicy{dpMaxNumObjectsInflightPerPeer, dp
               -- reset the objectMultiplicity counter for each new objectId
               let st' = st{objectMultiplicity = 0}
 
+              -- We iterate over the list of providers, and pick them or not according to the current state
+              -- When a peer is selected as a provider for this objectId, we insert the objectId in the peer's set in peersToObjectsToReq (inside St)
+              -- So the result of the filtering of providers is part of the final St state
               in Foldable.foldl'
-                    (howToFoldProviderList objectId expectedMultiplicity)
+                    (howToFoldProviders objectId expectedMultiplicity)
                     st'
                     providers
           )
@@ -221,10 +224,13 @@ pickObjectsToReq poolHasObject DecisionPolicy{dpMaxNumObjectsInflightPerPeer, dp
           }
           objectsToProvidersAndExpectedMultiplicities
 
+      totalNumObjectsInflight :: NumObjectsReq
+      totalNumObjectsInflight = fromIntegral $ Map.foldl' (+) 0 dgsObjectsInflightMultiplicities
+
       -- This function decides whether or not we should select a given peer as provider for the current objectId
       -- it takes into account if we are expecting to obtain the object from other sources (either inflight/owt pool already, or if the object will be requested from already selected peers in this given round)
-      howToFoldProviderList :: objectId -> ObjectMultiplicity -> St peerAddr objectId -> (peerAddr, NumObjectsReq) -> St peerAddr objectId
-      howToFoldProviderList objectId expectedMultiplicity st@St{totalNumObjectsToReq, objectMultiplicity, peersToObjectsToReq} (peerAddr, numObjectsInFlight) =
+      howToFoldProviders :: objectId -> ObjectMultiplicity -> St peerAddr objectId -> (peerAddr, NumObjectsReq) -> St peerAddr objectId
+      howToFoldProviders objectId expectedMultiplicity st@St{totalNumObjectsToReq, objectMultiplicity, peersToObjectsToReq} (peerAddr, numObjectsInFlight) =
         let -- see what has already been attributed to this peer
             objectsToReq = Map.findWithDefault Set.empty peerAddr peersToObjectsToReq
 
