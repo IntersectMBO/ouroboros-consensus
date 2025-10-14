@@ -47,10 +47,11 @@ IMMDB_SERVER_PID=$!
 
 echo "ImmDB server started with PID: $IMMDB_SERVER_PID"
 
+pushd "$CARDANO_NODE_PATH" > /dev/null
+
 ##
 ## Run cardano-node (node-0)
 ##
-pushd "$CARDANO_NODE_PATH" > /dev/null
 
 echo "Creating topology-node-0.json in $(pwd)"
 cat << EOF > topology-node-0.json
@@ -75,20 +76,61 @@ EOF
 
 mkdir -p "$TMP_DIR/node-0/db"
 
-CARDANO_NODE_CMD_CORE="cabal run -- cardano-node run \
+CARDANO_NODE_CMD="cabal run -- cardano-node run \
     --config $CLUSTER_RUN_DATA/node-0/config.json \
     --topology topology-node-0.json \
     --database-path $TMP_DIR/node-0/db \
     --socket-path node-0.socket \
     --host-addr 0.0.0.0 --port 3002"
 
-echo "Command: $CARDANO_NODE_CMD_CORE &> $TMP_DIR/cardano-node-0.log &"
+echo "Command: $CARDANO_NODE_CMD &> $TMP_DIR/cardano-node-0.log &"
 
-$CARDANO_NODE_CMD_CORE &> "$TMP_DIR/cardano-node-0.log" &
+$CARDANO_NODE_CMD &> "$TMP_DIR/cardano-node-0.log" &
 
-CARDANO_NODE_PID=$!
+CARDANO_NODE_0_PID=$!
 
-echo "Cardano node started with PID: $CARDANO_NODE_PID"
+echo "Cardano node 0 started with PID: $CARDANO_NODE_0_PID"
+
+##
+## Run a second Cardano-node (To be eventually replaced by a mocked downstream node)
+##
+
+cat << EOF > topology-node-1.json
+{
+  "bootstrapPeers": [],
+  "localRoots": [
+    {
+      "accessPoints": [
+        {
+          "address": "127.0.0.1",
+          "port": 3002
+        }
+      ],
+      "advertise": false,
+      "trustable": true,
+      "valency": 1
+    }
+  ],
+  "publicRoots": []
+}
+EOF
+
+mkdir -p "$TMP_DIR/node-1/db"
+
+MOCKED_PEER_CMD="cabal run -- cardano-node run \
+    --config $CLUSTER_RUN_DATA/node-0/config.json \
+    --topology topology-node-1.json \
+    --database-path $TMP_DIR/node-1/db \
+    --socket-path node-1.socket \
+    --host-addr 0.0.0.0 --port 3003"
+
+echo "Command (Node 1): $MOCKED_PEER_CMD &> $TMP_DIR/cardano-node-1.log &"
+
+$MOCKED_PEER_CMD &> "$TMP_DIR/cardano-node-1.log" &
+
+MOCKED_PEER_PID=$!
+
+echo "Cardano node 1 started with PID: $MOCKED_PEER_PID"
 
 # Return to the original directory
 popd > /dev/null
@@ -97,12 +139,13 @@ popd > /dev/null
 echo "Sleeping for 30 seconds"
 sleep 30
 
-echo "Killing processes $IMMDB_SERVER_PID (immdb-server) and $CARDANO_NODE_PID (cardano-node)..."
+echo "Killing processes $IMMDB_SERVER_PID (immdb-server), $CARDANO_NODE_0_PID (node-0), and $MOCKED_PEER_PID (node-1)..."
 
 kill "$IMMDB_SERVER_PID" 2>/dev/null || true
 
-# Use negative PID to target the process group ID and SIGKILL.
-kill -9 -"$CARDANO_NODE_PID" 2>/dev/null || true
+# Use negative PID to target the process group ID and SIGKILL for cardano-node processes.
+kill -9 -"$CARDANO_NODE_0_PID" 2>/dev/null || true
+kill -9 -"$MOCKED_PEER_PID" 2>/dev/null || true
 
 echo "Temporary data stored at: $TMP_DIR"
 
