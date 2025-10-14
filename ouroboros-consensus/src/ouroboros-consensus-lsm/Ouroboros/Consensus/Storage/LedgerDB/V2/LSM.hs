@@ -322,6 +322,25 @@ implTakeHandleSnapshot t _ snapshotName = do
   SnapshotManager
 -------------------------------------------------------------------------------}
 
+-- | Snapshots in LSM trees are split in two parts for now:
+--
+-- - The @state@ and @meta@ files in the usual location (@./ledger/<slotno>@ in
+--   the ChainDB).
+--
+-- - The ledger tables, which are stored in the LSM-trees session directory,
+--   under a @./lsm/snapshots/<slotno>@ directory.
+--
+-- Note that the name of the folder in which the @state@ file is and the name of
+-- the snapshot in the LSM-trees directory have to match. This means that if the
+-- user adds a suffix to the snapshot renaming the directory
+-- @./ledger/<slotno>@, they will also have to rename the directory
+-- @./lsm/snapshots/<slotno>@. Otherwise the initialization logic will exit with
+-- failure saying that the snapshot was not found.
+--
+-- There is [an issue open in
+-- LSM-trees](https://github.com/IntersectMBO/lsm-tree/issues/272) such that the
+-- ledger tables part of the snapshot could also be stored in the
+-- @./ledger/<slotno>@ directory, but it is not implemented yet.
 snapshotManager ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk

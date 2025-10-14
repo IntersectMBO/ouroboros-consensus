@@ -11,12 +11,34 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Common logic and types for LedgerDB Snapshots.
+-- | Snapshots
 --
--- Snapshots are saved copies of Ledger states in the chain which can be used to
--- restart the node without having to replay the whole chain. Regardless of the
--- actual LedgerDB implementation chosen, the general management of snapshots is
--- common to all implementations.
+-- Snapshotting a ledger state means saving a copy of the state to disk, so that
+-- a later start of a cardano-node can use such a snapshot as a starting point
+-- instead of having to replay from Genesis.
+--
+-- A snapshot is identified by the slot number of the ledger state it contains
+-- and possibly has a suffix in the name. The consensus logic will not delete a
+-- snapshot if it has a suffix. This can be used to store important
+-- snapshots. The suffix can be manually added to the snapshot by renaming the
+-- folder (see the caveats in 'snapshotManager' for the LSM backend). It will
+-- also be added automatically by some tools such as db-analyser.
+--
+-- In general snapshots will be stored in the @./ledger@ directory inside the
+-- ChainDB directory, but each LedgerDB backend is free to store it somewhere
+-- else. Management of snapshots is done through the 'SnapshotManager'
+-- record (see the 'snapshotManager' functions on each backend).
+--
+-- Snapshots cosists of two parts:
+--
+--  - the ledger state tables: location and format differs among backends,
+--
+--  - the rest of the ledger state: a CBOR serialization of an @ExtLedgerState
+--    blk EmptyMK@, stored in the @./state@ file in the snapshot directory.
+--
+-- V2 backends will provide means of loading a snapshot via the method
+-- 'newHandleFromSnapshot'. V1 backends load the snapshot directly in
+-- 'initFromSnapshot'.
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( -- * Snapshots
     CRCError (..)
