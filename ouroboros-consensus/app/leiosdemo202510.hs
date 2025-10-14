@@ -302,6 +302,7 @@ msgLeiosBlockRequest db ebSlot ebHash = do
             withDie (DB.stepNoCB stmt_lookup_ebBodies) >>= \case
                 DB.Done -> pure acc
                 DB.Row -> do
+                    -- TODO use a sink buffer to avoid polluting the heap with these temporary copies?
                     txHash <- DB.columnBlob stmt_lookup_ebBodies 0
                     txSizeInBytes <- DB.columnInt64 stmt_lookup_ebBodies 1
                     loop $ pushX acc (txSizeInBytes, txHash)
@@ -325,11 +326,16 @@ sql_lookup_ebBodies_DESC =
 
 msgLeiosBlockTxsRequest :: DB.Database -> Word64 -> ByteString -> [(Word16, Word64)] -> IO ()
 msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
-    when (not $ let idxs = map fst bitmaps in and $ zipWith (<) idxs (tail idxs)) $ do
-        die "Offsets not strictly ascending"
-    when (1000 < sum (map (Bits.popCount . snd) bitmaps)) $ do
-        -- TODO insert into temp table and join?
-        die "Too many offsets in one request"
+    do
+        let idxs = map fst bitmaps
+        let maxEbByteSize = 12500000 :: Int
+            minTxByteSize = 55
+            idxLimit = (maxEbByteSize `div` minTxByteSize) `div` 64
+        when (flip any idxs (> fromIntegral idxLimit)) $ do
+            die "An offset exceeds the theoretical limit"
+        when (not $ and $ zipWith (<) idxs (tail idxs)) $ do
+            die "Offsets not strictly ascending"
+    let numOffsets = sum $ map (Bits.popCount . snd) bitmaps
     let nextOffset = \case
             [] -> Nothing
             (idx, bitmap) : k -> case popOffset bitmap of
@@ -337,20 +343,36 @@ msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
                 Just (i, bitmap') ->
                     Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
         offsets = unfoldr nextOffset bitmaps
-    -- get the txs
-    stmt_lookup_ebClosures <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures (length offsets)
-    withDie $ DB.bindInt64 stmt_lookup_ebClosures 1 (fromIntegral ebSlot)
-    withDie $ DB.bindBlob  stmt_lookup_ebClosures 2 ebHash
-    forM_ ([(3 :: DB.ParamIndex) ..] `zip` offsets) $ \(i, offset) -> do
-        withDie $ DB.bindInt64 stmt_lookup_ebClosures i (fromIntegral offset)
-    acc <- (\f -> foldM f [] offsets) $ \acc offset -> do
-        withDie (DB.stepNoCB stmt_lookup_ebClosures) >>= \case
-            DB.Done -> die $ "No rows starting at offset: " ++ show offset
-            DB.Row -> do
-                txOffset <- DB.columnInt64 stmt_lookup_ebClosures 0
-                txCborBytes <- DB.columnBlob stmt_lookup_ebClosures 1
-                when (txOffset /= fromIntegral offset) $ die $ "Missing offset: " <> show offset
-                pure (txCborBytes : acc)
+    -- get the txs, at most 'maxBatchSize' at a time
+    --
+    -- TODO Better workaround for requests of many txs?
+    stmt_lookup_ebClosuresMAIN <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures (maxBatchSize `min` numOffsets)
+    withDie $ DB.bindInt64 stmt_lookup_ebClosuresMAIN 1 (fromIntegral ebSlot)
+    withDie $ DB.bindBlob  stmt_lookup_ebClosuresMAIN 2 ebHash
+    withDieMsg $ DB.exec db (fromString "BEGIN")
+    acc <- (\f -> foldM f [] (batches offsets)) $ \acc batch -> do
+        stmt <-
+          if numOffsets <= maxBatchSize || length batch == maxBatchSize then pure stmt_lookup_ebClosuresMAIN else do
+            -- this can only be reached for the last batch
+            withDie $ DB.finalize stmt_lookup_ebClosuresMAIN
+            stmt_lookup_ebClosuresTIDY <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures (numOffsets `mod` maxBatchSize)
+            withDie $ DB.bindInt64 stmt_lookup_ebClosuresTIDY 1 (fromIntegral ebSlot)
+            withDie $ DB.bindBlob  stmt_lookup_ebClosuresTIDY 2 ebHash
+            pure stmt_lookup_ebClosuresTIDY
+        forM_ ([(3 :: DB.ParamIndex) ..] `zip` batch) $ \(i, offset) -> do
+            withDie $ DB.bindInt64 stmt i (fromIntegral offset)
+        acc' <- (\f -> foldM f acc batch) $ \acc' offset -> do
+            withDie (DB.stepNoCB stmt) >>= \case
+                DB.Done -> die $ "No rows starting at offset: " ++ show offset
+                DB.Row -> do
+                    -- TODO use a sink buffer to avoid polluting the heap with these temporary copies?
+                    txOffset <- DB.columnInt64 stmt 0
+                    txCborBytes <- DB.columnBlob stmt 1
+                    when (txOffset /= fromIntegral offset) $ die $ "Missing offset: " <> show offset
+                    pure (txCborBytes : acc')
+        withDie $ DB.reset stmt
+        pure acc'
+    withDieMsg $ DB.exec db (fromString "COMMIT")
     -- combine the txs
     BS.putStr
       $ BS16.encode
@@ -377,6 +399,16 @@ popOffset = \case
     w -> let zs = Bits.countLeadingZeros w
          in
          Just (zs, Bits.clearBit w (63 - zs))
+
+-- | Never request more than this many txs simultaneously
+--
+-- TODO confirm this prevents the query string from exceeding its size limits,
+-- even if the largest txOffsets are being requested.
+maxBatchSize :: Int
+maxBatchSize = 1024
+
+batches :: [a] -> [[a]]
+batches xs = if null xs then [] else take maxBatchSize xs : batches (drop maxBatchSize xs)
 
 sql_lookup_ebClosures :: Int -> String
 sql_lookup_ebClosures n =
