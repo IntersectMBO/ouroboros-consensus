@@ -1,3 +1,6 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -44,6 +47,13 @@ main = getArgs >>= \case
         db <- withDieMsg $ DB.open (fromString dbPath)
         prng0 <- R.initStdGen
         generateDb prng0 db manifest
+    ["MsgLeiosBlockRequest", dbPath, ebSlotStr, ebHashStr]
+      | ".db" `isSuffixOf` dbPath
+      , Just ebSlot <- readMaybe ebSlotStr
+      , Right ebHash <- BS16.decode (fromString ebHashStr :: ByteString)
+      -> do
+        db <- withDieMsg $ DB.open (fromString dbPath)
+        msgLeiosBlockRequest db ebSlot ebHash
     "MsgLeiosBlockTxsRequest" : dbPath : ebSlotStr : ebHashStr : bitmapChunkStrs
       | ".db" `isSuffixOf` dbPath
       , Just ebSlot <- readMaybe ebSlotStr
@@ -52,7 +62,10 @@ main = getArgs >>= \case
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
         msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps
-    _ -> die "Either $0 generate myDatabase.db myManifest.json\n    OR $0 MsgLeiosBlockTxsRequest ebSlot ebHash(hex) index16:bitmap64 index16:bitmap64 index16:bitmap64 ..."
+    _ -> die "Either $0 generate myDatabase.db myManifest.json\n\
+             \    OR $0 MsgLeiosBlockRequest myDatabase.db ebSlot ebHash(hex)\n\
+             \    OR $0 MsgLeiosBlockTxsRequest myDatabase.db ebSlot ebHash(hex) index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
+             \"
 
 parseBitmaps :: [String] -> Maybe [(Word16, Word64)]
 parseBitmaps =
@@ -109,7 +122,11 @@ generateDb prng0 db ebRecipes = do
             pure (txCborBytes, Hash.hashWith id txCborBytes :: Hash.Hash HASH ByteString)
         let ebSlot = slotNo ebRecipe
         let ebHash :: Hash.Hash HASH ByteString
-            ebHash = Hash.castHash $ Hash.hashWithSerialiser encodeEB txs
+            ebHash =
+                Hash.castHash
+              $ Hash.hashWithSerialiser
+                    (encodeEB (fromIntegral . BS.length) Hash.hashToBytes)
+                    txs
         withDieMsg $ DB.exec db (fromString "BEGIN")
         withDie $ DB.bindInt64 stmt_insert_ebPoints   3 (fromIntegral ebPoint)
         withDie $ DB.bindInt64 stmt_insert_ebBodies   1 (fromIntegral ebPoint)
@@ -215,11 +232,20 @@ sql_insert_ebClosures =
     "INSERT INTO ebClosures (ebPoint, txOffset, txCborBytes) VALUES (?, ?, ?)\n\
     \"
 
+sql_lookup_ebBodies :: String
+sql_lookup_ebBodies =
+    "SELECT ebBodies.txHash, ebBodies.txSizeInBytes FROM ebBodies\n\
+    \INNER JOIN ebPoints ON ebBodies.ebPoint = ebPoints.id\n\
+    \WHERE ebPoints.ebSlot = ? AND ebPoints.ebHash = ?\n\
+    \ORDER BY ebBodies.txOffset\n\
+    \"
+
 sql_lookup_ebClosures :: Int -> String
 sql_lookup_ebClosures n =
     "SELECT ebClosures.txOffset, ebClosures.txCborBytes FROM ebClosures\n\
     \INNER JOIN ebPoints ON ebClosures.ebPoint = ebPoints.id\n\
-    \WHERE ebPoints.ebSlot = ? AND ebPoints.ebHash = ? AND ebClosures.txOffset IN (" ++ hooks ++ ") ORDER BY ebClosures.txOffset\n\
+    \WHERE ebPoints.ebSlot = ? AND ebPoints.ebHash = ? AND ebClosures.txOffset IN (" ++ hooks ++ ")\n\
+    \ORDER BY ebClosures.txOffset\n\
     \"
   where
     hooks = intercalate ", " (replicate n "?")
@@ -252,22 +278,72 @@ withDieJust io =
 
 -----
 
-encodeEbItem :: (ByteString, Hash.Hash HASH ByteString) -> CBOR.Encoding
-encodeEbItem (txCborBytes, txHash) =
+encodeEbItem :: (b -> Word16) -> (h -> ByteString) -> (b, h) -> CBOR.Encoding
+encodeEbItem bytesToLen hashToBytes (txCborBytes, txHash) =
     CBOR.encodeListLen 2
- <> CBOR.encodeBytes (Hash.hashToBytes txHash)
- <> CBOR.encodeWord16 (fromIntegral (BS.length txCborBytes))
+ <> CBOR.encodeBytes (hashToBytes txHash)
+ <> CBOR.encodeWord16 (bytesToLen txCborBytes)
 
-encodeEB :: Foldable f => f (ByteString, Hash.Hash HASH ByteString) -> CBOR.Encoding
-encodeEB ebItems =
-    CBOR.encodeListLenIndef <> foldr (\x r -> encodeEbItem x <> r) CBOR.encodeBreak ebItems
+encodeEB :: Foldable f => (b -> Word16) -> (h -> ByteString) -> f (b, h) -> CBOR.Encoding
+encodeEB bytesToLen hashToBytes ebItems =
+    CBOR.encodeListLenIndef
+ <> foldr
+        (\x r -> encodeEbItem bytesToLen hashToBytes x <> r)
+        CBOR.encodeBreak
+        ebItems
 
 -----
+
+-- | helper for msgLeiosBlockRequest
+--
+-- The @[a]@ is less than 1024 long.
+--
+-- Each 'V.Vector' is exactly 1024.
+data X a = X [V.Vector a] !Word16 [a]
+
+emptyX :: X a
+emptyX = X [] 0 []
+
+pushX :: a -> X a -> X a
+pushX x (X vs n xs) =
+    if n < 1024 then X vs (n+1) (x : xs) else
+    X (V.fromList (reverse xs) : vs) 1 [x]
+
+-- | helper for msgLeiosBlockRequest
+newtype Y a = Y [V.Vector a]
+  deriving (Functor, Foldable)
+
+finalizeX :: X a -> Y a
+finalizeX (X vs _n xs) = Y $ reverse $ V.fromList (reverse xs) : vs
+
+msgLeiosBlockRequest :: DB.Database -> Word64 -> ByteString -> IO ()
+msgLeiosBlockRequest db ebSlot ebHash = do
+    -- get the EB items
+    stmt_lookup_ebBodies <- withDieJust $ DB.prepare db (fromString sql_lookup_ebBodies)
+    withDie $ DB.bindInt64 stmt_lookup_ebBodies 1 (fromIntegral ebSlot)
+    withDie $ DB.bindBlob  stmt_lookup_ebBodies 2 ebHash
+    let loop !acc = do
+            withDie (DB.stepNoCB stmt_lookup_ebBodies) >>= \case
+                DB.Done -> pure $ finalizeX acc
+                DB.Row -> do
+                    txHash <- DB.columnBlob stmt_lookup_ebBodies 0
+                    txSizeInBytes <- DB.columnInt64 stmt_lookup_ebBodies 1
+                    loop $ pushX (txSizeInBytes, txHash) acc
+    y <- loop emptyX
+    -- combine the EB items
+    BS.putStr
+      $ BS16.encode
+      $ serialize'
+      $ encodeEB fromIntegral id y
+    putStrLn ""
 
 msgLeiosBlockTxsRequest :: DB.Database -> Word64 -> ByteString -> [(Word16, Word64)] -> IO ()
 msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
     when (not $ let idxs = map fst bitmaps in and $ zipWith (<) idxs (tail idxs)) $ do
         die "Offsets not strictly ascending"
+    when (1000 < sum (map (Bits.popCount . snd) bitmaps)) $ do
+        -- TODO insert into temp table and join?
+        die "Too many offsets in one request"
     let nextOffset = \case
             [] -> Nothing
             (idx, bitmap) : k -> case popOffset bitmap of
@@ -300,12 +376,12 @@ msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
 @
   print $ unfoldr popOffset 0
   print $ unfoldr popOffset 1
-  print $ unfoldr popOffset (2^ (33 :: Int))
-  print $ unfoldr popOffset (16 + 2^ (63 :: Int))
+  print $ unfoldr popOffset (2^(34 :: Int))
+  print $ unfoldr popOffset (2^(63 :: Int) + 2^(62 :: Int) + 8)
   []
   [63]
-  [30]
-  [0,59]
+  [29]
+  [0,1,60]
 @
 -}
 popOffset :: Word64 -> Maybe (Int, Word64)
