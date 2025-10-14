@@ -18,6 +18,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
   ( Backend (..)
   , Args (InMemArgs)
+  , Trace (NoTrace)
   , Mem
   , YieldArgs (YieldInMemory)
   , SinkArgs (SinkInMemory)
@@ -363,7 +364,7 @@ instance
   data Args m Mem = InMemArgs
   newtype Resources m Mem = Resources (SomeHasFS m)
     deriving newtype NoThunks
-  newtype Trace m Mem = NoTrace Void
+  newtype Trace Mem = NoTrace Void
     deriving newtype Show
 
   mkResources _ _ _ _ = pure . Resources
