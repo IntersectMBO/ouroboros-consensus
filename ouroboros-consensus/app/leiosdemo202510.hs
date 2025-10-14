@@ -72,10 +72,19 @@ main = getArgs >>= \case
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
         msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps
+    "MsgLeiosBlockTxs" : dbPath : ebPointStr : ebTxsPath : bitmapChunkStrs
+      | ".db" `isSuffixOf` dbPath
+      , ".bin" `isSuffixOf` ebTxsPath
+      , Just ebPoint <- readMaybe ebPointStr
+      , Just bitmaps <- parseBitmaps bitmapChunkStrs
+      -> do
+        db <- withDieMsg $ DB.open (fromString dbPath)
+        msgLeiosBlockTxs db ebPoint ebTxsPath bitmaps
     _ -> die "Either $0 generate myDatabase.db myManifest.json\n\
              \    OR $0 MsgLeiosBlockRequest myDatabase.db ebSlot ebHash(hex)\n\
-             \    OR $0 MsgLeiosBlockTxsRequest myDatabase.db ebSlot ebHash(hex) index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
              \    OR $0 MsgLeiosBlock myDatabase.db ebPoint(int) ebSlot myEb.bin\n\
+             \    OR $0 MsgLeiosBlockTxsRequest myDatabase.db ebSlot ebHash(hex) index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
+             \    OR $0 MsgLeiosBlockTxs myDatabase.db ebPoint(int) myEbTxs.bin index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
              \"
 
 parseBitmaps :: [String] -> Maybe [(Word16, Word64)]
@@ -363,7 +372,7 @@ msgLeiosBlockTxsRequest db ebSlot ebHash bitmaps = do
     let numOffsets = sum $ map (Bits.popCount . snd) bitmaps
     let nextOffsetDESC = \case
             [] -> Nothing
-            (idx, bitmap) : k -> case (popRightmostOffset `asTypeOf` popLeftmostOffset) bitmap of
+            (idx, bitmap) : k -> case popRightmostOffset bitmap of
                 Nothing           -> nextOffsetDESC k
                 Just (i, bitmap') ->
                     Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
@@ -484,6 +493,7 @@ msgLeiosBlock db ebPoint ebSlot ebPath = do
     withDieDone $ DB.stepNoCB stmt_insert_ebPoints
     withDie $ DB.reset        stmt_insert_ebPoints
     -- decode incrementally and simultaneously INSERT INTO ebBodies
+    withDie $ DB.bindInt64 stmt_insert_ebBodies 1 (fromIntegral ebPoint)
     let decodeBreakOrEbPair = do
             stop <- CBOR.decodeBreakOr
             if stop then pure Nothing else Just <$> decodeEbPair
@@ -492,7 +502,6 @@ msgLeiosBlock db ebPoint ebSlot ebPath = do
             go2 txOffset bytes' next
         go2 txOffset bytes = \case
             Just (txHashBytes, txSizeInBytes) -> do
-                withDie $ DB.bindInt64    stmt_insert_ebBodies 1 (fromIntegral ebPoint)
                 withDie $ DB.bindInt64    stmt_insert_ebBodies 2 txOffset
                 withDie $ DB.bindBlob     stmt_insert_ebBodies 3 txHashBytes
                 withDie $ DB.bindInt64    stmt_insert_ebBodies 4 (fromIntegral txSizeInBytes)
@@ -504,5 +513,45 @@ msgLeiosBlock db ebPoint ebSlot ebPath = do
               | otherwise -> pure ()
     (ebBytes2, ()) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes CBOR.decodeMapLenIndef $ BSL.fromStrict ebBytes
     go1 0 ebBytes2
+    -- finalize the EB
+    withDieMsg $ DB.exec db (fromString "COMMIT")
+
+msgLeiosBlockTxs :: DB.Database -> Int -> FilePath -> [(Word16, Word64)] -> IO ()
+msgLeiosBlockTxs db ebPoint ebTxsPath bitmaps = do
+    ebTxsBytes <- BSL.readFile ebTxsPath
+    stmt_insert_ebClosures <- withDieJust $ DB.prepare db (fromString sql_insert_ebClosures)
+    withDie $ DB.bindInt64 stmt_insert_ebClosures 1 (fromIntegral ebPoint)
+    withDieMsg $ DB.exec db (fromString "BEGIN")
+    -- decode incrementally and simultaneously INSERT INTO ebClosures
+    --
+    -- TODO also add to TxCache
+    let decodeBreakOrTx = do
+            stop <- CBOR.decodeBreakOr
+            if stop then pure Nothing else Just <$> CBOR.decodeBytes
+    let go1 offsets bytes = do
+            (bytes', next) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes decodeBreakOrTx bytes
+            go2 offsets bytes' next
+        go2 offsets bytes = \case
+            Just txBytes -> case offsets of
+                [] -> die "Too many txs"
+                txOffset:offsets' -> do
+                    withDie $ DB.bindInt64    stmt_insert_ebClosures 2 $ fromIntegral txOffset
+                    withDie $ DB.bindBlob     stmt_insert_ebClosures 3 $ serialize' $ CBOR.encodeBytes txBytes
+                    withDieDone $ DB.stepNoCB stmt_insert_ebClosures
+                    withDie $ DB.reset        stmt_insert_ebClosures
+                    go1 offsets' bytes
+            Nothing
+              | not (BSL.null bytes) -> die "Incomplete EB txs decode"
+              | txOffset:_ <- offsets -> die $ "Too few EB txs; next is " <> show txOffset
+              | otherwise -> pure ()
+    let nextOffset = \case
+            [] -> Nothing
+            (idx, bitmap) : k -> case popLeftmostOffset bitmap of
+                Nothing           -> nextOffset k
+                Just (i, bitmap') ->
+                    Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
+        offsets = unfoldr nextOffset bitmaps
+    (ebTxsBytes2, ()) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes CBOR.decodeListLenIndef ebTxsBytes
+    go1 offsets ebTxsBytes2
     -- finalize the EB
     withDieMsg $ DB.exec db (fromString "COMMIT")
