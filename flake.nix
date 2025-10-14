@@ -41,6 +41,7 @@
       url = "github:phadej/gentle-introduction";
       flake = false;
     };
+    cardano-nix.url = "github:mlabs-haskell/cardano.nix";
   };
   outputs = inputs:
     let
@@ -87,7 +88,9 @@
         inherit hydraJobs;
         legacyPackages = pkgs;
         packages =
-          hydraJobs.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano;
+          hydraJobs.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano // {
+            leios-mvd-test = pkgs.testers.nixosTest (import ./nix/leios-mvd/test.nix {inherit inputs pkgs;});
+          };
       }
     );
 }

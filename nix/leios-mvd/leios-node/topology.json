@@ -1,0 +1,18 @@
+{
+  "bootstrapPeers": null,
+  "localRoots": [
+    {
+      "accessPoints": [
+        {
+          "address": "immdb-node",
+          "port": 30001
+        }
+      ],
+      "advertise": false,
+      "trustable": true,
+      "valency": 1
+    }
+  ],
+  "publicRoots": [],
+  "useLedgerAfterSlot": -1
+}
