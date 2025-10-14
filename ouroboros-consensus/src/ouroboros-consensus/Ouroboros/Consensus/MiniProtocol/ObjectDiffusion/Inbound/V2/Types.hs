@@ -52,21 +52,17 @@ import Control.Concurrent.Class.MonadSTM.TSem (TSem, newTSem)
 import Control.DeepSeq (NFData)
 import Control.Exception (Exception (..))
 import Control.Monad.Class.MonadTime.SI
-import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
-import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set (Set)
-import Data.Set qualified as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Network.ControlMessage (ControlMessage)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 import Quiet (Quiet (..))
-import System.Random (StdGen)
 
 -- | Semaphore to guard access to the ObjectPool
 newtype ObjectPoolSem m = ObjectPoolSem (TSem m)
@@ -143,8 +139,6 @@ data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   --
   -- * We subtract from the counter when a given object is added to the
   -- objectpool
-  , dgsRng :: !StdGen
-  -- ^ Rng used to randomly order peers
   }
   deriving (Eq, Show, Generic)
 
@@ -152,7 +146,6 @@ instance
   ( NoThunks peerAddr
   , NoThunks object
   , NoThunks objectId
-  , NoThunks StdGen
   ) =>
   NoThunks (DecisionGlobalState peerAddr objectId object)
 
@@ -169,15 +162,13 @@ type DecisionGlobalStateVar m peerAddr objectId object =
 
 newDecisionGlobalStateVar ::
   MonadSTM m =>
-  StdGen ->
   m (DecisionGlobalStateVar m peerAddr objectId object)
-newDecisionGlobalStateVar rng =
+newDecisionGlobalStateVar =
   newTVarIO
     DecisionGlobalState
       { dgsPeerStates = Map.empty
       , dgsObjectsInflightMultiplicities = Map.empty
       , dgsObjectsOwtPoolMultiplicities = Map.empty
-      , dgsRng = rng
       }
 
 --

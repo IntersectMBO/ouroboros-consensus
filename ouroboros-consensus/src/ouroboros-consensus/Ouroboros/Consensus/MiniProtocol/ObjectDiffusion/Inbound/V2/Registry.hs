@@ -40,6 +40,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State qualifi
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsAck, NumObjectIdsReq)
+import System.Random (initStdGen)
 
 -- | Communication channels between `ObjectDiffusion` mini-protocol inbound side
 -- and decision logic.
@@ -268,14 +269,11 @@ decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject}
     -- if there are too many inbound connections.
     threadDelay _DECISION_LOOP_DELAY
 
-    -- Make decisions and update the global state var accordingly
-    (globalState', decisions) <- atomically $ do
+    globalState <- atomically $ readTVar globalStateVar
+    decisions <- atomically $ do
+      rng <- initStdGen
       hasObject <- opwHasObject
-      stateTVar
-        globalStateVar
-        \globalState ->
-          let (globalState', decisions) = makeDecisions hasObject decisionPolicy globalState
-           in ((globalState', decisions), globalState')
+      pure $ makeDecisions rng hasObject decisionPolicy globalState
 
     traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "decisionLogicThread" globalState')
     traceWith decisionTracer (TraceDecisionLogicDecisionsMade decisions)
@@ -290,7 +288,7 @@ decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject}
     -- Note that decisions are incremental, so we merge the old one to the new one (using the semigroup instance) if there is an old one
     traverse_ (uncurry putMVar) peerToChannelAndDecision
 
-    traceWith countersTracer (makeObjectDiffusionCounters globalState')
+    traceWith countersTracer (makeObjectDiffusionCounters globalState)
 
 -- `5ms` delay
 _DECISION_LOOP_DELAY :: DiffTime

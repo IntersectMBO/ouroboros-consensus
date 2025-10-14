@@ -1,11 +1,8 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
@@ -16,26 +13,20 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
   , makeDecisions
   ) where
 
-import Control.Arrow ((>>>))
-import Control.Exception (assert)
-import Data.Bifunctor (second)
 import Data.Foldable qualified as Foldable
 import Data.Hashable
-import Data.List qualified as List
 import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (mapMaybe)
 import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set (Set)
 import Data.Set qualified as Set
-import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
-import System.Random (StdGen, random)
+import System.Random (StdGen)
 
 strictSeqToSet :: Ord a => StrictSeq a -> Set a
 strictSeqToSet = Set.fromList . Foldable.toList
@@ -47,25 +38,23 @@ makeDecisions ::
   , Ord objectId
   , Hashable peerAddr
   ) =>
+  StdGen ->
   (objectId -> Bool) ->
   -- | decision decisionPolicy
   DecisionPolicy ->
   -- | decision context
   DecisionGlobalState peerAddr objectId object ->
-  ( DecisionGlobalState peerAddr objectId object
-  , Map peerAddr (PeerDecision objectId object)
-  )
-makeDecisions hasObject decisionPolicy globalState =
+  Map peerAddr (PeerDecision objectId object)
+makeDecisions rng hasObject decisionPolicy globalState =
   -- We do it in two steps, because computing the acknowledgment tell which objects from dpsObjectsAvailableIds sets of each peer won't actually be available anymore (as soon as we ack them),
   -- so that the pickObjectsToReq function can take this into account.
   let (ackAndRequestIdsDecisions, peerToIdsToAck) = computeAck hasObject decisionPolicy globalState
-      (globalState', peersToObjectsToReq) = pickObjectsToReq hasObject decisionPolicy globalState peerToIdsToAck
-      completeDecisions =
-        Map.intersectionWith
-          (\decision objectsToReqIds -> decision{pdObjectsToReqIds = objectsToReqIds})
-          ackAndRequestIdsDecisions
-          peersToObjectsToReq
-   in (globalState', completeDecisions)
+      peersToObjectsToReq = pickObjectsToReq rng hasObject decisionPolicy globalState peerToIdsToAck
+  in
+    Map.intersectionWith
+      (\decision objectsToReqIds -> decision{pdObjectsToReqIds = objectsToReqIds})
+      ackAndRequestIdsDecisions
+      peersToObjectsToReq
 
 -- | The ids to ack are the longest prefix of outstandingFifo of each peer that match the following criteria:
 -- * either the object is owt pool for the peer who has downloaded it
@@ -131,10 +120,11 @@ computeAck poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpMaxNumObjectsOut
       )
 
 orderPeers ::
-  Map peerAddr (DecisionPeerState objectId object) ->
+  Hashable peerAddr =>
   StdGen ->
-  ([(peerAddr, DecisionPeerState objectId object)], StdGen)
-orderPeers = undefined  -- TODO
+  Map peerAddr (DecisionPeerState objectId object) ->
+  [(peerAddr, DecisionPeerState objectId object)]
+orderPeers _rng = undefined  -- TODO
 
 data DownloadPickState peerAddr objectId
   = DownloadPickState
@@ -150,6 +140,7 @@ pickObjectsToReq ::
   , Ord objectId
   , Hashable peerAddr
   ) =>
+  StdGen ->
   (objectId -> Bool) ->
   DecisionPolicy ->
   DecisionGlobalState peerAddr objectId object ->
@@ -157,20 +148,24 @@ pickObjectsToReq ::
   -- we should treat these ids as not available anymore for the purpose of picking objects to request
   Map peerAddr (Set objectId) ->
   -- | new global state (with just RNG updated), and objects to request from each peer
-  (DecisionGlobalState peerAddr objectId object, Map peerAddr (Set objectId))
-pickObjectsToReq poolHasObject DecisionPolicy
-                                 { dpMaxNumObjectsInflightPerPeer
-                                 , dpMaxNumObjectsInflightTotal
-                                 , dpMaxObjectInflightMultiplicity
-                                 } globalState@DecisionGlobalState
-                                     { dgsRng
-                                     , dgsPeerStates
-                                     , dgsObjectsInflightMultiplicities
-                                     , dgsObjectsOwtPoolMultiplicities
-                                     } peerToIdsToAck =
-  (globalState{dgsRng = dgsRng'}, peersToObjectsToReq)
+  Map peerAddr (Set objectId)
+pickObjectsToReq
+  rng
+  poolHasObject
+  DecisionPolicy
+    { dpMaxNumObjectsInflightPerPeer
+    , dpMaxNumObjectsInflightTotal
+    , dpMaxObjectInflightMultiplicity
+    }
+  DecisionGlobalState
+    { dgsPeerStates
+    , dgsObjectsInflightMultiplicities
+    , dgsObjectsOwtPoolMultiplicities
+    }
+  peerToIdsToAck =
+  peersToObjectsToReq
  where
-  (orderedPeers, dgsRng') = orderPeers dgsPeerStates dgsRng
+  orderedPeers = orderPeers rng dgsPeerStates
 
   -- We want to map each objectId to the sorted list of peers that can provide it
   -- For each peer we also indicate how many objects it has in flight at the moment
