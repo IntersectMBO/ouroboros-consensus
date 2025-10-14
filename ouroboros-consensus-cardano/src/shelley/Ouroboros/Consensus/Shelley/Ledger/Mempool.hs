@@ -801,6 +801,7 @@ instance
   TxLimits (ShelleyBlock p ConwayEra)
   where
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
+  txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
 

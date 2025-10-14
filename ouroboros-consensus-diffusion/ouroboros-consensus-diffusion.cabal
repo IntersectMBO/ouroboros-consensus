@@ -140,6 +140,7 @@ library unstable-diffusion-testlib
     ouroboros-consensus-diffusion,
     ouroboros-consensus-protocol,
     ouroboros-network,
+    ouroboros-network:cardano-diffusion,
     ouroboros-network-api,
     ouroboros-network-framework,
     ouroboros-network-mock,

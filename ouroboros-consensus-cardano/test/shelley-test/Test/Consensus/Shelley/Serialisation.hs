@@ -40,7 +40,7 @@ tests =
     [ roundtrip_all testCodecCfg dictNestedHdr Nothing
     , testProperty "GenTx.txWireSize.txSubmission" (prop_txWireSize_txSubmission testCodecCfg)
     , testProperty "GenTx.txWireSize.tight" (prop_txWireSize getTxBytes testCodecCfg)
-    , -- Test for real crypto too
+      -- Test for real crypto too
     , testProperty "hashSize real crypto" $ prop_hashSize pReal
     , testProperty "ConvertRawHash real crypto" $ roundtrip_ConvertRawHash pReal
     , testProperty "BinaryBlockInfo sanity check" prop_shelleyBinaryBlockInfo

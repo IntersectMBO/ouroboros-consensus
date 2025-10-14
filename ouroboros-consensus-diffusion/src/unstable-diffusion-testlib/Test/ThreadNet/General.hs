@@ -68,7 +68,7 @@ import           Ouroboros.Network.TxSubmission.Inbound.V2
                      (TxSubmissionLogicVersion (..))
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
-import Test.QuickCheck
+import Test.QuickCheck as QC
 import Test.ThreadNet.Network
 import Test.ThreadNet.TxGen
 import Test.ThreadNet.Util
