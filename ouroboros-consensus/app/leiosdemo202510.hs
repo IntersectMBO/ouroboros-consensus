@@ -293,6 +293,7 @@ decodeEbPair :: CBOR.Decoder s (ByteString, Word16)
 decodeEbPair =
     (,) <$> CBOR.decodeBytes <*> CBOR.decodeWord16
 
+-- | The logic in this module instead does this decoding incrementally
 _decodeEB :: CBOR.Decoder s (X (ByteString, Word16))
 _decodeEB =
     CBOR.decodeMapLenIndef
@@ -304,11 +305,14 @@ _decodeEB =
 
 -----
 
--- | helper for msgLeiosBlockRequest
+-- | helper for msgLeiosBlockRequest and msgLeiosBlockTxsRequest
 --
 -- The @[a]@ is less than 1024 long.
 --
 -- Each 'V.Vector' is exactly 1024 long.
+--
+-- TODO those functions could instead generate the CBOR incrementally, but will
+-- the patched node be able to do that?
 data X a = X !Word16 [a] [V.Vector a]
   deriving (Functor, Foldable)
 
@@ -455,8 +459,8 @@ popRightmostOffset = \case
 
 -- | Never request more than this many txs simultaneously
 --
--- TODO confirm this prevents the query string from exceeding its size limits,
--- even if the largest txOffsets are being requested.
+-- TODO confirm this prevents the query string from exceeding SQLite's size
+-- limits, even if the largest possible txOffsets are being requested.
 maxBatchSize :: Int
 maxBatchSize = 1024
 
@@ -476,7 +480,9 @@ sql_lookup_ebClosures_DESC n =
 
 -----
 
--- | PREREQ: No row in ebTxs already has this ebId.
+-- | PREREQ: the file is the CBOR encoding (binary, not hex) of the payload of a MsgLeiosBlock
+--
+-- PREREQ: No row in ebTxs already has this ebId.
 msgLeiosBlock :: DB.Database -> Int -> Word64 -> FilePath -> IO ()
 msgLeiosBlock db ebId ebSlot ebPath = do
     ebBytes <- BS.readFile ebPath
@@ -520,6 +526,7 @@ sql_insert_ebBody =
     "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txByteSize, txBytes) VALUES (?, ?, ?, ?, NULL)\n\
     \"
 
+-- | PREREQ: the file is the CBOR encoding (binary, not hex) of the payload of a MsgLeiosBlockTxs
 msgLeiosBlockTxs :: DB.Database -> Int -> FilePath -> [(Word16, Word64)] -> IO ()
 msgLeiosBlockTxs db ebId ebTxsPath bitmaps = do
     ebTxsBytes <- BSL.readFile ebTxsPath
@@ -642,6 +649,7 @@ sql_next_fetch n =
 
 -----
 
+-- | PREREQ: the file is the CBOR encoding (binary, not hex) of the payload of a MsgLeiosBlockTxs
 hashTxs :: FilePath -> IO ()
 hashTxs ebTxsPath = do
     ebTxsBytes <- BSL.readFile ebTxsPath
