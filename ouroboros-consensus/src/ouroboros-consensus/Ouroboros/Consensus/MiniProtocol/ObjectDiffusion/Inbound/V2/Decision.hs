@@ -14,7 +14,6 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
   ) where
 
 import Data.Foldable qualified as Foldable
-import Data.Hashable
 import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -36,7 +35,6 @@ makeDecisions ::
   forall peerAddr objectId object.
   ( Ord peerAddr
   , Ord objectId
-  , Hashable peerAddr
   ) =>
   StdGen ->
   (objectId -> Bool) ->
@@ -131,7 +129,6 @@ computeAck poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpMaxNumObjectsOut
       )
 
 orderPeers ::
-  Hashable peerAddr =>
   StdGen ->
   Map peerAddr (DecisionPeerState objectId object) ->
   [(peerAddr, DecisionPeerState objectId object)]
@@ -149,7 +146,6 @@ pickObjectsToReq ::
   forall peerAddr objectId object.
   ( Ord peerAddr
   , Ord objectId
-  , Hashable peerAddr
   ) =>
   StdGen ->
   (objectId -> Bool) ->

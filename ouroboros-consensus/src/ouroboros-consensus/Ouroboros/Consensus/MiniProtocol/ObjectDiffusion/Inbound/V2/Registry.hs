@@ -25,11 +25,9 @@ import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Class.MonadTimer.SI
 import Control.Tracer (Tracer, traceWith)
-import Data.Foldable as Foldable (foldl', traverse_)
-import Data.Hashable
+import Data.Foldable as Foldable (traverse_)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set (Set)
 import Data.Set qualified as Set
@@ -63,9 +61,9 @@ data PeerStateAPI m objectId object = PeerStateAPI
   -- Marks the peer as available for the `makeDecision` logic
   , psaOnRequestIds :: NumObjectIdsAck -> NumObjectIdsReq -> m ()
   , psaOnRequestObjects :: Set objectId -> m ()
-  , psaOnReceivedIds :: NumObjectIdsReq -> [objectId] -> m ()
+  , psaOnReceiveIds :: NumObjectIdsReq -> [objectId] -> m ()
   -- ^ Error handling should have been done before calling this
-  , psaOnReceivedObjects :: [object] -> m ()
+  , psaOnReceiveObjects :: [object] -> m ()
   -- ^ Error handling should have been done before calling this
   -- Also every object should have been validated!
   }
@@ -80,7 +78,6 @@ withPeer ::
   , MonadSTM m
   , Ord objectId
   , Ord peerAddr
-  , Show peerAddr
   ) =>
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
@@ -139,23 +136,20 @@ withPeer
                         objectDiffusionTracer
                         decisionTracer
                         globalStateVar
-                        objectPoolWriter
                         peerAddr
                   , psaOnRequestObjects =
                       State.onRequestObjects
                         objectDiffusionTracer
                         decisionTracer
                         globalStateVar
-                        objectPoolWriter
                         peerAddr
-                  , psaOnReceivedIds =
+                  , psaOnReceiveIds =
                       State.onReceiveIds
                         objectDiffusionTracer
                         decisionTracer
                         globalStateVar
-                        objectPoolWriter
                         peerAddr
-                  , psaOnReceivedObjects =
+                  , psaOnReceiveObjects =
                       State.onReceiveObjects
                         objectDiffusionTracer
                         decisionTracer
@@ -222,11 +216,9 @@ decisionLogicThread ::
   , MonadMVar m
   , MonadSTM m
   , MonadFork m
-  , MonadMask m
   , MonadIO m
   , Ord peerAddr
   , Ord objectId
-  , Hashable peerAddr
   ) =>
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   Tracer m ObjectDiffusionCounters ->

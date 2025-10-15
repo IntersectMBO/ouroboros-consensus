@@ -36,13 +36,12 @@ onRequestIds ::
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   DecisionGlobalStateVar m peerAddr objectId object ->
-  ObjectPoolWriter objectId object m ->
   peerAddr ->
   NumObjectIdsAck ->
   -- | number of requests to req
   NumObjectIdsReq ->
   m ()
-onRequestIds odTracer decisionTracer globalStateVar _objectPoolWriter peerAddr numIdsToAck numIdsToReq = do
+onRequestIds odTracer decisionTracer globalStateVar peerAddr numIdsToAck numIdsToReq = do
   globalState' <- atomically $ do
     stateTVar
       globalStateVar
@@ -57,7 +56,7 @@ onRequestIds odTracer decisionTracer globalStateVar _objectPoolWriter peerAddr n
 -- That's why we update the dpsOutstandingFifo and dpsObjectsAvailableIds here.
 onRequestIdsImpl ::
   forall peerAddr object objectId.
-  (Ord objectId, Ord peerAddr, HasCallStack) =>
+  (Ord objectId, Ord peerAddr) =>
   peerAddr ->
   NumObjectIdsAck ->
   -- | number of requests to req
@@ -108,12 +107,11 @@ onRequestObjects ::
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   DecisionGlobalStateVar m peerAddr objectId object ->
-  ObjectPoolWriter objectId object m ->
   peerAddr ->
   -- | objets to request, by id
   Set objectId ->
   m ()
-onRequestObjects odTracer decisionTracer globalStateVar _objectPoolWriter peerAddr objectIds = do
+onRequestObjects odTracer decisionTracer globalStateVar peerAddr objectIds = do
   globalState' <- atomically $ do
     stateTVar
       globalStateVar
@@ -126,7 +124,7 @@ onRequestObjects odTracer decisionTracer globalStateVar _objectPoolWriter peerAd
 
 onRequestObjectsImpl ::
   forall peerAddr object objectId.
-  (Ord objectId, Ord peerAddr, HasCallStack) =>
+  (Ord objectId, Ord peerAddr) =>
   peerAddr ->
   -- | objets to request, by id
   Set objectId ->
@@ -162,7 +160,6 @@ onReceiveIds ::
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   DecisionGlobalStateVar m peerAddr objectId object ->
-  ObjectPoolWriter objectId object m ->
   peerAddr ->
   -- | number of requests to subtract from
   -- `dpsNumIdsInflight`
@@ -171,13 +168,12 @@ onReceiveIds ::
   [objectId] ->
   -- | received `objectId`s
   m ()
-onReceiveIds odTracer decisionTracer globalStateVar objectPoolWriter peerAddr numIdsInitiallyRequested receivedIds = do
+onReceiveIds odTracer decisionTracer globalStateVar peerAddr numIdsInitiallyRequested receivedIds = do
   globalState' <- atomically $ do
-    hasObject <- opwHasObject objectPoolWriter
     stateTVar
       globalStateVar
       ( \globalState ->
-          let globalState' = onReceiveIdsImpl hasObject peerAddr numIdsInitiallyRequested receivedIds globalState
+          let globalState' = onReceiveIdsImpl peerAddr numIdsInitiallyRequested receivedIds globalState
            in (globalState', globalState')
       )
   traceWith odTracer (TraceObjectDiffusionInboundReceivedIds (length receivedIds))
@@ -186,9 +182,6 @@ onReceiveIds odTracer decisionTracer globalStateVar objectPoolWriter peerAddr nu
 onReceiveIdsImpl ::
   forall peerAddr object objectId.
   (Ord objectId, Ord peerAddr, HasCallStack) =>
-  -- | check if objectId is in the objectpool, ref
-  -- 'opwHasObject'
-  (objectId -> Bool) ->
   peerAddr ->
   -- | number of requests to subtract from
   -- `dpsNumIdsInflight`
@@ -198,7 +191,6 @@ onReceiveIdsImpl ::
   DecisionGlobalState peerAddr objectId object ->
   DecisionGlobalState peerAddr objectId object
 onReceiveIdsImpl
-  hasObject
   peerAddr
   numIdsInitiallyRequested
   receivedIds
@@ -211,7 +203,6 @@ onReceiveIdsImpl
    where
     peerState@DecisionPeerState
       { dpsOutstandingFifo
-      , dpsObjectsInflightIds
       , dpsObjectsAvailableIds
       , dpsNumIdsInflight
       } =

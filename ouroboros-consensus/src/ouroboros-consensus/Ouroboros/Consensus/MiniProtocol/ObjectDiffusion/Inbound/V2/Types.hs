@@ -31,10 +31,6 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
   , ObjectDiffusionCounters (..)
   , makeObjectDiffusionCounters
 
-    -- * Init delay
-  , ObjectDiffusionInitDelay (..)
-  , defaultObjectDiffusionInitDelay
-
     -- * Copied from V1
   , NumObjectsProcessed (..)
   , TraceObjectDiffusionInbound (..)
@@ -49,7 +45,6 @@ import Control.Concurrent.Class.MonadSTM.Strict (MonadSTM, StrictTVar, atomicall
 import Control.Concurrent.Class.MonadSTM.TSem (TSem, newTSem)
 import Control.DeepSeq (NFData)
 import Control.Exception (Exception (..))
-import Control.Monad.Class.MonadTime.SI
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Monoid (Sum (..))
@@ -234,14 +229,6 @@ makeObjectDiffusionCounters
       , odcNumDistinctObjectsOwtPool = Map.size $ dgsObjectsOwtPoolMultiplicities dgs
       }
 
-data ObjectDiffusionInitDelay
-  = ObjectDiffusionInitDelay DiffTime
-  | NoObjectDiffusionInitDelay
-  deriving (Eq, Show)
-
-defaultObjectDiffusionInitDelay :: ObjectDiffusionInitDelay
-defaultObjectDiffusionInitDelay = ObjectDiffusionInitDelay 60
-
 -- Copied from V1:
 
 newtype NumObjectsProcessed
@@ -273,8 +260,6 @@ data TraceObjectDiffusionInbound objectId object
   | -- | Received a 'ControlMessage' from the outbound peer governor, and about
     -- to act on it.
     TraceObjectDiffusionInboundReceivedControlMessage ControlMessage
-  | TraceObjectDiffusionInboundCanRequestMoreObjects Int
-  | TraceObjectDiffusionInboundCannotRequestMoreObjects Int
   | TraceObjectDiffusionInboundReceivedDecision (PeerDecision objectId object)
   deriving (Eq, Show)
 

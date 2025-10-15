@@ -31,7 +31,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1
   ( objectDiffusionInbound
   )
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1.State
   ( ObjectDiffusionInboundStateView (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
