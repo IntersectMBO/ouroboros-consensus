@@ -128,7 +128,7 @@ mkInitDb args bss getBlock =
         flushLock <- mkLedgerDBLock
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
-        lastSnapshotWrite <- newTVarIO Nothing
+        lastSnapshotRequestedAt <- newTVarIO Nothing
         let env =
               LedgerDBEnv
                 { ldbChangelog = varDB
@@ -145,7 +145,7 @@ mkInitDb args bss getBlock =
                 , ldbShouldFlush = shouldFlush flushFreq
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbResolveBlock = getBlock
-                , ldbLastSnapshotWrite = lastSnapshotWrite
+                , ldbLastSnapshotRequestedAt = lastSnapshotRequestedAt
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h
@@ -319,11 +319,11 @@ implTryTakeSnapshot ::
   LedgerDBEnv m l blk ->
   Time ->
   m ()
-implTryTakeSnapshot env now = do
-  timeSinceLastWrite <- do
-    mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
-    forM mLastWrite $ \lastWrite -> do
-      pure $ now `diffTime` lastWrite
+implTryTakeSnapshot env snapshotRequestTime = do
+  timeSinceLastSnapshot <- do
+    mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
+    forM mLastSnapshotRequested $ \lastSnapshotRequested -> do
+      pure $ snapshotRequestTime `diffTime` lastSnapshotRequested
   chlog <- readTVarIO $ ldbChangelog env
   let immutableStates =
         AS.dropNewest (fromIntegral (envMaxRollbacks env)) $ changelogStates chlog
@@ -334,7 +334,7 @@ implTryTakeSnapshot env now = do
         onDiskSnapshotSelector
           (ldbSnapshotPolicy env)
           SnapshotSelectorContext
-            { sscTimeSinceLast = timeSinceLastWrite
+            { sscTimeSinceLast = timeSinceLastSnapshot
             , sscSnapshotSlots = immutableSlots
             }
   forM_ snapshotSlots $ \slot -> do
@@ -357,8 +357,7 @@ implTryTakeSnapshot env now = do
           (ldbHasFS env)
           (ldbBackingStore env)
           Nothing
-    finished <- getMonotonicTime
-    atomically $ writeTVar (ldbLastSnapshotWrite env) (Just $! finished)
+    atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
     void $
       trimSnapshots
         (LedgerDBSnapshotEvent >$< ldbTracer env)
@@ -599,8 +598,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- frequency that was provided when opening the LedgerDB.
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
-  , ldbLastSnapshotWrite :: !(StrictTVar m (Maybe Time))
-  -- ^ When did we finish writing the last snapshot.
+  , ldbLastSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
+  -- ^ The time at which the latest snapshot was requested. Note that this is
+  --   not the the last time a snapshot was requested -- this is only updated
+  --   with the request time when a snapshot is successfully made.
   }
   deriving Generic
 

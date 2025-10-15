@@ -99,7 +99,7 @@ mkInitDb args flavArgs getBlock =
         lock <- RAWLock.new ()
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
-        lastSnapshotWrite <- newTVarIO Nothing
+        lastSnapshotRequestedAt <- newTVarIO Nothing
         let env =
               LedgerDBEnv
                 { ldbSeq = varDB
@@ -113,7 +113,7 @@ mkInitDb args flavArgs getBlock =
                 , ldbResolveBlock = getBlock
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbOpenHandlesLock = lock
-                , ldbLastSnapshotWrite = lastSnapshotWrite
+                , ldbLastSnapshotRequestedAt = lastSnapshotRequestedAt
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h bss
@@ -379,11 +379,11 @@ implTryTakeSnapshot ::
   HandleArgs ->
   LedgerDBEnv m l blk ->
   m ()
-implTryTakeSnapshot now bss env = do
-  timeSinceLastWrite <- do
-    mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
-    for mLastWrite $ \lastWrite -> do
-      pure $ now `diffTime` lastWrite
+implTryTakeSnapshot snapshotRequestTime bss env = do
+  timeSinceLastSnapshot <- do
+    mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
+    for mLastSnapshotRequested $ \lastSnapshotRequested -> do
+      pure $ snapshotRequestTime `diffTime` lastSnapshotRequested
   RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
     lseq <- readTVarIO $ ldbSeq env
     let immutableStates = AS.dropNewest (fromIntegral k) $ getLedgerSeq lseq
@@ -394,7 +394,7 @@ implTryTakeSnapshot now bss env = do
           onDiskSnapshotSelector
             (ldbSnapshotPolicy env)
             SnapshotSelectorContext
-              { sscTimeSinceLast = timeSinceLastWrite
+              { sscTimeSinceLast = timeSinceLastSnapshot
               , sscSnapshotSlots = immutableSlots
               }
     for_ snapshotSlots $ \slot -> do
@@ -407,8 +407,7 @@ implTryTakeSnapshot now bss env = do
           (LedgerDBSnapshotEvent >$< ldbTracer env)
           (ldbHasFS env)
           (anchorHandle $ snd $ prune pruneStrat lseq)
-      finished <- getMonotonicTime
-      atomically $ writeTVar (ldbLastSnapshotWrite env) (Just $! finished)
+      atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
       Monad.void $
         trimSnapshots
           (LedgerDBSnapshotEvent >$< ldbTracer env)
@@ -508,8 +507,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   --
   --  * Modify 'ldbSeq' while holding a write lock, and then close the removed
   --    handles without any locking. See e.g. 'implGarbageCollect'.
-  , ldbLastSnapshotWrite :: !(StrictTVar m (Maybe Time))
-  -- ^ When did we finish writing the last snapshot.
+  , ldbLastSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
+  -- ^ The time at which the latest snapshot was requested. Note that this is
+  --   not the the last time a snapshot was requested -- this is only updated
+  --   with the request time when a snapshot is successfully made.
   }
   deriving Generic
 
