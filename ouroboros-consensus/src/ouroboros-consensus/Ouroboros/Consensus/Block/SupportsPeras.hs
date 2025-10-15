@@ -3,8 +3,8 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -17,10 +17,9 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , BlockSupportsPeras (..)
   , PerasCert (..)
   , ValidatedPerasCert (..)
-  , HasPerasCert (..)
-  , getPerasCertRound
-  , getPerasCertBoostedBlock
-  , getPerasCertBoost
+  , HasPerasCertRound (..)
+  , HasPerasCertBoostedBlock (..)
+  , HasPerasCertBoost (..)
 
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Params
@@ -128,20 +127,29 @@ instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
     pcCertBoostedBlock <- decode
     pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
 
-class StandardHash blk => HasPerasCert cert blk where
-  getPerasCert :: cert blk -> PerasCert blk
+-- | Extract the certificate round from a Peras certificate container
+class HasPerasCertRound cert where
+  getPerasCertRound :: cert -> PerasRoundNo
 
-instance StandardHash blk => HasPerasCert PerasCert blk where
-  getPerasCert = id
+instance HasPerasCertRound (PerasCert blk) where
+  getPerasCertRound = pcCertRound
 
-instance StandardHash blk => HasPerasCert ValidatedPerasCert blk where
-  getPerasCert = vpcCert
+instance HasPerasCertRound (ValidatedPerasCert blk) where
+  getPerasCertRound = getPerasCertRound . vpcCert
 
-getPerasCertRound :: HasPerasCert cert blk => cert blk -> PerasRoundNo
-getPerasCertRound = pcCertRound . getPerasCert
+-- | Extract the boosted block point from a Peras certificate container
+class HasPerasCertBoostedBlock cert blk | cert -> blk where
+  getPerasCertBoostedBlock :: cert -> Point blk
 
-getPerasCertBoostedBlock :: HasPerasCert cert blk => cert blk -> Point blk
-getPerasCertBoostedBlock = pcCertBoostedBlock . getPerasCert
+instance HasPerasCertBoostedBlock (PerasCert blk) blk where
+  getPerasCertBoostedBlock = pcCertBoostedBlock
 
-getPerasCertBoost :: ValidatedPerasCert blk -> PerasWeight
-getPerasCertBoost = vpcCertBoost
+instance HasPerasCertBoostedBlock (ValidatedPerasCert blk) blk where
+  getPerasCertBoostedBlock = getPerasCertBoostedBlock . vpcCert
+
+-- | Extract the certificate boost from a Peras certificate container
+class HasPerasCertBoost cert where
+  getPerasCertBoost :: cert -> PerasWeight
+
+instance HasPerasCertBoost (ValidatedPerasCert blk) where
+  getPerasCertBoost = vpcCertBoost

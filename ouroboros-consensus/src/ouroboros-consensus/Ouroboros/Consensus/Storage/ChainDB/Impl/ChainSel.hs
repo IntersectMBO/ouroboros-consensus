@@ -332,7 +332,7 @@ addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
 
 addPerasCertAsync ::
   forall m blk.
-  (IOLike m, HasHeader blk) =>
+  IOLike m =>
   ChainDbEnv m blk ->
   ValidatedPerasCert blk ->
   m (AddPerasCertPromise m)
