@@ -454,15 +454,16 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1758296791,
-        "narHash": "sha256-n24MZIYh1iVV2BTYEcC9nKzvMpjl7JTK1LAxU1caMOM=",
-        "owner": "mlabs-haskell",
+        "lastModified": 1760526797,
+        "narHash": "sha256-xODMhuzz5aVJE68CJwZiLpXa0zihgT2PAhJBowt9gjw=",
+        "owner": "bladyjoker",
         "repo": "cardano.nix",
-        "rev": "658bbc86da1f2dc61faa0316b148d71228975860",
+        "rev": "8b0f4ec95ae1d4ee36c7f47b10ce78211de79031",
         "type": "github"
       },
       "original": {
-        "owner": "mlabs-haskell",
+        "owner": "bladyjoker",
+        "ref": "bladyjoker/add-update-system-start-time-option",
         "repo": "cardano.nix",
         "type": "github"
       }

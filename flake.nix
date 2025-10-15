@@ -41,7 +41,7 @@
       url = "github:phadej/gentle-introduction";
       flake = false;
     };
-    cardano-nix.url = "github:mlabs-haskell/cardano.nix";
+    cardano-nix.url = "github:bladyjoker/cardano.nix?ref=bladyjoker/add-update-system-start-time-option";
   };
   outputs = inputs:
     let

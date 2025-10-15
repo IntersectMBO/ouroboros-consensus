@@ -20,6 +20,8 @@
       operationalCertificate = ./opcert;
       delegationCertificate = ./delegation-cert.json;
       signingKey = ./delegate.key;
+
+      updateSystemStartTime = false;
     };
   };
 }

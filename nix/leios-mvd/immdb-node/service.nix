@@ -142,6 +142,7 @@ in
 
         mkdir $STATE_DIRECTORY/immutable;
         cp -r ${cfg.db}/* $STATE_DIRECTORY/immutable;
+        chmod +rw $STATE_DIRECTORY/immutable/*;
 
         immdb-server \
           --db $STATE_DIRECTORY/immutable \
