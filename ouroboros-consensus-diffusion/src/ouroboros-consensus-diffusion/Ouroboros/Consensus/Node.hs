@@ -580,6 +580,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   llrnFeatureFlags
                   rnTraceConsensus
                   btime
+                  systemTime
                   (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
                   historicityCheck
                   chainDB
@@ -858,6 +859,7 @@ mkNodeKernelArgs ::
   Set CardanoFeatureFlag ->
   Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk ->
   BlockchainTime m ->
+  SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   (m GSM.GsmState -> HistoricityCheck m blk) ->
   ChainDB m blk ->
@@ -878,6 +880,7 @@ mkNodeKernelArgs
   featureFlags
   tracers
   btime
+  systemTime
   chainSyncFutureCheck
   chainSyncHistoricityCheck
   chainDB
@@ -897,6 +900,7 @@ mkNodeKernelArgs
           , cfg
           , featureFlags
           , btime
+          , systemTime
           , chainDB
           , initChainDB = nodeInitChainDB
           , chainSyncFutureCheck
