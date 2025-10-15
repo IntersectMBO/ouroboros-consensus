@@ -297,7 +297,8 @@ onReceiveObjectsImpl
   peerAddr
   objectsReceived
   st@DecisionGlobalState
-    { dgsPeerStates } =
+    { dgsPeerStates
+    } =
     st
       { dgsPeerStates = dgsPeerStates'
       }

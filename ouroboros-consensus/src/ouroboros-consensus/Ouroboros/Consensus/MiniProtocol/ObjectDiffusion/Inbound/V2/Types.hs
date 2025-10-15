@@ -225,7 +225,8 @@ makeObjectDiffusionCounters
     ObjectDiffusionCounters
       { odcNumDistinctObjectsAvailable = Map.size $ dgsObjectsAvailableMultiplicities dgs
       , odcNumDistinctObjectsInflight = Map.size $ dgsObjectsInflightMultiplicities dgs
-      , odcNumTotalObjectsInflight = fromIntegral . mconcat . Map.elems $ dgsObjectsInflightMultiplicities dgs
+      , odcNumTotalObjectsInflight =
+          fromIntegral . mconcat . Map.elems $ dgsObjectsInflightMultiplicities dgs
       , odcNumDistinctObjectsOwtPool = Map.size $ dgsObjectsOwtPoolMultiplicities dgs
       }
 

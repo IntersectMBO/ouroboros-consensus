@@ -47,14 +47,15 @@ makeDecisions ::
   -- | New decisions
   Map peerAddr (PeerDecision objectId object)
 makeDecisions rng hasObject decisionPolicy globalState prevDecisions =
-  let -- A subset of peers are currently executing a decision. We shouldn't update the decision for them
-      frozenPeersToDecisions = Map.filter pdExecutingDecision prevDecisions
+  let
+    -- A subset of peers are currently executing a decision. We shouldn't update the decision for them
+    frozenPeersToDecisions = Map.filter pdExecutingDecision prevDecisions
 
-      -- We do it in two steps, because computing the acknowledgment tell which objects from dpsObjectsAvailableIds sets of each peer won't actually be available anymore (as soon as we ack them),
-      -- so that the pickObjectsToReq function can take this into account.
-      (ackAndRequestIdsDecisions, peerToIdsToAck) = computeAck hasObject decisionPolicy globalState frozenPeersToDecisions
-      peersToObjectsToReq = pickObjectsToReq rng hasObject decisionPolicy globalState frozenPeersToDecisions peerToIdsToAck
-  in
+    -- We do it in two steps, because computing the acknowledgment tell which objects from dpsObjectsAvailableIds sets of each peer won't actually be available anymore (as soon as we ack them),
+    -- so that the pickObjectsToReq function can take this into account.
+    (ackAndRequestIdsDecisions, peerToIdsToAck) = computeAck hasObject decisionPolicy globalState frozenPeersToDecisions
+    peersToObjectsToReq = pickObjectsToReq rng hasObject decisionPolicy globalState frozenPeersToDecisions peerToIdsToAck
+   in
     Map.intersectionWith
       (\decision objectsToReqIds -> decision{pdObjectsToReqIds = objectsToReqIds})
       ackAndRequestIdsDecisions
@@ -77,13 +78,15 @@ computeAck ::
   , Map peerAddr (Set objectId)
   )
 computeAck poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpMaxNumObjectsOutstanding} DecisionGlobalState{dgsPeerStates} frozenPeersToDecisions =
-  let -- We shouldn't create a new decision for peers that are currently executing a decision
-      filteredPeerStates = Map.withoutKeys dgsPeerStates (Map.keysSet frozenPeersToDecisions)
-      (decisions, peerToIdsToAck) =
-        Map.foldlWithKey' computeAckForPeer (Map.empty, Map.empty) filteredPeerStates
-   in ( decisions
-      , peerToIdsToAck
-      )
+  let
+    -- We shouldn't create a new decision for peers that are currently executing a decision
+    filteredPeerStates = Map.withoutKeys dgsPeerStates (Map.keysSet frozenPeersToDecisions)
+    (decisions, peerToIdsToAck) =
+      Map.foldlWithKey' computeAckForPeer (Map.empty, Map.empty) filteredPeerStates
+   in
+    ( decisions
+    , peerToIdsToAck
+    )
  where
   computeAckForPeer ::
     -- \| Accumulator containing decisions already made for other peers
@@ -132,7 +135,7 @@ orderPeers ::
   StdGen ->
   Map peerAddr (DecisionPeerState objectId object) ->
   [(peerAddr, DecisionPeerState objectId object)]
-orderPeers _rng = undefined  -- TODO
+orderPeers _rng = undefined -- TODO
 
 data DownloadPickState peerAddr objectId
   = DownloadPickState
@@ -171,159 +174,159 @@ pickObjectsToReq
     }
   frozenPeersToDecisions
   peerToIdsToAck =
-  peersToObjectsToReq
- where
-  -- We order the peers that are not currently executing a decision
-  orderedPeers = orderPeers rng (dgsPeerStates `Map.withoutKeys` Map.keysSet frozenPeersToDecisions)
+    peersToObjectsToReq
+   where
+    -- We order the peers that are not currently executing a decision
+    orderedPeers = orderPeers rng (dgsPeerStates `Map.withoutKeys` Map.keysSet frozenPeersToDecisions)
 
-  -- We want to map each objectId to the sorted list of peers that can provide it
-  -- For each peer we also indicate how many objects it has in flight at the moment
-  -- We filter out here the objects that are already in pool
-  objectsToSortedProviders :: Map objectId [(peerAddr, NumObjectsReq)]
-  objectsToSortedProviders =
-    -- We iterate over each peer and the corresponding available ids
-    -- and turn the map "inside-out"
-    Foldable.foldl'
-      ( \accMap (peerAddr, DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds}) ->
-          let
-            -- ids that will be acked for this peer won't be available anymore, so we should not consider them in the decision logic
-            idsToAckForThisPeer =
-              Map.findWithDefault
-                (error "invariant violated: peer must be in peerToIdsToAck map")
-                peerAddr
-                peerToIdsToAck
-            -- we should also remove objects that are already in the pool
-            interestingAndAvailableObjectIds =
-              Set.filter (not . poolHasObject) $
-                dpsObjectsAvailableIds `Set.difference` idsToAckForThisPeer
-           in
-            -- we iterate over interestingAndAvailableObjectIds and add the peer to the list of providers for each object it can provide
-            Foldable.foldl'
-              ( \accMap' objectId -> Map.insertWith (++) objectId [(peerAddr, fromIntegral $ Set.size dpsObjectsInflightIds)] accMap'
-              )
-              accMap
-              interestingAndAvailableObjectIds
-      )
-      Map.empty
-      orderedPeers
-
-  frozenPeerStatesWithDecisions = Map.intersectionWith (,) dgsPeerStates frozenPeersToDecisions
-
-  availablePeerStates = Map.withoutKeys dgsPeerStates (Map.keysSet frozenPeersToDecisions)
-
-  -- For frozen peers, we should consider that the objects in pdObjectsToReqIds will be requested soon, so we should consider them as inflight for the purpose of picking objects to request for other peers
-  objectsInFlightMultiplicitiesOfFrozenPeer = Map.foldl'
-    ( \accMap (DecisionPeerState{dpsObjectsInflightIds}, PeerDecision{pdObjectsToReqIds}) ->
-        Foldable.foldl'
-          ( \accMap' objectId -> Map.insertWith (+) objectId 1 accMap'
-          )
-          accMap
-          (Set.union dpsObjectsInflightIds pdObjectsToReqIds)
-    )
-    Map.empty
-    frozenPeerStatesWithDecisions
-  -- Finally, we add to the previous map the objects that are currently inflight from peers for which we will make a decision in this round
-  objectsInFlightMultiplicities = Map.foldl'
-    ( \accMap (DecisionPeerState{dpsObjectsInflightIds}) ->
-        Foldable.foldl'
-          ( \accMap' objectId -> Map.insertWith (+) objectId 1 accMap'
-          )
-          accMap
-          dpsObjectsInflightIds
-    )
-    objectsInFlightMultiplicitiesOfFrozenPeer
-    availablePeerStates
-  
-  totalNumObjectsInflight :: NumObjectsReq
-  totalNumObjectsInflight = fromIntegral $ Map.foldl' (+) 0 objectsInFlightMultiplicities
-
-  objectsOwtPoolMultiplicities = Map.foldl'
-    ( \accMap (DecisionPeerState{dpsObjectsOwtPool}) ->
-        Foldable.foldl'
-          ( \accMap' objectId -> Map.insertWith (+) objectId 1 accMap'
-          )
-          accMap
-          (Map.keys dpsObjectsOwtPool)
-    )
-    Map.empty
-    dgsPeerStates
-
-  -- We also want to know for each objects how many peers have it in the inflight or owtPool,
-  -- meaning that we should receive them soon.
-  -- We should also add here the objects that are in the pdObjectsToReqIds of each peer decision for frozen peers,
-  -- if these ids are not already in dpsObjectsInflight or dpsObjectsOwtPool of this peer
-  objectsExpectedSoonMultiplicities :: Map objectId ObjectMultiplicity
-  objectsExpectedSoonMultiplicities = Map.unionWith (+) objectsInFlightMultiplicities objectsOwtPoolMultiplicities
-
-  -- Now we join objectsToSortedProviders and objectsExpectedSoonMultiplicities maps on objectId for easy fold
-  objectsToProvidersAndExpectedMultiplicities ::
-    Map objectId ([(peerAddr, NumObjectsReq)], ObjectMultiplicity)
-  objectsToProvidersAndExpectedMultiplicities =
-    Map.merge
-      -- if an objectId is missing from objectsExpectedSoonMultiplicities, then its expected multiplicity is 0
-      (Map.mapMissing \_ providers -> (providers, 0))
-      -- if an objectId is missing from objectsToSortedProviders, then we don't care about it
-      Map.dropMissing
-      -- Combine in a tuple the list of providers and the expected multiplicity
-      (Map.zipWithMatched \_ providers expectedMultiplicity -> (providers, expectedMultiplicity))
-      objectsToSortedProviders
-      objectsExpectedSoonMultiplicities
-
-  -- NOW HERE TAKE PLACE THE ACTUAL DECISION LOGIC AND ATTRIBUTION OF OBJECTS TO PEERS
-
-  -- The current decision logic is greedy on objects, so it will try to request as many copies of the same object as possible,
-  -- meaning we will have optimal coverage of the first objects, but might not request some other objects at all if they are (only) provided by peers that are already saturated.
-
-  -- Now we compute the actual attribution of downloads for peers
-  DownloadPickState{peersToObjectsToReq} =
-    -- We iterate over each objectId and the corresponding (providers, expectedMultiplicity)
-    Map.foldlWithKey'
-      ( \st objectId (providers, expectedMultiplicity) ->
-          -- reset the objectMultiplicity counter for each new objectId
-          let st' = st{objectMultiplicity = 0}
-           in -- We iterate over the list of providers, and pick them or not according to the current state
-              -- When a peer is selected as a provider for this objectId, we insert the objectId in the peer's set in peersToObjectsToReq (inside St)
-              -- So the result of the filtering of providers is part of the final St state
+    -- We want to map each objectId to the sorted list of peers that can provide it
+    -- For each peer we also indicate how many objects it has in flight at the moment
+    -- We filter out here the objects that are already in pool
+    objectsToSortedProviders :: Map objectId [(peerAddr, NumObjectsReq)]
+    objectsToSortedProviders =
+      -- We iterate over each peer and the corresponding available ids
+      -- and turn the map "inside-out"
+      Foldable.foldl'
+        ( \accMap (peerAddr, DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds}) ->
+            let
+              -- ids that will be acked for this peer won't be available anymore, so we should not consider them in the decision logic
+              idsToAckForThisPeer =
+                Map.findWithDefault
+                  (error "invariant violated: peer must be in peerToIdsToAck map")
+                  peerAddr
+                  peerToIdsToAck
+              -- we should also remove objects that are already in the pool
+              interestingAndAvailableObjectIds =
+                Set.filter (not . poolHasObject) $
+                  dpsObjectsAvailableIds `Set.difference` idsToAckForThisPeer
+             in
+              -- we iterate over interestingAndAvailableObjectIds and add the peer to the list of providers for each object it can provide
               Foldable.foldl'
-                (howToFoldProviders objectId expectedMultiplicity)
-                st'
-                providers
-      )
-      DownloadPickState
-        { totalNumObjectsToReq = 0
-        , objectMultiplicity = 0
-        , peersToObjectsToReq = Map.empty
-        }
-      objectsToProvidersAndExpectedMultiplicities
+                ( \accMap' objectId -> Map.insertWith (++) objectId [(peerAddr, fromIntegral $ Set.size dpsObjectsInflightIds)] accMap'
+                )
+                accMap
+                interestingAndAvailableObjectIds
+        )
+        Map.empty
+        orderedPeers
 
-  -- This function decides whether or not we should select a given peer as provider for the current objectId
-  -- it takes into account if we are expecting to obtain the object from other sources (either inflight/owt pool already, or if the object will be requested from already selected peers in this given round)
-  howToFoldProviders ::
-    objectId ->
-    ObjectMultiplicity ->
-    DownloadPickState peerAddr objectId ->
-    (peerAddr, NumObjectsReq) ->
-    DownloadPickState peerAddr objectId
-  howToFoldProviders objectId expectedMultiplicity st@DownloadPickState{totalNumObjectsToReq, objectMultiplicity, peersToObjectsToReq} (peerAddr, numObjectsInFlight) =
-    let
-      -- see what has already been attributed to this peer
-      objectsToReq = Map.findWithDefault Set.empty peerAddr peersToObjectsToReq
+    frozenPeerStatesWithDecisions = Map.intersectionWith (,) dgsPeerStates frozenPeersToDecisions
 
-      shouldSelect =
-        -- We should not go over the multiplicity limit per object
-        objectMultiplicity + expectedMultiplicity < dpMaxObjectInflightMultiplicity
-          -- We should not go over the total number of objects inflight limit
-          && totalNumObjectsInflight + totalNumObjectsToReq < dpMaxNumObjectsInflightTotal
-          -- We should not go over the per-peer number of objects inflight limit
-          && numObjectsInFlight + (fromIntegral $ Set.size objectsToReq) < dpMaxNumObjectsInflightPerPeer
-     in
-      if shouldSelect
-        then
-          -- We increase both global count and per-object count, and we add the object to the peer's set
-          DownloadPickState
-            { totalNumObjectsToReq = totalNumObjectsToReq + 1
-            , objectMultiplicity = objectMultiplicity + 1
-            , peersToObjectsToReq = Map.insert peerAddr (Set.insert objectId objectsToReq) peersToObjectsToReq
-            }
-        -- Or we keep the state as is if we don't select this peer
-        else st
+    availablePeerStates = Map.withoutKeys dgsPeerStates (Map.keysSet frozenPeersToDecisions)
+
+    -- For frozen peers, we should consider that the objects in pdObjectsToReqIds will be requested soon, so we should consider them as inflight for the purpose of picking objects to request for other peers
+    objectsInFlightMultiplicitiesOfFrozenPeer =
+      Map.foldl'
+        ( \accMap (DecisionPeerState{dpsObjectsInflightIds}, PeerDecision{pdObjectsToReqIds}) ->
+            Foldable.foldl'
+              (\accMap' objectId -> Map.insertWith (+) objectId 1 accMap')
+              accMap
+              (Set.union dpsObjectsInflightIds pdObjectsToReqIds)
+        )
+        Map.empty
+        frozenPeerStatesWithDecisions
+    -- Finally, we add to the previous map the objects that are currently inflight from peers for which we will make a decision in this round
+    objectsInFlightMultiplicities =
+      Map.foldl'
+        ( \accMap (DecisionPeerState{dpsObjectsInflightIds}) ->
+            Foldable.foldl'
+              (\accMap' objectId -> Map.insertWith (+) objectId 1 accMap')
+              accMap
+              dpsObjectsInflightIds
+        )
+        objectsInFlightMultiplicitiesOfFrozenPeer
+        availablePeerStates
+
+    totalNumObjectsInflight :: NumObjectsReq
+    totalNumObjectsInflight = fromIntegral $ Map.foldl' (+) 0 objectsInFlightMultiplicities
+
+    objectsOwtPoolMultiplicities =
+      Map.foldl'
+        ( \accMap (DecisionPeerState{dpsObjectsOwtPool}) ->
+            Foldable.foldl'
+              (\accMap' objectId -> Map.insertWith (+) objectId 1 accMap')
+              accMap
+              (Map.keys dpsObjectsOwtPool)
+        )
+        Map.empty
+        dgsPeerStates
+
+    -- We also want to know for each objects how many peers have it in the inflight or owtPool,
+    -- meaning that we should receive them soon.
+    -- We should also add here the objects that are in the pdObjectsToReqIds of each peer decision for frozen peers,
+    -- if these ids are not already in dpsObjectsInflight or dpsObjectsOwtPool of this peer
+    objectsExpectedSoonMultiplicities :: Map objectId ObjectMultiplicity
+    objectsExpectedSoonMultiplicities = Map.unionWith (+) objectsInFlightMultiplicities objectsOwtPoolMultiplicities
+
+    -- Now we join objectsToSortedProviders and objectsExpectedSoonMultiplicities maps on objectId for easy fold
+    objectsToProvidersAndExpectedMultiplicities ::
+      Map objectId ([(peerAddr, NumObjectsReq)], ObjectMultiplicity)
+    objectsToProvidersAndExpectedMultiplicities =
+      Map.merge
+        -- if an objectId is missing from objectsExpectedSoonMultiplicities, then its expected multiplicity is 0
+        (Map.mapMissing \_ providers -> (providers, 0))
+        -- if an objectId is missing from objectsToSortedProviders, then we don't care about it
+        Map.dropMissing
+        -- Combine in a tuple the list of providers and the expected multiplicity
+        (Map.zipWithMatched \_ providers expectedMultiplicity -> (providers, expectedMultiplicity))
+        objectsToSortedProviders
+        objectsExpectedSoonMultiplicities
+
+    -- NOW HERE TAKE PLACE THE ACTUAL DECISION LOGIC AND ATTRIBUTION OF OBJECTS TO PEERS
+
+    -- The current decision logic is greedy on objects, so it will try to request as many copies of the same object as possible,
+    -- meaning we will have optimal coverage of the first objects, but might not request some other objects at all if they are (only) provided by peers that are already saturated.
+
+    -- Now we compute the actual attribution of downloads for peers
+    DownloadPickState{peersToObjectsToReq} =
+      -- We iterate over each objectId and the corresponding (providers, expectedMultiplicity)
+      Map.foldlWithKey'
+        ( \st objectId (providers, expectedMultiplicity) ->
+            -- reset the objectMultiplicity counter for each new objectId
+            let st' = st{objectMultiplicity = 0}
+             in -- We iterate over the list of providers, and pick them or not according to the current state
+                -- When a peer is selected as a provider for this objectId, we insert the objectId in the peer's set in peersToObjectsToReq (inside St)
+                -- So the result of the filtering of providers is part of the final St state
+                Foldable.foldl'
+                  (howToFoldProviders objectId expectedMultiplicity)
+                  st'
+                  providers
+        )
+        DownloadPickState
+          { totalNumObjectsToReq = 0
+          , objectMultiplicity = 0
+          , peersToObjectsToReq = Map.empty
+          }
+        objectsToProvidersAndExpectedMultiplicities
+
+    -- This function decides whether or not we should select a given peer as provider for the current objectId
+    -- it takes into account if we are expecting to obtain the object from other sources (either inflight/owt pool already, or if the object will be requested from already selected peers in this given round)
+    howToFoldProviders ::
+      objectId ->
+      ObjectMultiplicity ->
+      DownloadPickState peerAddr objectId ->
+      (peerAddr, NumObjectsReq) ->
+      DownloadPickState peerAddr objectId
+    howToFoldProviders objectId expectedMultiplicity st@DownloadPickState{totalNumObjectsToReq, objectMultiplicity, peersToObjectsToReq} (peerAddr, numObjectsInFlight) =
+      let
+        -- see what has already been attributed to this peer
+        objectsToReq = Map.findWithDefault Set.empty peerAddr peersToObjectsToReq
+
+        shouldSelect =
+          -- We should not go over the multiplicity limit per object
+          objectMultiplicity + expectedMultiplicity < dpMaxObjectInflightMultiplicity
+            -- We should not go over the total number of objects inflight limit
+            && totalNumObjectsInflight + totalNumObjectsToReq < dpMaxNumObjectsInflightTotal
+            -- We should not go over the per-peer number of objects inflight limit
+            && numObjectsInFlight + (fromIntegral $ Set.size objectsToReq) < dpMaxNumObjectsInflightPerPeer
+       in
+        if shouldSelect
+          then
+            -- We increase both global count and per-object count, and we add the object to the peer's set
+            DownloadPickState
+              { totalNumObjectsToReq = totalNumObjectsToReq + 1
+              , objectMultiplicity = objectMultiplicity + 1
+              , peersToObjectsToReq = Map.insert peerAddr (Set.insert objectId objectsToReq) peersToObjectsToReq
+              }
+          -- Or we keep the state as is if we don't select this peer
+          else st

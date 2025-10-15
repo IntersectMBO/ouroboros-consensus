@@ -146,8 +146,9 @@ objectDiffusionInbound
   _version
   controlMessageSTM
   state =
-    ObjectDiffusionInboundPipelined $ pure $
-      continueWithStateM (go Zero) initialInboundSt
+    ObjectDiffusionInboundPipelined $
+      pure $
+        continueWithStateM (go Zero) initialInboundSt
    where
     canRequestMoreObjects :: InboundSt k object -> Bool
     canRequestMoreObjects st =
@@ -320,9 +321,10 @@ objectDiffusionInbound
         -- request.
         let st' = st{numIdsInFlight = numIdsInFlight st - numIdsRequested}
         poolHasObject <- atomically $ opwHasObject
-        pure $ continueWithStateM
-          (go n)
-          (preAcknowledge st' poolHasObject collectedIds)
+        pure $
+          continueWithStateM
+            (go n)
+            (preAcknowledge st' poolHasObject collectedIds)
       CollectObjects requestedIds collectedObjects -> do
         let requestedIdsSet = Set.fromList requestedIds
             obtainedIdsSet = Set.fromList (opwObjectId <$> collectedObjects)
@@ -368,15 +370,16 @@ objectDiffusionInbound
         traceWith tracer $
           TraceObjectDiffusionProcessed
             (NumObjectsProcessed (fromIntegral $ length objectsToAck))
-        pure $ continueWithStateM
-          (go n)
-          st
-            { pendingObjects = pendingObjects''
-            , outstandingFifo = outstandingFifo'
-            , numToAckOnNextReq =
-                numToAckOnNextReq st
-                  + fromIntegral (Seq.length objectIdsToAck)
-            }
+        pure $
+          continueWithStateM
+            (go n)
+            st
+              { pendingObjects = pendingObjects''
+              , outstandingFifo = outstandingFifo'
+              , numToAckOnNextReq =
+                  numToAckOnNextReq st
+                    + fromIntegral (Seq.length objectIdsToAck)
+              }
 
     goReqObjectIdsBlocking :: Stateful (InboundSt objectId object) 'Z objectId object m
     goReqObjectIdsBlocking = Stateful $ \st -> do
@@ -399,13 +402,14 @@ objectDiffusionInbound
               -- https://github.com/tweag/cardano-peras/issues/144
               Idling.idlingStop (odisvIdling state)
               traceWith tracer TraceObjectInboundStoppedIdling
-              pure $ collectAndContinueWithState
-                (goCollect Zero)
-                st
-                  { numToAckOnNextReq = 0
-                  , numIdsInFlight = numIdsToRequest
-                  }
-                (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
+              pure $
+                collectAndContinueWithState
+                  (goCollect Zero)
+                  st
+                    { numToAckOnNextReq = 0
+                    , numIdsInFlight = numIdsToRequest
+                    }
+                  (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
           )
 
     goReqObjectsAndObjectIdsPipelined ::
@@ -435,7 +439,8 @@ objectDiffusionInbound
       if numIdsToRequest <= 0
         then pure $ continueWithStateM (go n) st
         else
-            pure $ SendMsgRequestObjectIdsPipelined
+          pure $
+            SendMsgRequestObjectIdsPipelined
               (numToAckOnNextReq st)
               numIdsToRequest
               ( continueWithStateM

@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ImportQualifiedPost #-}
@@ -6,7 +7,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE BlockArguments #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
   ( -- * ObjectDiffusion Inbound client
@@ -24,7 +24,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
   , defaultDecisionPolicy
   ) where
 
-import Control.Concurrent.Class.MonadSTM (atomically, MonadSTM)
+import Control.Concurrent.Class.MonadSTM (MonadSTM, atomically)
 import Control.Monad.Class.MonadThrow
 import Control.Tracer (Tracer, traceWith)
 import Data.List.NonEmpty qualified as NonEmpty
@@ -52,7 +52,8 @@ objectDiffusionInbound ::
   forall objectId object m.
   ( MonadThrow m
   , MonadSTM m
-  ) =>Tracer m (TraceObjectDiffusionInbound objectId object) ->
+  ) =>
+  Tracer m (TraceObjectDiffusionInbound objectId object) ->
   ControlMessageSTM m ->
   PeerStateAPI m objectId object ->
   ObjectDiffusionInboundPipelined objectId object m ()
@@ -69,7 +70,6 @@ objectDiffusionInbound
     } =
     ObjectDiffusionInboundPipelined $ pure $ goIdle Zero
    where
-
     goIdle :: forall (n :: N). Nat n -> InboundStIdle n objectId object m ()
     goIdle n = WithEffect $ do
       ctrlMsg <- atomically controlMessageSTM
@@ -80,10 +80,10 @@ objectDiffusionInbound
           pure $ terminateAfterDrain n
         -- Otherwise, we can continue the protocol normally.
         _continue -> do
-            -- Block on next decision.
-            decision <- psaReadDecision
-            traceWith tracer (TraceObjectDiffusionInboundReceivedDecision decision)
-            pure $ goCollect n decision
+          -- Block on next decision.
+          decision <- psaReadDecision
+          traceWith tracer (TraceObjectDiffusionInboundReceivedDecision decision)
+          pure $ goCollect n decision
 
     terminateAfterDrain ::
       Nat n -> InboundStIdle n objectId object m ()
@@ -97,15 +97,16 @@ objectDiffusionInbound
     goCollect (Succ n) decision =
       CollectPipelined
         (Just $ goReqObjects (Succ n) decision)
-        (\case
-          CollectObjectIds numIdsRequested ids -> WithEffect $ do
-            -- TODO: Add checks and validation
-            psaOnReceiveIds numIdsRequested ids
-            pure $ goCollect n decision
-          CollectObjects _objectIds objects -> WithEffect $ do
-            -- TODO: Add checks and validation
-            psaOnReceiveObjects objects
-            pure $ goCollect n decision)
+        ( \case
+            CollectObjectIds numIdsRequested ids -> WithEffect $ do
+              -- TODO: Add checks and validation
+              psaOnReceiveIds numIdsRequested ids
+              pure $ goCollect n decision
+            CollectObjects _objectIds objects -> WithEffect $ do
+              -- TODO: Add checks and validation
+              psaOnReceiveObjects objects
+              pure $ goCollect n decision
+        )
 
     goReqObjects ::
       Nat n ->
@@ -113,13 +114,14 @@ objectDiffusionInbound
       InboundStIdle n objectId object m ()
     goReqObjects n object@PeerDecision{pdObjectsToReqIds} =
       if Set.null pdObjectsToReqIds
-      then
-        goReqIds n object
-      else WithEffect $ do
-        psaOnRequestObjects pdObjectsToReqIds
-        pure $ SendMsgRequestObjectsPipelined
-          (Set.toList pdObjectsToReqIds)
-          (goReqIds (Succ n) object)
+        then
+          goReqIds n object
+        else WithEffect $ do
+          psaOnRequestObjects pdObjectsToReqIds
+          pure $
+            SendMsgRequestObjectsPipelined
+              (Set.toList pdObjectsToReqIds)
+              (goReqIds (Succ n) object)
 
     goReqIds ::
       forall (n :: N).
@@ -144,14 +146,15 @@ objectDiffusionInbound
         else do
           psaOnRequestIds pdNumIdsToAck pdNumIdsToReq
           psaOnDecisionExecuted
-          pure $ SendMsgRequestObjectIdsBlocking
-                pdNumIdsToAck
-                pdNumIdsToReq
-                ( \objectIds -> WithEffect $ do
+          pure $
+            SendMsgRequestObjectIdsBlocking
+              pdNumIdsToAck
+              pdNumIdsToReq
+              ( \objectIds -> WithEffect $ do
                   -- TODO: Add checks and validation
                   psaOnReceiveIds pdNumIdsToReq (NonEmpty.toList objectIds)
                   pure $ goIdle Zero
-                )
+              )
 
     goReqIdsPipelined ::
       forall (n :: N).
@@ -166,7 +169,8 @@ objectDiffusionInbound
         else do
           psaOnRequestIds pdNumIdsToAck pdNumIdsToReq
           psaOnDecisionExecuted
-          pure $ SendMsgRequestObjectIdsPipelined
-                pdNumIdsToAck
-                pdNumIdsToReq
-                (goIdle (Succ n))
+          pure $
+            SendMsgRequestObjectIdsPipelined
+              pdNumIdsToAck
+              pdNumIdsToReq
+              (goIdle (Succ n))

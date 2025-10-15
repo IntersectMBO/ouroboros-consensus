@@ -24,6 +24,7 @@ import Control.Monad.Class.MonadFork
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Class.MonadTimer.SI
+import Control.Monad.IO.Class (MonadIO)
 import Control.Tracer (Tracer, traceWith)
 import Data.Foldable as Foldable (traverse_)
 import Data.Map.Strict (Map)
@@ -39,7 +40,6 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsAck, NumObjectIdsReq)
 import System.Random (initStdGen)
-import Control.Monad.IO.Class (MonadIO)
 
 -- | Communication channels between `ObjectDiffusion` mini-protocol inbound side
 -- and decision logic.
@@ -122,12 +122,14 @@ withPeer
             return
               ( peerToChannel'
               , PeerStateAPI
-                  { psaReadDecision = do -- TODO: make atomic
+                  { psaReadDecision = do
+                      -- TODO: make atomic
                       decision <- takeMVar chan'
                       let decision' = decision{pdExecutingDecision = True}
                       putMVar chan' decision'
                       return decision'
-                  , psaOnDecisionExecuted = do -- TODO: make atomic
+                  , psaOnDecisionExecuted = do
+                      -- TODO: make atomic
                       decision <- takeMVar chan'
                       let decision' = decision{pdExecutingDecision = False}
                       putMVar chan' decision'
