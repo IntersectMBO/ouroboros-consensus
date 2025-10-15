@@ -3,8 +3,8 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -38,6 +38,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 import Quiet (Quiet (..))
@@ -166,20 +167,29 @@ makePerasCfg _ =
     { perasCfgWeightBoost = boostPerCert
     }
 
-class StandardHash blk => HasPerasCert cert blk where
-  getPerasCert :: cert blk -> PerasCert blk
+class StandardHash blk => HasPerasCert cert blk | cert -> blk where
+  getPerasCert :: cert -> PerasCert blk
 
-instance StandardHash blk => HasPerasCert PerasCert blk where
-  getPerasCert = id
-
-instance StandardHash blk => HasPerasCert ValidatedPerasCert blk where
-  getPerasCert = vpcCert
-
-getPerasCertRound :: HasPerasCert cert blk => cert blk -> PerasRoundNo
+getPerasCertRound :: HasPerasCert cert blk => cert -> PerasRoundNo
 getPerasCertRound = pcCertRound . getPerasCert
 
-getPerasCertBoostedBlock :: HasPerasCert cert blk => cert blk -> Point blk
+getPerasCertBoostedBlock :: HasPerasCert cert blk => cert -> Point blk
 getPerasCertBoostedBlock = pcCertBoostedBlock . getPerasCert
 
-getPerasCertBoost :: ValidatedPerasCert blk -> PerasWeight
-getPerasCertBoost = vpcCertBoost
+instance StandardHash blk => HasPerasCert (PerasCert blk) blk where
+  getPerasCert = id
+
+instance StandardHash blk => HasPerasCert (ValidatedPerasCert blk) blk where
+  getPerasCert = vpcCert
+
+instance HasPerasCert cert blk => HasPerasCert (WithArrivalTime cert) blk where
+  getPerasCert = getPerasCert . forgetArrivalTime
+
+class HasPerasCertBoost cert blk | cert -> blk where
+  getPerasCertBoost :: cert -> PerasWeight
+
+instance HasPerasCertBoost (ValidatedPerasCert blk) blk where
+  getPerasCertBoost = vpcCertBoost
+
+instance HasPerasCertBoost cert blk => HasPerasCertBoost (WithArrivalTime cert) blk where
+  getPerasCertBoost = getPerasCertBoost . forgetArrivalTime
