@@ -32,6 +32,7 @@ import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Storage.PerasCertDB.API
 import Ouroboros.Consensus.Util.Args
@@ -152,7 +153,7 @@ implAddCert ::
   , StandardHash blk
   ) =>
   PerasCertDbEnv m blk ->
-  ValidatedPerasCert blk ->
+  WithArrivalTime (ValidatedPerasCert blk) ->
   m AddPerasCertResult
 implAddCert env cert = do
   traceWith pcdbTracer $ AddingPerasCert roundNo boostedPt
@@ -255,13 +256,13 @@ implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
 --
 -- INVARIANT: See 'invariantForPerasVolatileCertState'.
 data PerasVolatileCertState blk = PerasVolatileCertState
-  { pvcsCerts :: !(Map PerasRoundNo (ValidatedPerasCert blk))
+  { pvcsCerts :: !(Map PerasRoundNo (WithArrivalTime (ValidatedPerasCert blk)))
   -- ^ The boosted blocks by 'RoundNo' of all certificates currently in the db.
   , pvcsWeightByPoint :: !(PerasWeightSnapshot blk)
   -- ^ The weight of boosted blocks w.r.t. the certificates currently in the db.
   --
   -- INVARIANT: In sync with 'pvcsCerts'.
-  , pvcsCertsByTicket :: !(Map PerasCertTicketNo (ValidatedPerasCert blk))
+  , pvcsCertsByTicket :: !(Map PerasCertTicketNo (WithArrivalTime (ValidatedPerasCert blk)))
   -- ^ The certificates by 'PerasCertTicketNo'.
   --
   -- INVARIANT: In sync with 'pvcsCerts'.

@@ -97,11 +97,17 @@ import Data.Proxy
 import Data.TreeDiff
 import Data.Typeable
 import Data.Void (Void)
-import Data.Word (Word16)
+import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , SystemTime (..)
+  , WithArrivalTime
+  , addArrivalTime
+  )
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -189,7 +195,7 @@ data Cmd blk it flr
   = -- | Add a block, with (possibly) some gap blocks before it being created.
     AddBlock blk (Persistent [blk])
   | -- | Add a Peras cert for a block, with (possibly) some gap blocks before it being created.
-    AddPerasCert (ValidatedPerasCert blk) (Persistent [blk])
+    AddPerasCert (WithArrivalTime (ValidatedPerasCert blk)) (Persistent [blk])
   | GetCurrentChain
   | GetTipBlock
   | GetTipHeader
@@ -1090,6 +1096,11 @@ generator loe genBlock m@Model{..} =
   empty :: Bool
   empty = null pointsInDB
 
+  genSystemTime :: Gen (SystemTime Gen)
+  genSystemTime = do
+    current <- RelativeTime . fromIntegral <$> arbitrary @Word64
+    pure $ SystemTime{systemTimeCurrent = return current, systemTimeWait = pure ()}
+
   genRealPoint :: Gen (RealPoint blk)
   genRealPoint =
     frequency
@@ -1137,21 +1148,23 @@ generator loe genBlock m@Model{..} =
           [ (10, choose (1, k - 1))
           , (1, choose (k, k + 1))
           ]
+    -- Put together the certificate and attach a random arrival time
+    systemTime <- genSystemTime
+    validatedCert <-
+      addArrivalTime systemTime $
+        ValidatedPerasCert
+          { vpcCert =
+              PerasCert
+                { pcCertRound = roundNo
+                , pcCertBoostedBlock = blockPoint blk
+                }
+          , vpcCertBoost = boost
+          }
+
     -- Include the boosted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
 
-    pure $
-      AddPerasCert
-        ( ValidatedPerasCert
-            { vpcCert =
-                PerasCert
-                  { pcCertRound = roundNo
-                  , pcCertBoostedBlock = blockPoint blk
-                  }
-            , vpcCertBoost = boost
-            }
-        )
-        seenBlks
+    pure $ AddPerasCert validatedCert seenBlks
 
   genBounds :: Gen (StreamFrom blk, StreamTo blk)
   genBounds =
