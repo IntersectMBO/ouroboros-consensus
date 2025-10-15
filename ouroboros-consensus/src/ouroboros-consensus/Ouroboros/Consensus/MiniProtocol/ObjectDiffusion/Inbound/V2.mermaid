@@ -5,9 +5,6 @@ flowchart TD
     D(dpsObjectsInflightIds)
     F(dpsObjectsOwtPool)
 
-    H(dgsObjectsInflightMultiplicities)
-    I(dgsObjectsOwtPoolMultiplicities)
-
     EA{onRequestIds}
     EA-->|+count| A
     B -->|-ids| EA
@@ -22,14 +19,11 @@ flowchart TD
     EC{onRequestObjects}
     C -->|-ids| EC
     EC -->|+ids| D
-    EC -->|+count| H
 
     ED{onReceiveObjects / submitToPool}
     D -->|-ids| ED
-    H -->|-count| ED
     IN2@{ shape: lin-cyl, label: "objects" } --o ED
     ED -->|+objects| F
-    ED -->|+count| I
 
     EE{makeDecisions}
     EE -.->|readDecision : pdIdsToAck + pdIdsToReq + pdCanPipelineIdsReq/| EA
@@ -37,4 +31,3 @@ flowchart TD
 
     EG{Added to pool}
     F -->|-objects| EG
-    I -->|-count| EG

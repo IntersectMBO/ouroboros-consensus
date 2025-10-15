@@ -44,12 +44,18 @@ makeDecisions ::
   DecisionPolicy ->
   -- | decision context
   DecisionGlobalState peerAddr objectId object ->
+  -- | Previous decisions
+  Map peerAddr (PeerDecision objectId object) ->
+  -- | New decisions
   Map peerAddr (PeerDecision objectId object)
-makeDecisions rng hasObject decisionPolicy globalState =
-  -- We do it in two steps, because computing the acknowledgment tell which objects from dpsObjectsAvailableIds sets of each peer won't actually be available anymore (as soon as we ack them),
-  -- so that the pickObjectsToReq function can take this into account.
-  let (ackAndRequestIdsDecisions, peerToIdsToAck) = computeAck hasObject decisionPolicy globalState
-      peersToObjectsToReq = pickObjectsToReq rng hasObject decisionPolicy globalState peerToIdsToAck
+makeDecisions rng hasObject decisionPolicy globalState prevDecisions =
+  let -- A subset of peers are currently executing a decision. We shouldn't update the decision for them
+      frozenPeersToDecisions = Map.filter pdExecutingDecision prevDecisions
+
+      -- We do it in two steps, because computing the acknowledgment tell which objects from dpsObjectsAvailableIds sets of each peer won't actually be available anymore (as soon as we ack them),
+      -- so that the pickObjectsToReq function can take this into account.
+      (ackAndRequestIdsDecisions, peerToIdsToAck) = computeAck hasObject decisionPolicy globalState frozenPeersToDecisions
+      peersToObjectsToReq = pickObjectsToReq rng hasObject decisionPolicy globalState frozenPeersToDecisions peerToIdsToAck
   in
     Map.intersectionWith
       (\decision objectsToReqIds -> decision{pdObjectsToReqIds = objectsToReqIds})
@@ -67,12 +73,16 @@ computeAck ::
   (objectId -> Bool) ->
   DecisionPolicy ->
   DecisionGlobalState peerAddr objectId object ->
+  -- | Frozen peers and their previous decisions
+  Map peerAddr (PeerDecision objectId object) ->
   ( Map peerAddr (PeerDecision objectId object)
   , Map peerAddr (Set objectId)
   )
-computeAck poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpMaxNumObjectsOutstanding} DecisionGlobalState{dgsPeerStates} =
-  let (decisions, peerToIdsToAck) =
-        Map.foldlWithKey' computeAckForPeer (Map.empty, Map.empty) dgsPeerStates
+computeAck poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpMaxNumObjectsOutstanding} DecisionGlobalState{dgsPeerStates} frozenPeersToDecisions =
+  let -- We shouldn't create a new decision for peers that are currently executing a decision
+      filteredPeerStates = Map.withoutKeys dgsPeerStates (Map.keysSet frozenPeersToDecisions)
+      (decisions, peerToIdsToAck) =
+        Map.foldlWithKey' computeAckForPeer (Map.empty, Map.empty) filteredPeerStates
    in ( decisions
       , peerToIdsToAck
       )
@@ -113,6 +123,7 @@ computeAck poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpMaxNumObjectsOut
           , pdNumIdsToReq
           , pdCanPipelineIdsRequests
           , pdObjectsToReqIds = Set.empty -- we don't decide this here
+          , pdExecutingDecision = False
           }
      in
       ( Map.insert peerAddr peerDecision decisionsAcc
@@ -144,6 +155,8 @@ pickObjectsToReq ::
   (objectId -> Bool) ->
   DecisionPolicy ->
   DecisionGlobalState peerAddr objectId object ->
+  -- | Frozen peers and their previous decisions
+  Map peerAddr (PeerDecision objectId object) ->
   -- | map from peer to the set of ids that will be acked for that peer on next requestIds
   -- we should treat these ids as not available anymore for the purpose of picking objects to request
   Map peerAddr (Set objectId) ->
@@ -159,13 +172,13 @@ pickObjectsToReq
     }
   DecisionGlobalState
     { dgsPeerStates
-    , dgsObjectsInflightMultiplicities
-    , dgsObjectsOwtPoolMultiplicities
     }
+  frozenPeersToDecisions
   peerToIdsToAck =
   peersToObjectsToReq
  where
-  orderedPeers = orderPeers rng dgsPeerStates
+  -- We order the peers that are not currently executing a decision
+  orderedPeers = orderPeers rng (dgsPeerStates `Map.withoutKeys` Map.keysSet frozenPeersToDecisions)
 
   -- We want to map each objectId to the sorted list of peers that can provide it
   -- For each peer we also indicate how many objects it has in flight at the moment
@@ -198,10 +211,53 @@ pickObjectsToReq
       Map.empty
       orderedPeers
 
+  frozenPeerStatesWithDecisions = Map.intersectionWith (,) dgsPeerStates frozenPeersToDecisions
+
+  availablePeerStates = Map.withoutKeys dgsPeerStates (Map.keysSet frozenPeersToDecisions)
+
+  -- For frozen peers, we should consider that the objects in pdObjectsToReqIds will be requested soon, so we should consider them as inflight for the purpose of picking objects to request for other peers
+  objectsInFlightMultiplicitiesOfFrozenPeer = Map.foldl'
+    ( \accMap (DecisionPeerState{dpsObjectsInflightIds}, PeerDecision{pdObjectsToReqIds}) ->
+        Foldable.foldl'
+          ( \accMap' objectId -> Map.insertWith (+) objectId 1 accMap'
+          )
+          accMap
+          (Set.union dpsObjectsInflightIds pdObjectsToReqIds)
+    )
+    Map.empty
+    frozenPeerStatesWithDecisions
+  -- Finally, we add to the previous map the objects that are currently inflight from peers for which we will make a decision in this round
+  objectsInFlightMultiplicities = Map.foldl'
+    ( \accMap (DecisionPeerState{dpsObjectsInflightIds}) ->
+        Foldable.foldl'
+          ( \accMap' objectId -> Map.insertWith (+) objectId 1 accMap'
+          )
+          accMap
+          dpsObjectsInflightIds
+    )
+    objectsInFlightMultiplicitiesOfFrozenPeer
+    availablePeerStates
+  
+  totalNumObjectsInflight :: NumObjectsReq
+  totalNumObjectsInflight = fromIntegral $ Map.foldl' (+) 0 objectsInFlightMultiplicities
+
+  objectsOwtPoolMultiplicities = Map.foldl'
+    ( \accMap (DecisionPeerState{dpsObjectsOwtPool}) ->
+        Foldable.foldl'
+          ( \accMap' objectId -> Map.insertWith (+) objectId 1 accMap'
+          )
+          accMap
+          (Map.keys dpsObjectsOwtPool)
+    )
+    Map.empty
+    dgsPeerStates
+
   -- We also want to know for each objects how many peers have it in the inflight or owtPool,
   -- meaning that we should receive them soon.
+  -- We should also add here the objects that are in the pdObjectsToReqIds of each peer decision for frozen peers,
+  -- if these ids are not already in dpsObjectsInflight or dpsObjectsOwtPool of this peer
   objectsExpectedSoonMultiplicities :: Map objectId ObjectMultiplicity
-  objectsExpectedSoonMultiplicities = Map.unionWith (+) dgsObjectsInflightMultiplicities dgsObjectsOwtPoolMultiplicities
+  objectsExpectedSoonMultiplicities = Map.unionWith (+) objectsInFlightMultiplicities objectsOwtPoolMultiplicities
 
   -- Now we join objectsToSortedProviders and objectsExpectedSoonMultiplicities maps on objectId for easy fold
   objectsToProvidersAndExpectedMultiplicities ::
@@ -238,9 +294,6 @@ pickObjectsToReq
         , peersToObjectsToReq = Map.empty
         }
       objectsToProvidersAndExpectedMultiplicities
-
-  totalNumObjectsInflight :: NumObjectsReq
-  totalNumObjectsInflight = fromIntegral $ Map.foldl' (+) 0 dgsObjectsInflightMultiplicities
 
   -- This function decides whether or not we should select a given peer as provider for the current objectId
   -- it takes into account if we are expecting to obtain the object from other sources (either inflight/owt pool already, or if the object will be requested from already selected peers in this given round)

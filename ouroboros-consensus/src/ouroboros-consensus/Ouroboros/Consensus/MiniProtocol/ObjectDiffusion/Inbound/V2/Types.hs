@@ -16,6 +16,8 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
     -- * DecisionGlobalState
   , DecisionGlobalState (..)
   , dgsObjectsAvailableMultiplicities
+  , dgsObjectsInflightMultiplicities
+  , dgsObjectsOwtPoolMultiplicities
   , DecisionGlobalStateVar
   , newDecisionGlobalStateVar
 
@@ -37,10 +39,6 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
   , NumObjectsProcessed (..)
   , TraceObjectDiffusionInbound (..)
   , ObjectDiffusionInboundError (..)
-
-    -- * Helpers for ObjectMultiplicity maps
-  , increaseCount
-  , decreaseCount
 
     -- * Object pool semaphore
   , ObjectPoolSem (..)
@@ -125,20 +123,6 @@ data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   -- /Invariant:/ for peerAddr's which are registered using `withPeer`,
   -- there's always an entry in this map even if the set of `objectId`s is
   -- empty.
-  , dgsObjectsInflightMultiplicities :: !(Map objectId ObjectMultiplicity)
-  -- ^ Map from ids of objects which are in-flight (have already been
-  -- requested) to their multiplicities (from how many peers it is
-  -- currently in-flight)
-  --
-  -- This can intersect with some `dpsObjectsAvailableIds`.
-  -- The value for any key must be always non-zero (strictly positive).
-  , dgsObjectsOwtPoolMultiplicities :: !(Map objectId ObjectMultiplicity)
-  -- ^ Map from ids of objects which have already been downloaded, validated,
-  -- and are on their way to the objectpool (waiting for the lock)
-  -- to their multiplicities
-  --
-  -- * We subtract from the counter when a given object is added to the
-  -- objectpool
   }
   deriving (Eq, Show, Generic)
 
@@ -157,6 +141,20 @@ dgsObjectsAvailableMultiplicities DecisionGlobalState{dgsPeerStates} =
     (+)
     (Map.fromSet (const 1) . dpsObjectsAvailableIds <$> Map.elems dgsPeerStates)
 
+dgsObjectsInflightMultiplicities ::
+  Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId ObjectMultiplicity
+dgsObjectsInflightMultiplicities DecisionGlobalState{dgsPeerStates} =
+  Map.unionsWith
+    (+)
+    (Map.fromSet (const 1) . dpsObjectsInflightIds <$> Map.elems dgsPeerStates)
+
+dgsObjectsOwtPoolMultiplicities ::
+  Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId ObjectMultiplicity
+dgsObjectsOwtPoolMultiplicities DecisionGlobalState{dgsPeerStates} =
+  Map.unionsWith
+    (+)
+    (Map.fromSet (const 1) . Map.keysSet . dpsObjectsOwtPool <$> Map.elems dgsPeerStates)
+
 type DecisionGlobalStateVar m peerAddr objectId object =
   StrictTVar m (DecisionGlobalState peerAddr objectId object)
 
@@ -167,8 +165,6 @@ newDecisionGlobalStateVar =
   newTVarIO
     DecisionGlobalState
       { dgsPeerStates = Map.empty
-      , dgsObjectsInflightMultiplicities = Map.empty
-      , dgsObjectsOwtPoolMultiplicities = Map.empty
       }
 
 --
@@ -199,6 +195,8 @@ data PeerDecision objectId object = PeerDecision
   -- if we have non-acknowledged `objectId`s.
   , pdObjectsToReqIds :: !(Set objectId)
   -- ^ objectId's to download.
+  , pdExecutingDecision :: !Bool
+  -- ^ Whether the peer is actually executing the said decision
   }
   deriving (Show, Eq)
 
@@ -228,15 +226,12 @@ makeObjectDiffusionCounters ::
   DecisionGlobalState peerAddr objectId object ->
   ObjectDiffusionCounters
 makeObjectDiffusionCounters
-  dgs@DecisionGlobalState
-    { dgsObjectsInflightMultiplicities
-    , dgsObjectsOwtPoolMultiplicities
-    } =
+  dgs =
     ObjectDiffusionCounters
       { odcNumDistinctObjectsAvailable = Map.size $ dgsObjectsAvailableMultiplicities dgs
-      , odcNumDistinctObjectsInflight = Map.size dgsObjectsInflightMultiplicities
-      , odcNumTotalObjectsInflight = fromIntegral $ mconcat (Map.elems dgsObjectsInflightMultiplicities)
-      , odcNumDistinctObjectsOwtPool = Map.size dgsObjectsOwtPoolMultiplicities
+      , odcNumDistinctObjectsInflight = Map.size $ dgsObjectsInflightMultiplicities dgs
+      , odcNumTotalObjectsInflight = fromIntegral . mconcat . Map.elems $ dgsObjectsInflightMultiplicities dgs
+      , odcNumDistinctObjectsOwtPool = Map.size $ dgsObjectsOwtPoolMultiplicities dgs
       }
 
 data ObjectDiffusionInitDelay
@@ -268,23 +263,6 @@ newtype ObjectMultiplicity
   deriving Semigroup via (Sum Word64)
   deriving Monoid via (Sum Word64)
   deriving Show via (Quiet ObjectMultiplicity)
-
-increaseCount :: Ord k => Map k ObjectMultiplicity -> k -> Map k ObjectMultiplicity
-increaseCount mmap k =
-  Map.alter
-    ( \case
-        Nothing -> Just $! 1
-        Just cnt -> Just $! succ cnt
-    )
-    k
-    mmap
-
-decreaseCount :: Ord k => Map k ObjectMultiplicity -> k -> Map k ObjectMultiplicity
-decreaseCount mmap k =
-  Map.update
-    (\n -> if n > 1 then Just $! pred n else Nothing)
-    k
-    mmap
 
 data TraceObjectDiffusionInbound objectId object
   = TraceObjectDiffusionInboundRequestedIds Int

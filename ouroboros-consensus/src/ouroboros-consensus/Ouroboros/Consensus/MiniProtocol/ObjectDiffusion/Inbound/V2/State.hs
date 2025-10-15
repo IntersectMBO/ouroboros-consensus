@@ -137,18 +137,11 @@ onRequestObjectsImpl
   objectIds
   globalState@DecisionGlobalState
     { dgsPeerStates
-    , dgsObjectsInflightMultiplicities
     } =
     globalState
-      { dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
-      , dgsPeerStates = dgsPeerStates'
+      { dgsPeerStates = dgsPeerStates'
       }
    where
-    dgsObjectsInflightMultiplicities' =
-      Foldable.foldl'
-        increaseCount
-        dgsObjectsInflightMultiplicities
-        objectIds
     dgsPeerStates' =
       Map.adjust
         ( \ps@DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds} ->
@@ -313,14 +306,9 @@ onReceiveObjectsImpl
   peerAddr
   objectsReceived
   st@DecisionGlobalState
-    { dgsPeerStates
-    , dgsObjectsInflightMultiplicities
-    , dgsObjectsOwtPoolMultiplicities
-    } =
+    { dgsPeerStates } =
     st
-      { dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
-      , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
-      , dgsPeerStates = dgsPeerStates'
+      { dgsPeerStates = dgsPeerStates'
       }
    where
     objectsReceivedIds = Map.keysSet objectsReceived
@@ -338,19 +326,7 @@ onReceiveObjectsImpl
     dpsObjectsInflightIds' =
       dpsObjectsInflightIds \\ objectsReceivedIds
 
-    dgsObjectsInflightMultiplicities' =
-      Foldable.foldl'
-        decreaseCount
-        dgsObjectsInflightMultiplicities
-        objectsReceivedIds
-
     dpsObjectsOwtPool' = dpsObjectsOwtPool <> objectsReceived
-
-    dgsObjectsOwtPoolMultiplicities' =
-      Foldable.foldl'
-        increaseCount
-        dgsObjectsOwtPoolMultiplicities
-        objectsReceivedIds
 
     peerState' =
       peerState
@@ -419,16 +395,12 @@ submitObjectsToPool
     updateStateWhenObjectAddedToPool
       objectId
       st@DecisionGlobalState
-        { dgsObjectsOwtPoolMultiplicities
-        , dgsPeerStates
+        { dgsPeerStates
         } =
         st
-          { dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
-          , dgsPeerStates = dgsPeerStates'
+          { dgsPeerStates = dgsPeerStates'
           }
        where
-        dgsObjectsOwtPoolMultiplicities' = decreaseCount dgsObjectsOwtPoolMultiplicities objectId
-
         dgsPeerStates' =
           Map.adjust
             ( \ps@DecisionPeerState{dpsObjectsOwtPool} -> ps{dpsObjectsOwtPool = Map.delete objectId dpsObjectsOwtPool}

@@ -41,6 +41,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsAck, NumObjectIdsReq)
 import System.Random (initStdGen)
+import Control.Monad.IO.Class (MonadIO)
 
 -- | Communication channels between `ObjectDiffusion` mini-protocol inbound side
 -- and decision logic.
@@ -57,6 +58,9 @@ newPeerDecisionChannelsVar = newMVar (Map.empty)
 data PeerStateAPI m objectId object = PeerStateAPI
   { psaReadDecision :: m (PeerDecision objectId object)
   -- ^ a blocking action which reads `PeerDecision`
+  , psaOnDecisionExecuted :: m ()
+  -- ^ to be called by the peer when it has fully executed the decision.
+  -- Marks the peer as available for the `makeDecision` logic
   , psaOnRequestIds :: NumObjectIdsAck -> NumObjectIdsReq -> m ()
   , psaOnRequestObjects :: Set objectId -> m ()
   , psaOnReceivedIds :: NumObjectIdsReq -> [objectId] -> m ()
@@ -121,7 +125,15 @@ withPeer
             return
               ( peerToChannel'
               , PeerStateAPI
-                  { psaReadDecision = takeMVar chan'
+                  { psaReadDecision = do
+                      decision <- takeMVar chan'
+                      let decision' = decision{pdExecutingDecision = True}
+                      putMVar chan' decision'
+                      return decision'
+                  , psaOnDecisionExecuted = do
+                      decision <- takeMVar chan'
+                      let decision' = decision{pdExecutingDecision = False}
+                      putMVar chan' decision'
                   , psaOnRequestIds =
                       State.onRequestIds
                         objectDiffusionTracer
@@ -199,50 +211,10 @@ withPeer
     unregisterPeerGlobalState
       st@DecisionGlobalState
         { dgsPeerStates
-        , dgsObjectsInflightMultiplicities
-        , dgsObjectsOwtPoolMultiplicities
         } =
         st
-          { dgsPeerStates = dgsPeerStates'
-          , dgsObjectsInflightMultiplicities = dgsObjectsInflightMultiplicities'
-          , dgsObjectsOwtPoolMultiplicities = dgsObjectsOwtPoolMultiplicities'
+          { dgsPeerStates = Map.delete peerAddr dgsPeerStates
           }
-       where
-        -- First extract the DPS of the specified peer from the DGS
-        ( DecisionPeerState
-            { dpsObjectsInflightIds
-            , dpsObjectsOwtPool
-            }
-          , dgsPeerStates'
-          ) =
-            Map.alterF
-              ( \case
-                  Nothing ->
-                    error
-                      ( "ObjectDiffusion.withPeer: can't unregister peer "
-                          ++ show peerAddr
-                          ++ " because it isn't registered"
-                      )
-                  Just a -> (a, Nothing)
-              )
-              peerAddr
-              dgsPeerStates
-
-        -- Update dgsInflightMultiplicities map by decreasing the count
-        -- of objects that were in-flight for this peer.
-        dgsObjectsInflightMultiplicities' =
-          Foldable.foldl'
-            decreaseCount
-            dgsObjectsInflightMultiplicities
-            dpsObjectsInflightIds
-
-        -- Finally, we need to update dgsObjectsOwtPoolMultiplicities by decreasing the count of
-        -- each objectId which is part of the dpsObjectsOwtPool of this peer.
-        dgsObjectsOwtPoolMultiplicities' =
-          Foldable.foldl'
-            decreaseCount
-            dgsObjectsOwtPoolMultiplicities
-            (Map.keysSet dpsObjectsOwtPool)
 
 decisionLogicThread ::
   forall m peerAddr objectId object.
@@ -251,6 +223,7 @@ decisionLogicThread ::
   , MonadSTM m
   , MonadFork m
   , MonadMask m
+  , MonadIO m
   , Ord peerAddr
   , Ord objectId
   , Hashable peerAddr
@@ -269,23 +242,28 @@ decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject}
     -- if there are too many inbound connections.
     threadDelay _DECISION_LOOP_DELAY
 
-    globalState <- atomically $ readTVar globalStateVar
-    decisions <- atomically $ do
-      rng <- initStdGen
-      hasObject <- opwHasObject
-      pure $ makeDecisions rng hasObject decisionPolicy globalState
+    rng <- initStdGen
 
-    traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "decisionLogicThread" globalState')
-    traceWith decisionTracer (TraceDecisionLogicDecisionsMade decisions)
+    -- TODO: can we make this whole block atomic?
+    -- because makeDecisions should be atomic with respect to reading the global state and
+    -- reading the previous decisions
+    decisionsChannels <- readMVar decisionChannelsVar
+    prevDecisions <- traverse takeMVar decisionsChannels
+    (newDecisions, globalState) <- atomically $ do
+      globalState <- readTVar globalStateVar
+      hasObject <- opwHasObject
+      pure $ (makeDecisions rng hasObject decisionPolicy globalState prevDecisions, globalState)
+
+    traceWith decisionTracer (TraceDecisionLogicDecisionsMade newDecisions)
     peerToChannel <- readMVar decisionChannelsVar
     -- Pair decision channel with the corresponding decision
     let peerToChannelAndDecision =
           Map.intersectionWith
             (,)
             peerToChannel
-            decisions
-    -- Send the decisions to the corresponding peers
-    -- Note that decisions are incremental, so we merge the old one to the new one (using the semigroup instance) if there is an old one
+            newDecisions
+    -- Send the newDecisions to the corresponding peers
+    -- Note that newDecisions are incremental, so we merge the old one to the new one (using the semigroup instance) if there is an old one
     traverse_ (uncurry putMVar) peerToChannelAndDecision
 
     traceWith countersTracer (makeObjectDiffusionCounters globalState)
