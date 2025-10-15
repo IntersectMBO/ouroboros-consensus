@@ -81,6 +81,7 @@ import Control.ResourceRegistry
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
@@ -392,7 +393,7 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m (Maybe Statistics)
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
-  , addPerasCertAsync :: ValidatedPerasCert blk -> m (AddPerasCertPromise m)
+  , addPerasCertAsync :: WithArrivalTime (ValidatedPerasCert blk) -> m (AddPerasCertPromise m)
   -- ^ TODO docs
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ TODO
@@ -530,7 +531,7 @@ newtype AddPerasCertPromise m = AddPerasCertPromise
   -- impossible).
   }
 
-addPerasCertSync :: IOLike m => ChainDB m blk -> ValidatedPerasCert blk -> m ()
+addPerasCertSync :: IOLike m => ChainDB m blk -> WithArrivalTime (ValidatedPerasCert blk) -> m ()
 addPerasCertSync chainDB cert =
   waitPerasCertProcessed =<< addPerasCertAsync chainDB cert
 

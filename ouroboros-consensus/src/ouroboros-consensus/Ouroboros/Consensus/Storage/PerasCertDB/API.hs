@@ -16,12 +16,13 @@ module Ouroboros.Consensus.Storage.PerasCertDB.API
 import Data.Word (Word64)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 
 data PerasCertDB m blk = PerasCertDB
-  { addCert :: ValidatedPerasCert blk -> m AddPerasCertResult
+  { addCert :: WithArrivalTime (ValidatedPerasCert blk) -> m AddPerasCertResult
   -- ^ TODO docs
   , getWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Return the Peras weights in order compare the current selection against
@@ -45,7 +46,9 @@ data AddPerasCertResult = AddedPerasCertToDB | PerasCertAlreadyInDB
 data PerasCertSnapshot blk = PerasCertSnapshot
   { containsCert :: PerasRoundNo -> Bool
   -- ^ Do we have the certificate for this round?
-  , getCertsAfter :: PerasCertTicketNo -> [(ValidatedPerasCert blk, PerasCertTicketNo)]
+  , getCertsAfter ::
+      PerasCertTicketNo ->
+      [(WithArrivalTime (ValidatedPerasCert blk), PerasCertTicketNo)]
   }
 
 -- TODO: Once we store historical certificates on disk, this should (also) track

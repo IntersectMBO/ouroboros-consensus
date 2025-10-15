@@ -8,6 +8,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -17,12 +18,21 @@ import Control.Monad.State
 import Control.Tracer (nullTracer)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
+import Data.Word (Word64)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , SystemTime (..)
+  , WithArrivalTime
+  , addArrivalTime
+  )
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..), PerasCertDB)
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM
+import Test.Ouroboros.Storage.Orphans ()
 import qualified Test.Ouroboros.Storage.PerasCertDB.Model as Model
 import Test.QuickCheck hiding (Some (..))
 import qualified Test.QuickCheck.Monadic as QC
@@ -54,7 +64,7 @@ instance StateModel Model where
   data Action Model a where
     OpenDB :: Action Model ()
     CloseDB :: Action Model ()
-    AddCert :: ValidatedPerasCert TestBlock -> Action Model AddPerasCertResult
+    AddCert :: WithArrivalTime (ValidatedPerasCert TestBlock) -> Action Model AddPerasCertResult
     GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
     GarbageCollect :: SlotNo -> Action Model ()
 
@@ -68,19 +78,25 @@ instance StateModel Model where
           ]
     | otherwise = pure $ Some OpenDB
    where
+    genSystemTime :: Gen (SystemTime Gen)
+    genSystemTime = do
+      current <- RelativeTime . fromIntegral <$> arbitrary @Word64
+      pure $ SystemTime{systemTimeCurrent = return current, systemTimeWait = pure ()}
+
     genAddCert = do
       roundNo <- PerasRoundNo <$> arbitrary
       boostedBlock <- genPoint
-      pure $
-        AddCert
-          ValidatedPerasCert
-            { vpcCert =
-                PerasCert
-                  { pcCertRound = roundNo
-                  , pcCertBoostedBlock = boostedBlock
-                  }
-            , vpcCertBoost = perasCfgWeightBoost perasTestCfg
-            }
+      systemTime <- genSystemTime
+      let validatedCert =
+            ValidatedPerasCert
+              { vpcCert =
+                  PerasCert
+                    { pcCertRound = roundNo
+                    , pcCertBoostedBlock = boostedBlock
+                    }
+              , vpcCertBoost = perasCfgWeightBoost perasTestCfg
+              }
+      AddCert <$> addArrivalTime systemTime validatedCert
 
     genPoint :: Gen (Point TestBlock)
     genPoint =

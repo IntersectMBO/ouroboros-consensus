@@ -18,13 +18,14 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , mkPerasWeightSnapshot
   )
 
 data Model blk = Model
-  { certs :: Set (ValidatedPerasCert blk)
+  { certs :: Set (WithArrivalTime (ValidatedPerasCert blk))
   , open :: Bool
   }
   deriving Generic
@@ -42,7 +43,7 @@ closeDB _ = Model{open = False, certs = Set.empty}
 
 addCert ::
   StandardHash blk =>
-  Model blk -> ValidatedPerasCert blk -> Model blk
+  Model blk -> WithArrivalTime (ValidatedPerasCert blk) -> Model blk
 addCert model@Model{certs} cert =
   model{certs = Set.insert cert certs}
 

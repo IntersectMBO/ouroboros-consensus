@@ -1047,6 +1047,7 @@ runThreadNetwork
               , cfg = pInfoConfig
               , featureFlags = mempty
               , btime
+              , systemTime
               , chainDB
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
