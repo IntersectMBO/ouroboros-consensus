@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 
 module Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -14,6 +16,10 @@ module Ouroboros.Consensus.BlockchainTime.WallClock.Types
 
     -- * Get current time (as 'RelativeTime')
   , SystemTime (..)
+
+    -- * Attach an arrival time (as 'RelativeTime') to an object
+  , WithArrivalTime (..)
+  , addArrivalTime
 
     -- * Slot length
   , getSlotLength
@@ -31,6 +37,7 @@ module Ouroboros.Consensus.BlockchainTime.WallClock.Types
 
 import Cardano.Slotting.Time
 import Data.Time.Clock (NominalDiffTime)
+import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 
 addRelTime :: NominalDiffTime -> RelativeTime -> RelativeTime
@@ -60,3 +67,22 @@ data SystemTime m = SystemTime
   -- to reach 'SystemStart'. In tests this does nothing.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "SystemTime" (SystemTime m)
+
+{-------------------------------------------------------------------------------
+  Attach an arrival time (as RelativeTime) to an object
+-------------------------------------------------------------------------------}
+
+-- | WithArrivalTime
+data WithArrivalTime a = WithArrivalTime
+  { getArrivalTime :: !RelativeTime
+  -- ^ The time at which the object arrived
+  , forgetArrivalTime :: !a
+  -- ^ The object without its arrival time
+  }
+  deriving (Show, Eq, Ord, Generic, NoThunks)
+
+-- | Add an arrival time to an object
+addArrivalTime :: Monad m => SystemTime m -> a -> m (WithArrivalTime a)
+addArrivalTime systemTime a = do
+  t <- systemTimeCurrent systemTime
+  return (WithArrivalTime t a)

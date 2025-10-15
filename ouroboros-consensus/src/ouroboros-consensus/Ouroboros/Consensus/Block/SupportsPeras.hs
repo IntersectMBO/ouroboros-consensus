@@ -34,6 +34,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
@@ -137,6 +138,12 @@ instance HasPerasCertRound (PerasCert blk) where
 instance HasPerasCertRound (ValidatedPerasCert blk) where
   getPerasCertRound = getPerasCertRound . vpcCert
 
+instance
+  HasPerasCertRound cert =>
+  HasPerasCertRound (WithArrivalTime cert)
+  where
+  getPerasCertRound = getPerasCertRound . forgetArrivalTime
+
 -- | Extract the boosted block point from a Peras certificate container
 class HasPerasCertBoostedBlock cert blk | cert -> blk where
   getPerasCertBoostedBlock :: cert -> Point blk
@@ -147,9 +154,21 @@ instance HasPerasCertBoostedBlock (PerasCert blk) blk where
 instance HasPerasCertBoostedBlock (ValidatedPerasCert blk) blk where
   getPerasCertBoostedBlock = getPerasCertBoostedBlock . vpcCert
 
+instance
+  HasPerasCertBoostedBlock cert blk =>
+  HasPerasCertBoostedBlock (WithArrivalTime cert) blk
+  where
+  getPerasCertBoostedBlock = getPerasCertBoostedBlock . forgetArrivalTime
+
 -- | Extract the certificate boost from a Peras certificate container
 class HasPerasCertBoost cert where
   getPerasCertBoost :: cert -> PerasWeight
 
 instance HasPerasCertBoost (ValidatedPerasCert blk) where
   getPerasCertBoost = vpcCertBoost
+
+instance
+  HasPerasCertBoost cert =>
+  HasPerasCertBoost (WithArrivalTime cert)
+  where
+  getPerasCertBoost = getPerasCertBoost . forgetArrivalTime
