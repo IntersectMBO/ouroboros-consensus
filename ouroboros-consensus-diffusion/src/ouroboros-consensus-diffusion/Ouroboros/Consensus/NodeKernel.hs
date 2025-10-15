@@ -199,6 +199,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , cfg :: TopLevelConfig blk
   , featureFlags :: Set CardanoFeatureFlag
   , btime :: BlockchainTime m
+  , systemTime :: SystemTime m
   , chainDB :: ChainDB m blk
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
   , chainSyncFutureCheck :: SomeHeaderInFutureCheck m blk

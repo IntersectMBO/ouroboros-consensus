@@ -15,6 +15,13 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , SystemTime (..)
+  , WithArrivalTime (..)
+  , addArrivalTime
+  , systemTimeCurrent
+  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
 import Ouroboros.Consensus.Storage.PerasCertDB.API
@@ -25,6 +32,12 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.Impl as PerasCertDB
 import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , atomically
+  , stateTVar
+  , throwIO
+  , uncheckedNewTVarM
+  )
 import Ouroboros.Network.Block (Point (..), SlotNo (SlotNo), StandardHash)
 import Ouroboros.Network.Point (Block (Block), WithOrigin (..))
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
@@ -32,6 +45,7 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   ( objectDiffusionInboundPeerPipelined
   )
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionOutboundPeer)
+import System.Random (mkStdGen, uniform)
 import Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   ( ListWithUniqueIds (..)
   , WithId
@@ -80,12 +94,24 @@ genPerasCert = do
 instance WithId (PerasCert blk) PerasRoundNo where
   getId = pcCertRound
 
+mockSystemTime :: IOLike m => Int -> m (SystemTime m)
+mockSystemTime seed = do
+  varGen <- uncheckedNewTVarM (mkStdGen seed)
+  return $
+    SystemTime
+      { systemTimeCurrent =
+          RelativeTime . realToFrac @Int <$> atomically (stateTVar varGen uniform)
+      , systemTimeWait =
+          pure ()
+      }
+
 newCertDB ::
   (IOLike m, StandardHash blk) =>
   PerasCfg blk ->
+  SystemTime m ->
   [PerasCert blk] ->
   m (PerasCertDB m blk)
-newCertDB perasParams certs = do
+newCertDB perasParams systemTime certs = do
   db <- PerasCertDB.openDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
   mapM_
     ( \cert -> do
@@ -94,7 +120,7 @@ newCertDB perasParams certs = do
                 { vpcCert = cert
                 , vpcCertBoost = perasWeight perasParams
                 }
-        result <- PerasCertDB.addCert db validatedCert
+        result <- PerasCertDB.addCert db =<< addArrivalTime systemTime validatedCert
         case result of
           AddedPerasCertToDB -> pure ()
           PerasCertAlreadyInDB -> throwIO (userError "Expected AddedPerasCertToDB, but cert was already in DB")
@@ -106,47 +132,49 @@ prop_smoke :: Property
 prop_smoke =
   forAll genProtocolConstants $ \protocolConstants ->
     forAll (genListWithUniqueIds genPerasCert) $ \(ListWithUniqueIds certs) ->
-      let
-        runOutboundPeer outbound outboundChannel tracer =
-          runPeer
-            ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer)
-            codecObjectDiffusionId
-            outboundChannel
-            (objectDiffusionOutboundPeer outbound)
-            >> pure ()
-        runInboundPeer inbound inboundChannel tracer =
-          runPipelinedPeer
-            ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer)
-            codecObjectDiffusionId
-            inboundChannel
-            (objectDiffusionInboundPeerPipelined inbound)
-            >> pure ()
-        mkPoolInterfaces ::
-          forall m.
-          IOLike m =>
-          m
-            ( ObjectPoolReader PerasRoundNo (PerasCert TestBlock) PerasCertTicketNo m
-            , ObjectPoolWriter PerasRoundNo (PerasCert TestBlock) m
-            , m [PerasCert TestBlock]
-            )
-        mkPoolInterfaces = do
-          outboundPool <- newCertDB perasTestCfg certs
-          inboundPool <- newCertDB perasTestCfg []
+      forAll arbitrary $ \systemTimeSeed ->
+        let
+          runOutboundPeer outbound outboundChannel tracer =
+            runPeer
+              ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer)
+              codecObjectDiffusionId
+              outboundChannel
+              (objectDiffusionOutboundPeer outbound)
+              >> pure ()
+          runInboundPeer inbound inboundChannel tracer =
+            runPipelinedPeer
+              ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer)
+              codecObjectDiffusionId
+              inboundChannel
+              (objectDiffusionInboundPeerPipelined inbound)
+              >> pure ()
+          mkPoolInterfaces ::
+            forall m.
+            IOLike m =>
+            m
+              ( ObjectPoolReader PerasRoundNo (PerasCert TestBlock) PerasCertTicketNo m
+              , ObjectPoolWriter PerasRoundNo (PerasCert TestBlock) m
+              , m [PerasCert TestBlock]
+              )
+          mkPoolInterfaces = do
+            systemTime <- mockSystemTime systemTimeSeed
+            outboundPool <- newCertDB perasTestCfg systemTime certs
+            inboundPool <- newCertDB perasTestCfg systemTime []
 
-          let outboundPoolReader = makePerasCertPoolReaderFromCertDB outboundPool
-              inboundPoolWriter = makePerasCertPoolWriterFromCertDB inboundPool
-              getAllInboundPoolContent = atomically $ do
-                snap <- PerasCertDB.getCertSnapshot inboundPool
-                let rawContent =
-                      Map.toAscList $
-                        PerasCertDB.getCertsAfter snap (PerasCertDB.zeroPerasCertTicketNo)
-                pure $ vpcCert . snd <$> rawContent
+            let outboundPoolReader = makePerasCertPoolReaderFromCertDB outboundPool
+                inboundPoolWriter = makePerasCertPoolWriterFromCertDB systemTime inboundPool
+                getAllInboundPoolContent = atomically $ do
+                  snap <- PerasCertDB.getCertSnapshot inboundPool
+                  let rawContent =
+                        Map.toAscList $
+                          PerasCertDB.getCertsAfter snap (PerasCertDB.zeroPerasCertTicketNo)
+                  pure $ vpcCert . forgetArrivalTime . snd <$> rawContent
 
-          return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
-       in
-        prop_smoke_object_diffusion
-          protocolConstants
-          certs
-          runOutboundPeer
-          runInboundPeer
-          mkPoolInterfaces
+            return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
+         in
+          prop_smoke_object_diffusion
+            protocolConstants
+            certs
+            runOutboundPeer
+            runInboundPeer
+            mkPoolInterfaces
