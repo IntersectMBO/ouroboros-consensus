@@ -53,52 +53,52 @@ main = getArgs >>= \case
         db <- withDieMsg $ DB.open (fromString dbPath)
         prng0 <- R.initStdGen
         generateDb prng0 db manifest
-    ["MsgLeiosBlockRequest", dbPath, ebPointStr]
+    ["MsgLeiosBlockRequest", dbPath, ebIdStr]
       | ".db" `isSuffixOf` dbPath
-      , Just ebPoint <- readMaybe ebPointStr
+      , Just ebId <- readMaybe ebIdStr
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
-        msgLeiosBlockRequest db ebPoint
-    ["MsgLeiosBlock", dbPath, ebPointStr, ebSlotStr, ebPath]
+        msgLeiosBlockRequest db ebId
+    ["MsgLeiosBlock", dbPath, ebIdStr, ebSlotStr, ebPath]
       | ".db" `isSuffixOf` dbPath
       , ".bin" `isSuffixOf` ebPath
-      , Just ebPoint <- readMaybe ebPointStr
+      , Just ebId <- readMaybe ebIdStr
       , Just ebSlot <- readMaybe ebSlotStr
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
-        msgLeiosBlock db ebPoint ebSlot ebPath
-    "MsgLeiosBlockTxsRequest" : dbPath : ebPointStr : bitmapChunkStrs
+        msgLeiosBlock db ebId ebSlot ebPath
+    "MsgLeiosBlockTxsRequest" : dbPath : ebIdStr : bitmapChunkStrs
       | ".db" `isSuffixOf` dbPath
-      , Just ebPoint <- readMaybe ebPointStr
+      , Just ebId <- readMaybe ebIdStr
       , Just bitmaps <- parseBitmaps bitmapChunkStrs
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
-        msgLeiosBlockTxsRequest db ebPoint bitmaps
-    "MsgLeiosBlockTxs" : dbPath : ebPointStr : ebTxsPath : bitmapChunkStrs
+        msgLeiosBlockTxsRequest db ebId bitmaps
+    "MsgLeiosBlockTxs" : dbPath : ebIdStr : ebTxsPath : bitmapChunkStrs
       | ".db" `isSuffixOf` dbPath
       , ".bin" `isSuffixOf` ebTxsPath
-      , Just ebPoint <- readMaybe ebPointStr
+      , Just ebId <- readMaybe ebIdStr
       , Just bitmaps <- parseBitmaps bitmapChunkStrs
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
-        msgLeiosBlockTxs db ebPoint ebTxsPath bitmaps
-    "fetch-decision" : dbPath : ebPointStrs
+        msgLeiosBlockTxs db ebId ebTxsPath bitmaps
+    "fetch-decision" : dbPath : ebIdStrs
       | ".db" `isSuffixOf` dbPath
-      , Just ebPoints <- sequence $ map readMaybe ebPointStrs
-      , not (null ebPoints)
+      , Just ebIds <- sequence $ map readMaybe ebIdStrs
+      , not (null ebIds)
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
-        fetchDecision db (IntSet.fromList ebPoints)
+        fetchDecision db (IntSet.fromList ebIds)
     ["hash-txs", ebTxsPath]
       | ".bin" `isSuffixOf` ebTxsPath
       -> do
         hashTxs ebTxsPath
     _ -> die "Either $0 generate myDatabase.db myManifest.json\n\
-             \    OR $0 MsgLeiosBlockRequest myDatabase.db ebPoint(int)\n\
-             \    OR $0 MsgLeiosBlock myDatabase.db ebPoint(int) myEb.bin\n\
-             \    OR $0 MsgLeiosBlockTxsRequest myDatabase.db ebPoint(int) index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
-             \    OR $0 MsgLeiosBlockTxs myDatabase.db ebPoint(int) myEbTxs.bin index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
-             \    OR $0 fetch-decision myDatabase.db ebPoint(int) ebPoint(int) ebPoint(int) ...\n\
+             \    OR $0 MsgLeiosBlockRequest myDatabase.db ebId\n\
+             \    OR $0 MsgLeiosBlock myDatabase.db ebId myEb.bin\n\
+             \    OR $0 MsgLeiosBlockTxsRequest myDatabase.db ebId index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
+             \    OR $0 MsgLeiosBlockTxs myDatabase.db ebId myEbTxs.bin index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
+             \    OR $0 fetch-decision myDatabase.db ebId ebId ebId ...\n\
              \    OR $0 hash-txs myEbTxs.bin\n\
              \"
 
@@ -134,10 +134,10 @@ generateDb prng0 db ebRecipes = do
     gref <- R.newIOGenM prng0
     -- init db
     withDieMsg $ DB.exec db (fromString sql_schema)
-    stmt_write_ebPoint <- withDieJust $ DB.prepare db (fromString sql_insert_ebPoint)
+    stmt_write_ebId <- withDieJust $ DB.prepare db (fromString sql_insert_ebId)
     stmt_write_ebClosure <- withDieJust $ DB.prepare db (fromString sql_insert_ebClosure)
     -- loop over EBs (one SQL transaction each, to be gentle)
-    forM_ ([(0 :: Word16) ..] `zip` ebRecipes) $ \(ebPoint, ebRecipe) -> do
+    forM_ ([(0 :: Word16) ..] `zip` ebRecipes) $ \(ebId, ebRecipe) -> do
         -- generate txs, so we have their hashes
         txs <- V.forM (txByteSizes ebRecipe) $ \txByteSize -> do
             -- generate a random bytestring whose CBOR encoding has the expected length
@@ -163,13 +163,13 @@ generateDb prng0 db ebRecipes = do
                     (encodeEB (fromIntegral . BS.length) Hash.hashToBytes)
                     txs
         withDieMsg $ DB.exec db (fromString "BEGIN")
-        withDie $ DB.bindInt64 stmt_write_ebPoint   3 (fromIntegral ebPoint)
-        withDie $ DB.bindInt64 stmt_write_ebClosure 1 (fromIntegral ebPoint)
+        withDie $ DB.bindInt64 stmt_write_ebId   3 (fromIntegral ebId)
+        withDie $ DB.bindInt64 stmt_write_ebClosure 1 (fromIntegral ebId)
         -- INSERT INTO ebPoints
-        withDie $ DB.bindInt64    stmt_write_ebPoint 1 (fromIntegral ebSlot)
-        withDie $ DB.bindBlob     stmt_write_ebPoint 2 (Hash.hashToBytes ebHash)
-        withDieDone $ DB.stepNoCB stmt_write_ebPoint
-        withDie $ DB.reset        stmt_write_ebPoint
+        withDie $ DB.bindInt64    stmt_write_ebId 1 (fromIntegral ebSlot)
+        withDie $ DB.bindBlob     stmt_write_ebId 2 (Hash.hashToBytes ebHash)
+        withDieDone $ DB.stepNoCB stmt_write_ebId
+        withDie $ DB.reset        stmt_write_ebId
         -- loop over txs
         V.iforM_ txs $ \txOffset (txBytes, txHash) -> do
             -- INSERT INTO ebTxs
@@ -201,13 +201,13 @@ sql_schema =
     \  ,\n\
     \    ebHash BLOB NOT NULL\n\
     \  ,\n\
-    \    id INTEGER NOT NULL\n\
+    \    ebId INTEGER NOT NULL\n\
     \  ,\n\
     \    PRIMARY KEY (ebSlot, ebHash)\n\
     \  ) WITHOUT ROWID;\n\
     \\n\
     \CREATE TABLE ebTxs (\n\
-    \    ebPoint INTEGER NOT NULL   -- foreign key ebPoints.id\n\
+    \    ebId INTEGER NOT NULL   -- foreign key ebPoints.ebId\n\
     \  ,\n\
     \    txOffset INTEGER NOT NULL\n\
     \  ,\n\
@@ -217,35 +217,35 @@ sql_schema =
     \  ,\n\
     \    txBytes BLOB   -- valid CBOR\n\
     \  ,\n\
-    \    PRIMARY KEY (ebPoint, txOffset)\n\
+    \    PRIMARY KEY (ebId, txOffset)\n\
     \  ) WITHOUT ROWID;\n\
     \"
 
 sql_index_schema :: String
 sql_index_schema =
     "CREATE INDEX ebPointsExpiry\n\
-    \    ON ebPoints (ebSlot, id);   -- Helps with the eviction policy of the EbStore.\n\
+    \    ON ebPoints (ebSlot, ebId);   -- Helps with the eviction policy of the EbStore.\n\
     \\n\
     \CREATE INDEX txCacheExpiry\n\
     \    ON txCache (expiryUnixEpoch, txHashBytes);   -- Helps with the eviction policy of the TxCache.\n\
     \\n\
     \CREATE INDEX missingEbTxs\n\
-    \    ON ebTxs (ebPoint, txOffset)\n\
+    \    ON ebTxs (ebId, txOffset)\n\
     \    WHERE txBytes IS NULL;   -- Helps with fetch logic decisions.\n\
     \\n\
     \CREATE INDEX acquiredEbTxs\n\
-    \    ON ebTxs (ebPoint, txOffset)\n\
+    \    ON ebTxs (ebId, txOffset)\n\
     \    WHERE txBytes IS NOT NULL;   -- Helps with fetch logic decisions.\n\
     \"
 
-sql_insert_ebPoint :: String
-sql_insert_ebPoint =
-    "INSERT INTO ebPoints (ebSlot, ebHash, id) VALUES (?, ?, ?)\n\
+sql_insert_ebId :: String
+sql_insert_ebId =
+    "INSERT INTO ebPoints (ebSlot, ebHash, ebId) VALUES (?, ?, ?)\n\
     \"
 
 sql_insert_ebClosure :: String
 sql_insert_ebClosure =
-    "INSERT INTO ebTxs (ebPoint, txOffset, txHashBytes, txByteSize, txBytes) VALUES (?, ?, ?, ?, ?)\n\
+    "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txByteSize, txBytes) VALUES (?, ?, ?, ?, ?)\n\
     \"
 
 -----
@@ -321,10 +321,10 @@ pushX (X n xs vs) x =
     X 1 [x] (V.fromList xs : vs)
 
 msgLeiosBlockRequest :: DB.Database -> Int -> IO ()
-msgLeiosBlockRequest db ebPoint = do
+msgLeiosBlockRequest db ebId = do
     -- get the EB items
     stmt <- withDieJust $ DB.prepare db (fromString sql_lookup_ebBodies_DESC)
-    withDie $ DB.bindInt64 stmt 1 (fromIntegral ebPoint)
+    withDie $ DB.bindInt64 stmt 1 (fromIntegral ebId)
     let loop !acc =
             withDie (DB.stepNoCB stmt) >>= \case
                 DB.Done -> pure acc
@@ -346,12 +346,12 @@ msgLeiosBlockRequest db ebPoint = do
 sql_lookup_ebBodies_DESC :: String
 sql_lookup_ebBodies_DESC =
     "SELECT txHashBytes, txByteSize FROM ebTxs\n\
-    \WHERE ebPoint = ?\n\
+    \WHERE ebId = ?\n\
     \ORDER BY txOffset DESC\n\
     \"
 
 msgLeiosBlockTxsRequest :: DB.Database -> Int -> [(Word16, Word64)] -> IO ()
-msgLeiosBlockTxsRequest db ebPoint bitmaps = do
+msgLeiosBlockTxsRequest db ebId bitmaps = do
     do
         let idxs = map fst bitmaps
         let idxLimit = maxEbItems `div` 64
@@ -373,7 +373,7 @@ msgLeiosBlockTxsRequest db ebPoint bitmaps = do
     --
     -- TODO Better workaround for requests of many txs?
     stmt_lookup_ebClosuresMAIN <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures_DESC (maxBatchSize `min` numOffsets)
-    withDie $ DB.bindInt64 stmt_lookup_ebClosuresMAIN 1 (fromIntegral ebPoint)
+    withDie $ DB.bindInt64 stmt_lookup_ebClosuresMAIN 1 (fromIntegral ebId)
     withDieMsg $ DB.exec db (fromString "BEGIN")
     acc <- (\f -> foldM f emptyX (batches offsets)) $ \acc batch -> do
         stmt <-
@@ -381,7 +381,7 @@ msgLeiosBlockTxsRequest db ebPoint bitmaps = do
             -- this can only be reached for the last batch
             withDie $ DB.finalize stmt_lookup_ebClosuresMAIN
             stmt_lookup_ebClosuresTIDY <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures_DESC (numOffsets `mod` maxBatchSize)
-            withDie $ DB.bindInt64 stmt_lookup_ebClosuresTIDY 1 (fromIntegral ebPoint)
+            withDie $ DB.bindInt64 stmt_lookup_ebClosuresTIDY 1 (fromIntegral ebId)
             pure stmt_lookup_ebClosuresTIDY
         forM_ ([(2 :: DB.ParamIndex) ..] `zip` batch) $ \(i, offset) -> do
             withDie $ DB.bindInt64 stmt i (fromIntegral offset)
@@ -468,7 +468,7 @@ batches xs = if null xs then [] else take maxBatchSize xs : batches (drop maxBat
 sql_lookup_ebClosures_DESC :: Int -> String
 sql_lookup_ebClosures_DESC n =
     "SELECT txOffset, txBytes FROM ebTxs\n\
-    \WHERE ebPoint = ? AND txBytes IS NOT NULL AND txOffset IN (" ++ hooks ++ ")\n\
+    \WHERE ebId = ? AND txBytes IS NOT NULL AND txOffset IN (" ++ hooks ++ ")\n\
     \ORDER BY txOffset DESC\n\
     \"
   where
@@ -476,23 +476,23 @@ sql_lookup_ebClosures_DESC n =
 
 -----
 
--- | PREREQ: No row in ebTxs already has this ebPoint.
+-- | PREREQ: No row in ebTxs already has this ebId.
 msgLeiosBlock :: DB.Database -> Int -> Word64 -> FilePath -> IO ()
-msgLeiosBlock db ebPoint ebSlot ebPath = do
+msgLeiosBlock db ebId ebSlot ebPath = do
     ebBytes <- BS.readFile ebPath
     let ebHash :: Hash.Hash HASH ByteString
         ebHash = Hash.castHash $ Hash.hashWith id ebBytes
-    stmt_write_ebPoints <- withDieJust $ DB.prepare db (fromString sql_insert_ebPoint)
+    stmt_write_ebIds <- withDieJust $ DB.prepare db (fromString sql_insert_ebId)
     stmt_write_ebBodies <- withDieJust $ DB.prepare db (fromString sql_insert_ebBody)
     withDieMsg $ DB.exec db (fromString "BEGIN")
     -- INSERT INTO ebPoints
-    withDie $ DB.bindInt64    stmt_write_ebPoints 1 (fromIntegral ebSlot)
-    withDie $ DB.bindBlob     stmt_write_ebPoints 2 (Hash.hashToBytes ebHash)
-    withDie $ DB.bindInt64    stmt_write_ebPoints 3 (fromIntegral ebPoint)
-    withDieDone $ DB.stepNoCB stmt_write_ebPoints
-    withDie $ DB.reset        stmt_write_ebPoints
+    withDie $ DB.bindInt64    stmt_write_ebIds 1 (fromIntegral ebSlot)
+    withDie $ DB.bindBlob     stmt_write_ebIds 2 (Hash.hashToBytes ebHash)
+    withDie $ DB.bindInt64    stmt_write_ebIds 3 (fromIntegral ebId)
+    withDieDone $ DB.stepNoCB stmt_write_ebIds
+    withDie $ DB.reset        stmt_write_ebIds
     -- decode incrementally and simultaneously INSERT INTO ebTxs
-    withDie $ DB.bindInt64 stmt_write_ebBodies 1 (fromIntegral ebPoint)
+    withDie $ DB.bindInt64 stmt_write_ebBodies 1 (fromIntegral ebId)
     let decodeBreakOrEbPair = do
             stop <- CBOR.decodeBreakOr
             if stop then pure Nothing else Just <$> decodeEbPair
@@ -517,14 +517,14 @@ msgLeiosBlock db ebPoint ebSlot ebPath = do
 
 sql_insert_ebBody :: String
 sql_insert_ebBody =
-    "INSERT INTO ebTxs (ebPoint, txOffset, txHashBytes, txByteSize, txBytes) VALUES (?, ?, ?, ?, NULL)\n\
+    "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txByteSize, txBytes) VALUES (?, ?, ?, ?, NULL)\n\
     \"
 
 msgLeiosBlockTxs :: DB.Database -> Int -> FilePath -> [(Word16, Word64)] -> IO ()
-msgLeiosBlockTxs db ebPoint ebTxsPath bitmaps = do
+msgLeiosBlockTxs db ebId ebTxsPath bitmaps = do
     ebTxsBytes <- BSL.readFile ebTxsPath
     stmt <- withDieJust $ DB.prepare db (fromString sql_insert_ebTx)
-    withDie $ DB.bindInt64 stmt 2 (fromIntegral ebPoint)
+    withDie $ DB.bindInt64 stmt 2 (fromIntegral ebId)
     withDieMsg $ DB.exec db (fromString "BEGIN")
     -- decode incrementally and simultaneously UPDATE ebTxs
     --
@@ -564,7 +564,7 @@ sql_insert_ebTx :: String
 sql_insert_ebTx =
     "UPDATE ebTxs\n\
     \SET txBytes = ?\n\
-    \WHERE ebPoint = ? AND txOffset = ? AND txBytes IS NULL\n\
+    \WHERE ebId = ? AND txOffset = ? AND txBytes IS NULL\n\
     \"
 
 -----
@@ -579,9 +579,9 @@ maxByteSizePerRequest :: Int
 maxByteSizePerRequest = 500000
 
 fetchDecision :: DB.Database -> IntSet.IntSet -> IO ()
-fetchDecision db ebPoints = do
-    stmt <- withDieJust $ DB.prepare db $ fromString $ sql_next_fetch (IntSet.size ebPoints)
-    forM_ ([(1 :: DB.ParamIndex) ..] `zip` IntSet.toDescList ebPoints) $ \(i, p) -> do
+fetchDecision db ebIds = do
+    stmt <- withDieJust $ DB.prepare db $ fromString $ sql_next_fetch (IntSet.size ebIds)
+    forM_ ([(1 :: DB.ParamIndex) ..] `zip` IntSet.toDescList ebIds) $ \(i, p) -> do
         withDie $ DB.bindInt64 stmt i (fromIntegral p)
     let loopLimit = maxRequestsPerIteration * maxByteSizePerRequest
         loop !accReqs !accByteSize =
@@ -589,20 +589,20 @@ fetchDecision db ebPoints = do
             withDie (DB.stepNoCB stmt) >>= \case
                 DB.Done -> pure accReqs
                 DB.Row -> do
-                    ebPoint <- fromIntegral <$> DB.columnInt64 stmt 0
+                    ebId <- fromIntegral <$> DB.columnInt64 stmt 0
                     txOffset <- fromIntegral <$> DB.columnInt64 stmt 1
                     txHash <- DB.columnBlob stmt 2
                     txByteSize <- fromIntegral <$> DB.columnInt64 stmt 3
                     loop
                         (IntMap.insertWith
                             IntMap.union
-                            ebPoint
+                            ebId
                             (IntMap.singleton txOffset txHash)
                             accReqs
                         )
                         (accByteSize + txByteSize)
     reqs <- loop IntMap.empty 0
-    forM_ (IntMap.assocs reqs) $ \(ebPoint, m) -> do
+    forM_ (IntMap.assocs reqs) $ \(ebId, m) -> do
         let sho idx bitmap k =
                 if (0 :: Word64) == bitmap then k else
                 (show idx ++ ":0x" ++ Numeric.showHex bitmap "") : k
@@ -617,10 +617,10 @@ fetchDecision db ebPoints = do
                     $ go q (Bits.bit (63 - r)) txOffsets
         putStrLn
           $ unwords
-          $ "bitmaps" : show ebPoint : go 0 (0x0 :: Word64) (IntMap.keys m)
+          $ "bitmaps" : show ebId : go 0 (0x0 :: Word64) (IntMap.keys m)
         putStrLn
           $ unwords
-          $ "hashes" : show ebPoint : map (BS8.unpack . BS16.encode) (IntMap.elems m)
+          $ "hashes" : show ebId : map (BS8.unpack . BS16.encode) (IntMap.elems m)
 
 -- | Arbitrarily limited to 2000; about 2000 average txs are in the ball park
 -- of one megabyte.
@@ -632,9 +632,9 @@ fetchDecision db ebPoints = do
 -- parameterizing this query string with an OFFSET).
 sql_next_fetch :: Int -> String
 sql_next_fetch n =
-    "SELECT ebPoint, txOffset, txHashBytes, txByteSize FROM ebTxs\n\
-    \WHERE txBytes IS NULL AND ebPoint IN (" ++ hooks ++ ")\n\
-    \ORDER BY ebPoint DESC, txOffset ASC\n\
+    "SELECT ebId, txOffset, txHashBytes, txByteSize FROM ebTxs\n\
+    \WHERE txBytes IS NULL AND ebId IN (" ++ hooks ++ ")\n\
+    \ORDER BY ebId DESC, txOffset ASC\n\
     \LIMIT 2000\n\
     \"
   where
