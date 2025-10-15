@@ -1,9 +1,8 @@
-{immdb-server, ...}:
-{
-  config,
-  lib,
-  pkgs,
-  ...
+{ immdb-server, ... }:
+{ config
+, lib
+, pkgs
+, ...
 }:
 let
   cfg = config.cardano.immdb-server;
@@ -48,6 +47,12 @@ in
       default = ../genesis/genesis.shelley.json;
     };
 
+    address = lib.mkOption {
+      type = lib.types.str;
+      description = "Address to serve on";
+      default = "0.0.0.0";
+    };
+
     port = lib.mkOption {
       type = lib.types.port;
       description = "Port to serve on";
@@ -89,12 +94,6 @@ in
     networking.firewall.allowedTCPPorts = [ cfg.port ];
 
     environment.etc = {
-      # "immdb-server/immutable/" = {
-      #   user = cfg.user;
-      #   group = cfg.group;
-      #   mode = "0660";
-      #   source = cfg.db;
-      # };
       "immdb-server/config.json" = {
         user = cfg.user;
         group = cfg.group;
@@ -140,10 +139,16 @@ in
 
       script = ''
         echo "Starting Immutable DB server with ${builtins.toJSON cfg}";
+
         mkdir $STATE_DIRECTORY/immutable;
         cp -r ${cfg.db}/* $STATE_DIRECTORY/immutable;
-        immdb-server --db /var/lib/immdb-server/immutable --config /etc/immdb-server/config.json --port ${builtins.toString cfg.port};
-        '';
+
+        immdb-server \
+          --db $STATE_DIRECTORY/immutable \
+          --config $CONFIGURATION_DIRECTORY/config.json \
+          --address ${cfg.address} \
+          --port ${builtins.toString cfg.port};
+      '';
     };
 
   };
