@@ -97,11 +97,15 @@ import Data.Proxy
 import Data.TreeDiff
 import Data.Typeable
 import Data.Void (Void)
-import Data.Word (Word16)
+import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , WithArrivalTime (..)
+  )
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -190,7 +194,7 @@ data Cmd blk it flr
     AddBlock blk (Persistent [blk])
   | -- | Add a Peras cert for a block, with (possibly) some gap blocks leading to it.
     -- For more information about gap blocks, refer to 'GenState' below.
-    AddPerasCert (ValidatedPerasCert blk) (Persistent [blk])
+    AddPerasCert (WithArrivalTime (ValidatedPerasCert blk)) (Persistent [blk])
   | GetCurrentChain
   | GetTipBlock
   | GetTipHeader
@@ -1147,6 +1151,9 @@ generator loe genBlock m@Model{..} =
   empty :: Bool
   empty = null pointsInDB
 
+  genRelativeTime :: Gen RelativeTime
+  genRelativeTime = RelativeTime . fromIntegral <$> arbitrary @Word64
+
   genRealPoint :: Gen (RealPoint blk)
   genRealPoint =
     frequency
@@ -1196,19 +1203,19 @@ generator loe genBlock m@Model{..} =
           ]
     -- Include the boosted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
-
-    pure $
-      AddPerasCert
-        ( ValidatedPerasCert
-            { vpcCert =
-                PerasCert
-                  { pcCertRound = roundNo
-                  , pcCertBoostedBlock = blockPoint blk
-                  }
-            , vpcCertBoost = boost
-            }
-        )
-        seenBlks
+    -- Build the certificate
+    now <- genRelativeTime
+    let certWithTime =
+          WithArrivalTime now $
+            ValidatedPerasCert
+              { vpcCert =
+                  PerasCert
+                    { pcCertRound = roundNo
+                    , pcCertBoostedBlock = blockPoint blk
+                    }
+              , vpcCertBoost = boost
+              }
+    pure $ AddPerasCert certWithTime seenBlks
 
   genBounds :: Gen (StreamFrom blk, StreamTo blk)
   genBounds =

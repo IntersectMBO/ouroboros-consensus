@@ -263,6 +263,7 @@ mkHandlers
     , keepAliveRng
     , miniProtocolParameters
     , getDiffusionPipeliningSupport
+    , systemTime
     }
   NodeKernel
     { getChainDB
@@ -322,7 +323,7 @@ mkHandlers
             , 10 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             , 10 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             )
-            (makePerasCertPoolWriterFromChainDB $ getChainDB)
+            (makePerasCertPoolWriterFromChainDB systemTime getChainDB)
             version
             controlMessageSTM
       , hPerasCertDiffusionServer = \version peer ->
