@@ -96,11 +96,17 @@ import Data.Proxy
 import Data.TreeDiff
 import Data.Typeable
 import Data.Void (Void)
-import Data.Word (Word16)
+import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , SystemTime (..)
+  , WithArrivalTime
+  , addArrivalTime
+  )
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -179,7 +185,7 @@ import Test.Util.WithEq
 -- | Commands
 data Cmd blk it flr
   = AddBlock blk
-  | AddPerasCert (ValidatedPerasCert blk)
+  | AddPerasCert (WithArrivalTime (ValidatedPerasCert blk))
   | GetCurrentChain
   | GetTipBlock
   | GetTipHeader
@@ -1016,6 +1022,11 @@ generator loe genBlock m@Model{..} =
   empty :: Bool
   empty = null pointsInDB
 
+  genSystemTime :: Gen (SystemTime Gen)
+  genSystemTime = do
+    current <- RelativeTime . fromIntegral <$> arbitrary @Word64
+    pure $ SystemTime{systemTimeCurrent = return current, systemTimeWait = pure ()}
+
   genRealPoint :: Gen (RealPoint blk)
   genRealPoint =
     frequency
@@ -1043,7 +1054,7 @@ generator loe genBlock m@Model{..} =
 
   genAddBlock = AddBlock <$> genBlock m
 
-  genAddPerasCert :: Gen (ValidatedPerasCert blk)
+  genAddPerasCert :: Gen (WithArrivalTime (ValidatedPerasCert blk))
   genAddPerasCert = do
     -- TODO should we be more strict on which blocks we add certs to?
     -- see https://github.com/tweag/cardano-peras/issues/124
@@ -1051,7 +1062,8 @@ generator loe genBlock m@Model{..} =
     let roundNo = case Model.maxPerasRoundNo dbModel of
           Nothing -> PerasRoundNo 0
           Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
-    pure $
+    systemTime <- genSystemTime
+    addArrivalTime systemTime $
       ValidatedPerasCert
         { vpcCert =
             PerasCert
@@ -1725,7 +1737,8 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
             counterexample ("TraceEvents: " <> unlines (map show trace)) $
               tabulate "Chain length" [show (Chain.length modelChain)] $
                 tabulate "TraceEvents" (map traceEventName trace) $
-                  res === Ok
+                  res
+                    === Ok
                     .&&. prop_trace testCfg (dbModel model) trace
                     .&&. counterexample
                       "ImmutableDB is leaking file handles"

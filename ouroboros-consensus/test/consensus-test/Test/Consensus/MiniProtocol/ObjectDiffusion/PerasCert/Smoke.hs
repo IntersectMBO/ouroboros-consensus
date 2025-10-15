@@ -15,6 +15,12 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , SystemTime (..)
+  , addArrivalTime
+  , systemTimeCurrent
+  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
 import Ouroboros.Consensus.Storage.PerasCertDB.API
@@ -24,7 +30,7 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.Impl as PerasCertDB
-import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.IOLike (IOLike, atomically, newTVarIO, stateTVar, throwIO)
 import Ouroboros.Network.Block (Point (..), SlotNo (SlotNo), StandardHash)
 import Ouroboros.Network.Point (Block (Block), WithOrigin (..))
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
@@ -77,8 +83,23 @@ genPerasCert = do
 instance WithId (PerasCert blk) PerasRoundNo where
   getId = pcCertRound
 
-newCertDB :: (IOLike m, StandardHash blk) => [PerasCert blk] -> m (PerasCertDB m blk)
-newCertDB certs = do
+mockSystemTime :: IOLike m => m (SystemTime m)
+mockSystemTime = do
+  varTime <- newTVarIO 0
+  return $
+    SystemTime
+      { systemTimeCurrent =
+          RelativeTime <$> atomically (stateTVar varTime (\t -> (t, t + 1)))
+      , systemTimeWait =
+          pure ()
+      }
+
+newCertDB ::
+  (IOLike m, StandardHash blk) =>
+  SystemTime m ->
+  [PerasCert blk] ->
+  m (PerasCertDB m blk)
+newCertDB systemTime certs = do
   db <- PerasCertDB.openDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
   mapM_
     ( \cert -> do
@@ -87,7 +108,7 @@ newCertDB certs = do
                 { vpcCert = cert
                 , vpcCertBoost = boostPerCert
                 }
-        result <- PerasCertDB.addCert db validatedCert
+        result <- PerasCertDB.addCert db =<< addArrivalTime systemTime validatedCert
         case result of
           AddedPerasCertToDB -> pure ()
           PerasCertAlreadyInDB -> throwIO (userError "Expected AddedPerasCertToDB, but cert was already in DB")
@@ -123,11 +144,12 @@ prop_smoke =
             , m [PerasCert TestBlock]
             )
         mkPoolInterfaces = do
-          outboundPool <- newCertDB certs
-          inboundPool <- newCertDB []
+          systemTime <- mockSystemTime
+          outboundPool <- newCertDB systemTime certs
+          inboundPool <- newCertDB systemTime []
 
           let outboundPoolReader = makePerasCertPoolReaderFromCertDB outboundPool
-              inboundPoolWriter = makePerasCertPoolWriterFromCertDB inboundPool
+              inboundPoolWriter = makePerasCertPoolWriterFromCertDB systemTime inboundPool
               getAllInboundPoolContent = atomically $ do
                 snap <- PerasCertDB.getCertSnapshot inboundPool
                 let rawContent =
