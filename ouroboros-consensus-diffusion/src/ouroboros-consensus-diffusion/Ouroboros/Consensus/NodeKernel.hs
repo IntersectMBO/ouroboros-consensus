@@ -196,6 +196,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , registry :: ResourceRegistry m
   , cfg :: TopLevelConfig blk
   , btime :: BlockchainTime m
+  , systemTime :: SystemTime m
   , chainDB :: ChainDB m blk
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
   , chainSyncFutureCheck :: SomeHeaderInFutureCheck m blk

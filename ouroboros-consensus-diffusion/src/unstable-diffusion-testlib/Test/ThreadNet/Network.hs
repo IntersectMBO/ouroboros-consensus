@@ -1046,6 +1046,7 @@ runThreadNetwork
               , registry
               , cfg = pInfoConfig
               , btime
+              , systemTime
               , chainDB
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
