@@ -128,7 +128,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
         flushLock <- mkLedgerDBLock
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
-        lastSnapshotWrite <- newTVarIO Nothing
+        lastSnapshotRequestedAt <- newTVarIO Nothing
         let env =
               LedgerDBEnv
                 { ldbChangelog = varDB
@@ -146,7 +146,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbResolveBlock = getBlock
                 , ldbGetVolatileSuffix = getVolatileSuffix
-                , ldbLastSnapshotWrite = lastSnapshotWrite
+                , ldbLastSnapshotRequestedAt = lastSnapshotRequestedAt
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -326,11 +326,11 @@ implTryTakeSnapshot ::
   LedgerDBEnv m l blk ->
   Time ->
   m ()
-implTryTakeSnapshot snapManager env now = do
-  timeSinceLastWrite <- do
-    mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
-    forM mLastWrite $ \lastWrite -> do
-      pure $ now `diffTime` lastWrite
+implTryTakeSnapshot snapManager env snapshotRequestTime = do
+  timeSinceLastSnapshot <- do
+    mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
+    forM mLastSnapshotRequested $ \lastSnapshotRequested -> do
+      pure $ snapshotRequestTime `diffTime` lastSnapshotRequested
   -- Get all states before the volatile suffix.
   immutableStates <- atomically $ do
     states <- changelogStates <$> readTVar (ldbChangelog env)
@@ -344,7 +344,7 @@ implTryTakeSnapshot snapManager env now = do
         onDiskSnapshotSelector
           (ldbSnapshotPolicy env)
           SnapshotSelectorContext
-            { sscTimeSinceLast = timeSinceLastWrite
+            { sscTimeSinceLast = timeSinceLastSnapshot
             , sscSnapshotSlots = immutableSlots
             }
   forM_ snapshotSlots $ \slot -> do
@@ -364,9 +364,9 @@ implTryTakeSnapshot snapManager env now = do
           snapManager
           Nothing
           (ldbChangelog env, ldbBackingStore env)
-    finished <- getMonotonicTime
-    atomically $ writeTVar (ldbLastSnapshotWrite env) (Just $! finished)
-    void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
+    atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
+    void $
+      trimSnapshots snapManager (ldbSnapshotPolicy env)
 
 -- If the DbChangelog in the LedgerDB can flush (based on the SnapshotPolicy
 -- with which this LedgerDB was opened), flush differences to the backing
@@ -604,8 +604,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLastSnapshotWrite :: !(StrictTVar m (Maybe Time))
-  -- ^ When did we finish writing the last snapshot.
+  , ldbLastSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
+  -- ^ The time at which the latest snapshot was requested. Note that this is
+  --   not the the last time a snapshot was requested -- this is only updated
+  --   with the request time when a snapshot is successfully made.
   }
   deriving Generic
 
