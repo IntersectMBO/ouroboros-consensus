@@ -103,7 +103,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
         lock <- RAWLock.new ()
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
-        lastSnapshotWrite <- newTVarIO Nothing
+        lastSnapshotRequestedAt <- newTVarIO Nothing
         let env =
               LedgerDBEnv
                 { ldbSeq = varDB
@@ -119,7 +119,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbOpenHandlesLock = lock
                 , ldbGetVolatileSuffix = getVolatileSuffix
                 , ldbResourceKeys = SomeResources res
-                , ldbLastSnapshotWrite = lastSnapshotWrite
+                , ldbLastSnapshotRequestedAt = lastSnapshotRequestedAt
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -351,11 +351,11 @@ implTryTakeSnapshot ::
   LedgerDBEnv m l blk ->
   Time ->
   m ()
-implTryTakeSnapshot snapManager env now = do
-  timeSinceLastWrite <- do
-    mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
-    for mLastWrite $ \lastWrite -> do
-      pure $ now `diffTime` lastWrite
+implTryTakeSnapshot snapManager env snapshotRequestTime = do
+  timeSinceLastSnapshot <- do
+    mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
+    for mLastSnapshotRequested $ \lastSnapshotRequested -> do
+      pure $ snapshotRequestTime `diffTime` lastSnapshotRequested
   RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
     lseq@(LedgerSeq immutableStates) <- atomically $ do
       LedgerSeq states <- readTVar $ ldbSeq env
@@ -369,7 +369,7 @@ implTryTakeSnapshot snapManager env now = do
           onDiskSnapshotSelector
             (ldbSnapshotPolicy env)
             SnapshotSelectorContext
-              { sscTimeSinceLast = timeSinceLastWrite
+              { sscTimeSinceLast = timeSinceLastSnapshot
               , sscSnapshotSlots = immutableSlots
               }
     for_ snapshotSlots $ \slot -> do
@@ -378,8 +378,7 @@ implTryTakeSnapshot snapManager env now = do
       let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
           st = anchorHandle $ snd $ prune pruneStrat lseq
       Monad.void $ takeSnapshot snapManager Nothing st
-      finished <- getMonotonicTime
-      atomically $ writeTVar (ldbLastSnapshotWrite env) (Just $! finished)
+      atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
       Monad.void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
 
 -- In the first version of the LedgerDB for UTxO-HD, there is a need to
@@ -465,8 +464,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLastSnapshotWrite :: !(StrictTVar m (Maybe Time))
-  -- ^ When did we finish writing the last snapshot.
+  , ldbLastSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
+  -- ^ The time at which the latest snapshot was requested. Note that this is
+  --   not the the last time a snapshot was requested -- this is only updated
+  --   with the request time when a snapshot is successfully made.
   }
   deriving Generic
 
