@@ -140,7 +140,7 @@ prop_smoke =
                 let rawContent =
                       Map.toAscList $
                         PerasCertDB.getCertsAfter snap (PerasCertDB.zeroPerasCertTicketNo)
-                pure $ getPerasCert . snd <$> rawContent
+                pure $ vpcCert . snd <$> rawContent
 
           return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
        in

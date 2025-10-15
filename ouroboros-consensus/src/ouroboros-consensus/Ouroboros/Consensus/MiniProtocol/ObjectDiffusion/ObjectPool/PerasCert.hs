@@ -31,7 +31,7 @@ takeAscMap :: Int -> Map k v -> Map k v
 takeAscMap n = Map.fromDistinctAscList . take n . Map.toAscList
 
 makePerasCertPoolReaderFromSnapshot ::
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   STM m (PerasCertSnapshot blk) ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromSnapshot getCertSnapshot =
@@ -43,7 +43,7 @@ makePerasCertPoolReaderFromSnapshot getCertSnapshot =
         let certsAfterLastKnown =
               PerasCertDB.getCertsAfter certSnapshot lastKnown
         let loadCertsAfterLastKnown =
-              pure (getPerasCert <$> takeAscMap (fromIntegral limit) certsAfterLastKnown)
+              pure (vpcCert <$> takeAscMap (fromIntegral limit) certsAfterLastKnown)
         pure $
           if Map.null certsAfterLastKnown
             then Nothing
@@ -51,7 +51,7 @@ makePerasCertPoolReaderFromSnapshot getCertSnapshot =
     }
 
 makePerasCertPoolReaderFromCertDB ::
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   PerasCertDB m blk -> ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromCertDB perasCertDB =
   makePerasCertPoolReaderFromSnapshot (PerasCertDB.getCertSnapshot perasCertDB)
@@ -71,7 +71,7 @@ makePerasCertPoolWriterFromCertDB perasCertDB =
     }
 
 makePerasCertPoolReaderFromChainDB ::
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   ChainDB m blk -> ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromChainDB chainDB =
   makePerasCertPoolReaderFromSnapshot (ChainDB.getPerasCertSnapshot chainDB)
