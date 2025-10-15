@@ -306,15 +306,15 @@ pushX (X n xs vs) x =
 msgLeiosBlockRequest :: DB.Database -> Int -> IO ()
 msgLeiosBlockRequest db ebPoint = do
     -- get the EB items
-    stmt_lookup_ebBodies <- withDieJust $ DB.prepare db (fromString sql_lookup_ebBodies_DESC)
-    withDie $ DB.bindInt64 stmt_lookup_ebBodies 1 (fromIntegral ebPoint)
-    let loop !acc = do
-            withDie (DB.stepNoCB stmt_lookup_ebBodies) >>= \case
+    stmt <- withDieJust $ DB.prepare db (fromString sql_lookup_ebBodies_DESC)
+    withDie $ DB.bindInt64 stmt 1 (fromIntegral ebPoint)
+    let loop !acc =
+            withDie (DB.stepNoCB stmt) >>= \case
                 DB.Done -> pure acc
                 DB.Row -> do
                     -- TODO use a sink buffer to avoid polluting the heap with these temporary copies?
-                    txHashBytes <- DB.columnBlob stmt_lookup_ebBodies 0
-                    txByteSize <- DB.columnInt64 stmt_lookup_ebBodies 1
+                    txHashBytes <- DB.columnBlob stmt 0
+                    txByteSize <- DB.columnInt64 stmt 1
                     loop $ pushX acc (txByteSize, txHashBytes)
     acc <- loop emptyX
     -- combine the EB items
@@ -337,9 +337,7 @@ msgLeiosBlockTxsRequest :: DB.Database -> Int -> [(Word16, Word64)] -> IO ()
 msgLeiosBlockTxsRequest db ebPoint bitmaps = do
     do
         let idxs = map fst bitmaps
-        let maxEbByteSize = 12500000 :: Int
-            minTxByteSize = 55
-            idxLimit = (maxEbByteSize `div` minTxByteSize) `div` 64
+        let idxLimit = maxEbItems `div` 64
         when (any (== 0) $ map snd bitmaps) $ do
             die "A bitmap is zero"
         when (flip any idxs (> fromIntegral idxLimit)) $ do
@@ -388,6 +386,15 @@ msgLeiosBlockTxsRequest db ebPoint bitmaps = do
       $ serialize'
       $ CBOR.encodeListLenIndef <> foldr (\bs r -> CBOR.encodePreEncoded bs <> r) CBOR.encodeBreak acc
     putStrLn ""
+
+maxEbBodyByteSize :: Int
+maxEbBodyByteSize = 500000
+
+minEbItemByteSize :: Int
+minEbItemByteSize = (1 + 32 + 1) + (1 + 1)
+
+maxEbItems :: Int
+maxEbItems = (negate 1 + maxEbBodyByteSize - 1) `div` minEbItemByteSize
 
 {- | For example
 @
@@ -499,8 +506,8 @@ sql_insert_ebBody =
 msgLeiosBlockTxs :: DB.Database -> Int -> FilePath -> [(Word16, Word64)] -> IO ()
 msgLeiosBlockTxs db ebPoint ebTxsPath bitmaps = do
     ebTxsBytes <- BSL.readFile ebTxsPath
-    stmt_write_ebTx <- withDieJust $ DB.prepare db (fromString sql_insert_ebTx)
-    withDie $ DB.bindInt64 stmt_write_ebTx 2 (fromIntegral ebPoint)
+    stmt <- withDieJust $ DB.prepare db (fromString sql_insert_ebTx)
+    withDie $ DB.bindInt64 stmt 2 (fromIntegral ebPoint)
     withDieMsg $ DB.exec db (fromString "BEGIN")
     -- decode incrementally and simultaneously UPDATE ebTxs
     --
@@ -515,10 +522,10 @@ msgLeiosBlockTxs db ebPoint ebTxsPath bitmaps = do
             Just txBytes -> case offsets of
                 [] -> die "Too many txs"
                 txOffset:offsets' -> do
-                    withDie $ DB.bindInt64    stmt_write_ebTx 3 $ fromIntegral txOffset
-                    withDie $ DB.bindBlob     stmt_write_ebTx 1 $ serialize' $ CBOR.encodeBytes txBytes
-                    withDieDone $ DB.stepNoCB stmt_write_ebTx
-                    withDie $ DB.reset        stmt_write_ebTx
+                    withDie $ DB.bindInt64    stmt 3 $ fromIntegral txOffset
+                    withDie $ DB.bindBlob     stmt 1 $ serialize' $ CBOR.encodeBytes txBytes
+                    withDieDone $ DB.stepNoCB stmt
+                    withDie $ DB.reset        stmt
                     go1 offsets' bytes
             Nothing
               | not (BSL.null bytes) -> die "Incomplete EB txs decode"
