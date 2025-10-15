@@ -273,6 +273,11 @@ pickObjectsToReq
       objectsToSortedProviders
       objectsExpectedSoonMultiplicities
 
+  -- NOW HERE TAKE PLACE THE ACTUAL DECISION LOGIC AND ATTRIBUTION OF OBJECTS TO PEERS
+
+  -- The current decision logic is greedy on objects, so it will try to request as many copies of the same object as possible,
+  -- meaning we will have optimal coverage of the first objects, but might not request some other objects at all if they are (only) provided by peers that are already saturated.
+
   -- Now we compute the actual attribution of downloads for peers
   DownloadPickState{peersToObjectsToReq} =
     -- We iterate over each objectId and the corresponding (providers, expectedMultiplicity)

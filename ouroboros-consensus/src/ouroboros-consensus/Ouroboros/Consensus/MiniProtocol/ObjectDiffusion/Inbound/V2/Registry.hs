@@ -125,12 +125,12 @@ withPeer
             return
               ( peerToChannel'
               , PeerStateAPI
-                  { psaReadDecision = do
+                  { psaReadDecision = do -- TODO: make atomic
                       decision <- takeMVar chan'
                       let decision' = decision{pdExecutingDecision = True}
                       putMVar chan' decision'
                       return decision'
-                  , psaOnDecisionExecuted = do
+                  , psaOnDecisionExecuted = do -- TODO: make atomic
                       decision <- takeMVar chan'
                       let decision' = decision{pdExecutingDecision = False}
                       putMVar chan' decision'
