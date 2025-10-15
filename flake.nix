@@ -89,7 +89,7 @@
         legacyPackages = pkgs;
         packages =
           hydraJobs.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano // {
-            leios-mvd-test = pkgs.testers.nixosTest (import ./nix/leios-mvd/test.nix {inherit inputs pkgs;});
+            leios-mvd-test = pkgs.testers.nixosTest (import ./nix/leios-mvd/test.nix { inherit inputs pkgs; });
           };
       }
     );

@@ -1,4 +1,4 @@
-{inputs, ...}:{
+{ inputs, ... }: {
   imports = [
     inputs.cardano-nix.nixosModules.default
   ];

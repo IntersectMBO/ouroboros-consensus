@@ -4,7 +4,7 @@
     {
       "accessPoints": [
         {
-          "address": "immdb-node",
+          "address": "immdb-node.local",
           "port": 3001
         }
       ],
