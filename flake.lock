@@ -454,11 +454,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1760526797,
-        "narHash": "sha256-xODMhuzz5aVJE68CJwZiLpXa0zihgT2PAhJBowt9gjw=",
+        "lastModified": 1760535825,
+        "narHash": "sha256-odWQSUOkj1j20sml+yIEeQ3gWs35hN+XExPmpyCWnc8=",
         "owner": "bladyjoker",
         "repo": "cardano.nix",
-        "rev": "8b0f4ec95ae1d4ee36c7f47b10ce78211de79031",
+        "rev": "8e80c0630e6c5a17976c59a1b63f900a283243ab",
         "type": "github"
       },
       "original": {
