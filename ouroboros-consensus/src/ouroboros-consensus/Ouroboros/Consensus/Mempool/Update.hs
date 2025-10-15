@@ -413,23 +413,23 @@ implSyncWithLedger mpEnv =
       -- state didn't change.
       withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface registry) $
         \is (MempoolLedgerDBView ls meFrk) -> do
-          eFrk <- meFrk
-          case eFrk of
-            -- This case should happen only if the tip has moved again, this time
-            -- to a separate fork, since the background thread saw a change in the
-            -- tip, which should happen very rarely
-            Left{} -> do
-              traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
-              pure (Nothing, is)
-            Right frk -> do
-              let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
-              if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
-                then do
-                  -- The tip didn't change, put the same state.
-                  traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
-                  pure (Just (snapshotFromIS is), is)
-                else do
-                  -- The tip changed, we have to revalidate
+          let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
+          if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
+            then do
+              -- The tip didn't change, put the same state.
+              traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
+              pure (Just (snapshotFromIS is), is)
+            else do
+              -- The tip changed, we have to revalidate
+              eFrk <- meFrk
+              case eFrk of
+                -- This case should happen only if the tip has moved again, this time
+                -- to a separate fork, since the background thread saw a change in the
+                -- tip, which should happen very rarely
+                Left{} -> do
+                  traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
+                  pure (Nothing, is)
+                Right frk -> do
                   modifyMVar_
                     forkerMVar
                     ( \oldFrk -> do
