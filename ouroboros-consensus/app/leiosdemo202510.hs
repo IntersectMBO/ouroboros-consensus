@@ -19,14 +19,18 @@ import qualified Data.Bits as Bits
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Foldable (forM_)
+import qualified Data.IntMap as IntMap
+import qualified Data.IntSet as IntSet
 import           Data.List (intercalate, isSuffixOf, unfoldr)
 import           Data.String (fromString)
 import qualified Data.Vector as V
 import           Data.Word (Word8, Word16, Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
 import           GHC.Generics (Generic)
+import qualified Numeric
 import           System.Directory (doesFileExist)
 import           System.Environment (getArgs)
 import           System.Exit (die)
@@ -78,11 +82,24 @@ main = getArgs >>= \case
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
         msgLeiosBlockTxs db ebPoint ebTxsPath bitmaps
+    "fetch-decision" : dbPath : ebPointStrs
+      | ".db" `isSuffixOf` dbPath
+      , Just ebPoints <- sequence $ map readMaybe ebPointStrs
+      , not (null ebPoints)
+      -> do
+        db <- withDieMsg $ DB.open (fromString dbPath)
+        fetchDecision db (IntSet.fromList ebPoints)
+    ["hash-txs", ebTxsPath]
+      | ".bin" `isSuffixOf` ebTxsPath
+      -> do
+        hashTxs ebTxsPath
     _ -> die "Either $0 generate myDatabase.db myManifest.json\n\
              \    OR $0 MsgLeiosBlockRequest myDatabase.db ebPoint(int)\n\
              \    OR $0 MsgLeiosBlock myDatabase.db ebPoint(int) myEb.bin\n\
              \    OR $0 MsgLeiosBlockTxsRequest myDatabase.db ebPoint(int) index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
              \    OR $0 MsgLeiosBlockTxs myDatabase.db ebPoint(int) myEbTxs.bin index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
+             \    OR $0 fetch-decision myDatabase.db ebPoint(int) ebPoint(int) ebPoint(int) ...\n\
+             \    OR $0 hash-txs myEbTxs.bin\n\
              \"
 
 parseBitmaps :: [String] -> Maybe [(Word16, Word64)]
@@ -549,3 +566,100 @@ sql_insert_ebTx =
     \SET txBytes = ?\n\
     \WHERE ebPoint = ? AND txOffset = ? AND txBytes IS NULL\n\
     \"
+
+-----
+
+_maxTxOffsetBitWidth :: Int
+_maxTxOffsetBitWidth = ceiling $ log (fromIntegral maxEbItems :: Double) / log 2
+
+maxRequestsPerIteration :: Int
+maxRequestsPerIteration = 10
+
+maxByteSizePerRequest :: Int
+maxByteSizePerRequest = 500000
+
+fetchDecision :: DB.Database -> IntSet.IntSet -> IO ()
+fetchDecision db ebPoints = do
+    stmt <- withDieJust $ DB.prepare db $ fromString $ sql_next_fetch (IntSet.size ebPoints)
+    forM_ ([(1 :: DB.ParamIndex) ..] `zip` IntSet.toDescList ebPoints) $ \(i, p) -> do
+        withDie $ DB.bindInt64 stmt i (fromIntegral p)
+    let loopLimit = maxRequestsPerIteration * maxByteSizePerRequest
+        loop !accReqs !accByteSize =
+            if accByteSize >= loopLimit then pure accReqs else
+            withDie (DB.stepNoCB stmt) >>= \case
+                DB.Done -> pure accReqs
+                DB.Row -> do
+                    ebPoint <- fromIntegral <$> DB.columnInt64 stmt 0
+                    txOffset <- fromIntegral <$> DB.columnInt64 stmt 1
+                    txHash <- DB.columnBlob stmt 2
+                    txByteSize <- fromIntegral <$> DB.columnInt64 stmt 3
+                    loop
+                        (IntMap.insertWith
+                            IntMap.union
+                            ebPoint
+                            (IntMap.singleton txOffset txHash)
+                            accReqs
+                        )
+                        (accByteSize + txByteSize)
+    reqs <- loop IntMap.empty 0
+    forM_ (IntMap.assocs reqs) $ \(ebPoint, m) -> do
+        let sho idx bitmap k =
+                if (0 :: Word64) == bitmap then k else
+                (show idx ++ ":0x" ++ Numeric.showHex bitmap "") : k
+            go idx bitmap = \case
+                [] -> sho idx bitmap []
+                txOffset:txOffsets ->
+                    let (q, r) = txOffset `quotRem` 64
+                    in
+                    if q == idx
+                    then go idx (Bits.setBit bitmap (63 - r)) txOffsets else
+                      (if 0 /= bitmap then sho idx bitmap else id)
+                    $ go q (Bits.bit (63 - r)) txOffsets
+        putStrLn
+          $ unwords
+          $ "bitmaps" : show ebPoint : go 0 (0x0 :: Word64) (IntMap.keys m)
+        putStrLn
+          $ unwords
+          $ "hashes" : show ebPoint : map (BS8.unpack . BS16.encode) (IntMap.elems m)
+
+-- | Arbitrarily limited to 2000; about 2000 average txs are in the ball park
+-- of one megabyte.
+--
+-- If a prefix of the 2000 txs are large, the fetch logic can ignore the rest.
+--
+-- If all 2000 are still much less than a megabyte, then a) the EB is
+-- suspicious and b) the fetch logic can advance the query (TODO require
+-- parameterizing this query string with an OFFSET).
+sql_next_fetch :: Int -> String
+sql_next_fetch n =
+    "SELECT ebPoint, txOffset, txHashBytes, txByteSize FROM ebTxs\n\
+    \WHERE txBytes IS NULL AND ebPoint IN (" ++ hooks ++ ")\n\
+    \ORDER BY ebPoint DESC, txOffset ASC\n\
+    \LIMIT 2000\n\
+    \"
+  where
+    hooks = intercalate ", " (replicate n "?")
+
+-----
+
+hashTxs :: FilePath -> IO ()
+hashTxs ebTxsPath = do
+    ebTxsBytes <- BSL.readFile ebTxsPath
+    let decodeBreakOrTx = do
+            stop <- CBOR.decodeBreakOr
+            if stop then pure Nothing else Just <$> CBOR.decodeBytes
+    let go1 bytes = do
+            (bytes', next) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes decodeBreakOrTx bytes
+            go2 bytes bytes' next
+        go2 prevBytes bytes = \case
+            Just _txBytes -> do
+                let len = BSL.length prevBytes - BSL.length bytes
+                    txHash :: Hash.Hash HASH ByteString
+                    txHash = Hash.hashWith id $ BSL.toStrict $ BSL.take len prevBytes
+                putStrLn $ BS8.unpack $ BS16.encode $ Hash.hashToBytes txHash
+                go1 bytes
+            Nothing ->
+                when (not $ BSL.null bytes) $ do
+                    die "Incomplete EB txs decode"
+    (ebTxsBytes2, ()) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes CBOR.decodeListLenIndef ebTxsBytes
+    go1 ebTxsBytes2

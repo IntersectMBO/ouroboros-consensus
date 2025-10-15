@@ -862,6 +862,7 @@ executable leiosdemo202510
     cardano-binary,
     cardano-crypto-class,
     cborg,
+    containers,
     direct-sqlite,
     directory,
     random,
