@@ -17,12 +17,13 @@ import Data.Map (Map)
 import Data.Word (Word64)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 
 data PerasCertDB m blk = PerasCertDB
-  { addCert :: ValidatedPerasCert blk -> m AddPerasCertResult
+  { addCert :: WithArrivalTime (ValidatedPerasCert blk) -> m AddPerasCertResult
   -- ^ Add a Peras certificate to the database. The result indicates whether
   -- the certificate was actually added, or if it was already present.
   , getWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
@@ -46,7 +47,9 @@ data AddPerasCertResult = AddedPerasCertToDB | PerasCertAlreadyInDB
 data PerasCertSnapshot blk = PerasCertSnapshot
   { containsCert :: PerasRoundNo -> Bool
   -- ^ Do we have the certificate for this round?
-  , getCertsAfter :: PerasCertTicketNo -> Map PerasCertTicketNo (ValidatedPerasCert blk)
+  , getCertsAfter ::
+      PerasCertTicketNo ->
+      Map PerasCertTicketNo (WithArrivalTime (ValidatedPerasCert blk))
   -- ^ Get certificates after the given ticket number (excluded).
   -- The result is a map of ticket numbers to validated certificates.
   }

@@ -104,6 +104,7 @@ import qualified Data.Set as Set
 import Data.TreeDiff
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -148,7 +149,7 @@ data Model blk = Model
   -- ^ The VolatileDB
   , immutableDbChain :: Chain blk
   -- ^ The ImmutableDB
-  , perasCerts :: Map PerasRoundNo (ValidatedPerasCert blk)
+  , perasCerts :: Map PerasRoundNo (WithArrivalTime (ValidatedPerasCert blk))
   , cps :: CPS.ChainProducerState blk
   , currentLedger :: ExtLedgerState blk EmptyMK
   , initLedger :: ExtLedgerState blk EmptyMK
@@ -445,7 +446,7 @@ addPerasCert ::
   forall blk.
   (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
   TopLevelConfig blk ->
-  ValidatedPerasCert blk ->
+  WithArrivalTime (ValidatedPerasCert blk) ->
   Model blk ->
   Model blk
 addPerasCert cfg cert m
