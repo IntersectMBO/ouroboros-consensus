@@ -579,6 +579,7 @@ instance
 
   mkResources _ trcr (LSMArgs path salt mkFS) reg _ = do
     (rk1, SomeHasFSAndBlockIO fs blockio) <- mkFS reg
+    createDirectoryIfMissing fs True path
     session <-
       allocate
         reg
