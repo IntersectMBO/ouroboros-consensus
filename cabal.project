@@ -59,8 +59,8 @@ allow-newer:
 source-repository-package
    type: git
    location: https://github.com/IntersectMBO/ouroboros-network
-   tag: peras-staging/pr-5202
-   --sha256: sha256-nTbjunQaqt6/syzSKw24Lne50083dI2SZFirG2/1T9U=
+   tag: peras-staging/pr-5202-v2
+   --sha256: sha256-vEO721Xab0RTVKFQFKal5VCV5y+OUzELo8+7Z8TETJQ=
    subdir:
      ouroboros-network
      ouroboros-network-protocols
