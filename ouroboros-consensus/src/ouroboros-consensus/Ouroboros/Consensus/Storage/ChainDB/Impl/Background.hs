@@ -322,7 +322,7 @@ ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
     , wNotify = \slotNo -> do
         LedgerDB.tryFlush cdbLedgerDB
         now <- getMonotonicTime
-        LedgerDB.tryTakeSnapshot cdbLedgerDB now
+        LedgerDB.tryTakeSnapshot cdbLedgerDB now 0
         LedgerDB.garbageCollect cdbLedgerDB slotNo
     }
 
