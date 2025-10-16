@@ -82,8 +82,7 @@ import Prelude hiding (read)
 
 -- | The interface fulfilled by handles on both the InMemory and LSM handles.
 data LedgerTablesHandle m l = LedgerTablesHandle
-  { close :: !(Bool -> m ())
-  -- ^ Boolean is whether to force release or not.
+  { close :: !(m ())
   , transfer :: !(ResourceKey m -> m ())
   -- ^ Update the closing action in this handle with a new resource key, as the
   -- handle has moved to a different registry.
@@ -223,9 +222,7 @@ empty' st = empty (forgetLedgerTables st) st
 -- the anchor.
 closeLedgerSeq :: Monad m => LedgerSeq m l -> m ()
 closeLedgerSeq (LedgerSeq l) =
-  mapM_
-    (\t -> close (tables t) True)
-    $ AS.anchor l : AS.toOldestFirst l
+  mapM_ (close . tables) $ AS.anchor l : AS.toOldestFirst l
 
 {-------------------------------------------------------------------------------
   Apply blocks
