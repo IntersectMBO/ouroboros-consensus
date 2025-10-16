@@ -152,7 +152,11 @@ implDuplicate ::
   m (ResourceKey m, LedgerTablesHandle m l)
 implDuplicate tracer tv someFS rr = do
   hs <- readTVarIO tv
-  !x <- guardClosed hs $ \v -> allocate rr (\_ -> newInMemoryLedgerTablesHandle tracer someFS v) (const $ pure ())
+  !x <- guardClosed hs $ \v ->
+    allocate
+      rr
+      (\_ -> newInMemoryLedgerTablesHandle tracer someFS v)
+      close
   pure x
 
 implRead ::
