@@ -176,7 +176,7 @@ implForkerCommit env = do
                 closeLedgerSeq (LedgerSeq toCloseForker)
 
                 -- All the other remaining handles are transferred to the LedgerDB registry
-                keys <- ingestRegistry foeResourceRegistry foeLedgerDbRegistry
+                keys <- transferRegistry foeResourceRegistry foeLedgerDbRegistry
                 mapM_ (\(k, v) -> transfer (tables v) k) $ zip keys (AS.toOldestFirst toKeepTip)
 
           pure ((transferCommitted, ldbToClose), LedgerSeq newdb)
