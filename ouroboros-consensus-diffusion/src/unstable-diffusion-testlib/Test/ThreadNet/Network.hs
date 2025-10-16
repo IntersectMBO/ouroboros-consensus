@@ -1158,7 +1158,7 @@ runThreadNetwork
           mempool
           txs0
 
-      void $ allocate registry (\_ -> pure threadCrucialTxs) cancelThread
+      void $ allocateThread registry (\_ -> pure threadCrucialTxs)
 
       forkTxProducer
         coreNodeId
