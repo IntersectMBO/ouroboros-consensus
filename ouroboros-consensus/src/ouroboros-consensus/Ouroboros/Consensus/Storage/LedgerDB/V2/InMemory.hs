@@ -132,9 +132,8 @@ implClose ::
   IOLike m =>
   Tracer m LedgerDBV2Trace ->
   StrictTVar m (LedgerTablesHandleState l) ->
-  Bool ->
   m ()
-implClose tracer tv _ = do
+implClose tracer tv = do
   p <- atomically $ swapTVar tv LedgerTablesHandleClosed
   case p of
     LedgerTablesHandleOpen{} -> traceWith tracer TraceLedgerTablesHandleClose
