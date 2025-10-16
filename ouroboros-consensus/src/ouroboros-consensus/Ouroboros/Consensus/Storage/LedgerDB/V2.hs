@@ -100,6 +100,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
         lock <- RAWLock.new ()
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
+        ldbToClose <- newTVarIO []
         let env =
               LedgerDBEnv
                 { ldbSeq = varDB
@@ -116,6 +117,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbOpenHandlesLock = lock
                 , ldbGetVolatileSuffix = getVolatileSuffix
                 , ldbResourceKeys = SomeResources res
+                , ldbToClose
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -331,6 +333,7 @@ implGarbageCollect env slotNo = do
   atomically $
     modifyTVar (ldbPrevApplied env) $
       Set.dropWhileAntitone ((< slotNo) . realPointSlot)
+  mapM_ closeLedgerSeq =<< readTVarIO (ldbToClose env)
   -- It is safe to close the handles outside of the locked region, which reduces
   -- contention. See the docs of 'ldbOpenHandlesLock'.
   Monad.join $ RAWLock.withWriteAccess (ldbOpenHandlesLock env) $ \() -> do
@@ -430,6 +433,12 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbRegistry :: !(ResourceRegistry m)
+  -- ^ The registry of the LedgerDB, to give it to forkers to transfer committed
+  -- handles to the LedgerDB.
+  , ldbToClose :: !(StrictTVar m [LedgerSeq m l])
+  -- ^ When committing forkers, the discarded part of the LedgerDB will be put
+  -- in this TVar such that the 'garbageCollect' function will release such
+  -- resources.
   , ldbOpenHandlesLock :: !(RAWLock m ())
   -- ^ While holding a read lock (at least), all handles in the 'ldbSeq' are
   -- guaranteed to be open. During this time, the handle can be duplicated and
@@ -758,6 +767,7 @@ newForker h ldbEnv rr (rk, st) = do
           , foeInitialHandleKey = rk
           , foeCleanup
           , foeLedgerDbLock = ldbOpenHandlesLock ldbEnv
+          , foeLedgerDbToClose = ldbToClose ldbEnv
           }
   atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
   pure $
