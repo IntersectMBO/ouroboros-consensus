@@ -190,7 +190,7 @@ implMkLedgerDb h =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
-      , tryTakeSnapshot = getEnv1 h implTryTakeSnapshot
+      , tryTakeSnapshot = getEnv2 h implTryTakeSnapshot
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -318,8 +318,9 @@ implTryTakeSnapshot ::
   ) =>
   LedgerDBEnv m l blk ->
   Time ->
+  DiffTime ->
   m ()
-implTryTakeSnapshot env snapshotRequestTime = do
+implTryTakeSnapshot env snapshotRequestTime delayBeforeSnapshotting = do
   timeSinceLastSnapshot <- do
     mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
     forM mLastSnapshotRequested $ \lastSnapshotRequested -> do
@@ -337,32 +338,37 @@ implTryTakeSnapshot env snapshotRequestTime = do
             { sscTimeSinceLast = timeSinceLastSnapshot
             , sscSnapshotSlots = immutableSlots
             }
-  forM_ snapshotSlots $ \slot -> do
-    -- Prune the 'DbChangelog' such that the resulting anchor state has slot
-    -- number @slot@.
-    let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
-    atomically $ modifyTVar (ldbChangelog env) (prune pruneStrat)
-    -- Flush the LedgerDB such that we can take a snapshot for the new anchor
-    -- state due to the previous prune.
-    withWriteLock
-      (ldbLock env)
-      (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
-    -- Now, taking a snapshot (for the last flushed state) will do what we want.
-    void $
-      withReadLock (ldbLock env) $
-        takeSnapshot
-          (ldbChangelog env)
-          (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-          (LedgerDBSnapshotEvent >$< ldbTracer env)
-          (ldbHasFS env)
-          (ldbBackingStore env)
-          Nothing
-    atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
-    void $
-      trimSnapshots
-        (LedgerDBSnapshotEvent >$< ldbTracer env)
-        (snapshotsFs $ ldbHasFS env)
-        (ldbSnapshotPolicy env)
+  case snapshotSlots of
+    [] -> pure ()
+    _ -> do
+      threadDelay delayBeforeSnapshotting
+      forM_ snapshotSlots $ \slot -> do
+        -- Prune the 'DbChangelog' such that the resulting anchor state has slot
+        -- number @slot@.
+        let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
+        atomically $ modifyTVar (ldbChangelog env) (prune pruneStrat)
+        -- Flush the LedgerDB such that we can take a snapshot for the new anchor
+        -- state due to the previous prune.
+        withWriteLock
+          (ldbLock env)
+          (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
+        -- Now, taking a snapshot (for the last flushed state) will do what we want.
+        void $
+          withReadLock (ldbLock env) $
+            takeSnapshot
+              (ldbChangelog env)
+              (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
+              (LedgerDBSnapshotEvent >$< ldbTracer env)
+              (ldbHasFS env)
+              (ldbBackingStore env)
+              Nothing
+        finished <- getMonotonicTime
+        atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! finished)
+        void $
+          trimSnapshots
+            (LedgerDBSnapshotEvent >$< ldbTracer env)
+            (snapshotsFs $ ldbHasFS env)
+            (ldbSnapshotPolicy env)
 
 -- If the DbChangelog in the LedgerDB can flush (based on the SnapshotPolicy
 -- with which this LedgerDB was opened), flush differences to the backing

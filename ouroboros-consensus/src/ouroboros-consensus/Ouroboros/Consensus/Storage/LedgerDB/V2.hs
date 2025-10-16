@@ -18,7 +18,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Arrow ((>>>))
-import Control.Monad (join)
+import Control.Monad (forM, join)
 import qualified Control.Monad as Monad (void, (>=>))
 import Control.Monad.Except
 import Control.RAWLock
@@ -176,7 +176,7 @@ implMkLedgerDb h bss =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
-      , tryTakeSnapshot = \t -> getEnv h (implTryTakeSnapshot t bss)
+      , tryTakeSnapshot = \t d -> getEnv h (implTryTakeSnapshot t d bss)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -376,15 +376,16 @@ implTryTakeSnapshot ::
   , LedgerDbSerialiseConstraints blk
   ) =>
   Time ->
+  DiffTime ->
   HandleArgs ->
   LedgerDBEnv m l blk ->
   m ()
-implTryTakeSnapshot snapshotRequestTime bss env = do
+implTryTakeSnapshot snapshotRequestTime delayBeforeSnapshotting bss env = do
   timeSinceLastSnapshot <- do
     mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
     for mLastSnapshotRequested $ \lastSnapshotRequested -> do
       pure $ snapshotRequestTime `diffTime` lastSnapshotRequested
-  RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
+  handles <- RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
     lseq <- readTVarIO $ ldbSeq env
     let immutableStates = AS.dropNewest (fromIntegral k) $ getLedgerSeq lseq
         immutableSlots :: [SlotNo] =
@@ -397,16 +398,24 @@ implTryTakeSnapshot snapshotRequestTime bss env = do
               { sscTimeSinceLast = timeSinceLastSnapshot
               , sscSnapshotSlots = immutableSlots
               }
-    for_ snapshotSlots $ \slot -> do
+    forM snapshotSlots $ \slot -> do
       -- Prune the 'DbChangelog' such that the resulting anchor state has slot
       -- number @slot@.
       let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
-      Monad.void $
-        takeSnapshot
-          (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-          (LedgerDBSnapshotEvent >$< ldbTracer env)
-          (ldbHasFS env)
-          (anchorHandle $ snd $ prune pruneStrat lseq)
+      duplicateStateRef $ anchorHandle $ snd $ prune pruneStrat lseq
+
+  case handles of
+    [] -> pure ()
+    _ -> do
+      threadDelay delayBeforeSnapshotting
+      for_ handles $ \h -> do
+        Monad.void $
+          takeSnapshot
+            (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
+            (LedgerDBSnapshotEvent >$< ldbTracer env)
+            (ldbHasFS env)
+            h
+
       atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
       Monad.void $
         trimSnapshots
@@ -431,6 +440,9 @@ implTryTakeSnapshot snapshotRequestTime bss env = do
         Nothing
         ref
     LSMHandleArgs x -> absurd x
+
+  duplicateStateRef :: StateRef m (ExtLedgerState blk) -> m (StateRef m (ExtLedgerState blk))
+  duplicateStateRef StateRef{state, tables} = StateRef state <$> duplicate tables
 
 -- In the first version of the LedgerDB for UTxO-HD, there is a need to
 -- periodically flush the accumulated differences to the disk. However, in the
