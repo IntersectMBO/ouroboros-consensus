@@ -73,13 +73,13 @@ instance
     allPoolKeys <-
       replicateM (fromIntegral $ numCoreNodes defaultConstants) $
         genIssuerKeys defaultConstants
-    mkShelleyBlock <$> genBlock allPoolKeys
+    toShelleyBlock <$> genBlock allPoolKeys
 
 instance
   (Praos.PraosCrypto crypto, CanMock (Praos crypto) era) =>
   Arbitrary (ShelleyBlock (Praos crypto) era)
   where
-  arbitrary = mkShelleyBlock <$> blk
+  arbitrary = toShelleyBlock <$> blk
    where
     blk = SL.Block <$> arbitrary <*> arbitrary
 
@@ -93,7 +93,7 @@ instance
     allPoolKeys <-
       replicateM (fromIntegral $ numCoreNodes defaultConstants) $
         genIssuerKeys defaultConstants
-    Coherent . mkShelleyBlock <$> genCoherentBlock allPoolKeys
+    Coherent . toShelleyBlock <$> genCoherentBlock allPoolKeys
 
 -- | Create a coherent Praos block
 --
@@ -111,7 +111,7 @@ instance
     Coherent . mkBlk <$> pure blk
    where
     mkBlk sleBlock =
-      mkShelleyBlock $
+      toShelleyBlock $
         let
           SL.Block hdr1 bdy = sleBlock
          in

@@ -148,7 +148,7 @@ fromShelleyLedgerExamples
       , exampleLedgerTables = unlabelled $ mkLedgerTables leTx
       }
    where
-    blk = mkShelleyBlock pleBlock
+    blk = toShelleyBlock pleBlock
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = Serialised "<BLOCK>"
     tx = mkShelleyTx leTx
@@ -263,7 +263,7 @@ fromShelleyLedgerExamplesPraos
       }
    where
     blk =
-      mkShelleyBlock $
+      toShelleyBlock $
         let SL.Block hdr1 bdy = pleBlock
          in SL.Block (translateHeader hdr1) bdy
 

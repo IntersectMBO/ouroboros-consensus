@@ -8,7 +8,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
 import qualified Cardano.Ledger.Core as Core (Tx)
 import qualified Cardano.Ledger.Core as SL (hashBlockBody, mkBasicBlockBody, txSeqBlockBodyL)
-import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
+import qualified Cardano.Ledger.Shelley.API as SL (extractTx)
 import qualified Cardano.Ledger.Shelley.BlockBody as SL (bBodySize)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
@@ -72,7 +72,7 @@ forgeShelleyBlock
         (SL.hashBlockBody @era body)
         actualBodySize
         protocolVersion
-    let blk = mkShelleyBlock $ SL.Block hdr body
+    let blk = mkShelleyBlock hdr body
     return $
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
         blk

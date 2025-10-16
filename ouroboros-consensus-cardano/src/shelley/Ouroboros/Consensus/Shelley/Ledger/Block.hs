@@ -26,6 +26,8 @@ module Ouroboros.Consensus.Shelley.Ledger.Block
 
     -- * Shelley Compatibility
   , ShelleyCompatible
+  , fromShelleyBlock
+  , toShelleyBlock
   , mkShelleyBlock
   , mkShelleyHeader
 
@@ -51,15 +53,17 @@ import Cardano.Ledger.Binary
   )
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Ledger.Core as SL
-  ( eraDecoder
+  ( EraBlockBody (..)
+  , eraDecoder
   , eraProtVerLow
   , toEraCBOR
   )
-import qualified Cardano.Ledger.Core as SL (TranslationContext, hashBlockBody)
+import qualified Cardano.Ledger.Core as SL (TranslationContext)
 import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
+import Control.Arrow (Arrow (..))
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce (coerce)
 import Data.Typeable (Typeable)
@@ -145,7 +149,8 @@ instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) 
 --
 -- This block is parametrised over both the (ledger) era and the protocol.
 data ShelleyBlock proto era = ShelleyBlock
-  { shelleyBlockRaw :: !(SL.Block (ShelleyProtocolHeader proto) era)
+  { shelleyBlockHeader :: !(ShelleyProtocolHeader proto)
+  , shelleyBlockBody :: !(SL.BlockBody era)
   , shelleyBlockHeaderHash :: !ShelleyHash
   }
 
@@ -158,14 +163,29 @@ instance
 
 type instance HeaderHash (ShelleyBlock proto era) = ShelleyHash
 
+-- | Reconstruct a Shelley ledger block from a 'ShelleyBlock'.
+--
+-- TODO: we should be able to avoid this conversion in most cases
+fromShelleyBlock :: ShelleyBlock proto era -> SL.Block (ShelleyProtocolHeader proto) era
+fromShelleyBlock blk = SL.Block (shelleyBlockHeader blk) (shelleyBlockBody blk)
+
+-- | Construct a 'ShelleyBlock' from a Shelley ledger block.
+--
+-- TODO: we should be able to avoid this conversion in most cases
+toShelleyBlock ::
+  ShelleyCompatible proto era => SL.Block (ShelleyProtocolHeader proto) era -> ShelleyBlock proto era
+toShelleyBlock (SL.Block hdr body) = mkShelleyBlock hdr body
+
 mkShelleyBlock ::
   ShelleyCompatible proto era =>
-  SL.Block (ShelleyProtocolHeader proto) era ->
+  ShelleyProtocolHeader proto ->
+  SL.BlockBody era ->
   ShelleyBlock proto era
-mkShelleyBlock raw =
+mkShelleyBlock header body =
   ShelleyBlock
-    { shelleyBlockRaw = raw
-    , shelleyBlockHeaderHash = pHeaderHash $ SL.bheader raw
+    { shelleyBlockHeader = header
+    , shelleyBlockBody = body
+    , shelleyBlockHeaderHash = pHeaderHash header
     }
 
 class
@@ -198,10 +218,10 @@ instance
   ShowProxy (Header (ShelleyBlock proto era))
 
 instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
-  getHeader (ShelleyBlock rawBlk hdrHash) =
+  getHeader block =
     ShelleyHeader
-      { shelleyHeaderRaw = SL.bheader rawBlk
-      , shelleyHeaderHash = hdrHash
+      { shelleyHeaderRaw = shelleyBlockHeader block
+      , shelleyHeaderHash = shelleyBlockHeaderHash block
       }
 
   blockMatchesHeader hdr blk =
@@ -210,7 +230,7 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
     SL.hashBlockBody blockBody == pHeaderBodyHash shelleyHdr
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
-    ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} = blk
+    ShelleyBlock{shelleyBlockBody = blockBody} = blk
 
   headerIsEBB = const Nothing
 
@@ -288,10 +308,10 @@ instance HasNestedContent f (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => EncCBOR (ShelleyBlock proto era) where
   -- Don't encode the header hash, we recompute it during deserialisation
-  encCBOR = encCBOR . shelleyBlockRaw
+  encCBOR = encCBOR . fromShelleyBlock
 
 instance ShelleyCompatible proto era => DecCBOR (Annotator (ShelleyBlock proto era)) where
-  decCBOR = fmap mkShelleyBlock <$> decCBOR
+  decCBOR = fmap toShelleyBlock <$> decCBOR
 
 instance ShelleyCompatible proto era => EncCBOR (Header (ShelleyBlock proto era)) where
   -- Don't encode the header hash, we recompute it during deserialisation
@@ -342,7 +362,7 @@ decodeShelleyHeader = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
 -------------------------------------------------------------------------------}
 
 instance ShelleyCompatible proto era => Condense (ShelleyBlock proto era) where
-  condense = show . shelleyBlockRaw
+  condense = show . (shelleyBlockHeader &&& shelleyBlockBody)
 
 instance ShelleyCompatible proto era => Condense (Header (ShelleyBlock proto era)) where
   condense = show . shelleyHeaderRaw
