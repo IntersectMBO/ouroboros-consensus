@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -25,6 +26,7 @@ import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Typeable (Typeable)
 import Data.Void (Void)
+import Debug.Trace (traceM)
 import GHC.Generics (Generic)
 import qualified Network.Mux as Mux
 import Ouroboros.Consensus.Block
@@ -214,7 +216,9 @@ chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
                 ImmutableDB.IteratorExhausted -> do
                   ImmutableDB.iteratorClose iterator
                   throwIO ReachedImmutableTip
-                ImmutableDB.IteratorResult a ->
+                ImmutableDB.IteratorResult a -> do
+                  threadDelay 1 -- wait for one second
+                  !_ <- traceM $ "ChainSync: served header " <> show (ChainDB.point a)
                   pure $ AddBlock a
 
         followerClose = ImmutableDB.iteratorClose =<< readTVarIO varIterator
@@ -264,9 +268,11 @@ blockFetchServer immDB blockComponent registry =
   convertIterator iterator =
     ChainDB.Iterator
       { ChainDB.iteratorNext =
-          ImmutableDB.iteratorNext iterator <&> \case
-            ImmutableDB.IteratorResult b -> ChainDB.IteratorResult b
-            ImmutableDB.IteratorExhausted -> ChainDB.IteratorExhausted
+          ImmutableDB.iteratorNext iterator >>= \case
+            ImmutableDB.IteratorResult b -> do
+              !_ <- traceM $ "BlockFetch: served block " <> show (ChainDB.point b)
+              pure $ ChainDB.IteratorResult b
+            ImmutableDB.IteratorExhausted -> pure ChainDB.IteratorExhausted
       , ChainDB.iteratorClose = ImmutableDB.iteratorClose iterator
       }
 
