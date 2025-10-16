@@ -33,6 +33,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.NormalForm.StrictTVar ()
@@ -51,6 +52,7 @@ data ForkerEnv m l blk = ForkerEnv
   , foeLedgerDbRegistry :: !(ResourceRegistry m)
   -- ^ The registry in the LedgerDB to move handles to in case we commit the
   -- forker.
+  , foeLedgerDbToClose :: !(StrictTVar m [LedgerSeq m l])
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
   , foeResourceRegistry :: !(ResourceRegistry m)
@@ -154,7 +156,7 @@ implForkerCommit env = do
   LedgerSeq lseq <- readTVar foeLedgerSeq
   let intersectionSlot = getTipSlot $ state $ AS.anchor lseq
   let predicate = (== getTipHash (state (AS.anchor lseq))) . getTipHash . state
-  transfer <-
+  (transfer, ldbToClose) <-
     stateTVar
       foeSwitchVar
       ( \(LedgerSeq olddb) -> fromMaybe theImpossible $ do
@@ -165,20 +167,21 @@ implForkerCommit env = do
             AS.splitAfterMeasure intersectionSlot (either predicate predicate) lseq
           -- Join the prefix of the selection with the sequence in the forker
           newdb <- AS.join (const $ const True) toKeepBase toKeepTip
-          let transferCommitted = do
-                -- Do /not/ close the anchor of @toClose@, as that is also the
-                -- tip of @olddb'@ which will be used in @newdb@.
-                case toCloseLdb of
-                  AS.Empty _ -> pure ()
-                  _ AS.:< closeOld' -> closeLedgerSeq (LedgerSeq closeOld')
+          -- Do /not/ close the anchor of @toClose@, as that is also the
+          -- tip of @olddb'@ which will be used in @newdb@.
+          let ldbToClose = case toCloseLdb of
+                AS.Empty _ -> Nothing
+                _ AS.:< closeOld' -> Just (LedgerSeq closeOld')
+              transferCommitted = do
                 closeLedgerSeq (LedgerSeq toCloseForker)
 
                 -- All the other remaining handles are transferred to the LedgerDB registry
                 keys <- ingestRegistry foeResourceRegistry foeLedgerDbRegistry
                 mapM_ (\(k, v) -> transfer (tables v) k) $ zip keys (AS.toOldestFirst toKeepTip)
 
-          pure (transferCommitted, LedgerSeq newdb)
+          pure ((transferCommitted, ldbToClose), LedgerSeq newdb)
       )
+  whenJust ldbToClose (modifyTVar foeLedgerDbToClose . (:))
   writeTVar foeCleanup transfer
  where
   ForkerEnv
@@ -187,6 +190,7 @@ implForkerCommit env = do
     , foeResourceRegistry
     , foeLedgerDbRegistry
     , foeCleanup
+    , foeLedgerDbToClose
     } = env
 
   theImpossible =
