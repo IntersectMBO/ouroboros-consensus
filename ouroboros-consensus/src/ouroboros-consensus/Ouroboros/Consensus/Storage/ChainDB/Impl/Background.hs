@@ -47,6 +47,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Bifunctor
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import Data.Sequence.Strict (StrictSeq (..))
@@ -80,6 +81,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
 import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import System.Random
 
 {-------------------------------------------------------------------------------
   Launch background tasks
