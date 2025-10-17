@@ -202,7 +202,7 @@ newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId SL.TxId
   deriving newtype (Eq, Ord, NoThunks)
 
 deriving newtype instance
-  (Typeable era, Typeable proto, Crypto (ProtoCrypto proto)) =>
+  Crypto (ProtoCrypto proto) =>
   EncCBOR (TxId (GenTx (ShelleyBlock proto era)))
 deriving newtype instance
   (Typeable era, Typeable proto, Crypto (ProtoCrypto proto)) =>
