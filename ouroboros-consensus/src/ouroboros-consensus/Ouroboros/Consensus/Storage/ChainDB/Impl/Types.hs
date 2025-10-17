@@ -147,6 +147,7 @@ import Ouroboros.Network.Block (MaxSlotNo (..))
 import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( ChainSelStarvation (..)
   )
+import System.Random (StdGen)
 
 -- | All the serialisation related constraints needed by the ChainDB.
 class
@@ -354,9 +355,17 @@ data ChainDbEnv m blk = CDB
   , cdbChainSelStarvation :: !(StrictTVar m ChainSelStarvation)
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
+  , cdbSnapshotDelayRNG :: !(StrictTVar m StdGen)
+  -- ^ PRNG for determining the random delay we'll wait before actually
+  -- performing the snapshot when one has been requested.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
   }
   deriving Generic
+
+instance NoThunks StdGen where
+  showTypeOf = undefined
+  noThunks = undefined
+  wNoThunks = undefined
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a

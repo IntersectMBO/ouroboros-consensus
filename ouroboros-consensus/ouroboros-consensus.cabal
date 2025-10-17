@@ -343,6 +343,7 @@ library
     primitive,
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
+    random,
     rawlock ^>=0.1.1,
     resource-registry ^>=0.2,
     semialign >=1.1,

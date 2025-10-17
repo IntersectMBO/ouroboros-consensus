@@ -44,6 +44,7 @@ import Control.Monad (forM_, forever, void)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Bifunctor
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import Data.Sequence.Strict (StrictSeq (..))
@@ -76,6 +77,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (Watcher (..), blockUntilJust, forkLinkedWatcher)
 import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import System.Random
 
 {-------------------------------------------------------------------------------
   Launch background tasks
@@ -321,10 +323,23 @@ ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
     , wReader = blockUntilJust $ withOriginToMaybe <$> readTVar varSt
     , wNotify = \slotNo -> do
         LedgerDB.tryFlush cdbLedgerDB
+        randomizedDelay <-
+          atomically $
+            stateTVar cdbSnapshotDelayRNG randomSnapshotDelay
         now <- getMonotonicTime
-        LedgerDB.tryTakeSnapshot cdbLedgerDB now 0
+        LedgerDB.tryTakeSnapshot cdbLedgerDB now randomizedDelay
         LedgerDB.garbageCollect cdbLedgerDB slotNo
     }
+ where
+  randomSnapshotDelay :: StdGen -> (DiffTime, StdGen)
+  randomSnapshotDelay rng =
+    first fromInteger $ uniformR (fiveMinutes, tenMinutes) rng
+
+  fiveMinutes :: Integer
+  fiveMinutes = 5 * 60
+
+  tenMinutes :: Integer
+  tenMinutes = 10 * 60
 
 {-------------------------------------------------------------------------------
   Executing garbage collection
