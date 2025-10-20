@@ -32,21 +32,6 @@ fi
 TMP_DIR=$(mktemp -d)
 echo "Using temporary directory for DB and logs: $TMP_DIR"
 
-##
-## Run immdb-server
-##
-IMMDB_CMD_CORE="cabal run immdb-server \
-    -- --db $CLUSTER_RUN_DATA/node-0/db/immutable/ \
-    --config $CLUSTER_RUN_DATA/node-0/config.json"
-
-echo "Command: $IMMDB_CMD_CORE &> $TMP_DIR/immdb-server.log &"
-
-$IMMDB_CMD_CORE &> "$TMP_DIR/immdb-server.log" &
-
-IMMDB_SERVER_PID=$!
-
-echo "ImmDB server started with PID: $IMMDB_SERVER_PID"
-
 pushd "$CARDANO_NODE_PATH" > /dev/null
 
 ##
@@ -135,9 +120,29 @@ echo "Cardano node 1 started with PID: $MOCKED_PEER_PID"
 # Return to the original directory
 popd > /dev/null
 
-# TODO: we should change the condition on which we terminate the demo.
-echo "Sleeping for 30 seconds"
+##
+## Run immdb-server
+##
+
+## TODO: we should find a better way to wait for the nodes to be started
 sleep 30
+
+IMMDB_CMD_CORE="cabal run immdb-server \
+    -- --db $CLUSTER_RUN_DATA/node-0/db/immutable/ \
+    --config $CLUSTER_RUN_DATA/node-0/config.json"
+
+echo "Command: $IMMDB_CMD_CORE &> $TMP_DIR/immdb-server.log &"
+
+$IMMDB_CMD_CORE &> "$TMP_DIR/immdb-server.log" &
+
+IMMDB_SERVER_PID=$!
+
+echo "ImmDB server started with PID: $IMMDB_SERVER_PID"
+
+
+# TODO: we should change the condition on which we terminate the demo.
+echo "Sleeping..."
+sleep 120
 
 echo "Killing processes $IMMDB_SERVER_PID (immdb-server), $CARDANO_NODE_0_PID (node-0), and $MOCKED_PEER_PID (node-1)..."
 
@@ -148,5 +153,23 @@ kill -9 -"$CARDANO_NODE_0_PID" 2>/dev/null || true
 kill -9 -"$MOCKED_PEER_PID" 2>/dev/null || true
 
 echo "Temporary data stored at: $TMP_DIR"
+
+# Log analysis
+
+VENV_PATH="./scripts/leios-demo/venv"
+
+# 1. Activate the Python Virtual Environment
+if [ -f "$VENV_PATH/bin/activate" ]; then
+    echo "Activating virtual environment..."
+    # 'source' must be used for activation to modify the current shell environment
+    source "$VENV_PATH/bin/activate"
+else
+    echo "Error: Virtual environment activation script not found at $VENV_PATH/bin/activate." >&2
+fi
+
+python3 scripts/leios-demo/log_parser.py $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-1.log
+
+# 2. Deactivate the Python Virtual Environment before exiting
+deactivate 2>/dev/null || true
 
 exit 0
