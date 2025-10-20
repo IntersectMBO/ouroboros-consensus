@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Shelley.Eras
 
     -- * Convenience functions
   , isBeforeConway
+  , isBeforeDijkstra
 
     -- * Re-exports
   , StandardCrypto
@@ -139,6 +140,10 @@ data ConwayEraGovDict era where
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =
   L.eraProtVerLow @era < L.eraProtVerLow @L.ConwayEra
+
+isBeforeDijkstra :: forall era. L.Era era => Proxy era -> Bool
+isBeforeDijkstra _ =
+  L.eraProtVerLow @era < L.eraProtVerLow @L.DijkstraEra
 
 -- | The default implementation of 'applyShelleyBasedTx', a thin wrapper around
 -- 'SL.applyTx'

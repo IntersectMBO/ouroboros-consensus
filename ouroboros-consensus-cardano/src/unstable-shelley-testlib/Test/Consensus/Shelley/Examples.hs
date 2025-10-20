@@ -55,6 +55,7 @@ import Ouroboros.Consensus.Protocol.TPraos
   ( TPraos
   , TPraosState (TPraosState)
   )
+import Ouroboros.Consensus.Shelley.Eras (isBeforeDijkstra)
 import Ouroboros.Consensus.Shelley.HFEras
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Query.Types
@@ -120,6 +121,7 @@ mkLedgerTables tx =
     xs -> xs
 
 fromShelleyLedgerExamples ::
+  forall era.
   ShelleyCompatible (TPraos StandardCrypto) era =>
   ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
   Examples (ShelleyBlock (TPraos StandardCrypto) era)
@@ -129,9 +131,9 @@ fromShelleyLedgerExamples
     , ..
     } =
     Examples
-      { exampleBlock = unlabelled blk
+      { exampleBlock = exampleBlockForEra
       , exampleSerialisedBlock = unlabelled serialisedBlock
-      , exampleHeader = unlabelled $ getHeader blk
+      , exampleHeader = fmap getHeader <$> exampleBlockForEra
       , exampleSerialisedHeader = unlabelled serialisedHeader
       , exampleHeaderHash = unlabelled hash
       , exampleGenTx = unlabelled tx
@@ -148,7 +150,14 @@ fromShelleyLedgerExamples
       , exampleLedgerTables = unlabelled $ mkLedgerTables leTx
       }
    where
-    blk = toShelleyBlock pleBlock
+    SL.Block header body = pleBlock
+    blkWithoutCert = mkShelleyBlock header body
+    blkWithCert = mkShelleyBlockWithPerasCert perasCert header body
+
+    exampleBlockForEra
+      | isBeforeDijkstra (Proxy @era) = unlabelled blkWithoutCert
+      | otherwise = unlabelled blkWithoutCert <> labelled [("WithPerasCert", blkWithCert)]
+
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = Serialised "<BLOCK>"
     tx = mkShelleyTx leTx
@@ -169,7 +178,7 @@ fromShelleyLedgerExamples
         ]
     results =
       labelled
-        [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
+        [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blkWithoutCert))
         , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
         , ("EmptyPParams", SomeResult GetCurrentPParams lePParams)
         , ("StakeDistribution", SomeResult GetStakeDistribution $ fromLedgerPoolDistr lePoolDistr)
@@ -228,6 +237,11 @@ fromShelleyLedgerExamples
       ExtLedgerState
         ledgerState
         (genesisHeaderState chainDepState)
+    perasCert =
+      PerasCert
+        { pcCertRound = PerasRoundNo 10
+        , pcCertBoostedBlock = blockPoint blkWithoutCert
+        }
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 
@@ -243,9 +257,9 @@ fromShelleyLedgerExamplesPraos
     , ..
     } =
     Examples
-      { exampleBlock = unlabelled blk
+      { exampleBlock = exampleBlockForEra
       , exampleSerialisedBlock = unlabelled serialisedBlock
-      , exampleHeader = unlabelled $ getHeader blk
+      , exampleHeader = fmap getHeader <$> exampleBlockForEra
       , exampleSerialisedHeader = unlabelled serialisedHeader
       , exampleHeaderHash = unlabelled hash
       , exampleGenTx = unlabelled tx
@@ -262,10 +276,14 @@ fromShelleyLedgerExamplesPraos
       , exampleLedgerConfig = unlabelled ledgerConfig
       }
    where
-    blk =
-      toShelleyBlock $
-        let SL.Block hdr1 bdy = pleBlock
-         in SL.Block (translateHeader hdr1) bdy
+    SL.Block header' body = pleBlock
+    header = translateHeader header'
+    blkWithoutCert = mkShelleyBlock header body
+    blkWithCert = mkShelleyBlockWithPerasCert perasCert header body
+
+    exampleBlockForEra
+      | isBeforeDijkstra (Proxy @era) = unlabelled blkWithoutCert
+      | otherwise = unlabelled blkWithoutCert <> labelled [("WithPerasCert", blkWithCert)]
 
     translateHeader :: SL.BHeader StandardCrypto -> Praos.Header StandardCrypto
     translateHeader (SL.BHeader bhBody bhSig) =
@@ -305,7 +323,7 @@ fromShelleyLedgerExamplesPraos
         ]
     results =
       labelled
-        [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
+        [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blkWithoutCert))
         , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
         , ("EmptyPParams", SomeResult GetCurrentPParams lePParams)
         , ("StakeDistribution", SomeResult GetStakeDistribution $ fromLedgerPoolDistr lePoolDistr)
@@ -366,6 +384,11 @@ fromShelleyLedgerExamplesPraos
       ExtLedgerState
         ledgerState
         (genesisHeaderState chainDepState)
+    perasCert =
+      PerasCert
+        { pcCertRound = PerasRoundNo 10
+        , pcCertBoostedBlock = blockPoint blkWithoutCert
+        }
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 

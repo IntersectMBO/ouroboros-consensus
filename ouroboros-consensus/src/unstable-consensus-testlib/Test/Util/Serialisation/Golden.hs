@@ -44,7 +44,7 @@ import Control.Exception (SomeException, evaluate, try)
 import Data.Bifunctor (first)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.UTF8 as BS.UTF8
-import Data.List (nub)
+import Data.List (isSuffixOf, nub)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
@@ -215,15 +215,22 @@ goldenTests testName examples enc goldenFolder mCDDL
   | otherwise =
       testGroup
         testName
-        [ goldenTestCBOR testName' example enc (goldenFolder </> testName') mCDDL
+        [ goldenTestCBOR testName' example enc (goldenFolder </> testName') mCDDL'
         | (mbLabel, example) <- examples
         , let testName' = case mbLabel of
                 Nothing -> testName
                 Just label -> testName <> "_" <> label
+              mCDDL' = skipCDDLCheckWithPerasCert mbLabel mCDDL
         ]
  where
   labels :: [Maybe String]
   labels = map fst examples
+
+  -- TODO this needs to be removed before closing:
+  -- https://github.com/tweag/cardano-peras/issues/103
+  skipCDDLCheckWithPerasCert mbLabel
+    | Just label <- mbLabel, "WithPerasCert" `isSuffixOf` label = const Nothing
+    | otherwise = id
 
 goldenTests' ::
   HasCallStack =>
