@@ -93,7 +93,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
-import Control.Arrow (left, second)
+import Control.Arrow (Arrow (..), left, second)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
@@ -588,7 +588,7 @@ instance
     LedgerTables
       . KeysMK
       . Core.neededTxInsForBlock
-      . shelleyBlockRaw
+      . fromShelleyBlock
 
 data ShelleyReapplyException
   = forall era.
@@ -632,10 +632,7 @@ applyHelper f cfg blk stBefore = do
     f
       globals
       tickedShelleyLedgerState
-      ( let b = shelleyBlockRaw blk
-            h' = mkHeaderView (SL.bheader b)
-         in SL.Block h' (SL.bbody b)
-      )
+      (SL.Block (mkHeaderView (shelleyBlockHeader blk)) (shelleyBlockBody blk))
 
   let track ::
         LedgerState (ShelleyBlock proto era) ValuesMK ->
