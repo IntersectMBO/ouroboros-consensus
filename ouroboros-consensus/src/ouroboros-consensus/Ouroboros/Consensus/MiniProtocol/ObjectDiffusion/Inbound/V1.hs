@@ -147,8 +147,7 @@ objectDiffusionInbound
   controlMessageSTM
   state =
     ObjectDiffusionInboundPipelined $
-      pure $
-        continueWithStateM (go Zero) initialInboundSt
+      continueWithStateM (go Zero) initialInboundSt
    where
     canRequestMoreObjects :: InboundSt k object -> Bool
     canRequestMoreObjects st =

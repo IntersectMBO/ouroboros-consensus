@@ -68,7 +68,7 @@ objectDiffusionInbound
     , psaOnReceiveIds
     , psaOnReceiveObjects
     } =
-    ObjectDiffusionInboundPipelined $ pure $ goIdle Zero
+    ObjectDiffusionInboundPipelined $ goIdle Zero
    where
     goIdle :: forall (n :: N). Nat n -> InboundStIdle n objectId object m ()
     goIdle n = WithEffect $ do
