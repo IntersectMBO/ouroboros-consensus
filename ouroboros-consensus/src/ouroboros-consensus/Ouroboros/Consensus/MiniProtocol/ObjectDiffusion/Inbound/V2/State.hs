@@ -27,7 +27,7 @@ import Data.Set qualified as Set
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API (ObjectPoolWriter (..))
-import Ouroboros.Consensus.Util.IOLike (MonadMVar, MonadMask, bracket_)
+import Ouroboros.Consensus.Util.IOLike (MonadMask, bracket_)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectIdsAck, NumObjectIdsReq)
 
 onRequestIds ::
@@ -244,7 +244,6 @@ onReceiveObjects ::
   forall m peerAddr object objectId.
   ( MonadSTM m
   , MonadMask m
-  , MonadMVar m
   , Ord objectId
   , Ord peerAddr
   ) =>
@@ -328,13 +327,11 @@ onReceiveObjectsImpl
 
     dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
 
--- | Should be called by `acknowledgeIds`
 submitObjectsToPool ::
   forall m peerAddr object objectId.
   ( Ord objectId
   , Ord peerAddr
   , MonadMask m
-  , MonadMVar m
   , MonadSTM m
   ) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->

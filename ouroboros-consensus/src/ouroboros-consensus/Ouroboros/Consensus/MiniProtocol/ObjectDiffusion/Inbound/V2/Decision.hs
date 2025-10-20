@@ -49,7 +49,7 @@ makeDecisions ::
 makeDecisions rng hasObject decisionPolicy globalState prevDecisions =
   let
     -- A subset of peers are currently executing a decision. We shouldn't update the decision for them
-    frozenPeersToDecisions = Map.filter pdExecutingDecision prevDecisions
+    frozenPeersToDecisions = Map.filter (\PeerDecision{pdStatus} -> pdStatus == DecisionBeingActedUpon) prevDecisions
 
     -- We do it in two steps, because computing the acknowledgment tell which objects from dpsObjectsAvailableIds sets of each peer won't actually be available anymore (as soon as we ack them),
     -- so that the pickObjectsToReq function can take this into account.
@@ -124,7 +124,7 @@ computeAck poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpMaxNumObjectsOut
           , pdNumIdsToReq
           , pdCanPipelineIdsRequests
           , pdObjectsToReqIds = Set.empty -- we don't decide this here
-          , pdExecutingDecision = False
+          , pdStatus = DecisionUnread
           }
      in
       ( Map.insert peerAddr peerDecision decisionsAcc

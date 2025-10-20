@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
@@ -45,9 +44,9 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 -- 2. Handle any available reply (`goCollect`)
 -- 3. Request new objects if possible (`goReqObjects`)
 -- 4. Request new ids (also responsible for ack) (`goReqIds`)
--- 5. signal psaOnDecisionExecuted (as part of `goReqIds{Blocking,NonBlocking}`)
+-- 5. signal psaOnDecisionCompleted (as part of `goReqIds{Blocking,NonBlocking}`)
 -- And loop again
--- We need to make sure we don't go again into `goIdle` until `psaOnDecisionExecuted` has been called
+-- We need to make sure we don't go again into `goIdle` until `psaOnDecisionCompleted` has been called
 objectDiffusionInbound ::
   forall objectId object m.
   ( MonadThrow m
@@ -62,7 +61,7 @@ objectDiffusionInbound
   controlMessageSTM
   PeerStateAPI
     { psaReadDecision
-    , psaOnDecisionExecuted
+    , psaOnDecisionCompleted
     , psaOnRequestIds
     , psaOnRequestObjects
     , psaOnReceiveIds
@@ -141,11 +140,11 @@ objectDiffusionInbound
     goReqIdsBlocking PeerDecision{pdNumIdsToAck, pdNumIdsToReq} = WithEffect $ do
       if pdNumIdsToReq == 0
         then do
-          psaOnDecisionExecuted
+          psaOnDecisionCompleted
           pure $ goIdle Zero
         else do
           psaOnRequestIds pdNumIdsToAck pdNumIdsToReq
-          psaOnDecisionExecuted
+          psaOnDecisionCompleted
           pure $
             SendMsgRequestObjectIdsBlocking
               pdNumIdsToAck
@@ -164,11 +163,11 @@ objectDiffusionInbound
     goReqIdsPipelined n PeerDecision{pdNumIdsToAck, pdNumIdsToReq} = WithEffect $ do
       if pdNumIdsToReq == 0
         then do
-          psaOnDecisionExecuted
+          psaOnDecisionCompleted
           pure $ goIdle n
         else do
           psaOnRequestIds pdNumIdsToAck pdNumIdsToReq
-          psaOnDecisionExecuted
+          psaOnDecisionCompleted
           pure $
             SendMsgRequestObjectIdsPipelined
               pdNumIdsToAck
