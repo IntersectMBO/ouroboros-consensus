@@ -170,7 +170,6 @@ withPeer
                       -- This should block until the decision has status `DecisionUnread`
                       -- which means it is a new decision that the peer has not acted upon yet
                       -- If `DecisionCompleted` is read here, it means the decision logic hasn't had time to make a new decision for this peer
-                      -- If `DecisionBeingActedUpon` is read here, it means the peer forgot to call `psaOnDecisionCompleted` after acting upon the last decision
                       decision@PeerDecision{pdStatus} <- readTVar decisionChan
                       when (pdStatus == DecisionBeingActedUpon) $ error "Forgot to call `psaOnDecisionCompleted` for this peer"
                       check $ pdStatus == DecisionUnread
@@ -201,7 +200,8 @@ withPeer
                         decisionTracer
                         globalStateVar
                         peerAddr
-                  , psaOnReceiveObjects =
+                  , psaOnReceiveObjects = \objects -> do
+                      PeerDecision{pdObjectsToReqIds} <- atomically $ readTVar decisionChan
                       State.onReceiveObjects
                         objectDiffusionTracer
                         decisionTracer
@@ -209,6 +209,8 @@ withPeer
                         objectPoolWriter
                         objectPoolSem
                         peerAddr
+                        pdObjectsToReqIds
+                        objects
                   }
 
       -- register the peer in the global state now

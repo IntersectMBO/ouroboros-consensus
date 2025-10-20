@@ -16,7 +16,8 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
 
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Concurrent.Class.MonadSTM.TSem
-import Control.Exception (assert)
+import Control.Exception (assert, throw)
+import Control.Monad (when)
 import Control.Tracer (Tracer, traceWith)
 import Data.Foldable qualified as Foldable
 import Data.Map.Strict (Map, findWithDefault)
@@ -81,6 +82,7 @@ onRequestIdsImpl
             let
               -- We compute the ids to ack and new state of the FIFO based on the number of ids to ack given by the decision logic
               (idsToAck, dpsOutstandingFifo') =
+                assert (StrictSeq.length dpsOutstandingFifo >= fromIntegral numIdsToAck) $
                 StrictSeq.splitAt
                   (fromIntegral numIdsToAck)
                   dpsOutstandingFifo
@@ -143,6 +145,10 @@ onRequestObjectsImpl
     dgsPeerStates' =
       Map.adjust
         ( \ps@DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds} ->
+            assert
+            (  objectIds `Set.isSubsetOf` dpsObjectsAvailableIds
+            && Set.null (objectIds `Set.intersection` dpsObjectsInflightIds)
+            ) $
             ps
               { dpsObjectsAvailableIds = dpsObjectsAvailableIds \\ objectIds
               , dpsObjectsInflightIds = dpsObjectsInflightIds `Set.union` objectIds
@@ -169,15 +175,32 @@ onReceiveIds ::
   -- | received `objectId`s
   m ()
 onReceiveIds odTracer decisionTracer globalStateVar peerAddr numIdsInitiallyRequested receivedIds = do
+  peerState <- atomically $ ((Map.! peerAddr) . dgsPeerStates) <$> readTVar globalStateVar
+  checkProtocolErrors peerState numIdsInitiallyRequested receivedIds
   globalState' <- atomically $ do
     stateTVar
       globalStateVar
       ( \globalState ->
           let globalState' = onReceiveIdsImpl peerAddr numIdsInitiallyRequested receivedIds globalState
-           in (globalState', globalState')
+          in (globalState', globalState')
       )
   traceWith odTracer (TraceObjectDiffusionInboundReceivedIds (length receivedIds))
   traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "onReceiveIds" globalState')
+  where
+    checkProtocolErrors ::
+      DecisionPeerState objectId object->
+      NumObjectIdsReq ->
+      [objectId] ->
+      m ()
+    checkProtocolErrors DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds} nReq ids = do
+      when (length ids > fromIntegral nReq) $ throw ProtocolErrorObjectIdsNotRequested
+      let idSet = Set.fromList ids
+      when (length ids /= Set.size idSet) $ throw ProtocolErrorObjectIdsDuplicate
+      when
+        -- TODO also check for IDs in pool
+        (  (not $ Set.null $ idSet `Set.intersection` dpsObjectsAvailableIds)
+        || (not $ Set.null $ idSet `Set.intersection` dpsObjectsInflightIds)
+        ) $ throw ProtocolErrorObjectIdAlreadyKnown
 
 onReceiveIdsImpl ::
   forall peerAddr object objectId.
@@ -253,13 +276,15 @@ onReceiveObjects ::
   ObjectPoolWriter objectId object m ->
   ObjectPoolSem m ->
   peerAddr ->
+  -- | requested objects
+  Set objectId ->
   -- | received objects
   [object] ->
   m ()
-onReceiveObjects odTracer tracer globalStateVar objectPoolWriter poolSem peerAddr objectsReceived = do
+onReceiveObjects odTracer tracer globalStateVar objectPoolWriter poolSem peerAddr objectsRequestedIds objectsReceived = do
   let getId = opwObjectId objectPoolWriter
   let objectsReceivedMap = Map.fromList $ (\obj -> (getId obj, obj)) <$> objectsReceived
-
+  checkProtocolErrors objectsRequestedIds objectsReceivedMap
   globalState' <- atomically $ do
     stateTVar
       globalStateVar
@@ -281,6 +306,15 @@ onReceiveObjects odTracer tracer globalStateVar objectPoolWriter poolSem peerAdd
     poolSem
     peerAddr
     objectsReceivedMap
+  where
+    checkProtocolErrors ::
+      Set objectId->
+      Map objectId object ->
+      m ()
+    checkProtocolErrors requested received' = do
+      let received = Map.keysSet received'
+      when (not $ Set.null $ requested \\ received) $ throw ProtocolErrorObjectMissing
+      when (not $ Set.null $ received \\ requested) $ throw ProtocolErrorObjectNotRequested
 
 onReceiveObjectsImpl ::
   forall peerAddr object objectId.
@@ -314,7 +348,7 @@ onReceiveObjectsImpl
           dgsPeerStates
 
     -- subtract requested from in-flight
-    dpsObjectsInflightIds' =
+    dpsObjectsInflightIds' = assert (objectsReceivedIds `Set.isSubsetOf` dpsObjectsInflightIds) $
       dpsObjectsInflightIds \\ objectsReceivedIds
 
     dpsObjectsOwtPool' = dpsObjectsOwtPool <> objectsReceived
