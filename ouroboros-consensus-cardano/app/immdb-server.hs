@@ -12,23 +12,34 @@ import           Main.Utf8 (withStdTerminalHandles)
 import qualified Network.Socket as Socket
 import           Options.Applicative
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import           Cardano.Slotting.Slot (SlotNo (..))
+import qualified Data.Time.Clock.POSIX as POSIX
 
 main :: IO ()
 main = withStdTerminalHandles $ do
     cryptoInit
-    Opts {immDBDir, port, configFile} <- execParser optsParser
+    Opts {immDBDir, port, configFile, refSlotNr, refTimeForRefSlot}
+        <- execParser optsParser
     let sockAddr = Socket.SockAddrInet port hostAddr
           where
             -- could also be passed in
             hostAddr = Socket.tupleToHostAddress (127, 0, 0, 1)
         args = Cardano.CardanoBlockArgs configFile Nothing
     ProtocolInfo{pInfoConfig} <- mkProtocolInfo args
-    absurd <$> ImmDBServer.run immDBDir sockAddr pInfoConfig
+    let onsetRefSlot = ImmDBServer.OnsetRefSlot refSlotNr refTimeForRefSlot
+    absurd <$> ImmDBServer.run immDBDir sockAddr pInfoConfig onsetRefSlot
 
 data Opts = Opts {
     immDBDir   :: FilePath
   , port       :: Socket.PortNumber
   , configFile :: FilePath
+  , refSlotNr :: SlotNo
+  -- ^ Reference slot number. This, in combination with the reference
+  -- time will be used to convert between slot number and wallclock time.
+  -- N.B.: for now we assume the slot duration to be 1 second.
+  , refTimeForRefSlot  :: POSIX.POSIXTime
+  -- ^ Reference slot onset. Wallclock time that corresponds to the
+  -- reference slot.
   }
 
 optsParser :: ParserInfo Opts
@@ -54,4 +65,14 @@ optsParser =
         , help "Path to config file, in the same format as for the node or db-analyser"
         , metavar "PATH"
         ]
-      pure Opts {immDBDir, port, configFile}
+      refSlotNr <- fmap SlotNo $ option auto $ mconcat
+        [ long "initial-slot"
+        , help "Reference slot number (SlotNo). This, together with the initial-time will be used for time translations."
+        , metavar "SLOT_NO"
+        ]
+      refTimeForRefSlot <- option auto $ mconcat
+        [ long "initial-time"
+        , help "UTC time for the reference slot, provided as POSIX seconds (Unix timestamp)"
+        , metavar "POSIX_SECONDS"
+        ]
+      pure Opts {immDBDir, port, configFile, refSlotNr, refTimeForRefSlot}

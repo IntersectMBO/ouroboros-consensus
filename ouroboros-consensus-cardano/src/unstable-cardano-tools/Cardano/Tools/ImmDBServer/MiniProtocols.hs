@@ -12,7 +12,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- | Implement ChainSync and BlockFetch servers on top of just the immutable DB.
-module Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer) where
+module Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer, OnsetRefSlot(..)) where
 
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
@@ -60,6 +60,14 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
 import           Ouroboros.Network.Protocol.Handshake.Version (Version (..))
 import           Ouroboros.Network.Protocol.KeepAlive.Server
                      (keepAliveServerPeer)
+import qualified Data.Time.Clock.POSIX as POSIX
+
+-- | Onset of the reference slot. Used for conversions between
+-- wallclock time and slot number.
+data OnsetRefSlot =
+   OnsetRefSlot { slot :: SlotNo,
+                  onset :: POSIX.POSIXTime
+                }
 
 immDBServer ::
      forall m blk addr.
@@ -74,9 +82,10 @@ immDBServer ::
   -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addr)
   -> ImmutableDB m blk
   -> NetworkMagic
+  -> OnsetRefSlot
   -> Versions NodeToNodeVersion NodeToNodeVersionData
        (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ())
-immDBServer codecCfg encAddr decAddr immDB networkMagic = do
+immDBServer codecCfg encAddr decAddr immDB networkMagic onsetRefSlot  = do
     forAllVersions application
   where
     forAllVersions ::

@@ -586,6 +586,7 @@ library unstable-cardano-tools
     sop-core,
     sop-extras,
     strict-sop-core,
+    time,
     text,
     text-builder >=1,
     transformers,
@@ -673,11 +674,13 @@ executable immdb-server
   build-depends:
     base,
     cardano-crypto-class,
+    cardano-slotting,
     network,
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:unstable-cardano-tools,
     with-utf8,
+    time
 
 executable snapshot-converter
   import: common-exe

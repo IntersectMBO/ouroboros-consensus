@@ -3,9 +3,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Cardano.Tools.ImmDBServer.Diffusion (run) where
+module Cardano.Tools.ImmDBServer.Diffusion (run, OnsetRefSlot (..)) where
 
-import           Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer)
+import           Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer, OnsetRefSlot (..))
 import           Control.ResourceRegistry
 import           Control.Tracer
 import qualified Data.ByteString.Lazy as BL
@@ -82,8 +82,9 @@ run ::
   => FilePath
   -> SockAddr
   -> TopLevelConfig blk
+  -> OnsetRefSlot
   -> IO Void
-run immDBDir sockAddr cfg = withRegistry \registry ->
+run immDBDir sockAddr cfg onsetRefSlot = withRegistry \registry ->
     ImmutableDB.withDB
       (ImmutableDB.openDB (immDBArgs registry) runWithTempRegistry)
       \immDB -> serve sockAddr $ immDBServer
@@ -92,6 +93,7 @@ run immDBDir sockAddr cfg = withRegistry \registry ->
         decodeRemoteAddress
         immDB
         networkMagic
+        onsetRefSlot
   where
     immDBArgs registry = ImmutableDB.defaultArgs {
           immCheckIntegrity = nodeCheckIntegrity storageCfg
