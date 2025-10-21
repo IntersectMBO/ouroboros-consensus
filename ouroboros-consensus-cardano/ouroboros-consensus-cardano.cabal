@@ -586,7 +586,6 @@ library unstable-cardano-tools
     sop-core,
     sop-extras,
     strict-sop-core,
-    time,
     text,
     text-builder >=1,
     transformers,

@@ -12,7 +12,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- | Implement ChainSync and BlockFetch servers on top of just the immutable DB.
-module Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer, OnsetRefSlot(..)) where
+module Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer) where
 
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
@@ -60,14 +60,6 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
 import           Ouroboros.Network.Protocol.Handshake.Version (Version (..))
 import           Ouroboros.Network.Protocol.KeepAlive.Server
                      (keepAliveServerPeer)
-import qualified Data.Time.Clock.POSIX as POSIX
-
--- | Onset of the reference slot. Used for conversions between
--- wallclock time and slot number.
-data OnsetRefSlot =
-   OnsetRefSlot { slot :: SlotNo,
-                  onset :: POSIX.POSIXTime
-                }
 
 immDBServer ::
      forall m blk addr.
@@ -82,10 +74,10 @@ immDBServer ::
   -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addr)
   -> ImmutableDB m blk
   -> NetworkMagic
-  -> OnsetRefSlot
+  -> (WithOrigin SlotNo -> m DiffTime)
   -> Versions NodeToNodeVersion NodeToNodeVersionData
        (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ())
-immDBServer codecCfg encAddr decAddr immDB networkMagic onsetRefSlot  = do
+immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay  = do
     forAllVersions application
   where
     forAllVersions ::
@@ -151,7 +143,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic onsetRefSlot  = do
                 withRegistry
               $ runPeer nullTracer cChainSyncCodecSerialised channel
               . chainSyncServerPeer
-              . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint
+              . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint getSlotDelay
             blockFetchProt =
                 MiniProtocolCb $ \_ctx channel ->
                 withRegistry
@@ -182,9 +174,10 @@ chainSyncServer ::
      forall m blk a. (IOLike m, HasHeader blk)
   => ImmutableDB m blk
   -> BlockComponent blk (ChainDB.WithPoint blk a)
+  -> (WithOrigin SlotNo -> m DiffTime)
   -> ResourceRegistry m
   -> ChainSyncServer a (Point blk) (Tip blk) m ()
-chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
+chainSyncServer immDB blockComponent getSlotDelay registry = ChainSyncServer $ do
     follower <- newImmutableDBFollower
     runChainSyncServer $
       chainSyncServerForFollower nullTracer getImmutableTip follower
@@ -209,7 +202,10 @@ chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
                     ImmutableDB.IteratorExhausted -> do
                       ImmutableDB.iteratorClose iterator
                       throwIO ReachedImmutableTip
-                    ImmutableDB.IteratorResult a  ->
+                    ImmutableDB.IteratorResult a  -> do
+                      -- Wait until the slot of the current block has been reached
+                      slotDelay <- getSlotDelay $ pointSlot $ ChainDB.point a
+                      threadDelay slotDelay
                       pure $ AddBlock a
 
             followerClose = ImmutableDB.iteratorClose =<< readTVarIO varIterator

@@ -26,8 +26,12 @@ main = withStdTerminalHandles $ do
             hostAddr = Socket.tupleToHostAddress (127, 0, 0, 1)
         args = Cardano.CardanoBlockArgs configFile Nothing
     ProtocolInfo{pInfoConfig} <- mkProtocolInfo args
-    let onsetRefSlot = ImmDBServer.OnsetRefSlot refSlotNr refTimeForRefSlot
-    absurd <$> ImmDBServer.run immDBDir sockAddr pInfoConfig onsetRefSlot
+    absurd <$> ImmDBServer.run immDBDir
+                               sockAddr
+                               pInfoConfig
+                               (mkGetSlotDelay refSlotNr refTimeForRefSlot)
+    where
+      mkGetSlotDelay = undefined
 
 data Opts = Opts {
     immDBDir   :: FilePath
