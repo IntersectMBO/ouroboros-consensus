@@ -45,6 +45,9 @@
       url = "github:phadej/gentle-introduction";
       flake = false;
     };
+
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs";
+
   };
   outputs = inputs:
     let
@@ -73,6 +76,9 @@
           ];
         };
         hydraJobs = import ./nix/ci.nix { inherit inputs pkgs; };
+        leiosDemo = import ./scripts/leios-demo/build.nix { inherit inputs;
+                                                            pkgs = import inputs.nixpkgs-unstable {inherit system;};
+                                                          };
       in
       {
         devShells = rec {
@@ -89,7 +95,7 @@
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];
           };
-        };
+        } // leiosDemo.devShells;
         inherit hydraJobs;
         legacyPackages = pkgs;
         packages = hydraJobs.native.haskell96.exesNoAsserts;
