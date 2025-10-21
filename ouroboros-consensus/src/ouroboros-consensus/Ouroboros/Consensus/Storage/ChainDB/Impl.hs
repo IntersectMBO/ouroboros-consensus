@@ -90,7 +90,6 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( ChainSelStarvation (..)
   )
-import System.Random
 
 {-------------------------------------------------------------------------------
   Initialization
@@ -221,7 +220,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     chainSelFuse <- newFuse "chain selection"
     chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
-    varSnapshotDelayRNG <- newTVarIO (mkStdGen 0)
+    varSnapshotDelayRNG <- newTVarIO (Args.cdbsSnapshotDelayRNG cdbSpecificArgs)
 
     let env =
           CDB
