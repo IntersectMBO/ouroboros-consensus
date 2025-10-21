@@ -362,11 +362,6 @@ data ChainDbEnv m blk = CDB
   }
   deriving Generic
 
-instance NoThunks StdGen where
-  showTypeOf = undefined
-  noThunks = undefined
-  wNoThunks = undefined
-
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a
 -- constraint and still have it work with the simulator)
