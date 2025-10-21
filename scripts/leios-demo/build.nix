@@ -6,14 +6,16 @@
       name = "leios-demo";
       buildInputs = with pkgs; with python3Packages;
         [
-          python3
+          python
           ipython
           pandas
+          altair
           pip
           virtualenv
           python-lsp-server
           jupyterlab
           black
+          itables
 
           nixpkgs-fmt
           nil
