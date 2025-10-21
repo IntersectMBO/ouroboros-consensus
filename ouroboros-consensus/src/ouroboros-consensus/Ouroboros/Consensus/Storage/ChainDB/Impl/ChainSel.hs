@@ -13,6 +13,7 @@
 -- adding a block.
 module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   ( addBlockAsync
+  , addPerasCertAsync
   , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
@@ -37,7 +38,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust, isJust)
+import Data.Maybe (fromJust, fromMaybe, isJust)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -63,15 +64,19 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.SelectView
+import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
+  , AddPerasCertPromise
   , BlockComponent (..)
   , ChainType (..)
   , LoE (..)
   )
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
   ( InvalidBlockPunishment
+  , noPunishment
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
@@ -85,10 +90,12 @@ import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB hiding (yield)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.AnchoredFragment
+import Ouroboros.Consensus.Util.EarlyExit (exitEarly, withEarlyExit_)
 import Ouroboros.Consensus.Util.Enclose (encloseWith)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
@@ -118,6 +125,7 @@ initialChainSelection ::
   TopLevelConfig blk ->
   StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
   LoE () ->
+  PerasWeightSnapshot blk ->
   m (ChainAndLedger m blk)
 initialChainSelection
   immutableDB
@@ -127,7 +135,8 @@ initialChainSelection
   tracer
   cfg
   varInvalid
-  loE = do
+  loE
+  weights = do
     -- TODO: Improve the user experience by trimming any potential
     -- blocks from the future from the VolatileDB.
     --
@@ -172,7 +181,7 @@ initialChainSelection
     let curChain = Empty (AF.castAnchor i)
     curChainAndLedger <- VF.newM curChain curForker
 
-    case NE.nonEmpty (filter (preferAnchoredCandidate bcfg curChain) chains) of
+    case NE.nonEmpty (filter (preferAnchoredCandidate bcfg weights curChain) chains) of
       -- If there are no candidates, no chain selection is needed
       Nothing -> return curChainAndLedger
       Just chains' ->
@@ -254,7 +263,7 @@ initialChainSelection
     chainSelection' curChainAndLedger candidates =
       atomically (forkerCurrentPoint ledger) >>= \curpt ->
         assert (all ((curpt ==) . castPoint . AF.anchorPoint) candidates) $
-          assert (all (preferAnchoredCandidate bcfg curChain) candidates) $ do
+          assert (all (preferAnchoredCandidate bcfg weights curChain) candidates) $ do
             cse <- chainSelEnv
             chainSelection cse rr (Diff.extend <$> candidates)
      where
@@ -269,6 +278,7 @@ initialChainSelection
             , bcfg
             , varInvalid
             , blockCache = BlockCache.empty
+            , weights
             , curChain
             , validationTracer = InitChainSelValidation >$< tracer
             , -- initial chain selection is not concerned about pipelining
@@ -314,6 +324,15 @@ addBlockAsync ::
 addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
   addBlockToAdd (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
+addPerasCertAsync ::
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  ChainDbEnv m blk ->
+  ValidatedPerasCert blk ->
+  m (AddPerasCertPromise m)
+addPerasCertAsync CDB{cdbTracer, cdbChainSelQueue} =
+  addPerasCertToQueue (TraceAddPerasCertEvent >$< cdbTracer) cdbChainSelQueue
+
 -- | Schedule reprocessing of blocks postponed by the LoE.
 triggerChainSelectionAsync ::
   forall m blk.
@@ -358,14 +377,15 @@ chainSelSync ::
 -- blocks that were originally postponed by the LoE, but can be adopted once we
 -- conclude that we are caught-up (and hence are longer bound by the LoE).
 chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
-  (succsOf, lookupBlockInfo, curChain) <- atomically $ do
+  (succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
-    (,,)
+    (,,,)
       <$> ( ignoreInvalidSuc cdbVolatileDB invalid
               <$> VolatileDB.filterByPredecessor cdbVolatileDB
           )
       <*> VolatileDB.getBlockInfo cdbVolatileDB
       <*> Query.getCurrentChain cdb
+      <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
   let
     -- All immediate successor blocks of blocks on the current chain (including
     -- the anchor), excluding those on the current chain.
@@ -380,10 +400,10 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
       , not $ AF.pointOnFragment (realPointToPoint loePt) curChain
       ]
 
-    chainSelEnv = mkChainSelEnv cdb BlockCache.empty curChain Nothing
+    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
 
   chainDiffs :: [[ChainDiff (Header blk)]] <-
-    for loePoints $ constructPreferableCandidates cdb curChain Map.empty
+    for loePoints $ constructPreferableCandidates cdb weights curChain Map.empty
 
   -- Consider all candidates at once, to avoid transient chain switches.
   case NE.nonEmpty $ concat chainDiffs of
@@ -392,7 +412,7 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
       chainSelection chainSelEnv rr chainDiffs' >>= \case
         Just validatedChainDiff ->
           -- Switch to the new better chain.
-          switchTo cdb Nothing validatedChainDiff
+          switchTo cdb weights Nothing validatedChainDiff
         Nothing -> pure ()
     Nothing -> pure ()
 
@@ -463,6 +483,65 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   deliverProcessed tip =
     atomically $
       putTMVar varBlockProcessed (SuccesfullyAddedBlock tip)
+-- Process a Peras certificate by adding it to the PerasCertDB and potentially
+-- performing chain selection if a candidate is now better than our selection.
+chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
+  curChain <- lift $ atomically $ Query.getCurrentChain cdb
+  let immTip = AF.castAnchor $ AF.anchor curChain
+
+  withEarlyExit_ $ do
+    -- Ignore the certificate if it boosts a block that is so old that it can't
+    -- influence our selection.
+    when (pointSlot boostedBlock < AF.anchorToSlotNo immTip) $ do
+      lift $ lift $ traceWith tracer $ IgnorePerasCertTooOld certRound boostedBlock immTip
+      exitEarly
+
+    -- Add the certificate to the PerasCertDB.
+    lift (lift $ PerasCertDB.addCert cdbPerasCertDB cert) >>= \case
+      PerasCertDB.AddedPerasCertToDB -> pure ()
+      -- If it already is in the PerasCertDB, we are done.
+      PerasCertDB.PerasCertAlreadyInDB -> exitEarly
+
+    -- If the certificate boosts a block on our current chain (including the
+    -- anchor), then it just makes our selection even stronger.
+    when (AF.withinFragmentBounds (castPoint boostedBlock) curChain) $ do
+      lift $ lift $ traceWith tracer $ PerasCertBoostsCurrentChain certRound boostedBlock
+      exitEarly
+
+    boostedHash <- case pointHash boostedBlock of
+      -- If the certificate boosts the Genesis point, then it can not influence
+      -- chain selection as all chains contain it.
+      GenesisHash -> do
+        lift $ lift $ traceWith tracer $ PerasCertBoostsGenesis certRound
+        exitEarly
+      -- Otherwise, the certificate boosts a block potentially on a (future)
+      -- candidate.
+      BlockHash boostedHash -> pure boostedHash
+    boostedHdr <-
+      lift (lift $ VolatileDB.getBlockComponent cdbVolatileDB GetHeader boostedHash) >>= \case
+        -- If we have not (yet) received the boosted block, we don't need to do
+        -- anything further for now regarding chain selection. Once we receive
+        -- it, the additional weight of the certificate is taken into account.
+        Nothing -> do
+          lift $ lift $ traceWith tracer $ PerasCertBoostsBlockNotYetReceived certRound boostedBlock
+          exitEarly
+        Just boostedHdr -> pure boostedHdr
+
+    -- Trigger chain selection for the boosted block.
+    lift $ lift $ traceWith tracer $ ChainSelectionForBoostedBlock certRound boostedBlock
+    lift $ chainSelectionForBlock cdb BlockCache.empty boostedHdr noPunishment
+
+  -- Deliver promise indicating that we processed the cert.
+  lift $ atomically $ putTMVar varProcessed ()
+ where
+  tracer :: Tracer m (TraceAddPerasCertEvent blk)
+  tracer = TraceAddPerasCertEvent >$< cdbTracer
+
+  certRound :: PerasRoundNo
+  certRound = getPerasCertRound cert
+
+  boostedBlock :: Point blk
+  boostedBlock = getPerasCertBoostedBlock cert
 
 -- | Return 'True' when the given header should be ignored when adding it
 -- because it is too old, i.e., we wouldn't be able to switch to a chain
@@ -539,11 +618,12 @@ chainSelectionForBlock ::
   InvalidBlockPunishment m ->
   Electric m ()
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
-  (invalid, curChain) <-
+  (invalid, curChain, weights) <-
     atomically $
-      (,)
+      (,,)
         <$> (forgetFingerprint <$> readTVar cdbInvalid)
         <*> Query.getCurrentChain cdb
+        <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
 
   -- The current chain we're working with here is not longer than @k@ blocks
   -- (see 'getCurrentChain' and 'cdbChain'), which is easier to reason about
@@ -576,13 +656,14 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         chainDiffs <-
           constructPreferableCandidates
             cdb
+            weights
             curChain
             (Map.singleton (headerHash hdr) hdr)
             (headerRealPoint hdr)
 
         let noChange = traceWith addBlockTracer $ StoreButDontChange p
 
-            chainSelEnv = mkChainSelEnv cdb blockCache curChain (Just (p, punish))
+            chainSelEnv = mkChainSelEnv cdb blockCache weights curChain (Just (p, punish))
 
         case NE.nonEmpty chainDiffs of
           Just chainDiffs' -> do
@@ -590,7 +671,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
             chainSelection chainSelEnv rr chainDiffs' >>= \case
               Just validatedChainDiff ->
                 -- Switch to the new better chain.
-                switchTo cdb (Just p) validatedChainDiff
+                switchTo cdb weights (Just p) validatedChainDiff
               -- No valid candidate better than our chain.
               Nothing -> noChange
           -- No candidate better than our chain.
@@ -617,6 +698,7 @@ constructPreferableCandidates ::
   , BlockSupportsProtocol blk
   ) =>
   ChainDbEnv m blk ->
+  PerasWeightSnapshot blk ->
   -- | The current chain.
   AnchoredFragment (Header blk) ->
   -- | Headers already in memory (to avoid loading them from disk).
@@ -626,7 +708,7 @@ constructPreferableCandidates ::
   -- | All candidates involving @p@ (ie containing @p@ in 'getSuffix') which are
   -- preferable to the current chain.
   m [ChainDiff (Header blk)]
-constructPreferableCandidates CDB{..} curChain hdrCache p = do
+constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
   (succsOf, lookupBlockInfo) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
     (,)
@@ -666,10 +748,10 @@ constructPreferableCandidates CDB{..} curChain hdrCache p = do
             -- Translate the 'HeaderFields' to 'Header' by reading the headers
             -- from disk.
             mapM translateToHeaders
-              -- Filter out candidates that are shorter than the current chain.
-              -- We don't want to needlessly read the headers from disk for
-              -- those candidates.
-              . NE.filter (not . Diff.rollbackExceedsSuffix)
+              -- Filter out candidates that have less weight than the current
+              -- chain. We don't want to needlessly read the headers from disk
+              -- for those candidates.
+              . NE.filter (not . Diff.rollbackExceedsSuffix weights curChain)
               -- Extend the diff with candidates fitting on @p@
               . Paths.extendWithSuccessors succsOf lookupBlockInfo
               $ diff
@@ -677,7 +759,7 @@ constructPreferableCandidates CDB{..} curChain hdrCache p = do
         | otherwise -> pure []
   pure
     -- Only keep candidates preferable to the current chain.
-    . filter (preferAnchoredCandidate bcfg curChain . Diff.getSuffix)
+    . filter (preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix)
     -- Trim fragments so that they follow the LoE, that is, they extend the LoE
     -- by at most @k@ blocks or are extended by the LoE.
     . fmap (trimToLoE loeFrag)
@@ -792,6 +874,7 @@ switchTo ::
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
+  PerasWeightSnapshot blk ->
   -- | Which block we performed chain selection for (if any). This is 'Nothing'
   -- when reprocessing blocks that were postponed due to the Limit on Eagerness
   -- (cf 'ChainSelReprocessLoEBlocks').
@@ -799,7 +882,7 @@ switchTo ::
   -- | Chain and ledger to switch to
   ValidatedChainDiff (Header blk) (Forker' m blk) ->
   m ()
-switchTo CDB{..} triggerPt vChainDiff = do
+switchTo CDB{..} weights triggerPt vChainDiff = do
   traceWith addBlockTracer $
     ChangingSelection $
       castPoint $
@@ -860,7 +943,11 @@ switchTo CDB{..} triggerPt vChainDiff = do
   let mkTraceEvent
         | getRollback (getChainDiff vChainDiff) == 0 = AddedToCurrentChain
         | otherwise = SwitchedToAFork
-      selChangedInfo = mkSelectionChangedInfo curChain newChain newLedger
+      selChangedInfo =
+        mkSelectionChangedInfo
+          curChain
+          (getChainDiff vChainDiff)
+          newLedger
   traceWith addBlockTracer $
     mkTraceEvent events selChangedInfo curChain newChain
   whenJust (strictMaybeToMaybe prevTentativeHeader) $
@@ -875,27 +962,28 @@ switchTo CDB{..} triggerPt vChainDiff = do
   addBlockTracer = TraceAddBlockEvent >$< cdbTracer
 
   mkSelectionChangedInfo ::
-    AnchoredFragment (Header blk) ->
-    -- \^ old chain
-    AnchoredFragment (Header blk) ->
-    -- \^ new chain
-    ExtLedgerState blk EmptyMK ->
-    -- \^ new tip
+    AnchoredFragment (Header blk) -> -- old selection
+    ChainDiff (Header blk) -> -- diff we are adopting
+    ExtLedgerState blk EmptyMK -> -- new tip
     SelectionChangedInfo blk
-  mkSelectionChangedInfo oldChain newChain newTip =
+  mkSelectionChangedInfo oldChain diff newTip =
     SelectionChangedInfo
       { newTipPoint = castRealPoint tipPoint
       , newTipEpoch = tipEpoch
       , newTipSlotInEpoch = tipSlotInEpoch
       , newTipTrigger = triggerPt
-      , newTipSelectView
-      , oldTipSelectView =
-          selectView (configBlock cfg)
-            <$> eitherToMaybe (AF.head oldChain)
+      , newSuffixSelectView
+      , oldSuffixSelectView =
+          withEmptyFragmentToMaybe $
+            weightedSelectView (configBlock cfg) weights oldSuffix
       }
    where
     cfg :: TopLevelConfig blk
     cfg = cdbTopLevelConfig
+
+    oldSuffix, newSuffix :: AnchoredFragment (Header blk)
+    oldSuffix = AF.anchorNewest (getRollback diff) oldChain
+    newSuffix = getSuffix diff
 
     ledger :: LedgerState blk EmptyMK
     ledger = ledgerState newTip
@@ -906,14 +994,13 @@ switchTo CDB{..} triggerPt vChainDiff = do
         (configLedger cfg)
         ledger
 
-    (tipPoint, (tipEpoch, tipSlotInEpoch), newTipSelectView) =
-      case AF.head newChain of
-        Left _anchor -> error "cannot have switched to an empty chain"
-        Right tipHdr ->
+    (tipPoint, (tipEpoch, tipSlotInEpoch), newSuffixSelectView) =
+      case (AF.head newSuffix, weightedSelectView (configBlock cfg) weights newSuffix) of
+        (Right tipHdr, NonEmptyFragment wsv) ->
           let query = History.slotToEpoch' (blockSlot tipHdr)
               tipEpochData = History.runQueryPure query summary
-              sv = selectView (configBlock cfg) tipHdr
-           in (blockRealPoint tipHdr, tipEpochData, sv)
+           in (blockRealPoint tipHdr, tipEpochData, wsv)
+        _ -> error "cannot have switched via a diff with an empty suffix"
 
 -- | Check whether the header for the hash is in the cache, if not, get
 -- the corresponding header from the VolatileDB and store it in the cache.
@@ -943,6 +1030,7 @@ data ChainSelEnv m blk = ChainSelEnv
   , varTentativeHeader :: StrictTVar m (StrictMaybe (Header blk))
   , getTentativeFollowers :: STM m [FollowerHandle m blk]
   , blockCache :: BlockCache blk
+  , weights :: PerasWeightSnapshot blk
   , curChain :: AnchoredFragment (Header blk)
   , punish :: Maybe (RealPoint blk, InvalidBlockPunishment m)
   -- ^ The block that this chain selection invocation is processing, and the
@@ -968,12 +1056,14 @@ mkChainSelEnv ::
   ChainDbEnv m blk ->
   -- | See 'blockCache'
   BlockCache blk ->
+  -- | See 'weights'
+  PerasWeightSnapshot blk ->
   -- | See 'curChain'
   AnchoredFragment (Header blk) ->
   -- | See 'punish'.
   Maybe (RealPoint blk, InvalidBlockPunishment m) ->
   ChainSelEnv m blk
-mkChainSelEnv CDB{..} blockCache curChain punish =
+mkChainSelEnv CDB{..} blockCache weights curChain punish =
   ChainSelEnv
     { lgrDB = cdbLedgerDB
     , bcfg = configBlock cdbTopLevelConfig
@@ -984,6 +1074,7 @@ mkChainSelEnv CDB{..} blockCache curChain punish =
         filter ((TentativeChain ==) . fhChainType) . Map.elems
           <$> readTVar cdbFollowers
     , blockCache
+    , weights
     , curChain
     , validationTracer =
         TraceAddBlockEvent . AddBlockValidation >$< cdbTracer
@@ -1017,7 +1108,7 @@ chainSelection ::
 chainSelection chainSelEnv rr chainDiffs =
   assert
     ( all
-        (preferAnchoredCandidate bcfg curChain . Diff.getSuffix)
+        (preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix)
         chainDiffs
     )
     $ assert
@@ -1030,8 +1121,7 @@ chainSelection chainSelEnv rr chainDiffs =
   ChainSelEnv{..} = chainSelEnv
 
   sortCandidates :: [ChainDiff (Header blk)] -> [ChainDiff (Header blk)]
-  sortCandidates =
-    sortBy (flip (compareAnchoredFragments bcfg) `on` Diff.getSuffix)
+  sortCandidates = sortBy (flip $ compareChainDiffs bcfg weights curChain)
 
   -- 1. Take the first candidate from the list of sorted candidates
   -- 2. Validate it
@@ -1067,7 +1157,7 @@ chainSelection chainSelEnv rr chainDiffs =
         -- it will be dropped here, as it will not be preferred over the
         -- current chain.
         let candidates2
-              | preferAnchoredCandidate bcfg curChain (Diff.getSuffix candidate') =
+              | preferAnchoredCandidate bcfg weights curChain (Diff.getSuffix candidate') =
                   candidate' : candidates1
               | otherwise =
                   candidates1
@@ -1125,7 +1215,7 @@ chainSelection chainSelEnv rr chainDiffs =
     let isRejected hdr =
           Map.member (headerHash hdr) (forgetFingerprint invalid)
     return $
-      filter (preferAnchoredCandidate bcfg curChain . Diff.getSuffix) $
+      filter (preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix) $
         map (Diff.takeWhileOldest (not . isRejected)) cands
 
 -- [Ouroboros]
@@ -1333,3 +1423,26 @@ ignoreInvalidSuc ::
   (ChainHash blk -> Set (HeaderHash blk))
 ignoreInvalidSuc _ invalid succsOf =
   Set.filter (`Map.notMember` invalid) . succsOf
+
+-- | Compare two 'ChainDiff's w.r.t. the chain order.
+--
+-- PRECONDITION: Both 'ChainDiff's fit onto the given current chain.
+compareChainDiffs ::
+  forall blk.
+  BlockSupportsProtocol blk =>
+  BlockConfig blk ->
+  PerasWeightSnapshot blk ->
+  -- | Current chain.
+  AnchoredFragment (Header blk) ->
+  ChainDiff (Header blk) ->
+  ChainDiff (Header blk) ->
+  Ordering
+compareChainDiffs bcfg weights curChain =
+  -- The precondition of 'compareAnchoredFragment's is satisfied as the result
+  -- of @mkCand@ has the same anchor as @curChain@, and so any two fragments
+  -- returned by @mkCand@ do intersect.
+  compareAnchoredFragments bcfg weights `on` mkCand
+ where
+  mkCand =
+    fromMaybe (error "compareChainDiffs: precondition violated")
+      . Diff.apply curChain

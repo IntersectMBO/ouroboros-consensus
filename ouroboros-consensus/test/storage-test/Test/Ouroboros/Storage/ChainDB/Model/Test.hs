@@ -22,11 +22,11 @@
 -- chain DB, we always pick the most preferred chain.
 module Test.Ouroboros.Storage.ChainDB.Model.Test (tests) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
 import GHC.Stack
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Tables
+import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( LoE (..)
   , StreamFrom (..)
@@ -96,15 +96,20 @@ prop_alwaysPickPreferredChain bt p =
 
   curFragment = Chain.toAnchoredFragment (getHeader <$> current)
 
-  SecurityParam k = configSecurityParam singleNodeTestConfig
+  k = configSecurityParam singleNodeTestConfig
 
   bcfg = configBlock singleNodeTestConfig
 
   preferCandidate' candidate =
-    AF.preferAnchoredCandidate bcfg curFragment candFragment
-      && AF.forksAtMostKBlocks (unNonZero k) curFragment candFragment
+    AF.preferAnchoredCandidate bcfg weights curFragment candFragment
+      && AF.forksAtMostKWeight weights (maxRollbackWeight k) curFragment candFragment
    where
     candFragment = Chain.toAnchoredFragment (getHeader <$> candidate)
+
+    -- TODO test with non-trivial weights
+    -- see https://github.com/tweag/cardano-peras/issues/123
+    weights :: PerasWeightSnapshot TestBlock
+    weights = emptyPerasWeightSnapshot
 
 -- TODO add properties about forks too
 prop_between_currentChain :: LoE () -> BlockTree -> Property

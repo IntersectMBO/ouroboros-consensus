@@ -3,6 +3,7 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | Queries
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
@@ -18,6 +19,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getIsValid
   , getMaxSlotNo
   , getPastLedger
+  , getPerasWeightSnapshot
+  , getPerasCertSnapshot
   , getReadOnlyForkerAtPoint
   , getStatistics
   , getTipBlock
@@ -31,7 +34,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getChainSelStarvation
   ) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.ResourceRegistry (ResourceRegistry)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -43,6 +45,10 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Peras.Weight
+  ( PerasWeightSnapshot
+  , takeVolatileSuffix
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (..)
@@ -52,6 +58,8 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (eitherToMaybe)
@@ -67,45 +75,63 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 -- | Return the last @k@ headers.
 --
--- While the in-memory fragment ('cdbChain') might temporarily be longer than
--- @k@ (until the background thread has copied those blocks to the
--- ImmutableDB), this function will never return a fragment longer than @k@.
+-- While the in-memory fragment ('cdbChain') might temporarily have more weight
+-- than @k@ (until the background thread has copied those blocks to the
+-- ImmutableDB), this function will never return a fragment heavier than @k@.
 --
 -- The anchor point of the returned fragment will be the most recent
 -- \"immutable\" block, i.e. a block that cannot be rolled back. In
 -- ChainDB.md, we call this block @i@.
 --
--- Note that the returned fragment may be shorter than @k@ in case the whole
--- chain itself is shorter than @k@ or in case the VolatileDB was corrupted.
--- In the latter case, we don't take blocks already in the ImmutableDB into
--- account, as we know they /must/ have been \"immutable\" at some point, and,
--- therefore, /must/ still be \"immutable\".
+-- Note that the returned fragment may have weight less than @k@ in case the
+-- whole chain itself weights less than @k@, or in case the VolatileDB was
+-- corrupted. In the latter case, we don't take blocks already in the
+-- ImmutableDB into account, as we know they /must/ have been \"immutable\" at
+-- some point, and, therefore, /must/ still be \"immutable\".
 getCurrentChain ::
   forall m blk.
   ( IOLike m
+  , StandardHash blk
   , HasHeader (Header blk)
   , ConsensusProtocol (BlockProtocol blk)
   ) =>
   ChainDbEnv m blk ->
   STM m (AnchoredFragment (Header blk))
-getCurrentChain CDB{..} =
-  AF.anchorNewest (unNonZero k) . icWithoutTime <$> readTVar cdbChain
- where
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
+getCurrentChain cdb@CDB{..} =
+  getCurrentChainLike cdb $ icWithoutTime <$> readTVar cdbChain
 
 -- | Same as 'getCurrentChain', /mutatis mutandi/.
 getCurrentChainWithTime ::
   forall m blk.
   ( IOLike m
+  , StandardHash blk
   , HasHeader (HeaderWithTime blk)
   , ConsensusProtocol (BlockProtocol blk)
   ) =>
   ChainDbEnv m blk ->
   STM m (AnchoredFragment (HeaderWithTime blk))
-getCurrentChainWithTime CDB{..} =
-  AF.anchorNewest (unNonZero k) . icWithTime <$> readTVar cdbChain
+getCurrentChainWithTime cdb@CDB{..} =
+  getCurrentChainLike cdb $ icWithTime <$> readTVar cdbChain
+
+-- | This function is the generalised helper for 'getCurrentChain' and
+-- 'getCurrentChainWithTime'. See 'getCurrentChain' for the explanation of it's
+-- behaviour.
+getCurrentChainLike ::
+  forall m blk h.
+  ( IOLike m
+  , StandardHash blk
+  , HasHeader h
+  , HeaderHash blk ~ HeaderHash h
+  , ConsensusProtocol (BlockProtocol blk)
+  ) =>
+  ChainDbEnv m blk ->
+  STM m (AnchoredFragment h) ->
+  STM m (AnchoredFragment h)
+getCurrentChainLike cdb@CDB{..} getCurChain = do
+  weights <- forgetFingerprint <$> getPerasWeightSnapshot cdb
+  takeVolatileSuffix weights k <$> getCurChain
  where
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
+  k = configSecurityParam cdbTopLevelConfig
 
 -- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
 -- last @k@ blocks of the current chain.
@@ -261,6 +287,14 @@ getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
 
 getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe LedgerDB.Statistics)
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
+
+getPerasWeightSnapshot ::
+  ChainDbEnv m blk -> STM m (WithFingerprint (PerasWeightSnapshot blk))
+getPerasWeightSnapshot CDB{..} = PerasCertDB.getWeightSnapshot cdbPerasCertDB
+
+getPerasCertSnapshot ::
+  ChainDbEnv m blk -> STM m (PerasCertSnapshot blk)
+getPerasCertSnapshot CDB{..} = PerasCertDB.getCertSnapshot cdbPerasCertDB
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent

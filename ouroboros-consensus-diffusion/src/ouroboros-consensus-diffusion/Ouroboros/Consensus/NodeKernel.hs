@@ -271,15 +271,18 @@ initNodeKernel
               gsmTracerArgs
               GSM.GsmView
                 { GSM.antiThunderingHerd = Just gsmAntiThunderingHerd
-                , GSM.candidateOverSelection = \(headers, _lst) state ->
-                    case AF.intersectionPoint headers (csCandidate state) of
-                      Nothing -> GSM.CandidateDoesNotIntersect
-                      Just{} ->
-                        GSM.WhetherCandidateIsBetter $ -- precondition requires intersection
-                          preferAnchoredCandidate
-                            (configBlock cfg)
-                            headers
-                            (csCandidate state)
+                , GSM.getCandidateOverSelection = do
+                    weights <- ChainDB.getPerasWeightSnapshot chainDB
+                    pure $ \(headers, _lst) state ->
+                      case AF.intersectionPoint headers (csCandidate state) of
+                        Nothing -> GSM.CandidateDoesNotIntersect
+                        Just{} ->
+                          GSM.WhetherCandidateIsBetter $ -- precondition requires intersection
+                            preferAnchoredCandidate
+                              (configBlock cfg)
+                              (forgetFingerprint weights)
+                              headers
+                              (csCandidate state)
                 , GSM.peerIsIdle = csIdling
                 , GSM.durationUntilTooOld =
                     gsmDurationUntilTooOld

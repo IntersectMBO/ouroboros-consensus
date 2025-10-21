@@ -24,9 +24,11 @@ module Ouroboros.Consensus.Peras.Weight
   , prunePerasWeightSnapshot
 
     -- * Query
+  , isEmptyPerasWeightSnapshot
   , weightBoostOfPoint
   , weightBoostOfFragment
   , totalWeightOfFragment
+  , takeVolatileSuffix
   ) where
 
 import Data.Foldable as Foldable (foldl')
@@ -35,6 +37,8 @@ import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.Util.AnchoredSeq (takeLongestSuffix)
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -160,6 +164,28 @@ prunePerasWeightSnapshot slot =
  where
   isTooOld :: Point blk -> Bool
   isTooOld pt = pointSlot pt < NotOrigin slot
+
+-- | Check whether the snapshot contains weights for any blocks.
+--
+-- >>> isEmptyPerasWeightSnapshot emptyPerasWeightSnapshot
+-- True
+--
+-- >>> :{
+-- weights :: [(Point Blk, PerasWeight)]
+-- weights =
+--   [ (BlockPoint 2 "foo", PerasWeight 2)
+--   , (GenesisPoint,       PerasWeight 3)
+--   , (BlockPoint 3 "bar", PerasWeight 2)
+--   , (BlockPoint 2 "foo", PerasWeight 2)
+--   ]
+-- :}
+--
+-- >>> snap = mkPerasWeightSnapshot weights
+--
+-- >>> isEmptyPerasWeightSnapshot snap
+-- False
+isEmptyPerasWeightSnapshot :: PerasWeightSnapshot blk -> Bool
+isEmptyPerasWeightSnapshot = Map.null . getPerasWeightSnapshot
 
 -- | Get the weight boost for a point, or @'mempty' :: 'PerasWeight'@ otherwise.
 --
@@ -291,9 +317,70 @@ totalWeightOfFragment weightSnap frag =
   weightLength = PerasWeight $ fromIntegral $ AF.length frag
   weightBoost = weightBoostOfFragment weightSnap frag
 
+-- | Take the longest suffix of the given fragment with total weight
+-- ('totalWeightOfFragment') at most @k@. This is the volatile suffix of blocks
+-- which are subject to rollback.
+--
+-- If the total weight of the input fragment is at least @k@, then the anchor of
+-- the output fragment is the most recent point on the input fragment that is
+-- buried under at least weight @k@ (also counting the weight boost of that
+-- point).
+--
+-- See 'mkPerasWeightSnapshot' for context.
+--
+-- >>> :{
+-- weights :: [(Point Blk, PerasWeight)]
+-- weights =
+--   [ (BlockPoint 2 "foo", PerasWeight 2)
+--   , (GenesisPoint,       PerasWeight 3)
+--   , (BlockPoint 3 "bar", PerasWeight 2)
+--   , (BlockPoint 2 "foo", PerasWeight 2)
+--   ]
+-- snap = mkPerasWeightSnapshot weights
+-- foo = HeaderFields (SlotNo 2) (BlockNo 1) "foo"
+-- bar = HeaderFields (SlotNo 3) (BlockNo 2) "bar"
+-- frag :: AnchoredFragment (HeaderFields Blk)
+-- frag = Empty AnchorGenesis :> foo :> bar
+-- :}
+--
+-- >>> k1 = SecurityParam $ knownNonZeroBounded @1
+-- >>> k3 = SecurityParam $ knownNonZeroBounded @3
+-- >>> k6 = SecurityParam $ knownNonZeroBounded @6
+-- >>> k9 = SecurityParam $ knownNonZeroBounded @9
+--
+-- >>> AF.toOldestFirst $ takeVolatileSuffix snap k1 frag
+-- []
+--
+-- >>> AF.toOldestFirst $ takeVolatileSuffix snap k3 frag
+-- [HeaderFields {headerFieldSlot = SlotNo 3, headerFieldBlockNo = BlockNo 2, headerFieldHash = "bar"}]
+--
+-- >>> AF.toOldestFirst $ takeVolatileSuffix snap k6 frag
+-- [HeaderFields {headerFieldSlot = SlotNo 3, headerFieldBlockNo = BlockNo 2, headerFieldHash = "bar"}]
+--
+-- >>> AF.toOldestFirst $ takeVolatileSuffix snap k9 frag
+-- [HeaderFields {headerFieldSlot = SlotNo 2, headerFieldBlockNo = BlockNo 1, headerFieldHash = "foo"},HeaderFields {headerFieldSlot = SlotNo 3, headerFieldBlockNo = BlockNo 2, headerFieldHash = "bar"}]
+takeVolatileSuffix ::
+  forall blk h.
+  (StandardHash blk, HasHeader h, HeaderHash blk ~ HeaderHash h) =>
+  PerasWeightSnapshot blk ->
+  -- | The security parameter @k@ is interpreted as a weight.
+  SecurityParam ->
+  AnchoredFragment h ->
+  AnchoredFragment h
+takeVolatileSuffix snap secParam
+  | Map.null $ getPerasWeightSnapshot snap =
+      -- Optimize the case where Peras is disabled.
+      AF.anchorNewest (unPerasWeight k)
+  | otherwise =
+      takeLongestSuffix (totalWeightOfFragment snap) (<= k)
+ where
+  k :: PerasWeight
+  k = maxRollbackWeight secParam
+
 -- $setup
 -- >>> import Cardano.Ledger.BaseTypes
 -- >>> import Ouroboros.Consensus.Block
+-- >>> import Ouroboros.Consensus.Config.SecurityParam
 -- >>> import Ouroboros.Network.AnchoredFragment (AnchoredFragment, AnchoredSeq(..), Anchor(..))
 -- >>> import qualified Ouroboros.Network.AnchoredFragment as AF
 -- >>> :set -XDataKinds -XTypeApplications -XTypeFamilies
