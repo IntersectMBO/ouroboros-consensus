@@ -69,6 +69,7 @@
           ];
         };
         hydraJobs = import ./nix/ci.nix { inherit inputs pkgs; };
+        leiosDemo = import ./scripts/leios-demo/build.nix { inherit inputs pkgs; };
       in
       {
         devShells = rec {
@@ -83,7 +84,7 @@
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];
           };
-        };
+        } // leiosDemo.devShells;
         inherit hydraJobs;
         legacyPackages = pkgs;
         packages =
