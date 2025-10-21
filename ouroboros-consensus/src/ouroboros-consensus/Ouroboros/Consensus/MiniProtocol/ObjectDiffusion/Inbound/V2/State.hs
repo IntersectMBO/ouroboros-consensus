@@ -165,6 +165,7 @@ onReceiveIds ::
   (MonadSTM m, Ord objectId, Ord peerAddr) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
+  ObjectPoolWriter objectId object m ->
   DecisionGlobalStateVar m peerAddr objectId object ->
   peerAddr ->
   -- | number of requests to subtract from
@@ -174,9 +175,10 @@ onReceiveIds ::
   [objectId] ->
   -- | received `objectId`s
   m ()
-onReceiveIds odTracer decisionTracer globalStateVar peerAddr numIdsInitiallyRequested receivedIds = do
+onReceiveIds odTracer decisionTracer ObjectPoolWriter{opwHasObject} globalStateVar peerAddr numIdsInitiallyRequested receivedIds = do
   peerState <- atomically $ ((Map.! peerAddr) . dgsPeerStates) <$> readTVar globalStateVar
-  checkProtocolErrors peerState numIdsInitiallyRequested receivedIds
+  hasObject <- atomically opwHasObject
+  checkProtocolErrors hasObject peerState numIdsInitiallyRequested receivedIds
   globalState' <- atomically $ do
     stateTVar
       globalStateVar
@@ -188,18 +190,19 @@ onReceiveIds odTracer decisionTracer globalStateVar peerAddr numIdsInitiallyRequ
   traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "onReceiveIds" globalState')
   where
     checkProtocolErrors ::
+      (objectId -> Bool) ->
       DecisionPeerState objectId object->
       NumObjectIdsReq ->
       [objectId] ->
       m ()
-    checkProtocolErrors DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds} nReq ids = do
+    checkProtocolErrors hasObject DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds} nReq ids = do
       when (length ids > fromIntegral nReq) $ throw ProtocolErrorObjectIdsNotRequested
       let idSet = Set.fromList ids
       when (length ids /= Set.size idSet) $ throw ProtocolErrorObjectIdsDuplicate
       when
-        -- TODO also check for IDs in pool
         (  (not $ Set.null $ idSet `Set.intersection` dpsObjectsAvailableIds)
         || (not $ Set.null $ idSet `Set.intersection` dpsObjectsInflightIds)
+        || (any hasObject ids)
         ) $ throw ProtocolErrorObjectIdAlreadyKnown
 
 onReceiveIdsImpl ::

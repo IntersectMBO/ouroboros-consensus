@@ -198,6 +198,7 @@ withPeer
                       State.onReceiveIds
                         objectDiffusionTracer
                         decisionTracer
+                        objectPoolWriter
                         globalStateVar
                         peerAddr
                   , psaOnReceiveObjects = \objects -> do
