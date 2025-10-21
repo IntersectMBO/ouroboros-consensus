@@ -45,6 +45,7 @@ import Quiet (Quiet (..))
 
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving Show via Quiet PerasRoundNo
+  deriving Semigroup via Sum Word64
   deriving stock Generic
   deriving newtype (Enum, Eq, Ord, NoThunks, Serialise)
 
