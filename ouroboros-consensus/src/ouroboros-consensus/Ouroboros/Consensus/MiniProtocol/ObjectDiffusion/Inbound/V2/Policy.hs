@@ -20,7 +20,7 @@ data DecisionPolicy = DecisionPolicy
   -- ^ a limit of objects in-flight from a single peer.
   , dpMaxNumObjectsInflightTotal :: !NumObjectsReq
   -- ^ a limit of objects in-flight from all peers for this node.
-  , dpMaxObjectInflightMultiplicity :: !ObjectMultiplicity
+  , dpTargetObjectRedundancy :: !ObjectMultiplicity
   -- ^ from how many peers download the `objectId` simultaneously
   }
   deriving Show
@@ -32,5 +32,5 @@ defaultDecisionPolicy =
     , dpMaxNumObjectsOutstanding = 10 -- must be the same as the outbound peer's value
     , dpMaxNumObjectsInflightPerPeer = 6
     , dpMaxNumObjectsInflightTotal = 20
-    , dpMaxObjectInflightMultiplicity = 2
+    , dpTargetObjectRedundancy = 2
     }

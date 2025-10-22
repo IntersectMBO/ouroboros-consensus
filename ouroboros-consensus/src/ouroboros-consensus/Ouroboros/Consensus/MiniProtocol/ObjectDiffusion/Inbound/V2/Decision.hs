@@ -172,7 +172,7 @@ pickObjectsToReq
   DecisionPolicy
     { dpMaxNumObjectsInflightPerPeer
     , dpMaxNumObjectsInflightTotal
-    , dpMaxObjectInflightMultiplicity
+    , dpTargetObjectRedundancy
     }
   DecisionGlobalState
     { dgsPeerStates
@@ -321,7 +321,7 @@ pickObjectsToReq
 
         shouldSelect =
           -- We should not go over the multiplicity limit per object
-          objectMultiplicity + expectedMultiplicity < dpMaxObjectInflightMultiplicity
+          objectMultiplicity + expectedMultiplicity < dpTargetObjectRedundancy
             -- We should not go over the total number of objects inflight limit
             && totalNumObjectsInflight + totalNumObjectsToReq < dpMaxNumObjectsInflightTotal
             -- We should not go over the per-peer number of objects inflight limit
