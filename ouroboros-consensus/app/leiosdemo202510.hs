@@ -15,6 +15,7 @@ import qualified Cardano.Crypto.Hash as Hash
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
+import           Control.Applicative ((<|>))
 import           Control.Monad (foldM, when)
 import qualified Data.Aeson as JSON
 import qualified Data.Bits as Bits
@@ -26,11 +27,13 @@ import qualified Data.ByteString.Lazy as BSL
 import           Data.DList (DList)
 import qualified Data.DList as DList
 import           Data.Foldable (forM_)
+import qualified Data.Foldable as Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.IntMap as IntMap
 import           Data.IntMap (IntMap)
 import           Data.List (intercalate, isSuffixOf, unfoldr)
 import           Data.Map (Map)
+import           Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -155,16 +158,36 @@ prettyBitmap (idx, bitmap) =
     show idx ++ ":0x" ++ Numeric.showHex bitmap ""
 
 data EbRecipe = EbRecipe {
-    ebRecipeSlotNo :: Word64
+    ebRecipeBinder :: Maybe String
   ,
-    ebRecipeTxBytesSizes :: V.Vector Word16
+    ebRecipeElems :: V.Vector EbRecipeElem
+  ,
+    ebRecipeSlotNo :: Word64
   }
-  deriving (Generic, Show)
+  deriving (Show)
 
 instance JSON.FromJSON EbRecipe where
     parseJSON = JSON.withObject "EbRecipe" $ \v -> EbRecipe
-        <$> v JSON..: (fromString "slotNo")
-        <*> v JSON..: (fromString "txBytesSizes")
+        <$> v JSON..:? (fromString "binder")
+        <*> v JSON..: (fromString "txRecipes")
+        <*> v JSON..: (fromString "slotNo")
+
+data EbRecipeElem =
+    EbRecipeTxBytesSize Word16
+  |
+    -- | Binder occurrence, inclusive start, and exclusive stop
+    EbRecipeShare String Int (Maybe Int)
+  deriving (Show)
+
+instance JSON.FromJSON EbRecipeElem where
+    parseJSON =
+        \v -> size v <|> share v
+      where
+        size v = EbRecipeTxBytesSize <$> JSON.parseJSON @Word16 v
+        share = JSON.withObject "EbRecipeElem" $ \v -> EbRecipeShare
+          <$> v JSON..: (fromString "share")
+          <*> v JSON..: (fromString "startIncl")
+          <*> v JSON..:? (fromString "stopExcl")
 
 -----
 
@@ -178,32 +201,62 @@ generateDb prng0 db ebRecipes = do
     stmt_write_ebId <- withDieJust $ DB.prepare db (fromString sql_insert_ebId)
     stmt_write_ebClosure <- withDieJust $ DB.prepare db (fromString sql_insert_ebClosure)
     -- loop over EBs (one SQL transaction each, to be gentle)
-    _dynEnv' <- (\f -> foldM f emptyLeiosFetchDynEnv ebRecipes) $ \dynEnv ebRecipe -> do
+    (_dynEnv', _sigma) <- (\f -> foldM f (emptyLeiosFetchDynEnv, Map.empty) ebRecipes) $ \(dynEnv, sigma) ebRecipe -> do
         -- generate txs, so we have their hashes
-        txs <- V.forM (ebRecipeTxBytesSizes ebRecipe) $ \txBytesSize -> do
-            -- generate a random bytestring whose CBOR encoding has the expected length
-            --
-            -- In the actual implementation, the values themselves will be
-            -- valid CBOR. It's useful to maintain that invariant even for the
-            -- otherwise-opaque random data within this prototype/demo.
-            when (txBytesSize < 55) $ die "Tx cannot be smaller than 55 bytes"
-            let overhead   -- one for the initial byte, plus 1 2 4 or 8 for the length argument
-                  | txBytesSize < fromIntegral (maxBound :: Word8) = 2
-                  | txBytesSize <              (maxBound :: Word16) = 3
-                  | txBytesSize < fromIntegral (maxBound :: Word32) = 5
-                  | otherwise = 9
-            txBytes <- id
-              $ fmap (serialize' . CBOR.encodeBytes)
-              $ R.uniformByteStringM (fromIntegral txBytesSize - overhead) gref
-            pure (txBytes, Hash.hashWith id txBytes :: Hash.Hash HASH ByteString)
+        let finishX (n, x) = V.fromListN n $ Foldable.toList $ revX x   -- TODO in ST with mut vector
+        txs <- fmap finishX $ (\f -> V.foldM f (0, emptyX) (ebRecipeElems ebRecipe)) $ \(accN, accX) -> \case
+            EbRecipeShare occ startIncl mbStopExcl -> do
+                (srcEbId, ebTxsCount) <- case Map.lookup occ sigma of
+                    Nothing -> die $ "Could not find EB binder: " ++ occ
+                    Just x -> pure x
+                let stopExcl = fromMaybe ebTxsCount mbStopExcl
+                    len = stopExcl - startIncl
+                when (len < 0) $ die $ "Non-positive share length: " ++ show (occ, startIncl, mbStopExcl, stopExcl, len)
+                -- SELECT the referenced txs
+                stmt <- withDieJust $ DB.prepare db (fromString sql_share_ebClosures_ASC)
+                withDie $ DB.bindInt64 stmt 1 (fromIntegralEbId srcEbId)
+                withDie $ DB.bindInt64 stmt 2 (fromIntegral startIncl)
+                withDie $ DB.bindInt64 stmt 3 (fromIntegral len)
+                let loop i !accX' =
+                        withDie (DB.stepNoCB stmt) >>= \case
+                            DB.Done -> do
+                                when (i /= fromIntegral stopExcl) $ do
+                                    die $ "Ran out of txs for share" ++ show (occ, startIncl, mbStopExcl, i)
+                                pure accX'
+                            DB.Row -> do
+                                txOffset <- DB.columnInt64 stmt 0
+                                txHashBytes <- DB.columnBlob stmt 1
+                                txBytes <- DB.columnBlob stmt 2
+                                when (txOffset /= i) $ do
+                                    die $ "Unexpected share txOffset" ++ show (occ, startIncl, mbStopExcl, txOffset, i)
+                                loop (i + 1) $ pushX accX' (txBytes, MkHashBytes txHashBytes)
+                accX' <- loop (fromIntegral startIncl) accX
+                pure (accN + len, accX')
+            EbRecipeTxBytesSize txBytesSize -> do
+                -- generate a random bytestring whose CBOR encoding has the expected length
+                --
+                -- In the actual implementation, the values themselves will be
+                -- valid CBOR. It's useful to maintain that invariant even for
+                -- the otherwise-opaque random data within this prototype/demo.
+                when (txBytesSize < 55) $ die "Tx cannot be smaller than 55 bytes"
+                when (txBytesSize > 2^(14::Int)) $ die "Tx cannot be be larger than 2^14 bytes"
+                let overhead   -- one for the initial byte, plus 1 2 4 or 8 for the length argument
+                      | txBytesSize < fromIntegral (maxBound :: Word8) = 2
+                      | txBytesSize <              (maxBound :: Word16) = 3
+                      | txBytesSize < fromIntegral (maxBound :: Word32) = 5
+                      | otherwise = 9
+                txBytes <- id
+                  $ fmap (serialize' . CBOR.encodeBytes)
+                  $ R.uniformByteStringM (fromIntegral txBytesSize - overhead) gref
+                let txHash = Hash.hashWith id txBytes :: Hash.Hash HASH ByteString
+                pure (accN + 1, accX `pushX` (txBytes, MkHashBytes $ Hash.hashToBytes txHash))
         let ebSlot = ebRecipeSlotNo ebRecipe
         let ebHash :: Hash.Hash HASH ByteString
             ebHash =
                 Hash.castHash
               $ Hash.hashWithSerialiser
-                    (encodeEB (fromIntegral . BS.length) Hash.hashToBytes)
+                    (encodeEB (fromIntegral . BS.length) (\(MkHashBytes x) -> x))
                     txs
-        
         let (ebId, dynEnv') = ebIdFromPoint ebSlot (Hash.hashToBytes ebHash) dynEnv
         withDieMsg $ DB.exec db (fromString "BEGIN")
         withDie $ DB.bindInt64 stmt_write_ebId   3 (fromIntegralEbId ebId)
@@ -217,16 +270,17 @@ generateDb prng0 db ebRecipes = do
         V.iforM_ txs $ \txOffset (txBytes, txHash) -> do
             -- INSERT INTO ebTxs
             withDie $ DB.bindInt64    stmt_write_ebClosure 2 (fromIntegral txOffset)
-            withDie $ DB.bindBlob     stmt_write_ebClosure 3 (Hash.hashToBytes txHash)
+            withDie $ DB.bindBlob     stmt_write_ebClosure 3 (let MkHashBytes x = txHash in x)
             withDie $ DB.bindInt64    stmt_write_ebClosure 4 (fromIntegral (BS.length txBytes))
             withDie $ DB.bindBlob     stmt_write_ebClosure 5 txBytes
             withDieDone $ DB.stepNoCB stmt_write_ebClosure
             withDie $ DB.reset        stmt_write_ebClosure
         -- finalize each EB
         withDieMsg $ DB.exec db (fromString "COMMIT")
-        pure dynEnv'
+        pure (dynEnv', maybe id (\bndr -> Map.insert bndr (ebId, V.length txs)) (ebRecipeBinder ebRecipe) sigma)
     -- finalize db
     withDieMsg $ DB.exec db (fromString sql_index_schema)
+    -- TODO maybe print out the @sigma@ mapping as JSON, so the user can see the EbId for each of their declared variables?
 
 -----
 
@@ -290,6 +344,14 @@ sql_insert_ebId =
 sql_insert_ebClosure :: String
 sql_insert_ebClosure =
     "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, ?)\n\
+    \"
+
+sql_share_ebClosures_ASC :: String
+sql_share_ebClosures_ASC =
+    "SELECT txOffset, txHashBytes, txBytes FROM ebTxs\n\
+    \WHERE ebId = ? AND txOffset >= ?\n\
+    \ORDER BY txOffset ASC\n\
+    \LIMIT ?\n\
     \"
 
 -----
@@ -367,6 +429,9 @@ pushX :: X a -> a -> X a
 pushX (X n xs vs) x =
     if n < 1024 then X (n+1) (x : xs) vs else
     X 1 [x] (V.fromList xs : vs)
+
+revX :: X a -> X a
+revX (X n xs vs) = X n (reverse xs) (reverse (map V.reverse vs))
 
 msgLeiosBlockRequest :: DB.Database -> Int -> IO ()
 msgLeiosBlockRequest db ebId = do
@@ -1258,7 +1323,7 @@ fetchDecision2 db acc0 = do
     acc2 <- (\f -> foldM f acc1 (Map.toList $ packRequests env dynEnv (MkLeiosRequestDecisions decisions))) $ \acc (peerId, reqs) -> do
         forM_ reqs $ \req -> do
             let MkLeiosRequest ebSlot ebHash bitmaps _txHashes = req
-            putStrLn $ unwords $ "MSG" : prettyPeerId peerId : show ebSlot : prettyHashBytes ebHash : map prettyBitmap bitmaps
+            putStrLn $ unwords $ "MSG MsgLeiosBlockTxsRequest" : prettyPeerId peerId : show ebSlot : prettyHashBytes ebHash : map prettyBitmap bitmaps
         pure $ acc { requestedPerPeer = Map.insertWith (\new old -> old ++ new) peerId reqs (requestedPerPeer acc) }
     pure acc2
 
