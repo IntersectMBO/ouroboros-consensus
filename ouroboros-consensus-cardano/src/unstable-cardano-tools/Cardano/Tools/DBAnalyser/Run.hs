@@ -45,6 +45,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
 import System.IO
+import System.Random (newStdGen)
 import Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
@@ -118,6 +119,7 @@ analyse dbaConfig args =
     analysisTracer <- mkTracer lock True
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
+    snapshotDelayRng <- newStdGen
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
@@ -149,6 +151,7 @@ analyse dbaConfig args =
             (const True)
             shfs
             shfs
+            snapshotDelayRng
             flavargs
             $ ChainDB.defaultArgs
         -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever

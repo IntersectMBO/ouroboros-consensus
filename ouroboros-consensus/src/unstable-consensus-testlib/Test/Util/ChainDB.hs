@@ -42,6 +42,7 @@ import qualified System.FS.Sim.MockFS as Mock
 import System.FS.Sim.STM (simHasFS)
 import Test.Util.Orphans.NoThunks ()
 import Test.Util.TestBlock (TestBlock, TestBlockLedgerConfig (..))
+import System.Random (mkStdGen)
 
 -- | A vector with an element for each database of a node
 --
@@ -142,5 +143,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTracer = nullTracer
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
+          , cdbsSnapshotDelayRNG = mkStdGen 0
           }
     }
