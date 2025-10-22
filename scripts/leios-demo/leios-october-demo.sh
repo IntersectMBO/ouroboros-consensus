@@ -125,11 +125,14 @@ popd > /dev/null
 ##
 
 ## TODO: we should find a better way to wait for the nodes to be started
-sleep 30
+# Calculate the POSIX time 60 seconds from now.
+REF_TIME_FOR_SLOT=$(( $(date +%s) + 60 ))
 
 IMMDB_CMD_CORE="cabal run immdb-server \
     -- --db $CLUSTER_RUN_DATA/node-0/db/immutable/ \
-    --config $CLUSTER_RUN_DATA/node-0/config.json"
+    --config $CLUSTER_RUN_DATA/node-0/config.json \
+    --initial-slot 80 \
+    --initial-time $REF_TIME_FOR_SLOT"
 
 echo "Command: $IMMDB_CMD_CORE &> $TMP_DIR/immdb-server.log &"
 
