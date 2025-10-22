@@ -23,7 +23,6 @@ import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
-import qualified Data.Text as T
 import Lens.Micro
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Cardano.Block
@@ -36,14 +35,12 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.Args
 import Ouroboros.Consensus.Util.StreamingLedgerTables
 import System.Directory
 import System.FS.API
 import System.FS.IO
 import System.FilePath as FilePath
 import System.IO.Temp
-import System.Random
 
 type L = LedgerState (CardanoBlock StandardCrypto)
 

@@ -41,7 +41,6 @@ import System.Exit
 import System.FS.API
 import System.FS.CRC
 import System.FS.IO
-import System.FilePath (splitDirectories)
 import qualified System.FilePath as F
 import System.IO
 import System.ProgressBar

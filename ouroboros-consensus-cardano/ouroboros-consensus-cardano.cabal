@@ -172,7 +172,6 @@ library
     ouroboros-consensus ^>=0.28,
     ouroboros-consensus-protocol ^>=0.13,
     ouroboros-network-api ^>=0.16,
-    random,
     resource-registry,
     serialise ^>=0.2,
     singletons ^>=3.0,
