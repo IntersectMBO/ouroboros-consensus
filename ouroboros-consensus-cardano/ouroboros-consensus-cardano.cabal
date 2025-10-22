@@ -565,6 +565,7 @@ library unstable-cardano-tools
     cardano-ledger-byron,
     cardano-ledger-conway,
     cardano-ledger-core,
+    cardano-ledger-dijkstra,
     cardano-ledger-mary,
     cardano-ledger-shelley,
     cardano-prelude,
