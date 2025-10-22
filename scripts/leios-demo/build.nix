@@ -13,9 +13,14 @@
           pip
           virtualenv
           python-lsp-server
-          jupyterlab
           black
           itables
+          ipywidgets
+          jupyterlab-widgets
+          widgetsnbextension
+          jupyterlab
+          jupyter
+          venvShellHook
 
           nixpkgs-fmt
           nil
