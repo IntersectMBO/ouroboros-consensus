@@ -157,6 +157,7 @@ withPeer
       peerToChannel <- readTVar decisionChannelsVar
       decisionChan <- case peerToChannel Map.!? peerAddr of
         -- Checks if a channel already exists for this peer, in case we reuse it
+        -- Should not happen normally, because we unregister the peer from the channels map on disconnection through the bracket function
         Just chan -> return chan
         -- Otherwise create a new channel and register it
         Nothing -> do

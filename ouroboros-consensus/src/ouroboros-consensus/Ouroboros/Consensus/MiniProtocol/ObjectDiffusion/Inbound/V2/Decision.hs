@@ -116,6 +116,11 @@ computeAck poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpMaxNumObjectsOut
         (fromIntegral dpMaxNumObjectsOutstanding - futureFifoSizeOnOutboundPeer)
           `min` dpMaxNumObjectIdsReq
 
+      -- TODO: in the case where pdNumIdsToReq == 0, we know we actually won't be able to ack anything
+      -- during this round. So it might make sense to set pdNumIdsToAck = 0 and idsToAck = mempty as well?
+      -- If we do this change, we could add an assert in `V2.hs` that whenever pdNumIdsToReq == 0, then pdNumIdsToAck == 0 as well
+      -- /!\ We should also revise documentation in V2.md accordingly
+
       pdCanPipelineIdsRequests = not . StrictSeq.null $ dpsOutstandingFifo'
 
       peerDecision =
@@ -190,6 +195,8 @@ pickObjectsToReq
         ( \accMap (peerAddr, DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds}) ->
             let
               -- ids that will be acked for this peer won't be available anymore, so we should not consider them in the decision logic
+              --
+              -- TODO: this is quite redundant, because ack can only be made when the object is already in the pool (in which case it would have been filtered out anyway in next step) or when the object is in dpsObjectsOwtPool of this peer (in which case it shouldn't be anymore in dpsObjectsAvailableIds)
               idsToAckForThisPeer =
                 Map.findWithDefault
                   (error "invariant violated: peer must be in peerToIdsToAck map")
