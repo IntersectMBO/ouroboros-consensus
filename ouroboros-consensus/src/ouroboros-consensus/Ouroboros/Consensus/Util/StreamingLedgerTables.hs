@@ -22,11 +22,8 @@ import Codec.CBOR.Decoding (Decoder, decodeBreakOr, decodeListLen, decodeMapLenO
 import Codec.CBOR.Encoding (Encoding, encodeBreak, encodeListLen, encodeMapLenIndef)
 import Codec.CBOR.Read
 import Codec.CBOR.Write
-import Control.Concurrent.Class.MonadMVar
 import Control.Monad (replicateM_, unless)
-import Control.Monad.Class.MonadAsync
 import Control.Monad.Class.MonadST
-import Control.Monad.Class.MonadSTM
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Except
 import Control.Monad.State.Strict
@@ -35,18 +32,12 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder.Extra (defaultChunkSize)
 import qualified Data.Map.Strict as Map
-import Data.MemPack
-import Data.Proxy
 import qualified Data.Set as Set
-import qualified Data.Text as T
-import qualified Data.Vector as V
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util.IOLike (IOLike)
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Streaming
 import qualified Streaming as S
@@ -229,23 +220,6 @@ yieldLmdbS readChunkSize bsvh hint k = do
       Just x -> do
         S.each $ Map.toList values
         go (RangeQuery (Just . LedgerTables . KeysMK $ Set.singleton x) readChunkSize)
-
-yieldLsmS ::
-  Monad m =>
-  Int ->
-  LedgerTablesHandle m l ->
-  Yield l m
-yieldLsmS readChunkSize tb hint k = do
-  r <- k (go (Nothing, readChunkSize))
-  lift $ S.effects r
- where
-  go p = do
-    (LedgerTables (ValuesMK values), mx) <- lift $ S.lift $ readRange tb hint p
-    if Map.null values
-      then pure $ pure Nothing
-      else do
-        S.each $ Map.toList values
-        go (mx, readChunkSize)
 
 {-------------------------------------------------------------------------------
   Sink
