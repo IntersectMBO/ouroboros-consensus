@@ -12,7 +12,7 @@ data NodeConfigStub = NodeConfigStub
   , ncsShelleyGenesisFile :: !FilePath
   , ncsByronGenesisFile :: !FilePath
   , ncsConwayGenesisFile :: !FilePath
-  , ncsDijkstraGenesisFile :: !FilePath
+  , ncsDijkstraGenesisFile :: !(Maybe FilePath)
   }
   deriving Show
 
