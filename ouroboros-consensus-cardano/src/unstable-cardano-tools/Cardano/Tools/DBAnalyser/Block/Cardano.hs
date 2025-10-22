@@ -31,7 +31,9 @@ import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import Cardano.Crypto.Raw (Raw)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
+import Cardano.Ledger.BaseTypes (boundRational, unsafeNonZero)
 import Cardano.Ledger.Core (TxOut)
+import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Ledger.Shelley.LedgerState as Shelley.LedgerState
 import qualified Cardano.Ledger.Shelley.UTxO as Shelley.UTxO
 import Cardano.Ledger.TxIn (TxIn)
@@ -47,7 +49,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Compact as Compact
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, fromMaybe)
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
@@ -157,9 +159,11 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     genesisConway <-
       either (error . show) return
         =<< Aeson.eitherDecodeFileStrict' (conwayGenesisPath cc)
-    genesisDijkstra <-
-      either (error . show) return
-        =<< Aeson.eitherDecodeFileStrict' (dijkstraGenesisPath cc)
+    genesisDijkstra <- case dijkstraGenesisPath cc of
+      Nothing -> pure emptyDijkstraGenesis
+      Just fp ->
+        either (error . show) return
+          =<< Aeson.eitherDecodeFileStrict' fp
 
     let transCfg =
           SL.mkLatestTransitionConfig genesisShelley genesisAlonzo genesisConway genesisDijkstra
@@ -182,6 +186,18 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
         initialNonce
         (cfgHardForkTriggers cc)
 
+-- | An empty Dijkstra genesis to be provided when none is specified in the config.
+emptyDijkstraGenesis :: SL.DijkstraGenesis
+emptyDijkstraGenesis =
+  let upgradePParamsDef =
+        UpgradeDijkstraPParams
+          { udppMaxRefScriptSizePerBlock = 1048576
+          , udppMaxRefScriptSizePerTx = 204800
+          , udppRefScriptCostStride = unsafeNonZero 25600
+          , udppRefScriptCostMultiplier = fromMaybe (error "impossible") $ boundRational 1.2
+          }
+   in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
+
 data CardanoConfig = CardanoConfig
   { requiresNetworkMagic :: RequiresNetworkMagic
   -- ^ @RequiresNetworkMagic@ field
@@ -197,7 +213,7 @@ data CardanoConfig = CardanoConfig
   -- ^ @AlonzoGenesisFile@ field
   , conwayGenesisPath :: FilePath
   -- ^ @ConwayGenesisFile@ field
-  , dijkstraGenesisPath :: FilePath
+  , dijkstraGenesisPath :: Maybe FilePath
   -- ^ @DijkstraGenesisFile@ field
   , cfgHardForkTriggers :: CardanoHardForkTriggers
   -- ^ @Test*HardForkAtEpoch@ for each Shelley era
@@ -210,7 +226,7 @@ instance AdjustFilePaths CardanoConfig where
       , shelleyGenesisPath = f $ shelleyGenesisPath cc
       , alonzoGenesisPath = f $ alonzoGenesisPath cc
       , conwayGenesisPath = f $ conwayGenesisPath cc
-      , dijkstraGenesisPath = f $ dijkstraGenesisPath cc
+      , dijkstraGenesisPath = f <$> dijkstraGenesisPath cc
       -- Byron, Shelley, Alonzo, and Conway are the only eras that have genesis
       -- data. The actual genesis block is a Byron block, therefore we needed a
       -- genesis file. To transition to Shelley, we needed to add some additional
@@ -241,7 +257,7 @@ instance Aeson.FromJSON CardanoConfig where
 
     conwayGenesisPath <- v Aeson..: "ConwayGenesisFile"
 
-    dijkstraGenesisPath <- v Aeson..: "DijkstraGenesisFile"
+    dijkstraGenesisPath <- v Aeson..:? "DijkstraGenesisFile"
 
     triggers <- do
       let parseTrigger ::
