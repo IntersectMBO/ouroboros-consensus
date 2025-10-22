@@ -7,7 +7,7 @@
 module Ouroboros.Consensus.Peras.Params
   ( PerasIgnoranceRounds (..)
   , PerasCooldownRounds (..)
-  , PerasBlocksMinSlots (..)
+  , PerasBlockMinSlots (..)
   , PerasCertArrivalThreshold (..)
   , PerasParams (..)
   )
@@ -35,8 +35,8 @@ newtype PerasCooldownRounds = PerasCooldownRounds {unPerasCooldownRounds :: Word
   deriving newtype (Enum, Eq, Ord, NoThunks)
 
 -- | Minimum age (in slots) of a block to be voted on at the beginning of a Peras round.
-newtype PerasBlocksMinSlots = PerasBlocksMinSlots {unPerasBlocksMinSlots :: Word64}
-  deriving Show via Quiet PerasBlocksMinSlots
+newtype PerasBlockMinSlots = PerasBlockMinSlots {unPerasBlockMinSlots :: Word64}
+  deriving Show via Quiet PerasBlockMinSlots
   deriving stock Generic
   deriving newtype (Enum, Eq, Ord, NoThunks)
 
@@ -53,7 +53,7 @@ newtype PerasCertArrivalThreshold = PerasCertArrivalThreshold {unPerasCertArriva
 data PerasParams = PerasParams
   { perasIgnoranceRounds :: PerasIgnoranceRounds
   , perasCooldownRounds :: PerasCooldownRounds
-  , perasBlocksMinSlots :: PerasBlocksMinSlots
+  , perasBlockMinSlots :: PerasBlockMinSlots
   , perasCertArrivalThreshold :: PerasCertArrivalThreshold
   }
   deriving (Show, Generic, NoThunks)

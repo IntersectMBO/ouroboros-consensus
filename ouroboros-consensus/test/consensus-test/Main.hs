@@ -21,11 +21,13 @@ import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke (tests)
 import qualified Test.Consensus.Peras.WeightSnapshot (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
+import qualified Test.Consensus.Util.Pred (tests)
 import Test.Tasty
 import Test.Util.TestEnv
   ( defaultMainWithTestEnv
   , defaultTestEnvConfig
   )
+import qualified Test.Consensus.Peras.Voting
 
 main :: IO ()
 main = defaultMainWithTestEnv defaultTestEnvConfig tests
@@ -49,8 +51,10 @@ tests =
         , Test.Consensus.Mempool.StateMachine.tests
         ]
     , Test.Consensus.Peras.WeightSnapshot.tests
+    , Test.Consensus.Peras.Voting.tests
     , Test.Consensus.Util.MonadSTM.NormalForm.tests
     , Test.Consensus.Util.Versioned.tests
+    , Test.Consensus.Util.Pred.tests
     , testGroup
         "HardFork"
         [ testGroup
