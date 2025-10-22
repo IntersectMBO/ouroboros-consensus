@@ -2,11 +2,13 @@
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TypeApplications #-}
 
-module Main (main) where
+module Main (module Main) where
 
 import           Cardano.Binary (serialize')
 import qualified Cardano.Crypto.Hash as Hash
@@ -21,11 +23,20 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
+import           Data.DList (DList)
+import qualified Data.DList as DList
 import           Data.Foldable (forM_)
+import           Data.Functor.Contravariant ((>$<))
 import qualified Data.IntMap as IntMap
-import qualified Data.IntSet as IntSet
+import           Data.IntMap (IntMap)
 import           Data.List (intercalate, isSuffixOf, unfoldr)
+import           Data.Map (Map)
+import qualified Data.Map as Map
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Data.String (fromString)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T (decodeUtf8', encodeUtf8)
 import qualified Data.Vector as V
 import           Data.Word (Word8, Word16, Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
@@ -39,13 +50,21 @@ import qualified System.Random.Stateful as R
 import           Text.Read (readMaybe)
 
 main :: IO ()
-main = getArgs >>= \case
-    ["generate", dbPath, manifestPath]
+main = flip asTypeOf main2 $ do
+  main2
+
+main2 :: IO ()
+main2 = getArgs >>= \case
+    ["generate", dbPath, lfstPath, manifestPath]
       | ".db" `isSuffixOf` dbPath
+      , ".lfst" `isSuffixOf` lfstPath
       , ".json" `isSuffixOf` manifestPath
       -> do
         doesFileExist dbPath >>= \case
             True -> die "database path must not exist"
+            False -> pure ()
+        doesFileExist lfstPath >>= \case
+            True -> die "LeiosFetchState path must not exist"
             False -> pure ()
         manifest <- fmap JSON.eitherDecode (BSL.readFile manifestPath) >>= \case
             Left err -> die err
@@ -53,53 +72,69 @@ main = getArgs >>= \case
         db <- withDieMsg $ DB.open (fromString dbPath)
         prng0 <- R.initStdGen
         generateDb prng0 db manifest
+        JSON.encodeFile lfstPath emptyLeiosFetchState
     ["MsgLeiosBlockRequest", dbPath, ebIdStr]
       | ".db" `isSuffixOf` dbPath
       , Just ebId <- readMaybe ebIdStr
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
         msgLeiosBlockRequest db ebId
-    ["MsgLeiosBlock", dbPath, ebIdStr, ebSlotStr, ebPath]
+    ["MsgLeiosBlock", dbPath, ebSlotStr, ebPath]
       | ".db" `isSuffixOf` dbPath
       , ".bin" `isSuffixOf` ebPath
-      , Just ebId <- readMaybe ebIdStr
       , Just ebSlot <- readMaybe ebSlotStr
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
-        msgLeiosBlock db ebId ebSlot ebPath
-    "MsgLeiosBlockTxsRequest" : dbPath : ebIdStr : bitmapChunkStrs
+        msgLeiosBlock db ebSlot ebPath
+    "MsgLeiosBlockTxsRequest" : dbPath : slotStr : hashStr : bitmapChunkStrs
       | ".db" `isSuffixOf` dbPath
-      , Just ebId <- readMaybe ebIdStr
+      , Just slot <- readMaybe slotStr
+      , Right hash <- BS16.decode $ BS8.pack hashStr
       , Just bitmaps <- parseBitmaps bitmapChunkStrs
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
+        dynEnv <- loadLeiosFetchDynEnvHelper False db
+        let ebId = fst $ ebIdFromPoint slot hash dynEnv
         msgLeiosBlockTxsRequest db ebId bitmaps
-    "MsgLeiosBlockTxs" : dbPath : ebIdStr : ebTxsPath : bitmapChunkStrs
+    ["MsgLeiosBlockTxs", dbPath, lfstPath, peerIdStr, ebTxsPath]
       | ".db" `isSuffixOf` dbPath
       , ".bin" `isSuffixOf` ebTxsPath
-      , Just ebId <- readMaybe ebIdStr
-      , Just bitmaps <- parseBitmaps bitmapChunkStrs
+      , not (null peerIdStr)
       -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
-        msgLeiosBlockTxs db ebId ebTxsPath bitmaps
-    "fetch-decision" : dbPath : ebIdStrs
-      | ".db" `isSuffixOf` dbPath
-      , Just ebIds <- sequence $ map readMaybe ebIdStrs
+        dynEnv <- loadLeiosFetchDynEnvHelper False db
+        acc <- withDiePoly id $ JSON.eitherDecodeFileStrict lfstPath
+        acc' <- msgLeiosBlockTxs db dynEnv acc (MkPeerId peerIdStr) ebTxsPath
+        JSON.encodeFile lfstPath acc'
+    "MsgLeiosBlockTxsOffer" : lfstPath : peerIdStr : ebIdStrs
+      | ".lfst" `isSuffixOf` lfstPath
+      , not (null peerIdStr)
+      , Just ebIds <- map MkEbId <$> traverse readMaybe ebIdStrs
       , not (null ebIds)
       -> do
+        acc <- withDiePoly id $ JSON.eitherDecodeFileStrict lfstPath
+        acc' <- msgLeiosBlockTxsOffer acc (MkPeerId peerIdStr) ebIds
+        JSON.encodeFile lfstPath acc'
+    ["fetch-logic-iteration", dbPath, lfstPath]
+      | ".db" `isSuffixOf` dbPath
+      , ".lfst" `isSuffixOf` lfstPath
+      -> do
         db <- withDieMsg $ DB.open (fromString dbPath)
-        fetchDecision db (IntSet.fromList ebIds)
+        acc <- withDiePoly id $ JSON.eitherDecodeFileStrict lfstPath
+        acc' <- fetchDecision2 db acc
+        JSON.encodeFile lfstPath acc'
     ["hash-txs", ebTxsPath]
       | ".bin" `isSuffixOf` ebTxsPath
       -> do
         hashTxs ebTxsPath
-    _ -> die "Either $0 generate myDatabase.db myManifest.json\n\
-             \    OR $0 MsgLeiosBlockRequest myDatabase.db ebId\n\
-             \    OR $0 MsgLeiosBlock myDatabase.db ebId myEb.bin\n\
-             \    OR $0 MsgLeiosBlockTxsRequest myDatabase.db ebId index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
-             \    OR $0 MsgLeiosBlockTxs myDatabase.db ebId myEbTxs.bin index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
-             \    OR $0 fetch-decision myDatabase.db ebId ebId ebId ...\n\
+    _ -> die "Either $0 generate my.db myManifest.json\n\
+             \    OR $0 MsgLeiosBlockRequest my.db ebId\n\
+             \    OR $0 MsgLeiosBlock my.db ebId myEb.bin\n\
+             \    OR $0 MsgLeiosBlockTxsRequest my.db ebSlot ebHash(hex) index16:bitmap64 index16:bitmap64 index16:bitmap64 ...\n\
+             \    OR $0 MsgLeiosBlockTxs my.db my.lfst peerId myEbTxs.bin\n\
+             \    OR $0 fetch-logic-iteration my.db my.lfst\n\
              \    OR $0 hash-txs myEbTxs.bin\n\
+             \    OR $0 MsgLeiosBlockTxsOffer my.lfst peerId ebId ebId ebId ...\n\
              \"
 
 parseBitmaps :: [String] -> Maybe [(Word16, Word64)]
@@ -115,15 +150,21 @@ parseBitmaps =
           -> go ((idx, bitmap) : acc) bitmapChunkStrs
         _ -> Nothing
 
+prettyBitmap :: (Word16, Word64) -> String
+prettyBitmap (idx, bitmap) =
+    show idx ++ ":0x" ++ Numeric.showHex bitmap ""
+
 data EbRecipe = EbRecipe {
-    slotNo :: Word64
+    ebRecipeSlotNo :: Word64
   ,
-    txByteSizes :: V.Vector Word16
+    ebRecipeTxBytesSizes :: V.Vector Word16
   }
   deriving (Generic, Show)
 
--- | defaults to @GHC.Generics@
-instance JSON.FromJSON EbRecipe where {}
+instance JSON.FromJSON EbRecipe where
+    parseJSON = JSON.withObject "EbRecipe" $ \v -> EbRecipe
+        <$> v JSON..: (fromString "slotNo")
+        <*> v JSON..: (fromString "txBytesSizes")
 
 -----
 
@@ -137,34 +178,36 @@ generateDb prng0 db ebRecipes = do
     stmt_write_ebId <- withDieJust $ DB.prepare db (fromString sql_insert_ebId)
     stmt_write_ebClosure <- withDieJust $ DB.prepare db (fromString sql_insert_ebClosure)
     -- loop over EBs (one SQL transaction each, to be gentle)
-    forM_ ([(0 :: Word16) ..] `zip` ebRecipes) $ \(ebId, ebRecipe) -> do
+    _dynEnv' <- (\f -> foldM f emptyLeiosFetchDynEnv ebRecipes) $ \dynEnv ebRecipe -> do
         -- generate txs, so we have their hashes
-        txs <- V.forM (txByteSizes ebRecipe) $ \txByteSize -> do
+        txs <- V.forM (ebRecipeTxBytesSizes ebRecipe) $ \txBytesSize -> do
             -- generate a random bytestring whose CBOR encoding has the expected length
             --
             -- In the actual implementation, the values themselves will be
             -- valid CBOR. It's useful to maintain that invariant even for the
             -- otherwise-opaque random data within this prototype/demo.
-            when (txByteSize < 55) $ die "Tx cannot be smaller than 55 bytes"
+            when (txBytesSize < 55) $ die "Tx cannot be smaller than 55 bytes"
             let overhead   -- one for the initial byte, plus 1 2 4 or 8 for the length argument
-                  | txByteSize < fromIntegral (maxBound :: Word8) = 2
-                  | txByteSize <              (maxBound :: Word16) = 3
-                  | txByteSize < fromIntegral (maxBound :: Word32) = 5
+                  | txBytesSize < fromIntegral (maxBound :: Word8) = 2
+                  | txBytesSize <              (maxBound :: Word16) = 3
+                  | txBytesSize < fromIntegral (maxBound :: Word32) = 5
                   | otherwise = 9
             txBytes <- id
               $ fmap (serialize' . CBOR.encodeBytes)
-              $ R.uniformByteStringM (fromIntegral txByteSize - overhead) gref
+              $ R.uniformByteStringM (fromIntegral txBytesSize - overhead) gref
             pure (txBytes, Hash.hashWith id txBytes :: Hash.Hash HASH ByteString)
-        let ebSlot = slotNo ebRecipe
+        let ebSlot = ebRecipeSlotNo ebRecipe
         let ebHash :: Hash.Hash HASH ByteString
             ebHash =
                 Hash.castHash
               $ Hash.hashWithSerialiser
                     (encodeEB (fromIntegral . BS.length) Hash.hashToBytes)
                     txs
+        
+        let (ebId, dynEnv') = ebIdFromPoint ebSlot (Hash.hashToBytes ebHash) dynEnv
         withDieMsg $ DB.exec db (fromString "BEGIN")
-        withDie $ DB.bindInt64 stmt_write_ebId   3 (fromIntegral ebId)
-        withDie $ DB.bindInt64 stmt_write_ebClosure 1 (fromIntegral ebId)
+        withDie $ DB.bindInt64 stmt_write_ebId   3 (fromIntegralEbId ebId)
+        withDie $ DB.bindInt64 stmt_write_ebClosure 1 (fromIntegralEbId ebId)
         -- INSERT INTO ebPoints
         withDie $ DB.bindInt64    stmt_write_ebId 1 (fromIntegral ebSlot)
         withDie $ DB.bindBlob     stmt_write_ebId 2 (Hash.hashToBytes ebHash)
@@ -181,6 +224,7 @@ generateDb prng0 db ebRecipes = do
             withDie $ DB.reset        stmt_write_ebClosure
         -- finalize each EB
         withDieMsg $ DB.exec db (fromString "COMMIT")
+        pure dynEnv'
     -- finalize db
     withDieMsg $ DB.exec db (fromString sql_index_schema)
 
@@ -213,7 +257,7 @@ sql_schema =
     \  ,\n\
     \    txHashBytes BLOB NOT NULL   -- raw bytes\n\
     \  ,\n\
-    \    txByteSize INTEGER NOT NULL\n\
+    \    txBytesSize INTEGER NOT NULL\n\
     \  ,\n\
     \    txBytes BLOB   -- valid CBOR\n\
     \  ,\n\
@@ -224,17 +268,17 @@ sql_schema =
 sql_index_schema :: String
 sql_index_schema =
     "CREATE INDEX ebPointsExpiry\n\
-    \    ON ebPoints (ebSlot, ebId);   -- Helps with the eviction policy of the EbStore.\n\
+    \    ON ebPoints (ebSlot ASC, ebId ASC);   -- Helps with the eviction policy of the EbStore.\n\
     \\n\
     \CREATE INDEX txCacheExpiry\n\
-    \    ON txCache (expiryUnixEpoch, txHashBytes);   -- Helps with the eviction policy of the TxCache.\n\
+    \    ON txCache (expiryUnixEpoch ASC, txHashBytes);   -- Helps with the eviction policy of the TxCache.\n\
     \\n\
     \CREATE INDEX missingEbTxs\n\
-    \    ON ebTxs (ebId, txOffset)\n\
+    \    ON ebTxs (ebId DESC, txOffset ASC)\n\
     \    WHERE txBytes IS NULL;   -- Helps with fetch logic decisions.\n\
     \\n\
     \CREATE INDEX acquiredEbTxs\n\
-    \    ON ebTxs (ebId, txOffset)\n\
+    \    ON ebTxs (ebId DESC, txOffset ASC)\n\
     \    WHERE txBytes IS NOT NULL;   -- Helps with fetch logic decisions.\n\
     \"
 
@@ -245,7 +289,7 @@ sql_insert_ebId =
 
 sql_insert_ebClosure :: String
 sql_insert_ebClosure =
-    "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txByteSize, txBytes) VALUES (?, ?, ?, ?, ?)\n\
+    "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, ?)\n\
     \"
 
 -----
@@ -335,8 +379,8 @@ msgLeiosBlockRequest db ebId = do
                 DB.Row -> do
                     -- TODO use a sink buffer to avoid polluting the heap with these temporary copies?
                     txHashBytes <- DB.columnBlob stmt 0
-                    txByteSize <- DB.columnInt64 stmt 1
-                    loop $ pushX acc (txByteSize, txHashBytes)
+                    txBytesSize <- DB.columnInt64 stmt 1
+                    loop $ pushX acc (txBytesSize, txHashBytes)
     acc <- loop emptyX
     -- combine the EB items
     BS.putStr
@@ -349,12 +393,12 @@ msgLeiosBlockRequest db ebId = do
 -- logic naturally reverses it
 sql_lookup_ebBodies_DESC :: String
 sql_lookup_ebBodies_DESC =
-    "SELECT txHashBytes, txByteSize FROM ebTxs\n\
+    "SELECT txHashBytes, txBytesSize FROM ebTxs\n\
     \WHERE ebId = ?\n\
     \ORDER BY txOffset DESC\n\
     \"
 
-msgLeiosBlockTxsRequest :: DB.Database -> Int -> [(Word16, Word64)] -> IO ()
+msgLeiosBlockTxsRequest :: DB.Database -> EbId -> [(Word16, Word64)] -> IO ()
 msgLeiosBlockTxsRequest db ebId bitmaps = do
     do
         let idxs = map fst bitmaps
@@ -377,7 +421,7 @@ msgLeiosBlockTxsRequest db ebId bitmaps = do
     --
     -- TODO Better workaround for requests of many txs?
     stmt_lookup_ebClosuresMAIN <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures_DESC (maxBatchSize `min` numOffsets)
-    withDie $ DB.bindInt64 stmt_lookup_ebClosuresMAIN 1 (fromIntegral ebId)
+    withDie $ DB.bindInt64 stmt_lookup_ebClosuresMAIN 1 (fromIntegralEbId ebId)
     withDieMsg $ DB.exec db (fromString "BEGIN")
     acc <- (\f -> foldM f emptyX (batches offsets)) $ \acc batch -> do
         stmt <-
@@ -385,7 +429,7 @@ msgLeiosBlockTxsRequest db ebId bitmaps = do
             -- this can only be reached for the last batch
             withDie $ DB.finalize stmt_lookup_ebClosuresMAIN
             stmt_lookup_ebClosuresTIDY <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures_DESC (numOffsets `mod` maxBatchSize)
-            withDie $ DB.bindInt64 stmt_lookup_ebClosuresTIDY 1 (fromIntegral ebId)
+            withDie $ DB.bindInt64 stmt_lookup_ebClosuresTIDY 1 (fromIntegralEbId ebId)
             pure stmt_lookup_ebClosuresTIDY
         forM_ ([(2 :: DB.ParamIndex) ..] `zip` batch) $ \(i, offset) -> do
             withDie $ DB.bindInt64 stmt i (fromIntegral offset)
@@ -408,14 +452,14 @@ msgLeiosBlockTxsRequest db ebId bitmaps = do
       $ CBOR.encodeListLenIndef <> foldr (\bs r -> CBOR.encodePreEncoded bs <> r) CBOR.encodeBreak acc
     putStrLn ""
 
-maxEbBodyByteSize :: Int
-maxEbBodyByteSize = 500000
+maxEbBodyBytesSize :: Int
+maxEbBodyBytesSize = 500000
 
-minEbItemByteSize :: Int
-minEbItemByteSize = (1 + 32 + 1) + (1 + 1)
+minEbItemBytesSize :: Int
+minEbItemBytesSize = (1 + 32 + 1) + (1 + 1)
 
 maxEbItems :: Int
-maxEbItems = (negate 1 + maxEbBodyByteSize - 1) `div` minEbItemByteSize
+maxEbItems = (negate 1 + maxEbBodyBytesSize - 1) `div` minEbItemBytesSize
 
 {- | For example
 @
@@ -483,22 +527,25 @@ sql_lookup_ebClosures_DESC n =
 -- | PREREQ: the file is the CBOR encoding (binary, not hex) of the payload of a MsgLeiosBlock
 --
 -- PREREQ: No row in ebTxs already has this ebId.
-msgLeiosBlock :: DB.Database -> Int -> Word64 -> FilePath -> IO ()
-msgLeiosBlock db ebId ebSlot ebPath = do
+msgLeiosBlock :: DB.Database -> Word64 -> FilePath -> IO ()
+msgLeiosBlock db ebSlot ebPath = do
     ebBytes <- BS.readFile ebPath
     let ebHash :: Hash.Hash HASH ByteString
         ebHash = Hash.castHash $ Hash.hashWith id ebBytes
+    ebId <- do
+        dynEnv <- loadLeiosFetchDynEnvHelper False db
+        pure $ fst $ ebIdFromPoint ebSlot (Hash.hashToBytes ebHash) dynEnv
     stmt_write_ebIds <- withDieJust $ DB.prepare db (fromString sql_insert_ebId)
     stmt_write_ebBodies <- withDieJust $ DB.prepare db (fromString sql_insert_ebBody)
     withDieMsg $ DB.exec db (fromString "BEGIN")
     -- INSERT INTO ebPoints
     withDie $ DB.bindInt64    stmt_write_ebIds 1 (fromIntegral ebSlot)
     withDie $ DB.bindBlob     stmt_write_ebIds 2 (Hash.hashToBytes ebHash)
-    withDie $ DB.bindInt64    stmt_write_ebIds 3 (fromIntegral ebId)
+    withDie $ DB.bindInt64    stmt_write_ebIds 3 (fromIntegralEbId ebId)
     withDieDone $ DB.stepNoCB stmt_write_ebIds
     withDie $ DB.reset        stmt_write_ebIds
     -- decode incrementally and simultaneously INSERT INTO ebTxs
-    withDie $ DB.bindInt64 stmt_write_ebBodies 1 (fromIntegral ebId)
+    withDie $ DB.bindInt64 stmt_write_ebBodies 1 (fromIntegralEbId ebId)
     let decodeBreakOrEbPair = do
             stop <- CBOR.decodeBreakOr
             if stop then pure Nothing else Just <$> decodeEbPair
@@ -506,10 +553,10 @@ msgLeiosBlock db ebId ebSlot ebPath = do
             (bytes', next) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes decodeBreakOrEbPair bytes
             go2 txOffset bytes' next
         go2 txOffset bytes = \case
-            Just (txHashBytes, txByteSize) -> do
+            Just (txHashBytes, txBytesSize) -> do
                 withDie $ DB.bindInt64    stmt_write_ebBodies 2 txOffset
                 withDie $ DB.bindBlob     stmt_write_ebBodies 3 txHashBytes
-                withDie $ DB.bindInt64    stmt_write_ebBodies 4 (fromIntegral txByteSize)
+                withDie $ DB.bindInt64    stmt_write_ebBodies 4 (fromIntegral txBytesSize)
                 withDieDone $ DB.stepNoCB stmt_write_ebBodies
                 withDie $ DB.reset        stmt_write_ebBodies
                 go1 (txOffset + 1) bytes
@@ -523,15 +570,24 @@ msgLeiosBlock db ebId ebSlot ebPath = do
 
 sql_insert_ebBody :: String
 sql_insert_ebBody =
-    "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txByteSize, txBytes) VALUES (?, ?, ?, ?, NULL)\n\
+    "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, NULL)\n\
     \"
 
 -- | PREREQ: the file is the CBOR encoding (binary, not hex) of the payload of a MsgLeiosBlockTxs
-msgLeiosBlockTxs :: DB.Database -> Int -> FilePath -> [(Word16, Word64)] -> IO ()
-msgLeiosBlockTxs db ebId ebTxsPath bitmaps = do
+msgLeiosBlockTxs :: DB.Database -> LeiosFetchDynamicEnv -> LeiosFetchState -> PeerId -> FilePath -> IO LeiosFetchState
+msgLeiosBlockTxs db dynEnv lfst0 peerId ebTxsPath = do
+    (MkLeiosRequest ebSlot ebHash bitmaps0 txHashes, lfst1) <-
+        case Map.lookup peerId (requestedPerPeer lfst0) of
+            Just (req:reqs) -> pure $ (,) req $ lfst0 {
+                requestedPerPeer =
+                    if null reqs then Map.delete peerId (requestedPerPeer lfst0) else
+                    Map.insert peerId reqs (requestedPerPeer lfst0)
+              }
+            _ -> die "No such outstanding request"
+    let ebId = fst $ ebIdFromPoint ebSlot (let MkHashBytes x = ebHash in x) dynEnv
     ebTxsBytes <- BSL.readFile ebTxsPath
     stmt <- withDieJust $ DB.prepare db (fromString sql_insert_ebTx)
-    withDie $ DB.bindInt64 stmt 2 (fromIntegral ebId)
+    withDie $ DB.bindInt64 stmt 2 (fromIntegralEbId ebId)
     withDieMsg $ DB.exec db (fromString "BEGIN")
     -- decode incrementally and simultaneously UPDATE ebTxs
     --
@@ -539,33 +595,70 @@ msgLeiosBlockTxs db ebId ebTxsPath bitmaps = do
     let decodeBreakOrTx = do
             stop <- CBOR.decodeBreakOr
             if stop then pure Nothing else Just <$> CBOR.decodeBytes
-    let go1 offsets bytes = do
+    let go1 accRequested accTxBytesSize offsets bytes !i = do
             (bytes', next) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes decodeBreakOrTx bytes
-            go2 offsets bytes' next
-        go2 offsets bytes = \case
-            Just txBytes -> case offsets of
-                [] -> die "Too many txs"
-                txOffset:offsets' -> do
+            let txBytesSize = BSL.length bytes - BSL.length bytes'
+                txHash' :: Hash.Hash HASH ByteString
+                txHash' = Hash.hashWith id $ BSL.toStrict $ BSL.take txBytesSize bytes
+            go2
+                accRequested
+                accTxBytesSize
+                offsets
+                bytes'
+                i
+                (fromIntegral txBytesSize)
+                txHash'
+                next
+        go2 accRequested accTxBytesSize offsets bytes !i txBytesSize txHash' = \case
+            Just txBytes -> case (offsets, txHashes V.!? i)  of
+                ([], _) -> die "More txs than offsets"
+                (_, Nothing) -> die "More offsets than hashes"
+                
+                (txOffset:offsets', Just txHash)
+                  | txHash /= MkHashBytes (Hash.hashToBytes txHash') -> die "Wrong tx hash"
+                  | otherwise -> do
                     withDie $ DB.bindInt64    stmt 3 $ fromIntegral txOffset
                     withDie $ DB.bindBlob     stmt 1 $ serialize' $ CBOR.encodeBytes txBytes
                     withDieDone $ DB.stepNoCB stmt
                     withDie $ DB.reset        stmt
-                    go1 offsets' bytes
+                    let delIfNull x = if Set.null x then Nothing else Just x
+                    go1
+                        (Map.update (delIfNull . Set.delete peerId) txHash accRequested)
+                        (accTxBytesSize + txBytesSize)
+                        offsets'
+                        bytes
+                        (i + 1)
             Nothing
               | not (BSL.null bytes) -> die "Incomplete EB txs decode"
               | txOffset:_ <- offsets -> die $ "Too few EB txs; next is " <> show txOffset
-              | otherwise -> pure ()
+              | otherwise -> pure (accRequested, accTxBytesSize)
     let nextOffset = \case
             [] -> Nothing
             (idx, bitmap) : k -> case popLeftmostOffset bitmap of
                 Nothing           -> nextOffset k
                 Just (i, bitmap') ->
                     Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
-        offsets = unfoldr nextOffset bitmaps
+        offsets0 = unfoldr nextOffset bitmaps0
     (ebTxsBytes2, ()) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes CBOR.decodeListLenIndef ebTxsBytes
-    go1 offsets ebTxsBytes2
+    (requested', txBytesSize) <- go1 (requestedTxPeers lfst1) 0 offsets0 ebTxsBytes2 0
     -- finalize the EB
     withDieMsg $ DB.exec db (fromString "COMMIT")
+    pure lfst1 {
+        requestedTxBytesSize = requestedTxBytesSize lfst1 - txBytesSize
+      ,
+        requestedTxBytesSizePerPeer =
+            let delIfZero x = if 0 == x then Nothing else Just x
+            in
+            Map.alter
+                (\case
+                    Nothing -> error "impossible!"
+                    Just x -> delIfZero $ x - txBytesSize
+                )
+                peerId
+                (requestedTxBytesSizePerPeer lfst1)
+      ,
+        requestedTxPeers = requested'
+      }
 
 sql_insert_ebTx :: String
 sql_insert_ebTx =
@@ -576,30 +669,31 @@ sql_insert_ebTx =
 
 -----
 
+{-
 _maxTxOffsetBitWidth :: Int
 _maxTxOffsetBitWidth = ceiling $ log (fromIntegral maxEbItems :: Double) / log 2
 
 maxRequestsPerIteration :: Int
 maxRequestsPerIteration = 10
 
-maxByteSizePerRequest :: Int
-maxByteSizePerRequest = 500000
+maxBytesSizePerRequest :: Int
+maxBytesSizePerRequest = 500000
 
 fetchDecision :: DB.Database -> IntSet.IntSet -> IO ()
 fetchDecision db ebIds = do
     stmt <- withDieJust $ DB.prepare db $ fromString $ sql_next_fetch (IntSet.size ebIds)
     forM_ ([(1 :: DB.ParamIndex) ..] `zip` IntSet.toDescList ebIds) $ \(i, p) -> do
         withDie $ DB.bindInt64 stmt i (fromIntegral p)
-    let loopLimit = maxRequestsPerIteration * maxByteSizePerRequest
-        loop !accReqs !accByteSize =
-            if accByteSize >= loopLimit then pure accReqs else
+    let loopLimit = maxRequestsPerIteration * maxBytesSizePerRequest
+        loop !accReqs !accBytesSize =
+            if accBytesSize >= loopLimit then pure accReqs else
             withDie (DB.stepNoCB stmt) >>= \case
                 DB.Done -> pure accReqs
                 DB.Row -> do
                     ebId <- fromIntegral <$> DB.columnInt64 stmt 0
                     txOffset <- fromIntegral <$> DB.columnInt64 stmt 1
                     txHash <- DB.columnBlob stmt 2
-                    txByteSize <- fromIntegral <$> DB.columnInt64 stmt 3
+                    txBytesSize <- fromIntegral <$> DB.columnInt64 stmt 3
                     loop
                         (IntMap.insertWith
                             IntMap.union
@@ -607,7 +701,7 @@ fetchDecision db ebIds = do
                             (IntMap.singleton txOffset txHash)
                             accReqs
                         )
-                        (accByteSize + txByteSize)
+                        (accBytesSize + txBytesSize)
     reqs <- loop IntMap.empty 0
     forM_ (IntMap.assocs reqs) $ \(ebId, m) -> do
         let sho idx bitmap k =
@@ -629,23 +723,16 @@ fetchDecision db ebIds = do
           $ unwords
           $ "hashes" : show ebId : map (BS8.unpack . BS16.encode) (IntMap.elems m)
 
--- | Arbitrarily limited to 2000; about 2000 average txs are in the ball park
--- of one megabyte.
---
--- If a prefix of the 2000 txs are large, the fetch logic can ignore the rest.
---
--- If all 2000 are still much less than a megabyte, then a) the EB is
--- suspicious and b) the fetch logic can advance the query (TODO require
--- parameterizing this query string with an OFFSET).
+-- | The SQL query optimizer should use the @missingEbTxs@ INDEX.
 sql_next_fetch :: Int -> String
 sql_next_fetch n =
-    "SELECT ebId, txOffset, txHashBytes, txByteSize FROM ebTxs\n\
+    "SELECT ebId, txOffset, txHashBytes, txBytesSize FROM ebTxs\n\
     \WHERE txBytes IS NULL AND ebId IN (" ++ hooks ++ ")\n\
     \ORDER BY ebId DESC, txOffset ASC\n\
-    \LIMIT 2000\n\
     \"
   where
     hooks = intercalate ", " (replicate n "?")
+-}
 
 -----
 
@@ -671,3 +758,514 @@ hashTxs ebTxsPath = do
                     die "Incomplete EB txs decode"
     (ebTxsBytes2, ()) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes CBOR.decodeListLenIndef ebTxsBytes
     go1 ebTxsBytes2
+
+-----
+
+newtype PeerId = MkPeerId String
+  deriving (Eq, Ord, Show)
+  deriving newtype (JSON.FromJSON, JSON.FromJSONKey, JSON.ToJSON, JSON.ToJSONKey)
+
+prettyPeerId :: PeerId -> String
+prettyPeerId (MkPeerId x) = x
+
+newtype EbId = MkEbId Int
+  deriving (Eq, Ord, Show)
+  deriving newtype (JSON.FromJSON, JSON.FromJSONKey, JSON.ToJSON, JSON.ToJSONKey)
+
+prettyEbId :: EbId -> String
+prettyEbId (MkEbId y) = show y
+
+fromIntegralEbId :: Integral a => EbId -> a
+fromIntegralEbId (MkEbId y) = fromIntegral y
+
+newtype HashBytes = MkHashBytes ByteString
+  deriving (Eq, Ord, Show)
+
+prettyHashBytes :: HashBytes -> String
+prettyHashBytes (MkHashBytes bytes) = BS8.unpack $ BS16.encode bytes
+
+hashBytesToText :: HashBytes -> T.Text
+hashBytesToText (MkHashBytes hash) =
+    let hex = BS16.encode hash
+    in
+    case T.decodeUtf8' hex of
+        Left err -> error $ "bad HashBytes, " <> show err <> ": " <> BS8.unpack hex
+        Right txt -> txt
+
+instance JSON.FromJSON HashBytes where
+    parseJSON val = do
+        txt <- JSON.parseJSON val
+        case BS16.decode $ T.encodeUtf8 txt of
+            Left s -> error $ "bad HashBytes, " <> s <> ": " <> T.unpack txt
+            Right b -> pure $ MkHashBytes b
+
+instance JSON.FromJSONKey HashBytes where
+    fromJSONKey =
+        JSON.FromJSONKeyTextParser $ \txt ->
+        case BS16.decode $ T.encodeUtf8 txt of
+            Left s -> error $ "bad HashBytes, " <> s <> ": " <> T.unpack txt
+            Right b -> pure $ MkHashBytes b
+
+instance JSON.ToJSON HashBytes where
+    toJSON = JSON.toJSON . hashBytesToText
+    toEncoding = JSON.toEncoding . hashBytesToText
+
+instance JSON.ToJSONKey HashBytes where
+    toJSONKey = hashBytesToText >$< JSON.toJSONKey
+
+-- | INVARIANT: no overlap
+data LeiosFetchState = MkLeiosFetchState {
+    -- | Which EBs each peer has offered the closure for
+    --
+    -- INVARIANT: every set of EBs all exactly agree about the claimed size of each tx
+    --
+    -- TODO reverse index for when EBs age out?
+    offeredEbTxs :: Map PeerId (Set EbId)
+  ,
+    -- | Which requests have actually been sent to this peer
+    requestedPerPeer :: Map PeerId [LeiosRequest]
+  ,
+    -- | INVARIANT: no empty sets
+    --
+    -- INVARIANT: @<= maxRequestedTxBytes@
+    --
+    -- TODO may need to also store priority here
+    requestedTxPeers :: Map TxHash (Set PeerId)
+  ,
+    -- | Outstanding requested 'TxBytesSize' for each peer
+    --
+    -- INVARIANT: @Map.all (<= maxRequestedTxBytesPerPeer)@
+    requestedTxBytesSizePerPeer :: Map PeerId TxBytesSize
+  ,
+    -- | Sum of 'requestedTxBytesSizePerPeer'
+    --
+    -- INVARIANT: @<= maxRequestedTxBytes@
+    requestedTxBytesSize :: TxBytesSize
+  }
+  deriving (Generic)
+
+-- | defaults to @GHC.Generics@
+instance JSON.FromJSON LeiosFetchState where {}
+
+-- | defaults to @GHC.Generics@
+instance JSON.ToJSON LeiosFetchState where {}
+
+emptyLeiosFetchState :: LeiosFetchState
+emptyLeiosFetchState =
+    MkLeiosFetchState
+        Map.empty
+        Map.empty
+        Map.empty
+        Map.empty
+        0
+
+ebIdSlot :: EbId -> Word64
+ebIdSlot (MkEbId y) =
+    fromIntegral (y - minBound :: Int) `Bits.unsafeShiftR` 20 :: Word64
+
+ebIdToPoint :: EbId -> LeiosFetchDynamicEnv -> Maybe (Word64, ByteString)
+ebIdToPoint (MkEbId y) x =
+    f <$> IntMap.lookup y (ebPointsInverse x)
+  where
+    f (MkHashBytes z) = (ebIdSlot (MkEbId y), z)
+
+ebIdFromPoint :: Word64 -> ByteString -> LeiosFetchDynamicEnv -> (EbId, LeiosFetchDynamicEnv)
+ebIdFromPoint slotNo hash x =
+    case IntMap.lookup (fromIntegral slotNo) (ebPoints x) of
+        Just m -> case Map.lookup hashBytes m of
+            Just y -> (y, x)
+            Nothing -> gen $ MkEbId $ zero + (2^(20 :: Int) - 1) - Map.size m
+        Nothing -> gen $ MkEbId $ zero + (2^(20 :: Int) - 1)
+  where
+    hashBytes = MkHashBytes hash
+
+    zero = fromIntegral ((slotNo `Bits.unsafeShiftL` 20) :: Word64) + minBound :: Int
+
+    gen y =
+        (,) y
+      $ x { ebPoints = IntMap.insertWith Map.union (fromIntegral slotNo) (Map.singleton hashBytes y) (ebPoints x)
+          , ebPointsInverse = let MkEbId z = y in IntMap.insert z hashBytes (ebPointsInverse x)
+          }
+
+-----
+
+type TxBytesSize = Int
+
+type TxHash = HashBytes
+
+data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
+  {
+    -- | At most this many outstanding bytes requested from all peers together
+    maxRequestedTxBytes :: TxBytesSize
+  ,
+    -- | At most this many outstanding bytes requested from each peer
+    maxRequestedTxBytesPerPeer :: TxBytesSize
+  ,
+    -- | At most this many outstanding bytes per request
+    maxRequestTxBytesSize :: TxBytesSize
+  ,
+    -- | At most this many outstanding requests for each individual tx
+    maxRequestsPerTx :: Int
+  }
+
+-- TODO these maps are too big to actually have on the heap in the worst-case:
+-- 13888 txs per EB, 11000 EBs, 50 upstream peers, 32 bytes per hash
+data LeiosFetchDynamicEnv = MkLeiosFetchDynamicEnv
+  {
+    -- | @slot -> hash -> EbId@
+    --
+    -- This relation is written to and loaded from the 'ebPoints' table on node
+    -- shutdown and startup.
+    --
+    -- INVARIANT: the inner map is non-empty
+    --
+    -- INVARIANT: strictly ascending 'EbId's, which is ensured as follows.
+    --
+    -- Assumptions:
+    --   o This code base will not survive more than 100 years.
+    --   o The EBs' slot schedule will never be more granular than 5000 per second.
+    --   o There will be never be more than 2^20 elections in a single EB slot.
+    --
+    -- Therefore, since 2^(64 - 20) = 2^44 seconds is more than 500,000 years,
+    -- the 20 highest-order bits of the slot number will be 0 for the entire
+    -- lifetime of this codebase, and so can be repurposed to identify
+    -- individual EBs.
+    --
+    -- PREREQ: As justified above, this codes assumes the slot number will
+    -- never exceed 2^44 - 1.
+    --
+    -- Thus, the first EB with slot S received is assigned 'EbId' @fromIntegral
+    -- (S << 20) + 2^20 - 1 + minBound@, the next EB with slot S to arrive is
+    -- assigned the predecessor (so the tiebreaker favors first to arrive), and
+    -- so on. Note that @(enm () :: [Int]) == map cnv (enm () :: [Word64])@
+    -- where @cnv w = fromIntegral (w :: Word64) + minBound :: Int@ and @enm ()
+    -- = [minBound, minBound + 1, maxBound - 1, maxBound]@.
+    ebPoints :: IntMap {- SlotNo -} (Map HashBytes EbId)
+  ,
+    -- | Reverse index of 'ebPoints', just the hash
+    --
+    -- INVARIANT: @(ebPoints IntMap.! (ebIdSlot ebId)) Map.! (ebPointsInverse IntMap.! ebId) = ebId@
+    ebPointsInverse :: IntMap {- EbId -} HashBytes
+  ,
+--    acquiredTxBodies :: Map TxHash TxBytes
+--  ,
+    -- | Txs listed in received EBs but never themselves received
+    missingTxBodies :: Set TxHash
+  ,
+    -- | All missing txs in the context of EBs worth retrieving the closure for
+    ebBodies :: Map EbId (IntMap (TxHash, TxBytesSize))
+  ,
+    -- | Reverse index of 'ebBodies'
+    --
+    -- INVARIANT: @let (ebId, txOffset) = txOffsetss Map.! h in h = fst ((ebBodies IntMap.! ebId) IntMap.! txOffset)@
+    txOffsetss :: Map TxHash (Map EbId Int)
+  }
+
+emptyLeiosFetchDynEnv :: LeiosFetchDynamicEnv
+emptyLeiosFetchDynEnv =
+    MkLeiosFetchDynamicEnv
+        IntMap.empty
+        IntMap.empty
+        Set.empty
+        Map.empty
+        Map.empty
+
+loadLeiosFetchDynEnv :: DB.Database -> IO LeiosFetchDynamicEnv
+loadLeiosFetchDynEnv = loadLeiosFetchDynEnvHelper True
+
+loadLeiosFetchDynEnvHelper :: Bool -> DB.Database -> IO LeiosFetchDynamicEnv
+loadLeiosFetchDynEnvHelper full db = do
+    (ps, qs) <- do
+        stmt <- withDieJust $ DB.prepare db (fromString sql_scan_ebId)
+        let loop !ps !qs =
+                withDie (DB.stepNoCB stmt) >>= \case
+                    DB.Done -> pure (ps, qs)
+                    DB.Row -> do
+                        ebSlot <- fromIntegral <$> DB.columnInt64 stmt 0
+                        ebHash <- MkHashBytes <$> DB.columnBlob stmt 1
+                        ebId <- fromIntegral <$> DB.columnInt64 stmt 2
+                        loop
+                            (IntMap.insertWith Map.union ebSlot (Map.singleton ebHash (MkEbId ebId)) ps)
+                            (IntMap.insert ebId ebHash qs)
+        loop IntMap.empty IntMap.empty
+    (missing, bodies, offsetss) <- if not full then pure (Set.empty, Map.empty, Map.empty) else do
+        stmt <- withDieJust $ DB.prepare db (fromString sql_scan_missingEbTx)
+        let loop !missing !bodies !offsetss =
+                withDie (DB.stepNoCB stmt) >>= \case
+                    DB.Done -> pure (missing, bodies, offsetss)
+                    DB.Row -> do
+                        ebId <- (MkEbId . fromIntegral) <$> DB.columnInt64 stmt 0
+                        txOffset <- fromIntegral <$> DB.columnInt64 stmt 1
+                        txHash <- MkHashBytes <$> DB.columnBlob stmt 2
+                        txBytesSize <- fromIntegral <$> DB.columnInt64 stmt 3
+                        loop
+                            (Set.insert txHash missing)
+                            (Map.insertWith IntMap.union ebId (IntMap.singleton txOffset (txHash, txBytesSize)) bodies)
+                            (Map.insertWith Map.union txHash (Map.singleton ebId txOffset) offsetss)
+        loop Set.empty Map.empty Map.empty
+    pure MkLeiosFetchDynamicEnv
+      {
+        ebPoints = ps
+      ,
+        ebPointsInverse = qs
+      ,
+        missingTxBodies = missing
+      , 
+        ebBodies = bodies
+      ,
+        txOffsetss = offsetss
+      }
+
+sql_scan_ebId :: String
+sql_scan_ebId =
+    "SELECT ebSlot, ebHash, ebId\n\
+    \FROM ebPoints\n\
+    \ORDER BY ebId ASC\n\
+    \"
+
+sql_scan_missingEbTx :: String
+sql_scan_missingEbTx =
+    "SELECT ebId, txOffset, txHashBytes, txBytesSize\n\
+    \FROM ebTxs\n\
+    \WHERE txBytes IS NULL\n\
+    \ORDER BY ebId DESC, txOffset ASC\n\
+    \"
+
+-----
+
+newtype LeiosRequestDecisions =
+    MkLeiosRequestDecisions
+        (Map PeerId (Map Word64 (DList (TxHash, TxBytesSize, Map EbId Int))))
+  deriving (Show)
+
+leiosFetchLogicIteration ::
+    LeiosFetchStaticEnv
+ ->
+    LeiosFetchDynamicEnv
+ ->
+    LeiosFetchState
+ ->
+    (LeiosFetchState, LeiosRequestDecisions)
+leiosFetchLogicIteration env dynEnv =
+    \acc ->
+        go1 acc (MkLeiosRequestDecisions Map.empty)
+      $ expand
+      $ Map.toDescList
+      $ ebBodies dynEnv
+  where
+    expand = \case
+        [] -> []
+        (ebId, v):vs ->
+            [ (ebId, txHash) | (txHash, _txBytesSize) <- IntMap.elems v ]
+         <> expand vs
+    go1 !acc !accNew = \case
+        []
+         -> (acc, accNew)
+
+        (ebId, txHash):txHashes
+
+          | Set.member txHash (missingTxBodies dynEnv)   -- we don't already have it
+          , let !txOffsets = case Map.lookup txHash (txOffsetss dynEnv) of
+                    Nothing -> error "impossible!"
+                    Just x -> x
+          , let peerIds :: Set PeerId
+                !peerIds = Map.findWithDefault Set.empty txHash (requestedTxPeers acc)
+         -> go2 acc accNew txHashes (ebIdSlot ebId) txHash txOffsets peerIds
+
+          | otherwise
+         -> go1 acc accNew txHashes
+
+    go2 !acc !accNew txHashes ebSlot txHash txOffsets peerIds
+
+      | requestedTxBytesSize acc >= maxRequestedTxBytes env   -- we can't request anything
+      = (acc, accNew)
+
+      | Set.size peerIds < maxRequestsPerTx env   -- we would like to request it from an additional peer
+          -- TODO if requests list priority, does this limit apply even if the
+          -- tx has only been requested at lower priorities?
+      , Just (peerId, txOffsets') <- choosePeer peerIds acc txOffsets
+          -- there's a peer who offered it and we haven't already requested it from them
+      = let txBytesSize = case Map.lookupMax txOffsets' of
+                Nothing -> error "impossible!"
+                Just (ebId, txOffset) -> case Map.lookup ebId (ebBodies dynEnv) of
+                    Nothing -> error "impossible!"
+                    Just v -> snd $ v IntMap.! txOffset
+            accNew' =
+                MkLeiosRequestDecisions
+              $ Map.insertWith
+                    (Map.unionWith (<>))
+                    peerId
+                    (Map.singleton ebSlot (DList.singleton (txHash, txBytesSize, txOffsets')))
+                    (let MkLeiosRequestDecisions x = accNew in x)
+            acc' = MkLeiosFetchState {
+                offeredEbTxs = offeredEbTxs acc
+              ,
+                requestedPerPeer = requestedPerPeer acc
+              ,
+                requestedTxPeers = Map.insertWith Set.union txHash (Set.singleton peerId) (requestedTxPeers acc)
+              ,
+                requestedTxBytesSizePerPeer = Map.insertWith (+) peerId txBytesSize (requestedTxBytesSizePerPeer acc)
+              ,
+                requestedTxBytesSize = txBytesSize + requestedTxBytesSize acc
+              }
+            peerIds' = Set.insert peerId peerIds
+        in
+        go2 acc' accNew' txHashes ebSlot txHash txOffsets peerIds'
+
+      | otherwise
+      = go1 acc accNew txHashes
+
+    choosePeer :: Set PeerId -> LeiosFetchState -> Map EbId Int -> Maybe (PeerId, Map EbId Int)
+    choosePeer peerIds acc txOffsets =
+        foldr (\a _ -> Just a) Nothing
+      $ [ (peerId, txOffsets')
+        | (peerId, ebIds) <-
+              Map.toList   -- TODO prioritize/shuffle?
+            $ (`Map.withoutKeys` peerIds)   -- not already requested from this peer
+            $ offeredEbTxs acc
+        , Map.findWithDefault 0 peerId (requestedTxBytesSizePerPeer acc) <= maxRequestedTxBytesPerPeer env
+            -- peer can be sent more requests
+        , let txOffsets' = txOffsets `Map.restrictKeys` ebIds
+        , not $ Map.null txOffsets'   -- peer has offered an EB closure that includes this tx
+        ]
+
+-----
+
+data LeiosRequest =
+    -- | ebSlot, ebHash, bitmaps, txHashes
+    --
+    -- The hashes aren't sent to the peer, but they are used to validate the
+    -- reply when it arrives.
+    MkLeiosRequest
+        !Word64
+        !HashBytes
+        [(Word16, Word64)]
+        !(V.Vector TxHash)
+  deriving (Generic, Show)
+
+-- | defaults to @GHC.Generics@
+instance JSON.FromJSON LeiosRequest where {}
+
+-- | defaults to @GHC.Generics@
+instance JSON.ToJSON LeiosRequest where {}
+
+packRequests :: LeiosFetchStaticEnv -> LeiosFetchDynamicEnv -> LeiosRequestDecisions -> Map PeerId [LeiosRequest]
+packRequests env dynEnv =
+    \(MkLeiosRequestDecisions x) -> Map.map goPeer x
+  where
+    goPeer =
+         DList.toList
+       . Map.foldlWithKey
+            (\acc prio txs -> goPrio prio txs <> acc)
+            DList.empty
+
+    goPrio _prio txs =
+        Map.foldlWithKey
+            (\acc ebId txs' ->
+                case ebIdToPoint ebId dynEnv of
+                    Nothing -> error "impossible!"
+                    Just (ebSlot, ebHash) ->
+                        goEb
+                            {- prio -}
+                            ebSlot ebHash
+                            0
+                            IntMap.empty
+                            0
+                            DList.empty
+                            (IntMap.toAscList txs')
+                     <> acc
+            )
+            DList.empty
+      -- group by EbId, sort by offset ascending
+      $ Map.fromListWith IntMap.union
+      $ [ (,) ebId $ IntMap.singleton txOffset (txHash, txBytesSize)
+        | (txHash, txBytesSize, txOffsets) <- DList.toList txs
+        -- TODO somewhat arbitrarily choosing the freshest EbId here; merely
+        -- something simple and sufficient for the demo
+        , let (ebId, txOffset) =
+                  case Map.lookupMax txOffsets of
+                      Nothing -> error "impossible!"
+                      Just x -> x
+        ]
+
+    goEb ::
+        Word64
+     ->
+        ByteString
+     ->
+        TxBytesSize
+     ->
+        IntMap Word64
+     ->
+        Int
+     ->
+        DList TxHash
+     ->
+        [(Int, (TxHash, TxBytesSize))]
+     ->
+        DList LeiosRequest
+    -- TODO the incoming indexes are ascending, so the IntMap accumulator could
+    -- be simplified away
+    goEb ebSlot ebHash !accTxBytesSize !accBitmaps !accN !accHashes = \case
+        [] -> if 0 < accN then DList.singleton flush else DList.empty
+        (txOffset, (txHash, txBytesSize)):txs
+
+          | maxRequestTxBytesSize env < accTxBytesSize'
+         -> flush `DList.cons` goEb ebSlot ebHash 0 IntMap.empty 0 DList.empty txs
+
+          | otherwise
+          , let (q, r) = txOffset `divMod` 64
+         -> goEb
+                ebSlot ebHash
+                accTxBytesSize'
+                (IntMap.insertWith (Bits..|.) q (Bits.bit (63 - r)) accBitmaps)
+                (accN + 1)
+                (accHashes `DList.snoc` txHash)
+                txs
+
+          where
+            accTxBytesSize' = accTxBytesSize + txBytesSize
+
+      where
+        flush =
+            MkLeiosRequest
+                {- prio -}
+                ebSlot
+                (MkHashBytes ebHash)
+                [ (fromIntegral idx, bitmap) | (idx, bitmap) <- IntMap.toAscList accBitmaps ]
+                (V.fromListN accN $ DList.toList accHashes)              
+
+-----
+
+fetchDecision2 :: DB.Database -> LeiosFetchState -> IO LeiosFetchState
+fetchDecision2 db acc0 = do
+    let env = MkLeiosFetchStaticEnv
+          {
+            maxRequestedTxBytes = 50 * 10^(6 :: Int)
+          ,
+            maxRequestedTxBytesPerPeer = 5 * 10^(6 :: Int)
+          ,
+            maxRequestTxBytesSize = 500000
+          ,
+            maxRequestsPerTx = 2
+          }
+    dynEnv <- loadLeiosFetchDynEnv db
+    let (acc1, MkLeiosRequestDecisions decisions) = leiosFetchLogicIteration env dynEnv acc0
+    forM_ (Map.toList decisions) $ \(peerId, slots) -> do
+        forM_ (Map.toDescList slots) $ \(slot, dlist) -> do
+            forM_ dlist $ \(txHash, _txBytesSize, ebIds) -> do
+                putStrLn $ unwords $ "TX" : prettyPeerId peerId : show slot : prettyHashBytes txHash : [ prettyEbId ebId ++ "~" ++ show txOffset | (ebId, txOffset) <- Map.toList ebIds ]
+    acc2 <- (\f -> foldM f acc1 (Map.toList $ packRequests env dynEnv (MkLeiosRequestDecisions decisions))) $ \acc (peerId, reqs) -> do
+        forM_ reqs $ \req -> do
+            let MkLeiosRequest ebSlot ebHash bitmaps _txHashes = req
+            putStrLn $ unwords $ "MSG" : prettyPeerId peerId : show ebSlot : prettyHashBytes ebHash : map prettyBitmap bitmaps
+        pure $ acc { requestedPerPeer = Map.insertWith (\new old -> old ++ new) peerId reqs (requestedPerPeer acc) }
+    pure acc2
+
+-----
+
+msgLeiosBlockTxsOffer :: LeiosFetchState -> PeerId -> [EbId] -> IO LeiosFetchState
+msgLeiosBlockTxsOffer acc peerId ebIds = do
+    pure acc {
+        offeredEbTxs = Map.insertWith Set.union peerId (Set.fromList ebIds) (offeredEbTxs acc)
+      }

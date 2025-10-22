@@ -865,5 +865,8 @@ executable leiosdemo202510
     containers,
     direct-sqlite,
     directory,
+    dlist,
+    ghc-prim,
     random,
+    text,
     vector,
