@@ -104,11 +104,12 @@ instance Protocol (LeiosFetch point eb tx) where
       :: ![tx]
       -> Message (LeiosFetch point eb tx) StBlockTxs StIdle
 
-    -- vote request
-    -- vote reply
+    -- MsgLeiosVotesRequest
+    -- MsgLeiosVoteDelivery
 
-    -- range request
-    -- range reply
+    -- MsgLeiosBlockRangeRequest
+    -- MsgLeiosNextBlockAndTxsInRange
+    -- MsgLeiosLastBlockAndTxsInRange
 
     MsgDone
       :: Message (LeiosFetch point eb tx) StIdle StDone
@@ -126,10 +127,11 @@ instance NFData (Message (LeiosFetch point eb tx) from to) where
       MsgLeiosBlock{} -> ()
       MsgLeiosBlockTxsRequest _p bitmaps -> rnf bitmaps
       MsgLeiosBlockTxs{} -> ()
-      -- vote request
-      -- vote reply
-      -- range request
-      -- range reply
+      -- MsgLeiosVotesRequest
+      -- MsgLeiosVoteDelivery
+      -- MsgLeiosBlockRangeRequest
+      -- MsgLeiosNextBlockAndTxsInRange
+      -- MsgLeiosLastBlockAndTxsInRange
       MsgDone -> ()
 
 deriving instance (Eq point, Eq eb, Eq tx)
@@ -216,10 +218,11 @@ encodeLeiosFetch encodeP encodeEb encodeTx = encode
            CBOR.encodeListLen 2
         <> CBOR.encodeWord 3
         <> CBOR.encodeListLenIndef <> foldr (\tx r -> encodeTx tx <> r) CBOR.encodeBreak txs
-      -- vote request
-      -- vote reply
-      -- range request
-      -- range reply
+      -- MsgLeiosVotesRequest
+      -- MsgLeiosVoteDelivery
+      -- MsgLeiosBlockRangeRequest
+      -- MsgLeiosNextBlockAndTxsInRange
+      -- MsgLeiosLastBlockAndTxsInRange
       MsgDone ->
            CBOR.encodeListLen 1
         <> CBOR.encodeWord 8
@@ -259,11 +262,12 @@ decodeLeiosFetch decodeP decodeEb decodeTx = decode
         (SingBlockTxs, 2, 3) -> do
           txs <- CBOR.decodeListLenIndef *> CBOR.decodeSequenceLenIndef (flip (:)) [] reverse decodeTx
           return $ SomeMessage $ MsgLeiosBlockTxs txs
-        -- vote request
-        -- vote reply
-        -- range request
-        -- range reply
-        (SingIdle, 1, 8) ->
+        -- MsgLeiosVotesRequest
+        -- MsgLeiosVoteDelivery
+        -- MsgLeiosBlockRangeRequest
+        -- MsgLeiosNextBlockAndTxsInRange
+        -- MsgLeiosLastBlockAndTxsInRange
+        (SingIdle, 1, 9) ->
           return $ SomeMessage MsgDone
         (SingDone, _, _) -> notActiveState stok
         -- failures per protocol state
