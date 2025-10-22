@@ -34,7 +34,7 @@ instance FromJSON NodeConfigStub where
         <*> v .: "ShelleyGenesisFile"
         <*> v .: "ByronGenesisFile"
         <*> v .: "ConwayGenesisFile"
-        <*> v .: "DijkstraGenesisFile"
+        <*> v .:? "DijkstraGenesisFile"
 
 instance AdjustFilePaths NodeConfigStub where
   adjustFilePaths f nc =
@@ -43,7 +43,7 @@ instance AdjustFilePaths NodeConfigStub where
       , ncsShelleyGenesisFile = f $ ncsShelleyGenesisFile nc
       , ncsByronGenesisFile = f $ ncsByronGenesisFile nc
       , ncsConwayGenesisFile = f $ ncsConwayGenesisFile nc
-      , ncsDijkstraGenesisFile = f $ ncsDijkstraGenesisFile nc
+      , ncsDijkstraGenesisFile = fmap f $ ncsDijkstraGenesisFile nc
       }
 
 instance AdjustFilePaths NodeCredentials where

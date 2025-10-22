@@ -20,6 +20,8 @@ import Cardano.Api.Any (Error (..))
 import qualified Cardano.Chain.Update as Byron
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
+import Cardano.Ledger.BaseTypes
+import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Node.Protocol.Alonzo as Alonzo
 import qualified Cardano.Node.Protocol.Byron as Byron
 import qualified Cardano.Node.Protocol.Conway as Conway
@@ -28,6 +30,7 @@ import qualified Cardano.Node.Protocol.Shelley as Shelley
 import Cardano.Node.Types
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Monad.Trans.Except.Extra (firstExceptT)
+import Data.Maybe (fromMaybe)
 import Ouroboros.Consensus.Cardano
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import Ouroboros.Consensus.Cardano.Condense ()
@@ -56,7 +59,7 @@ mkConsensusProtocolCardano ::
   NodeShelleyProtocolConfiguration ->
   NodeAlonzoProtocolConfiguration ->
   NodeConwayProtocolConfiguration ->
-  NodeDijkstraProtocolConfiguration ->
+  Maybe NodeDijkstraProtocolConfiguration ->
   NodeHardForkProtocolConfiguration ->
   Maybe ProtocolFilepaths ->
   ExceptT CardanoProtocolInstantiationError IO (CardanoProtocolParams StandardCrypto)
@@ -84,10 +87,7 @@ mkConsensusProtocolCardano
     { npcConwayGenesisFile
     , npcConwayGenesisFileHash
     }
-  NodeDijkstraProtocolConfiguration
-    { npcDijkstraGenesisFile
-    , npcDijkstraGenesisFileHash
-    }
+  npcDijkstraProtocolConfig
   NodeHardForkProtocolConfiguration
     { npcTestEnableDevelopmentHardForkEras = _
     , -- During testing of the latest unreleased era, we conditionally
@@ -133,11 +133,20 @@ mkConsensusProtocolCardano
           npcConwayGenesisFile
           npcConwayGenesisFileHash
 
-    (dijkstraGenesis, _dijkstraGenesisHash) <-
-      firstExceptT CardanoProtocolInstantiationDijkstraGenesisReadError $
-        readGenesisAny
-          npcDijkstraGenesisFile
-          npcDijkstraGenesisFileHash
+    dijkstraGenesis <- case npcDijkstraProtocolConfig of
+      Nothing -> pure emptyDijkstraGenesis
+      Just
+        ( NodeDijkstraProtocolConfiguration
+            { npcDijkstraGenesisFile
+            , npcDijkstraGenesisFileHash
+            }
+          ) -> do
+          (dijkstraGenesis, _dijkstraGenesisHash) <-
+            firstExceptT CardanoProtocolInstantiationDijkstraGenesisReadError $
+              readGenesisAny
+                npcDijkstraGenesisFile
+                npcDijkstraGenesisFileHash
+          pure dijkstraGenesis
 
     shelleyLeaderCredentials <-
       firstExceptT CardanoProtocolInstantiationPraosLeaderCredentialsError $
@@ -246,6 +255,18 @@ mkConsensusProtocolCardano
         transitionLedgerConfig
         emptyCheckpointsMap
         (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
+
+-- | An empty Dijkstra genesis to be provided when none is specified in the config.
+emptyDijkstraGenesis :: SL.DijkstraGenesis
+emptyDijkstraGenesis =
+  let upgradePParamsDef =
+        UpgradeDijkstraPParams
+          { udppMaxRefScriptSizePerBlock = 1048576
+          , udppMaxRefScriptSizePerTx = 204800
+          , udppRefScriptCostStride = unsafeNonZero 25600
+          , udppRefScriptCostMultiplier = fromMaybe (error "impossible") $ boundRational 1.2
+          }
+   in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 
 ------------------------------------------------------------------------------
 -- Errors
