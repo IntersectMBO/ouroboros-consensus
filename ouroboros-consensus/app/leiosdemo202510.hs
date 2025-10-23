@@ -705,12 +705,11 @@ msgLeiosBlockTxs db lfst0 peerId ebTxsPath = do
             _ -> die "Not expecting MsgLeiosBlockTxs"
     ebId <- ebIdFromPoint' db ebSlot (let MkHashBytes x = ebHash in x)
     ebTxsBytes <- BSL.readFile ebTxsPath
-    stmt <- withDieJust $ DB.prepare db (fromString sql_insert_ebTx)
-    withDie $ DB.bindInt64 stmt 2 (fromIntegralEbId ebId)
+    stmtTxCache <- withDieJust $ DB.prepare db (fromString sql_insert_txCache)
+    stmtEbTxs <- withDieJust $ DB.prepare db (fromString sql_update_ebTx)
+    withDie $ DB.bindInt64 stmtEbTxs 2 (fromIntegralEbId ebId)
     withDieMsg $ DB.exec db (fromString "BEGIN")
-    -- decode incrementally and simultaneously UPDATE ebTxs
-    --
-    -- TODO also INSERT INTO TxCache
+    -- decode incrementally and simultaneously UPDATE ebTxs and INSERT INTO txCache
     let decodeBreakOrTx = do
             stop <- CBOR.decodeBreakOr
             if stop then pure Nothing else Just <$> CBOR.decodeBytes
@@ -736,10 +735,16 @@ msgLeiosBlockTxs db lfst0 peerId ebTxsPath = do
                 (txOffset:offsets', Just txHash)
                   | txHash /= MkHashBytes (Hash.hashToBytes txHash') -> die "Wrong tx hash"
                   | otherwise -> do
-                    withDie $ DB.bindInt64    stmt 3 $ fromIntegral txOffset
-                    withDie $ DB.bindBlob     stmt 1 $ serialize' $ CBOR.encodeBytes txBytes
-                    withDieDone $ DB.stepNoCB stmt
-                    withDie $ DB.reset        stmt
+                    -- INTO ebTxs
+                    withDie $ DB.bindInt64    stmtEbTxs 3 $ fromIntegral txOffset
+                    withDie $ DB.bindBlob     stmtEbTxs 1 $ serialize' $ CBOR.encodeBytes txBytes
+                    withDieDone $ DB.stepNoCB stmtEbTxs
+                    withDie $ DB.reset        stmtEbTxs
+                    -- INTO txCache
+                    withDie $ DB.bindBlob     stmtTxCache 1 $ Hash.hashToBytes txHash'
+                    withDie $ DB.bindBlob     stmtTxCache 2 $ serialize' $ CBOR.encodeBytes txBytes
+                    withDieDone $ DB.stepNoCB stmtTxCache
+                    withDie $ DB.reset        stmtTxCache
                     go1
                         (Map.update (delIfNull . Set.delete peerId) txHash accRequested)
                         (accTxBytesSize + txBytesSize)
@@ -776,11 +781,16 @@ msgLeiosBlockTxs db lfst0 peerId ebTxsPath = do
         requestedTxPeers = requested'
       }
 
-sql_insert_ebTx :: String
-sql_insert_ebTx =
+sql_update_ebTx :: String
+sql_update_ebTx =
     "UPDATE ebTxs\n\
     \SET txBytes = ?\n\
     \WHERE ebId = ? AND txOffset = ? AND txBytes IS NULL\n\
+    \"
+
+sql_insert_txCache :: String
+sql_insert_txCache =
+    "INSERT OR IGNORE INTO txCache (txHashBytes, txBytes, expiryUnixEpoch) VALUES (?, ?, -1)\n\
     \"
 
 -----
