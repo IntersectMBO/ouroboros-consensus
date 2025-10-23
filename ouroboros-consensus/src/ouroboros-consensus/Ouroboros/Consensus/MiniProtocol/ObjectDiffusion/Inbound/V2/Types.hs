@@ -46,12 +46,12 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 
 import Control.Concurrent.Class.MonadSTM.Strict (MonadSTM, StrictTVar, atomically, newTVarIO)
 import Control.Concurrent.Class.MonadSTM.TSem (TSem, newTSem)
-import Control.DeepSeq (NFData)
+import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Monoid (Sum (..))
-import Data.Sequence.Strict (StrictSeq)
+import Data.Sequence.Strict (StrictSeq, fromList)
 import Data.Set (Set)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -60,6 +60,7 @@ import NoThunks.Class (NoThunks (..))
 import Ouroboros.Network.ControlMessage (ControlMessage)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 import Quiet (Quiet (..))
+import Test.QuickCheck (Arbitrary (..), elements)
 
 -- | Semaphore to guard access to the ObjectPool
 newtype ObjectPoolSem m = ObjectPoolSem (TSem m)
@@ -109,6 +110,20 @@ data DecisionPeerState objectId object = DecisionPeerState
   deriving (Eq, Show, Generic)
 
 instance
+  ( Arbitrary objectId
+  , Arbitrary object
+  , Ord objectId
+  ) =>
+  Arbitrary (DecisionPeerState objectId object)
+  where
+    arbitrary = DecisionPeerState
+      <$> (NumObjectIdsReq <$> arbitrary)
+      <*> (fromList <$> arbitrary)
+      <*> arbitrary
+      <*> arbitrary
+      <*> arbitrary
+
+instance
   ( NoThunks objectId
   , NoThunks object
   ) =>
@@ -124,6 +139,16 @@ data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   -- empty.
   }
   deriving (Eq, Show, Generic)
+
+instance
+  ( Arbitrary peerAddr
+  , Arbitrary object
+  , Arbitrary objectId
+  , Ord peerAddr
+  , Ord objectId
+  ) =>
+  Arbitrary (DecisionGlobalState peerAddr objectId object) where
+    arbitrary = DecisionGlobalState <$> arbitrary
 
 instance
   ( NoThunks peerAddr
@@ -199,11 +224,37 @@ data PeerDecision objectId object = PeerDecision
   }
   deriving (Show, Eq)
 
+instance
+  ( Arbitrary objectId
+  , Ord objectId
+  ) =>
+  Arbitrary (PeerDecision objectId object) where
+    arbitrary = PeerDecision
+      <$> (NumObjectIdsAck <$> arbitrary)
+      <*> (NumObjectIdsReq <$> arbitrary)
+      <*> arbitrary
+      <*> arbitrary
+      <*> arbitrary
+
+instance
+  ( NFData objectId
+  , NFData object
+  ) =>
+  NFData (PeerDecision objectId object) where
+    rnf = undefined
+
 data PeerDecisionStatus
   = DecisionUnread
   | DecisionBeingActedUpon
   | DecisionCompleted
   deriving (Show, Eq)
+
+instance Arbitrary PeerDecisionStatus where
+  arbitrary = elements
+    [ DecisionUnread
+    , DecisionBeingActedUpon
+    , DecisionCompleted
+    ]
 
 -- | A placeholder when no decision has been made, at the beginning of a loop.
 -- Nothing should be read from it except its status.

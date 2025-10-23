@@ -7,13 +7,16 @@
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
   ( PeerDecision (..)
-  , mempty
+  , makeDecisions
 
     -- * Internal API exposed for testing
-  , makeDecisions
+  , DecisionContext (..)
+  , mkDecisionContext
   ) where
 
+import Control.DeepSeq (NFData (..))
 import Data.Foldable qualified as Foldable
+import Data.Hashable (Hashable (..))
 import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -25,7 +28,61 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
-import System.Random (StdGen)
+import Test.QuickCheck (Arbitrary (..))
+import Test.QuickCheck.Gen (Gen (..))
+import Test.QuickCheck.Random (QCGen (..))
+import System.Random.SplitMix (SMGen, nextInt)
+import System.Random (StdGen, mkStdGen)
+
+data DecisionContext peerAddr objectId object = DecisionContext
+  { dcRng :: StdGen
+  , dcHasObject :: (objectId -> Bool)
+  , dcDecisionPolicy :: DecisionPolicy
+  , dcGlobalState :: DecisionGlobalState peerAddr objectId object
+  , dcPrevDecisions :: Map peerAddr (PeerDecision objectId object)
+  }
+
+instance
+  ( NFData peerAddr
+  , NFData objectId
+  , NFData object
+  ) =>
+  NFData (DecisionContext peerAddr objectId object) where
+    rnf = undefined
+
+-- TODO: do not generate dcDecisionPolicy arbitrarily, it makes little sense.
+-- Instead we should provide decision policies fit for the concrete object types
+-- we want to make decisions for.
+mkDecisionContext ::
+  forall peerAddr objectId object.
+  ( Arbitrary peerAddr
+  , Arbitrary objectId
+  , Arbitrary object
+  , Ord peerAddr
+  , Ord objectId
+  , Hashable objectId
+  ) =>
+  SMGen ->
+  Int ->
+  DecisionContext peerAddr objectId object
+mkDecisionContext stdGen size = unGen gen (QCGen stdGen') size
+  where
+    (salt, stdGen') = nextInt stdGen
+    gen :: Gen (DecisionContext peerAddr objectId object)
+    gen = do
+      dcRng <- mkStdGen <$> arbitrary
+      dcDecisionPolicy <- arbitrary
+      dcGlobalState <- arbitrary
+      dcPrevDecisions <- arbitrary
+      let dcHasObject objId =
+            hashWithSalt salt objId `mod` 2 == 0
+      pure $ DecisionContext
+        { dcRng
+        , dcHasObject
+        , dcDecisionPolicy
+        , dcGlobalState
+        , dcPrevDecisions
+        }
 
 strictSeqToSet :: Ord a => StrictSeq a -> Set a
 strictSeqToSet = Set.fromList . Foldable.toList

@@ -359,6 +359,7 @@ library
     ouroboros-network-protocols ^>=0.15,
     primitive,
     psqueues ^>=0.2.3,
+    QuickCheck,
     quiet ^>=0.2,
     random,
     rawlock ^>=0.1.1,
@@ -369,6 +370,7 @@ library
     small-steps ^>=1.1,
     sop-core ^>=0.5,
     sop-extras ^>=0.4,
+    splitmix,
     streaming,
     strict >=0.1 && <0.6,
     strict-checked-vars ^>=0.2,
@@ -866,6 +868,21 @@ benchmark PerasCertDB-bench
     ouroboros-network-api,
     tasty-bench,
     unstable-consensus-testlib,
+
+benchmark ObjectDiffusion-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: bench/ObjectDiffusion-bench
+  main-is: Main.hs
+  other-modules:
+  build-depends:
+    base,
+    deepseq,
+    hashable,
+    ouroboros-consensus,
+    QuickCheck,
+    splitmix,
+    tasty-bench,
 
 test-suite doctest
   import: common-test

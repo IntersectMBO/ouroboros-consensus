@@ -3,10 +3,12 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
   , defaultDecisionPolicy
   ) where
 
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types (ObjectMultiplicity)
+import Test.QuickCheck (Arbitrary (..))
+
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types (ObjectMultiplicity (..))
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
   ( NumObjectIdsReq (..)
-  , NumObjectsOutstanding
+  , NumObjectsOutstanding (..)
   , NumObjectsReq (..)
   )
 
@@ -24,6 +26,14 @@ data DecisionPolicy = DecisionPolicy
   -- ^ from how many peers download the `objectId` simultaneously
   }
   deriving Show
+
+instance Arbitrary DecisionPolicy where
+  arbitrary = DecisionPolicy
+    <$> (NumObjectIdsReq <$> arbitrary)
+    <*> (NumObjectsOutstanding <$> arbitrary)
+    <*> (NumObjectsReq <$>arbitrary)
+    <*> (NumObjectsReq <$>arbitrary)
+    <*> (ObjectMultiplicity <$> arbitrary)
 
 defaultDecisionPolicy :: DecisionPolicy
 defaultDecisionPolicy =
