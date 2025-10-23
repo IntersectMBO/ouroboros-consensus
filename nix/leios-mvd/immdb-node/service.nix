@@ -59,6 +59,18 @@ in
       default = 3001;
     };
 
+    initialSlot = lib.mkOption {
+      type = lib.types.int;
+      description = "Reference slot number (SlotNo). This, together with the initial-time will be used for time translations.";
+      default = 0;
+    };
+
+    initialTime = lib.mkOption {
+      type = lib.types.nullOr lib.types.int;
+      description = "UTC time for the reference slot, provided as POSIX seconds (Unix timestamp)";
+      default = null;
+    };
+
     user = lib.mkOption {
       type = lib.types.str;
       default = "immdb-server";
@@ -148,7 +160,9 @@ in
           --db $STATE_DIRECTORY/immutable \
           --config $CONFIGURATION_DIRECTORY/config.json \
           --address ${cfg.address} \
-          --port ${builtins.toString cfg.port};
+          --port ${builtins.toString cfg.port} \
+          --initial-slot ${builtins.toString cfg.initialSlot} \
+          --initial-time ${if cfg.initialTime == null then "$(date +%s)" else builtins.toString cfg.initialTime};
       '';
     };
 
