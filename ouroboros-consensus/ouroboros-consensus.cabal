@@ -866,7 +866,6 @@ executable leiosdemo202510
     direct-sqlite,
     directory,
     dlist,
-    ghc-prim,
     random,
     text,
     vector,

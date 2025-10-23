@@ -929,7 +929,6 @@ instance JSON.ToJSON HashBytes where
 instance JSON.ToJSONKey HashBytes where
     toJSONKey = hashBytesToText >$< JSON.toJSONKey
 
--- | INVARIANT: no overlap
 data LeiosFetchState = MkLeiosFetchState {
     -- | Which EBs each peer has offered the body of
     --
@@ -938,7 +937,8 @@ data LeiosFetchState = MkLeiosFetchState {
   ,
     -- | Which EBs each peer has offered the closure of
     --
-    -- INVARIANT: every set of EBs all exactly agree about the claimed size of each tx
+    -- INVARIANT: all EBs from some peer exactly agree about the claimed size
+    -- of any txs they share (TODO enforce)
     --
     -- TODO reverse index for when EBs age out?
     offeredEbTxs :: Map PeerId (Set EbId)
@@ -946,16 +946,29 @@ data LeiosFetchState = MkLeiosFetchState {
     -- | EBs whose bodies have been received
     acquiredEbBodies :: Set EbId
   ,
-    -- | EBs whose bodies have been offered but never received
+    -- | The size of each EB whose body has been offered but never received
+    --
+    -- TODO double-check it won't actually be possible for peers to list
+    -- different sizes for the same EB, since 'EbId' will eventually be the
+    -- header hash, not the hash of the EB body? (It's the announcement that
+    -- specifies the EB body's hash.)
     missingEbBodies :: Map EbId BytesSize
   ,
-    -- | Which requests have actually been sent to this peer
+    -- | Which requests have been sent to this peer
+    --
+    -- (The fetch logic will not update this when it decides on some requests.
+    -- The LeiosFetch mini protocol clients update this when they actually send
+    -- those requests.)
     requestedPerPeer :: Map PeerId [LeiosFetchRequest]
   ,
-    -- | INVARIANT: no empty sets
+    -- | Which peers have outstanding requests for which EB bodies
+    --
+    -- INVARIANT: no empty sets
     requestedEbPeers :: Map EbId (Set PeerId)
   ,
-    -- | INVARIANT: no empty sets
+    -- | Which peers have outstanding requests for which txs
+    --
+    -- INVARIANT: no empty sets
     --
     -- TODO may need to also store priority here
     requestedTxPeers :: Map TxHash (Set PeerId)
@@ -1041,8 +1054,9 @@ type BytesSize = Int
 
 type TxHash = HashBytes
 
-data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
-  {
+-- TODO which of these limits are allowed to be exceeded by at most one
+-- request?
+data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv {
     -- | At most this many outstanding bytes requested from all peers together
     maxRequestedBytesSize :: Int
   ,
@@ -1061,8 +1075,10 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
 
 -- TODO these maps are too big to actually have on the heap in the worst-case:
 -- 13888 txs per EB, 11000 EBs, 50 upstream peers, 32 bytes per hash
-data LeiosFetchDynamicEnv = MkLeiosFetchDynamicEnv
-  {
+data LeiosFetchDynamicEnv = MkLeiosFetchDynamicEnv {
+    -- | All missing txs in the context of EBs worth retrieving the closure for
+    ebBodies :: Map EbId (IntMap (TxHash, BytesSize))
+  ,
     -- | @slot -> hash -> EbId@
     --
     -- This relation is written to and loaded from the 'ebPoints' table on node
@@ -1098,13 +1114,8 @@ data LeiosFetchDynamicEnv = MkLeiosFetchDynamicEnv
     -- INVARIANT: @(ebPoints IntMap.! (ebIdSlot ebId)) Map.! (ebPointsInverse IntMap.! ebId) = ebId@
     ebPointsInverse :: IntMap {- EbId -} HashBytes
   ,
---    acquiredTxBodies :: Map TxHash TxBytes
---  ,
     -- | Txs listed in received EBs but never themselves received
     missingTxBodies :: Set TxHash
-  ,
-    -- | All missing txs in the context of EBs worth retrieving the closure for
-    ebBodies :: Map EbId (IntMap (TxHash, BytesSize))
   ,
     -- | Reverse index of 'ebBodies'
     --
@@ -1115,10 +1126,10 @@ data LeiosFetchDynamicEnv = MkLeiosFetchDynamicEnv
 emptyLeiosFetchDynEnv :: LeiosFetchDynamicEnv
 emptyLeiosFetchDynEnv =
     MkLeiosFetchDynamicEnv
+        Map.empty
         IntMap.empty
         IntMap.empty
         Set.empty
-        Map.empty
         Map.empty
 
 loadLeiosFetchDynEnv :: DB.Database -> IO LeiosFetchDynamicEnv
@@ -1154,16 +1165,15 @@ loadLeiosFetchDynEnvHelper full db = do
                             (Map.insertWith IntMap.union ebId (IntMap.singleton txOffset (txHash, txBytesSize)) bodies)
                             (Map.insertWith Map.union txHash (Map.singleton ebId txOffset) offsetss)
         loop Set.empty Map.empty Map.empty
-    pure MkLeiosFetchDynamicEnv
-      {
+    pure MkLeiosFetchDynamicEnv {
+        ebBodies = bodies
+      ,
         ebPoints = ps
       ,
         ebPointsInverse = qs
       ,
         missingTxBodies = missing
       , 
-        ebBodies = bodies
-      ,
         txOffsetss = offsetss
       }
 
@@ -1492,8 +1502,7 @@ packRequests env dynEnv =
 
 fetchDecision2 :: DB.Database -> LeiosFetchState -> IO LeiosFetchState
 fetchDecision2 db acc0 = do
-    let env = MkLeiosFetchStaticEnv
-          {
+    let env = MkLeiosFetchStaticEnv {
             maxRequestedBytesSize = 50 * 10^(6 :: Int)
           ,
             maxRequestedBytesSizePerPeer = 5 * 10^(6 :: Int)

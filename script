@@ -1,29 +1,28 @@
 #! /bin/bash
 rm -f tmp/my.db tmp/up.db tmp/my.lfst tmp/demo tmp/reqBlocks tmp/reqBlockTxss
-set -eux
+set -eu
 cabal build exe:leiosdemo202510
 ln -s $(cabal list-bin exe:leiosdemo202510) tmp/demo
 tmp/demo generate tmp/up.db tmp/myManifest.json
-# MsgLeiosBlock messages
 sqlite3 tmp/up.db "SELECT ebSlot, PRINTF('%X', ebId), ebId FROM ebPoints ORDER BY ebId ASC" # dump points
+echo ----- Receiving block offers from Alice
 sqlite3 tmp/up.db "SELECT PRINTF('%d %s', ebSlot, HEX(ebHashBytes)) FROM ebPoints ORDER BY ebId DESC" | while IFS= read -r line; do
     tmp/demo MsgLeiosBlockRequest tmp/up.db $line | xxd -plain -revert >tmp/foo.bin
     sz=$(stat -c %s tmp/foo.bin)
     tmp/demo MsgLeiosBlockOffer tmp/my.db tmp/my.lfst Alice $line $sz
 done    
+echo ----- Receiving blocks from Alice
 tmp/demo fetch-logic-iteration tmp/my.db tmp/my.lfst | tee -a tmp/reqs
 cat tmp/reqs | grep -e MsgLeiosBlockRequest | grep -e Alice | cut -d' ' -f4- | while IFS= read -r line; do
-    set -x
     tmp/demo MsgLeiosBlockRequest tmp/up.db $line | xxd -plain -revert >tmp/foo.bin
     tmp/demo MsgLeiosBlock tmp/my.db tmp/my.lfst Alice tmp/foo.bin
-    set +x
     jq . tmp/my.lfst
 done
-sqlite3 tmp/my.db 'SELECT ebId FROM ebTxs WHERE txBytes IS NULL GROUP BY ebId' # dump incompletes
+echo Incompletes; sqlite3 tmp/my.db 'SELECT ebId, SUM(1) FROM ebTxs WHERE txBytes IS NULL GROUP BY ebId'
 tmp/demo fetch-logic-iteration tmp/my.db tmp/my.lfst | tee -a tmp/reqs
 echo Done with EB bodies
 rm tmp/reqs
-# MsgLeiosBlockTxs messages
+echo ----- Receiving tx offers from Alice
 sqlite3 tmp/my.db 'SELECT ebId, MAX(txOffset) FROM ebTxs GROUP BY ebId' # dump sizes
 tmp/demo fetch-logic-iteration tmp/my.db tmp/my.lfst | tee -a tmp/reqs
 tmp/demo ebId-to-point tmp/up.db -9223372036848484353 -9223372036843241473 | while IFS= read -r line; do
@@ -31,27 +30,24 @@ tmp/demo ebId-to-point tmp/up.db -9223372036848484353 -9223372036843241473 | whi
 done
 tmp/demo fetch-logic-iteration tmp/my.db tmp/my.lfst | tee -a tmp/reqs
 tmp/demo fetch-logic-iteration tmp/my.db tmp/my.lfst | tee -a tmp/reqs
+echo ----- Receiving tx offers from Bob
 tmp/demo ebId-to-point tmp/up.db -9223372036848484353 -9223372036843241473 | while IFS= read -r line; do
     tmp/demo MsgLeiosBlockTxsOffer tmp/my.db tmp/my.lfst Bob $line
 done
 tmp/demo fetch-logic-iteration tmp/my.db tmp/my.lfst | tee -a tmp/reqs
 tmp/demo fetch-logic-iteration tmp/my.db tmp/my.lfst | tee -a tmp/reqs
 jq . tmp/my.lfst
-sqlite3 tmp/my.db 'SELECT ebId FROM ebTxs WHERE txBytes IS NULL GROUP BY ebId' # dump incompletes
-set +x
+echo Incompletes; sqlite3 tmp/my.db 'SELECT ebId, SUM(1) FROM ebTxs WHERE txBytes IS NULL GROUP BY ebId'
+echo ----- Receiving txs from Alice
 cat tmp/reqs | grep -e MsgLeiosBlockTxsRequest | grep -e Alice | cut -d' ' -f4- | while IFS= read -r line; do
-    set -x
     tmp/demo MsgLeiosBlockTxsRequest tmp/up.db $line | xxd -plain -revert >tmp/foo.bin
     tmp/demo MsgLeiosBlockTxs tmp/my.db tmp/my.lfst Alice tmp/foo.bin
-    set +x
-    jq . tmp/my.lfst
-    sqlite3 tmp/my.db 'SELECT ebId FROM ebTxs WHERE txBytes IS NULL GROUP BY ebId' # dump incompletes
+    echo Incompletes; sqlite3 tmp/my.db 'SELECT ebId, SUM(1) FROM ebTxs WHERE txBytes IS NULL GROUP BY ebId'
 done
+echo ----- Receiving txs from Bob
 cat tmp/reqs | grep -e MsgLeiosBlockTxsRequest | grep -e Bob | cut -d' ' -f4- | while IFS= read -r line; do
-    set -x
     tmp/demo MsgLeiosBlockTxsRequest tmp/up.db $line | xxd -plain -revert >tmp/foo.bin
     tmp/demo MsgLeiosBlockTxs tmp/my.db tmp/my.lfst Bob tmp/foo.bin
-    jq . tmp/my.lfst
-    sqlite3 tmp/my.db 'SELECT ebId FROM ebTxs WHERE txBytes IS NULL GROUP BY ebId' # dump incompletes
-    set +x
+    echo Incompletes; sqlite3 tmp/my.db 'SELECT ebId, SUM(1) FROM ebTxs WHERE txBytes IS NULL GROUP BY ebId'
 done
+jq . tmp/my.lfst
