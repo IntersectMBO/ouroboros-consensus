@@ -20,7 +20,6 @@
           widgetsnbextension
           jupyterlab
           jupyter
-          venvShellHook
 
           nixpkgs-fmt
           nil

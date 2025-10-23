@@ -44,6 +44,7 @@
 
     nixpkgs-unstable.url = "github:NixOS/nixpkgs";
 
+    cardano-nix.url = "github:mlabs-haskell/cardano.nix";
   };
   outputs = inputs:
     let
@@ -72,9 +73,10 @@
           ];
         };
         hydraJobs = import ./nix/ci.nix { inherit inputs pkgs; };
-        leiosDemo = import ./scripts/leios-demo/build.nix { inherit inputs;
-                                                            pkgs = import inputs.nixpkgs-unstable {inherit system;};
-                                                          };
+        leiosDemo = import ./scripts/leios-demo/build.nix {
+          inherit inputs;
+          pkgs = import inputs.nixpkgs-unstable { inherit system; };
+        };
       in
       {
         devShells = rec {
@@ -93,7 +95,9 @@
         inherit hydraJobs;
         legacyPackages = pkgs;
         packages =
-          hydraJobs.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano;
+          hydraJobs.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano // {
+            leios-mvd-test = pkgs.testers.nixosTest (import ./nix/leios-mvd/test.nix { inherit inputs pkgs; });
+          };
       }
     );
 }
