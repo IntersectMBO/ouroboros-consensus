@@ -34,7 +34,7 @@ import           Data.IntMap (IntMap)
 import           Data.List (intercalate, isSuffixOf, unfoldr)
 import           Data.Map (Map)
 import           Data.Maybe (fromMaybe)
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.String (fromString)
@@ -991,7 +991,17 @@ data LeiosFetchState = MkLeiosFetchState {
     -- | Sum of 'requestedBytesSizePerPeer'
     --
     -- INVARIANT: @<= maxRequestedBytesSize@
-    requestedBytesSize :: BytesSize
+    requestedBytesSize :: !BytesSize
+  ,
+    -- | The 'EbId', offsets, and sizes of txs that need to be copied from the
+    -- TxCache to the EbStore
+    toCopy :: Map EbId (IntMap BytesSize)
+  ,
+    -- | INVARIANT: @sum $ fmap sum 'toCopy'@
+    toCopyBytesSize :: !BytesSize
+  ,
+    -- | INVARIANT: @sum $ fmap IntMap.size 'toCopy'@
+    toCopyCount :: !Int
   }
   deriving (Generic)
 
@@ -1012,6 +1022,9 @@ emptyLeiosFetchState =
         Map.empty
         Map.empty
         Map.empty
+        0
+        Map.empty
+        0
         0
 
 ebIdSlot :: EbId -> Word64
@@ -1068,24 +1081,33 @@ type TxHash = HashBytes
 -- request?
 data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv {
     -- | At most this many outstanding bytes requested from all peers together
-    maxRequestedBytesSize :: Int
+    maxRequestedBytesSize :: BytesSize
   ,
     -- | At most this many outstanding bytes requested from each peer
-    maxRequestedBytesSizePerPeer :: Int
+    maxRequestedBytesSizePerPeer :: BytesSize
   ,
     -- | At most this many outstanding bytes per request
-    maxRequestBytesSize :: Int
+    maxRequestBytesSize :: BytesSize
   ,
     -- | At most this many outstanding requests for each EB body
     maxRequestsPerEb :: Int
   ,
     -- | At most this many outstanding requests for each individual tx
     maxRequestsPerTx :: Int
+  ,
+    -- | At most this many bytes are scheduled to be copied from the TxCache to the EbStore
+    maxToCopyBytesSize :: BytesSize
+  ,
+    -- | At most this many txs are scheduled to be copied from the TxCache to the EbStore
+    maxToCopyCount :: Int
   }
 
 -- TODO these maps are too big to actually have on the heap in the worst-case:
 -- 13888 txs per EB, 11000 EBs, 50 upstream peers, 32 bytes per hash
 data LeiosFetchDynamicEnv = MkLeiosFetchDynamicEnv {
+    -- | The size of every tx in the TxCache
+    cachedTxs :: Map TxHash BytesSize
+  ,
     -- | All missing txs in the context of EBs worth retrieving the closure for
     ebBodies :: Map EbId (IntMap (TxHash, BytesSize))
   ,
@@ -1137,6 +1159,7 @@ emptyLeiosFetchDynEnv :: LeiosFetchDynamicEnv
 emptyLeiosFetchDynEnv =
     MkLeiosFetchDynamicEnv
         Map.empty
+        Map.empty
         IntMap.empty
         IntMap.empty
         Set.empty
@@ -1160,6 +1183,16 @@ loadLeiosFetchDynEnvHelper full db = do
                             (IntMap.insertWith Map.union ebSlot (Map.singleton ebHash (MkEbId ebId)) ps)
                             (IntMap.insert ebId ebHash qs)
         loop IntMap.empty IntMap.empty
+    cached <- if not full then pure Map.empty else do
+        stmt <- withDieJust $ DB.prepare db (fromString sql_scan_txCache)
+        let loop !cached =
+                withDie (DB.stepNoCB stmt) >>= \case
+                    DB.Done -> pure cached
+                    DB.Row -> do
+                        txHashBytes <- MkHashBytes <$> DB.columnBlob stmt 0
+                        txBytesSize <- fromIntegral <$> DB.columnInt64 stmt 1
+                        loop (Map.insert txHashBytes txBytesSize cached)
+        loop Map.empty
     (missing, bodies, offsetss) <- if not full then pure (Set.empty, Map.empty, Map.empty) else do
         stmt <- withDieJust $ DB.prepare db (fromString sql_scan_missingEbTx)
         let loop !missing !bodies !offsetss =
@@ -1176,6 +1209,8 @@ loadLeiosFetchDynEnvHelper full db = do
                             (Map.insertWith Map.union txHash (Map.singleton ebId txOffset) offsetss)
         loop Set.empty Map.empty Map.empty
     pure MkLeiosFetchDynamicEnv {
+        cachedTxs = cached
+      ,
         ebBodies = bodies
       ,
         ebPoints = ps
@@ -1202,12 +1237,22 @@ sql_scan_missingEbTx =
     \ORDER BY ebId DESC, txOffset ASC\n\
     \"
 
+sql_scan_txCache :: String
+sql_scan_txCache =
+    "SELECT txHashBytes\n\
+    \FROM txCache\n\
+    \ORDER BY txHashBytes\n\
+    \"
+
 -----
 
 newtype LeiosFetchDecisions =
     MkLeiosFetchDecisions
         (Map PeerId (Map Word64 (DList (TxHash, BytesSize, Map EbId Int), DList EbId)))
   deriving (Show)
+
+emptyLeiosFetchDecisions :: LeiosFetchDecisions
+emptyLeiosFetchDecisions = MkLeiosFetchDecisions Map.empty
 
 leiosFetchLogicIteration ::
     LeiosFetchStaticEnv
@@ -1219,16 +1264,16 @@ leiosFetchLogicIteration ::
     (LeiosFetchState, LeiosFetchDecisions)
 leiosFetchLogicIteration env dynEnv =
     \acc ->
-        go1 acc (MkLeiosFetchDecisions Map.empty)
+        go1 acc emptyLeiosFetchDecisions
       $ expand
       $ Map.toDescList
       $ Map.map Left (missingEbBodies acc) `Map.union` Map.map Right (ebBodies dynEnv)
   where
     expand = \case
         [] -> []
-        (ebId, Left ebByteSize):vs -> Left (ebId, ebByteSize) : expand vs
+        (ebId, Left ebBytesSize):vs -> Left (ebId, ebBytesSize) : expand vs
         (ebId, Right v):vs ->
-            [ Right (ebId, txHash) | (txHash, _txBytesSize) <- IntMap.elems v ]
+            [ Right (ebId, txOffset, txHash) | (txOffset, (txHash, _txBytesSize)) <- IntMap.toAscList v ]
          <> expand vs
     go1 !acc !accNew = \case
         []
@@ -1239,18 +1284,39 @@ leiosFetchLogicIteration env dynEnv =
                 peerIds = Map.findWithDefault Set.empty ebId (requestedEbPeers acc)
          -> goEb2 acc accNew targets ebId ebBytesSize peerIds
 
-        Right (ebId, txHash) : targets
+        Right (ebId, txOffset, txHash) : targets
 
-          | Set.member txHash (missingTxBodies dynEnv)   -- we don't already have it
-          , let !txOffsets = case Map.lookup txHash (txOffsetss dynEnv) of
-                    Nothing -> error "impossible!"
-                    Just x -> x
-          , let peerIds :: Set PeerId
-                peerIds = Map.findWithDefault Set.empty txHash (requestedTxPeers acc)
-         -> goTx2 acc accNew targets (ebIdSlot ebId) txHash txOffsets peerIds
+          | not $ Set.member txHash (missingTxBodies dynEnv)   -- we already have it
+         -> go1 acc accNew targets
+
+          | Just _ <- Map.lookup ebId (toCopy acc) >>= IntMap.lookup txOffset
+              -- it's already scheduled to be copied from TxCache
+         -> go1 acc accNew targets
+
+          | Just txBytesSize <- Map.lookup txHash (cachedTxs dynEnv)   -- it's in the TxCache
+         -> let full =
+                    toCopyBytesSize acc >= maxToCopyBytesSize env
+                 ||
+                    toCopyCount acc >= maxToCopyCount env
+                acc' =
+                    if full then acc else
+                    acc {
+                        toCopy = Map.insertWith IntMap.union ebId (IntMap.singleton txOffset txBytesSize) (toCopy acc)
+                      ,
+                        toCopyBytesSize = toCopyBytesSize acc + txBytesSize
+                      ,
+                        toCopyCount = toCopyCount acc + 1
+                      }
+            in go1 acc' accNew targets
 
           | otherwise
-         -> go1 acc accNew targets
+         -> let !txOffsets = case Map.lookup txHash (txOffsetss dynEnv) of
+                    Nothing -> error "impossible!"
+                    Just x -> x
+                peerIds :: Set PeerId
+                peerIds = Map.findWithDefault Set.empty txHash (requestedTxPeers acc)
+            in
+            goTx2 acc accNew targets (ebIdSlot ebId) txHash txOffsets peerIds
 
     goEb2 !acc !accNew targets ebId ebBytesSize peerIds
       | requestedBytesSize acc >= maxRequestedBytesSize env   -- we can't request anything
@@ -1262,24 +1328,12 @@ leiosFetchLogicIteration env dynEnv =
       = let accNew' =
                 MkLeiosFetchDecisions
               $ Map.insertWith
-                    (Map.unionWith (<>))
-                    peerId
-                    (Map.singleton (ebIdSlot ebId) (DList.empty, DList.singleton ebId))
-                    (let MkLeiosFetchDecisions x = accNew in x)
-            acc' = MkLeiosFetchState {
-                offeredEbs = offeredEbs acc
-              ,
-                offeredEbTxs = offeredEbTxs acc
-              ,
-                acquiredEbBodies = acquiredEbBodies acc
-              ,
-                missingEbBodies = missingEbBodies acc
-              ,
-                requestedPerPeer = requestedPerPeer acc
-              ,
+                   (Map.unionWith (<>))
+                   peerId
+                   (Map.singleton (ebIdSlot ebId) (DList.empty, DList.singleton ebId))
+                   (let MkLeiosFetchDecisions x = accNew in x)
+            acc' = acc {
                 requestedEbPeers = Map.insertWith Set.union ebId (Set.singleton peerId) (requestedEbPeers acc)
-              ,
-                requestedTxPeers = requestedTxPeers acc
               ,
                 requestedBytesSizePerPeer = Map.insertWith (+) peerId ebBytesSize (requestedBytesSizePerPeer acc)
               ,
@@ -1327,19 +1381,7 @@ leiosFetchLogicIteration env dynEnv =
                     peerId
                     (Map.singleton ebSlot (DList.singleton (txHash, txBytesSize, txOffsets'), DList.empty))
                     (let MkLeiosFetchDecisions x = accNew in x)
-            acc' = MkLeiosFetchState {
-                offeredEbs = offeredEbs acc
-              ,
-                offeredEbTxs = offeredEbTxs acc
-              ,
-                acquiredEbBodies = acquiredEbBodies acc
-              ,
-                missingEbBodies = missingEbBodies acc
-              ,
-                requestedPerPeer = requestedPerPeer acc
-              ,
-                requestedEbPeers = requestedEbPeers acc
-              ,
+            acc' = acc {
                 requestedTxPeers = Map.insertWith Set.union txHash (Set.singleton peerId) (requestedTxPeers acc)
               ,
                 requestedBytesSizePerPeer = Map.insertWith (+) peerId txBytesSize (requestedBytesSizePerPeer acc)
@@ -1522,6 +1564,10 @@ fetchDecision2 db acc0 = do
             maxRequestsPerEb = 2
           ,
             maxRequestsPerTx = 2
+          ,
+            maxToCopyBytesSize = 100 * 2^(20 :: Int)
+          ,
+            maxToCopyCount = 100 * 10^(3 :: Int)
           }
     dynEnv <- loadLeiosFetchDynEnv db
     let (acc1, MkLeiosFetchDecisions decisions) = leiosFetchLogicIteration env dynEnv acc0
