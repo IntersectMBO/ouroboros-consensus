@@ -8,10 +8,13 @@ import           Cardano.Crypto.Init (cryptoInit)
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import           Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
 import qualified Cardano.Tools.ImmDBServer.Diffusion as ImmDBServer
-import           Data.Void
+import           Data.Void (absurd)
 import           Main.Utf8 (withStdTerminalHandles)
+import           Network.Socket (AddrInfo (addrFlags, addrSocketType))
 import qualified Network.Socket as Socket
-import           Options.Applicative
+import           Options.Applicative (ParserInfo, execParser, fullDesc, help,
+                     helper, info, long, metavar, progDesc, showDefault,
+                     strOption, value, auto, option)
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (At, Origin))
 import qualified Data.Time.Clock.POSIX as POSIX
@@ -21,16 +24,19 @@ import Data.Int (Int64)
 main :: IO ()
 main = withStdTerminalHandles $ do
     cryptoInit
-    Opts {immDBDir, port, configFile, refSlotNr, refTimeForRefSlot}
-        <- execParser optsParser
-    let sockAddr = Socket.SockAddrInet port hostAddr
-          where
-            -- could also be passed in
-            hostAddr = Socket.tupleToHostAddress (127, 0, 0, 1)
-        args = Cardano.CardanoBlockArgs configFile Nothing
+    Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot} <- execParser optsParser
+
+    let hints = Socket.defaultHints { addrFlags = [Socket.AI_NUMERICHOST], addrSocketType = Socket.Stream}
+    addrInfo <- do
+      addrInfos <- Socket.getAddrInfo (Just hints) (Just address) (Just port)
+      case addrInfos of
+        []         -> error "Invalid address or port"
+        addrInfo:_ -> return addrInfo
+
+    let args = Cardano.CardanoBlockArgs configFile Nothing
     ProtocolInfo{pInfoConfig} <- mkProtocolInfo args
     absurd <$> ImmDBServer.run immDBDir
-                               sockAddr
+                               (Socket.addrAddress addrInfo)
                                pInfoConfig
                                (mkGetSlotDelay refSlotNr refTimeForRefSlot)
     where
@@ -62,7 +68,8 @@ main = withStdTerminalHandles $ do
 
 data Opts = Opts {
     immDBDir   :: FilePath
-  , port       :: Socket.PortNumber
+  , port       :: String
+  , address    :: String
   , configFile :: FilePath
   , refSlotNr :: SlotNo
   -- ^ Reference slot number. This, in combination with the reference
@@ -85,10 +92,16 @@ optsParser =
         , help "Path to the ImmutableDB"
         , metavar "PATH"
         ]
-      port <- option auto $ mconcat
+      port <- strOption $ mconcat
         [ long "port"
         , help "Port to serve on"
-        , value 3001
+        , value "3001"
+        , showDefault
+        ]
+      address <- strOption $ mconcat
+        [ long "address"
+        , help "Address to serve on"
+        , value "127.0.0.1"
         , showDefault
         ]
       configFile <- strOption $ mconcat
@@ -106,7 +119,7 @@ optsParser =
         , help "UTC time for the reference slot, provided as POSIX seconds (Unix timestamp)"
         , metavar "POSIX_SECONDS"
         ]
-      pure Opts {immDBDir, port, configFile, refSlotNr, refTimeForRefSlot}
+      pure Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot}
         where
           asPOSIXseconds :: Double -> POSIX.POSIXTime
           asPOSIXseconds = realToFrac

@@ -678,8 +678,8 @@ executable immdb-server
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:unstable-cardano-tools,
+    time,
     with-utf8,
-    time
 
 executable snapshot-converter
   import: common-exe
