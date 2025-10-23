@@ -2,6 +2,14 @@
 
 # Changelog entries
 
+<a id='changelog-0.26.0.1'></a>
+## 0.26.0.1 -- 2025-10-23
+
+### Patch
+
+- Backport #1603: Streaming of ledger tables in `snapshot-converter`
+- Make `"DijkstraGenesis"` optional in `unstable-cardano-tools` parsers.
+
 <a id='changelog-0.26.0.0'></a>
 ## 0.26.0.0 -- 2025-09-29
 
