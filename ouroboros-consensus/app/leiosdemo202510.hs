@@ -641,7 +641,7 @@ sql_insert_ebBody =
 -- | PREREQ: the file is the CBOR encoding (binary, not hex) of the payload of a MsgLeiosBlockTxs
 msgLeiosBlockTxs :: DB.Database -> LeiosFetchDynamicEnv -> LeiosFetchState -> PeerId -> FilePath -> IO LeiosFetchState
 msgLeiosBlockTxs db dynEnv lfst0 peerId ebTxsPath = do
-    (MkLeiosRequest ebSlot ebHash bitmaps0 txHashes, lfst1) <-
+    (MkLeiosBlockTxsRequest ebSlot ebHash bitmaps0 txHashes, lfst1) <-
         case Map.lookup peerId (requestedPerPeer lfst0) of
             Just (req:reqs) -> pure $ (,) req $ lfst0 {
                 requestedPerPeer =
@@ -880,7 +880,7 @@ instance JSON.ToJSONKey HashBytes where
 
 -- | INVARIANT: no overlap
 data LeiosFetchState = MkLeiosFetchState {
-    -- | Which EBs each peer has offered the closure for
+    -- | Which EBs each peer has offered the closure of
     --
     -- INVARIANT: every set of EBs all exactly agree about the claimed size of each tx
     --
@@ -888,7 +888,7 @@ data LeiosFetchState = MkLeiosFetchState {
     offeredEbTxs :: Map PeerId (Set EbId)
   ,
     -- | Which requests have actually been sent to this peer
-    requestedPerPeer :: Map PeerId [LeiosRequest]
+    requestedPerPeer :: Map PeerId [LeiosFetchRequest]
   ,
     -- | INVARIANT: no empty sets
     --
@@ -1098,8 +1098,8 @@ sql_scan_missingEbTx =
 
 -----
 
-newtype LeiosRequestDecisions =
-    MkLeiosRequestDecisions
+newtype LeiosFetchDecisions =
+    MkLeiosFetchDecisions
         (Map PeerId (Map Word64 (DList (TxHash, TxBytesSize, Map EbId Int))))
   deriving (Show)
 
@@ -1110,10 +1110,10 @@ leiosFetchLogicIteration ::
  ->
     LeiosFetchState
  ->
-    (LeiosFetchState, LeiosRequestDecisions)
+    (LeiosFetchState, LeiosFetchDecisions)
 leiosFetchLogicIteration env dynEnv =
     \acc ->
-        go1 acc (MkLeiosRequestDecisions Map.empty)
+        go1 acc (MkLeiosFetchDecisions Map.empty)
       $ expand
       $ Map.toDescList
       $ ebBodies dynEnv
@@ -1156,12 +1156,12 @@ leiosFetchLogicIteration env dynEnv =
                     Nothing -> error "impossible!"
                     Just v -> snd $ v IntMap.! txOffset
             accNew' =
-                MkLeiosRequestDecisions
+                MkLeiosFetchDecisions
               $ Map.insertWith
                     (Map.unionWith (<>))
                     peerId
                     (Map.singleton ebSlot (DList.singleton (txHash, txBytesSize, txOffsets')))
-                    (let MkLeiosRequestDecisions x = accNew in x)
+                    (let MkLeiosFetchDecisions x = accNew in x)
             acc' = MkLeiosFetchState {
                 offeredEbTxs = offeredEbTxs acc
               ,
@@ -1196,12 +1196,17 @@ leiosFetchLogicIteration env dynEnv =
 
 -----
 
-data LeiosRequest =
+data LeiosFetchRequest =
+    -- | ebSlot, ebHash
+    MkLeiosBlockRequest
+        !Word64
+        !HashBytes
+  |
     -- | ebSlot, ebHash, bitmaps, txHashes
     --
     -- The hashes aren't sent to the peer, but they are used to validate the
     -- reply when it arrives.
-    MkLeiosRequest
+    MkLeiosBlockTxsRequest
         !Word64
         !HashBytes
         [(Word16, Word64)]
@@ -1209,14 +1214,14 @@ data LeiosRequest =
   deriving (Generic, Show)
 
 -- | defaults to @GHC.Generics@
-instance JSON.FromJSON LeiosRequest where {}
+instance JSON.FromJSON LeiosFetchRequest where {}
 
 -- | defaults to @GHC.Generics@
-instance JSON.ToJSON LeiosRequest where {}
+instance JSON.ToJSON LeiosFetchRequest where {}
 
-packRequests :: LeiosFetchStaticEnv -> LeiosFetchDynamicEnv -> LeiosRequestDecisions -> Map PeerId [LeiosRequest]
+packRequests :: LeiosFetchStaticEnv -> LeiosFetchDynamicEnv -> LeiosFetchDecisions -> Map PeerId [LeiosFetchRequest]
 packRequests env dynEnv =
-    \(MkLeiosRequestDecisions x) -> Map.map goPeer x
+    \(MkLeiosFetchDecisions x) -> Map.map goPeer x
   where
     goPeer =
          DList.toList
@@ -1268,7 +1273,7 @@ packRequests env dynEnv =
      ->
         [(Int, (TxHash, TxBytesSize))]
      ->
-        DList LeiosRequest
+        DList LeiosFetchRequest
     -- TODO the incoming indexes are ascending, so the IntMap accumulator could
     -- be simplified away
     goEb ebSlot ebHash !accTxBytesSize !accBitmaps !accN !accHashes = \case
@@ -1293,7 +1298,7 @@ packRequests env dynEnv =
 
       where
         flush =
-            MkLeiosRequest
+            MkLeiosBlockTxsRequest
                 {- prio -}
                 ebSlot
                 (MkHashBytes ebHash)
@@ -1315,15 +1320,17 @@ fetchDecision2 db acc0 = do
             maxRequestsPerTx = 2
           }
     dynEnv <- loadLeiosFetchDynEnv db
-    let (acc1, MkLeiosRequestDecisions decisions) = leiosFetchLogicIteration env dynEnv acc0
+    let (acc1, MkLeiosFetchDecisions decisions) = leiosFetchLogicIteration env dynEnv acc0
     forM_ (Map.toList decisions) $ \(peerId, slots) -> do
         forM_ (Map.toDescList slots) $ \(slot, dlist) -> do
             forM_ dlist $ \(txHash, _txBytesSize, ebIds) -> do
                 putStrLn $ unwords $ "TX" : prettyPeerId peerId : show slot : prettyHashBytes txHash : [ prettyEbId ebId ++ "~" ++ show txOffset | (ebId, txOffset) <- Map.toList ebIds ]
-    acc2 <- (\f -> foldM f acc1 (Map.toList $ packRequests env dynEnv (MkLeiosRequestDecisions decisions))) $ \acc (peerId, reqs) -> do
-        forM_ reqs $ \req -> do
-            let MkLeiosRequest ebSlot ebHash bitmaps _txHashes = req
-            putStrLn $ unwords $ "MSG MsgLeiosBlockTxsRequest" : prettyPeerId peerId : show ebSlot : prettyHashBytes ebHash : map prettyBitmap bitmaps
+    acc2 <- (\f -> foldM f acc1 (Map.toList $ packRequests env dynEnv (MkLeiosFetchDecisions decisions))) $ \acc (peerId, reqs) -> do
+        forM_ reqs $ \case
+            MkLeiosBlockRequest ebSlot ebHash -> do
+                putStrLn $ unwords ["MSG", "MsgLeiosBlockRequest", prettyPeerId peerId, show ebSlot ,prettyHashBytes ebHash]
+            MkLeiosBlockTxsRequest ebSlot ebHash bitmaps _txHashes -> do
+                putStrLn $ unwords $ "MSG" : "MsgLeiosBlockTxsRequest" : prettyPeerId peerId : show ebSlot : prettyHashBytes ebHash : map prettyBitmap bitmaps
         pure $ acc { requestedPerPeer = Map.insertWith (\new old -> old ++ new) peerId reqs (requestedPerPeer acc) }
     pure acc2
 
