@@ -131,8 +131,9 @@ import           Ouroboros.Network.TxSubmission.Outbound
 
 
 import qualified Ouroboros.Network.Mux as ON
-import LeiosDemoOnlyTestFetch
+-- import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
+import Debug.Trace (traceM)
 
 {-------------------------------------------------------------------------------
   Handlers
@@ -289,8 +290,12 @@ mkHandlers
                     _ -> Right 300 {- TODO magic number -})
                 (\case
                     MsgLeiosBlockAnnouncement{} -> pure ()   -- TODO
-                    MsgLeiosBlockOffer{} -> pure ()   -- TODO
-                    MsgLeiosBlockTxsOffer{} -> pure ()   -- TODO
+                    MsgLeiosBlockOffer _ sz -> do
+                        traceM $ "MsgLeiosBlockOffer " ++ show sz
+                        pure ()   -- TODO
+                    MsgLeiosBlockTxsOffer{} -> do
+                        traceM "MsgLeiosBlockTxsOffer"
+                        pure ()   -- TODO
                 )
       , hLeiosNotifyServer = \_version _peer ->
             leiosNotifyServerPeer
@@ -942,12 +947,13 @@ initiator miniProtocolParameters version versionData Apps {..} =
                 ON.miniProtocolRun    = InitiatorProtocolOnly
                   (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
               }
-            , ON.MiniProtocol {
+{-            , ON.MiniProtocol {
                 ON.miniProtocolNum    = leiosFetchMiniProtocolNum,
                 ON.miniProtocolStart  = ON.StartOnDemand,
                 ON.miniProtocolLimits = leiosFetchProtocolLimits,
                 ON.miniProtocolRun    = InitiatorProtocolOnly (MiniProtocolCb undefined)
               }
+-}
             ]
            }
 
@@ -1000,12 +1006,13 @@ initiatorAndResponder miniProtocolParameters version versionData Apps {..} =
                   (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
                   (MiniProtocolCb (\responderCtx -> aLeiosNotifyServer version responderCtx))
               }
-            , ON.MiniProtocol {
+{-            , ON.MiniProtocol {
                 ON.miniProtocolNum    = leiosFetchMiniProtocolNum,
                 ON.miniProtocolStart  = ON.StartOnDemand,
                 ON.miniProtocolLimits = leiosFetchProtocolLimits,
                 ON.miniProtocolRun    = InitiatorAndResponderProtocol (MiniProtocolCb undefined) (MiniProtocolCb undefined)
               }
+-}
             ]
            }
 

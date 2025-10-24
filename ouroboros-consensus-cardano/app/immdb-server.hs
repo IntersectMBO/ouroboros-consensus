@@ -5,10 +5,14 @@
 
 module Main (main) where
 
+import qualified Data.Aeson as JSON
 import           Cardano.Crypto.Init (cryptoInit)
+import           Cardano.Slotting.Slot (SlotNo (..))
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import           Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
 import qualified Cardano.Tools.ImmDBServer.Diffusion as ImmDBServer
+import           Data.Time.Clock (DiffTime)
+import qualified Data.Time.Clock.POSIX as POSIX
 import           Data.Void (absurd)
 import           Main.Utf8 (withStdTerminalHandles)
 import           Network.Socket (AddrInfo (addrFlags, addrSocketType))
@@ -17,14 +21,12 @@ import           Options.Applicative (ParserInfo, execParser, fullDesc, help,
                      helper, info, long, metavar, progDesc, showDefault,
                      strOption, value, auto, option)
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
-import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (At, Origin))
-import qualified Data.Time.Clock.POSIX as POSIX
-import Data.Time.Clock (DiffTime)
+import           System.Exit (die)
 
 main :: IO ()
 main = withStdTerminalHandles $ do
     cryptoInit
-    Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot} <- execParser optsParser
+    Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot, leiosScheduleFile} <- execParser optsParser
 
     let hints = Socket.defaultHints { addrFlags = [Socket.AI_NUMERICHOST], addrSocketType = Socket.Stream}
     addrInfo <- do
@@ -35,27 +37,32 @@ main = withStdTerminalHandles $ do
 
     let args = Cardano.CardanoBlockArgs configFile Nothing
     ProtocolInfo{pInfoConfig} <- mkProtocolInfo args
+
+    leiosSchedule <- JSON.eitherDecodeFileStrict leiosScheduleFile >>= \case
+        Left err -> die $ "Failed to decode LeiosSchedule: " ++ err
+        Right x -> pure x
+
     absurd <$> ImmDBServer.run immDBDir
                                (Socket.addrAddress addrInfo)
                                pInfoConfig
                                (mkGetSlotDelay refSlotNr refTimeForRefSlot)
+                               (leiosSchedule :: ImmDBServer.LeiosSchedule)
     where
       -- NB we assume for now the slot duration is 1 second.
       --
       -- If we want to this in the actual chain we will need to access
       -- the information from the configuration file to run the
       -- Qry.slotToWallclock query.
-      mkGetSlotDelay :: SlotNo -> POSIX.POSIXTime -> WithOrigin SlotNo -> IO DiffTime
+      mkGetSlotDelay :: SlotNo -> POSIX.POSIXTime -> Double -> IO DiffTime
       mkGetSlotDelay refSlotNr refTimeForRefSlot =
         -- If slot < refSlotNr, we need to subtract to
         -- refTimeForRefSlot.
-        let slotToPosix :: SlotNo -> POSIX.POSIXTime
-            slotToPosix slot =  fromIntegral . unSlotNo $ slot -- TODO: here is where we assume the slot duration of 1 second.
-        in \case Origin  -> pure 0 -- TODO: I'm not sure what we want to do here.
-                 At slot -> do
-                   let slotTime = refTimeForRefSlot + (slotToPosix slot - slotToPosix refSlotNr)
+        let slotToPosix :: Double -> POSIX.POSIXTime
+            slotToPosix = realToFrac -- TODO: here is where we assume the slot duration of 1 second.
+        in \slotDbl -> do
+                   let slotTime = refTimeForRefSlot + (slotToPosix slotDbl - slotToPosix (fromIntegral $ unSlotNo refSlotNr))
                    currentTime <- POSIX.getPOSIXTime
-                   pure $ if currentTime <= slotTime
+                   pure $ if currentTime < slotTime
                           then realToFrac $ slotTime - currentTime
                           else 0
 
@@ -71,6 +78,8 @@ data Opts = Opts {
   , refTimeForRefSlot  :: POSIX.POSIXTime
   -- ^ Reference slot onset. Wallclock time that corresponds to the
   -- reference slot.
+  , leiosScheduleFile :: FilePath
+  -- ^ JSON file encoding the 'ImmDBServer.LeiosSchedule'
   }
 
 optsParser :: ParserInfo Opts
@@ -112,4 +121,9 @@ optsParser =
         , help "UTC time for the reference slot, provided as POSIX seconds (Unix timestamp)"
         , metavar "POSIX_SECONDS"
         ]
-      pure Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot}
+      leiosScheduleFile <- strOption $ mconcat
+        [ long "leios-schedule"
+        , help "Path to json file specifying when to send Leios offers"
+        , metavar "PATH"
+        ]
+      pure Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot, leiosScheduleFile}
