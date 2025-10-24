@@ -135,7 +135,8 @@ mkInitDb args bss getBlock =
       pure $ implMkLedgerDb h
   }
   where
-    bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
+    !bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< tr
+    !tr = lgrTracer
 
     LedgerDbArgs {
         lgrHasFS

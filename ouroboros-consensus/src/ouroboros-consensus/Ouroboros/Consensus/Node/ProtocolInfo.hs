@@ -35,7 +35,7 @@ enumCoreNodes (NumCoreNodes numNodes) =
 
 -- | Data required to run the specified protocol.
 data ProtocolInfo b = ProtocolInfo {
-        pInfoConfig     :: TopLevelConfig b
+        pInfoConfig     :: !(TopLevelConfig b)
       , pInfoInitLedger :: ExtLedgerState b ValuesMK
         -- ^ At genesis, this LedgerState must contain the UTxOs for the initial
         -- era (which for Cardano is Byron that has void tables).

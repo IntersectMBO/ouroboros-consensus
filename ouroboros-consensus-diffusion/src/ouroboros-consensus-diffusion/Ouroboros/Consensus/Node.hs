@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
@@ -609,7 +610,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       } = rnProtocolInfo
 
     codecConfig :: CodecConfig blk
-    codecConfig = configCodec cfg
+    !codecConfig = configCodec cfg
 
     mkNodeToNodeApps
       :: NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
