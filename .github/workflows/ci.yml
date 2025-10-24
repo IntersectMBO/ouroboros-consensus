@@ -220,7 +220,7 @@ jobs:
         use-sodium-vrf: false
 
     - name: Download benchmark executables
-      uses: actions/download-artifact@v5
+      uses: actions/download-artifact@v6
       with:
         name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
 
@@ -308,7 +308,7 @@ jobs:
           cp -r --no-preserve=mode,ownership result/ static/pdfs
 
       - name: Download haddocks
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: haddocks
 
