@@ -147,17 +147,39 @@ if __name__ == "__main__":
     # --- Argument Parsing ---
     try:
         initial_slot = int(sys.argv[1])
-        # Use pandas to_datetime, as it's already a dependency and robust.
-        initial_time = pd.to_datetime(sys.argv[2])
     except ValueError:
         print(
-            f"Configuration Error: Could not parse initial-slot '{sys.argv[1]}' as integer or initial-time '{sys.argv[2]}' as a valid timestamp.",
+            f"Configuration Error: Could not parse initial-slot '{sys.argv[1]}' as an integer.",
             file=sys.stderr,
         )
         sys.exit(1)
+
+    try:
+        initial_time_str = sys.argv[2]
+        # Try to parse as a POSIX timestamp (integer string) first
+        try:
+            posix_time = int(initial_time_str)
+            # Convert from POSIX seconds to a UTC datetime object
+            initial_time = pd.to_datetime(posix_time, unit="s", utc=True)
+            print(
+                f"Note: Interpreted initial-time '{initial_time_str}' as POSIX timestamp (UTC)."
+            )
+        except ValueError:
+            # If not an integer, try to parse as a standard datetime string
+            initial_time = pd.to_datetime(initial_time_str)
+            # If the provided string has no timezone, assume UTC for consistency
+            if initial_time.tzinfo is None:
+                initial_time = initial_time.tz_localize("UTC")
+                print(
+                    f"Note: Interpreted initial-time '{initial_time_str}' as datetime string (assuming UTC)."
+                )
+            else:
+                # If it has a timezone, convert it to UTC for consistency
+                initial_time = initial_time.tz_convert("UTC")
+
     except Exception as e:
         print(
-            f"Configuration Error: Error processing initial arguments: {e}",
+            f"Configuration Error: Could not parse initial-time '{sys.argv[2]}' as either a POSIX timestamp or a datetime string. Error: {e}",
             file=sys.stderr,
         )
         sys.exit(1)
