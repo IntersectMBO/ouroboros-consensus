@@ -288,12 +288,31 @@ if __name__ == "__main__":
         # Continue without onset time if calculation fails
         pass
 
+    # --- STEP 7: Calculate Diffs from Previous Slot ---
+    print("\n--- Calculating Diffs from Previous Slot ---")
+
+    # Ensure dataframe is sorted by slot to calculate diffs correctly
+    df_merged = df_merged.sort_values(by="slot").reset_index(drop=True)
+
+    # Calculate difference from the previous slot
+    df_merged["slot_diff_from_prev"] = df_merged["slot"].diff().fillna(0).astype(int)
+
+    # Calculate difference from the previous slot's onset time (in seconds)
+    if "slot_onset" in df_merged.columns:
+        df_merged["onset_diff_from_prev_s"] = (
+            df_merged["slot_onset"]
+            .diff()
+            .fillna(pd.Timedelta(seconds=0))
+            .dt.total_seconds()
+        )
+    else:
+        print("Warning: 'slot_onset' column not found. Skipping onset diff calculation.")
+
     print("\n--- Extracted and Merged Data Summary (First 5 Rows) ---")
     print(
         "Each row represents a unique block seen by both nodes, joined by hash and slot."
     )
-
-    # Define desired column order, including the new 'slot_onset'
+    # Define desired column order, including the new 'slot_onset' and diffs
     final_columns = [
         "slot",
         "hash",
@@ -301,6 +320,8 @@ if __name__ == "__main__":
         "at_node_0",
         "at_node_1",
         "latency_ms",
+        "slot_diff_from_prev",
+        "onset_diff_from_prev_s",
     ]
 
     # Filter list to only columns that actually exist in the dataframe
