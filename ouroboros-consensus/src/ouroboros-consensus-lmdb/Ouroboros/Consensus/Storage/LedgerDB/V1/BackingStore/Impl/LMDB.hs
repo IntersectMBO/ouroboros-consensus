@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
     LMDB
   , Backend (..)
   , Args (LMDBBackingStoreArgs)
+  , Trace (OnDiskBackingStoreInitialise, OnDiskBackingStoreTrace)
   , LMDBLimits (LMDBLimits, lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders)
   , mkLMDBArgs
 
@@ -832,7 +833,7 @@ instance
   where
   data Args m LMDB
     = LMDBBackingStoreArgs FilePath LMDBLimits (Dict.Dict MonadIOPrim m)
-  data Trace m LMDB
+  data Trace LMDB
     = OnDiskBackingStoreInitialise LMDB.Limits
     | OnDiskBackingStoreTrace BackingStoreTrace
     deriving (Eq, Show)

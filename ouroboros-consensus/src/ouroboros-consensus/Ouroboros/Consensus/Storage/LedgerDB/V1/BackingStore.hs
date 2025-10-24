@@ -32,6 +32,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import Cardano.Slotting.Slot
 import Control.Tracer
 import Data.Proxy
+import Data.Typeable
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
@@ -67,7 +68,7 @@ data SomeBackendArgs m l where
   SomeBackendArgs :: Backend m backend l => Args m backend -> SomeBackendArgs m l
 
 data SomeBackendTrace where
-  SomeBackendTrace :: Show (Trace m backend) => Trace m backend -> SomeBackendTrace
+  SomeBackendTrace :: (Show (Trace backend), Typeable backend) => Trace backend -> SomeBackendTrace
 
 instance Show SomeBackendTrace where
   show (SomeBackendTrace tr) = show tr
@@ -75,7 +76,7 @@ instance Show SomeBackendTrace where
 class Backend m backend l where
   data Args m backend
 
-  data Trace m backend
+  data Trace backend
 
   isRightBackendForSnapshot ::
     Proxy l ->
