@@ -3,6 +3,7 @@ import sys
 import json
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 # --- Configuration ---
 # Filter for the event containing the timestamp we want to measure at node 0 and node 1
@@ -132,14 +133,81 @@ def create_and_clean_df(
     return df
 
 
-if __name__ == "__main__":
-    if len(sys.argv) != 5:
+def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
+    """
+    Generates and displays a scatter plot of slot_onset vs. at_node_1.
+    If output_file is provided, saves the plot to that file.
+    """
+    print("\n--- Generating Scatter Plot ---")
+    try:
+        if "slot_onset" in df.columns and "at_node_1" in df.columns:
+            # Ensure both columns are datetime objects for plotting
+            df["slot_onset"] = pd.to_datetime(df["slot_onset"])
+            df["at_node_1"] = pd.to_datetime(df["at_node_1"])
+
+            plt.figure(figsize=(10, 6))
+            plt.scatter(df["slot_onset"], df["at_node_1"], alpha=0.5, s=10)
+
+            # Add a y=x reference line
+            # Find common min/max for a good 1:1 line
+            all_times = pd.concat([df["slot_onset"], df["at_node_1"]])
+            min_time = all_times.min()
+            max_time = all_times.max()
+            plt.plot(
+                [min_time, max_time],
+                [min_time, max_time],
+                "r--",
+                label="1:1 Line (Onset = Arrival)",
+            )
+
+            plt.title("Block Arrival Time (Node 1) vs. Slot Onset Time")
+            plt.xlabel("Slot Onset Time (Calculated)")
+            plt.ylabel("Block Arrival Time (at_node_1)")
+            plt.grid(True, linestyle="--", alpha=0.6)
+            plt.legend()
+            plt.tight_layout()
+
+            # Rotate x-axis labels for better readability
+            plt.xticks(rotation=45)
+
+            if output_file:
+                plt.savefig(output_file, bbox_inches="tight")
+                print(f"Plot saved to {output_file}")
+            else:
+                print("Displaying plot...")
+                plt.show()
+
+            plt.close(plt.gcf())  # Close the figure to free memory
+
+        else:
+            print(
+                "Warning: 'slot_onset' or 'at_node_1' column not found. Skipping plot generation."
+            )
+
+    except ImportError:
         print(
-            "Configuration Error: Please provide initial-slot, initial-time, and two log files.",
+            "\n--- Plotting Skipped ---",
             file=sys.stderr,
         )
         print(
-            "Example Usage: python log_parser.py <initial-slot> <initial-time> /path/to/node-0.log /path/to/node-1.log",
+            "To generate the plot, please install matplotlib: pip install matplotlib",
+            file=sys.stderr,
+        )
+    except Exception as e:
+        print(
+            f"Error: Failed to generate plot. Error: {e}",
+            file=sys.stderr,
+        )
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 5 or len(sys.argv) > 6:
+        print(
+            "Configuration Error: Please provide initial-slot, initial-time, two log files, and optionally an output plot file.",
+            file=sys.stderr,
+        )
+        print(
+            "Example Usage: python log_parser.py <initial-slot> <initial-time> /path/to/node-0.log /path/to/node-1.log [output_plot.png]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -186,12 +254,15 @@ if __name__ == "__main__":
 
     log_path_0 = sys.argv[3]
     log_path_1 = sys.argv[4]
+    plot_output_file = sys.argv[5] if len(sys.argv) == 6 else None
 
     print(f"\n--- Initial Configuration ---")
     print(f"Initial Slot: {initial_slot}")
     print(f"Initial Time: {initial_time}")
     print(f"Log File 0: {log_path_0}")
     print(f"Log File 1: {log_path_1}")
+    if plot_output_file:
+        print(f"Plot Output File: {plot_output_file}")
 
     # --- STEP 1: Create Hash-to-Slot Lookup Table (Headers) ---
 
@@ -307,6 +378,9 @@ if __name__ == "__main__":
         )
     else:
         print("Warning: 'slot_onset' column not found. Skipping onset diff calculation.")
+
+    # --- STEP 8: Generate Scatter Plot ---
+    plot_onset_vs_arrival(df_merged, plot_output_file)
 
     print("\n--- Extracted and Merged Data Summary (First 5 Rows) ---")
     print(

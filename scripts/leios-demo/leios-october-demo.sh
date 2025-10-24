@@ -173,7 +173,8 @@ fi
 
 python3 scripts/leios-demo/log_parser.py \
         $INITIAL_SLOT $REF_TIME_FOR_SLOT \
-        $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-1.log
+        $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-1.log \
+        "scatter_plot.png"
 
 # 2. Deactivate the Python Virtual Environment before exiting
 deactivate 2>/dev/null || true
