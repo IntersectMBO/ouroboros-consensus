@@ -127,11 +127,12 @@ popd > /dev/null
 ## TODO: we should find a better way to wait for the nodes to be started
 # Calculate the POSIX time 60 seconds from now.
 REF_TIME_FOR_SLOT=$(( $(date +%s) + 60 ))
+INITIAL_SLOT=80
 
 IMMDB_CMD_CORE="cabal run immdb-server \
     -- --db $CLUSTER_RUN_DATA/node-0/db/immutable/ \
     --config $CLUSTER_RUN_DATA/node-0/config.json \
-    --initial-slot 80 \
+    --initial-slot $INITIAL_SLOT \
     --initial-time $REF_TIME_FOR_SLOT"
 
 echo "Command: $IMMDB_CMD_CORE &> $TMP_DIR/immdb-server.log &"
@@ -170,7 +171,9 @@ else
     echo "Error: Virtual environment activation script not found at $VENV_PATH/bin/activate." >&2
 fi
 
-python3 scripts/leios-demo/log_parser.py $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-1.log
+python3 scripts/leios-demo/log_parser.py \
+        $INITIAL_SLOT $REF_TIME_FOR_SLOT \
+        $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-1.log
 
 # 2. Deactivate the Python Virtual Environment before exiting
 deactivate 2>/dev/null || true
