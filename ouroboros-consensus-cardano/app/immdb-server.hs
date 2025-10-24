@@ -1,6 +1,7 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Main (main) where
 
@@ -19,7 +20,6 @@ import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (At, Origin))
 import qualified Data.Time.Clock.POSIX as POSIX
 import Data.Time.Clock (DiffTime)
-import Data.Int (Int64)
 
 main :: IO ()
 main = withStdTerminalHandles $ do
@@ -48,19 +48,12 @@ main = withStdTerminalHandles $ do
       mkGetSlotDelay :: SlotNo -> POSIX.POSIXTime -> WithOrigin SlotNo -> IO DiffTime
       mkGetSlotDelay refSlotNr refTimeForRefSlot =
         -- If slot < refSlotNr, we need to subtract to
-        -- refTimeForRefSlot. To simplify the calculations we work
-        -- with Int64
-        let iRefSlotNr :: Int64
-            iRefSlotNr = fromIntegral $ unSlotNo refSlotNr
-
-            -- TODO: here is where we assume the slot duration of 1 second.
-            toSeconds :: Int64 -> POSIX.POSIXTime
-            toSeconds iSlot =  realToFrac iSlot
+        -- refTimeForRefSlot.
+        let slotToPosix :: SlotNo -> POSIX.POSIXTime
+            slotToPosix slot =  fromIntegral . unSlotNo $ slot -- TODO: here is where we assume the slot duration of 1 second.
         in \case Origin  -> pure 0 -- TODO: I'm not sure what we want to do here.
                  At slot -> do
-                   let iSlot = fromIntegral $ unSlotNo slot
-                       slotTime = refTimeForRefSlot + toSeconds (iSlot - iRefSlotNr)
-
+                   let slotTime = refTimeForRefSlot + (slotToPosix slot - slotToPosix refSlotNr)
                    currentTime <- POSIX.getPOSIXTime
                    pure $ if currentTime <= slotTime
                           then realToFrac $ slotTime - currentTime
@@ -114,12 +107,9 @@ optsParser =
         , help "Reference slot number (SlotNo). This, together with the initial-time will be used for time translations."
         , metavar "SLOT_NO"
         ]
-      refTimeForRefSlot <- fmap asPOSIXseconds $ option auto $ mconcat
+      refTimeForRefSlot <- fmap (fromInteger @POSIX.POSIXTime) $ option auto $ mconcat
         [ long "initial-time"
         , help "UTC time for the reference slot, provided as POSIX seconds (Unix timestamp)"
         , metavar "POSIX_SECONDS"
         ]
       pure Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot}
-        where
-          asPOSIXseconds :: Double -> POSIX.POSIXTime
-          asPOSIXseconds = realToFrac
