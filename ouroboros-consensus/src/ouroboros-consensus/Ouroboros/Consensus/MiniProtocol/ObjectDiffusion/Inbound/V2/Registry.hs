@@ -166,54 +166,58 @@ withPeer
           return newChan
 
       let !inboundPeerAPI =
-              PeerStateAPI
-                  { psaReadDecision = atomically $ do
-                      -- This should block until the decision has status `DecisionUnread`
-                      -- which means it is a new decision that the peer has not acted upon yet
-                      -- If `DecisionCompleted` is read here, it means the decision logic hasn't had time to make a new decision for this peer
-                      decision@PeerDecision{pdStatus} <- readTVar decisionChan
-                      when (pdStatus == DecisionBeingActedUpon) $ error "Forgot to call `psaOnDecisionCompleted` for this peer"
-                      check $ pdStatus == DecisionUnread
-                      let decision' = decision{pdStatus = DecisionBeingActedUpon}
-                      writeTVar decisionChan decision'
-                      return decision'
-                  , psaOnDecisionCompleted = atomically $ do
-                      decision@PeerDecision{pdStatus} <- readTVar decisionChan
-                      when (pdStatus == DecisionUnread) $ error "Forgot to call `psaReadDecision` for this peer, or the decision thread has mistakenly updated the decision for this peer while it was executing it"
-                      when (pdStatus == DecisionCompleted) $ error "`psaOnDecisionCompleted` has already been called for this peer"
-                      let decision' = decision{pdStatus = DecisionCompleted}
-                      writeTVar decisionChan decision'
-                  , psaOnRequestIds =
-                      State.onRequestIds
-                        objectDiffusionTracer
-                        decisionTracer
-                        globalStateVar
-                        peerAddr
-                  , psaOnRequestObjects =
-                      State.onRequestObjects
-                        objectDiffusionTracer
-                        decisionTracer
-                        globalStateVar
-                        peerAddr
-                  , psaOnReceiveIds =
-                      State.onReceiveIds
-                        objectDiffusionTracer
-                        decisionTracer
-                        objectPoolWriter
-                        globalStateVar
-                        peerAddr
-                  , psaOnReceiveObjects = \objects -> do
-                      PeerDecision{pdObjectsToReqIds} <- atomically $ readTVar decisionChan
-                      State.onReceiveObjects
-                        objectDiffusionTracer
-                        decisionTracer
-                        globalStateVar
-                        objectPoolWriter
-                        objectPoolSem
-                        peerAddr
-                        pdObjectsToReqIds
-                        objects
-                  }
+            PeerStateAPI
+              { psaReadDecision = atomically $ do
+                  -- This should block until the decision has status `DecisionUnread`
+                  -- which means it is a new decision that the peer has not acted upon yet
+                  -- If `DecisionCompleted` is read here, it means the decision logic hasn't had time to make a new decision for this peer
+                  decision@PeerDecision{pdStatus} <- readTVar decisionChan
+                  when (pdStatus == DecisionBeingActedUpon) $
+                    error "Forgot to call `psaOnDecisionCompleted` for this peer"
+                  check $ pdStatus == DecisionUnread
+                  let decision' = decision{pdStatus = DecisionBeingActedUpon}
+                  writeTVar decisionChan decision'
+                  return decision'
+              , psaOnDecisionCompleted = atomically $ do
+                  decision@PeerDecision{pdStatus} <- readTVar decisionChan
+                  when (pdStatus == DecisionUnread) $
+                    error
+                      "Forgot to call `psaReadDecision` for this peer, or the decision thread has mistakenly updated the decision for this peer while it was executing it"
+                  when (pdStatus == DecisionCompleted) $
+                    error "`psaOnDecisionCompleted` has already been called for this peer"
+                  let decision' = decision{pdStatus = DecisionCompleted}
+                  writeTVar decisionChan decision'
+              , psaOnRequestIds =
+                  State.onRequestIds
+                    objectDiffusionTracer
+                    decisionTracer
+                    globalStateVar
+                    peerAddr
+              , psaOnRequestObjects =
+                  State.onRequestObjects
+                    objectDiffusionTracer
+                    decisionTracer
+                    globalStateVar
+                    peerAddr
+              , psaOnReceiveIds =
+                  State.onReceiveIds
+                    objectDiffusionTracer
+                    decisionTracer
+                    objectPoolWriter
+                    globalStateVar
+                    peerAddr
+              , psaOnReceiveObjects = \objects -> do
+                  PeerDecision{pdObjectsToReqIds} <- atomically $ readTVar decisionChan
+                  State.onReceiveObjects
+                    objectDiffusionTracer
+                    decisionTracer
+                    globalStateVar
+                    objectPoolWriter
+                    objectPoolSem
+                    peerAddr
+                    pdObjectsToReqIds
+                    objects
+              }
 
       -- register the peer in the global state now
       modifyTVar globalStateVar registerPeerGlobalState
@@ -292,12 +296,19 @@ decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject}
     -- because makeDecisions should be atomic with respect to reading the global state and
     -- reading the previous decisions
     (newDecisions, counters) <- atomically $ do
-
       decisionsChannels <- readTVar decisionChannelsVar
       prevDecisions <- traverse readTVar decisionsChannels
       globalState <- readTVar globalStateVar
       hasObject <- opwHasObject
-      let newDecisions = makeDecisions rng hasObject decisionPolicy globalState prevDecisions
+      let newDecisions =
+            makeDecisions
+              DecisionContext
+                { dcRng = rng
+                , dcHasObject = hasObject
+                , dcDecisionPolicy = decisionPolicy
+                , dcGlobalState = globalState
+                , dcPrevDecisions = prevDecisions
+                }
 
       peerToChannel <- readTVar decisionChannelsVar
       -- Pair decision channel with the corresponding decision

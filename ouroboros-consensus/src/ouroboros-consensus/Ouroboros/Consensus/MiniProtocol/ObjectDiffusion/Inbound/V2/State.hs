@@ -54,7 +54,7 @@ onRequestIds
         globalStateVar
         ( \globalState ->
             let globalState' = onRequestIdsImpl peerAddr numIdsToAck numIdsToReq globalState
-            in (globalState', globalState')
+             in (globalState', globalState')
         )
     traceWith odTracer (TraceObjectDiffusionInboundRequestedIds (fromIntegral numIdsToReq))
     traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "onRequestIds" globalState')
@@ -89,9 +89,9 @@ onRequestIdsImpl
               -- We compute the ids to ack and new state of the FIFO based on the number of ids to ack given by the decision logic
               (idsToAck, dpsOutstandingFifo') =
                 assert (StrictSeq.length dpsOutstandingFifo >= fromIntegral numIdsToAck) $
-                StrictSeq.splitAt
-                  (fromIntegral numIdsToAck)
-                  dpsOutstandingFifo
+                  StrictSeq.splitAt
+                    (fromIntegral numIdsToAck)
+                    dpsOutstandingFifo
 
               -- We remove the acknowledged ids from dpsObjectsAvailableIds if they were present.
               -- We need to do that because objects that were advertised by this corresponding outbound peer
@@ -152,13 +152,13 @@ onRequestObjectsImpl
       Map.adjust
         ( \ps@DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds} ->
             assert
-            (  objectIds `Set.isSubsetOf` dpsObjectsAvailableIds
-            && Set.null (objectIds `Set.intersection` dpsObjectsInflightIds)
-            ) $
-            ps
-              { dpsObjectsAvailableIds = dpsObjectsAvailableIds \\ objectIds
-              , dpsObjectsInflightIds = dpsObjectsInflightIds `Set.union` objectIds
-              }
+              ( objectIds `Set.isSubsetOf` dpsObjectsAvailableIds
+                  && Set.null (objectIds `Set.intersection` dpsObjectsInflightIds)
+              )
+              $ ps
+                { dpsObjectsAvailableIds = dpsObjectsAvailableIds \\ objectIds
+                , dpsObjectsInflightIds = dpsObjectsInflightIds `Set.union` objectIds
+                }
         )
         peerAddr
         dgsPeerStates
@@ -197,26 +197,27 @@ onReceiveIds
         globalStateVar
         ( \globalState ->
             let globalState' = onReceiveIdsImpl peerAddr numIdsInitiallyRequested receivedIds globalState
-            in (globalState', globalState')
+             in (globalState', globalState')
         )
     traceWith odTracer (TraceObjectDiffusionInboundReceivedIds (length receivedIds))
     traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "onReceiveIds" globalState')
-    where
-      checkProtocolErrors ::
-        (objectId -> Bool) ->
-        DecisionPeerState objectId object->
-        NumObjectIdsReq ->
-        [objectId] ->
-        m ()
-      checkProtocolErrors hasObject DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds} nReq ids = do
-        when (length ids > fromIntegral nReq) $ throw ProtocolErrorObjectIdsNotRequested
-        let idSet = Set.fromList ids
-        when (length ids /= Set.size idSet) $ throw ProtocolErrorObjectIdsDuplicate
-        when
-          (  (not $ Set.null $ idSet `Set.intersection` dpsObjectsAvailableIds)
-          || (not $ Set.null $ idSet `Set.intersection` dpsObjectsInflightIds)
-          || (any hasObject ids)
-          ) $ throw ProtocolErrorObjectIdAlreadyKnown
+   where
+    checkProtocolErrors ::
+      (objectId -> Bool) ->
+      DecisionPeerState objectId object ->
+      NumObjectIdsReq ->
+      [objectId] ->
+      m ()
+    checkProtocolErrors hasObject DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds} nReq ids = do
+      when (length ids > fromIntegral nReq) $ throw ProtocolErrorObjectIdsNotRequested
+      let idSet = Set.fromList ids
+      when (length ids /= Set.size idSet) $ throw ProtocolErrorObjectIdsDuplicate
+      when
+        ( (not $ Set.null $ idSet `Set.intersection` dpsObjectsAvailableIds)
+            || (not $ Set.null $ idSet `Set.intersection` dpsObjectsInflightIds)
+            || (any hasObject ids)
+        )
+        $ throw ProtocolErrorObjectIdAlreadyKnown
 
 onReceiveIdsImpl ::
   forall peerAddr object objectId.
@@ -312,7 +313,7 @@ onReceiveObjects
                     peerAddr
                     objectsReceivedMap
                     globalState
-            in (globalState', globalState')
+             in (globalState', globalState')
         )
     traceWith odTracer (TraceObjectDiffusionInboundReceivedObjects (length objectsReceived))
     traceWith tracer (TraceDecisionLogicGlobalStateUpdated "onReceiveObjects" globalState')
@@ -324,15 +325,15 @@ onReceiveObjects
       poolSem
       peerAddr
       objectsReceivedMap
-    where
-      checkProtocolErrors ::
-        Set objectId->
-        Map objectId object ->
-        m ()
-      checkProtocolErrors requested received' = do
-        let received = Map.keysSet received'
-        when (not $ Set.null $ requested \\ received) $ throw ProtocolErrorObjectMissing
-        when (not $ Set.null $ received \\ requested) $ throw ProtocolErrorObjectNotRequested
+   where
+    checkProtocolErrors ::
+      Set objectId ->
+      Map objectId object ->
+      m ()
+    checkProtocolErrors requested received' = do
+      let received = Map.keysSet received'
+      when (not $ Set.null $ requested \\ received) $ throw ProtocolErrorObjectMissing
+      when (not $ Set.null $ received \\ requested) $ throw ProtocolErrorObjectNotRequested
 
 onReceiveObjectsImpl ::
   forall peerAddr object objectId.
@@ -366,8 +367,9 @@ onReceiveObjectsImpl
           dgsPeerStates
 
     -- subtract requested from in-flight
-    dpsObjectsInflightIds' = assert (objectsReceivedIds `Set.isSubsetOf` dpsObjectsInflightIds) $
-      dpsObjectsInflightIds \\ objectsReceivedIds
+    dpsObjectsInflightIds' =
+      assert (objectsReceivedIds `Set.isSubsetOf` dpsObjectsInflightIds) $
+        dpsObjectsInflightIds \\ objectsReceivedIds
 
     dpsObjectsOwtPool' = dpsObjectsOwtPool <> objectsReceived
 

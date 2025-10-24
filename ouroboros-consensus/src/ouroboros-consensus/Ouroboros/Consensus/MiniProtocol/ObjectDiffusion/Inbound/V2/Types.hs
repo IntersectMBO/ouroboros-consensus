@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -107,7 +108,8 @@ data DecisionPeerState objectId object = DecisionPeerState
   --   submitted to the objectpool)
   -- * removed by `withObjectPoolSem`
   }
-  deriving (Eq, Show, Generic)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NFData, NoThunks)
 
 instance
   ( Arbitrary objectId
@@ -116,18 +118,13 @@ instance
   ) =>
   Arbitrary (DecisionPeerState objectId object)
   where
-    arbitrary = DecisionPeerState
+  arbitrary =
+    DecisionPeerState
       <$> (NumObjectIdsReq <$> arbitrary)
       <*> (fromList <$> arbitrary)
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
-
-instance
-  ( NoThunks objectId
-  , NoThunks object
-  ) =>
-  NoThunks (DecisionPeerState objectId object)
 
 -- | Shared state of all `ObjectDiffusion` clients.
 data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
@@ -138,7 +135,8 @@ data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   -- there's always an entry in this map even if the set of `objectId`s is
   -- empty.
   }
-  deriving (Eq, Show, Generic)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NFData, NoThunks)
 
 instance
   ( Arbitrary peerAddr
@@ -147,15 +145,9 @@ instance
   , Ord peerAddr
   , Ord objectId
   ) =>
-  Arbitrary (DecisionGlobalState peerAddr objectId object) where
-    arbitrary = DecisionGlobalState <$> arbitrary
-
-instance
-  ( NoThunks peerAddr
-  , NoThunks object
-  , NoThunks objectId
-  ) =>
-  NoThunks (DecisionGlobalState peerAddr objectId object)
+  Arbitrary (DecisionGlobalState peerAddr objectId object)
+  where
+  arbitrary = DecisionGlobalState <$> arbitrary
 
 -- | Merge dpsObjectsAvailableIds from all peers of the global state.
 dgsObjectsAvailableMultiplicities ::
@@ -222,39 +214,37 @@ data PeerDecision objectId object = PeerDecision
   , pdStatus :: !PeerDecisionStatus
   -- ^ Whether the peer is actually executing the said decision
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NFData, NoThunks)
 
 instance
   ( Arbitrary objectId
   , Ord objectId
   ) =>
-  Arbitrary (PeerDecision objectId object) where
-    arbitrary = PeerDecision
+  Arbitrary (PeerDecision objectId object)
+  where
+  arbitrary =
+    PeerDecision
       <$> (NumObjectIdsAck <$> arbitrary)
       <*> (NumObjectIdsReq <$> arbitrary)
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
 
-instance
-  ( NFData objectId
-  , NFData object
-  ) =>
-  NFData (PeerDecision objectId object) where
-    rnf = undefined
-
 data PeerDecisionStatus
   = DecisionUnread
   | DecisionBeingActedUpon
   | DecisionCompleted
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NFData, NoThunks)
 
 instance Arbitrary PeerDecisionStatus where
-  arbitrary = elements
-    [ DecisionUnread
-    , DecisionBeingActedUpon
-    , DecisionCompleted
-    ]
+  arbitrary =
+    elements
+      [ DecisionUnread
+      , DecisionBeingActedUpon
+      , DecisionCompleted
+      ]
 
 -- | A placeholder when no decision has been made, at the beginning of a loop.
 -- Nothing should be read from it except its status.
@@ -272,7 +262,7 @@ unavailableDecision =
 data TraceDecisionLogic peerAddr objectId object
   = TraceDecisionLogicGlobalStateUpdated String (DecisionGlobalState peerAddr objectId object)
   | TraceDecisionLogicDecisionsMade (Map peerAddr (PeerDecision objectId object))
-  deriving Show
+  deriving stock (Show, Eq, Generic)
 
 data ObjectDiffusionCounters
   = ObjectDiffusionCounters
@@ -287,7 +277,7 @@ data ObjectDiffusionCounters
   -- objectpool (each peer need to acquire the semaphore to effectively add
   -- them to the pool)
   }
-  deriving (Eq, Show)
+  deriving stock (Show, Eq, Generic)
 
 makeObjectDiffusionCounters ::
   Ord objectId =>
@@ -309,8 +299,8 @@ newtype NumObjectsProcessed
   = NumObjectsProcessed
   { getNumObjectsProcessed :: Word64
   }
-  deriving (Eq, Ord, NFData, Generic)
-  deriving newtype (Num, Enum, Real, Integral, Bounded, NoThunks)
+  deriving stock (Eq, Ord, Generic)
+  deriving newtype (NFData, NoThunks, Num, Enum, Real, Integral, Bounded)
   deriving Semigroup via (Sum Word64)
   deriving Monoid via (Sum Word64)
   deriving Show via (Quiet NumObjectsProcessed)
@@ -319,8 +309,8 @@ newtype ObjectMultiplicity
   = ObjectMultiplicity
   { getObjectMultiplicity :: Word64
   }
-  deriving (Eq, Ord, NFData, Generic)
-  deriving newtype (Num, Enum, Real, Integral, Bounded, NoThunks)
+  deriving stock (Eq, Ord, Generic)
+  deriving newtype (NFData, NoThunks, Num, Enum, Real, Integral, Bounded)
   deriving Semigroup via (Sum Word64)
   deriving Monoid via (Sum Word64)
   deriving Show via (Quiet ObjectMultiplicity)
@@ -335,7 +325,7 @@ data TraceObjectDiffusionInbound objectId object
     -- to act on it.
     TraceObjectDiffusionInboundReceivedControlMessage ControlMessage
   | TraceObjectDiffusionInboundReceivedDecision (PeerDecision objectId object)
-  deriving (Eq, Show)
+  deriving stock (Show, Eq, Generic)
 
 data ObjectDiffusionInboundError
   = ProtocolErrorObjectNotRequested
@@ -343,7 +333,7 @@ data ObjectDiffusionInboundError
   | ProtocolErrorObjectIdAlreadyKnown
   | ProtocolErrorObjectIdsDuplicate
   | ProtocolErrorObjectMissing
-  deriving Show
+  deriving stock (Show, Eq, Generic)
 
 instance Exception ObjectDiffusionInboundError where
   displayException ProtocolErrorObjectNotRequested =
