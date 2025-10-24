@@ -177,6 +177,14 @@ main2 = getArgs >>= \case
             \    OR $0 cache-copy my.db my.lfst bytesSize(positive)\n\
             \"
 
+{- TODO
+
+- all kinds of evictions?
+
+- disconnects?
+
+-}
+
 reopenDb :: FilePath -> IO DB.Database
 reopenDb dbPath = do
     doesFileExist dbPath >>= \case
