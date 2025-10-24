@@ -153,6 +153,16 @@ main2 = getArgs >>= \case
       | ".bin" `isSuffixOf` ebTxsPath
       -> do
         hashTxs ebTxsPath
+    ["cache-copy", dbPath, lfstPath, bytesSizeStr]
+      | ".db" `isSuffixOf` dbPath
+      , ".lfst" `isSuffixOf` lfstPath
+      , Just bytesSize <- readMaybe bytesSizeStr
+      , 0 < bytesSize
+      -> do
+        db <- reopenDb dbPath
+        acc <- withDiePoly id $ JSON.eitherDecodeFileStrict lfstPath
+        acc' <- doCacheCopy db acc bytesSize
+        JSON.encodeFile lfstPath acc'
     _ ->
         die "Either $0 generate my.db myManifest.json\n\
             \    OR $0 ebId-to-point my.db ebId ebId ebId...\n\
@@ -164,6 +174,7 @@ main2 = getArgs >>= \case
             \    OR $0 MsgLeiosBlockTxs my.db my.lfst peerId myEbTxs.bin\n\
             \    OR $0 fetch-logic-iteration my.db my.lfst\n\
             \    OR $0 hash-txs myEbTxs.bin\n\
+            \    OR $0 cache-copy my.db my.lfst bytesSize(positive)\n\
             \"
 
 reopenDb :: FilePath -> IO DB.Database
@@ -322,6 +333,8 @@ sql_schema =
     \    txHashBytes BLOB NOT NULL PRIMARY KEY   -- raw bytes\n\
     \  ,\n\
     \    txBytes BLOB NOT NULL   -- valid CBOR\n\
+    \  ,\n\
+    \    txBytesSize INTEGER NOT NULL\n\
     \  ,\n\
     \    expiryUnixEpoch INTEGER NOT NULL\n\
     \  ) WITHOUT ROWID;\n\
@@ -743,6 +756,7 @@ msgLeiosBlockTxs db lfst0 peerId ebTxsPath = do
                     -- INTO txCache
                     withDie $ DB.bindBlob     stmtTxCache 1 $ Hash.hashToBytes txHash'
                     withDie $ DB.bindBlob     stmtTxCache 2 $ serialize' $ CBOR.encodeBytes txBytes
+                    withDie $ DB.bindInt64    stmtTxCache 3 $ fromIntegral txBytesSize
                     withDieDone $ DB.stepNoCB stmtTxCache
                     withDie $ DB.reset        stmtTxCache
                     go1
@@ -790,7 +804,7 @@ sql_update_ebTx =
 
 sql_insert_txCache :: String
 sql_insert_txCache =
-    "INSERT OR IGNORE INTO txCache (txHashBytes, txBytes, expiryUnixEpoch) VALUES (?, ?, -1)\n\
+    "INSERT OR IGNORE INTO txCache (txHashBytes, txBytes, txBytesSize, expiryUnixEpoch) VALUES (?, ?, ?, -1)\n\
     \"
 
 -----
@@ -1239,7 +1253,7 @@ sql_scan_missingEbTx =
 
 sql_scan_txCache :: String
 sql_scan_txCache =
-    "SELECT txHashBytes\n\
+    "SELECT txHashBytes, txBytesSize\n\
     \FROM txCache\n\
     \ORDER BY txHashBytes\n\
     \"
@@ -1632,3 +1646,74 @@ delIfNull x = if Set.null x then Nothing else Just x
 
 delIfZero :: (Eq a, Num a) => a -> Maybe a
 delIfZero x = if 0 == x then Nothing else Just x
+
+-----
+
+doCacheCopy :: DB.Database -> LeiosFetchState -> BytesSize -> IO LeiosFetchState
+doCacheCopy db lfst bytesSize = do
+    withDieMsg $ DB.exec db (fromString sql_attach_ebIds)
+    withDieMsg $ DB.exec db (fromString "BEGIN")
+    stmt <- withDieJust $ DB.prepare db (fromString sql_insert_memEbIds)
+    -- load in-mem table of ebId-txOffset pairs
+    lfst' <- go1 stmt 0 0 (toCopy lfst)
+    -- UPDATE JOIN driven by the loaded table
+    withDieMsg $ DB.exec db (fromString sql_copy_from_txCache)
+    withDieMsg $ DB.exec db (fromString "COMMIT")
+    pure lfst'
+  where
+    go1 stmt !accBytesSize !accCount !acc
+      | accBytesSize < bytesSize
+      , Just ((ebId, txs), acc') <- Map.maxViewWithKey acc
+      = go2 stmt accBytesSize accCount acc' ebId txs
+
+      | otherwise
+      = finish accBytesSize accCount acc
+
+    go2 stmt !accBytesSize !accCount !acc ebId txs
+      | Just ((txOffset, txBytesSize), txs') <- IntMap.minViewWithKey txs
+      = if accBytesSize + txBytesSize > bytesSize then stop else do
+            withDie $ DB.bindInt64    stmt 1 (fromIntegralEbId ebId)
+            withDie $ DB.bindInt64    stmt 2 (fromIntegral txOffset)
+            withDieDone $ DB.stepNoCB stmt
+            withDie $ DB.reset        stmt
+            go2 stmt (accBytesSize + txBytesSize) (accCount + 1) acc ebId txs'
+      | otherwise
+      = go1 stmt accBytesSize accCount acc
+      where
+        stop = finish accBytesSize accCount $ if IntMap.null txs then acc else Map.insert ebId txs acc
+
+    finish accBytesSize accCount acc =
+        pure lfst {
+            toCopy = acc
+          ,
+            toCopyBytesSize = toCopyBytesSize lfst - accBytesSize
+          ,
+            toCopyCount = toCopyCount lfst - accCount
+          }
+
+sql_attach_ebIds :: String
+sql_attach_ebIds =
+    -- NB :memory: databases are discarded when the SQLite connection is closed
+    "ATTACH DATABASE ':memory:' AS mem;\n\
+    \\n\
+    \CREATE TABLE mem.ebIds (\n\
+    \    ebId INTEGER NOT NULL\n\
+    \  ,\n\
+    \    txOffset INTEGER NOT NULL\n\
+    \  ,\n\
+    \    PRIMARY KEY (ebId ASC, txOffset ASC)\n\
+    \  ) WITHOUT ROWID;\n\
+    \"
+
+sql_insert_memEbIds :: String
+sql_insert_memEbIds =
+    "INSERT INTO mem.ebIds (ebId, txOffset) VALUES (?, ?);\n\
+    \"
+
+sql_copy_from_txCache :: String
+sql_copy_from_txCache =
+    "UPDATE ebTxs\n\
+    \SET txBytes = (SELECT txBytes FROM txCache WHERE txCache.txHashBytes = x.txHashBytes)\n\
+    \FROM ebTxs AS x\n\
+    \INNER JOIN mem.ebIds ON x.ebId = mem.ebIds.ebId AND x.txOffset = mem.ebIds.txOffset\n\
+    \"
