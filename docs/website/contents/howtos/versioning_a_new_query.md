@@ -106,7 +106,7 @@ The golden tests only generate golden files for queries that have examples. So i
 
 Old pull-requests that added new queries serve as good reference material when adding new queries. For instance see [#191](https://github.com/IntersectMBO/ouroboros-consensus/pull/191). Be aware that these PRs they can get out of date. If you detect this please delete old links and add those corresponding to newer pull requests.
 
-[n2c]: https://ouroboros-network.cardano.intersectmbo.org/ouroboros-network/cardano-diffusion/Cardano-Network-NodeToClient.html#t:NodeToClientVersion
+[n2c]: https://ouroboros-network.cardano.intersectmbo.org/cardano-diffusion/api/Cardano-Network-NodeToClient-Version.html#t:NodeToClientVersion
 [network-spec]: https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf
 [shelley-n2c]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs#L17
 [cardano-n2c]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs#L341-L527
