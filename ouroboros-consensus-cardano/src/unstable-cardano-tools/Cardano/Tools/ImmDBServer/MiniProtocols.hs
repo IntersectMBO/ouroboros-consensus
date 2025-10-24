@@ -74,9 +74,10 @@ immDBServer ::
   -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addr)
   -> ImmutableDB m blk
   -> NetworkMagic
+  -> (WithOrigin SlotNo -> m DiffTime)
   -> Versions NodeToNodeVersion NodeToNodeVersionData
        (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ())
-immDBServer codecCfg encAddr decAddr immDB networkMagic = do
+immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay  = do
     forAllVersions application
   where
     forAllVersions ::
@@ -142,7 +143,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
                 withRegistry
               $ runPeer nullTracer cChainSyncCodecSerialised channel
               . chainSyncServerPeer
-              . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint
+              . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint getSlotDelay
             blockFetchProt =
                 MiniProtocolCb $ \_ctx channel ->
                 withRegistry
@@ -173,9 +174,10 @@ chainSyncServer ::
      forall m blk a. (IOLike m, HasHeader blk)
   => ImmutableDB m blk
   -> BlockComponent blk (ChainDB.WithPoint blk a)
+  -> (WithOrigin SlotNo -> m DiffTime)
   -> ResourceRegistry m
   -> ChainSyncServer a (Point blk) (Tip blk) m ()
-chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
+chainSyncServer immDB blockComponent getSlotDelay registry = ChainSyncServer $ do
     follower <- newImmutableDBFollower
     runChainSyncServer $
       chainSyncServerForFollower nullTracer getImmutableTip follower
@@ -200,7 +202,10 @@ chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
                     ImmutableDB.IteratorExhausted -> do
                       ImmutableDB.iteratorClose iterator
                       throwIO ReachedImmutableTip
-                    ImmutableDB.IteratorResult a  ->
+                    ImmutableDB.IteratorResult a  -> do
+                      -- Wait until the slot of the current block has been reached
+                      slotDelay <- getSlotDelay $ pointSlot $ ChainDB.point a
+                      threadDelay slotDelay
                       pure $ AddBlock a
 
             followerClose = ImmutableDB.iteratorClose =<< readTVarIO varIterator
@@ -217,7 +222,7 @@ chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
                   pure $ Just pt
 
         pure Follower {
-            followerInstruction = Just <$> followerInstructionBlocking
+            followerInstruction = pure Nothing
           , followerInstructionBlocking
           , followerForward
           , followerClose

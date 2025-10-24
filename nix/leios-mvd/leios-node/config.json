@@ -1,0 +1,279 @@
+{
+  "AlonzoGenesisFile": "genesis-alonzo.json",
+  "ByronGenesisFile": "genesis-byron.json",
+  "ConwayGenesisFile": "genesis-conway.json",
+  "ShelleyGenesisFile": "genesis-shelley.json",
+  "ChainSyncIdleTimeout": 0,
+  "EnableP2P": true,
+  "ExperimentalHardForksEnabled": true,
+  "ExperimentalProtocolsEnabled": true,
+  "LastKnownBlockVersion-Alt": 0,
+  "LastKnownBlockVersion-Major": 3,
+  "LastKnownBlockVersion-Minor": 0,
+  "PeerSharing": false,
+  "Protocol": "Cardano",
+  "RequiresNetworkMagic": "RequiresMagic",
+  "SnapshotInterval": 4230,
+  "SyncTargetNumberOfActivePeers": 15,
+  "SyncTargetNumberOfEstablishedPeers": 40,
+  "TargetNumberOfActivePeers": 15,
+  "TargetNumberOfEstablishedPeers": 40,
+  "TestAllegraHardForkAtEpoch": 0,
+  "TestAlonzoHardForkAtEpoch": 0,
+  "TestBabbageHardForkAtEpoch": 0,
+  "TestConwayHardForkAtEpoch": 0,
+  "TestMaryHardForkAtEpoch": 0,
+  "TestShelleyHardForkAtEpoch": 0,
+  "TraceOptionForwarder": {
+    "connQueueSize": 64,
+    "disconnQueueSize": 128,
+    "maxReconnectDelay": 30
+  },
+  "TraceOptionMetricsPrefix": "cardano.node.metrics.",
+  "TraceOptionNodeName": "leios-node",
+  "TraceOptionPeerFrequency": 2000,
+  "TraceOptionResourceFrequency": 1000,
+  "TraceOptions": {
+    "": {
+      "backends": [
+        "Stdout MachineFormat",
+        "EKGBackend",
+        "Forwarder"
+      ],
+      "detail": "DNormal",
+      "severity": "Notice"
+    },
+    "BlockFetch.Client": {
+      "severity": "Debug"
+    },
+    "BlockFetch.Client.CompletedBlockFetch": {
+      "maxFrequency": 2.0
+    },
+    "BlockFetch.Decision": {
+      "severity": "Notice"
+    },
+    "BlockFetch.Remote": {
+      "severity": "Notice"
+    },
+    "BlockFetch.Remote.Serialised": {
+      "severity": "Notice"
+    },
+    "BlockFetch.Server": {
+      "severity": "Debug"
+    },
+    "BlockchainTime": {
+      "severity": "Notice"
+    },
+    "ChainDB": {
+      "severity": "Debug"
+    },
+    "ChainDB.AddBlockEvent.AddBlockValidation": {
+      "severity": "Silence"
+    },
+    "ChainDB.AddBlockEvent.AddBlockValidation.ValidCandidate": {
+      "maxFrequency": 2.0
+    },
+    "ChainDB.AddBlockEvent.AddedBlockToQueue": {
+      "maxFrequency": 2.0
+    },
+    "ChainDB.AddBlockEvent.AddedBlockToVolatileDB": {
+      "maxFrequency": 2.0
+    },
+    "ChainDB.CopyToImmutableDBEvent.CopiedBlockToImmutableDB": {
+      "maxFrequency": 2.0
+    },
+    "ChainDB.LedgerEvent.Flavor.V1.OnDisk.BackingStoreEvent": {
+      "severity": "Silence"
+    },
+    "ChainDB.LedgerEvent.Forker": {
+      "severity": "Silence"
+    },
+    "ChainDB.ReplayBlock.LedgerReplay": {
+      "severity": "Notice"
+    },
+    "ChainSync.Client": {
+      "severity": "Debug"
+    },
+    "ChainSync.Local": {
+      "severity": "Notice"
+    },
+    "ChainSync.Remote": {
+      "severity": "Notice"
+    },
+    "ChainSync.Remote.Serialised": {
+      "severity": "Notice"
+    },
+    "ChainSync.ServerBlock": {
+      "severity": "Notice"
+    },
+    "ChainSync.ServerHeader": {
+      "severity": "Debug"
+    },
+    "Consensus.GSM": {
+      "severity": "Info"
+    },
+    "Forge.Loop": {
+      "severity": "Debug"
+    },
+    "Forge.StateInfo": {
+      "severity": "Debug"
+    },
+    "LedgerMetrics": {
+      "severity": "Info"
+    },
+    "Mempool": {
+      "severity": "Debug"
+    },
+    "Mempool.AttemptAdd": {
+      "severity": "Silence"
+    },
+    "Mempool.LedgerFound": {
+      "severity": "Silence"
+    },
+    "Mempool.LedgerNotFound": {
+      "severity": "Silence"
+    },
+    "Mempool.SyncNotNeeded": {
+      "severity": "Silence"
+    },
+    "Mempool.Synced": {
+      "severity": "Silence"
+    },
+    "Net": {
+      "severity": "Notice"
+    },
+    "Net.AcceptPolicy": {
+      "severity": "Debug"
+    },
+    "Net.ConnectionManager.Local": {
+      "severity": "Debug"
+    },
+    "Net.ConnectionManager.Remote": {
+      "severity": "Debug"
+    },
+    "Net.ConnectionManager.Remote.ConnectionManagerCounters": {
+      "severity": "Silence"
+    },
+    "Net.DNSResolver": {
+      "severity": "Notice"
+    },
+    "Net.ErrorPolicy": {
+      "severity": "Info"
+    },
+    "Net.ErrorPolicy.Local": {
+      "severity": "Debug"
+    },
+    "Net.ErrorPolicy.Remote": {
+      "severity": "Debug"
+    },
+    "Net.Handshake.Local": {
+      "severity": "Debug"
+    },
+    "Net.Handshake.Remote": {
+      "severity": "Debug"
+    },
+    "Net.InboundGovernor": {
+      "severity": "Warning"
+    },
+    "Net.InboundGovernor.Local": {
+      "severity": "Debug"
+    },
+    "Net.InboundGovernor.Remote": {
+      "severity": "Debug"
+    },
+    "Net.InboundGovernor.Transition": {
+      "severity": "Debug"
+    },
+    "Net.Mux.Local": {
+      "severity": "Notice"
+    },
+    "Net.Mux.Remote": {
+      "severity": "Notice"
+    },
+    "Net.PeerSelection": {
+      "severity": "Silence"
+    },
+    "Net.PeerSelection.Actions": {
+      "severity": "Debug"
+    },
+    "Net.PeerSelection.Counters": {
+      "detail": "DMinimal",
+      "severity": "Debug"
+    },
+    "Net.PeerSelection.Initiator": {
+      "severity": "Notice"
+    },
+    "Net.PeerSelection.Responder": {
+      "severity": "Notice"
+    },
+    "Net.PeerSelection.Selection": {
+      "severity": "Debug"
+    },
+    "Net.Peers.Ledger": {
+      "severity": "Debug"
+    },
+    "Net.Peers.List": {
+      "severity": "Notice"
+    },
+    "Net.Peers.LocalRoot": {
+      "severity": "Debug"
+    },
+    "Net.Peers.PublicRoot": {
+      "severity": "Debug"
+    },
+    "Net.Server.Local": {
+      "severity": "Debug"
+    },
+    "Net.Server.Remote": {
+      "severity": "Debug"
+    },
+    "Net.Subscription.DNS": {
+      "severity": "Debug"
+    },
+    "Net.Subscription.IP": {
+      "severity": "Debug"
+    },
+    "NodeState": {
+      "severity": "Notice"
+    },
+    "Resources": {
+      "severity": "Debug"
+    },
+    "Shutdown": {
+      "severity": "Notice"
+    },
+    "Startup": {
+      "severity": "Notice"
+    },
+    "Startup.DiffusionInit": {
+      "severity": "Debug"
+    },
+    "StateQueryServer": {
+      "severity": "Notice"
+    },
+    "TxSubmission.Local": {
+      "severity": "Notice"
+    },
+    "TxSubmission.LocalServer": {
+      "severity": "Notice"
+    },
+    "TxSubmission.MonitorClient": {
+      "severity": "Notice"
+    },
+    "TxSubmission.Remote": {
+      "severity": "Notice"
+    },
+    "TxSubmission.TxInbound": {
+      "severity": "Debug"
+    },
+    "TxSubmission.TxOutbound": {
+      "severity": "Notice"
+    },
+    "Version.NodeVersion": {
+      "severity": "Info"
+    }
+  },
+  "TurnOnLogMetrics": true,
+  "TurnOnLogging": true,
+  "UseTraceDispatcher": true
+}

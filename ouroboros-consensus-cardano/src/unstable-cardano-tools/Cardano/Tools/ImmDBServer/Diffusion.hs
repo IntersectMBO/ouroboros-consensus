@@ -82,8 +82,9 @@ run ::
   => FilePath
   -> SockAddr
   -> TopLevelConfig blk
+  -> (WithOrigin SlotNo -> IO DiffTime)
   -> IO Void
-run immDBDir sockAddr cfg = withRegistry \registry ->
+run immDBDir sockAddr cfg getSlotDelay = withRegistry \registry ->
     ImmutableDB.withDB
       (ImmutableDB.openDB (immDBArgs registry) runWithTempRegistry)
       \immDB -> serve sockAddr $ immDBServer
@@ -92,6 +93,7 @@ run immDBDir sockAddr cfg = withRegistry \registry ->
         decodeRemoteAddress
         immDB
         networkMagic
+        getSlotDelay
   where
     immDBArgs registry = ImmutableDB.defaultArgs {
           immCheckIntegrity = nodeCheckIntegrity storageCfg
