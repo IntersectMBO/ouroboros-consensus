@@ -201,7 +201,7 @@ prettyBitmap (idx, bitmap) =
     show idx ++ ":0x" ++ Numeric.showHex bitmap ""
 
 data EbRecipe = EbRecipe {
-    ebRecipeBinder :: Maybe String
+    ebRecipeNickname :: Maybe String
   ,
     ebRecipeElems :: V.Vector EbRecipeElem
   ,
@@ -211,7 +211,7 @@ data EbRecipe = EbRecipe {
 
 instance JSON.FromJSON EbRecipe where
     parseJSON = JSON.withObject "EbRecipe" $ \v -> EbRecipe
-        <$> v JSON..:? (fromString "binder")
+        <$> v JSON..:? (fromString "nickname")
         <*> v JSON..: (fromString "txRecipes")
         <*> v JSON..: (fromString "slotNo")
 
@@ -244,7 +244,7 @@ generateDb prng0 db ebRecipes = do
     stmt_write_ebId <- withDieJust $ DB.prepare db (fromString sql_insert_ebId)
     stmt_write_ebClosure <- withDieJust $ DB.prepare db (fromString sql_insert_ebClosure)
     -- loop over EBs (one SQL transaction each, to be gentle)
-    (_dynEnv', _sigma) <- (\f -> foldM f (emptyLeiosFetchDynEnv, Map.empty) ebRecipes) $ \(dynEnv, sigma) ebRecipe -> do
+    (_dynEnv', sigma) <- (\f -> foldM f (emptyLeiosFetchDynEnv, Map.empty) ebRecipes) $ \(dynEnv, sigma) ebRecipe -> do
         -- generate txs, so we have their hashes
         let finishX (n, x) = V.fromListN n $ Foldable.toList $ revX x   -- TODO in ST with mut vector
         txs <- fmap finishX $ (\f -> V.foldM f (0, emptyX) (ebRecipeElems ebRecipe)) $ \(accN, accX) -> \case
@@ -320,10 +320,11 @@ generateDb prng0 db ebRecipes = do
             withDie $ DB.reset        stmt_write_ebClosure
         -- finalize each EB
         withDieMsg $ DB.exec db (fromString "COMMIT")
-        pure (fromMaybe dynEnv mbDynEnv', maybe id (\bndr -> Map.insert bndr (ebId, V.length txs)) (ebRecipeBinder ebRecipe) sigma)
+        pure (fromMaybe dynEnv mbDynEnv', maybe id (\bndr -> Map.insert bndr (ebId, V.length txs)) (ebRecipeNickname ebRecipe) sigma)
     -- finalize db
     withDieMsg $ DB.exec db (fromString sql_index_schema)
-    -- TODO maybe print out the @sigma@ mapping as JSON, so the user can see the EbId for each of their declared variables?
+    forM_ (Map.toList sigma) $ \(nickname, (ebId, _count)) -> do
+        putStrLn $ unwords [nickname, prettyEbId ebId]
 
 -----
 
@@ -630,7 +631,7 @@ sql_lookup_ebClosures_DESC n =
     \ORDER BY txOffset DESC\n\
     \"
   where
-    hooks = intercalate ", " (replicate n "?")
+    hooks = intercalate "," (replicate n "?")
 
 -----
 
