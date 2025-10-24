@@ -15,11 +15,10 @@ import Control.Exception (evaluate)
 import Data.Hashable (Hashable)
 import Debug.Trace (traceMarkerIO)
 import GHC.Generics (Generic)
-import System.Random.SplitMix qualified as SM
-import Test.Tasty.Bench
-import Test.QuickCheck (Arbitrary (..))
-
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision qualified as OD
+import System.Random.SplitMix qualified as SM
+import Test.QuickCheck (Arbitrary (..))
+import Test.Tasty.Bench
 
 -- TODO: We will probably want to use the actual types used in vote/cert diffusion,
 -- instead of placeholders.
@@ -47,51 +46,48 @@ instance Arbitrary DummyObject where
 main :: IO ()
 main =
   defaultMain
-    [ bgroup "ouroboros-consensus:ObjectDiffusion"
-      [ bgroup "VoteDiffusion"
-          [ env
-            (do let a = OD.mkDecisionContext (SM.mkSMGen 123) 10
-                evaluate (rnf a)
-                traceMarkerIO "evaluated decision context"
-                return a
-            )
-            (\a -> bench "makeDecisions: 10" $
-              nf makeVoteDiffusionDecision a
-            )
-        , env
-            (do let a = OD.mkDecisionContext (SM.mkSMGen 456) 100
-                evaluate (rnf a)
-                traceMarkerIO "evaluated decision context"
-                return a
-            )
-            (\a -> bench "makeDecisions: 100" $
-              nf makeVoteDiffusionDecision a
-            )
-        , env
-            (do let a = OD.mkDecisionContext (SM.mkSMGen 789) 1_000
-                evaluate (rnf a)
-                traceMarkerIO "evaluated decision context"
-                return a
-            )
-            (\a -> bench "makeDecisions: 1_000" $
-              nf makeVoteDiffusionDecision a
-            )
+    [ bgroup
+        "ouroboros-consensus:ObjectDiffusion"
+        [ bgroup
+            "VoteDiffusion"
+            [ env
+                ( do
+                    let a = OD.mkDecisionContext (SM.mkSMGen 123) 10 Nothing
+                    evaluate (rnf a)
+                    traceMarkerIO "evaluated decision context"
+                    return a
+                )
+                ( \a ->
+                    bench "makeDecisions: 10" $
+                      nf makeVoteDiffusionDecision a
+                )
+            , env
+                ( do
+                    let a = OD.mkDecisionContext (SM.mkSMGen 456) 100 Nothing
+                    evaluate (rnf a)
+                    traceMarkerIO "evaluated decision context"
+                    return a
+                )
+                ( \a ->
+                    bench "makeDecisions: 100" $
+                      nf makeVoteDiffusionDecision a
+                )
+            , env
+                ( do
+                    let a = OD.mkDecisionContext (SM.mkSMGen 789) 1_000 Nothing
+                    evaluate (rnf a)
+                    traceMarkerIO "evaluated decision context"
+                    return a
+                )
+                ( \a ->
+                    bench "makeDecisions: 1_000" $
+                      nf makeVoteDiffusionDecision a
+                )
+            ]
+        , bgroup "CertDiffusion" []
         ]
-      , bgroup "CertDiffusion" []
-      ]
     ]
-  where
-    -- TODO: We probably want to use the decision policy for vote/cert diffusion
-    -- instead of an arbitrary one.
-    makeVoteDiffusionDecision = \OD.DecisionContext 
-      { OD.dcRng
-      , OD.dcHasObject
-      , OD.dcDecisionPolicy
-      , OD.dcGlobalState
-      , OD.dcPrevDecisions
-      } -> OD.makeDecisions @DummyPeerAddr @DummyObjectId @DummyObject
-        dcRng
-        dcHasObject
-        dcDecisionPolicy
-        dcGlobalState
-        dcPrevDecisions
+ where
+  -- TODO: We probably want to use the decision policy for vote/cert diffusion
+  -- instead of an arbitrary one.
+  makeVoteDiffusionDecision = \decisionContext -> OD.makeDecisions @DummyPeerAddr @DummyObjectId @DummyObject decisionContext

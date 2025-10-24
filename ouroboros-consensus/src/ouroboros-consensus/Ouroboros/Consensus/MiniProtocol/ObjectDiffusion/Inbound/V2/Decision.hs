@@ -1,4 +1,6 @@
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -20,19 +22,21 @@ import Data.Hashable (Hashable (..))
 import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set (Set)
 import Data.Set qualified as Set
+import GHC.Generics (Generic)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
+import System.Random (StdGen, mkStdGen)
+import System.Random.SplitMix (SMGen, nextInt)
 import Test.QuickCheck (Arbitrary (..))
 import Test.QuickCheck.Gen (Gen (..))
 import Test.QuickCheck.Random (QCGen (..))
-import System.Random.SplitMix (SMGen, nextInt)
-import System.Random (StdGen, mkStdGen)
 
 data DecisionContext peerAddr objectId object = DecisionContext
   { dcRng :: StdGen
@@ -41,18 +45,11 @@ data DecisionContext peerAddr objectId object = DecisionContext
   , dcGlobalState :: DecisionGlobalState peerAddr objectId object
   , dcPrevDecisions :: Map peerAddr (PeerDecision objectId object)
   }
+  deriving stock Generic
+  deriving anyclass NFData
 
-instance
-  ( NFData peerAddr
-  , NFData objectId
-  , NFData object
-  ) =>
-  NFData (DecisionContext peerAddr objectId object) where
-    rnf = undefined
+-- TODO: Using `sized` to control size, we could maybe provide directly an instance of Arbitrary for DecisionContext?
 
--- TODO: do not generate dcDecisionPolicy arbitrarily, it makes little sense.
--- Instead we should provide decision policies fit for the concrete object types
--- we want to make decisions for.
 mkDecisionContext ::
   forall peerAddr objectId object.
   ( Arbitrary peerAddr
@@ -64,19 +61,22 @@ mkDecisionContext ::
   ) =>
   SMGen ->
   Int ->
+  -- | If we want to provide a specific decision policy instead of relying on an arbitrary variation of the default one
+  Maybe DecisionPolicy ->
   DecisionContext peerAddr objectId object
-mkDecisionContext stdGen size = unGen gen (QCGen stdGen') size
-  where
-    (salt, stdGen') = nextInt stdGen
-    gen :: Gen (DecisionContext peerAddr objectId object)
-    gen = do
-      dcRng <- mkStdGen <$> arbitrary
-      dcDecisionPolicy <- arbitrary
-      dcGlobalState <- arbitrary
-      dcPrevDecisions <- arbitrary
-      let dcHasObject objId =
-            hashWithSalt salt objId `mod` 2 == 0
-      pure $ DecisionContext
+mkDecisionContext stdGen size mPolicy = unGen gen (QCGen stdGen') size
+ where
+  (salt, stdGen') = nextInt stdGen
+  gen :: Gen (DecisionContext peerAddr objectId object)
+  gen = do
+    dcRng <- mkStdGen <$> arbitrary
+    dcDecisionPolicy <- fromMaybe arbitrary (pure <$> mPolicy)
+    dcGlobalState <- arbitrary
+    dcPrevDecisions <- arbitrary
+    let dcHasObject objId =
+          hashWithSalt salt objId `mod` 2 == 0
+    pure $
+      DecisionContext
         { dcRng
         , dcHasObject
         , dcDecisionPolicy
@@ -93,25 +93,25 @@ makeDecisions ::
   ( Ord peerAddr
   , Ord objectId
   ) =>
-  StdGen ->
-  (objectId -> Bool) ->
-  -- | decision decisionPolicy
-  DecisionPolicy ->
-  -- | decision context
-  DecisionGlobalState peerAddr objectId object ->
-  -- | Previous decisions
-  Map peerAddr (PeerDecision objectId object) ->
+  DecisionContext peerAddr objectId object ->
   -- | New decisions
   Map peerAddr (PeerDecision objectId object)
-makeDecisions rng hasObject decisionPolicy globalState prevDecisions =
+makeDecisions DecisionContext{dcRng, dcHasObject, dcDecisionPolicy, dcGlobalState, dcPrevDecisions} =
   let
     -- A subset of peers are currently executing a decision. We shouldn't update the decision for them
-    frozenPeersToDecisions = Map.filter (\PeerDecision{pdStatus} -> pdStatus == DecisionBeingActedUpon) prevDecisions
+    frozenPeersToDecisions = Map.filter (\PeerDecision{pdStatus} -> pdStatus == DecisionBeingActedUpon) dcPrevDecisions
 
     -- We do it in two steps, because computing the acknowledgment tell which objects from dpsObjectsAvailableIds sets of each peer won't actually be available anymore (as soon as we ack them),
     -- so that the pickObjectsToReq function can take this into account.
-    (ackAndRequestIdsDecisions, peerToIdsToAck) = computeAck hasObject decisionPolicy globalState frozenPeersToDecisions
-    peersToObjectsToReq = pickObjectsToReq rng hasObject decisionPolicy globalState frozenPeersToDecisions peerToIdsToAck
+    (ackAndRequestIdsDecisions, peerToIdsToAck) = computeAck dcHasObject dcDecisionPolicy dcGlobalState frozenPeersToDecisions
+    peersToObjectsToReq =
+      pickObjectsToReq
+        dcRng
+        dcHasObject
+        dcDecisionPolicy
+        dcGlobalState
+        frozenPeersToDecisions
+        peerToIdsToAck
    in
     Map.intersectionWith
       (\decision objectsToReqIds -> decision{pdObjectsToReqIds = objectsToReqIds})
