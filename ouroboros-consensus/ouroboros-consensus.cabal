@@ -327,6 +327,7 @@ library
     monoid-subclasses,
     mtl,
     multiset ^>=0.3,
+    network-mux ^>=0.8,
     nothunks ^>=0.2,
     ouroboros-network-api ^>=0.14,
     ouroboros-network-mock ^>=0.1,

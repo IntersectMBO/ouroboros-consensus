@@ -34,6 +34,9 @@ module Ouroboros.Consensus.Network.NodeToNode (
   , initiatorAndResponder
     -- * Re-exports
   , ChainSyncTimeout (..)
+
+  , leiosFetchProtocolLimits
+  , leiosNotifyProtocolLimits
   ) where
 
 import           Codec.CBOR.Decoding (Decoder)
@@ -125,6 +128,8 @@ import           Ouroboros.Network.TxSubmission.Outbound
 
 
 import qualified Ouroboros.Network.Mux as ON
+import LeiosDemoOnlyTestFetch (leiosFetchMiniProtocolNum)
+import LeiosDemoOnlyTestNotify (leiosNotifyMiniProtocolNum)
 
 {-------------------------------------------------------------------------------
   Handlers
@@ -845,23 +850,17 @@ initiator miniProtocolParameters version versionData Apps {..} =
               ON.MiniProtocol {
                 ON.miniProtocolNum    = leiosNotifyMiniProtocolNum,
                 ON.miniProtocolStart  = ON.StartOnDemand,
-                ON.miniProtocolLimits = ON.MiniProtocolLimits {
-                    ON.maximumIngressQueue = addSafetyMargin $ 1 * 2 ^ (20 :: Int)   -- 1 mebibyte
-                    },
+                ON.miniProtocolLimits = leiosNotifyProtocolLimits,
                 ON.miniProtocolRun    = InitiatorProtocolOnly (MiniProtocolCb undefined)
               }
             , ON.MiniProtocol {
                 ON.miniProtocolNum    = leiosFetchMiniProtocolNum,
                 ON.miniProtocolStart  = ON.StartOnDemand,
-                ON.miniProtocolLimits = ON.MiniProtocolLimits {
-                    ON.maximumIngressQueue = addSafetyMargin $ 50 * 2 ^ (20 :: Int)   -- 50 mebibytes
-                    },
+                ON.miniProtocolLimits = leiosFetchProtocolLimits,
                 ON.miniProtocolRun    = InitiatorProtocolOnly (MiniProtocolCb undefined)
               }
             ]
            }
-  where
-    addSafetyMargin x = x + x `div` 10
 
 -- | A bi-directional network application.
 --
@@ -907,27 +906,27 @@ initiatorAndResponder miniProtocolParameters version versionData Apps {..} =
               ON.MiniProtocol {
                 ON.miniProtocolNum    = leiosNotifyMiniProtocolNum,
                 ON.miniProtocolStart  = ON.StartOnDemand,
-                ON.miniProtocolLimits = ON.MiniProtocolLimits {
-                    ON.maximumIngressQueue = addSafetyMargin $ 1 * 2 ^ (20 :: Int)   -- 1 mebibyte
-                    },
+                ON.miniProtocolLimits = leiosNotifyProtocolLimits,
                 ON.miniProtocolRun    = InitiatorAndResponderProtocol (MiniProtocolCb undefined) (MiniProtocolCb undefined)
               }
             , ON.MiniProtocol {
                 ON.miniProtocolNum    = leiosFetchMiniProtocolNum,
                 ON.miniProtocolStart  = ON.StartOnDemand,
-                ON.miniProtocolLimits = ON.MiniProtocolLimits {
-                    ON.maximumIngressQueue = addSafetyMargin $ 50 * 2 ^ (20 :: Int)   -- 50 mebibytes
-                    },
+                ON.miniProtocolLimits = leiosFetchProtocolLimits,
                 ON.miniProtocolRun    = InitiatorAndResponderProtocol (MiniProtocolCb undefined) (MiniProtocolCb undefined)
               }
             ]
            }
-  where
-    addSafetyMargin x = x + x `div` 10
 
+leiosNotifyProtocolLimits :: MiniProtocolLimits
+leiosNotifyProtocolLimits = ON.MiniProtocolLimits {
+    ON.maximumIngressQueue = addSafetyMargin $ 1 * 2 ^ (20 :: Int)   -- 1 mebibyte
+  }
 
-leiosNotifyMiniProtocolNum :: MiniProtocolNum
-leiosNotifyMiniProtocolNum = MiniProtocolNum 18
+leiosFetchProtocolLimits :: MiniProtocolLimits
+leiosFetchProtocolLimits = ON.MiniProtocolLimits {
+    ON.maximumIngressQueue = addSafetyMargin $ 50 * 2 ^ (20 :: Int)   -- 50 mebibytes
+  }
 
-leiosFetchMiniProtocolNum :: MiniProtocolNum
-leiosFetchMiniProtocolNum = MiniProtocolNum 19
+addSafetyMargin :: Int -> Int
+addSafetyMargin x = x + x `div` 10

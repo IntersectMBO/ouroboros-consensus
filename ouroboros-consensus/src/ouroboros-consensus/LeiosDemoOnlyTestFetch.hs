@@ -19,6 +19,7 @@ module LeiosDemoOnlyTestFetch
   , timeLimitsLeiosFetch
   , codecLeiosFetch
   , codecLeiosFetchId
+  , leiosFetchMiniProtocolNum
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
@@ -30,6 +31,7 @@ import Data.ByteString.Lazy (ByteString)
 import Data.Kind (Type)
 import Data.Singletons
 import Data.Word (Word16, Word64)
+import qualified Network.Mux.Types as Mux
 import Network.TypedProtocol.Codec.CBOR
 import Network.TypedProtocol.Core
 import Ouroboros.Network.Protocol.Limits
@@ -37,6 +39,9 @@ import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 import Text.Printf
 
 -----
+
+leiosFetchMiniProtocolNum :: Mux.MiniProtocolNum
+leiosFetchMiniProtocolNum = Mux.MiniProtocolNum 19
 
 type LeiosFetch :: Type -> Type -> Type -> Type
 data LeiosFetch point eb tx where

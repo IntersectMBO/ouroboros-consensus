@@ -61,6 +61,9 @@ import           Ouroboros.Network.Protocol.Handshake.Version (Version (..))
 import           Ouroboros.Network.Protocol.KeepAlive.Server
                      (keepAliveServerPeer)
 
+import LeiosDemoOnlyTestFetch
+import LeiosDemoOnlyTestNotify
+
 immDBServer ::
      forall m blk addr.
      ( IOLike m
@@ -125,6 +128,16 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay  = do
                 N2N.txSubmissionMiniProtocolNum
                 N2N.txSubmissionProtocolLimits
                 txSubmissionProt
+            , mkMiniProtocol
+                Mux.StartOnDemand
+                leiosNotifyMiniProtocolNum
+                (const Consensus.N2N.leiosNotifyProtocolLimits)
+                undefined
+            , mkMiniProtocol
+                Mux.StartOnDemand
+                leiosFetchMiniProtocolNum
+                (const Consensus.N2N.leiosFetchProtocolLimits)
+                undefined
             ]
           where
             Consensus.N2N.Codecs {

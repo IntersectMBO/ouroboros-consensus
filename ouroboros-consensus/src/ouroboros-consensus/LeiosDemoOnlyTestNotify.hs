@@ -19,6 +19,7 @@ module LeiosDemoOnlyTestNotify
   , timeLimitsLeiosNotify
   , codecLeiosNotify
   , codecLeiosNotifyId
+  , leiosNotifyMiniProtocolNum
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
@@ -29,6 +30,7 @@ import Control.Monad.Class.MonadST
 import Data.ByteString.Lazy (ByteString)
 import Data.Kind (Type)
 import Data.Singletons
+import qualified Network.Mux.Types as Mux
 import Network.TypedProtocol.Codec.CBOR
 import Network.TypedProtocol.Core
 import Ouroboros.Network.Protocol.Limits
@@ -36,6 +38,9 @@ import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 import Text.Printf
 
 -----
+
+leiosNotifyMiniProtocolNum :: Mux.MiniProtocolNum
+leiosNotifyMiniProtocolNum = Mux.MiniProtocolNum 18
 
 type LeiosNotify :: Type -> Type -> Type
 data LeiosNotify point announcement where
