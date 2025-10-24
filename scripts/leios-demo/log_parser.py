@@ -262,9 +262,50 @@ if __name__ == "__main__":
         df_merged["at_node_1"] - df_merged["at_node_0"]
     ).dt.total_seconds() * 1000
 
+    # --- STEP 6: Calculate Slot Onset Time ---
+    print(f"\n--- Calculating Slot Onset Times ---")
+    print(
+        f"Using base slot {initial_slot} at {initial_time} (1 slot = 1 second)"
+    )
+    try:
+        # Calculate the difference in slots (which equals seconds)
+        # We must ensure 'slot' is numeric, which create_and_clean_df should have done
+        df_merged["slot_diff_seconds"] = df_merged["slot"] - initial_slot
+
+        # Convert the second difference into a timedelta and add to the initial time
+        df_merged["slot_onset"] = initial_time + pd.to_timedelta(
+            df_merged["slot_diff_seconds"], unit="s"
+        )
+
+        # Drop the intermediate calculation column
+        df_merged = df_merged.drop(columns=["slot_diff_seconds"])
+
+    except Exception as e:
+        print(
+            f"Error: Failed to calculate slot onset times. Check data types. Error: {e}",
+            file=sys.stderr,
+        )
+        # Continue without onset time if calculation fails
+        pass
+
     print("\n--- Extracted and Merged Data Summary (First 5 Rows) ---")
     print(
         "Each row represents a unique block seen by both nodes, joined by hash and slot."
     )
-    print(df_merged.head())
+
+    # Define desired column order, including the new 'slot_onset'
+    final_columns = [
+        "slot",
+        "hash",
+        "slot_onset",
+        "at_node_0",
+        "at_node_1",
+        "latency_ms",
+    ]
+
+    # Filter list to only columns that actually exist in the dataframe
+    # This prevents an error if 'slot_onset' failed to be created
+    existing_columns = [col for col in final_columns if col in df_merged.columns]
+
+    print(df_merged[existing_columns].head())
     print(f"\nTotal unique block events matched: {len(df_merged)}")
