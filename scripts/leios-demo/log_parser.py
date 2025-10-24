@@ -133,19 +133,43 @@ def create_and_clean_df(
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 5:
         print(
-            "Configuration Error: Please provide the full path to exactly TWO log files.",
+            "Configuration Error: Please provide initial-slot, initial-time, and two log files.",
             file=sys.stderr,
         )
         print(
-            "Example Usage: python log_parser.py /path/to/node-0.log /path/to/node-1.log",
+            "Example Usage: python log_parser.py <initial-slot> <initial-time> /path/to/node-0.log /path/to/node-1.log",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    log_path_0 = sys.argv[1]
-    log_path_1 = sys.argv[2]
+    # --- Argument Parsing ---
+    try:
+        initial_slot = int(sys.argv[1])
+        # Use pandas to_datetime, as it's already a dependency and robust.
+        initial_time = pd.to_datetime(sys.argv[2])
+    except ValueError:
+        print(
+            f"Configuration Error: Could not parse initial-slot '{sys.argv[1]}' as integer or initial-time '{sys.argv[2]}' as a valid timestamp.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except Exception as e:
+        print(
+            f"Configuration Error: Error processing initial arguments: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    log_path_0 = sys.argv[3]
+    log_path_1 = sys.argv[4]
+
+    print(f"\n--- Initial Configuration ---")
+    print(f"Initial Slot: {initial_slot}")
+    print(f"Initial Time: {initial_time}")
+    print(f"Log File 0: {log_path_0}")
+    print(f"Log File 1: {log_path_1}")
 
     # --- STEP 1: Create Hash-to-Slot Lookup Table (Headers) ---
 
