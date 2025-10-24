@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -10,6 +11,10 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+
+#if !MIN_VERSION_QuickCheck(2,16,0)
+{-# OPTIONS_GHC -Wno-dodgy-imports #-}
+#endif
 
 module Test.Ouroboros.Storage.PerasCertDB.StateMachine (tests) where
 
