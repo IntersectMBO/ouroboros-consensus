@@ -20,6 +20,7 @@
           widgetsnbextension
           jupyterlab
           jupyter
+          plotly
 
           nixpkgs-fmt
           nil
