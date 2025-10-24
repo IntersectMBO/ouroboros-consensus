@@ -13,16 +13,16 @@
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
+  , onPerasRoundNo
   , PerasWeight (..)
   , BlockSupportsPeras (..)
   , PerasCert (..)
   , PerasCfg (..)
   , ValidatedPerasCert (..)
   , makePerasCfg
-  , HasPerasCert (..)
-  , getPerasCertRound
-  , getPerasCertBoostedBlock
-  , getPerasCertBoost
+  , HasPerasCertRound (..)
+  , HasPerasCertBoostedBlock (..)
+  , HasPerasCertBoost (..)
 
     -- * Ouroboros Peras round length
   , PerasRoundLength (..)
@@ -45,6 +45,7 @@ import Quiet (Quiet (..))
 
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving Show via Quiet PerasRoundNo
+  deriving Semigroup via Sum Word64
   deriving stock Generic
   deriving newtype (Enum, Eq, Ord, NoThunks, Serialise)
 
@@ -53,6 +54,10 @@ instance Condense PerasRoundNo where
 
 instance ShowProxy PerasRoundNo where
   showProxy _ = "PerasRoundNo"
+
+-- | Lift a binary operation on 'Word64' to 'PerasRoundNo'
+onPerasRoundNo :: (Word64 -> Word64 -> Word64) -> PerasRoundNo -> PerasRoundNo -> PerasRoundNo
+onPerasRoundNo f a b = PerasRoundNo $ (unPerasRoundNo a `f` unPerasRoundNo b)
 
 newtype PerasWeight = PerasWeight {unPerasWeight :: Word64}
   deriving Show via Quiet PerasWeight
@@ -158,29 +163,51 @@ makePerasCfg _ =
     { perasCfgWeightBoost = boostPerCert
     }
 
-class StandardHash blk => HasPerasCert cert blk | cert -> blk where
-  getPerasCert :: cert -> PerasCert blk
+-- | Extract the certificate round from a Peras certificate container
+class HasPerasCertRound cert where
+  getPerasCertRound :: cert -> PerasRoundNo
 
-getPerasCertRound :: HasPerasCert cert blk => cert -> PerasRoundNo
-getPerasCertRound = pcCertRound . getPerasCert
+instance HasPerasCertRound (PerasCert blk) where
+  getPerasCertRound = pcCertRound
 
-getPerasCertBoostedBlock :: HasPerasCert cert blk => cert -> Point blk
-getPerasCertBoostedBlock = pcCertBoostedBlock . getPerasCert
+instance HasPerasCertRound (ValidatedPerasCert blk) where
+  getPerasCertRound = getPerasCertRound . vpcCert
 
-instance StandardHash blk => HasPerasCert (PerasCert blk) blk where
-  getPerasCert = id
+instance
+  HasPerasCertRound cert =>
+  HasPerasCertRound (WithArrivalTime cert)
+  where
+  getPerasCertRound = getPerasCertRound . forgetArrivalTime
 
-instance StandardHash blk => HasPerasCert (ValidatedPerasCert blk) blk where
-  getPerasCert = vpcCert
+-- | Extract the boosted block point from a Peras certificate container
+class HasPerasCertBoostedBlock cert where
+  type BoostedBlock cert
+  getPerasCertBoostedBlock :: cert -> BoostedBlock cert
 
-instance HasPerasCert cert blk => HasPerasCert (WithArrivalTime cert) blk where
-  getPerasCert = getPerasCert . forgetArrivalTime
+instance HasPerasCertBoostedBlock (PerasCert blk) where
+  type BoostedBlock (PerasCert blk) = Point blk
+  getPerasCertBoostedBlock = pcCertBoostedBlock
 
-class HasPerasCertBoost cert blk | cert -> blk where
+instance HasPerasCertBoostedBlock (ValidatedPerasCert blk) where
+  type BoostedBlock (ValidatedPerasCert blk) = Point blk
+  getPerasCertBoostedBlock = getPerasCertBoostedBlock . vpcCert
+
+instance
+  HasPerasCertBoostedBlock cert =>
+  HasPerasCertBoostedBlock (WithArrivalTime cert)
+  where
+  type BoostedBlock (WithArrivalTime cert) = BoostedBlock cert
+  getPerasCertBoostedBlock = getPerasCertBoostedBlock . forgetArrivalTime
+
+-- | Extract the certificate boost from a Peras certificate container
+class HasPerasCertBoost cert where
   getPerasCertBoost :: cert -> PerasWeight
 
-instance HasPerasCertBoost (ValidatedPerasCert blk) blk where
+instance HasPerasCertBoost (ValidatedPerasCert blk) where
   getPerasCertBoost = vpcCertBoost
 
-instance HasPerasCertBoost cert blk => HasPerasCertBoost (WithArrivalTime cert) blk where
+instance
+  HasPerasCertBoost cert =>
+  HasPerasCertBoost (WithArrivalTime cert)
+  where
   getPerasCertBoost = getPerasCertBoost . forgetArrivalTime

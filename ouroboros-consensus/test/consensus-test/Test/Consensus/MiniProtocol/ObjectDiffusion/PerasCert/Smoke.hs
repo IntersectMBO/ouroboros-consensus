@@ -48,6 +48,7 @@ import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.TestBlock
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime(..))
 
 tests :: TestTree
 tests =
@@ -152,6 +153,6 @@ prop_smoke protocolConstants (ListWithUniqueIds certs) =
         getAllInboundPoolContent = do
           snap <- atomically $ PerasCertDB.getCertSnapshot inboundPool
           let rawContent = PerasCertDB.getCertsAfter snap (PerasCertDB.zeroPerasCertTicketNo)
-          pure $ getPerasCert . fst <$> rawContent
+          pure $ vpcCert . forgetArrivalTime . fst <$> rawContent
 
     return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
