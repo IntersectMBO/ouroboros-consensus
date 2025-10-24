@@ -222,7 +222,7 @@ chainSyncServer immDB blockComponent getSlotDelay registry = ChainSyncServer $ d
                   pure $ Just pt
 
         pure Follower {
-            followerInstruction = Just <$> followerInstructionBlocking
+            followerInstruction = pure Nothing
           , followerInstructionBlocking
           , followerForward
           , followerClose
