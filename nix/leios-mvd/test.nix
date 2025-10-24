@@ -35,6 +35,8 @@
 
     # Collect logs from leios-node (read them in result/cardano.logs)
     leios_node.execute("journalctl -u cardano-node --no-pager > cardano-node.logs")
+    leios_node.execute("journalctl -u cardano-node --output json > cardano-node.logs.json")
     leios_node.copy_from_vm("cardano-node.logs", "")
+    leios_node.copy_from_vm("cardano-node.logs.json", "")
   '';
 }

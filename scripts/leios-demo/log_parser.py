@@ -3,6 +3,7 @@ import sys
 import json
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 # --- Configuration ---
 # Filter for the event containing the timestamp we want to measure at node 0 and node 1
@@ -132,20 +133,136 @@ def create_and_clean_df(
     return df
 
 
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
+def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
+    """
+    Generates and displays a scatter plot of slot_onset vs. at_node_1.
+    If output_file is provided, saves the plot to that file.
+    """
+    print("\n--- Generating Scatter Plot ---")
+    try:
+        if "slot_onset" in df.columns and "at_node_1" in df.columns:
+            # Ensure both columns are datetime objects for plotting
+            df["slot_onset"] = pd.to_datetime(df["slot_onset"])
+            df["at_node_1"] = pd.to_datetime(df["at_node_1"])
+
+            plt.figure(figsize=(10, 6))
+            plt.scatter(df["slot_onset"], df["at_node_1"], alpha=0.5, s=10)
+
+            # Add a y=x reference line
+            # Find common min/max for a good 1:1 line
+            all_times = pd.concat([df["slot_onset"], df["at_node_1"]])
+            min_time = all_times.min()
+            max_time = all_times.max()
+            plt.plot(
+                [min_time, max_time],
+                [min_time, max_time],
+                "r--",
+                label="1:1 Line (Onset = Arrival)",
+            )
+
+            plt.title("Block Arrival Time (Node 1) vs. Slot Onset Time")
+            plt.xlabel("Slot Onset Time (Calculated)")
+            plt.ylabel("Block Arrival Time (at_node_1)")
+            plt.grid(True, linestyle="--", alpha=0.6)
+            plt.legend()
+            plt.tight_layout()
+
+            # Rotate x-axis labels for better readability
+            plt.xticks(rotation=45)
+
+            if output_file:
+                plt.savefig(output_file, bbox_inches="tight")
+                print(f"Plot saved to {output_file}")
+            else:
+                print("Displaying plot...")
+                plt.show()
+
+            plt.close(plt.gcf())  # Close the figure to free memory
+
+        else:
+            print(
+                "Warning: 'slot_onset' or 'at_node_1' column not found. Skipping plot generation."
+            )
+
+    except ImportError:
         print(
-            "Configuration Error: Please provide the full path to exactly TWO log files.",
+            "\n--- Plotting Skipped ---",
             file=sys.stderr,
         )
         print(
-            "Example Usage: python log_parser.py /path/to/node-0.log /path/to/node-1.log",
+            "To generate the plot, please install matplotlib: pip install matplotlib",
+            file=sys.stderr,
+        )
+    except Exception as e:
+        print(
+            f"Error: Failed to generate plot. Error: {e}",
+            file=sys.stderr,
+        )
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 5 or len(sys.argv) > 6:
+        print(
+            "Configuration Error: Please provide initial-slot, initial-time, two log files, and optionally an output plot file.",
+            file=sys.stderr,
+        )
+        print(
+            "Example Usage: python log_parser.py <initial-slot> <initial-time> /path/to/node-0.log /path/to/node-1.log [output_plot.png]",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    log_path_0 = sys.argv[1]
-    log_path_1 = sys.argv[2]
+    # --- Argument Parsing ---
+    try:
+        initial_slot = int(sys.argv[1])
+    except ValueError:
+        print(
+            f"Configuration Error: Could not parse initial-slot '{sys.argv[1]}' as an integer.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        initial_time_str = sys.argv[2]
+        # Try to parse as a POSIX timestamp (integer string) first
+        try:
+            posix_time = int(initial_time_str)
+            # Convert from POSIX seconds to a UTC datetime object
+            initial_time = pd.to_datetime(posix_time, unit="s", utc=True)
+            print(
+                f"Note: Interpreted initial-time '{initial_time_str}' as POSIX timestamp (UTC)."
+            )
+        except ValueError:
+            # If not an integer, try to parse as a standard datetime string
+            initial_time = pd.to_datetime(initial_time_str)
+            # If the provided string has no timezone, assume UTC for consistency
+            if initial_time.tzinfo is None:
+                initial_time = initial_time.tz_localize("UTC")
+                print(
+                    f"Note: Interpreted initial-time '{initial_time_str}' as datetime string (assuming UTC)."
+                )
+            else:
+                # If it has a timezone, convert it to UTC for consistency
+                initial_time = initial_time.tz_convert("UTC")
+
+    except Exception as e:
+        print(
+            f"Configuration Error: Could not parse initial-time '{sys.argv[2]}' as either a POSIX timestamp or a datetime string. Error: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    log_path_0 = sys.argv[3]
+    log_path_1 = sys.argv[4]
+    plot_output_file = sys.argv[5] if len(sys.argv) == 6 else None
+
+    print(f"\n--- Initial Configuration ---")
+    print(f"Initial Slot: {initial_slot}")
+    print(f"Initial Time: {initial_time}")
+    print(f"Log File 0: {log_path_0}")
+    print(f"Log File 1: {log_path_1}")
+    if plot_output_file:
+        print(f"Plot Output File: {plot_output_file}")
 
     # --- STEP 1: Create Hash-to-Slot Lookup Table (Headers) ---
 
@@ -216,9 +333,74 @@ if __name__ == "__main__":
         df_merged["at_node_1"] - df_merged["at_node_0"]
     ).dt.total_seconds() * 1000
 
+    # --- STEP 6: Calculate Slot Onset Time ---
+    print(f"\n--- Calculating Slot Onset Times ---")
+    print(
+        f"Using base slot {initial_slot} at {initial_time} (1 slot = 1 second)"
+    )
+    try:
+        # Calculate the difference in slots (which equals seconds)
+        # We must ensure 'slot' is numeric, which create_and_clean_df should have done
+        df_merged["slot_diff_seconds"] = df_merged["slot"] - initial_slot
+
+        # Convert the second difference into a timedelta and add to the initial time
+        df_merged["slot_onset"] = initial_time + pd.to_timedelta(
+            df_merged["slot_diff_seconds"], unit="s"
+        )
+
+        # Drop the intermediate calculation column
+        df_merged = df_merged.drop(columns=["slot_diff_seconds"])
+
+    except Exception as e:
+        print(
+            f"Error: Failed to calculate slot onset times. Check data types. Error: {e}",
+            file=sys.stderr,
+        )
+        # Continue without onset time if calculation fails
+        pass
+
+    # --- STEP 7: Calculate Diffs from Previous Slot ---
+    print("\n--- Calculating Diffs from Previous Slot ---")
+
+    # Ensure dataframe is sorted by slot to calculate diffs correctly
+    df_merged = df_merged.sort_values(by="slot").reset_index(drop=True)
+
+    # Calculate difference from the previous slot
+    df_merged["slot_diff_from_prev"] = df_merged["slot"].diff().fillna(0).astype(int)
+
+    # Calculate difference from the previous slot's onset time (in seconds)
+    if "slot_onset" in df_merged.columns:
+        df_merged["onset_diff_from_prev_s"] = (
+            df_merged["slot_onset"]
+            .diff()
+            .fillna(pd.Timedelta(seconds=0))
+            .dt.total_seconds()
+        )
+    else:
+        print("Warning: 'slot_onset' column not found. Skipping onset diff calculation.")
+
+    # --- STEP 8: Generate Scatter Plot ---
+    plot_onset_vs_arrival(df_merged, plot_output_file)
+
     print("\n--- Extracted and Merged Data Summary (First 5 Rows) ---")
     print(
         "Each row represents a unique block seen by both nodes, joined by hash and slot."
     )
-    print(df_merged.head())
+    # Define desired column order, including the new 'slot_onset' and diffs
+    final_columns = [
+        "slot",
+        "hash",
+        "slot_onset",
+        "at_node_0",
+        "at_node_1",
+        "latency_ms",
+        "slot_diff_from_prev",
+        "onset_diff_from_prev_s",
+    ]
+
+    # Filter list to only columns that actually exist in the dataframe
+    # This prevents an error if 'slot_onset' failed to be created
+    existing_columns = [col for col in final_columns if col in df_merged.columns]
+
+    print(df_merged[existing_columns].head())
     print(f"\nTotal unique block events matched: {len(df_merged)}")
