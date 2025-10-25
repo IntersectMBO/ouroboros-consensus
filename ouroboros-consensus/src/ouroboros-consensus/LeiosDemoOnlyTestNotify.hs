@@ -17,6 +17,7 @@ module LeiosDemoOnlyTestNotify
   ( LeiosNotify (..)
   , SingLeiosNotify (..)
   , Message (..)
+  , leiosNotifyMiniProtocolNum
   -- *
   , byteLimitsLeiosNotify
   , timeLimitsLeiosNotify
@@ -25,7 +26,6 @@ module LeiosDemoOnlyTestNotify
   -- *
   , LeiosNotifyClientPeerPipelined
   , LeiosNotifyServerPeer
-  , leiosNotifyMiniProtocolNum
   , leiosNotifyClientPeer
   , leiosNotifyClientPeerPipelined
   , leiosNotifyServerPeer
@@ -34,7 +34,10 @@ module LeiosDemoOnlyTestNotify
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
+import           Control.Concurrent.Class.MonadMVar (MVar, MonadMVar)
+import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.DeepSeq (NFData (..))
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadST
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Functor ((<&>))
@@ -355,53 +358,70 @@ leiosNotifyServerPeer handler =
 
 -----
 
--- | Merely an abbrevation local to this module
+-- | Merely an abbreviation local to this module
 type X point announcement m a n =
-    Peer (LeiosNotify point announcement) AsClient (Pipelined n (C m)) StIdle m a
+    Peer (LeiosNotify point announcement) AsClient (Pipelined n C) StIdle m a
 
 type LeiosNotifyClientPeerPipelined point announcement m a =
     PeerPipelined (LeiosNotify point announcement) AsClient StIdle m a
 
-newtype C m = MkC (m ())
+data C = MkC
 
 leiosNotifyClientPeerPipelined ::
-  forall m announcement point a.
-       Monad m
+  forall m point announcement a.
+     MonadMVar m
   =>
      m (Either a Int)
      -- ^ either the return value or else the current max pipelining depth
   ->
-     (Message (LeiosNotify point announcement) StBusy StIdle -> m ())
+     m (Message (LeiosNotify point announcement) StBusy StIdle -> m ())
   ->
     PeerPipelined (LeiosNotify point announcement) AsClient StIdle m a
-leiosNotifyClientPeerPipelined checkDone handler =
-    PeerPipelined (go Zero)
+leiosNotifyClientPeerPipelined checkDone k0 =
+    PeerPipelined $ Effect $ do
+        stop <- MVar.newEmptyMVar   -- would be IORef if io-classes had it
+        pure $ go stop Zero
   where
-    go :: Nat n -> X point announcement m a n
-    go !n = Effect $ checkDone <&> \case
-        Left x -> drainThePipe x n
+    go :: MVar m () -> Nat n -> X point announcement m a n
+    go stop !n = Effect $ checkDone <&> \case
+        Left x -> Effect $ do
+            MVar.putMVar stop ()
+            pure $ drainThePipe x n
         Right maxDepth ->
             case n of
-                Zero -> sendAnother n
+                Zero -> sendAnother stop n
                 Succ m ->
                     Collect
-                        (if natToInt n >= maxDepth then Nothing else Just $ sendAnother n)
-                        (\(MkC action) -> Effect $ do action; pure $ go m)
+                        (if natToInt n >= maxDepth then Nothing else Just $ sendAnother stop n)
+                        (\MkC -> go stop m)
 
-    sendAnother :: Nat n -> X point announcement m a n
-    sendAnother !n =
+    sendAnother :: MVar m () -> Nat n -> X point announcement m a n
+    sendAnother stop !n =
         YieldPipelined
             ReflClientAgency
             MsgLeiosNotificationRequestNext
-            receiver
-            (go $ Succ n)
+            (receiver stop)
+            (go stop $ Succ n)
 
-    receiver :: Receiver (LeiosNotify point announcement) AsClient StBusy StIdle m (C m)
-    receiver =
+    receiver :: MVar m () -> Receiver (LeiosNotify point announcement) AsClient StBusy StIdle m C
+    receiver stop =
         ReceiverAwait ReflServerAgency $ \msg -> case msg of
-            MsgLeiosBlockAnnouncement{} -> ReceiverDone $ MkC $ handler msg
-            MsgLeiosBlockOffer{} -> ReceiverDone $ MkC $ handler msg
-            MsgLeiosBlockTxsOffer{} -> ReceiverDone $ MkC $ handler msg
+            MsgLeiosBlockAnnouncement{} -> handler stop k0 msg
+            MsgLeiosBlockOffer{} -> handler stop k0 msg
+            MsgLeiosBlockTxsOffer{} -> handler stop k0 msg
+
+    handler ::
+        MVar m ()
+     ->
+        m (msg -> m ())
+     ->
+        msg
+     ->
+        Receiver (LeiosNotify point announcement) AsClient StIdle StIdle m C
+    handler stop k x = ReceiverEffect $ do
+        b <- MVar.isEmptyMVar stop
+        when b $ k >>= ($ x)
+        pure $ ReceiverDone MkC
 
     drainThePipe :: a -> Nat n -> X point announcement m a n
     drainThePipe x = \case
@@ -411,4 +431,4 @@ leiosNotifyClientPeerPipelined checkDone handler =
         Succ m ->
             Collect
                 Nothing
-                (\(MkC action) -> Effect $ do action; pure $ drainThePipe x m)
+                (\MkC -> drainThePipe x m)
