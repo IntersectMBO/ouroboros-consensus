@@ -64,6 +64,7 @@ import Data.Void
 import Database.LSMTree (Salt, Session, Table)
 import qualified Database.LSMTree as LSM
 import GHC.Generics
+import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -167,21 +168,22 @@ newLSMLedgerTablesHandle ::
   , IndexedMemPack (l EmptyMK) (TxOut l)
   ) =>
   Tracer m LedgerDBV2Trace ->
-  ResourceRegistry m ->
   (ResourceKey m, UTxOTable m) ->
   m (LedgerTablesHandle m l)
-newLSMLedgerTablesHandle tracer rr (resKey, t) = do
+newLSMLedgerTablesHandle tracer (origResKey, t) = do
   traceWith tracer TraceLedgerTablesHandleCreate
+  tv <- newTVarIO origResKey
   pure
     LedgerTablesHandle
-      { close = implClose resKey
-      , duplicate = implDuplicate rr t tracer
+      { close = implClose tv
+      , duplicate = \rr -> implDuplicate rr t tracer
       , read = implRead t
       , readRange = implReadRange t
       , readAll = implReadAll t
       , pushDiffs = implPushDiffs t
       , takeHandleSnapshot = implTakeHandleSnapshot t
       , tablesSize = pure Nothing
+      , transfer = atomically . writeTVar tv
       }
 
 {-# INLINE implClose #-}
@@ -192,8 +194,9 @@ newLSMLedgerTablesHandle tracer rr (resKey, t) = do
 {-# INLINE implPushDiffs #-}
 {-# INLINE implTakeHandleSnapshot #-}
 
-implClose :: IOLike m => ResourceKey m -> m ()
-implClose = Monad.void . release
+implClose :: (HasCallStack, IOLike m) => StrictTVar m (ResourceKey m) -> m ()
+implClose tv =
+  Monad.void $ release =<< readTVarIO tv
 
 implDuplicate ::
   ( IOLike m
@@ -203,9 +206,9 @@ implDuplicate ::
   ResourceRegistry m ->
   UTxOTable m ->
   Tracer m LedgerDBV2Trace ->
-  m (LedgerTablesHandle m l)
+  m (ResourceKey m, LedgerTablesHandle m l)
 implDuplicate rr t tracer = do
-  table <-
+  (rk, table) <-
     allocate
       rr
       (\_ -> LSM.duplicate t)
@@ -213,7 +216,7 @@ implDuplicate rr t tracer = do
           traceWith tracer TraceLedgerTablesHandleClose
           LSM.closeTable t'
       )
-  newLSMLedgerTablesHandle tracer rr table
+  (rk,) <$> newLSMLedgerTablesHandle tracer (rk, table)
 
 implRead ::
   forall m l.
@@ -461,7 +464,7 @@ loadSnapshot tracer rr ccfg fs session ds =
     case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
       Origin -> throwE InitFailureGenesis
       NotOrigin pt -> do
-        values <-
+        (rk, values) <-
           lift $
             allocate
               rr
@@ -481,7 +484,7 @@ loadSnapshot tracer rr ccfg fs session ds =
           $ InitFailureRead
             ReadSnapshotDataCorruption
         (,pt)
-          <$> lift (empty extLedgerSt values (newLSMLedgerTablesHandle tracer rr))
+          <$> lift (empty extLedgerSt (rk, values) (newLSMLedgerTablesHandle tracer))
 
 -- | Create the initial LSM table from values, which should happen only at
 -- Genesis.
@@ -495,18 +498,16 @@ tableFromValuesMK ::
   LedgerTables l ValuesMK ->
   m (ResourceKey m, UTxOTable m)
 tableFromValuesMK tracer rr session st (LedgerTables (ValuesMK values)) = do
-  res@(_, table) <-
+  (rk, table) <-
     allocate
       rr
-      ( \_ ->
-          LSM.newTableWith (LSM.defaultTableConfig{LSM.confFencePointerIndex = LSM.OrdinaryIndex}) session
-      )
+      (\_ -> LSM.newTable session)
       ( \tb -> do
           traceWith tracer TraceLedgerTablesHandleClose
           LSM.closeTable tb
       )
   mapM_ (go table) $ chunks 1000 $ Map.toList values
-  pure res
+  pure (rk, table)
  where
   go table items =
     LSM.inserts table $
@@ -600,7 +601,7 @@ instance
   newHandleFromValues trcr reg res st = do
     table <-
       tableFromValuesMK trcr reg (sessionResource res) (forgetLedgerTables st) (ltprj st)
-    newLSMLedgerTablesHandle trcr reg table
+    newLSMLedgerTablesHandle trcr table
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 
@@ -731,7 +732,7 @@ mkLSMYieldArgs fp snapName mkFS mkGen _ reg = do
             (LSM.SnapshotLabel $ T.pack "UTxO table")
       )
       LSM.closeTable
-  YieldLSM 1000 <$> newLSMLedgerTablesHandle nullTracer reg tb
+  YieldLSM 1000 <$> newLSMLedgerTablesHandle nullTracer tb
 
 -- | Create Sink arguments for LSM
 mkLSMSinkArgs ::

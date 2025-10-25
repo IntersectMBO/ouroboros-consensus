@@ -116,6 +116,7 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
       , pushDiffs = implPushDiffs tv
       , takeHandleSnapshot = implTakeHandleSnapshot tv hasFS
       , tablesSize = implTablesSize tv
+      , transfer = const (pure ())
       }
 
 {-# INLINE implClose #-}
@@ -147,10 +148,15 @@ implDuplicate ::
   Tracer m LedgerDBV2Trace ->
   StrictTVar m (LedgerTablesHandleState l) ->
   SomeHasFS m ->
-  m (LedgerTablesHandle m l)
-implDuplicate tracer tv someFS = do
+  ResourceRegistry m ->
+  m (ResourceKey m, LedgerTablesHandle m l)
+implDuplicate tracer tv someFS rr = do
   hs <- readTVarIO tv
-  !x <- guardClosed hs $ newInMemoryLedgerTablesHandle tracer someFS
+  !x <- guardClosed hs $ \v ->
+    allocate
+      rr
+      (\_ -> newInMemoryLedgerTablesHandle tracer someFS v)
+      close
   pure x
 
 implRead ::
