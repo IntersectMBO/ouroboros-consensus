@@ -34,21 +34,20 @@ module LeiosDemoOnlyTestNotify
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
-import Control.DeepSeq (NFData (..))
-import Control.Monad.Class.MonadST
-import Data.ByteString.Lazy (ByteString)
-import Data.Functor ((<&>))
-import Data.Kind (Type)
-import Data.Singletons
-import Data.Word (Word32)
+import           Control.DeepSeq (NFData (..))
+import           Control.Monad.Class.MonadST
+import           Data.ByteString.Lazy (ByteString)
+import           Data.Functor ((<&>))
+import           Data.Kind (Type)
+import           Data.Singletons
+import           Data.Word (Word32)
 import qualified Network.Mux.Types as Mux
-import Network.TypedProtocol.Codec.CBOR
-import Network.TypedProtocol.Core
-import Network.TypedProtocol.Peer
--- import Network.TypedProtocol.Peer.Client
-import Ouroboros.Network.Protocol.Limits
-import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
-import Text.Printf
+import           Network.TypedProtocol.Codec.CBOR
+import           Network.TypedProtocol.Core
+import           Network.TypedProtocol.Peer
+import           Ouroboros.Network.Protocol.Limits
+import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
+import           Text.Printf
 
 
 -----
@@ -310,27 +309,51 @@ leiosNotifyClientPeer ::
   forall m announcement point a.
      Monad m
   =>
-     m (Maybe a)
-  ->
-     (Message (LeiosNotify point announcement) StBusy StIdle -> m ())
+     m (Either a (Message (LeiosNotify point announcement) StBusy StIdle -> m ()))
   ->
      Peer (LeiosNotify point announcement) AsClient NonPipelined StIdle m a
-leiosNotifyClientPeer checkDone handler =
+leiosNotifyClientPeer checkDone =
     go
   where
     go :: Peer (LeiosNotify point announcement) AsClient NonPipelined StIdle m a
     go = Effect $ checkDone <&> \case
-        Just x ->
+        Left x ->
             Yield ReflClientAgency MsgDone
           $ Done ReflNobodyAgency x
-        Nothing ->
+        Right k ->
             Yield ReflClientAgency MsgLeiosNotificationRequestNext
           $ Await ReflServerAgency $ \msg -> case msg of
-                MsgLeiosBlockAnnouncement{} -> react msg
-                MsgLeiosBlockOffer{} -> react msg
-                MsgLeiosBlockTxsOffer{} -> react msg
+                MsgLeiosBlockAnnouncement{} -> react $ k msg
+                MsgLeiosBlockOffer{} -> react $ k msg
+                MsgLeiosBlockTxsOffer{} -> react $ k msg
 
-    react msg = Effect $ fmap (\() -> go) $ handler msg
+    react action = Effect $ fmap (\() -> go) action
+
+-----
+
+type LeiosNotifyServerPeer point announcement m a =
+    Peer (LeiosNotify point announcement) AsServer NonPipelined StIdle m ()
+
+leiosNotifyServerPeer ::
+  forall m announcement point.
+     Monad m
+  =>
+     m (Message (LeiosNotify point announcement) StBusy StIdle)
+  ->
+     Peer (LeiosNotify point announcement) AsServer NonPipelined StIdle m ()
+leiosNotifyServerPeer handler =
+    go
+  where
+    go :: Peer (LeiosNotify point announcement) AsServer NonPipelined StIdle m ()
+    go = Await ReflClientAgency $ \case
+        MsgDone -> Done ReflNobodyAgency ()
+        MsgLeiosNotificationRequestNext -> Effect $ do
+            msg <- handler
+            pure
+              $ Yield ReflServerAgency msg
+              $ go
+
+-----
 
 -- | Merely an abbrevation local to this module
 type X point announcement m a n =
@@ -389,27 +412,3 @@ leiosNotifyClientPeerPipelined checkDone handler =
             Collect
                 Nothing
                 (\(MkC action) -> Effect $ do action; pure $ drainThePipe x m)
-
------
-
-type LeiosNotifyServerPeer point announcement m a =
-    Peer (LeiosNotify point announcement) AsServer NonPipelined StIdle m ()
-
-leiosNotifyServerPeer ::
-  forall m announcement point a.
-     Monad m
-  =>
-     m (Message (LeiosNotify point announcement) StBusy StIdle)
-  ->
-     Peer (LeiosNotify point announcement) AsServer NonPipelined StIdle m ()
-leiosNotifyServerPeer handler =
-    go
-  where
-    go :: Peer (LeiosNotify point announcement) AsServer NonPipelined StIdle m ()
-    go = Await ReflClientAgency $ \msg -> case msg of
-        MsgDone -> Done ReflNobodyAgency ()
-        MsgLeiosNotificationRequestNext -> Effect $ do
-            msg <- handler
-            pure
-              $ Yield ReflServerAgency msg
-              $ go
