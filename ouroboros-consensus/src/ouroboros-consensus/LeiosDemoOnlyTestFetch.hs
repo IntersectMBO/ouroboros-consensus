@@ -34,14 +34,14 @@ module LeiosDemoOnlyTestFetch
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
-import           Control.Concurrent.Class.MonadMVar (MVar, MonadMVar)
-import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad (when)
 import           Control.Monad.Class.MonadST
+import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Functor ((<&>))
 import           Data.Kind (Type)
+import           Data.Primitive.MutVar (MutVar)
+import qualified Data.Primitive.MutVar as Prim
 import           Data.Singletons
 import           Data.Word (Word16, Word64)
 import qualified Network.Mux.Types as Mux
@@ -447,9 +447,11 @@ type LeiosFetchClientPeerPipelined point eb tx m a =
 
 data C = MkC
 
+data WhetherDraining = AlreadyDraining | NotYetDraining
+
 leiosFetchClientPeerPipelined ::
   forall m point eb tx a.
-     MonadMVar m
+     PrimMonad m
   =>
      m (Either (m (Either a (SomeJob point eb tx m))) (Either a (SomeJob point eb tx m)))
      -- ^ either the return value or the next job, or a blocking request for those two
@@ -457,10 +459,10 @@ leiosFetchClientPeerPipelined ::
     PeerPipelined (LeiosFetch point eb tx) AsClient StIdle m a
 leiosFetchClientPeerPipelined tryNext =
     PeerPipelined $ Effect $ do
-        stop <- MVar.newEmptyMVar   -- would be IORef if io-classes had it
+        stop <- Prim.newMutVar NotYetDraining
         pure $ go1 stop Zero
   where
-    go1 :: MVar m () -> Nat n -> X point eb tx m a n
+    go1 :: MutVar (PrimState m) WhetherDraining -> Nat n -> X point eb tx m a n
     go1 stop !n =
         Effect $ tryNext >>= \case
             -- no next instruction yet
@@ -474,10 +476,10 @@ leiosFetchClientPeerPipelined tryNext =
                             (\MkC -> go1 stop m)
             Right x -> pure $ go2 stop n x
 
-    go2 :: MVar m () -> Nat n -> Either a (SomeJob point eb tx m) -> X point eb tx m a n
+    go2 :: MutVar (PrimState m) WhetherDraining -> Nat n -> Either a (SomeJob point eb tx m) -> X point eb tx m a n
     go2 stop !n = \case
         Left x -> Effect $ do
-            MVar.putMVar stop ()
+            Prim.writeMutVar stop AlreadyDraining
             pure $ drainThePipe x n
         Right job ->
             case n of
@@ -487,7 +489,7 @@ leiosFetchClientPeerPipelined tryNext =
                         (Just $ send stop n job)
                         (\MkC -> go1 stop m)
 
-    send :: MVar m () -> Nat n -> SomeJob point eb tx m -> X point eb tx m a n
+    send :: MutVar (PrimState m) WhetherDraining -> Nat n -> SomeJob point eb tx m -> X point eb tx m a n
     send stop !n (MkSomeJob req k) =
         YieldPipelined
             ReflClientAgency
@@ -498,7 +500,7 @@ leiosFetchClientPeerPipelined tryNext =
     receiver ::
         StateTokenI (StBusy st')
      =>
-        MVar m ()
+        MutVar (PrimState m) WhetherDraining
      ->
         m (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ())
      ->
@@ -509,7 +511,7 @@ leiosFetchClientPeerPipelined tryNext =
             MsgLeiosBlockTxs{} -> handler stop k msg
 
     handler ::
-        MVar m ()
+        MutVar (PrimState m) WhetherDraining
      ->
         m (msg -> m ())
      ->
@@ -517,8 +519,9 @@ leiosFetchClientPeerPipelined tryNext =
      ->
         Receiver (LeiosFetch point eb tx) AsClient StIdle StIdle m C
     handler stop k x = ReceiverEffect $ do
-        b <- MVar.isEmptyMVar stop
-        when b $ k >>= ($ x)
+        Prim.readMutVar stop >>= \case
+            AlreadyDraining -> pure ()
+            NotYetDraining -> k >>= ($ x)
         pure $ ReceiverDone MkC
 
     drainThePipe :: a -> Nat n -> X point eb tx m a n

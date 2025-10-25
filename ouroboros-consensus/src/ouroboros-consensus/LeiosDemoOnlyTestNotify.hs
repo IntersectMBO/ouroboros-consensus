@@ -34,14 +34,14 @@ module LeiosDemoOnlyTestNotify
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
-import           Control.Concurrent.Class.MonadMVar (MVar, MonadMVar)
-import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad (when)
 import           Control.Monad.Class.MonadST
+import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Functor ((<&>))
 import           Data.Kind (Type)
+import           Data.Primitive.MutVar (MutVar)
+import qualified Data.Primitive.MutVar as Prim
 import           Data.Singletons
 import           Data.Word (Word32)
 import qualified Network.Mux.Types as Mux
@@ -367,9 +367,11 @@ type LeiosNotifyClientPeerPipelined point announcement m a =
 
 data C = MkC
 
+data WhetherDraining = AlreadyDraining | NotYetDraining
+
 leiosNotifyClientPeerPipelined ::
   forall m point announcement a.
-     MonadMVar m
+     PrimMonad m
   =>
      m (Either a Int)
      -- ^ either the return value or else the current max pipelining depth
@@ -379,13 +381,13 @@ leiosNotifyClientPeerPipelined ::
     PeerPipelined (LeiosNotify point announcement) AsClient StIdle m a
 leiosNotifyClientPeerPipelined checkDone k0 =
     PeerPipelined $ Effect $ do
-        stop <- MVar.newEmptyMVar   -- would be IORef if io-classes had it
+        stop <- Prim.newMutVar NotYetDraining
         pure $ go stop Zero
   where
-    go :: MVar m () -> Nat n -> X point announcement m a n
+    go :: MutVar (PrimState m) WhetherDraining -> Nat n -> X point announcement m a n
     go stop !n = Effect $ checkDone <&> \case
         Left x -> Effect $ do
-            MVar.putMVar stop ()
+            Prim.writeMutVar stop AlreadyDraining
             pure $ drainThePipe x n
         Right maxDepth ->
             case n of
@@ -395,7 +397,7 @@ leiosNotifyClientPeerPipelined checkDone k0 =
                         (if natToInt n >= maxDepth then Nothing else Just $ sendAnother stop n)
                         (\MkC -> go stop m)
 
-    sendAnother :: MVar m () -> Nat n -> X point announcement m a n
+    sendAnother :: MutVar (PrimState m) WhetherDraining -> Nat n -> X point announcement m a n
     sendAnother stop !n =
         YieldPipelined
             ReflClientAgency
@@ -403,7 +405,7 @@ leiosNotifyClientPeerPipelined checkDone k0 =
             (receiver stop)
             (go stop $ Succ n)
 
-    receiver :: MVar m () -> Receiver (LeiosNotify point announcement) AsClient StBusy StIdle m C
+    receiver :: MutVar (PrimState m) WhetherDraining -> Receiver (LeiosNotify point announcement) AsClient StBusy StIdle m C
     receiver stop =
         ReceiverAwait ReflServerAgency $ \msg -> case msg of
             MsgLeiosBlockAnnouncement{} -> handler stop k0 msg
@@ -411,7 +413,7 @@ leiosNotifyClientPeerPipelined checkDone k0 =
             MsgLeiosBlockTxsOffer{} -> handler stop k0 msg
 
     handler ::
-        MVar m ()
+        MutVar (PrimState m) WhetherDraining
      ->
         m (msg -> m ())
      ->
@@ -419,8 +421,9 @@ leiosNotifyClientPeerPipelined checkDone k0 =
      ->
         Receiver (LeiosNotify point announcement) AsClient StIdle StIdle m C
     handler stop k x = ReceiverEffect $ do
-        b <- MVar.isEmptyMVar stop
-        when b $ k >>= ($ x)
+        Prim.readMutVar stop >>= \case
+            AlreadyDraining -> pure ()
+            NotYetDraining -> k >>= ($ x)
         pure $ ReceiverDone MkC
 
     drainThePipe :: a -> Nat n -> X point announcement m a n
