@@ -158,7 +158,7 @@ leiosScheduler getSlotDelay leiosContext =
     cnv (ebSlot, ebHashText, !mbEbBytesSize) = do
         let bytes = T.encodeUtf8 ebHashText
         ebHash <-
-            case fmap BL.fromStrict (BS16.decode bytes) >>= either (Left . show) Right . Serialise.deserialiseOrFail of
+            case BS16.decode bytes >>= either (Left . show) Right . Serialise.deserialiseOrFail . Serialise.serialise of
                 Left err -> die $ "bad hash in Leios schedule! " ++ T.unpack ebHashText ++ " " ++ err
                 Right y -> pure y
         let !rp = RealPoint (fromIntegral ebSlot) ebHash
