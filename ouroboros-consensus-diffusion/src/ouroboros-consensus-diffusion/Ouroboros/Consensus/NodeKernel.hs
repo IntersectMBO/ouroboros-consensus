@@ -193,8 +193,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       -- TODO this could all use TVars, but I'm curious whether MVars are a
       -- noticeably awkward fit for this logic.
 
-      -- See 'LeiosPeerMVars' for the write patterns
-    , getLeiosPeersMVars :: MVar m (Map (PeerId (ConnectionId addrNTN)) (LeiosPeerMVars m))
+      -- See 'LeiosPeerVars' for the write patterns
+    , getLeiosPeersVars :: MVar m (Map (PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
       -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
       -- eviction)
     , getLeiosEbBodies :: MVar m LeiosEbBodies
@@ -362,7 +362,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         fetchClientRegistry
         blockFetchConfiguration
 
-    getLeiosPeersMVars <- MVar.newMVar Map.empty
+    getLeiosPeersVars <- MVar.newMVar Map.empty
     getLeiosEbBodies <- MVar.newMVar emptyLeiosEbBodies
     getLeiosOutstanding <- MVar.newMVar emptyLeiosOutstanding
     getLeiosToCopy <- MVar.newMVar emptyLeiosToCopy
@@ -385,7 +385,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getDiffusionPipeliningSupport
       , getBlockchainTime       = btime
 
-      , getLeiosPeersMVars
+      , getLeiosPeersVars
       , getLeiosEbBodies
       , getLeiosOutstanding
       , getLeiosToCopy

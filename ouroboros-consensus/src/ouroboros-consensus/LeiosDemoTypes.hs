@@ -8,6 +8,7 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
 import           Control.Concurrent.Class.MonadMVar (MVar)
+import           Control.Concurrent.Class.MonadSTM (TVar)
 import           Data.ByteString (ByteString)
 import           Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
@@ -85,11 +86,11 @@ data LeiosBlockTxsRequest =
 -- patterns of access to the "Ouroboros.Consensus.NodeKernel"'s shared state.
 --
 
-data LeiosPeerMVars m = MkLeiosPeerMVars {
+data LeiosPeerVars m = MkLeiosPeerVars {
     -- written to only by the LeiosNotify client (TODO and eviction)
     offerings :: !(MVar m (Set EbId, Set EbId))
   ,
-    -- written to by the fetch logic and the LeiosFetch client
+    -- | written to by the fetch logic and the LeiosFetch client
     --
     -- These are the requests the fetch logic assumes will be sent, but have
     -- not already been sent.
@@ -100,7 +101,10 @@ data LeiosPeerMVars m = MkLeiosPeerMVars {
     --
     -- Note that @requestedPerPeer@ is the list maintained per client,
     -- whereas this list is not present in the model exe.
-    requestsToSend :: !(MVar m (Seq LeiosFetchRequest))
+    --
+    -- This is a 'TVar' so that the LeiosFetch client can wait on either it or
+    -- the Diffusion Layer's control message to be actionable.
+    requestsToSend :: !(TVar m (Seq LeiosFetchRequest))
   }
 
 data LeiosEbBodies = MkLeiosEbBodies {

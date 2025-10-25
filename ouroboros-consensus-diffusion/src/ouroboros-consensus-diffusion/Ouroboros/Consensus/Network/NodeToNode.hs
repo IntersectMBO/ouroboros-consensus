@@ -320,23 +320,23 @@ mkHandlers
                                             Map.insert ebId ebBytesSize (Leios.missingEbBodies ebBodies2)
                                       }
                             pure (ebBodies3, ebId)
-                        peerMVars <- do
-                            peersMVars <- MVar.readMVar getLeiosPeersMVars
-                            case Map.lookup (Leios.MkPeerId peer) peersMVars of
+                        peerVars <- do
+                            peersVars <- MVar.readMVar getLeiosPeersVars
+                            case Map.lookup (Leios.MkPeerId peer) peersVars of
                                 Nothing -> error "TODO"
                                 Just x -> pure x
-                        MVar.modifyMVar_ (Leios.offerings peerMVars) $ \(offers1, offers2) -> do
+                        MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
                             let !offers1' = Set.insert ebId offers1
                             pure (offers1', offers2)
                         void $ MVar.tryPutMVar getLeiosReady ()
                     MsgLeiosBlockTxsOffer p -> do
                         ebId <- Leios.ebIdFromPointM getLeiosEbBodies p
-                        peerMVars <- do
-                            peersMVars <- MVar.readMVar getLeiosPeersMVars
-                            case Map.lookup (Leios.MkPeerId peer) peersMVars of
+                        peerVars <- do
+                            peersVars <- MVar.readMVar getLeiosPeersVars
+                            case Map.lookup (Leios.MkPeerId peer) peersVars of
                                 Nothing -> error "TODO"
                                 Just x -> pure x
-                        MVar.modifyMVar_ (Leios.offerings peerMVars) $ \(offers1, offers2) -> do
+                        MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
                             let !offers2' = Set.insert ebId offers2
                             pure (offers1, offers2')
                         void $ MVar.tryPutMVar getLeiosReady ()
@@ -356,7 +356,7 @@ mkHandlers
       }
   where
     NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} = nodeKernel
-    NodeKernel {getLeiosPeersMVars, getLeiosEbBodies, getLeiosReady} = nodeKernel
+    NodeKernel {getLeiosPeersVars, getLeiosEbBodies, getLeiosReady} = nodeKernel
 
 {-------------------------------------------------------------------------------
   Codecs
