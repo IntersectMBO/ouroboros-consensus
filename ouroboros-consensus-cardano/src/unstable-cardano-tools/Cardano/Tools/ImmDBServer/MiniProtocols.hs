@@ -69,6 +69,7 @@ import           Ouroboros.Network.Protocol.KeepAlive.Server
 
 -- import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
+import LeiosDemoTypes (LeiosPoint)
 
 immDBServer ::
      forall m blk addr.
@@ -84,7 +85,7 @@ immDBServer ::
   -> ImmutableDB m blk
   -> NetworkMagic
   -> (SlotNo -> m DiffTime)
-  -> LeiosContext blk m
+  -> LeiosContext m
   -> Versions NodeToNodeVersion NodeToNodeVersionData
        (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ())
 immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay leios = do
@@ -297,6 +298,6 @@ data ImmDBServerException =
 
 -----
 
-data LeiosContext blk m = MkLeiosContext {
-    leiosMailbox :: MVar.MVar m (RealPoint blk, Maybe Word32)
+data LeiosContext m = MkLeiosContext {
+    leiosMailbox :: MVar.MVar m (LeiosPoint, Maybe Word32)
   }

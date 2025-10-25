@@ -9,8 +9,6 @@
 module Cardano.Tools.ImmDBServer.Diffusion (run, LeiosSchedule (..)) where
 
 import qualified Data.Aeson as Aeson
-import           Codec.Serialise (Serialise)
-import qualified Codec.Serialise as Serialise
 import           Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer, LeiosContext (..))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.ResourceRegistry
@@ -50,6 +48,8 @@ import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types (MountPoint (MountPoint))
 import           System.FS.IO (ioHasFS)
 
+import           LeiosDemoTypes
+
 -- | Glue code for using just the bits from the Diffusion Layer that we need in
 -- this context.
 serve ::
@@ -85,8 +85,7 @@ serve sockAddr application = withIOManager \iocp -> do
 
 run ::
      forall blk.
-     ( Serialise (HeaderHash blk)
-     , GetPrevHash blk
+     ( GetPrevHash blk
      , ShowProxy blk
      , SupportedNetworkProtocolVersion blk
      , SerialiseNodeToNodeConstraints blk
@@ -137,11 +136,9 @@ data LeiosSchedule = MkLeiosSchedule [(Double, (Word64, T.Text, Maybe Word32))]
 instance Aeson.FromJSON LeiosSchedule
 
 leiosScheduler ::
-    Serialise (HeaderHash blk)
- =>
     (Double -> IO DiffTime)
  ->
-    LeiosContext blk IO
+    LeiosContext IO
  ->
     LeiosSchedule
  ->
@@ -156,10 +153,9 @@ leiosScheduler getSlotDelay leiosContext =
             mapM_ (MVar.putMVar (leiosMailbox leiosContext)) msgs
   where
     cnv (ebSlot, ebHashText, !mbEbBytesSize) = do
-        let bytes = T.encodeUtf8 ebHashText
         ebHash <-
-            case BS16.decode bytes >>= either (Left . show) Right . Serialise.deserialiseOrFail . Serialise.serialise of
+            case BS16.decode (T.encodeUtf8 ebHashText) of
                 Left err -> die $ "bad hash in Leios schedule! " ++ T.unpack ebHashText ++ " " ++ err
                 Right y -> pure y
-        let !rp = RealPoint (fromIntegral ebSlot) ebHash
+        let !rp = MkLeiosPoint (SlotNo ebSlot) (MkEbHash ebHash)
         pure (rp, mbEbBytesSize)

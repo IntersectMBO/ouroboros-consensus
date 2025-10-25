@@ -1,6 +1,10 @@
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
+import           Cardano.Binary (enforceSize)
 import           Cardano.Slotting.Slot (SlotNo)
+import           Codec.CBOR.Decoding (Decoder)
+import           Codec.CBOR.Encoding (Encoding, encodeListLen)
+import           Codec.Serialise (decode, encode)
 import           Control.Concurrent.Class.MonadMVar (MVar)
 import           Data.ByteString (ByteString)
 import           Data.IntMap (IntMap)
@@ -10,8 +14,10 @@ import qualified Data.Map as Map
 import           Data.Sequence (Seq)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.String (fromString)
 import qualified Data.Vector as V
 import           Data.Word (Word16, Word32, Word64)
+import           Ouroboros.Consensus.Util (ShowProxy (..))
 
 type BytesSize = Word32
 
@@ -22,8 +28,26 @@ newtype PeerId a = MkPeerId a
   deriving (Eq, Ord)
 
 newtype EbHash = MkEbHash ByteString
+  deriving (Show)
 
 newtype TxHash = MkTxHash ByteString
+
+data LeiosPoint = MkLeiosPoint SlotNo EbHash
+  deriving (Show)
+
+instance ShowProxy LeiosPoint where
+    showProxy _ = "LeiosPoint"
+
+encodeLeiosPoint :: LeiosPoint -> Encoding
+encodeLeiosPoint (MkLeiosPoint ebSlot (MkEbHash ebHash)) =
+    encodeListLen 2
+ <> encode ebSlot
+ <> encode ebHash
+
+decodeLeiosPoint :: Decoder s LeiosPoint
+decodeLeiosPoint = do
+    enforceSize (fromString "LeiosPoint") 2
+    MkLeiosPoint <$> decode <*> (MkEbHash <$> decode)
 
 -----
 

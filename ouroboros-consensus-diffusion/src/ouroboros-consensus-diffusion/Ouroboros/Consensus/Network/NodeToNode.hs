@@ -133,6 +133,7 @@ import           Ouroboros.Network.TxSubmission.Outbound
 import qualified Ouroboros.Network.Mux as ON
 -- import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
+import LeiosDemoTypes (LeiosPoint, decodeLeiosPoint, encodeLeiosPoint)
 import Debug.Trace (traceM)
 
 {-------------------------------------------------------------------------------
@@ -212,12 +213,12 @@ data Handlers m addr blk = Handlers {
         :: NodeToNodeVersion
         -> ControlMessageSTM m
         -> ConnectionId addr
-        -> LeiosNotifyClientPeerPipelined (RealPoint blk) () m ()
+        -> LeiosNotifyClientPeerPipelined LeiosPoint () m ()
 
     , hLeiosNotifyServer
         :: NodeToNodeVersion
         -> ConnectionId addr
-        -> LeiosNotifyServerPeer (RealPoint blk) () m ()
+        -> LeiosNotifyServerPeer LeiosPoint () m ()
     }
 
 mkHandlers ::
@@ -315,7 +316,7 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bKA bPS bLN = Codecs {
     , cTxSubmission2Codec        :: Codec (TxSubmission2 (GenTxId blk) (GenTx blk))                e m bTX
     , cKeepAliveCodec            :: Codec KeepAlive                                                e m bKA
     , cPeerSharingCodec          :: Codec (PeerSharing addr)                                       e m bPS
-    , cLeiosNotifyCodec          :: Codec (LeiosNotify (RealPoint blk) ())                         e m bLN
+    , cLeiosNotifyCodec          :: Codec (LeiosNotify LeiosPoint ())                              e m bLN
     }
 
 -- | Protocol codecs for the node-to-node protocols
@@ -376,8 +377,8 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion = Codecs {
 
     , cLeiosNotifyCodec =
         codecLeiosNotify
-          (encodeRealPoint (encodeRawHash p))
-          (decodeRealPoint (decodeRawHash p))
+          encodeLeiosPoint
+          decodeLeiosPoint
           (\() -> CBOR.encodeNull)
           CBOR.decodeNull
     }
@@ -401,7 +402,7 @@ identityCodecs :: Monad m
                     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
                     (AnyMessage KeepAlive)
                     (AnyMessage (PeerSharing addr))
-                    (AnyMessage (LeiosNotify (RealPoint blk) ()))
+                    (AnyMessage (LeiosNotify LeiosPoint ()))
 identityCodecs = Codecs {
       cChainSyncCodec            = codecChainSyncId
     , cChainSyncCodecSerialised  = codecChainSyncId
@@ -429,7 +430,7 @@ data Tracers' peer ntnAddr blk e f = Tracers {
     , tTxSubmission2Tracer        :: f (TraceLabelPeer peer (TraceSendRecv (TxSubmission2 (GenTxId blk) (GenTx blk))))
     , tKeepAliveTracer            :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
     , tPeerSharingTracer          :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
-    , tLeiosNotifyTracer          :: f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify (RealPoint blk) ())))
+    , tLeiosNotifyTracer          :: f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify LeiosPoint ())))
     }
 
 instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f) where
