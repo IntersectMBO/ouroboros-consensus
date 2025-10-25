@@ -230,7 +230,7 @@ data Handlers m addr blk = Handlers {
         :: NodeToNodeVersion
         -> ControlMessageSTM m
         -> ConnectionId addr
-        -> LeiosFetchClientPeer LeiosPoint LeiosEb LeiosTx m ()
+        -> LeiosFetchClientPeerPipelined LeiosPoint LeiosEb LeiosTx m ()
 
     , hLeiosFetchServer
         :: NodeToNodeVersion
@@ -345,8 +345,8 @@ mkHandlers
             leiosNotifyServerPeer
                 (let loop = do threadDelay (60 :: DiffTime); loop in loop)   -- TODO
       , hLeiosFetchClient = \_version controlMessageSTM _peer ->
-            leiosFetchClientPeer
-                (atomically $ controlMessageSTM >>= \case
+            leiosFetchClientPeerPipelined
+                (pure $ Left $ atomically $ controlMessageSTM >>= \case
                     Terminate -> pure $ Left ()
                     _ -> retry
                 )   -- TODO
@@ -994,7 +994,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                                eicControlMessage = controlMessageSTM
                              } channel = do
       labelThisThread "LeiosFetchClient"
-      ((), trailing) <- runPeerWithLimits
+      ((), trailing) <- runPipelinedPeerWithLimits
         (TraceLabelPeer them `contramap` tLeiosFetchTracer)
         (cLeiosFetchCodec (mkCodecs version))
         blLeiosFetch

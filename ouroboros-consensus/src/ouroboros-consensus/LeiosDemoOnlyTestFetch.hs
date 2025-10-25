@@ -24,15 +24,20 @@ module LeiosDemoOnlyTestFetch
   , codecLeiosFetchId
   -- *
   , LeiosFetchClientPeer
+  , LeiosFetchClientPeerPipelined
   , LeiosFetchServerPeer
   , leiosFetchClientPeer
+  , leiosFetchClientPeerPipelined
   , leiosFetchServerPeer
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
+import           Control.Concurrent.Class.MonadMVar (MVar, MonadMVar)
+import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.DeepSeq (NFData (..))
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadST
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Functor ((<&>))
@@ -125,10 +130,9 @@ instance Protocol (LeiosFetch point eb tx) where
     MsgDone
       :: Message (LeiosFetch point eb tx) StIdle StDone
 
-  type StateAgency StIdle              = ClientAgency
-  type StateAgency (StBusy StBlock)    = ServerAgency
-  type StateAgency (StBusy StBlockTxs) = ServerAgency
-  type StateAgency StDone              = NobodyAgency
+  type StateAgency StIdle      = ClientAgency
+  type StateAgency (StBusy st) = ServerAgency
+  type StateAgency StDone      = NobodyAgency
 
   type StateToken = SingLeiosFetch
 
@@ -356,11 +360,13 @@ decodeBitmaps =
 
 -----
 
-data SomeTask point eb tx m =
+data SomeJob point eb tx m =
     forall st'.
-    MkSomeTask
-        (Message (LeiosFetch point eb tx) StIdle (StBusy st'))
-        (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ())
+        StateTokenI (StBusy st')
+     =>
+        MkSomeJob
+            (Message (LeiosFetch point eb tx) StIdle (StBusy st'))
+            (m (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ()))
 
 type LeiosFetchClientPeer point eb tx m a =
      Peer (LeiosFetch point eb tx) AsClient NonPipelined StIdle m a
@@ -369,7 +375,7 @@ leiosFetchClientPeer ::
   forall m point eb tx a.
      Monad m
   =>
-     m (Either a (SomeTask point eb tx m))
+     m (Either a (SomeJob point eb tx m))
   ->
      Peer (LeiosFetch point eb tx) AsClient NonPipelined StIdle m a
 leiosFetchClientPeer checkDone =
@@ -380,15 +386,15 @@ leiosFetchClientPeer checkDone =
         Left x ->
             Yield ReflClientAgency MsgDone
           $ Done ReflNobodyAgency x
-        Right (MkSomeTask req k) -> case req of
+        Right (MkSomeJob req k) -> case req of
             MsgLeiosBlockRequest{} -> do
                 Yield ReflClientAgency req
               $ Await ReflServerAgency $ \rsp -> case rsp of
-                    MsgLeiosBlock{} -> react $ k rsp
+                    MsgLeiosBlock{} -> react $ k >>= ($ rsp)
             MsgLeiosBlockTxsRequest{} -> do
                 Yield ReflClientAgency req
               $ Await ReflServerAgency $ \rsp -> case rsp of
-                    MsgLeiosBlockTxs{} -> react $ k rsp
+                    MsgLeiosBlockTxs{} -> react $ k >>= ($ rsp)
 
     react action = Effect $ fmap (\() -> go) action
 
@@ -429,3 +435,98 @@ leiosFetchServerPeer handler =
             pure
               $ Yield ReflServerAgency rsp
               $ go
+
+-----
+
+-- | Merely an abbreviation local to this module
+type X point eb tx m a n =
+    Peer (LeiosFetch point eb tx) AsClient (Pipelined n C) StIdle m a
+
+type LeiosFetchClientPeerPipelined point eb tx m a =
+    PeerPipelined (LeiosFetch point eb tx) AsClient StIdle m a
+
+data C = MkC
+
+leiosFetchClientPeerPipelined ::
+  forall m point eb tx a.
+     MonadMVar m
+  =>
+     m (Either (m (Either a (SomeJob point eb tx m))) (Either a (SomeJob point eb tx m)))
+     -- ^ either the return value or the next job, or a blocking request for those two
+  ->
+    PeerPipelined (LeiosFetch point eb tx) AsClient StIdle m a
+leiosFetchClientPeerPipelined tryNext =
+    PeerPipelined $ Effect $ do
+        stop <- MVar.newEmptyMVar   -- would be IORef if io-classes had it
+        pure $ go1 stop Zero
+  where
+    go1 :: MVar m () -> Nat n -> X point eb tx m a n
+    go1 stop !n =
+        Effect $ tryNext >>= \case
+            -- no next instruction yet
+            Left next ->
+                case n of
+                    Zero -> next <&> go2 stop Zero
+                    Succ m ->
+                        pure
+                      $ Collect
+                            Nothing
+                            (\MkC -> go1 stop m)
+            Right x -> pure $ go2 stop n x
+
+    go2 :: MVar m () -> Nat n -> Either a (SomeJob point eb tx m) -> X point eb tx m a n
+    go2 stop !n = \case
+        Left x -> Effect $ do
+            MVar.putMVar stop ()
+            pure $ drainThePipe x n
+        Right job ->
+            case n of
+                Zero -> send stop n job
+                Succ m ->
+                    Collect
+                        (Just $ send stop n job)
+                        (\MkC -> go1 stop m)
+
+    send :: MVar m () -> Nat n -> SomeJob point eb tx m -> X point eb tx m a n
+    send stop !n (MkSomeJob req k) =
+        YieldPipelined
+            ReflClientAgency
+            req
+            (receiver stop k)
+            (go1 stop $ Succ n)
+
+    receiver ::
+        StateTokenI (StBusy st')
+     =>
+        MVar m ()
+     ->
+        m (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ())
+     ->
+        Receiver (LeiosFetch point eb tx) AsClient (StBusy st') StIdle m C
+    receiver stop k =
+        ReceiverAwait ReflServerAgency $ \msg -> case msg of
+            MsgLeiosBlock{} -> handler stop k msg
+            MsgLeiosBlockTxs{} -> handler stop k msg
+
+    handler ::
+        MVar m ()
+     ->
+        m (msg -> m ())
+     ->
+        msg
+     ->
+        Receiver (LeiosFetch point eb tx) AsClient StIdle StIdle m C
+    handler stop k x = ReceiverEffect $ do
+        b <- MVar.isEmptyMVar stop
+        when b $ k >>= ($ x)
+        pure $ ReceiverDone MkC
+
+    drainThePipe :: a -> Nat n -> X point eb tx m a n
+    drainThePipe x = \case
+        Zero ->
+            Yield ReflClientAgency MsgDone
+          $ Done ReflNobodyAgency x
+        Succ m ->
+            Collect
+                Nothing
+                (\MkC -> drainThePipe x m)
