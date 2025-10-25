@@ -189,17 +189,26 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
 
       -- The following fields contain the information in the Leios model exe's
       -- @LeiosFetchDynamicEnv@ and @LeiosFetchState@ data structures.
+      --
+      -- TODO this could all use TVars, but I'm curious whether MVars are a
+      -- noticeably awkward fit for this logic.
 
       -- See 'LeiosPeerMVars' for the write patterns
-    , getLeiosPeerMVars :: MVar m (Map (PeerId addrNTN) (LeiosPeerMVars m))
+    , getLeiosPeersMVars :: MVar m (Map (PeerId (ConnectionId addrNTN)) (LeiosPeerMVars m))
       -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
       -- eviction)
     , getLeiosEbBodies :: MVar m LeiosEbBodies
       -- written to by the fetch logic and by the LeiosNotify&LeiosFetch
       -- clients (TODO and by eviction)
-    , getLeiosOutstanding :: MVar m (LeiosOutstanding addrNTN)
-      -- written to by the fetch logic and by the LeiosCopierThread
+    , getLeiosOutstanding :: MVar m (LeiosOutstanding (ConnectionId addrNTN))
+      -- written to by the fetch logic and by the LeiosCopier
     , getLeiosToCopy :: MVar m LeiosToCopy
+      -- | Leios fetch logic 'MVar.takeMVar's before it runs
+      --
+      -- LeiosNotify clients, LeiosFetch clients, and the LeiosCopier
+      -- 'MVar.tryPutMVar' whenever they make a change that might unblock a new
+      -- fetch decision.
+    , getLeiosReady :: MVar m ()
 
     }
 
@@ -353,10 +362,11 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         fetchClientRegistry
         blockFetchConfiguration
 
-    getLeiosPeerMVars <- MVar.newMVar Map.empty
+    getLeiosPeersMVars <- MVar.newMVar Map.empty
     getLeiosEbBodies <- MVar.newMVar emptyLeiosEbBodies
     getLeiosOutstanding <- MVar.newMVar emptyLeiosOutstanding
     getLeiosToCopy <- MVar.newMVar emptyLeiosToCopy
+    getLeiosReady <- MVar.newEmptyMVar
 
     return NodeKernel
       { getChainDB              = chainDB
@@ -375,10 +385,11 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getDiffusionPipeliningSupport
       , getBlockchainTime       = btime
 
-      , getLeiosPeerMVars
+      , getLeiosPeersMVars
       , getLeiosEbBodies
       , getLeiosOutstanding
       , getLeiosToCopy
+      , getLeiosReady
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk

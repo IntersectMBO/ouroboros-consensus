@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -46,6 +47,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.CBOR.Read (DeserialiseFailure)
+import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -53,7 +55,7 @@ import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BSL
-import           Data.Functor ((<&>))
+import           Data.Functor ((<&>), void)
 import           Data.Hashable (Hashable)
 import           Data.Int (Int64)
 import           Data.Map.Strict (Map)
@@ -132,9 +134,12 @@ import           Ouroboros.Network.TxSubmission.Outbound
 
 import qualified Ouroboros.Network.Mux as ON
 -- import LeiosDemoOnlyTestFetch
-import LeiosDemoOnlyTestNotify
-import LeiosDemoTypes (LeiosPoint, decodeLeiosPoint, encodeLeiosPoint)
-import Debug.Trace (traceM)
+import           LeiosDemoOnlyTestNotify
+import           LeiosDemoTypes (LeiosPoint, decodeLeiosPoint, encodeLeiosPoint)
+import qualified LeiosDemoTypes as Leios
+import qualified Data.IntMap as IntMap
+import qualified Data.Map as Map
+import qualified Data.Set as Set
 
 {-------------------------------------------------------------------------------
   Handlers
@@ -237,7 +242,7 @@ mkHandlers ::
   -> Handlers       m addrNTN           blk
 mkHandlers
       NodeKernelArgs {chainSyncFutureCheck, chainSyncHistoricityCheck, keepAliveRng, miniProtocolParameters, getDiffusionPipeliningSupport}
-      NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} =
+      nodeKernel =
     Handlers {
         hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
           CsClient.chainSyncClient
@@ -284,24 +289,59 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
-      , hLeiosNotifyClient = \_version controlMessageSTM _peer ->
+      , hLeiosNotifyClient = \_version controlMessageSTM peer ->
             leiosNotifyClientPeerPipelined
                 (atomically controlMessageSTM <&> \case
                     Terminate -> Left ()
                     _ -> Right 300 {- TODO magic number -})
                 (\case
-                    MsgLeiosBlockAnnouncement{} -> pure ()   -- TODO
-                    MsgLeiosBlockOffer _ sz -> do
-                        traceM $ "MsgLeiosBlockOffer " ++ show sz
-                        pure ()   -- TODO
-                    MsgLeiosBlockTxsOffer{} -> do
-                        traceM "MsgLeiosBlockTxsOffer"
-                        pure ()   -- TODO
+                    MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
+                    MsgLeiosBlockOffer p ebBytesSize -> do
+                        let Leios.MkLeiosPoint (SlotNo slot64) ebHash = p
+                        ebId <- MVar.modifyMVar getLeiosEbBodies $ \ebBodies -> do
+                            ebId <- case IntMap.lookup (fromIntegral slot64) (Leios.ebPoints ebBodies) >>= Map.lookup ebHash of
+                                Nothing -> error "TODO"
+                                Just x -> pure x
+                            let !ebBodies' =
+                                    if Set.member ebId (Leios.acquiredEbBodies ebBodies) then ebBodies else
+                                    ebBodies {
+                                        Leios.missingEbBodies =
+                                            Map.insert ebId ebBytesSize (Leios.missingEbBodies ebBodies)
+                                      }
+                            pure (ebBodies', ebId)
+                        peerMVars <- do
+                            peersMVars <- MVar.readMVar getLeiosPeersMVars
+                            case Map.lookup (Leios.MkPeerId peer) peersMVars of
+                                Nothing -> error "TODO"
+                                Just x -> pure x
+                        MVar.modifyMVar_ (Leios.offerings peerMVars) $ \(offers1, offers2) -> do
+                            let !offers1' = Set.insert ebId offers1
+                            pure (offers1', offers2)
+                        void $ MVar.tryPutMVar getLeiosReady ()
+                    MsgLeiosBlockTxsOffer p -> do
+                        let Leios.MkLeiosPoint (SlotNo slot64) ebHash = p
+                        ebId <- do
+                            ebBodies <- MVar.readMVar getLeiosEbBodies
+                            case IntMap.lookup (fromIntegral slot64) (Leios.ebPoints ebBodies) >>= Map.lookup ebHash of
+                                Nothing -> error "TODO"
+                                Just x -> pure x
+                        peerMVars <- do
+                            peersMVars <- MVar.readMVar getLeiosPeersMVars
+                            case Map.lookup (Leios.MkPeerId peer) peersMVars of
+                                Nothing -> error "TODO"
+                                Just x -> pure x
+                        MVar.modifyMVar_ (Leios.offerings peerMVars) $ \(offers1, offers2) -> do
+                            let !offers2' = Set.insert ebId offers2
+                            pure (offers1, offers2')
+                        void $ MVar.tryPutMVar getLeiosReady ()
                 )
       , hLeiosNotifyServer = \_version _peer ->
             leiosNotifyServerPeer
                 (let loop = do threadDelay (60 :: DiffTime); loop in loop)   -- TODO
       }
+  where
+    NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} = nodeKernel
+    NodeKernel {getLeiosPeersMVars, getLeiosEbBodies, getLeiosReady} = nodeKernel
 
 {-------------------------------------------------------------------------------
   Codecs

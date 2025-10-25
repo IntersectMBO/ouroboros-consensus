@@ -28,9 +28,10 @@ newtype PeerId a = MkPeerId a
   deriving (Eq, Ord)
 
 newtype EbHash = MkEbHash ByteString
-  deriving (Show)
+  deriving (Eq, Ord, Show)
 
 newtype TxHash = MkTxHash ByteString
+  deriving (Eq, Ord)
 
 data LeiosPoint = MkLeiosPoint SlotNo EbHash
   deriving (Show)
