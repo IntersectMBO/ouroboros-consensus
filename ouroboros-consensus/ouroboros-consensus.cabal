@@ -69,6 +69,7 @@ library
   exposed-modules:
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
+    LeiosDemoTypes
     Ouroboros.Consensus.Block
     Ouroboros.Consensus.Block.Abstract
     Ouroboros.Consensus.Block.EBB

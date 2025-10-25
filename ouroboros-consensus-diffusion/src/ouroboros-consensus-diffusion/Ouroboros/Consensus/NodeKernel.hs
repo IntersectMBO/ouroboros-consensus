@@ -127,6 +127,13 @@ import           Ouroboros.Network.TxSubmission.Mempool.Reader
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
 import           System.Random (StdGen)
 
+import           Control.Concurrent.Class.MonadMVar (MVar)
+import qualified Control.Concurrent.Class.MonadMVar as MVar
+import           Data.Map (Map)
+import qualified Data.Map as Map
+
+import LeiosDemoTypes
+
 {-------------------------------------------------------------------------------
   Relay node
 -------------------------------------------------------------------------------}
@@ -177,6 +184,23 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
     , getDiffusionPipeliningSupport
                              :: DiffusionPipeliningSupport
     , getBlockchainTime      :: BlockchainTime m
+
+      -- ----------------------------------------
+
+      -- The following fields contain the information in the Leios model exe's
+      -- @LeiosFetchDynamicEnv@ and @LeiosFetchState@ data structures.
+
+      -- See 'LeiosPeerMVars' for the write patterns
+    , getLeiosPeerMVars :: MVar m (Map (PeerId addrNTN) (LeiosPeerMVars m))
+      -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
+      -- eviction)
+    , getLeiosEbBodies :: MVar m LeiosEbBodies
+      -- written to by the fetch logic and by the LeiosNotify&LeiosFetch
+      -- clients (TODO and by eviction)
+    , getLeiosOutstanding :: MVar m (LeiosOutstanding addrNTN)
+      -- written to by the fetch logic and by the LeiosCopierThread
+    , getLeiosToCopy :: MVar m LeiosToCopy
+
     }
 
 -- | Arguments required when initializing a node
@@ -329,6 +353,11 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         fetchClientRegistry
         blockFetchConfiguration
 
+    getLeiosPeerMVars <- MVar.newMVar Map.empty
+    getLeiosEbBodies <- MVar.newMVar emptyLeiosEbBodies
+    getLeiosOutstanding <- MVar.newMVar emptyLeiosOutstanding
+    getLeiosToCopy <- MVar.newMVar emptyLeiosToCopy
+
     return NodeKernel
       { getChainDB              = chainDB
       , getMempool              = mempool
@@ -345,6 +374,11 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                 = varOutboundConnectionsState
       , getDiffusionPipeliningSupport
       , getBlockchainTime       = btime
+
+      , getLeiosPeerMVars
+      , getLeiosEbBodies
+      , getLeiosOutstanding
+      , getLeiosToCopy
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
