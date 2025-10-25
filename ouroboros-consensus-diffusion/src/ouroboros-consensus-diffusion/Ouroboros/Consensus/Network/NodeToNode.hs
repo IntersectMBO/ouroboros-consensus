@@ -137,8 +137,9 @@ import qualified Ouroboros.Network.Mux as ON
 import           LeiosDemoOnlyTestNotify
 import           LeiosDemoTypes (LeiosPoint, decodeLeiosPoint, encodeLeiosPoint)
 import qualified LeiosDemoTypes as Leios
-import qualified Data.IntMap as IntMap
+import qualified LeiosDemoLogic as Leios
 import qualified Data.Map as Map
+import           Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 
 {-------------------------------------------------------------------------------
@@ -297,18 +298,16 @@ mkHandlers
                 (\case
                     MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
                     MsgLeiosBlockOffer p ebBytesSize -> do
-                        let Leios.MkLeiosPoint (SlotNo slot64) ebHash = p
-                        ebId <- MVar.modifyMVar getLeiosEbBodies $ \ebBodies -> do
-                            ebId <- case IntMap.lookup (fromIntegral slot64) (Leios.ebPoints ebBodies) >>= Map.lookup ebHash of
-                                Nothing -> error "TODO"
-                                Just x -> pure x
-                            let !ebBodies' =
-                                    if Set.member ebId (Leios.acquiredEbBodies ebBodies) then ebBodies else
-                                    ebBodies {
+                        ebId <- MVar.modifyMVar getLeiosEbBodies $ \ebBodies1 -> do
+                            let (ebId, mbEbBodies2) = Leios.ebIdFromPoint p ebBodies1
+                                ebBodies2 = fromMaybe ebBodies1 mbEbBodies2
+                            let !ebBodies3 =
+                                    if Set.member ebId (Leios.acquiredEbBodies ebBodies2) then ebBodies2 else
+                                    ebBodies2 {
                                         Leios.missingEbBodies =
-                                            Map.insert ebId ebBytesSize (Leios.missingEbBodies ebBodies)
+                                            Map.insert ebId ebBytesSize (Leios.missingEbBodies ebBodies2)
                                       }
-                            pure (ebBodies', ebId)
+                            pure (ebBodies3, ebId)
                         peerMVars <- do
                             peersMVars <- MVar.readMVar getLeiosPeersMVars
                             case Map.lookup (Leios.MkPeerId peer) peersMVars of
@@ -319,12 +318,7 @@ mkHandlers
                             pure (offers1', offers2)
                         void $ MVar.tryPutMVar getLeiosReady ()
                     MsgLeiosBlockTxsOffer p -> do
-                        let Leios.MkLeiosPoint (SlotNo slot64) ebHash = p
-                        ebId <- do
-                            ebBodies <- MVar.readMVar getLeiosEbBodies
-                            case IntMap.lookup (fromIntegral slot64) (Leios.ebPoints ebBodies) >>= Map.lookup ebHash of
-                                Nothing -> error "TODO"
-                                Just x -> pure x
+                        ebId <- Leios.ebIdFromPointM getLeiosEbBodies p
                         peerMVars <- do
                             peersMVars <- MVar.readMVar getLeiosPeersMVars
                             case Map.lookup (Leios.MkPeerId peer) peersMVars of

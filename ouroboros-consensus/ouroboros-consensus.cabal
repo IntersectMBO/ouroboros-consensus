@@ -67,6 +67,7 @@ library
   import: common-lib
   hs-source-dirs: src/ouroboros-consensus
   exposed-modules:
+    LeiosDemoLogic
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
