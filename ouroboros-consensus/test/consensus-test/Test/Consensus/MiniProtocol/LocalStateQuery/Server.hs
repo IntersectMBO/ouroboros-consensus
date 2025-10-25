@@ -240,13 +240,12 @@ initLedgerDB s c = do
           , lgrStartSnapshot = Nothing
           }
   ldb <-
-    fst
-      <$> LedgerDB.openDB
-        args
-        streamAPI
-        (Chain.headPoint c)
-        (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
-        (LedgerDB.praosGetVolatileSuffix s)
+    LedgerDB.openDB
+      args
+      streamAPI
+      (Chain.headPoint c)
+      (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+      (LedgerDB.praosGetVolatileSuffix s)
 
   result <-
     LedgerDB.validateFork

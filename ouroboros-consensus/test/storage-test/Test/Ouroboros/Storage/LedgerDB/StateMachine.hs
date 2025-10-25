@@ -541,7 +541,7 @@ openLedgerDB flavArgs env cfg fs rr = do
   (tracer, getNumOpenHandles) <- mkTrackOpenHandles
   let args =
         LedgerDbArgs
-          (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots)
+          defaultSnapshotPolicyArgs
           (pure genesis)
           fs
           cfg
@@ -550,7 +550,7 @@ openLedgerDB flavArgs env cfg fs rr = do
           rr
           DefaultQueryBatchSize
           Nothing
-  (ldb, _, od) <- case lgrBackendArgs args of
+  (ldb, od) <- case lgrBackendArgs args of
     LedgerDbBackendArgsV1 bss ->
       let snapManager = V1.snapshotManager args
           initDb =

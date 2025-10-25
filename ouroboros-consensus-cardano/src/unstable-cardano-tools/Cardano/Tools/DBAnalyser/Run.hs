@@ -73,7 +73,7 @@ openLedgerDB ::
     , LedgerDB.TestInternals' IO blk
     )
 openLedgerDB args = do
-  (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
+  (ldb, od) <- case LedgerDB.lgrBackendArgs args of
     LedgerDB.LedgerDbBackendArgsV1 bss ->
       let snapManager = LedgerDB.V1.snapshotManager args
           initDb =
