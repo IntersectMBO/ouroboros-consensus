@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -15,40 +16,45 @@ module LeiosDemoOnlyTestFetch
   ( LeiosFetch (..)
   , SingLeiosFetch (..)
   , Message (..)
+  , leiosFetchMiniProtocolNum
+  -- *
   , byteLimitsLeiosFetch
   , timeLimitsLeiosFetch
   , codecLeiosFetch
   , codecLeiosFetchId
-  , leiosFetchMiniProtocolNum
+  -- *
+  , LeiosFetchClientPeer
+  , LeiosFetchServerPeer
+  , leiosFetchClientPeer
+  , leiosFetchServerPeer
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
-import Control.DeepSeq (NFData (..))
-import Control.Monad.Class.MonadST
-import Data.ByteString.Lazy (ByteString)
-import Data.Kind (Type)
-import Data.Singletons
-import Data.Word (Word16, Word64)
+import           Control.DeepSeq (NFData (..))
+import           Control.Monad.Class.MonadST
+import           Data.ByteString.Lazy (ByteString)
+import           Data.Functor ((<&>))
+import           Data.Kind (Type)
+import           Data.Singletons
+import           Data.Word (Word16, Word64)
 import qualified Network.Mux.Types as Mux
-import Network.TypedProtocol.Codec.CBOR
-import Network.TypedProtocol.Core
-import Ouroboros.Network.Protocol.Limits
-import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
-import Text.Printf
+import           Network.TypedProtocol.Codec.CBOR
+import           Network.TypedProtocol.Core
+import           Network.TypedProtocol.Peer
+import           Ouroboros.Network.Protocol.Limits
+import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
+import           Text.Printf
 
 -----
 
 leiosFetchMiniProtocolNum :: Mux.MiniProtocolNum
 leiosFetchMiniProtocolNum = Mux.MiniProtocolNum 19
 
-type LeiosFetch :: Type -> Type -> Type -> Type
-data LeiosFetch point eb tx where
-  StIdle     :: LeiosFetch point eb tx
-  StBlock    :: LeiosFetch point eb tx
-  StBlockTxs :: LeiosFetch point eb tx
-  StDone     :: LeiosFetch point eb tx
+data LeiosFetch point eb tx = StIdle | StBusy (LeiosFetchBusy point eb tx) | StDone
+
+data LeiosFetchBusy point eb tx = StBlock | StBlockTxs
 
 instance ( ShowProxy point
          , ShowProxy eb
@@ -65,13 +71,13 @@ instance ( ShowProxy point
         showProxy (Proxy :: Proxy tx)
       ]
 
-instance ShowProxy (StIdle :: LeiosFetch point eb tx) where
+instance ShowProxy (StIdle            :: LeiosFetch point eb tx) where
   showProxy _ = "StIdle"
-instance ShowProxy (StBlock :: LeiosFetch point eb tx) where
-  showProxy _ = "StBlock"
-instance ShowProxy (StBlockTxs :: LeiosFetch point eb tx) where
-  showProxy _ = "StBlockTxs"
-instance ShowProxy (StDone :: LeiosFetch point eb tx) where
+instance ShowProxy (StBusy StBlock    :: LeiosFetch point eb tx) where
+  showProxy _ = "(StBusy StBlock)"
+instance ShowProxy (StBusy StBlockTxs :: LeiosFetch point eb tx) where
+  showProxy _ = "(StBusy StBlockTxs)"
+instance ShowProxy (StDone            :: LeiosFetch point eb tx) where
   showProxy _ = "StDone"
 
 type SingLeiosFetch
@@ -79,16 +85,16 @@ type SingLeiosFetch
   -> Type
 data SingLeiosFetch st where
   SingIdle     :: SingLeiosFetch StIdle
-  SingBlock    :: SingLeiosFetch StBlock
-  SingBlockTxs :: SingLeiosFetch StBlockTxs
+  SingBlock    :: SingLeiosFetch (StBusy StBlock)
+  SingBlockTxs :: SingLeiosFetch (StBusy StBlockTxs)
   SingDone     :: SingLeiosFetch StDone
 
 deriving instance Show (SingLeiosFetch st)
 
-instance StateTokenI StIdle     where stateToken = SingIdle
-instance StateTokenI StBlock    where stateToken = SingBlock
-instance StateTokenI StBlockTxs where stateToken = SingBlockTxs
-instance StateTokenI StDone     where stateToken = SingDone
+instance StateTokenI StIdle              where stateToken = SingIdle
+instance StateTokenI (StBusy StBlock)    where stateToken = SingBlock
+instance StateTokenI (StBusy StBlockTxs) where stateToken = SingBlockTxs
+instance StateTokenI StDone              where stateToken = SingDone
 
 -----
 
@@ -96,18 +102,18 @@ instance Protocol (LeiosFetch point eb tx) where
   data Message (LeiosFetch point eb tx) from to where
     MsgLeiosBlockRequest
       :: !point
-      -> Message (LeiosFetch point eb tx) StIdle StBlock
+      -> Message (LeiosFetch point eb tx) StIdle (StBusy StBlock)
     MsgLeiosBlock
       :: !eb
-      -> Message (LeiosFetch point eb tx) StBlock StIdle
+      -> Message (LeiosFetch point eb tx) (StBusy StBlock) StIdle
 
     MsgLeiosBlockTxsRequest
       :: !point
       -> [(Word16, Word64)]
-      -> Message (LeiosFetch point eb tx) StIdle StBlockTxs
+      -> Message (LeiosFetch point eb tx) StIdle (StBusy StBlockTxs)
     MsgLeiosBlockTxs
       :: ![tx]
-      -> Message (LeiosFetch point eb tx) StBlockTxs StIdle
+      -> Message (LeiosFetch point eb tx) (StBusy StBlockTxs) StIdle
 
     -- MsgLeiosVotesRequest
     -- MsgLeiosVoteDelivery
@@ -119,10 +125,10 @@ instance Protocol (LeiosFetch point eb tx) where
     MsgDone
       :: Message (LeiosFetch point eb tx) StIdle StDone
 
-  type StateAgency StIdle     = ClientAgency
-  type StateAgency StBlock    = ServerAgency
-  type StateAgency StBlockTxs = ServerAgency
-  type StateAgency StDone     = NobodyAgency
+  type StateAgency StIdle              = ClientAgency
+  type StateAgency (StBusy StBlock)    = ServerAgency
+  type StateAgency (StBusy StBlockTxs) = ServerAgency
+  type StateAgency StDone              = NobodyAgency
 
   type StateToken = SingLeiosFetch
 
@@ -347,3 +353,79 @@ decodeBitmaps =
        []
        reverse
        ((,) <$> CBOR.decodeWord16 <*> CBOR.decodeWord64)
+
+-----
+
+data SomeTask point eb tx m =
+    forall st'.
+    MkSomeTask
+        (Message (LeiosFetch point eb tx) StIdle (StBusy st'))
+        (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ())
+
+type LeiosFetchClientPeer point eb tx m a =
+     Peer (LeiosFetch point eb tx) AsClient NonPipelined StIdle m a
+
+leiosFetchClientPeer ::
+  forall m point eb tx a.
+     Monad m
+  =>
+     m (Either a (SomeTask point eb tx m))
+  ->
+     Peer (LeiosFetch point eb tx) AsClient NonPipelined StIdle m a
+leiosFetchClientPeer checkDone =
+    go
+  where
+    go :: Peer (LeiosFetch point eb tx) AsClient NonPipelined StIdle m a
+    go = Effect $ checkDone <&> \case
+        Left x ->
+            Yield ReflClientAgency MsgDone
+          $ Done ReflNobodyAgency x
+        Right (MkSomeTask req k) -> case req of
+            MsgLeiosBlockRequest{} -> do
+                Yield ReflClientAgency req
+              $ Await ReflServerAgency $ \rsp -> case rsp of
+                    MsgLeiosBlock{} -> react $ k rsp
+            MsgLeiosBlockTxsRequest{} -> do
+                Yield ReflClientAgency req
+              $ Await ReflServerAgency $ \rsp -> case rsp of
+                    MsgLeiosBlockTxs{} -> react $ k rsp
+
+    react action = Effect $ fmap (\() -> go) action
+
+-----
+
+type LeiosFetchServerPeer point eb tx m a =
+    Peer (LeiosFetch point eb tx) AsServer NonPipelined StIdle m ()
+
+newtype RequestHandler point eb tx m = MkRequestHandler (
+    forall st'.
+        Message (LeiosFetch point eb tx) StIdle (StBusy st')
+     ->
+        m (Message (LeiosFetch point eb tx) (StBusy st') StIdle)
+  )
+
+leiosFetchServerPeer ::
+  forall m point eb tx.
+     Monad m
+  =>
+     m (RequestHandler point eb tx m)
+  ->
+     Peer (LeiosFetch point eb tx) AsServer NonPipelined StIdle m ()
+leiosFetchServerPeer handler =
+    go
+  where
+    go :: Peer (LeiosFetch point eb tx) AsServer NonPipelined StIdle m ()
+    go = Await ReflClientAgency $ \req -> case req of
+        MsgDone -> Done ReflNobodyAgency ()
+        MsgLeiosBlockRequest{} -> Effect $ do
+            MkRequestHandler f <- handler
+            rsp <- f req
+            pure
+              $ Yield ReflServerAgency rsp
+              $ go
+        MsgLeiosBlockTxsRequest{} -> Effect $ do
+            MkRequestHandler f <- handler
+            rsp <- f req
+            pure
+              $ Yield ReflServerAgency rsp
+              $ go

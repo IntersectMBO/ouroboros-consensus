@@ -3,7 +3,9 @@ module LeiosDemoTypes (module LeiosDemoTypes) where
 import           Cardano.Binary (enforceSize)
 import           Cardano.Slotting.Slot (SlotNo)
 import           Codec.CBOR.Decoding (Decoder)
-import           Codec.CBOR.Encoding (Encoding, encodeListLen)
+import qualified Codec.CBOR.Decoding as CBOR
+import           Codec.CBOR.Encoding (Encoding)
+import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
 import           Control.Concurrent.Class.MonadMVar (MVar)
 import           Data.ByteString (ByteString)
@@ -31,19 +33,18 @@ newtype EbHash = MkEbHash ByteString
   deriving (Eq, Ord, Show)
 
 newtype TxHash = MkTxHash ByteString
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Show)
 
 data LeiosPoint = MkLeiosPoint SlotNo EbHash
   deriving (Show)
 
-instance ShowProxy LeiosPoint where
-    showProxy _ = "LeiosPoint"
+instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
 
 encodeLeiosPoint :: LeiosPoint -> Encoding
 encodeLeiosPoint (MkLeiosPoint ebSlot (MkEbHash ebHash)) =
-    encodeListLen 2
+    CBOR.encodeListLen 2
  <> encode ebSlot
- <> encode ebHash
+ <> CBOR.encodeBytes ebHash
 
 decodeLeiosPoint :: Decoder s LeiosPoint
 decodeLeiosPoint = do
@@ -164,3 +165,40 @@ data LeiosToCopy = MkLeiosToCopy {
 
 emptyLeiosToCopy :: LeiosToCopy
 emptyLeiosToCopy = MkLeiosToCopy Map.empty 0 0
+
+-----
+
+newtype LeiosTx = MkLeiosTx ByteString
+  deriving (Show)
+
+instance ShowProxy LeiosTx where showProxy _ = "LeiosTx"
+
+encodeLeiosTx :: LeiosTx -> Encoding
+encodeLeiosTx (MkLeiosTx bytes) = CBOR.encodeBytes bytes
+
+decodeLeiosTx :: Decoder s LeiosTx
+decodeLeiosTx = MkLeiosTx <$> CBOR.decodeBytes
+
+data LeiosEb = MkLeiosEb !(V.Vector (TxHash, BytesSize))
+  deriving (Show)
+
+instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
+
+encodeLeiosEb :: LeiosEb -> Encoding
+encodeLeiosEb (MkLeiosEb v) =
+    V.foldl
+        (\acc (MkTxHash bytes, txBytesSize) ->
+            acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
+        )
+        (CBOR.encodeMapLen $ fromIntegral $ V.length v)
+        v
+
+decodeLeiosEb :: Decoder s LeiosEb
+decodeLeiosEb = do
+    n <- CBOR.decodeMapLen
+    -- TODO does V.generateM allocate exacly one buffer, via the hint?
+    --
+    -- If not, we could do so manually by relying on the fact that Decoder is
+    -- ultimate in ST.
+    fmap MkLeiosEb $ V.generateM n $ \_i -> do
+        (,) <$> (fmap MkTxHash CBOR.decodeBytes) <*> CBOR.decodeWord32
