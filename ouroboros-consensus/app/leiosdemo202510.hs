@@ -1179,6 +1179,7 @@ loadLeiosFetchDynEnv = loadLeiosFetchDynEnvHelper True
 
 loadLeiosFetchDynEnvHelper :: Bool -> DB.Database -> IO LeiosFetchDynamicEnv
 loadLeiosFetchDynEnvHelper full db = do
+    withDieMsg $ DB.exec db (fromString "BEGIN")
     (ps, qs) <- do
         stmt <- withDieJust $ DB.prepare db (fromString sql_scan_ebId)
         let loop !ps !qs =
@@ -1217,6 +1218,7 @@ loadLeiosFetchDynEnvHelper full db = do
                             (Map.insertWith IntMap.union ebId (IntMap.singleton txOffset (txHash, txBytesSize)) bodies)
                             (Map.insertWith Map.union txHash (Map.singleton ebId txOffset) offsetss)
         loop Set.empty Map.empty Map.empty
+    withDieMsg $ DB.exec db (fromString "COMMIT")
     pure MkLeiosFetchDynamicEnv {
         cachedTxs = cached
       ,
@@ -1563,20 +1565,23 @@ packRequests env dynEnv =
 
 fetchDecision2 :: DB.Database -> LeiosFetchState -> IO LeiosFetchState
 fetchDecision2 db acc0 = do
-    let env = MkLeiosFetchStaticEnv {
-            maxRequestedBytesSize = 50 * 10^(6 :: Int)
+    let million = 10^(6 :: Int)
+        millionBase2 = 2^(20 :: Int)
+        thousand = 10^(3 :: Int)
+        env = MkLeiosFetchStaticEnv {
+            maxRequestedBytesSize = 50 * million
           ,
-            maxRequestedBytesSizePerPeer = 5 * 10^(6 :: Int)
+            maxRequestedBytesSizePerPeer = 5 * million
           ,
-            maxRequestBytesSize = 500000
+            maxRequestBytesSize = 500 * thousand
           ,
             maxRequestsPerEb = 2
           ,
             maxRequestsPerTx = 2
           ,
-            maxToCopyBytesSize = 100 * 2^(20 :: Int)
+            maxToCopyBytesSize = 100 * millionBase2
           ,
-            maxToCopyCount = 100 * 10^(3 :: Int)
+            maxToCopyCount = 100 * thousand
           }
     dynEnv <- loadLeiosFetchDynEnv db
     let (acc1, MkLeiosFetchDecisions decisions) = leiosFetchLogicIteration env dynEnv acc0
