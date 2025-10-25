@@ -31,7 +31,7 @@ import qualified Data.Foldable as Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.IntMap as IntMap
 import           Data.IntMap (IntMap)
-import           Data.List (intercalate, isSuffixOf, unfoldr)
+import           Data.List (isSuffixOf, unfoldr)
 import           Data.Map (Map)
 import           Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
@@ -528,42 +528,38 @@ msgLeiosBlockTxsRequest db ebId bitmaps = do
             die $ "An offset exceeds the theoretical limit " <> show idxLimit
         when (not $ and $ zipWith (<) idxs (tail idxs)) $ do
             die "Offsets not strictly ascending"
-    let numOffsets = sum $ map (Bits.popCount . snd) bitmaps
     let nextOffsetDESC = \case
             [] -> Nothing
             (idx, bitmap) : k -> case popRightmostOffset bitmap of
                 Nothing           -> nextOffsetDESC k
                 Just (i, bitmap') ->
                     Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
-        offsets = unfoldr nextOffsetDESC (reverse bitmaps)
-    -- get the txs, at most 'maxBatchSize' at a time
-    --
-    -- TODO Better workaround for requests of many txs?
-    stmt_lookup_ebClosuresMAIN <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures_DESC (maxBatchSize `min` numOffsets)
-    withDie $ DB.bindInt64 stmt_lookup_ebClosuresMAIN 1 (fromIntegralEbId ebId)
+        txOffsets = unfoldr nextOffsetDESC (reverse bitmaps)
+    -- fill in-memory table
     withDieMsg $ DB.exec db (fromString "BEGIN")
-    acc <- (\f -> foldM f emptyX (batches offsets)) $ \acc batch -> do
-        stmt <-
-          if numOffsets <= maxBatchSize || length batch == maxBatchSize then pure stmt_lookup_ebClosuresMAIN else do
-            -- this can only be reached for the last batch
-            withDie $ DB.finalize stmt_lookup_ebClosuresMAIN
-            stmt_lookup_ebClosuresTIDY <- withDieJust $ DB.prepare db $ fromString $ sql_lookup_ebClosures_DESC (numOffsets `mod` maxBatchSize)
-            withDie $ DB.bindInt64 stmt_lookup_ebClosuresTIDY 1 (fromIntegralEbId ebId)
-            pure stmt_lookup_ebClosuresTIDY
-        forM_ ([(2 :: DB.ParamIndex) ..] `zip` batch) $ \(i, offset) -> do
-            withDie $ DB.bindInt64 stmt i (fromIntegral offset)
-        acc' <- (\f -> foldM f acc batch) $ \acc' offset -> do
-            withDie (DB.stepNoCB stmt) >>= \case
-                DB.Done -> die $ "No rows starting at offset: " ++ show offset
-                DB.Row -> do
-                    -- TODO use a sink buffer to avoid polluting the heap with these temporary copies?
-                    txOffset <- DB.columnInt64 stmt 0
-                    txBytes <- DB.columnBlob stmt 1
-                    when (txOffset /= fromIntegral offset) $ die $ "Missing offset: " <> show offset
-                    pure $ pushX acc' txBytes
-        withDie $ DB.reset stmt
-        pure acc'
+    do
+        withDieMsg $ DB.exec db (fromString sql_attach_memTxPoints)
+        stmt <- withDieJust $ DB.prepare db (fromString sql_insert_memTxPoints)
+        withDie $ DB.bindInt64 stmt 1 (fromIntegralEbId ebId)
+        forM_ txOffsets $ \txOffset -> do
+            withDie $ DB.bindInt64 stmt 2 (fromIntegral txOffset)
+            withDieDone $ DB.stepNoCB stmt
+            withDie $ DB.reset stmt
+        withDie $ DB.finalize stmt
+    -- get txBytess
+    stmt <- withDieJust $ DB.prepare db (fromString sql_retrieve_from_ebTxs)
+    acc <- (\f -> foldM f emptyX txOffsets) $ \acc txOffset -> do
+        withDie (DB.stepNoCB stmt) >>= \case
+            DB.Done -> pure acc
+            DB.Row -> do
+                txOffset' <- DB.columnInt64 stmt 0
+                txBytes <- DB.columnBlob stmt 1
+                when (fromIntegral txOffset /= txOffset') $ do
+                    die $ "Missing offset " ++ show (txOffset, txOffset')
+                pure $ pushX acc txBytes
+    withDie $ DB.finalize stmt
     withDieMsg $ DB.exec db (fromString "COMMIT")
+    withDieMsg $ DB.exec db (fromString sql_detach_memTxPoints)
     -- combine the txs
     BS.putStr
       $ BS16.encode
@@ -620,26 +616,16 @@ popRightmostOffset = \case
          in
          Just (63 - zs, Bits.clearBit w zs)
 
--- | Never request more than this many txs simultaneously
---
--- TODO confirm this prevents the query string from exceeding SQLite's size
--- limits, even if the largest possible txOffsets are being requested.
-maxBatchSize :: Int
-maxBatchSize = 1024
-
-batches :: [a] -> [[a]]
-batches xs = if null xs then [] else take maxBatchSize xs : batches (drop maxBatchSize xs)
-
 -- | It's DESCending because the accumulator within the
 -- 'msgLeiosBlockTxsRequest' logic naturally reverses it
-sql_lookup_ebClosures_DESC :: Int -> String
-sql_lookup_ebClosures_DESC n =
-    "SELECT txOffset, txBytes FROM ebTxs\n\
-    \WHERE ebId = ? AND txBytes IS NOT NULL AND txOffset IN (" ++ hooks ++ ")\n\
-    \ORDER BY txOffset DESC\n\
+sql_retrieve_from_ebTxs :: String
+sql_retrieve_from_ebTxs =
+    "SELECT x.txOffset, x.txBytes\n\
+    \FROM ebTxs as x\n\
+    \INNER JOIN mem.txPoints ON x.ebId = mem.txPoints.ebId AND x.txOffset = mem.txPoints.txOffset\n\
+    \WHERE x.txBytes IS NOT NULL\n\
+    \ORDER BY x.txOffset DESC\n\
     \"
-  where
-    hooks = intercalate "," (replicate n "?")
 
 -----
 
@@ -1660,14 +1646,16 @@ delIfZero x = if 0 == x then Nothing else Just x
 
 doCacheCopy :: DB.Database -> LeiosFetchState -> BytesSize -> IO LeiosFetchState
 doCacheCopy db lfst bytesSize = do
-    withDieMsg $ DB.exec db (fromString sql_attach_ebIds)
+    withDieMsg $ DB.exec db (fromString sql_attach_memTxPoints)
     withDieMsg $ DB.exec db (fromString "BEGIN")
-    stmt <- withDieJust $ DB.prepare db (fromString sql_insert_memEbIds)
+    stmt <- withDieJust $ DB.prepare db (fromString sql_insert_memTxPoints)
     -- load in-mem table of ebId-txOffset pairs
     lfst' <- go1 stmt 0 0 (toCopy lfst)
+    withDie $ DB.finalize stmt
     -- UPDATE JOIN driven by the loaded table
     withDieMsg $ DB.exec db (fromString sql_copy_from_txCache)
     withDieMsg $ DB.exec db (fromString "COMMIT")
+    withDieMsg $ DB.exec db (fromString sql_detach_memTxPoints)
     pure lfst'
   where
     go1 stmt !accBytesSize !accCount !acc
@@ -1700,12 +1688,11 @@ doCacheCopy db lfst bytesSize = do
             toCopyCount = toCopyCount lfst - accCount
           }
 
-sql_attach_ebIds :: String
-sql_attach_ebIds =
-    -- NB :memory: databases are discarded when the SQLite connection is closed
+sql_attach_memTxPoints :: String
+sql_attach_memTxPoints =
     "ATTACH DATABASE ':memory:' AS mem;\n\
     \\n\
-    \CREATE TABLE mem.ebIds (\n\
+    \CREATE TABLE mem.txPoints (\n\
     \    ebId INTEGER NOT NULL\n\
     \  ,\n\
     \    txOffset INTEGER NOT NULL\n\
@@ -1714,9 +1701,15 @@ sql_attach_ebIds =
     \  ) WITHOUT ROWID;\n\
     \"
 
-sql_insert_memEbIds :: String
-sql_insert_memEbIds =
-    "INSERT INTO mem.ebIds (ebId, txOffset) VALUES (?, ?);\n\
+sql_detach_memTxPoints :: String
+sql_detach_memTxPoints =
+    -- NB :memory: databases are discarded when detached
+    "DETACH DATABASE mem;\n\
+    \"
+
+sql_insert_memTxPoints :: String
+sql_insert_memTxPoints =
+    "INSERT INTO mem.txPoints (ebId, txOffset) VALUES (?, ?);\n\
     \"
 
 sql_copy_from_txCache :: String
@@ -1724,5 +1717,5 @@ sql_copy_from_txCache =
     "UPDATE ebTxs\n\
     \SET txBytes = (SELECT txBytes FROM txCache WHERE txCache.txHashBytes = x.txHashBytes)\n\
     \FROM ebTxs AS x\n\
-    \INNER JOIN mem.ebIds ON x.ebId = mem.ebIds.ebId AND x.txOffset = mem.ebIds.txOffset\n\
+    \INNER JOIN mem.txPoints ON x.ebId = mem.txPoints.ebId AND x.txOffset = mem.txPoints.txOffset\n\
     \"
