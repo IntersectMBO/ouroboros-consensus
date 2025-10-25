@@ -1,35 +1,69 @@
 #!/bin/bash
 
-# The first parameter should be the path to the local checkout of
-# cardano-node.
-#
-# The second parameter should be the path to the folder
-# where the data of a benchmarking cluster run is stored
-# (CLUSTER_RUN_DATA directory).
+now=$(date +%s)
 
-# Local checkout path of the cardano-node repository
-# Safely remove trailing slash if present
-CARDANO_NODE_PATH="${1%/}"
-
-# P&T cluster run data
-CLUSTER_RUN_DATA="${2%/}"
-
-if [ "$#" -ne 2 ]; then
-    echo "Error: Please provide two parameters: <cardano-node path> and <CLUSTER_RUN_DATA directory path>." >&2
+if [[ -z "${NETSTAT_OUTPUT}" ]]; then
+    echo "Error: \${NETSTAT_OUTPUT} must be the path to the stdout of a recent call to netstat -lntp." >&2
     exit 1
 fi
 
-if [ ! -d "$CARDANO_NODE_PATH" ]; then
-    echo "Error: Cardano node path '$CARDANO_NODE_PATH' not found or is not a directory." >&2
-    exit 1
+if [[ ! "$SECONDS_UNTIL_REF_SLOT" =~ ^[0-9]*$ ]] || [[ "$SECONDS_UNTIL_REF_SLOT" -le 0 ]]; then
+     echo "Error: \${SECONDS_UNTIL_REF_SLOT} must be a positive integer of seconds, which will be added to the execution time of this script." >&2
+     exit 1
 fi
 
-if [ ! -d "$CLUSTER_RUN_DATA" ]; then
+if [ ! -d "${CLUSTER_RUN_DATA%/}" ]; then
+    CLUSTER_RUN_DATA="${CLUSTER_RUN_DATA%/}"
     echo "Error: CLUSTER_RUN_DATA directory '$CLUSTER_RUN_DATA' not found or is not a directory." >&2
     exit 1
 fi
 
-TMP_DIR=$(mktemp -d)
+if [[ -z "${CARDANO_NODE}" ]]; then
+    echo "Error: \${CARDANO_NODE} must be the path to the cardano-node exe." >&2
+    exit 1
+fi
+
+if [[ -z "${IMMDB_SERVER}" ]]; then
+    echo "Error: \${IMMDB_SERVER} must be the path to the immdb-server exe." >&2
+    exit 1
+fi
+
+if [[ -z "${LEIOS_SCHEDULE}" ]]; then
+    echo "Error: \${LEIOS_SCHEDULE} must be the path to the JSON file that lists the schedule of Leios offers." >&2
+    exit 1
+fi
+
+if [[ -z "${REF_SLOT}" ]] || [[ ! "$REF_SLOT" =~ ^[0-9]*$ ]] || [[ "$REF_SLOT" -lt 0 ]]; then
+     echo "Error: \${REF_SLOT} must be a non-negative integer, a slot number" >&2
+     exit 1
+fi
+
+find_random_unused_port() {
+  local port
+  local min_port=1024  # Start checking from non-privileged ports
+  local max_port=65535 # Maximum possible port number
+
+  while true; do
+    # Generate a random port within the specified range
+    port=$(( RANDOM % (max_port - min_port + 1) + min_port ))
+
+    # Check if the port is in use using netstat
+    # -l: listening sockets, -t: TCP, -n: numeric addresses, -p: show PID/program name
+    # grep -q: quiet mode, exits with 0 if match found, 1 otherwise
+    if ! cat ${NETSTAT_OUTPUT} | grep -q ":$port "; then
+      echo "$port"
+      return 0 # Port found, exit function
+    fi
+  done
+}
+
+PORT1=$(find_random_unused_port)
+PORT2=$(find_random_unused_port)
+PORT3=$(find_random_unused_port)
+
+echo "Ports: ${PORT1} ${PORT2} ${PORT3}"
+
+TMP_DIR=$(mktemp -d ${TMPDIR:-/tmp}/leios-october-demo.XXXXXX)
 echo "Using temporary directory for DB and logs: $TMP_DIR"
 
 pushd "$CARDANO_NODE_PATH" > /dev/null
@@ -47,7 +81,7 @@ cat << EOF > topology-node-0.json
       "accessPoints": [
         {
           "address": "127.0.0.1",
-          "port": 3001
+          "port": ${PORT1}
         }
       ],
       "advertise": false,
@@ -61,12 +95,12 @@ EOF
 
 mkdir -p "$TMP_DIR/node-0/db"
 
-CARDANO_NODE_CMD="cabal run -- cardano-node run \
-    --config $CLUSTER_RUN_DATA/node-0/config.json \
+CARDANO_NODE_CMD="${CARDANO_NODE} run \
+    --config $CLUSTER_RUN_DATA/leios-node/config.json \
     --topology topology-node-0.json \
     --database-path $TMP_DIR/node-0/db \
     --socket-path node-0.socket \
-    --host-addr 0.0.0.0 --port 3002"
+    --host-addr 0.0.0.0 --port ${PORT2}"
 
 echo "Command: $CARDANO_NODE_CMD &> $TMP_DIR/cardano-node-0.log &"
 
@@ -88,7 +122,7 @@ cat << EOF > topology-node-1.json
       "accessPoints": [
         {
           "address": "127.0.0.1",
-          "port": 3002
+          "port": ${PORT2}
         }
       ],
       "advertise": false,
@@ -103,11 +137,11 @@ EOF
 mkdir -p "$TMP_DIR/node-1/db"
 
 MOCKED_PEER_CMD="cabal run -- cardano-node run \
-    --config $CLUSTER_RUN_DATA/node-0/config.json \
+    --config $CLUSTER_RUN_DATA/leios-node/config.json \
     --topology topology-node-1.json \
     --database-path $TMP_DIR/node-1/db \
     --socket-path node-1.socket \
-    --host-addr 0.0.0.0 --port 3003"
+    --host-addr 0.0.0.0 --port ${PORT3}"
 
 echo "Command (Node 1): $MOCKED_PEER_CMD &> $TMP_DIR/cardano-node-1.log &"
 
@@ -124,16 +158,15 @@ popd > /dev/null
 ## Run immdb-server
 ##
 
-## TODO: we should find a better way to wait for the nodes to be started
-# Calculate the POSIX time 60 seconds from now.
-REF_TIME_FOR_SLOT=$(( $(date +%s) + 60 ))
-INITIAL_SLOT=80
+ONSET_OF_REF_SLOT=$(( $now + ${SECONDS_UNTIL_REF_SLOT} ))
 
-IMMDB_CMD_CORE="cabal run immdb-server \
-    -- --db $CLUSTER_RUN_DATA/node-0/db/immutable/ \
-    --config $CLUSTER_RUN_DATA/node-0/config.json \
-    --initial-slot $INITIAL_SLOT \
-    --initial-time $REF_TIME_FOR_SLOT"
+IMMDB_CMD_CORE="${IMMDB_SERVER} \
+    --db $CLUSTER_RUN_DATA/immdb-node/immutable/ \
+    --config $CLUSTER_RUN_DATA/immdb-node/config.json \
+    --initial-slot $REF_SLOT \
+    --initial-time $ONSET_OF_REF_SLOT
+    --leios-schedule $LEIOS_SCHEDULE
+    --port ${PORT1}"
 
 echo "Command: $IMMDB_CMD_CORE &> $TMP_DIR/immdb-server.log &"
 
@@ -143,40 +176,38 @@ IMMDB_SERVER_PID=$!
 
 echo "ImmDB server started with PID: $IMMDB_SERVER_PID"
 
-
-# TODO: we should change the condition on which we terminate the demo.
-echo "Sleeping..."
-sleep 120
+read -n 1 -s -r -p "Press any key to stop the spawned processes..."
 
 echo "Killing processes $IMMDB_SERVER_PID (immdb-server), $CARDANO_NODE_0_PID (node-0), and $MOCKED_PEER_PID (node-1)..."
 
 kill "$IMMDB_SERVER_PID" 2>/dev/null || true
 
 # Use negative PID to target the process group ID and SIGKILL for cardano-node processes.
-kill -9 -"$CARDANO_NODE_0_PID" 2>/dev/null || true
-kill -9 -"$MOCKED_PEER_PID" 2>/dev/null || true
+kill "$CARDANO_NODE_0_PID" 2>/dev/null || true
+
+kill "$MOCKED_PEER_PID" 2>/dev/null || true
 
 echo "Temporary data stored at: $TMP_DIR"
 
-# Log analysis
+# # Log analysis
 
-VENV_PATH="./scripts/leios-demo/venv"
+# VENV_PATH="./scripts/leios-demo/venv"
 
-# 1. Activate the Python Virtual Environment
-if [ -f "$VENV_PATH/bin/activate" ]; then
-    echo "Activating virtual environment..."
-    # 'source' must be used for activation to modify the current shell environment
-    source "$VENV_PATH/bin/activate"
-else
-    echo "Error: Virtual environment activation script not found at $VENV_PATH/bin/activate." >&2
-fi
+# # 1. Activate the Python Virtual Environment
+# if [ -f "$VENV_PATH/bin/activate" ]; then
+#     echo "Activating virtual environment..."
+#     # 'source' must be used for activation to modify the current shell environment
+#     source "$VENV_PATH/bin/activate"
+# else
+#     echo "Error: Virtual environment activation script not found at $VENV_PATH/bin/activate." >&2
+# fi
 
-python3 scripts/leios-demo/log_parser.py \
-        $INITIAL_SLOT $REF_TIME_FOR_SLOT \
-        $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-1.log \
-        "scatter_plot.png"
+# python3 scripts/leios-demo/log_parser.py \
+#         $REF_SLOT $ONSET_OF_REF_SLOT \
+#         $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-1.log \
+#         "scatter_plot.png"
 
-# 2. Deactivate the Python Virtual Environment before exiting
-deactivate 2>/dev/null || true
+# # 2. Deactivate the Python Virtual Environment before exiting
+# deactivate 2>/dev/null || true
 
-exit 0
+# exit 0
