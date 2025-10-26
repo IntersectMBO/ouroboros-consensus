@@ -307,7 +307,7 @@ mkHandlers
                 (atomically controlMessageSTM <&> \case
                     Terminate -> Left ()
                     _ -> Right 300 {- TODO magic number -})
-                (pure $ \case
+                (asTypeOf (pure $ const $ pure ()) $ pure $ \case
                     MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
                     MsgLeiosBlockOffer p ebBytesSize -> do
                         ebId <- MVar.modifyMVar getLeiosEbBodies $ \ebBodies1 -> do

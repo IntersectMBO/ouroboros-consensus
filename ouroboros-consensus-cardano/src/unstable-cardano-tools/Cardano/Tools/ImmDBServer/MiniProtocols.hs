@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -13,8 +14,8 @@
 
 -- | Implement ChainSync and BlockFetch servers on top of just the immutable DB.
 module Cardano.Tools.ImmDBServer.MiniProtocols (
+  LeiosNotifyContext (..),
   immDBServer,
-  LeiosContext (..),
   ) where
 
 import           Cardano.Slotting.Slot (WithOrigin (At))
@@ -67,9 +68,10 @@ import           Ouroboros.Network.Protocol.Handshake.Version (Version (..))
 import           Ouroboros.Network.Protocol.KeepAlive.Server
                      (keepAliveServerPeer)
 
--- import LeiosDemoOnlyTestFetch
-import LeiosDemoOnlyTestNotify
-import LeiosDemoTypes (LeiosPoint)
+import           LeiosDemoOnlyTestFetch
+import           LeiosDemoOnlyTestNotify
+import qualified LeiosDemoLogic as LeiosLogic
+import qualified LeiosDemoTypes as Leios
 
 immDBServer ::
      forall m blk addr.
@@ -85,10 +87,11 @@ immDBServer ::
   -> ImmutableDB m blk
   -> NetworkMagic
   -> (SlotNo -> m DiffTime)
-  -> LeiosContext m
+  -> (ResourceRegistry m -> m (LeiosNotifyContext m))
+  -> m (LeiosLogic.SomeLeiosFetchContext m)
   -> Versions NodeToNodeVersion NodeToNodeVersionData
        (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ())
-immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay leios = do
+immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNotifyContext mkLeiosFetchContext = do
     forAllVersions application
   where
     forAllVersions ::
@@ -141,13 +144,11 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay leios = do
                 leiosNotifyMiniProtocolNum
                 (const Consensus.N2N.leiosNotifyProtocolLimits)
                 leiosNotifyProt
-{-
             , mkMiniProtocol
                 Mux.StartOnDemand
                 leiosFetchMiniProtocolNum
                 (const Consensus.N2N.leiosFetchProtocolLimits)
-                undefined
--}
+                leiosFetchProt
             ]
           where
             Consensus.N2N.Codecs {
@@ -155,6 +156,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay leios = do
               , cChainSyncCodecSerialised
               , cBlockFetchCodecSerialised
               , cLeiosNotifyCodec
+              , cLeiosFetchCodec
               } =
               Consensus.N2N.defaultCodecs codecCfg blockVersion encAddr decAddr version
 
@@ -178,13 +180,21 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay leios = do
                 -- never reply, there is no timeout
                 MiniProtocolCb $ \_ctx _channel -> forever $ threadDelay 10
             leiosNotifyProt =
-                MiniProtocolCb $ \_ctx channel ->
-                runPeer nullTracer cLeiosNotifyCodec channel
+                MiniProtocolCb $ \_ctx channel -> id
+              $ withRegistry $ \reg -> id
+              $ mkLeiosNotifyContext reg >>= \leiosContext -> id
+              $ runPeer nullTracer cLeiosNotifyCodec channel
               $ leiosNotifyServerPeer
-                    (MVar.takeMVar (leiosMailbox leios) <&> \case
+                    (MVar.takeMVar (leiosMailbox leiosContext) <&> \case
                         (p, Just sz) -> MsgLeiosBlockOffer p sz
                         (p, Nothing) -> MsgLeiosBlockTxsOffer p
                     )
+            leiosFetchProt =
+                MiniProtocolCb $ \_ctx channel -> id
+              $ mkLeiosFetchContext >>= \(LeiosLogic.MkSomeLeiosFetchContext leiosContext) -> id
+              $ runPeer nullTracer cLeiosFetchCodec channel
+              $ leiosFetchServerPeer
+              $ pure (LeiosLogic.leiosFetchHandler leiosContext)
 
         mkMiniProtocol miniProtocolStart miniProtocolNum limits proto = MiniProtocol {
             miniProtocolNum
@@ -298,6 +308,6 @@ data ImmDBServerException =
 
 -----
 
-data LeiosContext m = MkLeiosContext {
-    leiosMailbox :: MVar.MVar m (LeiosPoint, Maybe Word32)
+data LeiosNotifyContext m = MkLeiosNotifyContext {
+    leiosMailbox :: !(MVar.MVar m (Leios.LeiosPoint, Maybe Word32))
   }

@@ -319,6 +319,7 @@ library
     contra-tracer,
     deepseq,
     diff-containers >=1.2,
+    direct-sqlite,
     filelock,
     fingertree-rm >=1.0,
     fs-api ^>=0.3,

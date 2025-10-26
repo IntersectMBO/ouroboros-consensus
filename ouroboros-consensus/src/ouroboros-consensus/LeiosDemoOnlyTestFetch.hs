@@ -26,6 +26,7 @@ module LeiosDemoOnlyTestFetch
   , LeiosFetchClientPeer
   , LeiosFetchClientPeerPipelined
   , LeiosFetchServerPeer
+  , LeiosFetchRequestHandler (..)
   , leiosFetchClientPeer
   , leiosFetchClientPeerPipelined
   , leiosFetchServerPeer
@@ -43,6 +44,7 @@ import           Data.Kind (Type)
 import           Data.Primitive.MutVar (MutVar)
 import qualified Data.Primitive.MutVar as Prim
 import           Data.Singletons
+import qualified Data.Vector as V
 import           Data.Word (Word16, Word64)
 import qualified Network.Mux.Types as Mux
 import           Network.TypedProtocol.Codec.CBOR
@@ -117,7 +119,7 @@ instance Protocol (LeiosFetch point eb tx) where
       -> [(Word16, Word64)]
       -> Message (LeiosFetch point eb tx) StIdle (StBusy StBlockTxs)
     MsgLeiosBlockTxs
-      :: ![tx]
+      :: !(V.Vector tx)
       -> Message (LeiosFetch point eb tx) (StBusy StBlockTxs) StIdle
 
     -- MsgLeiosVotesRequest
@@ -232,7 +234,8 @@ encodeLeiosFetch encodeP encodeEb encodeTx = encode
       MsgLeiosBlockTxs txs ->
            CBOR.encodeListLen 2
         <> CBOR.encodeWord 3
-        <> CBOR.encodeListLenIndef <> foldr (\tx r -> encodeTx tx <> r) CBOR.encodeBreak txs
+        <> CBOR.encodeListLen (fromIntegral $ V.length txs)
+        <> foldMap encodeTx txs
       -- MsgLeiosVotesRequest
       -- MsgLeiosVoteDelivery
       -- MsgLeiosBlockRangeRequest
@@ -275,7 +278,12 @@ decodeLeiosFetch decodeP decodeEb decodeTx = decode
           bitmaps <- decodeBitmaps
           return $ SomeMessage $ MsgLeiosBlockTxsRequest p bitmaps
         (SingBlockTxs, 2, 3) -> do
-          txs <- CBOR.decodeListLenIndef *> CBOR.decodeSequenceLenIndef (flip (:)) [] reverse decodeTx
+          n <- CBOR.decodeListLen
+          -- TODO does V.generateM allocate exacly one buffer, via the hint?
+          --
+          -- If not, we could do so manually by relying on the fact that
+          -- Decoder is ultimate in ST.
+          txs <- V.generateM n $ \_i -> decodeTx
           return $ SomeMessage $ MsgLeiosBlockTxs txs
         -- MsgLeiosVotesRequest
         -- MsgLeiosVoteDelivery
@@ -360,11 +368,11 @@ decodeBitmaps =
 
 -----
 
-data SomeJob point eb tx m =
+data SomeLeiosFetchJob point eb tx m =
     forall st'.
         StateTokenI (StBusy st')
      =>
-        MkSomeJob
+        MkSomeLeiosFetchJob
             (Message (LeiosFetch point eb tx) StIdle (StBusy st'))
             (m (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ()))
 
@@ -375,7 +383,7 @@ leiosFetchClientPeer ::
   forall m point eb tx a.
      Monad m
   =>
-     m (Either a (SomeJob point eb tx m))
+     m (Either a (SomeLeiosFetchJob point eb tx m))
   ->
      Peer (LeiosFetch point eb tx) AsClient NonPipelined StIdle m a
 leiosFetchClientPeer checkDone =
@@ -386,7 +394,7 @@ leiosFetchClientPeer checkDone =
         Left x ->
             Yield ReflClientAgency MsgDone
           $ Done ReflNobodyAgency x
-        Right (MkSomeJob req k) -> case req of
+        Right (MkSomeLeiosFetchJob req k) -> case req of
             MsgLeiosBlockRequest{} -> do
                 Yield ReflClientAgency req
               $ Await ReflServerAgency $ \rsp -> case rsp of
@@ -403,7 +411,7 @@ leiosFetchClientPeer checkDone =
 type LeiosFetchServerPeer point eb tx m a =
     Peer (LeiosFetch point eb tx) AsServer NonPipelined StIdle m ()
 
-newtype RequestHandler point eb tx m = MkRequestHandler (
+newtype LeiosFetchRequestHandler point eb tx m = MkLeiosFetchRequestHandler (
     forall st'.
         Message (LeiosFetch point eb tx) StIdle (StBusy st')
      ->
@@ -414,7 +422,7 @@ leiosFetchServerPeer ::
   forall m point eb tx.
      Monad m
   =>
-     m (RequestHandler point eb tx m)
+     m (LeiosFetchRequestHandler point eb tx m)
   ->
      Peer (LeiosFetch point eb tx) AsServer NonPipelined StIdle m ()
 leiosFetchServerPeer handler =
@@ -424,13 +432,13 @@ leiosFetchServerPeer handler =
     go = Await ReflClientAgency $ \req -> case req of
         MsgDone -> Done ReflNobodyAgency ()
         MsgLeiosBlockRequest{} -> Effect $ do
-            MkRequestHandler f <- handler
+            MkLeiosFetchRequestHandler f <- handler
             rsp <- f req
             pure
               $ Yield ReflServerAgency rsp
               $ go
         MsgLeiosBlockTxsRequest{} -> Effect $ do
-            MkRequestHandler f <- handler
+            MkLeiosFetchRequestHandler f <- handler
             rsp <- f req
             pure
               $ Yield ReflServerAgency rsp
@@ -453,7 +461,7 @@ leiosFetchClientPeerPipelined ::
   forall m point eb tx a.
      PrimMonad m
   =>
-     m (Either (m (Either a (SomeJob point eb tx m))) (Either a (SomeJob point eb tx m)))
+     m (Either (m (Either a (SomeLeiosFetchJob point eb tx m))) (Either a (SomeLeiosFetchJob point eb tx m)))
      -- ^ either the return value or the next job, or a blocking request for those two
   ->
     PeerPipelined (LeiosFetch point eb tx) AsClient StIdle m a
@@ -476,7 +484,7 @@ leiosFetchClientPeerPipelined tryNext =
                             (\MkC -> go1 stop m)
             Right x -> pure $ go2 stop n x
 
-    go2 :: MutVar (PrimState m) WhetherDraining -> Nat n -> Either a (SomeJob point eb tx m) -> X point eb tx m a n
+    go2 :: MutVar (PrimState m) WhetherDraining -> Nat n -> Either a (SomeLeiosFetchJob point eb tx m) -> X point eb tx m a n
     go2 stop !n = \case
         Left x -> Effect $ do
             Prim.writeMutVar stop AlreadyDraining
@@ -489,8 +497,8 @@ leiosFetchClientPeerPipelined tryNext =
                         (Just $ send stop n job)
                         (\MkC -> go1 stop m)
 
-    send :: MutVar (PrimState m) WhetherDraining -> Nat n -> SomeJob point eb tx m -> X point eb tx m a n
-    send stop !n (MkSomeJob req k) =
+    send :: MutVar (PrimState m) WhetherDraining -> Nat n -> SomeLeiosFetchJob point eb tx m -> X point eb tx m a n
+    send stop !n (MkSomeLeiosFetchJob req k) =
         YieldPipelined
             ReflClientAgency
             req

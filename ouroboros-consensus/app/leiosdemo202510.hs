@@ -536,9 +536,9 @@ msgLeiosBlockTxsRequest db ebId bitmaps = do
                     Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
         txOffsets = unfoldr nextOffsetDESC (reverse bitmaps)
     -- fill in-memory table
+    withDieMsg $ DB.exec db (fromString sql_attach_memTxPoints)
     withDieMsg $ DB.exec db (fromString "BEGIN")
     do
-        withDieMsg $ DB.exec db (fromString sql_attach_memTxPoints)
         stmt <- withDieJust $ DB.prepare db (fromString sql_insert_memTxPoints)
         withDie $ DB.bindInt64 stmt 1 (fromIntegralEbId ebId)
         forM_ txOffsets $ \txOffset -> do

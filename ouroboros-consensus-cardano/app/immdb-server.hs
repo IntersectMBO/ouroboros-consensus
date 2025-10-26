@@ -22,12 +22,13 @@ import           Options.Applicative (ParserInfo, execParser, fullDesc, help,
                      strOption, value, auto, option)
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           System.Exit (die)
+import qualified System.IO as SIO
 
 main :: IO ()
 main = withStdTerminalHandles $ do
+    SIO.hSetBuffering SIO.stdout SIO.LineBuffering
     cryptoInit
-    Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot, leiosScheduleFile} <- execParser optsParser
-
+    Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot, leiosDbFile, leiosScheduleFile} <- execParser optsParser
     let hints = Socket.defaultHints { addrFlags = [Socket.AI_NUMERICHOST], addrSocketType = Socket.Stream}
     addrInfo <- do
       addrInfos <- Socket.getAddrInfo (Just hints) (Just address) (Just port)
@@ -46,6 +47,7 @@ main = withStdTerminalHandles $ do
                                (Socket.addrAddress addrInfo)
                                pInfoConfig
                                (mkGetSlotDelay refSlotNr refTimeForRefSlot)
+                               leiosDbFile
                                (leiosSchedule :: ImmDBServer.LeiosSchedule)
     where
       -- NB we assume for now the slot duration is 1 second.
@@ -78,6 +80,8 @@ data Opts = Opts {
   , refTimeForRefSlot  :: POSIX.POSIXTime
   -- ^ Reference slot onset. Wallclock time that corresponds to the
   -- reference slot.
+  , leiosDbFile :: FilePath
+  -- ^ SQLite3 file storing the Leios data
   , leiosScheduleFile :: FilePath
   -- ^ JSON file encoding the 'ImmDBServer.LeiosSchedule'
   }
@@ -121,9 +125,14 @@ optsParser =
         , help "UTC time for the reference slot, provided as POSIX seconds (Unix timestamp)"
         , metavar "POSIX_SECONDS"
         ]
+      leiosDbFile <- strOption $ mconcat
+        [ long "leios-db"
+        , help "Path to the Leios database"
+        , metavar "PATH"
+        ]
       leiosScheduleFile <- strOption $ mconcat
         [ long "leios-schedule"
         , help "Path to json file specifying when to send Leios offers"
         , metavar "PATH"
         ]
-      pure Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot, leiosScheduleFile}
+      pure Opts {immDBDir, port, address, configFile, refSlotNr, refTimeForRefSlot, leiosDbFile, leiosScheduleFile}

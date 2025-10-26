@@ -563,6 +563,7 @@ library unstable-cardano-tools
     compact,
     containers >=0.5 && <0.8,
     contra-tracer,
+    direct-sqlite,
     directory,
     dot,
     filepath,
@@ -583,7 +584,6 @@ library unstable-cardano-tools
     ouroboros-network-framework ^>=0.18,
     ouroboros-network-protocols,
     resource-registry,
-    serialise,
     singletons,
     sop-core,
     sop-extras,
@@ -592,6 +592,7 @@ library unstable-cardano-tools
     text-builder >=1,
     transformers,
     transformers-except,
+    vector,
 
 executable db-analyser
   import: common-lib

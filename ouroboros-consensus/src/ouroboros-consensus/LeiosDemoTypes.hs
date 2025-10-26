@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
 import           Cardano.Binary (enforceSize)
@@ -10,6 +12,7 @@ import           Codec.Serialise (decode, encode)
 import           Control.Concurrent.Class.MonadMVar (MVar)
 import           Control.Concurrent.Class.MonadSTM (TVar)
 import           Data.ByteString (ByteString)
+import           Data.Int (Int64)
 import           Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import           Data.Map (Map)
@@ -20,12 +23,17 @@ import qualified Data.Set as Set
 import           Data.String (fromString)
 import qualified Data.Vector as V
 import           Data.Word (Word16, Word32, Word64)
+import qualified Database.SQLite3.Direct as DB
 import           Ouroboros.Consensus.Util (ShowProxy (..))
+import           System.Exit (die)
 
 type BytesSize = Word32
 
 newtype EbId = MkEbId Int
   deriving (Eq, Ord)
+
+fromIntegralEbId :: Integral a => EbId -> a
+fromIntegralEbId (MkEbId x) = fromIntegral x
 
 newtype PeerId a = MkPeerId a
   deriving (Eq, Ord)
@@ -206,3 +214,95 @@ decodeLeiosEb = do
     -- ultimate in ST.
     fmap MkLeiosEb $ V.generateM n $ \_i -> do
         (,) <$> (fmap MkTxHash CBOR.decodeBytes) <*> CBOR.decodeWord32
+
+-----
+
+maxMsgLeiosBlockBytesSize :: BytesSize
+maxMsgLeiosBlockBytesSize = 500 * 10^(3 :: Int)   -- from CIP-0164's recommendations
+
+minEbItemBytesSize :: BytesSize
+minEbItemBytesSize = (32 - hashOverhead) + minSizeOverhead
+  where
+    hashOverhead = 1 + 1   -- bytestring major byte + a length = 32
+    minSizeOverhead = 1 + 1   -- int major byte + a value at low as 55
+
+maxEbItems :: Int
+maxEbItems =
+    fromIntegral
+  $         (maxMsgLeiosBlockBytesSize - msgOverhead - sequenceOverhead)
+    `div`
+            minEbItemBytesSize
+  where
+    msgOverhead = 1 + 1   -- short list len + small word
+    sequenceOverhead = 1 + 2   -- sequence major byte + a length > 255
+
+-----
+
+data LeiosDb stmt m = MkLeiosDb {
+    dbBindBlob :: !(stmt -> DB.ParamIndex -> ByteString -> m ())
+  ,
+    dbBindInt64 :: !(stmt -> DB.ParamIndex -> Int64 -> m ())
+  ,
+    dbColumnBlob :: !(stmt -> DB.ColumnIndex -> m ByteString)
+  ,
+    dbColumnInt64 :: !(stmt -> DB.ColumnIndex -> m Int64)
+  ,
+    dbExec :: !(DB.Utf8 -> m ())
+  ,
+    dbFinalize :: !(stmt -> m ())
+  ,
+    dbPrepare :: !(DB.Utf8 -> m stmt)
+  ,
+    dbReset :: !(stmt -> m ())
+  ,
+    dbStep :: !(stmt -> m DB.StepResult)
+  ,
+    dbStep1 :: !(stmt -> m ())
+  }
+
+leiosDbFromSqliteDirect :: DB.Database -> LeiosDb DB.Statement IO
+leiosDbFromSqliteDirect db = MkLeiosDb {
+    dbBindBlob = \stmt p v -> withDie $ DB.bindBlob stmt p v
+  ,
+    dbBindInt64 = \stmt p v -> withDie $ DB.bindInt64 stmt p v
+  ,
+    dbColumnBlob = \stmt c -> DB.columnBlob stmt c
+  ,
+    dbColumnInt64 = \stmt c -> DB.columnInt64 stmt c
+  ,
+    dbExec = \q -> withDieMsg $ DB.exec db q
+  ,
+    dbFinalize = \stmt -> withDie $ DB.finalize stmt
+  ,
+    dbPrepare = \q -> withDieJust $ DB.prepare db q
+  ,
+    dbReset = \stmt -> withDie $ DB.reset stmt
+  ,
+    dbStep = \stmt -> withDie $ DB.stepNoCB stmt
+  ,
+    dbStep1 = \stmt -> withDieDone $ DB.stepNoCB stmt
+  }
+
+withDiePoly :: Show b => (e -> b) -> IO (Either e a) -> IO a
+withDiePoly f io =
+    io >>= \case
+        Left e -> die $ show $ f e
+        Right x -> pure x
+
+withDieMsg :: IO (Either (DB.Error, DB.Utf8) a) -> IO a
+withDieMsg = withDiePoly snd
+
+withDie :: IO (Either DB.Error a) -> IO a
+withDie = withDiePoly id
+
+withDieJust :: IO (Either DB.Error (Maybe a)) -> IO a
+withDieJust io =
+    withDie io >>= \case
+        Nothing -> die "impossible!"
+        Just x -> pure x
+
+withDieDone :: IO (Either DB.Error DB.StepResult) -> IO ()
+withDieDone io =
+    withDie io >>= \case
+        DB.Row -> die "impossible!"
+        DB.Done -> pure ()

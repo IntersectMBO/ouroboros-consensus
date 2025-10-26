@@ -33,6 +33,11 @@ if [[ -z "${LEIOS_SCHEDULE}" ]]; then
     exit 1
 fi
 
+if [[ -z "${LEIOS_DB}" ]]; then
+    echo "Error: \${LEIOS_DB} must be the path to an exist Leios database." >&2
+    exit 1
+fi
+
 if [[ -z "${REF_SLOT}" ]] || [[ ! "$REF_SLOT" =~ ^[0-9]*$ ]] || [[ "$REF_SLOT" -lt 0 ]]; then
      echo "Error: \${REF_SLOT} must be a non-negative integer, a slot number" >&2
      exit 1
@@ -166,6 +171,7 @@ IMMDB_CMD_CORE="${IMMDB_SERVER} \
     --initial-slot $REF_SLOT \
     --initial-time $ONSET_OF_REF_SLOT
     --leios-schedule $LEIOS_SCHEDULE
+    --leios-db $LEIOS_DB
     --port ${PORT1}"
 
 echo "Command: $IMMDB_CMD_CORE &> $TMP_DIR/immdb-server.log &"
