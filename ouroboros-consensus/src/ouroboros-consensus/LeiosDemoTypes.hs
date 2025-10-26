@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
@@ -10,7 +11,9 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
 import           Control.Concurrent.Class.MonadMVar (MVar)
+import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.Concurrent.Class.MonadSTM (TVar)
+import qualified Control.Concurrent.Class.MonadSTM as STM
 import           Data.ByteString (ByteString)
 import           Data.Int (Int64)
 import           Data.IntMap (IntMap)
@@ -18,6 +21,7 @@ import qualified Data.IntMap as IntMap
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.String (fromString)
@@ -25,6 +29,7 @@ import qualified Data.Vector as V
 import           Data.Word (Word16, Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
 import           Ouroboros.Consensus.Util (ShowProxy (..))
+import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           System.Exit (die)
 
 type BytesSize = Word32
@@ -114,6 +119,12 @@ data LeiosPeerVars m = MkLeiosPeerVars {
     -- the Diffusion Layer's control message to be actionable.
     requestsToSend :: !(TVar m (Seq LeiosFetchRequest))
   }
+
+newLeiosPeerVars :: IOLike m => m (LeiosPeerVars m)
+newLeiosPeerVars = do
+    offerings <- MVar.newMVar (Set.empty, Set.empty)
+    requestsToSend <- STM.newTVarIO Seq.empty
+    pure MkLeiosPeerVars {offerings, requestsToSend}
 
 data LeiosEbBodies = MkLeiosEbBodies {
     acquiredEbBodies :: !(Set EbId)

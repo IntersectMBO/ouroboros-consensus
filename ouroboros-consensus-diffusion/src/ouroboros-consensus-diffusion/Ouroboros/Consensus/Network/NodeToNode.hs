@@ -307,7 +307,7 @@ mkHandlers
                 (atomically controlMessageSTM <&> \case
                     Terminate -> Left ()
                     _ -> Right 300 {- TODO magic number -})
-                (asTypeOf (pure $ const $ pure ()) $ pure $ \case
+                (pure $ \case
                     MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
                     MsgLeiosBlockOffer p ebBytesSize -> do
                         ebId <- MVar.modifyMVar getLeiosEbBodies $ \ebBodies1 -> do
@@ -323,7 +323,7 @@ mkHandlers
                         peerVars <- do
                             peersVars <- MVar.readMVar getLeiosPeersVars
                             case Map.lookup (Leios.MkPeerId peer) peersVars of
-                                Nothing -> error "TODO"
+                                Nothing -> error "impossible!"
                                 Just x -> pure x
                         MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
                             let !offers1' = Set.insert ebId offers1
@@ -334,7 +334,7 @@ mkHandlers
                         peerVars <- do
                             peersVars <- MVar.readMVar getLeiosPeersVars
                             case Map.lookup (Leios.MkPeerId peer) peersVars of
-                                Nothing -> error "TODO"
+                                Nothing -> error "impossible!"
                                 Just x -> pure x
                         MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
                             let !offers2' = Set.insert ebId offers2
@@ -959,6 +959,11 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                                eicConnectionId   = them,
                                eicControlMessage = controlMessageSTM
                              } channel = do
+      let NodeKernel { getLeiosPeersVars } = kernel
+      MVar.modifyMVar_ getLeiosPeersVars $ \leiosPeersVars -> do
+          x <- Leios.newLeiosPeerVars
+          let !leiosPeersVars' = Map.insert (Leios.MkPeerId them) x leiosPeersVars
+          pure leiosPeersVars'
       labelThisThread "LeiosNotifyClient"
       ((), trailing) <- runPipelinedPeerWithLimits
         (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
