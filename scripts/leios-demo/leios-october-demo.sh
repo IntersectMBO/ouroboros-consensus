@@ -177,6 +177,7 @@ IMMDB_SERVER_PID=$!
 echo "ImmDB server started with PID: $IMMDB_SERVER_PID"
 
 read -n 1 -s -r -p "Press any key to stop the spawned processes..."
+echo
 
 echo "Killing processes $IMMDB_SERVER_PID (immdb-server), $CARDANO_NODE_0_PID (node-0), and $MOCKED_PEER_PID (node-1)..."
 
