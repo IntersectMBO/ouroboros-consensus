@@ -29,6 +29,7 @@ module LeiosDemoOnlyTestNotify
   , leiosNotifyClientPeer
   , leiosNotifyClientPeerPipelined
   , leiosNotifyServerPeer
+  , toLeiosNotifyClientPeerPipelined
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
@@ -365,6 +366,11 @@ type X point announcement m a n =
 type LeiosNotifyClientPeerPipelined point announcement m a =
     PeerPipelined (LeiosNotify point announcement) AsClient StIdle m a
 
+toLeiosNotifyClientPeerPipelined ::
+     Peer (LeiosNotify point announcement) AsClient (Pipelined Z C) StIdle m a
+  -> LeiosNotifyClientPeerPipelined point announcement m a
+toLeiosNotifyClientPeerPipelined = PeerPipelined
+
 data C = MkC
 
 data WhetherDraining = AlreadyDraining | NotYetDraining
@@ -378,9 +384,9 @@ leiosNotifyClientPeerPipelined ::
   ->
      m (Message (LeiosNotify point announcement) StBusy StIdle -> m ())
   ->
-    PeerPipelined (LeiosNotify point announcement) AsClient StIdle m a
+    Peer (LeiosNotify point announcement) AsClient (Pipelined Z C) StIdle m a
 leiosNotifyClientPeerPipelined checkDone k0 =
-    PeerPipelined $ Effect $ do
+    Effect $ do
         stop <- Prim.newMutVar NotYetDraining
         pure $ go stop Zero
   where

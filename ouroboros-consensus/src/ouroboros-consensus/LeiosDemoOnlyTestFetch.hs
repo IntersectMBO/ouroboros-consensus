@@ -30,6 +30,7 @@ module LeiosDemoOnlyTestFetch
   , leiosFetchClientPeer
   , leiosFetchClientPeerPipelined
   , leiosFetchServerPeer
+  , toLeiosFetchClientPeerPipelined
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
@@ -453,6 +454,11 @@ type X point eb tx m a n =
 type LeiosFetchClientPeerPipelined point eb tx m a =
     PeerPipelined (LeiosFetch point eb tx) AsClient StIdle m a
 
+toLeiosFetchClientPeerPipelined ::
+     Peer (LeiosFetch point eb tx) AsClient (Pipelined Z C) StIdle m a
+  -> LeiosFetchClientPeerPipelined point eb tx m a
+toLeiosFetchClientPeerPipelined = PeerPipelined
+
 data C = MkC
 
 data WhetherDraining = AlreadyDraining | NotYetDraining
@@ -464,9 +470,9 @@ leiosFetchClientPeerPipelined ::
      m (Either (m (Either a (SomeLeiosFetchJob point eb tx m))) (Either a (SomeLeiosFetchJob point eb tx m)))
      -- ^ either the return value or the next job, or a blocking request for those two
   ->
-    PeerPipelined (LeiosFetch point eb tx) AsClient StIdle m a
+    Peer (LeiosFetch point eb tx) AsClient (Pipelined Z C) StIdle m a
 leiosFetchClientPeerPipelined tryNext =
-    PeerPipelined $ Effect $ do
+    Effect $ do
         stop <- Prim.newMutVar NotYetDraining
         pure $ go1 stop Zero
   where

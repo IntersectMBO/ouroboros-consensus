@@ -303,8 +303,12 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
-      , hLeiosNotifyClient = \_version controlMessageSTM peer ->
-            leiosNotifyClientPeerPipelined
+      , hLeiosNotifyClient = \_version controlMessageSTM peer -> toLeiosNotifyClientPeerPipelined $ Effect $ do
+            MVar.modifyMVar_ getLeiosPeersVars $ \leiosPeersVars -> do
+                x <- Leios.newLeiosPeerVars
+                let !leiosPeersVars' = Map.insert (Leios.MkPeerId peer) x leiosPeersVars
+                pure leiosPeersVars'
+            pure $ leiosNotifyClientPeerPipelined
                 (atomically controlMessageSTM <&> \case
                     Terminate -> Left ()
                     _ -> Right 300 {- TODO magic number -})
@@ -346,6 +350,7 @@ mkHandlers
             leiosNotifyServerPeer
                 (let loop = do threadDelay (60 :: DiffTime); loop in loop)   -- TODO
       , hLeiosFetchClient = \_version controlMessageSTM _peer ->
+      , hLeiosFetchClient = \_version controlMessageSTM _peer -> toLeiosFetchClientPeerPipelined $
             leiosFetchClientPeerPipelined
                 (pure $ Left $ atomically $ controlMessageSTM >>= \case
                     Terminate -> pure $ Left ()
@@ -965,11 +970,6 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                                eicConnectionId   = them,
                                eicControlMessage = controlMessageSTM
                              } channel = do
-      let NodeKernel { getLeiosPeersVars } = kernel
-      MVar.modifyMVar_ getLeiosPeersVars $ \leiosPeersVars -> do
-          x <- Leios.newLeiosPeerVars
-          let !leiosPeersVars' = Map.insert (Leios.MkPeerId them) x leiosPeersVars
-          pure leiosPeersVars'
       labelThisThread "LeiosNotifyClient"
       ((), trailing) <- runPipelinedPeerWithLimits
         (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
