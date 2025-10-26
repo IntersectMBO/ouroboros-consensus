@@ -306,7 +306,7 @@ generateDb prng0 db ebRecipes = do
             ebHash =
                 Hash.castHash
               $ Hash.hashWithSerialiser
-                    (encodeEB (fromIntegral . BS.length) (\(MkHashBytes x) -> x))
+                    (encodeEB (V.length txs) (fromIntegral . BS.length) (\(MkHashBytes x) -> x))
                     txs
         let (ebId, mbDynEnv') = ebIdFromPoint ebSlot (Hash.hashToBytes ebHash) dynEnv
         withDieMsg $ DB.exec db (fromString "BEGIN")
@@ -441,27 +441,14 @@ encodeEbPair bytesToLen hashToBytes (txBytes, txHash) =
     CBOR.encodeBytes (hashToBytes txHash)
  <> CBOR.encodeWord16 (bytesToLen txBytes)
 
-encodeEB :: Foldable f => (b -> Word16) -> (h -> ByteString) -> f (b, h) -> CBOR.Encoding
-encodeEB bytesToLen hashToBytes ebPairs =
-    CBOR.encodeMapLenIndef
- <> foldr
-        (\x r -> encodeEbPair bytesToLen hashToBytes x <> r)
-        CBOR.encodeBreak
-        ebPairs
+encodeEB :: Foldable f => Int -> (b -> Word16) -> (h -> ByteString) -> f (b, h) -> CBOR.Encoding
+encodeEB n bytesToLen hashToBytes ebPairs =
+    CBOR.encodeMapLen (fromIntegral n)
+ <> foldMap (encodeEbPair bytesToLen hashToBytes) ebPairs
 
 decodeEbPair :: CBOR.Decoder s (ByteString, Word16)
 decodeEbPair =
     (,) <$> CBOR.decodeBytes <*> CBOR.decodeWord16
-
--- | The logic in this module instead does this decoding incrementally
-_decodeEB :: CBOR.Decoder s (X (ByteString, Word16))
-_decodeEB =
-    CBOR.decodeMapLenIndef
- *> CBOR.decodeSequenceLenIndef
-       pushX
-       emptyX
-       id
-       decodeEbPair
 
 -----
 
@@ -492,27 +479,30 @@ msgLeiosBlockRequest db ebId = do
     -- get the EB items
     stmt <- withDieJust $ DB.prepare db (fromString sql_lookup_ebBodies_DESC)
     withDie $ DB.bindInt64 stmt 1 (fromIntegralEbId ebId)
-    let loop !acc =
+    let loop !accN !acc =
             withDie (DB.stepNoCB stmt) >>= \case
-                DB.Done -> pure acc
+                DB.Done -> pure (accN, acc)
                 DB.Row -> do
                     -- TODO use a sink buffer to avoid polluting the heap with these temporary copies?
-                    txHashBytes <- DB.columnBlob stmt 0
-                    txBytesSize <- DB.columnInt64 stmt 1
-                    loop $ pushX acc (txBytesSize, txHashBytes)
-    acc <- loop emptyX
+                    txOffset <- DB.columnInt64 stmt 0
+                    txHashBytes <- DB.columnBlob stmt 1
+                    txBytesSize <- DB.columnInt64 stmt 2
+                    loop
+                        (if 0 == accN then fromIntegral (txOffset + 1) else accN)
+                        (pushX acc (txBytesSize, txHashBytes))
+    (n, acc) <- loop 0 emptyX
     -- combine the EB items
     BS.putStr
       $ BS16.encode
       $ serialize'
-      $ encodeEB fromIntegral id acc
+      $ encodeEB n fromIntegral id acc
     putStrLn ""
 
 -- | It's DESCending because the accumulator within the 'msgLeiosBlockRequest'
 -- logic naturally reverses it
 sql_lookup_ebBodies_DESC :: String
 sql_lookup_ebBodies_DESC =
-    "SELECT txHashBytes, txBytesSize FROM ebTxs\n\
+    "SELECT txOffset, txHashBytes, txBytesSize FROM ebTxs\n\
     \WHERE ebId = ?\n\
     \ORDER BY txOffset DESC\n\
     \"
@@ -650,28 +640,21 @@ msgLeiosBlock db lfst0 peerId ebPath = do
     when (ebHash /= ebHash'') $ do
         die $ "MsgLeiosBlock hash mismatch: " <> show (ebHash, ebHash'')
     ebId <- ebIdFromPoint' db ebSlot (let MkHashBytes x = ebHash in x)
-    stmt_write_ebBodies <- withDieJust $ DB.prepare db (fromString sql_insert_ebBody)
+    stmt <- withDieJust $ DB.prepare db (fromString sql_insert_ebBody)
     withDieMsg $ DB.exec db (fromString "BEGIN")
     -- decode incrementally and simultaneously INSERT INTO ebTxs
-    withDie $ DB.bindInt64 stmt_write_ebBodies 1 (fromIntegralEbId ebId)
-    let decodeBreakOrEbPair = do
-            stop <- CBOR.decodeBreakOr
-            if stop then pure Nothing else Just <$> decodeEbPair
-    let go1 txOffset bytes = do
-            (bytes', next) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes decodeBreakOrEbPair bytes
+    withDie $ DB.bindInt64 stmt 1 (fromIntegralEbId ebId)
+    (ebBytes2, n) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes CBOR.decodeMapLen $ BSL.fromStrict ebBytes
+    let go1 txOffset bytes = if fromIntegral n == txOffset then pure () else do
+            (bytes', next) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes decodeEbPair bytes
             go2 txOffset bytes' next
-        go2 txOffset bytes = \case
-            Just (txHashBytes, txBytesSize) -> do
-                withDie $ DB.bindInt64    stmt_write_ebBodies 2 txOffset
-                withDie $ DB.bindBlob     stmt_write_ebBodies 3 txHashBytes
-                withDie $ DB.bindInt64    stmt_write_ebBodies 4 (fromIntegral txBytesSize)
-                withDieDone $ DB.stepNoCB stmt_write_ebBodies
-                withDie $ DB.reset        stmt_write_ebBodies
-                go1 (txOffset + 1) bytes
-            Nothing
-              | not (BSL.null bytes) -> die "Incomplete EB decode"
-              | otherwise -> pure ()
-    (ebBytes2, ()) <- withDiePoly id $ pure $ CBOR.deserialiseFromBytes CBOR.decodeMapLenIndef $ BSL.fromStrict ebBytes
+        go2 txOffset bytes (txHashBytes, txBytesSize) = do
+            withDie $ DB.bindInt64    stmt 2 txOffset
+            withDie $ DB.bindBlob     stmt 3 txHashBytes
+            withDie $ DB.bindInt64    stmt 4 (fromIntegral txBytesSize)
+            withDieDone $ DB.stepNoCB stmt
+            withDie $ DB.reset        stmt
+            go1 (txOffset + 1) bytes
     go1 0 ebBytes2
     -- finalize the EB
     withDieMsg $ DB.exec db (fromString "COMMIT")
