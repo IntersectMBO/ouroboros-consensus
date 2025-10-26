@@ -132,7 +132,9 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Data.Map (Map)
 import qualified Data.Map as Map
 
-import LeiosDemoTypes
+import           LeiosDemoTypes (LeiosEbBodies, LeiosOutstanding, LeiosPeerVars, SomeLeiosDb)
+import qualified LeiosDemoTypes as Leios
+import qualified LeiosDemoLogic as Leios
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -195,15 +197,13 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
 
       -- See 'LeiosPeerVars' for the write patterns
     , getLeiosNewDbConnection :: m (SomeLeiosDb m)
-    , getLeiosPeersVars :: MVar m (Map (PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
+    , getLeiosPeersVars :: MVar m (Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
       -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
       -- eviction)
     , getLeiosEbBodies :: MVar m LeiosEbBodies
-      -- written to by the fetch logic and by the LeiosNotify&LeiosFetch
+      -- written to by the fetch logic, by the LeiosNotify&LeiosFetch, and by LeiosCopier
       -- clients (TODO and by eviction)
     , getLeiosOutstanding :: MVar m (LeiosOutstanding (ConnectionId addrNTN))
-      -- written to by the fetch logic and by the LeiosCopier
-    , getLeiosToCopy :: MVar m LeiosToCopy
       -- | Leios fetch logic 'MVar.takeMVar's before it runs
       --
       -- LeiosNotify clients, LeiosFetch clients, and the LeiosCopier
@@ -368,10 +368,25 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
 
     let getLeiosNewDbConnection = nkaGetLeiosNewDbConnection
     getLeiosPeersVars <- MVar.newMVar Map.empty
-    getLeiosEbBodies <- MVar.newMVar emptyLeiosEbBodies
-    getLeiosOutstanding <- MVar.newMVar emptyLeiosOutstanding
-    getLeiosToCopy <- MVar.newMVar emptyLeiosToCopy
+    getLeiosEbBodies <- MVar.newMVar Leios.emptyLeiosEbBodies
+    getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     getLeiosReady <- MVar.newEmptyMVar
+
+    void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
+        () <- MVar.takeMVar getLeiosReady
+        leiosPeersVars <- MVar.readMVar getLeiosPeersVars
+        offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
+        ebBodies <- MVar.readMVar getLeiosEbBodies
+        newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+            pure $ Leios.leiosFetchLogicIteration
+                Leios.demoLeiosFetchStaticEnv
+                (ebBodies, offerings)
+                outstanding
+        let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
+        (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
+            atomically $ do
+                StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
+        threadDelay (0.050 :: DiffTime)   -- TODO magic number
 
     return NodeKernel
       { getChainDB              = chainDB
@@ -394,7 +409,6 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getLeiosPeersVars
       , getLeiosEbBodies
       , getLeiosOutstanding
-      , getLeiosToCopy
       , getLeiosReady
       }
   where

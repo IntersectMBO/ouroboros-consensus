@@ -1118,7 +1118,7 @@ data LeiosFetchDynamicEnv = MkLeiosFetchDynamicEnv {
     cachedTxs :: Map TxHash BytesSize
   ,
     -- | All missing txs in the context of EBs worth retrieving the closure for
-    ebBodies :: Map EbId (IntMap (TxHash, BytesSize))
+    missingEbTxs :: Map EbId (IntMap (TxHash, BytesSize))
   ,
     -- | @slot -> hash -> EbId@
     --
@@ -1158,9 +1158,9 @@ data LeiosFetchDynamicEnv = MkLeiosFetchDynamicEnv {
     -- | Txs listed in received EBs but never themselves received
     missingTxBodies :: Set TxHash
   ,
-    -- | Reverse index of 'ebBodies'
+    -- | Reverse index of 'missingEbTxs'
     --
-    -- INVARIANT: @let (ebId, txOffset) = txOffsetss Map.! h in h = fst ((ebBodies IntMap.! ebId) IntMap.! txOffset)@
+    -- INVARIANT: @let (ebId, txOffset) = txOffsetss Map.! h in h = fst ((missingEbTxs IntMap.! ebId) IntMap.! txOffset)@
     txOffsetss :: Map TxHash (Map EbId Int)
   }
 
@@ -1222,7 +1222,7 @@ loadLeiosFetchDynEnvHelper full db = do
     pure MkLeiosFetchDynamicEnv {
         cachedTxs = cached
       ,
-        ebBodies = bodies
+        missingEbTxs = bodies
       ,
         ebPoints = ps
       ,
@@ -1278,7 +1278,7 @@ leiosFetchLogicIteration env dynEnv =
         go1 acc emptyLeiosFetchDecisions
       $ expand
       $ Map.toDescList
-      $ Map.map Left (missingEbBodies acc) `Map.union` Map.map Right (ebBodies dynEnv)
+      $ Map.map Left (missingEbBodies acc) `Map.union` Map.map Right (missingEbTxs dynEnv)
   where
     expand = \case
         [] -> []
@@ -1382,7 +1382,7 @@ leiosFetchLogicIteration env dynEnv =
           -- there's a peer who offered it and we haven't already requested it from them
       = let txBytesSize = case Map.lookupMax txOffsets' of
                 Nothing -> error "impossible!"
-                Just (ebId, txOffset) -> case Map.lookup ebId (ebBodies dynEnv) of
+                Just (ebId, txOffset) -> case Map.lookup ebId (missingEbTxs dynEnv) of
                     Nothing -> error "impossible!"
                     Just v -> snd $ v IntMap.! txOffset
             accNew' =

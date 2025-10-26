@@ -13,8 +13,8 @@ import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
 import           Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
-import           Control.Concurrent.Class.MonadSTM (TVar)
-import qualified Control.Concurrent.Class.MonadSTM as STM
+import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Data.ByteString (ByteString)
 import           Data.Int (Int64)
 import           Data.IntMap (IntMap)
@@ -74,19 +74,16 @@ data LeiosFetchRequest =
     LeiosBlockTxsRequest LeiosBlockTxsRequest
 
 data LeiosBlockRequest =
-    -- | ebSlot, ebHash
     MkLeiosBlockRequest
-        !SlotNo
-        !ByteString
+        !LeiosPoint
 
 data LeiosBlockTxsRequest =
-    -- | ebSlot, ebHash, bitmaps, txHashes
+    -- |
     --
     -- The hashes aren't sent to the peer, but they are used to validate the
     -- reply when it arrives.
     MkLeiosBlockTxsRequest
-        !SlotNo
-        !ByteString
+        !LeiosPoint
         [(Word16, Word64)]
         !(V.Vector TxHash)
 
@@ -118,13 +115,13 @@ data LeiosPeerVars m = MkLeiosPeerVars {
     --
     -- This is a 'TVar' so that the LeiosFetch client can wait on either it or
     -- the Diffusion Layer's control message to be actionable.
-    requestsToSend :: !(TVar m (Seq LeiosFetchRequest))
+    requestsToSend :: !(StrictTVar m (Seq LeiosFetchRequest))
   }
 
 newLeiosPeerVars :: IOLike m => m (LeiosPeerVars m)
 newLeiosPeerVars = do
     offerings <- MVar.newMVar (Set.empty, Set.empty)
-    requestsToSend <- STM.newTVarIO Seq.empty
+    requestsToSend <- StrictSTM.newTVarIO Seq.empty
     pure MkLeiosPeerVars {offerings, requestsToSend}
 
 data LeiosEbBodies = MkLeiosEbBodies {
@@ -161,10 +158,16 @@ data LeiosOutstanding pid = MkLeiosOutstanding {
     missingTxBodies :: !(Set TxHash)
   ,
     -- TODO this is far too big for the heap
-    ebBodies :: !(Map EbId (IntMap (TxHash, BytesSize)))
+    missingEbTxs :: !(Map EbId (IntMap (TxHash, BytesSize)))
   ,
     -- TODO this is far too big for the heap
     txOffsetss :: !(Map TxHash (Map EbId Int))
+  ,
+    toCopy :: !(Map EbId (IntMap BytesSize))
+  ,
+    toCopyBytesSize :: !BytesSize
+  ,
+    toCopyCount :: !Int
   }
 
 emptyLeiosOutstanding :: LeiosOutstanding pid
@@ -178,17 +181,9 @@ emptyLeiosOutstanding =
         Set.empty
         Map.empty
         Map.empty
-
-data LeiosToCopy = MkLeiosToCopy {
-    toCopy :: !(Map EbId (IntMap BytesSize))
-  ,
-    toCopyBytesSize :: !BytesSize
-  ,
-    toCopyCount :: !Int
-  }
-
-emptyLeiosToCopy :: LeiosToCopy
-emptyLeiosToCopy = MkLeiosToCopy Map.empty 0 0
+        Map.empty
+        0
+        0
 
 -----
 
@@ -320,3 +315,55 @@ withDieDone io =
     withDie io >>= \case
         DB.Row -> die "impossible!"
         DB.Done -> pure ()
+
+-----
+
+-- TODO which of these limits are allowed to be exceeded by at most one
+-- request?
+data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv {
+    -- | At most this many outstanding bytes requested from all peers together
+    maxRequestedBytesSize :: BytesSize
+  ,
+    -- | At most this many outstanding bytes requested from each peer
+    maxRequestedBytesSizePerPeer :: BytesSize
+  ,
+    -- | At most this many outstanding bytes per request
+    maxRequestBytesSize :: BytesSize
+  ,
+    -- | At most this many outstanding requests for each EB body
+    maxRequestsPerEb :: Int
+  ,
+    -- | At most this many outstanding requests for each individual tx
+    maxRequestsPerTx :: Int
+  ,
+    -- | At most this many bytes are scheduled to be copied from the TxCache to the EbStore
+    maxToCopyBytesSize :: BytesSize
+  ,
+    -- | At most this many txs are scheduled to be copied from the TxCache to the EbStore
+    maxToCopyCount :: Int
+  }
+
+demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
+demoLeiosFetchStaticEnv =
+    MkLeiosFetchStaticEnv {
+        maxRequestedBytesSize = 50 * million
+      ,
+        maxRequestedBytesSizePerPeer = 5 * million
+      ,
+        maxRequestBytesSize = 500 * thousand
+      ,
+        maxRequestsPerEb = 2
+      ,
+        maxRequestsPerTx = 2
+      ,
+        maxToCopyBytesSize = 100 * millionBase2
+      ,
+        maxToCopyCount = 100 * thousand
+      }
+  where
+    million :: Num a => a
+    million = 10^(6 :: Int)
+    millionBase2 :: Num a => a
+    millionBase2 = 2^(20 :: Int)
+    thousand :: Num a => a
+    thousand = 10^(3 :: Int)
