@@ -5,7 +5,7 @@
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
 import           Cardano.Binary (enforceSize)
-import           Cardano.Slotting.Slot (SlotNo)
+import           Cardano.Slotting.Slot (SlotNo (SlotNo))
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
@@ -16,6 +16,8 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Data.ByteString (ByteString)
+import qualified Data.ByteString.Base16 as BS16
+import qualified Data.ByteString.Char8 as BS8
 import           Data.Int (Int64)
 import           Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
@@ -31,6 +33,8 @@ import           Data.Word (Word16, Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
+import           System.Directory (doesFileExist)
+import           System.Environment (lookupEnv)
 import           System.Exit (die)
 
 type BytesSize = Word32
@@ -54,6 +58,10 @@ data LeiosPoint = MkLeiosPoint SlotNo EbHash
   deriving (Show)
 
 instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
+
+prettyLeiosPoint :: LeiosPoint -> String
+prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
+    "(" ++ show slotNo ++ ", " ++ BS8.unpack (BS16.encode bytes) ++ ")"
 
 encodeLeiosPoint :: LeiosPoint -> Encoding
 encodeLeiosPoint (MkLeiosPoint ebSlot (MkEbHash ebHash)) =
@@ -315,6 +323,19 @@ withDieDone io =
     withDie io >>= \case
         DB.Row -> die "impossible!"
         DB.Done -> pure ()
+
+-----
+
+demoNewLeiosDbConnectionIO :: IO (SomeLeiosDb IO)
+demoNewLeiosDbConnectionIO = do
+    dbPath <- lookupEnv "LEIOS_DB_PATH" >>= \case
+        Nothing -> die "You must define the LEIOS_DB_PATH variable for this demo."
+        Just x -> pure x
+    doesFileExist dbPath >>= \case
+        False -> die $ "No such LeiosDb file: " ++ dbPath
+        True -> do
+            db <- withDieMsg $ DB.open (fromString dbPath)
+            pure $ MkSomeLeiosDb $ leiosDbFromSqliteDirect db
 
 -----
 

@@ -348,14 +348,23 @@ mkHandlers
                 )
       , hLeiosNotifyServer = \_version _peer ->
             leiosNotifyServerPeer
-                (let loop = do threadDelay (60 :: DiffTime); loop in loop)   -- TODO
-      , hLeiosFetchClient = \_version controlMessageSTM _peer ->
-      , hLeiosFetchClient = \_version controlMessageSTM _peer -> toLeiosFetchClientPeerPipelined $
-            leiosFetchClientPeerPipelined
-                (pure $ Left $ atomically $ controlMessageSTM >>= \case
-                    Terminate -> pure $ Left ()
-                    _ -> retry
-                )
+                (let loop = do threadDelay (60 :: DiffTime); loop in loop)   -- TODO step 5
+      , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
+            reqVar <-
+                let loop = do
+                        leiosPeersVars <- MVar.readMVar getLeiosPeersVars
+                        case Map.lookup (Leios.MkPeerId peer) leiosPeersVars of
+                            Just x -> pure $ Leios.requestsToSend x
+                            Nothing -> do
+                                -- TODO the LeiosNotify client has not inserted it yet
+                                threadDelay (0.010 :: DiffTime)
+                                loop
+                in loop
+            pure
+              $ leiosFetchClientPeerPipelined
+              $ Leios.nextLeiosFetchClientCommand
+                    ((== Terminate) <$> controlMessageSTM)
+                    reqVar
       , hLeiosFetchServer = \_version _peer -> Effect $ do
             Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
             leiosFetchContext <-
@@ -368,6 +377,10 @@ mkHandlers
   where
     NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} = nodeKernel
     NodeKernel {getLeiosNewDbConnection, getLeiosPeersVars, getLeiosEbBodies, getLeiosReady} = nodeKernel
+
+                    -- TODO step 3: actually store them in the database
+                    --
+                    -- TODO step 4: actually execute the ToCopy
 
 {-------------------------------------------------------------------------------
   Codecs

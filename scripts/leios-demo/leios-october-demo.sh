@@ -33,8 +33,8 @@ if [[ -z "${LEIOS_SCHEDULE}" ]]; then
     exit 1
 fi
 
-if [[ -z "${LEIOS_DB}" ]]; then
-    echo "Error: \${LEIOS_DB} must be the path to an exist Leios database." >&2
+if [[ -z "${LEIOS_UPSTREAM_DB_PATH}" ]]; then
+    echo "Error: \${LEIOS_UPSTREAM_DB_PATH} must be the path to the source Leios database." >&2
     exit 1
 fi
 
@@ -171,7 +171,7 @@ IMMDB_CMD_CORE="${IMMDB_SERVER} \
     --initial-slot $REF_SLOT \
     --initial-time $ONSET_OF_REF_SLOT
     --leios-schedule $LEIOS_SCHEDULE
-    --leios-db $LEIOS_DB
+    --leios-db $LEIOS_UPSTREAM_DB_PATH
     --port ${PORT1}"
 
 echo "Command: $IMMDB_CMD_CORE &> $TMP_DIR/immdb-server.log &"

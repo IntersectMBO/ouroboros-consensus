@@ -9,6 +9,8 @@ module LeiosDemoLogic (module LeiosDemoLogic) where
 import           Cardano.Slotting.Slot (SlotNo (..))
 import           Control.Concurrent.Class.MonadMVar (MVar, MonadMVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
+import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Monad (foldM, when)
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import qualified Data.Bits as Bits
@@ -30,6 +32,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import           Data.Word (Word16, Word64)
 import qualified Database.SQLite3.Direct as DB
+import           Debug.Trace (traceM)
 import qualified LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoTypes (BytesSize, EbHash (..), EbId (..), LeiosEbBodies, LeiosOutstanding, LeiosPoint (..), LeiosDb (..), LeiosEb (..), LeiosFetchStaticEnv, LeiosTx (..), PeerId (..), TxHash (..))
 import           LeiosDemoTypes (LeiosBlockRequest (..), LeiosBlockTxsRequest (..), LeiosFetchRequest (..))
@@ -157,9 +160,11 @@ leiosFetchHandler ::
  ->
     LF.LeiosFetchRequestHandler LeiosPoint LeiosEb LeiosTx m
 leiosFetchHandler leiosContext = LF.MkLeiosFetchRequestHandler $ \case
-    LF.MsgLeiosBlockRequest p ->
+    LF.MsgLeiosBlockRequest p -> do
+        traceM $ "MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
         LF.MsgLeiosBlock <$> msgLeiosBlockRequest leiosContext p
-    LF.MsgLeiosBlockTxsRequest p bitmaps ->
+    LF.MsgLeiosBlockTxsRequest p bitmaps -> do
+        traceM $ "MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
         LF.MsgLeiosBlockTxs <$> msgLeiosBlockTxsRequest leiosContext p bitmaps
 
 msgLeiosBlockRequest :: PrimMonad m => LeiosFetchContext stmt m -> LeiosPoint -> m LeiosEb
@@ -568,3 +573,46 @@ packRequests env ebBodies =
                 p
                 [ (fromIntegral idx, bitmap) | (idx, bitmap) <- IntMap.toAscList accBitmaps ]
                 (V.fromListN accN $ DList.toList accHashes)
+
+-----
+
+nextLeiosFetchClientCommand :: forall eb tx m.
+    StrictSTM.MonadSTM m
+ =>
+    StrictSTM.STM m Bool
+ ->
+    StrictTVar m (Seq LeiosFetchRequest)
+ ->
+    m (Either
+        (m  (Either () (LF.SomeLeiosFetchJob LeiosPoint eb tx m)))
+            (Either () (LF.SomeLeiosFetchJob LeiosPoint eb tx m))
+      )
+nextLeiosFetchClientCommand stopSTM reqsVar = do
+    f (pure Nothing) (pure . Just) >>= \case
+        Just x -> pure $ Right x
+        Nothing -> pure $ Left $ f StrictSTM.retry pure
+  where
+    f ::
+        StrictSTM.STM m r
+     ->
+        (Either () (LF.SomeLeiosFetchJob LeiosPoint eb tx m) -> StrictSTM.STM m r)
+     ->
+        m r
+    f retry_ pure_ = StrictSTM.atomically $ do
+        stopSTM >>= \case
+            True -> pure_ $ Left ()
+            False -> StrictSTM.readTVar reqsVar >>= \case
+                Seq.Empty -> retry_
+                req Seq.:<| reqs -> do
+                    StrictSTM.writeTVar reqsVar reqs
+                    pure_ $ Right $ g req
+
+    g = \case
+        LeiosBlockRequest (MkLeiosBlockRequest p) ->
+            LF.MkSomeLeiosFetchJob
+                (LF.MsgLeiosBlockRequest p)
+                (pure $ \_ -> pure ())
+        LeiosBlockTxsRequest (MkLeiosBlockTxsRequest p bitmaps _txHashes) ->
+            LF.MkSomeLeiosFetchJob
+                (LF.MsgLeiosBlockTxsRequest p bitmaps)
+                (pure $  \_ -> pure ())

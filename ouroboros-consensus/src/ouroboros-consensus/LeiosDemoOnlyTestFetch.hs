@@ -27,6 +27,7 @@ module LeiosDemoOnlyTestFetch
   , LeiosFetchClientPeerPipelined
   , LeiosFetchServerPeer
   , LeiosFetchRequestHandler (..)
+  , SomeLeiosFetchJob (..)
   , leiosFetchClientPeer
   , leiosFetchClientPeerPipelined
   , leiosFetchServerPeer
@@ -244,7 +245,7 @@ encodeLeiosFetch encodeP encodeEb encodeTx = encode
       -- MsgLeiosLastBlockAndTxsInRange
       MsgDone ->
            CBOR.encodeListLen 1
-        <> CBOR.encodeWord 8
+        <> CBOR.encodeWord 9
 
 decodeLeiosFetch
   :: forall (point :: Type) (eb :: Type) (tx :: Type)
@@ -268,7 +269,7 @@ decodeLeiosFetch decodeP decodeEb decodeTx = decode
       -> CBOR.Decoder s (SomeMessage st')
     decode stok len key = do
       case (stok, len, key) of
-        (SingIdle, 1, 0) -> do
+        (SingIdle, 2, 0) -> do
           p <- decodeP
           return $ SomeMessage $ MsgLeiosBlockRequest p
         (SingBlock, 2, 1) -> do
@@ -467,7 +468,10 @@ leiosFetchClientPeerPipelined ::
   forall m point eb tx a.
      PrimMonad m
   =>
-     m (Either (m (Either a (SomeLeiosFetchJob point eb tx m))) (Either a (SomeLeiosFetchJob point eb tx m)))
+     m (Either
+         (m  (Either a (SomeLeiosFetchJob point eb tx m)))
+             (Either a (SomeLeiosFetchJob point eb tx m))
+       )
      -- ^ either the return value or the next job, or a blocking request for those two
   ->
     Peer (LeiosFetch point eb tx) AsClient (Pipelined Z C) StIdle m a
