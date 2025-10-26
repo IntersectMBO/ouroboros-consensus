@@ -82,14 +82,19 @@ data LeiosFetchRequest =
     LeiosBlockTxsRequest LeiosBlockTxsRequest
 
 data LeiosBlockRequest =
+    -- |
+    --
+    -- The size isn't sent to the peer, but it's used to validate the reponse
+    -- when it arrives.
     MkLeiosBlockRequest
         !LeiosPoint
+        !BytesSize
 
 data LeiosBlockTxsRequest =
     -- |
     --
     -- The hashes aren't sent to the peer, but they are used to validate the
-    -- reply when it arrives.
+    -- response when it arrives.
     MkLeiosBlockTxsRequest
         !LeiosPoint
         [(Word16, Word64)]
@@ -163,9 +168,6 @@ data LeiosOutstanding pid = MkLeiosOutstanding {
     cachedTxs :: !(Map TxHash BytesSize)
   ,
     -- TODO this is far too big for the heap
-    missingTxBodies :: !(Set TxHash)
-  ,
-    -- TODO this is far too big for the heap
     missingEbTxs :: !(Map EbId (IntMap (TxHash, BytesSize)))
   ,
     -- TODO this is far too big for the heap
@@ -186,7 +188,6 @@ emptyLeiosOutstanding =
         Map.empty
         0
         Map.empty
-        Set.empty
         Map.empty
         Map.empty
         Map.empty
@@ -331,11 +332,30 @@ demoNewLeiosDbConnectionIO = do
     dbPath <- lookupEnv "LEIOS_DB_PATH" >>= \case
         Nothing -> die "You must define the LEIOS_DB_PATH variable for this demo."
         Just x -> pure x
+    newLeiosDbConnectionIO dbPath
+
+newLeiosDbConnectionIO :: FilePath -> IO (SomeLeiosDb IO)
+newLeiosDbConnectionIO dbPath = do
     doesFileExist dbPath >>= \case
         False -> die $ "No such LeiosDb file: " ++ dbPath
         True -> do
             db <- withDieMsg $ DB.open (fromString dbPath)
-            pure $ MkSomeLeiosDb $ leiosDbFromSqliteDirect db
+            let db' = leiosDbFromSqliteDirect db
+            dbExec db' (fromString sql_attach_memTxPoints)
+            pure $ MkSomeLeiosDb db'
+
+sql_attach_memTxPoints :: String
+sql_attach_memTxPoints =
+    "ATTACH DATABASE ':memory:' AS mem;\n\
+    \\n\
+    \CREATE TABLE mem.txPoints (\n\
+    \    ebId INTEGER NOT NULL\n\
+    \  ,\n\
+    \    txOffset INTEGER NOT NULL\n\
+    \  ,\n\
+    \    PRIMARY KEY (ebId ASC, txOffset ASC)\n\
+    \  ) WITHOUT ROWID;\n\
+    \"
 
 -----
 

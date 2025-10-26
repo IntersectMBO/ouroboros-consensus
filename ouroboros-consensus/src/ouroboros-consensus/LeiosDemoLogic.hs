@@ -3,21 +3,27 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module LeiosDemoLogic (module LeiosDemoLogic) where
 
+import           Cardano.Binary (serialize')
+import qualified Cardano.Crypto.Hash as Hash
 import           Cardano.Slotting.Slot (SlotNo (..))
 import           Control.Concurrent.Class.MonadMVar (MVar, MonadMVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
+import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Monad (foldM, when)
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import qualified Data.Bits as Bits
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import           Data.DList (DList)
 import qualified Data.DList as DList
 import           Data.Foldable (forM_)
-import           Data.Functor ((<&>))
+import           Data.Functor ((<&>), void)
 import           Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import           Data.List (unfoldr)
@@ -37,6 +43,8 @@ import qualified LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoTypes (BytesSize, EbHash (..), EbId (..), LeiosEbBodies, LeiosOutstanding, LeiosPoint (..), LeiosDb (..), LeiosEb (..), LeiosFetchStaticEnv, LeiosTx (..), PeerId (..), TxHash (..))
 import           LeiosDemoTypes (LeiosBlockRequest (..), LeiosBlockTxsRequest (..), LeiosFetchRequest (..))
 import qualified LeiosDemoTypes as Leios
+
+type HASH = Hash.Blake2b_256
 
 ebIdSlot :: EbId -> SlotNo
 ebIdSlot (MkEbId y) =
@@ -233,7 +241,6 @@ msgLeiosBlockTxsRequest leiosContext p bitmaps = do
                     Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
         txOffsets = unfoldr nextOffset bitmaps
     -- fill in-memory table
-    dbExec db (fromString sql_attach_memTxPoints)
     dbExec db (fromString "BEGIN")
     do
         stmt <- dbPrepare db (fromString sql_insert_memTxPoints)
@@ -257,8 +264,8 @@ msgLeiosBlockTxsRequest leiosContext p bitmaps = do
                     error $ "Missing offset " ++ show (txOffset, txOffset')
                 MV.write buf i (MkLeiosTx txBytes)
                 pure $! (i + 1)
+    dbExec db (fromString sql_flush_memTxPoints)
     dbExec db (fromString "COMMIT")
-    dbExec db (fromString sql_detach_memTxPoints)
     V.freeze $ MV.slice 0 n buf
 
 {- | For example
@@ -281,23 +288,15 @@ popLeftmostOffset = \case
          in
          Just (zs, Bits.clearBit w (63 - zs))
 
-sql_attach_memTxPoints :: String
-sql_attach_memTxPoints =
-    "ATTACH DATABASE ':memory:' AS mem;\n\
-    \\n\
-    \CREATE TABLE mem.txPoints (\n\
-    \    ebId INTEGER NOT NULL\n\
-    \  ,\n\
-    \    txOffset INTEGER NOT NULL\n\
-    \  ,\n\
-    \    PRIMARY KEY (ebId ASC, txOffset ASC)\n\
-    \  ) WITHOUT ROWID;\n\
-    \"
-
-sql_detach_memTxPoints :: String
-sql_detach_memTxPoints =
+_sql_detach_memTxPoints :: String
+_sql_detach_memTxPoints =
     -- NB :memory: databases are discarded when detached
     "DETACH DATABASE mem;\n\
+    \"
+
+sql_flush_memTxPoints :: String
+sql_flush_memTxPoints =
+    "DELETE FROM mem.txPoints;\n\
     \"
 
 sql_insert_memTxPoints :: String
@@ -318,7 +317,7 @@ sql_retrieve_from_ebTxs =
 
 newtype LeiosFetchDecisions pid =
     MkLeiosFetchDecisions
-        (Map (PeerId pid) (Map SlotNo (DList (TxHash, BytesSize, Map EbId Int), DList EbId)))
+        (Map (PeerId pid) (Map SlotNo (DList (TxHash, BytesSize, Map EbId Int), DList (EbId , BytesSize))))
 
 emptyLeiosFetchDecisions :: LeiosFetchDecisions pid
 emptyLeiosFetchDecisions = MkLeiosFetchDecisions Map.empty
@@ -356,9 +355,6 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
          -> goEb2 acc accNew targets ebId ebBytesSize peerIds
 
         Right (ebId, txOffset, txHash) : targets
-
-          | not $ Set.member txHash (Leios.missingTxBodies acc)   -- we already have it
-         -> go1 acc accNew targets
 
           | Just _ <- Map.lookup ebId (Leios.toCopy acc) >>= IntMap.lookup txOffset
               -- it's already scheduled to be copied from TxCache
@@ -401,7 +397,7 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
               $ Map.insertWith
                    (Map.unionWith (<>))
                    peerId
-                   (Map.singleton (ebIdSlot ebId) (DList.empty, DList.singleton ebId))
+                   (Map.singleton (ebIdSlot ebId) (DList.empty, DList.singleton (ebId, ebBytesSize)))
                    (let MkLeiosFetchDecisions x = accNew in x)
             acc' = acc {
                 Leios.requestedEbPeers = Map.insertWith Set.union ebId (Set.singleton peerId) (Leios.requestedEbPeers acc)
@@ -495,9 +491,9 @@ packRequests env ebBodies =
     goPrioEb _prio ebs =
         DList.foldr (Seq.:<|) Seq.empty
       $ DList.map
-            (\ebId -> case ebIdToPoint ebId ebBodies of
+            (\(ebId, ebBytesSize) -> case ebIdToPoint ebId ebBodies of
                 Nothing -> error "impossible!"
-                Just p -> LeiosBlockRequest $ MkLeiosBlockRequest p
+                Just p -> LeiosBlockRequest $ MkLeiosBlockRequest p ebBytesSize
             )
             ebs
 
@@ -576,18 +572,30 @@ packRequests env ebBodies =
 
 -----
 
-nextLeiosFetchClientCommand :: forall eb tx m.
-    StrictSTM.MonadSTM m
+nextLeiosFetchClientCommand :: forall pid tx stmt m.
+  (
+    Ord pid
+  ,
+    MonadSTM m
+  ,
+    MonadMVar m
+  )
  =>
     StrictSTM.STM m Bool
+ ->
+    (MVar m LeiosEbBodies, MVar m (LeiosOutstanding pid), MVar m ())
+ ->
+    LeiosDb stmt m
+ ->
+    PeerId pid
  ->
     StrictTVar m (Seq LeiosFetchRequest)
  ->
     m (Either
-        (m  (Either () (LF.SomeLeiosFetchJob LeiosPoint eb tx m)))
-            (Either () (LF.SomeLeiosFetchJob LeiosPoint eb tx m))
+        (m  (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb tx m)))
+            (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb tx m))
       )
-nextLeiosFetchClientCommand stopSTM reqsVar = do
+nextLeiosFetchClientCommand stopSTM kernelVars db peerId reqsVar = do
     f (pure Nothing) (pure . Just) >>= \case
         Just x -> pure $ Right x
         Nothing -> pure $ Left $ f StrictSTM.retry pure
@@ -595,7 +603,7 @@ nextLeiosFetchClientCommand stopSTM reqsVar = do
     f ::
         StrictSTM.STM m r
      ->
-        (Either () (LF.SomeLeiosFetchJob LeiosPoint eb tx m) -> StrictSTM.STM m r)
+        (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb tx m) -> StrictSTM.STM m r)
      ->
         m r
     f retry_ pure_ = StrictSTM.atomically $ do
@@ -608,11 +616,130 @@ nextLeiosFetchClientCommand stopSTM reqsVar = do
                     pure_ $ Right $ g req
 
     g = \case
-        LeiosBlockRequest (MkLeiosBlockRequest p) ->
+        LeiosBlockRequest req@(MkLeiosBlockRequest p _ebBytesSize) ->
             LF.MkSomeLeiosFetchJob
                 (LF.MsgLeiosBlockRequest p)
-                (pure $ \_ -> pure ())
+                (pure $ \(LF.MsgLeiosBlock eb) ->
+                    msgLeiosBlock kernelVars db peerId req eb
+                )
         LeiosBlockTxsRequest (MkLeiosBlockTxsRequest p bitmaps _txHashes) ->
             LF.MkSomeLeiosFetchJob
                 (LF.MsgLeiosBlockTxsRequest p bitmaps)
-                (pure $  \_ -> pure ())
+                (pure $ \(LF.MsgLeiosBlockTxs _txs) -> do
+                    traceM $ "MsgLeiosBlockTxs " <> Leios.prettyLeiosPoint p
+                )
+
+-----
+
+msgLeiosBlock ::
+  (
+    Ord pid
+  ,
+    MonadMVar m
+  )
+ =>
+    (MVar m LeiosEbBodies, MVar m (LeiosOutstanding pid), MVar m ())
+ ->
+    LeiosDb stmt m
+ ->
+    PeerId pid
+ ->
+    LeiosBlockRequest
+ ->
+    LeiosEb
+ ->
+    m ()
+msgLeiosBlock (ebBodiesVar, outstandingVar, readyVar) db peerId req eb = do
+    -- validate it
+    let MkLeiosBlockRequest p ebBytesSize = req
+    traceM $ "MsgLeiosBlock " <> Leios.prettyLeiosPoint p
+    do
+        let MkLeiosPoint _ebSlot ebHash = p
+        let ebBytes :: ByteString
+            ebBytes = serialize' $ Leios.encodeLeiosEb eb
+        let ebBytesSize' = BS.length ebBytes
+        when (ebBytesSize' /= fromIntegral ebBytesSize) $ do
+            error $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
+        let ebHash' :: EbHash
+            ebHash' = MkEbHash $ Hash.hashToBytes $ Hash.hashWith @HASH id ebBytes
+        when (ebHash' /= ebHash) $ do
+            error $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
+    -- ingest it
+    (ebId, novel) <- MVar.modifyMVar ebBodiesVar $ \ebBodies -> do
+        ebId <- do
+            let (x, mbLeiosEbBodies') = ebIdFromPoint p ebBodies
+            case mbLeiosEbBodies' of
+                Just _ -> error "Unrecognized Leios point"
+                Nothing -> pure x
+        let novel = not $ Set.member ebId (Leios.acquiredEbBodies ebBodies)
+        when novel $ do   -- TODO don't hold the mvar during this IO
+            stmt <- dbPrepare db (fromString sql_insert_ebBody)
+            dbExec db (fromString "BEGIN")
+            -- INSERT INTO ebTxs
+            dbBindInt64 db stmt 1 (Leios.fromIntegralEbId ebId)
+            V.iforM_ (let MkLeiosEb v = eb in v) $ \txOffset (txHash, txBytesSize) -> do
+                dbBindInt64 db stmt 2 (fromIntegral txOffset)
+                dbBindBlob  db stmt 3 (let MkTxHash bytes = txHash in bytes)
+                dbBindInt64 db stmt 4 (fromIntegral txBytesSize)
+                dbStep1     db stmt
+                dbReset     db stmt
+            dbFinalize db stmt
+            dbExec db (fromString "COMMIT")
+        -- update NodeKernel state
+        let !ebBodies' = if not novel then ebBodies else ebBodies {
+                Leios.acquiredEbBodies = Set.insert ebId (Leios.acquiredEbBodies ebBodies)
+              ,
+                Leios.missingEbBodies = Map.delete ebId (Leios.missingEbBodies ebBodies)
+              }
+        pure (ebBodies', (ebId, novel))
+    MVar.modifyMVar_ outstandingVar $ \outstanding -> do
+        let !outstanding' = outstanding {
+                Leios.missingEbTxs =
+                    if not novel then Leios.missingEbTxs outstanding else
+                    Map.insert
+                        ebId
+                        (V.ifoldl
+                            (\acc i x -> IntMap.insert i x acc)
+                            IntMap.empty
+                            (let MkLeiosEb v = eb in v)
+                        )
+                        (Leios.missingEbTxs outstanding)
+              ,
+                Leios.txOffsetss =
+                    if not novel then Leios.txOffsetss outstanding else
+                    V.ifoldl
+                        (\acc i (txHash, _txBytesSize) ->
+                             Map.insertWith Map.union txHash (Map.singleton ebId i) acc
+                        )
+                        (Leios.txOffsetss outstanding)
+                        (let MkLeiosEb v = eb in v)
+              ,
+                Leios.requestedBytesSize = Leios.requestedBytesSize outstanding - ebBytesSize
+              ,
+                Leios.requestedBytesSizePerPeer =
+                    Map.alter
+                        (\case
+                            Nothing -> error "impossible!"
+                            Just x -> delIfZero $ x - ebBytesSize
+                        )
+                        peerId
+                        (Leios.requestedBytesSizePerPeer outstanding)
+              ,
+                Leios.requestedEbPeers =
+                    Map.update (delIfNull . Set.delete peerId) ebId (Leios.requestedEbPeers outstanding)
+              }
+        pure outstanding'
+    void $ MVar.tryPutMVar readyVar ()
+
+sql_insert_ebBody :: String
+sql_insert_ebBody =
+    "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, NULL)\n\
+    \"
+
+-----
+
+delIfNull :: Set a -> Maybe (Set a)
+delIfNull x = if Set.null x then Nothing else Just x
+
+delIfZero :: (Eq a, Num a) => a -> Maybe a
+delIfZero x = if 0 == x then Nothing else Just x

@@ -136,6 +136,8 @@ import           LeiosDemoTypes (LeiosEbBodies, LeiosOutstanding, LeiosPeerVars,
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoLogic as Leios
 
+import           Debug.Trace (traceM)
+
 {-------------------------------------------------------------------------------
   Relay node
 -------------------------------------------------------------------------------}
@@ -368,8 +370,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
 
     let getLeiosNewDbConnection = nkaGetLeiosNewDbConnection
     getLeiosPeersVars <- MVar.newMVar Map.empty
-    getLeiosEbBodies <- MVar.newMVar Leios.emptyLeiosEbBodies
-    getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
+    getLeiosEbBodies <- MVar.newMVar Leios.emptyLeiosEbBodies   -- TODO init from DB
+    getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding   -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
 
     void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
@@ -383,10 +385,13 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                 (ebBodies, offerings)
                 outstanding
         let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
+        traceM $ "leiosFetchLogic: " ++ show (sum (fmap length newRequests)) ++ " new reqs"
         (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
             atomically $ do
                 StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
-        threadDelay (0.050 :: DiffTime)   -- TODO magic number
+        threadDelay (1 :: DiffTime)   -- TODO magic number
+
+    -- TODO Leios.toCopy
 
     return NodeKernel
       { getChainDB              = chainDB

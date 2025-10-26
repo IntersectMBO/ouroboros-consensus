@@ -563,7 +563,6 @@ library unstable-cardano-tools
     compact,
     containers >=0.5 && <0.8,
     contra-tracer,
-    direct-sqlite,
     directory,
     dot,
     filepath,

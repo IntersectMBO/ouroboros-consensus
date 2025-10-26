@@ -143,6 +143,8 @@ import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoLogic as Leios
 import qualified Ouroboros.Network.Mux as ON
 
+import           Debug.Trace (traceM)
+
 {-------------------------------------------------------------------------------
   Handlers
 -------------------------------------------------------------------------------}
@@ -315,6 +317,7 @@ mkHandlers
                 (pure $ \case
                     MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
                     MsgLeiosBlockOffer p ebBytesSize -> do
+                        traceM $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint p
                         ebId <- MVar.modifyMVar getLeiosEbBodies $ \ebBodies1 -> do
                             let (ebId, mbEbBodies2) = Leios.ebIdFromPoint p ebBodies1
                                 ebBodies2 = fromMaybe ebBodies1 mbEbBodies2
@@ -335,6 +338,7 @@ mkHandlers
                             pure (offers1', offers2)
                         void $ MVar.tryPutMVar getLeiosReady ()
                     MsgLeiosBlockTxsOffer p -> do
+                        traceM $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
                         ebId <- Leios.ebIdFromPointM getLeiosEbBodies p
                         peerVars <- do
                             peersVars <- MVar.readMVar getLeiosPeersVars
@@ -348,8 +352,9 @@ mkHandlers
                 )
       , hLeiosNotifyServer = \_version _peer ->
             leiosNotifyServerPeer
-                (let loop = do threadDelay (60 :: DiffTime); loop in loop)   -- TODO step 5
+                (let loop = do threadDelay (60 :: DiffTime); loop in loop)   -- TODO
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
+            Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection   -- TODO share DB connection for same peer?
             reqVar <-
                 let loop = do
                         leiosPeersVars <- MVar.readMVar getLeiosPeersVars
@@ -364,6 +369,9 @@ mkHandlers
               $ leiosFetchClientPeerPipelined
               $ Leios.nextLeiosFetchClientCommand
                     ((== Terminate) <$> controlMessageSTM)
+                    (getLeiosEbBodies, getLeiosOutstanding, getLeiosReady)
+                    db
+                    (Leios.MkPeerId peer)
                     reqVar
       , hLeiosFetchServer = \_version _peer -> Effect $ do
             Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
@@ -376,11 +384,7 @@ mkHandlers
       }
   where
     NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} = nodeKernel
-    NodeKernel {getLeiosNewDbConnection, getLeiosPeersVars, getLeiosEbBodies, getLeiosReady} = nodeKernel
-
-                    -- TODO step 3: actually store them in the database
-                    --
-                    -- TODO step 4: actually execute the ToCopy
+    NodeKernel {getLeiosNewDbConnection, getLeiosPeersVars, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady} = nodeKernel
 
 {-------------------------------------------------------------------------------
   Codecs

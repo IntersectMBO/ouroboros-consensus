@@ -18,12 +18,10 @@ import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as BL
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
-import           Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import           Data.Void (Void)
 import           Data.Word (Word32, Word64)
-import qualified Database.SQLite3.Direct as DB
 import           GHC.Generics (Generic)
 import qualified Network.Mux as Mux
 import           Network.Socket (SockAddr (..))
@@ -117,9 +115,7 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
           Dir.doesFileExist leiosDbFile >>= \case
               False -> die $ "The Leios database must already exist: " <> show leiosDbFile
               True -> pure ()
-          leiosDb <- DB.open (fromString leiosDbFile) >>= \case
-              Left (_err, utf8) -> die $ show utf8
-              Right x -> pure $ Leios.leiosDbFromSqliteDirect x
+          Leios.MkSomeLeiosDb leiosDb <- Leios.newLeiosDbConnectionIO leiosDbFile
           leiosEbBodies <- LeiosLogic.loadEbBodies leiosDb
           fmap LeiosLogic.MkSomeLeiosFetchContext
             $ LeiosLogic.newLeiosFetchContext
