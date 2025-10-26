@@ -21,10 +21,9 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import           Data.Word (Word16, Word64)
 import qualified Database.SQLite3.Direct as DB
+import qualified LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoTypes (BytesSize, EbHash (..), EbId (..), LeiosEbBodies, LeiosPoint (..), LeiosDb (..), LeiosEb (..), LeiosTx (..), TxHash (..))
 import qualified LeiosDemoTypes as Leios
-
-import qualified LeiosDemoOnlyTestFetch as LF
 
 ebIdSlot :: EbId -> SlotNo
 ebIdSlot (MkEbId y) =
@@ -120,10 +119,26 @@ data SomeLeiosFetchContext m =
 
 data LeiosFetchContext stmt m = MkLeiosFetchContext {
     leiosDb :: !(LeiosDb stmt m)
-  , leiosEbBodies :: !LeiosEbBodies
   , leiosEbBuffer :: !(MV.MVector (PrimState m) (TxHash, BytesSize))
   , leiosEbTxsBuffer :: !(MV.MVector (PrimState m) LeiosTx)
+  , readLeiosEbBodies :: !(m LeiosEbBodies)
   }
+
+newLeiosFetchContext ::
+    PrimMonad m
+ =>
+    LeiosDb stmt m
+ ->
+    m LeiosEbBodies
+ ->
+    m (LeiosFetchContext stmt m)
+newLeiosFetchContext leiosDb readLeiosEbBodies = do
+    -- each LeiosFetch server calls this when it initializes
+    leiosEbBuffer <- MV.new Leios.maxEbItems
+    leiosEbTxsBuffer <- MV.new Leios.maxEbItems
+    pure MkLeiosFetchContext { leiosDb, leiosEbBuffer, leiosEbTxsBuffer, readLeiosEbBodies}
+
+-----
 
 leiosFetchHandler ::
     PrimMonad m
@@ -139,8 +154,11 @@ leiosFetchHandler leiosContext = LF.MkLeiosFetchRequestHandler $ \case
 
 msgLeiosBlockRequest :: PrimMonad m => LeiosFetchContext stmt m -> LeiosPoint -> m LeiosEb
 msgLeiosBlockRequest leiosContext p = do
-    let MkLeiosFetchContext {leiosDb = db, leiosEbBodies, leiosEbBuffer = buf} = leiosContext
-    let ebId = fst $ ebIdFromPoint p leiosEbBodies
+    let MkLeiosFetchContext {leiosDb = db, leiosEbBuffer = buf, readLeiosEbBodies} = leiosContext
+    (ebId, mbLeiosEbBodies') <- readLeiosEbBodies <&> ebIdFromPoint p
+    case mbLeiosEbBodies' of
+        Nothing -> pure ()
+        Just _ -> error "Unrecognized Leios point"
     -- get the EB items
     dbExec db (fromString "BEGIN")
     stmt <- dbPrepare db (fromString sql_lookup_ebBodies)
@@ -178,8 +196,11 @@ msgLeiosBlockTxsRequest ::
  ->
     m (V.Vector LeiosTx)
 msgLeiosBlockTxsRequest leiosContext p bitmaps = do
-    let MkLeiosFetchContext {leiosDb = db, leiosEbBodies, leiosEbTxsBuffer = buf} = leiosContext
-    let ebId = fst $ ebIdFromPoint p leiosEbBodies
+    let MkLeiosFetchContext {leiosDb = db, leiosEbTxsBuffer = buf, readLeiosEbBodies} = leiosContext
+    (ebId, mbLeiosEbBodies') <- readLeiosEbBodies <&> ebIdFromPoint p
+    case mbLeiosEbBodies' of
+        Nothing -> pure ()
+        Just _ -> error "Unrecognized Leios point"
     do
         let idxs = map fst bitmaps
         let idxLimit = Leios.maxEbItems `div` 64

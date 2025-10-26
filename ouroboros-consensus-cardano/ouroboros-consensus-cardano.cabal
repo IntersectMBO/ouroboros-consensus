@@ -592,7 +592,6 @@ library unstable-cardano-tools
     text-builder >=1,
     transformers,
     transformers-except,
-    vector,
 
 executable db-analyser
   import: common-lib

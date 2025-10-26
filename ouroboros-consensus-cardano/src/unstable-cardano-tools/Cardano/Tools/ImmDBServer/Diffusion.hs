@@ -21,7 +21,6 @@ import qualified Data.Map.Strict as Map
 import           Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.Vector.Mutable as MV
 import           Data.Void (Void)
 import           Data.Word (Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
@@ -115,8 +114,6 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
           pure leiosNotifyContext
     let mkLeiosFetchContext = do
           -- each LeiosFetch server calls this when it initializes
-          leiosEbBuffer <- MV.new Leios.maxEbItems
-          leiosEbTxsBuffer <- MV.new Leios.maxEbItems
           Dir.doesFileExist leiosDbFile >>= \case
               False -> die $ "The Leios database must already exist: " <> show leiosDbFile
               True -> pure ()
@@ -124,8 +121,10 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
               Left (_err, utf8) -> die $ show utf8
               Right x -> pure $ Leios.leiosDbFromSqliteDirect x
           leiosEbBodies <- LeiosLogic.loadEbBodies leiosDb
-          let leiosFetchContext = LeiosLogic.MkLeiosFetchContext { LeiosLogic.leiosDb, LeiosLogic.leiosEbBodies, LeiosLogic.leiosEbBuffer, LeiosLogic.leiosEbTxsBuffer }
-          pure $ LeiosLogic.MkSomeLeiosFetchContext leiosFetchContext
+          fmap LeiosLogic.MkSomeLeiosFetchContext
+            $ LeiosLogic.newLeiosFetchContext
+                  leiosDb
+                  (pure leiosEbBodies)
     ImmutableDB.withDB
       (ImmutableDB.openDB (immDBArgs registry) runWithTempRegistry)
       \immDB -> serve sockAddr $ MP.immDBServer

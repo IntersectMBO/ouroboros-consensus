@@ -1,3 +1,4 @@
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
@@ -248,6 +249,8 @@ maxEbItems =
     sequenceOverhead = 1 + 2   -- sequence major byte + a length > 255
 
 -----
+
+data SomeLeiosDb m = forall stmt. MkSomeLeiosDb (LeiosDb stmt m)
 
 data LeiosDb stmt m = MkLeiosDb {
     dbBindBlob :: !(stmt -> DB.ParamIndex -> ByteString -> m ())

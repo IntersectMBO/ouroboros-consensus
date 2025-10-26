@@ -194,6 +194,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       -- noticeably awkward fit for this logic.
 
       -- See 'LeiosPeerVars' for the write patterns
+    , getLeiosNewDbConnection :: m (SomeLeiosDb m)
     , getLeiosPeersVars :: MVar m (Map (PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
       -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
       -- eviction)
@@ -236,6 +237,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
                               :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
     , genesisArgs             :: GenesisNodeKernelArgs m blk
     , getDiffusionPipeliningSupport    :: DiffusionPipeliningSupport
+
+    , nkaGetLeiosNewDbConnection :: m (SomeLeiosDb m)
     }
 
 initNodeKernel ::
@@ -258,6 +261,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , publicPeerSelectionStateVar
                                    , genesisArgs
                                    , getDiffusionPipeliningSupport
+                                   , nkaGetLeiosNewDbConnection
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -362,6 +366,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         fetchClientRegistry
         blockFetchConfiguration
 
+    let getLeiosNewDbConnection = nkaGetLeiosNewDbConnection
     getLeiosPeersVars <- MVar.newMVar Map.empty
     getLeiosEbBodies <- MVar.newMVar emptyLeiosEbBodies
     getLeiosOutstanding <- MVar.newMVar emptyLeiosOutstanding
@@ -385,6 +390,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getDiffusionPipeliningSupport
       , getBlockchainTime       = btime
 
+      , getLeiosNewDbConnection
       , getLeiosPeersVars
       , getLeiosEbBodies
       , getLeiosOutstanding

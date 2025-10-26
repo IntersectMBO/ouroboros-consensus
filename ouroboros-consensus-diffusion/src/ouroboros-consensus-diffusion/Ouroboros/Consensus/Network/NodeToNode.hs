@@ -62,6 +62,7 @@ import           Data.Map.Strict (Map)
 import           Data.Void (Void)
 import qualified Network.Mux as Mux
 import           Network.TypedProtocol.Codec
+import           Network.TypedProtocol.Peer (Peer (Effect))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
 import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
@@ -349,14 +350,19 @@ mkHandlers
                 (pure $ Left $ atomically $ controlMessageSTM >>= \case
                     Terminate -> pure $ Left ()
                     _ -> retry
-                )   -- TODO
-      , hLeiosFetchServer = \_version _peer ->
-            leiosFetchServerPeer
-                (let loop = do threadDelay (60 :: DiffTime); loop in loop)   -- TODO
+                )
+      , hLeiosFetchServer = \_version _peer -> Effect $ do
+            Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
+            leiosFetchContext <-
+                Leios.newLeiosFetchContext
+                    db
+                    (MVar.readMVar getLeiosEbBodies)
+            pure $ leiosFetchServerPeer
+                    (pure $ Leios.leiosFetchHandler leiosFetchContext)
       }
   where
     NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} = nodeKernel
-    NodeKernel {getLeiosPeersVars, getLeiosEbBodies, getLeiosReady} = nodeKernel
+    NodeKernel {getLeiosNewDbConnection, getLeiosPeersVars, getLeiosEbBodies, getLeiosReady} = nodeKernel
 
 {-------------------------------------------------------------------------------
   Codecs
