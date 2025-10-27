@@ -13,6 +13,7 @@
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
+  , onPerasRoundNo
   , PerasWeight (..)
   , BlockSupportsPeras (..)
   , PerasCert (..)
@@ -31,6 +32,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
+import Data.Coerce (coerce)
 import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
 import Data.Word (Word64)
@@ -45,13 +47,19 @@ import Quiet (Quiet (..))
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving Show via Quiet PerasRoundNo
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Serialise)
+  deriving newtype (Enum, Eq, Ord, Num, Bounded, NoThunks, Serialise)
 
 instance Condense PerasRoundNo where
   condense = show . unPerasRoundNo
 
 instance ShowProxy PerasRoundNo where
   showProxy _ = "PerasRoundNo"
+
+-- | Lift a binary operation on 'Word64' to 'PerasRoundNo'
+onPerasRoundNo ::
+  (Word64 -> Word64 -> Word64) ->
+  (PerasRoundNo -> PerasRoundNo -> PerasRoundNo)
+onPerasRoundNo = coerce
 
 newtype PerasWeight = PerasWeight {unPerasWeight :: Word64}
   deriving Show via Quiet PerasWeight
