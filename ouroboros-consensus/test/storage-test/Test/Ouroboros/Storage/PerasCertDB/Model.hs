@@ -50,7 +50,6 @@ addCert model@Model{certs} cert
   | otherwise = model{certs = Set.insert cert certs}
 
 hasRoundNo ::
-  StandardHash blk =>
   Set (WithArrivalTime (ValidatedPerasCert blk)) ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   Bool
@@ -66,7 +65,7 @@ getWeightSnapshot Model{certs} =
     | cert <- Set.toList certs
     ]
 
-garbageCollect :: StandardHash blk => SlotNo -> Model blk -> Model blk
+garbageCollect :: SlotNo -> Model blk -> Model blk
 garbageCollect slot model@Model{certs} =
   model{certs = Set.filter keepCert certs}
  where
