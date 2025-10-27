@@ -243,7 +243,7 @@ chainSyncServer immDB blockComponent getSlotDelay registry = ChainSyncServer $ d
                   ImmutableDB.iteratorNext iterator >>= \case
                     ImmutableDB.IteratorExhausted -> do
                       ImmutableDB.iteratorClose iterator
-                      threadDelay (5 :: DiffTime)
+                      threadDelay (1000 :: DiffTime)
                       throwIO ReachedImmutableTip
                     ImmutableDB.IteratorResult a  -> do
                       -- Wait until the slot of the current block has been reached

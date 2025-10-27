@@ -328,6 +328,7 @@ mkHandlers
                                             Map.insert ebId ebBytesSize (Leios.missingEbBodies ebBodies2)
                                       }
                             pure (ebBodies3, ebId)
+                        traceM $ "leiosId: " ++ Leios.prettyLeiosPoint p ++ " ---> " ++ show (let Leios.MkEbId i = ebId in i)
                         peerVars <- do
                             peersVars <- MVar.readMVar getLeiosPeersVars
                             case Map.lookup (Leios.MkPeerId peer) peersVars of
@@ -369,7 +370,7 @@ mkHandlers
               $ leiosFetchClientPeerPipelined
               $ Leios.nextLeiosFetchClientCommand
                     ((== Terminate) <$> controlMessageSTM)
-                    (getLeiosEbBodies, getLeiosOutstanding, getLeiosReady)
+                    (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady)
                     db
                     (Leios.MkPeerId peer)
                     reqVar
@@ -384,7 +385,7 @@ mkHandlers
       }
   where
     NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} = nodeKernel
-    NodeKernel {getLeiosNewDbConnection, getLeiosPeersVars, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady} = nodeKernel
+    NodeKernel {getLeiosNewDbConnection, getLeiosPeersVars, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosWriteLock} = nodeKernel
 
 {-------------------------------------------------------------------------------
   Codecs

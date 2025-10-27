@@ -36,6 +36,7 @@ import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (force)
 import           Control.Monad
+import           Control.Monad.Class.MonadTime (getMonotonicTimeNSec)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import           Control.Monad.Except
 import           Control.ResourceRegistry
@@ -212,6 +213,12 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       -- 'MVar.tryPutMVar' whenever they make a change that might unblock a new
       -- fetch decision.
     , getLeiosReady :: MVar m ()
+      -- | Must be held before writing to the database
+      --
+      -- Preferable to dealing with SQLite's BUSY errors.
+      --
+      -- INVARIANT: never acquire 'MVar' while holding this lock.
+    , getLeiosWriteLock :: MVar m ()
 
     }
 
@@ -373,25 +380,47 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
     getLeiosEbBodies <- MVar.newMVar Leios.emptyLeiosEbBodies   -- TODO init from DB
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding   -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
+    getLeiosWriteLock <- MVar.newMVar ()
+
+    getLeiosCopyReady <- MVar.newEmptyMVar
 
     void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
         () <- MVar.takeMVar getLeiosReady
         leiosPeersVars <- MVar.readMVar getLeiosPeersVars
         offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
         ebBodies <- MVar.readMVar getLeiosEbBodies
-        newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
-            pure $ Leios.leiosFetchLogicIteration
-                Leios.demoLeiosFetchStaticEnv
-                (ebBodies, offerings)
-                outstanding
+        (newDecisions, newCopy, xxx, yyy) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+            let (!outstanding', newDecisions) =
+                    Leios.leiosFetchLogicIteration
+                        Leios.demoLeiosFetchStaticEnv
+                        (ebBodies, offerings)
+                        outstanding
+            let newCopy = Leios.toCopyCount outstanding' /= Leios.toCopyCount outstanding
+            pure (outstanding', (newDecisions, newCopy, outstanding, outstanding'))
         let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
-        traceM $ "leiosFetchLogic: " ++ show (sum (fmap length newRequests)) ++ " new reqs"
+        traceM $ "leiosFetchLogic: " ++ show (sum (fmap length newRequests)) ++ " new reqs, " ++ show newCopy ++ " new copy" ++ "\n" ++
+                 "leiosOutstanding: " ++ Leios.prettyLeiosOutstanding xxx ++ "\n" ++
+                 "leiosOutstanding': " ++ Leios.prettyLeiosOutstanding yyy ++ "\n"
         (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
             atomically $ do
                 StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
-        threadDelay (1 :: DiffTime)   -- TODO magic number
+        when newCopy $ void $ MVar.tryPutMVar getLeiosCopyReady ()
+        threadDelay (0.5 :: DiffTime)   -- TODO magic number
 
-    -- TODO Leios.toCopy
+    void $ forkLinkedThread registry "NodeKernel.leiosCopyLogic" $ do
+        Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
+        (\m -> let loop !i = do m i; loop (i+1 :: Int) in loop 0) $ \i -> do
+            () <- MVar.takeMVar getLeiosCopyReady
+            traceM $ "leiosCopy: running " ++ show i
+            t1 <- getMonotonicTimeNSec
+            moreTodo <- Leios.doCacheCopy db (getLeiosWriteLock, getLeiosOutstanding) (500 * 10^(3 :: Int))   -- TODO magic number
+            t2 <- getMonotonicTimeNSec
+            traceM $ "leiosCopy: done " ++ show (i, (t2 - t1) `div` (10^(6 :: Int)))
+            void $ MVar.tryPutMVar getLeiosReady ()
+            when moreTodo $ do
+                traceM $ "leiosCopy: more " ++ show i
+                void $ MVar.tryPutMVar getLeiosCopyReady ()
+            threadDelay (0.050 :: DiffTime)   -- TODO magic number
 
     return NodeKernel
       { getChainDB              = chainDB
@@ -415,6 +444,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getLeiosEbBodies
       , getLeiosOutstanding
       , getLeiosReady
+      , getLeiosWriteLock
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk

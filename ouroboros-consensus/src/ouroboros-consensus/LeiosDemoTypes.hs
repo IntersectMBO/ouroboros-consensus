@@ -31,6 +31,7 @@ import           Data.String (fromString)
 import qualified Data.Vector as V
 import           Data.Word (Word16, Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
+import qualified Numeric
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           System.Directory (doesFileExist)
@@ -99,6 +100,15 @@ data LeiosBlockTxsRequest =
         !LeiosPoint
         [(Word16, Word64)]
         !(V.Vector TxHash)
+
+prettyLeiosBlockTxsRequest :: LeiosBlockTxsRequest -> String
+prettyLeiosBlockTxsRequest (MkLeiosBlockTxsRequest p bitmaps _txHashes) =
+    unwords
+  $ "MsgLeiosBlockTxs" : prettyLeiosPoint p : map prettyBitmap bitmaps
+
+prettyBitmap :: (Word16, Word64) -> String
+prettyBitmap (idx, bitmap) =
+    show idx ++ ":0x" ++ Numeric.showHex bitmap ""
 
 -----
 
@@ -173,7 +183,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding {
     -- TODO this is far too big for the heap
     txOffsetss :: !(Map TxHash (Map EbId Int))
   ,
-    toCopy :: !(Map EbId (IntMap BytesSize))
+    toCopy :: !(Map EbId (IntMap (TxHash, BytesSize)))
   ,
     toCopyBytesSize :: !BytesSize
   ,
@@ -193,6 +203,49 @@ emptyLeiosOutstanding =
         Map.empty
         0
         0
+
+prettyLeiosOutstanding :: LeiosOutstanding pid -> String
+prettyLeiosOutstanding x =
+  unlines $ map ("    [leios] " ++) $
+  [ 
+        "requestedEbPeers = " ++ unwords (map prettyEbId (Map.keys requestedEbPeers))
+      ,
+        "requestedTxPeers = " ++ show (Map.size requestedTxPeers)
+      ,
+        "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
+      ,
+        "requestedBytesSize = " ++  show requestedBytesSize
+      ,
+        "missingEbTxs = " ++ unwords [ (prettyEbId k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList missingEbTxs ]
+      ,
+        "toCopy = " ++ unwords [ (prettyEbId k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList toCopy ]
+      ,
+        "toCopyBytesSize = " ++  show toCopyBytesSize
+      ,
+        "toCopyCount = " ++  show toCopyCount
+      ,
+        ""
+   ]
+  where
+    prettyEbId (MkEbId i) = show i
+
+    MkLeiosOutstanding {
+        requestedEbPeers
+      ,
+        requestedTxPeers
+      ,
+        requestedBytesSizePerPeer
+      ,
+        requestedBytesSize
+      ,
+        missingEbTxs
+      ,
+        toCopy
+      ,
+        toCopyBytesSize
+      ,
+        toCopyCount
+      } = x
 
 -----
 
@@ -304,7 +357,7 @@ leiosDbFromSqliteDirect db = MkLeiosDb {
 withDiePoly :: Show b => (e -> b) -> IO (Either e a) -> IO a
 withDiePoly f io =
     io >>= \case
-        Left e -> die $ show $ f e
+        Left e -> die $ "LeiosDb: " ++ show (f e)
         Right x -> pure x
 
 withDieMsg :: IO (Either (DB.Error, DB.Utf8) a) -> IO a
@@ -316,13 +369,13 @@ withDie = withDiePoly id
 withDieJust :: IO (Either DB.Error (Maybe a)) -> IO a
 withDieJust io =
     withDie io >>= \case
-        Nothing -> die "impossible!"
+        Nothing -> die $ "LeiosDb: [Just] " ++ "impossible!"
         Just x -> pure x
 
 withDieDone :: IO (Either DB.Error DB.StepResult) -> IO ()
 withDieDone io =
     withDie io >>= \case
-        DB.Row -> die "impossible!"
+        DB.Row -> die $ "LeiosDb: [Done] " ++ "impossible!"
         DB.Done -> pure ()
 
 -----
