@@ -15,7 +15,11 @@ import Control.Monad ((>=>))
 import GHC.Exception (throw)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime)
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (SystemTime (..), addArrivalTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( SystemTime (..)
+  , WithArrivalTime (..)
+  , addArrivalTime
+  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -28,7 +32,7 @@ import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import Ouroboros.Consensus.Util.IOLike
 
 makePerasCertPoolReaderFromSnapshot ::
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   STM m (PerasCertSnapshot blk) ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromSnapshot getCertSnapshot =
@@ -39,13 +43,13 @@ makePerasCertPoolReaderFromSnapshot getCertSnapshot =
         certSnapshot <- getCertSnapshot
         pure $
           take (fromIntegral limit) $
-            [ (ticketNo, getPerasCertRound cert, pure (getPerasCert cert))
+            [ (ticketNo, getPerasCertRound cert, pure (vpcCert (forgetArrivalTime cert)))
             | (cert, ticketNo) <- PerasCertDB.getCertsAfter certSnapshot lastKnown
             ]
     }
 
 makePerasCertPoolReaderFromCertDB ::
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   PerasCertDB m blk -> ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromCertDB perasCertDB =
   makePerasCertPoolReaderFromSnapshot (PerasCertDB.getCertSnapshot perasCertDB)
@@ -65,7 +69,7 @@ makePerasCertPoolWriterFromCertDB systemTime perasCertDB =
     }
 
 makePerasCertPoolReaderFromChainDB ::
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   ChainDB m blk -> ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromChainDB chainDB =
   makePerasCertPoolReaderFromSnapshot (ChainDB.getPerasCertSnapshot chainDB)
