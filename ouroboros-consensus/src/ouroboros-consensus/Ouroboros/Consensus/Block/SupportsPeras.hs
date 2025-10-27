@@ -13,31 +13,27 @@
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
-  , PerasWeight (..)
   , BlockSupportsPeras (..)
   , PerasCert (..)
-  , PerasCfg (..)
   , ValidatedPerasCert (..)
-  , makePerasCfg
   , HasPerasCert (..)
   , getPerasCertRound
   , getPerasCertBoostedBlock
   , getPerasCertBoost
 
-    -- * Ouroboros Peras round length
-  , PerasRoundLength (..)
-  , defaultPerasRoundLength
+    -- * Convenience re-exports
+  , module Ouroboros.Consensus.Peras.Params
   ) where
 
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
-import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 import Quiet (Quiet (..))
@@ -53,20 +49,6 @@ instance Condense PerasRoundNo where
 instance ShowProxy PerasRoundNo where
   showProxy _ = "PerasRoundNo"
 
-newtype PerasWeight = PerasWeight {unPerasWeight :: Word64}
-  deriving Show via Quiet PerasWeight
-  deriving stock Generic
-  deriving newtype (Eq, Ord, NoThunks)
-  deriving (Semigroup, Monoid) via Sum Word64
-
-instance Condense PerasWeight where
-  condense = show . unPerasWeight
-
--- | TODO: this will become a Ledger protocol parameter
--- see https://github.com/tweag/cardano-peras/issues/119
-boostPerCert :: PerasWeight
-boostPerCert = PerasWeight 15
-
 -- TODO using 'Validated' for extra safety? Or some @.Unsafe@ module?
 data ValidatedPerasCert blk = ValidatedPerasCert
   { vpcCert :: !(PerasCert blk)
@@ -76,19 +58,8 @@ data ValidatedPerasCert blk = ValidatedPerasCert
   deriving anyclass NoThunks
 
 {-------------------------------------------------------------------------------
-  Ouroboros Peras round length
+-- * BlockSupportsPeras class
 -------------------------------------------------------------------------------}
-
-newtype PerasRoundLength = PerasRoundLength {unPerasRoundLength :: Word64}
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (NoThunks, Num)
-
--- | See the Protocol parameters section of the Peras design report:
---   https://tweag.github.io/cardano-peras/peras-design.pdf#section.2.1
--- TODO: this will become a Ledger protocol parameter
--- see https://github.com/tweag/cardano-peras/issues/119
-defaultPerasRoundLength :: PerasRoundLength
-defaultPerasRoundLength = 90
 
 class
   ( Show (PerasCfg blk)
@@ -96,7 +67,7 @@ class
   ) =>
   BlockSupportsPeras blk
   where
-  data PerasCfg blk
+  type PerasCfg blk
 
   data PerasCert blk
 
@@ -110,13 +81,7 @@ class
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
 instance StandardHash blk => BlockSupportsPeras blk where
-  newtype PerasCfg blk = PerasCfg
-    { -- TODO: eventually, this will come from the
-      -- protocol parameters from the ledger state
-      -- see https://github.com/tweag/cardano-peras/issues/119
-      perasCfgWeightBoost :: PerasWeight
-    }
-    deriving stock (Show, Eq)
+  type PerasCfg blk = PerasParams
 
   data PerasCert blk = PerasCert
     { pcCertRound :: PerasRoundNo
@@ -134,11 +99,11 @@ instance StandardHash blk => BlockSupportsPeras blk where
   -- TODO: perform actual validation against all
   -- possible 'PerasValidationErr' variants
   -- see https://github.com/tweag/cardano-peras/issues/120
-  validatePerasCert cfg cert =
+  validatePerasCert params cert =
     Right
       ValidatedPerasCert
         { vpcCert = cert
-        , vpcCertBoost = perasCfgWeightBoost cfg
+        , vpcCertBoost = perasWeight params
         }
 
 instance ShowProxy blk => ShowProxy (PerasCert blk) where
@@ -154,17 +119,6 @@ instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
     pcCertRound <- decode
     pcCertBoostedBlock <- decode
     pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
-
--- | Derive a 'PerasCfg' from a 'BlockConfig'
---
--- TODO: this currently doesn't depend on 'BlockConfig' at all, but likely will
--- depend on it in the future
--- see https://github.com/tweag/cardano-peras/issues/73
-makePerasCfg :: Maybe (BlockConfig blk) -> PerasCfg blk
-makePerasCfg _ =
-  PerasCfg
-    { perasCfgWeightBoost = boostPerCert
-    }
 
 class StandardHash blk => HasPerasCert cert blk where
   getPerasCert :: cert blk -> PerasCert blk
