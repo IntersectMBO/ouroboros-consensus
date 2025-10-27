@@ -222,7 +222,7 @@ implGetCertSnapshot PerasCertDbEnv{pcdbVolatileState} =
 
 implGarbageCollect ::
   forall m blk.
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   PerasCertDbEnv m blk -> SlotNo -> m ()
 implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
   -- No need to update the 'Fingerprint' as we only remove certificates that do
