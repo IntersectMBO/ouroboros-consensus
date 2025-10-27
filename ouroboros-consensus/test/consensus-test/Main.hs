@@ -18,6 +18,7 @@ import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
 import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke (tests)
 import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke (tests)
+import qualified Test.Consensus.Peras.Voting (tests)
 import qualified Test.Consensus.Peras.WeightSnapshot (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Pred (tests)
@@ -49,7 +50,11 @@ tests =
         , Test.Consensus.Mempool.Fairness.tests
         , Test.Consensus.Mempool.StateMachine.tests
         ]
-    , Test.Consensus.Peras.WeightSnapshot.tests
+    , testGroup
+        "Peras"
+        [ Test.Consensus.Peras.Voting.tests
+        , Test.Consensus.Peras.WeightSnapshot.tests
+        ]
     , Test.Consensus.Util.MonadSTM.NormalForm.tests
     , Test.Consensus.Util.Versioned.tests
     , Test.Consensus.Util.Pred.tests
