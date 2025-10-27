@@ -18,6 +18,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
+  , WithArrivalTime (..)
   , addArrivalTime
   , systemTimeCurrent
   )
@@ -155,6 +156,6 @@ prop_smoke protocolConstants (ListWithUniqueIds certs) =
           let rawContent =
                 Map.toAscList $
                   PerasCertDB.getCertsAfter snap (PerasCertDB.zeroPerasCertTicketNo)
-          pure $ getPerasCert . snd <$> rawContent
+          pure $ vpcCert . forgetArrivalTime . snd <$> rawContent
 
     return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
