@@ -1167,13 +1167,22 @@ initiatorAndResponder miniProtocolParameters version versionData Apps {..} =
 
 leiosNotifyProtocolLimits :: MiniProtocolLimits
 leiosNotifyProtocolLimits = ON.MiniProtocolLimits {
-    ON.maximumIngressQueue = addSafetyMargin $ 1 * 2 ^ (20 :: Int)   -- 1 mebibyte
+    ON.maximumIngressQueue =
+        addSafetyMargin
+      $ fromIntegral
+      $ Leios.maxLeiosNotifyIngressQueue
+      $ Leios.demoLeiosFetchStaticEnv
   }
 
 leiosFetchProtocolLimits :: MiniProtocolLimits
 leiosFetchProtocolLimits = ON.MiniProtocolLimits {
-    ON.maximumIngressQueue = addSafetyMargin $ 50 * 2 ^ (20 :: Int)   -- 50 mebibytes
+    ON.maximumIngressQueue =
+        addSafetyMargin
+      $ fromIntegral
+      $ Leios.maxLeiosFetchIngressQueue
+      $ Leios.demoLeiosFetchStaticEnv
   }
 
+-- | Copied from ouroboros-network
 addSafetyMargin :: Int -> Int
 addSafetyMargin x = x + x `div` 10

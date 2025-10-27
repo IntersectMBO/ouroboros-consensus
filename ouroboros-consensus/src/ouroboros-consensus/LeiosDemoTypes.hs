@@ -456,6 +456,12 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv {
   ,
     -- | At most this many txs are scheduled to be copied from the TxCache to the EbStore
     maxToCopyCount :: Int
+  ,
+    -- | @maximumIngressQueue@ for LeiosNotify
+    maxLeiosNotifyIngressQueue :: BytesSize
+  ,
+    -- | @maximumIngressQueue@ for LeiosFetch
+    maxLeiosFetchIngressQueue :: BytesSize
   }
 
 demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
@@ -474,6 +480,10 @@ demoLeiosFetchStaticEnv =
         maxToCopyBytesSize = 100 * millionBase2
       ,
         maxToCopyCount = 100 * thousand
+      ,
+        maxLeiosNotifyIngressQueue = 1 * millionBase2
+      ,
+        maxLeiosFetchIngressQueue = 50 * millionBase2
       }
   where
     million :: Num a => a
