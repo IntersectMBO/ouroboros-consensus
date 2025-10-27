@@ -26,11 +26,11 @@ import           Data.Foldable (forM_)
 import           Data.Functor ((<&>), void)
 import           Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
+import           Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 import           Data.List (unfoldr)
 import           Data.Map (Map)
 import qualified Data.Map as Map
-import qualified Data.Map.Merge.Strict as MapMerge
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import           Data.Set (Set)
@@ -398,7 +398,7 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
                             Map.insertWith
                                 IntMap.union
                                 ebId
-                                (IntMap.singleton txOffset (txHash, txBytesSize))
+                                (IntMap.singleton txOffset txBytesSize)
                                 (Leios.toCopy acc)
                       ,
                         Leios.toCopyBytesSize = Leios.toCopyBytesSize acc + txBytesSize
@@ -725,6 +725,13 @@ msgLeiosBlock (writeLock, ebBodiesVar, outstandingVar, readyVar) db peerId req e
         pure (ebBodies', (ebId, novel))
     MVar.modifyMVar_ outstandingVar $ \outstanding -> do
         let !outstanding' = outstanding {
+                Leios.blockingPerEb =
+                    if not novel then Leios.blockingPerEb outstanding else
+                    Map.insert
+                        ebId
+                        (let MkLeiosEb v = eb in V.length v)
+                        (Leios.blockingPerEb outstanding)
+              ,
                 Leios.missingEbTxs =
                     if not novel then Leios.missingEbTxs outstanding else
                     Map.insert
@@ -870,16 +877,43 @@ msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar) db peerId re
                 ,
                   accSz + BS.length txBytes
                 )
+        let offsetsSet = IntSet.fromList offsets
+            beatOtherPeers =
+                -- the requests that this MsgLeiosBlockTxs was the first to
+                -- resolve
+                (`IntMap.restrictKeys` IntSet.fromList offsets)
+              $ Map.findWithDefault
+                    IntMap.empty
+                    ebId
+                    (Leios.toCopy outstanding)
+            beatToCopy =
+                -- the currently scheduled 'toCopy' operations that this
+                -- MsgLeiosBlockTxs just won the race against
+                (`IntMap.restrictKeys` IntSet.fromList offsets)
+              $ Map.findWithDefault
+                    IntMap.empty
+                    ebId
+                    (Leios.toCopy outstanding)
         let !outstanding' = outstanding {
                 Leios.cachedTxs = cachedTxs'
               ,
                 Leios.missingEbTxs =
                     Map.update
-                        (delIf IntMap.null . flip IntMap.withoutKeys (IntSet.fromList offsets))
+                        (delIf IntMap.null . (`IntMap.withoutKeys` offsetsSet))
                         ebId
                         (Leios.missingEbTxs outstanding)
               ,
                 Leios.txOffsetss = txOffsetss'
+              ,
+                Leios.blockingPerEb =
+                    if IntMap.null beatOtherPeers then Leios.blockingPerEb outstanding else
+                    Map.alter
+                        (\case
+                            Nothing -> Nothing
+                            Just x -> delIf (==0) $ x - IntMap.size beatOtherPeers
+                        )
+                        ebId
+                        (Leios.blockingPerEb outstanding)
               ,
                 Leios.requestedBytesSize =
                     Leios.requestedBytesSize outstanding - fromIntegral txsBytesSize
@@ -894,6 +928,24 @@ msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar) db peerId re
                         (Leios.requestedBytesSizePerPeer outstanding)
               ,
                 Leios.requestedTxPeers = requestedTxPeers'
+              ,
+                Leios.toCopy =
+                    if IntMap.null beatToCopy then Leios.toCopy outstanding else
+                    Map.alter
+                        (\case
+                            Nothing -> Nothing
+                            Just x ->
+                                delIf IntMap.null
+                              $ x `IntMap.difference` beatToCopy
+                        )
+                        ebId
+                        (Leios.toCopy outstanding)
+              ,
+                Leios.toCopyBytesSize =
+                    Leios.toCopyBytesSize outstanding - sum beatToCopy
+              ,
+                Leios.toCopyCount =
+                    Leios.toCopyCount outstanding - IntMap.size beatToCopy
               }
         pure outstanding'
     void $ MVar.tryPutMVar readyVar ()
@@ -917,44 +969,61 @@ doCacheCopy ::
  =>
     LeiosDb stmt m -> (MVar m (), MVar m (LeiosOutstanding pid)) -> BytesSize -> m Bool
 doCacheCopy db (writeLock, outstandingVar) bytesSize = do
-    (copied, copiedBytesSize, copiedCount) <- do
+    copied <- do
         outstanding <- MVar.readMVar outstandingVar
         MVar.withMVar writeLock $ \() -> do
             dbExec db (fromString "BEGIN")
             stmt <- dbPrepare db (fromString sql_copy_from_txCache)
-            x <- go1 stmt Map.empty 0 0 (Leios.toCopy outstanding)
+            x <- go1 stmt Map.empty 0 (Leios.toCopy outstanding)
             dbFinalize db stmt
             dbExec db (fromString "COMMIT")
             pure x
     MVar.modifyMVar outstandingVar $ \outstanding -> do
+        let _ = copied :: Map EbId IntSet
+        let usefulCopied =
+                -- @copied@ might contain elements that were already accounted
+                -- for by a @MsgLeiosBlockTxs@ that won the race. This
+                -- intersection discards those.
+                Map.intersectionWith
+                    IntMap.restrictKeys
+                    (Leios.toCopy outstanding)
+                    copied
         let !outstanding' = outstanding {
+                Leios.blockingPerEb =
+                    Map.differenceWithKey
+                        (\_ebId count copiedEbId ->
+                            delIf (==0) $ count - IntMap.size copiedEbId
+                        )
+                        (Leios.blockingPerEb outstanding)
+                        usefulCopied
+              ,
                 Leios.toCopy =
-                    MapMerge.merge
-                        MapMerge.preserveMissing
-                        MapMerge.dropMissing   -- TODO impossible, so error here?
-                        (MapMerge.zipWithMaybeMatched $ \_ebId toCopy copiedEbId ->
-                              delIf IntMap.null $ toCopy `IntMap.difference` copiedEbId
+                    Map.differenceWithKey
+                        (\_ebId toCopy copiedEbId ->
+                            delIf IntMap.null $ toCopy `IntMap.difference` copiedEbId
                         )
                         (Leios.toCopy outstanding)
-                        copied
+                        usefulCopied
               ,
-                Leios.toCopyBytesSize = Leios.toCopyBytesSize outstanding - copiedBytesSize
+                Leios.toCopyBytesSize =
+                    Leios.toCopyBytesSize outstanding - sum (Map.map sum usefulCopied)
               ,
-                Leios.toCopyCount = Leios.toCopyCount outstanding - copiedCount
+                Leios.toCopyCount =
+                    Leios.toCopyCount outstanding - sum (Map.map IntMap.size usefulCopied)
               }
         pure (outstanding', 0 /= Leios.toCopyCount outstanding')
   where
-    go1 stmt !accCopied !accBytesSize !accCount !acc
+    go1 stmt !accCopied !accBytesSize !acc
       | accBytesSize < bytesSize
       , Just ((ebId, txs), acc') <- Map.maxViewWithKey acc
-      = go2 stmt accCopied accBytesSize accCount acc' ebId IntMap.empty txs
+      = go2 stmt accCopied accBytesSize acc' ebId IntSet.empty txs
 
       | otherwise
-      = finish accCopied accBytesSize accCount
+      = pure accCopied
 
-    go2 stmt !accCopied !accBytesSize !accCount !acc ebId !accCopiedEbId txs
-      | Just ((txOffset, (txHash, txBytesSize)), txs') <- IntMap.minViewWithKey txs
-      = if accBytesSize + txBytesSize > bytesSize then stop else do
+    go2 stmt !accCopied !accBytesSize !acc ebId !accCopiedEbId txs
+      | Just ((txOffset, txBytesSize), txs') <- IntMap.minViewWithKey txs
+      = if accBytesSize + txBytesSize > bytesSize then pure accCopied' else do
             dbBindInt64 db stmt 1 (Leios.fromIntegralEbId ebId)
             dbBindInt64 db stmt 2 (fromIntegral txOffset)
             dbStep1     db stmt
@@ -963,23 +1032,18 @@ doCacheCopy db (writeLock, outstandingVar) bytesSize = do
                 stmt
                 accCopied
                 (accBytesSize + txBytesSize)
-                (accCount + 1)
                 acc
                 ebId
-                (IntMap.insert txOffset txHash accCopiedEbId)
+                (IntSet.insert txOffset accCopiedEbId)
                 txs'
       | otherwise
-      = go1 stmt accCopied' accBytesSize accCount acc
+      = go1 stmt accCopied' accBytesSize acc
       where
-        accCopied' = Map.insertWith IntMap.union ebId accCopiedEbId accCopied
-        stop = finish accCopied' accBytesSize accCount
-
-    finish accCopied accBytesSize accCount =
-        pure (accCopied, accBytesSize, accCount)
+        accCopied' = Map.insertWith IntSet.union ebId accCopiedEbId accCopied
 
 sql_copy_from_txCache :: String
 sql_copy_from_txCache =
     "UPDATE ebTxs\n\
     \SET txBytes = (SELECT txBytes FROM txCache WHERE txCache.txHashBytes = ebTxs.txHashBytes)\n\
-    \WHERE ebId = ? AND txOffset = ?\n\
+    \WHERE ebId = ? AND txOffset = ? AND txBytes IS NULL\n\
     \"

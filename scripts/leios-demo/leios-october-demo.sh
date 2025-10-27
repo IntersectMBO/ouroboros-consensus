@@ -49,6 +49,9 @@ echo "Ports: ${PORT1} ${PORT2} ${PORT3}"
 TMP_DIR=$(mktemp -d ${TMPDIR:-/tmp}/leios-october-demo.XXXXXX)
 echo "Using temporary directory for DB and logs: $TMP_DIR"
 
+rm -f ./leios-run-tmp-dir
+ln -s "$TMP_DIR" ./leios-run-tmp-dir
+
 pushd "$CARDANO_NODE_PATH" > /dev/null
 
 ##

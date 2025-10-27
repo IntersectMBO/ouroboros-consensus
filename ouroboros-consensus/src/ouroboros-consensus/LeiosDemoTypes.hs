@@ -200,13 +200,49 @@ data LeiosOutstanding pid = MkLeiosOutstanding {
     -- TODO this might be far too big for the heap
     cachedTxs :: !(Map TxHash BytesSize)
   ,
+    -- | The txs that still need to be sourced
+    --
+    -- * A @MsgLeiosBlock@ inserts into 'missingEbTxs' if that EB has never
+    --   been received before.
+    --
+    -- * Every @MsgLeiosBlockTxs@ deletes from 'missingEbTxs', but that delete
+    --   will be a no-op for all except the first to arrive carrying this EbTx.
+    --
+    -- * EbTxs are deleted from 'missingEbTxs' when a 'toCopy' is scheduled
+    --   (b/c we can immediately stop requesting it from any peer). This delete
+    --   will never be a no-op (except maybe in a race?).
+    --
     -- TODO this is far too big for the heap
     missingEbTxs :: !(Map EbId (IntMap (TxHash, BytesSize)))
   ,
     -- TODO this is far too big for the heap
+    --
+    -- inverse of missingEbTxs
     txOffsetss :: !(Map TxHash (Map EbId Int))
   ,
-    toCopy :: !(Map EbId (IntMap (TxHash, BytesSize)))
+    -- | How many txs of each EB are not yet in the @ebTxs@ table
+    --
+    -- These NULLs are blocking the node from sending @MsgLeiosBlockTxsOffer@
+    -- to its downstream peers.
+    --
+    -- It's different from 'missingEbTxs' in two ways.
+    --
+    -- * The heap footprint of 'blockingPerEb' doesn't scale with the number of
+    --   EbTxs.
+    --
+    -- * 'blockingPerEb' is only updated when a 'toCopy' /finishes/ instead of as
+    --   soon as it's /scheduled/.
+    --
+    -- We need to be careful not to double-count arrivals. 'blockingPerEb'
+    --  should only be decremented by the arrival of a @MsgLeiosBlockTx@ if
+    --
+    -- * The EbTx is in 'missingEbTxs'.
+    --
+    -- * The EbTx is in 'toCopy' (and therefore not in 'missingEbTxs'). The
+    --   handler shoulder also remove it from 'toCopy'.
+    blockingPerEb :: !(Map EbId Int)
+  ,
+    toCopy :: !(Map EbId (IntMap BytesSize))
   ,
     toCopyBytesSize :: !BytesSize
   ,
@@ -220,6 +256,7 @@ emptyLeiosOutstanding =
         Map.empty
         Map.empty
         0
+        Map.empty
         Map.empty
         Map.empty
         Map.empty
@@ -241,6 +278,8 @@ prettyLeiosOutstanding x =
       ,
         "missingEbTxs = " ++ unwords [ (prettyEbId k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList missingEbTxs ]
       ,
+        "blockingPerEb = " ++ unwords [ (prettyEbId k ++ "__" ++ show c) | (k, c) <- Map.toList blockingPerEb ]
+      ,
         "toCopy = " ++ unwords [ (prettyEbId k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList toCopy ]
       ,
         "toCopyBytesSize = " ++  show toCopyBytesSize
@@ -260,6 +299,8 @@ prettyLeiosOutstanding x =
         requestedBytesSize
       ,
         missingEbTxs
+      ,
+        blockingPerEb
       ,
         toCopy
       ,
