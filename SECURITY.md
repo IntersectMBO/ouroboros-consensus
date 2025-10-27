@@ -2,7 +2,7 @@
 
 ## Introduction
 
-The Cardano open source project (xxx) is committed to ensuring the security of
+The Cardano open source project (ouroboros-consensus) is committed to ensuring the security of
 its software and the privacy of its users. We value the contributions
 of the security community in helping us identify and address
 vulnerabilities in our code. This Security Vulnerability Disclosure
@@ -16,7 +16,7 @@ how we will respond to and remediate such reports.
 If you discover a security vulnerability in xxxx, we encourage you to
 responsibly disclose it to us. To report a vulnerability, please use
 the [private reporting form on
-GitHub](https://github.com/input-output-hk/mithril/security/advisories/new)
+GitHub](https://github.com/IntersectMBO/ouroboros-consensus/security/advisories/new)
 to draft a new _Security advisory_.
 
 Please include as much details as needed to clearly qualify the issue:
@@ -90,17 +90,17 @@ report security vulnerabilities to us.
 ## Contact Information
 
 To report a security vulnerability, please use [GitHub
-form]((add project github form for your project)). Should you experience any issues reporting via GitHub or have other questions, Please contact [Security](security@intersectmbo.org).
+form](https://github.com/IntersectMBO/ouroboros-consensus/security/advisories/new). Should you experience any issues reporting via GitHub or have other questions, Please contact [Security](mailto:security@intersectmbo.org).
 
 ## Revision of Policy
 
 This Security Vulnerability Disclosure Policy may be updated or
 revised as necessary. Please check the latest version of this policy
-on the [xxxx repository]((add link for your project)).
+on the [ouroboros-consensus repository](https://github.com/IntersectMBO/ouroboros-consensus).
 
 ## Conclusion
 
-The xxxx project greatly appreciates the assistance of the security
+The ouroboros-consensus project greatly appreciates the assistance of the security
 community in helping us maintain the security of our software while
 upholding the highest standards of privacy. Together, we can work to
 identify and address vulnerabilities, ensuring a safer and more secure
