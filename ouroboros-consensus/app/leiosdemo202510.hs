@@ -1019,9 +1019,13 @@ emptyLeiosFetchState =
         0
         0
 
+-- | See 'ebPoints'
+ebIdBitWidthOfSlot :: Int
+ebIdBitWidthOfSlot = 20
+
 ebIdSlot :: EbId -> Word64
 ebIdSlot (MkEbId y) =
-    fromIntegral (y - minBound :: Int) `Bits.unsafeShiftR` 20 :: Word64
+    fromIntegral (y - minBound :: Int) `Bits.unsafeShiftR` ebIdBitWidthOfSlot :: Word64
 
 ebIdToPoint :: EbId -> LeiosFetchDynamicEnv -> Maybe (Word64, ByteString)
 ebIdToPoint (MkEbId y) x =
@@ -1034,12 +1038,12 @@ ebIdFromPoint ebSlot ebHash x =
     case IntMap.lookup (fromIntegral ebSlot) (ebPoints x) of
         Just m -> case Map.lookup hashBytes m of
             Just y -> (y, Nothing)
-            Nothing -> gen $ MkEbId $ zero + (2^(20 :: Int) - 1) - Map.size m
-        Nothing -> gen $ MkEbId $ zero + (2^(20 :: Int) - 1)
+            Nothing -> gen $ MkEbId $ zero + (2^ebIdBitWidthOfSlot - 1) - Map.size m
+        Nothing -> gen $ MkEbId $ zero + (2^ebIdBitWidthOfSlot - 1)
   where
     hashBytes = MkHashBytes ebHash
 
-    zero = fromIntegral ((ebSlot `Bits.unsafeShiftL` 20) :: Word64) + minBound :: Int
+    zero = fromIntegral ((ebSlot `Bits.unsafeShiftL` ebIdBitWidthOfSlot) :: Word64) + minBound :: Int
 
     gen y =
         (,) y
@@ -1641,7 +1645,7 @@ doCacheCopy db lfst bytesSize = do
     lfst' <- go1 stmt 0 0 (toCopy lfst)
     withDie $ DB.finalize stmt
     -- UPDATE JOIN driven by the loaded table
-    withDieMsg $ DB.exec db (fromString sql_copy_from_txCache)
+    withDieMsg $ DB.exec db (fromString sql_copy_from_txCache)   -- TODO this was tragically slow in the node
     withDieMsg $ DB.exec db (fromString "COMMIT")
     withDieMsg $ DB.exec db (fromString sql_detach_memTxPoints)
     pure lfst'

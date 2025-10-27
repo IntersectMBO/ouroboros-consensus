@@ -52,6 +52,9 @@ ebIdSlot :: EbId -> SlotNo
 ebIdSlot (MkEbId y) =
     SlotNo (fromIntegral (y - minBound :: Int) `Bits.unsafeShiftR` 20 :: Word64)
 
+ebIdBitWidthOfSlot :: Int
+ebIdBitWidthOfSlot = 20
+
 ebIdToPoint :: EbId -> LeiosEbBodies -> Maybe LeiosPoint
 ebIdToPoint (MkEbId i) x =
         (\h -> MkLeiosPoint (ebIdSlot (MkEbId i)) h)
@@ -67,14 +70,14 @@ ebIdFromPoint p x =
     case IntMap.lookup islot (Leios.ebPoints x) of
         Just m -> case Map.lookup ebHash m of
             Just y -> (y, Nothing)
-            Nothing -> gen $ MkEbId $ zero + (2^(20 :: Int) - 1) - Map.size m
-        Nothing -> gen $ MkEbId $ zero + (2^(20 :: Int) - 1)
+            Nothing -> gen $ MkEbId $ zero + (2^ebIdBitWidthOfSlot - 1) - Map.size m
+        Nothing -> gen $ MkEbId $ zero + (2^ebIdBitWidthOfSlot - 1)
   where
     MkLeiosPoint ebSlot ebHash = p
     SlotNo wslot = ebSlot
     islot = fromIntegral (wslot :: Word64)
 
-    zero = fromIntegral (wslot `Bits.unsafeShiftL` 20) + minBound :: Int
+    zero = fromIntegral (wslot `Bits.unsafeShiftL` ebIdBitWidthOfSlot) + minBound :: Int
 
     gen y =
         let !x' = x {
