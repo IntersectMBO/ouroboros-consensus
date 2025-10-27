@@ -55,7 +55,7 @@ tests =
     ]
 
 perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = makePerasCfg Nothing
+perasTestCfg = mkPerasParams
 
 genPoint :: Gen (Point (TestBlock))
 genPoint =
@@ -85,14 +85,14 @@ newCertDB ::
   PerasCfg blk ->
   [PerasCert blk] ->
   m (PerasCertDB m blk)
-newCertDB perasCfg certs = do
+newCertDB perasParams certs = do
   db <- PerasCertDB.openDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
   mapM_
     ( \cert -> do
         let validatedCert =
               ValidatedPerasCert
                 { vpcCert = cert
-                , vpcCertBoost = perasCfgWeightBoost perasCfg
+                , vpcCertBoost = perasWeight perasParams
                 }
         result <- PerasCertDB.addCert db validatedCert
         case result of
