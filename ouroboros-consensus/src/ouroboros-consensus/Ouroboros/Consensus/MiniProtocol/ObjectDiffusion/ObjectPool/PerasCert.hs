@@ -104,11 +104,10 @@ validatePerasCerts ::
   [PerasCert blk] ->
   m [ValidatedPerasCert blk]
 validatePerasCerts certs = do
-  let perasCfg = makePerasCfg Nothing
-  -- TODO replace the mocked-up Nothing with a real
-  -- 'BlockConfig' when all the plumbing is in place
+  let perasParams = mkPerasParams
+  -- TODO pass down 'BlockConfig' when all the plumbing is in place
   -- see https://github.com/tweag/cardano-peras/issues/73
   -- see https://github.com/tweag/cardano-peras/issues/120
-  case traverse (validatePerasCert perasCfg) certs of
+  case traverse (validatePerasCert perasParams) certs of
     Left validationErr -> throw (PerasCertValidationError validationErr)
     Right validatedCerts -> return validatedCerts
