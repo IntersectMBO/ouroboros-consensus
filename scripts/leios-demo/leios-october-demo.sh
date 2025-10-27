@@ -2,11 +2,6 @@
 
 now=$(date +%s)
 
-if [[ -z "${NETSTAT_OUTPUT}" ]]; then
-    echo "Error: \${NETSTAT_OUTPUT} must be the path to the stdout of a recent call to netstat -lntp." >&2
-    exit 1
-fi
-
 if [[ ! "$SECONDS_UNTIL_REF_SLOT" =~ ^[0-9]*$ ]] || [[ "$SECONDS_UNTIL_REF_SLOT" -le 0 ]]; then
      echo "Error: \${SECONDS_UNTIL_REF_SLOT} must be a positive integer of seconds, which will be added to the execution time of this script." >&2
      exit 1
@@ -43,28 +38,11 @@ if [[ -z "${REF_SLOT}" ]] || [[ ! "$REF_SLOT" =~ ^[0-9]*$ ]] || [[ "$REF_SLOT" -
      exit 1
 fi
 
-find_random_unused_port() {
-  local port
-  local min_port=1024  # Start checking from non-privileged ports
-  local max_port=65535 # Maximum possible port number
+# arbitrary choices
 
-  while true; do
-    # Generate a random port within the specified range
-    port=$(( RANDOM % (max_port - min_port + 1) + min_port ))
-
-    # Check if the port is in use using netstat
-    # -l: listening sockets, -t: TCP, -n: numeric addresses, -p: show PID/program name
-    # grep -q: quiet mode, exits with 0 if match found, 1 otherwise
-    if ! cat ${NETSTAT_OUTPUT} | grep -q ":$port "; then
-      echo "$port"
-      return 0 # Port found, exit function
-    fi
-  done
-}
-
-PORT1=$(find_random_unused_port)
-PORT2=$(find_random_unused_port)
-PORT3=$(find_random_unused_port)
+PORT1=3001
+PORT2=3002
+PORT3=3003
 
 echo "Ports: ${PORT1} ${PORT2} ${PORT3}"
 
