@@ -31,7 +31,7 @@ import qualified Data.Foldable as Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.IntMap as IntMap
 import           Data.IntMap (IntMap)
-import           Data.List (isSuffixOf, unfoldr)
+import           Data.List (intercalate, isSuffixOf, unfoldr)
 import           Data.Map (Map)
 import           Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
@@ -58,9 +58,10 @@ main = flip asTypeOf main2 $ do
 
 main2 :: IO ()
 main2 = getArgs >>= \case
-    ["generate", dbPath, manifestPath]
+    ["generate", dbPath, manifestPath, schedulePath]
       | ".db" `isSuffixOf` dbPath
       , ".json" `isSuffixOf` manifestPath
+      , ".json" `isSuffixOf` schedulePath
       -> do
         doesFileExist dbPath >>= \case
             True -> die "database path must not exist"
@@ -68,9 +69,18 @@ main2 = getArgs >>= \case
         manifest <- fmap JSON.eitherDecode (BSL.readFile manifestPath) >>= \case
             Left err -> die err
             Right x -> pure x
+        doesFileExist schedulePath >>= \case
+            True -> die "schedule path must not exist"
+            False -> pure ()
         db <- withDieMsg $ DB.open (fromString dbPath)
         prng0 <- R.initStdGen
-        generateDb prng0 db manifest
+        schedule <- generateDb prng0 db manifest
+        writeFile schedulePath
+          $ (\s -> "[\n  " ++ s ++ "\n]\n")
+          $ intercalate "\n,\n  "
+          $ [ BS8.unpack $ BSL.toStrict $ JSON.encode item
+            | item <- schedule
+            ]
     "ebId-to-point" : dbPath : ebIdStrs
       | ".db" `isSuffixOf` dbPath
       , not (null ebIdStrs)
@@ -164,7 +174,7 @@ main2 = getArgs >>= \case
         acc' <- doCacheCopy db acc bytesSize
         JSON.encodeFile lfstPath acc'
     _ ->
-        die "Either $0 generate my.db myManifest.json\n\
+        die "Either $0 generate my.db myManifest.json outputSchedule.json\n\
             \    OR $0 ebId-to-point my.db ebId ebId ebId...\n\
             \    OR $0 MsgLeiosBlockOffer my.db my.lfst peerId ebSlot ebHash(hex) ebBytesSize\n\
             \    OR $0 MsgLeiosBlockRequest my.db ebSlot ebHash(hex)\n\
@@ -244,7 +254,13 @@ instance JSON.FromJSON EbRecipeElem where
 
 type HASH = Hash.Blake2b_256
 
-generateDb :: R.RandomGen g => g -> DB.Database -> [EbRecipe] -> IO ()
+newtype LeiosScheduleItem = MkLeiosScheduleItem (Double, (Word64, T.Text, Maybe Word32))
+  deriving (Generic)
+
+-- | Deriving via "GHC.Generics"
+instance JSON.ToJSON LeiosScheduleItem
+
+generateDb :: R.RandomGen g => g -> DB.Database -> [EbRecipe] -> IO [LeiosScheduleItem]
 generateDb prng0 db ebRecipes = do
     gref <- R.newIOGenM prng0
     -- init db
@@ -252,7 +268,7 @@ generateDb prng0 db ebRecipes = do
     stmt_write_ebId <- withDieJust $ DB.prepare db (fromString sql_insert_ebId)
     stmt_write_ebClosure <- withDieJust $ DB.prepare db (fromString sql_insert_ebClosure)
     -- loop over EBs (one SQL transaction each, to be gentle)
-    (_dynEnv', sigma) <- (\f -> foldM f (emptyLeiosFetchDynEnv, Map.empty) ebRecipes) $ \(dynEnv, sigma) ebRecipe -> do
+    (_dynEnv', sigma, revSchedule) <- (\f -> foldM f (emptyLeiosFetchDynEnv, Map.empty, []) ebRecipes) $ \(dynEnv, sigma, revSchedule) ebRecipe -> do
         -- generate txs, so we have their hashes
         let finishX (n, x) = V.fromListN n $ Foldable.toList $ revX x   -- TODO in ST with mut vector
         txs <- fmap finishX $ (\f -> V.foldM f (0, emptyX) (ebRecipeElems ebRecipe)) $ \(accN, accX) -> \case
@@ -302,12 +318,16 @@ generateDb prng0 db ebRecipes = do
                 let txHash = Hash.hashWith id txBytes :: Hash.Hash HASH ByteString
                 pure (accN + 1, accX `pushX` (txBytes, MkHashBytes $ Hash.hashToBytes txHash))
         let ebSlot = ebRecipeSlotNo ebRecipe
-        let ebHash :: Hash.Hash HASH ByteString
-            ebHash =
-                Hash.castHash
-              $ Hash.hashWithSerialiser
-                    (encodeEB (V.length txs) (fromIntegral . BS.length) (\(MkHashBytes x) -> x))
+        let ebBytes :: ByteString
+            ebBytes =
+                serialize'
+              $ encodeEB
+                    (V.length txs)
+                    (fromIntegral . BS.length)
+                    (\(MkHashBytes x) -> x)
                     txs
+            ebHash :: Hash.Hash HASH ByteString
+            ebHash = Hash.castHash $ Hash.hashWith id ebBytes
         let (ebId, mbDynEnv') = ebIdFromPoint ebSlot (Hash.hashToBytes ebHash) dynEnv
         withDieMsg $ DB.exec db (fromString "BEGIN")
         withDie $ DB.bindInt64 stmt_write_ebId      3 (fromIntegralEbId ebId)
@@ -328,11 +348,23 @@ generateDb prng0 db ebRecipes = do
             withDie $ DB.reset        stmt_write_ebClosure
         -- finalize each EB
         withDieMsg $ DB.exec db (fromString "COMMIT")
-        pure (fromMaybe dynEnv mbDynEnv', maybe id (\bndr -> Map.insert bndr (ebId, V.length txs)) (ebRecipeNickname ebRecipe) sigma)
+        pure (
+            fromMaybe dynEnv mbDynEnv'
+          ,
+            maybe id (\bndr -> Map.insert bndr (ebId, V.length txs)) (ebRecipeNickname ebRecipe) sigma
+          ,
+            let txt = T.pack $ BS8.unpack $ BS16.encode $ Hash.hashToBytes ebHash
+            in
+            -- NB reversed!
+              MkLeiosScheduleItem (fromIntegral ebSlot + 0.2, (ebSlot, txt, Nothing))
+            : MkLeiosScheduleItem (fromIntegral ebSlot + 0.1, (ebSlot, txt, Just $ fromIntegral $ BS.length ebBytes))
+            : revSchedule
+          )
     -- finalize db
     withDieMsg $ DB.exec db (fromString sql_index_schema)
     forM_ (Map.toList sigma) $ \(nickname, (ebId, _count)) -> do
         putStrLn $ unwords [nickname, prettyEbId ebId]
+    pure $ reverse revSchedule
 
 -----
 
