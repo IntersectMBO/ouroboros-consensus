@@ -132,7 +132,7 @@ import           Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Data.Map (Map)
 import qualified Data.Map as Map
-import qualified Data.Set as Set
+-- import qualified Data.Set as Set
 
 import           LeiosDemoTypes (LeiosEbBodies, LeiosOutstanding, LeiosPeerVars, SomeLeiosDb)
 import qualified LeiosDemoTypes as Leios
@@ -390,7 +390,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         leiosPeersVars <- MVar.readMVar getLeiosPeersVars
         offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
         ebBodies <- MVar.readMVar getLeiosEbBodies
-        (newDecisions, newCopy, xxx, yyy) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+        (newDecisions, newCopy, _xxx, _yyy) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
             let (!outstanding', newDecisions) =
                     Leios.leiosFetchLogicIteration
                         Leios.demoLeiosFetchStaticEnv
