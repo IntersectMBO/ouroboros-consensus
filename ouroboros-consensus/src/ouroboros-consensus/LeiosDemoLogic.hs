@@ -793,8 +793,8 @@ msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar) db peerId re
     traceM $ Leios.prettyLeiosBlockTxsRequest req
     -- validate it
     let MkLeiosBlockTxsRequest p bitmaps txHashes = req
-    forM_ txHashes $ \txHash -> do
-        traceM $ "leiosRspTxHash: " ++ Leios.prettyTxHash txHash
+--    forM_ txHashes $ \txHash -> do
+--        traceM $ "leiosRspTxHash: " ++ Leios.prettyTxHash txHash
     let txBytess :: V.Vector ByteString
         txBytess = V.map (serialize' . Leios.encodeLeiosTx) txs
     do
