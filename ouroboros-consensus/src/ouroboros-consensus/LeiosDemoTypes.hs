@@ -43,6 +43,9 @@ type BytesSize = Word32
 newtype EbId = MkEbId Int
   deriving (Eq, Ord)
 
+prettyEbId :: EbId -> String
+prettyEbId (MkEbId i) = show i
+
 fromIntegralEbId :: Integral a => EbId -> a
 fromIntegralEbId (MkEbId x) = fromIntegral x
 
@@ -54,6 +57,9 @@ newtype EbHash = MkEbHash ByteString
 
 newtype TxHash = MkTxHash ByteString
   deriving (Eq, Ord, Show)
+
+prettyTxHash :: TxHash -> String
+prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
 
 data LeiosPoint = MkLeiosPoint SlotNo EbHash
   deriving (Show)
@@ -96,7 +102,7 @@ data LeiosBlockTxsRequest =
     --
     -- The hashes aren't sent to the peer, but they are used to validate the
     -- response when it arrives.
-    MkLeiosBlockTxsRequest
+  MkLeiosBlockTxsRequest
         !LeiosPoint
         [(Word16, Word64)]
         !(V.Vector TxHash)
@@ -165,6 +171,23 @@ emptyLeiosEbBodies =
         IntMap.empty
         IntMap.empty
 
+prettyLeiosEbBodies :: LeiosEbBodies -> String
+prettyLeiosEbBodies x =
+  unwords
+  [
+        "LeiosEbBodies:"
+      , 
+        "acquiredEbBodies = " ++ show (Set.size acquiredEbBodies)
+      ,
+        "missingEbBodies = " ++ show (Map.size missingEbBodies)
+   ]
+  where
+    MkLeiosEbBodies {
+        acquiredEbBodies
+      ,
+        missingEbBodies
+      } = x
+
 data LeiosOutstanding pid = MkLeiosOutstanding {
     requestedEbPeers :: !(Map EbId (Set (PeerId pid)))
   ,
@@ -210,7 +233,7 @@ prettyLeiosOutstanding x =
   [ 
         "requestedEbPeers = " ++ unwords (map prettyEbId (Map.keys requestedEbPeers))
       ,
-        "requestedTxPeers = " ++ show (Map.size requestedTxPeers)
+        "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
       ,
         "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
       ,
@@ -227,8 +250,6 @@ prettyLeiosOutstanding x =
         ""
    ]
   where
-    prettyEbId (MkEbId i) = show i
-
     MkLeiosOutstanding {
         requestedEbPeers
       ,

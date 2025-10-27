@@ -16,7 +16,6 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Monad (foldM, when)
-import           Control.Monad.Class.MonadTime (MonadMonotonicTimeNSec, getMonotonicTimeNSec)
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import qualified Data.Bits as Bits
 import           Data.ByteString (ByteString)
@@ -573,10 +572,10 @@ packRequests env ebBodies =
     -- be simplified away
     goEb p !accTxBytesSize !accBitmaps !accN !accHashes = \case
         [] -> if 0 < accN then Seq.singleton flush else Seq.empty
-        (txOffset, (txHash, txBytesSize)):txs
+        txsAgain@((txOffset, (txHash, txBytesSize)):txs)
 
           | Leios.maxRequestBytesSize env < accTxBytesSize'
-         -> flush Seq.:<| goEb p 0 IntMap.empty 0 DList.empty txs
+         -> flush Seq.:<| goEb p 0 IntMap.empty 0 DList.empty txsAgain
 
           | otherwise
           , let (q, r) = txOffset `divMod` 64
@@ -794,6 +793,8 @@ msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar) db peerId re
     traceM $ Leios.prettyLeiosBlockTxsRequest req
     -- validate it
     let MkLeiosBlockTxsRequest p bitmaps txHashes = req
+    forM_ txHashes $ \txHash -> do
+        traceM $ "leiosRspTxHash: " ++ Leios.prettyTxHash txHash
     let txBytess :: V.Vector ByteString
         txBytess = V.map (serialize' . Leios.encodeLeiosTx) txs
     do
@@ -909,35 +910,20 @@ sql_insert_txCache =
 -----
 
 doCacheCopy ::
-    (MonadMVar m, MonadMonotonicTimeNSec m)
+    MonadMVar m
  =>
     LeiosDb stmt m -> (MVar m (), MVar m (LeiosOutstanding pid)) -> BytesSize -> m Bool
 doCacheCopy db (writeLock, outstandingVar) bytesSize = do
     (copied, copiedBytesSize, copiedCount) <- do
         outstanding <- MVar.readMVar outstandingVar
-        (x, t1, t2, t3, t4) <- MVar.withMVar writeLock $ \() -> do
-            t1 <- getMonotonicTimeNSec
+        MVar.withMVar writeLock $ \() -> do
             dbExec db (fromString "BEGIN")
-            stmt <- dbPrepare db (fromString sql_insert_memTxPoints)
-            -- load in-mem table of ebId-txOffset pairs
+            stmt <- dbPrepare db (fromString sql_copy_from_txCache)
             x <- go1 stmt Map.empty 0 0 (Leios.toCopy outstanding)
             dbFinalize db stmt
-            t2 <- getMonotonicTimeNSec
-            -- UPDATE JOIN driven by the loaded table
-            dbExec db (fromString sql_copy_from_txCache)
-            t3 <- getMonotonicTimeNSec
-            dbExec db (fromString sql_flush_memTxPoints)
-            t4 <- getMonotonicTimeNSec
             dbExec db (fromString "COMMIT")
-            pure (x, t1, t2, t3, t4)
-        t5 <- getMonotonicTimeNSec
-        traceM $ "leiosCopySQL1-2: done " ++ show ((t2 - t1) `div` (10^(6 :: Int)))
-        traceM $ "leiosCopySQL2-3: done " ++ show ((t3 - t2) `div` (10^(6 :: Int)))
-        traceM $ "leiosCopySQL3-4: done " ++ show ((t4 - t3) `div` (10^(6 :: Int)))
-        traceM $ "leiosCopySQL4-5: done " ++ show ((t5 - t4) `div` (10^(6 :: Int)))
-        pure x
-    (moreTodo, t1) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
-        t1 <- getMonotonicTimeNSec
+            pure x
+    MVar.modifyMVar outstandingVar $ \outstanding -> do
         let !outstanding' = outstanding {
                 Leios.toCopy =
                     MapMerge.merge
@@ -953,10 +939,7 @@ doCacheCopy db (writeLock, outstandingVar) bytesSize = do
               ,
                 Leios.toCopyCount = Leios.toCopyCount outstanding - copiedCount
               }
-        pure (outstanding', (0 /= Leios.toCopyCount outstanding', t1))
-    t2 <- getMonotonicTimeNSec
-    traceM $ "leiosCopyUpd: done " ++ show ((t2 - t1) `div` (10^(6 :: Int)))
-    pure moreTodo
+        pure (outstanding', 0 /= Leios.toCopyCount outstanding')
   where
     go1 stmt !accCopied !accBytesSize !accCount !acc
       | accBytesSize < bytesSize
@@ -994,7 +977,6 @@ doCacheCopy db (writeLock, outstandingVar) bytesSize = do
 sql_copy_from_txCache :: String
 sql_copy_from_txCache =
     "UPDATE ebTxs\n\
-    \SET txBytes = (SELECT txBytes FROM txCache WHERE txCache.txHashBytes = x.txHashBytes)\n\
-    \FROM ebTxs AS x\n\
-    \INNER JOIN mem.txPoints ON x.ebId = mem.txPoints.ebId AND x.txOffset = mem.txPoints.txOffset\n\
+    \SET txBytes = (SELECT txBytes FROM txCache WHERE txCache.txHashBytes = ebTxs.txHashBytes)\n\
+    \WHERE ebId = ? AND txOffset = ?\n\
     \"
