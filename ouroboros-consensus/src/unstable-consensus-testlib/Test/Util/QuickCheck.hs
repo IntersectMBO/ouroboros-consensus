@@ -23,6 +23,9 @@ module Test.Util.QuickCheck
   , frequency'
   , oneof'
 
+    -- * Sampling from distributions
+  , geometric
+
     -- * Comparing maps
   , isSubmapOfBy
 
@@ -308,3 +311,19 @@ frequency' xs0 = lift (choose (1, tot)) >>= (`pick` xs0)
 oneof' :: (MonadTrans t, Monad (t Gen)) => [t Gen a] -> t Gen a
 oneof' [] = error "QuickCheck.oneof used with empty list"
 oneof' gs = lift (chooseInt (0, length gs - 1)) >>= (gs !!)
+
+{-------------------------------------------------------------------------------
+  Sampling from distributions
+-------------------------------------------------------------------------------}
+
+-- NOTE: if more advanced sampling is required, consider using 'mwc-random':
+-- https://hackage.haskell.org/package/mwc-random
+
+-- | Sample from a geometric distribution
+geometric :: Double -> Gen Int
+geometric p
+  | p <= 0 || p > 1 = error "p must be in (0,1]"
+  | otherwise = do
+      u <- choose (0.0, 1.0)
+      let k = floor (log u / log (1 - p))
+      return k
