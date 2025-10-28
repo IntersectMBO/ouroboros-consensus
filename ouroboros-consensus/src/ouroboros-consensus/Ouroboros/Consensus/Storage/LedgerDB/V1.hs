@@ -759,13 +759,14 @@ acquireAtTarget ::
   Either Word64 (Target (Point blk)) ->
   ReadLocked m (Either GetForkerError (DbChangelog l))
 acquireAtTarget ldbEnv target = readLocked $ runExceptT $ do
-  dblog <- lift $ readTVarIO (ldbChangelog ldbEnv)
-  volSuffix <- lift $ atomically $ getVolatileSuffix $ ldbGetVolatileSuffix ldbEnv
-  -- The DbChangelog might contain more than k states if they have not yet
-  -- been garbage-collected.
-  let volStates = volSuffix $ changelogStates dblog
+  (dblog, volStates) <- lift $ atomically $ do
+    dblog <- readTVar (ldbChangelog ldbEnv)
+    -- The DbChangelog might contain more than k states if they have not yet
+    -- been garbage-collected.
+    volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix ldbEnv
+    pure (dblog, volSuffix $ changelogStates dblog)
 
-      immTip :: Point blk
+  let immTip :: Point blk
       immTip = castPoint $ getTip $ AS.anchor volStates
 
       rollbackMax :: Word64
