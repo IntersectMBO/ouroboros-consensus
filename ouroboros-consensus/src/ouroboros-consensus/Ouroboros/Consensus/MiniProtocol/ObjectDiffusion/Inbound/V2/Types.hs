@@ -54,9 +54,9 @@ import Data.Map.Strict qualified as Map
 import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
 import Data.Set (Set)
+import Data.Set qualified as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import GHC.Stack (HasCallStack)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Network.ControlMessage (ControlMessage)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
@@ -227,14 +227,14 @@ data PeerDecisionStatus
 
 -- | A placeholder when no decision has been made, at the beginning of a loop.
 -- Nothing should be read from it except its status.
-unavailableDecision :: HasCallStack => PeerDecision objectId object
+unavailableDecision :: PeerDecision objectId object
 unavailableDecision =
   PeerDecision
     { pdStatus = DecisionCompleted
-    , pdObjectsToReqIds = error "This decision is not available yet"
-    , pdNumIdsToAck = error "This decision is not available yet"
-    , pdNumIdsToReq = error "This decision is not available yet"
-    , pdCanPipelineIdsRequests = error "This decision is not available yet"
+    , pdObjectsToReqIds = Set.empty
+    , pdNumIdsToAck = 0
+    , pdNumIdsToReq = 0
+    , pdCanPipelineIdsRequests = True
     }
 
 -- | ObjectLogic tracer.

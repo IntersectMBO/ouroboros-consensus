@@ -370,7 +370,6 @@ library
     small-steps ^>=1.1,
     sop-core ^>=0.5,
     sop-extras ^>=0.4,
-    splitmix,
     streaming,
     strict >=0.1 && <0.6,
     strict-checked-vars ^>=0.2,
@@ -881,7 +880,10 @@ benchmark ObjectDiffusion-bench
     hashable,
     ouroboros-consensus,
     QuickCheck,
+    random,
+    splitmix,
     tasty-bench,
+    vector
 
 test-suite doctest
   import: common-test
