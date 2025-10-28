@@ -14,7 +14,7 @@ See https://github.com/IntersectMBO/ouroboros-consensus/issues/1701 for context.
         Bump node version to 10.5.1
     ```
 - The Python script needs `pandas` and `matplotlib`.
-- The bash script needs `ps` (which on a `nix-shell` might require the `procps` package for matching CLIB, eg), and `sqlite`, and so on.
+- The various commands and bash scripts below needs `toxiproxy`, `sqlite`, `ps` (which on a `nix-shell` might require the `procps` package for matching CLIB, eg), and so on.
 - Set `CONSENSUS_BUILD_DIR` to the absolute path of a directory in which `cabal build exe:immdb-server` will succeed.
 - Set `NODE_BUILD_DIR` to the absolute path of a directory in which `cabal build exe:cardano-node` will succeed.
 - Set `CONSENSUS_REPO_DIR` to the absolute path of the `ouroboros-consensus` repo.
@@ -56,25 +56,34 @@ lrwxrwxrwx 1 nfrisby nifr 30 Oct 24 16:27 nix/leios-mvd/leios-node/genesis-conwa
 lrwxrwxrwx 1 nfrisby nifr 31 Oct 24 16:27 nix/leios-mvd/leios-node/genesis-shelley.json -> ../genesis/genesis.shelley.json
 ```
 
+## Prepare to run scenarios
+
+Ensure a toxiproxy server is running.
+
+```
+$ toxiproxy-server 1>toxiproxy.log 2>&1 &
+```
+
 ## Run the scenario
 
 Run the scenario with `emptySchedule.json`, ie no Leios traffic.
 
 ```
-$ LEIOS_UPSTREAM_DB_PATH="$(pwd)/demoUpstream.db" LEIOS_SCHEDULE="$(pwd)/emptySchedule.json" SECONDS_UNTIL_REF_SLOT=5 REF_SLOT=182 CLUSTER_RUN_DATA="${CONSENSUS_REPO_DIR}/nix/leios-mvd" CARDANO_NODE=$CARDANO_NODE IMMDB_SERVER=$IMMDB_SERVER ${CONSENSUS_REPO_DIR}/scripts/leios-demo/leios-october-demo.sh
+$ LEIOS_UPSTREAM_DB_PATH="$(pwd)/demoUpstream.db" LEIOS_SCHEDULE="$(pwd)/emptySchedule.json" SECONDS_UNTIL_REF_SLOT=5 REF_SLOT=177 CLUSTER_RUN_DATA="${CONSENSUS_REPO_DIR}/nix/leios-mvd" CARDANO_NODE=$CARDANO_NODE IMMDB_SERVER=$IMMDB_SERVER ${CONSENSUS_REPO_DIR}/scripts/leios-demo/leios-october-demo.sh
 $ # wait about ~20 seconds before stopping the execution by pressing any key
 ```
 
 Run the scenario with `demoSchedule.json`.
 
 ```
-$ LEIOS_UPSTREAM_DB_PATH="$(pwd)/demoUpstream.db" LEIOS_SCHEDULE="$(pwd)/demoSchedule.json" SECONDS_UNTIL_REF_SLOT=5 REF_SLOT=182 CLUSTER_RUN_DATA="${CONSENSUS_REPO_DIR}/nix/leios-mvd" CARDANO_NODE=$CARDANO_NODE IMMDB_SERVER=$IMMDB_SERVER ${CONSENSUS_REPO_DIR}/scripts/leios-demo/leios-october-demo.sh
+$ LEIOS_UPSTREAM_DB_PATH="$(pwd)/demoUpstream.db" LEIOS_SCHEDULE="$(pwd)/demoSchedule.json" SECONDS_UNTIL_REF_SLOT=5 REF_SLOT=177 CLUSTER_RUN_DATA="${CONSENSUS_REPO_DIR}/nix/leios-mvd" CARDANO_NODE=$CARDANO_NODE IMMDB_SERVER=$IMMDB_SERVER ${CONSENSUS_REPO_DIR}/scripts/leios-demo/leios-october-demo.sh
 $ # wait about ~20 seconds before stopping the execution by pressing any key
 ```
 
 ## Analysis
 
-Compare and contrast the cell that is in the column for `latency_ms` and the row for the Praos block in slot 183.
+Compare and contrast the `latency_ms` column for the rows with a slot that's after the reference slot 177.
+The first few such ros (ie those within a couple seconds of the reference slot) seem to often also be disrupted, because the initial bulk syncing to catch up to the reference slot presumably leaves the node in a disrupted state for a short interval.
 
 **WARNING**.
 Each execution consumes about 0.5 gigabytes of disk.

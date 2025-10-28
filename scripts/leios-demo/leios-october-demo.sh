@@ -49,7 +49,26 @@ PORT1=3001
 PORT2=3002
 PORT3=3003
 
-echo "Ports: ${PORT1} ${PORT2} ${PORT3}"
+TOXIPROXY=100
+
+cleanup_proxy() {
+    toxiproxy-cli delete mocked-upstream-peer-proxy
+    toxiproxy-cli delete node0-proxy
+}
+
+trap cleanup_proxy EXIT INT TERM
+
+toxiproxy-cli create --listen 127.0.0.1:"$PORT1" --upstream 127.0.0.1:"$(($TOXIPROXY + $PORT1))" mocked-upstream-peer-proxy
+toxiproxy-cli create --listen 127.0.0.1:"$PORT2" --upstream 127.0.0.1:"$(($TOXIPROXY + $PORT2))" node0-proxy
+
+for i in mocked-upstream-peer-proxy node0-proxy; do
+    # TODO magic numbers
+    toxiproxy-cli toxic add --type latency   --attribute latency=150 --attribute jitter=30 $i   # milliseconds
+    toxiproxy-cli toxic add --type bandwidth --attribute rate=2500 $i   # kilobytes per second
+    # FYI, 125 kilobyte/s = 1 megabit/s, so EG 2500 kilobyte/s = 20 megabit/s
+done
+
+echo "Ports: ${PORT1} ${PORT2} ${PORT3}, each plus ${TOXIPROXY} for toxiproxy"
 
 TMP_DIR=$(mktemp -d ${TMPDIR:-/tmp}/leios-october-demo.XXXXXX)
 echo "Using temporary directory for DB and logs: $TMP_DIR"
@@ -95,7 +114,7 @@ CARDANO_NODE_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-0/leios.db \
     --topology topology-node-0.json \
     --database-path $TMP_DIR/node-0/db \
     --socket-path node-0.socket \
-    --host-addr 127.0.0.1 --port ${PORT2}"
+    --host-addr 127.0.0.1 --port $(($TOXIPROXY + $PORT2))"
 
 echo "Command (Node 0): $CARDANO_NODE_CMD &> $TMP_DIR/cardano-node-0.log &"
 
@@ -164,7 +183,7 @@ IMMDB_CMD_CORE="${IMMDB_SERVER} \
     --initial-time $ONSET_OF_REF_SLOT
     --leios-schedule $LEIOS_SCHEDULE
     --leios-db $LEIOS_UPSTREAM_DB_PATH
-    --port ${PORT1}"
+    --port $(($TOXIPROXY + $PORT1))"
 
 echo "Command: $IMMDB_CMD_CORE &> $TMP_DIR/immdb-server.log &"
 
@@ -174,7 +193,8 @@ IMMDB_SERVER_PID=$!
 
 echo "ImmDB server started with PID: $IMMDB_SERVER_PID"
 
-read -n 1 -s -r -p "Press any key to stop the spawned processes..."
+TIMEOUT=25
+read -t $TIMEOUT -n 1 -s -r -p "Press any key to stop the spawned processes, or just wait $TIMEOUT seconds..."
 echo
 
 echo "Killing processes $IMMDB_SERVER_PID (immdb-server), $CARDANO_NODE_0_PID (node-0), and $MOCKED_PEER_PID (node-1)..."
@@ -203,5 +223,7 @@ python3 ouroboros-consensus/scripts/leios-demo/log_parser.py \
 echo
 echo Any processes still running:
 ps -aux | grep -e '[c]ardano-node' -e '[i]mmdb' | cut -c-180
+
+echo "(Hopefully there were none!)"
 
 exit 0
