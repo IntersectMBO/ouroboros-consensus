@@ -81,7 +81,11 @@ EOF
 
 mkdir -p "$TMP_DIR/node-0/db"
 
-CARDANO_NODE_CMD="${CARDANO_NODE} run \
+cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node-0/leios.db"
+sqlite3 "$TMP_DIR/node-0/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints;'
+
+CARDANO_NODE_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-0/leios.db \
+    ${CARDANO_NODE} run \
     --config $CLUSTER_RUN_DATA/leios-node/config.json \
     --topology topology-node-0.json \
     --database-path $TMP_DIR/node-0/db \
@@ -122,7 +126,11 @@ EOF
 
 mkdir -p "$TMP_DIR/node-1/db"
 
-MOCKED_PEER_CMD="cabal run -- cardano-node run \
+cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node-1/leios.db"
+sqlite3 "$TMP_DIR/node-1/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints;'
+
+MOCKED_PEER_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db \
+    ${CARDANO_NODE} run \
     --config $CLUSTER_RUN_DATA/leios-node/config.json \
     --topology topology-node-1.json \
     --database-path $TMP_DIR/node-1/db \

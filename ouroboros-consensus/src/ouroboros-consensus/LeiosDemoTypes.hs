@@ -533,3 +533,10 @@ demoLeiosFetchStaticEnv =
     millionBase2 = 2^(20 :: Int)
     thousand :: Num a => a
     thousand = 10^(3 :: Int)
+
+-----
+
+data LeiosNotification =
+    LeiosOfferBlock EbId BytesSize
+  |
+    LeiosOfferBlockTxs EbId

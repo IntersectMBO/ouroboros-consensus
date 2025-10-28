@@ -48,6 +48,7 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
+import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -351,9 +352,14 @@ mkHandlers
                             pure (offers1, offers2')
                         void $ MVar.tryPutMVar getLeiosReady ()
                 )
-      , hLeiosNotifyServer = \_version _peer ->
-            leiosNotifyServerPeer
-                (let loop = do threadDelay (60 :: DiffTime); loop in loop)   -- TODO
+      , hLeiosNotifyServer = \_version peer -> Effect $ do
+            var <- StrictSTM.newTVarIO Map.empty
+            MVar.modifyMVar_ getLeiosNotifications $ \x -> do
+                let x' = Map.insert (Leios.MkPeerId peer) var x
+                pure x'
+            pure
+              $ leiosNotifyServerPeer
+                    (Leios.nextLeiosNotification (getLeiosEbBodies, var))
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
             Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection   -- TODO share DB connection for same peer?
             reqVar <-
@@ -370,7 +376,7 @@ mkHandlers
               $ leiosFetchClientPeerPipelined
               $ Leios.nextLeiosFetchClientCommand
                     ((== Terminate) <$> controlMessageSTM)
-                    (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady)
+                    (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosNotifications)
                     db
                     (Leios.MkPeerId peer)
                     reqVar
@@ -378,6 +384,7 @@ mkHandlers
             Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
             leiosFetchContext <-
                 Leios.newLeiosFetchContext
+                    getLeiosWriteLock
                     db
                     (MVar.readMVar getLeiosEbBodies)
             pure $ leiosFetchServerPeer
@@ -385,7 +392,7 @@ mkHandlers
       }
   where
     NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} = nodeKernel
-    NodeKernel {getLeiosNewDbConnection, getLeiosPeersVars, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosWriteLock} = nodeKernel
+    NodeKernel {getLeiosNewDbConnection, getLeiosNotifications, getLeiosPeersVars, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosWriteLock} = nodeKernel
 
 {-------------------------------------------------------------------------------
   Codecs

@@ -117,8 +117,10 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
               True -> pure ()
           Leios.MkSomeLeiosDb leiosDb <- Leios.newLeiosDbConnectionIO leiosDbFile
           leiosEbBodies <- LeiosLogic.loadEbBodies leiosDb
+          leiosWriteLock <- MVar.newMVar ()
           fmap LeiosLogic.MkSomeLeiosFetchContext
             $ LeiosLogic.newLeiosFetchContext
+                  leiosWriteLock
                   leiosDb
                   (pure leiosEbBodies)
     ImmutableDB.withDB

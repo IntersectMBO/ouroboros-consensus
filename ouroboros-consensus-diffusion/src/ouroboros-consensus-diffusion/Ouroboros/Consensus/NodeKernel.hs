@@ -132,8 +132,7 @@ import           Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Data.Map (Map)
 import qualified Data.Map as Map
--- import qualified Data.Set as Set
-
+import           Data.Sequence (Seq)
 import           LeiosDemoTypes (LeiosEbBodies, LeiosOutstanding, LeiosPeerVars, SomeLeiosDb)
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoLogic as Leios
@@ -220,6 +219,14 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       --
       -- INVARIANT: never acquire 'MVar' while holding this lock.
     , getLeiosWriteLock :: MVar m ()
+    , getLeiosNotifications ::
+          MVar m
+              (Map
+                  (Leios.PeerId (ConnectionId addrNTN))
+                  (StrictSTM.StrictTVar m
+                      (Map SlotNo (Seq Leios.LeiosNotification))
+                  )
+              )
 
     }
 
@@ -382,6 +389,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding   -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
     getLeiosWriteLock <- MVar.newMVar ()
+    getLeiosNotifications <- MVar.newMVar Map.empty
 
     getLeiosCopyReady <- MVar.newEmptyMVar
 
@@ -390,20 +398,24 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         leiosPeersVars <- MVar.readMVar getLeiosPeersVars
         offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
         ebBodies <- MVar.readMVar getLeiosEbBodies
-        (newDecisions, newCopy, _xxx, _yyy) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+        (newDecisions, newCopy, newNotifications) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
             let (!outstanding', newDecisions) =
                     Leios.leiosFetchLogicIteration
                         Leios.demoLeiosFetchStaticEnv
                         (ebBodies, offerings)
                         outstanding
             let newCopy = Leios.toCopyCount outstanding' /= Leios.toCopyCount outstanding
-            pure (outstanding', (newDecisions, newCopy, outstanding, outstanding'))
+            let newNotifications =
+                   Map.keys
+                 $ Leios.blockingPerEb outstanding `Map.difference` Leios.blockingPerEb outstanding'
+            pure (outstanding', (newDecisions, newCopy, newNotifications))
         let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
         traceM $ "leiosFetchLogic: " ++ show (sum (fmap length newRequests)) ++ " new reqs, " ++ show newCopy ++ " new copy" {- ++ "\n" ++
                  "leiosOfferings: " ++ unwords [ Leios.prettyEbId ebId | (_peer, (_offers1, offers2)) <- Map.toList offerings, ebId <- Set.toList offers2 ]  ++ "\n" ++
                  "leiosEbBodies: " ++ Leios.prettyLeiosEbBodies ebBodies ++ "\n" ++
                  "leiosOutstanding: " ++ Leios.prettyLeiosOutstanding xxx ++ "\n" ++
                  "leiosOutstanding': " ++ Leios.prettyLeiosOutstanding yyy ++ "\n" -}
+          ++ "\n" ++ "leiosNotifications: " ++ unwords (map Leios.prettyEbId newNotifications) ++ "\n"
 {-
         forM_ newRequests $ \perPeer -> forM_ perPeer $ \case
             Leios.LeiosBlockRequest _ -> pure ()
@@ -423,7 +435,11 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
             () <- MVar.takeMVar getLeiosCopyReady
             traceM $ "leiosCopy: running " ++ show i
             t1 <- getMonotonicTimeNSec
-            moreTodo <- Leios.doCacheCopy db (getLeiosWriteLock, getLeiosOutstanding) (500 * 10^(3 :: Int))   -- TODO magic number
+            moreTodo <-
+                Leios.doCacheCopy
+                    db
+                    (getLeiosWriteLock, getLeiosOutstanding, getLeiosNotifications)
+                    (500 * 10^(3 :: Int))   -- TODO magic number
             t2 <- getMonotonicTimeNSec
             traceM $ "leiosCopy: done " ++ show (i, (t2 - t1) `div` (10^(6 :: Int)))
             void $ MVar.tryPutMVar getLeiosReady ()
@@ -455,6 +471,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getLeiosOutstanding
       , getLeiosReady
       , getLeiosWriteLock
+      , getLeiosNotifications
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
