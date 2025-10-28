@@ -380,7 +380,7 @@ if __name__ == "__main__":
         print("Warning: 'slot_onset' column not found. Skipping onset diff calculation.")
 
     # --- STEP 8: Generate Scatter Plot ---
-    plot_onset_vs_arrival(df_merged, plot_output_file)
+#    plot_onset_vs_arrival(df_merged, plot_output_file)
 
     print("\n--- Extracted and Merged Data Summary ---")
     print(
