@@ -1,7 +1,5 @@
 #!/bin/bash
 
-now=$(date +%s)
-
 if [[ ! "$SECONDS_UNTIL_REF_SLOT" =~ ^[0-9]*$ ]] || [[ "$SECONDS_UNTIL_REF_SLOT" -le 0 ]]; then
      echo "Error: \${SECONDS_UNTIL_REF_SLOT} must be a positive integer of seconds, which will be added to the execution time of this script." >&2
      exit 1
@@ -37,6 +35,13 @@ if [[ -z "${REF_SLOT}" ]] || [[ ! "$REF_SLOT" =~ ^[0-9]*$ ]] || [[ "$REF_SLOT" -
      echo "Error: \${REF_SLOT} must be a non-negative integer, a slot number" >&2
      exit 1
 fi
+
+now=$(date +%s)
+ONSET_OF_REF_SLOT=$(( $now + ${SECONDS_UNTIL_REF_SLOT} ))
+echo "REF_SLOT=$REF_SLOT"
+echo "ONSET_OF_REF_SLOT=$ONSET_OF_REF_SLOT"
+echo "$REF_SLOT" >ref_slot
+echo "$ONSET_OF_REF_SLOT" >onset_of_ref_slot
 
 # arbitrary choices
 
@@ -151,12 +156,6 @@ popd > /dev/null
 ##
 ## Run immdb-server
 ##
-
-ONSET_OF_REF_SLOT=$(( $now + ${SECONDS_UNTIL_REF_SLOT} ))
-echo "REF_SLOT=$REF_SLOT"
-echo "ONSET_OF_REF_SLOT=$ONSET_OF_REF_SLOT"
-echo "$REF_SLOT" >ref_slot
-echo "$ONSET_OF_REF_SLOT" >onset_of_ref_slot
 
 IMMDB_CMD_CORE="${IMMDB_SERVER} \
     --db $CLUSTER_RUN_DATA/immdb-node/immutable/ \
