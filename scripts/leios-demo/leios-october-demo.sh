@@ -153,6 +153,10 @@ popd > /dev/null
 ##
 
 ONSET_OF_REF_SLOT=$(( $now + ${SECONDS_UNTIL_REF_SLOT} ))
+echo "REF_SLOT=$REF_SLOT"
+echo "ONSET_OF_REF_SLOT=$ONSET_OF_REF_SLOT"
+echo "$REF_SLOT" >ref_slot
+echo "$ONSET_OF_REF_SLOT" >onset_of_ref_slot
 
 IMMDB_CMD_CORE="${IMMDB_SERVER} \
     --db $CLUSTER_RUN_DATA/immdb-node/immutable/ \
@@ -185,25 +189,20 @@ kill "$MOCKED_PEER_PID" 2>/dev/null || true
 
 echo "Temporary data stored at: $TMP_DIR"
 
-# # Log analysis
+# Log analysis
 
-# VENV_PATH="./scripts/leios-demo/venv"
+cat $TMP_DIR/cardano-node-0.log | grep -v -i -e leios >logA
+cat $TMP_DIR/cardano-node-1.log | grep -v -i -e leios >logB
 
-# # 1. Activate the Python Virtual Environment
-# if [ -f "$VENV_PATH/bin/activate" ]; then
-#     echo "Activating virtual environment..."
-#     # 'source' must be used for activation to modify the current shell environment
-#     source "$VENV_PATH/bin/activate"
-# else
-#     echo "Error: Virtual environment activation script not found at $VENV_PATH/bin/activate." >&2
-# fi
+python3 ouroboros-consensus/scripts/leios-demo/log_parser.py \
+        $REF_SLOT $ONSET_OF_REF_SLOT \
+        logA logB \
+        "scatter_plot.png"
 
-# python3 scripts/leios-demo/log_parser.py \
-#         $REF_SLOT $ONSET_OF_REF_SLOT \
-#         $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-1.log \
-#         "scatter_plot.png"
+# Status
 
-# # 2. Deactivate the Python Virtual Environment before exiting
-# deactivate 2>/dev/null || true
+echo
+echo Any processes still running:
+ps -aux | grep -e '[c]ardano-node' -e '[i]mmdb' | cut -c-180
 
-# exit 0
+exit 0

@@ -328,11 +328,6 @@ if __name__ == "__main__":
         how="inner",
     )
 
-    # --- STEP 5: Calculate Latency (Time Difference) ---
-    df_merged["latency_ms"] = (
-        df_merged["at_node_1"] - df_merged["at_node_0"]
-    ).dt.total_seconds() * 1000
-
     # --- STEP 6: Calculate Slot Onset Time ---
     print(f"\n--- Calculating Slot Onset Times ---")
     print(
@@ -359,6 +354,11 @@ if __name__ == "__main__":
         # Continue without onset time if calculation fails
         pass
 
+    # --- STEP 5: Calculate Latency (Time Difference) ---
+    df_merged["latency_ms"] = (
+        df_merged["at_node_1"] - df_merged["slot_onset"]
+    ).dt.total_seconds() * 1000
+
     # --- STEP 7: Calculate Diffs from Previous Slot ---
     print("\n--- Calculating Diffs from Previous Slot ---")
 
@@ -382,7 +382,7 @@ if __name__ == "__main__":
     # --- STEP 8: Generate Scatter Plot ---
     plot_onset_vs_arrival(df_merged, plot_output_file)
 
-    print("\n--- Extracted and Merged Data Summary (First 5 Rows) ---")
+    print("\n--- Extracted and Merged Data Summary ---")
     print(
         "Each row represents a unique block seen by both nodes, joined by hash and slot."
     )
@@ -390,17 +390,19 @@ if __name__ == "__main__":
     final_columns = [
         "slot",
         "hash",
-        "slot_onset",
-        "at_node_0",
-        "at_node_1",
+#        "slot_onset",
+#        "at_node_0",
+#        "at_node_1",
         "latency_ms",
-        "slot_diff_from_prev",
-        "onset_diff_from_prev_s",
+#        "slot_diff_from_prev",
+#        "onset_diff_from_prev_s",
     ]
 
     # Filter list to only columns that actually exist in the dataframe
     # This prevents an error if 'slot_onset' failed to be created
     existing_columns = [col for col in final_columns if col in df_merged.columns]
 
-    print(df_merged[existing_columns].head())
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.expand_frame_repr', False)
+    print(df_merged[existing_columns])
     print(f"\nTotal unique block events matched: {len(df_merged)}")
