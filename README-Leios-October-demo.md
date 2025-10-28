@@ -88,7 +88,7 @@ This is where you might see messages about, eg, the missing `genesis-*.json` fil
 
 ## The topology
 
-For this first iteration, the demo topology is a simple linear chain.
+For this first iteration, the demo topology is a simple linear graph.
 
 ```mermaid
 flowchart TD
@@ -100,7 +100,7 @@ In this iteration of the demo, the mocked downstream peer (see section below) is
 
 ## The Praos traffic and Leios traffic
 
-In this iteration of the demo, the Praos data and traffic is very simple.
+In this iteration of the demo, the data and traffic is very simple.
 
 - The Praos data is a simple chain provided by the Performance&Tracing team.
 - The mocked upstream peer serves each Praos block when the mocked wall-clock reaches the onset of their slots.
@@ -157,7 +157,7 @@ That would not be a well-formed EB, but the prototype's behavior in response to 
 
 The mocked upstream peer is a patched variant of `immdb-server`.
 
-- It runs incomplete variant of LeiosNotify and LeiosFetch: just EBs and EB closures, nothing else (no EB announcements, no votes, no range requests).
+- It runs incomplete variants of LeiosNotify and LeiosFetch: just EBs and EB closures, nothing else (no EB announcements, no votes, no range requests).
 - It serves the EBs present in the given `--leios-db`; it sends Leios notificaitons offering the data according to the given `--leios-schedule`.
   See the demo tool section above for how to generate those files.
 
@@ -166,15 +166,15 @@ The mocked upstream peer is a patched variant of `immdb-server`.
 The patched node is a patched variant of `cardano-node`.
 All of the material changes were made in the `ouroboros-consensus` repo; the `cardano-node` changes are merely for integration.
 
-- It runs the same incomplete variant of LeiosNotify and LeiosFetch as the mocked upstream peer.
-- The Leios fetch request logic is a fully fledged first draft, with four primary shortcomings.
+- It runs the same incomplete variants of LeiosNotify and LeiosFetch as the mocked upstream peer.
+- The Leios fetch request logic is a fully fledged first draft, with following primary shortcomings.
     - It only handles EBs and EB closures, not votes and not range requests.
     - It retains a number of heap objects in proportion with the number of txs in EBs it has acquired.
       The real node---and so subsequent iterations of this prototype---must instead keep that data on disk.
-      This first draft was intended to do so, but we struggled to invent the fetch logic algorithm with the constraint that some of its state was on-disk; that's currently presumed to be possible, but has been deferred to a iteration of the prototype.
+      This first draft was intended to do so, but we struggled to invent the fetch logic algorithm with the constraint that some of its state was on-disk; that's currently presumed to be possible, but has been deferred to a subsequent iteration of the prototype.
     - It never discards any information.
-      The real node---and so subsequent iterations of this prototype---must instead discard EBs and EB closures once their old enough, unless they are needed for the immutable chain.
-    - Once it decides to fetch a set of txs from an upstream peer for the sake of some EB closure, it does not necessarily compose those into an optimal set of requests for that peer.
+      The real node---and so subsequent iterations of this prototype---must instead discard EBs and EB closures once they're old enough, unless they are needed for the immutable chain.
+    - Once it decides to fetch a set of txs from an upstream peer for the sake of some EB closure(s), it does not necessarily compose those into an optimal set of requests for that peer.
       We had not identified the potential for an optimizing algorithm here until writing this first prototype, so it just does something straight-forward and naive for now (which might be sufficient even for the real-node---we'll have to investigate later).
 
 There are no other changes.
@@ -184,9 +184,9 @@ There are many such changes, from small to large.
 Some examples includes the following.
 
 - The prototype uses SQLite3 with entirely default settings.
-  Maybe Write-Ahead Log mode would be much preferable, etc.
+  Maybe Write-Ahead Log mode would be much preferable, likely need to VACUUM at some point, and so on.
 - The prototype uses a mutex to completely isolate every SQLite3 invocation---that's probably excessive, but was useful for some debugging during initial development (see the Engineering Notes appendix)
-- The prototype chooses several _magic numbers_ for resource utilization limits (eg max-bytes per reqeusted, max outsanding bytes per peer, fetch decision logic rate-limiting, txCache disk-bandwidth rate-limiting, etc).
+- The prototype chooses several _magic numbers_ for resource utilization limits (eg max bytes per reqeust, max outsanding bytes per peer, fetch decision logic rate-limiting, txCache disk-bandwidth rate-limiting, etc).
   These all ultimately need to be tuned for the intended behvaiors on `mainnet`.
 - The prototype does not deduplicate the storage of EBs' closures when they share txs.
   This decision makes the LeiosFetch server a trivial single-pass instead of a join.
@@ -200,7 +200,7 @@ In the future, it could be comparatively lightweight and moreover could replay a
 
 # Appendix: Engineering Notes
 
-This section summaries some lessons learned during the development of this prototype.
+This section summarizes some lessons learned during the development of this prototype.
 
 - Hypothesis: A SQLite connection will continue to hold SQLite's internal EXCLUSIVE lock _even after the transaction is COMMITed_ when the write transaction involved a prepared statement that was accidentally not finalized.
   That hypothesis was inferred from a painstaking debugging session, but I haven't not yet confirmed it in isolation.
