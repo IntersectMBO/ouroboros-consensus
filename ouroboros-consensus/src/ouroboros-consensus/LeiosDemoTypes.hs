@@ -16,6 +16,7 @@ import           Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
+import           Control.Monad.Class.MonadThrow (MonadThrow, bracket, bracket_)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
@@ -417,6 +418,22 @@ dbFinalize = dbFinalize_
 dbPrepare :: HasCallStack => LeiosDb stmt m -> DB.Utf8 -> m stmt
 dbPrepare = dbPrepare_
 
+dbWithPrepare ::
+    (HasCallStack, MonadThrow m)
+ =>
+    LeiosDb stmt m -> DB.Utf8 -> (stmt -> m r) -> m r
+dbWithPrepare db q k = bracket (dbPrepare db q) (dbFinalize db) k
+
+dbWithBEGIN ::
+    (HasCallStack, MonadThrow m)
+ =>
+    LeiosDb stmt m -> m r -> m r
+dbWithBEGIN db k = do
+    bracket_
+        (dbExec db (fromString "BEGIN"))
+        (dbExec db (fromString "COMMIT"))
+        k
+
 dbReset :: HasCallStack => LeiosDb stmt m -> stmt -> m ()
 dbReset = dbReset_
 
@@ -474,7 +491,7 @@ withDieDone io =
         DB.Done -> pure ()
 
 dieStack :: HasCallStack => String -> IO a
-dieStack s = dieStack $ s ++ "\n\n" ++ GHC.Stack.prettyCallStack GHC.Stack.callStack
+dieStack s = die $ s ++ "\n\n" ++ GHC.Stack.prettyCallStack GHC.Stack.callStack
 
 -----
 

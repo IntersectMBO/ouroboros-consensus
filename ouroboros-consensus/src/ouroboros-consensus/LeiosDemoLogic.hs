@@ -46,8 +46,9 @@ import qualified LeiosDemoOnlyTestNotify as LN
 import qualified LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoTypes (BytesSize, EbHash (..), EbId (..), LeiosEbBodies, LeiosOutstanding, LeiosPoint (..), LeiosDb (..), LeiosEb (..), LeiosFetchStaticEnv, LeiosTx (..), PeerId (..), TxHash (..))
 import           LeiosDemoTypes (LeiosBlockRequest (..), LeiosBlockTxsRequest (..), LeiosFetchRequest (..), LeiosNotification (..))
-import           LeiosDemoTypes (dbBindBlob, dbBindInt64, dbColumnBlob, dbColumnInt64, dbExec, dbFinalize, dbPrepare, dbReset, dbStep, dbStep1)
+import           LeiosDemoTypes (dbBindBlob, dbBindInt64, dbColumnBlob, dbColumnInt64, dbExec, dbReset, dbStep, dbStep1, dbWithBEGIN, dbWithPrepare)
 import qualified LeiosDemoTypes as Leios
+import           Ouroboros.Consensus.Util.IOLike (IOLike)
 
 type HASH = Hash.Blake2b_256
 
@@ -107,24 +108,20 @@ ebIdFromPointM mvar p =
 
 -----
 
-loadEbBodies :: Monad m => LeiosDb stmt m -> m LeiosEbBodies
+loadEbBodies :: IOLike m => LeiosDb stmt m -> m LeiosEbBodies
 loadEbBodies db = do
-    dbExec db (fromString "BEGIN")
-    stmt <- dbPrepare db (fromString sql_scan_ebId)
-    let loop !ps !qs =
-            dbStep db stmt >>= \case
-                DB.Done -> do
-                    dbFinalize db stmt
-                    pure (ps, qs)
-                DB.Row -> do
-                    ebSlot <- fromIntegral <$> dbColumnInt64 db stmt 0
-                    ebHash <- MkEbHash <$> dbColumnBlob db stmt 1
-                    ebId <- fromIntegral <$> dbColumnInt64 db stmt 2
-                    loop
-                        (IntMap.insertWith Map.union ebSlot (Map.singleton ebHash (MkEbId ebId)) ps)
-                        (IntMap.insert ebId ebHash qs)
-    (ps, qs) <- loop IntMap.empty IntMap.empty
-    dbExec db (fromString "COMMIT")
+    (ps, qs) <- dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_ebId) $ \stmt -> do
+        let loop !ps !qs =
+                dbStep db stmt >>= \case
+                    DB.Done -> pure (ps, qs)
+                    DB.Row -> do
+                        ebSlot <- fromIntegral <$> dbColumnInt64 db stmt 0
+                        ebHash <- MkEbHash <$> dbColumnBlob db stmt 1
+                        ebId <- fromIntegral <$> dbColumnInt64 db stmt 2
+                        loop
+                            (IntMap.insertWith Map.union ebSlot (Map.singleton ebHash (MkEbId ebId)) ps)
+                            (IntMap.insert ebId ebHash qs)
+        loop IntMap.empty IntMap.empty
     pure Leios.emptyLeiosEbBodies {
         Leios.ebPoints = ps
       ,
@@ -170,11 +167,7 @@ newLeiosFetchContext leiosWriteLock leiosDb readLeiosEbBodies = do
 -----
 
 leiosFetchHandler ::
-  (
-    PrimMonad m
-  ,
-    MonadMVar m
-  )
+    IOLike m
  =>
     LeiosFetchContext stmt m
  ->
@@ -192,11 +185,7 @@ leiosFetchHandler leiosContext = LF.MkLeiosFetchRequestHandler $ \case
         pure $ LF.MsgLeiosBlockTxs x
 
 msgLeiosBlockRequest ::
-  (
-    MonadMVar m
-  ,
-    PrimMonad m
-  )
+    IOLike m
  =>
     LeiosFetchContext stmt m
  ->
@@ -211,22 +200,17 @@ msgLeiosBlockRequest leiosContext p = do
         Just _ -> error "Unrecognized Leios point"
     n <- MVar.withMVar leiosWriteLock $ \() -> do
         -- get the EB items
-        dbExec db (fromString "BEGIN")
-        stmt <- dbPrepare db (fromString sql_lookup_ebBodies)
-        dbBindInt64 db stmt 1 (Leios.fromIntegralEbId ebId)
-        let loop !i =
-                dbStep db stmt >>= \case
-                    DB.Done -> do
-                        dbFinalize db stmt
-                        pure i
-                    DB.Row -> do
-                        txHashBytes <- dbColumnBlob db stmt 0
-                        txBytesSize <- fromIntegral <$> dbColumnInt64 db stmt 1
-                        MV.write buf i (MkTxHash txHashBytes, txBytesSize)
-                        loop (i+1)
-        n <- loop 0
-        dbExec db (fromString "COMMIT")
-        pure n
+        dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebBodies) $ \stmt -> do
+            dbBindInt64 db stmt 1 (Leios.fromIntegralEbId ebId)
+            let loop !i =
+                    dbStep db stmt >>= \case
+                        DB.Done -> pure i
+                        DB.Row -> do
+                            txHashBytes <- dbColumnBlob db stmt 0
+                            txBytesSize <- fromIntegral <$> dbColumnInt64 db stmt 1
+                            MV.write buf i (MkTxHash txHashBytes, txBytesSize)
+                            loop (i+1)
+            loop 0
     v <- V.freeze $ MV.slice 0 n buf
     pure $ MkLeiosEb v
 
@@ -238,11 +222,7 @@ sql_lookup_ebBodies =
     \"
 
 msgLeiosBlockTxsRequest ::
-  (
-    MonadMVar m
-  ,
-    PrimMonad m
-  )
+    IOLike m
  =>
     LeiosFetchContext stmt m
  ->
@@ -273,36 +253,30 @@ msgLeiosBlockTxsRequest leiosContext p bitmaps = do
                 Just (i, bitmap') ->
                     Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
         txOffsets = unfoldr nextOffset bitmaps
-    n <- MVar.withMVar leiosWriteLock $ \() -> do
+    n <- MVar.withMVar leiosWriteLock $ \() -> dbWithBEGIN db $ do
         -- fill in-memory table
-        dbExec db (fromString "BEGIN")
-        do
-            stmt <- dbPrepare db (fromString sql_insert_memTxPoints)
+        dbWithPrepare db (fromString sql_insert_memTxPoints) $ \stmt -> do
             dbBindInt64 db stmt 1 (Leios.fromIntegralEbId ebId)
             forM_ txOffsets $ \txOffset -> do
                 dbBindInt64 db stmt 2 (fromIntegral txOffset)
                 dbStep1 db stmt
                 dbReset db stmt
-            dbFinalize db stmt
         -- get txBytess
-        stmt <- dbPrepare db (fromString sql_retrieve_from_ebTxs)
-        n <- (\f -> foldM f 0 txOffsets) $ \i txOffset -> do
-            dbStep db stmt >>= \case
-                DB.Done -> do
-                  dbFinalize db stmt
-                  pure i
-                DB.Row -> do
-                    txOffset' <- dbColumnInt64 db stmt 0
-                    txBytes <- dbColumnBlob db stmt 1
-                    when (fromIntegral txOffset /= txOffset') $ do
-                        error $ "Missing offset " ++ show (txOffset, txOffset')
-                    tx <- case decodeFullDecoder' (fromString "txBytes column") Leios.decodeLeiosTx txBytes of
-                        Left err -> error $ "Failed to deserialize txBytes column: " ++ Leios.prettyLeiosPoint p ++ " " ++ show (txOffset', err)
-                        Right tx -> pure tx
-                    MV.write buf i tx
-                    pure $! (i + 1)
+        n <- dbWithPrepare db (fromString sql_retrieve_from_ebTxs) $ \stmt -> do
+            (\f -> foldM f 0 txOffsets) $ \i txOffset -> do
+                dbStep db stmt >>= \case
+                    DB.Done -> pure i
+                    DB.Row -> do
+                        txOffset' <- dbColumnInt64 db stmt 0
+                        txBytes <- dbColumnBlob db stmt 1
+                        when (fromIntegral txOffset /= txOffset') $ do
+                            error $ "Missing offset " ++ show (txOffset, txOffset')
+                        tx <- case decodeFullDecoder' (fromString "txBytes column") Leios.decodeLeiosTx txBytes of
+                            Left err -> error $ "Failed to deserialize txBytes column: " ++ Leios.prettyLeiosPoint p ++ " " ++ show (txOffset', err)
+                            Right tx -> pure tx
+                        MV.write buf i tx
+                        pure $! (i + 1)
         dbExec db (fromString sql_flush_memTxPoints)
-        dbExec db (fromString "COMMIT")
         pure n
     V.freeze $ MV.slice 0 n buf
 
@@ -637,9 +611,7 @@ nextLeiosFetchClientCommand :: forall pid stmt m.
   (
     Ord pid
   ,
-    MonadSTM m
-  ,
-    MonadMVar m
+    IOLike m
   )
  =>
     StrictSTM.STM m Bool
@@ -696,9 +668,7 @@ msgLeiosBlock ::
   (
     Ord pid
   ,
-    MonadMVar m
-  ,
-    MonadSTM m
+    IOLike m
   )
  =>
     (MVar m (), MVar m LeiosEbBodies, MVar m (LeiosOutstanding pid), MVar m (), MVar m (Map (PeerId pid) (StrictTVar m (Map SlotNo (Seq LeiosNotification)))))
@@ -736,18 +706,15 @@ msgLeiosBlock (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVar
                 Nothing -> pure x
         let novel = not $ Set.member ebId (Leios.acquiredEbBodies ebBodies)
         when novel $ MVar.withMVar writeLock $ \() -> do   -- TODO don't hold the ebBodies mvar during this IO
-            stmt <- dbPrepare db (fromString sql_insert_ebBody)
-            dbExec db (fromString "BEGIN")
-            -- INSERT INTO ebTxs
-            dbBindInt64 db stmt 1 (Leios.fromIntegralEbId ebId)
-            V.iforM_ (let MkLeiosEb v = eb in v) $ \txOffset (txHash, txBytesSize) -> do
-                dbBindInt64 db stmt 2 (fromIntegral txOffset)
-                dbBindBlob  db stmt 3 (let MkTxHash bytes = txHash in bytes)
-                dbBindInt64 db stmt 4 (fromIntegral txBytesSize)
-                dbStep1     db stmt
-                dbReset     db stmt
-            dbFinalize db stmt
-            dbExec db (fromString "COMMIT")
+            dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebBody) $ \stmt -> do
+                -- INSERT INTO ebTxs
+                dbBindInt64 db stmt 1 (Leios.fromIntegralEbId ebId)
+                V.iforM_ (let MkLeiosEb v = eb in v) $ \txOffset (txHash, txBytesSize) -> do
+                    dbBindInt64 db stmt 2 (fromIntegral txOffset)
+                    dbBindBlob  db stmt 3 (let MkTxHash bytes = txHash in bytes)
+                    dbBindInt64 db stmt 4 (fromIntegral txBytesSize)
+                    dbStep1     db stmt
+                    dbReset     db stmt
         -- update NodeKernel state
         let !ebBodies' = if not novel then ebBodies else ebBodies {
                 Leios.acquiredEbBodies = Set.insert ebId (Leios.acquiredEbBodies ebBodies)
@@ -831,9 +798,7 @@ msgLeiosBlockTxs ::
   (
     Ord pid
   ,
-    MonadMVar m
-  ,
-    MonadSTM m
+    IOLike m
   )
  =>
     (
@@ -892,24 +857,21 @@ msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar, notification
         offsets = unfoldr nextOffset bitmaps
     -- ingest
     MVar.withMVar writeLock $ \() -> do
-        stmtTxCache <- dbPrepare db (fromString sql_insert_txCache)
-        stmtEbTxs <- dbPrepare db (fromString sql_update_ebTx)
-        dbBindInt64 db stmtEbTxs 2 (Leios.fromIntegralEbId ebId)
-        dbExec db (fromString "BEGIN")
-        forM_ (zip offsets $ V.toList $ txHashes `V.zip` txBytess) $ \(txOffset, (txHash, txBytes)) -> do
-            -- INTO ebTxs
-            dbBindInt64 db stmtEbTxs 3 $ fromIntegral txOffset
-            dbBindBlob  db stmtEbTxs 1 $ txBytes
-            dbStep1     db stmtEbTxs
-            dbReset     db stmtEbTxs
-            -- INTO txCache
-            dbBindBlob  db stmtTxCache 1 $ (let MkTxHash bytes = txHash in bytes)
-            dbBindBlob  db stmtTxCache 2 $ txBytes
-            dbBindInt64 db stmtTxCache 3 $ fromIntegral $ BS.length txBytes
-            dbStep1     db stmtTxCache
-            dbReset     db stmtTxCache
-        dbExec db (fromString "COMMIT")
-        -- update NodeKernel state
+        dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_txCache) $ \stmtTxCache -> dbWithPrepare db (fromString sql_update_ebTx) $ \stmtEbTxs -> do
+            dbBindInt64 db stmtEbTxs 2 (Leios.fromIntegralEbId ebId)
+            forM_ (zip offsets $ V.toList $ txHashes `V.zip` txBytess) $ \(txOffset, (txHash, txBytes)) -> do
+                -- INTO ebTxs
+                dbBindInt64 db stmtEbTxs 3 $ fromIntegral txOffset
+                dbBindBlob  db stmtEbTxs 1 $ txBytes
+                dbStep1     db stmtEbTxs
+                dbReset     db stmtEbTxs
+                -- INTO txCache
+                dbBindBlob  db stmtTxCache 1 $ (let MkTxHash bytes = txHash in bytes)
+                dbBindBlob  db stmtTxCache 2 $ txBytes
+                dbBindInt64 db stmtTxCache 3 $ fromIntegral $ BS.length txBytes
+                dbStep1     db stmtTxCache
+                dbReset     db stmtTxCache
+    -- update NodeKernel state
     newNotifications <- MVar.modifyMVar outstandingVar $ \outstanding -> do
         let (requestedTxPeers', cachedTxs', txOffsetss', txsBytesSize) =
                 (\f -> V.foldl
@@ -1036,11 +998,7 @@ sql_insert_txCache =
 -----
 
 doCacheCopy ::
-  (
-    MonadMVar m
-  ,
-    MonadSTM m
-  )
+    IOLike m
  =>
     LeiosDb stmt m
  ->
@@ -1059,12 +1017,8 @@ doCacheCopy db (writeLock, outstandingVar, notificationVars) bytesSize = do
     copied <- do
         outstanding <- MVar.readMVar outstandingVar
         MVar.withMVar writeLock $ \() -> do
-            dbExec db (fromString "BEGIN")
-            stmt <- dbPrepare db (fromString sql_copy_from_txCache)
-            x <- go1 stmt Map.empty 0 (Leios.toCopy outstanding)
-            dbFinalize db stmt
-            dbExec db (fromString "COMMIT")
-            pure x
+            dbWithBEGIN db $ dbWithPrepare db (fromString sql_copy_from_txCache) $ \stmt -> do
+                go1 stmt Map.empty 0 (Leios.toCopy outstanding)
     (moreTodo, newNotifications) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
         let _ = copied :: Map EbId IntSet
         let usefulCopied =
