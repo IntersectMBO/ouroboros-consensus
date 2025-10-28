@@ -32,7 +32,6 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Void (Void)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State qualified as State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API

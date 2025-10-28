@@ -20,7 +20,6 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
   , PeerDecisionChannelsVar
   , newPeerDecisionChannelsVar
   , DecisionPolicy (..)
-  , defaultDecisionPolicy
   ) where
 
 import Control.Concurrent.Class.MonadSTM (MonadSTM, atomically)
@@ -29,7 +28,6 @@ import Control.Tracer (Tracer, traceWith)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Set qualified as Set
 import Network.TypedProtocol
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types as V2
 import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)

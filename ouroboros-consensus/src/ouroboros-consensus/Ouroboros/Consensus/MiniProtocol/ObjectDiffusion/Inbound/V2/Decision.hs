@@ -1,7 +1,4 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -14,141 +11,20 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
 
     -- * Internal API exposed for testing
   , DecisionContext (..)
-  , mkDecisionContext
   ) where
 
-import Cardano.Prelude (for)
-import Control.DeepSeq (NFData (..))
-import Data.Either (partitionEithers)
 import Data.Foldable qualified as Foldable
 import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
 import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as StrictSeq
 import Data.Set (Set)
 import Data.Set qualified as Set
-import GHC.Generics (Generic)
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
-import System.Random (StdGen, mkStdGen)
-import System.Random.SplitMix (SMGen)
-import Test.QuickCheck (Arbitrary (..))
-import Test.QuickCheck.Arbitrary (vector)
-import Test.QuickCheck.Gen (Gen (..), choose, shuffle)
-import Test.QuickCheck.Random (QCGen (..))
-
-data DecisionContext peerAddr objectId object = DecisionContext
-  { dcRng :: StdGen
-  , dcHasObject :: (objectId -> Bool)
-  , dcDecisionPolicy :: DecisionPolicy
-  , dcGlobalState :: DecisionGlobalState peerAddr objectId object
-  , dcPrevDecisions :: Map peerAddr (PeerDecision objectId object)
-  }
-  deriving stock Generic
-  deriving anyclass NFData
-
--- TODO: Using `sized` to control size, we could maybe provide directly an instance of Arbitrary for DecisionContext?
-
-partitionWithProb :: Double -> [a] -> Gen ([a], [a])
-partitionWithProb p xs = do
-  partitionEithers
-    <$> traverse
-      ( \x -> do
-          r <- choose (0.0, 1.0)
-          if r < p then return (Left x) else return (Right x)
-      )
-      xs
-
--- TODO: we do not take into account dpMaxNumObjectsInflightTotal here
-mkDecisionContext ::
-  forall peerAddr objectId object.
-  ( Arbitrary peerAddr
-  , Arbitrary object
-  , Ord peerAddr
-  , Ord objectId
-  ) =>
-  SMGen ->
-  Int ->
-  Int ->
-  (object -> objectId) ->
-  -- | If we want to provide a specific decision policy instead of relying on an arbitrary variation of the default one
-  Maybe DecisionPolicy ->
-  DecisionContext peerAddr objectId object
-mkDecisionContext stdGen peersNb objectsNb getId mPolicy = unGen gen (QCGen stdGen) peersNb -- We use peerNb as the size parameter
- where
-  alreadyInPoolRatio :: Double = 0.2
-  -- How many peers should offer an object compared to the target redundancy
-  -- for objects (e.g. with targetRedundancy at 2, and this factor at 1.5, then 3 peers will on average offer each object)
-  advertiseRedundancyOverTargetRedundancy :: Double = 1.5
-
-  gen :: Gen (DecisionContext peerAddr objectId object)
-  gen = do
-    dcRng <- mkStdGen <$> arbitrary
-    dcDecisionPolicy@DecisionPolicy{dpTargetObjectRedundancy} <- fromMaybe arbitrary (pure <$> mPolicy)
-    objects <- vector objectsNb
-
-    (alreadyInPool, _) <- partitionWithProb alreadyInPoolRatio objects
-    let !alreadyInPoolIds = Set.fromList $ getId <$> alreadyInPool
-        dcHasObject = (`Set.member` alreadyInPoolIds)
-
-    dcGlobalState <-
-      DecisionGlobalState . Map.fromList <$> for [1 .. peersNb] \_ -> do
-        (peerObjects, _) <-
-          partitionWithProb
-            ( advertiseRedundancyOverTargetRedundancy
-                * fromIntegral dpTargetObjectRedundancy
-                / fromIntegral peersNb
-            )
-            objects
-        (,) <$> arbitrary <*> (mkPeerState getId dcDecisionPolicy peerObjects)
-
-    let dcPrevDecisions = Map.map (\_ -> unavailableDecision) (dgsPeerStates dcGlobalState)
-
-    pure $
-      DecisionContext
-        { dcRng
-        , dcHasObject
-        , dcDecisionPolicy
-        , dcGlobalState
-        , dcPrevDecisions
-        }
-
-mkPeerState ::
-  Ord objectId =>
-  (object -> objectId) -> DecisionPolicy -> [object] -> Gen (DecisionPeerState objectId object)
-mkPeerState getId DecisionPolicy{dpMaxNumObjectsOutstanding, dpMaxNumObjectsInflightPerPeer} rawPeerObjects = do
-  let peerObjects = take (fromIntegral dpMaxNumObjectsOutstanding) rawPeerObjects
-
-  let inflightRatio :: Double = 0.1
-  let owtPoolRatio :: Double = 0.1
-  -- let availableRatio :: Double = 1 - (inflightRatio + owtPoolRatio)
-  let owtPoolStillInFifoRatio :: Double = 0.3
-  let idsInflightSaturation :: Double = 0.8
-
-  (objectsAvailable, rest) <- partitionWithProb (1 - (inflightRatio + owtPoolRatio)) peerObjects
-  (rawObjectsInflight, objectsOwtPool) <-
-    partitionWithProb (owtPoolRatio / (owtPoolRatio + inflightRatio)) rest
-  let objectsInflight = take (fromIntegral dpMaxNumObjectsInflightPerPeer) rawObjectsInflight
-
-  (owtPoolStillInFifo, _) <- partitionWithProb owtPoolStillInFifoRatio objectsOwtPool
-  objectsInFifo <- shuffle $ objectsAvailable ++ objectsInflight ++ owtPoolStillInFifo
-
-  let maxNumIdsInFlight = max 0 (fromIntegral dpMaxNumObjectsOutstanding - length objectsInFifo)
-  numIdsInFlight <-
-    (chooseGeometricWithMedian (round $ idsInflightSaturation * fromIntegral maxNumIdsInFlight))
-
-  pure $
-    DecisionPeerState
-      { dpsObjectsAvailableIds = Set.fromList $ getId <$> objectsAvailable
-      , dpsObjectsInflightIds = Set.fromList $ getId <$> objectsInflight
-      , dpsObjectsOwtPool = Map.fromList $ (\obj -> (getId obj, obj)) <$> objectsOwtPool
-      , dpsOutstandingFifo = StrictSeq.fromList $ getId <$> objectsInFifo
-      , dpsNumIdsInflight = fromIntegral $ numIdsInFlight `max` 0 `min` maxNumIdsInFlight
-      }
+import System.Random (StdGen)
 
 strictSeqToSet :: Ord a => StrictSeq a -> Set a
 strictSeqToSet = Set.fromList . Foldable.toList

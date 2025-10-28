@@ -10,10 +10,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
-  ( -- * DecisionPeerState
+  ( -- * State
     DecisionPeerState (..)
-
-    -- * DecisionGlobalState
   , DecisionGlobalState (..)
   , dgsObjectsAvailableMultiplicities
   , dgsObjectsInflightMultiplicities
@@ -22,6 +20,8 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
   , newDecisionGlobalStateVar
 
     -- * Decisions
+  , DecisionContext (..)
+  , DecisionPolicy (..)
   , PeerDecision (..)
   , PeerDecisionStatus (..)
   , unavailableDecision
@@ -52,7 +52,7 @@ import Control.Exception (Exception (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Monoid (Sum (..))
-import Data.Sequence.Strict (StrictSeq, fromList)
+import Data.Sequence.Strict (StrictSeq)
 import Data.Set (Set)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -61,7 +61,7 @@ import NoThunks.Class (NoThunks (..))
 import Ouroboros.Network.ControlMessage (ControlMessage)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 import Quiet (Quiet (..))
-import Test.QuickCheck (Arbitrary (..), elements)
+import System.Random (StdGen)
 
 -- | Semaphore to guard access to the ObjectPool
 newtype ObjectPoolSem m = ObjectPoolSem (TSem m)
@@ -111,21 +111,6 @@ data DecisionPeerState objectId object = DecisionPeerState
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks)
 
-instance
-  ( Arbitrary objectId
-  , Arbitrary object
-  , Ord objectId
-  ) =>
-  Arbitrary (DecisionPeerState objectId object)
-  where
-  arbitrary =
-    DecisionPeerState
-      <$> (NumObjectIdsReq <$> arbitrary)
-      <*> (fromList <$> arbitrary)
-      <*> arbitrary
-      <*> arbitrary
-      <*> arbitrary
-
 -- | Shared state of all `ObjectDiffusion` clients.
 data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   { dgsPeerStates :: !(Map peerAddr (DecisionPeerState objectId object))
@@ -137,17 +122,6 @@ data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks)
-
-instance
-  ( Arbitrary peerAddr
-  , Arbitrary object
-  , Arbitrary objectId
-  , Ord peerAddr
-  , Ord objectId
-  ) =>
-  Arbitrary (DecisionGlobalState peerAddr objectId object)
-  where
-  arbitrary = DecisionGlobalState <$> arbitrary
 
 -- | Merge dpsObjectsAvailableIds from all peers of the global state.
 dgsObjectsAvailableMultiplicities ::
@@ -187,6 +161,33 @@ newDecisionGlobalStateVar =
 -- Decisions
 --
 
+data DecisionContext peerAddr objectId object = DecisionContext
+  { dcRng :: StdGen
+  , dcHasObject :: (objectId -> Bool)
+  , dcDecisionPolicy :: DecisionPolicy
+  , dcGlobalState :: DecisionGlobalState peerAddr objectId object
+  , dcPrevDecisions :: Map peerAddr (PeerDecision objectId object)
+  }
+  deriving stock Generic
+  deriving anyclass NFData
+
+-- | Policy for making decisions
+data DecisionPolicy = DecisionPolicy
+  { dpMaxNumObjectIdsReq :: !NumObjectIdsReq
+  -- ^ a maximal number of objectIds requested at once.
+  , dpMaxNumObjectsOutstanding :: !NumObjectsOutstanding
+  -- ^ maximal number of objects in the outstanding FIFO.
+  -- Must be the same as the outbound peer's value.
+  , dpMaxNumObjectsInflightPerPeer :: !NumObjectsReq
+  -- ^ a limit of objects in-flight from a single peer.
+  , dpMaxNumObjectsInflightTotal :: !NumObjectsReq
+  -- ^ a limit of objects in-flight from all peers for this node.
+  , dpTargetObjectRedundancy :: !ObjectMultiplicity
+  -- ^ from how many peers download the `objectId` simultaneously
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NFData, NoThunks)
+
 -- | Decision made by the decision logic.  Each peer will receive a 'Decision'.
 --
 -- /note:/ it is rather non-standard to represent a choice between requesting
@@ -217,34 +218,12 @@ data PeerDecision objectId object = PeerDecision
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks)
 
-instance
-  ( Arbitrary objectId
-  , Ord objectId
-  ) =>
-  Arbitrary (PeerDecision objectId object)
-  where
-  arbitrary =
-    PeerDecision
-      <$> (NumObjectIdsAck <$> arbitrary)
-      <*> (NumObjectIdsReq <$> arbitrary)
-      <*> arbitrary
-      <*> arbitrary
-      <*> arbitrary
-
 data PeerDecisionStatus
   = DecisionUnread
   | DecisionBeingActedUpon
   | DecisionCompleted
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks)
-
-instance Arbitrary PeerDecisionStatus where
-  arbitrary =
-    elements
-      [ DecisionUnread
-      , DecisionBeingActedUpon
-      , DecisionCompleted
-      ]
 
 -- | A placeholder when no decision has been made, at the beginning of a loop.
 -- Nothing should be read from it except its status.

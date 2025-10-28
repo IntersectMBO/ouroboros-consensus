@@ -15,8 +15,8 @@ import Data.Hashable (Hashable)
 import Debug.Trace (traceMarkerIO)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision qualified as OD
-import System.Random.SplitMix qualified as SM
-import Test.QuickCheck (Arbitrary (..))
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.TestUtils qualified as OD
+import Test.QuickCheck (Arbitrary (..), generate)
 import Test.Tasty.Bench
 
 -- TODO: We will probably want to use the actual types used in vote/cert diffusion,
@@ -37,10 +37,13 @@ data DummyObject = DummyObject
   { doId :: DummyObjectId
   , doPayload :: ()
   }
-  deriving (Generic, NFData)
+  deriving (Eq, Ord, Generic, Hashable, NFData)
 
 instance Arbitrary DummyObject where
   arbitrary = DummyObject <$> arbitrary <*> arbitrary
+
+-- TODO: We should probably use specific policies that are well suited to the
+-- number of peers and objects.
 
 main :: IO ()
 main =
@@ -51,7 +54,7 @@ main =
             "VoteDiffusion"
             [ env
                 ( do
-                    let a = OD.mkDecisionContext (SM.mkSMGen 123) 10 50 doId Nothing
+                    a <- generate $ OD.genDecisionContext 10 50 doId Nothing
                     evaluate (rnf a)
                     traceMarkerIO "evaluated decision context"
                     return a
@@ -62,7 +65,7 @@ main =
                 )
             , env
                 ( do
-                    let a = OD.mkDecisionContext (SM.mkSMGen 456) 100 500 doId Nothing
+                    a <- generate $ OD.genDecisionContext 100 500 doId Nothing
                     evaluate (rnf a)
                     traceMarkerIO "evaluated decision context"
                     return a
@@ -73,7 +76,7 @@ main =
                 )
             , env
                 ( do
-                    let a = OD.mkDecisionContext (SM.mkSMGen 789) 1_000 5_000 doId Nothing
+                    a <- generate $ OD.genDecisionContext 1_000 5_000 doId Nothing
                     evaluate (rnf a)
                     traceMarkerIO "evaluated decision context"
                     return a
@@ -89,4 +92,5 @@ main =
  where
   -- TODO: We probably want to use the decision policy for vote/cert diffusion
   -- instead of an arbitrary one.
-  makeVoteDiffusionDecision = \decisionContext -> OD.makeDecisions @DummyPeerAddr @DummyObjectId @DummyObject decisionContext
+  makeVoteDiffusionDecision decisionContext =
+    OD.makeDecisions @DummyPeerAddr @DummyObjectId @DummyObject decisionContext

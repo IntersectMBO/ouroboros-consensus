@@ -195,10 +195,10 @@ library
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1.State
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
-    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Policy
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.TestUtils
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
@@ -881,7 +881,6 @@ benchmark ObjectDiffusion-bench
     hashable,
     ouroboros-consensus,
     QuickCheck,
-    splitmix,
     tasty-bench,
 
 test-suite doctest
