@@ -1,6 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE Rank2Types #-}
 
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
@@ -31,6 +32,8 @@ import           Data.String (fromString)
 import qualified Data.Vector as V
 import           Data.Word (Word16, Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
+import           GHC.Stack (HasCallStack)
+import qualified GHC.Stack
 import qualified Numeric
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -372,73 +375,106 @@ maxEbItems =
 data SomeLeiosDb m = forall stmt. MkSomeLeiosDb (LeiosDb stmt m)
 
 data LeiosDb stmt m = MkLeiosDb {
-    dbBindBlob :: !(stmt -> DB.ParamIndex -> ByteString -> m ())
+    dbBindBlob_ :: !(HasCallStack => stmt -> DB.ParamIndex -> ByteString -> m ())
   ,
-    dbBindInt64 :: !(stmt -> DB.ParamIndex -> Int64 -> m ())
+    dbBindInt64_ :: !(HasCallStack => stmt -> DB.ParamIndex -> Int64 -> m ())
   ,
-    dbColumnBlob :: !(stmt -> DB.ColumnIndex -> m ByteString)
+    dbColumnBlob_ :: !(HasCallStack => stmt -> DB.ColumnIndex -> m ByteString)
   ,
-    dbColumnInt64 :: !(stmt -> DB.ColumnIndex -> m Int64)
+    dbColumnInt64_ :: !(HasCallStack => stmt -> DB.ColumnIndex -> m Int64)
   ,
-    dbExec :: !(DB.Utf8 -> m ())
+    dbExec_ :: !(HasCallStack => DB.Utf8 -> m ())
   ,
-    dbFinalize :: !(stmt -> m ())
+    dbFinalize_ :: !(HasCallStack => stmt -> m ())
   ,
-    dbPrepare :: !(DB.Utf8 -> m stmt)
+    dbPrepare_ :: !(HasCallStack => DB.Utf8 -> m stmt)
   ,
-    dbReset :: !(stmt -> m ())
+    dbReset_ :: !(HasCallStack => stmt -> m ())
   ,
-    dbStep :: !(stmt -> m DB.StepResult)
+    dbStep_ :: !(HasCallStack => stmt -> m DB.StepResult)
   ,
-    dbStep1 :: !(stmt -> m ())
+    dbStep1_ :: !(HasCallStack => stmt -> m ())
   }
+
+dbBindBlob :: HasCallStack => LeiosDb stmt m -> stmt -> DB.ParamIndex -> ByteString -> m ()
+dbBindBlob = dbBindBlob_
+
+dbBindInt64 :: HasCallStack => LeiosDb stmt m -> stmt -> DB.ParamIndex -> Int64 -> m ()
+dbBindInt64 = dbBindInt64_
+
+dbColumnBlob :: HasCallStack => LeiosDb stmt m -> stmt -> DB.ColumnIndex -> m ByteString
+dbColumnBlob = dbColumnBlob_
+
+dbColumnInt64 :: HasCallStack => LeiosDb stmt m -> stmt -> DB.ColumnIndex -> m Int64
+dbColumnInt64 = dbColumnInt64_
+
+dbExec :: HasCallStack => LeiosDb stmt m -> DB.Utf8 -> m ()
+dbExec = dbExec_
+
+dbFinalize :: HasCallStack => LeiosDb stmt m -> stmt -> m ()
+dbFinalize = dbFinalize_
+
+dbPrepare :: HasCallStack => LeiosDb stmt m -> DB.Utf8 -> m stmt
+dbPrepare = dbPrepare_
+
+dbReset :: HasCallStack => LeiosDb stmt m -> stmt -> m ()
+dbReset = dbReset_
+
+dbStep :: HasCallStack => LeiosDb stmt m -> stmt -> m DB.StepResult
+dbStep = dbStep_
+
+dbStep1 :: HasCallStack => LeiosDb stmt m -> stmt -> m ()
+dbStep1 = dbStep1_
 
 leiosDbFromSqliteDirect :: DB.Database -> LeiosDb DB.Statement IO
 leiosDbFromSqliteDirect db = MkLeiosDb {
-    dbBindBlob = \stmt p v -> withDie $ DB.bindBlob stmt p v
+    dbBindBlob_ = \stmt p v -> withDie $ DB.bindBlob stmt p v
   ,
-    dbBindInt64 = \stmt p v -> withDie $ DB.bindInt64 stmt p v
+    dbBindInt64_ = \stmt p v -> withDie $ DB.bindInt64 stmt p v
   ,
-    dbColumnBlob = \stmt c -> DB.columnBlob stmt c
+    dbColumnBlob_ = \stmt c -> DB.columnBlob stmt c
   ,
-    dbColumnInt64 = \stmt c -> DB.columnInt64 stmt c
+    dbColumnInt64_ = \stmt c -> DB.columnInt64 stmt c
   ,
-    dbExec = \q -> withDieMsg $ DB.exec db q
+    dbExec_ = \q -> withDieMsg $ DB.exec db q
   ,
-    dbFinalize = \stmt -> withDie $ DB.finalize stmt
+    dbFinalize_ = \stmt -> withDie $ DB.finalize stmt
   ,
-    dbPrepare = \q -> withDieJust $ DB.prepare db q
+    dbPrepare_ = \q -> withDieJust $ DB.prepare db q
   ,
-    dbReset = \stmt -> withDie $ DB.reset stmt
+    dbReset_ = \stmt -> withDie $ DB.reset stmt
   ,
-    dbStep = \stmt -> withDie $ DB.stepNoCB stmt
+    dbStep_ = \stmt -> withDie $ DB.stepNoCB stmt
   ,
-    dbStep1 = \stmt -> withDieDone $ DB.stepNoCB stmt
+    dbStep1_ = \stmt -> withDieDone $ DB.stepNoCB stmt
   }
 
-withDiePoly :: Show b => (e -> b) -> IO (Either e a) -> IO a
+withDiePoly :: (HasCallStack, Show b) => (e -> b) -> IO (Either e a) -> IO a
 withDiePoly f io =
     io >>= \case
-        Left e -> die $ "LeiosDb: " ++ show (f e)
+        Left e -> dieStack $ "LeiosDb: " ++ show (f e)
         Right x -> pure x
 
-withDieMsg :: IO (Either (DB.Error, DB.Utf8) a) -> IO a
+withDieMsg :: HasCallStack => IO (Either (DB.Error, DB.Utf8) a) -> IO a
 withDieMsg = withDiePoly snd
 
-withDie :: IO (Either DB.Error a) -> IO a
+withDie :: HasCallStack => IO (Either DB.Error a) -> IO a
 withDie = withDiePoly id
 
-withDieJust :: IO (Either DB.Error (Maybe a)) -> IO a
+withDieJust :: HasCallStack => IO (Either DB.Error (Maybe a)) -> IO a
 withDieJust io =
     withDie io >>= \case
-        Nothing -> die $ "LeiosDb: [Just] " ++ "impossible!"
+        Nothing -> dieStack $ "LeiosDb: [Just] " ++ "impossible!"
         Just x -> pure x
 
-withDieDone :: IO (Either DB.Error DB.StepResult) -> IO ()
+withDieDone :: HasCallStack => IO (Either DB.Error DB.StepResult) -> IO ()
 withDieDone io =
     withDie io >>= \case
-        DB.Row -> die $ "LeiosDb: [Done] " ++ "impossible!"
+        DB.Row -> dieStack $ "LeiosDb: [Done] " ++ "impossible!"
         DB.Done -> pure ()
+
+dieStack :: HasCallStack => String -> IO a
+dieStack s = dieStack $ s ++ "\n\n" ++ GHC.Stack.prettyCallStack GHC.Stack.callStack
 
 -----
 

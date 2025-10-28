@@ -46,6 +46,7 @@ import qualified LeiosDemoOnlyTestNotify as LN
 import qualified LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoTypes (BytesSize, EbHash (..), EbId (..), LeiosEbBodies, LeiosOutstanding, LeiosPoint (..), LeiosDb (..), LeiosEb (..), LeiosFetchStaticEnv, LeiosTx (..), PeerId (..), TxHash (..))
 import           LeiosDemoTypes (LeiosBlockRequest (..), LeiosBlockTxsRequest (..), LeiosFetchRequest (..), LeiosNotification (..))
+import           LeiosDemoTypes (dbBindBlob, dbBindInt64, dbColumnBlob, dbColumnInt64, dbExec, dbFinalize, dbPrepare, dbReset, dbStep, dbStep1)
 import qualified LeiosDemoTypes as Leios
 
 type HASH = Hash.Blake2b_256
