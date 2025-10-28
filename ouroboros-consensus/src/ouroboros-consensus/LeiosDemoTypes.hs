@@ -16,7 +16,8 @@ import           Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import           Control.Monad.Class.MonadThrow (MonadThrow, bracket, bracket_)
+import           Control.Monad.Class.MonadThrow (MonadThrow, bracket, generalBracket)
+import qualified Control.Monad.Class.MonadThrow as MonadThrow
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
@@ -425,14 +426,19 @@ dbWithPrepare ::
 dbWithPrepare db q k = bracket (dbPrepare db q) (dbFinalize db) k
 
 dbWithBEGIN ::
-    (HasCallStack, MonadThrow m)
+    (HasCallStack, IOLike m)
  =>
     LeiosDb stmt m -> m r -> m r
 dbWithBEGIN db k = do
-    bracket_
+     fmap fst
+   $ generalBracket
         (dbExec db (fromString "BEGIN"))
-        (dbExec db (fromString "COMMIT"))
-        k
+        (\() -> \case
+            MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
+            MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
+            MonadThrow.ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
+        )
+        (\() -> k)
 
 dbReset :: HasCallStack => LeiosDb stmt m -> stmt -> m ()
 dbReset = dbReset_
