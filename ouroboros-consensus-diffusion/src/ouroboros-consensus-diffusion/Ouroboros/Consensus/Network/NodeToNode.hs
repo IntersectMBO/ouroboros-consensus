@@ -253,6 +253,7 @@ mkHandlers ::
      , LedgerSupportsProtocol blk
      , Ord addrNTN
      , Hashable addrNTN
+     , Show addrNTN
      )
   => NodeKernelArgs m addrNTN addrNTC blk
   -> NodeKernel     m addrNTN addrNTC blk
@@ -318,7 +319,7 @@ mkHandlers
                 (pure $ \case
                     MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
                     MsgLeiosBlockOffer p ebBytesSize -> do
-                        traceM $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint p
+                        traceM $ "MsgLeiosBlockOffer " ++ Leios.prettyLeiosPoint p ++ " (from peer " ++ show peer ++ ")"
                         ebId <- MVar.modifyMVar getLeiosEbBodies $ \ebBodies1 -> do
                             let (ebId, mbEbBodies2) = Leios.ebIdFromPoint p ebBodies1
                                 ebBodies2 = fromMaybe ebBodies1 mbEbBodies2
@@ -340,7 +341,7 @@ mkHandlers
                             pure (offers1', offers2)
                         void $ MVar.tryPutMVar getLeiosReady ()
                     MsgLeiosBlockTxsOffer p -> do
-                        traceM $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
+                        traceM $ "MsgLeiosBlockTxsOffer " ++ Leios.prettyLeiosPoint p ++ " (from peer " ++ show peer ++ ")"
                         ebId <- Leios.ebIdFromPointM getLeiosEbBodies p
                         peerVars <- do
                             peersVars <- MVar.readMVar getLeiosPeersVars
