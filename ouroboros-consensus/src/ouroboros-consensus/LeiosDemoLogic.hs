@@ -181,11 +181,15 @@ leiosFetchHandler ::
     LF.LeiosFetchRequestHandler LeiosPoint LeiosEb LeiosTx m
 leiosFetchHandler leiosContext = LF.MkLeiosFetchRequestHandler $ \case
     LF.MsgLeiosBlockRequest p -> do
-        traceM $ "MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
-        LF.MsgLeiosBlock <$> msgLeiosBlockRequest leiosContext p
+        traceM $ "[start] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
+        x <- msgLeiosBlockRequest leiosContext p
+        traceM $ "[done] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
+        pure $ LF.MsgLeiosBlock x
     LF.MsgLeiosBlockTxsRequest p bitmaps -> do
-        traceM $ "MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
-        LF.MsgLeiosBlockTxs <$> msgLeiosBlockTxsRequest leiosContext p bitmaps
+        traceM $ "[start] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
+        x <- msgLeiosBlockTxsRequest leiosContext p bitmaps
+        traceM $ "[done] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
+        pure $ LF.MsgLeiosBlockTxs x
 
 msgLeiosBlockRequest ::
   (
@@ -711,7 +715,7 @@ msgLeiosBlock ::
 msgLeiosBlock (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req eb = do
     -- validate it
     let MkLeiosBlockRequest p ebBytesSize = req
-    traceM $ "MsgLeiosBlock " <> Leios.prettyLeiosPoint p
+    traceM $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
     do
         let MkLeiosPoint _ebSlot ebHash = p
         let ebBytes :: ByteString
@@ -797,8 +801,10 @@ msgLeiosBlock (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVar
         pure outstanding'
     void $ MVar.tryPutMVar readyVar ()
     when novel $ do
+        traceM $ "leiosNotificationsBlock: " ++ Leios.prettyEbId ebId
         vars <- MVar.readMVar notificationVars
         forM_ vars $ \var -> StrictSTM.atomically $ do
+            traceM $ "leiosNotificationsBlock!: " ++ Leios.prettyEbId ebId
             x <- StrictSTM.readTVar var
             let !x' =
                     Map.insertWith
@@ -807,6 +813,7 @@ msgLeiosBlock (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVar
                         (Seq.singleton (LeiosOfferBlock ebId ebBytesSize))
                         x
             StrictSTM.writeTVar var x'
+    traceM $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
 
 sql_insert_ebBody :: String
 sql_insert_ebBody =
@@ -851,7 +858,7 @@ msgLeiosBlockTxs ::
  ->
     m ()
 msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req txs = do
-    traceM $ Leios.prettyLeiosBlockTxsRequest req
+    traceM $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
     -- validate it
     let MkLeiosBlockTxsRequest p bitmaps txHashes = req
 --    forM_ txHashes $ \txHash -> do
@@ -995,20 +1002,24 @@ msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar, notification
                     Leios.toCopyCount outstanding - IntMap.size beatToCopy
               }
         let newNotifications =
-               (\ebIds ->
-                   Map.fromList
-                       [ (ebIdSlot x, Seq.singleton (LeiosOfferBlockTxs x)) | x <- ebIds ]
-               )
-             $ Map.keys
+               Map.keys
              $ Leios.blockingPerEb outstanding `Map.difference` Leios.blockingPerEb outstanding'
         pure (outstanding', newNotifications)
     void $ MVar.tryPutMVar readyVar ()
-    when (not $ Map.null newNotifications) $ do
+    when (not $ null newNotifications) $ do
+        let notifications =
+                Map.fromList
+              $ [ (ebIdSlot x, Seq.singleton (LeiosOfferBlockTxs x))
+                | x <- newNotifications
+                ]
+        traceM $ "leiosNotificationsBlockTxs: " ++ unwords (map Leios.prettyEbId newNotifications)
         vars <- MVar.readMVar notificationVars
         forM_ vars $ \var -> StrictSTM.atomically $ do
+            traceM $ "leiosNotificationsBlockTxs!: " ++ unwords (map Leios.prettyEbId newNotifications)
             x <- StrictSTM.readTVar var
-            let !x' = Map.unionWith (<>) x newNotifications
+            let !x' = Map.unionWith (<>) x notifications
             StrictSTM.writeTVar var x'
+    traceM $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
 
 sql_update_ebTx :: String
 sql_update_ebTx =
@@ -1088,18 +1099,21 @@ doCacheCopy db (writeLock, outstandingVar, notificationVars) bytesSize = do
                     Leios.toCopyCount outstanding - sum (Map.map IntMap.size usefulCopied)
               }
         let newNotifications =
-               (\ebIds ->
-                   Map.fromList
-                       [ (ebIdSlot x, Seq.singleton (LeiosOfferBlockTxs x)) | x <- ebIds ]
-               )
-             $ Map.keys
+               Map.keys
              $ Leios.blockingPerEb outstanding `Map.difference` Leios.blockingPerEb outstanding'
         pure (outstanding', (0 /= Leios.toCopyCount outstanding', newNotifications))
-    when (not $ Map.null newNotifications) $ do
+    when (not $ null newNotifications) $ do
+        let notifications =
+                Map.fromList
+              $ [ (ebIdSlot x, Seq.singleton (LeiosOfferBlockTxs x))
+                | x <- newNotifications
+                ]
+        traceM $ "leiosNotificationsCopy: " ++ unwords (map Leios.prettyEbId newNotifications)
         vars <- MVar.readMVar notificationVars
         forM_ vars $ \var -> StrictSTM.atomically $ do
+            traceM $ "leiosNotificationsCopy!: " ++ unwords (map Leios.prettyEbId newNotifications)
             x <- StrictSTM.readTVar var
-            let !x' = Map.unionWith (<>) x newNotifications
+            let !x' = Map.unionWith (<>) x notifications
             StrictSTM.writeTVar var x'
     pure moreTodo
   where
@@ -1151,9 +1165,7 @@ nextLeiosNotification ::
  ->
     m (LN.Message (LN.LeiosNotify LeiosPoint announcement) LN.StBusy LN.StIdle)
 nextLeiosNotification (ebBodiesVar, var) = do
-    notification <- StrictSTM.atomically $ do
-        x <- StrictSTM.readTVar var
-        go1 x
+    notification <- StrictSTM.atomically $ StrictSTM.readTVar var >>= go1
     ebBodies <- MVar.readMVar ebBodiesVar
     let f ebId = case ebIdToPoint ebId ebBodies of
             Nothing -> error "impossible!"

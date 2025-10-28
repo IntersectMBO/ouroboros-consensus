@@ -127,7 +127,7 @@ EOF
 mkdir -p "$TMP_DIR/node-1/db"
 
 cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node-1/leios.db"
-sqlite3 "$TMP_DIR/node-1/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints;'
+sqlite3 "$TMP_DIR/node-1/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints; VACUUM;'
 
 MOCKED_PEER_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db \
     ${CARDANO_NODE} run \

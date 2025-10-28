@@ -398,31 +398,16 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         leiosPeersVars <- MVar.readMVar getLeiosPeersVars
         offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
         ebBodies <- MVar.readMVar getLeiosEbBodies
-        (newDecisions, newCopy, newNotifications) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+        (newDecisions, newCopy) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
             let (!outstanding', newDecisions) =
                     Leios.leiosFetchLogicIteration
                         Leios.demoLeiosFetchStaticEnv
                         (ebBodies, offerings)
                         outstanding
             let newCopy = Leios.toCopyCount outstanding' /= Leios.toCopyCount outstanding
-            let newNotifications =
-                   Map.keys
-                 $ Leios.blockingPerEb outstanding `Map.difference` Leios.blockingPerEb outstanding'
-            pure (outstanding', (newDecisions, newCopy, newNotifications))
+            pure (outstanding', (newDecisions, newCopy))
         let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
-        traceM $ "leiosFetchLogic: " ++ show (sum (fmap length newRequests)) ++ " new reqs, " ++ show newCopy ++ " new copy" {- ++ "\n" ++
-                 "leiosOfferings: " ++ unwords [ Leios.prettyEbId ebId | (_peer, (_offers1, offers2)) <- Map.toList offerings, ebId <- Set.toList offers2 ]  ++ "\n" ++
-                 "leiosEbBodies: " ++ Leios.prettyLeiosEbBodies ebBodies ++ "\n" ++
-                 "leiosOutstanding: " ++ Leios.prettyLeiosOutstanding xxx ++ "\n" ++
-                 "leiosOutstanding': " ++ Leios.prettyLeiosOutstanding yyy ++ "\n" -}
-          ++ "\n" ++ "leiosNotifications: " ++ unwords (map Leios.prettyEbId newNotifications) ++ "\n"
-{-
-        forM_ newRequests $ \perPeer -> forM_ perPeer $ \case
-            Leios.LeiosBlockRequest _ -> pure ()
-            Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p _bitmaps txHashes) -> do
-                forM_ txHashes $ \txHash -> do
-                    traceM $ "leiosReqTxHash: " ++ Leios.prettyTxHash txHash
--}
+        traceM $ "leiosFetchLogic: " ++ show (sum (fmap length newRequests)) ++ " new reqs, " ++ show newCopy ++ " new copy"
         (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
             atomically $ do
                 StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)

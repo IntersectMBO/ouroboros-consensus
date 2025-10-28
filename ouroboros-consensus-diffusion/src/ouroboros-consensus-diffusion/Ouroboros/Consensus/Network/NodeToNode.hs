@@ -355,7 +355,7 @@ mkHandlers
       , hLeiosNotifyServer = \_version peer -> Effect $ do
             var <- StrictSTM.newTVarIO Map.empty
             MVar.modifyMVar_ getLeiosNotifications $ \x -> do
-                let x' = Map.insert (Leios.MkPeerId peer) var x
+                let !x' = Map.insert (Leios.MkPeerId peer) var x
                 pure x'
             pure
               $ leiosNotifyServerPeer
