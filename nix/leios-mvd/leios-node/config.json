@@ -47,7 +47,6 @@
       "severity": "Debug"
     },
     "BlockFetch.Client.CompletedBlockFetch": {
-      "maxFrequency": 2.0
     },
     "BlockFetch.Decision": {
       "severity": "Notice"
