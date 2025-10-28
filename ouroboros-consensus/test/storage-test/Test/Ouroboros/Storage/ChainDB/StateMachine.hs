@@ -1739,14 +1739,6 @@ genSecurityParam =
     . fromIntegral
     . (+ 2) -- shift to the right to avoid degenerate cases
     <$> geometric 0.5 -- range in [0, +inf); mean = 1/p = 2
- where
-  geometric :: Double -> Gen Int
-  geometric p
-    | p <= 0 || p > 1 = error "p must be in (0,1]"
-    | otherwise = do
-        u <- choose (0.0, 1.0)
-        let k = floor (log u / log (1 - p))
-        return k
 
 {-------------------------------------------------------------------------------
   Top-level tests
