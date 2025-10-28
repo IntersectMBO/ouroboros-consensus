@@ -481,7 +481,6 @@ runWith :: forall m addrNTN addrNTC blk p2p.
      , Hashable addrNTN -- the constraint comes from `initNodeKernel`
      , NetworkIO m
      , NetworkAddr addrNTN
-     , Show addrNTN
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)

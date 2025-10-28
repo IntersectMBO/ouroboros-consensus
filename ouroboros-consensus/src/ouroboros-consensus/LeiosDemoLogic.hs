@@ -611,8 +611,6 @@ nextLeiosFetchClientCommand :: forall pid stmt m.
   (
     Ord pid
   ,
-    Show pid
-  ,
     IOLike m
   )
  =>
@@ -668,8 +666,6 @@ nextLeiosFetchClientCommand stopSTM kernelVars db peerId reqsVar = do
 
 msgLeiosBlock ::
   (
-    Show pid
-  ,
     Ord pid
   ,
     IOLike m
@@ -689,7 +685,7 @@ msgLeiosBlock ::
 msgLeiosBlock (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req eb = do
     -- validate it
     let MkLeiosBlockRequest p ebBytesSize = req
-    traceM $ "[start] MsgLeiosBlock " ++ Leios.prettyLeiosPoint p ++ " (from peer " ++ show peerId ++ ")"
+    traceM $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
     do
         let MkLeiosPoint _ebSlot ebHash = p
         let ebBytes :: ByteString
@@ -784,7 +780,7 @@ msgLeiosBlock (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVar
                         (Seq.singleton (LeiosOfferBlock ebId ebBytesSize))
                         x
             StrictSTM.writeTVar var x'
-    traceM $ "[done] MsgLeiosBlock " ++ Leios.prettyLeiosPoint p ++ " (from peer " ++ show peerId ++ ")"
+    traceM $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
 
 sql_insert_ebBody :: String
 sql_insert_ebBody =
@@ -801,8 +797,6 @@ delIf predicate x = if predicate x then Nothing else Just x
 msgLeiosBlockTxs ::
   (
     Ord pid
-  ,
-    Show pid
   ,
     IOLike m
   )
@@ -829,7 +823,7 @@ msgLeiosBlockTxs ::
  ->
     m ()
 msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req txs = do
-    traceM $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req ++ " (from peer " ++ show peerId ++ ")"
+    traceM $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
     -- validate it
     let MkLeiosBlockTxsRequest p bitmaps txHashes = req
 --    forM_ txHashes $ \txHash -> do
@@ -987,7 +981,7 @@ msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar, notification
             x <- StrictSTM.readTVar var
             let !x' = Map.unionWith (<>) x notifications
             StrictSTM.writeTVar var x'
-    traceM $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req ++ " (from peer " ++ show peerId ++ ")"
+    traceM $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
 
 sql_update_ebTx :: String
 sql_update_ebTx =

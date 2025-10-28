@@ -40,12 +40,11 @@ fi
 
 # arbitrary choices
 
-PORT_UP=3001
+PORT1=3001
 PORT2=3002
 PORT3=3003
-PORT4=3004
 
-echo "Ports: ${PORT_UP} ${PORT2} ${PORT3} ${PORT4}"
+echo "Ports: ${PORT1} ${PORT2} ${PORT3}"
 
 TMP_DIR=$(mktemp -d ${TMPDIR:-/tmp}/leios-october-demo.XXXXXX)
 echo "Using temporary directory for DB and logs: $TMP_DIR"
@@ -68,7 +67,7 @@ cat << EOF > topology-node-0.json
       "accessPoints": [
         {
           "address": "127.0.0.1",
-          "port": ${PORT_UP}
+          "port": ${PORT1}
         }
       ],
       "advertise": false,
@@ -83,7 +82,7 @@ EOF
 mkdir -p "$TMP_DIR/node-0/db"
 
 cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node-0/leios.db"
-sqlite3 "$TMP_DIR/node-0/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints; VACUUM;'
+sqlite3 "$TMP_DIR/node-0/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints;'
 
 CARDANO_NODE_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-0/leios.db \
     ${CARDANO_NODE} run \
@@ -102,10 +101,9 @@ CARDANO_NODE_0_PID=$!
 echo "Cardano node 0 started with PID: $CARDANO_NODE_0_PID"
 
 ##
-## Run a second cardano-node (node-0)
+## Run a second Cardano-node (To be eventually replaced by a mocked downstream node)
 ##
 
-echo "Creating topology-node-1.json in $(pwd)"
 cat << EOF > topology-node-1.json
 {
   "bootstrapPeers": [],
@@ -114,7 +112,7 @@ cat << EOF > topology-node-1.json
       "accessPoints": [
         {
           "address": "127.0.0.1",
-          "port": ${PORT_UP}
+          "port": ${PORT2}
         }
       ],
       "advertise": false,
@@ -129,9 +127,9 @@ EOF
 mkdir -p "$TMP_DIR/node-1/db"
 
 cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node-1/leios.db"
-sqlite3 "$TMP_DIR/node-1/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints; VACUUM'
+sqlite3 "$TMP_DIR/node-1/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints; VACUUM;'
 
-CARDANO_NODE_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db \
+MOCKED_PEER_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db \
     ${CARDANO_NODE} run \
     --config $CLUSTER_RUN_DATA/leios-node/config.json \
     --topology topology-node-1.json \
@@ -139,62 +137,13 @@ CARDANO_NODE_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db \
     --socket-path node-1.socket \
     --host-addr 127.0.0.1 --port ${PORT3}"
 
-echo "Command (Node 0): $CARDANO_NODE_CMD &> $TMP_DIR/cardano-node-1.log &"
+echo "Command (Node 1): $MOCKED_PEER_CMD &> $TMP_DIR/cardano-node-1.log &"
 
-$CARDANO_NODE_CMD &> "$TMP_DIR/cardano-node-1.log" &
-
-CARDANO_NODE_1_PID=$!
-
-echo "Cardano node 1 started with PID: $CARDANO_NODE_1_PID"
-
-##
-## Run a third Cardano-node (To be eventually replaced by a mocked downstream node)
-##
-
-cat << EOF > topology-node-2.json
-{
-  "bootstrapPeers": [],
-  "localRoots": [
-    {
-      "accessPoints": [
-        {
-          "address": "127.0.0.1",
-          "port": ${PORT2}
-        },
-        {
-          "address": "127.0.0.1",
-          "port": ${PORT3}
-        }
-      ],
-      "advertise": false,
-      "trustable": true,
-      "valency": 2
-    }
-  ],
-  "publicRoots": []
-}
-EOF
-
-mkdir -p "$TMP_DIR/node-2/db"
-
-cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node-2/leios.db"
-sqlite3 "$TMP_DIR/node-2/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints; VACUUM;'
-
-MOCKED_PEER_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-2/leios.db \
-    ${CARDANO_NODE} run \
-    --config $CLUSTER_RUN_DATA/leios-node/config.json \
-    --topology topology-node-2.json \
-    --database-path $TMP_DIR/node-2/db \
-    --socket-path node-2.socket \
-    --host-addr 127.0.0.1 --port ${PORT4}"
-
-echo "Command (Node 1): $MOCKED_PEER_CMD &> $TMP_DIR/cardano-node-2.log &"
-
-$MOCKED_PEER_CMD &> "$TMP_DIR/cardano-node-2.log" &
+$MOCKED_PEER_CMD &> "$TMP_DIR/cardano-node-1.log" &
 
 MOCKED_PEER_PID=$!
 
-echo "Mocked downstream peer started with PID: $MOCKED_PEER_PID"
+echo "Cardano node 1 started with PID: $MOCKED_PEER_PID"
 
 # Return to the original directory
 popd > /dev/null
@@ -212,7 +161,7 @@ IMMDB_CMD_CORE="${IMMDB_SERVER} \
     --initial-time $ONSET_OF_REF_SLOT
     --leios-schedule $LEIOS_SCHEDULE
     --leios-db $LEIOS_UPSTREAM_DB_PATH
-    --port ${PORT_UP}"
+    --port ${PORT1}"
 
 echo "Command: $IMMDB_CMD_CORE &> $TMP_DIR/immdb-server.log &"
 
@@ -225,12 +174,12 @@ echo "ImmDB server started with PID: $IMMDB_SERVER_PID"
 read -n 1 -s -r -p "Press any key to stop the spawned processes..."
 echo
 
-echo "Killing processes $IMMDB_SERVER_PID (immdb-server), $CARDANO_NODE_0_PID (node-0), $CARDANO_NODE_1_PID (node-1), and $MOCKED_PEER_PID (node-2)..."
+echo "Killing processes $IMMDB_SERVER_PID (immdb-server), $CARDANO_NODE_0_PID (node-0), and $MOCKED_PEER_PID (node-1)..."
 
 kill "$IMMDB_SERVER_PID" 2>/dev/null || true
 
+# Use negative PID to target the process group ID and SIGKILL for cardano-node processes.
 kill "$CARDANO_NODE_0_PID" 2>/dev/null || true
-kill "$CARDANO_NODE_1_PID" 2>/dev/null || true
 
 kill "$MOCKED_PEER_PID" 2>/dev/null || true
 
@@ -251,7 +200,7 @@ echo "Temporary data stored at: $TMP_DIR"
 
 # python3 scripts/leios-demo/log_parser.py \
 #         $REF_SLOT $ONSET_OF_REF_SLOT \
-#         $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-2.log \
+#         $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-1.log \
 #         "scatter_plot.png"
 
 # # 2. Deactivate the Python Virtual Environment before exiting

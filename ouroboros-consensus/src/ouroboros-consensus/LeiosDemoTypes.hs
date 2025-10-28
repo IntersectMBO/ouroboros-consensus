@@ -55,7 +55,7 @@ fromIntegralEbId :: Integral a => EbId -> a
 fromIntegralEbId (MkEbId x) = fromIntegral x
 
 newtype PeerId a = MkPeerId a
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord)
 
 newtype EbHash = MkEbHash ByteString
   deriving (Eq, Ord, Show)
