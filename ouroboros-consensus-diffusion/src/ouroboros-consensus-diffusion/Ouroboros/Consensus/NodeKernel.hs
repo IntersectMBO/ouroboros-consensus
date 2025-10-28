@@ -36,6 +36,7 @@ import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (force)
 import           Control.Monad
+import           Control.Monad.Class.MonadTime (getMonotonicTimeNSec)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import           Control.Monad.Except
 import           Control.ResourceRegistry
@@ -127,6 +128,17 @@ import           Ouroboros.Network.TxSubmission.Mempool.Reader
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
 import           System.Random (StdGen)
 
+import           Control.Concurrent.Class.MonadMVar (MVar)
+import qualified Control.Concurrent.Class.MonadMVar as MVar
+import           Data.Map (Map)
+import qualified Data.Map as Map
+import           Data.Sequence (Seq)
+import           LeiosDemoTypes (LeiosEbBodies, LeiosOutstanding, LeiosPeerVars, SomeLeiosDb)
+import qualified LeiosDemoTypes as Leios
+import qualified LeiosDemoLogic as Leios
+
+import           Debug.Trace (traceM)
+
 {-------------------------------------------------------------------------------
   Relay node
 -------------------------------------------------------------------------------}
@@ -177,6 +189,45 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
     , getDiffusionPipeliningSupport
                              :: DiffusionPipeliningSupport
     , getBlockchainTime      :: BlockchainTime m
+
+      -- ----------------------------------------
+
+      -- The following fields contain the information in the Leios model exe's
+      -- @LeiosFetchDynamicEnv@ and @LeiosFetchState@ data structures.
+      --
+      -- TODO this could all use TVars, but I'm curious whether MVars are a
+      -- noticeably awkward fit for this logic.
+
+      -- See 'LeiosPeerVars' for the write patterns
+    , getLeiosNewDbConnection :: m (SomeLeiosDb m)
+    , getLeiosPeersVars :: MVar m (Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
+      -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
+      -- eviction)
+    , getLeiosEbBodies :: MVar m LeiosEbBodies
+      -- written to by the fetch logic, by the LeiosNotify&LeiosFetch, and by LeiosCopier
+      -- clients (TODO and by eviction)
+    , getLeiosOutstanding :: MVar m (LeiosOutstanding (ConnectionId addrNTN))
+      -- | Leios fetch logic 'MVar.takeMVar's before it runs
+      --
+      -- LeiosNotify clients, LeiosFetch clients, and the LeiosCopier
+      -- 'MVar.tryPutMVar' whenever they make a change that might unblock a new
+      -- fetch decision.
+    , getLeiosReady :: MVar m ()
+      -- | Must be held before writing to the database
+      --
+      -- Preferable to dealing with SQLite's BUSY errors.
+      --
+      -- INVARIANT: never acquire 'MVar' while holding this lock.
+    , getLeiosWriteLock :: MVar m ()
+    , getLeiosNotifications ::
+          MVar m
+              (Map
+                  (Leios.PeerId (ConnectionId addrNTN))
+                  (StrictSTM.StrictTVar m
+                      (Map SlotNo (Seq Leios.LeiosNotification))
+                  )
+              )
+
     }
 
 -- | Arguments required when initializing a node
@@ -203,6 +254,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
                               :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
     , genesisArgs             :: GenesisNodeKernelArgs m blk
     , getDiffusionPipeliningSupport    :: DiffusionPipeliningSupport
+
+    , nkaGetLeiosNewDbConnection :: m (SomeLeiosDb m)
     }
 
 initNodeKernel ::
@@ -225,6 +278,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , publicPeerSelectionStateVar
                                    , genesisArgs
                                    , getDiffusionPipeliningSupport
+                                   , nkaGetLeiosNewDbConnection
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -329,6 +383,56 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         fetchClientRegistry
         blockFetchConfiguration
 
+    let getLeiosNewDbConnection = nkaGetLeiosNewDbConnection
+    getLeiosPeersVars <- MVar.newMVar Map.empty
+    getLeiosEbBodies <- MVar.newMVar Leios.emptyLeiosEbBodies   -- TODO init from DB
+    getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding   -- TODO init from DB
+    getLeiosReady <- MVar.newEmptyMVar
+    getLeiosWriteLock <- MVar.newMVar ()
+    getLeiosNotifications <- MVar.newMVar Map.empty
+
+    getLeiosCopyReady <- MVar.newEmptyMVar
+
+    void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
+        () <- MVar.takeMVar getLeiosReady
+        leiosPeersVars <- MVar.readMVar getLeiosPeersVars
+        offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
+        ebBodies <- MVar.readMVar getLeiosEbBodies
+        (newDecisions, newCopy) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+            let (!outstanding', newDecisions) =
+                    Leios.leiosFetchLogicIteration
+                        Leios.demoLeiosFetchStaticEnv
+                        (ebBodies, offerings)
+                        outstanding
+            let newCopy = Leios.toCopyCount outstanding' /= Leios.toCopyCount outstanding
+            pure (outstanding', (newDecisions, newCopy))
+        let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
+        traceM $ "leiosFetchLogic: " ++ show (sum (fmap length newRequests)) ++ " new reqs, " ++ show newCopy ++ " new copy"
+        (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
+            atomically $ do
+                StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
+        when newCopy $ void $ MVar.tryPutMVar getLeiosCopyReady ()
+        threadDelay (0.5 :: DiffTime)   -- TODO magic number
+
+    void $ forkLinkedThread registry "NodeKernel.leiosCopyLogic" $ do
+        Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
+        (\m -> let loop !i = do m i; loop (i+1 :: Int) in loop 0) $ \i -> do
+            () <- MVar.takeMVar getLeiosCopyReady
+            traceM $ "leiosCopy: running " ++ show i
+            t1 <- getMonotonicTimeNSec
+            moreTodo <-
+                Leios.doCacheCopy
+                    db
+                    (getLeiosWriteLock, getLeiosOutstanding, getLeiosNotifications)
+                    (500 * 10^(3 :: Int))   -- TODO magic number
+            t2 <- getMonotonicTimeNSec
+            traceM $ "leiosCopy: done " ++ show (i, (t2 - t1) `div` (10^(6 :: Int)))
+            void $ MVar.tryPutMVar getLeiosReady ()
+            when moreTodo $ do
+                traceM $ "leiosCopy: more " ++ show i
+                void $ MVar.tryPutMVar getLeiosCopyReady ()
+            threadDelay (0.050 :: DiffTime)   -- TODO magic number
+
     return NodeKernel
       { getChainDB              = chainDB
       , getMempool              = mempool
@@ -345,6 +449,14 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                 = varOutboundConnectionsState
       , getDiffusionPipeliningSupport
       , getBlockchainTime       = btime
+
+      , getLeiosNewDbConnection
+      , getLeiosPeersVars
+      , getLeiosEbBodies
+      , getLeiosOutstanding
+      , getLeiosReady
+      , getLeiosWriteLock
+      , getLeiosNotifications
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk

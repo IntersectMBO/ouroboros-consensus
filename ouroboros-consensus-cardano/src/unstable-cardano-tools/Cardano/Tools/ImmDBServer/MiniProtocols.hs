@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -12,10 +13,15 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- | Implement ChainSync and BlockFetch servers on top of just the immutable DB.
-module Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer) where
+module Cardano.Tools.ImmDBServer.MiniProtocols (
+  LeiosNotifyContext (..),
+  immDBServer,
+  ) where
 
+import           Cardano.Slotting.Slot (WithOrigin (At))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
+import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.Monad (forever)
 import           Control.ResourceRegistry
 import           Control.Tracer
@@ -24,6 +30,7 @@ import qualified Data.ByteString.Lazy as BL
 import           Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
+import           Data.Word (Word32)
 import           Data.Void (Void)
 import           GHC.Generics (Generic)
 import qualified Network.Mux as Mux
@@ -61,6 +68,11 @@ import           Ouroboros.Network.Protocol.Handshake.Version (Version (..))
 import           Ouroboros.Network.Protocol.KeepAlive.Server
                      (keepAliveServerPeer)
 
+import           LeiosDemoOnlyTestFetch
+import           LeiosDemoOnlyTestNotify
+import qualified LeiosDemoLogic as LeiosLogic
+import qualified LeiosDemoTypes as Leios
+
 immDBServer ::
      forall m blk addr.
      ( IOLike m
@@ -74,9 +86,12 @@ immDBServer ::
   -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addr)
   -> ImmutableDB m blk
   -> NetworkMagic
+  -> (SlotNo -> m DiffTime)
+  -> (ResourceRegistry m -> m (LeiosNotifyContext m))
+  -> m (LeiosLogic.SomeLeiosFetchContext m)
   -> Versions NodeToNodeVersion NodeToNodeVersionData
        (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ())
-immDBServer codecCfg encAddr decAddr immDB networkMagic = do
+immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNotifyContext mkLeiosFetchContext = do
     forAllVersions application
   where
     forAllVersions ::
@@ -124,12 +139,24 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
                 N2N.txSubmissionMiniProtocolNum
                 N2N.txSubmissionProtocolLimits
                 txSubmissionProt
+            , mkMiniProtocol
+                Mux.StartOnDemand
+                leiosNotifyMiniProtocolNum
+                (const Consensus.N2N.leiosNotifyProtocolLimits)
+                leiosNotifyProt
+            , mkMiniProtocol
+                Mux.StartOnDemand
+                leiosFetchMiniProtocolNum
+                (const Consensus.N2N.leiosFetchProtocolLimits)
+                leiosFetchProt
             ]
           where
             Consensus.N2N.Codecs {
                 cKeepAliveCodec
               , cChainSyncCodecSerialised
               , cBlockFetchCodecSerialised
+              , cLeiosNotifyCodec
+              , cLeiosFetchCodec
               } =
               Consensus.N2N.defaultCodecs codecCfg blockVersion encAddr decAddr version
 
@@ -142,7 +169,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
                 withRegistry
               $ runPeer nullTracer cChainSyncCodecSerialised channel
               . chainSyncServerPeer
-              . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint
+              . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint getSlotDelay
             blockFetchProt =
                 MiniProtocolCb $ \_ctx channel ->
                 withRegistry
@@ -152,6 +179,22 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
             txSubmissionProt =
                 -- never reply, there is no timeout
                 MiniProtocolCb $ \_ctx _channel -> forever $ threadDelay 10
+            leiosNotifyProt =
+                MiniProtocolCb $ \_ctx channel -> id
+              $ withRegistry $ \reg -> id
+              $ mkLeiosNotifyContext reg >>= \leiosContext -> id
+              $ runPeer nullTracer cLeiosNotifyCodec channel
+              $ leiosNotifyServerPeer
+                    (MVar.takeMVar (leiosMailbox leiosContext) <&> \case
+                        (p, Just sz) -> MsgLeiosBlockOffer p sz
+                        (p, Nothing) -> MsgLeiosBlockTxsOffer p
+                    )
+            leiosFetchProt =
+                MiniProtocolCb $ \_ctx channel -> id
+              $ mkLeiosFetchContext >>= \(LeiosLogic.MkSomeLeiosFetchContext leiosContext) -> id
+              $ runPeer nullTracer cLeiosFetchCodec channel
+              $ leiosFetchServerPeer
+              $ pure (LeiosLogic.leiosFetchHandler leiosContext)
 
         mkMiniProtocol miniProtocolStart miniProtocolNum limits proto = MiniProtocol {
             miniProtocolNum
@@ -173,9 +216,10 @@ chainSyncServer ::
      forall m blk a. (IOLike m, HasHeader blk)
   => ImmutableDB m blk
   -> BlockComponent blk (ChainDB.WithPoint blk a)
+  -> (SlotNo -> m DiffTime)
   -> ResourceRegistry m
   -> ChainSyncServer a (Point blk) (Tip blk) m ()
-chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
+chainSyncServer immDB blockComponent getSlotDelay registry = ChainSyncServer $ do
     follower <- newImmutableDBFollower
     runChainSyncServer $
       chainSyncServerForFollower nullTracer getImmutableTip follower
@@ -199,8 +243,13 @@ chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
                   ImmutableDB.iteratorNext iterator >>= \case
                     ImmutableDB.IteratorExhausted -> do
                       ImmutableDB.iteratorClose iterator
+                      threadDelay (1000 :: DiffTime)
                       throwIO ReachedImmutableTip
-                    ImmutableDB.IteratorResult a  ->
+                    ImmutableDB.IteratorResult a  -> do
+                      -- Wait until the slot of the current block has been reached
+                      case pointSlot $ ChainDB.point a of
+                          Origin -> pure ()
+                          At slot -> getSlotDelay slot >>= threadDelay
                       pure $ AddBlock a
 
             followerClose = ImmutableDB.iteratorClose =<< readTVarIO varIterator
@@ -217,7 +266,7 @@ chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
                   pure $ Just pt
 
         pure Follower {
-            followerInstruction = Just <$> followerInstructionBlocking
+            followerInstruction = pure Nothing
           , followerInstructionBlocking
           , followerForward
           , followerClose
@@ -256,3 +305,9 @@ data ImmDBServerException =
   | TriedToFetchGenesis
   deriving stock (Show)
   deriving anyclass (Exception)
+
+-----
+
+data LeiosNotifyContext m = MkLeiosNotifyContext {
+    leiosMailbox :: !(MVar.MVar m (Leios.LeiosPoint, Maybe Word32))
+  }

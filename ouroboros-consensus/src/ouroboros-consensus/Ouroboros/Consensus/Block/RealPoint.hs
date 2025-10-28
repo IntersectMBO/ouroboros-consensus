@@ -34,6 +34,7 @@ import           GHC.Generics
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util (ShowProxy (..))
 
 {-------------------------------------------------------------------------------
   Non-genesis point
@@ -48,6 +49,10 @@ data RealPoint blk = RealPoint !SlotNo !(HeaderHash blk)
 deriving instance StandardHash blk => Eq   (RealPoint blk)
 deriving instance StandardHash blk => Ord  (RealPoint blk)
 deriving instance StandardHash blk => Show (RealPoint blk)
+
+instance ShowProxy blk
+      => ShowProxy (RealPoint blk) where
+    showProxy _ = "RealPoint " ++ showProxy (Proxy :: Proxy blk)
 
 instance (StandardHash blk, Typeable blk)
       => NoThunks (RealPoint blk) where

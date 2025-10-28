@@ -568,6 +568,7 @@ library unstable-cardano-tools
     filepath,
     fs-api ^>=0.3,
     githash,
+    io-classes,
     microlens,
     mtl,
     network,
@@ -671,12 +672,15 @@ executable immdb-server
   hs-source-dirs: app
   main-is: immdb-server.hs
   build-depends:
+    aeson,
     base,
     cardano-crypto-class,
+    cardano-slotting,
     network,
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:unstable-cardano-tools,
+    time,
     with-utf8,
 
 executable snapshot-converter

@@ -162,6 +162,8 @@ import           System.FS.API.Types (MountPoint (..))
 import           System.FS.IO (ioHasFS)
 import           System.Random (StdGen, newStdGen, randomIO, split)
 
+import           LeiosDemoTypes (SomeLeiosDb)
+
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
 -------------------------------------------------------------------------------}
@@ -225,6 +227,8 @@ data RunNodeArgs m addrNTN addrNTC blk p2p = RunNodeArgs {
     , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
 
     , rnGenesisConfig :: GenesisConfig
+
+    , rnNewLeiosDbConnection :: m (SomeLeiosDb m)
     }
 
 
@@ -587,6 +591,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     llrnPublicPeerSelectionStateVar
                     genesisArgs
                     DiffusionPipeliningOn
+                    rnNewLeiosDbConnection
           nodeKernel <- initNodeKernel nodeKernelArgs
           rnNodeKernelHook registry nodeKernel
 
@@ -620,6 +625,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       -> BlockNodeToNodeVersion blk
       -> NTN.Apps m
           addrNTN
+          ByteString
+          ByteString
           ByteString
           ByteString
           ByteString
@@ -659,6 +666,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           -> NTN.Apps
                m
                addrNTN
+               ByteString
+               ByteString
                ByteString
                ByteString
                ByteString
@@ -837,6 +846,7 @@ mkNodeKernelArgs ::
   -> StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   -> GenesisNodeKernelArgs m blk
   -> DiffusionPipeliningSupport
+  -> m (SomeLeiosDb m)
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -856,6 +866,7 @@ mkNodeKernelArgs
   publicPeerSelectionStateVar
   genesisArgs
   getDiffusionPipeliningSupport
+  nkaGetLeiosNewDbConnection
   = do
     let (kaRng, psRng) = split rng
     return NodeKernelArgs
@@ -883,6 +894,7 @@ mkNodeKernelArgs
       , publicPeerSelectionStateVar
       , genesisArgs
       , getDiffusionPipeliningSupport
+      , nkaGetLeiosNewDbConnection
       }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
