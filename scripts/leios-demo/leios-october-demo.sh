@@ -90,9 +90,9 @@ CARDANO_NODE_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-0/leios.db \
     --topology topology-node-0.json \
     --database-path $TMP_DIR/node-0/db \
     --socket-path node-0.socket \
-    --host-addr 0.0.0.0 --port ${PORT2}"
+    --host-addr 127.0.0.1 --port ${PORT2}"
 
-echo "Command: $CARDANO_NODE_CMD &> $TMP_DIR/cardano-node-0.log &"
+echo "Command (Node 0): $CARDANO_NODE_CMD &> $TMP_DIR/cardano-node-0.log &"
 
 $CARDANO_NODE_CMD &> "$TMP_DIR/cardano-node-0.log" &
 
@@ -135,7 +135,7 @@ MOCKED_PEER_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db \
     --topology topology-node-1.json \
     --database-path $TMP_DIR/node-1/db \
     --socket-path node-1.socket \
-    --host-addr 0.0.0.0 --port ${PORT3}"
+    --host-addr 127.0.0.1 --port ${PORT3}"
 
 echo "Command (Node 1): $MOCKED_PEER_CMD &> $TMP_DIR/cardano-node-1.log &"
 
