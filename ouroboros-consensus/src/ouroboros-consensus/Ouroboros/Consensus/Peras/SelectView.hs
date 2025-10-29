@@ -2,7 +2,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -21,7 +20,6 @@ module Ouroboros.Consensus.Peras.SelectView
   ) where
 
 import Data.Function (on)
-import Data.Word (Word64)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
@@ -39,12 +37,8 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 -- as the fragments might not intersect, and so some blocks after their
 -- intersection (and hence their weight boost) are unknown.
 data WeightedSelectView proto = WeightedSelectView
-  { wsvLength :: !Word64
-  -- ^ The length of the fragment.
-  --
-  -- If we ignore EBBs, then it would be equivalent to use the tip 'BlockNo'
-  -- here. However, with EBBs, the 'BlockNo' can result in misleading
-  -- comparisons if only one fragment contains EBBs.
+  { wsvBlockNo :: !BlockNo
+  -- ^ The 'BlockNo' at the tip of a fragment.
   , wsvWeightBoost :: !PerasWeight
   -- ^ The weight boost of a fragment (w.r.t. a particular anchor).
   , wsvTiebreaker :: TiebreakerView proto
@@ -58,11 +52,11 @@ deriving stock instance Eq (TiebreakerView proto) => Eq (WeightedSelectView prot
 -- 'WeightedSelectView's obtained from fragments with different anchors?
 -- Something ST-trick like?
 
--- | The total weight, ie the sum of 'wsvLength' and 'wsvBoostedWeight'.
+-- | The total weight, ie the sum of 'wsvBlockNo' and 'wsvBoostedWeight'.
 wsvTotalWeight :: WeightedSelectView proto -> PerasWeight
 -- could be cached, but then we need to be careful to maintain the invariant
 wsvTotalWeight wsv =
-  PerasWeight (wsvLength wsv) <> wsvWeightBoost wsv
+  PerasWeight (unBlockNo (wsvBlockNo wsv)) <> wsvWeightBoost wsv
 
 instance Ord (TiebreakerView proto) => Ord (WeightedSelectView proto) where
   compare =
@@ -100,7 +94,7 @@ weightedSelectView bcfg weights = \case
   frag@(_ AF.:> (getHeader1 -> hdr)) ->
     NonEmptyFragment
       WeightedSelectView
-        { wsvLength = fromIntegral @Int @Word64 $ AF.length frag
+        { wsvBlockNo = blockNo hdr
         , wsvWeightBoost = weightBoostOfFragment weights frag
         , wsvTiebreaker = tiebreakerView bcfg hdr
         }
