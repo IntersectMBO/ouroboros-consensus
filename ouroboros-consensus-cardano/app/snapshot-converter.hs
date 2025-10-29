@@ -103,10 +103,6 @@ programDescription =
 
 data InOut = In | Out
 
-inoutForGroup :: InOut -> String
-inoutForGroup In = "Input arguments:"
-inoutForGroup Out = "Output arguments:"
-
 inoutForHelp :: InOut -> String -> Bool -> String
 inoutForHelp In s b =
   mconcat $
@@ -134,14 +130,10 @@ inoutForCommand Out = (++ "-out")
 parseConfig :: InOut -> Parser Format
 parseConfig io =
   ( Mem
-      <$> parserOptionGroup
-        (inoutForGroup io)
-        (parsePath (inoutForCommand io "mem") (inoutForHelp io "snapshot dir" True))
+      <$> (parsePath (inoutForCommand io "mem") (inoutForHelp io "snapshot dir" True))
   )
     <|> ( LMDB
-            <$> parserOptionGroup
-              (inoutForGroup io)
-              (parsePath (inoutForCommand io "lmdb") (inoutForHelp io "snapshot dir" True))
+            <$> (parsePath (inoutForCommand io "lmdb") (inoutForHelp io "snapshot dir" True))
         )
 
 parsePath :: String -> String -> Parser FilePath
