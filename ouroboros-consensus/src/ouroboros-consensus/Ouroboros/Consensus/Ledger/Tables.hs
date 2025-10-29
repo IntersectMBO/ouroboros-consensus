@@ -198,6 +198,7 @@ import Ouroboros.Consensus.Ledger.Tables.Combinators
 import Ouroboros.Consensus.Ledger.Tables.MapKind
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.IndexedMemPack
+import Data.SOP.Strict
 
 {-------------------------------------------------------------------------------
   Basic LedgerState classes
@@ -387,7 +388,7 @@ class (TxIn l ~ Void, TxOut l ~ Void) => LedgerTablesAreTrivial l where
 trivialLedgerTables ::
   (ZeroableMK mk, LedgerTablesAreTrivial l) =>
   LedgerTables l mk
-trivialLedgerTables = LedgerTables emptyMK
+trivialLedgerTables = LedgerTables $ hpure $ Table emptyMK
 
 -- | A newtype to @derive via@ the instances for blocks with trivial ledger
 -- tables.
@@ -414,8 +415,8 @@ instance IndexedMemPack (TrivialLedgerTables l EmptyMK) Void where
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
-instance SerializeTablesWithHint (TrivialLedgerTables l) where
+instance LedgerTablesAreTrivial l => SerializeTablesWithHint (TrivialLedgerTables l) where
   decodeTablesWithHint _ = do
     _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
+    pure trivialLedgerTables
   encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
