@@ -41,7 +41,7 @@ openMempool ::
   m (Mempool m blk)
 openMempool topLevelRegistry ledger cfg capacityOverride tracer = do
   env <- initMempoolEnv ledger cfg capacityOverride tracer topLevelRegistry
-  forkSyncStateOnTipPointChange topLevelRegistry env
+  forkSyncStateOnTipPointChange env
   return $ mkMempool env
 
 -- | Spawn a thread which syncs the 'Mempool' state whenever the 'LedgerState'
@@ -53,11 +53,10 @@ forkSyncStateOnTipPointChange ::
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
   ) =>
-  ResourceRegistry m ->
   MempoolEnv m blk ->
   m ()
-forkSyncStateOnTipPointChange topLevelRegistry menv = do
-  w <-
+forkSyncStateOnTipPointChange menv =
+  void $
     forkLinkedWatcher
       (mpEnvRegistry menv)
       "Mempool.syncStateOnTipPointChange"
@@ -67,12 +66,6 @@ forkSyncStateOnTipPointChange topLevelRegistry menv = do
         , wNotify = action
         , wReader = getCurrentTip
         }
-
-  -- With this allocation on the top level registry, we make sure that we first
-  -- stop the watcher thread before closing the mempool registry, as otherwise
-  -- we would run into a race condition (the thread might try to re-sync and
-  -- allocate a forker on the mempool registry which would be closing down).
-  void $ allocate topLevelRegistry (\_ -> pure w) cancelThread
  where
   action :: MempoolLedgerDBView m blk -> m ()
   action _a =
