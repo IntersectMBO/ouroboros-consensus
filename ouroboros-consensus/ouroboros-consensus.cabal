@@ -362,6 +362,7 @@ library
     QuickCheck,
     quiet ^>=0.2,
     random,
+    random-shuffle,
     rawlock ^>=0.1.1,
     resource-registry ^>=0.1,
     semialign >=1.1,
@@ -880,10 +881,7 @@ benchmark ObjectDiffusion-bench
     hashable,
     ouroboros-consensus,
     QuickCheck,
-    random,
-    splitmix,
-    tasty-bench,
-    vector
+    tasty-bench
 
 test-suite doctest
   import: common-test

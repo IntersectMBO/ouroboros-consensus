@@ -25,6 +25,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 import System.Random (StdGen)
+import System.Random.Shuffle (shuffle')
 
 strictSeqToSet :: Ord a => StrictSeq a -> Set a
 strictSeqToSet = Set.fromList . Foldable.toList
@@ -135,11 +136,17 @@ computeAck poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpMaxNumObjectsOut
       , Map.insert peerAddr (strictSeqToSet idsToAck) peerToIdsToAck
       )
 
+-- | Order peers randomly based on the provided RNG.
+-- We do that to avoid biasing the decision logic towards the peers that
+-- would happen to be first in the map default ordering, as that could
+-- be exploited by an adversary.
 orderPeers ::
   StdGen ->
   Map peerAddr (DecisionPeerState objectId object) ->
   [(peerAddr, DecisionPeerState objectId object)]
-orderPeers _rng = undefined -- TODO
+orderPeers rng peerStates =
+  let peerPairs = Map.toList peerStates
+   in shuffle' peerPairs (length peerPairs) rng
 
 data DownloadPickState peerAddr objectId
   = DownloadPickState
