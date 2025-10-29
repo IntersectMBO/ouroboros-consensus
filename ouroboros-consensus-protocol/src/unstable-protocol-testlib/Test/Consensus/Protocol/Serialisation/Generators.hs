@@ -81,3 +81,4 @@ instance Arbitrary PraosState where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
+      <*> arbitrary
