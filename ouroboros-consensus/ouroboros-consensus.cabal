@@ -303,6 +303,7 @@ library
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.Time
+    Ouroboros.Consensus.Util.TypeLevel
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
