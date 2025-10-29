@@ -1608,7 +1608,16 @@ genBlk chunkInfo Model{..} =
   noSavedGapBlocks = Map.null savedGapBlocks
   withoutGapBlocks = fmap (,Persistent [])
 
-  modelSupportsEBBs = ImmutableDB.chunkInfoSupportsEBBs chunkInfo
+  k = unNonZero (maxRollbacks (configSecurityParam (unOpaque modelConfig)))
+
+  modelSupportsEBBs =
+    ImmutableDB.chunkInfoSupportsEBBs chunkInfo
+      -- NOTE: we disable the generation of EBBs entirely when k>2 to avoid
+      -- triggering an edge case caused by a mismatch between the model and
+      -- actual the implementation. For more information, see:
+      -- https://github.com/IntersectMBO/ouroboros-consensus/issues/1745
+      && k <= 2
+
   canContainEBB = const modelSupportsEBBs -- TODO: we could be more precise
   genBody :: Gen TestBody
   genBody = do
