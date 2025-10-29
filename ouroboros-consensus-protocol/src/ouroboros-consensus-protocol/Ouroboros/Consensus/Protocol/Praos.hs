@@ -279,6 +279,8 @@ data PraosState = PraosState
   -- ^ Candidate nonce
   , praosStateEpochNonce :: !Nonce
   -- ^ Epoch nonce
+  , praosStatePreviousEpochNonce :: !Nonce
+  -- ^ Previous epoch nonce
   , praosStateLabNonce :: !Nonce
   -- ^ Nonce constructed from the hash of the previous block
   , praosStateLastEpochBlockNonce :: !Nonce
@@ -303,17 +305,19 @@ instance Serialise PraosState where
       , praosStateEvolvingNonce
       , praosStateCandidateNonce
       , praosStateEpochNonce
+      , praosStatePreviousEpochNonce
       , praosStateLabNonce
       , praosStateLastEpochBlockNonce
       } =
       encodeVersion 0 $
         mconcat
-          [ CBOR.encodeListLen 7
+          [ CBOR.encodeListLen 8
           , toCBOR praosStateLastSlot
           , toCBOR praosStateOCertCounters
           , toCBOR praosStateEvolvingNonce
           , toCBOR praosStateCandidateNonce
           , toCBOR praosStateEpochNonce
+          , toCBOR praosStatePreviousEpochNonce
           , toCBOR praosStateLabNonce
           , toCBOR praosStateLastEpochBlockNonce
           ]
@@ -323,9 +327,10 @@ instance Serialise PraosState where
       [(0, Decode decodePraosState)]
    where
     decodePraosState = do
-      enforceSize "PraosState" 7
+      enforceSize "PraosState" 8
       PraosState
         <$> fromCBOR
+        <*> fromCBOR
         <*> fromCBOR
         <*> fromCBOR
         <*> fromCBOR
@@ -423,11 +428,13 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   -- Updating the chain dependent state for Praos.
   --
   -- If we are not in a new epoch, then nothing happens. If we are in a new
-  -- epoch, we do two things:
+  -- epoch, we do three things:
   -- - Update the epoch nonce to the combination of the candidate nonce and the
   --   nonce derived from the last block of the previous epoch.
-  -- - Update the "last block of previous epoch" nonce to the nonce derived from
-  --   the last applied block.
+  -- - Store the current epoch nonce as the "previous epoch" nonce. This is
+  --   needed by Peras to be able to validate slightly old certificates.
+  -- - Update the "last block of previous epoch" nonce to the nonce derived
+  --   from the last applied block.
   tickChainDepState
     PraosConfig{praosEpochInfo}
     lv
@@ -450,7 +457,10 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
               { praosStateEpochNonce =
                   praosStateCandidateNonce st
                     ⭒ praosStateLastEpochBlockNonce st
-              , praosStateLastEpochBlockNonce = praosStateLabNonce st
+              , praosStatePreviousEpochNonce =
+                  praosStateEpochNonce st
+              , praosStateLastEpochBlockNonce =
+                  praosStateLabNonce st
               }
           else st
 
@@ -758,7 +768,8 @@ instance TranslateProto (TPraos c) (Praos c) where
       , praosStateOCertCounters = Map.mapKeysMonotonic coerce certCounters
       , praosStateEvolvingNonce = evolvingNonce
       , praosStateCandidateNonce = candidateNonce
-      , praosStateEpochNonce = SL.ticknStateEpochNonce csTickn
+      , praosStateEpochNonce = epochNonce
+      , praosStatePreviousEpochNonce = epochNonce -- same as current epoch nonce
       , praosStateLabNonce = csLabNonce
       , praosStateLastEpochBlockNonce = SL.ticknStatePrevHashNonce csTickn
       }
@@ -767,6 +778,7 @@ instance TranslateProto (TPraos c) (Praos c) where
       tpraosStateChainDepState tpState
     SL.PrtclState certCounters evolvingNonce candidateNonce =
       csProtocol
+    epochNonce = SL.ticknStateEpochNonce csTickn
 
 {-------------------------------------------------------------------------------
   Util
