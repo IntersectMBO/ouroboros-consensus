@@ -725,19 +725,7 @@ newForkerAtTarget ::
   ResourceRegistry m ->
   Target (Point blk) ->
   m (Either GetForkerError (Forker m l blk))
-newForkerAtTarget h rr pt = getEnv h $ \ldbEnv -> do
-  tv <- newTVarIO (pure ())
-  void $ allocate rr
-    (\_ -> atomically $ do
-        -- Populate the tvar with the releasing action. Once we create the
-        -- forker the release will be done via `forkerClose` if an exception
-        -- makes us deallocate the forker
-        writeTVar tv (atomically $ unsafeReleaseReadAccess (ldbLock ldbEnv))
-        -- Acquire the read access
-        unsafeAcquireReadAccess (ldbLock ldbEnv)
-    )
-    (\_ -> join $ readTVarIO tv)
-  runReadLocked (acquireAtTarget ldbEnv (Right pt) >>= traverse (newForker h ldbEnv tv rr))
+newForkerAtTarget h rr pt = withTransferrableReadAccess h rr (Right pt)
 
 newForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
@@ -752,19 +740,41 @@ newForkerByRollback ::
   -- | How many blocks to rollback from the tip
   Word64 ->
   m (Either GetForkerError (Forker m l blk))
-newForkerByRollback h rr n = getEnv h $ \ldbEnv -> do
+newForkerByRollback h rr n = withTransferrableReadAccess h rr (Left n)
+
+-- | Acquire read access and then allocate a forker, acquiring it at the given
+-- point or rollback.
+withTransferrableReadAccess ::
+  ( HeaderHash l ~ HeaderHash blk
+  , IOLike m
+  , IsLedger l
+  , StandardHash l
+  , HasLedgerTables l
+  , LedgerSupportsProtocol blk
+  ) =>
+  LedgerDBHandle m l blk ->
+  ResourceRegistry m ->
+  Either Word64 (Target (Point blk)) ->
+  m (Either GetForkerError (Forker m l blk))
+withTransferrableReadAccess h rr f = getEnv h $ \ldbEnv -> do
+  -- This TVar will be used to maybe release the read lock by the resource
+  -- registry. Once the forker was opened it will be emptied.
   tv <- newTVarIO (pure ())
-  void $ allocate rr
-    (\_ -> atomically $ do
-        -- Populate the tvar with the releasing action. Once we create the
-        -- forker the release will be done via `forkerClose` if an exception
-        -- makes us deallocate the forker
-        writeTVar tv (atomically $ unsafeReleaseReadAccess (ldbLock ldbEnv))
-        -- Acquire the read access
-        unsafeAcquireReadAccess (ldbLock ldbEnv)
-    )
-    (\_ -> join $ readTVarIO tv)
-  runReadLocked (acquireAtTarget ldbEnv (Left n) >>= traverse (newForker h ldbEnv tv rr))
+  void $
+    allocate
+      rr
+      ( \_ -> atomically $ do
+          -- Populate the tvar with the releasing action. Creating the forker will empty this
+          writeTVar tv (atomically $ unsafeReleaseReadAccess (ldbLock ldbEnv))
+          -- Acquire the read access
+          unsafeAcquireReadAccess (ldbLock ldbEnv)
+      )
+      ( \_ ->
+          -- Run the contents of the releasing TVar which will be `pure ()` if
+          -- the forker was opened.
+          join $ readTVarIO tv
+      )
+  runReadLocked (acquireAtTarget ldbEnv f >>= traverse (newForker h ldbEnv tv rr))
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
@@ -821,6 +831,7 @@ acquireAtTarget ldbEnv target = readLocked $ runExceptT $ do
 -------------------------------------------------------------------------------}
 
 newForker ::
+  forall m l blk.
   ( IOLike m
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
@@ -834,28 +845,36 @@ newForker ::
   ResourceRegistry m ->
   DbChangelog l ->
   ReadLocked m (Forker m l blk)
-newForker h ldbEnv releaseVar rr dblog = readLocked $ do
-  dblogVar <- newTVarIO dblog
-  forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
-  forkerMVar <- newMVar $ Left (ldbLock ldbEnv, ldbBackingStore ldbEnv, rr)
-  let forkerEnv =
-        ForkerEnv
-          { foeBackingStoreValueHandle = forkerMVar
-          , foeChangelog = dblogVar
-          , foeSwitchVar = ldbChangelog ldbEnv
-          , foeTracer =
-              LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
-          }
-  atomically $ do
-    -- Note that we add the forkerEnv to the 'ldbForkers' so that an exception
-    -- which will close all the forkers, also closes this one, releasing the
-    -- read access we acquired above.
-    modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
-    -- And we tell the bracketOnError above to not release the lock as closing the
-    -- forker will.
-    writeTVar releaseVar (pure ())
-  traceWith (foeTracer forkerEnv) ForkerOpen
-  pure $ mkForker h (ldbQueryBatchSize ldbEnv) forkerKey forkerEnv
+newForker h ldbEnv releaseVar rr dblog =
+  readLocked $
+    fmap snd $
+      allocate
+        rr
+        ( \_ -> do
+            dblogVar <- newTVarIO dblog
+            forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
+            forkerMVar <- newMVar $ Left (ldbLock ldbEnv, ldbBackingStore ldbEnv, rr)
+            let forkerEnv =
+                  ForkerEnv
+                    { foeBackingStoreValueHandle = forkerMVar
+                    , foeChangelog = dblogVar
+                    , foeSwitchVar = ldbChangelog ldbEnv
+                    , foeTracer =
+                        LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
+                    }
+            atomically $ do
+              -- Note that we add the forkerEnv to the 'ldbForkers' so that an exception
+              -- which will close all the forkers, also closes this one, releasing the
+              -- read access we acquired above.
+              modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
+              -- Empty the tvar created for allocating the unsafe read access,
+              -- so that it is the forker the one that takes care of releasing
+              -- it.
+              writeTVar releaseVar (pure ())
+            traceWith (foeTracer forkerEnv) ForkerOpen
+            pure $ (mkForker h (ldbQueryBatchSize ldbEnv) forkerKey forkerEnv)
+        )
+        forkerClose
 
 mkForker ::
   ( IOLike m
