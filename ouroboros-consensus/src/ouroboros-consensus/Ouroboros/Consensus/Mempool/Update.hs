@@ -405,31 +405,44 @@ implSyncWithLedger mpEnv =
       -- For that reason, we read the state again here in the same STM
       -- transaction in which we acquire the internal state of the mempool.
       --
-      -- This implies that the watcher might be triggered again with the same
-      -- state from the point of view of the mempool, if after the watcher saw a
-      -- new state and this read for re-syncing, the state has changed. The
-      -- watcher will see it once again and trigger re-validation again. Just
-      -- for performance reasons, we will avoid re-validating the mempool if the
-      -- state didn't change.
+      -- The following interleaving could happen:
+      --
+      -- - [ChainSel thread] We adopt a new block B at the tip of our selection.
+      --
+      -- - [Mempool sync thread] The Watcher wakes up, seeing that the tip has
+      --   changed to B, records it as the fingerprint, and invokes
+      --   implSyncWithLedger, but doesn't reach withTMVarAnd here.
+      --
+      -- - [ChainSel thread] Adopt a new block C.
+      --
+      -- - [Mempool thread] Execute withTMVarAnd here, obtaining the ledger
+      --   state for C and syncing the mempool with C.
+      --
+      -- - [Mempool thread] The Watcher wakes up again, seeing that the tip has
+      --   changed from B to C, and invokes implSyncWithLedger. This time,
+      --   nothing needs to be done, resulting in TraceMempoolSyncNotNeeded.
+      --
+      -- Just for performance reasons, we will avoid re-validating the mempool
+      -- if the state didn't change.
       withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface registry) $
         \is (MempoolLedgerDBView ls meFrk) -> do
-          eFrk <- meFrk
-          case eFrk of
-            -- This case should happen only if the tip has moved again, this time
-            -- to a separate fork, since the background thread saw a change in the
-            -- tip, which should happen very rarely
-            Left{} -> do
-              traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
-              pure (Nothing, is)
-            Right frk -> do
-              let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
-              if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
-                then do
-                  -- The tip didn't change, put the same state.
-                  traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
-                  pure (Just (snapshotFromIS is), is)
-                else do
-                  -- The tip changed, we have to revalidate
+          let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
+          if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
+            then do
+              -- The tip didn't change, put the same state.
+              traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
+              pure (Just (snapshotFromIS is), is)
+            else do
+              -- The tip changed, we have to revalidate
+              eFrk <- meFrk
+              case eFrk of
+                -- This case should happen only if the tip has moved again, this time
+                -- to a separate fork, since the background thread saw a change in the
+                -- tip, which should happen very rarely
+                Left{} -> do
+                  traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
+                  pure (Nothing, is)
+                Right frk -> do
                   modifyMVar_
                     forkerMVar
                     ( \oldFrk -> do
