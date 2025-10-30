@@ -9,7 +9,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
   ( -- * LedgerDB lock
     LedgerDBLock
-  , ReadLocked
+  , ReadLocked (..)
   , WriteLocked
   , mkLedgerDBLock
   , readLocked
