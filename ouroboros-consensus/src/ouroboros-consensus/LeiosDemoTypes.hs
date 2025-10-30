@@ -18,7 +18,9 @@ import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Monad.Class.MonadThrow (MonadThrow, bracket, generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
+import qualified Data.Bits as Bits
 import           Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
 import           Data.Int (Int64)
@@ -59,6 +61,9 @@ newtype PeerId a = MkPeerId a
 
 newtype EbHash = MkEbHash ByteString
   deriving (Eq, Ord, Show)
+
+prettyEbHash :: EbHash -> String
+prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
 
 newtype TxHash = MkTxHash ByteString
   deriving (Eq, Ord, Show)
@@ -119,7 +124,11 @@ prettyLeiosBlockTxsRequest (MkLeiosBlockTxsRequest p bitmaps _txHashes) =
 
 prettyBitmap :: (Word16, Word64) -> String
 prettyBitmap (idx, bitmap) =
-    show idx ++ ":0x" ++ Numeric.showHex bitmap ""
+    show idx ++ ":0x" ++ padding ++ Numeric.showHex bitmap ""
+  where
+    n = Bits.countLeadingZeros bitmap
+
+    padding = replicate (n `div` 4) '0'
 
 -----
 
@@ -319,6 +328,15 @@ prettyLeiosOutstanding x =
 newtype LeiosTx = MkLeiosTx ByteString
   deriving (Show)
 
+leiosTxBytesSize:: LeiosTx -> BytesSize
+leiosTxBytesSize (MkLeiosTx bytes) =
+    majorByte + argument + fromIntegral n
+  where
+    majorByte = 1
+    -- ASSUMPTION: greater than 55 and at most 2^14
+    argument = 1 + (if n >= 2^(8::Int) then 1 else 0)
+    n = BS.length bytes
+
 instance ShowProxy LeiosTx where showProxy _ = "LeiosTx"
 
 encodeLeiosTx :: LeiosTx -> Encoding
@@ -331,6 +349,17 @@ data LeiosEb = MkLeiosEb !(V.Vector (TxHash, BytesSize))
   deriving (Show)
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
+
+leiosEbBytesSize:: LeiosEb -> BytesSize
+leiosEbBytesSize (MkLeiosEb items) =
+    majorByte + argument + (V.sum $ V.map (each . snd) items)
+  where
+    majorByte = 1
+    -- ASSUMPTION: less than 14000
+    argument = 1 + (if V.length items >= 2^(8::Int) then 1 else 0)
+
+    -- ASSUMPTION: greater than 55 and at most 2^14
+    each sz = 1 + 32 + 1 + 1 + (if sz >= 2^(8::Int) then 1 else 0)
 
 encodeLeiosEb :: LeiosEb -> Encoding
 encodeLeiosEb (MkLeiosEb v) =

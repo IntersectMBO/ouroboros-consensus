@@ -269,6 +269,12 @@
     "TxSubmission.TxOutbound": {
       "severity": "Notice"
     },
+    "LeiosNotify.Remote": {
+      "severity": "Debug"
+    },
+    "LeiosFetch.Remote": {
+      "severity": "Debug"
+    },
     "Version.NodeVersion": {
       "severity": "Info"
     }
