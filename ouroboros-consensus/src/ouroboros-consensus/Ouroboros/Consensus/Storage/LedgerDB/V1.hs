@@ -351,6 +351,8 @@ implTryTakeSnapshot snapManager env snapshotRequestTime delayBeforeSnapshotting 
   case snapshotSlots of
     [] -> pure ()
     _ -> do
+      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+        SnapshotRequestDelayed snapshotRequestTime delayBeforeSnapshotting (length snapshotSlots)
       threadDelay delayBeforeSnapshotting
       forM_ snapshotSlots $ \slot -> do
         -- Prune the 'DbChangelog' such that the resulting anchor state has slot
@@ -373,6 +375,8 @@ implTryTakeSnapshot snapManager env snapshotRequestTime delayBeforeSnapshotting 
         atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! finished)
         void $
           trimSnapshots snapManager (ldbSnapshotPolicy env)
+      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+        SnapshotRequestCompleted
 
 -- If the DbChangelog in the LedgerDB can flush (based on the SnapshotPolicy
 -- with which this LedgerDB was opened), flush differences to the backing
