@@ -268,12 +268,10 @@
     "TxSubmission.TxOutbound": {
       "severity": "Notice"
     },
-    "LeiosNotify.Remote": {
-      "severity": "Debug"
-    },
-    "LeiosFetch.Remote": {
-      "severity": "Debug"
-    },
+    "LeiosNotify.Remote": { "severity": "Debug" },
+    "LeiosFetch.Remote": { "severity": "Debug" },
+    "Consensus.LeiosKernel": { "severity": "Debug" },
+    "Consensus.LeiosPeer": { "severity": "Debug" },
     "Version.NodeVersion": {
       "severity": "Info"
     }

@@ -49,6 +49,8 @@ import           Ouroboros.Network.TxSubmission.Inbound
 import           Ouroboros.Network.TxSubmission.Outbound
                      (TraceTxSubmissionOutbound)
 
+import           LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
+
 {-------------------------------------------------------------------------------
   All tracers of a node bundled together
 -------------------------------------------------------------------------------}
@@ -74,6 +76,8 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , gddTracer                     :: f (TraceGDDEvent remotePeer blk)
   , csjTracer                     :: f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
   , dbfTracer                     :: f (CSJumping.TraceEventDbf remotePeer)
+  , leiosKernelTracer             :: f TraceLeiosKernel
+  , leiosPeerTracer               :: f (TraceLabelPeer remotePeer TraceLeiosPeer)
   }
 
 instance (forall a. Semigroup (f a))
@@ -99,6 +103,8 @@ instance (forall a. Semigroup (f a))
       , gddTracer                     = f gddTracer
       , csjTracer                     = f csjTracer
       , dbfTracer                     = f dbfTracer
+      , leiosKernelTracer             = f leiosKernelTracer
+      , leiosPeerTracer               = f leiosPeerTracer
       }
     where
       f :: forall a. Semigroup a
@@ -132,6 +138,8 @@ nullTracers = Tracers
     , gddTracer                     = nullTracer
     , csjTracer                     = nullTracer
     , dbfTracer                     = nullTracer
+    , leiosKernelTracer             = nullTracer
+    , leiosPeerTracer               = nullTracer
     }
 
 showTracers :: ( Show blk
@@ -168,6 +176,8 @@ showTracers tr = Tracers
     , gddTracer                     = showTracing tr
     , csjTracer                     = showTracing tr
     , dbfTracer                     = showTracing tr
+    , leiosKernelTracer             = showTracing tr
+    , leiosPeerTracer               = showTracing tr
     }
 
 {-------------------------------------------------------------------------------

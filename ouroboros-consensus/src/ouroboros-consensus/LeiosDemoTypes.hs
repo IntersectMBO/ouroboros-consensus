@@ -18,6 +18,7 @@ import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Monad.Class.MonadThrow (MonadThrow, bracket, generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
+import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -628,3 +629,17 @@ data LeiosNotification =
     LeiosOfferBlock EbId BytesSize
   |
     LeiosOfferBlockTxs EbId
+
+-----
+
+newtype TraceLeiosKernel = MkTraceLeiosKernel String
+  deriving (Show)
+
+traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
+traceLeiosKernelToObject (MkTraceLeiosKernel s) = fromString "msg" Aeson..= Aeson.String (fromString s)
+
+newtype TraceLeiosPeer = MkTraceLeiosPeer String
+  deriving (Show)
+
+traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
+traceLeiosPeerToObject (MkTraceLeiosPeer s) = fromString "msg" Aeson..= Aeson.String (fromString s)

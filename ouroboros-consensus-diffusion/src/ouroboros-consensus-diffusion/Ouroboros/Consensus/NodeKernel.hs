@@ -134,10 +134,9 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Sequence (Seq)
 import           LeiosDemoTypes (LeiosEbBodies, LeiosOutstanding, LeiosPeerVars, SomeLeiosDb)
+import           LeiosDemoTypes (TraceLeiosKernel (..))
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoLogic as Leios
-
-import           Debug.Trace (traceM)
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -394,6 +393,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
     getLeiosCopyReady <- MVar.newEmptyMVar
 
     void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
+        let tracer = leiosKernelTracer tracers
         () <- MVar.takeMVar getLeiosReady
         leiosPeersVars <- MVar.readMVar getLeiosPeersVars
         offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
@@ -407,7 +407,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
             let newCopy = Leios.toCopyCount outstanding' /= Leios.toCopyCount outstanding
             pure (outstanding', (newDecisions, newCopy))
         let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
-        traceM $ "leiosFetchLogic: " ++ show (sum (fmap length newRequests)) ++ " new reqs, " ++ show newCopy ++ " new copy"
+        traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: " ++ show (sum (fmap length newRequests)) ++ " new reqs, " ++ show newCopy ++ " new copy"
         (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
             atomically $ do
                 StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
@@ -415,21 +415,23 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         threadDelay (0.5 :: DiffTime)   -- TODO magic number
 
     void $ forkLinkedThread registry "NodeKernel.leiosCopyLogic" $ do
+        let tracer = leiosKernelTracer tracers
         Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
         (\m -> let loop !i = do m i; loop (i+1 :: Int) in loop 0) $ \i -> do
             () <- MVar.takeMVar getLeiosCopyReady
-            traceM $ "leiosCopy: running " ++ show i
+            traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: running " ++ show i
             t1 <- getMonotonicTimeNSec
             moreTodo <-
                 Leios.doCacheCopy
+                    tracer
                     db
                     (getLeiosWriteLock, getLeiosOutstanding, getLeiosNotifications)
                     (500 * 10^(3 :: Int))   -- TODO magic number
             t2 <- getMonotonicTimeNSec
-            traceM $ "leiosCopy: done " ++ show (i, (t2 - t1) `div` (10^(6 :: Int)))
+            traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: done " ++ show (i, (t2 - t1) `div` (10^(6 :: Int)))
             void $ MVar.tryPutMVar getLeiosReady ()
             when moreTodo $ do
-                traceM $ "leiosCopy: more " ++ show i
+                traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: more " ++ show i
                 void $ MVar.tryPutMVar getLeiosCopyReady ()
             threadDelay (0.050 :: DiffTime)   -- TODO magic number
 

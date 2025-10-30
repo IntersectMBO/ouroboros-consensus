@@ -116,9 +116,9 @@ CARDANO_NODE_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-0/leios.db \
     --socket-path node-0.socket \
     --host-addr 127.0.0.1 --port $(($TOXIPROXY + $PORT2))"
 
-echo "Command (Node 0): $CARDANO_NODE_CMD &> $TMP_DIR/cardano-node-0.log &"
+echo "Command (Node 0): $CARDANO_NODE_CMD > $TMP_DIR/cardano-node-0.log &"
 
-$CARDANO_NODE_CMD &> "$TMP_DIR/cardano-node-0.log" &
+$CARDANO_NODE_CMD 1> "$TMP_DIR/cardano-node-0.log" 2>"$TMP_DIR/cardano-node-0.stderr" &
 
 CARDANO_NODE_0_PID=$!
 
@@ -161,9 +161,9 @@ MOCKED_PEER_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db \
     --socket-path node-1.socket \
     --host-addr 127.0.0.1 --port ${PORT3}"
 
-echo "Command (Node 1): $MOCKED_PEER_CMD &> $TMP_DIR/cardano-node-1.log &"
+echo "Command (Node 1): $MOCKED_PEER_CMD > $TMP_DIR/cardano-node-1.log &"
 
-$MOCKED_PEER_CMD &> "$TMP_DIR/cardano-node-1.log" &
+$MOCKED_PEER_CMD 1>"$TMP_DIR/cardano-node-1.log" 2>"$TMP_DIR/cardano-node-1.stderr" &
 
 MOCKED_PEER_PID=$!
 

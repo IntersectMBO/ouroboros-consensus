@@ -194,7 +194,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
               $ mkLeiosFetchContext >>= \(LeiosLogic.MkSomeLeiosFetchContext leiosContext) -> id
               $ runPeer nullTracer cLeiosFetchCodec channel
               $ leiosFetchServerPeer
-              $ pure (LeiosLogic.leiosFetchHandler leiosContext)
+              $ pure (LeiosLogic.leiosFetchHandler nullTracer leiosContext)
 
         mkMiniProtocol miniProtocolStart miniProtocolNum limits proto = MiniProtocol {
             miniProtocolNum

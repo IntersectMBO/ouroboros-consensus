@@ -18,6 +18,7 @@ import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Monad (foldM, when)
 import           Control.Monad.Primitive (PrimMonad, PrimState)
+import           Control.Tracer (Tracer, traceWith)
 import qualified Data.Bits as Bits
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -41,11 +42,11 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import           Data.Word (Word16, Word64)
 import qualified Database.SQLite3.Direct as DB
-import           Debug.Trace (traceM)
 import qualified LeiosDemoOnlyTestNotify as LN
 import qualified LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoTypes (BytesSize, EbHash (..), EbId (..), LeiosEbBodies, LeiosOutstanding, LeiosPoint (..), LeiosDb (..), LeiosEb (..), LeiosFetchStaticEnv, LeiosTx (..), PeerId (..), TxHash (..))
 import           LeiosDemoTypes (LeiosBlockRequest (..), LeiosBlockTxsRequest (..), LeiosFetchRequest (..), LeiosNotification (..))
+import           LeiosDemoTypes (TraceLeiosKernel (..), TraceLeiosPeer (..))
 import           LeiosDemoTypes (dbBindBlob, dbBindInt64, dbColumnBlob, dbColumnInt64, dbExec, dbReset, dbStep, dbStep1, dbWithBEGIN, dbWithPrepare)
 import qualified LeiosDemoTypes as Leios
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -169,30 +170,34 @@ newLeiosFetchContext leiosWriteLock leiosDb readLeiosEbBodies = do
 leiosFetchHandler ::
     IOLike m
  =>
+    Tracer m TraceLeiosPeer
+ ->
     LeiosFetchContext stmt m
  ->
     LF.LeiosFetchRequestHandler LeiosPoint LeiosEb LeiosTx m
-leiosFetchHandler leiosContext = LF.MkLeiosFetchRequestHandler $ \case
+leiosFetchHandler tracer leiosContext = LF.MkLeiosFetchRequestHandler $ \case
     LF.MsgLeiosBlockRequest p -> do
-        traceM $ "[start] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
-        x <- msgLeiosBlockRequest leiosContext p
-        traceM $ "[done] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
+        traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
+        x <- msgLeiosBlockRequest tracer leiosContext p
+        traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
         pure $ LF.MsgLeiosBlock x
     LF.MsgLeiosBlockTxsRequest p bitmaps -> do
-        traceM $ "[start] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
-        x <- msgLeiosBlockTxsRequest leiosContext p bitmaps
-        traceM $ "[done] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
+        traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
+        x <- msgLeiosBlockTxsRequest tracer leiosContext p bitmaps
+        traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
         pure $ LF.MsgLeiosBlockTxs x
 
 msgLeiosBlockRequest ::
     IOLike m
  =>
+    Tracer m TraceLeiosPeer
+ ->
     LeiosFetchContext stmt m
  ->
     LeiosPoint
  ->
     m LeiosEb
-msgLeiosBlockRequest leiosContext p = do
+msgLeiosBlockRequest _tracer leiosContext p = do
     let MkLeiosFetchContext {leiosDb = db, leiosEbBuffer = buf, leiosWriteLock, readLeiosEbBodies} = leiosContext
     (ebId, mbLeiosEbBodies') <- readLeiosEbBodies <&> ebIdFromPoint p
     case mbLeiosEbBodies' of
@@ -224,6 +229,8 @@ sql_lookup_ebBodies =
 msgLeiosBlockTxsRequest ::
     IOLike m
  =>
+    Tracer m TraceLeiosPeer
+ ->
     LeiosFetchContext stmt m
  ->
     LeiosPoint
@@ -231,7 +238,7 @@ msgLeiosBlockTxsRequest ::
     [(Word16, Word64)]
  ->
     m (V.Vector LeiosTx)
-msgLeiosBlockTxsRequest leiosContext p bitmaps = do
+msgLeiosBlockTxsRequest _tracer leiosContext p bitmaps = do
     let MkLeiosFetchContext {leiosDb = db, leiosEbTxsBuffer = buf, leiosWriteLock, readLeiosEbBodies} = leiosContext
     (ebId, mbLeiosEbBodies') <- readLeiosEbBodies <&> ebIdFromPoint p
     case mbLeiosEbBodies' of
@@ -614,6 +621,8 @@ nextLeiosFetchClientCommand :: forall pid stmt m.
     IOLike m
   )
  =>
+    Tracer m TraceLeiosPeer
+ ->
     StrictSTM.STM m Bool
  ->
     (MVar m (), MVar m LeiosEbBodies, MVar m (LeiosOutstanding pid), MVar m (), MVar m (Map (PeerId pid) (StrictTVar m (Map SlotNo (Seq LeiosNotification)))))
@@ -628,7 +637,7 @@ nextLeiosFetchClientCommand :: forall pid stmt m.
         (m  (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
             (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
       )
-nextLeiosFetchClientCommand stopSTM kernelVars db peerId reqsVar = do
+nextLeiosFetchClientCommand tracer stopSTM kernelVars db peerId reqsVar = do
     f (pure Nothing) (pure . Just) >>= \case
         Just x -> pure $ Right x
         Nothing -> pure $ Left $ f StrictSTM.retry pure
@@ -653,13 +662,13 @@ nextLeiosFetchClientCommand stopSTM kernelVars db peerId reqsVar = do
             LF.MkSomeLeiosFetchJob
                 (LF.MsgLeiosBlockRequest p)
                 (pure $ \(LF.MsgLeiosBlock eb) ->
-                    msgLeiosBlock kernelVars db peerId req eb
+                    msgLeiosBlock tracer kernelVars db peerId req eb
                 )
         LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p bitmaps _txHashes) ->
             LF.MkSomeLeiosFetchJob
                 (LF.MsgLeiosBlockTxsRequest p bitmaps)
                 (pure $ \(LF.MsgLeiosBlockTxs txs) -> do
-                    msgLeiosBlockTxs kernelVars db peerId req txs
+                    msgLeiosBlockTxs tracer kernelVars db peerId req txs
                 )
 
 -----
@@ -671,6 +680,8 @@ msgLeiosBlock ::
     IOLike m
   )
  =>
+    Tracer m TraceLeiosPeer
+ ->
     (MVar m (), MVar m LeiosEbBodies, MVar m (LeiosOutstanding pid), MVar m (), MVar m (Map (PeerId pid) (StrictTVar m (Map SlotNo (Seq LeiosNotification)))))
  ->
     LeiosDb stmt m
@@ -682,10 +693,10 @@ msgLeiosBlock ::
     LeiosEb
  ->
     m ()
-msgLeiosBlock (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req eb = do
+msgLeiosBlock tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req eb = do
     -- validate it
     let MkLeiosBlockRequest p ebBytesSize = req
-    traceM $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
+    traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
     do
         let MkLeiosPoint _ebSlot ebHash = p
         let ebBytes :: ByteString
@@ -768,19 +779,20 @@ msgLeiosBlock (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVar
         pure outstanding'
     void $ MVar.tryPutMVar readyVar ()
     when novel $ do
-        traceM $ "leiosNotificationsBlock: " ++ Leios.prettyEbId ebId
+        traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlock: " ++ Leios.prettyEbId ebId
         vars <- MVar.readMVar notificationVars
-        forM_ vars $ \var -> StrictSTM.atomically $ do
-            traceM $ "leiosNotificationsBlock!: " ++ Leios.prettyEbId ebId
-            x <- StrictSTM.readTVar var
-            let !x' =
-                    Map.insertWith
-                        (<>)
-                        (ebIdSlot ebId)
-                        (Seq.singleton (LeiosOfferBlock ebId ebBytesSize))
-                        x
-            StrictSTM.writeTVar var x'
-    traceM $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
+        forM_ vars $ \var -> do
+            traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlock!: " ++ Leios.prettyEbId ebId
+            StrictSTM.atomically $ do
+                x <- StrictSTM.readTVar var
+                let !x' =
+                        Map.insertWith
+                            (<>)
+                            (ebIdSlot ebId)
+                            (Seq.singleton (LeiosOfferBlock ebId ebBytesSize))
+                            x
+                StrictSTM.writeTVar var x'
+    traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
 
 sql_insert_ebBody :: String
 sql_insert_ebBody =
@@ -801,6 +813,8 @@ msgLeiosBlockTxs ::
     IOLike m
   )
  =>
+    Tracer m TraceLeiosPeer
+ ->
     (
       MVar m ()
     ,
@@ -822,12 +836,12 @@ msgLeiosBlockTxs ::
     V.Vector LeiosTx
  ->
     m ()
-msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req txs = do
-    traceM $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
+msgLeiosBlockTxs tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req txs = do
+    traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
     -- validate it
     let MkLeiosBlockTxsRequest p bitmaps txHashes = req
 --    forM_ txHashes $ \txHash -> do
---        traceM $ "leiosRspTxHash: " ++ Leios.prettyTxHash txHash
+--        traceWith tracer $ MkTraceLeiosPeer $ "leiosRspTxHash: " ++ Leios.prettyTxHash txHash
     let txBytess :: V.Vector ByteString
         txBytess = V.map (serialize' . Leios.encodeLeiosTx) txs
     do
@@ -974,14 +988,15 @@ msgLeiosBlockTxs (writeLock, ebBodiesVar, outstandingVar, readyVar, notification
               $ [ (ebIdSlot x, Seq.singleton (LeiosOfferBlockTxs x))
                 | x <- newNotifications
                 ]
-        traceM $ "leiosNotificationsBlockTxs: " ++ unwords (map Leios.prettyEbId newNotifications)
+        traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlockTxs: " ++ unwords (map Leios.prettyEbId newNotifications)
         vars <- MVar.readMVar notificationVars
-        forM_ vars $ \var -> StrictSTM.atomically $ do
-            traceM $ "leiosNotificationsBlockTxs!: " ++ unwords (map Leios.prettyEbId newNotifications)
-            x <- StrictSTM.readTVar var
-            let !x' = Map.unionWith (<>) x notifications
-            StrictSTM.writeTVar var x'
-    traceM $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
+        forM_ vars $ \var -> do
+            traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlockTxs!: " ++ unwords (map Leios.prettyEbId newNotifications)
+            StrictSTM.atomically $ do
+                x <- StrictSTM.readTVar var
+                let !x' = Map.unionWith (<>) x notifications
+                StrictSTM.writeTVar var x'
+    traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
 
 sql_update_ebTx :: String
 sql_update_ebTx =
@@ -1000,6 +1015,8 @@ sql_insert_txCache =
 doCacheCopy ::
     IOLike m
  =>
+    Tracer m TraceLeiosKernel
+ ->
     LeiosDb stmt m
  ->
     (
@@ -1013,7 +1030,7 @@ doCacheCopy ::
     BytesSize
  ->
     m Bool
-doCacheCopy db (writeLock, outstandingVar, notificationVars) bytesSize = do
+doCacheCopy tracer db (writeLock, outstandingVar, notificationVars) bytesSize = do
     copied <- do
         outstanding <- MVar.readMVar outstandingVar
         MVar.withMVar writeLock $ \() -> do
@@ -1062,13 +1079,14 @@ doCacheCopy db (writeLock, outstandingVar, notificationVars) bytesSize = do
               $ [ (ebIdSlot x, Seq.singleton (LeiosOfferBlockTxs x))
                 | x <- newNotifications
                 ]
-        traceM $ "leiosNotificationsCopy: " ++ unwords (map Leios.prettyEbId newNotifications)
+        traceWith tracer $ MkTraceLeiosKernel $ "leiosNotificationsCopy: " ++ unwords (map Leios.prettyEbId newNotifications)
         vars <- MVar.readMVar notificationVars
-        forM_ vars $ \var -> StrictSTM.atomically $ do
-            traceM $ "leiosNotificationsCopy!: " ++ unwords (map Leios.prettyEbId newNotifications)
-            x <- StrictSTM.readTVar var
-            let !x' = Map.unionWith (<>) x notifications
-            StrictSTM.writeTVar var x'
+        forM_ vars $ \var -> do
+            traceWith tracer $ MkTraceLeiosKernel $ "leiosNotificationsCopy!: " ++ unwords (map Leios.prettyEbId newNotifications)
+            StrictSTM.atomically $ do
+                x <- StrictSTM.readTVar var
+                let !x' = Map.unionWith (<>) x notifications
+                StrictSTM.writeTVar var x'
     pure moreTodo
   where
     go1 stmt !accCopied !accBytesSize !acc
@@ -1115,10 +1133,12 @@ nextLeiosNotification ::
     MonadSTM m
   )
  =>
+    Tracer m TraceLeiosPeer
+ ->
     (MVar m LeiosEbBodies, StrictTVar m (Map SlotNo (Seq LeiosNotification)))
  ->
     m (LN.Message (LN.LeiosNotify LeiosPoint announcement) LN.StBusy LN.StIdle)
-nextLeiosNotification (ebBodiesVar, var) = do
+nextLeiosNotification _tracer (ebBodiesVar, var) = do
     notification <- StrictSTM.atomically $ StrictSTM.readTVar var >>= go1
     ebBodies <- MVar.readMVar ebBodiesVar
     let f ebId = case ebIdToPoint ebId ebBodies of
