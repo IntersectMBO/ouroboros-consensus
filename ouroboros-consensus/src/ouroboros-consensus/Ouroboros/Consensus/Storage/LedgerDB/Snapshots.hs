@@ -679,6 +679,10 @@ defaultSnapshotPolicy (SecurityParam k) args =
 data TraceSnapshotEvent blk
   = -- | An on disk snapshot was skipped because it was invalid.
     InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
+  | -- | A snapshot request was requested and delayed
+    SnapshotRequestDelayed Time DiffTime Int
+  | -- | A snapshot request was completed
+    SnapshotRequestCompleted
   | -- | A snapshot was written to disk.
     TookSnapshot DiskSnapshot (RealPoint blk) EnclosingTimed
   | -- | An old or invalid on-disk snapshot was deleted

@@ -387,12 +387,16 @@ implTryTakeSnapshot snapManager env snapshotRequestTime delayBeforeSnapshotting 
   case handles of
     [] -> pure ()
     _ -> do
+      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+        SnapshotRequestDelayed snapshotRequestTime delayBeforeSnapshotting (length handles)
       threadDelay delayBeforeSnapshotting
       for_ handles $ \h -> do
         Monad.void $ takeSnapshot snapManager Nothing h
 
       atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
       Monad.void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
+      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+        SnapshotRequestCompleted
  where
   duplicateStateRef :: StateRef m (ExtLedgerState blk) -> m (StateRef m (ExtLedgerState blk))
   duplicateStateRef StateRef{state, tables} = do
