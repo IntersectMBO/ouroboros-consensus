@@ -757,7 +757,7 @@ withTransferrableReadAccess h rr f = getEnv h $ \ldbEnv -> do
   -- This TVar will be used to maybe release the read lock by the resource
   -- registry. Once the forker was opened it will be emptied.
   tv <- newTVarIO (pure ())
-  void $
+  (rk, _) <-
     allocate
       rr
       ( \_ -> atomically $ do
@@ -771,7 +771,7 @@ withTransferrableReadAccess h rr f = getEnv h $ \ldbEnv -> do
           -- the forker was opened.
           join $ readTVarIO tv
       )
-  unsafeRunReadLocked (acquireAtTarget ldbEnv f >>= traverse (newForker h ldbEnv tv rr))
+  unsafeRunReadLocked (acquireAtTarget ldbEnv f >>= traverse (newForker h ldbEnv (rk, tv) rr))
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
@@ -839,11 +839,11 @@ newForker ::
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
-  StrictTVar m (m ()) ->
+  (ResourceKey m, StrictTVar m (m ())) ->
   ResourceRegistry m ->
   DbChangelog l ->
   ReadLocked m (Forker m l blk)
-newForker h ldbEnv releaseVar rr dblog =
+newForker h ldbEnv (rk, releaseVar) rr dblog =
   readLocked $
     fmap snd $
       allocate
@@ -869,6 +869,7 @@ newForker h ldbEnv releaseVar rr dblog =
               -- so that it is the forker the one that takes care of releasing
               -- it.
               writeTVar releaseVar (pure ())
+            void $ release rk
             traceWith (foeTracer forkerEnv) ForkerOpen
             pure $ (mkForker h (ldbQueryBatchSize ldbEnv) forkerKey forkerEnv)
         )
