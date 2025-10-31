@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -17,13 +18,16 @@ module Ouroboros.Consensus.Shelley.Node.Common
   , ShelleyEraWithCrypto
   , ShelleyLeaderCredentials (..)
   , shelleyBlockIssuerVKey
+  , validateGenesis
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Slot
+import Data.Bifunctor (first)
 import Data.Text (Text)
+import qualified Data.Text as Text
 import Ouroboros.Consensus.Block
   ( CannotForge
   , ForgeStateInfo
@@ -134,3 +138,14 @@ data ProtocolParamsShelleyBased c = ProtocolParamsShelleyBased
   -- mutually incompatible.
   , shelleyBasedLeaderCredentials :: [ShelleyLeaderCredentials c]
   }
+
+-- | Check the validity of the genesis config. To be used in conjunction with
+-- 'assertWithMsg'.
+validateGenesis :: SL.ShelleyGenesis -> Either String ()
+validateGenesis = first errsToString . SL.validateGenesis
+ where
+  errsToString :: [SL.ValidationErr] -> String
+  errsToString errs =
+    Text.unpack $
+      Text.unlines
+        ("Invalid genesis config:" : map SL.describeValidationErr errs)
