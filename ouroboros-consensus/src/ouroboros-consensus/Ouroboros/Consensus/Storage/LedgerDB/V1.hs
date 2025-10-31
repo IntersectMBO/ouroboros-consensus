@@ -846,8 +846,8 @@ newForker ::
   DbChangelog l ->
   ReadLocked m (Forker m l blk)
 newForker h ldbEnv (rk, releaseVar) rr dblog =
-  readLocked $
-    fmap snd $
+  readLocked $ do
+    (rk', frk) <-
       allocate
         rr
         ( \_ -> do
@@ -876,6 +876,7 @@ newForker h ldbEnv (rk, releaseVar) rr dblog =
             pure $ (mkForker h (ldbQueryBatchSize ldbEnv) forkerKey forkerEnv)
         )
         forkerClose
+    pure $ frk{forkerClose = void $ release rk'}
 
 mkForker ::
   ( IOLike m
