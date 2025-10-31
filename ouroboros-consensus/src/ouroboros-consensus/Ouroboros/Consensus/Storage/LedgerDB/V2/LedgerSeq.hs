@@ -562,7 +562,7 @@ volatileStatesBimap f g =
 -- >>> instance LedgerTablesAreTrivial LS where convertMapKind (LS p) = LS p
 -- >>> s = [LS (Point Origin), LS (Point (At (Block 0 0))), LS (Point (At (Block 1 1))), LS (Point (At (Block 2 2))), LS (Point (At (Block 3 3)))]
 -- >>> [l0s, l1s, l2s, l3s, l4s] = s
--- >>> emptyHandle = LedgerTablesHandle (pure ()) (pure emptyHandle) (\_ -> undefined) (\_ -> undefined) (\_ -> pure trivialLedgerTables) (\_ _ _ -> undefined) (\_ -> undefined) (pure Nothing)
+-- >>> emptyHandle = LedgerTablesHandle (pure ()) (\_ -> pure ()) (\_ -> pure (undefined, emptyHandle)) (\_ -> undefined) (\_ -> undefined) (\_ -> pure trivialLedgerTables) (\_ _ _ -> undefined) (\_ -> undefined) (pure Nothing)
 -- >>> [l0, l1, l2, l3, l4] = map (flip StateRef emptyHandle) s
 -- >>> instance GetTip LS where getTip (LS p) = p
 -- >>> instance Eq (LS EmptyMK) where LS p1 == LS p2 = p1 == p2
