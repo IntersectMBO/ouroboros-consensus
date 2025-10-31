@@ -5,6 +5,7 @@
 
 module Cardano.Tools.ImmDBServer.Diffusion (run) where
 
+import qualified Cardano.Network.NodeToNode as N2N
 import Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -27,7 +28,6 @@ import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.IOManager (withIOManager)
 import Ouroboros.Network.Mux
-import qualified Ouroboros.Network.NodeToNode as N2N
 import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   ( decodeRemoteAddress
   , encodeRemoteAddress
