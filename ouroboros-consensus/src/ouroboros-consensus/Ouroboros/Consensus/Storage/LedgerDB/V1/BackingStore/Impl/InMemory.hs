@@ -360,7 +360,7 @@ instance
   Backend m Mem l
   where
   data Args m Mem = InMemArgs
-  data Trace m Mem
+  data Trace Mem
     = InMemoryBackingStoreInitialise
     | InMemoryBackingStoreTrace BackingStoreTrace
     deriving (Eq, Show)

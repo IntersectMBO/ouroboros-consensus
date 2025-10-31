@@ -23,6 +23,7 @@ import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Proxy
+import Data.Typeable
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -41,7 +42,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   data Resources m backend
 
   -- | A trace dependent on the particular backend.
-  data Trace m backend
+  data Trace backend
 
   -- | Transform 'Args' into 'Resources', with some context made up of
   -- 'LedgerDbArgs'.
@@ -89,7 +90,8 @@ class NoThunks (Resources m backend) => Backend m backend blk where
 -------------------------------------------------------------------------------}
 
 data SomeBackendTrace where
-  SomeBackendTrace :: Show (Trace m backend) => Trace m backend -> SomeBackendTrace
+  SomeBackendTrace ::
+    (Show (Trace backend), Typeable backend) => Trace backend -> SomeBackendTrace
 
 instance Show SomeBackendTrace where
   show (SomeBackendTrace tr) = show tr
