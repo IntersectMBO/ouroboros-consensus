@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.26.0.2'></a>
+## 0.26.0.2 -- 2025-10-29
+
+### Patch
+
+- Downgrade optparse-applicative to 0.18.
+
 <a id='changelog-0.26.0.1'></a>
 ## 0.26.0.1 -- 2025-10-23
 
