@@ -10,7 +10,9 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -21,7 +23,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Query
-  ( BlockQuery (..)
+  ( BlockQuery (.., GetLedgerPeerSnapshot)
   , NonMyopicMemberRewards (..)
   , StakeSnapshot (..)
   , StakeSnapshots (..)
@@ -109,10 +111,12 @@ import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
   ( Serialised (..)
+  , Point (..)
   , decodePoint
   , encodePoint
   , mkSerialised
   )
+import Ouroboros.Network.Point (Block(blockPointHash))
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import Ouroboros.Network.PeerSelection.LedgerPeers.Utils
 
@@ -142,6 +146,13 @@ type VoteDelegatees = Map (SL.Credential 'SL.Staking) SL.DRep
   GetStakeDistribution
   "Deprecated in ShelleyNodeToClientVersion13. Implement the new alterative GetStakeDistribution2"
   #-}
+
+-- convenience wrapper to hide the boolean, this pattern can be removed
+-- once support for ntcV22/shelleyV15 is removed
+pattern GetLedgerPeerSnapshot
+  :: LedgerPeersKind
+  -> BlockQuery (ShelleyBlock proto era) QFNoTables SomeLedgerPeerSnapshot
+pattern GetLedgerPeerSnapshot kind = GetLedgerPeerSnapshot' True kind
 
 data instance BlockQuery (ShelleyBlock proto era) fp result where
   GetLedgerTip :: BlockQuery (ShelleyBlock proto era) QFNoTables (Point (ShelleyBlock proto era))
@@ -335,12 +346,15 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery (ShelleyBlock proto era) QFNoTables (CG.RatifyState era)
   GetFuturePParams ::
     BlockQuery (ShelleyBlock proto era) QFNoTables (Maybe (LC.PParams era))
-  -- | Obtain a snapshot of big ledger peers. CLI can serialize these,
-  -- and if made available to the node by topology configuration,
-  -- the diffusion layer can use these peers when syncing up from scratch
-  -- or stale ledger state - especially useful for Genesis mode
-  GetBigLedgerPeerSnapshot ::
-    BlockQuery (ShelleyBlock proto era) QFNoTables LedgerPeerSnapshot
+  -- | A snapshot of all or big ledger peers
+  -- use 'GetLedgerPeerSnapshot' pattern synonym
+  GetLedgerPeerSnapshot' ::
+    Bool ->
+    -- ^ >= Shelley v15/NtC v23
+    -- TODO: remove once NodeToClientV_22/Shelley V14  is no longer supported,
+    -- rename to GetLedgerPeerSnapshot and remove the pattern synonym
+    LedgerPeersKind ->
+    BlockQuery (ShelleyBlock proto era) QFNoTables SomeLedgerPeerSnapshot
   QueryStakePoolDefaultVote ::
     CG.ConwayEraGov era =>
     KeyHash 'StakePool ->
@@ -361,6 +375,8 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery (ShelleyBlock proto era) QFNoTables SL.PoolDistr
   GetMaxMajorProtocolVersion ::
     BlockQuery (ShelleyBlock proto era) QFNoTables MaxMajorProtVer
+
+{-# DEPRECATED GetLedgerPeerSnapshot' "Use GetLedgerPeerSnapshot instead" #-}
 
 -- WARNING: please add new queries to the end of the list and stick to this
 -- order in all other pattern matches on queries. This helps in particular
@@ -383,6 +399,7 @@ instance
 instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
+  , ConfigSupportsNode (ShelleyBlock proto era)
   , ProtoCrypto proto ~ crypto
   , Crypto crypto
   ) =>
@@ -512,11 +529,19 @@ instance
         SL.queryRatifyState st
       GetFuturePParams ->
         SL.queryFuturePParams st
-      GetBigLedgerPeerSnapshot ->
-        let slot = getTipSlot lst
-            ledgerPeers = second (fmap stakePoolRelayAccessPoint) <$> getPeers lst
-            bigLedgerPeers = accumulateBigLedgerStake ledgerPeers
-         in LedgerPeerSnapshot (slot, bigLedgerPeers)
+      -- use bundled pattern synonym GetLedgerPeerSnapshot instead for stable API
+      GetLedgerPeerSnapshot' v15Encoding kind ->
+        let allPools       = second (fmap stakePoolRelayAccessPoint) <$> getPeers lst
+            bigLedgerPools = accumulateBigLedgerStake allPools
+            magic = getNetworkMagic cfg.getExtLedgerCfg.topLevelConfigBlock
+            point = Point $ shelleyLedgerTipPoint lst & getPoint <&>
+              \blk -> blk { blockPointHash = SomeHashableBlock (Proxy :: Proxy (ShelleyBlock proto era)) (blockPointHash blk) }
+        in case v15Encoding of
+          True | BigLedgerPeers <- kind ->
+                   SomeLedgerPeerSnapshot $ LedgerBigPeerSnapshotV23 point magic bigLedgerPools
+               | AllLedgerPeers <- kind ->
+                   SomeLedgerPeerSnapshot $ LedgerAllPeerSnapshotV23 point magic allPools
+          False -> SomeLedgerPeerSnapshot $ LedgerPeerSnapshotV2 (getTipSlot lst, bigLedgerPools)
       QueryStakePoolDefaultVote stakePool ->
         SL.queryStakePoolDefaultVote st stakePool
       GetPoolDistr2 mPoolIds ->
@@ -583,7 +608,8 @@ instance
     GetProposals{} -> (>= v9)
     GetRatifyState{} -> (>= v9)
     GetFuturePParams{} -> (>= v10)
-    GetBigLedgerPeerSnapshot -> (>= v11)
+    GetLedgerPeerSnapshot' False _peerKind -> (>= v11)
+    GetLedgerPeerSnapshot' True  _peerKind -> (>= v15)
     QueryStakePoolDefaultVote{} -> (>= v12)
     GetPoolDistr2{} -> (>= v13)
     GetStakeDistribution2{} -> (>= v13)
@@ -598,6 +624,7 @@ instance
     v11 = ShelleyNodeToClientVersion11
     v12 = ShelleyNodeToClientVersion12
     v13 = ShelleyNodeToClientVersion13
+    v15 = ShelleyNodeToClientVersion15
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetLedgerTip GetLedgerTip =
@@ -747,8 +774,8 @@ instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetRatifyState{} _ = Nothing
   sameDepIndex2 GetFuturePParams{} GetFuturePParams{} = Just Refl
   sameDepIndex2 GetFuturePParams{} _ = Nothing
-  sameDepIndex2 GetBigLedgerPeerSnapshot GetBigLedgerPeerSnapshot = Just Refl
-  sameDepIndex2 GetBigLedgerPeerSnapshot _ = Nothing
+  sameDepIndex2 GetLedgerPeerSnapshot'{} GetLedgerPeerSnapshot'{} = Just Refl
+  sameDepIndex2 GetLedgerPeerSnapshot'{} _ = Nothing
   sameDepIndex2 QueryStakePoolDefaultVote{} QueryStakePoolDefaultVote{} = Just Refl
   sameDepIndex2 QueryStakePoolDefaultVote{} _ = Nothing
   sameDepIndex2 GetPoolDistr2{} GetPoolDistr2{} = Just Refl
@@ -797,7 +824,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
     GetProposals{} -> show
     GetRatifyState{} -> show
     GetFuturePParams{} -> show
-    GetBigLedgerPeerSnapshot -> show
+    GetLedgerPeerSnapshot'{} -> show
     QueryStakePoolDefaultVote{} -> show
     GetPoolDistr2{} -> show
     GetStakeDistribution2{} -> show
@@ -916,8 +943,10 @@ encodeShelleyQuery query = case query of
     CBOR.encodeListLen 1 <> CBOR.encodeWord8 32
   GetFuturePParams ->
     CBOR.encodeListLen 1 <> CBOR.encodeWord8 33
-  GetBigLedgerPeerSnapshot ->
-    CBOR.encodeListLen 1 <> CBOR.encodeWord8 34
+  GetLedgerPeerSnapshot' _v15 kind ->
+    CBOR.encodeListLen 2 <> CBOR.encodeWord8 34 <> CBOR.encodeWord8 tag
+    where
+      tag = case kind of AllLedgerPeers -> 0; BigLedgerPeers -> 1
   QueryStakePoolDefaultVote stakePoolKey ->
     CBOR.encodeListLen 2 <> CBOR.encodeWord8 35 <> LC.toEraCBOR @era stakePoolKey
   GetPoolDistr2 poolids ->
@@ -995,7 +1024,15 @@ decodeShelleyQuery = do
     (2, 31) -> requireCG $ SomeBlockQuery . GetProposals <$> LC.fromEraCBOR @era
     (1, 32) -> requireCG $ return $ SomeBlockQuery GetRatifyState
     (1, 33) -> requireCG $ return $ SomeBlockQuery GetFuturePParams
-    (1, 34) -> return $ SomeBlockQuery GetBigLedgerPeerSnapshot
+    -- TODO: remove (1, 34) once NodeToClientV_22 is no longer supported
+    (1, 34) -> return . SomeBlockQuery $ GetLedgerPeerSnapshot' False BigLedgerPeers
+    (2, 34) -> do
+      -- >=v15
+      peerKind <- CBOR.decodeWord8
+      SomeBlockQuery . GetLedgerPeerSnapshot' True <$> case peerKind of
+        0 -> pure AllLedgerPeers
+        1 -> pure BigLedgerPeers
+        _ -> failmsg $ "invalid peer kind tag " <> show tag
     (2, 35) -> requireCG $ SomeBlockQuery . QueryStakePoolDefaultVote <$> LC.fromEraCBOR @era
     (2, 36) -> SomeBlockQuery . GetPoolDistr2 <$> fromCBOR
     (1, 37) -> return $ SomeBlockQuery GetStakeDistribution2
@@ -1044,7 +1081,7 @@ encodeShelleyResult v query = case query of
   GetProposals{} -> LC.toEraCBOR @era
   GetRatifyState{} -> LC.toEraCBOR @era
   GetFuturePParams{} -> LC.toEraCBOR @era
-  GetBigLedgerPeerSnapshot -> encodeLedgerPeerSnapshot (ledgerPeerSnapshotSupportsSRV v)
+  GetLedgerPeerSnapshot'{} -> encodeLedgerPeerSnapshot' (ledgerPeerSnapshotSupportsSRV v)
   QueryStakePoolDefaultVote{} -> toCBOR
   GetPoolDistr2{} -> LC.toEraCBOR @era
   GetStakeDistribution2{} -> LC.toEraCBOR @era
@@ -1092,7 +1129,7 @@ decodeShelleyResult v query = case query of
   GetProposals{} -> LC.fromEraCBOR @era
   GetRatifyState{} -> LC.fromEraCBOR @era
   GetFuturePParams{} -> LC.fromEraCBOR @era
-  GetBigLedgerPeerSnapshot -> decodeLedgerPeerSnapshot (ledgerPeerSnapshotSupportsSRV v)
+  GetLedgerPeerSnapshot'{} -> decodeLedgerPeerSnapshot (Proxy :: Proxy (ShelleyBlock proto era))
   QueryStakePoolDefaultVote{} -> fromCBOR
   GetPoolDistr2{} -> LC.fromEraCBOR @era
   GetStakeDistribution2 -> LC.fromEraCBOR @era
