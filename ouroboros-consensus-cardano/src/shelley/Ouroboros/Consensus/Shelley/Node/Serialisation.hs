@@ -352,7 +352,9 @@ instance ShelleyBasedEra era => SerialiseNodeToClient (ShelleyBlock proto era) (
   decodeNodeToClient _ _ = fromEraCBOR @era
 
 instance
-  (ShelleyCompatible proto era, LedgerSupportsProtocol (ShelleyBlock proto era)) =>
+  ( ShelleyCompatible proto era
+  , LedgerSupportsProtocol (ShelleyBlock proto era)
+  , ConfigSupportsNode (ShelleyBlock proto era)) =>
   SerialiseNodeToClient
     (ShelleyBlock proto era)
     (SomeBlockQuery (BlockQuery (ShelleyBlock proto era)))
