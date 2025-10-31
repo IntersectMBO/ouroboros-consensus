@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -83,6 +85,8 @@ import Ouroboros.Consensus.Ledger.Tables.Basics
 import Ouroboros.Consensus.Ledger.Tables.MapKind
 import Ouroboros.Consensus.Util ((...:), (..:), (.:))
 import Ouroboros.Consensus.Util.IndexedMemPack
+import Data.Proxy
+import Lens.Micro
 
 {-------------------------------------------------------------------------------
   Common constraints
@@ -112,11 +116,12 @@ type LedgerTableConstraints' l k v =
 
 -- | Like 'bmap', but for ledger tables.
 ltmap ::
-  LedgerTableConstraints l =>
+  forall l (tag :: TAG) mk1 mk2. LedgerTableConstraints l =>
+  Proxy tag ->
   (forall k v. LedgerTableConstraints' l k v => mk1 k v -> mk2 k v) ->
   LedgerTables l mk1 ->
   LedgerTables l mk2
-ltmap f (LedgerTables x) = LedgerTables $ f x
+ltmap p f tbs = tbs & onTable (Proxy @l) p %~ Table . f . getTable
 
 {-------------------------------------------------------------------------------
   Traversable
