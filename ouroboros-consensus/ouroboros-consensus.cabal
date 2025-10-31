@@ -308,6 +308,8 @@ library
 
   build-depends:
     FailT ^>=0.1.2,
+    microlens,
+    singletons-base,
     aeson,
     base >=4.14 && <4.22,
     base-deriving-via,
