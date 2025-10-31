@@ -14,6 +14,11 @@
 -- | Implement ChainSync and BlockFetch servers on top of just the immutable DB.
 module Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer) where
 
+import Cardano.Network.NodeToNode
+  ( NodeToNodeVersionData (..)
+  , Versions (..)
+  )
+import qualified Cardano.Network.NodeToNode as N2N
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad (forever)
@@ -57,11 +62,6 @@ import Ouroboros.Network.Mux
   , OuroborosApplicationWithMinimalCtx
   , RunMiniProtocol (..)
   )
-import Ouroboros.Network.NodeToNode
-  ( NodeToNodeVersionData (..)
-  , Versions (..)
-  )
-import qualified Ouroboros.Network.NodeToNode as N2N
 import Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing (..))
 import Ouroboros.Network.Protocol.BlockFetch.Server
 import Ouroboros.Network.Protocol.ChainSync.Server

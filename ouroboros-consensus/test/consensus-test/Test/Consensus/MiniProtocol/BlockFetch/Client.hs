@@ -25,6 +25,7 @@
 module Test.Consensus.MiniProtocol.BlockFetch.Client (tests) where
 
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Control.Monad (replicateM)
 import Control.Monad.Class.MonadTime
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -74,7 +75,6 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
 import Ouroboros.Network.Protocol.BlockFetch.Server
   ( BlockFetchBlockSender (SendMsgNoBlocks, SendMsgStartBatch)

@@ -26,7 +26,7 @@
 --   see 'prop_sequential_iosim' for the construction and reification of the configuration.
 module Test.Consensus.GSM (tests) where
 
-import Cardano.Network.Types (LedgerStateJudgement (..))
+import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
 import Control.Exception (SomeException (..))
 import qualified Control.Monad as Monad

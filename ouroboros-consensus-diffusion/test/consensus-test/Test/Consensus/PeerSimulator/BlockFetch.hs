@@ -15,6 +15,7 @@ module Test.Consensus.PeerSimulator.BlockFetch
   , startKeepAliveThread
   ) where
 
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Control.Monad (void)
 import Control.Monad.Class.MonadTime
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -64,7 +65,6 @@ import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit)
   , runPipelinedPeerWithLimits
   )
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.BlockFetch.Codec
   ( byteLimitsBlockFetch
   , codecBlockFetchId
