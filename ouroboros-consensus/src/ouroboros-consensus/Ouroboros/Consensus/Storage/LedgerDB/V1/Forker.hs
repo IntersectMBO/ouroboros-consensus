@@ -90,10 +90,14 @@ deriving instance
 
 closeForkerEnv :: IOLike m => ForkerEnv m l blk -> m ()
 closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = do
-  either
-    (\(l, _, _) -> atomically . unsafeReleaseReadAccess $ l)
-    (Monad.void . release . fst)
-    =<< takeMVar foeBackingStoreValueHandle
+  -- If this MVar is empty, we already closed the forker in the past so do nothing.
+  tryTakeMVar foeBackingStoreValueHandle >>= \case
+    -- We already closed the forker in the past, so do nothing.
+    Nothing -> pure ()
+    -- Release the read lock.
+    Just (Left (lock, _, _)) -> atomically $ unsafeReleaseReadAccess lock
+    -- Release the value handle
+    Just (Right (bsvh, _)) -> Monad.void $ release bsvh
 
 {-------------------------------------------------------------------------------
   Acquiring consistent views
@@ -110,6 +114,7 @@ getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} =
       dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
       if bsvhAtSlot bsvh == dblogSlot
         then do
+          -- Release the read lock acquired when opening the forker.
           atomically $ unsafeReleaseReadAccess l
           pure (Right (k, bsvh), bsvh)
         else
