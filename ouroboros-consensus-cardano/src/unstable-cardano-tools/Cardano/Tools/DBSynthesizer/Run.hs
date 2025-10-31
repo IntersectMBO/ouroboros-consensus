@@ -59,6 +59,7 @@ import Ouroboros.Network.Block
 import Ouroboros.Network.Point (WithOrigin (..))
 import System.Directory
 import System.FilePath (takeDirectory, (</>))
+import System.Random (newStdGen)
 
 initialize ::
   NodeFilePaths ->
@@ -145,6 +146,7 @@ synthesize ::
   IO ForgeResult
 synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
   withRegistry $ \registry -> do
+    snapshotDelayRng <- newStdGen
     let
       epochSize = sgEpochLength confShelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
@@ -158,6 +160,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           (const True)
           (Node.stdMkChainDbHasFS confDbDir)
           (Node.stdMkChainDbHasFS confDbDir)
+          snapshotDelayRng
           flavargs
           $ ChainDB.defaultArgs
 
