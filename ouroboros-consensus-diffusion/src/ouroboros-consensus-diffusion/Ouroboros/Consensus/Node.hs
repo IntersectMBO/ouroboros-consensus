@@ -75,7 +75,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (NFData)
-import Control.Monad (forM_, when)
+import Control.Monad (forever, forM_, when)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
@@ -618,9 +618,11 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                           { lpGetLatestSlot = getImmTipSlot nodeKernel
                           , lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger nodeKernel (const True)
                           , lpExtraAPI =
+                              -- TODO
                               Cardano.LedgerPeersConsensusInterface
                                 { Cardano.readFetchMode = getFetchMode nodeKernel
                                 , Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState nodeKernel
+                                , Cardano.getBlockHash = \_slotNo k -> k $ forever (pure ())
                                 , Cardano.updateOutboundConnectionsState =
                                     let varOcs = getOutboundConnectionsState nodeKernel
                                      in \newOcs -> do
