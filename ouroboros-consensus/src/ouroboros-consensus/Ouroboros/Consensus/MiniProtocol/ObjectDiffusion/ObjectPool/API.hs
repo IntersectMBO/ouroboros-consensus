@@ -26,10 +26,14 @@
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   ( ObjectPoolReader (..)
   , ObjectPoolWriter (..)
+  , SizeInBytes -- TODO: remove
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict (STM)
+import Data.Void (Void) -- TODO: remove
 import Data.Word (Word64)
+
+type SizeInBytes = Void -- TODO: remove
 
 -- | Interface used by the outbound side of object diffusion as its source of
 -- objects to give to the remote side.
