@@ -611,9 +611,11 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                           { lpGetLatestSlot = getImmTipSlot nodeKernel
                           , lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger nodeKernel (const True)
                           , lpExtraAPI =
+                              -- TODO
                               Cardano.LedgerPeersConsensusInterface
                                 { Cardano.readFetchMode = getFetchMode nodeKernel
                                 , Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState nodeKernel
+                                , Cardano.getBlockHash = \slotNo k -> k retry -- ^ TODO
                                 , Cardano.updateOutboundConnectionsState =
                                     let varOcs = getOutboundConnectionsState nodeKernel
                                      in \newOcs -> do
