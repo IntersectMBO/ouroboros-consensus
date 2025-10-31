@@ -136,7 +136,7 @@ instance Arbitrary TestConfig where
 
     numCoreNodes <- arbitrary
     nodeTopology <- genNodeTopology numCoreNodes
-    txLogicVersion <- QC.elements [minBound .. maxBound]
+    txLogicVersion <- elements [minBound .. maxBound]
 
     numSlots <- arbitrary
     pure

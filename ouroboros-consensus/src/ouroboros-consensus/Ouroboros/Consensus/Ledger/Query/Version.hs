@@ -28,3 +28,4 @@ nodeToClientVersionToQueryVersion x = case x of
   NodeToClientV_20 -> QueryVersion3
   NodeToClientV_21 -> QueryVersion3
   NodeToClientV_22 -> QueryVersion3
+  NodeToClientV_23 -> QueryVersion3
