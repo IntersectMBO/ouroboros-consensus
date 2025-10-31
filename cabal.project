@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-09-26T20:57:57Z
+  , hackage.haskell.org 2025-10-23T13:39:53Z
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2025-10-01T14:54:25Z
 

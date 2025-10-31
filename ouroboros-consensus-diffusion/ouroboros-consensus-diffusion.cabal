@@ -95,7 +95,7 @@ library
     ouroboros-network-framework ^>=0.19,
     ouroboros-network-protocols ^>=0.15,
     random,
-    resource-registry ^>=0.1,
+    resource-registry ^>=0.2,
     safe-wild-cards ^>=1.0,
     serialise ^>=0.2,
     text,
