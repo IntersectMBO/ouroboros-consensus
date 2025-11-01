@@ -28,7 +28,7 @@ dummyExternalFunctions = record
   ; extLn        = λ p → to (rationalExtStructure≈ .ln (from p) ⦃ if (from p) ℚ.> 0ℚ then (λ{p>0} → positive p>0) else error "Not a positive rational number" ⦄)
   }
   where
-    open import Data.Rational.Ext using (RationalExtStructure; rationalExtStructure≈)
+    open import stdlib.Data.Rational.Ext using (RationalExtStructure; rationalExtStructure≈)
     open RationalExtStructure
     open import Data.Rational as ℚ
 {-# COMPILE GHC dummyExternalFunctions as dummyExternalFunctions #-}
