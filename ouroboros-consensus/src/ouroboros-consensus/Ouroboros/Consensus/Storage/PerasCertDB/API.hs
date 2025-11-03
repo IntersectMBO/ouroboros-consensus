@@ -35,6 +35,14 @@ data PerasCertDB m blk = PerasCertDB
   -- The 'Fingerprint' is updated every time a new certificate is added, but it
   -- stays the same when certificates are garbage-collected.
   , getCertSnapshot :: STM m (PerasCertSnapshot blk)
+  , getLatestCertSeen :: STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+  -- ^ Get the certificate with the highest round number that has been added to
+  -- the db since it has been opened. This certificate is not affected by garbage
+  -- collection, but it's forgotten when the db is closed.
+  --
+  -- NOTE: having seen a certificate is a precondition to start voting in every
+  -- round except for the first one (at origin). As a consequence, only caught-up
+  -- nodes can actively participate in the Peras protocol for now.
   , garbageCollect :: SlotNo -> m ()
   -- ^ Garbage-collect state older than the given slot number.
   , closeDB :: m ()
