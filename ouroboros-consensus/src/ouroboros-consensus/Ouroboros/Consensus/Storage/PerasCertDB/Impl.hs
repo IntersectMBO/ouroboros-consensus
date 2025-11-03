@@ -79,6 +79,7 @@ openDB args = do
       { addCert = getEnv1 h implAddCert
       , getWeightSnapshot = getEnvSTM h implGetWeightSnapshot
       , getCertSnapshot = getEnvSTM h implGetCertSnapshot
+      , getLatestCertSeen = getEnvSTM h implGetLatestCertSeen
       , garbageCollect = getEnv1 h implGarbageCollect
       , closeDB = implCloseDB h
       }
@@ -170,18 +171,22 @@ implAddCert env cert = do
     if Map.member roundNo pvcsCerts
       then pure PerasCertAlreadyInDB
       else do
+        let pvcsCerts' = Map.insert roundNo cert pvcsCerts
         let pvcsLastTicketNo' = succ pvcsLastTicketNo
         writeTVar pcdbVolatileState $
           WithFingerprint
             PerasVolatileCertState
               { pvcsCerts =
-                  Map.insert roundNo cert pvcsCerts
+                  pvcsCerts'
               , -- Note that the same block might be boosted by multiple points.
                 pvcsWeightByPoint =
                   addToPerasWeightSnapshot boostedPt (getPerasCertBoost cert) pvcsWeightByPoint
               , pvcsCertsByTicket =
                   Map.insert pvcsLastTicketNo' cert pvcsCertsByTicket
-              , pvcsLastTicketNo = pvcsLastTicketNo'
+              , pvcsLastTicketNo =
+                  pvcsLastTicketNo'
+              , pvcsLatestCertSeen =
+                  snd <$> Map.lookupMax pvcsCerts'
               }
             (succ fp)
         pure AddedPerasCertToDB
@@ -220,6 +225,14 @@ implGetCertSnapshot PerasCertDbEnv{pcdbVolatileState} =
               snd $ Map.split ticketNo pvcsCertsByTicket
           }
 
+implGetLatestCertSeen ::
+  IOLike m =>
+  PerasCertDbEnv m blk -> STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+implGetLatestCertSeen PerasCertDbEnv{pcdbVolatileState} =
+  readTVar pcdbVolatileState
+    <&> forgetFingerprint
+    <&> pvcsLatestCertSeen
+
 implGarbageCollect ::
   forall m blk.
   IOLike m =>
@@ -236,12 +249,14 @@ implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
       , pvcsWeightByPoint
       , pvcsLastTicketNo
       , pvcsCertsByTicket
+      , pvcsLatestCertSeen
       } =
       PerasVolatileCertState
         { pvcsCerts = Map.filter keepCert pvcsCerts
         , pvcsWeightByPoint = prunePerasWeightSnapshot slot pvcsWeightByPoint
         , pvcsCertsByTicket = Map.filter keepCert pvcsCertsByTicket
         , pvcsLastTicketNo = pvcsLastTicketNo
+        , pvcsLatestCertSeen = pvcsLatestCertSeen
         }
      where
       keepCert cert =
@@ -269,6 +284,9 @@ data PerasVolatileCertState blk = PerasVolatileCertState
   , pvcsLastTicketNo :: !PerasCertTicketNo
   -- ^ The most recent 'PerasCertTicketNo' (or 'zeroPerasCertTicketNo'
   -- otherwise).
+  , pvcsLatestCertSeen :: !(Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+  -- ^ The certificate with the highest round number that has been added to the
+  -- db since it has been opened.
   }
   deriving stock (Show, Generic)
   deriving anyclass NoThunks
@@ -281,6 +299,7 @@ initialPerasVolatileCertState =
       , pvcsWeightByPoint = emptyPerasWeightSnapshot
       , pvcsCertsByTicket = Map.empty
       , pvcsLastTicketNo = zeroPerasCertTicketNo
+      , pvcsLatestCertSeen = Nothing
       }
     (Fingerprint 0)
 
@@ -305,7 +324,6 @@ invariantForPerasVolatileCertState pvcs = do
           <> " > "
           <> show pvcsLastTicketNo
  where
-  PerasVolatileCertState _ _ _ _keep = forgetFingerprint pvcs
   PerasVolatileCertState
     { pvcsCerts
     , pvcsWeightByPoint
