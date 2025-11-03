@@ -70,6 +70,7 @@ instance StateModel Model where
     CloseDB :: Action Model ()
     AddCert :: WithArrivalTime (ValidatedPerasCert TestBlock) -> Action Model AddPerasCertResult
     GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
+    GetLatestCertSeen :: Action Model (Maybe (WithArrivalTime (ValidatedPerasCert TestBlock)))
     GarbageCollect :: SlotNo -> Action Model ()
 
   arbitraryAction _ (Model model)
@@ -78,6 +79,7 @@ instance StateModel Model where
           [ (1, pure $ Some CloseDB)
           , (20, Some <$> genAddCert)
           , (20, pure $ Some GetWeightSnapshot)
+          , (10, pure $ Some GetLatestCertSeen)
           , (5, Some . GarbageCollect . SlotNo <$> arbitrary)
           ]
     | otherwise = pure $ Some OpenDB
@@ -125,6 +127,7 @@ instance StateModel Model where
     CloseDB -> Model.closeDB model
     AddCert cert -> Model.addCert model cert
     GetWeightSnapshot -> model
+    GetLatestCertSeen -> model
     GarbageCollect slot -> Model.garbageCollect slot model
 
   precondition (Model model) = \case
@@ -140,6 +143,7 @@ instance StateModel Model where
          where
           p cert' = getPerasCertRound cert /= getPerasCertRound cert' || cert == cert'
         GetWeightSnapshot -> True
+        GetLatestCertSeen -> True
         GarbageCollect _slot -> True
 
 deriving stock instance Show (Action Model a)
@@ -162,6 +166,9 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
     GetWeightSnapshot -> do
       perasCertDB <- get
       lift $ atomically $ forgetFingerprint <$> PerasCertDB.getWeightSnapshot perasCertDB
+    GetLatestCertSeen -> do
+      perasCertDB <- get
+      lift $ atomically $ PerasCertDB.getLatestCertSeen perasCertDB
     GarbageCollect slot -> do
       perasCertDB <- get
       lift $ PerasCertDB.garbageCollect perasCertDB slot
@@ -174,6 +181,11 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
     pure $ expected == actual
   postcondition (Model model, _) GetWeightSnapshot _ actual = do
     let expected = Model.getWeightSnapshot model
+    counterexamplePost $ "Model: " <> show expected
+    counterexamplePost $ "SUT: " <> show actual
+    pure $ expected == actual
+  postcondition (Model model, _) GetLatestCertSeen _ actual = do
+    let expected = Model.getLatestCertSeen model
     counterexamplePost $ "Model: " <> show expected
     counterexamplePost $ "SUT: " <> show actual
     pure $ expected == actual
