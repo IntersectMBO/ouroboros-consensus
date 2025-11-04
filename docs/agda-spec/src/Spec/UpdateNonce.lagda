@@ -180,12 +180,15 @@ mkInput e I l pn i g = nothing
 computeNonce : G → Nonce
 computeNonce y = defaultNonce
 
-UpdateNonceEnv = Slot × Slot
+record UpdateNonceEnv  : Type where
+  constructor ⟦_,_,_,_⟧ᵘᵉ
+  field
+    sₗ : Slot 
+    slot : Slot 
+    η : Nonce 
+    η-epoch : Nonce
 
--- record UpdateNonceEnv : Type where
---   constructor ⟦_⟧ᵘᵉ
---   field
---     η : Nonce -- new nonce
+
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Update Nonce states}
@@ -204,6 +207,14 @@ data UpdateNonceState  : Type where
 -- TODO define
 getInlNonce : UpdateNonceState → Maybe Nonce
 getInlNonce inl = nothing
+
+-- TODO define 
+contains6kof : Slot → Slot → Bool
+contains6kof sₗ sₙ = true
+
+-- TODO define 
+contains9kof : Slot → Slot → Bool
+contains9kof sₗ sₙ = true
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Update Nonce transitions}
@@ -212,7 +223,7 @@ getInlNonce inl = nothing
 data
 \end{code}
 \begin{code}
-  _⊢_⇀⦇_,UPDNONESTREAM⦈_ : UpdateNonceEnv → UpdateNonceState  → UpdateNonceSignal  → UpdateNonceState  → Type
+  _⊢_⇀⦇_,UPDNONESTREAM⦈_ : (Slot × Slot) → UpdateNonceState  → UpdateNonceSignal  → UpdateNonceState  → Type
 \end{code}
 \end{AgdaAlign}
 \caption{Update Nonce transition system types}
@@ -250,7 +261,7 @@ private variable
   -- sₗ is the slot from before the block was applied (when last block was applied)
   -- sₙ is the slot of the current block being applied 
   -- s keeps track of processing intermediate slots when tick rules are being applied
-  s sₗ sₙ : Slot 
+  s sₗ sₙ slot : Slot 
   spr : ℕ -- VDF discriminant size
   cnt : ℕ
   TΦ lam : ℕ
@@ -258,8 +269,9 @@ private variable
   p : parametrize
   a b c : G
   ds : ℤ
-  η ηv ηc pre-ηc pre-ηₑ ηₑ candidate-η : Nonce
+  -- η ηv ηc pre-ηc pre-ηₑ ηₑ candidate-η : Nonce 
   inl : Initialized
+  iInl : initialize
   φᵢ φ : G × G
   xᵢ yᵢ πᵢ x y : G
   I : G
@@ -267,8 +279,13 @@ private variable
   m : Bool
   mx : Maybe G
   newState : UpdateNonceState
-  sig1ago sig2ago sig : UpdateNonceCommand
-  2ago-ηstate  1ago-ηstate 1ago-ηstate' 2ago-ηstate' : UpdateNonceState 
+  sig : UpdateNonceCommand
+  ηstate ηstate' : UpdateNonceState 
+  pre-η-candidate pre-η-candidate' : Nonce
+  candidate-η candidate-η' : Nonce
+  pre-ηₑ η-head η-epoch : Nonce
+  ηₑ : Nonce
+  cl : close
 
   -- 3 k/f 
   -- intervals = 12 (hours) * numSecondsInHour
@@ -289,12 +306,14 @@ data _⊢_⇀⦇_,UPDNONESTREAM⦈_ where
     ────────────────────────────────
     ( sₗ , sₙ ) ⊢ sPrePhalanx ⇀⦇ (s , iParametrize ⟦ lam , TΦ ⟧ᵖⁱ)  ,UPDNONESTREAM⦈ (sParametrized ⟦ lam , I ⟧ᵖ )
 
-  initialize-pr : 
+  initialize-pr : -- TODO specify ds
+
     ∙ ( sₗ , sₙ ) ⊢ ( sInitialized ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ ) ⇀⦇ (s , sig) ,UPDNONESTREAM⦈ newState
     ────────────────────────────────
     ( sₗ , sₙ ) ⊢ (sParametrized ps ) ⇀⦇ (s , iInitialize ⟦ pre-ηₑ ⟧ⁱⁱ)  ,UPDNONESTREAM⦈ newState 
 
-  initialize-cl : 
+  initialize-cl : -- TODO specify ds!!
+  
     ∙ ( sₗ , sₙ ) ⊢ ( sInitialized ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ ) ⇀⦇ ( s , sig) ,UPDNONESTREAM⦈ newState 
     ────────────────────────────────
     ( sₗ , sₙ ) ⊢ ( sClosed ⟦ ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ , pins , ( a , b , c ) , ηₑ ⟧ᶜᵈ ) ⇀⦇ (s , iInitialize ⟦ pre-ηₑ ⟧ⁱⁱ)  ,UPDNONESTREAM⦈ newState -- (sInitialized ⟦ ps , ds , (epoch s) , pre-ηₑ ⟧ⁱ)
@@ -461,10 +480,10 @@ data _⊢_⇀⦇_,UPDNONESTREAM⦈_ where
 
 \begin{figure*}[h]
 \begin{code}
-UpdateNonce3EpochState = UpdateNonceState × UpdateNonceState × Nonce
+UpdateNonce3EpochState = Nonce × UpdateNonceState × Nonce
 
 data
-  _⊢_⇀⦇_,UPDN⦈_ : UpdateNonceEnv → UpdateNonce3EpochState  → Slot × UpdateNonceCommand × UpdateNonceCommand  → UpdateNonce3EpochState  → Type
+  _⊢_⇀⦇_,UPDN⦈_ : UpdateNonceEnv → UpdateNonce3EpochState  → Slot × UpdateNonceCommand  → UpdateNonce3EpochState  → Type
 \end{code}
 \end{AgdaAlign}
 \caption{Update Nonce transition system types}
@@ -475,34 +494,48 @@ data
 \begin{code}[hide]
 data _⊢_⇀⦇_,UPDN⦈_ where 
 
-  -- TODO : are initialize and parametrize done within the same transition? right now, parametrize calls neither initialize nor tick
-  -- initialize 2-epochs ago phalanx cycle 
-  -- nothing in 1-epoch ago 
-  -- candidate nonce always exists
-  begin-phalanx : 
-    ∙ (( sₗ , sₙ ) ⊢ sPrePhalanx ⇀⦇ (s , sig2ago)  ,UPDNONESTREAM⦈  ( sParametrized ps ))
-    ∙ (( sₗ , sₙ ) ⊢ sPrePhalanx ⇀⦇ ( s , iNothing )  ,UPDNONESTREAM⦈ sPrePhalanx )
-    ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( 2ago-ηstate , sPrePhalanx , candidate-η ) ⇀⦇ (s , sig2ago , iNothing )  ,UPDN⦈  ( ( sParametrized ps ) , sPrePhalanx , candidate-η )
+  -- TODO should we include special cases here for the epochs right after the hard fork?
 
-  -- initialize new state from 1 epoch ago
-  -- rotate 2-epoch ago state into 1-epoch ago 
-  -- get new candidate nonce from 1 epoch ago 
-  switch-nonces : 
+  -- applies when 6k/f slot is contained between this slot and last slot
+  -- swap the pre-nonce candidate for the current VRF output (i.e. η-epoch nonce)
+  -- update nonce state with sig
+  -- keep candidate nonce 
+  switch-pre-cand : 
+    ∙ contains6kof sₗ sₙ ≡ true
+    ∙ (( sₗ , sₙ ) ⊢ ηstate ⇀⦇ ( s , iInitialize ⟦ η-epoch ⟧ⁱⁱ )  ,UPDNONESTREAM⦈ ηstate' ) -- checked to be 9k/f by UPDNONESTREAM transition
+    ────────────────────────────────
+    ⟦ sₗ , sₙ , η-head , η-epoch ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , candidate-η ) ⇀⦇ (s , sig )  ,UPDN⦈  ( η-epoch , ηstate' , candidate-η )
+
+  -- keep pre-nonce candidate 
+  -- initialize nonce state with pre-η-candidate
+  -- keep candidate-η
+  init : 
+    ∙ (( sₗ , sₙ ) ⊢ ηstate ⇀⦇ ( s , iInitialize ⟦ pre-η-candidate ⟧ⁱⁱ )  ,UPDNONESTREAM⦈ ηstate' ) 
+    ────────────────────────────────
+    ⟦ sₗ , sₙ , η-head , η-epoch ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , candidate-η ) ⇀⦇ (s , iInitialize ⟦ η-epoch ⟧ⁱⁱ )  ,UPDN⦈  ( pre-η-candidate , ηstate' , candidate-η )
+
+  -- applies when 9k/f slot is contained between this slot and last slot
+  -- update nonce state must be iClose 
+  -- keep pre-η-candidate
+  -- update candidate-η from nonce computed in closed state
+  close-switch-cand : 
     let 
-      mηₑ = getInlNonce 1ago-ηstate' 
+      mηₑ = getInlNonce ηstate' 
     in
-    ∙ (( sₗ , sₙ ) ⊢ 2ago-ηstate ⇀⦇ (s , sig2ago)  ,UPDNONESTREAM⦈  ( sInitialized inl ))
-    ∙ (( sₗ , sₙ ) ⊢ 1ago-ηstate ⇀⦇ ( s , iClose  ⟦ φ ⟧ᶜ )  ,UPDNONESTREAM⦈ 1ago-ηstate' )
+    ∙ contains9kof sₗ sₙ ≡ true
+    ∙ (( sₗ , sₙ ) ⊢ ηstate ⇀⦇ ( s , iClose  ⟦ φ ⟧ᶜ )  ,UPDNONESTREAM⦈ ηstate' ) -- checked to be 9k/f by UPDNONESTREAM transition
     ∙ (mηₑ ≡ just candidate-η)
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( 2ago-ηstate , 1ago-ηstate , η ) ⇀⦇ (s , sig2ago , iClose  ⟦ φ ⟧ᶜ )  ,UPDN⦈  ( ( sInitialized inl ) , 2ago-ηstate' , candidate-η )
+    ⟦ sₗ , sₙ , η-head , η-epoch ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , candidate-η' ) ⇀⦇ (s , iClose  ⟦ φ ⟧ᶜ )  ,UPDN⦈  ( pre-η-candidate , ηstate' , candidate-η )
 
+  -- if the signal is neither iInitialize nor iClose, update nonce state with signal
+  -- keep pre-η-candidate and candidate-η
   update-noswitch : 
-    ∙ ( sₗ , sₙ ) ⊢ 2ago-ηstate ⇀⦇ (s , sig2ago)  ,UPDNONESTREAM⦈  2ago-ηstate'
-    ∙ ( sₗ , sₙ ) ⊢ 1ago-ηstate ⇀⦇ (s , sig1ago)  ,UPDNONESTREAM⦈  1ago-ηstate'
+    ∙ sig ≢ iClose cl 
+    ∙ sig ≢ iInitialize iInl
+    ∙ ( sₗ , sₙ ) ⊢ ηstate ⇀⦇ (s , sig)  ,UPDNONESTREAM⦈  ηstate'
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( 2ago-ηstate , 1ago-ηstate , candidate-η ) ⇀⦇ (s , sig2ago , sig1ago)  ,UPDN⦈  ( 2ago-ηstate' , 1ago-ηstate' , candidate-η )
+    ⟦ sₗ , sₙ , η-head , η-epoch ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , candidate-η ) ⇀⦇ (s , sig)  ,UPDN⦈  ( pre-η-candidate , ηstate' , candidate-η )
 
 \end{code}
 \caption{Update Nonce transition system rules}

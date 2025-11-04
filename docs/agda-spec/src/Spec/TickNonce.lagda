@@ -3,9 +3,9 @@
 
 The Tick Nonce Transition ($\mathsf{TICKN}$) is responsible for updating the epoch nonce and the
 previous epoch's hash nonce at the start of an epoch. Its environment is shown in
-Figure~\ref{fig:ts-types:ticknonce} and consists of the candidate nonce \afld{ηc}
+Figure~\ref{fig:ts-types:ticknonce} and consists of the candidate nonce \afld{η-candidate}
 and the previous epoch's last block header hash as a nonce \afld{ηph}.
-Its state consists of the epoch nonce \afld{η₀} and the previous epoch's last block header hash nonce \afld{ηh}.
+Its state consists of the epoch nonce \afld{η-epoch} and the previous epoch's last block header hash nonce \afld{ηh}.
 
 \begin{code}[hide]
 -- {-# OPTIONS --safe #-}
@@ -22,6 +22,7 @@ module Spec.TickNonce
   where
 
 open import Ledger.Prelude
+open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
 
 \end{code}
 
@@ -33,12 +34,13 @@ open import Ledger.Prelude
 record TickNonceEnv : Type where
 \end{code}
 \begin{code}[hide]
-  constructor ⟦_,_⟧ᵗᵉ
+  constructor ⟦_,_,_⟧ᵗᵉ
   field
 \end{code}
 \begin{code}
-    ηc  : Nonce     -- candidate nonce
+    η-candidate  : Nonce     -- candidate nonce
     ηph : Nonce     -- previous header hash as nonce
+    pdm1 : PoolDistr -- prev epoch pool distr
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Tick Nonce states}
@@ -47,12 +49,13 @@ record TickNonceEnv : Type where
 record TickNonceState : Type where
 \end{code}
 \begin{code}[hide]
-  constructor ⟦_,_⟧ᵗˢ
+  constructor ⟦_,_,_⟧ᵗˢ
   field
 \end{code}
 \begin{code}  
-    η₀ : Nonce -- epoch nonce
+    η-epoch : Nonce -- epoch nonce
     ηh : Nonce -- nonce from hash of previous epoch's last block header
+    pdm2 : PoolDistr -- 2 epochs ago pool distr
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Tick Nonce transitions}
@@ -75,18 +78,19 @@ is shown in Figure~\ref{fig:ts-rules:ticknonce}.
 \begin{figure*}[h]
 \begin{code}[hide]
 private variable
-  ηc ηph η₀ ηh : Nonce
+  η-candidate ηph η-epoch ηh : Nonce
+  pdm1 pdm2 : PoolDistr
 
 data _⊢_⇀⦇_,TICKN⦈_ where 
 \end{code}
 \begin{code}
   Not-New-Epoch :
     ────────────────────────────────
-    ⟦ ηc , ηph ⟧ᵗᵉ ⊢ ⟦ η₀ , ηh ⟧ᵗˢ ⇀⦇ false ,TICKN⦈ ⟦ η₀ , ηh ⟧ᵗˢ
+    ⟦ η-candidate , ηph , pdm1 ⟧ᵗᵉ ⊢ ⟦ η-epoch , ηh , pdm2 ⟧ᵗˢ ⇀⦇ false ,TICKN⦈ ⟦ η-epoch , ηh , pdm2 ⟧ᵗˢ
 
   New-Epoch :
     ────────────────────────────────
-    ⟦ ηc , ηph ⟧ᵗᵉ ⊢ ⟦ η₀ , ηh ⟧ᵗˢ ⇀⦇ true ,TICKN⦈ ⟦ ηc ⋆ ηh , ηph ⟧ᵗˢ
+    ⟦ η-candidate , ηph , pdm1 ⟧ᵗᵉ ⊢ ⟦ η-epoch , ηh , pdm2 ⟧ᵗˢ ⇀⦇ true ,TICKN⦈ ⟦ η-candidate ⋆ ηh , ηph , pdm1 ⟧ᵗˢ
 \end{code}
 \caption{Tick Nonce transition system rules}
 \label{fig:ts-rules:ticknonce}

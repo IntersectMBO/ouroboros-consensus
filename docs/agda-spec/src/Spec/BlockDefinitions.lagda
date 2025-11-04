@@ -77,15 +77,16 @@ record BlockStructure : Type₁ where
 \begin{code}
       prevHeader : Maybe HashHeader   -- hash of previous block header
       issuerVk   : VKeyˢ              -- block issuer
-      vrfVk      : VKeyᵛ              -- VRF verification key
+      vrfVk      : VKeyᵛ              -- VRF verification key 
       blockNo    : BlockNo            -- block number
       slot       : Slot               -- block slot
-      vrfRes     : VRFRes             -- VRF result value
-      vrfPrf     : Proof              -- VRF proof
+      vrfRes     : VRFRes             -- VRF result value 
+      vrfPrf     : Proof              -- VRF proof 
       bodySize   : ℕ                  -- size of the block body
       bodyHash   : HashBBody          -- block body hash
       oc         : OCert              -- operational certificate
       pv         : ProtVer            -- protocol version
+      phalanxCommand   : UpdateNonceCommand 
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Block Types}
@@ -104,8 +105,6 @@ record BlockStructure : Type₁ where
       prevHashToNonce : Maybe HashHeader → Nonce
       serHashToℕ      : SerHash → Certifiedℕ
       serHashToNonce  : SerHash → Nonce
-      phalanxCommand2ago   : UpdateNonceCommand 
-      phalanxCommand1ago   : UpdateNonceCommand
 \end{code}
 \end{AgdaAlign}
 \caption{Block definitions}

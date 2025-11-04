@@ -11,11 +11,11 @@ state is shown in Figure~\ref{fig:ts-types:chainhead} and it consists of the fol
 
 \begin{itemize}
   \item The operational certificate issue number map \afld{cs}.
-  \item The epoch nonce \afld{η₀}.
-  \item The pre-nonce \afld{pre-ηc}.
+  \item The epoch nonce \afld{η-epoch}.
+  \item The pre-nonce \afld{pre-η-candidate}.
   \item The evolving nonce \afld{ηv}.
-  \item The candidate nonce \afld{ηc}.
-  \item The previous epoch hash nonce \afld{ηh}.
+  \item The candidate nonce \afld{η-candidate}.
+  \item The previous epoch hash nonce \afld{η-lheaderhash}.
   \item The last header hash \afld{h}.
   \item The last slot \afld{sℓ}.
   \item The last block number \afld{bℓ}.
@@ -62,6 +62,7 @@ open import Spec.Protocol crypto nonces es ss rs setupVDFGroup setupVDF combinEI
 open import Ledger.PParams crypto es ss using (PParams; ProtVer)
 open import Ledger.Prelude
 open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce 
+open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
 \end{code}
 
 \begin{figure*}[h]
@@ -87,17 +88,18 @@ record LastAppliedBlock : Type where
 record ChainHeadState : Type where
 \end{code}
 \begin{code}[hide]
-  constructor ⟦_,_,_,_,_,_,_⟧ᶜˢ
+  constructor ⟦_,_,_,_,_,_,_,_⟧ᶜˢ
   field
 \end{code}
 \begin{code}  
     cs     : OCertCounters          -- operational certificate issue numbers
-    η₀     : Nonce                  -- epoch nonce
-    pre-ηc : Nonce                  -- pre-nonce
-    ηv     : Nonce                  -- evolving nonce
-    ηc     : Nonce                  -- candidate nonce
-    ηh     : Nonce                  -- nonce from hash of last epoch’s last header
+    η-epoch     : Nonce                  -- epoch nonce
+    pre-η-candidate     : Nonce                  
+    ηstate     : UpdateNonceState                  -- evolving nonce state 
+    η-candidate     : Nonce                  -- candidate nonce pre-η-candidate
+    η-lheaderhash     : Nonce                  -- nonce from hash of last epoch’s last header
     lab    : Maybe LastAppliedBlock -- latest applied block
+    pdm2 : PoolDistr
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Chain Head transitions}
@@ -155,12 +157,13 @@ The transition checks the following things
 \begin{code}[hide]
 private variable
   nes forecast                               : NewEpochState
-  cs cs′                                     : OCertCounters
-  η₀ pre-ηc pre-ηc′ ηv ηc ηh η₀′ ηv′ ηc′ ηh′ : Nonce
+  cs cs'                                     : OCertCounters
+  η-epoch η-candidate η-lheaderhash η-epoch' η-candidate' η-lheaderhash' : Nonce
   lab                                        : Maybe LastAppliedBlock
   bh                                         : BHeader
-  sig1ago sig2ago : UpdateNonceCommand
-  2ago-ηstate  1ago-ηstate 1ago-ηstate' 2ago-ηstate' : UpdateNonceState 
+  ηstate ηstate' : UpdateNonceState 
+  pre-η-candidate pre-η-candidate' : Nonce
+  pdm2 pdm2' : PoolDistr
 
 data _⊢_⇀⦇_,CHAINHEAD⦈_ where
 \end{code}
@@ -172,18 +175,18 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
         ne   = (e₁ ≠ e₂)
         pp   = getPParams forecast; open PParams
         nₚₕ  = prevHashToNonce (lastAppliedHash lab)
-        pd   = getPoolDistr forecast
-        lab′ = just ⟦ blockNo , slot , headerHash bh ⟧ℓ
+        pdm1   = getPoolDistr forecast
+        lab' = just ⟦ blockNo , slot , headerHash bh ⟧ℓ
         sₗ = getLastSlot lab 
     in
     ∙ prtlSeqChecks lab bh
     ∙ _ ⊢ nes ⇀⦇ slot ,TICKF⦈ forecast
     ∙ chainChecks MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh
-    ∙ ⟦ ηc , nₚₕ ⟧ᵗᵉ ⊢ ⟦ η₀ , ηh ⟧ᵗˢ ⇀⦇ ne ,TICKN⦈ ⟦ η₀′ , ηh′ ⟧ᵗˢ
-    ∙ ⟦ pd , η₀′ , sₗ ⟧ᵖᵉ ⊢ ⟦ cs , 2ago-ηstate , 1ago-ηstate , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , 2ago-ηstate' , 1ago-ηstate' , ηc′ ⟧ᵖˢ
+    ∙ ⟦ η-candidate , nₚₕ , pdm1 ⟧ᵗᵉ ⊢ ⟦ η-epoch , η-lheaderhash , pdm2 ⟧ᵗˢ ⇀⦇ ne ,TICKN⦈ ⟦ η-epoch' , η-lheaderhash' , pdm2' ⟧ᵗˢ -- the new η-epoch comes from the candidate nonce composed with the new chain tip (hash of incoming block header/block no/slot no)
+    ∙ ⟦ pdm2 , η-epoch' , sₗ ⟧ᵖᵉ ⊢ ⟦ cs , pre-η-candidate , ηstate , η-candidate ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs' , pre-η-candidate' , ηstate' , η-candidate' ⟧ᵖˢ
     ────────────────────────────────
-    nes ⊢ ⟦ cs  , η₀  , pre-ηc , ηv  , ηc  , ηh  , lab  ⟧ᶜˢ ⇀⦇ bh ,CHAINHEAD⦈
-          ⟦ cs′ , η₀′ , pre-ηc′ , ηv′ , ηc′ , ηh′ , lab′ ⟧ᶜˢ
+    nes ⊢ ⟦ cs  , η-epoch  , pre-η-candidate , ηstate  , η-candidate  , η-lheaderhash  , lab , pdm2 ⟧ᶜˢ ⇀⦇ bh ,CHAINHEAD⦈
+          ⟦ cs' , η-epoch' , pre-η-candidate' , ηstate' , η-candidate' , η-lheaderhash' , lab' , pdm2' ⟧ᶜˢ
 
 \end{code}
 \caption{Chain Head transition system rules}

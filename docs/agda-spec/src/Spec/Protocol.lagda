@@ -7,15 +7,15 @@ Figure~\ref{fig:ts-types:prtcl} and consists of:
 
 \begin{itemize}
   \item The stake pool stake distribution \afld{pd}.
-  \item The epoch nonce \afld{η₀}.
+  \item The epoch nonce \afld{η-epoch}.
 \end{itemize}
 
 Its state is shown in Figure~\ref{fig:ts-types:prtcl} and consists of
 \begin{itemize}
   \item The operational certificate issue number mapping \afld{cs}.
-  \item The pre-nonce \afld{pre-ηc}.  
+  \item The pre-nonce \afld{pre-η-candidate}.  
   \item The evolving nonce \afld{ηv}.
-  \item The candidate nonce for the next epoch \afld{ηc}.
+  \item The candidate nonce for the next epoch \afld{η-candidate}.
 \end{itemize}
 
 \begin{code}[hide]
@@ -71,8 +71,8 @@ record PrtclEnv : Type where
   field
 \end{code}
 \begin{code}  
-    pd  : PoolDistr -- pool stake distribution
-    η₀  : Nonce     -- epoch nonce
+    pdm2  : PoolDistr -- pool stake distribution from e - 2
+    η-epoch  : Nonce     -- epoch nonce
     sₗ   : Slot
 \end{code}
 \end{AgdaSuppressSpace}
@@ -87,9 +87,9 @@ record PrtclState : Type where
 \end{code}
 \begin{code}
     cs     : OCertCounters -- operational certificate issues numbers
-    2ago-ηstate : UpdateNonceState -- Nonce state 2 epochs ago
-    1ago-ηstate : UpdateNonceState -- Nonce state 1 epoch ago
-    ηc     : Nonce         -- candidate nonce
+    pre-η-candidate : Nonce
+    ηstate : UpdateNonceState -- Nonce state 
+    candidate-η     : Nonce         -- candidate nonce
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Protocol transitions}
@@ -148,7 +148,7 @@ checkLeaderVal (certℕ , certℕprf) (f , posf , f≤1) σ =
 \end{AgdaAlign}
 \begin{code}
 vrfChecks : Nonce → PoolDistr → PosUnitInterval → BHBody → Type
-vrfChecks η₀ pd f bhb =
+vrfChecks η-epoch pd f bhb =
   case lookupPoolDistr pd hk of
     λ where
       nothing            → ⊥
@@ -159,7 +159,7 @@ vrfChecks η₀ pd f bhb =
   where
     open BHBody bhb
     hk = hash issuerVk
-    seed = slotToSeed slot XOR nonceToSeed η₀
+    seed = slotToSeed slot XOR nonceToSeed η-epoch
 \end{code}
 \end{AgdaSuppressSpace}
 \caption{Protocol transition system helper functions}
@@ -168,7 +168,7 @@ vrfChecks η₀ pd f bhb =
 
 In Figure~\ref{fig:ts-funs:prtcl} we define a function \afun{vrfChecks} which performs all the VRF related checks
 on a given block header body.
-In addition to the block header body \aarg{bhb}, the function requires the epoch nonce \aarg{η₀},
+In addition to the block header body \aarg{bhb}, the function requires the epoch nonce \aarg{η-epoch},
 the stake distribution \aarg{pd} (aggregated by pool), and the active slots coefficient \aarg{f} from the protocol
 parameters. The function checks:
 
@@ -194,10 +194,11 @@ The function \afun{vrfChecks} has the following predicate failures:
 \begin{figure*}[h]
 \begin{code}[hide]
 private variable
-  pd                              : PoolDistr
-  cs cs′                          : OCertCounters
-  pre-ηc pre-ηc′ ηv ηc ηv′ ηc′ η₀ : Nonce 
-  2ago-ηstate  1ago-ηstate 1ago-ηstate' 2ago-ηstate' : UpdateNonceState 
+  pdm1 pdm2                              : PoolDistr
+  cs cs'                          : OCertCounters
+  η-candidate η-candidate' η-epoch : Nonce 
+  pre-η-candidate pre-η-candidate' : Nonce
+  ηstate ηstate' : UpdateNonceState 
   bh                              : BHeader
   sₗ : Slot
 
@@ -208,11 +209,11 @@ data _⊢_⇀⦇_,PRTCL⦈_ where
     let (bhb , σ) = bh; open BHBody bhb
         η = hBNonce bhb
     in
-    ∙ (sₗ , slot) ⊢ ( 2ago-ηstate , 1ago-ηstate , ηc ) ⇀⦇ (sₗ , phalanxCommand2ago , phalanxCommand1ago) ,UPDN⦈ ( 2ago-ηstate' , 1ago-ηstate' , ηc′ ) -- environment was ⟦ η ⟧ᵘᵉ before
-    ∙ dom (pd ˢ) ⊢ cs ⇀⦇ bh ,OCERT⦈ cs′
-    -- ∙ vrfChecks η₀ pd ActiveSlotCoeff bhb -- commented out because VDF checks instead done in the UPDN rule
+    ∙ ⟦ sₗ , slot , η , η-epoch ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , η-candidate ) ⇀⦇ (sₗ , phalanxCommand) ,UPDN⦈ ( pre-η-candidate' , ηstate' , η-candidate' ) -- environment was ⟦ η ⟧ᵘᵉ before , TODO probably dont need η
+    ∙ dom (pdm2 ˢ) ⊢ cs ⇀⦇ bh ,OCERT⦈ cs'
+    ∙ vrfChecks η-epoch pdm2 ActiveSlotCoeff bhb -- the new η-epoch comes from the candidate nonce composed with the new chain tip (hash of incoming block header/block no/slot no)
     ────────────────────────────────
-    ⟦ pd , η₀ , sₗ ⟧ᵖᵉ ⊢ ⟦ cs , 2ago-ηstate , 1ago-ηstate , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , 2ago-ηstate' , 1ago-ηstate' , ηc′ ⟧ᵖˢ
+    ⟦ pdm2 , η-epoch , sₗ ⟧ᵖᵉ ⊢ ⟦ cs , pre-η-candidate , ηstate , η-candidate ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs' , pre-η-candidate , ηstate' , η-candidate' ⟧ᵖˢ
 \end{code}
 \caption{Protocol transition system rules}
 \label{fig:ts-rules:prtcl}
