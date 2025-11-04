@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
   , unsafeReleaseReadAccess
   ) where
 
+import Control.Monad.Class.MonadTime
 import qualified Control.RAWLock as Lock
 import NoThunks.Class
 import Ouroboros.Consensus.Util.IOLike
@@ -73,7 +74,7 @@ withReadLock (LedgerDBLock lock) m =
 
 -- | An action in @m@ that has to hold the write lock. See @withWriteLock@.
 newtype WriteLocked m a = WriteLocked {runWriteLocked :: m a}
-  deriving newtype (Functor, Applicative, Monad)
+  deriving newtype (Functor, Applicative, Monad, MonadMonotonicTime, MonadMonotonicTimeNSec)
 
 -- | Used safely, for example, during initialization.
 unsafeIgnoreWriteLock :: WriteLocked m a -> m a

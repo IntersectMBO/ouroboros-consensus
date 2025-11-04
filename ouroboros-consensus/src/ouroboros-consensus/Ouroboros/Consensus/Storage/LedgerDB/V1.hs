@@ -67,6 +67,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -188,7 +189,7 @@ implMkLedgerDb h snapManager =
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = getEnvSTM1 h implGetPastLedgerState
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
-      , getForkerAtTarget = newForkerAtTarget h
+      , getForkerAtTarget = \lbl -> newForkerAtTarget lbl h
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
@@ -291,7 +292,7 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
           writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
       )
       (readTVar (ldbPrevApplied ldbEnv))
-      (newForkerByRollback h)
+      (newForkerByRollback "validate" h)
       rr
       tr
       cache
@@ -353,9 +354,19 @@ implTryFlush env = do
   ldb <- readTVarIO $ ldbChangelog env
   when
     (ldbShouldFlush env $ DbCh.flushableLength ldb)
-    ( withWriteLock
-        (ldbLock env)
-        (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
+    ( encloseTimedWith
+        (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 . FlavorImplFlushAcqFree >$< ldbTracer env)
+        $ withWriteLock
+          (ldbLock env)
+          ( encloseTimedWith
+              ( Tracer $ \ev ->
+                  writeLocked $
+                    traceWith (ldbTracer env) $
+                      LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 $
+                        FlavorImplFlush ev
+              )
+              $ flushLedgerDB (ldbChangelog env) (ldbBackingStore env)
+          )
     )
 
 implCloseDB :: IOLike m => LedgerDBHandle m l blk -> m ()
@@ -721,11 +732,12 @@ newForkerAtTarget ::
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   Target (Point blk) ->
   m (Either GetForkerError (Forker m l blk))
-newForkerAtTarget h rr pt = withTransferrableReadAccess h rr (Right pt)
+newForkerAtTarget label h rr pt = withTransferrableReadAccess label h rr (Right pt)
 
 newForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
@@ -735,12 +747,13 @@ newForkerByRollback ::
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   -- | How many blocks to rollback from the tip
   Word64 ->
   m (Either GetForkerError (Forker m l blk))
-newForkerByRollback h rr n = withTransferrableReadAccess h rr (Left n)
+newForkerByRollback label h rr n = withTransferrableReadAccess label h rr (Left n)
 
 -- | Acquire read access and then allocate a forker, acquiring it at the given
 -- point or rollback.
@@ -752,11 +765,13 @@ withTransferrableReadAccess ::
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   Either Word64 (Target (Point blk)) ->
   m (Either GetForkerError (Forker m l blk))
-withTransferrableReadAccess h rr f = getEnv h $ \ldbEnv -> do
+withTransferrableReadAccess label h rr f = getEnv h $ \ldbEnv -> do
+  traceWith (ldbTracer ldbEnv) LedgerDBPreOpenForker
   -- This TVar will be used to maybe release the read lock by the resource
   -- registry. Once the forker was opened it will be emptied.
   tv <- newTVarIO (pure ())
@@ -774,7 +789,7 @@ withTransferrableReadAccess h rr f = getEnv h $ \ldbEnv -> do
           -- the forker was opened.
           join $ readTVarIO tv
       )
-  unsafeRunReadLocked (acquireAtTarget ldbEnv f >>= traverse (newForker h ldbEnv (rk, tv) rr))
+  unsafeRunReadLocked (acquireAtTarget ldbEnv f >>= traverse (newForker label h ldbEnv (rk, tv) rr))
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
@@ -839,13 +854,14 @@ newForker ::
   , GetTip l
   , StandardHash l
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
   (ResourceKey m, StrictTVar m (m ())) ->
   ResourceRegistry m ->
   DbChangelog l ->
   ReadLocked m (Forker m l blk)
-newForker h ldbEnv (rk, releaseVar) rr dblog =
+newForker label h ldbEnv (rk, releaseVar) rr dblog =
   readLocked $ do
     (rk', frk) <-
       allocate
@@ -854,6 +870,7 @@ newForker h ldbEnv (rk, releaseVar) rr dblog =
             dblogVar <- newTVarIO dblog
             forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
             forkerMVar <- newMVar $ Left (ldbLock ldbEnv, ldbBackingStore ldbEnv, rr)
+            foeWasCommitted <- newTVarIO False
             let forkerEnv =
                   ForkerEnv
                     { foeBackingStoreValueHandle = forkerMVar
@@ -861,6 +878,7 @@ newForker h ldbEnv (rk, releaseVar) rr dblog =
                     , foeSwitchVar = ldbChangelog ldbEnv
                     , foeTracer =
                         LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
+                    , foeWasCommitted
                     }
             atomically $ do
               -- Note that we add the forkerEnv to the 'ldbForkers' so that an exception
@@ -872,7 +890,7 @@ newForker h ldbEnv (rk, releaseVar) rr dblog =
               -- it.
               writeTVar releaseVar (pure ())
             void $ release rk
-            traceWith (foeTracer forkerEnv) ForkerOpen
+            traceWith (foeTracer forkerEnv) $ ForkerOpen label
             pure $ (mkForker h (ldbQueryBatchSize ldbEnv) forkerKey forkerEnv)
         )
         forkerClose
@@ -921,7 +939,7 @@ implForkerClose (LDBHandle varState) forkerKey env = do
           stateTVar
             (ldbForkers ldbEnv)
             (\m -> Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey m)
+  closeForkerEnv env
   case frk of
     Nothing -> pure ()
-    Just e -> traceWith (foeTracer e) DanglingForkerClosed
-  closeForkerEnv env
+    Just e -> traceWith (foeTracer e) ForkerClose

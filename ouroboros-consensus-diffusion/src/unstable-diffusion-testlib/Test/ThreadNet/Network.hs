@@ -1128,7 +1128,7 @@ runThreadNetwork
       -- needs the read-only forker to elaborate a complete UTxO set to generate
       -- transactions.
       let getForker rr = do
-            ChainDB.getReadOnlyForkerAtPoint chainDB rr VolatileTip >>= \case
+            ChainDB.getReadOnlyForkerAtPoint chainDB "forkTxProducer" rr VolatileTip >>= \case
               Left e -> error $ show e
               Right l -> pure l
 

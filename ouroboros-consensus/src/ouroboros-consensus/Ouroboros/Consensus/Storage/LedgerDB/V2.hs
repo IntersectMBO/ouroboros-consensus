@@ -170,7 +170,7 @@ implMkLedgerDb h snapManager =
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = \s -> getEnvSTM h (flip implGetPastLedgerState s)
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
-      , getForkerAtTarget = newForkerAtTarget h
+      , getForkerAtTarget = \lbl -> newForkerAtTarget lbl h
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
@@ -205,14 +205,14 @@ mkInternals h snapManager =
     , wipeLedgerDB = destroySnapshots snapManager
     , truncateSnapshots = getEnv h $ implIntTruncateSnapshots snapManager . ldbHasFS
     , push = \st -> withRegistry $ \reg -> do
-        eFrk <- newForkerAtTarget h reg VolatileTip
+        eFrk <- newForkerAtTarget "Internal:push" h reg VolatileTip
         case eFrk of
           Left{} -> error "Unreachable, Volatile tip MUST be in LedgerDB"
           Right frk -> do
             forkerPush frk st >> atomically (forkerCommit frk) >> forkerClose frk
             getEnv h pruneLedgerSeq
     , reapplyThenPushNOW = \blk -> getEnv h $ \env -> withRegistry $ \reg -> do
-        eFrk <- newForkerAtTarget h reg VolatileTip
+        eFrk <- newForkerAtTarget "Internal:reapplyThenPush" h reg VolatileTip
         case eFrk of
           Left{} -> error "Unreachable, Volatile tip MUST be in LedgerDB"
           Right frk -> do
@@ -323,7 +323,7 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
           writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
       )
       (readTVar (ldbPrevApplied ldbEnv))
-      (newForkerByRollback h)
+      (newForkerByRollback "validate" h)
       rr
       tr
       cache
@@ -645,12 +645,13 @@ newForkerAtTarget ::
   , LedgerSupportsProtocol blk
   , StandardHash l
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   Target (Point blk) ->
   m (Either GetForkerError (Forker m l blk))
-newForkerAtTarget h rr pt = getEnv h $ \ldbEnv ->
-  acquireAtTarget ldbEnv (Right pt) rr >>= traverse (newForker h ldbEnv rr)
+newForkerAtTarget label h rr pt = getEnv h $ \ldbEnv ->
+  acquireAtTarget ldbEnv (Right pt) rr >>= traverse (newForker label h ldbEnv rr)
 
 newForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
@@ -660,12 +661,13 @@ newForkerByRollback ::
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   Word64 ->
   m (Either GetForkerError (Forker m l blk))
-newForkerByRollback h rr n = getEnv h $ \ldbEnv ->
-  acquireAtTarget ldbEnv (Left n) rr >>= traverse (newForker h ldbEnv rr)
+newForkerByRollback label h rr n = getEnv h $ \ldbEnv ->
+  acquireAtTarget ldbEnv (Left n) rr >>= traverse (newForker label h ldbEnv rr)
 
 closeForkerEnv ::
   IOLike m => ForkerEnv m l blk -> m ()
@@ -745,11 +747,10 @@ implForkerClose (LDBHandle varState) forkerKey forkerEnv = do
             (ldbForkers ldbEnv)
             (\m -> Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey m)
 
+  closeForkerEnv forkerEnv
   case frk of
     Nothing -> pure ()
-    Just e -> traceWith (foeTracer e) DanglingForkerClosed
-
-  closeForkerEnv forkerEnv
+    Just e -> traceWith (foeTracer e) ForkerClose
 
 newForker ::
   ( IOLike m
@@ -759,15 +760,16 @@ newForker ::
   , GetTip l
   , StandardHash l
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
   ResourceRegistry m ->
   (StateRef m l, ResourceKey m) ->
   m (Forker m l blk)
-newForker h ldbEnv rr (st, rk) = do
+newForker label h ldbEnv rr (st, rk) = do
   forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
   let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
-  traceWith tr ForkerOpen
+  traceWith tr $ ForkerOpen label
   lseqVar <- newTVarIO . LedgerSeq . AS.Empty $ st
   -- The closing action that we allocate in the TVar from the start is not
   -- strictly necessary if the caller uses a short-lived registry like the ones

@@ -48,6 +48,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import Ouroboros.Consensus.Util.Args
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 import System.FS.IO
@@ -117,6 +118,8 @@ newBackingStoreInitialiser trcr bss =
 data FlavorImplSpecificTrace
   = FlavorImplSpecificTraceInMemory FlavorImplSpecificTraceInMemory
   | FlavorImplSpecificTraceOnDisk FlavorImplSpecificTraceOnDisk
+  | FlavorImplFlushAcqFree EnclosingTimed
+  | FlavorImplFlush EnclosingTimed
   deriving (Eq, Show)
 
 data FlavorImplSpecificTraceInMemory

@@ -32,6 +32,7 @@ data TraceEvent blk
   = LedgerDBSnapshotEvent !(TraceSnapshotEvent blk)
   | LedgerReplayEvent !(TraceReplayEvent blk)
   | LedgerDBForkerEvent !TraceForkerEventWithKey
+  | LedgerDBPreOpenForker
   | LedgerDBFlavorImplEvent !FlavorImplSpecificTrace
   deriving Generic
 

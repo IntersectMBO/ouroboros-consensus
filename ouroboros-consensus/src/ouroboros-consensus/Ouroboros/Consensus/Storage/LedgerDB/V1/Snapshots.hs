@@ -238,8 +238,9 @@ implTakeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS) backingStore suffix = re
         then
           return Nothing
         else do
-          encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
+          encloseTimedWith (TookSnapshot snapshot t >$< tracer) $ do
             writeSnapshot hasFS backingStore (encodeDiskExtLedgerState ccfg) snapshot state
+            traceMarkerIO $ "Took snapshot " <> show number
           return $ Just (snapshot, t)
 
 -- | Write snapshot to disk

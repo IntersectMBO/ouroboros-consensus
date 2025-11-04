@@ -254,6 +254,7 @@ getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 getReadOnlyForkerAtPoint ::
   IOLike m =>
   ChainDbEnv m blk ->
+  String ->
   ResourceRegistry m ->
   Target (Point blk) ->
   m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
