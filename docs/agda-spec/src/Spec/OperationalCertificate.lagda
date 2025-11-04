@@ -24,14 +24,12 @@ module Spec.OperationalCertificate
   (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
   (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
   (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
-  -- TODO implement nonce combination with epoch number
-  (combinEIN : Epoch → Nonce → Nonce)
   -- TODO temporary parameters (required because of UpdateNonce)
   (G : Set) 
   (_*ᵍ_ : G × G → G) 
   (idᵍ : G) 
   (defaultNonce : Nonce)
-  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce ) (open BlockStructure bs)
+  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce ) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   where
 

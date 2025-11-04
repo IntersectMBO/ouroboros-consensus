@@ -19,8 +19,6 @@ module Spec.BlockDefinitions
   (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
   (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
   -- TODO implement nonce combination with epoch number
-  (combinEIN : Epoch → Nonce → Nonce)
-  -- TODO temporary parameters (required because of UpdateNonce)
   (G : Set) 
   (_*ᵍ_ : G × G → G) 
   (idᵍ : G) 
@@ -28,7 +26,7 @@ module Spec.BlockDefinitions
   where
 
 open import Ledger.PParams crypto es ss using (ProtVer)
-open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce 
+open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce 
 
 record BlockStructure : Type₁ where
   field

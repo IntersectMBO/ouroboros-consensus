@@ -66,6 +66,13 @@ unsafeUpdateAt82 i x y (xs , lengthProof) =
     updateListAt i (just( x , y)) xs , 
     trans (updateListAt-length i (just( x , y)) xs) lengthProof
 
+allJust : ∀ {A : Set} → List (Maybe A) → Bool
+allJust = foldr check true
+  where
+    check : ∀ {A : Set} → Maybe A → Bool → Bool
+    check nothing acc = false
+    check (just _) acc = acc
+
 -- foldMaybe : (Maybe G × Maybe G) → Maybe (List (G × G)) → Maybe (List (G × G))
 -- foldMaybe (just x , just y) (just acc) = just ((x , y) ∷ acc)
 -- foldMaybe _ _ = nothing

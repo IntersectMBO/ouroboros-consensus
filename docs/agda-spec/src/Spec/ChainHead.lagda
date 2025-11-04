@@ -43,25 +43,23 @@ module Spec.ChainHead
   (rs     : _) (open RationalExtStructure rs)  
   (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
   (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
-  -- TODO implement nonce combination with epoch number
-  (combinEIN : Epoch → Nonce → Nonce)
   -- TODO temporary parameters (required because of UpdateNonce)
   (G : Set) 
   (_*ᵍ_ : G × G → G) 
   (idᵍ : G) 
   (defaultNonce : Nonce)
   (defaultSlot : Slot)
-  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce) (open BlockStructure bs)
+  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   where
 
 open import Spec.BaseTypes crypto using (OCertCounters)
 open import Spec.TickForecast crypto es ss li
 open import Spec.TickNonce crypto es nonces
-open import Spec.Protocol crypto nonces es ss rs setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce bs af
+open import Spec.Protocol crypto nonces es ss rs setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce bs af
 open import Ledger.PParams crypto es ss using (PParams; ProtVer)
 open import Ledger.Prelude
-open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce 
+open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce 
 open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
 \end{code}
 

@@ -39,23 +39,21 @@ module Spec.Protocol
   -- TODO instantiate thes with correct VDF setup!
   (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
   (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
-  -- TODO implement nonce combination with epoch number
-  (combinEIN : Epoch → Nonce → Nonce)
   -- TODO temporary parameters (required because of UpdateNonce)
   (G : Set) 
   (_*ᵍ_ : G × G → G) 
   (idᵍ : G) 
   (defaultNonce : Nonce)
-  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce ) (open BlockStructure bs)
+  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce ) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   where
 
 open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
-open import Spec.OperationalCertificate crypto nonces es ss setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce bs af
+open import Spec.OperationalCertificate crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce bs af
 open import Spec.BaseTypes crypto using (OCertCounters)
 open import Data.Rational as ℚ using (ℚ; 0ℚ; 1ℚ)
 open Ledger.Prelude.ℤ using (pos)
-open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF combinEIN G _*ᵍ_ idᵍ defaultNonce
+open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce
 
 \end{code}
 
