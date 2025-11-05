@@ -19,6 +19,7 @@ module Spec.ChainHead.Properties
   (rs     : _) (open RationalExtStructure rs)
   where
 
+open import Tactic.GenError
 open import Ledger.Prelude
 open import Ledger.PParams crypto es ss using (PParams; ProtVer)
 open import Spec.TickForecast crypto es ss li
@@ -75,7 +76,7 @@ instance
 
       computeProof : ComputationResult String (∃[ s′ ] nes ⊢ s ⇀⦇ bh ,CHAINHEAD⦈ s′)
       computeProof = case ¿ prtlSeqChecks ¿² lab bh of λ where
-        (no _)    → failure "Failed in CHAINHEAD"
+        (no ¬psc) → failure (genErrors ¬psc)
         (yes psc) → do
           (forecast , tickfStep) ← computeTICKF _ nes slot
           let
@@ -84,7 +85,7 @@ instance
             pp = getPParams forecast; open PParams
             pd = getPoolDistr forecast
           case chainChecks? MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh of λ where
-            (no _)   → failure "Failed in CHAINHEAD"
+            (no ¬cc) → failure (genErrors ¬cc)
             (yes cc) → do
               (⟦ η₀′ , _ ⟧ᵗˢ , ticknStep) ← computeTICKN ticknΓ ticknSt ne
               (_             , prtclStep) ← computePRTCL ⟦ pd , η₀′ ⟧ᵖᵉ prtclSt bh
