@@ -15,16 +15,15 @@ module Spec.Protocol.Properties
   (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   (rs     : _) (open RationalExtStructure rs)
-  (grindingf : Nonce → Nonce)
   where
 
 open import Data.Rational as ℚ using (1ℚ)
 open import Ledger.Prelude
 open import Tactic.GenError
-open import Spec.Protocol crypto nonces es ss bs af rs grindingf
+open import Spec.Protocol crypto nonces es ss bs af rs
 open import Spec.BaseTypes crypto using (OCertCounters)
-open import Spec.UpdateNonce crypto nonces es grindingf
-open import Spec.UpdateNonce.Properties crypto nonces es grindingf
+open import Spec.UpdateNonce crypto nonces es
+open import Spec.UpdateNonce.Properties crypto nonces es
 open import Spec.OperationalCertificate crypto nonces es ss bs af
 open import Spec.OperationalCertificate.Properties crypto nonces es ss bs af
 open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
@@ -73,13 +72,13 @@ instance
     computeOCERT = comp {STS = _⊢_⇀⦇_,OCERT⦈_}
     module Go
       (Γ  : PrtclEnv)   (let ⟦ pd , η₀ ⟧ᵖᵉ = Γ)
-      (s  : PrtclState) (let ⟦ cs , pre-ηc , ηv , ηc ⟧ᵖˢ = s)
+      (s  : PrtclState) (let ⟦ cs , ηv , ηc ⟧ᵖˢ = s)
       (bh : BHeader)    (let (bhb , σ) = bh; open BHBody bhb)
       where
 
       η      = hBNonce bhb
       updnΓ  = UpdateNonceEnv ∋ ⟦ η ⟧ᵘᵉ
-      updnSt = UpdateNonceState ∋ ⟦ pre-ηc , ηv , ηc ⟧ᵘˢ
+      updnSt = UpdateNonceState ∋ ⟦ ηv , ηc ⟧ᵘˢ
       ocertΓ = OCertEnv ∋ dom (pd ˢ)
 
       hyps = vrfChecks? η₀ pd ActiveSlotCoeff bhb

@@ -17,20 +17,17 @@ module Spec.ChainHead.Properties
   (af     : _) (open AbstractFunctions af)
   (li     : LedgerInterface crypto es ss) (let open LedgerInterface li)
   (rs     : _) (open RationalExtStructure rs)
-  (grindingf : Nonce → Nonce)
   where
 
-open import Tactic.GenError
 open import Ledger.Prelude
 open import Ledger.PParams crypto es ss using (PParams; ProtVer)
 open import Spec.TickForecast crypto es ss li
 open import Spec.TickForecast.Properties crypto es ss li
 open import Spec.TickNonce crypto es nonces
 open import Spec.TickNonce.Properties crypto es nonces
-open import Spec.Protocol crypto nonces es ss bs af rs grindingf
-open import Spec.Protocol.Properties crypto nonces es ss bs af rs grindingf
-open import Spec.ChainHead crypto nonces es ss bs af li rs grindingf
-
+open import Spec.Protocol crypto nonces es ss bs af rs
+open import Spec.Protocol.Properties crypto nonces es ss bs af rs
+open import Spec.ChainHead crypto nonces es ss bs af li rs
 
 instance
 
@@ -65,7 +62,7 @@ instance
     computePRTCL = comp {STS = _⊢_⇀⦇_,PRTCL⦈_}
     module Go
       (nes : NewEpochState)
-      (s   : ChainHeadState) (let ⟦ cs , η₀ , pre-ηc , ηv , ηc , ηh , lab ⟧ᶜˢ = s)
+      (s   : ChainHeadState) (let ⟦ cs , η₀ , ηv , ηc , ηh , lab ⟧ᶜˢ = s)
       (bh  : BHeader)        (let (bhb , σ) = bh; open BHBody bhb)
       where
 
@@ -74,11 +71,11 @@ instance
       lab′    = just ⟦ blockNo , slot , headerHash bh ⟧ℓ
       ticknΓ  = ⟦ ηc , nₚₕ ⟧ᵗᵉ
       ticknSt = ⟦ η₀ , ηh ⟧ᵗˢ
-      prtclSt = ⟦ cs , pre-ηc , ηv , ηc ⟧ᵖˢ
+      prtclSt = ⟦ cs , ηv , ηc ⟧ᵖˢ
 
       computeProof : ComputationResult String (∃[ s′ ] nes ⊢ s ⇀⦇ bh ,CHAINHEAD⦈ s′)
       computeProof = case ¿ prtlSeqChecks ¿² lab bh of λ where
-        (no ¬psc) → failure (genErrors ¬psc)
+        (no _)    → failure "Failed in CHAINHEAD"
         (yes psc) → do
           (forecast , tickfStep) ← computeTICKF _ nes slot
           let
@@ -87,14 +84,14 @@ instance
             pp = getPParams forecast; open PParams
             pd = getPoolDistr forecast
           case chainChecks? MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh of λ where
-            (no ¬cc) → failure (genErrors ¬cc)
+            (no _)   → failure "Failed in CHAINHEAD"
             (yes cc) → do
               (⟦ η₀′ , _ ⟧ᵗˢ , ticknStep) ← computeTICKN ticknΓ ticknSt ne
               (_             , prtclStep) ← computePRTCL ⟦ pd , η₀′ ⟧ᵖᵉ prtclSt bh
               success (-, Chain-Head (psc , tickfStep , cc , ticknStep , prtclStep))
 
       completeness : ∀ s′ → nes ⊢ s ⇀⦇ bh ,CHAINHEAD⦈ s′ → (proj₁ <$> computeProof) ≡ success s′
-      completeness ⟦ cs′ , η₀′ , pre-ηc′ , ηv′ , ηc′ , ηh′ , lab′ ⟧ᶜˢ (Chain-Head (psc , tickfStep , cc , ticknStep , prtclStep))
+      completeness ⟦ cs′ , η₀′ , ηv′ , ηc′ , ηh′ , lab′ ⟧ᶜˢ (Chain-Head (psc , tickfStep , cc , ticknStep , prtclStep))
         with ¿ prtlSeqChecks ¿² lab bh
       ... | no ¬psc = contradiction psc ¬psc
       ... | yes _

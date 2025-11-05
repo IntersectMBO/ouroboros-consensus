@@ -28,7 +28,7 @@ record EpochStructure : Type₁ where
         epoch                         : Slot → Epoch
         firstSlot                     : Epoch → Slot
         StabilityWindow               : Slot
-        RandomnessStabilisationWindowPlusOne : Slot
+        RandomnessStabilisationWindow : Slot
         sucᵉ                          : Epoch → Epoch
         kesPeriod                     : Slot → KESPeriod
         _+ᵏ_                          : KESPeriod → ℕ → KESPeriod
@@ -84,7 +84,7 @@ record GlobalConstants : Type₁ where
   field  Network : Type; ⦃ DecEq-Netw ⦄ : DecEq Network; ⦃ Show-Network ⦄ : Show Network
          SlotsPerEpochᶜ : ℕ; ⦃ NonZero-SlotsPerEpochᶜ ⦄ : NonZero SlotsPerEpochᶜ
          StabilityWindowᶜ : ℕ
-         RandomnessStabilisationWindowPlusOneᶜ : ℕ
+         RandomnessStabilisationWindowᶜ : ℕ
          Quorum : ℕ
          NetworkId : Network
          SlotsPerKESPeriodᶜ : ℕ; ⦃ NonZero-SlotsPerKESPeriodᶜ ⦄ : NonZero SlotsPerKESPeriodᶜ
@@ -104,7 +104,7 @@ record GlobalConstants : Type₁ where
     .epoch slot                    → slot / SlotsPerEpochᶜ
     .firstSlot e                   → e * SlotsPerEpochᶜ
     .StabilityWindow               → StabilityWindowᶜ
-    .RandomnessStabilisationWindowPlusOne → RandomnessStabilisationWindowPlusOneᶜ
+    .RandomnessStabilisationWindow → RandomnessStabilisationWindowᶜ
     .sucᵉ                          → suc
     ._+ᵉ'_                         → _+_
     .kesPeriod slot                → slot / SlotsPerKESPeriodᶜ

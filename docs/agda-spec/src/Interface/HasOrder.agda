@@ -25,7 +25,6 @@ module _ {a} {A : Set a} where
         using ()
         renaming (isEquivalence to ≈-isEquivalence; refl to ≤-refl; trans to ≤-trans)
 
-      open IsEquivalence ≈-isEquivalence using () renaming (sym to ≈-sym) public
 
       _≤?_ : ⦃ _≤_ ⁇² ⦄ → Decidable _≤_
       _≤?_ = dec²
@@ -58,7 +57,6 @@ module _ {a} {A : Set a} where
       field
         ⦃ hasPreorder ⦄ : HasPreorder
         ≤-antisym : Antisymmetric _≈_ _≤_
-        
 
       ≤-isPartialOrder : IsPartialOrder _≈_ _≤_
       ≤-isPartialOrder = record { isPreorder = ≤-isPreorder ; antisym = ≤-antisym }
@@ -66,29 +64,8 @@ module _ {a} {A : Set a} where
       <-asymmetric : Asymmetric _<_
       <-asymmetric = ≤-antisym⇒<-asym ≤-antisym
 
-      ≤∧≉⇒<' : ∀ x y → x ≤ y × ¬ (x ≈ y) → x < y
-      ≤∧≉⇒<' x y = ≤∧≉⇒< {x} {y}
+      open IsEquivalence ≈-isEquivalence using () renaming (sym to ≈-sym) public
 
-      ¬-sym : ∀ {x y} → ¬ (x ≈ y) → ¬ (y ≈ x)
-      ¬-sym ¬p q = ¬p (≈-sym q)
-      
-      ≥∧≉⇒>' : ∀ x y → x ≥ y × ¬ (x ≈ y) → (x ≥ y) ≡ (y ≤ x) → (y < x) ≡ (x > y) → x > y
-      ≥∧≉⇒>' x y (x≥y , ¬x=y) xy≥yx yxxy with xy≥yx | yxxy
-      ... | refl | refl = ≤∧≉⇒<' y x (x≥y , (¬-sym ¬x=y))
-
-      ≥∧≉⇒> : ∀ x y → x ≥ y × ¬ (x ≈ y) → x > y
-      ≥∧≉⇒> x y (x≥y , ¬x=y) = ≥∧≉⇒>' x y (x≥y , ¬x=y) refl refl
-
-      >⇒≉' : ∀ x y  → y > x → (y > x) ≡ (x < y) → ¬ (x ≈ y)
-      >⇒≉' x y y>x yxxy with yxxy 
-      ... | refl = (proj₂ (<⇒≤∧≉ y>x))
-
-      >⇒≉ : ∀ y x → y > x → ¬ (y ≈ x)
-      >⇒≉ y x y>x = ¬-sym (>⇒≉' x y y>x refl)
-
-      >⇒≉∧n< : ∀ y x → y > x → ¬ (y ≈ x) × ¬ (y < x)
-      >⇒≉∧n< y x y>x = (>⇒≉ y x y>x , <-asymmetric y>x)
-      
       <-trans : Transitive _<_
       <-trans i<j j<k =
         let
@@ -103,18 +80,7 @@ module _ {a} {A : Set a} where
 
       ≥⇒≮ : ∀ {x y} → y ≤ x → ¬ (x < y)
       ≥⇒≮ y≤x x<y = contradiction (to ≤⇔<∨≈ y≤x) (<⇒¬>⊎≈ x<y)
-      deMorgan₂ : ∀ {A B} → ¬ (A ⊎ B) → ¬ A × ¬ B
-      deMorgan₂ n = (λ a → n (inj₁ a)) , (λ b → n (inj₂ b))
 
-      ≈⇒≮ : ∀ {x y} → x ≈ y → ¬ (x < y)
-      ≈⇒≮ x≈y = λ x<y → contradiction (≈-sym x≈y) (proj₂ (deMorgan₂ (<⇒¬>⊎≈ x<y)))
-
-      >⇒≮∧≉ : ∀ {x y} → x > y → ¬ (x < y) × ¬ (x ≈ y)
-      >⇒≮∧≉ x>y =
-        (λ x<y → contradiction x>y (proj₁ (deMorgan₂ (<⇒¬>⊎≈ x<y))))
-        ,
-        (λ x≈y → contradiction x>y (≈⇒≮ (≈-sym x≈y)))
-        
     open HasPartialOrder ⦃...⦄
 
     record HasDecPartialOrder : Set (sucˡ a) where
