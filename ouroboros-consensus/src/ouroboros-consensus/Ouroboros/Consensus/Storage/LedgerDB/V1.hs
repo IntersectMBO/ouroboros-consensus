@@ -152,7 +152,8 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
         pure $ implMkLedgerDb h snapManager
     }
  where
-  bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
+  !bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< tr
+  !tr = lgrTracer
 
   LedgerDbArgs
     { lgrHasFS
