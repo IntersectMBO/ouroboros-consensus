@@ -616,6 +616,10 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke
     Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
     Test.Consensus.Peras.Voting
+    Test.Consensus.Peras.Voting.Model
+    Test.Consensus.Peras.Voting.Smoke
+    Test.Consensus.Peras.Voting.StateMachine
+    Test.Consensus.Peras.Voting.Util
     Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Pred
@@ -623,6 +627,7 @@ test-suite consensus-test
 
   build-depends:
     QuickCheck,
+    quickcheck-dynamic,
     async,
     base,
     base-deriving-via,
