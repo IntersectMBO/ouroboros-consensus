@@ -2,6 +2,7 @@
 module Test.Consensus.Peras.Voting (tests) where
 
 import qualified Test.Consensus.Peras.Voting.Smoke
+import qualified Test.Consensus.Peras.Voting.StateMachine
 import Test.Tasty (TestTree, testGroup)
 
 {-------------------------------------------------------------------------------
@@ -13,4 +14,5 @@ tests =
   testGroup
     "Voting"
     [ Test.Consensus.Peras.Voting.Smoke.tests
+    , Test.Consensus.Peras.Voting.StateMachine.tests
     ]

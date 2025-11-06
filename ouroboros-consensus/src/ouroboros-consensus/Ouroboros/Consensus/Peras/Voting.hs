@@ -197,11 +197,11 @@ mkPerasVotingView
 
 -- | Reason for voting being disallowed
 newtype NoVoteReason = NoVoteReason (Evidence PerasVotingRule)
-  deriving (Show, Explainable)
+  deriving (Show, Eq, Explainable)
 
 -- | Reason for voting being allowed
 newtype VoteReason = VoteReason (Evidence PerasVotingRule)
-  deriving (Show, Explainable)
+  deriving (Show, Eq, Explainable)
 
 -- | Evaluate whether voting is allowed or not according to the voting rules
 isPerasVotingAllowed ::
