@@ -1,0 +1,533 @@
+diff --git a/cabal.project b/cabal.project
+index 0bc6f2b8e..4dd737e48 100644
+--- a/cabal.project
++++ b/cabal.project
+@@ -16,7 +16,7 @@ index-state:
+   -- Bump this if you need newer packages from Hackage
+   , hackage.haskell.org 2025-09-26T20:57:57Z
+   -- Bump this if you need newer packages from CHaP
+-  , cardano-haskell-packages 2025-10-07T11:20:00Z
++  , cardano-haskell-packages 2025-10-01T14:54:25Z
+ 
+ packages:
+   ouroboros-consensus
+@@ -49,6 +49,14 @@ if impl (ghc >= 9.10)
+   allow-newer:
+     -- https://github.com/phadej/regression-simple/pull/14
+     , regression-simple:base
++    -- https://github.com/kapralVV/Unique/issues/11
++    , Unique:hashable
++
++allow-newer:
++    -- https://github.com/phadej/vec/issues/121
++    , ral:QuickCheck
++    , fin:QuickCheck
++    , bin:QuickCheck
+ 
+ source-repository-package
+   type: git
+@@ -80,12 +88,6 @@ source-repository-package
+     eras/byron/ledger/impl
+     eras/byron/crypto
+ 
+-allow-newer:
+-    -- https://github.com/phadej/vec/issues/121
+-    , ral:QuickCheck
+-    , fin:QuickCheck
+-    , bin:QuickCheck
+-
+ -- Using https://github.com/IntersectMBO/ouroboros-network/tree/peras-staging/pr-5202-v2
+ source-repository-package
+    type: git
+diff --git a/flake.lock b/flake.lock
+index 4feaa3947..acef08067 100644
+--- a/flake.lock
++++ b/flake.lock
+@@ -3,11 +3,11 @@
+     "CHaP": {
+       "flake": false,
+       "locked": {
+-        "lastModified": 1759837865,
+-        "narHash": "sha256-g8SMcVN1v51Muz6a+xJkB92mPx1jsg+sjHKvQ3Wj/jY=",
++        "lastModified": 1759339316,
++        "narHash": "sha256-SW/K9yfhNLNCDAl2ZC8ol0w8X+AwyLin0XOvnn50468=",
+         "owner": "intersectmbo",
+         "repo": "cardano-haskell-packages",
+-        "rev": "9a46cacd941c108492cd4cee5d29735e8cd8ee65",
++        "rev": "aa50d6dffede91c8fdfcef94c71641a00214522a",
+         "type": "github"
+       },
+       "original": {
+diff --git a/ouroboros-consensus-cardano/changelog.d/20250919_095938_thomas.bagrel_object_diffusion.md b/ouroboros-consensus-cardano/changelog.d/20250919_095938_thomas.bagrel_object_diffusion.md
+deleted file mode 100644
+index 9efe00d43..000000000
+--- a/ouroboros-consensus-cardano/changelog.d/20250919_095938_thomas.bagrel_object_diffusion.md
++++ /dev/null
+@@ -1,23 +0,0 @@
+-<!--
+-A new scriv changelog fragment.
+-
+-Uncomment the section that is right (remove the HTML comment wrapper).
+-For top level release notes, leave all the headers commented out.
+--->
+-
+-<!--
+-### Patch
+-
+-- A bullet item for the Patch category.
+-
+--->
+-<!--
+-### Non-Breaking
+-
+-- A bullet item for the Non-Breaking category.
+-
+--->
+-
+-### Breaking
+-
+-- Added support for `NodeToNodeV_16`
+diff --git a/ouroboros-consensus-cardano/changelog.d/20250919_101630_thomas.bagrel_hfc_era_peras.md b/ouroboros-consensus-cardano/changelog.d/20250919_101630_thomas.bagrel_hfc_era_peras.md
+deleted file mode 100644
+index 043efd495..000000000
+--- a/ouroboros-consensus-cardano/changelog.d/20250919_101630_thomas.bagrel_hfc_era_peras.md
++++ /dev/null
+@@ -1,29 +0,0 @@
+-<!--
+-A new scriv changelog fragment.
+-
+-Uncomment the section that is right (remove the HTML comment wrapper).
+-For top level release notes, leave all the headers commented out.
+--->
+-
+-<!--
+-### Patch
+-
+-- A bullet item for the Patch category.
+-
+--->
+-<!--
+-### Non-Breaking
+-
+-- A bullet item for the Non-Breaking category.
+-
+--->
+-
+-### Breaking
+-
+-- Add `eraPerasRoundLength` parameters to `{Byron,Shelley}EraParams` structs.
+-
+-
+-### Non-Breaking
+-
+-- The `EraSummary`, while not modified directly, is now Peras-aware via `EraParams`
+-  - in a valid summary, Peras round length must divide the epoch size.
+diff --git a/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Ledger.hs b/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Ledger.hs
+index d3a86f21a..c8851eaaf 100644
+--- a/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Ledger.hs
++++ b/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Ledger.hs
+@@ -175,7 +175,6 @@ shelleyEraParams genesis =
+     , eraSafeZone = HardFork.StandardSafeZone stabilityWindow
+     , eraGenesisWin = GenesisWindow stabilityWindow
+     , -- TODO(geo2a): enabled Peras conditionally in the Dijkstra era
+-      -- see https://github.com/tweag/cardano-peras/issues/112
+       eraPerasRoundLength = HardFork.NoPerasEnabled
+     }
+  where
+diff --git a/ouroboros-consensus-diffusion/changelog.d/20250919_095930_thomas.bagrel_object_diffusion.md b/ouroboros-consensus-diffusion/changelog.d/20250919_095930_thomas.bagrel_object_diffusion.md
+deleted file mode 100644
+index fc67d834c..000000000
+--- a/ouroboros-consensus-diffusion/changelog.d/20250919_095930_thomas.bagrel_object_diffusion.md
++++ /dev/null
+@@ -1,28 +0,0 @@
+-<!--
+-A new scriv changelog fragment.
+-
+-Uncomment the section that is right (remove the HTML comment wrapper).
+-For top level release notes, leave all the headers commented out.
+--->
+-
+-<!--
+-### Patch
+-
+-- A bullet item for the Patch category.
+-
+--->
+-<!--
+-### Non-Breaking
+-
+-- A bullet item for the Non-Breaking category.
+-
+--->
+-
+-### Breaking
+-
+-- Modify `Ouroboros.Consensus{.Node,.Node.Tracer,.Network.NodeToNode}` to wire-in PerasCertDiffusion similarly to other mini-protocols (e.g. TX-submission)
+-- Propagate feature flags down to `NodeKernelArgs`
+-
+-### Non-Breaking
+-
+-- Update `Test.ThreadNet.Network` in `unstable-diffusion-testlib` accordingly to the changes made in `Ouroboros.Consensus.Network.NodeToNode`
+diff --git a/ouroboros-consensus-diffusion/changelog.d/20250919_101623_thomas.bagrel_hfc_era_peras.md b/ouroboros-consensus-diffusion/changelog.d/20250919_101623_thomas.bagrel_hfc_era_peras.md
+deleted file mode 100644
+index 18ef03093..000000000
+--- a/ouroboros-consensus-diffusion/changelog.d/20250919_101623_thomas.bagrel_hfc_era_peras.md
++++ /dev/null
+@@ -1,24 +0,0 @@
+-<!--
+-A new scriv changelog fragment.
+-
+-Uncomment the section that is right (remove the HTML comment wrapper).
+-For top level release notes, leave all the headers commented out.
+--->
+-
+-<!--
+-### Patch
+-
+-- A bullet item for the Patch category.
+-
+--->
+-
+-### Non-Breaking
+-
+-- Update code using `EraParams` now that it has a new field `eraPerasRoundLength` for Byron and Shelley eras.
+-
+-<!--
+-### Breaking
+-
+-- A bullet item for the Breaking category.
+-
+--->
+diff --git a/ouroboros-consensus-diffusion/ouroboros-consensus-diffusion.cabal b/ouroboros-consensus-diffusion/ouroboros-consensus-diffusion.cabal
+index 0caddc634..f1c5b42fc 100644
+--- a/ouroboros-consensus-diffusion/ouroboros-consensus-diffusion.cabal
++++ b/ouroboros-consensus-diffusion/ouroboros-consensus-diffusion.cabal
+@@ -77,7 +77,6 @@ library
+   build-depends:
+     base >=4.14 && <4.22,
+     bytestring >=0.10 && <0.13,
+-    cardano-base,
+     cardano-slotting,
+     cborg ^>=0.2.2,
+     containers >=0.5 && <0.8,
+diff --git a/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node.hs b/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node.hs
+index fd009ec4b..b0d749a94 100644
+--- a/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node.hs
++++ b/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node.hs
+@@ -61,7 +61,6 @@ module Ouroboros.Consensus.Node
+   , openChainDB
+   ) where
+ 
+-import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+ import qualified Cardano.Network.Diffusion as Cardano.Diffusion
+ import Cardano.Network.Diffusion.Configuration (ChainSyncIdleTimeout (..))
+ import qualified Cardano.Network.Diffusion.Policies as Cardano.Diffusion
+@@ -86,7 +85,6 @@ import Data.Kind (Type)
+ import Data.Map.Strict (Map)
+ import qualified Data.Map.Strict as Map
+ import Data.Maybe (fromMaybe, isNothing)
+-import Data.Set (Set)
+ import Data.Time (NominalDiffTime)
+ import Data.Typeable (Typeable)
+ import Ouroboros.Consensus.Block
+@@ -235,8 +233,6 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
+   -- ^ Network PeerSharing miniprotocol willingness flag
+   , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
+   , rnGenesisConfig :: GenesisConfig
+-  , rnFeatureFlags :: Set CardanoFeatureFlag
+-  -- ^ Enabled experimental features
+   }
+ 
+ -- | Arguments that usually only tests /directly/ specify.
+@@ -324,8 +320,6 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
+   , llrnPublicPeerSelectionStateVar :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
+   , llrnLdbFlavorArgs :: LedgerDbBackendArgs m blk
+   -- ^ The flavor arguments
+-  , llrnFeatureFlags :: Set CardanoFeatureFlag
+-  -- ^ Enabled experimental features
+   }
+ 
+ data NodeDatabasePaths
+@@ -577,7 +571,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
+                   gsmAntiThunderingHerd
+                   keepAliveRng
+                   cfg
+-                  llrnFeatureFlags
+                   rnTraceConsensus
+                   btime
+                   (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
+@@ -855,7 +848,6 @@ mkNodeKernelArgs ::
+   StdGen ->
+   StdGen ->
+   TopLevelConfig blk ->
+-  Set CardanoFeatureFlag ->
+   Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk ->
+   BlockchainTime m ->
+   InFutureCheck.SomeHeaderInFutureCheck m blk ->
+@@ -875,7 +867,6 @@ mkNodeKernelArgs
+   gsmAntiThunderingHerd
+   rng
+   cfg
+-  featureFlags
+   tracers
+   btime
+   chainSyncFutureCheck
+@@ -895,7 +886,6 @@ mkNodeKernelArgs
+           { tracers
+           , registry
+           , cfg
+-          , featureFlags
+           , btime
+           , chainDB
+           , initChainDB = nodeInitChainDB
+@@ -1014,7 +1004,6 @@ stdLowLevelRunNodeArgsIO
+     { rnProtocolInfo
+     , rnPeerSharing
+     , rnGenesisConfig
+-    , rnFeatureFlags
+     }
+   $(SafeWildCards.fields 'StdRunNodeArgs) = do
+     llrnBfcSalt <- stdBfcSaltIO
+@@ -1064,8 +1053,6 @@ stdLowLevelRunNodeArgsIO
+         , llrnPublicPeerSelectionStateVar =
+             Diffusion.dcPublicPeerSelectionVar srnDiffusionConfiguration
+         , llrnLdbFlavorArgs = srnLedgerDbBackendArgs
+-        , llrnFeatureFlags =
+-            rnFeatureFlags
+         }
+    where
+     networkMagic :: NetworkMagic
+diff --git a/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node/Tracers.hs b/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node/Tracers.hs
+index 4b8627dbd..0509743d0 100644
+--- a/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node/Tracers.hs
++++ b/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node/Tracers.hs
+@@ -80,10 +80,6 @@ data Tracers' remotePeer localPeer blk f = Tracers
+       f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
+   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
+   , mempoolTracer :: f (TraceEventMempool blk)
+-  , perasCertDiffusionInboundTracer ::
+-      f (TraceLabelPeer remotePeer (TracePerasCertDiffusionInbound blk))
+-  , perasCertDiffusionOutboundTracer ::
+-      f (TraceLabelPeer remotePeer (TracePerasCertDiffusionOutbound blk))
+   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
+   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
+   , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
+@@ -96,6 +92,10 @@ data Tracers' remotePeer localPeer blk f = Tracers
+       f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
+   , dbfTracer :: f (CSJumping.TraceEventDbf remotePeer)
+   , kesAgentTracer :: f KESAgentClientTrace
++  , perasCertDiffusionInboundTracer ::
++      f (TraceLabelPeer remotePeer (TracePerasCertDiffusionInbound blk))
++  , perasCertDiffusionOutboundTracer ::
++      f (TraceLabelPeer remotePeer (TracePerasCertDiffusionOutbound blk))
+   }
+ 
+ instance
+@@ -114,8 +114,6 @@ instance
+       , txOutboundTracer = f txOutboundTracer
+       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
+       , mempoolTracer = f mempoolTracer
+-      , perasCertDiffusionInboundTracer = f perasCertDiffusionInboundTracer
+-      , perasCertDiffusionOutboundTracer = f perasCertDiffusionOutboundTracer
+       , forgeTracer = f forgeTracer
+       , blockchainTimeTracer = f blockchainTimeTracer
+       , forgeStateInfoTracer = f forgeStateInfoTracer
+@@ -127,6 +125,8 @@ instance
+       , csjTracer = f csjTracer
+       , dbfTracer = f dbfTracer
+       , kesAgentTracer = f kesAgentTracer
++      , perasCertDiffusionInboundTracer = f perasCertDiffusionInboundTracer
++      , perasCertDiffusionOutboundTracer = f perasCertDiffusionOutboundTracer
+       }
+    where
+     f ::
+@@ -153,8 +153,6 @@ nullTracers =
+     , txOutboundTracer = nullTracer
+     , localTxSubmissionServerTracer = nullTracer
+     , mempoolTracer = nullTracer
+-    , perasCertDiffusionInboundTracer = nullTracer
+-    , perasCertDiffusionOutboundTracer = nullTracer
+     , forgeTracer = nullTracer
+     , blockchainTimeTracer = nullTracer
+     , forgeStateInfoTracer = nullTracer
+@@ -166,6 +164,8 @@ nullTracers =
+     , csjTracer = nullTracer
+     , dbfTracer = nullTracer
+     , kesAgentTracer = nullTracer
++    , perasCertDiffusionInboundTracer = nullTracer
++    , perasCertDiffusionOutboundTracer = nullTracer
+     }
+ 
+ showTracers ::
+@@ -194,8 +194,6 @@ showTracers tr =
+     , txOutboundTracer = showTracing tr
+     , localTxSubmissionServerTracer = showTracing tr
+     , mempoolTracer = showTracing tr
+-    , perasCertDiffusionInboundTracer = showTracing tr
+-    , perasCertDiffusionOutboundTracer = showTracing tr
+     , forgeTracer = showTracing tr
+     , blockchainTimeTracer = showTracing tr
+     , forgeStateInfoTracer = showTracing tr
+@@ -207,6 +205,8 @@ showTracers tr =
+     , csjTracer = showTracing tr
+     , dbfTracer = showTracing tr
+     , kesAgentTracer = showTracing tr
++    , perasCertDiffusionInboundTracer = showTracing tr
++    , perasCertDiffusionOutboundTracer = showTracing tr
+     }
+ 
+ {-------------------------------------------------------------------------------
+diff --git a/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/NodeKernel.hs b/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/NodeKernel.hs
+index 36ba2cbcf..1c45c6815 100644
+--- a/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/NodeKernel.hs
++++ b/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/NodeKernel.hs
+@@ -27,7 +27,6 @@ module Ouroboros.Consensus.NodeKernel
+   , toConsensusMode
+   ) where
+ 
+-import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+ import Cardano.Network.ConsensusMode (ConsensusMode (..))
+ import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
+ import Cardano.Network.PeerSelection.LocalRootPeers
+@@ -52,7 +51,6 @@ import Data.List.NonEmpty (NonEmpty)
+ import qualified Data.List.NonEmpty as NE
+ import Data.Maybe (isJust, mapMaybe)
+ import Data.Proxy
+-import Data.Set (Set)
+ import qualified Data.Text as Text
+ import Data.Void (Void)
+ import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
+@@ -197,7 +195,6 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
+   { tracers :: Tracers m (ConnectionId addrNTN) addrNTC blk
+   , registry :: ResourceRegistry m
+   , cfg :: TopLevelConfig blk
+-  , featureFlags :: Set CardanoFeatureFlag
+   , btime :: BlockchainTime m
+   , chainDB :: ChainDB m blk
+   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
+diff --git a/ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs b/ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
+index 6bd6d9bde..44f13dbfe 100644
+--- a/ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
++++ b/ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
+@@ -1045,7 +1045,6 @@ runThreadNetwork
+               { tracers
+               , registry
+               , cfg = pInfoConfig
+-              , featureFlags = mempty
+               , btime
+               , chainDB
+               , initChainDB = nodeInitChainDB
+diff --git a/ouroboros-consensus/changelog.d/20250918_104810_thomas.bagrel_object_diffusion.md b/ouroboros-consensus/changelog.d/20250918_104810_thomas.bagrel_object_diffusion.md
+deleted file mode 100644
+index fba0bcc16..000000000
+--- a/ouroboros-consensus/changelog.d/20250918_104810_thomas.bagrel_object_diffusion.md
++++ /dev/null
+@@ -1,28 +0,0 @@
+-<!--
+-A new scriv changelog fragment.
+-
+-Uncomment the section that is right (remove the HTML comment wrapper).
+-For top level release notes, leave all the headers commented out.
+--->
+-
+-<!--
+-### Patch
+-
+-- A bullet item for the Patch category.
+-
+--->
+-<!--
+-
+-
+-- A bullet item for the Non-Breaking category.
+-
+--->
+-
+-### Breaking
+-
+-- Relies on a new version of `ouroboros-network` with support for ObjectDiffusion mini-protocol
+-- Added modules `Ouroboros.Consensus.MiniProtocol.ObjectDiffusion{.Inbound,.Outbound}` with implementations of the ObjectDiffusion protocol (quite similar/inspired from TX-submission, except that client = inbound, server = outbound)
+-- Added module `Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API` defining `ObjectPool{Reader,Writer}` interfaces, through which ObjectDiffusion accesses/stores the objects to send/that have been received.
+-- Added modules `Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert` and `Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert` containing definitions specific to `PerasCert` diffusion through the ObjectDiffusion mini-protocol 
+-- Modifies `Ouroboros.Consensus.Node.Serialisation` to add CBOR serialisation (`SerialiseNodeToNode`) for `Point blk`, `Tip blk`, and  `PerasCert blk`
+-- Added modules `Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke` and `Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke` with smoke tests for the general ObjectDiffusion mini-protocol and for the `PerasCert`-specific instance of it
+diff --git a/ouroboros-consensus/changelog.d/20250918_114333_thomas.bagrel_hfc_era_peras.md b/ouroboros-consensus/changelog.d/20250918_114333_thomas.bagrel_hfc_era_peras.md
+deleted file mode 100644
+index 912fa1517..000000000
+--- a/ouroboros-consensus/changelog.d/20250918_114333_thomas.bagrel_hfc_era_peras.md
++++ /dev/null
+@@ -1,36 +0,0 @@
+-<!--
+-A new scriv changelog fragment.
+-
+-Uncomment the section that is right (remove the HTML comment wrapper).
+-For top level release notes, leave all the headers commented out.
+--->
+-
+-<!--
+-### Patch
+-
+-- A bullet item for the Patch category.
+-
+--->
+-<!--
+-### Non-Breaking
+-
+-- A bullet item for the Non-Breaking category.
+-
+--->
+-
+-### Breaking
+-
+-- Changes in the HFC types:
+-  - `EraParams` now keeps track of an optional Peras round length.
+-  - `Bound` now keeps track of an optional Peras round number.
+-  - In the `Serialise` instances for `EraParams` and `Bound`, the encoders generate different CBOR depending on whether of not the Peras-relate components are present. The decoders act differently depending on the length of the CBOR list.
+-- Changes in the HFC time translation queries:
+-  - Two new top-level queries are exposed from `Ouroboros.Consensus.HardFork.History.Qry`:
+-
+-    ```haskell
+-    perasRoundNoToSlot :: PerasRoundNo -> Qry SlotNo
+-    slotToPerasRoundNo :: SlotNo -> Qry PerasRoundNo
+-    ```
+-
+-- Add a roundtrip test that ensures that converting Peras round number to a slot and then back is an identity is added into the `Test.Consensus.HardFork.Summary` module.
+-- Add a Peras-specific test into `Test.Consensus.HardFork.History` module.
+diff --git a/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/PerasCertDB/Impl.hs b/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/PerasCertDB/Impl.hs
+index 8b8a33c34..e8738ad0b 100644
+--- a/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/PerasCertDB/Impl.hs
++++ b/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/PerasCertDB/Impl.hs
+@@ -259,8 +259,12 @@ data PerasVolatileCertState blk = PerasVolatileCertState
+   -- ^ The boosted blocks by 'RoundNo' of all certificates currently in the db.
+   , pvcsWeightByPoint :: !(PerasWeightSnapshot blk)
+   -- ^ The weight of boosted blocks w.r.t. the certificates currently in the db.
++  --
++  -- INVARIANT: In sync with 'pvcsCerts'.
+   , pvcsCertsByTicket :: !(Map PerasCertTicketNo (ValidatedPerasCert blk))
+   -- ^ The certificates by 'PerasCertTicketNo'.
++  --
++  -- INVARIANT: In sync with 'pvcsCerts'.
+   , pvcsLastTicketNo :: !PerasCertTicketNo
+   -- ^ The most recent 'PerasCertTicketNo' (or 'zeroPerasCertTicketNo'
+   -- otherwise).
+diff --git a/ouroboros-consensus/test/storage-test/Test/Ouroboros/Storage/PerasCertDB/StateMachine.hs b/ouroboros-consensus/test/storage-test/Test/Ouroboros/Storage/PerasCertDB/StateMachine.hs
+index 5df29e3d2..97bf4844c 100644
+--- a/ouroboros-consensus/test/storage-test/Test/Ouroboros/Storage/PerasCertDB/StateMachine.hs
++++ b/ouroboros-consensus/test/storage-test/Test/Ouroboros/Storage/PerasCertDB/StateMachine.hs
+@@ -113,7 +113,15 @@ instance StateModel Model where
+ 
+   precondition (Model model) = \case
+     OpenDB -> not model.open
+-    _ -> model.open
++    action ->
++      model.open && case action of
++        CloseDB -> True
++        -- Do not add equivocating certificates.
++        AddCert cert -> all p model.certs
++         where
++          p cert' = getPerasCertRound cert /= getPerasCertRound cert' || cert == cert'
++        GetWeightSnapshot -> True
++        GarbageCollect _slot -> True
+ 
+ deriving stock instance Show (Action Model a)
+ deriving stock instance Eq (Action Model a)
