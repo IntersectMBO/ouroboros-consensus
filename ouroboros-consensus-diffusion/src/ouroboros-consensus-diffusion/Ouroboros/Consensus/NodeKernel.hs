@@ -395,6 +395,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
     void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
         let tracer = leiosKernelTracer tracers
         () <- MVar.takeMVar getLeiosReady
+        iterationStart <- getMonotonicTime
         leiosPeersVars <- MVar.readMVar getLeiosPeersVars
         offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
         ebBodies <- MVar.readMVar getLeiosEbBodies
@@ -412,13 +413,18 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
             atomically $ do
                 StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
         when newCopy $ void $ MVar.tryPutMVar getLeiosCopyReady ()
-        threadDelay (0.5 :: DiffTime)   -- TODO magic number
+        iterationEnd <- getMonotonicTime
+        let loopInterval = 0.5 :: DiffTime    -- TODO magic number
+            duration = iterationEnd `diffTime` iterationStart
+        traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
+        threadDelay $ loopInterval - duration
 
     void $ forkLinkedThread registry "NodeKernel.leiosCopyLogic" $ do
         let tracer = leiosKernelTracer tracers
         Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
         (\m -> let loop !i = do m i; loop (i+1 :: Int) in loop 0) $ \i -> do
             () <- MVar.takeMVar getLeiosCopyReady
+            iterationStart <- getMonotonicTime
             traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: running " ++ show i
             t1 <- getMonotonicTimeNSec
             moreTodo <-
@@ -433,7 +439,11 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
             when moreTodo $ do
                 traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: more " ++ show i
                 void $ MVar.tryPutMVar getLeiosCopyReady ()
-            threadDelay (0.050 :: DiffTime)   -- TODO magic number
+            iterationEnd <- getMonotonicTime
+            let loopInterval = 0.050 :: DiffTime    -- TODO magic number
+                duration = iterationEnd `diffTime` iterationStart
+            traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: duration " ++ show duration
+            threadDelay $ loopInterval - duration
 
     return NodeKernel
       { getChainDB              = chainDB
