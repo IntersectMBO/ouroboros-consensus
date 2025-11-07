@@ -75,6 +75,8 @@ import Ouroboros.Network.AnchoredSeq hiding
 import qualified Ouroboros.Network.AnchoredSeq as AS hiding (map)
 import System.FS.CRC (CRC)
 import Prelude hiding (read)
+import Data.SOP.Strict
+import Data.SOP.BasicFunctors
 
 {-------------------------------------------------------------------------------
   LedgerTablesHandles
@@ -131,7 +133,7 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- encoding of the values based on the current era.
   --
   -- It returns a CRC only on backends that support it, as the InMemory backend.
-  , tablesSize :: !(m (Maybe Int))
+  , tablesSize :: !(m (Maybe (NP (K Int) (TablesForBlock l))))
   -- ^ Consult the size of the ledger tables in the database. This will return
   -- 'Nothing' in backends that do not support this operation.
   }

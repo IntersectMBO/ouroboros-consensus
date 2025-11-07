@@ -192,7 +192,7 @@ import Control.Exception as Exn
 import Data.Bifunctor (bimap)
 import Data.Functor.Identity
 import Data.Map.Diff.Strict as AntiDiff (applyDiffForKeys)
-import Data.SOP (K, unK)
+import Data.SOP (K, hcollapse, unK)
 import Data.SOP.Functors
 import Data.Word
 import GHC.Generics (Generic)
@@ -290,13 +290,13 @@ data DbChangelog l = DbChangelog
   deriving Generic
 
 deriving instance
-  (Eq (TxIn l), Eq (TxOut l), Eq (l EmptyMK)) =>
+  (AllTables Eq SeqDiffMK l, Eq (l EmptyMK)) =>
   Eq (DbChangelog l)
 deriving instance
-  (NoThunks (TxIn l), NoThunks (TxOut l), NoThunks (l EmptyMK)) =>
+  (AllTables NoThunks SeqDiffMK l, NoThunks (l EmptyMK)) =>
   NoThunks (DbChangelog l)
 deriving instance
-  (Show (TxIn l), Show (TxOut l), Show (l EmptyMK)) =>
+  (AllTables Show SeqDiffMK l, Show (l EmptyMK)) =>
   Show (DbChangelog l)
 
 type DbChangelog' blk = DbChangelog (ExtLedgerState blk)
@@ -663,7 +663,7 @@ splitForFlushing ::
   DbChangelog l ->
   (Maybe (DiffsToFlush l), DbChangelog l)
 splitForFlushing dblog =
-  if getTipSlot immTip == Origin || ltcollapse (ltmap (K2 . DS.length . getSeqDiffMK) l) == 0
+  if getTipSlot immTip == Origin || maximum (hcollapse (ltcollapse (ltmap (K2 . DS.length . getSeqDiffMK) l))) == 0
     then (Nothing, dblog)
     else (Just ldblog, rdblog)
  where
@@ -862,14 +862,14 @@ immutableTipSlot =
     . changelogStates
 
 -- | How many diffs we can flush to the backing store?
---
--- NOTE: This will be wrong once we have more than one table.
 flushableLength ::
   (HasLedgerTables l, GetTip l) =>
   DbChangelog l ->
   Word64
 flushableLength chlog =
   (\x -> x - fromIntegral (AS.length (changelogStates chlog)))
+    . maximum
+    . hcollapse
     . ltcollapse
     . ltmap (K2 . f)
     $ changelogDiffs chlog

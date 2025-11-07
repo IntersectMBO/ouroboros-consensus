@@ -6,6 +6,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | Interface to the ledger layer
 --
@@ -89,6 +90,9 @@ class
   , HasHeader (Header blk)
   , HasLedgerTables l
   , HasLedgerTables (Ticked l)
+  , CanCastLedgerTables l (Ticked l) KeysMK
+  , CanCastLedgerTables l (Ticked l) ValuesMK
+  , CanCastLedgerTables (Ticked l) l DiffMK
   ) =>
   ApplyBlock l blk
   where
@@ -196,7 +200,7 @@ reapplyLedgerBlock ::
 reapplyLedgerBlock = lrResult ...: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
-  ApplyBlock l blk =>
+  (ApplyBlock l blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l ->
   blk ->

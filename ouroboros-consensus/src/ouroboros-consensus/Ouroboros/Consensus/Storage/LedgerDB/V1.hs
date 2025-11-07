@@ -1,3 +1,4 @@
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -78,6 +79,7 @@ mkInitDb ::
   , IOLike m
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
+  , ApplyBlock (ExtLedgerState blk) blk
   ) =>
   Complete LedgerDbArgs m blk ->
   V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->

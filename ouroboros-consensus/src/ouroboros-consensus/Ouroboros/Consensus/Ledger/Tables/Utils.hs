@@ -81,7 +81,7 @@ ltwith ::
 ltwith = withLedgerTables
 
 ltprj ::
-  (HasLedgerTables l, SameUtxoTypes l l', CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+  (HasLedgerTables l, CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk, CanCastLedgerTables l l' mk) =>
   l mk ->
   LedgerTables l' mk
 ltprj = castLedgerTables . projectLedgerTables
@@ -113,7 +113,8 @@ emptyLedgerTables = ltpure emptyMK
 rawTrackingDiffs :: TrackingMK k v -> DiffMK k v
 rawTrackingDiffs (TrackingMK _vs d) = DiffMK d
 
-trackingToDiffs :: (HasLedgerTables l, LedgerTableConstraints l) => l TrackingMK -> l DiffMK
+trackingToDiffs ::
+  (HasLedgerTables l, CanCastLedgerTables l l TrackingMK) => l TrackingMK -> l DiffMK
 trackingToDiffs l = ltwith l $ ltmap rawTrackingDiffs (ltprj l)
 
 --
@@ -123,7 +124,8 @@ trackingToDiffs l = ltwith l $ ltmap rawTrackingDiffs (ltprj l)
 rawTrackingValues :: TrackingMK k v -> ValuesMK k v
 rawTrackingValues (TrackingMK vs _ds) = ValuesMK vs
 
-trackingToValues :: (LedgerTableConstraints l, HasLedgerTables l) => l TrackingMK -> l ValuesMK
+trackingToValues ::
+  (HasLedgerTables l, CanCastLedgerTables l l TrackingMK) => l TrackingMK -> l ValuesMK
 trackingToValues l = ltwith l $ ltmap rawTrackingValues (ltprj l)
 
 --
@@ -142,18 +144,22 @@ rawPrependDiffs (DiffMK d1) (DiffMK d2) = DiffMK (d1 <> d2)
 -- | Prepend diffs from the first ledger state to the diffs from the second
 -- ledger state. Returns ledger tables.
 prependDiffs' ::
-  ( SameUtxoTypes l l''
-  , SameUtxoTypes l' l''
-  , HasLedgerTables l
+  ( HasLedgerTables l
   , HasLedgerTables l'
   , HasLedgerTables l''
+  , CanCastLedgerTables l l'' DiffMK
+  , CanCastLedgerTables l' l'' DiffMK
   ) =>
   l DiffMK -> l' DiffMK -> LedgerTables l'' DiffMK
 prependDiffs' l1 l2 = ltliftA2 rawPrependDiffs (ltprj l1) (ltprj l2)
 
 -- | Prepend the diffs from @l1@ to @l2@. Returns @l2@.
 prependDiffs ::
-  (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l') =>
+  ( HasLedgerTables l
+  , HasLedgerTables l'
+  , CanCastLedgerTables l l' DiffMK
+  , CanCastLedgerTables l' l' DiffMK
+  ) =>
   l DiffMK -> l' DiffMK -> l' DiffMK
 prependDiffs l1 l2 = ltwith l2 $ prependDiffs' l1 l2
 
@@ -173,18 +179,22 @@ applyDiffsMK (ValuesMK vals) (DiffMK diffs) = ValuesMK (Diff.applyDiff vals diff
 -- | Apply diffs from the second ledger state to the values of the first ledger
 -- state. Returns ledger tables.
 applyDiffs' ::
-  ( SameUtxoTypes l l''
-  , SameUtxoTypes l' l''
-  , HasLedgerTables l
+  ( HasLedgerTables l
   , HasLedgerTables l'
   , HasLedgerTables l''
+  , CanCastLedgerTables l l'' ValuesMK
+  , CanCastLedgerTables l' l'' DiffMK
   ) =>
   l ValuesMK -> l' DiffMK -> LedgerTables l'' ValuesMK
 applyDiffs' l1 l2 = ltliftA2 applyDiffsMK (ltprj l1) (ltprj l2)
 
 -- | Apply diffs from @l2@ on values from @l1@. Returns @l2@.
 applyDiffs ::
-  (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l') =>
+  ( HasLedgerTables l
+  , HasLedgerTables l'
+  , CanCastLedgerTables l l' ValuesMK
+  , CanCastLedgerTables l' l' DiffMK
+  ) =>
   l ValuesMK -> l' DiffMK -> l' ValuesMK
 applyDiffs l1 l2 = ltwith l2 $ applyDiffs' l1 l2
 
@@ -199,23 +209,31 @@ rawApplyDiffForKeys (ValuesMK vals) (KeysMK keys) (DiffMK diffs) =
 
 -- | Apply diffs in @l3@ for keys in @l2@ and @l1@ on values from @l1@. Returns @l3@.
 applyDiffForKeys ::
-  (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l') =>
+  ( HasLedgerTables l
+  , HasLedgerTables l'
+  , CanCastLedgerTables l l ValuesMK
+  , CanCastLedgerTables l l' KeysMK
+  , CanCastLedgerTables l l' ValuesMK
+  ) =>
   l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> l' ValuesMK
 applyDiffForKeys l1 l2 l3 = ltwith l3 $ applyDiffForKeys' (ltprj l1) l2 l3
 
 applyDiffForKeys' ::
-  ( SameUtxoTypes l l''
-  , SameUtxoTypes l l'
-  , HasLedgerTables l
-  , HasLedgerTables l'
+  ( HasLedgerTables l'
   , HasLedgerTables l''
+  , CanCastLedgerTables l' l'' DiffMK
+  , CanCastLedgerTables l l'' KeysMK
+  , CanCastLedgerTables l l'' ValuesMK
   ) =>
   LedgerTables l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> LedgerTables l'' ValuesMK
 applyDiffForKeys' l1 l2 l3 = ltliftA3 rawApplyDiffForKeys (castLedgerTables l1) (castLedgerTables l2) (ltprj l3)
 
 -- | Apply diffs in @l3@ for keys in @l2@ and @l1@ on values from @l1@. Returns @l3@.
 applyDiffForKeysOnTables ::
-  (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l') =>
+  ( HasLedgerTables l'
+  , CanCastLedgerTables l l' KeysMK
+  , CanCastLedgerTables l l' ValuesMK
+  ) =>
   LedgerTables l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> l' ValuesMK
 applyDiffForKeysOnTables l1 l2 l3 = ltwith l3 $ applyDiffForKeys' l1 l2 l3
 
@@ -234,19 +252,18 @@ rawCalculateDifference (ValuesMK before) (ValuesMK after) = TrackingMK after (Di
 -- considered diffs. In particular this is used when populating the ledger
 -- tables for the first time.
 valuesAsDiffs ::
-  (LedgerTableConstraints l, HasLedgerTables l) =>
-  l ValuesMK -> l DiffMK
+  HasLedgerTables l => l ValuesMK -> l DiffMK
 valuesAsDiffs l = trackingToDiffs $ ltwith l $ ltliftA (rawCalculateDifference emptyMK) (ltprj l)
 
 -- | Calculate the differences between two ledger states. The first ledger state
 -- is considered /before/, the second ledger state is considered /after/.
 -- Returns ledger tables.
 calculateDifference' ::
-  ( SameUtxoTypes l l''
-  , SameUtxoTypes l' l''
-  , HasLedgerTables l
+  ( HasLedgerTables l
   , HasLedgerTables l'
   , HasLedgerTables l''
+  , CanCastLedgerTables l' l'' ValuesMK
+  , CanCastLedgerTables l l'' ValuesMK
   ) =>
   l ValuesMK -> l' ValuesMK -> LedgerTables l'' TrackingMK
 calculateDifference' l1 l2 = ltliftA2 rawCalculateDifference (ltprj l1) (ltprj l2)
@@ -255,7 +272,10 @@ calculateDifference' l1 l2 = ltliftA2 rawCalculateDifference (ltprj l1) (ltprj l
 -- is considered /before/, the second ledger state is considered /after/.
 -- Returns the second ledger state.
 calculateDifference ::
-  (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l') =>
+  ( HasLedgerTables l
+  , HasLedgerTables l'
+  , CanCastLedgerTables l l' ValuesMK
+  ) =>
   l ValuesMK -> l' ValuesMK -> l' TrackingMK
 calculateDifference l1 l2 = ltwith l2 $ calculateDifference' l1 l2
 
@@ -274,11 +294,11 @@ rawAttachAndApplyDiffs (ValuesMK v) (DiffMK d) = TrackingMK (Diff.applyDiff v d)
 -- second ledger state, and returns the resulting values together with the
 -- applied diff.
 attachAndApplyDiffs' ::
-  ( SameUtxoTypes l l''
-  , SameUtxoTypes l' l''
-  , HasLedgerTables l
+  ( HasLedgerTables l
   , HasLedgerTables l'
   , HasLedgerTables l''
+  , CanCastLedgerTables l l'' DiffMK
+  , CanCastLedgerTables l' l'' ValuesMK
   ) =>
   l' ValuesMK -> l DiffMK -> LedgerTables l'' TrackingMK
 attachAndApplyDiffs' l1 l2 = ltliftA2 rawAttachAndApplyDiffs (ltprj l1) (ltprj l2)
@@ -287,7 +307,7 @@ attachAndApplyDiffs' l1 l2 = ltliftA2 rawAttachAndApplyDiffs (ltprj l1) (ltprj l
 -- second ledger state. Returns the second ledger state with a 'TrackingMK' of
 -- the final values and all the diffs.
 attachAndApplyDiffs ::
-  (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l') =>
+  (HasLedgerTables l, HasLedgerTables l', CanCastLedgerTables l l' ValuesMK) =>
   l ValuesMK -> l' DiffMK -> l' TrackingMK
 attachAndApplyDiffs l1 l2 = ltwith l2 $ attachAndApplyDiffs' l1 l2
 
@@ -322,11 +342,11 @@ rawPrependTrackingDiffs (TrackingMK _ d1) (TrackingMK v d2) =
 --
 -- PRECONDITION:  See 'rawPrependTrackingDiffs'.
 prependTrackingDiffs' ::
-  ( SameUtxoTypes l l''
-  , SameUtxoTypes l' l''
-  , HasLedgerTables l
+  ( HasLedgerTables l
   , HasLedgerTables l'
   , HasLedgerTables l''
+  , CanCastLedgerTables l' l'' TrackingMK
+  , CanCastLedgerTables l l'' TrackingMK
   ) =>
   l TrackingMK -> l' TrackingMK -> LedgerTables l'' TrackingMK
 prependTrackingDiffs' l1 l2 = ltliftA2 rawPrependTrackingDiffs (ltprj l1) (ltprj l2)
@@ -337,7 +357,10 @@ prependTrackingDiffs' l1 l2 = ltliftA2 rawPrependTrackingDiffs (ltprj l1) (ltprj
 --
 -- PRECONDITION:  See 'rawPrependTrackingDiffs'.
 prependTrackingDiffs ::
-  (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l') =>
+  ( HasLedgerTables l
+  , HasLedgerTables l'
+  , CanCastLedgerTables l l' TrackingMK
+  ) =>
   l TrackingMK -> l' TrackingMK -> l' TrackingMK
 prependTrackingDiffs l1 l2 = ltwith l2 $ prependTrackingDiffs' l1 l2
 
@@ -351,11 +374,11 @@ restrictValuesMK ::
 restrictValuesMK (ValuesMK v) (KeysMK k) = ValuesMK $ v `Map.restrictKeys` k
 
 restrictValues' ::
-  ( SameUtxoTypes l l''
-  , SameUtxoTypes l' l''
-  , HasLedgerTables l
+  ( HasLedgerTables l
   , HasLedgerTables l'
   , HasLedgerTables l''
+  , CanCastLedgerTables l' l'' KeysMK
+  , CanCastLedgerTables l l'' ValuesMK
   ) =>
   l ValuesMK -> l' KeysMK -> LedgerTables l'' ValuesMK
 restrictValues' l1 l2 = ltliftA2 restrictValuesMK (ltprj l1) (ltprj l2)
