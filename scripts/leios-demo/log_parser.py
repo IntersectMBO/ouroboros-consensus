@@ -355,7 +355,11 @@ if __name__ == "__main__":
         pass
 
     # --- STEP 5: Calculate Latency (Time Difference) ---
-    df_merged["latency_ms"] = (
+    df_merged["node0_latency_ms"] = (
+        df_merged["at_node_0"] - df_merged["slot_onset"]
+    ).dt.total_seconds() * 1000
+
+    df_merged["node1_latency_ms"] = (
         df_merged["at_node_1"] - df_merged["slot_onset"]
     ).dt.total_seconds() * 1000
 
@@ -390,10 +394,11 @@ if __name__ == "__main__":
     final_columns = [
         "slot",
         "hash",
-#        "slot_onset",
+        "slot_onset",
 #        "at_node_0",
 #        "at_node_1",
-        "latency_ms",
+        "node0_latency_ms",
+        "node1_latency_ms",
 #        "slot_diff_from_prev",
 #        "onset_diff_from_prev_s",
     ]
