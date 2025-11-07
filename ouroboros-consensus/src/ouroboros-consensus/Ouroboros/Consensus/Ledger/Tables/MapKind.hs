@@ -18,7 +18,6 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind
   , NoThunksMK
   , ShowMK
   , ZeroableMK (..)
---   , bimapLedgerTables
 
     -- * Concrete MapKinds
   , CodecMK (..)
@@ -35,8 +34,6 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Data.Kind (Constraint)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Proxy
-import Data.SOP.Strict
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
@@ -79,36 +76,6 @@ type NoThunksMK :: MapKind -> Constraint
 class
   (forall k v. (NoThunks k, NoThunks v) => NoThunks (mk k v)) =>
   NoThunksMK mk
-
--- -- | Map both keys and values in ledger tables.
--- --
--- -- For keys, it has the same caveats as 'Data.Map.Strict.mapKeys' or
--- -- `Data.Set.map', namely that only injective functions are suitable to be used
--- -- here.
--- bimapLedgerTables ::
---   forall tag x y mk.
---   ( CanMapKeysMK mk
---   , CanMapMK mk
---   , Ord (TxIn y)
---   ) =>
---   (TxIn x -> TxIn y) ->
---   (TxOut x -> TxOut y) ->
---   (Credential x -> Credential y) ->
---   (AccountState x -> AccountState y) ->
---   LedgerTables x mk ->
---   LedgerTables y mk
--- bimapLedgerTables f g h i t =
-
---     `onUTxOTable` ( Table
---                       . mapKeysMK f
---                       . mapMK g
---                       . getTable
---                   )
---     `onAccountsTable` ( Table
---                           . mapKeysMK f
---                           . mapMK g
---                           . getTable
---                       )
 
 {-------------------------------------------------------------------------------
   EmptyMK

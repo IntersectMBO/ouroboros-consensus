@@ -4,12 +4,14 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | This module defines the 'LedgerTables', a portion of the Ledger notion of a
 -- /ledger state/ (not to confuse with our
@@ -188,9 +190,13 @@ module Ouroboros.Consensus.Ledger.Tables
 
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
-import Data.Kind (Constraint, Type)
+import Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
+import Data.Proxy
+import Data.SOP (lengthSList, type (:.:) (..))
+import Data.SOP.Constraint
+import Data.SOP.Strict
 import Data.Void (Void)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Ledger.Tables.Basics
@@ -198,7 +204,7 @@ import Ouroboros.Consensus.Ledger.Tables.Combinators
 import Ouroboros.Consensus.Ledger.Tables.MapKind
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.IndexedMemPack
-import Data.SOP.Strict
+import Ouroboros.Consensus.Util.TypeLevel
 
 {-------------------------------------------------------------------------------
   Basic LedgerState classes
@@ -208,14 +214,13 @@ import Data.SOP.Strict
 -- or replacing the @'LedgerTables'@ associated to a particular @l@.
 type HasLedgerTables :: LedgerStateKind -> Constraint
 class
-  ( Ord (TxIn l)
-  , Eq (TxOut l)
-  , Show (TxIn l)
-  , Show (TxOut l)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
-  , MemPack (TxIn l)
-  , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
+  ( AllKeys NoThunks l
+  , AllValues NoThunks l
+  , AllKeys Show l
+  , AllValues Show l
+  , LedgerTableConstraints l
+  , forall mk. SameTypesAsMyself l mk
+  , All (CanCastTables l l) (TablesForBlock l)
   ) =>
   HasLedgerTables l
   where
@@ -245,19 +250,18 @@ class
     l mk
 
 instance
-  ( Ord (TxIn l)
-  , Eq (TxOut l)
-  , Show (TxIn l)
-  , Show (TxOut l)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
-  , MemPack (TxIn l)
-  , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
+  ( AllKeys Show (LedgerTables l)
+  , AllValues Show (LedgerTables l)
+  , AllKeys NoThunks (LedgerTables l)
+  , AllValues NoThunks (LedgerTables l)
+  , LedgerTableConstraints (LedgerTables l)
+  , forall mk. SameTypesAsMyself (LedgerTables l) mk
+  , All (CanCastTables (LedgerTables l) (LedgerTables l)) (TablesForBlock (LedgerTables l))
   ) =>
   HasLedgerTables (LedgerTables l)
   where
-  projectLedgerTables = castLedgerTables
-  withLedgerTables _ = castLedgerTables
+  projectLedgerTables = undefined
+  withLedgerTables _ = undefined
 
 -- | Convenience class, useful for partially applying the composition of
 -- 'HasLedgerTables' and 'Ticked'.
@@ -289,22 +293,27 @@ class CanStowLedgerTables l where
 -- in-memory backing store.
 valuesMKEncoder ::
   forall l.
-  SerializeTablesWithHint l =>
+  All (SerializeTablesWithHint l) (TablesForBlock l) =>
   l EmptyMK ->
   LedgerTables l ValuesMK ->
   CBOR.Encoding
-valuesMKEncoder st tbs =
-  CBOR.encodeListLen 1 <> encodeTablesWithHint st tbs
+valuesMKEncoder st (LedgerTables tbs) =
+  mconcat
+    [ CBOR.encodeListLen (fromIntegral $ lengthSList (Proxy @(TablesForBlock l)))
+    , hcfoldMap (Proxy @(SerializeTablesWithHint l)) (encodeTablesWithHint st) tbs
+    ]
 
 -- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKDecoder ::
   forall l s.
-  SerializeTablesWithHint l =>
+  All (SerializeTablesWithHint l) (TablesForBlock l) =>
   l EmptyMK ->
   CBOR.Decoder s (LedgerTables l ValuesMK)
-valuesMKDecoder st =
-  CBOR.decodeListLenOf 1 >> decodeTablesWithHint st
+valuesMKDecoder st = do
+  _ <- CBOR.decodeListLenOf (lengthSList (Proxy @(TablesForBlock l)))
+  LedgerTables
+    <$> hsequence' (hcpure (Proxy @(SerializeTablesWithHint l)) (Comp $ decodeTablesWithHint st))
 
 -- | When decoding the tables and in particular the UTxO set we want
 -- to share data in the TxOuts in the same way the Ledger did (see the
@@ -318,14 +327,14 @@ valuesMKDecoder st =
 -- See @SerializeTablesWithHint (LedgerState (HardForkBlock
 -- (CardanoBlock c)))@ for a good example, the rest of the instances
 -- are somewhat degenerate.
-class SerializeTablesWithHint l where
+class SerializeTablesWithHint l tag where
   encodeTablesWithHint ::
     SerializeTablesHint (LedgerTables l ValuesMK) ->
-    LedgerTables l ValuesMK ->
+    Table ValuesMK l tag ->
     CBOR.Encoding
   decodeTablesWithHint ::
     SerializeTablesHint (LedgerTables l ValuesMK) ->
-    CBOR.Decoder s (LedgerTables l ValuesMK)
+    CBOR.Decoder s (Table ValuesMK l tag)
 
 -- This is just for the BackingStore Lockstep tests. Once V1 is gone
 -- we can inline it above.
@@ -336,11 +345,11 @@ type family SerializeTablesHint values :: Type
 type instance SerializeTablesHint (LedgerTables l ValuesMK) = l EmptyMK
 
 defaultEncodeTablesWithHint ::
-  (MemPack (TxIn l), MemPack (TxOut l)) =>
+  (KVConstraints l tag, MemPack (Snd (TableKV tag l))) =>
   SerializeTablesHint (LedgerTables l ValuesMK) ->
-  LedgerTables l ValuesMK ->
+  Table ValuesMK l tag ->
   CBOR.Encoding
-defaultEncodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
+defaultEncodeTablesWithHint _ (Table (ValuesMK tbs)) =
   mconcat
     [ CBOR.encodeMapLen (fromIntegral $ Map.size tbs)
     , Map.foldMapWithKey
@@ -354,12 +363,12 @@ defaultEncodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
     ]
 
 defaultDecodeTablesWithHint ::
-  (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l)) =>
+  (KVConstraints l tag, MemPack (Snd (TableKV tag l))) =>
   SerializeTablesHint (LedgerTables l ValuesMK) ->
-  CBOR.Decoder s (LedgerTables l ValuesMK)
+  CBOR.Decoder s (Table ValuesMK l tag)
 defaultDecodeTablesWithHint _ = do
   n <- CBOR.decodeMapLen
-  LedgerTables . ValuesMK <$> go n Map.empty
+  Table . ValuesMK <$> go n Map.empty
  where
   go 0 m = pure m
   go n !m = do
@@ -376,7 +385,7 @@ defaultDecodeTablesWithHint _ = do
 -- allows for easy manipulation of the types of @mk@ required at any step of the
 -- program.
 type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
-class (TxIn l ~ Void, TxOut l ~ Void) => LedgerTablesAreTrivial l where
+class (TablesForBlock l ~ '[], LedgerTableConstraints l) => LedgerTablesAreTrivial l where
   -- | If the ledger state is always in memory, then @l mk@ will be isomorphic
   -- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers
   -- states indexed by different map kinds.
@@ -386,9 +395,10 @@ class (TxIn l ~ Void, TxOut l ~ Void) => LedgerTablesAreTrivial l where
   convertMapKind :: l mk -> l mk'
 
 trivialLedgerTables ::
+  forall mk l.
   (ZeroableMK mk, LedgerTablesAreTrivial l) =>
   LedgerTables l mk
-trivialLedgerTables = LedgerTables $ hpure $ Table emptyMK
+trivialLedgerTables = LedgerTables $ hcpure (Proxy @(KVConstraints l)) $ Table emptyMK
 
 -- | A newtype to @derive via@ the instances for blocks with trivial ledger
 -- tables.
@@ -397,15 +407,27 @@ newtype TrivialLedgerTables l mk = TrivialLedgerTables {untrivialLedgerTables ::
 
 type instance TxIn (TrivialLedgerTables l) = TxIn l
 type instance TxOut (TrivialLedgerTables l) = TxOut l
+type instance Credential (TrivialLedgerTables l) = Credential l
+type instance Coin (TrivialLedgerTables l) = Coin l
+type instance TablesForBlock (TrivialLedgerTables l) = '[]
 
-instance LedgerTablesAreTrivial l => LedgerTablesAreTrivial (TrivialLedgerTables l) where
+instance
+  LedgerTablesAreTrivial l =>
+  LedgerTablesAreTrivial (TrivialLedgerTables l)
+  where
   convertMapKind = TrivialLedgerTables . convertMapKind . untrivialLedgerTables
 
-instance LedgerTablesAreTrivial l => HasLedgerTables (TrivialLedgerTables l) where
+instance
+  (HasLedgerTables l, LedgerTablesAreTrivial l) =>
+  HasLedgerTables (TrivialLedgerTables l)
+  where
   projectLedgerTables _ = trivialLedgerTables
   withLedgerTables st _ = convertMapKind st
 
-instance LedgerTablesAreTrivial l => CanStowLedgerTables (TrivialLedgerTables l) where
+instance
+  LedgerTablesAreTrivial l =>
+  CanStowLedgerTables (TrivialLedgerTables l)
+  where
   stowLedgerTables = convertMapKind
   unstowLedgerTables = convertMapKind
 
@@ -415,8 +437,9 @@ instance IndexedMemPack (TrivialLedgerTables l EmptyMK) Void where
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
-instance LedgerTablesAreTrivial l => SerializeTablesWithHint (TrivialLedgerTables l) where
-  decodeTablesWithHint _ = do
-    _ <- CBOR.decodeMapLen
-    pure trivialLedgerTables
-  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
+instance
+  LedgerTablesAreTrivial l =>
+  SerializeTablesWithHint (TrivialLedgerTables l) tag
+  where
+  decodeTablesWithHint _ = error "decoding trivial ledger tables"
+  encodeTablesWithHint _ _ = mempty

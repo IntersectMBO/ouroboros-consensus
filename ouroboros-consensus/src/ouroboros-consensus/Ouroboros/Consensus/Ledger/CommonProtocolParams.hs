@@ -1,3 +1,4 @@
+{-# LANGUAGE UndecidableSuperClasses #-}
 module Ouroboros.Consensus.Ledger.CommonProtocolParams (CommonProtocolParams (..)) where
 
 import Data.Word (Word32)
