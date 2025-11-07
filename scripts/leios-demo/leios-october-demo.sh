@@ -195,7 +195,7 @@ IMMDB_SERVER_PID=$!
 
 echo "ImmDB server started with PID: $IMMDB_SERVER_PID"
 
-TIMEOUT=25
+TIMEOUT=${TIMEOUT:-25}
 read -t $TIMEOUT -n 1 -s -r -p "Press any key to stop the spawned processes, or just wait $TIMEOUT seconds..."
 echo
 
