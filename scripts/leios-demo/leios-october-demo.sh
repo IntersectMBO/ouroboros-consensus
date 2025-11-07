@@ -63,8 +63,8 @@ toxiproxy-cli create --listen 127.0.0.1:"$PORT2" --upstream 127.0.0.1:"$(($TOXIP
 
 for i in mocked-upstream-peer-proxy node0-proxy; do
     # TODO magic numbers
-    toxiproxy-cli toxic add --upstream   --type latency   --attribute latency=150 --attribute jitter=0 $i   # milliseconds
-    toxiproxy-cli toxic add --downstream --type latency   --attribute latency=150 --attribute jitter=0 $i   # milliseconds
+    toxiproxy-cli toxic add --upstream   --type latency   --attribute latency=100 --attribute jitter=0 $i   # milliseconds
+    toxiproxy-cli toxic add --downstream --type latency   --attribute latency=100 --attribute jitter=0 $i   # milliseconds
     toxiproxy-cli toxic add --upstream   --type bandwidth --attribute rate=2500 $i   # kilobytes per second
     toxiproxy-cli toxic add --downstream --type bandwidth --attribute rate=2500 $i   # kilobytes per second
     # FYI, 125 kilobyte/s = 1 megabit/s, so EG 2500 kilobyte/s = 20 megabit/s
