@@ -212,6 +212,12 @@ data ChainSyncIntersection blk =
   deriving stock (Generic)
   deriving anyclass (NoThunks)
 
+-- | An auxiliary data type used so that immdb-server sends MsgAwaitReply only
+-- when appropriate.
+data DelayingBuffer a = Empty | Exhausted | Delayed a
+  deriving stock (Generic)
+  deriving anyclass (NoThunks)
+
 chainSyncServer ::
      forall m blk a. (IOLike m, HasHeader blk)
   => ImmutableDB m blk
@@ -226,27 +232,48 @@ chainSyncServer immDB blockComponent getSlotDelay registry = ChainSyncServer $ d
   where
     newImmutableDBFollower :: m (Follower m blk (ChainDB.WithPoint blk a))
     newImmutableDBFollower = do
+        varForBlocking <- uncheckedNewTVarM Empty
         varIterator <-
           newTVarIO =<< ImmutableDB.streamAll immDB registry blockComponent
         varIntersection <-
           newTVarIO $ JustNegotiatedIntersection GenesisPoint
 
-        let followerInstructionBlocking =
+        let followerInstruction =
               readTVarIO varIntersection >>= \case
                 JustNegotiatedIntersection intersectionPt -> do
-                  atomically $
+                  atomically $ do
                     writeTVar varIntersection AlreadySentRollbackToIntersection
-                  pure $ RollBack intersectionPt
+                  pure $ Just $ RollBack intersectionPt
                 -- Otherwise, get the next block from the iterator (or fail).
                 AlreadySentRollbackToIntersection -> do
                   iterator <- readTVarIO varIterator
                   ImmutableDB.iteratorNext iterator >>= \case
                     ImmutableDB.IteratorExhausted -> do
                       ImmutableDB.iteratorClose iterator
-                      threadDelay (1000 :: DiffTime)
-                      throwIO ReachedImmutableTip
+                      atomically $ writeTVar varForBlocking Exhausted
+                      pure Nothing
                     ImmutableDB.IteratorResult a  -> do
-                      -- Wait until the slot of the current block has been reached
+                      delay <- case pointSlot $ ChainDB.point a of
+                          Origin -> pure 0
+                          At slot -> getSlotDelay slot
+                      if delay <= 0 then pure $ Just $ AddBlock a else do
+                          atomically $ writeTVar varForBlocking $ Delayed a
+                          pure Nothing
+
+        let followerInstructionBlocking = do
+                readTVarIO varForBlocking >>= \case
+                    Empty -> error "impossible!"
+                      -- The contract is for followerInstructionBlocking to
+                      -- only be called if followerInstruction returned
+                      -- Nothing. And it only does so immediately after writing
+                      -- a non-Empty value to varForBlocking.
+                    Exhausted -> do
+                      -- This delay gives the downstream peer a chance to
+                      -- finish some req/rsp exchanges, eg BlockFetch.
+                      threadDelay (100 :: DiffTime)
+                      throwIO ReachedImmutableTip
+                    Delayed a -> do
+                      -- Wait until the slot of the current block has been reache
                       case pointSlot $ ChainDB.point a of
                           Origin -> pure ()
                           At slot -> getSlotDelay slot >>= threadDelay
@@ -266,7 +293,7 @@ chainSyncServer immDB blockComponent getSlotDelay registry = ChainSyncServer $ d
                   pure $ Just pt
 
         pure Follower {
-            followerInstruction = pure Nothing
+            followerInstruction
           , followerInstructionBlocking
           , followerForward
           , followerClose
