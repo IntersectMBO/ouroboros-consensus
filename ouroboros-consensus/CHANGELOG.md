@@ -2,6 +2,19 @@
 
 # Changelog entries
 
+<a id='changelog-0.28.0.2'></a>
+## 0.28.0.2 -- 2025-10-29
+
+### Patch
+
+- Ensure Mempool always deallocates stale forkers, or rather that it does not
+  try to allocate a new one unless completely necessary and closes the old one
+  in the process.
+- Fix double read lock acquisition when opening a forker in LedgerDB V1.
+- Ensure the read lock acquired when opening a forker is released in the presence of exceptions.
+- Ensure the forker is tracked in the resource registry from the start and it will only deallocate the read lock once.
+- Force the BackingStore tracer evaluation.
+
 <a id='changelog-0.28.0.1'></a>
 ## 0.28.0.1 -- 2025-10-23
 
