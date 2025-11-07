@@ -8,6 +8,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -15,6 +16,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | The Ledger DB is responsible for the following tasks:
 --
@@ -173,11 +175,11 @@ import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind
-import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.Proxy
+import Data.SOP.Constraint
+import Data.SOP.Strict
 import Data.Set (Set)
-import Data.Void (absurd)
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -210,7 +212,7 @@ import System.FS.CRC
 
 -- | Serialization constraints required by the 'LedgerDB' to be properly
 -- instantiated with a @blk@.
-type LedgerDbSerialiseConstraints blk =
+class
   ( Serialise (HeaderHash blk)
   , EncodeDisk blk (LedgerState blk EmptyMK)
   , DecodeDisk blk (LedgerState blk EmptyMK)
@@ -220,10 +222,27 @@ type LedgerDbSerialiseConstraints blk =
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
   , -- For InMemory LedgerDBs
     MemPack (TxIn (LedgerState blk))
-  , SerializeTablesWithHint (LedgerState blk)
+  , forall tag. SerializeTablesWithHint (LedgerState blk) tag
   , -- For OnDisk LedgerDBs
     IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
-  )
+  ) =>
+  LedgerDbSerialiseConstraints blk
+
+instance
+  ( Serialise (HeaderHash blk)
+  , EncodeDisk blk (LedgerState blk EmptyMK)
+  , DecodeDisk blk (LedgerState blk EmptyMK)
+  , EncodeDisk blk (AnnTip blk)
+  , DecodeDisk blk (AnnTip blk)
+  , EncodeDisk blk (ChainDepState (BlockProtocol blk))
+  , DecodeDisk blk (ChainDepState (BlockProtocol blk))
+  , -- For InMemory LedgerDBs
+    MemPack (TxIn (LedgerState blk))
+  , forall tag. SerializeTablesWithHint (LedgerState blk) tag
+  , -- For OnDisk LedgerDBs
+    IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
+  ) =>
+  LedgerDbSerialiseConstraints blk
 
 -- | The core API of the LedgerDB component
 type LedgerDB :: (Type -> Type) -> LedgerStateKind -> Type -> Type
@@ -756,7 +775,13 @@ class CanUpgradeLedgerTables l where
     LedgerTables l ValuesMK
 
 instance
-  CanUpgradeLedgerTables (LedgerState blk) =>
+  ( HasLedgerTables (ExtLedgerState blk)
+  , CanUpgradeLedgerTables (LedgerState blk)
+  , All (CanCastTables (ExtLedgerState blk) (ExtLedgerState blk)) (TablesForBlock (ExtLedgerState blk))
+  , All (CanCastTables (LedgerState blk) (ExtLedgerState blk)) (TablesForBlock (ExtLedgerState blk))
+  , forall mk. CanCastLedgerTables (LedgerState blk) (ExtLedgerState blk) mk
+  , forall mk. CanCastLedgerTables (ExtLedgerState blk) (LedgerState blk) mk
+  ) =>
   CanUpgradeLedgerTables (ExtLedgerState blk)
   where
   upgradeTables (ExtLedgerState st0 _) (ExtLedgerState st1 _) =
@@ -766,18 +791,43 @@ instance
   LedgerTablesAreTrivial l =>
   CanUpgradeLedgerTables (TrivialLedgerTables l)
   where
-  upgradeTables _ _ (LedgerTables (ValuesMK mk)) =
-    LedgerTables (ValuesMK (Map.map absurd mk))
+  upgradeTables _ _ (LedgerTables Nil) = LedgerTables Nil
 
 {-------------------------------------------------------------------------------
   LedgerDB constraints
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsInMemoryLedgerDB l =
-  (CanUpgradeLedgerTables l, SerializeTablesWithHint l)
+class
+  ( CanUpgradeLedgerTables l
+  , All (SerializeTablesWithHint l) (TablesForBlock l)
+  , AllTables NoThunks ValuesMK l
+  , AllKeys NoThunks l
+  , AllValues NoThunks l
+  , HasLedgerTables l
+  ) =>
+  LedgerSupportsInMemoryLedgerDB l
+instance
+  ( CanUpgradeLedgerTables l
+  , All (SerializeTablesWithHint l) (TablesForBlock l)
+  , AllTables NoThunks ValuesMK l
+  , AllKeys NoThunks l
+  , AllValues NoThunks l
+  , HasLedgerTables l
+  ) =>
+  LedgerSupportsInMemoryLedgerDB l
 
-type LedgerSupportsLMDBLedgerDB l =
-  (IndexedMemPack (l EmptyMK) (TxOut l), MemPackIdx l EmptyMK ~ l EmptyMK)
+class
+  ( AllValues (IndexedMemPack (l EmptyMK)) l
+  , MemPackIdx l EmptyMK ~ l EmptyMK
+  , AllKeys MemPack l
+  ) =>
+  LedgerSupportsLMDBLedgerDB l
+instance
+  ( AllValues (IndexedMemPack (l EmptyMK)) l
+  , MemPackIdx l EmptyMK ~ l EmptyMK
+  , AllKeys MemPack l
+  ) =>
+  LedgerSupportsLMDBLedgerDB l
 
 type LedgerSupportsV1LedgerDB l =
   (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
@@ -785,7 +835,12 @@ type LedgerSupportsV1LedgerDB l =
 type LedgerSupportsV2LedgerDB l =
   (LedgerSupportsInMemoryLedgerDB l, MemPack (TxIn l))
 
-type LedgerSupportsLedgerDB blk = LedgerSupportsLedgerDB' (LedgerState blk) blk
+type LedgerSupportsLedgerDB blk =
+  ( LedgerSupportsLedgerDB' (LedgerState blk) blk
+  , LedgerSupportsLedgerDB' (Ticked (LedgerState blk)) blk
+  , LedgerSupportsLedgerDB' (ExtLedgerState blk) blk
+  , LedgerSupportsLedgerDB' (Ticked (ExtLedgerState blk)) blk
+  )
 
 type LedgerSupportsLedgerDB' l blk =
   ( LedgerSupportsV1LedgerDB l

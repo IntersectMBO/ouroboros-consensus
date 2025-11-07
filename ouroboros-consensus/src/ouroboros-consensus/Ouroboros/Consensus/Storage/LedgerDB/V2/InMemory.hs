@@ -49,6 +49,8 @@ import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.MemPack
+import Data.SOP.BasicFunctors
+import Data.SOP.Strict
 import Data.Void
 import GHC.Generics
 import NoThunks.Class
@@ -96,9 +98,7 @@ guardClosed (LedgerTablesHandleOpen st) f = f st
 newInMemoryLedgerTablesHandle ::
   forall m l.
   ( IOLike m
-  , HasLedgerTables l
-  , CanUpgradeLedgerTables l
-  , SerializeTablesWithHint l
+  , LedgerSupportsInMemoryLedgerDB l
   ) =>
   Tracer m LedgerDBV2Trace ->
   SomeHasFS m ->
@@ -142,9 +142,7 @@ implClose tracer tv = do
 
 implDuplicate ::
   ( IOLike m
-  , HasLedgerTables l
-  , CanUpgradeLedgerTables l
-  , SerializeTablesWithHint l
+  , LedgerSupportsInMemoryLedgerDB l
   ) =>
   Tracer m LedgerDBV2Trace ->
   StrictTVar m (LedgerTablesHandleState l) ->
@@ -175,19 +173,19 @@ implRead tv _ keys = do
     (pure . flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys)
 
 implReadRange ::
-  (IOLike m, HasLedgerTables l) =>
+  -- (IOLike m, HasLedgerTables l) =>
   StrictTVar m (LedgerTablesHandleState l) ->
   l EmptyMK ->
   (Maybe (TxIn l), Int) ->
   m (LedgerTables l ValuesMK, Maybe (TxIn l))
-implReadRange tv _ (f, t) = do
-  hs <- readTVarIO tv
-  guardClosed
-    hs
-    ( \(LedgerTables (ValuesMK m)) ->
-        let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
-         in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
-    )
+implReadRange = undefined -- tv _ (f, t) = undefined -- do
+-- hs <- readTVarIO tv
+-- guardClosed
+--   hs
+--   ( \(LedgerTables (ValuesMK m)) ->
+--       let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
+--        in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
+--   )
 
 implReadAll ::
   IOLike m =>
@@ -200,8 +198,7 @@ implReadAll tv _ = do
 
 implPushDiffs ::
   ( IOLike m
-  , HasLedgerTables l
-  , CanUpgradeLedgerTables l
+  , LedgerSupportsInMemoryLedgerDB l
   ) =>
   StrictTVar m (LedgerTablesHandleState l) ->
   l mk1 ->
@@ -223,7 +220,7 @@ implPushDiffs tv st0 !diffs =
       )
 
 implTakeHandleSnapshot ::
-  (IOLike m, SerializeTablesWithHint l) =>
+  (IOLike m, LedgerSupportsInMemoryLedgerDB l) =>
   StrictTVar m (LedgerTablesHandleState l) ->
   HasFS m h ->
   l EmptyMK ->
@@ -241,12 +238,12 @@ implTakeHandleSnapshot tv hasFS hint snapshotName = do
               valuesMKEncoder hint values
 
 implTablesSize ::
-  IOLike m =>
+  (IOLike m, LedgerSupportsInMemoryLedgerDB l) =>
   StrictTVar m (LedgerTablesHandleState l) ->
-  m (Maybe Int)
+  m (Maybe (NP (K Int) (TablesForBlock l)))
 implTablesSize tv = do
   hs <- readTVarIO tv
-  guardClosed hs (pure . Just . Map.size . getValuesMK . getLedgerTables)
+  guardClosed hs (pure . Just . hmap (K . Map.size . getValuesMK . getTable) . getLedgerTables)
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -315,7 +312,7 @@ loadSnapshot ::
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , IOLike m
-  , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  , LedgerSupportsInMemoryLedgerDB (ExtLedgerState blk)
   ) =>
   Tracer m LedgerDBV2Trace ->
   ResourceRegistry m ->
@@ -360,7 +357,7 @@ instance
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  , LedgerSupportsInMemoryLedgerDB (ExtLedgerState blk)
   ) =>
   Backend m Mem blk
   where
@@ -384,7 +381,7 @@ mkInMemoryArgs ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  , LedgerSupportsInMemoryLedgerDB (ExtLedgerState blk)
   ) =>
   a -> (LedgerDbBackendArgs m blk, a)
 mkInMemoryArgs = (,) $ LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
@@ -482,8 +479,8 @@ yieldInMemoryS ::
   (forall s. Decoder s (TxIn l)) ->
   (forall s. Decoder s (TxOut l)) ->
   Yield m l
-yieldInMemoryS mkFs (F.splitFileName -> (fp, fn)) decK decV _ k =
-  streamingFile (mkFs $ MountPoint fp) (mkFsPath [fn]) $ \s -> do
+yieldInMemoryS mkFs (F.splitFileName -> (fp, fname)) decK decV _ k =
+  streamingFile (mkFs $ MountPoint fp) (mkFsPath [fname]) $ \s -> do
     k $ yieldCborMapS decK decV s
 
 sinkInMemoryS ::
