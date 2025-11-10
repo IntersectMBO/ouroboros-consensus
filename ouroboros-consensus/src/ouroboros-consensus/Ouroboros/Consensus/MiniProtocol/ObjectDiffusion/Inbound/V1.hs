@@ -11,7 +11,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
+module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1
   ( objectDiffusionInbound
   , TraceObjectDiffusionInbound (..)
   , ObjectDiffusionInboundError (..)
@@ -38,7 +38,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Network.TypedProtocol.Core (N (Z), Nat (..), natToInt)
 import NoThunks.Class (NoThunks (..))
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1.State
   ( ObjectDiffusionInboundStateView (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
