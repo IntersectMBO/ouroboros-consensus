@@ -197,6 +197,7 @@ library
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Decision
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.TestUtils
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
@@ -323,6 +324,7 @@ library
 
   build-depends:
     FailT ^>=0.1.2,
+    QuickCheck,
     aeson,
     base >=4.14 && <4.22,
     base-deriving-via,
@@ -934,6 +936,20 @@ benchmark PerasCertDB-bench
     ouroboros-network-api,
     tasty-bench,
     unstable-consensus-testlib,
+
+benchmark ObjectDiffusion-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: bench/ObjectDiffusion-bench
+  main-is: Main.hs
+  other-modules:
+  build-depends:
+    QuickCheck,
+    base,
+    deepseq,
+    hashable,
+    ouroboros-consensus,
+    tasty-bench,
 
 test-suite doctest
   import: common-test
