@@ -45,6 +45,7 @@ import qualified Data.Set as Set
 import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
 import qualified Ouroboros.Consensus.Fragment.Diff as Diff
@@ -326,9 +327,9 @@ addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
 
 addPerasCertAsync ::
   forall m blk.
-  (IOLike m, HasHeader blk) =>
+  IOLike m =>
   ChainDbEnv m blk ->
-  ValidatedPerasCert blk ->
+  WithArrivalTime (ValidatedPerasCert blk) ->
   m (AddPerasCertPromise m)
 addPerasCertAsync CDB{cdbTracer, cdbChainSelQueue} =
   addPerasCertToQueue (TraceAddPerasCertEvent >$< cdbTracer) cdbChainSelQueue

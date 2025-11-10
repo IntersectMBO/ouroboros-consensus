@@ -142,16 +142,15 @@ run = withRegistry \registry -> do
 
     -- Then, send C.
     atomically $ modifyTVar (cschState hdl) $ \s ->
-      ChainSyncState
+      s
         { csCandidate = csCandidate s AF.:> attachSlotTime cfg (getHeader blkC)
         , csLatestSlot = pure $ NotOrigin $ blockSlot blkC
-        , csIdling = csIdling s
         }
     addBlk blkC
 
     -- Finally, roll back to the initial fragment and idle.
-    atomically $ modifyTVar (cschState hdl) $ \_s ->
-      ChainSyncState
+    atomically $ modifyTVar (cschState hdl) $ \s ->
+      s
         { csCandidate = initialFrag
         , csLatestSlot = pure $ AF.headSlot initialFrag
         , csIdling = True
@@ -169,7 +168,7 @@ run = withRegistry \registry -> do
 
     -- Finally, idle.
     atomically $ modifyTVar (cschState hdl) $ \s ->
-      ChainSyncState
+      s
         { csCandidate = csCandidate s
         , csLatestSlot = csLatestSlot s
         , csIdling = True
@@ -223,6 +222,7 @@ mkTestChainSyncClientHandle frag = do
         { csCandidate = frag
         , csIdling = False
         , csLatestSlot = pure $ AF.headSlot frag
+        , csNodeToNodeVersion = maxBound
         }
   varJumping <- newTVar $ Disengaged DisengagedDone
   varJumpInfo <- newTVar Nothing
@@ -283,7 +283,7 @@ mkGsmEntryPoints varChainSyncHandles chainDB writeGsmState =
       { GSM.getCandidateOverSelection = pure candidateOverSelection
       , GSM.peerIsIdle = csIdling
       , GSM.equivalent = (==) `on` AF.headPoint
-      , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
+      , GSM.getPeerStates = traverse readTVar =<< fmap cschState <$> cschcMap varChainSyncHandles
       , GSM.getCurrentSelection = ChainDB.getCurrentChain chainDB
       , -- Make sure that we stay in CaughtUp for the duration of the test once we
         -- have entered it.

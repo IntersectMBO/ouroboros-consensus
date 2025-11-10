@@ -191,6 +191,14 @@ library
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
+    Ouroboros.Consensus.MiniProtocol.Util
+    Ouroboros.Consensus.MiniProtocol.Util.Idling
     Ouroboros.Consensus.Node.GsmState
     Ouroboros.Consensus.Node.InitStorage
     Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -198,7 +206,9 @@ library
     Ouroboros.Consensus.Node.Run
     Ouroboros.Consensus.Node.Serialisation
     Ouroboros.Consensus.NodeId
+    Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
+    Ouroboros.Consensus.Peras.Voting
     Ouroboros.Consensus.Peras.Weight
     Ouroboros.Consensus.Protocol.Abstract
     Ouroboros.Consensus.Protocol.BFT
@@ -300,6 +310,7 @@ library
     Ouroboros.Consensus.Util.NormalForm.StrictMVar
     Ouroboros.Consensus.Util.NormalForm.StrictTVar
     Ouroboros.Consensus.Util.Orphans
+    Ouroboros.Consensus.Util.Pred
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.Time
@@ -664,8 +675,12 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ChainSync.CSJ
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
+    Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke
+    Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
+    Test.Consensus.Peras.Voting
     Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.MonadSTM.NormalForm
+    Test.Consensus.Util.Pred
     Test.Consensus.Util.Versioned
 
   build-depends:
