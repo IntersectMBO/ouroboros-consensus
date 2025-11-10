@@ -162,7 +162,11 @@ import           System.FS.API.Types (MountPoint (..))
 import           System.FS.IO (ioHasFS)
 import           System.Random (StdGen, newStdGen, randomIO, split)
 
+import           Control.Tracer (condTracing)
+import qualified LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoTypes (SomeLeiosDb)
+import qualified Network.Mux as Mux
+import qualified Ouroboros.Network.NodeToNode as N2N
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -1097,7 +1101,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
                                 rnPeerSharing
                                 rnGetUseBootstrapPeers
                                 (GSM.gsmStateToLedgerJudgement <$> getGsmState kernel))
-                             srnDiffusionTracers
+                             (myf srnDiffusionTracers)
                              srnDiffusionTracersExtra
                              srnDiffusionArguments
                              srnDiffusionArgumentsExtra'
@@ -1111,7 +1115,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
                     rnPeerSharing
                     (pure DontUseBootstrapPeers)
                     (pure TooOld))
-                 srnDiffusionTracers
+                 (myf srnDiffusionTracers)
                  srnDiffusionTracersExtra
                  srnDiffusionArguments
                  (srnDiffusionArgumentsExtra
@@ -1154,6 +1158,26 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
           srnLdbFlavorArgs
       }
   where
+    myf x = x { Diffusion.dtMuxTracer = condTracing muxCond $ Diffusion.dtMuxTracer x }
+
+    muxCond = (. Mux.wbEvent) $ \case
+        Mux.TraceRecvStart{} -> False
+        Mux.TraceRecvEnd{} -> False
+        Mux.TraceSendStart{} -> False
+        Mux.TraceSendEnd{} -> False
+        Mux.TraceChannelRecvStart mid -> midCond mid
+        Mux.TraceChannelRecvEnd mid _ -> midCond mid
+        Mux.TraceChannelSendStart mid _ -> midCond mid
+        Mux.TraceChannelSendEnd mid -> midCond mid
+        _ -> False
+
+    midCond mid =
+        mid == N2N.chainSyncMiniProtocolNum
+     ||
+        mid == N2N.blockFetchMiniProtocolNum
+     ||
+        mid == LF.leiosFetchMiniProtocolNum
+
     networkMagic :: NetworkMagic
     networkMagic = getNetworkMagic $ configBlock $ pInfoConfig rnProtocolInfo
 

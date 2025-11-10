@@ -32,7 +32,7 @@ import           Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 import           Data.List (unfoldr)
 import           Data.Map (Map)
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import           Data.Set (Set)

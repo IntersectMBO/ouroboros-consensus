@@ -50,8 +50,11 @@ import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types (MountPoint (MountPoint))
 import           System.FS.IO (ioHasFS)
 
+import           Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import qualified LeiosDemoLogic as LeiosLogic
 import qualified LeiosDemoTypes as Leios
+
+import qualified LeiosDemoOnlyTestFetch as LF
 
 -- | Glue code for using just the bits from the Diffusion Layer that we need in
 -- this context.
@@ -71,8 +74,9 @@ serve sockAddr application = withIOManager \iocp -> do
       N2N.withServer
         sn
         N2N.nullNetworkServerTracers {
-          N2N.nstHandshakeTracer   = show >$< stdoutTracer
-        , N2N.nstErrorPolicyTracer = show >$< stdoutTracer
+          N2N.nstHandshakeTracer   = show >$< wallclockTracer
+        , N2N.nstMuxTracer         = condTracing (muxCond . Mux.wbEvent) $ show >$< wallclockTracer
+        , N2N.nstErrorPolicyTracer = show >$< wallclockTracer
         }
         networkMutableState
         acceptedConnectionsLimit
@@ -85,6 +89,28 @@ serve sockAddr application = withIOManager \iocp -> do
         , N2N.acceptedConnectionsSoftLimit = maxBound
         , N2N.acceptedConnectionsDelay     = 0
         }
+
+    wallclockTracer = Tracer $ \s -> do
+        tm <- getCurrentTime
+        putStrLn $ formatTime defaultTimeLocale "%F %H:%M:%S%4QZ" tm ++ " " ++ s
+
+    muxCond = \case
+        Mux.TraceRecvStart{} -> True
+        Mux.TraceRecvEnd{} -> True
+        Mux.TraceSendStart{} -> True
+        Mux.TraceSendEnd{} -> True
+        Mux.TraceChannelRecvStart mid -> midCond mid
+        Mux.TraceChannelRecvEnd mid _ -> midCond mid
+        Mux.TraceChannelSendStart mid _ -> midCond mid
+        Mux.TraceChannelSendEnd mid -> midCond mid
+        _ -> False
+
+    midCond mid =
+        mid == N2N.chainSyncMiniProtocolNum
+     ||
+        mid == N2N.blockFetchMiniProtocolNum
+     ||
+        mid == LF.leiosFetchMiniProtocolNum
 
 run ::
      forall blk.
