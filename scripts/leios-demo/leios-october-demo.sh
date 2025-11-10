@@ -196,10 +196,10 @@ IMMDB_SERVER_PID=$!
 echo "ImmDB server started with PID: $IMMDB_SERVER_PID"
 
 TIMEOUT=${TIMEOUT:-25}
-read -t $TIMEOUT -n 1 -s -r -p "Press any key to stop the spawned processes, or just wait $TIMEOUT seconds..."
+read -t "$(($TIMEOUT + $SECONDS_UNTIL_REF_SLOT))" -n 1 -s -r -p "Press any key to stop the spawned processes, or just wait ~$SECONDS_UNTIL_REF_SLOT + $TIMEOUT seconds..."
 echo
 
-echo "Killing processes $IMMDB_SERVER_PID (immdb-server), $CARDANO_NODE_0_PID (node-0), and $MOCKED_PEER_PID (node-1)..."
+echo "$(date) Killing processes $IMMDB_SERVER_PID (immdb-server), $CARDANO_NODE_0_PID (node-0), and $MOCKED_PEER_PID (node-1)..."
 
 kill "$IMMDB_SERVER_PID" 2>/dev/null || true
 
