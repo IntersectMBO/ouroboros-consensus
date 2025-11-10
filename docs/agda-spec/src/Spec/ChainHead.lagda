@@ -14,7 +14,7 @@ state is shown in Figure~\ref{fig:ts-types:chainhead} and it consists of the fol
   \item The epoch nonce \afld{η-epoch}.
   \item The pre-nonce \afld{pre-η-candidate}.
   \item The evolving nonce \afld{ηv}.
-  \item The candidate nonce \afld{η-candidate}.
+  \item The candidate nonce \afld{φ-output}.
   \item The previous epoch hash nonce \afld{η-lheaderhash}.
   \item The last header hash \afld{h}.
   \item The last slot \afld{sℓ}.
@@ -39,9 +39,8 @@ module Spec.ChainHead
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
   (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
-  (li     : LedgerInterface crypto es ss) (let open LedgerInterface li)
   (rs     : _) (open RationalExtStructure rs)  
-  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
+  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Spec.VDF.Discriminant crypto nonces) → Set )
   (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
   -- TODO temporary parameters (required because of UpdateNonce)
   (G : Set) 
@@ -51,10 +50,11 @@ module Spec.ChainHead
   (defaultSlot : Slot)
   (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
+  (li     : LedgerInterface crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce ) (let open LedgerInterface li)
   where
 
 open import Spec.BaseTypes crypto using (OCertCounters)
-open import Spec.TickForecast crypto es ss li
+open import Spec.TickForecast crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce  defaultSlot li
 open import Spec.TickNonce crypto es nonces
 open import Spec.Protocol crypto nonces es ss rs setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce bs af
 open import Ledger.PParams crypto es ss using (PParams; ProtVer)
@@ -86,7 +86,7 @@ record LastAppliedBlock : Type where
 record ChainHeadState : Type where
 \end{code}
 \begin{code}[hide]
-  constructor ⟦_,_,_,_,_,_,_,_⟧ᶜˢ
+  constructor ⟦_,_,_,_,_,_,_⟧ᶜˢ
   field
 \end{code}
 \begin{code}  
@@ -94,10 +94,9 @@ record ChainHeadState : Type where
     η-epoch     : Nonce                  -- epoch nonce
     pre-η-candidate     : Nonce                  
     ηstate     : UpdateNonceState                  -- evolving nonce state 
-    η-candidate     : Nonce                  -- candidate nonce pre-η-candidate
+    φ-output     : Nonce                  -- candidate nonce pre-η-candidate
     η-lheaderhash     : Nonce                  -- nonce from hash of last epoch’s last header
     lab    : Maybe LastAppliedBlock -- latest applied block
-    pdm2 : PoolDistr
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Chain Head transitions}
@@ -155,36 +154,38 @@ The transition checks the following things
 \begin{code}[hide]
 private variable
   nes forecast                               : NewEpochState
+  bbody  : BlockBody
   cs cs'                                     : OCertCounters
-  η-epoch η-candidate η-lheaderhash η-epoch' η-candidate' η-lheaderhash' : Nonce
+  η-epoch φ-output η-lheaderhash η-epoch' φ-output' η-lheaderhash' : Nonce
   lab                                        : Maybe LastAppliedBlock
   bh                                         : BHeader
   ηstate ηstate' : UpdateNonceState 
   pre-η-candidate pre-η-candidate' : Nonce
-  pdm2 pdm2' : PoolDistr
 
 data _⊢_⇀⦇_,CHAINHEAD⦈_ where
 \end{code}
 \begin{code}
   Chain-Head :
-    let (bhb , _) = bh; open BHBody bhb
-        e₁   = getEpoch nes
-        e₂   = getEpoch forecast
-        ne   = (e₁ ≠ e₂)
+    let (bhb , _) = bh; open BHBody bhb 
+        epochThisBlock   = getEpoch nes
+        epochMinusOne   = getEpoch forecast 
+        ne   = (epochThisBlock ≠ epochMinusOne)
         pp   = getPParams forecast; open PParams
         nₚₕ  = prevHashToNonce (lastAppliedHash lab)
-        pdm1   = getPoolDistr forecast
+        pd   = getPoolDistr nes -- this change (from forecast to nes as argument here) pushes the stake distr. used in VRF back 1 epoch
         lab' = just ⟦ blockNo , slot , headerHash bh ⟧ℓ
         sₗ = getLastSlot lab 
+        param = ⟦ pp .phalanxSecurityParam , pp .phalanxIParam ⟧ᵖ
+        phalanxCommand = getPhalanxCommand bbody
     in
     ∙ prtlSeqChecks lab bh
     ∙ _ ⊢ nes ⇀⦇ slot ,TICKF⦈ forecast
     ∙ chainChecks MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh
-    ∙ ⟦ η-candidate , nₚₕ , pdm1 ⟧ᵗᵉ ⊢ ⟦ η-epoch , η-lheaderhash , pdm2 ⟧ᵗˢ ⇀⦇ ne ,TICKN⦈ ⟦ η-epoch' , η-lheaderhash' , pdm2' ⟧ᵗˢ -- the new η-epoch comes from the candidate nonce composed with the new chain tip (hash of incoming block header/block no/slot no)
-    ∙ ⟦ pdm2 , η-epoch' , sₗ ⟧ᵖᵉ ⊢ ⟦ cs , pre-η-candidate , ηstate , η-candidate ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs' , pre-η-candidate' , ηstate' , η-candidate' ⟧ᵖˢ
+    ∙ ⟦ φ-output , nₚₕ ⟧ᵗᵉ ⊢ ⟦ η-epoch , η-lheaderhash ⟧ᵗˢ ⇀⦇ ne ,TICKN⦈ ⟦ η-epoch' , η-lheaderhash' ⟧ᵗˢ -- the new η-epoch comes from the candidate nonce composed with the new chain tip (hash of incoming block header/block no/slot no)
+    ∙ ⟦ η-epoch' , sₗ , param ⟧ᵖᵉ ⊢ ⟦ cs , pre-η-candidate , ηstate , φ-output ⟧ᵖˢ ⇀⦇ (bh , phalanxCommand) ,PRTCL⦈ ⟦ cs' , pre-η-candidate' , ηstate' , φ-output' ⟧ᵖˢ
     ────────────────────────────────
-    nes ⊢ ⟦ cs  , η-epoch  , pre-η-candidate , ηstate  , η-candidate  , η-lheaderhash  , lab , pdm2 ⟧ᶜˢ ⇀⦇ bh ,CHAINHEAD⦈
-          ⟦ cs' , η-epoch' , pre-η-candidate' , ηstate' , η-candidate' , η-lheaderhash' , lab' , pdm2' ⟧ᶜˢ
+    nes ⊢ ⟦ cs  , η-epoch  , pre-η-candidate , ηstate  , φ-output  , η-lheaderhash  , lab ⟧ᶜˢ ⇀⦇ bh ,CHAINHEAD⦈
+          ⟦ cs' , η-epoch' , pre-η-candidate' , ηstate' , φ-output' , η-lheaderhash' , lab' ⟧ᶜˢ
 
 \end{code}
 \caption{Chain Head transition system rules}

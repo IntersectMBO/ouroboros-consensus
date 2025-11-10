@@ -1,4 +1,4 @@
--- {-# OPTIONS --safe #-} 
+{-# OPTIONS --safe #-} 
 
 open import Ledger.Crypto
 open import Ledger.Types.Epoch using (EpochStructure)
@@ -72,6 +72,12 @@ allJust = foldr check true
     check : ∀ {A : Set} → Maybe A → Bool → Bool
     check nothing acc = false
     check (just _) acc = acc
+
+compAgg : (ℕ → (G × G) → (G × G × G) → G × G × G) → ℕ → Maybe (G × G) → Maybe (G × G × G) → Maybe (G × G × G)
+compAgg aggU lam nothing _ = nothing
+compAgg aggU lam _ nothing = nothing
+compAgg aggU lam (just (xᵢ , yᵢ)) (just (x , y , π)) = just (aggU lam (xᵢ , yᵢ) (x , y , π))
+
 
 -- foldMaybe : (Maybe G × Maybe G) → Maybe (List (G × G)) → Maybe (List (G × G))
 -- foldMaybe (just x , just y) (just acc) = just ((x , y) ∷ acc)

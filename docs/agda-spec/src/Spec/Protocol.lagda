@@ -37,7 +37,7 @@ module Spec.Protocol
   (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
   (rs     : _) (open RationalExtStructure rs)
   -- TODO instantiate thes with correct VDF setup!
-  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
+  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Spec.VDF.Discriminant crypto nonces) → Set )
   (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
   -- TODO temporary parameters (required because of UpdateNonce)
   (G : Set) 
@@ -69,9 +69,9 @@ record PrtclEnv : Type where
   field
 \end{code}
 \begin{code}  
-    pdm2  : PoolDistr -- pool stake distribution from e - 2
     η-epoch  : Nonce     -- epoch nonce
     sₗ   : Slot
+    param : Parametrized
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Protocol states}
@@ -95,7 +95,7 @@ record PrtclState : Type where
 data
 \end{code}
 \begin{code}
-  _⊢_⇀⦇_,PRTCL⦈_ : PrtclEnv → PrtclState → BHeader → PrtclState → Type
+  _⊢_⇀⦇_,PRTCL⦈_ : PrtclEnv → PrtclState → (BHeader × UpdateNonceCommand) → PrtclState → Type
 \end{code}
 \end{AgdaAlign}
 \caption{Protocol transition system types}
@@ -192,13 +192,15 @@ The function \afun{vrfChecks} has the following predicate failures:
 \begin{figure*}[h]
 \begin{code}[hide]
 private variable
-  pdm1 pdm2                              : PoolDistr
+  pd                              : PoolDistr
   cs cs'                          : OCertCounters
   η-candidate η-candidate' η-epoch : Nonce 
   pre-η-candidate pre-η-candidate' : Nonce
   ηstate ηstate' : UpdateNonceState 
   bh                              : BHeader
   sₗ : Slot
+  params : Parametrized
+  phalanxCommand : UpdateNonceCommand
 
 data _⊢_⇀⦇_,PRTCL⦈_ where
 \end{code}
@@ -207,11 +209,11 @@ data _⊢_⇀⦇_,PRTCL⦈_ where
     let (bhb , σ) = bh; open BHBody bhb
         η = hBNonce bhb
     in
-    ∙ ⟦ sₗ , slot , η , η-epoch ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , η-candidate ) ⇀⦇ (sₗ , phalanxCommand) ,UPDN⦈ ( pre-η-candidate' , ηstate' , η-candidate' ) -- environment was ⟦ η ⟧ᵘᵉ before , TODO probably dont need η
-    ∙ dom (pdm2 ˢ) ⊢ cs ⇀⦇ bh ,OCERT⦈ cs'
-    ∙ vrfChecks η-epoch pdm2 ActiveSlotCoeff bhb -- the new η-epoch comes from the candidate nonce composed with the new chain tip (hash of incoming block header/block no/slot no)
+    ∙ ⟦ sₗ , slot , η-epoch , params ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , η-candidate ) ⇀⦇ (sₗ , phalanxCommand) ,UPDN⦈ ( pre-η-candidate' , ηstate' , η-candidate' ) 
+    ∙ dom (pd ˢ) ⊢ cs ⇀⦇ bh ,OCERT⦈ cs'
+    ∙ vrfChecks η-epoch pd ActiveSlotCoeff bhb -- the new η-epoch comes from the candidate nonce composed with the new chain tip (hash of incoming block header/block no/slot no)
     ────────────────────────────────
-    ⟦ pdm2 , η-epoch , sₗ ⟧ᵖᵉ ⊢ ⟦ cs , pre-η-candidate , ηstate , η-candidate ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs' , pre-η-candidate , ηstate' , η-candidate' ⟧ᵖˢ
+    ⟦ η-epoch , sₗ , params ⟧ᵖᵉ ⊢ ⟦ cs , pre-η-candidate , ηstate , η-candidate ⟧ᵖˢ ⇀⦇ (bh , phalanxCommand) ,PRTCL⦈ ⟦ cs' , pre-η-candidate , ηstate' , η-candidate' ⟧ᵖˢ
 \end{code}
 \caption{Protocol transition system rules}
 \label{fig:ts-rules:prtcl}

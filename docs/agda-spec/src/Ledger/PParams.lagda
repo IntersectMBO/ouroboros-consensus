@@ -149,6 +149,14 @@ record PParams : Type where
         drepDeposit                   : Coin
         drepActivity                  : Epoch
 \end{code}
+\emph{Phalanx Security Group}
+\begin{code}[hide]
+        -- costmdls                   : Language →/⇀ CostModel (Does not work with DecEq)
+\end{code}
+\begin{code}
+        phalanxSecurityParam               : ℕ
+        phalanxIParam                      : ℕ
+\end{code}
 \end{AgdaMultiCode}
 \caption{Protocol parameter definitions}
 \label{fig:protocol-parameter-declarations}
@@ -231,6 +239,8 @@ module PParamsUpdate where
           govActionDeposit drepDeposit  : Maybe Coin
           drepActivity                  : Maybe Epoch
           ccMinSize ccMaxTermLength     : Maybe ℕ
+          phalanxSecurityParam          : Maybe ℕ
+          phalanxIParam                 : Maybe ℕ
   
   paramsUpdateWellFormed : PParamsUpdate → Type
   paramsUpdateWellFormed ppu =
@@ -357,6 +367,8 @@ module PParamsUpdate where
       ; drepActivity                = U.drepActivity ?↗ P.drepActivity
       ; ccMinSize                   = U.ccMinSize ?↗ P.ccMinSize
       ; ccMaxTermLength             = U.ccMaxTermLength ?↗ P.ccMaxTermLength
+      ; phalanxSecurityParam                = U.phalanxSecurityParam ?↗ P.phalanxSecurityParam
+      ; phalanxIParam                = U.phalanxIParam ?↗ P.phalanxIParam
       }
     where
       open module P = PParams pp

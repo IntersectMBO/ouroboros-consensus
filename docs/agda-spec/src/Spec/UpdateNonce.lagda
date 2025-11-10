@@ -8,7 +8,7 @@ The state is shown in Figure~\ref{fig:ts-types:updnonce} and consists of
 the candidate nonce \afld{ηc} and the evolving nonce \afld{ηv}. 
 
 \begin{code}[hide]
--- {-# OPTIONS --safe #-}
+{-# OPTIONS --safe #-}
 
 open import Ledger.Crypto
 open import Spec.BaseTypes using (Nonces)
@@ -22,7 +22,7 @@ module Spec.UpdateNonce
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
   -- TODO instantiate thes with correct VDF setup!
-  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
+  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Spec.VDF.Discriminant crypto nonces) → Set )
   (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
   -- TODO temporary! the group G should always be obtained from the Initialized state!
   (G : Set) 
@@ -50,28 +50,22 @@ getInterval s = 0
 nextSlot : Slot → Slot
 nextSlot s = s
 
+-- TODO define
+-- TODO this is ℤ in CIP, why is it not Nonce?
+combinEIN : Epoch → Nonce → Discriminant
+combinEIN e n = n
+
 record Parametrized : Type where
   constructor ⟦_,_⟧ᵖ
   field
     securityParameter : ℕ -- The security parameter, defining the size (in bits) of the VDF discriminant.
     I : ℕ -- The per-interval VDF iteration count, computed from TΦ and evenly distributed across 82 computation intervals.
 
-record parametrize : Type where
-  constructor ⟦_,_⟧ᵖⁱ
-  field
-    lambda : ℕ
-    TΦ : ℕ
-
--- TODO define
--- TODO this is ℤ in CIP, why is it not Nonce?
-combinEIN : Epoch → Nonce → Nonce
-combinEIN e n = n
-
 record Initialized : Type where
   constructor ⟦_,_,_,_⟧ⁱ
   field
     parametrized : Parametrized
-    discriminant : Nonce -- TODO check type
+    discriminant : Discriminant
     epochIdₑ : Epoch -- Numerical identifier for epoch e - the epoch in which initialization happened??
     pre-ηₑ : Nonce 
     
@@ -84,14 +78,6 @@ record Initialized : Type where
 -- remove this, and replace all G's with some function getting it from the state
 VDFg = setupVDF G
 open import Spec.OutsVec crypto nonces G
-
-record initialize : Type where
-  constructor ⟦_⟧ⁱⁱ
-  field
-    -- commented out fields in this record and others represent ones that are in the state machine diagram in the CIP, but are actually redundant
-    -- parametrizedState : Parametrized 
-    -- epochIdₑ : ℕ 
-    pre-ηₑ : Nonce
 
 record AwaitingComputationPhase  : Type where
   constructor ⟦_⟧ᵃᶜᵖ
@@ -107,12 +93,11 @@ data AwaitingOrProvided : Set where
 -- represents states : AwaitingAttestedOutput AttestedOutputProvided AwaitingMissingAttestedOutput AttestedMissingOutputProvided 
 -- TODO this needs the aggregated output i think?? aggregated output needs to be updated with every new output?
 record AwaitingProvided  (awaitingOrProvided : AwaitingOrProvided) (missing : Bool) : Type where
-  constructor ⟦_,_,_⟧ᵃᵖ
+  constructor ⟦_,_⟧ᵃᵖ
   field
     initializedState : Initialized 
     -- currentSlot : Slot 
     attestedOutputs : AttestedOutputsM 
-    aggOut : G × G × G
 
 record provideAttestedOutput  : Type where
   constructor ⟦_⟧ᵖᵃᵒ
@@ -155,20 +140,13 @@ record close  : Type where
     -- awaitingGracefulClosureState : AwaitingGracefulClosure  
     φ : G × G
 
-data UpdateNonceCommand  : Type where
-  iNothing : UpdateNonceCommand
-  iParametrize : parametrize → UpdateNonceCommand
-  iInitialize : initialize → UpdateNonceCommand
-  iProvideAttestedOutput : (a : AwaitingOrProvided) → provideAttestedOutput  → UpdateNonceCommand
-  iProvideMissingAttestedOutput : provideMissingAttestedOutput  → UpdateNonceCommand 
-  iClose : close  → UpdateNonceCommand 
-  iTick : UpdateNonceCommand
+UpdateNonceCommand = Maybe (G × G )
 
 UpdateNonceSignal = Slot × UpdateNonceCommand
 
 data isPhase : Type where 
-  isIGP : isPhase -- isWithinInitializationGracePhase
-  isCP : isPhase -- isWithinComputationPhase
+  isWithinInitializationGracePhase : isPhase 
+  isWithinComputationPhase : isPhase
   isWithinCurrentInterval : isPhase 
   isWithinNextInterval : isPhase
   isWithinCatchUpPhase : isPhase 
@@ -177,7 +155,7 @@ data isPhase : Type where
 
 -- TODO define this correctly
 getPhase : Slot → Initialized → isPhase
-getPhase s inl = isIGP
+getPhase s inl = isWithinInitializationGracePhase
 
 -- TODO define
 mkInput : ℕ → Epoch → Nonce → ℕ → Maybe G
@@ -192,8 +170,8 @@ record UpdateNonceEnv  : Type where
   field
     sₗ : Slot 
     slot : Slot 
-    η : Nonce 
     η-epoch : Nonce
+    params : Parametrized
 
 
 \end{code}
@@ -203,7 +181,7 @@ record UpdateNonceEnv  : Type where
 \begin{code}
 data UpdateNonceState  : Type where
   sPrePhalanx : UpdateNonceState
-  sParametrized : Parametrized → UpdateNonceState
+  sParametrized : UpdateNonceState
   sInitialized : Initialized  → UpdateNonceState
   sAwaitingComputationPhase : AwaitingComputationPhase → UpdateNonceState
   sAwaitingProvided : (a : AwaitingOrProvided) → (missing : Bool) → AwaitingProvided a missing → UpdateNonceState
@@ -231,7 +209,7 @@ contains9kof sₗ sₙ = true
 data
 \end{code}
 \begin{code}
-  _⊢_⇀⦇_,UPDNONESTREAM⦈_ : (Slot × Slot) → UpdateNonceState  → UpdateNonceSignal  → UpdateNonceState  → Type
+  _⊢_⇀⦇_,UPDNONESTREAM⦈_ : UpdateNonceEnv → UpdateNonceState  → UpdateNonceSignal  → UpdateNonceState  → Type
 \end{code}
 \end{AgdaAlign}
 \caption{Update Nonce transition system types}
@@ -274,15 +252,14 @@ private variable
   cnt : ℕ
   TΦ lam : ℕ
   pz ps : Parametrized
-  p : parametrize
+  par : Parametrized
   a b c : G
   ds : Nonce
-  -- η ηv ηc pre-ηc pre-ηₑ ηₑ candidate-η : Nonce 
   inl : Initialized
-  iInl : initialize
   φᵢ φ : G × G
   xᵢ yᵢ πᵢ x y π : G
   I : G
+  Isp : ℕ
   pins pins' : AttestedOutputsM
   m : Bool
   mx : Maybe G
@@ -290,205 +267,187 @@ private variable
   sig : UpdateNonceCommand
   ηstate ηstate' : UpdateNonceState 
   pre-η-candidate pre-η-candidate' : Nonce
-  candidate-η candidate-η' : Nonce
-  pre-ηₑ η-head η-epoch : Nonce
+  next-η next-η' : Nonce
+  pre-ηₑ η-epoch : Nonce
   ηₑ : Nonce
-  cl : close
+  cl : Closed
   aggOut : G × G × G
-
-  -- 3 k/f 
-  -- intervals = 12 (hours) * numSecondsInHour
-  -- slotToIntervalIndex s = s / 120
-  -- convert RandomnessStabilisationWindowPlusOne to intervals also
-  -- 9 k/f - beginning of computation phase 
-  
-
--- TODO ⟦ η ⟧ᵘᵉ is not used anywhere - do we want to use the block nonce for extra randomness somewhere?
+  agc : AwaitingGracefulClosure
 
 data _⊢_⇀⦇_,UPDNONESTREAM⦈_ where
 
-  parametrize-r : 
-    let 
-      I = (VDFg .VDF.iterationsFromDuration TΦ ) / 82
-    in
-    ∙ ( sₗ , sₙ ) ⊢ (sParametrized ⟦ lam , TΦ ⟧ᵖ ) ⇀⦇ (s , sig) ,UPDNONESTREAM⦈ newState
-    ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ sPrePhalanx ⇀⦇ (s , iParametrize ⟦ lam , TΦ ⟧ᵖⁱ)  ,UPDNONESTREAM⦈ newState
+  -- TODO parametrized state is entered at the hard fork (transition not specified here)
 
   initialize-pr : 
     let 
-      ds = combinEIN (epoch sₙ) pre-ηₑ -- Δchallenge←Hash(bin(epochIde)|pre-ηe)
+      -- TODO why do we even need ds in the state? it's just computed from (epoch sₙ) and η-epoch
+      ds = combinEIN (epoch sₙ) η-epoch -- Δchallenge←Hash(bin(epochIde)|pre-ηe) 
     in
-    ∙ ( sₗ , sₙ ) ⊢ ( sInitialized ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ ) ⇀⦇ (s , sig) ,UPDNONESTREAM⦈ newState
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sInitialized ⟦ ps , ds , (epoch sₙ) , η-epoch ⟧ⁱ ) ⇀⦇ (s , nothing) ,UPDNONESTREAM⦈ newState
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ (sParametrized ps ) ⇀⦇ (s , iInitialize ⟦ pre-ηₑ ⟧ⁱⁱ)  ,UPDNONESTREAM⦈ newState 
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ sParametrized ⇀⦇ (s , nothing )  ,UPDNONESTREAM⦈ newState 
 
   initialize-cl : 
     let 
-      ds = combinEIN (epoch sₙ) pre-ηₑ -- Δchallenge←Hash(bin(epochIde)|pre-ηe)
+      ds = combinEIN (epoch sₙ) η-epoch -- Δchallenge←Hash(bin(epochIde)|pre-ηe)
     in
-    ∙ ( sₗ , sₙ ) ⊢ ( sInitialized ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ ) ⇀⦇ ( s , sig) ,UPDNONESTREAM⦈ newState 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sInitialized ⟦ ps , ds , (epoch sₙ) , η-epoch ⟧ⁱ ) ⇀⦇ ( s , nothing) ,UPDNONESTREAM⦈ newState 
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sClosed ⟦ ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ , pins , ( a , b , c ) , ηₑ ⟧ᶜᵈ ) ⇀⦇ (s , iInitialize ⟦ pre-ηₑ ⟧ⁱⁱ)  ,UPDNONESTREAM⦈ newState 
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sClosed ⟦ ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ , pins , ( a , b , c ) , ηₑ ⟧ᶜᵈ ) ⇀⦇ (s , nothing )  ,UPDNONESTREAM⦈ newState 
 
   tick-i : -- (1) <- this number is used to enumerate "tick"-type rules 
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ (sInitialized inl ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ (sInitialized inl ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
-  tick-igp : -- (2) TODO getPhase depends only on slot number (and k, which is - or does it come from ledger params? make a note about how much changes if this changes)
+  tick-igp : -- (2)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState      
-    ∙ isIGP ≡ getPhase s inl
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState      
+    ∙ isWithinInitializationGracePhase ≡ getPhase s inl
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
   tick-ic : -- (3) 
     let 
-      lam = inl .Initialized.parametrized .Parametrized.securityParameter
       pn = inl .Initialized.pre-ηₑ
     in 
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting false ⟦ inl , allN , ((VDFg .VDF.init) lam pn) ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState   
-    ∙ isCP ≡ getPhase s inl
+    ∙ ⟦ sₗ , sₙ , η-epoch , ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting false ⟦ inl , allN ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState   
+    ∙ isWithinComputationPhase ≡ getPhase s inl
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch ,  ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
 
   -- works for missing and non-missing
   provideOut :
     let i = getInterval s 
-        I = inl .Initialized.parametrized .Parametrized.I
-        lam = inl .Initialized.parametrized .Parametrized.securityParameter
         mxᵢ = mkInput lam (epoch sₙ) pre-ηₑ i  --  Hash(b“challenge"||bin(e)||pre-ηe||bin(i)) fix does this need to take I or (atIndex i pins)?
         pins' = unsafeUpdateAt82 i xᵢ (proj₁ φᵢ) pins
-        aggOut' = (VDFg .VDF.aggUpdate) lam (xᵢ , (proj₁ φᵢ)) aggOut
     in
-    ∙ (VDFg .VDF.verify) xᵢ (proj₁ φᵢ) I (proj₂ φᵢ) ≡ true
     ∙ mxᵢ ≡ just xᵢ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided m ⟦ inl , pins' , aggOut' ⟧ᵃᵖ ) ⇀⦇ ( s , sig ) ,UPDNONESTREAM⦈ newState
+    ∙ ⟦ sₗ , sₙ , η-epoch , ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided m ⟦ inl , pins' ⟧ᵃᵖ ) ⇀⦇ ( s , nothing ) ,UPDNONESTREAM⦈ newState
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting m ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , (iProvideAttestedOutput awaiting ⟦ φᵢ ⟧ᵖᵃᵒ ))  ,UPDNONESTREAM⦈ newState 
+    ⟦ sₗ , sₙ , η-epoch , ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting m ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , just φᵢ )  ,UPDNONESTREAM⦈ newState 
 
   tick-ci-p : -- (4)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided false ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState  
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState  
     ∙ getPhase s inl ≡ isWithinCurrentInterval
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided false ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
   tick-ni-p : -- (5)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState  
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState  
     ∙ getPhase s inl ≡ isWithinNextInterval
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided false ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
   tick-cup-p : --(6)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState 
     ∙ getPhase s inl ≡ isWithinCatchUpPhase
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided false ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
 
   tick-ci-a : -- (7)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState 
     ∙ getPhase s inl ≡ isWithinCurrentInterval
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
   tick-cu-a : -- (8)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState 
     ∙ getPhase s inl ≡ isWithinCatchUpPhase
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
   tick-ic-a : -- (9)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState 
     ∙ getPhase s inl ≡ isClosable
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting false ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
 
   tick-cu-mp : -- (10)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState 
     ∙ getPhase s inl ≡ isWithinCurrentInterval
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
   tick-ni-mp : -- (11)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState 
     ∙ getPhase s inl ≡ isWithinNextInterval
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
   tick-ic-mp : -- (12)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState 
     ∙ getPhase s inl ≡ isClosable
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
   tick-uc-mp : --(13)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState 
     ∙ getPhase s inl ≡ isUngracefullyClosable
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided provided true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
 
   tick-ci-m : -- (14)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState
     ∙ getPhase s inl ≡ isWithinCurrentInterval
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
   tick-c-m : -- (15)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState
     ∙ allJust (proj₁ pins) ≡ true
     ∙ getPhase s inl ≡ isClosable
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
     
   tick-uc-m : -- (16)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState
     ∙ getPhase s inl ≡ isUngracefullyClosable
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins , aggOut ⟧ᵃᵖ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting true ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState 
 
   close-rule : 
     let 
-      y = proj₁ φᵢ
       ηₑ = computeNonce y -- η e = Hash ( 256 ) ( y ) — Apply the SHA-256 hash function to y 
-      lam = inl .Initialized.parametrized .Parametrized.securityParameter
+      pn = inl .Initialized.pre-ηₑ
       i = getInterval s 
-      I = inl .Initialized.parametrized .Parametrized.I
+      aggOuts = foldr (compAgg (VDFg .VDF.aggUpdate) lam) (just (VDFg .VDF.init lam pn)) (proj₁ pins) 
     in 
-    ∙ mx ≡ just x
-    ∙ (VDFg .VDF.aggVerify) (x , y , lam) I π ≡ true 
-    ∙ ( sₗ , sₙ ) ⊢ ( sClosed  ⟦ inl , pins , (x , y , π) , ηₑ ⟧ᶜᵈ ) ⇀⦇ ( s , sig ) ,UPDNONESTREAM⦈ newState
+    ∙ mx ≡ just x  
+    ∙ aggOuts ≡ just (x , y , π)
+    -- TODO probably need another rule here to allow additional ticks after sClose is reached and before initializing!
+    ∙ ⟦ sₗ , sₙ , η-epoch , ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sClosed  ⟦ inl , pins , (x , y , π) , ηₑ ⟧ᶜᵈ ) ⇀⦇ ( s , nothing ) ,UPDNONESTREAM⦈ newState
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , (x , y , π) ⟧ᵃᵍᶜ ) ⇀⦇ (s , iClose  ⟦ φ ⟧ᶜ )  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , (x , y , π) ⟧ᵃᵍᶜ ) ⇀⦇ (s , just φ )  ,UPDNONESTREAM⦈ newState
 
   tick-gcl : -- (17)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sUngracefullyClosed ⟦ inl , pins , inl .Initialized.pre-ηₑ ⟧ᵘᶜ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState
     ∙ getPhase s inl ≡ isUngracefullyClosable
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState 
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState 
 
   tick-ngcl : -- (18)
     ∙ s > sₙ
-    ∙ ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , iTick)  ,UPDNONESTREAM⦈ newState
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState
     ∙ getPhase s inl ≢ isUngracefullyClosable
     ────────────────────────────────
-    ( sₗ , sₙ ) ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (s , iTick)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , aggOut ⟧ᵃᵍᶜ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
 
 \end{code}
 \caption{Update Nonce transition system rules}
@@ -500,7 +459,7 @@ data _⊢_⇀⦇_,UPDNONESTREAM⦈_ where
 UpdateNonce3EpochState = Nonce × UpdateNonceState × Nonce
 
 data
-  _⊢_⇀⦇_,UPDN⦈_ : UpdateNonceEnv → UpdateNonce3EpochState  → Slot × UpdateNonceCommand  → UpdateNonce3EpochState  → Type
+  _⊢_⇀⦇_,UPDN⦈_ : UpdateNonceEnv → UpdateNonce3EpochState  → UpdateNonceSignal  → UpdateNonce3EpochState  → Type
 \end{code}
 \end{AgdaAlign}
 \caption{Update Nonce transition system types}
@@ -512,47 +471,60 @@ data
 data _⊢_⇀⦇_,UPDN⦈_ where 
 
   -- TODO should we include special cases here for the epochs right after the hard fork?
+  -- TODO prove relations are computational
+  -- TODO check no cases are excluded
+  -- TODO remove unnecessary constraints
+  -- TODO we are assuming there is a block between 6k/f and 9k/f - is this valid?
 
   -- applies when 6k/f slot is contained between this slot and last slot
   -- swap the pre-nonce candidate for the current VRF output (i.e. η-epoch nonce)
   -- update nonce state with sig
   -- keep candidate nonce 
+  -- TODO check conditions : not initialization
   switch-pre-cand : 
-    ∙ contains6kof sₗ sₙ ≡ true
-    ∙ (( sₗ , sₙ ) ⊢ ηstate ⇀⦇ ( s , iInitialize ⟦ η-epoch ⟧ⁱⁱ )  ,UPDNONESTREAM⦈ ηstate' ) -- checked to be 9k/f by UPDNONESTREAM transition
+    ∙ contains6kof sₗ sₙ ≡ true 
+    ∙ ηstate ≢ sParametrized 
+    ∙ ηstate ≢ sClosed cl 
+    ∙ (⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ηstate ⇀⦇ ( s , nothing )  ,UPDNONESTREAM⦈ ηstate' ) 
     ────────────────────────────────
-    ⟦ sₗ , sₙ , η-head , η-epoch ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , candidate-η ) ⇀⦇ (s , sig )  ,UPDN⦈  ( η-epoch , ηstate' , candidate-η )
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , next-η ) ⇀⦇ (s , sig )  ,UPDN⦈  ( η-epoch , ηstate' , next-η )
 
   -- keep pre-nonce candidate 
   -- initialize nonce state with pre-η-candidate
-  -- keep candidate-η
+  -- keep next-η
+  -- TODO check conditions : initializing (from closed or parametrized)
   init : 
-    ∙ (( sₗ , sₙ ) ⊢ ηstate ⇀⦇ ( s , iInitialize ⟦ pre-η-candidate ⟧ⁱⁱ )  ,UPDNONESTREAM⦈ ηstate' ) 
+    ∙ ( ηstate ≡ sClosed cl ) ⊎ ( ηstate ≡ sParametrized )
+    ∙ (⟦ sₗ , sₙ , pre-η-candidate , par ⟧ᵘᵉ ⊢ ηstate ⇀⦇ ( s , nothing )  ,UPDNONESTREAM⦈ ηstate' ) 
     ────────────────────────────────
-    ⟦ sₗ , sₙ , η-head , η-epoch ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , candidate-η ) ⇀⦇ (s , iInitialize ⟦ η-epoch ⟧ⁱⁱ )  ,UPDN⦈  ( pre-η-candidate , ηstate' , candidate-η )
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , next-η ) ⇀⦇ (s , nothing )  ,UPDN⦈  ( pre-η-candidate , ηstate' , next-η )
 
-  -- applies when 9k/f slot is contained between this slot and last slot
-  -- update nonce state must be iClose 
+  -- applies when 9k/f slot is contained between this slot and last slot, and ηstate is getting closed
   -- keep pre-η-candidate
-  -- update candidate-η from nonce computed in closed state
+  -- update next-η from nonce computed in closed state
+  -- TODO check the conditions : crossing 9k/f and not closing 
   close-switch-cand : 
     let 
       mηₑ = getInlNonce ηstate' 
     in
     ∙ contains9kof sₗ sₙ ≡ true
-    ∙ (( sₗ , sₙ ) ⊢ ηstate ⇀⦇ ( s , iClose  ⟦ φ ⟧ᶜ )  ,UPDNONESTREAM⦈ ηstate' ) -- checked to be 9k/f by UPDNONESTREAM transition
-    ∙ (mηₑ ≡ just candidate-η)
+    ∙ ηstate ≡ sAwaitingGracefulClosure agc 
+    ∙ (⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ηstate ⇀⦇ ( s , just φ )  ,UPDNONESTREAM⦈ ηstate' ) 
+    ∙ (mηₑ ≡ just next-η) 
     ────────────────────────────────
-    ⟦ sₗ , sₙ , η-head , η-epoch ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , candidate-η' ) ⇀⦇ (s , iClose  ⟦ φ ⟧ᶜ )  ,UPDN⦈  ( pre-η-candidate , ηstate' , candidate-η )
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , next-η' ) ⇀⦇ (s , just φ )  ,UPDN⦈  ( pre-η-candidate , ηstate' , next-η )
 
-  -- if the signal is neither iInitialize nor iClose, update nonce state with signal
-  -- keep pre-η-candidate and candidate-η
+  -- if the signal is neither nothing nor iClose, update nonce state with signal
+  -- keep pre-η-candidate and next-η
+  -- TODO check the conditions : not closing or initializing and not crossing 6k/f or 9k/f
   update-noswitch : 
-    ∙ sig ≢ iClose cl 
-    ∙ sig ≢ iInitialize iInl
-    ∙ ( sₗ , sₙ ) ⊢ ηstate ⇀⦇ (s , sig)  ,UPDNONESTREAM⦈  ηstate'
+    ∙ ¬ ((ηstate ≡ sAwaitingGracefulClosure agc) × (sig ≡ just φ))
+    ∙ ¬ ((ηstate ≡ sInitialized inl) × (sig ≡ just φ))
+    ∙ contains6kof sₗ sₙ ≢ true 
+    ∙ contains9kof sₗ sₙ ≢ true 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ηstate ⇀⦇ (s , sig)  ,UPDNONESTREAM⦈  ηstate'
     ────────────────────────────────
-    ⟦ sₗ , sₙ , η-head , η-epoch ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , candidate-η ) ⇀⦇ (s , sig)  ,UPDN⦈  ( pre-η-candidate , ηstate' , candidate-η )
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( pre-η-candidate , ηstate , next-η ) ⇀⦇ (s , sig)  ,UPDN⦈  ( pre-η-candidate , ηstate' , next-η )
 
 \end{code}
 \caption{Update Nonce transition system rules}

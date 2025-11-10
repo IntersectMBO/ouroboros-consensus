@@ -8,19 +8,30 @@ and its signal is the current slot.
 \begin{code}[hide]
 {-# OPTIONS --safe #-}
 
-open import Ledger.Crypto
 open import Ledger.Script
 open import Ledger.Types.Epoch
 open import InterfaceLibrary.Ledger
+open import Ledger.Crypto
+open import Spec.BaseTypes using (Nonces)
+open import Ledger.Prelude
+import Spec.VDF
 
 module Spec.TickForecast
-  (crypto : Crypto)
+  (crypto : _) (open Crypto crypto)
+  (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)
-  (li     : LedgerInterface crypto es ss) (let open LedgerInterface li)
+  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
+  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Spec.VDF.Discriminant crypto nonces) → Set )
+  (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
+  -- TODO temporary parameters (required because of UpdateNonce)
+  (G : Set) 
+  (_*ᵍ_ : G × G → G) 
+  (idᵍ : G) 
+  (defaultNonce : Nonce)
+  (defaultSlot : Slot)
+  (li     : LedgerInterface crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce ) (let open LedgerInterface li)
   where
 
-open import Ledger.Prelude
 
 \end{code}
 

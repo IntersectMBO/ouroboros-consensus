@@ -16,6 +16,10 @@ module Spec.VDF
 isGroup : (S : Set) → S → (S × S → S) → Set
 isGroup _ _ _ = ⊤
 
+-- TODO specify the real type we want discriminant to have
+Discriminant : Type 
+Discriminant = Nonce 
+
 -- _ₛ : ∀ {Grp : Set} → Group {Grp} → Set
 -- (_ₛ) {G} gr = G
 

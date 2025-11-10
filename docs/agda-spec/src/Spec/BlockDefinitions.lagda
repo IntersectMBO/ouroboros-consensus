@@ -16,7 +16,7 @@ module Spec.BlockDefinitions
   (nonces : Nonces crypto) (open Nonces nonces)  
   (es     : _) (open EpochStructure es)
   (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
-  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
+  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Spec.VDF.Discriminant crypto nonces) → Set )
   (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
   -- TODO implement nonce combination with epoch number
   (G : Set) 
@@ -84,7 +84,6 @@ record BlockStructure : Type₁ where
       bodyHash   : HashBBody          -- block body hash
       oc         : OCert              -- operational certificate
       pv         : ProtVer            -- protocol version
-      phalanxCommand   : UpdateNonceCommand 
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Block Types}
