@@ -74,7 +74,7 @@ cleanup_netns() {
     # no need to call cleanup_links, since deleting the namespace deletes those
     # links
 
-    # the script directly calls invokes handler, so when teardown is complete,
+    # the script itself invokes this handler directly to stop the processes, so
     # reset the SIGNAL handlers
     trap - EXIT INT TERM
 }
@@ -109,7 +109,7 @@ add_qdiscs() {
     i=$1
     j=$2
     # I Googled "netem delay after tbf of tbf after netem delay" and the AI
-    # Overview implied that I want the following. TODO double-check
+    # Overview implied that I want netem as the child. TODO double-check
     sudo tc -n ns$i qdisc add dev veth$i$j handle 1: root $myrate
     sudo tc -n ns$i qdisc add dev veth$i$j parent 1: handle 2: $mydelay
 }
