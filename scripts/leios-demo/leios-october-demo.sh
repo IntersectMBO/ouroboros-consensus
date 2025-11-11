@@ -49,26 +49,7 @@ PORT1=3001
 PORT2=3002
 PORT3=3003
 
-TOXIPROXY=100
-
-cleanup_proxy() {
-    toxiproxy-cli delete mocked-upstream-peer-proxy
-    toxiproxy-cli delete node0-proxy
-}
-
-trap cleanup_proxy EXIT INT TERM
-
-toxiproxy-cli create --listen 127.0.0.1:"$PORT1" --upstream 127.0.0.1:"$(($TOXIPROXY + $PORT1))" mocked-upstream-peer-proxy
-toxiproxy-cli create --listen 127.0.0.1:"$PORT2" --upstream 127.0.0.1:"$(($TOXIPROXY + $PORT2))" node0-proxy
-
-for i in mocked-upstream-peer-proxy node0-proxy; do
-    # TODO magic numbers
-    toxiproxy-cli toxic add --upstream   --type latency   --attribute latency=100 --attribute jitter=0 $i   # milliseconds
-    toxiproxy-cli toxic add --downstream --type latency   --attribute latency=100 --attribute jitter=0 $i   # milliseconds
-    toxiproxy-cli toxic add --upstream   --type bandwidth --attribute rate=2500 $i   # kilobytes per second
-    toxiproxy-cli toxic add --downstream --type bandwidth --attribute rate=2500 $i   # kilobytes per second
-    # FYI, 125 kilobyte/s = 1 megabit/s, so EG 2500 kilobyte/s = 20 megabit/s
-done
+TOXIPROXY=0
 
 echo "Ports: ${PORT1} ${PORT2} ${PORT3}, each plus ${TOXIPROXY} for toxiproxy"
 
