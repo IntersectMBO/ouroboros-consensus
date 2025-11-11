@@ -20,7 +20,7 @@ module Spec.OperationalCertificate
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
   (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
-  (bs : BlockStructure crypto nonces es ss) (open BlockStructure bs)
+  (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   where
 
