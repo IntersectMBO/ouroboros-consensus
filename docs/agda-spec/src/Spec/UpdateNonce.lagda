@@ -42,8 +42,9 @@ open module VDF' = Spec.VDF crypto nonces
 \begin{code}
 
 -- TODO define 
-getInterval : Slot → ℕ
-getInterval s = 0
+-- uses security parameter I and slot number to compute interval number
+getInterval : ℕ → Slot → ℕ
+getInterval i s = 0
 
 
 -- TODO define/find
@@ -277,21 +278,25 @@ private variable
 data _⊢_⇀⦇_,UPDNONESTREAM⦈_ where
 
   -- TODO parametrized state is entered at the hard fork (transition not specified here)
+  -- the state machine never again enters the parametrized state 
+  -- updated parameters get stored directly in the Initialized state
 
-  initialize-pr : 
-    let 
-      -- TODO why do we even need ds in the state? it's just computed from (epoch sₙ) and η-epoch
-      ds = combinEIN (epoch sₙ) η-epoch -- Δchallenge←Hash(bin(epochIde)|pre-ηe) 
-    in
-    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sInitialized ⟦ ps , ds , (epoch sₙ) , η-epoch ⟧ⁱ ) ⇀⦇ (s , nothing) ,UPDNONESTREAM⦈ newState
-    ────────────────────────────────
-    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ sParametrized ⇀⦇ (s , nothing )  ,UPDNONESTREAM⦈ newState 
+  -- initialize-pr : 
+  --   let 
+  --     ds = combinEIN (epoch sₙ) η-epoch -- Δchallenge←Hash(bin(epochIde)|pre-ηe) 
+  --   in
+  --   ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sInitialized ⟦ par , ds , (epoch sₙ) , η-epoch ⟧ⁱ ) ⇀⦇ (s , nothing) ,UPDNONESTREAM⦈ newState
+  --   ────────────────────────────────
+  --   ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ sParametrized ⇀⦇ (s , nothing )  ,UPDNONESTREAM⦈ newState 
 
   initialize-cl : 
+      -- TODO why do we even need ds in the state? it's just computed from (epoch sₙ) and η-epoch
+      -- note here that current phalanx parameters par are stored in sInitialized, they will be used for the rest of the cycle 
+      -- this is where the parameter update (from ps to par, in this rule) takes effect in the Phalanx nonce update
     let 
       ds = combinEIN (epoch sₙ) η-epoch -- Δchallenge←Hash(bin(epochIde)|pre-ηe)
     in
-    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sInitialized ⟦ ps , ds , (epoch sₙ) , η-epoch ⟧ⁱ ) ⇀⦇ ( s , nothing) ,UPDNONESTREAM⦈ newState 
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sInitialized ⟦ par , ds , (epoch sₙ) , η-epoch ⟧ⁱ ) ⇀⦇ ( s , nothing) ,UPDNONESTREAM⦈ newState 
     ────────────────────────────────
     ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sClosed ⟦ ⟦ ps , ds , (epoch sₙ) , pre-ηₑ ⟧ⁱ , pins , ( a , b , c ) , ηₑ ⟧ᶜᵈ ) ⇀⦇ (s , nothing )  ,UPDNONESTREAM⦈ newState 
 
@@ -313,21 +318,23 @@ data _⊢_⇀⦇_,UPDNONESTREAM⦈_ where
       pn = inl .Initialized.pre-ηₑ
     in 
     ∙ s > sₙ
-    ∙ ⟦ sₗ , sₙ , η-epoch , ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting false ⟦ inl , allN ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState   
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting false ⟦ inl , allN ⟧ᵃᵖ ) ⇀⦇ (nextSlot s , nothing)  ,UPDNONESTREAM⦈ newState   
     ∙ isWithinComputationPhase ≡ getPhase s inl
     ────────────────────────────────
-    ⟦ sₗ , sₙ , η-epoch ,  ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch ,  par ⟧ᵘᵉ ⊢ ( sAwaitingComputationPhase ⟦ inl ⟧ᵃᶜᵖ ) ⇀⦇ (s , nothing)  ,UPDNONESTREAM⦈ newState
 
   -- works for missing and non-missing
   provideOut :
-    let i = getInterval s 
+    let lam = inl .Initialized.parametrized .Parametrized.securityParameter
+        Isp = inl .Initialized.parametrized .Parametrized.I
+        i = getInterval Isp s 
         mxᵢ = mkInput lam (epoch sₙ) pre-ηₑ i  --  Hash(b“challenge"||bin(e)||pre-ηe||bin(i)) fix does this need to take I or (atIndex i pins)?
         pins' = unsafeUpdateAt82 i xᵢ (proj₁ φᵢ) pins
     in
     ∙ mxᵢ ≡ just xᵢ
-    ∙ ⟦ sₗ , sₙ , η-epoch , ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided m ⟦ inl , pins' ⟧ᵃᵖ ) ⇀⦇ ( s , nothing ) ,UPDNONESTREAM⦈ newState
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided provided m ⟦ inl , pins' ⟧ᵃᵖ ) ⇀⦇ ( s , nothing ) ,UPDNONESTREAM⦈ newState
     ────────────────────────────────
-    ⟦ sₗ , sₙ , η-epoch , ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting m ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , just φᵢ )  ,UPDNONESTREAM⦈ newState 
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingProvided awaiting m ⟦ inl , pins ⟧ᵃᵖ ) ⇀⦇ (s , just φᵢ )  ,UPDNONESTREAM⦈ newState 
 
   tick-ci-p : -- (4)
     ∙ s > sₙ
@@ -425,15 +432,17 @@ data _⊢_⇀⦇_,UPDNONESTREAM⦈_ where
     let 
       ηₑ = computeNonce y -- η e = Hash ( 256 ) ( y ) — Apply the SHA-256 hash function to y 
       pn = inl .Initialized.pre-ηₑ
-      i = getInterval s 
+      lam = inl .Initialized.parametrized .Parametrized.securityParameter
+      Isp = inl .Initialized.parametrized .Parametrized.I
+      i = getInterval Isp s 
       aggOuts = foldr (compAgg (VDFg .VDF.aggUpdate) lam) (just (VDFg .VDF.init lam pn)) (proj₁ pins) 
     in 
     ∙ mx ≡ just x  
     ∙ aggOuts ≡ just (x , y , π)
     -- TODO probably need another rule here to allow additional ticks after sClose is reached and before initializing!
-    ∙ ⟦ sₗ , sₙ , η-epoch , ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sClosed  ⟦ inl , pins , (x , y , π) , ηₑ ⟧ᶜᵈ ) ⇀⦇ ( s , nothing ) ,UPDNONESTREAM⦈ newState
+    ∙ ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sClosed  ⟦ inl , pins , (x , y , π) , ηₑ ⟧ᶜᵈ ) ⇀⦇ ( s , nothing ) ,UPDNONESTREAM⦈ newState
     ────────────────────────────────
-    ⟦ sₗ , sₙ , η-epoch , ⟦ lam , Isp ⟧ᵖ ⟧ᵘᵉ ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , (x , y , π) ⟧ᵃᵍᶜ ) ⇀⦇ (s , just φ )  ,UPDNONESTREAM⦈ newState
+    ⟦ sₗ , sₙ , η-epoch , par ⟧ᵘᵉ ⊢ ( sAwaitingGracefulClosure ⟦ inl , pins , (x , y , π) ⟧ᵃᵍᶜ ) ⇀⦇ (s , just φ )  ,UPDNONESTREAM⦈ newState
 
   tick-gcl : -- (17)
     ∙ s > sₙ
