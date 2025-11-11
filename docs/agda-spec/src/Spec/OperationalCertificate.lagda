@@ -8,28 +8,19 @@ and consists of the set of stake pools. The state is shown in Figure~\ref{fig:ts
 and consists of the mapping of operation certificate issue numbers. Its signal is a block header.
 
 \begin{code}[hide]
--- {-# OPTIONS --safe #-}
+{-# OPTIONS --safe #-}
 open import Ledger.Crypto
 open import Ledger.Script
 open import Ledger.Types.Epoch
 open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
-import Spec.VDF
-open import Ledger.Prelude
 
 module Spec.OperationalCertificate
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
   (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
-  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Nonce) → Set )
-  (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
-  -- TODO temporary parameters (required because of UpdateNonce)
-  (G : Set) 
-  (_*ᵍ_ : G × G → G) 
-  (idᵍ : G) 
-  (defaultNonce : Nonce)
-  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce ) (open BlockStructure bs)
+  (bs : BlockStructure crypto nonces es ss) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   where
 

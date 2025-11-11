@@ -19,7 +19,7 @@ Its state is shown in Figure~\ref{fig:ts-types:prtcl} and consists of
 \end{itemize}
 
 \begin{code}[hide]
--- {-# OPTIONS --safe #-}
+{-# OPTIONS --safe #-}
 
 open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
@@ -35,6 +35,8 @@ module Spec.Protocol
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
   (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
+  (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
+  (af     : _) (open AbstractFunctions af)
   (rs     : _) (open RationalExtStructure rs)
   -- TODO instantiate thes with correct VDF setup!
   (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Spec.VDF.Discriminant crypto nonces) → Set )
@@ -44,12 +46,10 @@ module Spec.Protocol
   (_*ᵍ_ : G × G → G) 
   (idᵍ : G) 
   (defaultNonce : Nonce)
-  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce ) (open BlockStructure bs)
-  (af     : _) (open AbstractFunctions af)
   where
 
 open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
-open import Spec.OperationalCertificate crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce bs af
+open import Spec.OperationalCertificate crypto nonces es ss bs af
 open import Spec.BaseTypes crypto using (OCertCounters)
 open import Data.Rational as ℚ using (ℚ; 0ℚ; 1ℚ)
 open Ledger.Prelude.ℤ using (pos)

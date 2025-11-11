@@ -2,31 +2,22 @@
 \label{sec:defs-blocks}
 
 \begin{code}[hide]
--- {-# OPTIONS --safe #-}
+{-# OPTIONS --safe #-}
 
 open import Spec.BaseTypes using (Nonces)
 open import Ledger.Prelude
 open import Ledger.Crypto
 open import Ledger.Script
 open import Ledger.Types.Epoch
-import Spec.VDF
 
 module Spec.BlockDefinitions
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)  
   (es     : _) (open EpochStructure es)
   (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
-  (setupVDFGroup : (securityParam : ℕ) → ∀ (Δ-challenge : Spec.VDF.Discriminant crypto nonces) → Set )
-  (setupVDF : (G : Set) → (Spec.VDF.VDF crypto nonces {G}))
-  -- TODO implement nonce combination with epoch number
-  (G : Set) 
-  (_*ᵍ_ : G × G → G) 
-  (idᵍ : G) 
-  (defaultNonce : Nonce)
   where
 
 open import Ledger.PParams crypto es ss using (ProtVer)
-open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce 
 
 record BlockStructure : Type₁ where
   field

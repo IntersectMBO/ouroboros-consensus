@@ -22,11 +22,11 @@ state is shown in Figure~\ref{fig:ts-types:chainhead} and it consists of the fol
 \end{itemize}
 
 \begin{code}[hide]
--- {-# OPTIONS --safe #-}
+{-# OPTIONS --safe #-}
 
 open import InterfaceLibrary.Ledger
 open import Spec.BaseTypes using (Nonces)
-open import Spec.BlockDefinitions 
+open import Spec.BlockDefinitions
 open import Ledger.Crypto
 open import Ledger.Script
 open import Ledger.Types.Epoch
@@ -48,7 +48,7 @@ module Spec.ChainHead
   (idᵍ : G) 
   (defaultNonce : Nonce)
   (defaultSlot : Slot)
-  (bs     : BlockStructure crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce) (open BlockStructure bs)
+  (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   (li     : LedgerInterface crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce ) (let open LedgerInterface li)
   where
@@ -56,7 +56,7 @@ module Spec.ChainHead
 open import Spec.BaseTypes crypto using (OCertCounters)
 open import Spec.TickForecast crypto nonces es ss setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce  defaultSlot li
 open import Spec.TickNonce crypto es nonces
-open import Spec.Protocol crypto nonces es ss rs setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce bs af
+open import Spec.Protocol crypto nonces es ss bs af rs setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce 
 open import Ledger.PParams crypto es ss using (PParams; ProtVer)
 open import Ledger.Prelude
 open import Spec.UpdateNonce crypto nonces es setupVDFGroup setupVDF G _*ᵍ_ idᵍ defaultNonce 
