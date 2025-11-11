@@ -604,6 +604,7 @@ data Environment
       !(ResourceRegistry IO)
 
 data LedgerDBError = ErrorValidateExceededRollback
+  deriving Show
 
 instance RunModel Model (StateT Environment IO) where
   type Error Model (StateT Environment IO) = LedgerDBError
