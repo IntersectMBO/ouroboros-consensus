@@ -33,6 +33,7 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.State
   , writeOpenState
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Control.Monad
 import Control.Monad.State.Strict hiding (withState)
 import Control.RAWLock (RAWLock)
@@ -307,7 +308,7 @@ mkOpenState ::
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , Eq h
   ) =>
   CodecConfig blk ->
@@ -360,7 +361,7 @@ mkOpenStateHelper ::
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , Eq h
   ) =>
   CodecConfig blk ->

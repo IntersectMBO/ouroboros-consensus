@@ -273,6 +273,7 @@ test-suite consensus-test
     base,
     binary,
     bytestring,
+    cardano-binary,
     cardano-crypto-class ^>=2.2,
     cardano-diffusion:api,
     cardano-ledger-core,

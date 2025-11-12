@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
   , getBlockAtOrAfterPointImpl
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Prelude (forceElemsToWHNF)
 import Cardano.Slotting.Slot (WithOrigin (..))
 import qualified Codec.CBOR.Read as CBOR
@@ -118,7 +119,7 @@ streamImpl ::
   forall m blk b.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   , HasCallStack
@@ -429,7 +430,7 @@ iteratorNextImpl ::
   forall m blk b h.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   ) =>
@@ -604,7 +605,7 @@ extractBlockComponent ::
   forall m blk b h.
   ( HasHeader blk
   , ReconstructNestedCtxt Header blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , IOLike m
   ) =>
@@ -726,18 +727,28 @@ extractBlockComponent
     parseHeader (SomeSecond ctxt) bytes =
       throwParseErrors bytes $
         CBOR.deserialiseFromBytes
-          ((\f -> nest . DepPair ctxt . f) <$> decodeDiskDep ccfg ctxt)
+          (aux <$> decodeDiskDep ccfg ctxt)
           bytes
+      where
+        aux = \f -> Right . nest . DepPair ctxt . f
 
     throwParseErrors ::
-      forall b'.
+      forall b''.
       Lazy.ByteString ->
-      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b') ->
-      m b'
+      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> Either Plain.DecoderError b'') ->
+      m b''
     throwParseErrors fullBytes = \case
       Right (trailing, f)
         | Lazy.null trailing ->
-            return $ f fullBytes
+            case f fullBytes of
+              Left err ->
+                -- TODO(10.7): must change the UnexpectedFailure type's ParseError constructor to
+                -- carry Plain.DecoderError and return it. CBOR.DeserialiseFailure could be subsumed
+                -- by Plain.DecoderError, there's a constructor for it
+                throwUnexpectedFailure $
+                  ParseError (fsPathChunkFile chunk) pt (CBOR.DeserialiseFailure 0 (show err))
+              Right result -> pure result
+            -- return $ f fullBytes
         | otherwise ->
             throwUnexpectedFailure $
               TrailingDataError (fsPathChunkFile chunk) pt trailing

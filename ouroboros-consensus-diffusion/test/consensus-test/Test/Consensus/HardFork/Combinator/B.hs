@@ -35,6 +35,7 @@ module Test.Consensus.HardFork.Combinator.B
   , TxId (..)
   ) where
 
+import Cardano.Binary (DecoderError)
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Codec.Serialise
 import qualified Data.Binary as B
@@ -467,8 +468,8 @@ instance EncodeDisk BlockB (LedgerState BlockB EmptyMK)
 instance DecodeDisk BlockB (LedgerState BlockB EmptyMK)
 
 instance EncodeDisk BlockB BlockB
-instance DecodeDisk BlockB (Lazy.ByteString -> BlockB) where
-  decodeDisk _ = const <$> decode
+instance DecodeDisk BlockB (Lazy.ByteString -> Either DecoderError BlockB) where
+  decodeDisk _ = const . Right <$> decode
 
 instance EncodeDisk BlockB (AnnTip BlockB)
 instance DecodeDisk BlockB (AnnTip BlockB)

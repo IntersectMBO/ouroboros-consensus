@@ -59,8 +59,8 @@ instance SerialiseDiskConstraints DualByronBlock
 
 instance EncodeDisk DualByronBlock DualByronBlock where
   encodeDisk _ = encodeDualBlock encodeByronBlock
-instance DecodeDisk DualByronBlock (Lazy.ByteString -> DualByronBlock) where
-  decodeDisk ccfg = decodeDualBlock (decodeByronBlock epochSlots)
+instance DecodeDisk DualByronBlock (Lazy.ByteString -> Either DecoderError DualByronBlock) where
+  decodeDisk ccfg = (Right .) <$> decodeDualBlock (decodeByronBlock epochSlots)
    where
     epochSlots = extractEpochSlots ccfg
 

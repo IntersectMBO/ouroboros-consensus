@@ -124,7 +124,7 @@ prop_detectCorruption_Header :: Header Block -> Corruption -> Property
 prop_detectCorruption_Header =
   detectCorruption
     encodeShelleyHeader
-    decodeShelleyHeader
+    ((Right .) <$> decodeShelleyHeader)
     ( verifyHeaderIntegrity @(TPraos MockCrypto) testTPraosSlotsPerKESPeriod
         . shelleyHeaderRaw
     )

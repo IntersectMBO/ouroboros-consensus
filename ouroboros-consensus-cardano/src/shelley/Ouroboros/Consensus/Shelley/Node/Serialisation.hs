@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Shelley.Node.Serialisation () where
 
 import Cardano.Binary
 import Cardano.Ledger.BaseTypes
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -64,13 +65,17 @@ import Ouroboros.Network.Block
 instance ShelleyCompatible proto era => HasBinaryBlockInfo (ShelleyBlock proto era) where
   getBinaryBlockInfo = shelleyBinaryBlockInfo
 
-instance ShelleyCompatible proto era => SerialiseDiskConstraints (ShelleyBlock proto era)
+instance
+  ShelleyCompatible proto era =>
+  SerialiseDiskConstraints (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (ShelleyBlock proto era) where
   encodeDisk _ = encodeShelleyBlock
 instance
   ShelleyCompatible proto era =>
-  DecodeDisk (ShelleyBlock proto era) (Lazy.ByteString -> ShelleyBlock proto era)
+  DecodeDisk
+    (ShelleyBlock proto era)
+    (Lazy.ByteString -> Either Plain.DecoderError (ShelleyBlock proto era))
   where
   decodeDisk _ = decodeShelleyBlock
 
@@ -143,11 +148,12 @@ instance
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
 -- wrapped ('Serialised') variant.
 instance
+  forall proto era.
   ShelleyCompatible proto era =>
   SerialiseNodeToNode (ShelleyBlock proto era) (ShelleyBlock proto era)
   where
   encodeNodeToNode _ _ = wrapCBORinCBOR encodeShelleyBlock
-  decodeNodeToNode _ _ = unwrapCBORinCBOR ((Right .) <$> decodeShelleyBlock)
+  decodeNodeToNode _ _ = unwrapCBORinCBOR decodeShelleyBlock
 
 -- | 'Serialised' uses CBOR-in-CBOR by default.
 instance SerialiseNodeToNode (ShelleyBlock proto era) (Serialised (ShelleyBlock proto era))
@@ -211,7 +217,7 @@ instance
   SerialiseNodeToClient (ShelleyBlock proto era) (ShelleyBlock proto era)
   where
   encodeNodeToClient _ _ = wrapCBORinCBOR encodeShelleyBlock
-  decodeNodeToClient _ _ = unwrapCBORinCBOR ((Right .) <$> decodeShelleyBlock)
+  decodeNodeToClient _ _ = unwrapCBORinCBOR decodeShelleyBlock
 
 -- | This instance uses the invariant that the 'EpochInfo' in a
 -- 'ShelleyLedgerConfig' is fixed i.e. has a constant 'EpochSize' and

@@ -191,17 +191,17 @@ instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
       ) = do
       enforceSize "CardanoBlock" 2
       CBOR.decodeWord >>= \case
-        0 -> fmap BlockByron <$> Byron.decodeByronBoundaryBlock epochSlots
-        1 -> fmap BlockByron <$> Byron.decodeByronRegularBlock epochSlots
+        0 -> fmap (Right . BlockByron) <$> Byron.decodeByronBoundaryBlock epochSlots
+        1 -> fmap (Right . BlockByron) <$> Byron.decodeByronRegularBlock epochSlots
         -- We don't have to drop the first two bytes from the 'ByteString'
         -- passed to the decoder as slicing already takes care of this.
-        2 -> fmap BlockShelley <$> decodeDisk ccfgShelley
-        3 -> fmap BlockAllegra <$> decodeDisk ccfgAllegra
-        4 -> fmap BlockMary <$> decodeDisk ccfgMary
-        5 -> fmap BlockAlonzo <$> decodeDisk ccfgAlonzo
-        6 -> fmap BlockBabbage <$> decodeDisk ccfgBabbage
-        7 -> fmap BlockConway <$> decodeDisk ccfgConway
-        8 -> fmap BlockDijkstra <$> decodeDisk ccfgDijkstra
+        2 -> fmap (fmap BlockShelley) <$> decodeDisk ccfgShelley
+        3 -> fmap (fmap BlockAllegra) <$> decodeDisk ccfgAllegra
+        4 -> fmap (fmap BlockMary) <$> decodeDisk ccfgMary
+        5 -> fmap (fmap BlockAlonzo) <$> decodeDisk ccfgAlonzo
+        6 -> fmap (fmap BlockBabbage) <$> decodeDisk ccfgBabbage
+        7 -> fmap (fmap BlockConway) <$> decodeDisk ccfgConway
+        8 -> fmap (fmap BlockDijkstra) <$> decodeDisk ccfgDijkstra
         t -> cborError $ DecoderErrorUnknownTag "CardanoBlock" (fromIntegral t)
      where
       epochSlots = Byron.getByronEpochSlots ccfgByron

@@ -310,8 +310,10 @@ decodeShelleyBlock ::
   forall proto era.
   ShelleyCompatible proto era =>
   forall s.
-  Plain.Decoder s (Lazy.ByteString -> ShelleyBlock proto era)
-decodeShelleyBlock = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+  Plain.Decoder s (Lazy.ByteString -> Either Plain.DecoderError (ShelleyBlock proto era))
+decodeShelleyBlock =
+  eraDecoder @era $
+    (. Full) . runAnnotator <$> decCBOR
 
 shelleyBinaryBlockInfo ::
   forall proto era. ShelleyCompatible proto era => ShelleyBlock proto era -> BinaryBlockInfo
@@ -330,12 +332,18 @@ encodeShelleyHeader ::
   Header (ShelleyBlock proto era) -> Plain.Encoding
 encodeShelleyHeader = toEraCBOR @era
 
+-- The `error` call is introduced to work around the change of the type of `runAnnotator`. The annotated decoder has type `Lazy.ByteString -> Either DecoderError (Header (ShelleyBlock proto era))`, but we need `(Lazy.ByteString -> Header (ShelleyBlock proto era))`. We have no way to handle the inner decoder error without actually running the decoder. We also know that the current code does not allow `Header` decoding to fail in a way different than normal CBOR failures. Hence, we chose to introduce an error call here. We intend to refactor `Header` decoding in Consesnus to not have to have this error call.
 decodeShelleyHeader ::
   forall proto era.
   ShelleyCompatible proto era =>
   forall s.
   Plain.Decoder s (Lazy.ByteString -> Header (ShelleyBlock proto era))
-decodeShelleyHeader = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+decodeShelleyHeader =
+  eraDecoder @era $
+    (. Full)
+      . (either (\e -> error ("Impossible, header decoder failed: " <> show e)) id .)
+      . runAnnotator
+      <$> decCBOR
 
 {-------------------------------------------------------------------------------
   Condense
