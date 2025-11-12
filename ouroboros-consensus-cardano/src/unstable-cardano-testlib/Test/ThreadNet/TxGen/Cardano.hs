@@ -256,19 +256,19 @@ migrateUTxO migrationInfo curSlot lcfg lst
       (SL.StakeRefBase $ Shelley.mkCredential stakingSK)
 
   -- A simplistic individual pool
-  poolParams :: SL.Coin -> SL.PoolParams
+  poolParams :: SL.Coin -> SL.StakePoolParams
   poolParams pledge =
-    SL.PoolParams
-      { SL.ppCost = SL.Coin 1
-      , SL.ppMetadata = SL.SNothing
-      , SL.ppMargin = minBound
-      , SL.ppOwners = Set.singleton $ Shelley.mkKeyHash poolSK
-      , SL.ppPledge = pledge
-      , SL.ppId = Shelley.mkKeyHash poolSK
-      , SL.ppRewardAccount =
+    SL.StakePoolParams
+      { SL.sppCost = SL.Coin 1
+      , SL.sppMetadata = SL.SNothing
+      , SL.sppMargin = minBound
+      , SL.sppOwners = Set.singleton $ Shelley.mkKeyHash poolSK
+      , SL.sppPledge = pledge
+      , SL.sppId = Shelley.mkKeyHash poolSK
+      , SL.sppRewardAccount =
           SL.RewardAccount Shelley.networkId $ Shelley.mkCredential poolSK
-      , SL.ppRelays = StrictSeq.empty
-      , SL.ppVrf = Shelley.mkKeyHashVrf @c vrfSK
+      , SL.sppRelays = StrictSeq.empty
+      , SL.sppVrf = Shelley.mkKeyHashVrf @c vrfSK
       }
 
 -----
