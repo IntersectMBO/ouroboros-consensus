@@ -5,6 +5,7 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseDisk () where
 
+import Cardano.Binary (DecoderError)
 import Codec.CBOR.Encoding (Encoding)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.SOP.BasicFunctors
@@ -52,7 +53,7 @@ instance
 
 instance
   SerialiseHFC xs =>
-  DecodeDisk (HardForkBlock xs) (Lazy.ByteString -> HardForkBlock xs)
+  DecodeDisk (HardForkBlock xs) (Lazy.ByteString -> Either DecoderError (HardForkBlock xs))
   where
   decodeDisk = decodeDiskHfcBlock
 

@@ -71,7 +71,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
   , SerialiseNS (..)
   ) where
 
-import Cardano.Binary (enforceSize)
+import Cardano.Binary (DecoderError, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as Dec
 import Codec.CBOR.Encoding (Encoding)
@@ -218,9 +218,9 @@ class
   decodeDiskHfcBlock ::
     CodecConfig (HardForkBlock xs) ->
     forall s.
-    Decoder s (Lazy.ByteString -> HardForkBlock xs)
+    Decoder s (Lazy.ByteString -> Either DecoderError (HardForkBlock xs))
   decodeDiskHfcBlock cfg =
-    (\f -> HardForkBlock . OneEraBlock . f)
+    (\f -> fmap (HardForkBlock . OneEraBlock) . f)
       <$> decodeAnnNS (hcmap pSHFC aux cfgs)
    where
     cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
@@ -228,7 +228,10 @@ class
     aux ::
       SerialiseDiskConstraints blk =>
       CodecConfig blk -> AnnDecoder I blk
-    aux cfg' = AnnDecoder $ (I .) <$> decodeDisk cfg'
+    aux cfg' =
+      AnnDecoder $
+        (fmap I .)
+          <$> decodeDisk cfg'
 
   -- | Used as the implementation of 'reconstructPrefixLen' for
   -- 'HardForkBlock'.
@@ -355,7 +358,7 @@ disabledEraException = HardForkEncoderDisabledEra . singleEraInfo
 -------------------------------------------------------------------------------}
 
 data AnnDecoder f blk = AnnDecoder
-  { annDecoder :: forall s. Decoder s (Lazy.ByteString -> f blk)
+  { annDecoder :: forall s. Decoder s (Lazy.ByteString -> Either DecoderError (f blk))
   }
 
 {-------------------------------------------------------------------------------
@@ -431,7 +434,7 @@ decodeAnnNS ::
   SListI xs =>
   NP (AnnDecoder f) xs ->
   forall s.
-  Decoder s (Lazy.ByteString -> NS f xs)
+  Decoder s (Lazy.ByteString -> Either DecoderError (NS f xs))
 decodeAnnNS ds = do
   enforceSize "decodeDiskAnnNS" 2
   i <- Dec.decodeWord8
@@ -443,8 +446,9 @@ decodeAnnNS ds = do
     Index xs blk ->
     AnnDecoder f blk ->
     K () blk ->
-    K (Decoder s (Lazy.ByteString -> NS f xs)) blk
-  aux index (AnnDecoder dec) (K ()) = K $ (injectNS index .) <$> dec
+    K (Decoder s (Lazy.ByteString -> Either DecoderError (NS f xs))) blk
+  aux index (AnnDecoder dec) (K ()) =
+    K $ (fmap (injectNS index) .) <$> dec
 
 {-------------------------------------------------------------------------------
   Dependent serialisation

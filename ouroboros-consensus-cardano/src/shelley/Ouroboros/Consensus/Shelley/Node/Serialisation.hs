@@ -6,6 +6,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -13,6 +14,7 @@ module Ouroboros.Consensus.Shelley.Node.Serialisation () where
 
 import Cardano.Binary
 import Cardano.Ledger.BaseTypes
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -64,13 +66,17 @@ import Ouroboros.Network.Block
 instance ShelleyCompatible proto era => HasBinaryBlockInfo (ShelleyBlock proto era) where
   getBinaryBlockInfo = shelleyBinaryBlockInfo
 
-instance ShelleyCompatible proto era => SerialiseDiskConstraints (ShelleyBlock proto era)
+instance
+  ShelleyCompatible proto era =>
+  SerialiseDiskConstraints (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (ShelleyBlock proto era) where
   encodeDisk _ = encodeShelleyBlock
 instance
   ShelleyCompatible proto era =>
-  DecodeDisk (ShelleyBlock proto era) (Lazy.ByteString -> ShelleyBlock proto era)
+  DecodeDisk
+    (ShelleyBlock proto era)
+    (Lazy.ByteString -> Either Plain.DecoderError (ShelleyBlock proto era))
   where
   decodeDisk _ = decodeShelleyBlock
 
@@ -143,6 +149,7 @@ instance
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
 -- wrapped ('Serialised') variant.
 instance
+  forall proto era.
   ShelleyCompatible proto era =>
   SerialiseNodeToNode (ShelleyBlock proto era) (ShelleyBlock proto era)
   where
@@ -160,7 +167,7 @@ instance
   SerialiseNodeToNode (ShelleyBlock proto era) (Header (ShelleyBlock proto era))
   where
   encodeNodeToNode _ _ = wrapCBORinCBOR encodeShelleyHeader
-  decodeNodeToNode _ _ = unwrapCBORinCBOR decodeShelleyHeader
+  decodeNodeToNode _ _ = unwrapCBORinCBOR ((Right .) <$> decodeShelleyHeader)
 
 -- | We use CBOR-in-CBOR
 instance SerialiseNodeToNode (ShelleyBlock proto era) (SerialisedHeader (ShelleyBlock proto era)) where
