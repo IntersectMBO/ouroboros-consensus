@@ -12,7 +12,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2
     objectDiffusionInbound
 
     -- * PeerStateAPI
-  , withPeer
+  , withObjectDiffusionInboundPeer
   , PeerStateAPI
 
     -- * Supporting types
@@ -33,8 +33,6 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types as V2
 import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 
--- TODO: Add checks and validation
-
 -- | A object-diffusion inbound side (client).
 --
 -- The steps are as follow
@@ -42,9 +40,15 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 -- 2. Handle any available reply (`goCollect`)
 -- 3. Request new objects if possible (`goReqObjects`)
 -- 4. Request new ids (also responsible for ack) (`goReqIds`)
--- 5. signal psaOnDecisionCompleted (as part of `goReqIds{Blocking,NonBlocking}`)
+-- 5. Signal psaOnDecisionCompleted (as part of `goReqIds{Blocking,NonBlocking}`)
 -- And loop again
--- We need to make sure we don't go again into `goIdle` until `psaOnDecisionCompleted` has been called
+--
+-- The architecture/code org of this module should make sure we don't go again
+-- into `goIdle` until `psaOnDecisionCompleted` has been called
+--
+-- NOTE: each `go____` function is responsible for calling the next one in order
+-- to continue the protocol.
+-- E.g. `goReqObjects` will call `goReqIds` whatever the outcome of its logic is.
 objectDiffusionInbound ::
   forall objectId object m.
   ( MonadThrow m
@@ -82,12 +86,22 @@ objectDiffusionInbound
           traceWith tracer (TraceObjectDiffusionInboundReceivedDecision decision)
           pure $ goCollect n decision
 
+    -- \| Block until all replies of pipelined requests have been received, then
+    -- sends `MsgDone` to terminate the protocol.
     terminateAfterDrain ::
       Nat n -> InboundStIdle n objectId object m ()
     terminateAfterDrain = \case
-      Zero -> SendMsgDone ()
+      Zero -> WithEffect $ do
+        traceWith tracer TraceObjectDiffusionInboundTerminated
+        pure $ SendMsgDone ()
       Succ n -> CollectPipelined Nothing $ \_ignoredMsg -> terminateAfterDrain n
 
+    -- \| Handle potential available replies before continuing with `goReqObjects`.
+    --
+    -- If there are no pipelined requests, this will directly call `goReqObjects`.
+    -- If there are pipelined requests, it will collect as many replies as
+    -- possible before continuing with `goReqObjects` once no more replies are
+    -- immediately available.
     goCollect :: Nat n -> PeerDecision objectId object -> InboundStIdle n objectId object m ()
     goCollect Zero decision =
       goReqObjects Zero decision
@@ -96,78 +110,94 @@ objectDiffusionInbound
         (Just $ goReqObjects (Succ n) decision)
         ( \case
             CollectObjectIds numIdsRequested ids -> WithEffect $ do
-              -- TODO: Add checks and validation
               psaOnReceiveIds numIdsRequested ids
               pure $ goCollect n decision
             CollectObjects _objectIds objects -> WithEffect $ do
-              -- TODO: Add checks and validation
+              -- TODO: We could try to validate objects here, i.e.
+              -- as early as possible, instead of validating them when adding
+              -- them to the ObjectPool, in order to pivot away from
+              -- adversarial peers as soon as possible.
               psaOnReceiveObjects objects
               pure $ goCollect n decision
         )
 
+    -- \| Request objects, if the set of ids of objects to request in the
+    -- decision is non-empty.
+    -- Regardless, it will ultimately call `goReqIds`.
     goReqObjects ::
       Nat n ->
       PeerDecision objectId object ->
       InboundStIdle n objectId object m ()
-    goReqObjects n object@PeerDecision{pdObjectsToReqIds} =
-      if Set.null pdObjectsToReqIds
+    goReqObjects n decision@(_, ReqObjectsDecision{rodObjectsToReqIds}) =
+      if Set.null rodObjectsToReqIds
         then
-          goReqIds n object
+          goReqIds n decision
         else WithEffect $ do
-          psaOnRequestObjects pdObjectsToReqIds
+          psaOnRequestObjects rodObjectsToReqIds
           pure $
             SendMsgRequestObjectsPipelined
-              (Set.toList pdObjectsToReqIds)
-              (goReqIds (Succ n) object)
+              (Set.toList rodObjectsToReqIds)
+              (goReqIds (Succ n) decision)
 
+    -- \| Request objectIds, either in a blocking or pipelined fashion depending
+    -- on the decision's `ridCanPipelineIdsRequests` flag.
+    -- In both cases, once done, we will ultimately call `psaOnDecisionCompleted`
+    -- and return to `goIdle`.
     goReqIds ::
       forall (n :: N).
       Nat n ->
       PeerDecision objectId object ->
       InboundStIdle n objectId object m ()
-    goReqIds n pd@PeerDecision{pdCanPipelineIdsRequests} =
-      if pdCanPipelineIdsRequests
-        then goReqIdsPipelined n pd
+    goReqIds n decision@(ReqIdsDecision{ridCanPipelineIdsRequests}, _) =
+      if ridCanPipelineIdsRequests
+        then goReqIdsPipelined n decision
         else case n of
-          Zero -> goReqIdsBlocking pd
+          Zero -> goReqIdsBlocking decision
           Succ{} -> error "Impossible to have pipelined requests when we have no known unacknowledged objectIds"
 
+    -- \| Request objectIds in a blocking fashion if the number to request in the
+    -- decision is non-zero.
+    -- Regardless, it will ultimately call `psaOnDecisionCompleted` and return to
+    -- `goIdle`.
     goReqIdsBlocking ::
       PeerDecision objectId object ->
       InboundStIdle Z objectId object m ()
-    goReqIdsBlocking PeerDecision{pdNumIdsToAck, pdNumIdsToReq} = WithEffect $ do
-      if pdNumIdsToReq == 0
+    goReqIdsBlocking (ReqIdsDecision{ridNumIdsToAck, ridNumIdsToReq}, _) = WithEffect $ do
+      if ridNumIdsToReq == 0
         then do
           psaOnDecisionCompleted
           pure $ goIdle Zero
         else do
-          psaOnRequestIds pdNumIdsToAck pdNumIdsToReq
+          psaOnRequestIds ridNumIdsToAck ridNumIdsToReq
           psaOnDecisionCompleted
           pure $
             SendMsgRequestObjectIdsBlocking
-              pdNumIdsToAck
-              pdNumIdsToReq
+              ridNumIdsToAck
+              ridNumIdsToReq
               ( \objectIds -> WithEffect $ do
-                  -- TODO: Add checks and validation
-                  psaOnReceiveIds pdNumIdsToReq (NonEmpty.toList objectIds)
+                  psaOnReceiveIds ridNumIdsToReq (NonEmpty.toList objectIds)
                   pure $ goIdle Zero
               )
 
+    -- \| Request objectIds in a pipelined fashion if the number to request in the
+    -- decision is non-zero.
+    -- Regardless, it will ultimately call `psaOnDecisionCompleted` and return to
+    -- `goIdle`.
     goReqIdsPipelined ::
       forall (n :: N).
       Nat n ->
       PeerDecision objectId object ->
       InboundStIdle n objectId object m ()
-    goReqIdsPipelined n PeerDecision{pdNumIdsToAck, pdNumIdsToReq} = WithEffect $ do
-      if pdNumIdsToReq == 0
+    goReqIdsPipelined n (ReqIdsDecision{ridNumIdsToAck, ridNumIdsToReq}, _) = WithEffect $ do
+      if ridNumIdsToReq == 0
         then do
           psaOnDecisionCompleted
           pure $ goIdle n
         else do
-          psaOnRequestIds pdNumIdsToAck pdNumIdsToReq
+          psaOnRequestIds ridNumIdsToAck ridNumIdsToReq
           psaOnDecisionCompleted
           pure $
             SendMsgRequestObjectIdsPipelined
-              pdNumIdsToAck
-              pdNumIdsToReq
+              ridNumIdsToAck
+              ridNumIdsToReq
               (goIdle (Succ n))

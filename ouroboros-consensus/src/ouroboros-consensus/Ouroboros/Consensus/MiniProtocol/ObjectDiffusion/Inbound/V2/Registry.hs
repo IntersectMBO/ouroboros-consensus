@@ -8,19 +8,18 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Registry
   ( PeerDecisionChannels
   , PeerDecisionChannelsVar
   , ObjectPoolSem
-  , DecisionGlobalStateVar
+  , PeerStatesVar
   , newPeerDecisionChannelsVar
   , newObjectPoolSem
   , PeerStateAPI (..)
-  , withPeer
+  , withObjectDiffusionInboundPeer
   , decisionLogicThread
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
-import Control.Monad (forever, when)
+import Control.Monad (forever)
 import Control.Monad.Class.MonadFork
 import Control.Monad.Class.MonadThrow
-import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Class.MonadTimer.SI
 import Control.Monad.IO.Class (MonadIO)
 import Control.Tracer (Tracer, traceWith)
@@ -41,7 +40,7 @@ import System.Random (initStdGen)
 -- | Communication channels between `ObjectDiffusion` mini-protocol inbound side
 -- and decision logic.
 type PeerDecisionChannels m peerAddr objectId object =
-  Map peerAddr (StrictTVar m (PeerDecision objectId object))
+  Map peerAddr (StrictTVar m (PeerDecisionStatus objectId object))
 
 type PeerDecisionChannelsVar m peerAddr objectId object =
   StrictTVar m (PeerDecisionChannels m peerAddr objectId object)
@@ -53,7 +52,7 @@ newPeerDecisionChannelsVar = newTVarIO (Map.empty)
 data PeerStateAPI m objectId object = PeerStateAPI
   { psaReadDecision :: m (PeerDecision objectId object)
   -- ^ A blocking action which reads the `PeerDecision` for this peer from the decision channel.
-  -- It blocks until a new decision (i.e. with status `DecisionUnread`) is emitted for the peer by the deecision thread,
+  -- It blocks until a new decision (i.e. with status `DecisionUnread`) is emitted for the peer by the decision thread,
   -- and immediately turn its status to `DecisionBeingActedUpon`.
   --
   -- PRECONDITIONS:
@@ -71,56 +70,56 @@ data PeerStateAPI m objectId object = PeerStateAPI
   , psaOnRequestIds :: NumObjectIdsAck -> NumObjectIdsReq -> m ()
   -- ^ To be called when emitting a request for new IDs (that also acks previously received IDs that we no longer care about).
   -- Under the hood, it will increase the `dpsNumIdsInFlight` count by the requested number of IDs, and remove the acked IDs
-  -- from `dpsOutstandingFifo` and `dpsObjectsAvailableIds`. Note that those IDs may not be present in the latter, if they have
+  -- from `psOutstandingFifo` and `psObjectsAvailableIds`. Note that those IDs may not be present in the latter, if they have
   -- already been requested to the outbound peer.
   --
   -- PRECONDITIONS:
-  -- * `dpsOutstandingFifo` has at least `nAck :: NumObjectIdsAck` IDs that will be removed from it
+  -- * `psOutstandingFifo` has at least `nAck :: NumObjectIdsAck` IDs that will be removed from it
   -- POSTCONDITIONS:
-  -- * The `nAck` first IDs from `dpsOutstandingFifo` are removed from `dpsOutstandingFifo` and  removed from `dpsObjectsAvailableIds`
+  -- * The `nAck` first IDs from `psOutstandingFifo` are removed from `psOutstandingFifo` and  removed from `psObjectsAvailableIds`
   , psaOnRequestObjects :: Set objectId -> m ()
-  -- ^ To be called when emitting a request for new objects. Under the hood, it will remove the requested IDs from `dpsObjectsAvailableIds`
-  -- and add them to `dpsObjectsInflightIds`.
+  -- ^ To be called when emitting a request for new objects. Under the hood, it will remove the requested IDs from `psObjectsAvailableIds`
+  -- and add them to `psObjectsInflightIds`.
   --
   -- PRECONDITIONS:
-  -- * The requested IDs are a subset of `dpsObjectsAvailableIds`
-  -- * The requested IDs are not in `dpsObjectsInflightIds`
+  -- * The requested IDs are a subset of `psObjectsAvailableIds`
+  -- * The requested IDs are not in `psObjectsInflightIds`
   -- POSTCONDITIONS:
-  -- * The requested IDs are removed from `dpsObjectsAvailableIds`
-  -- * The requested IDs are now in `dpsObjectsInflightIds`
+  -- * The requested IDs are removed from `psObjectsAvailableIds`
+  -- * The requested IDs are now in `psObjectsInflightIds`
   , psaOnReceiveIds :: NumObjectIdsReq -> [objectId] -> m ()
   -- ^ To be called after receiving new IDs from the outbound peer, after validating that we received the correct number (not more than requested).
   -- Under the hood, it will decrease the `dpsNumIdsInFlight` count by **the number of IDs that were requested in the request corresponding to this reply**.
-  -- This number might be more than the number of received IDs. It also add the received IDs to `dpsOutstandingFifo` and `dpsObjectsAvailableIds`.
+  -- This number might be more than the number of received IDs. It also add the received IDs to `psOutstandingFifo` and `psObjectsAvailableIds`.
   --
   -- PRECONDITIONS:
   -- * The number of received IDs is less than or equal to `nReq :: NumObjectIdsReq` (the number of IDs that were requested in the request corresponding to this reply)
-  -- * The received IDs are not already in `dpsObjectsAvailableIds` nor in `dpsObjectsInflightIds` nor in `dpsObjectsOwtPool`
+  -- * The received IDs are not already in `psObjectsAvailableIds` nor in `psObjectsInflightIds` nor in `psObjectsOwtPool`
   -- * The received IDs do not contain duplicates
   -- * `dpsNumIdsInFlight` is greater than or equal to `nReq :: NumObjectIdsReq`
   -- POSTCONDITIONS:
-  -- * `dpsNumIdsInflight` is `nReq` less than before
-  -- * `dpsOutstandingFifo` contains the received IDs appended at the end in the same order as they were received
-  -- * `dpsObjectsAvailableIds` contains the received IDs
+  -- * `psNumIdsInflight` is `nReq` less than before
+  -- * `psOutstandingFifo` contains the received IDs appended at the end in the same order as they were received
+  -- * `psObjectsAvailableIds` contains the received IDs
   , psaOnReceiveObjects :: [object] -> m ()
   -- ^ To be called when receiving objects from the outbound peer, after validating that the received objects match exactly the requested IDs.
   -- It also checks that all received objects have valid cryptographic proofs.
-  -- Under the hood, it will remove the received IDs from `dpsObjectsInflightIds`, add the received objects to `dpsOwtPool`,
+  -- Under the hood, it will remove the received IDs from `psObjectsInflightIds`, add the received objects to `dpsOwtPool`,
   -- and call the `submitObjectsToPool` subroutine that will actually insert the objects into the object pool.
   --
   -- PRECONDITIONS:
   -- * All received objects are valid wrt. their cryptographic proofs/invariants specific to the object type
   -- * The received objects correspond exactly to the set of requested objects (order not mattering)
-  -- * The IDs of the received objects are a subset of `dpsObjectsInflightIds`
+  -- * The IDs of the received objects are a subset of `psObjectsInflightIds`
   -- POSTCONDITIONS:
-  -- * The IDs of the received objects are removed from `dpsObjectsInflightIds`
-  -- * `dpsObjectsOwtPool` contains the received objects
+  -- * The IDs of the received objects are removed from `psObjectsInflightIds`
+  -- * `psObjectsOwtPool` contains the received objects
   }
 
 -- | A bracket function which registers / de-registers a new peer in
--- `DecisionGlobalStateVar` and `PeerDecisionChannelsVar`s, which exposes `PeerStateAPI`.
--- `PeerStateAPI` is only safe inside the `withPeer` scope.
-withPeer ::
+-- `PeerStatesVar` and `PeerDecisionChannelsVar`s, which exposes `PeerStateAPI`.
+-- `PeerStateAPI` is only safe inside the `withObjectDiffusionInboundPeer` scope.
+withObjectDiffusionInboundPeer ::
   forall object peerAddr objectId m a.
   ( MonadMask m
   , MonadSTM m
@@ -131,7 +130,7 @@ withPeer ::
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   PeerDecisionChannelsVar m peerAddr objectId object ->
   DecisionPolicy ->
-  DecisionGlobalStateVar m peerAddr objectId object ->
+  PeerStatesVar m peerAddr objectId object ->
   ObjectPoolWriter objectId object m ->
   ObjectPoolSem m ->
   -- | new peer
@@ -139,12 +138,12 @@ withPeer ::
   -- | callback which gives access to `PeerStateAPI`
   (PeerStateAPI m objectId object -> m a) ->
   m a
-withPeer
+withObjectDiffusionInboundPeer
   decisionTracer
   objectDiffusionTracer
   decisionChannelsVar
   _decisionPolicy
-  globalStateVar
+  peerStatesVar
   objectPoolWriter
   objectPoolSem
   peerAddr
@@ -160,7 +159,7 @@ withPeer
         Just chan -> return chan
         -- Otherwise create a new channel and register it
         Nothing -> do
-          newChan <- newTVar unavailableDecision
+          newChan <- newTVar PeerDecisionCompleted
           modifyTVar decisionChannelsVar (Map.insert peerAddr newChan)
           return newChan
 
@@ -170,60 +169,67 @@ withPeer
                   -- This should block until the decision has status `DecisionUnread`
                   -- which means it is a new decision that the peer has not acted upon yet
                   -- If `DecisionCompleted` is read here, it means the decision logic hasn't had time to make a new decision for this peer
-                  decision@PeerDecision{pdStatus} <- readTVar decisionChan
-                  when (pdStatus == DecisionBeingActedUpon) $
-                    error "Forgot to call `psaOnDecisionCompleted` for this peer"
-                  check $ pdStatus == DecisionUnread
-                  let decision' = decision{pdStatus = DecisionBeingActedUpon}
-                  writeTVar decisionChan decision'
-                  return decision'
+                  decision <- readTVar decisionChan
+                  case decision of
+                    PeerDecisionBeingActedUpon{} -> error "Forgot to call `psaOnDecisionCompleted` for this peer"
+                    PeerDecisionCompleted -> retry
+                    PeerDecisionUnread dec ->
+                      let decision' = PeerDecisionBeingActedUpon dec
+                       in do
+                            writeTVar decisionChan decision'
+                            return dec
               , psaOnDecisionCompleted = atomically $ do
-                  decision@PeerDecision{pdStatus} <- readTVar decisionChan
-                  when (pdStatus == DecisionUnread) $
-                    error
-                      "Forgot to call `psaReadDecision` for this peer, or the decision thread has mistakenly updated the decision for this peer while it was executing it"
-                  when (pdStatus == DecisionCompleted) $
-                    error "`psaOnDecisionCompleted` has already been called for this peer"
-                  let decision' = decision{pdStatus = DecisionCompleted}
-                  writeTVar decisionChan decision'
+                  decision <- readTVar decisionChan
+                  case decision of
+                    PeerDecisionUnread{} ->
+                      error
+                        "Forgot to call `psaReadDecision` for this peer, or the decision thread has mistakenly updated the decision for this peer while it was executing it"
+                    PeerDecisionCompleted -> error "`psaOnDecisionCompleted` has already been called for this peer"
+                    PeerDecisionBeingActedUpon{} ->
+                      writeTVar decisionChan PeerDecisionCompleted
               , psaOnRequestIds =
                   State.onRequestIds
                     objectDiffusionTracer
                     decisionTracer
-                    globalStateVar
+                    peerStatesVar
                     peerAddr
               , psaOnRequestObjects =
                   State.onRequestObjects
                     objectDiffusionTracer
                     decisionTracer
-                    globalStateVar
+                    peerStatesVar
                     peerAddr
               , psaOnReceiveIds =
                   State.onReceiveIds
                     objectDiffusionTracer
                     decisionTracer
                     objectPoolWriter
-                    globalStateVar
+                    peerStatesVar
                     peerAddr
               , psaOnReceiveObjects = \objects -> do
-                  PeerDecision{pdObjectsToReqIds} <- atomically $ readTVar decisionChan
-                  State.onReceiveObjects
-                    objectDiffusionTracer
-                    decisionTracer
-                    globalStateVar
-                    objectPoolWriter
-                    objectPoolSem
-                    peerAddr
-                    pdObjectsToReqIds
-                    objects
+                  decision <- atomically $ readTVar decisionChan
+                  case decision of
+                    PeerDecisionUnread{} -> error "The peer shouldn't be processing received objects if it has no decision being acted upon"
+                    PeerDecisionCompleted ->
+                      error
+                        "The peer shouldn't be processing received objects if it has finished acting upon its decision"
+                    PeerDecisionBeingActedUpon (_, ReqObjectsDecision{rodObjectsToReqIds}) ->
+                      State.onReceiveObjects
+                        objectDiffusionTracer
+                        decisionTracer
+                        peerStatesVar
+                        objectPoolWriter
+                        objectPoolSem
+                        peerAddr
+                        rodObjectsToReqIds
+                        objects
               }
 
       -- register the peer in the global state now
-      modifyTVar globalStateVar registerPeerGlobalState
+      modifyTVar peerStatesVar registerPeerPeerStates
       -- initialization is complete for this peer, it can proceed and
       -- interact through its given API
       return inboundPeerAPI
-     where
 
     unregisterPeer :: PeerStateAPI m objectId object -> m ()
     unregisterPeer _api =
@@ -231,40 +237,31 @@ withPeer
       -- `uninterruptibleMask_`
       uninterruptibleMask_ $ atomically $ do
         -- unregister the peer from the global state
-        modifyTVar globalStateVar unregisterPeerGlobalState
+        modifyTVar peerStatesVar unregisterPeerPeerStates
         -- remove the channel of this peer from the global channel map
         modifyTVar decisionChannelsVar (Map.delete peerAddr)
 
-    registerPeerGlobalState ::
-      DecisionGlobalState peerAddr objectId object ->
-      DecisionGlobalState peerAddr objectId object
-    registerPeerGlobalState st@DecisionGlobalState{dgsPeerStates} =
-      st
-        { dgsPeerStates =
-            Map.insert
-              peerAddr
-              DecisionPeerState
-                { dpsObjectsAvailableIds = Set.empty
-                , dpsNumIdsInflight = 0
-                , dpsObjectsInflightIds = Set.empty
-                , dpsOutstandingFifo = StrictSeq.empty
-                , dpsObjectsOwtPool = Map.empty
-                }
-              dgsPeerStates
-        }
+    registerPeerPeerStates ::
+      Map peerAddr (PeerState objectId object) ->
+      Map peerAddr (PeerState objectId object)
+    registerPeerPeerStates peerStates =
+      Map.insert
+        peerAddr
+        PeerState
+          { psObjectsAvailableIds = Set.empty
+          , psNumIdsInflight = 0
+          , psObjectsInflightIds = Set.empty
+          , psOutstandingFifo = StrictSeq.empty
+          , psObjectsOwtPool = Map.empty
+          }
+        peerStates
 
     -- TODO: this function needs to be tested!
     -- Issue: https://github.com/IntersectMBO/ouroboros-network/issues/5151
-    unregisterPeerGlobalState ::
-      DecisionGlobalState peerAddr objectId object ->
-      DecisionGlobalState peerAddr objectId object
-    unregisterPeerGlobalState
-      st@DecisionGlobalState
-        { dgsPeerStates
-        } =
-        st
-          { dgsPeerStates = Map.delete peerAddr dgsPeerStates
-          }
+    unregisterPeerPeerStates ::
+      Map peerAddr (PeerState objectId object) ->
+      Map peerAddr (PeerState objectId object)
+    unregisterPeerPeerStates = Map.delete peerAddr
 
 decisionLogicThread ::
   forall m peerAddr objectId object.
@@ -280,24 +277,23 @@ decisionLogicThread ::
   ObjectPoolWriter objectId object m ->
   DecisionPolicy ->
   PeerDecisionChannelsVar m peerAddr objectId object ->
-  DecisionGlobalStateVar m peerAddr objectId object ->
+  PeerStatesVar m peerAddr objectId object ->
   m Void
-decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject} decisionPolicy decisionChannelsVar globalStateVar = do
+decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject} decisionPolicy@DecisionPolicy{dpDecisionThreadSleepDelay} decisionChannelsVar peerStatesVar = do
   labelThisThread "ObjectDiffusionInbound.decisionLogicThread"
   forever $ do
     -- We rate limit the decision making process, it could overwhelm the CPU
     -- if there are too many inbound connections.
-    threadDelay const_DECISION_LOOP_DELAY
+    --
+    -- TODO: change that for a watcher pattern based on decisions/global state being updated?
+    threadDelay dpDecisionThreadSleepDelay
 
     rng <- initStdGen
 
-    -- TODO: can we make this whole block atomic?
-    -- because makeDecisions should be atomic with respect to reading the global state and
-    -- reading the previous decisions
     (newDecisions, counters) <- atomically $ do
       decisionsChannels <- readTVar decisionChannelsVar
       prevDecisions <- traverse readTVar decisionsChannels
-      globalState <- readTVar globalStateVar
+      peerStates <- readTVar peerStatesVar
       hasObject <- opwHasObject
       let newDecisions =
             makeDecisions
@@ -305,7 +301,7 @@ decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject}
                 { dcRng = rng
                 , dcHasObject = hasObject
                 , dcDecisionPolicy = decisionPolicy
-                , dcGlobalState = globalState
+                , dcPeerStates = peerStates
                 , dcPrevDecisions = prevDecisions
                 }
 
@@ -318,16 +314,12 @@ decisionLogicThread decisionTracer countersTracer ObjectPoolWriter{opwHasObject}
               newDecisions
       -- Send the newDecisions to the corresponding peers
       traverse_
-        (\(chan, decision) -> writeTVar chan decision)
+        (\(chan, decision) -> writeTVar chan (PeerDecisionUnread decision))
         peerToChannelAndDecision
 
       -- Return values for tracing purposes
-      let counters = makeObjectDiffusionCounters globalState
+      let counters = makeObjectDiffusionCounters peerStates
       return (newDecisions, counters)
 
     traceWith decisionTracer (TraceDecisionLogicDecisionsMade newDecisions)
     traceWith countersTracer counters
-
--- `5ms` delay
-const_DECISION_LOOP_DELAY :: DiffTime
-const_DECISION_LOOP_DELAY = 0.005

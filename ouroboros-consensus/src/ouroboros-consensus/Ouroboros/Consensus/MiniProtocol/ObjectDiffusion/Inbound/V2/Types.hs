@@ -6,25 +6,24 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
   ( -- * State
-    DecisionPeerState (..)
-  , DecisionGlobalState (..)
+    PeerState (..)
   , dgsObjectsAvailableMultiplicities
   , dgsObjectsInflightMultiplicities
   , dgsObjectsOwtPoolMultiplicities
-  , DecisionGlobalStateVar
-  , newDecisionGlobalStateVar
+  , PeerStatesVar
+  , newPeerStatesVar
 
     -- * Decisions
   , DecisionContext (..)
   , DecisionPolicy (..)
-  , PeerDecision (..)
+  , PeerDecision
   , PeerDecisionStatus (..)
-  , unavailableDecision
+  , ReqObjectsDecision (..)
+  , ReqIdsDecision (..)
 
     -- * Tracing
   , mempty
@@ -35,8 +34,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
   , ObjectDiffusionCounters (..)
   , makeObjectDiffusionCounters
 
-    -- * Copied from V1
-  , NumObjectsProcessed (..)
+    -- * Error and Tracing
   , TraceObjectDiffusionInbound (..)
   , ObjectDiffusionInboundError (..)
 
@@ -54,7 +52,7 @@ import Data.Map.Strict qualified as Map
 import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
 import Data.Set (Set)
-import Data.Set qualified as Set
+import Data.Time (DiffTime)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
@@ -69,93 +67,62 @@ newtype ObjectPoolSem m = ObjectPoolSem (TSem m)
 newObjectPoolSem :: MonadSTM m => m (ObjectPoolSem m)
 newObjectPoolSem = ObjectPoolSem <$> atomically (newTSem 1)
 
---
--- DecisionPeerState, DecisionGlobalState
---
-
 -- | In all the fields' names,
 -- If "Ids" appears at the beginning of a name field, it means we refer to IDs
 -- specifically (i.e. before the corresponding object is in flight).
 -- On the other hand, a field name of the form "Objects...Ids" means we are
 -- speaking of objects (i.e. after they have been requested) but identify them
 -- by their IDs for this field purpose.
-data DecisionPeerState objectId object = DecisionPeerState
-  { dpsNumIdsInflight :: !NumObjectIdsReq
+data PeerState objectId object = PeerState
+  { psNumIdsInflight :: !NumObjectIdsReq
   -- ^ The number of object identifiers that we have requested but
   -- which have not yet been replied to. We need to track this it keep
   -- our requests within the limit on the number of unacknowledged objectIds.
-  , dpsOutstandingFifo :: !(StrictSeq objectId)
-  -- ^ Those objects (by their identifier) that the client has told
+  , psOutstandingFifo :: !(StrictSeq objectId)
+  -- ^ Sequence of objects (by their id) that the client has told
   -- us about, and which we have not yet acknowledged. This is kept in
-  -- the order in which the client gave them to us. This is the same order
-  -- in which we submit them to the objectpool. It is also the order
+  -- the order in which the client gave them to us. It is also the order
   -- in which we acknowledge them.
-  , dpsObjectsAvailableIds :: !(Set objectId)
-  -- ^ Set of known object ids which can be requested from this peer.
-  , dpsObjectsInflightIds :: !(Set objectId)
-  -- ^ The set of requested objects (by their ids).
-  -- , dpsObjectsRequestedButNotReceivedIds :: !(Set objectId)
-  -- ^ A subset of `dpsOutstandingFifo` which were unknown to the peer
-  -- (i.e. requested but not received). We need to track these `objectId`s
-  -- since they need to be acknowledged.
-  , dpsObjectsOwtPool :: !(Map objectId object)
-  -- ^ A set of objects on their way to the objectpool.
-  -- Tracked here so that we can cleanup `dgsObjectsOwtPoolMultiplicities` if the
-  -- peer dies.
-  --
-  -- Life cycle of entries:
-  -- * added by `acknowledgeObjectIds` (where decide which objects can be
-  --   submitted to the objectpool)
-  -- * removed by `withObjectPoolSem`
+  , psObjectsAvailableIds :: !(Set objectId)
+  -- ^ Set of objects (by their ids) that can be requested from the outbound peer.
+  , psObjectsInflightIds :: !(Set objectId)
+  -- ^ The set of requested objects (by their ids) that haven't been received yet.
+  , psObjectsOwtPool :: !(Map objectId object)
+  -- ^ Received objects that are on their way to the objectpool.
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks)
 
--- | Shared state of all `ObjectDiffusion` clients.
-data DecisionGlobalState peerAddr objectId object = DecisionGlobalState
-  { dgsPeerStates :: !(Map peerAddr (DecisionPeerState objectId object))
-  -- ^ Map of peer states.
-  --
-  -- /Invariant:/ for peerAddr's which are registered using `withPeer`,
-  -- there's always an entry in this map even if the set of `objectId`s is
-  -- empty.
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass (NFData, NoThunks)
-
--- | Merge dpsObjectsAvailableIds from all peers of the global state.
-dgsObjectsAvailableMultiplicities ::
-  Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId ObjectMultiplicity
-dgsObjectsAvailableMultiplicities DecisionGlobalState{dgsPeerStates} =
+countMultiplicities ::
+  Ord objectId =>
+  (PeerState objectId object -> Set objectId) ->
+  Map peerAddr (PeerState objectId object) ->
+  Map objectId ObjectMultiplicity
+countMultiplicities selector peerStates =
   Map.unionsWith
     (+)
-    (Map.fromSet (const 1) . dpsObjectsAvailableIds <$> Map.elems dgsPeerStates)
+    (Map.fromSet (const 1) . selector <$> Map.elems peerStates)
+
+dgsObjectsAvailableMultiplicities ::
+  Ord objectId => Map peerAddr (PeerState objectId object) -> Map objectId ObjectMultiplicity
+dgsObjectsAvailableMultiplicities = countMultiplicities psObjectsAvailableIds
 
 dgsObjectsInflightMultiplicities ::
-  Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId ObjectMultiplicity
-dgsObjectsInflightMultiplicities DecisionGlobalState{dgsPeerStates} =
-  Map.unionsWith
-    (+)
-    (Map.fromSet (const 1) . dpsObjectsInflightIds <$> Map.elems dgsPeerStates)
+  Ord objectId => Map peerAddr (PeerState objectId object) -> Map objectId ObjectMultiplicity
+dgsObjectsInflightMultiplicities = countMultiplicities psObjectsInflightIds
 
 dgsObjectsOwtPoolMultiplicities ::
-  Ord objectId => DecisionGlobalState peerAddr objectId object -> Map objectId ObjectMultiplicity
-dgsObjectsOwtPoolMultiplicities DecisionGlobalState{dgsPeerStates} =
-  Map.unionsWith
-    (+)
-    (Map.fromSet (const 1) . Map.keysSet . dpsObjectsOwtPool <$> Map.elems dgsPeerStates)
+  Ord objectId => Map peerAddr (PeerState objectId object) -> Map objectId ObjectMultiplicity
+dgsObjectsOwtPoolMultiplicities = countMultiplicities (Map.keysSet . psObjectsOwtPool)
 
-type DecisionGlobalStateVar m peerAddr objectId object =
-  StrictTVar m (DecisionGlobalState peerAddr objectId object)
+type PeerStatesVar m peerAddr objectId object =
+  StrictTVar m (Map peerAddr (PeerState objectId object))
 
-newDecisionGlobalStateVar ::
+newPeerStatesVar ::
   MonadSTM m =>
-  m (DecisionGlobalStateVar m peerAddr objectId object)
-newDecisionGlobalStateVar =
-  newTVarIO
-    DecisionGlobalState
-      { dgsPeerStates = Map.empty
-      }
+  m (PeerStatesVar m peerAddr objectId object)
+newPeerStatesVar =
+  newTVarIO Map.empty
 
 --
 -- Decisions
@@ -165,8 +132,8 @@ data DecisionContext peerAddr objectId object = DecisionContext
   { dcRng :: StdGen
   , dcHasObject :: (objectId -> Bool)
   , dcDecisionPolicy :: DecisionPolicy
-  , dcGlobalState :: DecisionGlobalState peerAddr objectId object
-  , dcPrevDecisions :: Map peerAddr (PeerDecision objectId object)
+  , dcPeerStates :: Map peerAddr (PeerState objectId object)
+  , dcPrevDecisions :: Map peerAddr (PeerDecisionStatus objectId object)
   }
   deriving stock Generic
   deriving anyclass NFData
@@ -184,6 +151,8 @@ data DecisionPolicy = DecisionPolicy
   -- ^ a limit of objects in-flight from all peers for this node.
   , dpTargetObjectRedundancy :: !ObjectMultiplicity
   -- ^ from how many peers download the `objectId` simultaneously
+  , dpDecisionThreadSleepDelay :: !DiffTime
+  -- ^ delay (in seconds) between two decision making rounds
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks)
@@ -196,50 +165,44 @@ data DecisionPolicy = DecisionPolicy
 -- acknowledge some `objectId`s). Due to pipelining each client will request
 -- decision from the decision logic quite often (every two pipelined requests).
 --
--- TODO: in the previous design, we prefiltered active peers before calling
--- `makeDecision`, so that a decision once taken would make the peer non-active
--- (e.g. it won't be returned by `filterActivePeers`) for longer, and thus the
+-- TODO: in the previous design, we prefiltered pending peers before calling
+-- `makeDecision`, so that a decision once taken would make the peer non-pending
+-- (e.g. it won't be returned by `filterPendingPeers`) for longer, and thus the
 -- expensive `makeDecision` computation would not need to take that peer into
 -- account. This is no longer the case, but we could reintroduce this optimization
 -- if needed.
-data PeerDecision objectId object = PeerDecision
-  { pdNumIdsToAck :: !NumObjectIdsAck
+data ReqIdsDecision objectId object = ReqIdsDecision
+  { ridNumIdsToAck :: !NumObjectIdsAck
   -- ^ objectId's to acknowledge
-  , pdNumIdsToReq :: !NumObjectIdsReq
+  , ridNumIdsToReq :: !NumObjectIdsReq
   -- ^ number of objectId's to request
-  , pdCanPipelineIdsRequests :: !Bool
+  , ridCanPipelineIdsRequests :: !Bool
   -- ^ the object-submission protocol only allows to pipeline `objectId`'s requests
   -- if we have non-acknowledged `objectId`s.
-  , pdObjectsToReqIds :: !(Set objectId)
-  -- ^ objectId's to download.
-  , pdStatus :: !PeerDecisionStatus
-  -- ^ Whether the peer is actually executing the said decision
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks)
 
-data PeerDecisionStatus
-  = DecisionUnread
-  | DecisionBeingActedUpon
-  | DecisionCompleted
+newtype ReqObjectsDecision objectId object = ReqObjectsDecision
+  { rodObjectsToReqIds :: Set objectId
+  -- ^ objectId's to request
+  }
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks)
 
--- | A placeholder when no decision has been made, at the beginning of a loop.
--- Nothing should be read from it except its status.
-unavailableDecision :: PeerDecision objectId object
-unavailableDecision =
-  PeerDecision
-    { pdStatus = DecisionCompleted
-    , pdObjectsToReqIds = Set.empty
-    , pdNumIdsToAck = 0
-    , pdNumIdsToReq = 0
-    , pdCanPipelineIdsRequests = True
-    }
+type PeerDecision objectId object =
+  (ReqIdsDecision objectId object, ReqObjectsDecision objectId object)
+
+data PeerDecisionStatus objectId object
+  = PeerDecisionUnread !(PeerDecision objectId object)
+  | PeerDecisionBeingActedUpon !(PeerDecision objectId object)
+  | PeerDecisionCompleted
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NFData, NoThunks)
 
 -- | ObjectLogic tracer.
 data TraceDecisionLogic peerAddr objectId object
-  = TraceDecisionLogicGlobalStateUpdated String (DecisionGlobalState peerAddr objectId object)
+  = TraceDecisionLogicPeerStatesUpdated String (Map peerAddr (PeerState objectId object))
   | TraceDecisionLogicDecisionsMade (Map peerAddr (PeerDecision objectId object))
   deriving stock (Show, Eq, Generic)
 
@@ -260,7 +223,7 @@ data ObjectDiffusionCounters
 
 makeObjectDiffusionCounters ::
   Ord objectId =>
-  DecisionGlobalState peerAddr objectId object ->
+  Map peerAddr (PeerState objectId object) ->
   ObjectDiffusionCounters
 makeObjectDiffusionCounters
   dgs =
@@ -271,16 +234,6 @@ makeObjectDiffusionCounters
           fromIntegral . mconcat . Map.elems $ dgsObjectsInflightMultiplicities dgs
       , odcNumDistinctObjectsOwtPool = Map.size $ dgsObjectsOwtPoolMultiplicities dgs
       }
-
-newtype NumObjectsProcessed
-  = NumObjectsProcessed
-  { getNumObjectsProcessed :: Word64
-  }
-  deriving stock (Eq, Ord, Generic)
-  deriving newtype (NFData, NoThunks, Num, Enum, Real, Integral, Bounded)
-  deriving Semigroup via (Sum Word64)
-  deriving Monoid via (Sum Word64)
-  deriving Show via (Quiet NumObjectsProcessed)
 
 newtype ObjectMultiplicity
   = ObjectMultiplicity
@@ -301,6 +254,7 @@ data TraceObjectDiffusionInbound objectId object
   | -- | Received a 'ControlMessage' from the outbound peer governor, and about
     -- to act on it.
     TraceObjectDiffusionInboundReceivedControlMessage ControlMessage
+  | TraceObjectDiffusionInboundTerminated
   | TraceObjectDiffusionInboundReceivedDecision (PeerDecision objectId object)
   deriving stock (Show, Eq, Generic)
 

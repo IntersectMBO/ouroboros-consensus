@@ -10,14 +10,15 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.TestUtils
   , partitionWithProb
   , genDecisionPolicy
   , genDecisionContext
-  , genDecisionGlobalState
-  , genDecisionPeerState
+  , genPeerStates
+  , genPeerState
   , defaultDecisionPolicy
   )
 where
 
 import Data.Either (partitionEithers)
 import qualified Data.Foldable as Foldable
+import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import qualified Data.Sequence.Strict as StrictSeq
@@ -25,10 +26,9 @@ import qualified Data.Set as Set
 import Data.Traversable (for)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
   ( DecisionContext (..)
-  , DecisionGlobalState (..)
-  , DecisionPeerState (..)
   , DecisionPolicy (..)
-  , unavailableDecision
+  , PeerDecisionStatus (PeerDecisionCompleted)
+  , PeerState (..)
   )
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (NumObjectsReq (..))
 import System.Random (mkStdGen)
@@ -92,6 +92,7 @@ defaultDecisionPolicy =
     , dpMaxNumObjectsInflightPerPeer = 50
     , dpMaxNumObjectsInflightTotal = 500
     , dpTargetObjectRedundancy = 3
+    , dpDecisionThreadSleepDelay = 0.005
     }
 
 -- | Generate a random 'DecisionPolicy' based on a geometric variation using the
@@ -111,6 +112,7 @@ genDecisionPolicy =
         <*> (chooseGeometricWithMedian dpMaxNumObjectsInflightPerPeer)
         <*> (chooseGeometricWithMedian dpMaxNumObjectsInflightTotal)
         <*> (chooseGeometricWithMedian dpTargetObjectRedundancy)
+        <*> pure 0.005
 
 -- TODO: in all functions below, we may want to use random ratios centered on a
 -- given median instead of fixed ratios, to have more variability in the
@@ -121,11 +123,11 @@ genDecisionPolicy =
 -- The number of desired peers and existing objects must be specified.
 -- It will take the whole pool of existing objects as a starting point, and
 -- randomly attribute a subset of them to each peer.
--- Then for each peer the `genDecisionPeerState` function will randomly
+-- Then for each peer the `genPeerState` function will randomly
 -- decide which objects are available, inflight, in the OWT pool, etc.
 --
 -- NOTE: given that the generated decision context is meant for benchs
--- primarily, all peers receive an 'unavailableDecision' as their previous
+-- primarily, all peers receive an 'PeerDecisionCompleted' as their previous
 -- so that they are all selected for the next round of decisions.
 --
 -- We also try to uphold as much realism as possible, e.g. we try to enforce
@@ -172,27 +174,27 @@ genDecisionContext peersNb objectsNb getId mPolicy = do
   let !alreadyInPoolIds = Set.fromList $ getId <$> alreadyInPool
       dcHasObject = (`Set.member` alreadyInPoolIds)
 
-  -- Delegate generation of the state to `genDecisionGlobalState` (and beneath
-  -- that `genDecisionPeerState`)
-  dcGlobalState <- genDecisionGlobalState getId dcDecisionPolicy peersNb objects
+  -- Delegate generation of the state to `genPeerStates` (and beneath
+  -- that `genPeerState`)
+  dcPeerStates <- genPeerStates getId dcDecisionPolicy peersNb objects
 
-  -- Use `unavailableDecision` as the previous decision for all peers so that
+  -- Use `PeerDecisionCompleted` as the previous decision for all peers so that
   -- they are all selected in the next round of decisions.
   let dcPrevDecisions =
-        Map.map (\_ -> unavailableDecision) (dgsPeerStates dcGlobalState)
+        Map.map (\_ -> PeerDecisionCompleted) (dcPeerStates)
 
   pure $
     DecisionContext
       { dcRng
       , dcHasObject
       , dcDecisionPolicy
-      , dcGlobalState
+      , dcPeerStates
       , dcPrevDecisions
       }
 
--- | Generate a random 'DecisionGlobalState' suitable for benchs,
+-- | Generate a random 'PeerStates' suitable for benchs,
 -- based on a given decision policy and a pool of existing objects.
-genDecisionGlobalState ::
+genPeerStates ::
   (Arbitrary peerAddr, Ord peerAddr, Ord objectId, Ord object) =>
   (object -> objectId) ->
   -- | Decision policy to respect when generating the global state.
@@ -201,8 +203,8 @@ genDecisionGlobalState ::
   Int ->
   -- | Pool of all existing objects to choose from
   [object] ->
-  Gen (DecisionGlobalState peerAddr objectId object)
-genDecisionGlobalState
+  Gen (Map peerAddr (PeerState objectId object))
+genPeerStates
   getId
   policy@DecisionPolicy{dpMaxNumObjectsInflightTotal}
   peersNb
@@ -217,7 +219,7 @@ genDecisionGlobalState
             objects
 
         peerAddr <- arbitrary
-        peerState <- genDecisionPeerState getId policy peerObjects
+        peerState <- genPeerState getId policy peerObjects
         pure (peerAddr, peerState)
 
       -- Now we need to make sure that we are not over the limit of
@@ -230,8 +232,8 @@ genDecisionGlobalState
       -- implementation details.
       let numObjectsInflightTotal =
             Foldable.foldl'
-              ( \count (_, DecisionPeerState{dpsObjectsInflightIds}) ->
-                  count + (fromIntegral $ Set.size dpsObjectsInflightIds)
+              ( \count (_, PeerState{psObjectsInflightIds}) ->
+                  count + (fromIntegral $ Set.size psObjectsInflightIds)
               )
               (NumObjectsReq 0)
               peerPairs
@@ -242,7 +244,7 @@ genDecisionGlobalState
           then traverse (trimObjectsInflightIds trimRatio) peerPairs
           else pure peerPairs
 
-      pure $ DecisionGlobalState{dgsPeerStates = Map.fromList peerPairs'}
+      pure $ Map.fromList peerPairs'
 
 -- | Remove a given ratio of inflight ids from a peer state in a most equitable
 -- fashion. It also removes them from the FIFO.
@@ -251,50 +253,50 @@ trimObjectsInflightIds ::
   -- | Ratio of inflight ids to remove (between 0 and 1)
   Double ->
   -- | Peer address and its peer state
-  (peerAddr, DecisionPeerState objectId object) ->
-  Gen (peerAddr, DecisionPeerState objectId object)
+  (peerAddr, PeerState objectId object) ->
+  Gen (peerAddr, PeerState objectId object)
 trimObjectsInflightIds
   trimRatio
   ( peerAddr
-    , peerState@DecisionPeerState{dpsObjectsInflightIds, dpsOutstandingFifo}
+    , peerState@PeerState{psObjectsInflightIds, psOutstandingFifo}
     ) =
     do
       -- We take the ceiling of the number to remove to make sure we go under the limit
-      let nbToRemove = ceiling $ fromIntegral (Set.size dpsObjectsInflightIds) * trimRatio
+      let nbToRemove = ceiling $ fromIntegral (Set.size psObjectsInflightIds) * trimRatio
       -- Then pick randomly this number of ids to remove
-      idsToRemove <- take nbToRemove <$> shuffle (Set.toList dpsObjectsInflightIds)
+      idsToRemove <- take nbToRemove <$> shuffle (Set.toList psObjectsInflightIds)
       -- Then we remove them from both the inflight set and the outstanding FIFO
-      let dpsObjectsInflightIds' =
+      let psObjectsInflightIds' =
             Foldable.foldl'
               (flip Set.delete)
-              dpsObjectsInflightIds
+              psObjectsInflightIds
               idsToRemove
 
           -- Should we actually do that?
-          dpsOutstandingFifo' =
+          psOutstandingFifo' =
             StrictSeq.filter
               (\objId -> not (objId `elem` idsToRemove))
-              dpsOutstandingFifo
+              psOutstandingFifo
       pure
         ( peerAddr
         , peerState
-            { dpsObjectsInflightIds = dpsObjectsInflightIds'
-            , dpsOutstandingFifo = dpsOutstandingFifo'
+            { psObjectsInflightIds = psObjectsInflightIds'
+            , psOutstandingFifo = psOutstandingFifo'
             }
         )
 
--- | Generate a random 'DecisionPeerState' suitable for benchs,
+-- | Generate a random 'PeerState' suitable for benchs,
 -- based on a given decision policy and a pool of existing objects that this
 -- peer can use in its state.
-genDecisionPeerState ::
+genPeerState ::
   (Ord objectId, Ord object) =>
   (object -> objectId) ->
   -- | Decision policy to respect when generating the peer state.
   DecisionPolicy ->
   -- | Pool of existing objects this peer should use for its state
   [object] ->
-  Gen (DecisionPeerState objectId object)
-genDecisionPeerState
+  Gen (PeerState objectId object)
+genPeerState
   getId
   DecisionPolicy{dpMaxNumObjectsOutstanding, dpMaxNumObjectsInflightPerPeer}
   peerObjects =
@@ -325,7 +327,7 @@ genDecisionPeerState
         take (fromIntegral dpMaxNumObjectsOutstanding)
           <$> (shuffle $ objectsAvailable ++ objectsInflight ++ owtPoolStillInFifo)
 
-      -- Retroactively, to uphold the invariants, we must remove elements from
+      -- Retropendingly, to uphold the invariants, we must remove elements from
       -- the available and inflight lists that are not in the FIFO.
       let objectsAvailable' =
             filter (\obj -> obj `elem` objectsInFifo) objectsAvailable
@@ -339,10 +341,10 @@ genDecisionPeerState
       numIdsInFlight <- choose (0, maxNumIdsInFlight)
 
       pure $
-        DecisionPeerState
-          { dpsObjectsAvailableIds = Set.fromList $ getId <$> objectsAvailable'
-          , dpsObjectsInflightIds = Set.fromList $ getId <$> objectsInflight''
-          , dpsObjectsOwtPool = Map.fromList $ (\obj -> (getId obj, obj)) <$> objectsOwtPool
-          , dpsOutstandingFifo = StrictSeq.fromList $ getId <$> objectsInFifo
-          , dpsNumIdsInflight = fromIntegral $ numIdsInFlight
+        PeerState
+          { psObjectsAvailableIds = Set.fromList $ getId <$> objectsAvailable'
+          , psObjectsInflightIds = Set.fromList $ getId <$> objectsInflight''
+          , psObjectsOwtPool = Map.fromList $ (\obj -> (getId obj, obj)) <$> objectsOwtPool
+          , psOutstandingFifo = StrictSeq.fromList $ getId <$> objectsInFifo
+          , psNumIdsInflight = fromIntegral $ numIdsInFlight
           }

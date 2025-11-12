@@ -6,8 +6,7 @@
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.State
   ( -- * Core API
-    DecisionGlobalState (..)
-  , DecisionPeerState (..)
+    PeerState (..)
   , onRequestIds
   , onRequestObjects
   , onReceiveIds
@@ -36,7 +35,7 @@ onRequestIds ::
   (MonadSTM m, Ord objectId, Ord peerAddr) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
-  DecisionGlobalStateVar m peerAddr objectId object ->
+  PeerStatesVar m peerAddr objectId object ->
   peerAddr ->
   NumObjectIdsAck ->
   -- | number of requests to req
@@ -45,22 +44,22 @@ onRequestIds ::
 onRequestIds
   odTracer
   decisionTracer
-  globalStateVar
+  peerStatesVar
   peerAddr
   numIdsToAck
   numIdsToReq = do
-    globalState' <- atomically $ do
+    peerStates' <- atomically $ do
       stateTVar
-        globalStateVar
-        ( \globalState ->
-            let globalState' = onRequestIdsImpl peerAddr numIdsToAck numIdsToReq globalState
-             in (globalState', globalState')
+        peerStatesVar
+        ( \peerStates ->
+            let peerStates' = onRequestIdsImpl peerAddr numIdsToAck numIdsToReq peerStates
+             in (peerStates', peerStates')
         )
     traceWith odTracer (TraceObjectDiffusionInboundRequestedIds (fromIntegral numIdsToReq))
-    traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "onRequestIds" globalState')
+    traceWith decisionTracer (TraceDecisionLogicPeerStatesUpdated "onRequestIds" peerStates')
 
 -- Acknowledgment is done when a requestIds is made.
--- That's why we update the dpsOutstandingFifo and dpsObjectsAvailableIds here.
+-- That's why we update the psOutstandingFifo and psObjectsAvailableIds here.
 onRequestIdsImpl ::
   forall peerAddr object objectId.
   (Ord objectId, Ord peerAddr) =>
@@ -68,67 +67,60 @@ onRequestIdsImpl ::
   NumObjectIdsAck ->
   -- | number of requests to req
   NumObjectIdsReq ->
-  DecisionGlobalState peerAddr objectId object ->
-  DecisionGlobalState peerAddr objectId object
+  Map peerAddr (PeerState objectId object) ->
+  Map peerAddr (PeerState objectId object)
 onRequestIdsImpl
   peerAddr
   numIdsToAck
   numIdsToReq
-  globalState@DecisionGlobalState
-    { dgsPeerStates
-    } =
-    globalState
-      { dgsPeerStates = dgsPeerStates'
-      }
-   where
-    dgsPeerStates' =
-      Map.adjust
-        ( \ps@DecisionPeerState{dpsNumIdsInflight, dpsOutstandingFifo, dpsObjectsAvailableIds} ->
-            -- we isolate the longest prefix of outstandingFifo that matches our ack criteria (see above in computeAck doc)
-            let
-              -- We compute the ids to ack and new state of the FIFO based on the number of ids to ack given by the decision logic
-              (idsToAck, dpsOutstandingFifo') =
-                assert (StrictSeq.length dpsOutstandingFifo >= fromIntegral numIdsToAck) $
-                  StrictSeq.splitAt
-                    (fromIntegral numIdsToAck)
-                    dpsOutstandingFifo
+  peerStates =
+    Map.adjust
+      ( \ps@PeerState{psNumIdsInflight, psOutstandingFifo, psObjectsAvailableIds} ->
+          -- we isolate the longest prefix of outstandingFifo that matches our ack criteria (see above in computeAck doc)
+          let
+            -- We compute the ids to ack and new state of the FIFO based on the number of ids to ack given by the decision logic
+            (idsToAck, psOutstandingFifo') =
+              assert (StrictSeq.length psOutstandingFifo >= fromIntegral numIdsToAck) $
+                StrictSeq.splitAt
+                  (fromIntegral numIdsToAck)
+                  psOutstandingFifo
 
-              -- We remove the acknowledged ids from dpsObjectsAvailableIds if they were present.
-              -- We need to do that because objects that were advertised by this corresponding outbound peer
-              -- but never downloaded because we already have them in pool were consequently never removed
-              -- from dpsObjectsAvailableIds by onRequestObjects
-              dpsObjectsAvailableIds' =
-                Foldable.foldl' (\set objectId -> Set.delete objectId set) dpsObjectsAvailableIds idsToAck
-             in
-              ps
-                { dpsNumIdsInflight = dpsNumIdsInflight + numIdsToReq
-                , dpsOutstandingFifo = dpsOutstandingFifo'
-                , dpsObjectsAvailableIds = dpsObjectsAvailableIds'
-                }
-        )
-        peerAddr
-        dgsPeerStates
+            -- We remove the acknowledged ids from psObjectsAvailableIds if they were present.
+            -- We need to do that because objects that were advertised by this corresponding outbound peer
+            -- but never downloaded because we already have them in pool were consequently never removed
+            -- from psObjectsAvailableIds by onRequestObjects
+            psObjectsAvailableIds' =
+              Foldable.foldl' (\set objectId -> Set.delete objectId set) psObjectsAvailableIds idsToAck
+           in
+            ps
+              { psNumIdsInflight = psNumIdsInflight + numIdsToReq
+              , psOutstandingFifo = psOutstandingFifo'
+              , psObjectsAvailableIds = psObjectsAvailableIds'
+              }
+      )
+      peerAddr
+      peerStates
 
 onRequestObjects ::
   forall m peerAddr object objectId.
   (MonadSTM m, Ord objectId, Ord peerAddr) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
-  DecisionGlobalStateVar m peerAddr objectId object ->
+  PeerStatesVar m peerAddr objectId object ->
   peerAddr ->
   -- | objets to request, by id
   Set objectId ->
   m ()
-onRequestObjects odTracer decisionTracer globalStateVar peerAddr objectIds = do
-  globalState' <- atomically $ do
+onRequestObjects odTracer decisionTracer peerStatesVar peerAddr objectIds = do
+  peerStates' <- atomically $ do
     stateTVar
-      globalStateVar
-      ( \globalState ->
-          let globalState' = onRequestObjectsImpl peerAddr objectIds globalState
-           in (globalState', globalState')
+      peerStatesVar
+      ( \peerStates ->
+          let peerStates' = onRequestObjectsImpl peerAddr objectIds peerStates
+           in (peerStates', peerStates')
       )
   traceWith odTracer (TraceObjectDiffusionInboundRequestedObjects (Set.size objectIds))
-  traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "onRequestObjects" globalState')
+  traceWith decisionTracer (TraceDecisionLogicPeerStatesUpdated "onRequestObjects" peerStates')
 
 onRequestObjectsImpl ::
   forall peerAddr object objectId.
@@ -136,32 +128,25 @@ onRequestObjectsImpl ::
   peerAddr ->
   -- | objets to request, by id
   Set objectId ->
-  DecisionGlobalState peerAddr objectId object ->
-  DecisionGlobalState peerAddr objectId object
+  Map peerAddr (PeerState objectId object) ->
+  Map peerAddr (PeerState objectId object)
 onRequestObjectsImpl
   peerAddr
   objectIds
-  globalState@DecisionGlobalState
-    { dgsPeerStates
-    } =
-    globalState
-      { dgsPeerStates = dgsPeerStates'
-      }
-   where
-    dgsPeerStates' =
-      Map.adjust
-        ( \ps@DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds} ->
-            assert
-              ( objectIds `Set.isSubsetOf` dpsObjectsAvailableIds
-                  && Set.null (objectIds `Set.intersection` dpsObjectsInflightIds)
-              )
-              $ ps
-                { dpsObjectsAvailableIds = dpsObjectsAvailableIds \\ objectIds
-                , dpsObjectsInflightIds = dpsObjectsInflightIds `Set.union` objectIds
-                }
-        )
-        peerAddr
-        dgsPeerStates
+  peerStates =
+    Map.adjust
+      ( \ps@PeerState{psObjectsAvailableIds, psObjectsInflightIds} ->
+          assert
+            ( objectIds `Set.isSubsetOf` psObjectsAvailableIds
+                && Set.null (objectIds `Set.intersection` psObjectsInflightIds)
+            )
+            $ ps
+              { psObjectsAvailableIds = psObjectsAvailableIds \\ objectIds
+              , psObjectsInflightIds = psObjectsInflightIds `Set.union` objectIds
+              }
+      )
+      peerAddr
+      peerStates
 
 -- | Wrapper around `onReceiveIdsImpl`.
 -- Obtain the `hasObject` function atomically from the STM context and
@@ -172,10 +157,10 @@ onReceiveIds ::
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
   ObjectPoolWriter objectId object m ->
-  DecisionGlobalStateVar m peerAddr objectId object ->
+  PeerStatesVar m peerAddr objectId object ->
   peerAddr ->
   -- | number of requests to subtract from
-  -- `dpsNumIdsInflight`
+  -- `psNumIdsInflight`
   NumObjectIdsReq ->
   -- | sequence of received `objectIds`
   [objectId] ->
@@ -185,36 +170,36 @@ onReceiveIds
   odTracer
   decisionTracer
   ObjectPoolWriter{opwHasObject}
-  globalStateVar
+  peerStatesVar
   peerAddr
   numIdsInitiallyRequested
   receivedIds = do
-    peerState <- atomically $ ((Map.! peerAddr) . dgsPeerStates) <$> readTVar globalStateVar
+    peerState <- atomically $ (Map.! peerAddr) <$> readTVar peerStatesVar
     hasObject <- atomically opwHasObject
     checkProtocolErrors hasObject peerState numIdsInitiallyRequested receivedIds
-    globalState' <- atomically $ do
+    peerStates' <- atomically $ do
       stateTVar
-        globalStateVar
-        ( \globalState ->
-            let globalState' = onReceiveIdsImpl peerAddr numIdsInitiallyRequested receivedIds globalState
-             in (globalState', globalState')
+        peerStatesVar
+        ( \peerStates ->
+            let peerStates' = onReceiveIdsImpl peerAddr numIdsInitiallyRequested receivedIds peerStates
+             in (peerStates', peerStates')
         )
     traceWith odTracer (TraceObjectDiffusionInboundReceivedIds (length receivedIds))
-    traceWith decisionTracer (TraceDecisionLogicGlobalStateUpdated "onReceiveIds" globalState')
+    traceWith decisionTracer (TraceDecisionLogicPeerStatesUpdated "onReceiveIds" peerStates')
    where
     checkProtocolErrors ::
       (objectId -> Bool) ->
-      DecisionPeerState objectId object ->
+      PeerState objectId object ->
       NumObjectIdsReq ->
       [objectId] ->
       m ()
-    checkProtocolErrors hasObject DecisionPeerState{dpsObjectsAvailableIds, dpsObjectsInflightIds} nReq ids = do
+    checkProtocolErrors hasObject PeerState{psObjectsAvailableIds, psObjectsInflightIds} nReq ids = do
       when (length ids > fromIntegral nReq) $ throw ProtocolErrorObjectIdsNotRequested
       let idSet = Set.fromList ids
       when (length ids /= Set.size idSet) $ throw ProtocolErrorObjectIdsDuplicate
       when
-        ( (not $ Set.null $ idSet `Set.intersection` dpsObjectsAvailableIds)
-            || (not $ Set.null $ idSet `Set.intersection` dpsObjectsInflightIds)
+        ( (not $ Set.null $ idSet `Set.intersection` psObjectsAvailableIds)
+            || (not $ Set.null $ idSet `Set.intersection` psObjectsInflightIds)
             || (any hasObject ids)
         )
         $ throw ProtocolErrorObjectIdAlreadyKnown
@@ -224,53 +209,48 @@ onReceiveIdsImpl ::
   (Ord objectId, Ord peerAddr, HasCallStack) =>
   peerAddr ->
   -- | number of requests to subtract from
-  -- `dpsNumIdsInflight`
+  -- `psNumIdsInflight`
   NumObjectIdsReq ->
   -- | sequence of received `objectId`s
   [objectId] ->
-  DecisionGlobalState peerAddr objectId object ->
-  DecisionGlobalState peerAddr objectId object
+  Map peerAddr (PeerState objectId object) ->
+  Map peerAddr (PeerState objectId object)
 onReceiveIdsImpl
   peerAddr
   numIdsInitiallyRequested
   receivedIds
-  globalState@DecisionGlobalState
-    { dgsPeerStates
-    } =
-    globalState
-      { dgsPeerStates = dgsPeerStates'
-      }
+  peerStates = peerStates'
    where
-    peerState@DecisionPeerState
-      { dpsOutstandingFifo
-      , dpsObjectsAvailableIds
-      , dpsNumIdsInflight
+    peerState@PeerState
+      { psOutstandingFifo
+      , psObjectsAvailableIds
+      , psNumIdsInflight
       } =
         findWithDefault
-          (error "ObjectDiffusion.onReceiveIdsImpl: the peer should appear in dgsPeerStates")
+          (error "ObjectDiffusion.onReceiveIdsImpl: the peer should appear in peerStates")
           peerAddr
-          dgsPeerStates
+          peerStates
 
     -- Actually we don't need to filter out availableIds, because
-    -- makeDecisions is the only reader of dpsObjectsAvailableIds
+    -- makeDecisions is the only reader of psObjectsAvailableIds
     -- and will filter it when needed with the actualized state of the object
     -- pool.
-    dpsObjectsAvailableIds' =
-      dpsObjectsAvailableIds `Set.union` Set.fromList receivedIds
+    psObjectsAvailableIds' =
+      psObjectsAvailableIds `Set.union` Set.fromList receivedIds
 
-    -- Add received objectIds to `dpsOutstandingFifo`.
-    dpsOutstandingFifo' = dpsOutstandingFifo <> StrictSeq.fromList receivedIds
+    -- Add received objectIds to `psOutstandingFifo`.
+    psOutstandingFifo' = psOutstandingFifo <> StrictSeq.fromList receivedIds
 
     peerState' =
       assert
-        (dpsNumIdsInflight >= numIdsInitiallyRequested)
+        (psNumIdsInflight >= numIdsInitiallyRequested)
         peerState
-          { dpsObjectsAvailableIds = dpsObjectsAvailableIds'
-          , dpsOutstandingFifo = dpsOutstandingFifo'
-          , dpsNumIdsInflight = dpsNumIdsInflight - numIdsInitiallyRequested
+          { psObjectsAvailableIds = psObjectsAvailableIds'
+          , psOutstandingFifo = psOutstandingFifo'
+          , psNumIdsInflight = psNumIdsInflight - numIdsInitiallyRequested
           }
 
-    dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
+    peerStates' = Map.insert peerAddr peerState' peerStates
 
 -- | Wrapper around `onReceiveObjectsImpl` that updates and traces the
 -- global state TVar.
@@ -283,7 +263,7 @@ onReceiveObjects ::
   ) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
-  DecisionGlobalStateVar m peerAddr objectId object ->
+  PeerStatesVar m peerAddr objectId object ->
   ObjectPoolWriter objectId object m ->
   ObjectPoolSem m ->
   peerAddr ->
@@ -295,7 +275,7 @@ onReceiveObjects ::
 onReceiveObjects
   odTracer
   tracer
-  globalStateVar
+  peerStatesVar
   objectPoolWriter
   poolSem
   peerAddr
@@ -304,23 +284,23 @@ onReceiveObjects
     let getId = opwObjectId objectPoolWriter
     let objectsReceivedMap = Map.fromList $ (\obj -> (getId obj, obj)) <$> objectsReceived
     checkProtocolErrors objectsRequestedIds objectsReceivedMap
-    globalState' <- atomically $ do
+    peerStates' <- atomically $ do
       stateTVar
-        globalStateVar
-        ( \globalState ->
-            let globalState' =
+        peerStatesVar
+        ( \peerStates ->
+            let peerStates' =
                   onReceiveObjectsImpl
                     peerAddr
                     objectsReceivedMap
-                    globalState
-             in (globalState', globalState')
+                    peerStates
+             in (peerStates', peerStates')
         )
     traceWith odTracer (TraceObjectDiffusionInboundReceivedObjects (length objectsReceived))
-    traceWith tracer (TraceDecisionLogicGlobalStateUpdated "onReceiveObjects" globalState')
+    traceWith tracer (TraceDecisionLogicPeerStatesUpdated "onReceiveObjects" peerStates')
     submitObjectsToPool
       odTracer
       tracer
-      globalStateVar
+      peerStatesVar
       objectPoolWriter
       poolSem
       peerAddr
@@ -343,43 +323,38 @@ onReceiveObjectsImpl ::
   peerAddr ->
   -- | received objects
   Map objectId object ->
-  DecisionGlobalState peerAddr objectId object ->
-  DecisionGlobalState peerAddr objectId object
+  Map peerAddr (PeerState objectId object) ->
+  Map peerAddr (PeerState objectId object)
 onReceiveObjectsImpl
   peerAddr
   objectsReceived
-  st@DecisionGlobalState
-    { dgsPeerStates
-    } =
-    st
-      { dgsPeerStates = dgsPeerStates'
-      }
+  peerStates = peerStates'
    where
     objectsReceivedIds = Map.keysSet objectsReceived
 
-    peerState@DecisionPeerState
-      { dpsObjectsInflightIds
-      , dpsObjectsOwtPool
+    peerState@PeerState
+      { psObjectsInflightIds
+      , psObjectsOwtPool
       } =
         findWithDefault
-          (error "ObjectDiffusion.onReceiveObjectsImpl: the peer should appear in dgsPeerStates")
+          (error "ObjectDiffusion.onReceiveObjectsImpl: the peer should appear in peerStates")
           peerAddr
-          dgsPeerStates
+          peerStates
 
     -- subtract requested from in-flight
-    dpsObjectsInflightIds' =
-      assert (objectsReceivedIds `Set.isSubsetOf` dpsObjectsInflightIds) $
-        dpsObjectsInflightIds \\ objectsReceivedIds
+    psObjectsInflightIds' =
+      assert (objectsReceivedIds `Set.isSubsetOf` psObjectsInflightIds) $
+        psObjectsInflightIds \\ objectsReceivedIds
 
-    dpsObjectsOwtPool' = dpsObjectsOwtPool <> objectsReceived
+    psObjectsOwtPool' = psObjectsOwtPool <> objectsReceived
 
     peerState' =
       peerState
-        { dpsObjectsInflightIds = dpsObjectsInflightIds'
-        , dpsObjectsOwtPool = dpsObjectsOwtPool'
+        { psObjectsInflightIds = psObjectsInflightIds'
+        , psObjectsOwtPool = psObjectsOwtPool'
         }
 
-    dgsPeerStates' = Map.insert peerAddr peerState' dgsPeerStates
+    peerStates' = Map.insert peerAddr peerState' peerStates
 
 submitObjectsToPool ::
   forall m peerAddr object objectId.
@@ -390,7 +365,7 @@ submitObjectsToPool ::
   ) =>
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   Tracer m (TraceDecisionLogic peerAddr objectId object) ->
-  DecisionGlobalStateVar m peerAddr objectId object ->
+  PeerStatesVar m peerAddr objectId object ->
   ObjectPoolWriter objectId object m ->
   ObjectPoolSem m ->
   peerAddr ->
@@ -399,7 +374,7 @@ submitObjectsToPool ::
 submitObjectsToPool
   odTracer
   decisionTracer
-  globalStateVar
+  peerStatesVar
   objectPoolWriter
   (ObjectPoolSem poolSem)
   peerAddr
@@ -417,36 +392,28 @@ submitObjectsToPool
             length objects
 
         -- Move objects from `owtPool` to `inPool` state
-        globalState' <- atomically $ stateTVar globalStateVar $ \globalState ->
-          let globalState' =
+        peerStates' <- atomically $ stateTVar peerStatesVar $ \peerStates ->
+          let peerStates' =
                 Foldable.foldl'
-                  (\st object -> updateStateWhenObjectAddedToPool (getId object) st)
-                  globalState
+                  (\st object -> removeObjectsFromStateWhenAddedToPool (getId object) st)
+                  peerStates
                   objects
-           in (globalState', globalState')
+           in (peerStates', peerStates')
         traceWith
           decisionTracer
-          ( TraceDecisionLogicGlobalStateUpdated
-              "submitObjectsToPool.updateStateWhenObjectAddedToPool"
-              globalState'
+          ( TraceDecisionLogicPeerStatesUpdated
+              "submitObjectsToPool.removeObjectsFromStateWhenAddedToPool"
+              peerStates'
           )
    where
-    updateStateWhenObjectAddedToPool ::
+    removeObjectsFromStateWhenAddedToPool ::
       objectId ->
-      DecisionGlobalState peerAddr objectId object ->
-      DecisionGlobalState peerAddr objectId object
-    updateStateWhenObjectAddedToPool
+      Map peerAddr (PeerState objectId object) ->
+      Map peerAddr (PeerState objectId object)
+    removeObjectsFromStateWhenAddedToPool
       objectId
-      st@DecisionGlobalState
-        { dgsPeerStates
-        } =
-        st
-          { dgsPeerStates = dgsPeerStates'
-          }
-       where
-        dgsPeerStates' =
-          Map.adjust
-            ( \ps@DecisionPeerState{dpsObjectsOwtPool} -> ps{dpsObjectsOwtPool = Map.delete objectId dpsObjectsOwtPool}
-            )
-            peerAddr
-            dgsPeerStates
+      peerStates =
+        Map.adjust
+          (\ps@PeerState{psObjectsOwtPool} -> ps{psObjectsOwtPool = Map.delete objectId psObjectsOwtPool})
+          peerAddr
+          peerStates
