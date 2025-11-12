@@ -232,7 +232,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (Map (SL.KeyHash 'SL.StakePool) SL.PoolParams)
+      (Map (SL.KeyHash 'SL.StakePool) SL.StakePoolParams)
   GetRewardInfoPools ::
     BlockQuery
       (ShelleyBlock proto era)
@@ -429,11 +429,11 @@ instance
       GetStakePools ->
         SL.getPools st
       GetStakePoolParams poolids ->
-        SL.queryPoolParameters st poolids
+        SL.queryPoolParameters (SL.networkId globals) st poolids
       GetRewardInfoPools ->
         SL.getRewardInfoPools globals st
       GetPoolState mPoolIds ->
-        SL.queryPoolState st mPoolIds
+        SL.queryPoolState st mPoolIds (SL.networkId globals)
       GetStakeSnapshots mPoolIds ->
         let SL.SnapShots
               { SL.ssStakeMark

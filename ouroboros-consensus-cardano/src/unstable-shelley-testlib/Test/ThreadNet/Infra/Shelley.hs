@@ -417,7 +417,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
       { sgsPools =
           ListMap
             [ (pk, pp)
-            | pp@SL.PoolParams{ppId = pk} <- Map.elems coreNodeToPoolMapping
+            | pp@SL.StakePoolParams{sppId = pk} <- Map.elems coreNodeToPoolMapping
             ]
       , -- The staking key maps to the key hash of the pool, which is set to the
         -- "delegate key" in order that nodes may issue blocks both as delegates
@@ -432,23 +432,23 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
       }
    where
     coreNodeToPoolMapping ::
-      Map (SL.KeyHash 'SL.StakePool) SL.PoolParams
+      Map (SL.KeyHash 'SL.StakePool) SL.StakePoolParams
     coreNodeToPoolMapping =
       Map.fromList
         [ ( SL.hashKey . SL.VKey . deriveVerKeyDSIGN $ cnStakingKey
-          , SL.PoolParams
-              { SL.ppId = poolHash
-              , SL.ppVrf = vrfHash
+          , SL.StakePoolParams
+              { SL.sppId = poolHash
+              , SL.sppVrf = vrfHash
               , -- Each core node pledges its full stake to the pool.
-                SL.ppPledge = SL.Coin $ fromIntegral initialLovelacePerCoreNode
-              , SL.ppCost = SL.Coin 1
-              , SL.ppMargin = minBound
+                SL.sppPledge = SL.Coin $ fromIntegral initialLovelacePerCoreNode
+              , SL.sppCost = SL.Coin 1
+              , SL.sppMargin = minBound
               , -- Reward accounts live in a separate "namespace" to other
                 -- accounts, so it should be fine to use the same address.
-                SL.ppRewardAccount = SL.RewardAccount networkId $ mkCredential cnDelegateKey
-              , SL.ppOwners = Set.singleton poolOwnerHash
-              , SL.ppRelays = Seq.empty
-              , SL.ppMetadata = SL.SNothing
+                SL.sppRewardAccount = SL.RewardAccount networkId $ mkCredential cnDelegateKey
+              , SL.sppOwners = Set.singleton poolOwnerHash
+              , SL.sppRelays = Seq.empty
+              , SL.sppMetadata = SL.SNothing
               }
           )
         | CoreNode{cnDelegateKey, cnStakingKey, cnVRF} <- coreNodes
