@@ -525,7 +525,7 @@ mkSetDecentralizationParamTxs coreNodes pVer ttl dNew =
 
   -- Nothing but the parameter update and the obligatory touching of an
   -- input.
-  body :: SL.TxBody ShelleyEra
+  body :: SL.TxBody SL.TopTx ShelleyEra
   body =
     SL.mkBasicTxBody
       & SL.inputsTxBodyL .~ Set.singleton (fst touchCoins)
@@ -646,7 +646,7 @@ mkMASetDecentralizationParamTxs coreNodes pVer ttl dNew =
 
   -- Nothing but the parameter update and the obligatory touching of an
   -- input.
-  body :: SL.TxBody era
+  body :: SL.TxBody SL.TopTx era
   body =
     SL.mkBasicTxBody
       & SL.inputsTxBodyL .~ inputs

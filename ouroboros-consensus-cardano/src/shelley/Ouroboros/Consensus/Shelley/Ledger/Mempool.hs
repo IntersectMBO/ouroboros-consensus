@@ -45,6 +45,7 @@ import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import Cardano.Ledger.Alonzo.Core
   ( BlockBody
+  , TopTx
   , Tx
   , allInputsTxBodyF
   , bodyTxL
@@ -115,7 +116,7 @@ import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 import Ouroboros.Network.SizeInBytes
 
-data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx era)
+data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx TopTx era)
   deriving stock Generic
 
 deriving instance ShelleyBasedEra era => NoThunks (GenTx (ShelleyBlock proto era))
@@ -129,7 +130,7 @@ instance
 data instance Validated (GenTx (ShelleyBlock proto era))
   = ShelleyValidatedTx
       !SL.TxId
-      !(SL.Validated (Tx era))
+      !(SL.Validated (Tx TopTx era))
   deriving stock Generic
 
 deriving instance ShelleyBasedEra era => NoThunks (Validated (GenTx (ShelleyBlock proto era)))
@@ -193,13 +194,14 @@ instance
     f <- mkMkMempoolShelleyPredicateFailure (Proxy @era)
     Just $ SL.ApplyTxError $ f txt NE.:| []
 
-mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
+mkShelleyTx ::
+  forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (txIdTx tx) tx
 
 mkShelleyValidatedTx ::
   forall era proto.
   ShelleyBasedEra era =>
-  SL.Validated (Tx era) ->
+  SL.Validated (Tx TopTx era) ->
   Validated (GenTx (ShelleyBlock proto era))
 mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
  where
@@ -233,7 +235,7 @@ instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
       . SL.blockBody
       . shelleyBlockRaw
    where
-    blockBodyToTxList :: BlockBody era -> [Tx era]
+    blockBodyToTxList :: BlockBody era -> [Tx TopTx era]
     blockBodyToTxList blockBody = toList $ blockBody ^. txSeqBlockBodyL
 
 {-------------------------------------------------------------------------------
