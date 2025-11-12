@@ -614,6 +614,8 @@ instance RunModel Model (StateT Environment IO) where
       let args = mkArgs secParam salt
       -- TODO after a drop and restore we restart the db but the session has been closed below where I wrote blahblahblah
       openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs rr
+    lift $
+      garbageCollect ldb . fromWithOrigin 0 . pointSlot . getTip =<< atomically (getImmutableTip ldb)
     put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup rr)
     pure $ pure ()
   perform _ WipeLedgerDB _ = do
@@ -642,6 +644,7 @@ instance RunModel Model (StateT Environment IO) where
                 (reverse (map blockRealPoint blks) ++) . drop (fromIntegral n)
             atomically (forkerCommit forker)
             forkerClose forker
+            garbageCollect ldb . fromWithOrigin 0 . pointSlot . getTip =<< atomically (getImmutableTip ldb)
             pure $ pure ()
           ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
           ValidateLedgerError (AnnLedgerError forker _ err) -> forkerClose forker >> error ("Unexpected ledger error" <> show err)

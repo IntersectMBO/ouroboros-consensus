@@ -83,7 +83,10 @@ import Prelude hiding (read)
 -- | The interface fulfilled by handles on both the InMemory and LSM handles.
 data LedgerTablesHandle m l = LedgerTablesHandle
   { close :: !(m ())
-  , duplicate :: !(m (LedgerTablesHandle m l))
+  , transfer :: !(ResourceKey m -> m ())
+  -- ^ Update the closing action in this handle with a new resource key, as the
+  -- handle has moved to a different registry.
+  , duplicate :: !(ResourceRegistry m -> m (ResourceKey m, LedgerTablesHandle m l))
   -- ^ Create a copy of the handle.
   --
   -- A duplicated handle must provide access to all the data that was there in
@@ -249,10 +252,10 @@ reapplyBlock ::
   ResourceRegistry m ->
   LedgerSeq m l ->
   m (StateRef m l)
-reapplyBlock evs cfg b _rr db = do
+reapplyBlock evs cfg b rr db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db
-  newtbs <- duplicate tbs
+  (_, newtbs) <- duplicate tbs rr
   vals <- read newtbs st ks
   let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
       newst = forgetLedgerTables st'
@@ -559,7 +562,7 @@ volatileStatesBimap f g =
 -- >>> instance LedgerTablesAreTrivial LS where convertMapKind (LS p) = LS p
 -- >>> s = [LS (Point Origin), LS (Point (At (Block 0 0))), LS (Point (At (Block 1 1))), LS (Point (At (Block 2 2))), LS (Point (At (Block 3 3)))]
 -- >>> [l0s, l1s, l2s, l3s, l4s] = s
--- >>> emptyHandle = LedgerTablesHandle (pure ()) (pure emptyHandle) (\_ -> undefined) (\_ -> undefined) (\_ -> pure trivialLedgerTables) (\_ _ _ -> undefined) (\_ -> undefined) (pure Nothing)
+-- >>> emptyHandle = LedgerTablesHandle (pure ()) (\_ -> pure ()) (\_ -> pure (undefined, emptyHandle)) (\_ -> undefined) (\_ -> undefined) (\_ -> pure trivialLedgerTables) (\_ _ _ -> undefined) (\_ -> undefined) (pure Nothing)
 -- >>> [l0, l1, l2, l3, l4] = map (flip StateRef emptyHandle) s
 -- >>> instance GetTip LS where getTip (LS p) = p
 -- >>> instance Eq (LS EmptyMK) where LS p1 == LS p2 = p1 == p2
