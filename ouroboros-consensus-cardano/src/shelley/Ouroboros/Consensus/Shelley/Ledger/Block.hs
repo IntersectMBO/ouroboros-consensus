@@ -62,6 +62,7 @@ import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce (coerce)
+import Data.Either (fromRight)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
@@ -311,7 +312,9 @@ decodeShelleyBlock ::
   ShelleyCompatible proto era =>
   forall s.
   Plain.Decoder s (Lazy.ByteString -> ShelleyBlock proto era)
-decodeShelleyBlock = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+decodeShelleyBlock =
+  eraDecoder @era $
+    (. Full) . (fromRight (error "TODO(geo2a): remove fromRight") .) . runAnnotator <$> decCBOR
 
 shelleyBinaryBlockInfo ::
   forall proto era. ShelleyCompatible proto era => ShelleyBlock proto era -> BinaryBlockInfo
@@ -335,7 +338,9 @@ decodeShelleyHeader ::
   ShelleyCompatible proto era =>
   forall s.
   Plain.Decoder s (Lazy.ByteString -> Header (ShelleyBlock proto era))
-decodeShelleyHeader = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+decodeShelleyHeader =
+  eraDecoder @era $
+    (. Full) . (fromRight (error "TODO(geo2a): remove fromRight") .) . runAnnotator <$> decCBOR
 
 {-------------------------------------------------------------------------------
   Condense
