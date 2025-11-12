@@ -25,6 +25,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     LSM
   , Backend (..)
   , Args (LSMArgs)
+  , Trace (LSMTreeTrace)
+  , LSM.LSMTreeTrace (..)
   , mkLSMArgs
   , stdMkBlockIOFS
 
@@ -571,12 +573,13 @@ instance
     }
     deriving Generic
 
-  data Trace m LSM
+  data Trace LSM
     = LSMTreeTrace !LSM.LSMTreeTrace
     deriving Show
 
   mkResources _ trcr (LSMArgs path salt mkFS) reg _ = do
     (rk1, SomeHasFSAndBlockIO fs blockio) <- mkFS reg
+    createDirectoryIfMissing fs True path
     session <-
       allocate
         reg

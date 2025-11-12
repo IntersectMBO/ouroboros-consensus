@@ -43,6 +43,8 @@ module Ouroboros.Consensus.Node
   , LowLevelRunNodeArgs (..)
   , MempoolCapacityBytesOverride (..)
   , NodeDatabasePaths (..)
+  , immutableDbPath
+  , nonImmutableDbPath
   , NodeKernel (..)
   , NodeKernelArgs (..)
   , ProtocolInfo (..)
@@ -376,7 +378,10 @@ data
   , -- Ad hoc values to replace default ChainDB configurations
     srnSnapshotPolicyArgs :: SnapshotPolicyArgs
   , srnQueryBatchSize :: QueryBatchSize
-  , srnLedgerDbBackendArgs :: LedgerDbBackendArgs m blk
+  , srnLedgerDbBackendArgs :: (StdGen -> (LedgerDbBackendArgs m blk, StdGen))
+  -- ^ The 'StdGen' will be used to initialize the salt for the LSM backend. It
+  -- is expected that it is the same 'StdGen' that is passed elsewhere in
+  -- Consensus, i.e. 'llrnRng'.
   }
 
 {-------------------------------------------------------------------------------
@@ -1005,7 +1010,7 @@ stdLowLevelRunNodeArgsIO
     }
   $(SafeWildCards.fields 'StdRunNodeArgs) = do
     llrnBfcSalt <- stdBfcSaltIO
-    llrnRng <- newStdGen
+    (ldbBackendArgs, llrnRng) <- srnLedgerDbBackendArgs <$> newStdGen
     pure
       LowLevelRunNodeArgs
         { llrnBfcSalt
@@ -1050,7 +1055,7 @@ stdLowLevelRunNodeArgsIO
             InFutureCheck.defaultClockSkew
         , llrnPublicPeerSelectionStateVar =
             Diffusion.dcPublicPeerSelectionVar srnDiffusionConfiguration
-        , llrnLdbFlavorArgs = srnLedgerDbBackendArgs
+        , llrnLdbFlavorArgs = ldbBackendArgs
         }
    where
     networkMagic :: NetworkMagic
