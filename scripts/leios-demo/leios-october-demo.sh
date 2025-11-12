@@ -49,18 +49,6 @@ set -x
 # one veth pair per edge in the topology (TODO one veth pair with a SFQ qdisc for each edge?)
 #
 
-cleanup_links() {
-    sudo ip link del veth12
-    sudo ip link del veth23
-
-    # this handler only runs when the script was interrupted, so no need to
-    # update the SIGNAL handlers
-}
-
-sudo ip link add veth12 type veth peer name veth21
-sudo ip link add veth23 type veth peer name veth32
-trap cleanup_links EXIT INT TERM
-
 cleanup_netns() {
     for i in 1 2 3; do
         echo "pids in ns${i}:"
@@ -71,22 +59,18 @@ cleanup_netns() {
     done
     for i in 1 2 3; do sudo ip netns del ns$i; done
 
-    # no need to call cleanup_links, since deleting the namespace deletes those
+    # no need to cleanup links, since deleting the namespace deletes those
     # links
 
     # the script itself invokes this handler directly to stop the processes, so
     # reset the SIGNAL handlers
     trap - EXIT INT TERM
 }
+trap cleanup_netns EXIT INT TERM
 
 for i in 1 2 3; do sudo ip netns add ns$i; done
-
-sudo ip link set veth12 netns ns1
-sudo ip link set veth21 netns ns2
-sudo ip link set veth23 netns ns2
-sudo ip link set veth32 netns ns3
-
-trap cleanup_netns EXIT INT TERM
+sudo ip link add veth12 netns ns1 type veth peer name veth21 netns ns2
+sudo ip link add veth23 netns ns2 type veth peer name veth32 netns ns3
 
 # adapted from https://unix.stackexchange.com/a/558427
 add_addrs() {
@@ -109,7 +93,10 @@ add_qdiscs() {
     i=$1
     j=$2
     # I Googled "netem delay after tbf of tbf after netem delay" and the AI
-    # Overview implied that I want netem as the child. TODO double-check
+    # Overview implied that I want netem as the child.
+    #
+    # Also, the netem man page gives an example where a tbf is the parent of a
+    # netem delay https://man7.org/linux/man-pages/man8/tc-netem.8.html
     sudo tc -n ns$i qdisc add dev veth$i$j handle 1: root $myrate
     sudo tc -n ns$i qdisc add dev veth$i$j parent 1: handle 2: $mydelay
 }
@@ -184,7 +171,6 @@ cleanup_node_0() {
     sudo ip netns exec ns2 kill $CARDANO_NODE_0_PID
     cleanup_netns
 }
-
 trap cleanup_node_0 EXIT INT TERM
 
 echo "Cardano node 0 started with PID: $CARDANO_NODE_0_PID"
@@ -236,7 +222,6 @@ cleanup_node_1() {
     sudo ip netns exec ns2 kill $DOWNSTREAM_PEER_PID
     cleanup_node_0
 }
-
 trap cleanup_node_1 EXIT INT TERM
 
 echo "Cardano node 1 started with PID: $DOWNSTREAM_PEER_PID"
@@ -268,7 +253,6 @@ cleanup_immdb() {
     sudo ip netns exec ns1 kill $UPSTREAM_PEER_PID
     cleanup_node_1
 }
-
 trap cleanup_immdb EXIT INT TERM
 
 echo "ImmDB server started with PID: $UPSTREAM_PEER_PID"
