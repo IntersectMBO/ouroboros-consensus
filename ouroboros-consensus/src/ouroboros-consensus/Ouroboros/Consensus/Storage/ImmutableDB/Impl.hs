@@ -103,6 +103,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl
   , openDBInternal
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import qualified Codec.CBOR.Write as CBOR
 import Control.Monad (replicateM_, unless, when)
 import Control.Monad.Except (runExceptT)
@@ -195,7 +196,7 @@ defaultArgs =
 -- | 'EncodeDisk' and 'DecodeDisk' constraints needed for the ImmutableDB.
 type ImmutableDbSerialiseConstraints blk =
   ( EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   , HasBinaryBlockInfo blk
@@ -458,7 +459,7 @@ getBlockComponentImpl ::
   forall m blk b.
   ( HasHeader blk
   , ReconstructNestedCtxt Header blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , IOLike m
   ) =>

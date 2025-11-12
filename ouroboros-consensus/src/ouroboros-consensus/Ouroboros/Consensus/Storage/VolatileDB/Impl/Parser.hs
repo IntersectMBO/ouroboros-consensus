@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser
   , extractBlockInfo
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Data.Bifunctor (bimap)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Word (Word64)
@@ -54,7 +55,7 @@ parseBlockFile ::
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   ) =>
   CodecConfig blk ->
   HasFS m h ->

@@ -86,7 +86,7 @@ prop_detectCorruption_RegularBlock :: RegularBlock -> Corruption -> Property
 prop_detectCorruption_RegularBlock (RegularBlock blk) =
   detectCorruption
     encodeByronBlock
-    (decodeByronBlock epochSlots)
+    ((Right .) <$> decodeByronBlock epochSlots)
     (verifyBlockIntegrity (configBlock testCfg))
     blk
 

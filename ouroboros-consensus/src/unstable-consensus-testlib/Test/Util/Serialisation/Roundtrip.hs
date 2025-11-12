@@ -43,6 +43,7 @@ module Test.Util.Serialisation.Roundtrip
   , examplesRoundtrip
   ) where
 
+import qualified Cardano.Binary as Plain
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
 import Codec.CBOR.FlatTerm (toFlatTerm, validFlatTerm)
@@ -116,7 +117,7 @@ roundtrip ::
   (BS.ByteString -> IO (Either e ())) ->
   a ->
   Property
-roundtrip enc dec = roundtrip' enc (const <$> dec)
+roundtrip enc dec = roundtrip' enc (const . Right <$> dec)
 
 -- | Perform roundtrip tests, checking the validity of the encoded CBOR.
 --
@@ -126,7 +127,7 @@ roundtrip' ::
   (Eq a, Show a, Show e) =>
   -- | @enc@
   (a -> Encoding) ->
-  (forall s. Decoder s (Lazy.ByteString -> a)) ->
+  (forall s. Decoder s (Lazy.ByteString -> Either Plain.DecoderError a)) ->
   (BS.ByteString -> IO (Either e ())) ->
   a ->
   Property
@@ -155,7 +156,7 @@ roundtripAnd ::
   ShouldCheckCBORValidity ->
   -- | @enc@
   (a -> Encoding) ->
-  (forall s. Decoder s (Lazy.ByteString -> a)) ->
+  (forall s. Decoder s (Lazy.ByteString -> Either Plain.DecoderError a)) ->
   (BS.ByteString -> IO (Either e ())) ->
   a ->
   Property
@@ -167,9 +168,12 @@ roundtripAnd check enc dec checkCddlValid a =
           when (check == CheckCBORValidity) $
             validFlatTerm (toFlatTerm enc_a) ?! "Encoded flat term is not valid: " <> show enc_a
       doesRoundtrip = throwLeft $ do
-        (bsRem, a') <- deserialiseFromBytes dec bs `onError` showByteString bs
+        (bsRem, mkA') <- deserialiseFromBytes dec bs `onDeserialiseFailure` showByteString bs
         Lazy.null bsRem ?! "Left-over bytes: " <> toBase16 bsRem
-        a == a' bs ?! pShowNeq a (a' bs)
+        case mkA' bs of
+          Left err -> Left (showByteString bsRem err)
+          Right a' ->
+            a == a' ?! pShowNeq a a
       cddlValid =
         monadicIO $
           run (checkCddlValid $ Lazy.toStrict bs) >>= \case
@@ -183,16 +187,17 @@ roundtripAnd check enc dec checkCddlValid a =
 
   pShowNeq x y = TL.unpack (pShow x) <> "\n \t/= \n" <> TL.unpack (pShow y)
 
-  onError ::
-    Either DeserialiseFailure (Char8.ByteString, Char8.ByteString -> a) ->
+  onDeserialiseFailure ::
+    Either DeserialiseFailure (Char8.ByteString, Char8.ByteString -> Either Plain.DecoderError a) ->
     (DeserialiseFailure -> String) ->
-    Either String (Char8.ByteString, Char8.ByteString -> a)
-  onError result showDeserialiseFailure =
+    Either String (Char8.ByteString, Char8.ByteString -> Either Plain.DecoderError a)
+  onDeserialiseFailure result showDeserialiseFailure =
     left showDeserialiseFailure result
 
   showByteString ::
+    Show error =>
     Char8.ByteString ->
-    DeserialiseFailure ->
+    error ->
     String
   showByteString bs deserialiseFailure =
     show deserialiseFailure <> "\n" <> "When deserialising " <> toBase16 bs
@@ -361,7 +366,7 @@ roundtrip_SerialiseDisk ccfg dictNestedHdr =
           Dict ->
             roundtrip'
               (encodeDiskDep ccfg ctxt)
-              (decodeDiskDep ccfg ctxt)
+              ((Right .) <$> decodeDiskDep ccfg ctxt)
               (const $ pure (Right () :: Either () ()))
               nestedHdr
   , -- Since the 'LedgerState' is a large data structure, we lower the
@@ -498,7 +503,7 @@ roundtrip_SerialiseNodeToNode ::
   , ArbitraryWithVersion (BlockNodeToNodeVersion blk) (GenTxId blk)
   , -- Needed for testing the @Serialised blk@
     EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , -- Needed for testing the @Serialised (Header blk)@
     HasNestedContent Header blk
   , EncodeDiskDep (NestedCtxt Header) blk
@@ -641,7 +646,7 @@ roundtrip_SerialiseNodeToClient ::
   , BlockSupportsLedgerQuery blk
   , -- Needed for testing the @Serialised blk@
     EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   ) =>
   (TestName -> ShouldCheckCBORValidity) ->
   CodecConfig blk ->
@@ -681,7 +686,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
             roundtripAnd @blk
               (shouldCheckCBORvalidity testLabel)
               (encodeThroughSerialised (encodeDisk ccfg) (enc version))
-              (const <$> decodeThroughSerialised (decodeDisk ccfg) (dec version))
+              (const . Right <$> decodeThroughSerialised (decodeDisk ccfg) (dec version))
               (const $ pure (Right () :: Either () ()))
               blk
   , -- See roundtrip_SerialiseNodeToNode for more info
@@ -691,7 +696,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
             roundtripAnd @blk
               (shouldCheckCBORvalidity testLabel)
               (encodeThroughSerialised (encodeDisk ccfg) (enc version))
-              (const <$> dec version)
+              (const . Right <$> dec version)
               (const $ pure (Right () :: Either () ()))
               blk
   , let testLabel = "roundtrip Result"
@@ -700,7 +705,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
             roundtripAnd
               (shouldCheckCBORvalidity testLabel)
               (encodeBlockQueryResult ccfg version query)
-              (const <$> decodeBlockQueryResult ccfg version query)
+              (const . Right <$> decodeBlockQueryResult ccfg version query)
               (const $ pure (Right () :: Either () ()))
               result
   ]
@@ -742,7 +747,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
         roundtripAnd @a
           (shouldCheckCBORvalidity testLabel)
           (enc' version)
-          (const <$> dec' version)
+          (const . Right <$> dec' version)
           (const $ pure (Right () :: Either () ()))
           a
    where
@@ -876,7 +881,7 @@ encodeThroughSerialised ::
 encodeThroughSerialised enc encSerialised = encSerialised . mkSerialised enc
 
 decodeThroughSerialised ::
-  (forall s. Decoder s (Lazy.ByteString -> a)) ->
+  (forall s. Decoder s (Lazy.ByteString -> Either Plain.DecoderError a)) ->
   (forall s. Decoder s (Serialised a)) ->
   (forall s. Decoder s a)
 decodeThroughSerialised dec decSerialised = do
@@ -902,27 +907,27 @@ examplesRoundtrip codecConfig examples =
   , testRoundtripFor
       "Header hash"
       encode
-      (const <$> decode)
+      (const . Right <$> decode)
       exampleHeaderHash
   , testRoundtripFor
       "Ledger state"
       (encodeDisk codecConfig)
-      (const <$> decodeDisk codecConfig)
+      (const . Right <$> decodeDisk codecConfig)
       exampleLedgerState
   , testRoundtripFor
       "Annotated tip"
       (encodeDisk codecConfig)
-      (const <$> decodeDisk codecConfig)
+      (const . Right <$> decodeDisk codecConfig)
       exampleAnnTip
   , testRoundtripFor
       "Chain dependent state"
       (encodeDisk codecConfig)
-      (const <$> decodeDisk codecConfig)
+      (const . Right <$> decodeDisk codecConfig)
       exampleChainDepState
   , testRoundtripFor
       "Extended ledger state"
       (encodeDiskExtLedgerState codecConfig)
-      (const <$> decodeDiskExtLedgerState codecConfig)
+      (const . Right <$> decodeDiskExtLedgerState codecConfig)
       exampleExtLedgerState
   ]
  where
@@ -931,7 +936,7 @@ examplesRoundtrip codecConfig examples =
     (Eq a, Show a) =>
     String ->
     (a -> Encoding) ->
-    (forall s. Decoder s (Char8.ByteString -> a)) ->
+    (forall s. Decoder s (Char8.ByteString -> Either Plain.DecoderError a)) ->
     (Examples blk -> Labelled a) ->
     TestTree
   testRoundtripFor testLabel enc dec field =
