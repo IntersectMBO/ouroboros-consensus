@@ -176,7 +176,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
             assert (pickedCoin > spentCoin) $
               pickedCoin <-> spentCoin
 
-          body :: SL.TxBody ShelleyEra
+          body :: SL.TxBody SL.TopTx ShelleyEra
           body =
             SL.mkBasicTxBody
               & SL.certsTxBodyL
