@@ -37,6 +37,14 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
     poolDistr :: SL.PoolDistr
     poolDistr = SL.nesPd shelleyLedgerState
 
+    futurePoolParams
+      , poolParams ::
+        Map (SL.KeyHash 'SL.StakePool) SL.StakePoolParams
+    (futurePoolParams, poolParams) =
+      ( SL.psFutureStakePoolParams pstate
+      , Map.mapWithKey SL.stakePoolStateToStakePoolParams (SL.psStakePools pstate)
+      )
+
     -- Sort stake pools by descending stake
     orderByStake ::
       SL.PoolDistr ->
@@ -72,14 +80,14 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
     -- Note that a stake pool can have multiple registered relays
     pparamsLedgerRelayAccessPoints ::
       (LedgerRelayAccessPoint -> StakePoolRelay) ->
-      SL.StakePoolState ->
+      SL.StakePoolParams ->
       Maybe (NonEmpty StakePoolRelay)
     pparamsLedgerRelayAccessPoints injStakePoolRelay =
       NE.nonEmpty
         . force
         . mapMaybe (fmap injStakePoolRelay . relayToLedgerRelayAccessPoint)
         . toList
-        . SL.spsRelays
+        . SL.sppRelays
 
     -- Combine the stake pools registered in the future and the current pool
     -- parameters, and remove duplicates.
@@ -88,8 +96,8 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
     poolLedgerRelayAccessPoints =
       Map.unionWith
         (\futureRelays currentRelays -> NE.nub (futureRelays <> currentRelays))
-        (Map.mapMaybe (pparamsLedgerRelayAccessPoints FutureRelay) (SL.psStakePools pstate))
-        (Map.mapMaybe (pparamsLedgerRelayAccessPoints CurrentRelay) (SL.psFutureStakePools pstate))
+        (Map.mapMaybe (pparamsLedgerRelayAccessPoints FutureRelay) futurePoolParams)
+        (Map.mapMaybe (pparamsLedgerRelayAccessPoints CurrentRelay) poolParams)
 
     pstate :: SL.PState era
     pstate =
