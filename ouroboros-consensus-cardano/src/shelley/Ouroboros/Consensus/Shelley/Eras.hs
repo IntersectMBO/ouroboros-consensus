@@ -123,11 +123,11 @@ class
     SL.LedgerEnv era ->
     SL.LedgerState era ->
     WhetherToIntervene ->
-    Core.Tx era ->
+    Core.Tx TopTx era ->
     Except
       (SL.ApplyTxError era)
       ( SL.LedgerState era
-      , SL.Validated (Core.Tx era)
+      , SL.Validated (Core.Tx TopTx era)
       )
 
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
@@ -148,11 +148,11 @@ defaultApplyShelleyBasedTx ::
   SL.LedgerEnv era ->
   SL.LedgerState era ->
   WhetherToIntervene ->
-  Core.Tx era ->
+  Core.Tx TopTx era ->
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx era)
+    , SL.Validated (Core.Tx TopTx era)
     )
 defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
   liftEither $
@@ -210,11 +210,11 @@ applyAlonzoBasedTx ::
   SL.LedgerEnv era ->
   SL.LedgerState era ->
   WhetherToIntervene ->
-  Core.Tx era ->
+  Core.Tx TopTx era ->
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx era)
+    , SL.Validated (Core.Tx TopTx era)
     )
 applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   (mempoolState', vtx) <-
