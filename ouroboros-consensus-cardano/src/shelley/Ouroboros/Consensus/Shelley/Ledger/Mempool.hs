@@ -87,6 +87,7 @@ import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
 import Data.DerivingVia (InstantiatedAt (..))
+import Data.Either (fromRight)
 import Data.Foldable (toList)
 import Data.Measure (Measure)
 import Data.Typeable (Typeable)
@@ -245,7 +246,7 @@ instance ShelleyCompatible proto era => FromCBOR (GenTx (ShelleyBlock proto era)
     fmap mkShelleyTx $
       unwrapCBORinCBOR $
         eraDecoder @era $
-          (. Full) . runAnnotator <$> decCBOR
+          (. Full) . (fromRight (error "TODO(geo2a): remove fromRight") .) . runAnnotator <$> decCBOR
 
 {-------------------------------------------------------------------------------
   Pretty-printing
