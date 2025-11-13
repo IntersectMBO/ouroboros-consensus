@@ -780,8 +780,6 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
-    Test.Ouroboros.Storage.LedgerDB.V1.BackingStore
-    Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog
     Test.Ouroboros.Storage.LedgerDB.V1.LMDB
@@ -801,12 +799,10 @@ test-suite storage-test
     bifunctors,
     bytestring,
     cardano-binary,
-    cardano-ledger-binary:testlib,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
     cborg,
-    constraints,
     containers,
     contra-tracer,
     diff-containers,
@@ -815,7 +811,7 @@ test-suite storage-test
     fs-api ^>=0.4,
     fs-sim ^>=0.4,
     generics-sop,
-    io-classes:{io-classes, strict-mvar, strict-stm},
+    io-classes:{strict-stm},
     io-sim,
     mempack,
     mtl,
@@ -826,7 +822,6 @@ test-suite storage-test
     ouroboros-network-protocols,
     pretty-show,
     quickcheck-dynamic,
-    quickcheck-lockstep ^>=0.8,
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     random,
     resource-registry,

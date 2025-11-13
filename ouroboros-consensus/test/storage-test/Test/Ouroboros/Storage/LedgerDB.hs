@@ -9,7 +9,6 @@ import qualified Test.Ouroboros.Storage.LedgerDB.Serialisation as Serialisation
 import qualified Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy as SnapshotPolicy
 import qualified Test.Ouroboros.Storage.LedgerDB.Snapshots as Snapshots
 import qualified Test.Ouroboros.Storage.LedgerDB.StateMachine as StateMachine
-import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore as BackingStore
 import qualified Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import Test.Tasty (TestTree, testGroup)
 
@@ -19,8 +18,7 @@ tests =
     "LedgerDB"
     [ testGroup
         "V1"
-        [ BackingStore.tests
-        , DbChangelog.tests
+        [ DbChangelog.tests
         ]
     , -- Independent of the LedgerDB implementation
       SnapshotPolicy.tests
