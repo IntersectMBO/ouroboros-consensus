@@ -88,8 +88,8 @@ add_addrs() {
 add_addrs 1 2
 add_addrs 2 3
 
-mydelay="netem delay 100ms"
-myrate="tbf rate 20mbit burst 2048b latency 10ms"
+# mydelay="netem delay 100ms"
+# myrate="tbf rate 20mbit burst 32kbit latency 70ms"   # burst and latency from Gemini 2.5 Pro
 add_qdiscs() {
     i=$1
     j=$2
@@ -99,8 +99,22 @@ add_qdiscs() {
     # Also, the netem man page gives an example where a tbf is the parent of a
     # netem delay https://man7.org/linux/man-pages/man8/tc-netem.8.html
     set -x
-    sudo tc -n ns$i qdisc add dev veth$i$j handle 1: root $myrate
-    sudo tc -n ns$i qdisc add dev veth$i$j parent 1: handle 2: $mydelay
+
+    # My inital setup, but Marcin Wójtowicz says the netem delay qdisc is too
+    # dumb and so still queueing too much, ie bufferbloat
+    #
+    # sudo tc -n ns$i qdisc add dev veth$i$j handle 1: root $myrate
+    # sudo tc -n ns$i qdisc add dev veth$i$j parent 1: handle 2: $mydelay
+
+    # Gemini 2.5 Pro asserts the fq_codel defaults are both robust and also
+    # realistic for this long fat intercontinental scenario
+    #
+    # TODO compare and contrast once Marcin Wójtowicz sends recommendations
+    sudo tc -n ns$i qdisc add dev veth$i$j root handle 1: netem delay 100ms
+    sudo tc -n ns$i qdisc add dev veth$i$j parent 1:1 handle 10: htb default 1
+    sudo tc -n ns$i class add dev veth$i$j parent 10: classid 10:1 htb rate 20mbit
+    sudo tc -n ns$i qdisc add dev veth$i$j parent 10:1 handle 100: fq_codel
+
     { set +x; } 2>/dev/null
 }
 
@@ -240,6 +254,14 @@ popd > /dev/null
 ## Run immdb-server
 ##
 
+# Marcin Wójtowicz's recommended instrumention for assesing the faithfulness of
+# the qdisc-based network emulation and/or the overall behavior of the
+# ouroboros-network stack and kernel's TCP logic when handling the
+# immdb-server's socket writes
+sudo ip netns exec ns1 bash -c "{ while true; do date; ss -i -m -t sport = :3001; sleep 0.1s; done; } 1>${TMP_DIR}/catch-ns1-ss.log 2>&1" &
+
+ss_pid=$!
+
 UPSTREAM_PEER_CMD="sudo ip netns exec ns1 ${IMMDB_SERVER}
     --db $CLUSTER_RUN_DATA/immdb-node/immutable/
     --config $CLUSTER_RUN_DATA/immdb-node/config.json
@@ -258,6 +280,7 @@ UPSTREAM_PEER_PID=$!
 
 cleanup_immdb() {
     sudo ip netns exec ns1 kill $UPSTREAM_PEER_PID
+    sudo ip netns exec ns1 kill $ss_pid
     cleanup_node_1
 }
 trap cleanup_immdb EXIT INT TERM
