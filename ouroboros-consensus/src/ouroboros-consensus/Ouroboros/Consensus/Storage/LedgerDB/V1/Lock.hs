@@ -9,7 +9,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
   ( -- * LedgerDB lock
     LedgerDBLock
-  , ReadLocked
+  , ReadLocked (..)
   , WriteLocked
   , mkLedgerDBLock
   , readLocked
@@ -59,7 +59,7 @@ mkLedgerDBLock :: IOLike m => m (LedgerDBLock m)
 mkLedgerDBLock = LedgerDBLock <$> Lock.new ()
 
 -- | An action in @m@ that has to hold the read lock. See @withReadLock@.
-newtype ReadLocked m a = ReadLocked {runReadLocked :: m a}
+newtype ReadLocked m a = ReadLocked {unsafeRunReadLocked :: m a}
   deriving newtype (Functor, Applicative, Monad)
 
 -- | Enforce that the action has to be run while holding the read lock.
@@ -69,7 +69,7 @@ readLocked = ReadLocked
 -- | Acquire the ledger DB read lock and hold it while performing an action
 withReadLock :: IOLike m => LedgerDBLock m -> ReadLocked m a -> m a
 withReadLock (LedgerDBLock lock) m =
-  Lock.withReadAccess lock (\() -> runReadLocked m)
+  Lock.withReadAccess lock (\() -> unsafeRunReadLocked m)
 
 -- | An action in @m@ that has to hold the write lock. See @withWriteLock@.
 newtype WriteLocked m a = WriteLocked {runWriteLocked :: m a}
