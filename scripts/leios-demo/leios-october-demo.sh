@@ -258,10 +258,7 @@ popd > /dev/null
 # the qdisc-based network emulation and/or the overall behavior of the
 # ouroboros-network stack and kernel's TCP logic when handling the
 # immdb-server's socket writes
-# sudo ip netns exec ns1 bash -c "{ while true; do date; ss -i -m -t sport = :3001; sleep 0.1s; done; } 1>${TMP_DIR}/catch-ns1-ss.log 2>&1" &
-
-# Karl's request
-sudo ip netns exec ns1 tcpdump -ni veth12 port 3001 -w "$TMP_DIR/upstream-tcpdump.pcap" &
+sudo ip netns exec ns1 bash -c "{ while true; do date; ss -i -m -t sport = :3001; sleep 0.1s; done; } 1>${TMP_DIR}/catch-ns1-ss.log 2>&1" &
 
 ss_pid=$!
 
