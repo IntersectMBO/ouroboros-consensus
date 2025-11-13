@@ -1,4 +1,5 @@
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
 -- | The scheduled ChainSync and BlockFetch servers are supposed to be linked,
@@ -31,6 +32,7 @@ import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.IOLike ()
+import Test.Util.TestBlock (TestBlock)
 
 tests :: TestTree
 tests = testProperty "ChainSync kills BlockFetch" prop_chainSyncKillsBlockFetch
@@ -42,7 +44,7 @@ tests = testProperty "ChainSync kills BlockFetch" prop_chainSyncKillsBlockFetch
 -- the corresponding block. We check that the block is not served.
 prop_chainSyncKillsBlockFetch :: Property
 prop_chainSyncKillsBlockFetch = do
-  forAllGenesisTest
+  forAllGenesisTest @TestBlock
     ( do
         gt@GenesisTest{gtBlockTree} <- genChains (pure 0)
         pure $ enableMustReplyTimeout $ gt $> dullSchedule (btTrunk gtBlockTree)
