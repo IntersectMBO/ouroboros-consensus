@@ -81,9 +81,7 @@ makeDecisions DecisionContext{dcRng, dcHasObject, dcDecisionPolicy, dcPeerStates
 -- * or the object is already in pool
 makeReqIdsAndAckDecisions ::
   forall peerAddr objectId object.
-  ( Ord peerAddr
-  , Ord objectId
-  ) =>
+  Ord objectId =>
   (objectId -> Bool) ->
   DecisionPolicy ->
   Pending (Map peerAddr (PeerState objectId object)) ->
@@ -92,21 +90,16 @@ makeReqIdsAndAckDecisions ::
   )
 makeReqIdsAndAckDecisions poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpMaxNumObjectsOutstanding} (Pending pendingPeerStates) =
   let
-    (decisions, peerToIdsToAck) =
-      Map.foldlWithKey' computeAckForPeer (Map.empty, Map.empty) pendingPeerStates
+    decisionAndAcks = computeDecisionAndAck <$> pendingPeerStates
    in
-    ( decisions
-    , peerToIdsToAck
+    ( fst <$> decisionAndAcks
+    , snd <$> decisionAndAcks
     )
  where
-  computeAckForPeer ::
-    -- \| Accumulator containing decisions already made for other peers
-    -- It's a map in which we need to insert the new decision into
-    (Map peerAddr (ReqIdsDecision objectId object), Map peerAddr (Set objectId)) ->
-    peerAddr ->
+  computeDecisionAndAck ::
     PeerState objectId object ->
-    (Map peerAddr (ReqIdsDecision objectId object), Map peerAddr (Set objectId))
-  computeAckForPeer (decisionsAcc, peerToIdsToAck) peerAddr PeerState{psOutstandingFifo, psObjectsOwtPool, psNumIdsInflight} =
+    (ReqIdsDecision objectId object, Set objectId)
+  computeDecisionAndAck PeerState{psOutstandingFifo, psObjectsOwtPool, psNumIdsInflight} =
     let
       -- we isolate the longest prefix of outstandingFifo that matches our ack criteria (see above in computeAck doc)
       (idsToAck, psOutstandingFifo') =
@@ -140,9 +133,7 @@ makeReqIdsAndAckDecisions poolHasObject DecisionPolicy{dpMaxNumObjectIdsReq, dpM
           , ridCanPipelineIdsRequests
           }
      in
-      ( Map.insert peerAddr reqIdsDecision decisionsAcc
-      , Map.insert peerAddr (strictSeqToSet idsToAck) peerToIdsToAck
-      )
+      (reqIdsDecision, strictSeqToSet idsToAck)
 
 -- | Order peers randomly based on the provided RNG.
 -- We do that to avoid biasing the decision logic towards the peers that
@@ -196,7 +187,9 @@ makeReqObjectsDecisions
 
     -- We want to map each objectId to the sorted list of peers that can provide it
     -- For each peer we also indicate how many objects it has in flight at the moment
-    -- We filter out here the objects that are already in pool
+    -- We filter out here the objects that are already in pool.
+    -- TODO: we may want to consider using a Seq instead of a list when we'll care
+    -- about performance.
     objectsToSortedProviders :: Map objectId [(peerAddr, NumObjectsReq)]
     objectsToSortedProviders =
       -- We iterate over each peer and the corresponding available ids

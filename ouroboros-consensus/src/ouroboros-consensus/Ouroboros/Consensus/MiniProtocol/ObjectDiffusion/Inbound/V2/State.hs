@@ -174,15 +174,15 @@ onReceiveIds
   peerAddr
   numIdsInitiallyRequested
   receivedIds = do
-    peerState <- atomically $ (Map.! peerAddr) <$> readTVar peerStatesVar
-    hasObject <- atomically opwHasObject
-    checkProtocolErrors hasObject peerState numIdsInitiallyRequested receivedIds
     peerStates' <- atomically $ do
+      peerState <- (Map.! peerAddr) <$> readTVar peerStatesVar
+      hasObject <- opwHasObject
+      checkProtocolErrors hasObject peerState numIdsInitiallyRequested receivedIds
       stateTVar
         peerStatesVar
         ( \peerStates ->
             let peerStates' = onReceiveIdsImpl peerAddr numIdsInitiallyRequested receivedIds peerStates
-             in (peerStates', peerStates')
+            in (peerStates', peerStates')
         )
     traceWith odTracer (TraceObjectDiffusionInboundReceivedIds (length receivedIds))
     traceWith decisionTracer (TraceDecisionLogicPeerStatesUpdated "onReceiveIds" peerStates')
@@ -192,7 +192,7 @@ onReceiveIds
       PeerState objectId object ->
       NumObjectIdsReq ->
       [objectId] ->
-      m ()
+      STM m ()
     checkProtocolErrors hasObject PeerState{psObjectsAvailableIds, psObjectsInflightIds} nReq ids = do
       when (length ids > fromIntegral nReq) $ throw ProtocolErrorObjectIdsNotRequested
       let idSet = Set.fromList ids
