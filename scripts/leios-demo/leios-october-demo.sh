@@ -43,90 +43,91 @@ echo "ONSET_OF_REF_SLOT=$ONSET_OF_REF_SLOT"
 echo "$REF_SLOT" >ref_slot
 echo "$ONSET_OF_REF_SLOT" >onset_of_ref_slot
 
-set -x
+# Shape traffic
 
-#
-# one veth pair per edge in the topology (TODO one veth pair with a SFQ qdisc for each edge?)
-#
+IF=lo
+RATE_MBIT=20          # Target bandwidth (Mbit/s)
+DELAY_MS=100          # Target one-way delay (ms)
+OVERHEAD_FACTOR=1.2   # Safety margin (20% extra for bursts/jitter)
+MSS=1460              # Typical TCP MSS (1500 - 40 IP+TCP headers)
 
-cleanup_links() {
-    sudo ip link del veth12
-    sudo ip link del veth23
+RATE_HI_MBIT=$(echo "1.05 * $RATE_MBIT" | bc)
+RATE_HI_MBIT=${RATE_HI_MBIT%.*}
+RTT_SEC=$(echo "2 * $DELAY_MS / 1000" | bc -l)
+RATE_BPS=$(echo "$RATE_MBIT * 1000000" | bc)
+BDP_BYTES=$(echo "$RATE_BPS * $RTT_SEC / 8 * $OVERHEAD_FACTOR" | bc -l)
+BDP_BYTES=${BDP_BYTES%.*}  # truncate
 
-    # this handler only runs when the script was interrupted, so no need to
-    # update the SIGNAL handlers
+MAX_BDP=$((4 * 1024 * 1024))
+[[ $BDP_BYTES -gt $MAX_BDP ]] && BDP_BYTES=$MAX_BDP
+
+SOCK_BUF_DEFAULT=$BDP_BYTES
+SOCK_BUF_MAX=$((BDP_BYTES * 2))
+
+PAGE_SIZE=4096
+SOCK_BUF_DEFAULT=$(((SOCK_BUF_DEFAULT + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE))
+SOCK_BUF_MAX=$(((SOCK_BUF_MAX + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE))
+
+BDP_PKTS=$(echo "$BDP_BYTES / $MSS" | bc)
+CODEL_LIMIT=$BDP_PKTS
+CODEL_LIMIT=$((CODEL_LIMIT < 50 ? 50 : CODEL_LIMIT))
+CODEL_LIMIT=$((CODEL_LIMIT > 1000 ? 1000 : CODEL_LIMIT))
+
+cat <<EOF
+Target ceil: ${RATE_HI_MBIT}mbit/s
+Target rate: ${RATE_MBIT}mbit/s
+RTT: ${RTT_SEC}s | BDP: ${BDP_BYTES} bytes (${BDP_PKTS} packets)
+Socket buffers: default=${SOCK_BUF_DEFAULT}B, max=${SOCK_BUF_MAX}B
+codel limit: ${CODEL_LIMIT} packets
+EOF
+
+# test w/o first
+# apply_buffers() {
+#     echo "Applying sysctl buffer settings..."
+#     sysctl -q \
+#         net.core.rmem_default=$SOCK_BUF_DEFAULT \
+#         net.core.rmem_max=$SOCK_BUF_MAX \
+#         net.core.wmem_default=$SOCK_BUF_DEFAULT \
+#         net.core.wmem_max=$SOCK_BUF_MAX \
+#         net.ipv4.tcp_rmem="4096 $SOCK_BUF_DEFAULT $SOCK_BUF_MAX" \
+#         net.ipv4.tcp_wmem="4096 $SOCK_BUF_DEFAULT $SOCK_BUF_MAX" \
+#         net.ipv4.tcp_no_metrics_save=1
+# }
+
+sudo tc qdisc del dev $IF root 2>/dev/null || true
+sudo tc qdisc del dev $IF ingress 2>/dev/null || true
+sudo ip link del ifb0 2>/dev/null || true
+
+sudo ip link set lo mtu 1500
+
+sudo ip link add ifb0 type ifb
+sudo ip link set ifb0 up
+
+sudo tc qdisc add dev $IF root handle 1: htb default 1
+sudo tc class add dev $IF parent 1: classid 1:1 \
+     htb rate ${RATE_MBIT}mbit ceil ${RATE_HI_MBIT}mbit quantum 10000 burst $BDP_BYTES
+sudo tc qdisc add dev $IF parent 1:1 fq_codel limit $CODEL_LIMIT \
+     quantum 10000 \
+     target 5ms \
+     interval 100ms
+sudo tc qdisc add dev $IF handle ffff: ingress
+sudo tc filter add dev $IF parent ffff: \
+    protocol ip \
+    flower ip_proto tcp dst_port 5200-5202 \
+    action mirred egress redirect dev ifb0
+sudo tc filter add dev $IF parent ffff: \
+    protocol ip \
+    flower ip_proto tcp src_port 5200-5202 \
+    action mirred egress redirect dev ifb0
+sudo tc qdisc add dev ifb0 root netem delay ${DELAY_MS}ms limit 10000
+
+cleanup_network() {
+    sudo ip link del ifb0 2>/dev/null
+    sudo tc qdisc del dev $IF ingress 2>/dev/null
+    sudo tc qdisc del dev $IF root 2>/dev/null
+    sudo ip link set lo mtu 65536
 }
-
-sudo ip link add veth12 type veth peer name veth21
-sudo ip link add veth23 type veth peer name veth32
-trap cleanup_links EXIT INT TERM
-
-cleanup_netns() {
-    for i in 1 2 3; do
-        echo "pids in ns${i}:"
-        for pid in $(sudo ip netns pids ns$i); do
-            echo -n "$pid "
-            ps -aux | grep -e $pid
-        done
-    done
-    for i in 1 2 3; do sudo ip netns del ns$i; done
-
-    # no need to call cleanup_links, since deleting the namespace deletes those
-    # links
-
-    # the script directly calls invokes handler, so when teardown is complete,
-    # reset the SIGNAL handlers
-    trap - EXIT INT TERM
-}
-
-for i in 1 2 3; do sudo ip netns add ns$i; done
-
-sudo ip link set veth12 netns ns1
-sudo ip link set veth21 netns ns2
-sudo ip link set veth23 netns ns2
-sudo ip link set veth32 netns ns3
-
-trap cleanup_netns EXIT INT TERM
-
-# adapted from https://unix.stackexchange.com/a/558427
-add_addrs() {
-    i=$1
-    j=$2
-    sudo ip -n ns$i link set veth$i$j up
-    sudo ip -n ns$j link set veth$j$i up
-    sudo ip -n ns$i addr add 10.0.0.$i$j peer 10.0.0.$j$i dev veth$i$j
-    sudo ip -n ns$j addr add 10.0.0.$j$i peer 10.0.0.$i$j dev veth$j$i
-}
-
-add_addrs 1 2
-add_addrs 2 3
-
-sudo ip -n ns3 addr add 10.0.0.33/32 dev veth32   # TODO ?
-
-mydelay="netem delay 100ms"
-myrate="tbf rate 20mbit burst 2048b latency 10ms"
-add_qdiscs() {
-    i=$1
-    j=$2
-    # I Googled "netem delay after tbf of tbf after netem delay" and the AI
-    # Overview implied that I want the following. TODO double-check
-    sudo tc -n ns$i qdisc add dev veth$i$j handle 1: root $myrate
-    sudo tc -n ns$i qdisc add dev veth$i$j parent 1: handle 2: $mydelay
-}
-
-add_qdiscs 1 2
-add_qdiscs 2 1
-add_qdiscs 2 3
-add_qdiscs 3 2
-
-set +x
-
-NS1_ADDR1=10.0.0.12
-NS2_ADDR1=10.0.0.12
-NS2_ADDR2=10.0.0.21
-NS3_ADDR2=10.0.0.32
-# TODO an actually mocked downstream peer wouldn't need to bind any addr
-NS3_ADDR3=10.0.0.33   # TODO ?
+trap cleanup_network EXIT INT TERM
 
 TMP_DIR=$(mktemp -d ${TMPDIR:-/tmp}/leios-october-demo.XXXXXX)
 echo "Using temporary directory for DB and logs: $TMP_DIR"
@@ -134,7 +135,7 @@ echo "Using temporary directory for DB and logs: $TMP_DIR"
 rm -f ./leios-run-tmp-dir
 ln -s "$TMP_DIR" ./leios-run-tmp-dir
 
-pushd "$CARDANO_NODE_PATH" > /dev/null
+pushd $(dirname "$CARDANO_NODE") > /dev/null
 
 ##
 ## Run cardano-node (node-0)
@@ -148,8 +149,8 @@ cat << EOF > topology-node-0.json
     {
       "accessPoints": [
         {
-          "address": "${NS1_ADDR1}",
-          "port": 5201
+          "address": "127.0.0.1",
+          "port": 5200
         }
       ],
       "advertise": false,
@@ -166,13 +167,13 @@ mkdir -p "$TMP_DIR/node-0/db"
 cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node-0/leios.db"
 sqlite3 "$TMP_DIR/node-0/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints; VACUUM'
 
-CARDANO_NODE_CMD="sudo ip netns exec ns2 env LEIOS_DB_PATH=$TMP_DIR/node-0/leios.db
+CARDANO_NODE_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-0/leios.db
     ${CARDANO_NODE} run
     --config $CLUSTER_RUN_DATA/leios-node/config.json
     --topology topology-node-0.json
     --database-path $TMP_DIR/node-0/db
     --socket-path node-0.socket
-    --host-addr $NS2_ADDR2 --port 5201"
+    --port 5201"
 
 echo "node-0: $CARDANO_NODE_CMD"
 
@@ -181,8 +182,8 @@ $CARDANO_NODE_CMD 1> "$TMP_DIR/cardano-node-0.log" 2>"$TMP_DIR/cardano-node-0.st
 CARDANO_NODE_0_PID=$!
 
 cleanup_node_0() {
-    sudo ip netns exec ns2 kill $CARDANO_NODE_0_PID
-    cleanup_netns
+    sudo kill $CARDANO_NODE_0_PID
+    cleanup_network
 }
 
 trap cleanup_node_0 EXIT INT TERM
@@ -200,7 +201,7 @@ cat << EOF > topology-node-1.json
     {
       "accessPoints": [
         {
-          "address": "${NS3_ADDR2}",
+          "address": "127.0.0.1",
           "port": 5201
         }
       ],
@@ -218,13 +219,13 @@ mkdir -p "$TMP_DIR/node-1/db"
 cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node-1/leios.db"
 sqlite3 "$TMP_DIR/node-1/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints; VACUUM;'
 
-DOWNSTREAM_PEER_CMD="sudo ip netns exe ns3 env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db
+DOWNSTREAM_PEER_CMD="env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db
     ${CARDANO_NODE} run
     --config $CLUSTER_RUN_DATA/leios-node/config.json
     --topology topology-node-1.json
     --database-path $TMP_DIR/node-1/db
     --socket-path node-1.socket
-    --host-addr ${NS3_ADDR3} --port 5201"
+    --port 5202"
 
 echo "downstream: $DOWNSTREAM_PEER_CMD"
 
@@ -233,7 +234,7 @@ $DOWNSTREAM_PEER_CMD 1>"$TMP_DIR/cardano-node-1.log" 2>"$TMP_DIR/cardano-node-1.
 DOWNSTREAM_PEER_PID=$!
 
 cleanup_node_1() {
-    sudo ip netns exec ns2 kill $DOWNSTREAM_PEER_PID
+    sudo kill $DOWNSTREAM_PEER_PID
     cleanup_node_0
 }
 
@@ -248,15 +249,14 @@ popd > /dev/null
 ## Run immdb-server
 ##
 
-UPSTREAM_PEER_CMD="sudo ip netns exec ns1 ${IMMDB_SERVER}
+UPSTREAM_PEER_CMD="${IMMDB_SERVER}
     --db $CLUSTER_RUN_DATA/immdb-node/immutable/
     --config $CLUSTER_RUN_DATA/immdb-node/config.json
     --initial-slot $REF_SLOT
     --initial-time $ONSET_OF_REF_SLOT
     --leios-schedule $LEIOS_SCHEDULE
     --leios-db $LEIOS_UPSTREAM_DB_PATH
-    --address ${NS1_ADDR1}
-    --port 5201"
+    --port 5200"
 
 echo "upstream: $UPSTREAM_PEER_CMD"
 
@@ -265,7 +265,7 @@ $UPSTREAM_PEER_CMD &> "$TMP_DIR/immdb-server.log" &
 UPSTREAM_PEER_PID=$!
 
 cleanup_immdb() {
-    sudo ip netns exec ns1 kill $UPSTREAM_PEER_PID
+    sudo kill $UPSTREAM_PEER_PID
     cleanup_node_1
 }
 
@@ -285,10 +285,9 @@ cleanup_immdb
 # Log analysis
 
 cat $TMP_DIR/cardano-node-0.log >logA
-#cat $TMP_DIR/cardano-node-1.log >logB
-cat $TMP_DIR/cardano-node-0.log >logB
+cat $TMP_DIR/cardano-node-1.log >logB
 
-python3 ouroboros-consensus/scripts/leios-demo/log_parser.py $REF_SLOT $ONSET_OF_REF_SLOT logA logB "scatter_plot.png"
+python3 scripts/leios-demo/log_parser.py $REF_SLOT $ONSET_OF_REF_SLOT logA logB "scatter_plot.png"
 
 # Status
 
