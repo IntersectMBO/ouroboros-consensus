@@ -94,7 +94,7 @@
       "severity": "Debug"
     },
     "ChainSync.Local": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "ChainSync.Remote": {
       "severity": "Notice"
@@ -121,7 +121,7 @@
       "severity": "Info"
     },
     "Mempool": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Mempool.AttemptAdd": {
       "severity": "Silence"
@@ -142,95 +142,95 @@
       "severity": "Notice"
     },
     "Net.AcceptPolicy": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.ConnectionManager.Local": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.ConnectionManager.Remote": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.ConnectionManager.Remote.ConnectionManagerCounters": {
       "severity": "Silence"
     },
     "Net.DNSResolver": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "Net.ErrorPolicy": {
-      "severity": "Info"
+      "severity": "Silence"
     },
     "Net.ErrorPolicy.Local": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.ErrorPolicy.Remote": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.Handshake.Local": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.Handshake.Remote": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.InboundGovernor": {
-      "severity": "Warning"
+      "severity": "Silence"
     },
     "Net.InboundGovernor.Local": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.InboundGovernor.Remote": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.InboundGovernor.Transition": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.Mux.Local": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "Net.Mux.Remote": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.PeerSelection": {
       "severity": "Silence"
     },
     "Net.PeerSelection.Actions": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.PeerSelection.Counters": {
       "detail": "DMinimal",
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.PeerSelection.Initiator": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "Net.PeerSelection.Responder": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "Net.PeerSelection.Selection": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.Peers.Ledger": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.Peers.List": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "Net.Peers.LocalRoot": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.Peers.PublicRoot": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.Server.Local": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.Server.Remote": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.Subscription.DNS": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "Net.Subscription.IP": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "NodeState": {
       "severity": "Notice"
@@ -245,28 +245,28 @@
       "severity": "Notice"
     },
     "Startup.DiffusionInit": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "StateQueryServer": {
       "severity": "Notice"
     },
     "TxSubmission.Local": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "TxSubmission.LocalServer": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "TxSubmission.MonitorClient": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "TxSubmission.Remote": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "TxSubmission.TxInbound": {
-      "severity": "Debug"
+      "severity": "Silence"
     },
     "TxSubmission.TxOutbound": {
-      "severity": "Notice"
+      "severity": "Silence"
     },
     "LeiosNotify.Remote": { "severity": "Debug" },
     "LeiosFetch.Remote": { "severity": "Debug" },

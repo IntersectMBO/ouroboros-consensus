@@ -43,23 +43,94 @@ echo "ONSET_OF_REF_SLOT=$ONSET_OF_REF_SLOT"
 echo "$REF_SLOT" >ref_slot
 echo "$ONSET_OF_REF_SLOT" >onset_of_ref_slot
 
+IP1="10.0.0.1" # immdb server / upstream
+IP2="10.0.0.2" # node-0
+IP3="10.0.0.3" # node-1 downstream
+PORT=5200
+
+# scrub
+for i in 1 2 3; do { sudo ip netns del ns$i; } 2>/dev/null; done
+
+# create namespaces
+for i in 1 2 3; do set -x; sudo ip netns add ns$i; { set +x; } 2>/dev/null; done
+
+# create veth pairs
+for i in 1 2 3; do
+    IP=IP$i
+    set -x
+    sudo ip link add veth${i}p netns ns$i type veth peer name veth${i} netns ns2
+    sudo ip -n ns$i link set veth${i}p up
+    sudo ip -n ns2 link set veth$i up
+    sudo ip -n ns$i addr add ${!IP}/24 dev veth${i}p
+    { set +x; } 2>/dev/null
+done
+
 set -x
 
-#
-# one veth pair per edge in the topology (TODO one veth pair with a SFQ qdisc for each edge?)
-#
+# bridge
+sudo ip -n ns2 link add name br type bridge
+sudo ip -n ns2 link set dev br up
 
-cleanup_links() {
-    sudo ip link del veth12
-    sudo ip link del veth23
+{ set +x; } 2>/dev/null
 
-    # this handler only runs when the script was interrupted, so no need to
-    # update the SIGNAL handlers
-}
+# attach to bridge
+for i in 1 2 3; do set -x; sudo ip -n ns2 link set veth${i} master br; { set +x; } 2>/dev/null; done
 
-sudo ip link add veth12 type veth peer name veth21
-sudo ip link add veth23 type veth peer name veth32
-trap cleanup_links EXIT INT TERM
+# Shape traffic
+
+RATE_MBIT=20          # Target bandwidth (Mbit/s) per peer
+DELAY_MS=100          # Target one-way delay (ms)
+OVERHEAD_FACTOR=1.2   # Safety margin (20% extra for bursts/jitter)
+MSS=1448              # Typical TCP MSS (1500 - 40 IP+TCP+FLAGS headers)
+TOKEN_RATE=250        # TBF replenishment rate (kernel parameter)
+
+RTT_MS=$((2 * $DELAY_MS))
+RTT_SEC=$(echo "2 * $DELAY_MS / 1000" | bc -l)
+BURST=$(echo "$RATE_MBIT * $OVERHEAD_FACTOR * 1000000 / $TOKEN_RATE / 8" | bc)
+RATE_BPS=$(echo "$RATE_MBIT * 1000000" | bc)
+BDP_BYTES=$(echo "$RATE_BPS * $RTT_SEC * $OVERHEAD_FACTOR / 8" | bc)
+
+MAX_BDP=$((4 * 1024 * 1024))
+[[ $BDP_BYTES -gt $MAX_BDP ]] && BDP_BYTES=$MAX_BDP
+
+SOCK_BUF_DEFAULT=$BDP_BYTES
+SOCK_BUF_MAX=$((BDP_BYTES * 2))
+
+PAGE_SIZE=4096
+SOCK_BUF_DEFAULT=$(((SOCK_BUF_DEFAULT + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE))
+SOCK_BUF_MAX=$(((SOCK_BUF_MAX + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE))
+
+BDP_PKTS=$(echo "$BDP_BYTES / $MSS" | bc)
+
+cat <<EOF
+Target rate: ${RATE_MBIT}mbit/s
+RTT: ${RTT_SEC}s | BDP: ${BDP_BYTES} bytes (${BDP_PKTS} packets)
+TBF burst: $BURST bytes
+Socket buffers: default=${SOCK_BUF_DEFAULT}B, max=${SOCK_BUF_MAX}B
+EOF
+
+# shape egress
+for i in 1 2 3; do
+    set -x
+    sudo tc -n ns$i qdisc add dev veth${i}p root handle 1: tbf \
+         rate ${RATE_MBIT}mbit burst $BURST latency 5ms
+    sudo tc -n ns$i qdisc add dev veth${i}p parent 1: fq_codel limit 100 \
+         quantum 2000 target 5ms interval 10ms
+    # shape netem at bridge port
+    sudo tc -n ns2 qdisc add dev veth${i} root netem delay ${DELAY_MS}ms limit 500
+    { set +x; } 2>/dev/null
+done
+
+# benchmark harness
+set -x
+
+# run iperf servers
+# sudo ip netns exec ns2 iperf3 -s -1 -p 3001 -B $IP2 1>/dev/null &
+# sudo ip netns exec ns2 iperf3 -s -1 -p 3003 -B $IP2 1>/dev/null &
+# sudo ip netns exec ns1 iperf3 -c $IP2 -p 3001 -t 24 -i 1 --get-server-output > $TMP_DIR/iperf_upstream.log &
+# sudo ip netns exec ns3 iperf3 -c $IP2 -p 3003 -t 24 -i 1 --get-server-output > $TMP_DIR/iperf_downstream.log &
+
+{ set +x; } 2>/dev/null
 
 cleanup_netns() {
     for i in 1 2 3; do
@@ -71,62 +142,14 @@ cleanup_netns() {
     done
     for i in 1 2 3; do sudo ip netns del ns$i; done
 
-    # no need to call cleanup_links, since deleting the namespace deletes those
+    # no need to cleanup links, since deleting the namespace deletes those
     # links
 
-    # the script directly calls invokes handler, so when teardown is complete,
+    # the script itself invokes this handler directly to stop the processes, so
     # reset the SIGNAL handlers
     trap - EXIT INT TERM
 }
-
-for i in 1 2 3; do sudo ip netns add ns$i; done
-
-sudo ip link set veth12 netns ns1
-sudo ip link set veth21 netns ns2
-sudo ip link set veth23 netns ns2
-sudo ip link set veth32 netns ns3
-
 trap cleanup_netns EXIT INT TERM
-
-# adapted from https://unix.stackexchange.com/a/558427
-add_addrs() {
-    i=$1
-    j=$2
-    sudo ip -n ns$i link set veth$i$j up
-    sudo ip -n ns$j link set veth$j$i up
-    sudo ip -n ns$i addr add 10.0.0.$i$j peer 10.0.0.$j$i dev veth$i$j
-    sudo ip -n ns$j addr add 10.0.0.$j$i peer 10.0.0.$i$j dev veth$j$i
-}
-
-add_addrs 1 2
-add_addrs 2 3
-
-sudo ip -n ns3 addr add 10.0.0.33/32 dev veth32   # TODO ?
-
-mydelay="netem delay 100ms"
-myrate="tbf rate 20mbit burst 2048b latency 10ms"
-add_qdiscs() {
-    i=$1
-    j=$2
-    # I Googled "netem delay after tbf of tbf after netem delay" and the AI
-    # Overview implied that I want the following. TODO double-check
-    sudo tc -n ns$i qdisc add dev veth$i$j handle 1: root $myrate
-    sudo tc -n ns$i qdisc add dev veth$i$j parent 1: handle 2: $mydelay
-}
-
-add_qdiscs 1 2
-add_qdiscs 2 1
-add_qdiscs 2 3
-add_qdiscs 3 2
-
-set +x
-
-NS1_ADDR1=10.0.0.12
-NS2_ADDR1=10.0.0.12
-NS2_ADDR2=10.0.0.21
-NS3_ADDR2=10.0.0.32
-# TODO an actually mocked downstream peer wouldn't need to bind any addr
-NS3_ADDR3=10.0.0.33   # TODO ?
 
 TMP_DIR=$(mktemp -d ${TMPDIR:-/tmp}/leios-october-demo.XXXXXX)
 echo "Using temporary directory for DB and logs: $TMP_DIR"
@@ -134,7 +157,7 @@ echo "Using temporary directory for DB and logs: $TMP_DIR"
 rm -f ./leios-run-tmp-dir
 ln -s "$TMP_DIR" ./leios-run-tmp-dir
 
-pushd "$CARDANO_NODE_PATH" > /dev/null
+pushd $(dirname "$CARDANO_NODE") > /dev/null
 
 ##
 ## Run cardano-node (node-0)
@@ -148,8 +171,8 @@ cat << EOF > topology-node-0.json
     {
       "accessPoints": [
         {
-          "address": "${NS1_ADDR1}",
-          "port": 5201
+          "address": "$IP1",
+          "port": $PORT
         }
       ],
       "advertise": false,
@@ -172,9 +195,23 @@ CARDANO_NODE_CMD="sudo ip netns exec ns2 env LEIOS_DB_PATH=$TMP_DIR/node-0/leios
     --topology topology-node-0.json
     --database-path $TMP_DIR/node-0/db
     --socket-path node-0.socket
-    --host-addr $NS2_ADDR2 --port 5201"
+    --host-addr $IP2 --port $PORT"
 
 echo "node-0: $CARDANO_NODE_CMD"
+
+# capture tcp at node-0, it will have streams for both sides
+sudo ip netns exec ns2 tcpdump \
+  -i veth2p \
+  -w ${TMP_DIR}/node_0.pcap \
+  -s 0 \
+  -n \
+  "(host 10.0.0.2 and port 5200) or (icmp and icmp[0] == 3 and icmp[1] == 4)" &
+
+dump_pid=$!
+
+sudo ip netns exec ns2 bash -c "{ while true; do date; ss -i -m -t sport = :5200; sleep 0.1s; done; } 1>${TMP_DIR}/catch-ns2-ss.log 2>&1" &
+
+ss_pid2=$!
 
 $CARDANO_NODE_CMD 1> "$TMP_DIR/cardano-node-0.log" 2>"$TMP_DIR/cardano-node-0.stderr" &
 
@@ -182,6 +219,8 @@ CARDANO_NODE_0_PID=$!
 
 cleanup_node_0() {
     sudo ip netns exec ns2 kill $CARDANO_NODE_0_PID
+    sudo ip netns exec ns2 kill $dump_pid
+    sudo ip netns exec ns2 kill $ss_pid2
     cleanup_netns
 }
 
@@ -200,8 +239,8 @@ cat << EOF > topology-node-1.json
     {
       "accessPoints": [
         {
-          "address": "${NS3_ADDR2}",
-          "port": 5201
+          "address": "$IP2",
+          "port": $PORT
         }
       ],
       "advertise": false,
@@ -218,15 +257,19 @@ mkdir -p "$TMP_DIR/node-1/db"
 cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node-1/leios.db"
 sqlite3 "$TMP_DIR/node-1/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints; VACUUM;'
 
-DOWNSTREAM_PEER_CMD="sudo ip netns exe ns3 env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db
+DOWNSTREAM_PEER_CMD="sudo ip netns exec ns3 env LEIOS_DB_PATH=$TMP_DIR/node-1/leios.db
     ${CARDANO_NODE} run
     --config $CLUSTER_RUN_DATA/leios-node/config.json
     --topology topology-node-1.json
     --database-path $TMP_DIR/node-1/db
     --socket-path node-1.socket
-    --host-addr ${NS3_ADDR3} --port 5201"
+    --host-addr $IP3 --port $PORT"
 
 echo "downstream: $DOWNSTREAM_PEER_CMD"
+
+sudo ip netns exec ns3 bash -c "{ while true; do date; ss -i -m -t sport = :5200; sleep 0.1s; done; } 1>${TMP_DIR}/catch-ns3-ss.log 2>&1" &
+
+ss_pid3=$!
 
 $DOWNSTREAM_PEER_CMD 1>"$TMP_DIR/cardano-node-1.log" 2>"$TMP_DIR/cardano-node-1.stderr" &
 
@@ -234,6 +277,7 @@ DOWNSTREAM_PEER_PID=$!
 
 cleanup_node_1() {
     sudo ip netns exec ns2 kill $DOWNSTREAM_PEER_PID
+    sudo ip netns exec ns3 kill $ss_pid3
     cleanup_node_0
 }
 
@@ -248,6 +292,10 @@ popd > /dev/null
 ## Run immdb-server
 ##
 
+sudo ip netns exec ns1 bash -c "{ while true; do date; ss -i -m -t sport = :5200; sleep 0.1s; done; } 1>${TMP_DIR}/catch-ns1-ss.log 2>&1" &
+
+ss_pid=$!
+
 UPSTREAM_PEER_CMD="sudo ip netns exec ns1 ${IMMDB_SERVER}
     --db $CLUSTER_RUN_DATA/immdb-node/immutable/
     --config $CLUSTER_RUN_DATA/immdb-node/config.json
@@ -255,8 +303,8 @@ UPSTREAM_PEER_CMD="sudo ip netns exec ns1 ${IMMDB_SERVER}
     --initial-time $ONSET_OF_REF_SLOT
     --leios-schedule $LEIOS_SCHEDULE
     --leios-db $LEIOS_UPSTREAM_DB_PATH
-    --address ${NS1_ADDR1}
-    --port 5201"
+    --address $IP1
+    --port $PORT"
 
 echo "upstream: $UPSTREAM_PEER_CMD"
 
@@ -266,6 +314,7 @@ UPSTREAM_PEER_PID=$!
 
 cleanup_immdb() {
     sudo ip netns exec ns1 kill $UPSTREAM_PEER_PID
+    sudo ip netns exec ns1 kill $ss_pid
     cleanup_node_1
 }
 
@@ -285,10 +334,9 @@ cleanup_immdb
 # Log analysis
 
 cat $TMP_DIR/cardano-node-0.log >logA
-#cat $TMP_DIR/cardano-node-1.log >logB
-cat $TMP_DIR/cardano-node-0.log >logB
+cat $TMP_DIR/cardano-node-1.log >logB
 
-python3 ouroboros-consensus/scripts/leios-demo/log_parser.py $REF_SLOT $ONSET_OF_REF_SLOT logA logB "scatter_plot.png"
+python3 scripts/leios-demo/log_parser.py $REF_SLOT $ONSET_OF_REF_SLOT logA logB "scatter_plot.png"
 
 # Status
 
