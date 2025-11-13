@@ -110,12 +110,17 @@ add_qdiscs 2 3
 add_qdiscs 3 2
 
 UPSTREAM_BIND_ADDR=10.0.0.1
+UPSTREAM_BIND_PORT=3001
 NODE0_BIND_ADDR=10.0.0.2
+NODE0_BIND_PORT=3002
 # TODO an actually mocked downstream peer wouldn't need to call bind()
 DOWNSTREAM_BIND_ADDR=10.0.0.3
+DOWNSTREAM_BIND_PORT=3003
 
 FROM_NODE0_TO_UPSTREAM_ADDR=${UPSTREAM_BIND_ADDR}
+FROM_NODE0_TO_UPSTREAM_PORT=${UPSTREAM_BIND_PORT}
 FROM_DOWNSTREAM_TO_NODE0_ADDR=${NODE0_BIND_ADDR}
+FROM_DOWNSTREAM_TO_NODE0_PORT=${NODE0_BIND_PORT}
 
 TMP_DIR=$(mktemp -d ${TMPDIR:-/tmp}/leios-october-demo.XXXXXX)
 echo "Using temporary directory for DB and logs: $TMP_DIR"
@@ -138,7 +143,7 @@ cat << EOF > topology-node-0.json
       "accessPoints": [
         {
           "address": "${FROM_NODE0_TO_UPSTREAM_ADDR}",
-          "port": 5201
+          "port": ${FROM_NODE0_TO_UPSTREAM_PORT}
         }
       ],
       "advertise": false,
@@ -161,7 +166,7 @@ CARDANO_NODE_CMD="sudo ip netns exec ns2 env LEIOS_DB_PATH=$TMP_DIR/node-0/leios
     --topology topology-node-0.json
     --database-path $TMP_DIR/node-0/db
     --socket-path node-0.socket
-    --host-addr $NODE0_BIND_ADDR --port 5201"
+    --host-addr $NODE0_BIND_ADDR --port $NODE0_BIND_PORT"
 
 echo "node-0: $CARDANO_NODE_CMD"
 
@@ -189,7 +194,7 @@ cat << EOF > topology-downstream.json
       "accessPoints": [
         {
           "address": "${FROM_DOWNSTREAM_TO_NODE0_ADDR}",
-          "port": 5201
+          "port": ${FROM_DOWNSTREAM_TO_NODE0_PORT}
         }
       ],
       "advertise": false,
@@ -212,7 +217,7 @@ DOWNSTREAM_PEER_CMD="sudo ip netns exe ns3 env LEIOS_DB_PATH=$TMP_DIR/downstream
     --topology topology-downstream.json
     --database-path $TMP_DIR/downstream/db
     --socket-path downstream.socket
-    --host-addr ${DOWNSTREAM_BIND_ADDR} --port 5201"
+    --host-addr ${DOWNSTREAM_BIND_ADDR} --port ${DOWNSTREAM_BIND_PORT}"
 
 echo "downstream: $DOWNSTREAM_PEER_CMD"
 
@@ -243,7 +248,7 @@ UPSTREAM_PEER_CMD="sudo ip netns exec ns1 ${IMMDB_SERVER}
     --leios-schedule $LEIOS_SCHEDULE
     --leios-db $LEIOS_UPSTREAM_DB_PATH
     --address ${UPSTREAM_BIND_ADDR}
-    --port 5201"
+    --port ${UPSTREAM_BIND_PORT}"
 
 echo "upstream: $UPSTREAM_PEER_CMD"
 
