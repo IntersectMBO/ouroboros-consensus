@@ -232,7 +232,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (Map (SL.KeyHash 'SL.StakePool) SL.PoolParams)
+      (Map (SL.KeyHash 'SL.StakePool) SL.StakePoolParams)
   GetRewardInfoPools ::
     BlockQuery
       (ShelleyBlock proto era)
