@@ -20,7 +20,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V2.Types
     -- * Decisions
   , DecisionContext (..)
   , DecisionPolicy (..)
-  , PeerDecision
+  , PeerDecision (..)
   , PeerDecisionStatus (..)
   , ReqObjectsDecision (..)
   , ReqIdsDecision (..)
@@ -190,8 +190,13 @@ newtype ReqObjectsDecision objectId object = ReqObjectsDecision
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks)
 
-type PeerDecision objectId object =
-  (ReqIdsDecision objectId object, ReqObjectsDecision objectId object)
+data PeerDecision objectId object
+  = PeerDecision
+  { pdReqObjects :: ReqObjectsDecision objectId object
+  , pdReqIds :: ReqIdsDecision objectId object
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NFData, NoThunks)
 
 data PeerDecisionStatus objectId object
   = PeerDecisionUnread !(PeerDecision objectId object)

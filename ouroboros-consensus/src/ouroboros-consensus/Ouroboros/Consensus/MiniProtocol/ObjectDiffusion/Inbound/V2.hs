@@ -128,15 +128,16 @@ objectDiffusionInbound
       Nat n ->
       PeerDecision objectId object ->
       InboundStIdle n objectId object m ()
-    goReqObjects n decision@(_, ReqObjectsDecision{rodObjectsToReqIds}) =
-      if Set.null rodObjectsToReqIds
+    goReqObjects n decision = do
+      let objectIds = rodObjectsToReqIds (pdReqObjects decision)
+      if Set.null objectIds
         then
           goReqIds n decision
         else WithEffect $ do
-          psaOnRequestObjects rodObjectsToReqIds
+          psaOnRequestObjects objectIds
           pure $
             SendMsgRequestObjectsPipelined
-              (Set.toList rodObjectsToReqIds)
+              (Set.toList objectIds)
               (goReqIds (Succ n) decision)
 
     -- \| Request objectIds, either in a blocking or pipelined fashion depending
@@ -148,8 +149,9 @@ objectDiffusionInbound
       Nat n ->
       PeerDecision objectId object ->
       InboundStIdle n objectId object m ()
-    goReqIds n decision@(ReqIdsDecision{ridCanPipelineIdsRequests}, _) =
-      if ridCanPipelineIdsRequests
+    goReqIds n decision = do
+      let canPipelineIdRequests = ridCanPipelineIdsRequests (pdReqIds decision)
+      if canPipelineIdRequests
         then goReqIdsPipelined n decision
         else case n of
           Zero -> goReqIdsBlocking decision
@@ -162,20 +164,22 @@ objectDiffusionInbound
     goReqIdsBlocking ::
       PeerDecision objectId object ->
       InboundStIdle Z objectId object m ()
-    goReqIdsBlocking (ReqIdsDecision{ridNumIdsToAck, ridNumIdsToReq}, _) = WithEffect $ do
-      if ridNumIdsToReq == 0
+    goReqIdsBlocking decision = WithEffect $ do
+      let numIdsToAck = ridNumIdsToAck (pdReqIds decision)
+      let numIdsToReq = ridNumIdsToReq (pdReqIds decision)
+      if numIdsToReq == 0
         then do
           psaOnDecisionCompleted
           pure $ goIdle Zero
         else do
-          psaOnRequestIds ridNumIdsToAck ridNumIdsToReq
+          psaOnRequestIds numIdsToAck numIdsToReq
           psaOnDecisionCompleted
           pure $
             SendMsgRequestObjectIdsBlocking
-              ridNumIdsToAck
-              ridNumIdsToReq
+              numIdsToAck
+              numIdsToReq
               ( \objectIds -> WithEffect $ do
-                  psaOnReceiveIds ridNumIdsToReq (NonEmpty.toList objectIds)
+                  psaOnReceiveIds numIdsToReq (NonEmpty.toList objectIds)
                   pure $ goIdle Zero
               )
 
@@ -188,16 +192,18 @@ objectDiffusionInbound
       Nat n ->
       PeerDecision objectId object ->
       InboundStIdle n objectId object m ()
-    goReqIdsPipelined n (ReqIdsDecision{ridNumIdsToAck, ridNumIdsToReq}, _) = WithEffect $ do
-      if ridNumIdsToReq == 0
+    goReqIdsPipelined n decision = WithEffect $ do
+      let numIdsToAck = ridNumIdsToAck (pdReqIds decision)
+      let numIdsToReq = ridNumIdsToReq (pdReqIds decision)
+      if numIdsToReq == 0
         then do
           psaOnDecisionCompleted
           pure $ goIdle n
         else do
-          psaOnRequestIds ridNumIdsToAck ridNumIdsToReq
+          psaOnRequestIds numIdsToAck numIdsToReq
           psaOnDecisionCompleted
           pure $
             SendMsgRequestObjectIdsPipelined
-              ridNumIdsToAck
-              ridNumIdsToReq
+              numIdsToAck
+              numIdsToReq
               (goIdle (Succ n))

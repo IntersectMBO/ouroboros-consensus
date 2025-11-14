@@ -207,13 +207,14 @@ withObjectDiffusionInboundPeer
                     peerStatesVar
                     peerAddr
               , psaOnReceiveObjects = \objects -> do
-                  decision <- atomically $ readTVar decisionChan
-                  case decision of
+                  status <- atomically $ readTVar decisionChan
+                  case status of
                     PeerDecisionUnread{} -> error "The peer shouldn't be processing received objects if it has no decision being acted upon"
                     PeerDecisionCompleted ->
                       error
                         "The peer shouldn't be processing received objects if it has finished acting upon its decision"
-                    PeerDecisionBeingActedUpon (_, ReqObjectsDecision{rodObjectsToReqIds}) ->
+                    PeerDecisionBeingActedUpon decision -> do
+                      let objectsToRequest = rodObjectsToReqIds (pdReqObjects decision)
                       State.onReceiveObjects
                         objectDiffusionTracer
                         decisionTracer
@@ -221,7 +222,7 @@ withObjectDiffusionInboundPeer
                         objectPoolWriter
                         objectPoolSem
                         peerAddr
-                        rodObjectsToReqIds
+                        objectsToRequest
                         objects
               }
 

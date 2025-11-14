@@ -37,9 +37,10 @@ splitPeerStates peerStates peerDecisions =
   let peerStatesAndDecisions = Map.intersectionWith (,) peerStates peerDecisions
       (pending, busy) =
         Map.mapEither
-          ( \(state, decision) ->
-              case decision of
-                PeerDecisionBeingActedUpon (_, ReqObjectsDecision{rodObjectsToReqIds}) -> Right (state, rodObjectsToReqIds)
+          ( \(state, status) ->
+              case status of
+                PeerDecisionBeingActedUpon decision ->
+                  Right (state, rodObjectsToReqIds (pdReqObjects decision))
                 _ -> Left state
           )
           peerStatesAndDecisions
@@ -72,9 +73,9 @@ makeDecisions DecisionContext{dcRng, dcHasObject, dcDecisionPolicy, dcPeerStates
         peerToIdsToAck
    in
     Map.intersectionWith
-      (,)
-      reqIdsDecisions
+      PeerDecision
       reqObjectsDecisions
+      reqIdsDecisions
 
 -- | The ids to ack are the longest prefix of outstandingFifo of each peer that match the following criteria:
 -- * either the object is owt pool for the peer who has downloaded it
