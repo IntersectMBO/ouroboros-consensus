@@ -333,10 +333,17 @@ cleanup_immdb
 
 # Log analysis
 
-cat $TMP_DIR/cardano-node-0.log >logA
-cat $TMP_DIR/cardano-node-1.log >logB
+echo -e "Send MsgLeiosBlockTxsRequest\tRecv MsgLeiosBlockTxsRequest\tSend MsgLeiosBlockTxs    \tRecv MsgLeiosBlock         \tTxsBytesSize" \
+    >$TMP_DIR/LF-req-rsp.txt
+paste \
+    <(cat $TMP_DIR/cardano-node-0.log | grep -e Send.BlockTxsRequest | jq -r .at) \
+    <(cat $TMP_DIR/immdb-server.log | grep -e 'Recv MsgLeiosBlockTxsRequest' | cut -d' ' -f1) \
+    <(cat $TMP_DIR/immdb-server.log | grep -e 'Send MsgLeiosBlockTxs' | cut -d' ' -f1) \
+    <(cat $TMP_DIR/cardano-node-0.log | grep -e 'Receive.BlockTxs"' | jq -r .at) \
+    <(cat $TMP_DIR/cardano-node-0.log | grep -e 'Receive.BlockTxs"' | jq -r .data.msg.txsBytesSize) \
+    >>$TMP_DIR/LF-req-rsp.txt
 
-python3 scripts/leios-demo/log_parser.py $REF_SLOT $ONSET_OF_REF_SLOT logA logB "scatter_plot.png"
+python3 scripts/leios-demo/log_parser.py $REF_SLOT $ONSET_OF_REF_SLOT $TMP_DIR/cardano-node-0.log $TMP_DIR/cardano-node-1.log "scatter_plot.png"
 
 # Status
 

@@ -592,6 +592,7 @@ library unstable-cardano-tools
     time,
     transformers,
     transformers-except,
+    typed-protocols,
 
 executable db-analyser
   import: common-lib
