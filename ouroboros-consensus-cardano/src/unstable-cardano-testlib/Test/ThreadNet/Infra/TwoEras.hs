@@ -1,20 +1,33 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Definitions used in ThreadNet tests that involve two eras.
 module Test.ThreadNet.Infra.TwoEras
-  ( -- * Generators
-    Partition (..)
+  ( -- * Common infrastructure used in the ThreadNet tests that perform an era crossing
+
+    -- ** A hard-fork block for two eras
+    DualBlock
+
+    -- ** The varying data of the tests crossing between Shelley-based eras
+  , TestSetup (..)
+
+    -- ** Generators
+  , Partition (..)
   , genNonce
   , genPartition
   , genTestConfig
 
-    -- * Era inspection
+    -- ** Era inspection
   , ReachesEra2 (..)
   , activeSlotCoeff
   , isFirstEraBlock
@@ -25,7 +38,7 @@ module Test.ThreadNet.Infra.TwoEras
   , secondEraOverlaySlots
   , shelleyEpochSize
 
-    -- * Properties
+    -- ** Properties
   , label_ReachesEra2
   , label_hadActiveNonOverlaySlots
   , prop_ReachesEra2
@@ -37,41 +50,137 @@ module Test.ThreadNet.Infra.TwoEras
 import qualified Cardano.Chain.Common as CC.Common
 import Cardano.Chain.ProtocolConstants (kEpochSlots)
 import Cardano.Chain.Slotting (unEpochSlots)
-import Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Protocol.TPraos.Rules.Overlay as SL
 import Cardano.Slotting.EpochInfo
-import Cardano.Slotting.Slot
-  ( EpochNo (..)
-  , EpochSize (..)
-  , SlotNo (..)
-  )
+import Cardano.Slotting.Slot (EpochNo (..), EpochSize (..), SlotNo (..))
 import Control.Exception (assert)
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import Data.Proxy (Proxy (..))
 import Data.SOP.Strict (NS (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.Cardano.Condense ()
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.HardFork.Combinator
   ( HardForkBlock (..)
   , OneEraBlock (..)
   )
+import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
+  ( isHardForkNodeToNodeEnabled
+  )
 import qualified Ouroboros.Consensus.HardFork.History.Util as Util
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
+import Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import Test.QuickCheck
 import Test.ThreadNet.General
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
+import Test.ThreadNet.Infra.ShelleyBasedHardFork
 import Test.ThreadNet.Network (CalcMessageDelay (..), NodeOutput (..))
+import Test.ThreadNet.TxGen.Allegra ()
 import Test.ThreadNet.Util.Expectations (NumBlocks (..))
+import Test.ThreadNet.Util.NodeToNodeVersion (genVersionFiltered)
 import qualified Test.ThreadNet.Util.NodeTopology as Topo
 import qualified Test.Util.BoolProps as BoolProps
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Slots (NumSlots (..))
+
+{-------------------------------------------------------------------------------
+  Block Type
+-------------------------------------------------------------------------------}
+
+-- | A hard-fork block for two Shelley-based eras
+type DualBlock proto era1 era2 =
+  ShelleyBasedHardForkBlock (proto MockCrypto) era1 (proto MockCrypto) era2
+
+{-------------------------------------------------------------------------------
+  Test Setup
+-------------------------------------------------------------------------------}
+
+-- | The varying data of the tests crossing between Shelley-based eras
+--
+-- Note: The Shelley nodes in this test all join, propose an update, and endorse
+-- it literally as soon as possible. Therefore, if the test reaches the end of
+-- the first epoch, the proposal will be adopted.
+data TestSetup proto era1 era2 = TestSetup
+  { setupD :: Shelley.DecentralizationParam
+  , setupHardFork :: Bool
+  -- ^ whether the proposal should trigger a hard fork or not
+  , setupInitialNonce :: SL.Nonce
+  -- ^ the initial Shelley 'SL.ticknStateEpochNonce'
+  --
+  -- We vary it to ensure we explore different leader schedules.
+  , setupK :: SecurityParam
+  , setupPartition :: Partition
+  , setupSlotLength :: SlotLength
+  , setupTestConfig :: TestConfig
+  , setupVersion :: (NodeToNodeVersion, BlockNodeToNodeVersion (DualBlock proto era1 era2))
+  }
+
+deriving instance Show (TestSetup proto era1 era2)
+
+instance
+  SupportedNetworkProtocolVersion (DualBlock proto era1 era2) =>
+  Arbitrary (TestSetup proto era1 era2)
+  where
+  arbitrary = do
+    setupD <-
+      arbitrary
+        -- The decentralization parameter cannot be 0 in the first
+        -- Shelley epoch, since stake pools can only be created and
+        -- delegated to via Shelley transactions.
+        `suchThat` ((/= 0) . Shelley.decentralizationParamToRational)
+    setupK <- SecurityParam <$> choose (8, 10) `suchThatMap` nonZero
+    -- If k < 8, common prefix violations become too likely in
+    -- Praos mode for thin overlay schedules (ie low d), even for
+    -- f=0.2.
+
+    setupInitialNonce <- genNonce
+
+    setupSlotLength <- arbitrary
+
+    let epochSize = EpochSize $ shelleyEpochSize setupK
+    setupTestConfig <-
+      genTestConfig
+        setupK
+        (epochSize, epochSize)
+    let TestConfig{numCoreNodes, numSlots} = setupTestConfig
+
+    setupHardFork <- frequency [(49, pure True), (1, pure False)]
+
+    -- TODO How reliable is the Byron-based partition duration logic when
+    -- reused for Shelley?
+    setupPartition <- genPartition numCoreNodes numSlots setupK
+
+    setupVersion <-
+      genVersionFiltered
+        isHardForkNodeToNodeEnabled
+        (Proxy @(DualBlock proto era1 era2))
+
+    pure
+      TestSetup
+        { setupD
+        , setupHardFork
+        , setupInitialNonce
+        , setupK
+        , setupPartition
+        , setupSlotLength
+        , setupTestConfig
+        , setupVersion
+        }
+
+{-------------------------------------------------------------------------------
+  Network Partitions
+-------------------------------------------------------------------------------}
 
 -- | When and for how long the nodes are partitioned
 --
