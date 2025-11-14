@@ -75,7 +75,7 @@ serve sockAddr application = withIOManager \iocp -> do
         sn
         N2N.nullNetworkServerTracers {
           N2N.nstHandshakeTracer   = show >$< wallclockTracer
-        , N2N.nstMuxTracer         = condTracing (muxCond . Mux.wbEvent) $ show >$< wallclockTracer
+        , N2N.nstMuxTracer         = flip asTypeOf nullTracer $ condTracing (muxCond . Mux.wbEvent) $ show >$< wallclockTracer
         , N2N.nstErrorPolicyTracer = show >$< wallclockTracer
         }
         networkMutableState

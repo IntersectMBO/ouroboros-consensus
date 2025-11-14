@@ -74,6 +74,8 @@ import           LeiosDemoOnlyTestNotify
 import qualified LeiosDemoLogic as LeiosLogic
 import qualified LeiosDemoTypes as Leios
 import           Network.TypedProtocol.Codec (AnyMessage (AnyMessage))
+import qualified Ouroboros.Network.Protocol.BlockFetch.Type as BF
+import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
 
 immDBServer ::
      forall m blk addr.
@@ -170,13 +172,13 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
             chainSyncProt  =
                 MiniProtocolCb $ \_ctx channel ->
                 withRegistry
-              $ runPeer nullTracer cChainSyncCodecSerialised channel
+              $ runPeer (traceMaybe maybeShowSendRecvCS tracer) cChainSyncCodecSerialised channel
               . chainSyncServerPeer
               . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint getSlotDelay
             blockFetchProt =
                 MiniProtocolCb $ \_ctx channel ->
                 withRegistry
-              $ runPeer nullTracer cBlockFetchCodecSerialised channel
+              $ runPeer (traceMaybe maybeShowSendRecvBF tracer) cBlockFetchCodecSerialised channel
               . blockFetchServerPeer
               . blockFetchServer immDB ChainDB.getSerialisedBlockWithPoint
             txSubmissionProt =
@@ -218,6 +220,16 @@ maybeShowSendRecvLF = \case
     N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockTxsRequest{}) -> Just "Recv MsgLeiosBlockTxsRequest"
     N2N.TraceSendMsg (AnyMessage MsgLeiosBlockTxs{}) -> Just "Send MsgLeiosBlockTxs"
     N2N.TraceRecvMsg (AnyMessage LF.MsgDone{}) -> Just "Recv MsgDone"
+    _ -> Nothing
+
+maybeShowSendRecvCS :: N2N.TraceSendRecv (CS.ChainSync h p tip) -> Maybe String
+maybeShowSendRecvCS = \case
+    N2N.TraceSendMsg (AnyMessage CS.MsgRollForward{}) -> Just "Send MsgRollForward"
+    _ -> Nothing
+
+maybeShowSendRecvBF :: N2N.TraceSendRecv (BF.BlockFetch blk p) -> Maybe String
+maybeShowSendRecvBF = \case
+    N2N.TraceSendMsg (AnyMessage BF.MsgBlock{}) -> Just "Send MsgBlock"
     _ -> Nothing
 
 -- | The ChainSync specification requires sending a rollback instruction to the
