@@ -5,6 +5,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
@@ -68,10 +69,11 @@ import           Ouroboros.Network.Protocol.Handshake.Version (Version (..))
 import           Ouroboros.Network.Protocol.KeepAlive.Server
                      (keepAliveServerPeer)
 
-import           LeiosDemoOnlyTestFetch
+import           LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoOnlyTestNotify
 import qualified LeiosDemoLogic as LeiosLogic
 import qualified LeiosDemoTypes as Leios
+import           Network.TypedProtocol.Codec (AnyMessage (AnyMessage))
 
 immDBServer ::
      forall m blk addr.
@@ -89,9 +91,10 @@ immDBServer ::
   -> (SlotNo -> m DiffTime)
   -> (ResourceRegistry m -> m (LeiosNotifyContext m))
   -> m (LeiosLogic.SomeLeiosFetchContext m)
+  -> Tracer m String
   -> Versions NodeToNodeVersion NodeToNodeVersionData
        (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ())
-immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNotifyContext mkLeiosFetchContext = do
+immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNotifyContext mkLeiosFetchContext tracer = do
     forAllVersions application
   where
     forAllVersions ::
@@ -192,7 +195,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
             leiosFetchProt =
                 MiniProtocolCb $ \_ctx channel -> id
               $ mkLeiosFetchContext >>= \(LeiosLogic.MkSomeLeiosFetchContext leiosContext) -> id
-              $ runPeer nullTracer cLeiosFetchCodec channel
+              $ runPeer (traceMaybe maybeShowSendRecvLF tracer) cLeiosFetchCodec channel
               $ leiosFetchServerPeer
               $ pure (LeiosLogic.leiosFetchHandler nullTracer leiosContext)
 
@@ -202,6 +205,20 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
           , miniProtocolRun    = ResponderProtocolOnly proto
           , miniProtocolStart
           }
+
+traceMaybe :: Monad m => (a -> Maybe b) -> Tracer m b -> Tracer m a
+traceMaybe f tr = Tracer $ \x -> case f x of
+    Nothing -> pure ()
+    Just y -> traceWith tr y
+
+maybeShowSendRecvLF :: N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) -> Maybe String
+maybeShowSendRecvLF = \case
+    N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockRequest{}) -> Just "Recv MsgLeiosBlockRequest"
+    N2N.TraceSendMsg (AnyMessage MsgLeiosBlock{}) -> Just "Send MsgLeiosBlock"
+    N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockTxsRequest{}) -> Just "Recv MsgLeiosBlockTxsRequest"
+    N2N.TraceSendMsg (AnyMessage MsgLeiosBlockTxs{}) -> Just "Send MsgLeiosBlockTxs"
+    N2N.TraceRecvMsg (AnyMessage LF.MsgDone{}) -> Just "Recv MsgDone"
+    _ -> Nothing
 
 -- | The ChainSync specification requires sending a rollback instruction to the
 -- intersection point right after an intersection has been negotiated. (Opening

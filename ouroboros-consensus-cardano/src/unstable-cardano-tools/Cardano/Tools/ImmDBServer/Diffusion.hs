@@ -60,8 +60,8 @@ import qualified LeiosDemoOnlyTestFetch as LF
 -- this context.
 serve ::
      SockAddr
-  -> N2N.Versions N2N.NodeToNodeVersion N2N.NodeToNodeVersionData
-       (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode SockAddr BL.ByteString IO Void ())
+  -> (Tracer IO String -> N2N.Versions N2N.NodeToNodeVersion N2N.NodeToNodeVersionData
+       (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode SockAddr BL.ByteString IO Void ()))
   -> IO Void
 serve sockAddr application = withIOManager \iocp -> do
     let sn     = Snocket.socketSnocket iocp
@@ -81,7 +81,7 @@ serve sockAddr application = withIOManager \iocp -> do
         networkMutableState
         acceptedConnectionsLimit
         socket
-        application
+        (application wallclockTracer)
         nullErrorPolicies
   where
     acceptedConnectionsLimit = N2N.AcceptedConnectionsLimit {
@@ -92,7 +92,7 @@ serve sockAddr application = withIOManager \iocp -> do
 
     wallclockTracer = Tracer $ \s -> do
         tm <- getCurrentTime
-        putStrLn $ formatTime defaultTimeLocale "%F %H:%M:%S%4QZ" tm ++ " " ++ s
+        putStrLn $ formatTime defaultTimeLocale "%FT%H:%M:%S%4QZ" tm ++ " " ++ s
 
     muxCond = \case
         Mux.TraceRecvStart{} -> True

@@ -274,7 +274,7 @@ UPSTREAM_PEER_CMD="sudo ip netns exec ns1 ${IMMDB_SERVER}
 
 echo "upstream: $UPSTREAM_PEER_CMD"
 
-$UPSTREAM_PEER_CMD &> "$TMP_DIR/immdb-server.log" &
+$UPSTREAM_PEER_CMD &> "$TMP_DIR/upstream.log" &
 
 UPSTREAM_PEER_PID=$!
 
@@ -298,10 +298,17 @@ cleanup_immdb
 
 # Log analysis
 
-cat $TMP_DIR/cardano-node-0.log >logA
-cat $TMP_DIR/downstream.log >logB
+echo -e "Send MsgLeiosBlockTxsRequest\tRecv MsgLeiosBlockTxsRequest\tSend MsgLeiosBlockTxs    \tRecv MsgLeiosBlock         \tTxsBytesSize" \
+    >$TMP_DIR/LF-req-rsp.txt
+paste \
+    <(cat $TMP_DIR/cardano-node-0.log | grep -e Send.BlockTxsRequest | jq -r .at) \
+    <(cat $TMP_DIR/upstream.log | grep -e 'Recv MsgLeiosBlockTxsRequest' | cut -d' ' -f1) \
+    <(cat $TMP_DIR/upstream.log | grep -e 'Send MsgLeiosBlockTxs' | cut -d' ' -f1) \
+    <(cat $TMP_DIR/cardano-node-0.log | grep -e 'Receive.BlockTxs"' | jq -r .at) \
+    <(cat $TMP_DIR/cardano-node-0.log | grep -e 'Receive.BlockTxs"' | jq -r .data.msg.txsBytesSize) \
+    >>$TMP_DIR/LF-req-rsp.txt
 
-python3 ouroboros-consensus/scripts/leios-demo/log_parser.py $REF_SLOT $ONSET_OF_REF_SLOT logA logB "scatter_plot.png"
+python3 ouroboros-consensus/scripts/leios-demo/log_parser.py $REF_SLOT $ONSET_OF_REF_SLOT $TMP_DIR/cardano-node-0.log $TMP_DIR/downstream.log "scatter_plot.png"
 
 # Status
 
