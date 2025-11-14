@@ -375,6 +375,7 @@ mkHandlers
             pure
               $ leiosFetchClientPeerPipelined
               $ Leios.nextLeiosFetchClientCommand
+                    (Node.leiosKernelTracer tracers)
                     (leiosPeerTracer peer)
                     ((== Terminate) <$> controlMessageSTM)
                     (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosNotifications)

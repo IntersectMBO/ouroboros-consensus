@@ -621,6 +621,8 @@ nextLeiosFetchClientCommand :: forall pid stmt m.
     IOLike m
   )
  =>
+    Tracer m TraceLeiosKernel
+ ->
     Tracer m TraceLeiosPeer
  ->
     StrictSTM.STM m Bool
@@ -637,7 +639,7 @@ nextLeiosFetchClientCommand :: forall pid stmt m.
         (m  (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
             (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
       )
-nextLeiosFetchClientCommand tracer stopSTM kernelVars db peerId reqsVar = do
+nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar = do
     f (pure Nothing) (pure . Just) >>= \case
         Just x -> pure $ Right x
         Nothing -> pure $ Left $ f StrictSTM.retry pure
@@ -662,13 +664,13 @@ nextLeiosFetchClientCommand tracer stopSTM kernelVars db peerId reqsVar = do
             LF.MkSomeLeiosFetchJob
                 (LF.MsgLeiosBlockRequest p)
                 (pure $ \(LF.MsgLeiosBlock eb) ->
-                    msgLeiosBlock tracer kernelVars db peerId req eb
+                    msgLeiosBlock ktracer tracer kernelVars db peerId req eb
                 )
         LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p bitmaps _txHashes) ->
             LF.MkSomeLeiosFetchJob
                 (LF.MsgLeiosBlockTxsRequest p bitmaps)
                 (pure $ \(LF.MsgLeiosBlockTxs txs) -> do
-                    msgLeiosBlockTxs tracer kernelVars db peerId req txs
+                    msgLeiosBlockTxs ktracer tracer kernelVars db peerId req txs
                 )
 
 -----
@@ -680,6 +682,8 @@ msgLeiosBlock ::
     IOLike m
   )
  =>
+    Tracer m TraceLeiosKernel
+ ->
     Tracer m TraceLeiosPeer
  ->
     (MVar m (), MVar m LeiosEbBodies, MVar m (LeiosOutstanding pid), MVar m (), MVar m (Map (PeerId pid) (StrictTVar m (Map SlotNo (Seq LeiosNotification)))))
@@ -693,7 +697,7 @@ msgLeiosBlock ::
     LeiosEb
  ->
     m ()
-msgLeiosBlock tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req eb = do
+msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req eb = do
     -- validate it
     let MkLeiosBlockRequest p ebBytesSize = req
     traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
@@ -779,7 +783,7 @@ msgLeiosBlock tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, notifica
         pure outstanding'
     void $ MVar.tryPutMVar readyVar ()
     when novel $ do
-        traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlock: " ++ Leios.prettyEbId ebId
+        traceWith ktracer $ MkTraceLeiosKernel $ "leiosNotificationsBlock: " ++ Leios.prettyEbId ebId
         vars <- MVar.readMVar notificationVars
         forM_ vars $ \var -> do
             traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlock!: " ++ Leios.prettyEbId ebId
@@ -813,6 +817,8 @@ msgLeiosBlockTxs ::
     IOLike m
   )
  =>
+    Tracer m TraceLeiosKernel
+ ->
     Tracer m TraceLeiosPeer
  ->
     (
@@ -836,7 +842,7 @@ msgLeiosBlockTxs ::
     V.Vector LeiosTx
  ->
     m ()
-msgLeiosBlockTxs tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req txs = do
+msgLeiosBlockTxs ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req txs = do
     traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
     -- validate it
     let MkLeiosBlockTxsRequest p bitmaps txHashes = req
@@ -988,7 +994,7 @@ msgLeiosBlockTxs tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, notif
               $ [ (ebIdSlot x, Seq.singleton (LeiosOfferBlockTxs x))
                 | x <- newNotifications
                 ]
-        traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlockTxs: " ++ unwords (map Leios.prettyEbId newNotifications)
+        traceWith ktracer $ MkTraceLeiosKernel $ "leiosNotificationsBlockTxs: " ++ unwords (map Leios.prettyEbId newNotifications)
         vars <- MVar.readMVar notificationVars
         forM_ vars $ \var -> do
             traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlockTxs!: " ++ unwords (map Leios.prettyEbId newNotifications)
