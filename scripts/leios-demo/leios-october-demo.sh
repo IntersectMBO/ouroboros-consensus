@@ -110,9 +110,9 @@ add_qdiscs() {
     # realistic for this long fat intercontinental scenario
     #
     # TODO compare and contrast once Marcin Wójtowicz sends recommendations
-    sudo tc -n ns$i qdisc add dev veth$i$j root handle 1: netem delay 100ms
+    sudo tc -n ns$i qdisc add dev veth$i$j root handle 1: netem delay 20ms
     sudo tc -n ns$i qdisc add dev veth$i$j parent 1:1 handle 10: htb default 1
-    sudo tc -n ns$i class add dev veth$i$j parent 10: classid 10:1 htb rate 20mbit
+    sudo tc -n ns$i class add dev veth$i$j parent 10: classid 10:1 htb rate 100mbit
     sudo tc -n ns$i qdisc add dev veth$i$j parent 10:1 handle 100: fq_codel
 
     { set +x; } 2>/dev/null
