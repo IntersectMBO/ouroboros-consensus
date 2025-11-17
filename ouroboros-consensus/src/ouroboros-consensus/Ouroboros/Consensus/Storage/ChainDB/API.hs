@@ -386,6 +386,18 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m (Maybe Statistics)
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
+  , waitForImmutableBlock :: SlotNo -> STM m (Point blk)
+  -- ^ return an STM action that waits until the given slot becomes filled
+  --   with an immutable block:
+  --   - retries until the immutable tip slot is younger than the target slot;
+  --   - returns the block when it becomes the immutable tip.
+  --
+  -- PRECONDITON: the slot must be know to be filled in the future.
+  --
+  -- For example, it is safe to provide a slot of a known block from the
+  -- big ledger peer snapshot.
+  --
+  -- If the slot is never filled, the returned transaction will wait forever.
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --

@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -23,6 +24,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getTipBlock
   , getTipHeader
   , getTipPoint
+  , waitForImmutableBlock
 
     -- * Low-level queries
   , getAnyBlockComponent
@@ -31,7 +33,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getChainSelStarvation
   ) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Ledger.BaseTypes (WithOrigin (..), unNonZero)
 import Control.ResourceRegistry (ResourceRegistry)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -59,7 +61,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.Block (MaxSlotNo, maxSlotNoFromWithOrigin)
+import Ouroboros.Network.Block (MaxSlotNo, maxSlotNoFromWithOrigin, pointSlot)
 import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( ChainSelStarvation (..)
   )
@@ -261,6 +263,16 @@ getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
 
 getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe LedgerDB.Statistics)
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
+
+-- | Return an STM action that waits for the given block to become immutable:
+--   - retries until the immutable tip slot number is lower than the block's slot number;
+--   - returns 'True' if immutable tip is older and the block is in the DB;
+--   - returns 'False' otherwise.
+waitForImmutableBlock :: IOLike m => ChainDbEnv m blk -> SlotNo -> STM m (Point blk)
+waitForImmutableBlock CDB{cdbImmutableDB} targetSlot = do
+  immutableTip <- ImmutableDB.tipToPoint <$> ImmutableDB.getTip cdbImmutableDB
+  check (pointSlot immutableTip == At targetSlot)
+  pure immutableTip
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent
