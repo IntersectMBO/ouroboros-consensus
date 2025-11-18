@@ -57,7 +57,7 @@ instance Arbitrary (Point TestBlock) where
     frequency
       [ (1, pure $ Point Origin)
       ,
-        ( 4
+        ( 50
         , do
             slotNo <- SlotNo <$> arbitrary
             hash <- TestHash . NE.fromList . getNonEmpty <$> arbitrary
