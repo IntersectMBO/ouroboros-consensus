@@ -43,7 +43,11 @@ data ObjectPoolReader objectId object ticketNo m
   -- ^ Get the list of objects available in the pool with a ticketNo greater
   -- than the specified one. The number of returned objects is capped by the
   -- given Word64. Only the IDs and ticketNos of the objects are directly
-  -- accessible; each actual object must be loaded through a monadic action.
+  -- accessible; each actual object must be retrieved through a monadic action
+  -- (this is to account for a future evaluation of the implementation where
+  -- objects might be stored on disk, and thus might be costly to retrieve wholly).
+  -- In any case, the advertised objects are guaranteed to be available in the
+  -- pool so the monadic action is not supposed to fail.
   }
 
 -- | Interface used by the inbound side of object diffusion when receiving
