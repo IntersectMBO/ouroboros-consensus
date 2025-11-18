@@ -255,11 +255,19 @@ smartDelay ::
 smartDelay lifecycle@NodeLifecycle{nlStart, nlShutdown} node duration
   | itIsTimeToRestartTheNode lifecycle duration = do
       results <- nlShutdown node
-      threadDelay duration
+      delay duration
       nlStart results
-smartDelay _ node duration = do
-  threadDelay duration
-  pure node
+  | otherwise = do
+      delay duration
+      pure node
+
+-- This 'threadDelay' operates over 'DiffTime', which has /picosecond/
+-- precision. But 'Control.Concurrent.threadDelay' has only /microsecond/
+-- precision. Thus we must ensure the duration is at least one microsecond;
+-- otherwise we will get different results in 'IO' than we do in @io-sim@.
+-- See io-sim#232 for more details.
+delay :: MonadDelay m => DiffTime -> m ()
+delay = threadDelay . max 1e-6
 
 itIsTimeToRestartTheNode :: NodeLifecycle blk m -> DiffTime -> Bool
 itIsTimeToRestartTheNode NodeLifecycle{nlMinDuration} duration =
@@ -342,7 +350,7 @@ runScheduler tracer varHandles ps@PointSchedule{psMinEndTime} peers lifecycle@No
         -- Give an opportunity to the node to finish whatever it was doing at
         -- shutdown
         when (itIsTimeToRestartTheNode lifecycle duration) $
-          threadDelay $
+          delay $
             coerce psMinEndTime
         pure nodeEnd'
       Nothing ->
