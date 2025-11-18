@@ -525,6 +525,7 @@ wrapPositiveAction ::
   ( Show (QD.Action state a)
   , Eq (QD.Action state a)
   , Typeable a
+  , Show a
   ) =>
   QD.Action state a ->
   QD.Actions state
