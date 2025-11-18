@@ -6,7 +6,7 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
-import qualified Cardano.Ledger.Core as Core (Tx)
+import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
 import qualified Cardano.Ledger.Core as SL (hashBlockBody, mkBasicBlockBody, txSeqBlockBodyL)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import qualified Cardano.Ledger.Shelley.BlockBody as SL (bBodySize)
@@ -85,7 +85,7 @@ forgeShelleyBlock
 
     actualBodySize = SL.bBodySize protocolVersion body
 
-    extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
+    extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx Core.TopTx era
     extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx
 
     prevHash :: SL.PrevHash
