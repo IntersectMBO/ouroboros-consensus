@@ -10,6 +10,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
   ( objectDiffusionInbound
@@ -25,6 +26,7 @@ import Control.Monad (when)
 import Control.Monad.Class.MonadSTM
 import Control.Monad.Class.MonadThrow
 import Control.Tracer (Tracer, traceWith)
+import Data.Data (Typeable)
 import Data.Foldable as Foldable (foldl', toList)
 import Data.List qualified as List
 import Data.List.NonEmpty qualified as NonEmpty
@@ -65,22 +67,34 @@ data TraceObjectDiffusionInbound objectId object
   | TraceObjectDiffusionInboundCannotRequestMoreObjects Int
   deriving (Eq, Show)
 
-data ObjectDiffusionInboundError
-  = ProtocolErrorObjectNotRequested
-  | ProtocolErrorObjectIdsNotRequested
-  | ProtocolErrorObjectIdAlreadyKnown
-  | ProtocolErrorObjectIdsDuplicate
+data ObjectDiffusionInboundError objectId object
+  = ProtocolErrorObjectsDifferentThanRequested (Set objectId) (Set objectId)
+  | ProtocolErrorObjectIdsNotRequested Int Int
+  | ProtocolErrorObjectIdsAlreadyKnown (Set objectId)
+  | ProtocolErrorObjectIdsDuplicate (Map objectId Int)
   deriving Show
 
-instance Exception ObjectDiffusionInboundError where
-  displayException ProtocolErrorObjectNotRequested =
-    "The peer replied with a object we did not ask for."
-  displayException ProtocolErrorObjectIdsNotRequested =
-    "The peer replied with more objectIds than we asked for."
-  displayException ProtocolErrorObjectIdAlreadyKnown =
-    "The peer replied with an objectId that it has already sent us previously."
-  displayException ProtocolErrorObjectIdsDuplicate =
-    "The peer replied with a batch of objectIds containing a duplicate."
+instance
+  (Show objectId, Typeable object, Typeable objectId) =>
+  Exception (ObjectDiffusionInboundError objectId object)
+  where
+  displayException (ProtocolErrorObjectsDifferentThanRequested reqButNotRecvd recvButNotReq) =
+    "The peer replied with different objects than those we asked for: "
+      ++ "requested but didn't receive "
+      ++ show reqButNotRecvd
+      ++ "; received but didn't requested "
+      ++ show recvButNotReq
+  displayException (ProtocolErrorObjectIdsNotRequested expected actual) =
+    "The peer replied with more objectIds than we asked for: expected "
+      ++ show expected
+      ++ " , received "
+      ++ show actual
+  displayException (ProtocolErrorObjectIdsAlreadyKnown offenders) =
+    "The peer replied with some objectIds that it has already sent us previously: "
+      ++ show offenders
+  displayException (ProtocolErrorObjectIdsDuplicate offenders) =
+    "The peer replied with a batch of objectIds containing duplicates: "
+      ++ show offenders
 
 -- | Information maintained internally in the 'objectDiffusionInbound'
 -- implementation.
@@ -120,6 +134,9 @@ initialInboundSt = InboundSt 0 Seq.empty Set.empty Map.empty 0
 objectDiffusionInbound ::
   forall objectId object m.
   ( Ord objectId
+  , Show objectId
+  , Typeable objectId
+  , Typeable object
   , NoThunks objectId
   , NoThunks object
   , MonadSTM m
@@ -296,23 +313,35 @@ objectDiffusionInbound
     goCollect n collect !st = case collect of
       CollectObjectIds numIdsRequested collectedIds -> WithEffect $ do
         let numCollectedIds = length collectedIds
-            collectedIdsSet = Set.fromList collectedIds
+            collectedIdsMap = Map.fromListWith (+) [(x, 1 :: Int) | x <- collectedIds]
 
         -- Check they didn't send more than we asked for. We don't need to
         -- check for a minimum: the blocking case checks for non-zero
         -- elsewhere, and for the non-blocking case it is quite normal for
         -- them to send us none.
         when (numCollectedIds > fromIntegral numIdsRequested) $
-          throwIO ProtocolErrorObjectIdsNotRequested
+          throwIO
+            ( ProtocolErrorObjectIdsNotRequested @objectId @object
+                (fromIntegral numIdsRequested)
+                numCollectedIds
+            )
+
+        -- Check that the server didn't send duplicate IDs in its response
+        when (Map.size collectedIdsMap /= numCollectedIds) $
+          throwIO
+            ( ProtocolErrorObjectIdsDuplicate @objectId @object $
+                Map.filter (> 1) $
+                  collectedIdsMap
+            )
 
         -- Check that the server didn't send IDs that were already in the
         -- outstanding FIFO
-        when (any (`Set.member` collectedIdsSet) (outstandingFifo st)) $
-          throwIO ProtocolErrorObjectIdAlreadyKnown
-
-        -- Check that the server didn't send duplicate IDs in its response
-        when (Set.size collectedIdsSet /= numCollectedIds) $
-          throwIO ProtocolErrorObjectIdsDuplicate
+        let alreadyKnownIds = Seq.filter (`Map.member` collectedIdsMap) (outstandingFifo st)
+        when (not (null alreadyKnownIds)) $
+          throwIO
+            ( ProtocolErrorObjectIdsAlreadyKnown @objectId @object $
+                Set.fromList (toList alreadyKnownIds)
+            )
 
         -- We extend our outstanding FIFO with the newly received objectIds by
         -- calling 'preAcknowledge' which will also pre-emptively acknowledge the
@@ -329,7 +358,13 @@ objectDiffusionInbound
         -- To start with we have to verify that the objects they have sent us are
         -- exactly the objects we asked for, not more, not less.
         when (requestedIdsSet /= obtainedIdsSet) $
-          throwIO ProtocolErrorObjectNotRequested
+          let reqButNotRecvd = requestedIdsSet `Set.difference` obtainedIdsSet
+              recvButNotReq = obtainedIdsSet `Set.difference` requestedIdsSet
+           in throwIO
+                ( ProtocolErrorObjectsDifferentThanRequested @objectId @object
+                    reqButNotRecvd
+                    recvButNotReq
+                )
 
         traceWith tracer $
           TraceObjectDiffusionInboundCollectedObjects (length collectedObjects)

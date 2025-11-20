@@ -23,6 +23,7 @@ import Control.Monad.IOSim (runSimStrictShutdown)
 import Control.ResourceRegistry (forkLinkedThread, waitAnyThread, withRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Containers.ListUtils (nubOrdOn)
+import Data.Data (Typeable)
 import Data.Functor.Contravariant (contramap)
 import Network.TypedProtocol.Channel (Channel, createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage)
@@ -210,6 +211,8 @@ prop_smoke_object_diffusion ::
   ( Eq object
   , Show object
   , Ord objectId
+  , Typeable objectId
+  , Typeable object
   , NoThunks objectId
   , Show objectId
   , NoThunks object
