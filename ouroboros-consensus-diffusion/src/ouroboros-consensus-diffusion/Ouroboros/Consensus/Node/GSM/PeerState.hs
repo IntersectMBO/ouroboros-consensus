@@ -17,7 +17,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
   , ChainSyncClientHandleCollection (..)
   , ChainSyncState (..)
   )
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1.State
   ( ObjectDiffusionInboundHandle (..)
   , ObjectDiffusionInboundHandleCollection (..)
   , ObjectDiffusionInboundState (..)

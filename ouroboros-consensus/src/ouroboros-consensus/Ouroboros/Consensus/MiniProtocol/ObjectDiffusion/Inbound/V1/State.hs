@@ -6,7 +6,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1.State
   ( ObjectDiffusionInboundState (..)
   , initObjectDiffusionInboundState
   , ObjectDiffusionInboundHandle (..)
