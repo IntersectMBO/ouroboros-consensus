@@ -195,8 +195,10 @@ library
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
     Ouroboros.Consensus.MiniProtocol.Util
     Ouroboros.Consensus.MiniProtocol.Util.Idling
     Ouroboros.Consensus.Node.GsmState
@@ -275,6 +277,9 @@ library
     Ouroboros.Consensus.Storage.PerasCertDB
     Ouroboros.Consensus.Storage.PerasCertDB.API
     Ouroboros.Consensus.Storage.PerasCertDB.Impl
+    Ouroboros.Consensus.Storage.PerasVoteDB
+    Ouroboros.Consensus.Storage.PerasVoteDB.API
+    Ouroboros.Consensus.Storage.PerasVoteDB.Impl
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
     Ouroboros.Consensus.Storage.VolatileDB.API

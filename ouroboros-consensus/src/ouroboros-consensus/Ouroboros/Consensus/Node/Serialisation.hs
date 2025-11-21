@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -36,6 +37,8 @@ module Ouroboros.Consensus.Node.Serialisation
   , Some (..)
   ) where
 
+import qualified Cardano.Binary as KeyHash
+import Cardano.Ledger.Core
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (Serialise (decode, encode))
@@ -206,6 +209,22 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
     pcCertRound <- decodeNodeToNode ccfg version
     pcCertBoostedBlock <- decodeNodeToNode ccfg version
     pure $ PerasCert pcCertRound pcCertBoostedBlock
+instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote blk) where
+  -- Consistent with the 'Serialise' instance for 'PerasVote' defined in Ouroboros.Consensus.Block.SupportsPeras
+  encodeNodeToNode ccfg version PerasVote{..} =
+    encodeListLen 2
+      <> encodeNodeToNode ccfg version pvVoteRound
+      <> encodeNodeToNode ccfg version pvVotedBlock
+  decodeNodeToNode ccfg version = do
+    decodeListLenOf 3
+    pvVoteRound <- decodeNodeToNode ccfg version
+    pvVotedBlock <- decodeNodeToNode ccfg version
+    pvVoteStakePoolId <- decodeNodeToNode ccfg version
+    pure $ PerasVote pvVoteRound pvVotedBlock pvVoteStakePoolId
+
+instance SerialiseNodeToNode blk (KeyHash 'StakePool) where
+  encodeNodeToNode _ccfg _version = KeyHash.toCBOR
+  decodeNodeToNode _ccfg _version = KeyHash.fromCBOR
 
 deriving newtype instance
   SerialiseNodeToClient blk (GenTxId blk) =>
