@@ -8,7 +8,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -17,20 +16,28 @@
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
   , onPerasRoundNo
+  , PerasVoteStake (..)
   , PerasWeight (..)
   , BlockSupportsPeras (..)
   , PerasCert (..)
   , PerasVote (..)
+  , PerasVoteTarget
   , PerasCfg (..)
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
+  , PerasVoteAggregate (..)
+  , emptyPerasVoteAggregate
+  , updatePerasVoteAggregate
+  , UpdatePerasVoteAggregateResult (..)
   , makePerasCfg
+  , HasId (..)
   , HasPerasCertRound (..)
   , HasPerasCertBoostedBlock (..)
   , HasPerasCertBoost (..)
   , HasPerasVoteRound (..)
   , HasPerasVoteVotedBlock (..)
-  , HasStakePoolId (..)
+  , HasPerasVoteVoterId (..)
+  , HasPerasVoteTarget (..)
 
     -- * Ouroboros Peras round length
   , PerasRoundLength (..)
@@ -39,14 +46,16 @@ module Ouroboros.Consensus.Block.SupportsPeras
 
 import qualified Cardano.Binary as KeyHash
 import Cardano.Ledger.Core (KeyHash, KeyRole (StakePool))
-import Cardano.Ledger.State (IndividualPoolStake (..), PoolDistr (PoolDistr, unPoolDistr))
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
+import Control.Applicative ((<|>))
 import Data.Coerce (coerce)
-import qualified Data.Map as Map
+import Data.Maybe (isNothing)
 import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -56,13 +65,40 @@ import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 import Quiet (Quiet (..))
 
+class
+  ( Ord (IdOf a)
+  , Eq (IdOf a)
+  , Show (IdOf a)
+  , NoThunks (IdOf a)
+  , Serialise (IdOf a)
+  ) =>
+  HasId a
+  where
+  type IdOf a
+  getId :: a -> IdOf a
+
+instance HasId perasObj => HasId (WithArrivalTime perasObj) where
+  type IdOf (WithArrivalTime perasObj) = IdOf perasObj
+  getId = getId . forgetArrivalTime
+
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving Show via Quiet PerasRoundNo
   deriving stock Generic
   deriving newtype (Enum, Eq, Ord, Num, Bounded, NoThunks, Serialise)
 
+newtype PerasVoteStake = PerasVoteStake {unPerasVoteStake :: Rational}
+  deriving Show via Quiet PerasVoteStake
+  deriving stock Generic
+  deriving newtype (Enum, Eq, Ord, Num, Fractional, NoThunks, Serialise)
+  deriving Semigroup via Sum Rational
+  deriving Monoid via Sum Rational
+
+data PerasVoteStakeDistr
+getPerasVoteStakeOf :: PerasVoteStakeDistr -> VoterId -> PerasVoteStake
+getPerasVoteStakeOf = undefined
+
 -- | TODO: what is the proper underlying type?
-type StakePoolId = KeyHash 'StakePool
+type VoterId = KeyHash 'StakePool
 
 instance Condense PerasRoundNo where
   condense = show . unPerasRoundNo
@@ -98,14 +134,38 @@ data ValidatedPerasCert blk = ValidatedPerasCert
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
 
-deriving instance Ord IndividualPoolStake
+instance
+  ( HasId (PerasCert blk)
+  , Ord (IdOf (PerasCert blk))
+  , Eq (IdOf (PerasCert blk))
+  , Show (IdOf (PerasCert blk))
+  , NoThunks (IdOf (PerasCert blk))
+  , Serialise (IdOf (PerasCert blk))
+  ) =>
+  HasId (ValidatedPerasCert blk)
+  where
+  type IdOf (ValidatedPerasCert blk) = IdOf (PerasCert blk)
+  getId = getId . vpcCert
 
 data ValidatedPerasVote blk = ValidatedPerasVote
   { vpvVote :: !(PerasVote blk)
-  , vpvVoteStake :: !IndividualPoolStake
+  , vpvVoteStake :: !PerasVoteStake
   }
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
+
+instance
+  ( HasId (PerasVote blk)
+  , Ord (IdOf (PerasVote blk))
+  , Eq (IdOf (PerasVote blk))
+  , Show (IdOf (PerasVote blk))
+  , NoThunks (IdOf (PerasVote blk))
+  , Serialise (IdOf (PerasVote blk))
+  ) =>
+  HasId (ValidatedPerasVote blk)
+  where
+  type IdOf (ValidatedPerasVote blk) = IdOf (PerasVote blk)
+  getId = getId . vpvVote
 
 {-------------------------------------------------------------------------------
   Ouroboros Peras round length
@@ -144,8 +204,79 @@ class
   validatePerasVote ::
     PerasCfg blk ->
     PerasVote blk ->
-    PoolDistr ->
+    PerasVoteStakeDistr ->
     Either (PerasValidationErr blk) (ValidatedPerasVote blk)
+
+const_PERAS_QUORUM_THRESHOLD :: PerasVoteStake
+const_PERAS_QUORUM_THRESHOLD = PerasVoteStake 0.75
+
+data PerasVoteAggregate blk = PerasVoteAggregate
+  { pvaTarget :: !(PerasVoteTarget blk)
+  , pvaVotes :: !(Set (WithArrivalTime (ValidatedPerasVote blk)))
+  , pvaTotalStake :: !PerasVoteStake
+  , pvaMaybeCert :: !(Maybe (ValidatedPerasCert blk))
+  }
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
+emptyPerasVoteAggregate :: PerasVoteTarget blk -> PerasVoteAggregate blk
+emptyPerasVoteAggregate target =
+  PerasVoteAggregate
+    { pvaTotalStake = PerasVoteStake 0
+    , pvaTarget = target
+    , pvaVotes = Set.empty
+    , pvaMaybeCert = Nothing
+    }
+
+data UpdatePerasVoteAggregateResult blk
+  = IncorrectPerasVoteTarget
+  | AddedPerasVoteButDidntGenerateNewCert (PerasVoteAggregate blk)
+  | AddedPerasVoteAndGeneratedNewCert (PerasVoteAggregate blk) (ValidatedPerasCert blk)
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
+updatePerasVoteAggregate ::
+  StandardHash blk =>
+  PerasVoteAggregate blk ->
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  UpdatePerasVoteAggregateResult blk
+updatePerasVoteAggregate
+  pva@PerasVoteAggregate
+    { pvaTarget = (roundNo, point)
+    , pvaVotes = existingVotes
+    , pvaTotalStake = initialStake
+    , pvaMaybeCert = mExistingCert
+    }
+  vote =
+    if getPerasVoteRound vote == roundNo && getPerasVoteVotedBlock vote == point
+      then
+        let pvaTotalStake = initialStake + vpvVoteStake (forgetArrivalTime vote)
+            pvaVotes = Set.insert vote existingVotes
+            mNewCert =
+              if isNothing mExistingCert && pvaTotalStake >= const_PERAS_QUORUM_THRESHOLD
+                then
+                  Just $
+                    ValidatedPerasCert
+                      { vpcCertBoost = boostPerCert
+                      , vpcCert =
+                          PerasCert
+                            { pcCertRound = roundNo
+                            , pcCertBoostedBlock = point
+                            }
+                      }
+                else Nothing
+            pva' =
+              pva
+                { pvaVotes
+                , pvaTotalStake
+                , pvaMaybeCert = mExistingCert <|> mNewCert
+                }
+         in case mNewCert of
+              Just cert -> AddedPerasVoteAndGeneratedNewCert pva' cert
+              Nothing -> AddedPerasVoteButDidntGenerateNewCert pva'
+      else IncorrectPerasVoteTarget
+
+type PerasVoteTarget blk = (PerasRoundNo, Point blk)
 
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
@@ -168,7 +299,7 @@ instance StandardHash blk => BlockSupportsPeras blk where
   data PerasVote blk = PerasVote
     { pvVoteRound :: PerasRoundNo
     , pvVotedBlock :: Point blk
-    , pvVoteStakePoolId :: StakePoolId
+    , pvVoteVoterId :: VoterId
     }
     deriving stock (Generic, Eq, Ord, Show)
     deriving anyclass NoThunks
@@ -189,9 +320,22 @@ instance StandardHash blk => BlockSupportsPeras blk where
         , vpcCertBoost = perasCfgWeightBoost cfg
         }
 
-  validatePerasVote _cfg vote PoolDistr{unPoolDistr} =
-    let stake = unPoolDistr Map.! (pvVoteStakePoolId vote)
+  validatePerasVote _cfg vote stakeDistr =
+    let stake = getPerasVoteStakeOf stakeDistr (pvVoteVoterId vote)
      in Right (ValidatedPerasVote{vpvVote = vote, vpvVoteStake = stake})
+
+instance HasId (PerasCert blk) where
+  type IdOf (PerasCert blk) = PerasRoundNo
+  getId = pcCertRound
+
+-- TODO: Orphan instance
+instance Serialise (KeyHash 'StakePool) where
+  encode = KeyHash.toCBOR
+  decode = KeyHash.fromCBOR
+
+instance HasId (PerasVote blk) where
+  type IdOf (PerasVote blk) = (PerasRoundNo, VoterId)
+  getId vote = (pvVoteRound vote, pvVoteVoterId vote)
 
 instance ShowProxy blk => ShowProxy (PerasCert blk) where
   showProxy _ = "PerasCert " <> showProxy (Proxy @blk)
@@ -211,17 +355,17 @@ instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
     pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
 
 instance Serialise (HeaderHash blk) => Serialise (PerasVote blk) where
-  encode PerasVote{pvVoteRound, pvVotedBlock, pvVoteStakePoolId} =
+  encode PerasVote{pvVoteRound, pvVotedBlock, pvVoteVoterId} =
     encodeListLen 3
       <> encode pvVoteRound
       <> encode pvVotedBlock
-      <> KeyHash.toCBOR pvVoteStakePoolId
+      <> KeyHash.toCBOR pvVoteVoterId
   decode = do
     decodeListLenOf 3
     pvVoteRound <- decode
     pvVotedBlock <- decode
-    pvVoteStakePoolId <- KeyHash.fromCBOR
-    pure $ PerasVote{pvVoteRound, pvVotedBlock, pvVoteStakePoolId}
+    pvVoteVoterId <- KeyHash.fromCBOR
+    pure $ PerasVote{pvVoteRound, pvVotedBlock, pvVoteVoterId}
 
 -- | Derive a 'PerasCfg' from a 'BlockConfig'
 --
@@ -303,14 +447,26 @@ instance
   where
   getPerasVoteVotedBlock = getPerasVoteVotedBlock . forgetArrivalTime
 
-class HasStakePoolId vote where
-  getStakePoolId :: vote -> StakePoolId
-instance HasStakePoolId (PerasVote blk) where
-  getStakePoolId = pvVoteStakePoolId
-instance HasStakePoolId (ValidatedPerasVote blk) where
-  getStakePoolId = getStakePoolId . vpvVote
+class HasPerasVoteVoterId vote where
+  getPerasVoteVoterId :: vote -> VoterId
+instance HasPerasVoteVoterId (PerasVote blk) where
+  getPerasVoteVoterId = pvVoteVoterId
+instance HasPerasVoteVoterId (ValidatedPerasVote blk) where
+  getPerasVoteVoterId = getPerasVoteVoterId . vpvVote
 instance
-  HasStakePoolId vote =>
-  HasStakePoolId (WithArrivalTime vote)
+  HasPerasVoteVoterId vote =>
+  HasPerasVoteVoterId (WithArrivalTime vote)
   where
-  getStakePoolId = getStakePoolId . forgetArrivalTime
+  getPerasVoteVoterId = getPerasVoteVoterId . forgetArrivalTime
+
+class HasPerasVoteTarget vote blk | vote -> blk where
+  getPerasVoteTarget :: vote -> PerasVoteTarget blk
+instance HasPerasVoteTarget (PerasVote blk) blk where
+  getPerasVoteTarget vote = (pvVoteRound vote, pvVotedBlock vote)
+instance HasPerasVoteTarget (ValidatedPerasVote blk) blk where
+  getPerasVoteTarget vote = getPerasVoteTarget (vpvVote vote)
+instance
+  HasPerasVoteTarget vote blk =>
+  HasPerasVoteTarget (WithArrivalTime vote) blk
+  where
+  getPerasVoteTarget = getPerasVoteTarget . forgetArrivalTime

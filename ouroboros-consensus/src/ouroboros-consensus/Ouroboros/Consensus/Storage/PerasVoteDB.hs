@@ -1,1 +1,1 @@
-module Ouroboros.Consensus.Storage.PerasVoteDB where
+module Ouroboros.Consensus.Storage.PerasVoteDB () where

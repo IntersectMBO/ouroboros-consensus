@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -9,52 +11,64 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.API
 
     -- * 'PerasVoteSnapshot'
   , PerasVoteSnapshot (..)
+  , PerasStakeSnapshot (..)
   , PerasVoteTicketNo
   , zeroPerasVoteTicketNo
+  , getPerasCertsFromStakeSnapshot
   ) where
 
 import Data.Map (Map)
+import qualified Data.Map as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Word (Word64)
+import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
-import Ouroboros.Consensus.Peras.Weight
-import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.MonadSTM.NormalForm
+  ( MonadSTM (STM)
+  )
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 
 data PerasVoteDB m blk = PerasVoteDB
-  { addVote :: WithArrivalTime (ValidatedPerasVote blk) -> m AddPerasVoteResult
+  { addVote :: WithArrivalTime (ValidatedPerasVote blk) -> m (AddPerasVoteResult blk)
   -- ^ Add a Peras vote to the database. The result indicates whether
   -- the vote was actually added, or if it was already present.
-  , getWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
-  -- ^ Return the Peras weights in order compare the current selection against
-  -- potential candidate chains, namely the weights for blocks not older than
-  -- the current immutable tip. It might contain weights for even older blocks
-  -- if they have not yet been garbage-collected.
+  , getStakeSnapshot :: STM m (PerasStakeSnapshot blk)
+  -- ^ Return a view of accumulated vote stake per (point, round)
   --
-  -- The 'Fingerprint' is updated every time a new vote is added, but it
+  -- The underlying 'Fingerprint' is updated every time a new vote is added, but it
   -- stays the same when votes are garbage-collected.
   , getVoteSnapshot :: STM m (PerasVoteSnapshot blk)
-  , getLatestVoteSeen :: STM m (Maybe (WithArrivalTime (ValidatedPerasVote blk)))
-  -- ^ Get the vote with the highest round number that has been added to
-  -- the db since it has been opened. This vote is not affected by garbage
-  -- collection, but it's forgotten when the db is closed.
-  --
-  -- NOTE: having seen a vote is a precondition to start voting in every
-  -- round except for the first one (at origin). As a consequence, only caught-up
-  -- nodes can actively participate in the Peras protocol for now.
-  , garbageCollect :: SlotNo -> m ()
-  -- ^ Garbage-collect state older than the given slot number.
+  -- ^ Interface to read the known votes, mostly for diffusion
+  , garbageCollect :: PerasRoundNo -> m ()
+  -- ^ Garbage-collect state strictly older than the given slot number.
   , closeDB :: m ()
   }
   deriving NoThunks via OnlyCheckWhnfNamed "PerasVoteDB" (PerasVoteDB m blk)
 
-data AddPerasVoteResult = AddedPerasVoteToDB | PerasVoteAlreadyInDB
-  deriving stock (Show, Eq)
+data AddPerasVoteResult blk
+  = PerasVoteAlreadyInDB
+  | AddedPerasVoteButDidntGenerateNewCert
+  | AddedPerasVoteAndGeneratedNewCert (ValidatedPerasCert blk)
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
+newtype PerasStakeSnapshot blk = PerasStakeSnapshot
+  {unPerasStakeSnapshot :: WithFingerprint (Map (PerasVoteTarget blk) (PerasVoteAggregate blk))}
+  deriving Generic
+  deriving newtype NoThunks
+
+getPerasCertsFromStakeSnapshot ::
+  StandardHash blk =>
+  PerasStakeSnapshot blk ->
+  Set (ValidatedPerasCert blk)
+getPerasCertsFromStakeSnapshot (PerasStakeSnapshot mp) =
+  Set.fromList $ Map.elems $ Map.mapMaybe pvaMaybeCert (forgetFingerprint mp)
 
 data PerasVoteSnapshot blk = PerasVoteSnapshot
-  { containsVote :: PerasRoundNo -> Bool
-  -- ^ Do we have the vote for this round?
+  { containsVote :: IdOf (PerasVote blk) -> Bool
   , getVotesAfter ::
       PerasVoteTicketNo ->
       Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk))
@@ -63,13 +77,6 @@ data PerasVoteSnapshot blk = PerasVoteSnapshot
   }
 
 -- | A sequence number, incremented every time we receive a new vote.
---
--- Note that we will /usually/ receive votes monotonically by round
--- number, so round numbers could /almost/ fulfill the role of ticket numbers.
--- However, in certain edge cases (while catching up, or during cooldowns), this
--- might not be true, such as during syncing or during cooldown periods.
--- Therefore, for robustness, we choose to maintain dedicated ticket numbers
--- separately.
 newtype PerasVoteTicketNo = PerasVoteTicketNo Word64
   deriving stock Show
   deriving newtype (Eq, Ord, Enum, NoThunks)
