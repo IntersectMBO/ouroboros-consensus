@@ -74,8 +74,8 @@ This ensures:
 
 This repository provides four packages with dependencies among them:
 
-```mermaid
-dflowchart TD
+``` mermaid
+flowchart TD
     D[ouroboros-consensus-diffusion] --> C
     A[ouroboros-consensus-cardano] --> B[ouroboros-consensus-protocol]
     A --> C
