@@ -1,1 +1,1 @@
-module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote where
+module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote () where
