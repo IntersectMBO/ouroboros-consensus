@@ -7,172 +7,188 @@
 [![sop-extras](https://img.shields.io/badge/sop--extras-0.4.1.0-blue)](https://chap.intersectmbo.org/package/sop-extras-0.4.1.0/)
 [![strict-sop-core](https://img.shields.io/badge/strict--sop--core-0.1.3.0-blue)](https://chap.intersectmbo.org/package/strict-sop-core-0.1.3.0/)
 
-
 [![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
 
 Implementation of the Ouroboros family of consensus algorithms.
 
-## Libraries and executables
+---
 
-This repository provides four packages, with the following dependencies among
-them:
+# ✨ What Is Ouroboros? (Beginner-Friendly Overview)
 
-``` mermaid
-flowchart TD
+**Ouroboros is the Proof-of-Stake (PoS) consensus protocol that powers the Cardano blockchain.**
+It ensures that:
+
+* The blockchain keeps growing correctly
+* Transactions are validated securely
+* Blocks are produced in a decentralized way
+
+Here is a simple explanation of how it works.
+
+## 🔷 How Ouroboros Works — Explained for Beginners
+
+Ouroboros works by dividing time into **epochs** and **slots**.
+
+### **1. Epochs and Slots**
+
+* An **epoch** is a large time period (e.g., 5 days on Cardano mainnet)
+* Each epoch is divided into many **slots** (1 second each)
+* Each slot has the potential for one block to be created
+
+### **2. Slot Leaders**
+
+In each slot, the protocol randomly chooses a **slot leader**.
+Slot leaders:
+
+* Are usually stake pools
+* Are chosen based on how much ADA they control (more stake = higher chance)
+* Create and validate blocks during their assigned slot
+
+### **3. Proof-of-Stake Selection**
+
+Ouroboros uses cryptographic randomness to pick leaders. This randomness:
+
+* Is unpredictable
+* Cannot be manipulated by attackers
+* Ensures fairness across all stake pools
+
+### **4. Chain Selection Rule**
+
+Unlike Proof-of-Work where the longest chain wins, Ouroboros uses:
+
+**The chain with the most accumulated stake from valid block producers wins.**
+
+This ensures:
+
+* Security
+* Resistance to long-range attacks
+* Consensus that remains decentralized even if some nodes go offline
+
+### **5. Finality and Safety**
+
+* Once a block has enough confirmations, it becomes practically irreversible
+* Ouroboros is proven secure in academic peer-reviewed papers
+
+---
+
+# Libraries and Executables
+
+This repository provides four packages with dependencies among them:
+
+```mermaid
+dflowchart TD
     D[ouroboros-consensus-diffusion] --> C
     A[ouroboros-consensus-cardano] --> B[ouroboros-consensus-protocol]
     A --> C
     B --> C[ouroboros-consensus]
 ```
 
-The packages contain many test-suites that complicate the dependency graph as
-they create new depencency arcs.
+The many test-suites in the repository create additional dependency links.
 
-This repository also provides four executables:
+It also provides four executables:
 
-- `ouroboros-consensus-cardano/app/db-analyser.hs`: for analyzing ChainDBs as
-  the ones created by the node. This helps identifying performance hotspots and
-  testing that the validating logic remains correct.
+* **db-analyser** – Inspect ChainDBs for correctness and performance
+* **db-synthesizer** – Generate synthetic chains for benchmarking
+* **db-truncater** – Truncate immutable databases
+* **immdb-server** – Serve a local immutable DB via network
 
-- `ouroboros-consensus-cardano/app/db-synthesizer.hs`: for quickly generating
-  chains to be used in benchmarking.
+To list all cabal components:
 
-- `ouroboros-consensus-cardano/app/db-truncater.hs`: for truncating an immutable
-  DB.
-
-- `ouroboros-consensus-cardano/app/immdb-server.hs`: for serving a immutable DB
-  stored locally.
-
-To list all the available Cabal components, one can use the following script
-because unfortunately, `cabal` doesn't have a command to list the [available
-targets](https://github.com/haskell/cabal/issues/4070):
-
-``` bash
+```bash
 for f in $(find ouroboros-consensus* *sop* -type f -name "*.cabal"); do
     printf "Components of package %s:\n" $f;
     grep -E "^(library|test-suite|executable|benchmark)" $f --color=never | column -t | sort | sed 's/^/\t/'
 done
 ```
 
-## Building the project
+---
 
-We use `cabal` to build our project, potentially inside a Nix shell (`nix
-develop` or `nix-shell`). It should suffice with:
+# Building the Project
 
-``` bash
-> cabal build all
+```bash
+cabal build all
 ```
 
-Specific executables can be executed through cabal once built:
+Run executables:
 
-``` bash
-> cabal run db-analyser
+```bash
+cabal run db-analyser
 ```
 
-## Testing the project
+---
 
-The project is tested with numerous Haskell test suites. To run every test
-suite, one can use:
+# Testing the Project
 
-``` bash
-> cabal test all
+```bash
+cabal test all
 ```
 
-For running specific test-suites (such as `consensus-test`), we recommend one of
-the following commands:
+Run a specific suite:
 
-``` bash
-> cabal run ouroboros-consensus:test:consensus-test -- <args>
-> cabal test ouroboros-consensus:test:consensus-test --test-show-details=direct
+```bash
+cabal run ouroboros-consensus:test:consensus-test -- <args>
 ```
 
-Note the second one cannot be used when we want to provide CLI arguments to the
-test-suite.
+Or:
 
-## Using Consensus as a dependency
+```bash
+cabal test ouroboros-consensus:test:consensus-test --test-show-details=direct
+```
 
-We make releases to the [Cardano Haskell
-Package](https://chap.intersectmbo.org/all-packages/)
-repository from where you should pull new releases.
+---
 
-To use CHaP, follow their Readme, but in short:
+# Using Consensus as a Dependency
 
-1. Add this at the top of your `cabal.project` file:
+To use CHaP, add this to the top of `cabal.project`:
 
-  ```
-  repository cardano-haskell-packages
-    url: https://chap.intersectmbo.org
-    secure: True
-    root-keys:
-      3e0cce471cf09815f930210f7827266fd09045445d65923e6d0238a6cd15126f
-      443abb7fb497a134c343faf52f0b659bd7999bc06b7f63fa76dc99d631f9bea1
-      a86a1f6ce86c449c46666bda44268677abf29b5b2d2eb5ec7af903ec2f117a82
-      bcec67e8e99cabfa7764d75ad9b158d72bfacf70ca1d0ec8bc6b4406d1bf8413
-      c00aae8461a256275598500ea0e187588c35a5d5d7454fb57eac18d9edb86a56
-      d4a35cd3121aa00d18544bb0ac01c3e1691d618f462c46129271bccf39f7e8ee
-  ```
+```
+repository cardano-haskell-packages
+  url: https://chap.intersectmbo.org
+  secure: True
+  root-keys:
+    3e0cce471cf09815f930210f7827266fd09045445d65923e6d0238a6cd15126f
+    443abb7fb497a134c343faf52f0b659bd7999bc06b7f63fa76dc99d631f9bea1
+    a86a1f6ce86c449c46666bda44268677abf29b5b2d2eb5ec7af903ec2f117a82
+    bcec67e8e99cabfa7764d75ad9b158d72bfacf70ca1d0ec8bc6b4406d1bf8413
+    c00aae8461a256275598500ea0e187588c35a5d5d7454fb57eac18d9edb86a56
+    d4a35cd3121aa00d18544bb0ac01c3e1691d618f462c46129271bccf39f7e8ee
+```
 
-2. Run `cabal update` to pull in the latest index.
-3. Specify which version of the index you want for both Hackage and CHaP. Note
-   that it has to be higher or equal to the highest timestamp of the released
-   versions of the packages that you want to use as dependencies:
+Then run:
 
-   ```
-   index-state:
-    , hackage.haskell.org      2023-04-12T00:00:00Z
-    , cardano-haskell-packages 2023-04-23T00:00:00Z
-   ```
+```bash
+cabal update
+```
 
-At this point, you should be able to declare our libraries as dependencies in
-your `build-depends` list on your cabal files.
+Specify index-state:
 
-If you use Nix, see the [CHaP
-website](https://chap.intersectmbo.org/) on how to
-configure CHaP for haskell.nix.
+```
+index-state:
+  , hackage.haskell.org      2023-04-12T00:00:00Z
+  , cardano-haskell-packages 2023-04-23T00:00:00Z
+```
 
-The Consensus sublibraries---which are used for our internal testing---are
-visible and buildable by default only because the appropriate Cabal and/or Nix
-infrastructure to guard them behind an explicit opt-in is currently immature
-and fragile. **WARNING** breaking changes to the these libraries are **not**
-reflected in the package versions. That is why they all have the `unstable-`
-prefix in their name; use at your own risk, and please reach out to us if this
-policy of ours is an excessive burden on your use case.
+> ⚠️ **Warning:** Internal testing sublibraries are unstable and may break without version bumps.
 
-## How to contribute to the project
+---
 
-Your help is greatly appreciated. Please see [our CONTRIBUTING
-document](CONTRIBUTING.md).
+# How to Contribute
 
-## How to submit an issue
+See the [CONTRIBUTING.md](CONTRIBUTING.md) file.
 
-Issues can be filled in our [GitHub issue
-tracker](https://github.com/IntersectMBO/ouroboros-consensus/issues). Please
-use the provided issue templates.
+---
 
-## Documentation
+# Submitting Issues
 
-We have several sources of documentation:
+Open an issue at:
+[https://github.com/IntersectMBO/ouroboros-consensus/issues](https://github.com/IntersectMBO/ouroboros-consensus/issues)
 
-- [Haddocks](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/):
-  our code is full of haddock annotations and comments that try to clarify
-  expected behaviors and subtleties. Reading through the code should provide
-  most of the information on how is Consensus implemented.
+---
 
-- [Website](https://ouroboros-consensus.cardano.intersectmbo.org/): this
-  website provides access to the markdown documentation to which step by step we
-  want to move the bulk of the "higher level documentation" as well as
-  achitectural documentation.
+# Documentation
 
-- [Report](./docs/tech-reports/report/): this in-depth technical report describes many of the
-  deep choices made in the implementation of the Consensus layer, as well as
-  non-trivial lemmas or properties of the Consensus algorithms that have
-  perspired to the implementation. Although incomplete in some sections, it is a
-  mandatory reading for anyone looking to understand why Consensus does what it
-  does.
-  ([rendered](https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf))
-
-- [Formal specification](./docs/agda-spec/): this directory contains the formal (Agda)
-  specification of the Consensus layer.
-
+* **Haddocks:** API reference
+* **Website:** High-level docs and architecture
+* **Technical Report:** Deep design reasoning and formal properties
+* **Agda Specification:** Formal consensus modeling
 
 [webpage]: https://ouroboros-consensus.cardano.intersectmbo.org/
