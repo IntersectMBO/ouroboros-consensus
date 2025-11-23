@@ -6,11 +6,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # --- Configuration ---
-# Filter for the event containing the timestamp we want to measure at node 0 and node 1
+# Filter for the event containing the timestamp we want to measure at node0 and downstream
 BLOCK_EVENT_FILTER = "BlockFetch.Client.CompletedBlockFetch"
 # Filter for the event containing the slot and hash. We need to do this because the 'CompletedBlockFetch' event does not contain the slot number.
 HEADER_EVENT_FILTER = "ChainSync.Client.DownloadedHeader"
-
 
 def filter_log_events(log_path: str, filter_text: str):
     """
@@ -47,7 +46,6 @@ def filter_log_events(log_path: str, filter_text: str):
 
                         # Base record structure
                         record = {
-                            "node": log_filename.split("-")[-1].split(".")[0],
                             "at": log_entry.get("at"),
                             "hash": block_hash,
                             "slot": block_slot,
@@ -58,51 +56,33 @@ def filter_log_events(log_path: str, filter_text: str):
                             parsed_data.append(record)
 
                 except json.JSONDecodeError:
+                    # Some log lines are not JSON; we simply skip those
                     continue
                 except Exception as e:
-                    # This catch remains for general unexpected issues.
-                    print(
-                        f"Warning: Failed to parse or extract fields from a line in {log_filename}. Error: {e}",
-                        file=sys.stderr,
-                    )
-                    continue
+                    print(f"An unexpected error occurred while processing a line in {log_path}", file=sys.stderr)
+                    raise
 
-            print(
-                f"Successfully extracted {len(parsed_data)} records matching '{filter_text}'."
-            )
             return parsed_data
 
-    except FileNotFoundError:
-        print(f"Error: Log file not found at {log_path}.", file=sys.stderr)
-        return []
     except Exception as e:
-        print(
-            f"An unexpected error occurred while processing {log_path}: {e}",
-            file=sys.stderr,
-        )
-        return []
-
+        print(f"An unexpected error occurred while processing {log_path}", file=sys.stderr)
+        raise
 
 def create_and_clean_df(
-    records: list, node_id: str, timestamp_column: str, unique_subset: list
+    records: list, node_id: str
 ) -> pd.DataFrame:
     """
-    Converts records to a DataFrame, converts types, removes duplicates,
-    and renames the 'at' column.
+    Converts records to a DataFrame, converts types and removes duplicates.
     """
+    # Return an empty DataFrame with the expected columns if no records were found.
     if not records:
-        # Return an empty DataFrame with the expected columns if no records were found.
-        # This prevents KeyError later during column selection.
-        return pd.DataFrame(columns=["hash", "slot", "at", "node"]).rename(
-            columns={"at": timestamp_column}
-        )
+        return pd.DataFrame(columns=["hash", "slot", "at"])
 
     df = pd.DataFrame(records)
 
     # Convert columns to appropriate data types
     try:
-        if "at" in df.columns:
-            df["at"] = pd.to_datetime(df["at"])
+        df["at"] = pd.to_datetime(df["at"])
         if "slot" in df.columns:
             df["slot"] = pd.to_numeric(df["slot"], errors="coerce").astype("Int64")
     except Exception as e:
@@ -110,47 +90,71 @@ def create_and_clean_df(
             f"Warning: Failed to convert data types in DataFrame for node {node_id}: {e}",
             file=sys.stderr,
         )
-        return pd.DataFrame(columns=["hash", "slot", "at", "node"]).rename(
-            columns={"at": timestamp_column}
-        )
+        raise
 
     # Deduplication: Keep only the first (earliest) occurrence
     initial_rows = len(df)
     df = df.sort_values(
-        by="at" if "at" in df.columns else df.columns[0]
-    ).drop_duplicates(subset=unique_subset, keep="first")
+        by="at"
+    ).drop_duplicates(subset=["hash"], keep="first")
 
     if len(df) < initial_rows:
         duplicates_removed = initial_rows - len(df)
         print(
-            f"Warning: Removed {duplicates_removed} duplicate log entries from node {node_id}."
+            f"Warning: Removed {duplicates_removed} duplicate log entries from node {node_id}.",
+            file=sys.stderr,
         )
-
-    # Rename the timestamp column for merging later
-    if "at" in df.columns:
-        df = df.rename(columns={"at": timestamp_column})
 
     return df
 
+def load_block_arrivals(df_headers: pd.DataFrame, log_path: str, node_id: str):
+    """
+    Loads the hash arrival times at the node of the given log file.
+    """
+    raw_data = filter_log_events(log_path, BLOCK_EVENT_FILTER)
+    df = create_and_clean_df(
+        raw_data, node_id
+    )[["hash", "at"]]
+
+    # add slot column
+    df = pd.merge(df, df_headers, on="hash", how="left")
+
+    if df["slot"].isna().any():
+        print(
+            f"Error: {node_id} downloaded somes blocks with unknown slot.",
+            file=sys.stderr,
+        )
+        print(
+            df[df["slot"].isnull()],
+            file=sys.stderr,
+        )
+        raise
+
+    # Use 'Int64' to allow NaNs; see https://stackoverflow.com/a/54194908
+    df["latency_ms"] = ((
+        df["at"] - df["slot_onset"]
+    ).dt.total_seconds() * 1000).round(0).astype('Int64')
+
+    return df
 
 def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
     """
-    Generates and displays a scatter plot of slot_onset vs. at_node_1.
+    Generates and displays a scatter plot of slot_onset vs. at_downstream.
     If output_file is provided, saves the plot to that file.
     """
     print("\n--- Generating Scatter Plot ---")
     try:
-        if "slot_onset" in df.columns and "at_node_1" in df.columns:
+        if "slot_onset" in df.columns and "at_downstream" in df.columns:
             # Ensure both columns are datetime objects for plotting
             df["slot_onset"] = pd.to_datetime(df["slot_onset"])
-            df["at_node_1"] = pd.to_datetime(df["at_node_1"])
+            df["at_downstream"] = pd.to_datetime(df["at_downstream"])
 
             plt.figure(figsize=(10, 6))
-            plt.scatter(df["slot_onset"], df["at_node_1"], alpha=0.5, s=10)
+            plt.scatter(df["slot_onset"], df["at_downstream"], alpha=0.5, s=10)
 
             # Add a y=x reference line
             # Find common min/max for a good 1:1 line
-            all_times = pd.concat([df["slot_onset"], df["at_node_1"]])
+            all_times = pd.concat([df["slot_onset"], df["at_downstream"]])
             min_time = all_times.min()
             max_time = all_times.max()
             plt.plot(
@@ -160,9 +164,9 @@ def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
                 label="1:1 Line (Onset = Arrival)",
             )
 
-            plt.title("Block Arrival Time (Node 1) vs. Slot Onset Time")
+            plt.title("Block Arrival Time (downstream) vs. Slot Onset Time")
             plt.xlabel("Slot Onset Time (Calculated)")
-            plt.ylabel("Block Arrival Time (at_node_1)")
+            plt.ylabel("Block Arrival Time (at_downstream)")
             plt.grid(True, linestyle="--", alpha=0.6)
             plt.legend()
             plt.tight_layout()
@@ -181,7 +185,7 @@ def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
 
         else:
             print(
-                "Warning: 'slot_onset' or 'at_node_1' column not found. Skipping plot generation."
+                "Warning: 'slot_onset' or 'at_downstream' column not found. Skipping plot generation."
             )
 
     except ImportError:
@@ -201,13 +205,13 @@ def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 5 or len(sys.argv) > 6:
+    if len(sys.argv) < 6 or len(sys.argv) > 7:
         print(
-            "Configuration Error: Please provide initial-slot, initial-time, two log files, and optionally an output plot file.",
+            "Configuration Error: Please provide initial-slot, initial-time, EB sending schedule, two log files, and optionally an output plot file.",
             file=sys.stderr,
         )
         print(
-            "Example Usage: python log_parser.py <initial-slot> <initial-time> /path/to/node-0.log /path/to/node-1.log [output_plot.png]",
+            "Example Usage: python log_parser.py <initial-slot> <initial-time> demoSchedule.json /path/to/node0.log /path/to/downstream.log [output_plot.png]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -252,162 +256,85 @@ if __name__ == "__main__":
         )
         sys.exit(1)
 
-    log_path_0 = sys.argv[3]
-    log_path_1 = sys.argv[4]
+    log_path_node0 = sys.argv[3]
+    log_path_downstream = sys.argv[4]
     plot_output_file = sys.argv[5] if len(sys.argv) == 6 else None
 
     print(f"\n--- Initial Configuration ---")
     print(f"Initial Slot: {initial_slot}")
     print(f"Initial Time: {initial_time}")
-    print(f"Log File 0: {log_path_0}")
-    print(f"Log File 1: {log_path_1}")
+    print(f"node0 Log File: {log_path_node0}")
+    print(f"downstream Log File: {log_path_downstream}")
     if plot_output_file:
         print(f"Plot Output File: {plot_output_file}")
 
-    # --- STEP 1: Create Hash-to-Slot Lookup Table (Headers) ---
-
-    # Collect header data from node 0 only (the primary source for slot mapping)
-    header_data = filter_log_events(log_path_0, HEADER_EVENT_FILTER)
+    # Collect header data
+    #
+    # node0 log suffices, since downstream only has a header if node0 does.
+    header_data = filter_log_events(log_path_node0, HEADER_EVENT_FILTER)
 
     if not header_data:
         print("\nNo header events found for slot/hash lookup. Exiting.")
         sys.exit(0)
 
     # Create the header lookup DataFrame
-    df_headers_full = create_and_clean_df(
-        header_data, "0", "at_header_lookup", ["slot", "hash", "node"]
-    )
-
-    # Select only the necessary lookup columns and drop any entries where slot is still None
+    #
+    # Retain only the hash and slot columns and only if slot isn't None
     df_headers = (
-        df_headers_full[["hash", "slot"]]
+        create_and_clean_df(
+            header_data, "node0"
+        )[["hash", "slot"]]
         .dropna(subset=["slot"])
         .drop_duplicates(subset=["hash"], keep="first")
     )
+
     print(f"Created Hash-to-Slot lookup table with {len(df_headers)} unique entries.")
 
-    # --- STEP 2: Collect and Process Block Fetch Timestamps ---
+    try:
+        # Calculate the difference in slots (where 1 slot happens to be 1 second)
+        slot_diff_seconds = df_headers["slot"] - initial_slot
 
-    # Node 0 Block Fetch Data
-    raw_data_0 = filter_log_events(log_path_0, BLOCK_EVENT_FILTER)
-    df_node_0_block = create_and_clean_df(
-        raw_data_0, "0", "at_node_0", ["hash", "node"]
-    )
+        # Convert the second difference into a timedelta and add to the initial time
+        df_headers["slot_onset"] = initial_time + pd.to_timedelta(
+            slot_diff_seconds, unit="s"
+        )
+    except Exception:
+        print("Error: Failed to calculate slot onset times.", file=sys.stderr)
+        raise
 
-    # Node 1 Block Fetch Data
-    raw_data_1 = filter_log_events(log_path_1, BLOCK_EVENT_FILTER)
-    df_node_1_block = create_and_clean_df(
-        raw_data_1, "1", "at_node_1", ["hash", "node"]
-    )
+    df_node0 = load_block_arrivals(df_headers, log_path_node0, "node0")
+    df_downstream = load_block_arrivals(df_headers, log_path_downstream, "downstream")
 
-    # --- STEP 3: Inject Slot Number into Block Fetch Data ---
-
-    # Inject 'slot' into Node 0 data using 'hash'
-    df_node_0_final = pd.merge(
-        df_node_0_block[["hash", "at_node_0"]], df_headers, on="hash", how="inner"
-    )
-
-    # Inject 'slot' into Node 1 data using 'hash'
-    df_node_1_final = pd.merge(
-        df_node_1_block[["hash", "at_node_1"]], df_headers, on="hash", how="inner"
-    )
-
-    # --- STEP 4: Final Merge on Hash AND Slot ---
-
-    if df_node_0_final.empty or df_node_1_final.empty:
+    if df_node0.empty or df_downstream.empty:
         print(
             "\nCould not match block fetch times to slot numbers for one or both nodes. Exiting."
         )
         sys.exit(0)
 
-    # Final merge to compare the two nodes for the same block
+    # We also merge on "slot_onset" to retain it. It's a function of "slot", so
+    # this is harmless.
     df_merged = pd.merge(
-        df_node_0_final,
-        df_node_1_final,
-        on=["hash", "slot"],
-        how="inner",
+        df_node0, df_downstream,
+        suffixes=["_node0", "_downstream"],
+        on=["slot", "slot_onset", "hash"],   # note that this determines order of resulting rows
+        how="outer",
     )
 
-    # --- STEP 6: Calculate Slot Onset Time ---
-    print(f"\n--- Calculating Slot Onset Times ---")
-    print(
-        f"Using base slot {initial_slot} at {initial_time} (1 slot = 1 second)"
-    )
-    try:
-        # Calculate the difference in slots (which equals seconds)
-        # We must ensure 'slot' is numeric, which create_and_clean_df should have done
-        df_merged["slot_diff_seconds"] = df_merged["slot"] - initial_slot
-
-        # Convert the second difference into a timedelta and add to the initial time
-        df_merged["slot_onset"] = initial_time + pd.to_timedelta(
-            df_merged["slot_diff_seconds"], unit="s"
-        )
-
-        # Drop the intermediate calculation column
-        df_merged = df_merged.drop(columns=["slot_diff_seconds"])
-
-    except Exception as e:
-        print(
-            f"Error: Failed to calculate slot onset times. Check data types. Error: {e}",
-            file=sys.stderr,
-        )
-        # Continue without onset time if calculation fails
-        pass
-
-    # --- STEP 5: Calculate Latency (Time Difference) ---
-    df_merged["node0_latency_ms"] = (
-        df_merged["at_node_0"] - df_merged["slot_onset"]
-    ).dt.total_seconds() * 1000
-
-    df_merged["node1_latency_ms"] = (
-        df_merged["at_node_1"] - df_merged["slot_onset"]
-    ).dt.total_seconds() * 1000
-
-    # --- STEP 7: Calculate Diffs from Previous Slot ---
-    print("\n--- Calculating Diffs from Previous Slot ---")
-
-    # Ensure dataframe is sorted by slot to calculate diffs correctly
-    df_merged = df_merged.sort_values(by="slot").reset_index(drop=True)
-
-    # Calculate difference from the previous slot
-    df_merged["slot_diff_from_prev"] = df_merged["slot"].diff().fillna(0).astype(int)
-
-    # Calculate difference from the previous slot's onset time (in seconds)
-    if "slot_onset" in df_merged.columns:
-        df_merged["onset_diff_from_prev_s"] = (
-            df_merged["slot_onset"]
-            .diff()
-            .fillna(pd.Timedelta(seconds=0))
-            .dt.total_seconds()
-        )
-    else:
-        print("Warning: 'slot_onset' column not found. Skipping onset diff calculation.")
-
-    # --- STEP 8: Generate Scatter Plot ---
 #    plot_onset_vs_arrival(df_merged, plot_output_file)
 
     print("\n--- Extracted and Merged Data Summary ---")
     print(
         "Each row represents a unique block seen by both nodes, joined by hash and slot."
     )
-    # Define desired column order, including the new 'slot_onset' and diffs
-    final_columns = [
+    # Which columns to display
+    display_columns = [
         "slot",
         "hash",
         "slot_onset",
-#        "at_node_0",
-#        "at_node_1",
-        "node0_latency_ms",
-        "node1_latency_ms",
-#        "slot_diff_from_prev",
-#        "onset_diff_from_prev_s",
+        "latency_ms_node0",
+        "latency_ms_downstream",
     ]
-
-    # Filter list to only columns that actually exist in the dataframe
-    # This prevents an error if 'slot_onset' failed to be created
-    existing_columns = [col for col in final_columns if col in df_merged.columns]
 
     pd.set_option('display.max_columns', None)
     pd.set_option('display.expand_frame_repr', False)
-    print(df_merged[existing_columns])
-    print(f"\nTotal unique block events matched: {len(df_merged)}")
+    print(df_merged[display_columns])
