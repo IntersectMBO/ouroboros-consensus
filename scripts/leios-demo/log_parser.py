@@ -11,6 +11,9 @@ BLOCK_EVENT_FILTER = "BlockFetch.Client.CompletedBlockFetch"
 # Filter for the event containing the slot and hash. We need to do this because the 'CompletedBlockFetch' event does not contain the slot number.
 HEADER_EVENT_FILTER = "ChainSync.Client.DownloadedHeader"
 
+# Filter for the event containing the timestamp we want to measure at node0 and downstream
+LEIOS_BLOCK_EVENT_FILTER = "Consensus.LeiosKernel"
+
 def filter_log_events(log_path: str, filter_text: str):
     """
     Reads a log file, parses JSON lines, and extracts relevant fields
@@ -43,6 +46,12 @@ def filter_log_events(log_path: str, filter_text: str):
                             # Structure: "data":{"block": "HASH", ...}
                             block_hash = event_data.get("block")
                             block_slot = None
+                        elif filter_text == LEIOS_BLOCK_EVENT_FILTER:
+                            # Structure: "data":{"kind": "LeiosBlockTxsAcquired", "ebHash": "HASH", "ebSlot": "SLOT"}
+                            if "LeiosBlockTxsAcquired" != event_data.get("kind", ""):
+                                continue
+                            block_hash = event_data.get("ebHash")
+                            block_slot = None   # event_data.get("ebSlot")   # slot comes from schedule.json
 
                         # Base record structure
                         record = {
@@ -137,6 +146,36 @@ def load_block_arrivals(df_headers: pd.DataFrame, log_path: str, node_id: str):
 
     return df
 
+def load_leios_block_arrivals(df_schedule: pd.DataFrame, log_path: str, node_id: str):
+    """
+    Loads the hash arrival times for Leios blocks at the node of the given log file.
+    """
+    raw_data = filter_log_events(log_path, LEIOS_BLOCK_EVENT_FILTER)
+    df = create_and_clean_df(
+        raw_data, node_id
+    )[["hash", "at"]]
+
+    # add slot column
+    df = pd.merge(df, df_schedule, on="hash", how="left")
+
+    if df["offer_slot"].isna().any():
+        print(
+            f"Error: {node_id} downloaded somes Leios blocks with unknown offer slot.",
+            file=sys.stderr,
+        )
+        print(
+            df[df["offer_slot"].isnull()],
+            file=sys.stderr,
+        )
+        raise
+
+    # Use 'Int64' to allow NaNs; see https://stackoverflow.com/a/54194908
+    df["latency_ms"] = ((
+        df["at"] - df["offer"]
+    ).dt.total_seconds() * 1000).round(0).astype('Int64')
+
+    return df
+
 def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
     """
     Generates and displays a scatter plot of slot_onset vs. at_downstream.
@@ -205,7 +244,14 @@ def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 6 or len(sys.argv) > 7:
+    # --- Argument Parsing ---
+    try:
+        initial_slot_str = sys.argv[1]
+        initial_time_str = sys.argv[2]
+        eb_schedule_path = sys.argv[3]
+        log_path_node0 = sys.argv[4]
+        log_path_downstream = sys.argv[5]
+    except Exception:
         print(
             "Configuration Error: Please provide initial-slot, initial-time, EB sending schedule, two log files, and optionally an output plot file.",
             file=sys.stderr,
@@ -216,19 +262,22 @@ if __name__ == "__main__":
         )
         sys.exit(1)
 
-    # --- Argument Parsing ---
     try:
-        initial_slot = int(sys.argv[1])
+        plot_output_file = sys.argv[6]
+    except Exception:
+        plot_output_file = None
+
+    try:
+        initial_slot = int(initial_slot_str)
     except ValueError:
         print(
-            f"Configuration Error: Could not parse initial-slot '{sys.argv[1]}' as an integer.",
+            f"Configuration Error: Could not parse initial-slot '{initial_slot_str}' as an integer.",
             file=sys.stderr,
         )
         sys.exit(1)
 
+    # Try to parse as a POSIX timestamp (integer string) or else as a datetime string
     try:
-        initial_time_str = sys.argv[2]
-        # Try to parse as a POSIX timestamp (integer string) first
         try:
             posix_time = int(initial_time_str)
             # Convert from POSIX seconds to a UTC datetime object
@@ -248,17 +297,12 @@ if __name__ == "__main__":
             else:
                 # If it has a timezone, convert it to UTC for consistency
                 initial_time = initial_time.tz_convert("UTC")
-
     except Exception as e:
         print(
-            f"Configuration Error: Could not parse initial-time '{sys.argv[2]}' as either a POSIX timestamp or a datetime string. Error: {e}",
+            f"Configuration Error: Could not parse initial-time '{initial_time_str}' as either a POSIX timestamp or a datetime string. Error: {e}",
             file=sys.stderr,
         )
         sys.exit(1)
-
-    log_path_node0 = sys.argv[3]
-    log_path_downstream = sys.argv[4]
-    plot_output_file = sys.argv[5] if len(sys.argv) == 6 else None
 
     print(f"\n--- Initial Configuration ---")
     print(f"Initial Slot: {initial_slot}")
@@ -338,3 +382,58 @@ if __name__ == "__main__":
     pd.set_option('display.max_columns', None)
     pd.set_option('display.expand_frame_repr', False)
     print(df_merged[display_columns])
+
+    # ---------------------------------------- again, for Leios messages
+
+    # Create the schedule lookup DataFrame
+    with open(eb_schedule_path) as f:
+        schedule_json = json.load(f)
+
+    # only the MsgLeiosBlockTxsOffer messages
+    df_schedule = pd.DataFrame(
+        [ (x[0], x[1][1]) for x in schedule_json if None == x[1][2] ],
+        columns=["offer_slot", "hash"],
+    )
+
+    print(f"Created Hash-to-Offer lookup table with {len(df_schedule)} unique entries.")
+
+    try:
+        # Calculate the difference in slots (where 1 slot happens to be 1 second)
+        slot_diff_seconds = df_schedule["offer_slot"] - initial_slot
+
+        # Convert the second difference into a timedelta and add to the initial time
+        df_schedule["offer"] = initial_time + pd.to_timedelta(
+            slot_diff_seconds, unit="s"
+        )
+    except Exception:
+        print("Error: Failed to calculate offer times.", file=sys.stderr)
+        raise
+
+    df_leios_node0 = load_leios_block_arrivals(df_schedule, log_path_node0, "node0")
+    df_leios_downstream = load_leios_block_arrivals(df_schedule, log_path_downstream, "downstream")
+
+    # We also merge on "slot_onset" to retain it. It's a function of "slot", so
+    # this is harmless.
+    df_leios_merged = pd.merge(
+        df_leios_node0, df_leios_downstream,
+        suffixes=["_node0", "_downstream"],
+        on=["offer_slot", "offer", "hash"],   # note that this determines order of resulting rows
+        how="outer",
+    )
+
+    print("\n--- Extracted and Merged Data Summary for Leios blocks ---")
+    print(
+        "Each row represents a unique block seen by both nodes, joined by hash and offer slot."
+    )
+    # Which columns to display
+    leios_display_columns = [
+        "offer_slot",
+        "hash",
+        "offer",
+        "latency_ms_node0",
+        "latency_ms_downstream",
+    ]
+
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.expand_frame_repr', False)
+    print(df_leios_merged[leios_display_columns])
