@@ -136,7 +136,7 @@ FROM_NODE0_TO_UPSTREAM_PORT=${UPSTREAM_BIND_PORT}
 FROM_DOWNSTREAM_TO_NODE0_ADDR=${NODE0_BIND_ADDR}
 FROM_DOWNSTREAM_TO_NODE0_PORT=${NODE0_BIND_PORT}
 
-TMP_DIR=$(mktemp -d ${TMPDIR:-/tmp}/leios-october-demo.XXXXXX)
+TMP_DIR=$(mktemp -d ${TMPDIR:-/tmp}/leios-november-demo.XXXXXX)
 echo "Using temporary directory for DB and logs: $TMP_DIR"
 
 rm -f ./leios-run-tmp-dir
@@ -145,11 +145,11 @@ ln -s "$TMP_DIR" ./leios-run-tmp-dir
 pushd "$CARDANO_NODE_PATH" > /dev/null
 
 ##
-## Run cardano-node (node-0)
+## Run cardano-node (node0)
 ##
 
-echo "Creating topology-node-0.json in $(pwd)"
-cat << EOF > topology-node-0.json
+echo "Creating topology-node0.json in $(pwd)"
+cat << EOF > topology-node0.json
 {
   "bootstrapPeers": [],
   "localRoots": [
@@ -169,22 +169,22 @@ cat << EOF > topology-node-0.json
 }
 EOF
 
-mkdir -p "$TMP_DIR/node-0/db"
+mkdir -p "$TMP_DIR/node0/db"
 
-cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node-0/leios.db"
-sqlite3 "$TMP_DIR/node-0/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints; VACUUM'
+cp "$LEIOS_UPSTREAM_DB_PATH" "$TMP_DIR/node0/leios.db"
+sqlite3 "$TMP_DIR/node0/leios.db" 'DELETE FROM ebTxs; DELETE FROM txCache; DELETE FROM ebPoints; VACUUM'
 
-CARDANO_NODE_CMD="sudo ip netns exec ns2 env LEIOS_DB_PATH=$TMP_DIR/node-0/leios.db
+CARDANO_NODE_CMD="sudo ip netns exec ns2 env LEIOS_DB_PATH=$TMP_DIR/node0/leios.db
     ${CARDANO_NODE} run
     --config $CLUSTER_RUN_DATA/leios-node/config.json
-    --topology topology-node-0.json
-    --database-path $TMP_DIR/node-0/db
-    --socket-path node-0.socket
+    --topology topology-node0.json
+    --database-path $TMP_DIR/node0/db
+    --socket-path node0.socket
     --host-addr $NODE0_BIND_ADDR --port $NODE0_BIND_PORT"
 
-echo "node-0: $CARDANO_NODE_CMD"
+echo "node0: $CARDANO_NODE_CMD"
 
-$CARDANO_NODE_CMD 1> "$TMP_DIR/cardano-node-0.log" 2>"$TMP_DIR/cardano-node-0.stderr" &
+$CARDANO_NODE_CMD 1> "$TMP_DIR/node0.log" 2>"$TMP_DIR/node0.stderr" &
 
 CARDANO_NODE_0_PID=$!
 
@@ -194,7 +194,7 @@ cleanup_node_0() {
 }
 trap cleanup_node_0 EXIT INT TERM
 
-echo "Cardano node 0 started with PID: $CARDANO_NODE_0_PID"
+echo "node0 started with PID: $CARDANO_NODE_0_PID"
 
 ##
 ## Run a second Cardano-node (To be eventually replaced by a mocked downstream node)
@@ -245,7 +245,7 @@ cleanup_node_1() {
 }
 trap cleanup_node_1 EXIT INT TERM
 
-echo "Cardano node 1 started with PID: $DOWNSTREAM_PEER_PID"
+echo "downstream started with PID: $DOWNSTREAM_PEER_PID"
 
 # Return to the original directory
 popd > /dev/null
@@ -285,7 +285,7 @@ cleanup_immdb() {
 }
 trap cleanup_immdb EXIT INT TERM
 
-echo "ImmDB server started with PID: $UPSTREAM_PEER_PID"
+echo "upstream started with PID: $UPSTREAM_PEER_PID"
 
 TIMEOUT=${TIMEOUT:-25}
 read -t "$(($TIMEOUT + $SECONDS_UNTIL_REF_SLOT))" -n 1 -s -r -p "Press any key to stop the spawned processes, or just wait ~$SECONDS_UNTIL_REF_SLOT + $TIMEOUT seconds..."
@@ -293,7 +293,7 @@ echo
 
 echo "Temporary data stored at: $TMP_DIR"
 
-echo "$(date) Tearing down processes $UPSTREAM_PEER_PID (upstream peer, aka immdb-server), $CARDANO_NODE_0_PID (node-0), and $DOWNSTREAM_PEER_PID (downstream peer)..."
+echo "$(date) Tearing down processes $UPSTREAM_PEER_PID (upstream peer, aka immdb-server), $CARDANO_NODE_0_PID (node0), and $DOWNSTREAM_PEER_PID (downstream peer)..."
 cleanup_immdb
 
 # Log analysis
@@ -301,14 +301,19 @@ cleanup_immdb
 echo -e "Send MsgLeiosBlockTxsRequest\tRecv MsgLeiosBlockTxsRequest\tSend MsgLeiosBlockTxs    \tRecv MsgLeiosBlock         \tTxsBytesSize" \
     >$TMP_DIR/LF-req-rsp.txt
 paste \
-    <(cat $TMP_DIR/cardano-node-0.log | grep -e Send.BlockTxsRequest | jq -r .at) \
+    <(cat $TMP_DIR/node0.log | grep -e Send.BlockTxsRequest | jq -r .at) \
     <(cat $TMP_DIR/upstream.log | grep -e 'Recv MsgLeiosBlockTxsRequest' | cut -d' ' -f1) \
     <(cat $TMP_DIR/upstream.log | grep -e 'Send MsgLeiosBlockTxs' | cut -d' ' -f1) \
-    <(cat $TMP_DIR/cardano-node-0.log | grep -e 'Receive.BlockTxs"' | jq -r .at) \
-    <(cat $TMP_DIR/cardano-node-0.log | grep -e 'Receive.BlockTxs"' | jq -r .data.msg.txsBytesSize) \
+    <(cat $TMP_DIR/node0.log | grep -e 'Receive.BlockTxs"' | jq -r .at) \
+    <(cat $TMP_DIR/node0.log | grep -e 'Receive.BlockTxs"' | jq -r .data.msg.txsBytesSize) \
     >>$TMP_DIR/LF-req-rsp.txt
 
-python3 ouroboros-consensus/scripts/leios-demo/log_parser.py $REF_SLOT $ONSET_OF_REF_SLOT $TMP_DIR/cardano-node-0.log $TMP_DIR/downstream.log "scatter_plot.png"
+ANALYSIS_CMD="python3 ouroboros-consensus/scripts/leios-demo/log_parser.py
+        $REF_SLOT $ONSET_OF_REF_SLOT
+        $TMP_DIR/node0.log $TMP_DIR/downstream.log
+        scatter_plot.png"
+echo "analysis: $ANALYSIS_CMD"
+$ANALYSIS_CMD
 
 # Status
 
