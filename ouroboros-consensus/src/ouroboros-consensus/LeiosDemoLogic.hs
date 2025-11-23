@@ -783,7 +783,7 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, 
         pure outstanding'
     void $ MVar.tryPutMVar readyVar ()
     when novel $ do
-        traceWith ktracer $ MkTraceLeiosKernel $ "leiosNotificationsBlock: " ++ Leios.prettyEbId ebId
+        traceWith ktracer $ TraceLeiosBlockAcquired p
         vars <- MVar.readMVar notificationVars
         forM_ vars $ \var -> do
             traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlock!: " ++ Leios.prettyEbId ebId
@@ -862,8 +862,8 @@ msgLeiosBlockTxs ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVa
                   $ V.findIndices id
                   $ V.zipWith (/=) txHashes txHashes'
             error $ "MsgLeiosBlockTxs hash mismatches: " ++ show mismatches
+    ebBodies <- MVar.readMVar ebBodiesVar
     ebId <- do
-        ebBodies <- MVar.readMVar ebBodiesVar
         let (x, mbLeiosEbBodies') = ebIdFromPoint p ebBodies
         case mbLeiosEbBodies' of
             Just _ -> error "Unrecognized Leios point"
@@ -994,7 +994,10 @@ msgLeiosBlockTxs ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVa
               $ [ (ebIdSlot x, Seq.singleton (LeiosOfferBlockTxs x))
                 | x <- newNotifications
                 ]
-        traceWith ktracer $ MkTraceLeiosKernel $ "leiosNotificationsBlockTxs: " ++ unwords (map Leios.prettyEbId newNotifications)
+        forM_ newNotifications $ \ebId' -> do
+            case ebIdToPoint ebId' ebBodies of
+                Nothing -> error $ "Unrecognized Leios EbId: " ++ Leios.prettyEbId ebId'
+                Just p' -> traceWith ktracer $ TraceLeiosBlockTxsAcquired p'
         vars <- MVar.readMVar notificationVars
         forM_ vars $ \var -> do
             traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlockTxs!: " ++ unwords (map Leios.prettyEbId newNotifications)

@@ -632,11 +632,33 @@ data LeiosNotification =
 
 -----
 
-newtype TraceLeiosKernel = MkTraceLeiosKernel String
+data TraceLeiosKernel =
+    MkTraceLeiosKernel String
+  |
+    TraceLeiosBlockAcquired LeiosPoint
+  |
+    TraceLeiosBlockTxsAcquired LeiosPoint
   deriving (Show)
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
-traceLeiosKernelToObject (MkTraceLeiosKernel s) = fromString "msg" Aeson..= Aeson.String (fromString s)
+traceLeiosKernelToObject = \case
+    MkTraceLeiosKernel s -> fromString "msg" Aeson..= Aeson.String (fromString s)
+    TraceLeiosBlockAcquired p ->
+        let MkLeiosPoint (SlotNo ebSlot) ebHash = p
+        in
+        (fromString "kind" Aeson..= Aeson.String (fromString "LeiosBlockAcquired"))
+        <>
+        (fromString "ebHash" Aeson..= Aeson.String (fromString $ prettyEbHash ebHash))
+        <>
+        (fromString "ebSlot" Aeson..= Aeson.String (fromString $ show ebSlot))
+    TraceLeiosBlockTxsAcquired p ->
+        let MkLeiosPoint (SlotNo ebSlot) ebHash = p
+        in
+        (fromString "kind" Aeson..= Aeson.String (fromString "LeiosBlockTxsAcquired"))
+        <>
+        (fromString "ebHash" Aeson..= Aeson.String (fromString $ prettyEbHash ebHash))
+        <>
+        (fromString "ebSlot" Aeson..= Aeson.String (fromString $ show ebSlot))
 
 newtype TraceLeiosPeer = MkTraceLeiosPeer String
   deriving (Show)
