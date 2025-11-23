@@ -12,9 +12,12 @@ BLOCK_EVENT_FILTER = "BlockFetch.Client.CompletedBlockFetch"
 HEADER_EVENT_FILTER = "ChainSync.Client.DownloadedHeader"
 
 # Filter for the event containing the timestamp we want to measure at node0 and downstream
-LEIOS_BLOCK_EVENT_FILTER = "Consensus.LeiosKernel"
+LEIOS_EVENT_FILTER = "Consensus.LeiosKernel"
 
-def filter_log_events(log_path: str, filter_text: str):
+LEIOS_BLOCK_EVENT_SUBFILTER = "LeiosBlockAcquired"
+LEIOS_BLOCKTXS_EVENT_SUBFILTER = "LeiosBlockTxsAcquired"
+
+def filter_log_events(log_path: str, filter_text: str, subfilter_text : str = ""):
     """
     Reads a log file, parses JSON lines, and extracts relevant fields
     based on the filter type.
@@ -46,9 +49,9 @@ def filter_log_events(log_path: str, filter_text: str):
                             # Structure: "data":{"block": "HASH", ...}
                             block_hash = event_data.get("block")
                             block_slot = None
-                        elif filter_text == LEIOS_BLOCK_EVENT_FILTER:
+                        elif filter_text == LEIOS_EVENT_FILTER:
                             # Structure: "data":{"kind": "LeiosBlockTxsAcquired", "ebHash": "HASH", "ebSlot": "SLOT"}
-                            if "LeiosBlockTxsAcquired" != event_data.get("kind", ""):
+                            if subfilter_text != event_data.get("kind", "XXXXXXXX"):
                                 continue
                             block_hash = event_data.get("ebHash")
                             block_slot = None   # event_data.get("ebSlot")   # slot comes from schedule.json
@@ -146,11 +149,11 @@ def load_block_arrivals(df_headers: pd.DataFrame, log_path: str, node_id: str):
 
     return df
 
-def load_leios_block_arrivals(df_schedule: pd.DataFrame, log_path: str, node_id: str):
+def load_leios_block_arrivals(df_schedule: pd.DataFrame, log_path: str, node_id: str, subfilter: str):
     """
     Loads the hash arrival times for Leios blocks at the node of the given log file.
     """
-    raw_data = filter_log_events(log_path, LEIOS_BLOCK_EVENT_FILTER)
+    raw_data = filter_log_events(log_path, LEIOS_EVENT_FILTER, subfilter)
     df = create_and_clean_df(
         raw_data, node_id
     )[["hash", "at"]]
@@ -368,7 +371,7 @@ if __name__ == "__main__":
 
     print("\n--- Extracted and Merged Data Summary ---")
     print(
-        "Each row represents a unique block seen by both nodes, joined by hash and slot."
+        "Each row represents a unique Praos block seen by both nodes, joined by hash and slot."
     )
     # Which columns to display
     display_columns = [
@@ -409,13 +412,13 @@ if __name__ == "__main__":
         print("Error: Failed to calculate offer times.", file=sys.stderr)
         raise
 
-    df_leios_node0 = load_leios_block_arrivals(df_schedule, log_path_node0, "node0")
-    df_leios_downstream = load_leios_block_arrivals(df_schedule, log_path_downstream, "downstream")
+    df_leios_block_node0 = load_leios_block_arrivals(df_schedule, log_path_node0, "node0", LEIOS_BLOCK_EVENT_SUBFILTER)
+    df_leios_block_downstream = load_leios_block_arrivals(df_schedule, log_path_downstream, "downstream", LEIOS_BLOCK_EVENT_SUBFILTER)
 
     # We also merge on "slot_onset" to retain it. It's a function of "slot", so
     # this is harmless.
-    df_leios_merged = pd.merge(
-        df_leios_node0, df_leios_downstream,
+    df_leios_block_merged = pd.merge(
+        df_leios_block_node0, df_leios_block_downstream,
         suffixes=["_node0", "_downstream"],
         on=["offer_slot", "offer", "hash"],   # note that this determines order of resulting rows
         how="outer",
@@ -423,7 +426,7 @@ if __name__ == "__main__":
 
     print("\n--- Extracted and Merged Data Summary for Leios blocks ---")
     print(
-        "Each row represents a unique block seen by both nodes, joined by hash and offer slot."
+        "Each row represents a unique Leios block seen by both nodes, joined by hash and offer slot."
     )
     # Which columns to display
     leios_display_columns = [
@@ -434,6 +437,31 @@ if __name__ == "__main__":
         "latency_ms_downstream",
     ]
 
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.expand_frame_repr', False)
-    print(df_leios_merged[leios_display_columns])
+    print(df_leios_block_merged[leios_display_columns])
+
+    df_leios_blocktxs_node0 = load_leios_block_arrivals(df_schedule, log_path_node0, "node0", LEIOS_BLOCKTXS_EVENT_SUBFILTER)
+    df_leios_blocktxs_downstream = load_leios_block_arrivals(df_schedule, log_path_downstream, "downstream", LEIOS_BLOCKTXS_EVENT_SUBFILTER)
+
+    # We also merge on "slot_onset" to retain it. It's a function of "slot", so
+    # this is harmless.
+    df_leios_blocktxs_merged = pd.merge(
+        df_leios_blocktxs_node0, df_leios_blocktxs_downstream,
+        suffixes=["_node0", "_downstream"],
+        on=["offer_slot", "offer", "hash"],   # note that this determines order of resulting rows
+        how="outer",
+    )
+
+    print("\n--- Extracted and Merged Data Summary for Leios blocks ---")
+    print(
+        "Each row represents a unique Leios closure seen by both nodes, joined by hash and offer slot."
+    )
+    # Which columns to display
+    leios_display_columns = [
+        "offer_slot",
+        "hash",
+        "offer",
+        "latency_ms_node0",
+        "latency_ms_downstream",
+    ]
+
+    print(df_leios_blocktxs_merged[leios_display_columns])
