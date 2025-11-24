@@ -20,8 +20,10 @@ data SendRecvEvent tm cnt = MkSendRecvEvent {
       , direction :: Direction
       , msg :: String
         -- ^ which message
+      , connectionId :: String
+        -- ^ which peer
       , prevCount :: cnt
-        -- ^ how many previous occurrences of this same event
+        -- ^ how many previous occurrences of this same event for this same peer
       }
   deriving stock (Eq, Generic, Ord)
   deriving anyclass (Aeson.ToJSON)
