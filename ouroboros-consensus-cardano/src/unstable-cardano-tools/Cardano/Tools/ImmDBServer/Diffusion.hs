@@ -50,7 +50,8 @@ import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types (MountPoint (MountPoint))
 import           System.FS.IO (ioHasFS)
 
-import           Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
+import qualified Cardano.Tools.ImmDBServer.Json as Json
+import qualified Cardano.Tools.ImmDBServer.Json.Say as Json
 import qualified LeiosDemoLogic as LeiosLogic
 import qualified LeiosDemoTypes as Leios
 
@@ -60,12 +61,15 @@ import qualified LeiosDemoOnlyTestFetch as LF
 -- this context.
 serve ::
      SockAddr
-  -> (Tracer IO String -> N2N.Versions N2N.NodeToNodeVersion N2N.NodeToNodeVersionData
+  -> (Tracer IO Json.LogEvent -> N2N.Versions N2N.NodeToNodeVersion N2N.NodeToNodeVersionData
        (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode SockAddr BL.ByteString IO Void ()))
   -> IO Void
 serve sockAddr application = withIOManager \iocp -> do
     let sn     = Snocket.socketSnocket iocp
         family = Snocket.addrFamily sn sockAddr
+
+    ultimateTracer <- Json.mkUltimateTracer
+
     bracket (Snocket.open sn family) (Snocket.close sn) \socket -> do
       networkMutableState <- N2N.newNetworkMutableState
       configureSocket socket (Just sockAddr)
@@ -74,14 +78,14 @@ serve sockAddr application = withIOManager \iocp -> do
       N2N.withServer
         sn
         N2N.nullNetworkServerTracers {
-          N2N.nstHandshakeTracer   = show >$< wallclockTracer
-        , N2N.nstMuxTracer         = flip asTypeOf nullTracer $ condTracing (muxCond . Mux.wbEvent) $ show >$< wallclockTracer
-        , N2N.nstErrorPolicyTracer = show >$< wallclockTracer
+          N2N.nstHandshakeTracer   = sayShow >$< ultimateTracer
+        , N2N.nstMuxTracer         = flip asTypeOf nullTracer $ condTracing (muxCond . Mux.wbEvent) $ sayShow >$< ultimateTracer
+        , N2N.nstErrorPolicyTracer = sayShow >$< ultimateTracer
         }
         networkMutableState
         acceptedConnectionsLimit
         socket
-        (application wallclockTracer)
+        (application ultimateTracer)
         nullErrorPolicies
   where
     acceptedConnectionsLimit = N2N.AcceptedConnectionsLimit {
@@ -90,9 +94,8 @@ serve sockAddr application = withIOManager \iocp -> do
         , N2N.acceptedConnectionsDelay     = 0
         }
 
-    wallclockTracer = Tracer $ \s -> do
-        tm <- getCurrentTime
-        putStrLn $ formatTime defaultTimeLocale "%FT%H:%M:%S%4QZ" tm ++ " " ++ s
+    sayShow :: Show a => a -> Json.LogEvent
+    sayShow x = Json.SayEvent $ Json.MkSayEvent { Json.at = Json.TBD, Json.msg = show x }
 
     muxCond = \case
         Mux.TraceRecvStart{} -> True

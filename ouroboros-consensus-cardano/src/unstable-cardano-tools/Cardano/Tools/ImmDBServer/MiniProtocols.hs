@@ -69,6 +69,8 @@ import           Ouroboros.Network.Protocol.Handshake.Version (Version (..))
 import           Ouroboros.Network.Protocol.KeepAlive.Server
                      (keepAliveServerPeer)
 
+import qualified Cardano.Tools.ImmDBServer.Json as Json
+import qualified Cardano.Tools.ImmDBServer.Json.SendRecv as Json
 import           LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoOnlyTestNotify
 import qualified LeiosDemoLogic as LeiosLogic
@@ -93,7 +95,7 @@ immDBServer ::
   -> (SlotNo -> m DiffTime)
   -> (ResourceRegistry m -> m (LeiosNotifyContext m))
   -> m (LeiosLogic.SomeLeiosFetchContext m)
-  -> Tracer m String
+  -> Tracer m Json.LogEvent
   -> Versions NodeToNodeVersion NodeToNodeVersionData
        (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ())
 immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNotifyContext mkLeiosFetchContext tracer = do
@@ -213,24 +215,30 @@ traceMaybe f tr = Tracer $ \x -> case f x of
     Nothing -> pure ()
     Just y -> traceWith tr y
 
-maybeShowSendRecvLF :: N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) -> Maybe String
+maybeShowSendRecvLF :: N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) -> Maybe Json.LogEvent
 maybeShowSendRecvLF = \case
-    N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockRequest{}) -> Just "Recv MsgLeiosBlockRequest"
-    N2N.TraceSendMsg (AnyMessage MsgLeiosBlock{}) -> Just "Send MsgLeiosBlock"
-    N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockTxsRequest{}) -> Just "Recv MsgLeiosBlockTxsRequest"
-    N2N.TraceSendMsg (AnyMessage MsgLeiosBlockTxs{}) -> Just "Send MsgLeiosBlockTxs"
-    N2N.TraceRecvMsg (AnyMessage LF.MsgDone{}) -> Just "Recv MsgDone"
+    N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockRequest{}) -> Just $ f Json.Recv "MsgLeiosBlockRequest"
+    N2N.TraceSendMsg (AnyMessage MsgLeiosBlock{}) -> Just $ f Json.Send "MsgLeiosBlock"
+    N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockTxsRequest{}) -> Just $ f Json.Recv "MsgLeiosBlockTxsRequest"
+    N2N.TraceSendMsg (AnyMessage MsgLeiosBlockTxs{}) -> Just $ f Json.Send "MsgLeiosBlockTxs"
+    N2N.TraceRecvMsg (AnyMessage LF.MsgDone{}) -> Just $ f Json.Recv "MsgDone"
     _ -> Nothing
+  where
+    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.direction = x, Json.msg = y }
 
-maybeShowSendRecvCS :: N2N.TraceSendRecv (CS.ChainSync h p tip) -> Maybe String
+maybeShowSendRecvCS :: N2N.TraceSendRecv (CS.ChainSync h p tip) -> Maybe Json.LogEvent
 maybeShowSendRecvCS = \case
-    N2N.TraceSendMsg (AnyMessage CS.MsgRollForward{}) -> Just "Send MsgRollForward"
+    N2N.TraceSendMsg (AnyMessage CS.MsgRollForward{}) -> Just $ f Json.Send "MsgRollForward"
     _ -> Nothing
+  where
+    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.direction = x, Json.msg = y }
 
-maybeShowSendRecvBF :: N2N.TraceSendRecv (BF.BlockFetch blk p) -> Maybe String
+maybeShowSendRecvBF :: N2N.TraceSendRecv (BF.BlockFetch blk p) -> Maybe Json.LogEvent
 maybeShowSendRecvBF = \case
-    N2N.TraceSendMsg (AnyMessage BF.MsgBlock{}) -> Just "Send MsgBlock"
+    N2N.TraceSendMsg (AnyMessage BF.MsgBlock{}) -> Just $ f Json.Send "MsgBlock"
     _ -> Nothing
+  where
+    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.direction = x, Json.msg = y }
 
 -- | The ChainSync specification requires sending a rollback instruction to the
 -- intersection point right after an intersection has been negotiated. (Opening

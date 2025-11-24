@@ -520,6 +520,9 @@ library unstable-cardano-tools
     Cardano.Tools.GitRev
     Cardano.Tools.Headers
     Cardano.Tools.ImmDBServer.Diffusion
+    Cardano.Tools.ImmDBServer.Json
+    Cardano.Tools.ImmDBServer.Json.Say
+    Cardano.Tools.ImmDBServer.Json.SendRecv
     Cardano.Tools.ImmDBServer.MiniProtocols
 
   other-modules:
