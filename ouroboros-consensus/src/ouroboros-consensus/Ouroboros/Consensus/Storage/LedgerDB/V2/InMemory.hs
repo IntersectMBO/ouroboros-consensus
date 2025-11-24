@@ -323,7 +323,10 @@ loadSnapshot ::
   SomeHasFS m ->
   DiskSnapshot ->
   ExceptT (SnapshotFailure blk) m (LedgerSeq' m blk, RealPoint blk)
-loadSnapshot tracer _rr ccfg fs ds = do
+loadSnapshot tracer _rr ccfg fs@(SomeHasFS hfs) ds = do
+  fileEx <- lift $ doesFileExist hfs (snapshotToDirPath ds)
+  Monad.when fileEx $ throwE $ InitFailureRead ReadSnapshotIsLegacy
+
   snapshotMeta <-
     withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath ds)) $
       loadSnapshotMetadata fs ds
