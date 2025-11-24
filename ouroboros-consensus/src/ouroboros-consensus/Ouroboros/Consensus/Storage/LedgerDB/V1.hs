@@ -852,6 +852,7 @@ newForker h ldbEnv (rk, releaseVar) rr dblog =
             dblogVar <- newTVarIO dblog
             forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
             forkerMVar <- newMVar $ Left (ldbLock ldbEnv, ldbBackingStore ldbEnv, rr)
+            forkerCommitted <- newTVarIO False
             let forkerEnv =
                   ForkerEnv
                     { foeBackingStoreValueHandle = forkerMVar
@@ -859,6 +860,7 @@ newForker h ldbEnv (rk, releaseVar) rr dblog =
                     , foeSwitchVar = ldbChangelog ldbEnv
                     , foeTracer =
                         LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
+                    , foeWasCommitted = forkerCommitted
                     }
             atomically $ do
               -- Note that we add the forkerEnv to the 'ldbForkers' so that an exception
@@ -921,5 +923,7 @@ implForkerClose (LDBHandle varState) forkerKey env = do
             (\m -> Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey m)
   case frk of
     Nothing -> pure ()
-    Just e -> traceWith (foeTracer e) DanglingForkerClosed
+    Just e -> do
+      wc <- readTVarIO (foeWasCommitted e)
+      traceWith (foeTracer e) (ForkerClose $ if wc then ForkerWasCommitted else ForkerWasUncommitted)
   closeForkerEnv env
