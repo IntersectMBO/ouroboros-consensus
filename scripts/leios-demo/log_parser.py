@@ -25,7 +25,7 @@ def filter_log_events(log_path: str, filter_text: str, subfilter_text : str = ""
     log_filename = os.path.basename(log_path)
     print(f"\n--- Analyzing Log: {log_filename} for event: '{filter_text}' ---")
 
-    parsed_data = []
+    records = []
 
     try:
         with open(log_path, "r") as f:
@@ -65,7 +65,7 @@ def filter_log_events(log_path: str, filter_text: str, subfilter_text : str = ""
 
                         # Only add if the core fields were successfully extracted
                         if record["at"] and record["hash"]:
-                            parsed_data.append(record)
+                            records.append(record)
 
                 except json.JSONDecodeError:
                     # Some log lines are not JSON; we simply skip those
@@ -74,7 +74,7 @@ def filter_log_events(log_path: str, filter_text: str, subfilter_text : str = ""
                     print(f"An unexpected error occurred while processing a line in {log_path}", file=sys.stderr)
                     raise
 
-            return parsed_data
+            return records
 
     except Exception as e:
         print(f"An unexpected error occurred while processing {log_path}", file=sys.stderr)
@@ -245,6 +245,160 @@ def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
             file=sys.stderr,
         )
 
+################################################################################
+
+empty_sendrecv = pd.DataFrame(columns=["at", "connection_id", "direction", "msg", "prevCount"])
+
+msgs_SendRecv = set([
+    "MsgLeiosBlockTxsRequest",
+    "MsgLeiosBlockTxs",
+  ])
+
+nss_cardano_node_SendRecv = set(
+    "LeiosFetch.Remote." + direction + "." + msg[8:]
+    for direction in ["Send", "Receive"]
+    for msg in msgs_SendRecv
+  )
+
+
+def load_sendrecv_upstream(log_path: str):
+    """
+    Reads a log file, parses JSON lines, and extracts relevant fields
+    for the upstream node.
+    """
+    log_filename = os.path.basename(log_path)
+    print(f"\n--- Analyzing Log: {log_filename} for Leios SendRecvs ---")
+
+    records = []
+
+    try:
+        with open(log_path, "r") as f:
+            n = 0
+            for line in f:
+                n = n + 1
+                try:
+                    log_entry = json.loads(line)
+                    record = {
+                        "at": log_entry["at"],
+                        "connection_id": log_entry["connectionId"],
+                        "direction": log_entry["direction"],
+                        "msg": str(log_entry["msg"]),
+                        "prevCount": log_entry["prevCount"],
+                    }
+                    if record["msg"] not in msgs_SendRecv:
+                        continue
+                except json.JSONDecodeError:
+                    # Some log lines are not JSON; we simply skip those
+                    continue
+                except KeyError:
+                    # Some JSON lines are not SendRecv; we simply skip those
+                    continue
+                except Exception as e:
+                    print(f"While processing line {n}", file=sys.stderr)
+                    raise
+                records.append(record)
+
+            return pd.DataFrame(records) if records else empty_sendrecv
+
+    except Exception as e:
+        print(f"While processing {log_path}", file=sys.stderr)
+        raise
+
+def load_sendrecv_node(log_path: str):
+    """
+    Reads a log file, parses JSON lines, and extracts relevant fields
+    for a cardano-node.
+    """
+    log_filename = os.path.basename(log_path)
+    print(f"\n--- Analyzing Log: {log_filename} for Leios SendRecvs: ---")
+
+    records = []
+
+    try:
+        with open(log_path, "r") as f:
+            n = 0
+            cntrs = {}
+            for line in f:
+                n = n + 1
+                try:
+                    log_entry = json.loads(line)
+                    if log_entry.get("ns", None) not in nss_cardano_node_SendRecv:
+                        # Some JSON lines are not SendRecv; we simply skip those
+                        continue
+                    connection_id = log_entry["data"]["peer"]["connectionId"]
+                    direction = log_entry["data"]["kind"]
+                    msg = str(log_entry["data"]["msg"]["kind"])
+
+                    prevCount = cntrs.get((direction, msg, connection_id), 0)
+                    cntrs[(direction, msg, connection_id)] = prevCount + 1
+
+                    record = {
+                        "at": log_entry["at"],
+                        "connection_id": connection_id,
+                        "direction": direction,
+                        "msg": msg,
+                        "prevCount": prevCount,
+                    }
+                    if record["msg"] not in msgs_SendRecv:
+                        continue
+                except json.JSONDecodeError:
+                    # Some log lines are not JSON; we simply skip those
+                    continue
+                except Exception as e:
+                    print(f"While processing line {n}", file=sys.stderr)
+                    raise
+                records.append(record)
+
+            return pd.DataFrame(records) if records else empty_sendrecv
+
+    except Exception as e:
+        print(f"While processing {log_path}", file=sys.stderr)
+        raise
+
+noFlip = lambda x: x
+
+def flipDirection(s: str):
+    if "Recv" == s:
+        return "Send"
+    elif "Send" == s:
+        return "Recv"
+    else:
+        raise ValueError
+def flipConnectionId(s: str):
+    l, r = s.split()
+    return r + " " + l
+flips = {
+    "connection_id": lambda x: x.apply(flipConnectionId),
+    "direction": lambda x: x.apply(flipDirection),
+}
+
+def join_sendrecv(left_connId: str, left_id: str, left: pd.DataFrame, rite_id: str, rite: pd.DataFrame):
+    df = pd.merge(
+        left[left["connection_id"] == left_connId],
+        rite[rite["connection_id"] == flipConnectionId(left_connId)].apply(lambda x: flips.get(x.name, noFlip)(x)),
+        suffixes=["_" + left_id, "_" + rite_id],
+        on=["msg", "connection_id", "direction", "prevCount"],
+        how="outer",
+    ).drop(columns=["connection_id"])
+
+    df["sent_at"] = None
+    # df.["sent_at"][df["direction"] == "Send"] = df["at_" + left_id], but avoiding Copy-on-Write pitfalls
+    df.loc[df["direction"] == "Send","sent_at"] = df["at_" + left_id]
+    df.loc[df["direction"] == "Recv","sent_at"] = df["at_" + rite_id]
+
+    df = df.drop(columns=["direction"]).sort_values(by=["sent_at"]).reset_index(drop=True)
+
+    df["latency_ms"] = (abs(
+        pd.to_datetime(df["at_" + rite_id]) - pd.to_datetime(df["at_" + left_id])
+    ).dt.total_seconds() * 1000).round(0).astype('Int64')
+    df = df.drop(columns=["at_" + left_id,"at_" + rite_id])
+
+    return df
+
+################################################################################
+
+def subscriptOrNone(xs, i):
+    return xs[i] if i < len(xs) else None
 
 if __name__ == "__main__":
     # --- Argument Parsing ---
@@ -252,23 +406,20 @@ if __name__ == "__main__":
         initial_slot_str = sys.argv[1]
         initial_time_str = sys.argv[2]
         eb_schedule_path = sys.argv[3]
-        log_path_node0 = sys.argv[4]
-        log_path_downstream = sys.argv[5]
-    except Exception:
+        log_path_upstream = sys.argv[4]
+        log_path_node0 = sys.argv[5]
+        log_path_downstream = sys.argv[6]
+        plot_output_file = subscriptOrNone(sys.argv, 7)
+    except IndexError:
         print(
-            "Configuration Error: Please provide initial-slot, initial-time, EB sending schedule, two log files, and optionally an output plot file.",
+            "Configuration Error: Please provide initial-slot, initial-time, EB sending schedule, three log files, and optionally an output plot file.",
             file=sys.stderr,
         )
         print(
-            "Example Usage: python log_parser.py <initial-slot> <initial-time> demoSchedule.json /path/to/node0.log /path/to/downstream.log [output_plot.png]",
+            "Example Usage: python log_parser.py <initial-slot> <initial-time> demoSchedule.json /path/to/upstream.log /path/to/node0.log /path/to/downstream.log [output_plot.png]",
             file=sys.stderr,
         )
         sys.exit(1)
-
-    try:
-        plot_output_file = sys.argv[6]
-    except Exception:
-        plot_output_file = None
 
     try:
         initial_slot = int(initial_slot_str)
@@ -383,6 +534,7 @@ if __name__ == "__main__":
     ]
 
     pd.set_option('display.max_columns', None)
+    pd.set_option('display.max_rows', None)
     pd.set_option('display.expand_frame_repr', False)
     print(df_merged[display_columns])
 
@@ -436,7 +588,6 @@ if __name__ == "__main__":
         "latency_ms_node0",
         "latency_ms_downstream",
     ]
-
     print(df_leios_block_merged[leios_display_columns])
 
     df_leios_blocktxs_node0 = load_leios_block_arrivals(df_schedule, log_path_node0, "node0", LEIOS_BLOCKTXS_EVENT_SUBFILTER)
@@ -465,3 +616,32 @@ if __name__ == "__main__":
     ]
 
     print(df_leios_blocktxs_merged[leios_display_columns])
+
+    # ---------------------------------------- and finally for each BlockTxs mini protocol message
+
+    df_sendrecv_upstream = load_sendrecv_upstream(log_path_upstream)
+    df_sendrecv_node0 = load_sendrecv_node(log_path_node0)
+    df_sendrecv_downstream = load_sendrecv_node(log_path_downstream)
+
+    df_sendrecv_upstream_node0 = join_sendrecv(
+        df_sendrecv_upstream["connection_id"][0],
+        "upstream", df_sendrecv_upstream,
+        "node0", df_sendrecv_node0,
+    )
+    df_sendrecv_node0_downstream = join_sendrecv(
+        flipConnectionId(df_sendrecv_downstream["connection_id"][0]),
+        "node0", df_sendrecv_node0,
+        "downstream", df_sendrecv_downstream,
+    )
+
+    # Which columns to display
+    sendrecv_display_columns = [
+        "sent_at",
+        "msg",
+        "prevCount",
+        "latency_ms",
+    ]
+    print("\n--- Extracted and Merged Data Summary for MsgLeiosBlockTxs{,Request} between upstream and node0 ---")
+    print(df_sendrecv_upstream_node0[sendrecv_display_columns])
+    print("\n--- Extracted and Merged Data Summary for MsgLeiosBlockTxs{,Request} between node0 and downstream ---")
+    print(df_sendrecv_node0_downstream[sendrecv_display_columns])

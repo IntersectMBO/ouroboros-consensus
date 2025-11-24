@@ -311,7 +311,7 @@ paste \
 ANALYSIS_CMD="python3 ouroboros-consensus/scripts/leios-demo/log_parser.py
         $REF_SLOT $ONSET_OF_REF_SLOT
         ${LEIOS_SCHEDULE}
-        $TMP_DIR/node0.log $TMP_DIR/downstream.log
+        $TMP_DIR/upstream.log $TMP_DIR/node0.log $TMP_DIR/downstream.log
         scatter_plot.png"
 echo "analysis: $ANALYSIS_CMD"
 $ANALYSIS_CMD
