@@ -85,6 +85,7 @@ immDBServer ::
      , HasHeader blk
      , ShowProxy blk
      , SerialiseNodeToNodeConstraints blk
+     , Show addr
      , SupportedNetworkProtocolVersion blk
      )
   => CodecConfig blk
@@ -172,15 +173,15 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
                 runPeer nullTracer cKeepAliveCodec channel
                       $ keepAliveServerPeer keepAliveServer
             chainSyncProt  =
-                MiniProtocolCb $ \_ctx channel ->
+                MiniProtocolCb $ \ctx channel ->
                 withRegistry
-              $ runPeer (traceMaybe maybeShowSendRecvCS tracer) cChainSyncCodecSerialised channel
+              $ runPeer (traceMaybe (maybeShowSendRecvCS ctx) tracer) cChainSyncCodecSerialised channel
               . chainSyncServerPeer
               . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint getSlotDelay
             blockFetchProt =
-                MiniProtocolCb $ \_ctx channel ->
+                MiniProtocolCb $ \ctx channel ->
                 withRegistry
-              $ runPeer (traceMaybe maybeShowSendRecvBF tracer) cBlockFetchCodecSerialised channel
+              $ runPeer (traceMaybe (maybeShowSendRecvBF ctx) tracer) cBlockFetchCodecSerialised channel
               . blockFetchServerPeer
               . blockFetchServer immDB ChainDB.getSerialisedBlockWithPoint
             txSubmissionProt =
@@ -197,9 +198,9 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
                         (p, Nothing) -> MsgLeiosBlockTxsOffer p
                     )
             leiosFetchProt =
-                MiniProtocolCb $ \_ctx channel -> id
+                MiniProtocolCb $ \ctx channel -> id
               $ mkLeiosFetchContext >>= \(LeiosLogic.MkSomeLeiosFetchContext leiosContext) -> id
-              $ runPeer (traceMaybe maybeShowSendRecvLF tracer) cLeiosFetchCodec channel
+              $ runPeer (traceMaybe (maybeShowSendRecvLF ctx) tracer) cLeiosFetchCodec channel
               $ leiosFetchServerPeer
               $ pure (LeiosLogic.leiosFetchHandler nullTracer leiosContext)
 
@@ -210,13 +211,19 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
           , miniProtocolStart
           }
 
+responderContextToConnectionIdString :: Show addr => N2N.ResponderContext addr -> String
+responderContextToConnectionIdString ctx =
+    show (N2N.localAddress connId) ++ " " ++ show (N2N.remoteAddress connId)
+  where
+    connId = N2N.rcConnectionId ctx
+
 traceMaybe :: Monad m => (a -> Maybe b) -> Tracer m b -> Tracer m a
 traceMaybe f tr = Tracer $ \x -> case f x of
     Nothing -> pure ()
     Just y -> traceWith tr y
 
-maybeShowSendRecvLF :: N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) -> Maybe Json.LogEvent
-maybeShowSendRecvLF = \case
+maybeShowSendRecvLF :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) -> Maybe Json.LogEvent
+maybeShowSendRecvLF ctx = \case
     N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockRequest{}) -> Just $ f Json.Recv "MsgLeiosBlockRequest"
     N2N.TraceSendMsg (AnyMessage MsgLeiosBlock{}) -> Just $ f Json.Send "MsgLeiosBlock"
     N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockTxsRequest{}) -> Just $ f Json.Recv "MsgLeiosBlockTxsRequest"
@@ -224,21 +231,21 @@ maybeShowSendRecvLF = \case
     N2N.TraceRecvMsg (AnyMessage LF.MsgDone{}) -> Just $ f Json.Recv "MsgDone"
     _ -> Nothing
   where
-    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.direction = x, Json.msg = y }
+    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.msg = y }
 
-maybeShowSendRecvCS :: N2N.TraceSendRecv (CS.ChainSync h p tip) -> Maybe Json.LogEvent
-maybeShowSendRecvCS = \case
+maybeShowSendRecvCS :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (CS.ChainSync h p tip) -> Maybe Json.LogEvent
+maybeShowSendRecvCS ctx = \case
     N2N.TraceSendMsg (AnyMessage CS.MsgRollForward{}) -> Just $ f Json.Send "MsgRollForward"
     _ -> Nothing
   where
-    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.direction = x, Json.msg = y }
+    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.msg = y }
 
-maybeShowSendRecvBF :: N2N.TraceSendRecv (BF.BlockFetch blk p) -> Maybe Json.LogEvent
-maybeShowSendRecvBF = \case
+maybeShowSendRecvBF :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (BF.BlockFetch blk p) -> Maybe Json.LogEvent
+maybeShowSendRecvBF ctx = \case
     N2N.TraceSendMsg (AnyMessage BF.MsgBlock{}) -> Just $ f Json.Send "MsgBlock"
     _ -> Nothing
   where
-    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.direction = x, Json.msg = y }
+    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.msg = y }
 
 -- | The ChainSync specification requires sending a rollback instruction to the
 -- intersection point right after an intersection has been negotiated. (Opening
