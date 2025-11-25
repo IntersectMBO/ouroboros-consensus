@@ -27,7 +27,6 @@ const config = {
   projectName: 'ouroboros-consensus',
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'warn',
 
   // Even if you don't use internalization, you can use this field to set useful
   // metadata like html lang. For example, if your site is Chinese, you may want
@@ -42,6 +41,9 @@ const config = {
       // We don't want to use MDX, as this requires escaping `<` and `{` symbols, which is quite inconvenient.
       // See: https://docusaurus.io/docs/markdown-features#mdx-vs-commonmark
     format: 'detect',
+    hooks: {
+        onBrokenMarkdownLinks: 'warn',
+    },
   },
 
   themes: ['@docusaurus/theme-mermaid'],
