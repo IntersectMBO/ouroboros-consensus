@@ -734,7 +734,9 @@ implForkerClose (LDBHandle varState) forkerKey forkerEnv = do
 
   case frk of
     Nothing -> pure ()
-    Just e -> traceWith (foeTracer e) DanglingForkerClosed
+    Just e -> do
+      wc <- readTVarIO (foeWasCommitted e)
+      traceWith (foeTracer e) (ForkerClose $ if wc then ForkerWasCommitted else ForkerWasUncommitted)
 
   closeForkerEnv forkerEnv
 
@@ -757,6 +759,7 @@ newForker h ldbEnv rr (rk, st) = do
   traceWith tr ForkerOpen
   lseqVar <- newTVarIO . LedgerSeq . AS.Empty $ st
   foeCleanup <- newTVarIO $ pure ()
+  forkerCommitted <- newTVarIO False
   let forkerEnv =
         ForkerEnv
           { foeLedgerSeq = lseqVar
@@ -768,6 +771,7 @@ newForker h ldbEnv rr (rk, st) = do
           , foeCleanup
           , foeLedgerDbLock = ldbOpenHandlesLock ldbEnv
           , foeLedgerDbToClose = ldbToClose ldbEnv
+          , foeWasCommitted = forkerCommitted
           }
   atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
   pure $

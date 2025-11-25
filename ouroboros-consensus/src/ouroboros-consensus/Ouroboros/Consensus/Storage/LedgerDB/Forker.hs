@@ -39,6 +39,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
     -- ** Tracing
   , TraceForkerEvent (..)
   , TraceForkerEventWithKey (..)
+  , ForkerWasCommitted (..)
 
     -- * Validation
   , AnnLedgerError (..)
@@ -81,6 +82,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
@@ -663,14 +665,14 @@ data TraceForkerEventWithKey
 
 data TraceForkerEvent
   = ForkerOpen
-  | ForkerCloseUncommitted
-  | ForkerCloseCommitted
-  | ForkerReadTablesStart
-  | ForkerReadTablesEnd
-  | ForkerRangeReadTablesStart
-  | ForkerRangeReadTablesEnd
+  | ForkerReadTables EnclosingTimed
+  | ForkerRangeReadTables EnclosingTimed
   | ForkerReadStatistics
-  | ForkerPushStart
-  | ForkerPushEnd
-  | DanglingForkerClosed
+  | ForkerPush EnclosingTimed
+  | ForkerClose ForkerWasCommitted
   deriving (Show, Eq)
+
+data ForkerWasCommitted
+  = ForkerWasCommitted
+  | ForkerWasUncommitted
+  deriving (Eq, Show)

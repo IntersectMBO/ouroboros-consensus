@@ -179,6 +179,39 @@ library
     validation,
     vector-map,
 
+library snapshot-conversion
+  import: common-lib
+  visibility: public
+  hs-source-dirs: src/snapshot-conversion
+  other-modules:
+    Ouroboros.Consensus.Cardano.StreamingLedgerTables
+  exposed-modules:
+    Ouroboros.Consensus.Cardano.SnapshotConversion
+  build-depends:
+    ansi-terminal,
+    base,
+    cardano-ledger-binary,
+    cardano-ledger-core,
+    cardano-ledger-shelley,
+    cborg,
+    directory,
+    filepath,
+    fs-api,
+    microlens,
+    mtl,
+    optparse-applicative,
+    ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lmdb, ouroboros-consensus-lsm},
+    ouroboros-consensus-cardano,
+    random,
+    resource-registry,
+    serialise,
+    sop-core,
+    sop-extras,
+    strict-sop-core,
+    terminal-progress-bar,
+    text,
+
+
 library unstable-byronspec
   import: common-lib
   visibility: public
@@ -695,35 +728,15 @@ executable immdb-server
 executable snapshot-converter
   import: common-exe
   hs-source-dirs: app
-  other-modules:
-    Ouroboros.Consensus.Cardano.StreamingLedgerTables
 
   main-is: snapshot-converter.hs
   build-depends:
-    ansi-terminal,
     base,
     cardano-crypto-class,
-    cardano-ledger-binary,
-    cardano-ledger-core,
-    cardano-ledger-shelley,
-    cborg,
-    directory,
-    filepath,
-    fs-api,
-    microlens,
     mtl,
     optparse-applicative,
-    ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lmdb, ouroboros-consensus-lsm},
-    ouroboros-consensus-cardano,
-    ouroboros-consensus-cardano:unstable-cardano-tools,
-    random,
-    resource-registry,
-    serialise,
-    sop-core,
-    sop-extras,
-    strict-sop-core,
-    terminal-progress-bar,
-    text,
+    ouroboros-consensus,
+    ouroboros-consensus-cardano:{unstable-cardano-tools, ouroboros-consensus-cardano, snapshot-conversion},
     with-utf8,
 
   other-modules:
