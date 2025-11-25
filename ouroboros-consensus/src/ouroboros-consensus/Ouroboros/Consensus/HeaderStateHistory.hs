@@ -256,9 +256,10 @@ validateHeader cfg lv hdr slotTime history = do
 -- PRECONDITION: the blocks in the chain are valid.
 fromChain ::
   forall blk.
-  ( ApplyBlock (ExtLedgerState blk) blk
+  ( ApplyBlock ExtLedgerState blk
   , HasHardForkHistory blk
   , HasAnnTip blk
+  , GetBlockKeySets blk
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state

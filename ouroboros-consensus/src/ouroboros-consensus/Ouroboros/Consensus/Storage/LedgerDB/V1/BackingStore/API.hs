@@ -6,6 +6,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 
 -- | The 'BackingStore' is the component of the LedgerDB V1 implementation that
 -- stores a key-value map with the 'LedgerTable's at a specific slot on the
@@ -80,10 +81,10 @@ newtype LiveLMDBFS m = LiveLMDBFS {liveLMDBFs :: SomeHasFS m}
 
 -- | A container for differences that are inteded to be flushed to a
 -- 'BackingStore'
-data DiffsToFlush l = DiffsToFlush
-  { toFlushDiffs :: !(LedgerTables l DiffMK)
+data DiffsToFlush l blk = DiffsToFlush
+  { toFlushDiffs :: !(LedgerTables blk DiffMK)
   -- ^ The set of differences that should be flushed into the 'BackingStore'
-  , toFlushState :: !(l EmptyMK, l EmptyMK)
+  , toFlushState :: !(l blk EmptyMK, l blk EmptyMK)
   -- ^ The last flushed state and the newly flushed state. This will be the
   -- immutable tip.
   , toFlushSlot :: !SlotNo
@@ -130,22 +131,25 @@ type LedgerBackingStore m l =
 
 type BackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)
 
-type family InitHint values :: Type
-type instance InitHint (LedgerTables l ValuesMK) = l EmptyMK
+type InitHint :: LedgerStateKind -> Type -> Type
+type family InitHint l values :: Type
+type instance InitHint l (LedgerTables blk ValuesMK) = l EmptyMK
 
-type family WriteHint diffs :: Type
-type instance WriteHint (LedgerTables l DiffMK) = (l EmptyMK, l EmptyMK)
+type WriteHint :: LedgerStateKind -> Type -> Type
+type family WriteHint l diffs :: Type
+type instance WriteHint l (LedgerTables blk DiffMK) = (l EmptyMK, l EmptyMK)
 
-type family ReadHint values :: Type
-type instance ReadHint (LedgerTables l ValuesMK) = l EmptyMK
+type ReadHint :: LedgerStateKind -> Type -> Type
+type family ReadHint l values :: Type
+type instance ReadHint l (LedgerTables blk ValuesMK) = l EmptyMK
 
 -- | Choose how to initialize the backing store
-data InitFrom values
+data InitFrom l values
   = -- | Initialize from a set of values, at the given slot.
-    InitFromValues !(WithOrigin SlotNo) !(InitHint values) !values
+    InitFromValues !(WithOrigin SlotNo) !(InitHint l values) !values
   | -- | Use a snapshot at the given path to overwrite the set of values in the
     -- opened database.
-    InitFromCopy !(InitHint values) !FS.FsPath
+    InitFromCopy !(InitHint l values) !FS.FsPath
 
 {-------------------------------------------------------------------------------
   Value handles

@@ -77,6 +77,7 @@ import System.FS.CRC (CRC)
 import Prelude hiding (read)
 import Data.SOP.Strict
 import Data.SOP.BasicFunctors
+import Ouroboros.Consensus.Ledger.LedgerStateType
 
 {-------------------------------------------------------------------------------
   LedgerTablesHandles
@@ -98,10 +99,10 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- When applying diffs to a table, we will first duplicate the handle, then
   -- apply the diffs in the copy. It is expected that duplicating the handle
   -- takes constant time.
-  , read :: !(l EmptyMK -> LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  , read :: !(l EmptyMK -> LedgerTables (LBlock l) KeysMK -> m (LedgerTables (LBlock l) ValuesMK))
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
-  , readRange :: !(l EmptyMK -> (Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  , readRange :: !(l EmptyMK -> (Maybe (TxIn (LBlock l)), Int) -> m (LedgerTables (LBlock l) ValuesMK, Maybe (TxIn (LBlock l))))
   -- ^ Read the requested number of values, possibly starting from the given
   -- key, from the tables, and deserialize them as if they were from the same
   -- era as the given ledger state.
@@ -116,7 +117,7 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- back into the next iteration of the range read. If the function returns
   -- Nothing, it means the read returned no results, or in other words, we
   -- reached the end of the ledger tables.
-  , readAll :: !(l EmptyMK -> m (LedgerTables l ValuesMK))
+  , readAll :: !(l EmptyMK -> m (LedgerTables (LBlock l) ValuesMK))
   -- ^ Costly read all operation, not to be used in Consensus but only in
   -- snapshot-converter executable. The values will be read as if they were from
   -- the same era as the given ledger state.
@@ -133,7 +134,7 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- encoding of the values based on the current era.
   --
   -- It returns a CRC only on backends that support it, as the InMemory backend.
-  , tablesSize :: !(m (Maybe (NP (K Int) (TablesForBlock l))))
+  , tablesSize :: !(m (Maybe (NP (K Int) (TablesForBlock (LBlock l)))))
   -- ^ Consult the size of the ledger tables in the database. This will return
   -- 'Nothing' in backends that do not support this operation.
   }
@@ -235,25 +236,25 @@ closeLedgerSeq (LedgerSeq l) =
 --
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
-  (IOLike m, ApplyBlock l blk) =>
+  (IOLike m, ApplyBlock l blk, GetBlockKeySets blk) =>
   ResourceRegistry m ->
-  LedgerDbCfg l ->
+  LedgerDbCfg (l blk) ->
   blk ->
-  LedgerSeq m l ->
-  m (m (), LedgerSeq m l)
+  LedgerSeq m (l blk) ->
+  m (m (), LedgerSeq m (l blk))
 reapplyThenPush rr cfg ap db =
   (\current' -> pruneToImmTipOnly $ extend current' db)
     <$> reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap rr db
 
 reapplyBlock ::
   forall m l blk.
-  (ApplyBlock l blk, IOLike m) =>
+  (ApplyBlock l blk, IOLike m, GetBlockKeySets blk) =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   blk ->
   ResourceRegistry m ->
-  LedgerSeq m l ->
-  m (StateRef m l)
+  LedgerSeq m (l blk) ->
+  m (StateRef m (l blk))
 reapplyBlock evs cfg b rr db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db

@@ -1,6 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -49,10 +48,11 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
   , LedgerTableConstraintsMK
 
     -- * Casting
-  , SameTablesTypes
-  , SameTypesAsMyself
-  , CanCastLedgerTables (..)
-  , CanCastTables (..)
+
+  -- , SameTablesTypes
+  -- , SameTypesAsMyself
+  -- , CanCastLedgerTables (..)
+  -- , CanCastTables (..)
   , Key
   , Value
   , WrapKey (..)
@@ -60,9 +60,10 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
   , AllKeys
   , AllValues
   , AllTables
+  -- , defaultCastLedgerTables
+  -- , defaultCastTable
   ) where
 
-import Data.Coerce
 import Data.Kind (Type)
 import Data.List.Singletons hiding (All)
 import Data.SOP.Constraint
@@ -72,9 +73,9 @@ import Data.Type.Equality (TestEquality (testEquality), (:~:) (Refl))
 import GHC.Generics (Generic)
 import Lens.Micro
 import NoThunks.Class
-import Ouroboros.Consensus.Ticked (Ticked)
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.TypeLevel
+import Ouroboros.Consensus.Ledger.LedgerStateType
 
 {-------------------------------------------------------------------------------
   Kinds
@@ -120,69 +121,58 @@ instance TestEquality STAG where
 ------------------------------------------------------------
 
 -- | The table keys and values for each table.
-type TableKV :: TAG -> LedgerStateKind -> (Type, Type)
-type family TableKV tag l where
-  TableKV UTxOTable l = '(TxIn l, TxOut l)
-  TableKV InstantStakeTable l = '(Credential l, Coin l)
+type TableKV :: TAG -> Type -> (Type, Type)
+type family TableKV tag blk where
+  TableKV UTxOTable blk = '(TxIn blk, TxOut blk)
+  TableKV InstantStakeTable blk = '(Credential blk, Coin blk)
 
-class All (Compose c (WrapKey l)) (TablesForBlock l) => AllKeys c l
-instance All (Compose c (WrapKey l)) (TablesForBlock l) => AllKeys c l
-class All (Compose c (WrapValue l)) (TablesForBlock l) => AllValues c l
-instance All (Compose c (WrapValue l)) (TablesForBlock l) => AllValues c l
+class All (Compose c (WrapKey blk)) (TablesForBlock blk) => AllKeys c blk
+instance All (Compose c (WrapKey blk)) (TablesForBlock blk) => AllKeys c blk
+class All (Compose c (WrapValue blk)) (TablesForBlock blk) => AllValues c blk
+instance All (Compose c (WrapValue blk)) (TablesForBlock blk) => AllValues c blk
 
-type family Key l tag where
-  Key l tag = Fst (TableKV tag l)
+type family Key blk tag where
+  Key blk tag = Fst (TableKV tag blk)
 
-newtype WrapKey l tag = WrapKey (Key l tag)
+newtype WrapKey blk tag = WrapKey (Key blk tag)
 
-deriving instance NoThunks (Fst (TableKV tag l)) => NoThunks (WrapKey l tag)
-deriving instance Show (Fst (TableKV tag l)) => Show (WrapKey l tag)
-deriving instance Eq (Fst (TableKV tag l)) => Eq (WrapKey l tag)
+deriving instance NoThunks (Fst (TableKV tag blk)) => NoThunks (WrapKey blk tag)
+deriving instance Show (Fst (TableKV tag blk)) => Show (WrapKey blk tag)
+deriving instance Eq (Fst (TableKV tag blk)) => Eq (WrapKey blk tag)
 
-newtype WrapValue l tag = WrapValue (Value l tag)
+type family Value blk tag where
+  Value blk tag = Snd (TableKV tag blk)
 
-deriving instance NoThunks (Snd (TableKV tag l)) => NoThunks (WrapValue l tag)
-deriving instance Show (Snd (TableKV tag l)) => Show (WrapValue l tag)
-deriving instance Eq (Snd (TableKV tag l)) => Eq (WrapValue l tag)
+newtype WrapValue blk tag = WrapValue (Value blk tag)
 
-type family Value l tag where
-  Value l tag = Snd (TableKV tag l)
+deriving instance NoThunks (Snd (TableKV tag blk)) => NoThunks (WrapValue blk tag)
+deriving instance Show (Snd (TableKV tag blk)) => Show (WrapValue blk tag)
+deriving instance Eq (Snd (TableKV tag blk)) => Eq (WrapValue blk tag)
 
-type Credential :: LedgerStateKind -> Type
-type family Credential l
+type Credential :: Type -> Type
+type family Credential blk
 
-type Coin :: LedgerStateKind -> Type
-type family Coin l
+type Coin :: Type -> Type
+type family Coin blk
 
-type TxIn :: LedgerStateKind -> Type
-type family TxIn l
+type TxIn :: Type -> Type
+type family TxIn blk
 
-type TxOut :: LedgerStateKind -> Type
-type family TxOut l
-
-type instance TxIn (LedgerTables l) = TxIn l
-type instance TxOut (LedgerTables l) = TxOut l
-type instance Credential (LedgerTables l) = Credential l
-type instance Coin (LedgerTables l) = Coin l
-type instance TablesForBlock (LedgerTables l) = TablesForBlock l
-
-type instance TxIn (Ticked l) = TxIn l
-type instance TxOut (Ticked l) = TxOut l
-type instance Credential (Ticked l) = Credential l
-type instance Coin (Ticked l) = Coin l
-type instance TablesForBlock (Ticked l) = TablesForBlock l
+type TxOut :: Type -> Type
+type family TxOut blk
 
 {-------------------------------------------------------------------------------
   Ledger tables
 -------------------------------------------------------------------------------}
 
 -- | A table value
-type Table :: KV -> LedgerStateKind -> TAG -> Type
-newtype Table mk l tag = Table {getTable :: mk (Fst (TableKV tag l)) (Snd (TableKV tag l))} deriving Generic
+type Table :: KV -> Type -> TAG -> Type
+newtype Table mk blk tag = Table {getTable :: mk (Fst (TableKV tag blk)) (Snd (TableKV tag blk))}
+  deriving Generic
 
-deriving instance NoThunks (mk (Key l tag) (Value l tag)) => NoThunks (Table mk l tag)
-deriving instance Show (mk (Key l tag) (Value l tag)) => Show (Table mk l tag)
-deriving instance Eq (mk (Key l tag) (Value l tag)) => Eq (Table mk l tag)
+deriving instance NoThunks (mk (Key blk tag) (Value blk tag)) => NoThunks (Table mk blk tag)
+deriving instance Show (mk (Key blk tag) (Value blk tag)) => Show (Table mk blk tag)
+deriving instance Eq (mk (Key blk tag) (Value blk tag)) => Eq (Table mk blk tag)
 
 class All (Compose c (Table mk l)) (TablesForBlock l) => AllTables c mk l
 instance All (Compose c (Table mk l)) (TablesForBlock l) => AllTables c mk l
@@ -194,8 +184,8 @@ instance All (Compose c (Table mk l)) (TablesForBlock l) => AllTables c mk l
 -- > TablesForBlock (LedgerState Shelley) = '[UTxOTable]
 --
 -- > TablesForBlock (LedgerState Conway) = '[UTxOTable, InstantStakeTable]
-type TablesForBlock :: LedgerStateKind -> [TAG]
-type family TablesForBlock l
+type TablesForBlock :: Type -> [TAG]
+type family TablesForBlock blk
 
 -- | The Ledger Tables represent the portion of the data on disk that has been
 -- pulled from disk and attached to the in-memory Ledger State or that will
@@ -216,31 +206,21 @@ type family TablesForBlock l
 --
 -- The @mk@ can be instantiated to anything that is map-like, i.e. that expects
 -- two type parameters, the key and the value.
-type LedgerTables :: LedgerStateKind -> MapKind -> Type
-newtype LedgerTables l mk = LedgerTables
-  { getLedgerTables :: NP (Table mk l) (TablesForBlock l)
+type LedgerTables :: Type -> MapKind -> Type
+newtype LedgerTables blk mk = LedgerTables
+  { getLedgerTables :: NP (Table mk blk) (TablesForBlock blk)
   }
   deriving Generic
 
-{-
-
-Byron -> Nil
-
-Shelley -> Table mk UTxOTable Shelley :* Nil
-
-Conway -> Table mk UTxOTable Conway :* Table mk InstantStakeTable Conway :* Nil
-
--}
-
 deriving newtype instance
-  AllTables NoThunks mk l =>
-  NoThunks (LedgerTables l mk)
+  AllTables NoThunks mk blk =>
+  NoThunks (LedgerTables blk mk)
 deriving newtype instance
-  AllTables Show mk l =>
-  Show (LedgerTables l mk)
+  AllTables Show mk blk =>
+  Show (LedgerTables blk mk)
 deriving newtype instance
-  AllTables Eq mk l =>
-  Eq (LedgerTables l mk)
+  AllTables Eq mk blk =>
+  Eq (LedgerTables blk mk)
 
 ------------------------------------------------------------
 -- Type proof of inclusion
@@ -286,11 +266,9 @@ setterForSing sxs sx =
 
 -- | Auxiliary information for @IndexedMemPack@. @mk@ is there only because the
 -- last instance needs to be a full type.
-type MemPackIdx :: LedgerStateKind -> MapKind -> Type
+type MemPackIdx :: Type -> MapKind -> Type
 type family MemPackIdx l mk where
-  MemPackIdx (LedgerTables l) mk = MemPackIdx l mk
-  MemPackIdx (Ticked l) mk = MemPackIdx l mk
-  MemPackIdx l mk = l mk
+  MemPackIdx blk mk = LedgerState blk mk
 
 --------------------------------------------------------------------------------
 -- Auxiliary classes
@@ -301,73 +279,23 @@ type family MemPackIdx l mk where
 ------------------------------------------------------------
 
 class
-  ( Ord (Fst (TableKV tag l))
-  , MemPack (Fst (TableKV tag l))
-  , Eq (Snd (TableKV tag l))
-  , IndexedMemPack (MemPackIdx l mk) (Snd (TableKV tag l))
+  ( Ord (Fst (TableKV tag blk))
+  , MemPack (Fst (TableKV tag blk))
+  , Eq (Snd (TableKV tag blk))
+  , IndexedMemPack (MemPackIdx blk mk) (Snd (TableKV tag blk))
   ) =>
-  KVConstraintsMK l mk tag
+  KVConstraintsMK blk mk tag
 instance
-  ( Ord (Fst (TableKV tag l))
-  , MemPack (Fst (TableKV tag l))
-  , Eq (Snd (TableKV tag l))
-  , IndexedMemPack (MemPackIdx l mk) (Snd (TableKV tag l))
+  ( Ord (Fst (TableKV tag blk))
+  , MemPack (Fst (TableKV tag blk))
+  , Eq (Snd (TableKV tag blk))
+  , IndexedMemPack (MemPackIdx blk mk) (Snd (TableKV tag blk))
   ) =>
-  KVConstraintsMK l mk tag
+  KVConstraintsMK blk mk tag
 
 class
-  ( SingI (TablesForBlock l)
-  , All (KVConstraintsMK l mk) (TablesForBlock l)
-  ) =>
-  LedgerTableConstraintsMK l mk
+  (SingI (TablesForBlock blk), All (KVConstraintsMK blk mk) (TablesForBlock blk)) =>
+  LedgerTableConstraintsMK blk mk
 instance
-  ( SingI (TablesForBlock l)
-  , All (KVConstraintsMK l mk) (TablesForBlock l)
-  ) =>
-  LedgerTableConstraintsMK l mk
-
-class SameTablesTypes l l mk => SameTypesAsMyself l mk
-instance SameTablesTypes l l mk => SameTypesAsMyself l mk
-
-------------------------------------------------------------
--- Two l
-------------------------------------------------------------
-
-class
-  ( SameShapeAs (TablesForBlock l) (TablesForBlock l')
-  , AllZipF
-      (LiftedCoercible (Table mk l) (Table mk l'))
-      (TablesForBlock l)
-      (TablesForBlock l')
-  , SListI (TablesForBlock l)
-  , SListI (TablesForBlock l')
-  , TablesForBlock l ~ TablesForBlock l'
-  ) =>
-  SameTablesTypes l l' mk
-instance
-  ( SameShapeAs (TablesForBlock l) (TablesForBlock l')
-  , AllZipF
-      (LiftedCoercible (Table mk l) (Table mk l'))
-      (TablesForBlock l)
-      (TablesForBlock l')
-  , SListI (TablesForBlock l)
-  , SListI (TablesForBlock l')
-  , TablesForBlock l ~ TablesForBlock l'
-  ) =>
-  SameTablesTypes l l' mk
-
-class
-  (SameTablesTypes l l' mk, All (CanCastTables l l') (TablesForBlock l)) =>
-  CanCastLedgerTables l l' mk
-  where
-  castLedgerTables ::
-    LedgerTables l mk ->
-    LedgerTables l' mk
-  castLedgerTables (LedgerTables l1) = LedgerTables (hcoerce l1)
-
-class (forall mk. SameTablesTypes l l' mk) => CanCastTables l l' tag where
-  castTable :: Table mk l tag -> Table mk l' tag
-  default castTable :: TableKV tag l ~ TableKV tag l' => Table mk l tag -> Table mk l' tag
-  castTable = coerce
-
-instance (SameTypesAsMyself l mk, All (CanCastTables l l) (TablesForBlock l)) => CanCastLedgerTables l l mk
+  (SingI (TablesForBlock blk), All (KVConstraintsMK blk mk) (TablesForBlock blk)) =>
+  LedgerTableConstraintsMK blk mk

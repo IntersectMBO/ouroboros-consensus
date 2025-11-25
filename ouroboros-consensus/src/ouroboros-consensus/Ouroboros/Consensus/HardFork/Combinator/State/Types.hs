@@ -166,17 +166,17 @@ newtype TranslateLedgerState x y = TranslateLedgerState
 
 -- | Transate a 'LedgerTables' across an era transition.
 data TranslateLedgerTables x y = TranslateLedgerTables
-  { translateTxInWith :: !(TxIn (LedgerState x) -> TxIn (LedgerState y))
+  { translateTxInWith :: !(TxIn x -> TxIn y)
   -- ^ Translate a 'TxIn' across an era transition.
   --
   -- See 'translateLedgerTablesWith'.
-  , translateTxOutWith :: !(TxOut (LedgerState x) -> TxOut (LedgerState y))
+  , translateTxOutWith :: !(TxOut x -> TxOut y)
   -- ^ Translate a 'TxOut' across an era transition.
   --
   -- See 'translateLedgerTablesWith'.
   }
 
-newtype TranslateTxOut x y = TranslateTxOut (TxOut (LedgerState x) -> TxOut (LedgerState y))
+newtype TranslateTxOut x y = TranslateTxOut (TxOut x -> TxOut y)
 
 -- | Translate a 'LedgerTables' across an era transition.
 --
@@ -203,10 +203,10 @@ newtype TranslateTxOut x y = TranslateTxOut (TxOut (LedgerState x) -> TxOut (Led
 -- previous eras, so it will be called only when crossing era boundaries,
 -- therefore the translation won't be equivalent to 'id'.
 translateLedgerTablesWith ::
-  Ord (TxIn (LedgerState y)) =>
+  Ord (TxIn y) =>
   TranslateLedgerTables x y ->
-  LedgerTables (LedgerState x) DiffMK ->
-  LedgerTables (LedgerState y) DiffMK
+  LedgerTables x DiffMK ->
+  LedgerTables y DiffMK
 translateLedgerTablesWith f =
   LedgerTables
     . DiffMK
