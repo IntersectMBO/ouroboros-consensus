@@ -171,7 +171,7 @@ data Mempool m blk = Mempool
   , getSnapshotFor ::
       SlotNo ->
       TickedLedgerState blk DiffMK ->
-      (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+      (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
       m (MempoolSnapshot blk)
   -- ^ Get a snapshot of the mempool state that is valid with respect to
   -- the given ledger state

@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -46,6 +47,7 @@ import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Ledger.LedgerStateType
 
 -- | Generalized transaction
 --
@@ -210,7 +212,7 @@ class
   -- ledger state. This is implemented in the Ledger. An example of non-obvious
   -- needed keys in Cardano are those of reference scripts for computing the
   -- transaction size.
-  getTransactionKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
+  getTransactionKeySets :: GenTx blk -> LedgerTables blk KeysMK
 
   -- Mempools live in a single slot so in the hard fork block case
   -- it is cheaper to perform these operations on LedgerStates, saving
@@ -228,15 +230,15 @@ class
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk DiffMK
-  prependMempoolDiffs = prependDiffs
+  prependMempoolDiffs x y = unTickedL $ prependDiffs @(TickedL LedgerState) @(TickedL LedgerState) @blk (TickedL x) (TickedL y)
 
   -- | Apply diffs on ledger states
   applyMempoolDiffs ::
-    LedgerTables (LedgerState blk) ValuesMK ->
-    LedgerTables (LedgerState blk) KeysMK ->
+    LedgerTables blk ValuesMK ->
+    LedgerTables blk KeysMK ->
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk ValuesMK
-  applyMempoolDiffs = applyDiffForKeysOnTables
+  applyMempoolDiffs = applyDiffForKeysOnTables @(TickedLedgerState blk) @(TickedLedgerState blk)
 
 data ReapplyTxsResult extra blk
   = ReapplyTxsResult

@@ -161,6 +161,7 @@ library
     Ouroboros.Consensus.Ledger.Dual
     Ouroboros.Consensus.Ledger.Extended
     Ouroboros.Consensus.Ledger.Inspect
+    Ouroboros.Consensus.Ledger.LedgerStateType
     Ouroboros.Consensus.Ledger.Query
     Ouroboros.Consensus.Ledger.Query.Version
     Ouroboros.Consensus.Ledger.SupportsMempool
@@ -307,6 +308,7 @@ library
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
+    constraints,
     FailT ^>=0.1.2,
     microlens,
     singletons-base,
