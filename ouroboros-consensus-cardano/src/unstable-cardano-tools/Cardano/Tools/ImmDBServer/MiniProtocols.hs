@@ -239,17 +239,22 @@ maybeShowSendRecvLF ctx = \case
 
 maybeShowSendRecvCS :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (CS.ChainSync h p tip) -> Maybe Json.LogEvent
 maybeShowSendRecvCS ctx = \case
-    N2N.TraceSendMsg tm (AnyMessage CS.MsgRollForward{}) -> Just $ f tm Json.Send "MsgRollForward"
+    N2N.TraceSendMsg tm (AnyMessage CS.MsgRollForward{}) -> Just $ send tm "MsgRollForward"
     _ -> Nothing
   where
-    f tm x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.mux_at = tm, Json.msg = y }
+    send tm y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = Json.Send, Json.mux_at = tm, Json.msg = y }
 
 maybeShowSendRecvBF :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (BF.BlockFetch blk p) -> Maybe Json.LogEvent
 maybeShowSendRecvBF ctx = \case
-    N2N.TraceSendMsg tm (AnyMessage BF.MsgBlock{}) -> Just $ f tm Json.Send "MsgBlock"
+    N2N.TraceRecvMsg mbTm (AnyMessage BF.MsgRequestRange{}) -> Just $ recv mbTm "MsgRequestRange"
+    N2N.TraceSendMsg tm (AnyMessage BF.MsgBlock{}) -> Just $ send tm "MsgBlock"
     _ -> Nothing
   where
     f tm x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.mux_at = tm, Json.msg = y }
+    send tm y = f tm Json.Send y
+    recv mbTm y = case mbTm of
+        Nothing -> error $ "impossible! " ++ y
+        Just tm -> f tm Json.Recv y
 
 -- | The ChainSync specification requires sending a rollback instruction to the
 -- intersection point right after an intersection has been negotiated. (Opening
