@@ -222,11 +222,11 @@ class
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
   , -- For InMemory LedgerDBs
     MemPack (TxIn blk)
-  , forall tag. SerializeTablesWithHint blk tag
+  , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
   , -- For OnDisk LedgerDBs
     IndexedMemPack (LedgerState blk EmptyMK) (TxOut blk)
   ) =>
-  LedgerDbSerialiseConstraints blk
+  LedgerDbSerialiseConstraints l blk
 
 instance
   ( Serialise (HeaderHash blk)
@@ -238,11 +238,11 @@ instance
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
   , -- For InMemory LedgerDBs
     MemPack (TxIn blk)
-  , forall tag. SerializeTablesWithHint blk tag
+  , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
   , -- For OnDisk LedgerDBs
     IndexedMemPack (LedgerState blk EmptyMK) (TxOut blk)
   ) =>
-  LedgerDbSerialiseConstraints blk
+  LedgerDbSerialiseConstraints l blk
 
 -- | The core API of the LedgerDB component
 type LedgerDB :: (Type -> Type) -> LedgerStateKind -> Type -> Type
@@ -785,7 +785,7 @@ class CanUpgradeLedgerTables l where
 
 class
   ( CanUpgradeLedgerTables l
-  , All (SerializeTablesWithHint (LBlock l)) (TablesForBlock (LBlock l))
+  , All (SerializeTablesWithHint l (LBlock l)) (TablesForBlock (LBlock l))
   , AllTables NoThunks ValuesMK (LBlock l)
   , AllKeys NoThunks (LBlock l)
   , AllValues NoThunks (LBlock l)
@@ -794,7 +794,7 @@ class
   LedgerSupportsInMemoryLedgerDB l
 instance
   ( CanUpgradeLedgerTables l
-  , All (SerializeTablesWithHint (LBlock l)) (TablesForBlock (LBlock l))
+  , All (SerializeTablesWithHint l (LBlock l)) (TablesForBlock (LBlock l))
   , AllTables NoThunks ValuesMK (LBlock l)
   , AllKeys NoThunks (LBlock l)
   , AllValues NoThunks (LBlock l)
@@ -831,7 +831,7 @@ type LedgerSupportsLedgerDB blk =
 type LedgerSupportsLedgerDB' l blk =
   ( LedgerSupportsV1LedgerDB l
   , LedgerSupportsV2LedgerDB l
-  , LedgerDbSerialiseConstraints blk
+  , LedgerDbSerialiseConstraints l blk
   )
 
 {-------------------------------------------------------------------------------
@@ -852,19 +852,19 @@ data LedgerDbPrune
 -------------------------------------------------------------------------------}
 
 -- | A backend that supports streaming the ledger tables
-class StreamingBackend m backend l where
-  data YieldArgs m backend l
+class StreamingBackend m backend blk where
+  data YieldArgs m backend blk
 
-  data SinkArgs m backend l
+  data SinkArgs m backend blk
 
-  yield :: Proxy backend -> YieldArgs m backend l -> Yield m l
+  yield :: Proxy backend -> YieldArgs m backend blk -> Yield m blk
 
-  sink :: Proxy backend -> SinkArgs m backend l -> Sink m l
+  sink :: Proxy backend -> SinkArgs m backend blk -> Sink m blk
 
-type Yield m l =
-  l EmptyMK ->
+type Yield m blk =
+  LedgerState blk EmptyMK ->
   ( ( Stream
-        (Of (TxIn (LBlock l), TxOut (LBlock l)))
+        (Of (TxIn blk, TxOut blk))
         (ExceptT DeserialiseFailure m)
         (Stream (Of ByteString) m (Maybe CRC)) ->
       ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
@@ -872,15 +872,15 @@ type Yield m l =
   ) ->
   ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
 
-type Sink m l =
-  l EmptyMK ->
+type Sink m blk =
+  LedgerState blk EmptyMK ->
   Stream
-    (Of (TxIn (LBlock l), TxOut (LBlock l)))
+    (Of (TxIn blk, TxOut blk))
     (ExceptT DeserialiseFailure m)
     (Stream (Of ByteString) m (Maybe CRC)) ->
   ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
 
-data Decoders l
+data Decoders blk
   = Decoders
-      (forall s. Decoder s (TxIn l))
-      (forall s. Decoder s (TxOut l))
+      (forall s. Decoder s (TxIn blk))
+      (forall s. Decoder s (TxOut blk))

@@ -60,16 +60,17 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
 import Prelude hiding (read)
+import Ouroboros.Consensus.Ledger.LedgerStateType
 
 type SnapshotManagerV2 m blk = SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
 
 mkInitDb ::
   forall m blk backend.
   ( LedgerSupportsProtocol blk
-  , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , Backend m backend blk
   , IOLike m
+  , GetBlockKeySets blk
   ) =>
   Complete LedgerDbArgs m blk ->
   ResolveBlock m blk ->
@@ -151,7 +152,7 @@ implMkLedgerDb ::
   , StandardHash l
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
-  , HasHardForkHistory blk
+  , HasHardForkHistory blk, GetBlockKeySets blk
   ) =>
   LedgerDBHandle m l blk ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
@@ -177,7 +178,8 @@ mkInternals ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , ApplyBlock (ExtLedgerState blk) blk
+  , ApplyBlock ExtLedgerState blk
+  , GetBlockKeySets blk
   ) =>
   LedgerDBHandle m (ExtLedgerState blk) blk ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
@@ -297,6 +299,7 @@ implValidate ::
   , LedgerSupportsProtocol blk
   , HasCallStack
   , l ~ ExtLedgerState blk
+  , GetBlockKeySets blk
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
@@ -465,8 +468,6 @@ deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
   , NoThunks (l EmptyMK)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
   , NoThunks (LedgerCfg l)
   , NoThunks (SomeResources m blk)
   ) =>
@@ -490,8 +491,6 @@ deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
   , NoThunks (l EmptyMK)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
   , NoThunks (LedgerCfg l)
   , NoThunks (SomeResources m blk)
   ) =>
@@ -593,14 +592,14 @@ withStateRef ldbEnv project f =
   withRegistry $ \reg -> getStateRef ldbEnv reg project >>= f
 
 acquireAtTarget ::
-  ( HeaderHash l ~ HeaderHash blk
-  , IOLike m
+  ( IOLike m
   , GetTip l
   , StandardHash l
-  , LedgerSupportsProtocol blk
+  , LedgerSupportsProtocol (LBlock l)
+  , HeaderHash (LBlock l) ~ HeaderHash l
   ) =>
-  LedgerDBEnv m l blk ->
-  Either Word64 (Target (Point blk)) ->
+  LedgerDBEnv m l (LBlock l) ->
+  Either Word64 (Target (Point (LBlock l))) ->
   ResourceRegistry m ->
   m (Either GetForkerError (ResourceKey m, StateRef m l))
 acquireAtTarget ldbEnv target reg =
@@ -626,32 +625,32 @@ acquireAtTarget ldbEnv target reg =
       Just l' -> pure $ currentHandle l'
 
 newForkerAtTarget ::
-  ( HeaderHash l ~ HeaderHash blk
-  , IOLike m
+  ( IOLike m
   , IsLedger l
   , HasLedgerTables l
-  , LedgerSupportsProtocol blk
+  , LedgerSupportsProtocol (LBlock l)
   , StandardHash l
+    , HeaderHash (LBlock l) ~ HeaderHash l
   ) =>
-  LedgerDBHandle m l blk ->
+  LedgerDBHandle m l (LBlock l) ->
   ResourceRegistry m ->
-  Target (Point blk) ->
-  m (Either GetForkerError (Forker m l blk))
+  Target (Point (LBlock l)) ->
+  m (Either GetForkerError (Forker m l (LBlock l)))
 newForkerAtTarget h rr pt = getEnv h $ \ldbEnv ->
   acquireAtTarget ldbEnv (Right pt) rr >>= traverse (newForker h ldbEnv rr)
 
 newForkerByRollback ::
-  ( HeaderHash l ~ HeaderHash blk
-  , IOLike m
+  (  IOLike m
   , IsLedger l
   , StandardHash l
   , HasLedgerTables l
-  , LedgerSupportsProtocol blk
+  , LedgerSupportsProtocol (LBlock l)
+    , HeaderHash (LBlock l) ~ HeaderHash l
   ) =>
-  LedgerDBHandle m l blk ->
+  LedgerDBHandle m l (LBlock l) ->
   ResourceRegistry m ->
   Word64 ->
-  m (Either GetForkerError (Forker m l blk))
+  m (Either GetForkerError (Forker m l (LBlock l)))
 newForkerByRollback h rr n = getEnv h $ \ldbEnv ->
   acquireAtTarget ldbEnv (Left n) rr >>= traverse (newForker h ldbEnv rr)
 
@@ -743,16 +742,16 @@ implForkerClose (LDBHandle varState) forkerKey forkerEnv = do
 newForker ::
   ( IOLike m
   , HasLedgerTables l
-  , LedgerSupportsProtocol blk
+  , LedgerSupportsProtocol (LBlock l)
   , NoThunks (l EmptyMK)
   , GetTip l
   , StandardHash l
   ) =>
-  LedgerDBHandle m l blk ->
-  LedgerDBEnv m l blk ->
+  LedgerDBHandle m l (LBlock l) ->
+  LedgerDBEnv m l (LBlock l) ->
   ResourceRegistry m ->
   (ResourceKey m, StateRef m l) ->
-  m (Forker m l blk)
+  m (Forker m l (LBlock l))
 newForker h ldbEnv rr (rk, st) = do
   forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
   let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv

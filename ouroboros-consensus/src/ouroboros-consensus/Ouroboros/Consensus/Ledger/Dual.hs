@@ -269,6 +269,7 @@ class
   , Serialise (BridgeBlock m a)
   , Serialise (BridgeTx m a)
   , Show (BridgeTx m a)
+  , GetBlockKeySets m
   ) =>
   Bridge m a
   where
@@ -464,7 +465,7 @@ applyHelper f opts cfg block@DualBlock{..} TickedDualLedgerState{..} = do
               tickedDualLedgerStateBridge
         }
 
-instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) where
+instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
   applyBlockLedgerResultWithValidation doValidate =
     applyHelper (applyBlockLedgerResultWithValidation doValidate)
 
@@ -500,9 +501,9 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
           dualBlockMain
           tickedDualLedgerStateMain
 
+instance Bridge m a => GetBlockKeySets (DualBlock m a) where
   getBlockKeySets =
-    castLedgerTables
-      . getBlockKeySets @(LedgerState m)
+    getBlockKeySets @m
       . dualBlockMain
 
 data instance LedgerState (DualBlock m a) mk = DualLedgerState
@@ -733,8 +734,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
       } = vtx
 
   getTransactionKeySets =
-    castLedgerTables
-      . getTransactionKeySets @m
+    getTransactionKeySets @m
       . dualGenTxMain
 
 instance Bridge m a => TxLimits (DualBlock m a) where
@@ -1101,14 +1101,18 @@ decodeDualLedgerState decodeMain = do
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState (DualBlock m a)) = TxIn (LedgerState m)
-type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
+type instance TxIn (DualBlock m a) = TxIn m
+type instance TxOut (DualBlock m a) = TxOut m
+type instance Credential (DualBlock m a) = Credential m
+type instance Coin (DualBlock m a) = Coin m
+
+type instance TablesForBlock (DualBlock m a) = TablesForBlock m
 
 instance CanUpgradeLedgerTables (LedgerState (DualBlock m a)) where
   upgradeTables _ _ = id
 
 instance
-  (txout ~ TxOut (LedgerState m), IndexedMemPack (LedgerState m EmptyMK) txout) =>
+  (txout ~ TxOut m, IndexedMemPack (LedgerState m EmptyMK) txout) =>
   IndexedMemPack (LedgerState (DualBlock m a) EmptyMK) txout
   where
   indexedTypeName (DualLedgerState st _ _) = indexedTypeName @(LedgerState m EmptyMK) @txout st
@@ -1117,27 +1121,26 @@ instance
   indexedUnpackM (DualLedgerState st _ _) = indexedUnpackM st
 
 instance
-  (Ord (TxIn (LedgerState m)), MemPack (TxIn (LedgerState m)), MemPack (TxOut (LedgerState m))) =>
-  SerializeTablesWithHint (LedgerState (DualBlock m a))
+  SerializeTablesWithHint (LedgerState m) m tag =>
+  SerializeTablesWithHint (LedgerState (DualBlock m a)) (DualBlock m a) tag
   where
-  encodeTablesWithHint = defaultEncodeTablesWithHint
-  decodeTablesWithHint = defaultDecodeTablesWithHint
+  encodeTablesWithHint hint = encodeTablesWithHint (dualLedgerStateMain hint)
+  decodeTablesWithHint hint = decodeTablesWithHint (dualLedgerStateMain hint)
 
 instance
   ( Bridge m a
-  , NoThunks (TxOut (LedgerState m))
-  , NoThunks (TxIn (LedgerState m))
-  , Show (TxOut (LedgerState m))
-  , Show (TxIn (LedgerState m))
-  , Eq (TxOut (LedgerState m))
-  , Ord (TxIn (LedgerState m))
-  , MemPack (TxIn (LedgerState m))
+  -- , NoThunks (TxOut (LedgerState m))
+  -- , NoThunks (TxIn (LedgerState m))
+  -- , Show (TxOut (LedgerState m))
+  -- , Show (TxIn (LedgerState m))
+  -- , Eq (TxOut (LedgerState m))
+  -- , Ord (TxIn (LedgerState m))
+  -- , MemPack (TxIn (LedgerState m))
   ) =>
   HasLedgerTables (LedgerState (DualBlock m a))
   where
   projectLedgerTables DualLedgerState{..} =
-    castLedgerTables
-      (projectLedgerTables dualLedgerStateMain)
+    projectLedgerTables dualLedgerStateMain
 
   withLedgerTables DualLedgerState{..} main =
     DualLedgerState
@@ -1150,13 +1153,13 @@ instance
 
 instance
   ( Bridge m a
-  , NoThunks (TxOut (LedgerState m))
-  , NoThunks (TxIn (LedgerState m))
-  , Show (TxOut (LedgerState m))
-  , Show (TxIn (LedgerState m))
-  , Eq (TxOut (LedgerState m))
-  , Ord (TxIn (LedgerState m))
-  , MemPack (TxIn (LedgerState m))
+  -- , NoThunks (TxOut (LedgerState m))
+  -- , NoThunks (TxIn (LedgerState m))
+  -- , Show (TxOut (LedgerState m))
+  -- , Show (TxIn (LedgerState m))
+  -- , Eq (TxOut (LedgerState m))
+  -- , Ord (TxIn (LedgerState m))
+  -- , MemPack (TxIn (LedgerState m))
   ) =>
   HasLedgerTables (Ticked (LedgerState (DualBlock m a)))
   where

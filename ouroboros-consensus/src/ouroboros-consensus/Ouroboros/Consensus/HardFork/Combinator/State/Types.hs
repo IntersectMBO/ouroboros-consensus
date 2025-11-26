@@ -1,8 +1,18 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( -- * Main types
@@ -18,23 +28,34 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types
   , TranslateLedgerState (..)
   , TranslateLedgerTables (..)
   , TranslateTxOut (..)
+  , TranslateTxIn (..)
+  , TranslateCred (..)
+  , TranslateCoin (..)
+  , TranslateKV (..)
   , translateLedgerTablesWith
   ) where
 
 import Control.Monad.Except
+import Data.Function ((&))
+import Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
+import qualified Data.SOP.Dict as Dict
 import Data.SOP.Strict
 import Data.SOP.Telescope (Telescope)
 import qualified Data.SOP.Telescope as Telescope
+import Data.Singletons (SingI)
 import GHC.Generics (Generic)
+import Lens.Micro ((.~))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.History (Bound)
 import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Util.TypeLevel
 
 {-------------------------------------------------------------------------------
   Types
@@ -165,18 +186,52 @@ newtype TranslateLedgerState x y = TranslateLedgerState
   }
 
 -- | Transate a 'LedgerTables' across an era transition.
-data TranslateLedgerTables x y = TranslateLedgerTables
-  { translateTxInWith :: !(TxIn x -> TxIn y)
-  -- ^ Translate a 'TxIn' across an era transition.
-  --
-  -- See 'translateLedgerTablesWith'.
-  , translateTxOutWith :: !(TxOut x -> TxOut y)
-  -- ^ Translate a 'TxOut' across an era transition.
-  --
-  -- See 'translateLedgerTablesWith'.
+newtype TranslateLedgerTables x y = TranslateLedgerTables (NP (TranslateKV y x) (TablesForBlock x))
+
+data TranslateKV y x tag = TranslateKV
+  { translateKey :: Fst (TableKV tag x) -> Fst (TableKV tag y)
+  , translateValue :: Snd (TableKV tag x) -> Snd (TableKV tag y)
   }
 
 newtype TranslateTxOut x y = TranslateTxOut (TxOut x -> TxOut y)
+newtype TranslateTxIn x y = TranslateTxIn (TxIn x -> TxIn y)
+newtype TranslateCred x y = TranslateCred (Credential x -> Credential y)
+newtype TranslateCoin x y = TranslateCoin (Coin x -> Coin y)
+
+data Prefix :: [k] -> [k] -> Type where
+  PNil :: Prefix '[] ys
+  PCons :: Prefix xs ys -> Prefix (x ': xs) (x ': ys)
+
+data AllDict c xs where
+  ANil :: AllDict c '[]
+  ACons :: Dict.Dict c x -> AllDict c xs -> AllDict c (x ': xs)
+
+class All c xs => ToAllDict c xs where
+  toAllDict :: AllDict c xs
+
+instance ToAllDict c '[] where
+  toAllDict = ANil
+
+instance (c x, ToAllDict c xs) => ToAllDict c (x ': xs) where
+  toAllDict = ACons Dict.Dict toAllDict
+
+prefixAll :: Prefix xs ys -> AllDict c ys -> AllDict c xs
+prefixAll PNil _ = ANil
+prefixAll (PCons p) (ACons d rest) =
+  ACons d (prefixAll p rest)
+
+withAllDict :: AllDict c xs -> (All c xs => r) -> r
+withAllDict ANil k = k
+withAllDict (ACons Dict.Dict rest) k = withAllDict rest k
+
+class PrefixI xs ys where
+  prefix :: Prefix xs ys
+
+instance PrefixI '[] ys where
+  prefix = PNil
+
+instance PrefixI xs ys => PrefixI (x ': xs) (x ': ys) where
+  prefix = PCons prefix
 
 -- | Translate a 'LedgerTables' across an era transition.
 --
@@ -203,21 +258,48 @@ newtype TranslateTxOut x y = TranslateTxOut (TxOut x -> TxOut y)
 -- previous eras, so it will be called only when crossing era boundaries,
 -- therefore the translation won't be equivalent to 'id'.
 translateLedgerTablesWith ::
-  Ord (TxIn y) =>
+  forall x y.
+  ( HasLedgerTables (LedgerState y)
+  , All SingI (TablesForBlock x)
+  , PrefixI (TablesForBlock x) (TablesForBlock y)
+  , ToAllDict (KVConstraintsMK y DiffMK) (TablesForBlock y)
+  ) =>
   TranslateLedgerTables x y ->
   LedgerTables x DiffMK ->
   LedgerTables y DiffMK
-translateLedgerTablesWith f =
-  LedgerTables
-    . DiffMK
-    . Diff.Diff
-    . Map.mapKeys (translateTxInWith f)
-    . getDiff
-    . getDiffMK
-    . mapMK (translateTxOutWith f)
-    . getLedgerTables
+translateLedgerTablesWith (TranslateLedgerTables f) (LedgerTables x) =
+  let dictY = toAllDict @(KVConstraintsMK y DiffMK) @(TablesForBlock y)
+      dictX = prefixAll (prefix @(TablesForBlock x) @(TablesForBlock y)) dictY
+   in withAllDict dictX $ foldNP emptyLedgerTables f x
  where
   getDiff (Diff.Diff m) = m
+
+  doTranslate ::
+    Ord (Fst (TableKV tag y)) => TranslateKV y x tag -> Table DiffMK x tag -> Table DiffMK y tag
+  doTranslate (TranslateKV tk tv) (Table tb) =
+    Table
+      . DiffMK
+      . Diff.Diff
+      . Map.mapKeys tk
+      . getDiff
+      . getDiffMK
+      $ mapMK tv tb
+
+  foldNP ::
+    (All (KVConstraintsMK y DiffMK) xtags, All SingI xtags) =>
+    LedgerTables y DiffMK ->
+    NP (TranslateKV y x) xtags ->
+    NP (Table DiffMK x) xtags ->
+    LedgerTables y DiffMK
+  foldNP !acc Nil Nil = acc
+  foldNP !acc (tr :* trNext) (tb :* tbNext) = foldNP (actOnTable acc tr tb) trNext tbNext
+
+  actOnTable ::
+    forall tag.
+    (Ord (Fst (TableKV tag y)), SingI tag) =>
+    LedgerTables y DiffMK -> TranslateKV y x tag -> Table DiffMK x tag -> LedgerTables y DiffMK
+  actOnTable acc tr tb =
+    acc & onTable (Proxy @y) (Proxy @tag) .~ doTranslate tr tb
 
 -- | Knowledge in a particular era of the transition to the next era
 data TransitionInfo

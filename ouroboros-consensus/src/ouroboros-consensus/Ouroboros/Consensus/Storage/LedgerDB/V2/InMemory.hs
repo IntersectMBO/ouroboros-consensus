@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -14,6 +15,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
   ( Backend (..)
@@ -76,13 +78,14 @@ import System.FS.API
 import System.FS.CRC
 import qualified System.FilePath as F
 import Prelude hiding (read)
+import Ouroboros.Consensus.Ledger.LedgerStateType
 
 {-------------------------------------------------------------------------------
   InMemory implementation of LedgerTablesHandles
 -------------------------------------------------------------------------------}
 
-data LedgerTablesHandleState l
-  = LedgerTablesHandleOpen !(LedgerTables l ValuesMK)
+data LedgerTablesHandleState blk
+  = LedgerTablesHandleOpen !(LedgerTables blk ValuesMK)
   | LedgerTablesHandleClosed
   deriving Generic
 
@@ -102,7 +105,7 @@ newInMemoryLedgerTablesHandle ::
   ) =>
   Tracer m LedgerDBV2Trace ->
   SomeHasFS m ->
-  LedgerTables l ValuesMK ->
+  LedgerTables (LBlock l) ValuesMK ->
   m (LedgerTablesHandle m l)
 newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   !tv <- newTVarIO (LedgerTablesHandleOpen l)
@@ -116,7 +119,7 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
       , readAll = implReadAll tv
       , pushDiffs = implPushDiffs tv
       , takeHandleSnapshot = implTakeHandleSnapshot tv hasFS
-      , tablesSize = implTablesSize tv
+      , tablesSize = implTablesSize (Proxy @l) tv
       , transfer = const (pure ())
       }
 
@@ -145,7 +148,7 @@ implDuplicate ::
   , LedgerSupportsInMemoryLedgerDB l
   ) =>
   Tracer m LedgerDBV2Trace ->
-  StrictTVar m (LedgerTablesHandleState l) ->
+  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
   SomeHasFS m ->
   ResourceRegistry m ->
   m (ResourceKey m, LedgerTablesHandle m l)
@@ -162,10 +165,10 @@ implRead ::
   ( IOLike m
   , HasLedgerTables l
   ) =>
-  StrictTVar m (LedgerTablesHandleState l) ->
+  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
   l EmptyMK ->
-  LedgerTables l KeysMK ->
-  m (LedgerTables l ValuesMK)
+  LedgerTables (LBlock l) KeysMK ->
+  m (LedgerTables (LBlock l) ValuesMK)
 implRead tv _ keys = do
   hs <- readTVarIO tv
   guardClosed
@@ -174,10 +177,10 @@ implRead tv _ keys = do
 
 implReadRange ::
   -- (IOLike m, HasLedgerTables l) =>
-  StrictTVar m (LedgerTablesHandleState l) ->
+  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
   l EmptyMK ->
-  (Maybe (TxIn l), Int) ->
-  m (LedgerTables l ValuesMK, Maybe (TxIn l))
+  (Maybe (TxIn (LBlock l)), Int) ->
+  m (LedgerTables (LBlock l) ValuesMK, Maybe (TxIn (LBlock l)))
 implReadRange = undefined -- tv _ (f, t) = undefined -- do
 -- hs <- readTVarIO tv
 -- guardClosed
@@ -189,9 +192,9 @@ implReadRange = undefined -- tv _ (f, t) = undefined -- do
 
 implReadAll ::
   IOLike m =>
-  StrictTVar m (LedgerTablesHandleState l) ->
+  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
   l EmptyMK ->
-  m (LedgerTables l ValuesMK)
+  m (LedgerTables (LBlock l) ValuesMK)
 implReadAll tv _ = do
   hs <- readTVarIO tv
   guardClosed hs pure
@@ -200,7 +203,7 @@ implPushDiffs ::
   ( IOLike m
   , LedgerSupportsInMemoryLedgerDB l
   ) =>
-  StrictTVar m (LedgerTablesHandleState l) ->
+  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
   l mk1 ->
   l DiffMK ->
   m ()
@@ -221,7 +224,7 @@ implPushDiffs tv st0 !diffs =
 
 implTakeHandleSnapshot ::
   (IOLike m, LedgerSupportsInMemoryLedgerDB l) =>
-  StrictTVar m (LedgerTablesHandleState l) ->
+  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
   HasFS m h ->
   l EmptyMK ->
   String ->
@@ -239,9 +242,9 @@ implTakeHandleSnapshot tv hasFS hint snapshotName = do
 
 implTablesSize ::
   (IOLike m, LedgerSupportsInMemoryLedgerDB l) =>
-  StrictTVar m (LedgerTablesHandleState l) ->
-  m (Maybe (NP (K Int) (TablesForBlock l)))
-implTablesSize tv = do
+  Proxy l -> StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
+  m (Maybe (NP (K Int) (TablesForBlock (LBlock l))))
+implTablesSize _ tv = do
   hs <- readTVarIO tv
   guardClosed hs (pure . Just . hmap (K . Map.size . getValuesMK . getTable) . getLedgerTables)
 
@@ -251,7 +254,7 @@ implTablesSize tv = do
 
 snapshotManager ::
   ( IOLike m
-  , LedgerDbSerialiseConstraints blk
+  , LedgerDbSerialiseConstraints (ExtLedgerState blk) blk
   , LedgerSupportsProtocol blk
   ) =>
   CodecConfig blk ->
@@ -268,7 +271,7 @@ snapshotManager ccfg tracer fs =
 {-# INLINE implTakeSnapshot #-}
 implTakeSnapshot ::
   ( IOLike m
-  , LedgerDbSerialiseConstraints blk
+  , LedgerDbSerialiseConstraints (ExtLedgerState blk) blk
   , LedgerSupportsProtocol blk
   ) =>
   CodecConfig blk ->
@@ -309,7 +312,7 @@ implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
 --   from the one tracked by @'DiskSnapshot'@.
 loadSnapshot ::
   forall blk m.
-  ( LedgerDbSerialiseConstraints blk
+  ( LedgerDbSerialiseConstraints (ExtLedgerState blk) blk
   , LedgerSupportsProtocol blk
   , IOLike m
   , LedgerSupportsInMemoryLedgerDB (ExtLedgerState blk)
@@ -355,7 +358,7 @@ type data Mem
 
 instance
   ( IOLike m
-  , LedgerDbSerialiseConstraints blk
+  , LedgerDbSerialiseConstraints (ExtLedgerState blk) blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsInMemoryLedgerDB (ExtLedgerState blk)
   ) =>
@@ -379,28 +382,28 @@ instance
 -- | Create arguments for initializing the LedgerDB using the InMemory backend.
 mkInMemoryArgs ::
   ( IOLike m
-  , LedgerDbSerialiseConstraints blk
+  , LedgerDbSerialiseConstraints (ExtLedgerState blk) blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsInMemoryLedgerDB (ExtLedgerState blk)
   ) =>
   a -> (LedgerDbBackendArgs m blk, a)
 mkInMemoryArgs = (,) $ LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
 
-instance IOLike m => StreamingBackend m Mem l where
-  data YieldArgs m Mem l
+instance IOLike m => StreamingBackend m Mem blk where
+  data YieldArgs m Mem blk
     = -- \| Yield an in-memory snapshot
       YieldInMemory
         -- \| How to make a SomeHasFS for @m@
         (MountPoint -> SomeHasFS m)
         -- \| The file path at which the HasFS has to be opened
         FilePath
-        (Decoders l)
+        (Decoders blk)
 
-  data SinkArgs m Mem l
+  data SinkArgs m Mem blk
     = SinkInMemory
         Int
-        (TxIn l -> Encoding)
-        (TxOut l -> Encoding)
+        (TxIn blk -> Encoding)
+        (TxOut blk -> Encoding)
         (SomeHasFS m)
         FilePath
 
@@ -476,22 +479,22 @@ yieldInMemoryS ::
   (MonadThrow m, MonadST m) =>
   (MountPoint -> SomeHasFS m) ->
   FilePath ->
-  (forall s. Decoder s (TxIn l)) ->
-  (forall s. Decoder s (TxOut l)) ->
-  Yield m l
+  (forall s. Decoder s (TxIn blk)) ->
+  (forall s. Decoder s (TxOut blk)) ->
+  Yield m blk
 yieldInMemoryS mkFs (F.splitFileName -> (fp, fname)) decK decV _ k =
   streamingFile (mkFs $ MountPoint fp) (mkFsPath [fname]) $ \s -> do
     k $ yieldCborMapS decK decV s
 
 sinkInMemoryS ::
-  forall m l.
+  forall m blk.
   MonadThrow m =>
   Int ->
-  (TxIn l -> Encoding) ->
-  (TxOut l -> Encoding) ->
+  (TxIn blk -> Encoding) ->
+  (TxOut blk -> Encoding) ->
   SomeHasFS m ->
   FilePath ->
-  Sink m l
+  Sink m blk
 sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) fp _ s =
   ExceptT $ withFile fs (mkFsPath [fp]) (WriteMode MustBeNew) $ \hdl -> do
     let bs = toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)

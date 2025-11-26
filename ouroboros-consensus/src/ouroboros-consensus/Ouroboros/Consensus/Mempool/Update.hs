@@ -174,8 +174,7 @@ doAddTx mpEnv wti tx =
       \is () -> do
         frkr <- readMVar forker
         tbs <-
-          castLedgerTables
-            <$> roforkerReadTables frkr (castLedgerTables $ getTransactionKeySets tx)
+          roforkerReadTables frkr (getTransactionKeySets tx)
         case pureTryAddTx cfg wti tx is tbs of
           NotEnoughSpaceLeft -> do
             pure (Left (isMempoolSize is), is)
@@ -194,7 +193,7 @@ pureTryAddTx ::
   GenTx blk ->
   -- | The current internal state of the mempool.
   InternalState blk ->
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   TriedToAddTx blk
 pureTryAddTx cfg wti tx is values =
   let st =
@@ -326,7 +325,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
               (TxSeq.toList $ isTxs is)
           toKeep' = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . TxSeq.txTicketTx) toKeep
       frkr <- readMVar forker
-      tbs <- castLedgerTables <$> roforkerReadTables frkr (castLedgerTables toKeep')
+      tbs <- roforkerReadTables frkr toKeep'
       let (is', t) =
             pureRemoveTxs
               capacityOverride
@@ -358,7 +357,7 @@ pureRemoveTxs ::
   LedgerConfig blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   TicketNo ->
   -- | Txs to keep
   [TxTicket (TxMeasure blk) (Validated (GenTx blk))] ->
@@ -449,7 +448,7 @@ implSyncWithLedger mpEnv =
                         roforkerClose oldFrk
                         pure frk
                     )
-                  tbs <- castLedgerTables <$> roforkerReadTables frk (castLedgerTables $ isTxKeys is)
+                  tbs <- roforkerReadTables frk (isTxKeys is)
                   let (is', mTrace) =
                         pureSyncWithLedger
                           capacityOverride
@@ -485,7 +484,7 @@ pureSyncWithLedger ::
   LedgerConfig blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   InternalState blk ->
   ( InternalState blk
   , Maybe (TraceEventMempool blk)

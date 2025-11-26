@@ -39,7 +39,7 @@ ipTranslateTxOut ::
   All Top xs =>
   EraTranslation xs ->
   InPairs TranslateTxOut xs
-ipTranslateTxOut = InPairs.hmap (TranslateTxOut . translateTxOutWith) . translateLedgerTables
+ipTranslateTxOut = undefined -- InPairs.hmap (TranslateTxOut . translateTxOutWith) . translateLedgerTables
 
 trivialEraTranslation :: EraTranslation '[blk]
 trivialEraTranslation =

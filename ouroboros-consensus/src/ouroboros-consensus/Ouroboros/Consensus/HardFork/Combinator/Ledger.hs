@@ -19,6 +19,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Ledger
   ( HardForkEnvelopeErr (..)
@@ -105,6 +106,10 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
+import Ouroboros.Consensus.Ledger.Extended
+import qualified Data.List.Singletons as S
+import Ouroboros.Consensus.Util.TypeLevel
+import qualified Data.Singletons as S
 
 -- $setup
 -- >>> import Image.LaTeX.Render
@@ -241,7 +246,7 @@ instance
   , HasCanonicalTxIn xs
   , HasHardForkTxOut xs
   ) =>
-  ApplyBlock (LedgerState (HardForkBlock xs)) (HardForkBlock xs)
+  ApplyBlock LedgerState (HardForkBlock xs)
   where
   applyBlockLedgerResultWithValidation
     doValidate
@@ -278,6 +283,7 @@ instance
           error "reapplyBlockLedgerResult: can't be from other era"
       )
 
+instance GetBlockKeySets (HardForkBlock xs) where
   getBlockKeySets (HardForkBlock (OneEraBlock ns)) =
     hcollapse $
       hcimap proxySingle f ns
@@ -286,7 +292,7 @@ instance
       SingleEraBlock x =>
       Index xs x ->
       I x ->
-      K (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) x
+      K (LedgerTables (HardForkBlock xs) KeysMK) x
     f idx (I blk) = K $ injectLedgerTables idx $ getBlockKeySets blk
 
 apply ::
@@ -892,7 +898,7 @@ instance
     forall mk.
     (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
     LedgerState (HardForkBlock xs) mk ->
-    LedgerTables (LedgerState (HardForkBlock xs)) mk
+    LedgerTables (HardForkBlock xs) mk
   projectLedgerTables (HardForkLedgerState st) =
     hcollapse $
       hcimap (Proxy @(Compose HasLedgerTables LedgerState)) projectOne st
@@ -901,7 +907,7 @@ instance
       Compose HasLedgerTables LedgerState x =>
       Index xs x ->
       Flip LedgerState mk x ->
-      K (LedgerTables (LedgerState (HardForkBlock xs)) mk) x
+      K (LedgerTables (HardForkBlock xs) mk) x
     projectOne i l =
       K $
         injectLedgerTables i $
@@ -912,7 +918,7 @@ instance
     forall mk any.
     (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
     LedgerState (HardForkBlock xs) any ->
-    LedgerTables (LedgerState (HardForkBlock xs)) mk ->
+    LedgerTables (HardForkBlock xs) mk ->
     LedgerState (HardForkBlock xs) mk
   withLedgerTables (HardForkLedgerState st) tables =
     HardForkLedgerState $
@@ -939,7 +945,7 @@ instance
     forall mk.
     (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
     Ticked (LedgerState (HardForkBlock xs)) mk ->
-    LedgerTables (Ticked (LedgerState (HardForkBlock xs))) mk
+    LedgerTables (HardForkBlock xs) mk
   projectLedgerTables st =
     hcollapse $
       hcimap
@@ -951,7 +957,7 @@ instance
       Compose HasTickedLedgerTables LedgerState x =>
       Index xs x ->
       FlipTickedLedgerState mk x ->
-      K (LedgerTables (Ticked (LedgerState (HardForkBlock xs))) mk) x
+      K (LedgerTables (HardForkBlock xs) mk) x
     projectOne i l =
       K $
         castLedgerTables $
@@ -964,7 +970,7 @@ instance
     forall mk any.
     (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
     Ticked (LedgerState (HardForkBlock xs)) any ->
-    LedgerTables (Ticked (LedgerState (HardForkBlock xs))) mk ->
+    LedgerTables (HardForkBlock xs) mk ->
     Ticked (LedgerState (HardForkBlock xs)) mk
   withLedgerTables st tables =
     st
@@ -1024,22 +1030,22 @@ injectLedgerTables ::
   , HasHardForkTxOut xs
   ) =>
   Index xs x ->
-  LedgerTables (LedgerState x) mk ->
-  LedgerTables (LedgerState (HardForkBlock xs)) mk
+  LedgerTables x mk ->
+  LedgerTables (HardForkBlock xs) mk
 injectLedgerTables idx =
   bimapLedgerTables (injectCanonicalTxIn idx) (injectHardForkTxOut idx)
 
 ejectLedgerTables ::
   forall xs x mk.
   ( CanMapKeysMK mk
-  , Ord (TxIn (LedgerState x))
+  , Ord (TxIn x)
   , HasCanonicalTxIn xs
   , CanMapMK mk
   , HasHardForkTxOut xs
   ) =>
   Index xs x ->
-  LedgerTables (LedgerState (HardForkBlock xs)) mk ->
-  LedgerTables (LedgerState x) mk
+  LedgerTables (HardForkBlock xs) mk ->
+  LedgerTables x mk
 ejectLedgerTables idx =
   bimapLedgerTables (ejectCanonicalTxIn idx) (ejectHardForkTxOut idx)
 
@@ -1049,7 +1055,7 @@ ejectLedgerTables idx =
 
 -- | Must be the 'CannonicalTxIn' type, but this will probably change in the
 -- future to @NS 'WrapTxIn' xs@. See 'HasCanonicalTxIn'.
-type instance TxIn (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
+type instance TxIn (HardForkBlock xs) = CanonicalTxIn xs
 
 -- | Canonical TxIn
 --
@@ -1073,21 +1079,21 @@ class
   -- | Inject an era-specific 'TxIn' into a 'TxIn' for a 'HardForkBlock'.
   injectCanonicalTxIn ::
     Index xs x ->
-    TxIn (LedgerState x) ->
+    TxIn x ->
     CanonicalTxIn xs
 
   -- | Distribute a 'TxIn' for a 'HardForkBlock' to an era-specific 'TxIn'.
   ejectCanonicalTxIn ::
     Index xs x ->
     CanonicalTxIn xs ->
-    TxIn (LedgerState x)
+    TxIn x
 
 {-------------------------------------------------------------------------------
   HardForkTxOut
 -------------------------------------------------------------------------------}
 
 -- | Must be the 'HardForkTxOut' type
-type instance TxOut (LedgerState (HardForkBlock xs)) = HardForkTxOut xs
+type instance TxOut (HardForkBlock xs) = HardForkTxOut xs
 
 -- | This choice for 'HardForkTxOut' imposes some complications on the code.
 --
@@ -1163,21 +1169,55 @@ type instance TxOut (LedgerState (HardForkBlock xs)) = HardForkTxOut xs
 -- >>> \ \\draw (bab) -> (bat);"
 -- >>> :}
 type DefaultHardForkTxOut xs = NS WrapTxOut xs
+type DefaultHardForkCoin xs = NS WrapCoin xs
+type DefaultHardForkCredential xs = NS WrapCredential xs
+type DefaultHardForkTxIn xs = NS WrapTxIn xs
+
+-- This is just necessary because GHC fails to parse the instance below otherwise
+--
+-- Try:
+-- type instance TablesForBlock (HardForkBlock xs)
+--   = S.Nub (Unions (S.Map (S.TyCon1 TablesForBlock) xs))
+data MapTablesForBlock :: Type S.~> [TAG]
+type instance S.Apply MapTablesForBlock x = TablesForBlock x
+
+type instance TablesForBlock (HardForkBlock xs)
+   = S.Nub (Unions (S.Map MapTablesForBlock xs))
 
 class
   ( Show (HardForkTxOut xs)
   , Eq (HardForkTxOut xs)
   , NoThunks (HardForkTxOut xs)
   , IndexedMemPack (LedgerState (HardForkBlock xs) EmptyMK) (HardForkTxOut xs)
-  , SerializeTablesWithHint (LedgerState (HardForkBlock xs))
+  , All (SerializeTablesWithHint (LedgerState (HardForkBlock xs)) (HardForkBlock xs)) (TablesForBlock (HardForkBlock xs))
   ) =>
   HasHardForkTxOut xs
   where
+
+  type HardForkTxIn xs :: Type
+  type HardForkTxIn xs = DefaultHardForkTxIn xs
+
   type HardForkTxOut xs :: Type
   type HardForkTxOut xs = DefaultHardForkTxOut xs
 
-  injectHardForkTxOut :: Index xs x -> TxOut (LedgerState x) -> HardForkTxOut xs
-  ejectHardForkTxOut :: Index xs x -> HardForkTxOut xs -> TxOut (LedgerState x)
+  type HardForkCredential xs :: Type
+  type HardForkCredential xs = DefaultHardForkCredential xs
+
+  type HardForkCoin xs :: Type
+  type HardForkCoin xs = DefaultHardForkCoin xs
+
+  injectHardForkTxIn :: Index xs x -> TxIn x -> HardForkTxIn xs
+  ejectHardForkTxIn :: Index xs x -> HardForkTxIn xs -> TxIn x
+
+  injectHardForkTxOut :: Index xs x -> TxOut x -> HardForkTxOut xs
+  ejectHardForkTxOut :: Index xs x -> HardForkTxOut xs -> TxOut x
+
+  injectHardForkCredential :: Index xs x -> Credential x -> HardForkCredential xs
+  ejectHardForkCredential :: Index xs x -> HardForkCredential xs -> Credential x
+
+  injectHardForkCoin :: Index xs x -> Coin x -> HardForkCoin xs
+  ejectHardForkCoin :: Index xs x -> HardForkCoin xs -> Coin x
+
 
   -- | This method is a null-arity method in a typeclass to make it a CAF, such
   -- that we only compute it once, then it is cached for the duration of the
@@ -1221,11 +1261,11 @@ extendTables ::
   (CanHardFork xs, HasHardForkTxOut xs) =>
   NS (K ()) xs ->
   Map.Map
-    (TxIn (LedgerState (HardForkBlock xs)))
-    (TxOut (LedgerState (HardForkBlock xs))) ->
+    (TxIn (HardForkBlock xs))
+    (TxOut (HardForkBlock xs)) ->
   Map.Map
-    (TxIn (LedgerState (HardForkBlock xs)))
-    (TxOut (LedgerState (HardForkBlock xs)))
+    (TxIn (HardForkBlock xs))
+    (TxOut (HardForkBlock xs))
 extendTables st =
   Map.map
     ( \txout ->
@@ -1244,7 +1284,7 @@ extendTables st =
 injectHardForkTxOutDefault ::
   SListI xs =>
   Index xs x ->
-  TxOut (LedgerState x) ->
+  TxOut x ->
   DefaultHardForkTxOut xs
 injectHardForkTxOutDefault idx = injectNS idx . WrapTxOut
 
@@ -1253,7 +1293,7 @@ ejectHardForkTxOutDefault ::
   HasHardForkTxOut xs =>
   Index xs x ->
   DefaultHardForkTxOut xs ->
-  TxOut (LedgerState x)
+  TxOut x
 ejectHardForkTxOutDefault idx =
   unwrapTxOut
     . apFn (projectNP idx txOutEjections)
@@ -1290,8 +1330,8 @@ composeTxOutTranslations = \case
     Z x -> l x
     S x -> r x
 
-class MemPack (TxOut (LedgerState x)) => MemPackTxOut x
-instance MemPack (TxOut (LedgerState x)) => MemPackTxOut x
+class MemPack (TxOut x) => MemPackTxOut x
+instance MemPack (TxOut x) => MemPackTxOut x
 
 instance
   (All MemPackTxOut xs, Typeable xs) =>

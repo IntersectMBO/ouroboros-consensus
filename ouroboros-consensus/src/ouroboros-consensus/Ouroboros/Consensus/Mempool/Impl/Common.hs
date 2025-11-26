@@ -68,6 +68,7 @@ import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
+import Data.SOP.Constraint
 
 {-------------------------------------------------------------------------------
   Internal State
@@ -92,12 +93,12 @@ data InternalState blk = IS
   -- 'MempoolSnapshot' (see 'snapshotHasTx').
   --
   -- This should always be in-sync with the transactions in 'isTxs'.
-  , isTxKeys :: !(LedgerTables (LedgerState blk) KeysMK)
+  , isTxKeys :: !(LedgerTables blk KeysMK)
   -- ^ The cached set of keys needed for the transactions
   -- currently in the mempool.
   --
   -- INVARIANT: @'isTxKeys' == foldMap (getTransactionKeySets . txForgetValidated) $ toList 'isTxs'@
-  , isTxValues :: !(LedgerTables (LedgerState blk) ValuesMK)
+  , isTxValues :: !(LedgerTables blk ValuesMK)
   -- ^ The cached values corresponding to reading 'isTxKeys' at
   -- 'isLedgerState'. These values can be used unless we switch to
   -- a different ledger state. It usually happens in the forging
@@ -148,8 +149,11 @@ deriving instance
   ( NoThunks (Validated (GenTx blk))
   , NoThunks (GenTxId blk)
   , NoThunks (TickedLedgerState blk DiffMK)
-  , NoThunks (TxIn (LedgerState blk))
-  , NoThunks (TxOut (LedgerState blk))
+  -- , NoThunks (TxIn (LedgerState blk))
+  -- , NoThunks (TxOut (LedgerState blk))
+  , All (Compose NoThunks (Table ValuesMK blk)) (TablesForBlock blk)
+  , All (Compose NoThunks (Table KeysMK blk)) (TablesForBlock blk)
+  , HasLedgerTables (LedgerState blk)
   , NoThunks (TxMeasure blk)
   , StandardHash blk
   , Typeable blk
@@ -330,7 +334,7 @@ validateNewTransaction ::
   GenTx blk ->
   TxMeasure blk ->
   -- | Values to cache if success
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   -- | This state is the internal state with the tables for this transaction
   -- advanced through the diffs in the internal state. One could think we can
   -- create this value here, but it is needed for some other uses like calling
@@ -382,7 +386,7 @@ revalidateTxsFor ::
   -- | The ticked ledger state againt which txs will be revalidated
   TickedLedgerState blk DiffMK ->
   -- | The tables with all the inputs for the transactions
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
   [TxTicket (TxMeasure blk) (Validated (GenTx blk))] ->
@@ -431,7 +435,7 @@ computeSnapshot ::
   -- | The ticked ledger state againt which txs will be revalidated
   TickedLedgerState blk DiffMK ->
   -- | The tables with all the inputs for the transactions
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
   [TxTicket (TxMeasure blk) (Validated (GenTx blk))] ->

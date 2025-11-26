@@ -41,6 +41,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.NormalForm.StrictTVar ()
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import Prelude hiding (read)
+import Ouroboros.Consensus.Ledger.LedgerStateType
 
 {-------------------------------------------------------------------------------
   Forker operations
@@ -76,16 +77,14 @@ deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
   , NoThunks (l EmptyMK)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
   ) =>
   NoThunks (ForkerEnv m l blk)
 
 implForkerReadTables ::
   (IOLike m, GetTip l) =>
-  ForkerEnv m l blk ->
-  LedgerTables l KeysMK ->
-  m (LedgerTables l ValuesMK)
+  ForkerEnv m l (LBlock l) ->
+  LedgerTables (LBlock l) KeysMK ->
+  m (LedgerTables (LBlock l) ValuesMK)
 implForkerReadTables env ks =
   encloseTimedWith (ForkerReadTables >$< foeTracer env) $ do
     lseq <- readTVarIO (foeLedgerSeq env)
@@ -95,9 +94,9 @@ implForkerReadTables env ks =
 implForkerRangeReadTables ::
   (IOLike m, GetTip l, HasLedgerTables l) =>
   QueryBatchSize ->
-  ForkerEnv m l blk ->
-  RangeQueryPrevious l ->
-  m (LedgerTables l ValuesMK, Maybe (TxIn l))
+  ForkerEnv m l (LBlock l) ->
+  RangeQueryPrevious (LBlock l) ->
+  m (LedgerTables (LBlock l) ValuesMK, Maybe (TxIn (LBlock l)))
 implForkerRangeReadTables qbs env rq0 =
   encloseTimedWith (ForkerRangeReadTables >$< foeTracer env) $ do
     ldb <- readTVarIO $ foeLedgerSeq env
@@ -105,7 +104,7 @@ implForkerRangeReadTables qbs env rq0 =
         stateRef = currentHandle ldb
     case rq0 of
       NoPreviousQuery -> readRange (tables stateRef) (state stateRef) (Nothing, n)
-      PreviousQueryWasFinal -> pure (LedgerTables emptyMK, Nothing)
+      PreviousQueryWasFinal -> pure (emptyLedgerTables, Nothing)
       PreviousQueryWasUpTo k ->
         readRange (tables stateRef) (state stateRef) (Just k, n)
 
@@ -117,8 +116,8 @@ implForkerGetLedgerState env = current <$> readTVar (foeLedgerSeq env)
 
 implForkerReadStatistics ::
   (MonadSTM m, GetTip l) =>
-  ForkerEnv m l blk ->
-  m (Maybe Statistics)
+  ForkerEnv m l (LBlock l) ->
+  m (Maybe (Statistics (LBlock l)))
 implForkerReadStatistics env = do
   traceWith (foeTracer env) ForkerReadStatistics
   fmap (fmap Statistics) . tablesSize . tables . currentHandle =<< readTVarIO (foeLedgerSeq env)

@@ -25,6 +25,8 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTxIn (..)
   , WrapTxMeasure (..)
   , WrapTxOut (..)
+  , WrapCoin (..)
+  , WrapCredential (..)
   , WrapValidatedGenTx (..)
 
     -- * Protocol based
@@ -91,6 +93,8 @@ newtype WrapTxMeasure blk = WrapTxMeasure {unwrapTxMeasure :: TxMeasure blk}
 
 newtype WrapTxIn blk = WrapTxIn {unwrapTxIn :: TxIn blk}
 newtype WrapTxOut blk = WrapTxOut {unwrapTxOut :: TxOut blk}
+newtype WrapCredential blk = WrapCredential {unwrapCredential :: Credential blk}
+newtype WrapCoin blk = WrapCoin {unwrapCoin :: Coin blk}
 
 {-------------------------------------------------------------------------------
   Consensus based

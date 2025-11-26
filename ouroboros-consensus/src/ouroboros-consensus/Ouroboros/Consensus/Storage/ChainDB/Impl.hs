@@ -1,3 +1,4 @@
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -94,6 +95,7 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( ChainSelStarvation (..)
   )
+import Ouroboros.Consensus.Ledger.Abstract
 
 {-------------------------------------------------------------------------------
   Initialization
@@ -108,7 +110,7 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk
+  , LedgerSupportsLedgerDB blk, GetBlockKeySets blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -124,7 +126,7 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk
+  , LedgerSupportsLedgerDB blk, GetBlockKeySets blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -140,7 +142,7 @@ openDBInternal ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , HasCallStack
-  , LedgerSupportsLedgerDB blk
+  , LedgerSupportsLedgerDB blk, GetBlockKeySets blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks
