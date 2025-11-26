@@ -17,6 +17,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 
 module Ouroboros.Consensus.Ledger.Extended
   ( -- * Extended ledger state
@@ -410,28 +411,28 @@ instance
 -- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKEncoder ::
-  forall blk.
-  All (SerializeTablesWithHint blk) (TablesForBlock blk) =>
-  ExtLedgerState blk EmptyMK ->
-  LedgerTables blk ValuesMK ->
+  forall l.
+  All (SerializeTablesWithHint l (LBlock l)) (TablesForBlock (LBlock l)) =>
+  l EmptyMK ->
+  LedgerTables (LBlock l) ValuesMK ->
   Encoding
 valuesMKEncoder st (LedgerTables tbs) =
   mconcat
-    [ CBOR.encodeListLen (fromIntegral $ lengthSList (Proxy @(TablesForBlock blk)))
-    , hcfoldMap (Proxy @(SerializeTablesWithHint blk)) (encodeTablesWithHint st) tbs
+    [ CBOR.encodeListLen (fromIntegral $ lengthSList (Proxy @(TablesForBlock (LBlock l))))
+    , hcfoldMap (Proxy @(SerializeTablesWithHint l (LBlock l))) (encodeTablesWithHint st) tbs
     ]
 
 -- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKDecoder ::
-  forall blk s.
-  All (SerializeTablesWithHint blk) (TablesForBlock blk) =>
-  ExtLedgerState blk EmptyMK ->
-  Decoder s (LedgerTables blk ValuesMK)
+  forall l s.
+  All (SerializeTablesWithHint l (LBlock l)) (TablesForBlock (LBlock l)) =>
+  l EmptyMK ->
+  Decoder s (LedgerTables (LBlock l) ValuesMK)
 valuesMKDecoder st = do
-  _ <- CBOR.decodeListLenOf (lengthSList (Proxy @(TablesForBlock blk)))
+  _ <- CBOR.decodeListLenOf (lengthSList (Proxy @(TablesForBlock (LBlock l))))
   LedgerTables
-    <$> hsequence' (hcpure (Proxy @(SerializeTablesWithHint blk)) (Comp $ decodeTablesWithHint st))
+    <$> hsequence' (hcpure (Proxy @(SerializeTablesWithHint l (LBlock l))) (Comp $ decodeTablesWithHint st))
 
 -- | When decoding the tables and in particular the UTxO set we want
 -- to share data in the TxOuts in the same way the Ledger did (see the
@@ -445,27 +446,28 @@ valuesMKDecoder st = do
 -- See @SerializeTablesWithHint (LedgerState (HardForkBlock
 -- (CardanoBlock c)))@ for a good example, the rest of the instances
 -- are somewhat degenerate.
-class SerializeTablesWithHint blk tag where
+class SerializeTablesWithHint l blk tag where
   encodeTablesWithHint ::
-    SerializeTablesHint (LedgerTables blk ValuesMK) ->
+    SerializeTablesHint l (LedgerTables blk ValuesMK) ->
     Table ValuesMK blk tag ->
     Encoding
   decodeTablesWithHint ::
-    SerializeTablesHint (LedgerTables blk ValuesMK) ->
+    SerializeTablesHint l (LedgerTables blk ValuesMK) ->
     Decoder s (Table ValuesMK blk tag)
 
 -- This is just for the BackingStore Lockstep tests. Once V1 is gone
 -- we can inline it above.
 
 -- | The hint for 'SerializeTablesWithHint'
-type family SerializeTablesHint values :: Type
+type SerializeTablesHint :: LedgerStateKind -> Type -> Type
+type family SerializeTablesHint l values :: Type
 
-type instance SerializeTablesHint (LedgerTables blk ValuesMK) = ExtLedgerState blk EmptyMK
+type instance SerializeTablesHint l (LedgerTables blk ValuesMK) = l EmptyMK
 
 defaultEncodeTablesWithHint ::
-  (KVConstraints l tag, MemPack (Snd (TableKV tag l))) =>
-  SerializeTablesHint (LedgerTables l ValuesMK) ->
-  Table ValuesMK l tag ->
+  (KVConstraints blk tag, MemPack (Snd (TableKV tag blk))) =>
+  SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+  Table ValuesMK blk tag ->
   Encoding
 defaultEncodeTablesWithHint _ (Table (ValuesMK tbs)) =
   mconcat
@@ -481,9 +483,9 @@ defaultEncodeTablesWithHint _ (Table (ValuesMK tbs)) =
     ]
 
 defaultDecodeTablesWithHint ::
-  (KVConstraints l tag, MemPack (Snd (TableKV tag l))) =>
-  SerializeTablesHint (LedgerTables l ValuesMK) ->
-  Decoder s (Table ValuesMK l tag)
+  (KVConstraints blk tag, MemPack (Snd (TableKV tag blk))) =>
+  SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+  Decoder s (Table ValuesMK blk tag)
 defaultDecodeTablesWithHint _ = do
   n <- CBOR.decodeMapLen
   Table . ValuesMK <$> go n Map.empty

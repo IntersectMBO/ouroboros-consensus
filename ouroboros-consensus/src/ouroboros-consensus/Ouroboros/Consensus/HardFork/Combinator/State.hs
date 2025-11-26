@@ -312,13 +312,14 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
               -- will just be a no-op. See the haddock for
               -- 'translateLedgerTablesWith' and 'extendToSlot' for more
               -- information.
-              . prependDiffs
-                ( translateLedgerTablesWith f'
-                    . projectLedgerTables
-                    . unFlip
-                    . currentState
-                    $ cur
-                )
+              . -- prependDiffs
+                -- ( translateLedgerTablesWith f'
+                --     . projectLedgerTables
+                --     . unFlip
+                --     . currentState
+                --     $ cur
+                -- )
+                undefined
               . translateLedgerStateWith f (History.boundEpoch currentEnd)
               . forgetLedgerTables
               . unFlip

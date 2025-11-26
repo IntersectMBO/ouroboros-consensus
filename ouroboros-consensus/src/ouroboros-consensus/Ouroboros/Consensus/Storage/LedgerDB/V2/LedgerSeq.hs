@@ -502,10 +502,9 @@ rollbackToAnchor (LedgerSeq vol) =
 -- When no ledger state (or anchor) has the given 'Point', 'Nothing' is
 -- returned.
 rollback ::
-  ( HasHeader blk
-  , GetTip l
+  ( GetTip l
+  , StandardHash l, StandardHash blk
   , HeaderHash l ~ HeaderHash blk
-  , StandardHash l
   ) =>
   Point blk ->
   LedgerSeq m l ->

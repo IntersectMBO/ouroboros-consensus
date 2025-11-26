@@ -1,3 +1,4 @@
+{-# LANGUAGE UndecidableSuperClasses #-}
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.NoHardForks
   ( ImmutableEraParams (..)
   , NoHardForks (..)

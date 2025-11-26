@@ -24,7 +24,7 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind
   , DiffMK (..)
   , EmptyMK (..)
   , KeysMK (..)
-  , SeqDiffMK (..)
+--  , SeqDiffMK (..)
   , TrackingMK (..)
   , ValuesMK (..)
   ) where
@@ -40,7 +40,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Ledger.Tables.Basics
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
-import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
+-- import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
 
 {-------------------------------------------------------------------------------
   Classes
@@ -177,13 +177,13 @@ instance CanMapKeysMK TrackingMK where
   SeqDiffMK
 -------------------------------------------------------------------------------}
 
-newtype SeqDiffMK k v = SeqDiffMK {getSeqDiffMK :: DiffSeq k v}
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
-  deriving anyclass (ShowMK, EqMK, NoThunksMK)
+-- newtype SeqDiffMK k v = SeqDiffMK {getSeqDiffMK :: DiffSeq k v}
+--   deriving stock (Generic, Eq, Show)
+--   deriving anyclass NoThunks
+--   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
-instance ZeroableMK SeqDiffMK where
-  emptyMK = SeqDiffMK empty
+-- instance ZeroableMK SeqDiffMK where
+--   emptyMK = SeqDiffMK empty
 
 {-------------------------------------------------------------------------------
   CodecMK
