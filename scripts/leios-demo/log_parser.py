@@ -172,6 +172,10 @@ def load_leios_block_arrivals(df_schedule: pd.DataFrame, log_path: str, node_id:
         )
         raise
 
+    if df.empty:
+        df["latency_ms"] = None
+        return df
+
     # Use 'Int64' to allow NaNs; see https://stackoverflow.com/a/54194908
     df["latency_ms"] = ((
         df["at"] - df["offer"]
@@ -250,16 +254,28 @@ def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
 empty_sendrecv = pd.DataFrame(columns=["at", "mux_at", "connection_id", "direction", "msg", "prevCount"])
 
 msgs_SendRecv = set([
+    "MsgRollForward",
+    "MsgBlock",
+    "MsgRequestRange",
+    "MsgBlock",
+    "MsgLeiosBlockRequest",
+    "MsgLeiosBlock",
     "MsgLeiosBlockTxsRequest",
     "MsgLeiosBlockTxs",
   ])
 
-nss_cardano_node_SendRecv = set(
-    "LeiosFetch.Remote." + direction + "." + msg[8:]
+nss_cardano_node_SendRecv = set([
+    "LeiosFetch.Remote." + direction + "." + msg
     for direction in ["Send", "Receive"]
-    for msg in msgs_SendRecv
-  )
-
+    for msg in ["BlockRequest", "Block", "BlockTxsRequest", "BlockTxs"]
+  ] + ["ChainSync.Remote" + dotSerialised + "." + direction + ".RollForward"
+    for direction in ["Send", "Receive"]
+    for dotSerialised in ["", ".Serialised"]
+  ] + ["BlockFetch.Remote" + dotSerialised + "." + direction + "." + msg
+    for direction in ["Send", "Receive"]
+    for dotSerialised in ["", ".Serialised"]
+    for msg in ["Block", "RequestRange"]
+  ])
 
 def load_sendrecv_upstream(log_path: str):
     """
