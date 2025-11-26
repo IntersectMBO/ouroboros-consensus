@@ -179,12 +179,12 @@ data CoreNode c = CoreNode
 
 data CoreNodeKeyInfo c = CoreNodeKeyInfo
   { cnkiKeyPair ::
-      ( TL.KeyPair 'SL.Payment
-      , TL.KeyPair 'SL.Staking
+      ( TL.KeyPair SL.Payment
+      , TL.KeyPair SL.Staking
       )
   , cnkiCoreNode ::
-      ( TL.KeyPair 'SL.Genesis
-      , Gen.AllIssuerKeys c 'SL.GenesisDelegate
+      ( TL.KeyPair SL.GenesisRole
+      , Gen.AllIssuerKeys c SL.GenesisDelegate
       )
   }
 
@@ -380,11 +380,11 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
       & SL.ppProtocolVersionL .~ pVer
 
   coreNodesToGenesisMapping ::
-    Map (SL.KeyHash 'SL.Genesis) SL.GenDelegPair
+    Map (SL.KeyHash SL.GenesisRole) SL.GenDelegPair
   coreNodesToGenesisMapping =
     Map.fromList
       [ let
-          gkh :: SL.KeyHash 'SL.Genesis
+          gkh :: SL.KeyHash SL.GenesisRole
           gkh = SL.hashKey . SL.VKey $ deriveVerKeyDSIGN cnGenesisKey
 
           gdpair :: SL.GenDelegPair
@@ -432,7 +432,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
       }
    where
     coreNodeToPoolMapping ::
-      Map (SL.KeyHash 'SL.StakePool) SL.StakePoolParams
+      Map (SL.KeyHash SL.StakePool) SL.StakePoolParams
     coreNodeToPoolMapping =
       Map.fromList
         [ ( SL.hashKey . SL.VKey . deriveVerKeyDSIGN $ cnStakingKey
@@ -513,7 +513,7 @@ mkSetDecentralizationParamTxs coreNodes pVer ttl dNew =
 
   -- Every node signs the transaction body, since it includes a " vote " from
   -- every node.
-  signatures :: Set (SL.WitVKey 'SL.Witness)
+  signatures :: Set (SL.WitVKey SL.Witness)
   signatures =
     TL.mkWitnessesVKey
       (hashAnnotated body)
@@ -634,7 +634,7 @@ mkMASetDecentralizationParamTxs coreNodes pVer ttl dNew =
 
   -- Every node signs the transaction body, since it includes a " vote " from
   -- every node.
-  signatures :: Set (SL.WitVKey 'SL.Witness)
+  signatures :: Set (SL.WitVKey SL.Witness)
   signatures =
     TL.mkWitnessesVKey
       (eraIndTxBodyHash' body)
