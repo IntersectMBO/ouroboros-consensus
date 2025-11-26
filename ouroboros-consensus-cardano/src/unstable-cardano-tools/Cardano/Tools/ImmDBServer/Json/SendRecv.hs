@@ -14,9 +14,14 @@ data Direction = Recv | Send
   deriving anyclass (Aeson.ToJSON)
 
 -- | The event as it appears in the log file.
-data SendRecvEvent tm cnt = MkSendRecvEvent {
+data SendRecvEvent muxtm tm cnt = MkSendRecvEvent {
         at :: tm
         -- ^ when
+      , mux_at :: muxtm
+        -- ^ For 'Recv', when these bytes left the demuxer.
+        --
+        -- For 'Send', when the mini protocol began trying to put these bytes
+        -- into the muxer.
       , direction :: Direction
       , msg :: String
         -- ^ which message

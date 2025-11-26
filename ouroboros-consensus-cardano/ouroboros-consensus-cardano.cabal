@@ -589,6 +589,7 @@ library unstable-cardano-tools
     singletons,
     sop-core,
     sop-extras,
+    si-timers,
     strict-sop-core,
     text,
     text-builder >=1,

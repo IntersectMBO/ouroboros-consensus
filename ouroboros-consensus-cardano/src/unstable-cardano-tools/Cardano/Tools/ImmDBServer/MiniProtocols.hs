@@ -170,18 +170,18 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
 
             keepAliveProt  =
               MiniProtocolCb $ \_ctx channel ->
-                runPeer nullTracer cKeepAliveCodec channel
+                runPeer nullTracer cKeepAliveCodec (fromIntegral . BL.length) channel
                       $ keepAliveServerPeer keepAliveServer
             chainSyncProt  =
                 MiniProtocolCb $ \ctx channel ->
                 withRegistry
-              $ runPeer (traceMaybe (maybeShowSendRecvCS ctx) tracer) cChainSyncCodecSerialised channel
+              $ runPeer (traceMaybe (maybeShowSendRecvCS ctx) tracer) cChainSyncCodecSerialised (fromIntegral . BL.length) channel
               . chainSyncServerPeer
               . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint getSlotDelay
             blockFetchProt =
                 MiniProtocolCb $ \ctx channel ->
                 withRegistry
-              $ runPeer (traceMaybe (maybeShowSendRecvBF ctx) tracer) cBlockFetchCodecSerialised channel
+              $ runPeer (traceMaybe (maybeShowSendRecvBF ctx) tracer) cBlockFetchCodecSerialised (fromIntegral . BL.length) channel
               . blockFetchServerPeer
               . blockFetchServer immDB ChainDB.getSerialisedBlockWithPoint
             txSubmissionProt =
@@ -191,7 +191,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
                 MiniProtocolCb $ \_ctx channel -> id
               $ withRegistry $ \reg -> id
               $ mkLeiosNotifyContext reg >>= \leiosContext -> id
-              $ runPeer nullTracer cLeiosNotifyCodec channel
+              $ runPeer nullTracer cLeiosNotifyCodec (fromIntegral . BL.length) channel
               $ leiosNotifyServerPeer
                     (MVar.takeMVar (leiosMailbox leiosContext) <&> \case
                         (p, Just sz) -> MsgLeiosBlockOffer p sz
@@ -200,7 +200,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
             leiosFetchProt =
                 MiniProtocolCb $ \ctx channel -> id
               $ mkLeiosFetchContext >>= \(LeiosLogic.MkSomeLeiosFetchContext leiosContext) -> id
-              $ runPeer (traceMaybe (maybeShowSendRecvLF ctx) tracer) cLeiosFetchCodec channel
+              $ runPeer (traceMaybe (maybeShowSendRecvLF ctx) tracer) cLeiosFetchCodec (fromIntegral . BL.length) channel
               $ leiosFetchServerPeer
               $ pure (LeiosLogic.leiosFetchHandler nullTracer leiosContext)
 
@@ -224,28 +224,32 @@ traceMaybe f tr = Tracer $ \x -> case f x of
 
 maybeShowSendRecvLF :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) -> Maybe Json.LogEvent
 maybeShowSendRecvLF ctx = \case
-    N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockRequest{}) -> Just $ f Json.Recv "MsgLeiosBlockRequest"
-    N2N.TraceSendMsg (AnyMessage MsgLeiosBlock{}) -> Just $ f Json.Send "MsgLeiosBlock"
-    N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockTxsRequest{}) -> Just $ f Json.Recv "MsgLeiosBlockTxsRequest"
-    N2N.TraceSendMsg (AnyMessage MsgLeiosBlockTxs{}) -> Just $ f Json.Send "MsgLeiosBlockTxs"
-    N2N.TraceRecvMsg (AnyMessage LF.MsgDone{}) -> Just $ f Json.Recv "MsgDone"
+    N2N.TraceRecvMsg mbTm (AnyMessage MsgLeiosBlockRequest{}) -> Just $ recv mbTm "MsgLeiosBlockRequest"
+    N2N.TraceSendMsg tm (AnyMessage MsgLeiosBlock{}) -> Just $ send tm "MsgLeiosBlock"
+    N2N.TraceRecvMsg mbTm (AnyMessage MsgLeiosBlockTxsRequest{}) -> Just $ recv mbTm "MsgLeiosBlockTxsRequest"
+    N2N.TraceSendMsg tm (AnyMessage MsgLeiosBlockTxs{}) -> Just $ send tm "MsgLeiosBlockTxs"
+    N2N.TraceRecvMsg mbTm (AnyMessage LF.MsgDone{}) -> Just $ recv mbTm "MsgDone"
     _ -> Nothing
   where
-    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.msg = y }
+    f tm x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.mux_at = tm, Json.msg = y }
+    send tm y = f tm Json.Send y
+    recv mbTm y = case mbTm of
+        Nothing -> error $ "impossible! " ++ y
+        Just tm -> f tm Json.Recv y
 
 maybeShowSendRecvCS :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (CS.ChainSync h p tip) -> Maybe Json.LogEvent
 maybeShowSendRecvCS ctx = \case
-    N2N.TraceSendMsg (AnyMessage CS.MsgRollForward{}) -> Just $ f Json.Send "MsgRollForward"
+    N2N.TraceSendMsg tm (AnyMessage CS.MsgRollForward{}) -> Just $ f tm Json.Send "MsgRollForward"
     _ -> Nothing
   where
-    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.msg = y }
+    f tm x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.mux_at = tm, Json.msg = y }
 
 maybeShowSendRecvBF :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (BF.BlockFetch blk p) -> Maybe Json.LogEvent
 maybeShowSendRecvBF ctx = \case
-    N2N.TraceSendMsg (AnyMessage BF.MsgBlock{}) -> Just $ f Json.Send "MsgBlock"
+    N2N.TraceSendMsg tm (AnyMessage BF.MsgBlock{}) -> Just $ f tm Json.Send "MsgBlock"
     _ -> Nothing
   where
-    f x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.msg = y }
+    f tm x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.mux_at = tm, Json.msg = y }
 
 -- | The ChainSync specification requires sending a rollback instruction to the
 -- intersection point right after an intersection has been negotiated. (Opening
