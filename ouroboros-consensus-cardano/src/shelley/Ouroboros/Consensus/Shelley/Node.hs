@@ -107,8 +107,8 @@ instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto
    where
     issuerVKeys ::
       Map
-        (SL.KeyHash 'SL.BlockIssuer)
-        (SL.VKey 'SL.BlockIssuer)
+        (SL.KeyHash SL.BlockIssuer)
+        (SL.VKey SL.BlockIssuer)
     issuerVKeys = shelleyBlockIssuerVKeys cfg
 
 instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto era) where

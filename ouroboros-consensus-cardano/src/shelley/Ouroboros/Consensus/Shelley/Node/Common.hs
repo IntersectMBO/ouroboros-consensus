@@ -65,7 +65,7 @@ data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
   }
 
 shelleyBlockIssuerVKey ::
-  ShelleyLeaderCredentials c -> SL.VKey 'SL.BlockIssuer
+  ShelleyLeaderCredentials c -> SL.VKey SL.BlockIssuer
 shelleyBlockIssuerVKey =
   praosCanBeLeaderColdVerKey . shelleyLeaderCredentialsCanBeLeader
 
