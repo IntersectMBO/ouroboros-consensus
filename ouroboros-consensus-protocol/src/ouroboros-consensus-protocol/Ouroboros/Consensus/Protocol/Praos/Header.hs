@@ -93,7 +93,7 @@ data HeaderBody crypto = HeaderBody
   -- ^ block slot
   , hbPrev :: !PrevHash
   -- ^ Hash of the previous block header
-  , hbVk :: !(VKey 'BlockIssuer)
+  , hbVk :: !(VKey BlockIssuer)
   -- ^ verification key of block issuer
   , hbVrfVk :: !(VRF.VerKeyVRF (VRF crypto))
   -- ^ VRF verification key for block issuer
@@ -221,7 +221,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
 encodeHeaderRaw ::
   Crypto crypto =>
   HeaderRaw crypto ->
-  Encode ('Closed 'Dense) (HeaderRaw crypto)
+  Encode (Closed Dense) (HeaderRaw crypto)
 encodeHeaderRaw (HeaderRaw body sig) =
   Rec HeaderRaw !> To body !> E encodeSignedKES sig
 

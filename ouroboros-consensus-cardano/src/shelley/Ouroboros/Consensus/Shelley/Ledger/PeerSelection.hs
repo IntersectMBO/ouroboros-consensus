@@ -47,7 +47,7 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
     -- Sort stake pools by descending stake
     orderByStake ::
       SL.PoolDistr ->
-      [(SL.KeyHash 'SL.StakePool, PoolStake)]
+      [(SL.KeyHash SL.StakePool, PoolStake)]
     orderByStake =
       sortOn (Down . snd)
         . map (second (PoolStake . SL.individualPoolStake))
@@ -90,7 +90,7 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
     -- Combine the stake pools registered in the future and the current pool
     -- parameters, and remove duplicates.
     poolLedgerRelayAccessPoints ::
-      Map (SL.KeyHash 'SL.StakePool) (NonEmpty StakePoolRelay)
+      Map (SL.KeyHash SL.StakePool) (NonEmpty StakePoolRelay)
     poolLedgerRelayAccessPoints =
       Map.unionWith
         (\futureRelays currentRelays -> NE.nub (futureRelays <> currentRelays))
