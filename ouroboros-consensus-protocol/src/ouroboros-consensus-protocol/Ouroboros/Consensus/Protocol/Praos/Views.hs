@@ -22,7 +22,7 @@ import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 data HeaderView crypto = HeaderView
   { hvPrevHash :: !PrevHash
   -- ^ Hash of the previous block
-  , hvVK :: !(VKey 'BlockIssuer)
+  , hvVK :: !(VKey BlockIssuer)
   -- ^ verification key of block issuer
   , hvVrfVK :: !(VerKeyVRF (VRF crypto))
   -- ^ VRF verification key for block issuer
