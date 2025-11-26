@@ -203,14 +203,14 @@ migrateUTxO migrationInfo curSlot lcfg lst
               Byron.addrAttributes byronAddr
 
           -- Witness the stake delegation.
-          delegWit :: SL.WitVKey 'SL.Witness
+          delegWit :: SL.WitVKey SL.Witness
           delegWit =
             TL.mkWitnessVKey
               bodyHash
               (Shelley.mkKeyPair stakingSK)
 
           -- Witness the pool registration.
-          poolWit :: SL.WitVKey 'SL.Witness
+          poolWit :: SL.WitVKey SL.Witness
           poolWit =
             TL.mkWitnessVKey
               bodyHash
