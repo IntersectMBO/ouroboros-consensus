@@ -247,7 +247,7 @@ def plot_onset_vs_arrival(df: pd.DataFrame, output_file: str = None):
 
 ################################################################################
 
-empty_sendrecv = pd.DataFrame(columns=["at", "connection_id", "direction", "msg", "prevCount"])
+empty_sendrecv = pd.DataFrame(columns=["at", "mux_at", "connection_id", "direction", "msg", "prevCount"])
 
 msgs_SendRecv = set([
     "MsgLeiosBlockTxsRequest",
@@ -280,6 +280,7 @@ def load_sendrecv_upstream(log_path: str):
                     log_entry = json.loads(line)
                     record = {
                         "at": log_entry["at"],
+                        "mux_at": log_entry["mux_at"],
                         "connection_id": log_entry["connectionId"],
                         "direction": log_entry["direction"],
                         "msg": str(log_entry["msg"]),
@@ -334,6 +335,7 @@ def load_sendrecv_node(log_path: str):
 
                     record = {
                         "at": log_entry["at"],
+                        "mux_at": log_entry["data"]["mux_at"],
                         "connection_id": connection_id,
                         "direction": direction,
                         "msg": msg,
@@ -381,17 +383,36 @@ def join_sendrecv(left_connId: str, left_id: str, left: pd.DataFrame, rite_id: s
         how="outer",
     ).drop(columns=["connection_id"])
 
-    df["sent_at"] = None
-    # df.["sent_at"][df["direction"] == "Send"] = df["at_" + left_id], but avoiding Copy-on-Write pitfalls
-    df.loc[df["direction"] == "Send","sent_at"] = df["at_" + left_id]
-    df.loc[df["direction"] == "Recv","sent_at"] = df["at_" + rite_id]
+    df["push_at"] = None
+    df["send_at"] = None
+    df["recv_at"] = None
+    df["pull_at"] = None
+    # df.["push_at"][df["direction"] == "Send"] = df["at_" + left_id], but avoiding Copy-on-Write pitfalls
+    df.loc[df["direction"] == "Send","send_at"] = df["at_" + left_id]
+    df.loc[df["direction"] == "Send","push_at"] = df["mux_at_" + left_id]
+    df.loc[df["direction"] == "Send","recv_at"] = df["mux_at_" + rite_id]
+    df.loc[df["direction"] == "Send","pull_at"] = df["at_" + rite_id]
+    df.loc[df["direction"] == "Recv","send_at"] = df["at_" + rite_id]
+    df.loc[df["direction"] == "Recv","push_at"] = df["mux_at_" + rite_id]
+    df.loc[df["direction"] == "Recv","recv_at"] = df["mux_at_" + left_id]
+    df.loc[df["direction"] == "Recv","pull_at"] = df["at_" + left_id]
 
-    df = df.drop(columns=["direction"]).sort_values(by=["sent_at"]).reset_index(drop=True)
-
-    df["latency_ms"] = (abs(
-        pd.to_datetime(df["at_" + rite_id]) - pd.to_datetime(df["at_" + left_id])
-    ).dt.total_seconds() * 1000).round(0).astype('Int64')
     df = df.drop(columns=["at_" + left_id,"at_" + rite_id])
+
+    df = df.drop(columns=["direction"]).sort_values(by=["push_at"]).reset_index(drop=True)
+
+    df["send_latency_ms"] = (abs(
+        pd.to_datetime(df["send_at"]) - pd.to_datetime(df["push_at"])
+    ).dt.total_seconds() * 1000).round(0).astype('Int64')
+    df["transport_latency_ms"] = (abs(
+        pd.to_datetime(df["recv_at"]) - pd.to_datetime(df["send_at"])
+    ).dt.total_seconds() * 1000).round(0).astype('Int64')
+    df["recv_latency_ms"] = (abs(
+        pd.to_datetime(df["pull_at"]) - pd.to_datetime(df["recv_at"])
+    ).dt.total_seconds() * 1000).round(0).astype('Int64')
+    df["latency_ms"] = (abs(
+        pd.to_datetime(df["pull_at"]) - pd.to_datetime(df["push_at"])
+    ).dt.total_seconds() * 1000).round(0).astype('Int64')
 
     return df
 
@@ -636,10 +657,13 @@ if __name__ == "__main__":
 
     # Which columns to display
     sendrecv_display_columns = [
-        "sent_at",
+        "push_at",
         "msg",
         "prevCount",
-        "latency_ms",
+        "send_latency_ms",
+        "transport_latency_ms",
+        "recv_latency_ms",
+        "pull_at",
     ]
     print("\n--- Extracted and Merged Data Summary for MsgLeiosBlockTxs{,Request} between upstream and node0 ---")
     print(df_sendrecv_upstream_node0[sendrecv_display_columns])

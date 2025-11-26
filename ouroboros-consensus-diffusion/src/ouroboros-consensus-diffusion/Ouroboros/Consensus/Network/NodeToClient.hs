@@ -368,7 +368,7 @@ showTracers tr = Tracers {
 -------------------------------------------------------------------------------}
 
 -- | A node-to-client application
-type App m peer bytes a = peer -> Channel m bytes -> m (a, Maybe bytes)
+type App m peer bytes a = peer -> Channel m bytes -> m (a, Maybe (Reception bytes))
 
 -- | Applications for the node-to-client (i.e., local) protocols
 --
@@ -402,15 +402,18 @@ mkApps ::
   => NodeKernel m addrNTN addrNTC blk
   -> Tracers m addrNTC blk e
   -> Codecs blk e m bCS bTX bSQ bTM
+  -> (bCS -> Word, bTX -> Word, bSQ -> Word, bTM -> Word)
   -> Handlers m addrNTC blk
   -> Apps m addrNTC bCS bTX bSQ bTM ()
-mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
+mkApps kernel Tracers {..} Codecs {..} sizes Handlers {..} =
     Apps {..}
   where
+    (sizeCS, sizeTX, sizeSQ, sizeTM) = sizes
+
     aChainSyncServer
       :: addrNTC
       -> Channel m bCS
-      -> m ((), Maybe bCS)
+      -> m ((), Maybe (Reception bCS))
     aChainSyncServer them channel = do
       labelThisThread "LocalChainSyncServer"
       bracketWithPrivateRegistry
@@ -419,7 +422,7 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
         $ \flr ->
           runPeer
             (contramap (TraceLabelPeer them) tChainSyncTracer)
-            cChainSyncCodec
+            cChainSyncCodec sizeCS
             channel
             $ chainSyncServerPeer
             $ hChainSyncServer flr
@@ -427,25 +430,25 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
     aTxSubmissionServer
       :: addrNTC
       -> Channel m bTX
-      -> m ((), Maybe bTX)
+      -> m ((), Maybe (Reception bTX))
     aTxSubmissionServer them channel = do
       labelThisThread "LocalTxSubmissionServer"
       runPeer
         (contramap (TraceLabelPeer them) tTxSubmissionTracer)
-        cTxSubmissionCodec
+        cTxSubmissionCodec sizeTX
         channel
         (localTxSubmissionServerPeer (pure hTxSubmissionServer))
 
     aStateQueryServer
       :: addrNTC
       -> Channel m bSQ
-      -> m ((), Maybe bSQ)
+      -> m ((), Maybe (Reception bSQ))
     aStateQueryServer them channel = do
       labelThisThread "LocalStateQueryServer"
       withRegistry $ \rr ->
         Stateful.runPeer
           (contramap (TraceLabelPeer them) tStateQueryTracer)
-          cStateQueryCodec
+          cStateQueryCodec sizeSQ
           channel
           LocalStateQuery.StateIdle
           (localStateQueryServerPeer (hStateQueryServer rr))
@@ -453,12 +456,12 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
     aTxMonitorServer
       :: addrNTC
       -> Channel m bTM
-      -> m ((), Maybe bTM)
+      -> m ((), Maybe (Reception bTM))
     aTxMonitorServer them channel = do
       labelThisThread "LocalTxMonitorServer"
       runPeer
         (contramap (TraceLabelPeer them) tTxMonitorTracer)
-        cTxMonitorCodec
+        cTxMonitorCodec sizeTM
         channel
         (localTxMonitorServerPeer hTxMonitorServer)
 
