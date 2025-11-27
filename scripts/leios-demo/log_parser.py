@@ -415,6 +415,9 @@ def join_sendrecv(left_connId: str, left_id: str, left: pd.DataFrame, rite_id: s
 
     df = df.drop(columns=["at_" + left_id,"at_" + rite_id])
 
+    df.loc[df["direction"] == "Recv","dir"] = "<-  "
+    df.loc[df["direction"] == "Send","dir"] = "  ->"
+
     df = df.drop(columns=["direction"]).sort_values(by=["push_at"]).reset_index(drop=True)
 
     df["send_latency_ms"] = (abs(
@@ -674,6 +677,7 @@ if __name__ == "__main__":
     # Which columns to display
     sendrecv_display_columns = [
         "push_at",
+        "dir",
         "msg",
         "prevCount",
         "send_latency_ms",
@@ -681,7 +685,7 @@ if __name__ == "__main__":
         "recv_latency_ms",
         "pull_at",
     ]
-    print("\n--- Extracted and Merged Data Summary for MsgLeiosBlockTxs{,Request} between upstream and node0 ---")
+    print("\n--- Extracted and Merged Data Summary for requests and replies between upstream and node0 ---")
     print(df_sendrecv_upstream_node0[sendrecv_display_columns])
-    print("\n--- Extracted and Merged Data Summary for MsgLeiosBlockTxs{,Request} between node0 and downstream ---")
+    print("\n--- Extracted and Merged Data Summary for requests and replies between node0 and downstream ---")
     print(df_sendrecv_node0_downstream[sendrecv_display_columns])
