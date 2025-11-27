@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Network.NodeToNode (
     -- * Byte Limits
   , ByteLimits
   , byteLimits
-  , noByteLimits
     -- * Tracers
   , Tracers
   , Tracers' (..)
@@ -55,10 +54,8 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Lazy as BSL
 import           Data.Functor ((<&>), void)
 import           Data.Hashable (Hashable)
-import           Data.Int (Int64)
 import           Data.Map.Strict (Map)
 import           Data.Void (Void)
 import qualified Network.Mux as Mux
@@ -119,8 +116,8 @@ import           Ouroboros.Network.Protocol.KeepAlive.Type
 import           Ouroboros.Network.Protocol.PeerSharing.Client
                      (PeerSharingClient, peerSharingClientPeer)
 import           Ouroboros.Network.Protocol.PeerSharing.Codec
-                     (byteLimitsPeerSharing, codecPeerSharing,
-                     codecPeerSharingId, timeLimitsPeerSharing)
+                     (codecPeerSharing, codecPeerSharingId,
+                     timeLimitsPeerSharing)
 import           Ouroboros.Network.Protocol.PeerSharing.Server
                      (PeerSharingServer, peerSharingServerPeer)
 import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
@@ -700,29 +697,15 @@ data ByteLimits bCS bBF bTX bKA bLN bLF = ByteLimits {
 
     }
 
-noByteLimits :: ByteLimits bCS bBF bTX bKA bLN bLF
-noByteLimits = ByteLimits {
-    blChainSync     = byteLimitsChainSync     (const 0)
-  , blBlockFetch    = byteLimitsBlockFetch    (const 0)
-  , blTxSubmission2 = byteLimitsTxSubmission2 (const 0)
-  , blKeepAlive     = byteLimitsKeepAlive     (const 0)
-  , blLeiosNotify   = byteLimitsLeiosNotify   (const 0)
-  , blLeiosFetch    = byteLimitsLeiosFetch    (const 0)
-  }
-
 byteLimits :: ByteLimits ByteString ByteString ByteString ByteString ByteString ByteString
 byteLimits = ByteLimits {
-      blChainSync     = byteLimitsChainSync     size
-    , blBlockFetch    = byteLimitsBlockFetch    size
-    , blTxSubmission2 = byteLimitsTxSubmission2 size
-    , blKeepAlive     = byteLimitsKeepAlive     size
-    , blLeiosNotify   = byteLimitsLeiosNotify   size
-    , blLeiosFetch    = byteLimitsLeiosFetch    size
+      blChainSync     = byteLimitsChainSync
+    , blBlockFetch    = byteLimitsBlockFetch
+    , blTxSubmission2 = byteLimitsTxSubmission2
+    , blKeepAlive     = byteLimitsKeepAlive
+    , blLeiosNotify   = byteLimitsLeiosNotify
+    , blLeiosFetch    = byteLimitsLeiosFetch
     }
-  where
-    size :: ByteString -> Word
-    size = (fromIntegral :: Int64 -> Word)
-         . BSL.length
 
 -- | Construct the 'NetworkApplication' for the node-to-node protocols
 mkApps ::
@@ -736,6 +719,7 @@ mkApps ::
      , ShowProxy (Header blk)
      , ShowProxy (TxId (GenTx blk))
      , ShowProxy (GenTx blk)
+     , BearerBytes bCS, BearerBytes bBF, BearerBytes bTX, BearerBytes bKA, BearerBytes bPS, BearerBytes bLN, BearerBytes bLF
      )
   => NodeKernel m addrNTN addrNTC blk -- ^ Needed for bracketing only
   -> Tracers m addrNTN blk e
@@ -944,7 +928,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
       runPeerWithLimits
         (TraceLabelPeer them `contramap` tKeepAliveTracer)
         (cKeepAliveCodec (mkCodecs version))
-        (byteLimitsKeepAlive (const 0)) -- TODO: Real Bytelimits, see #1727
+        (ProtocolSizeLimits (const maxBound)) -- TODO: Real Bytelimits, see #1727
         timeLimitsKeepAlive
         channel
         $ keepAliveServerPeer
@@ -968,7 +952,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
           ((), trailing) <- runPeerWithLimits
             (TraceLabelPeer them `contramap` tPeerSharingTracer)
             (cPeerSharingCodec (mkCodecs version))
-            (byteLimitsPeerSharing (const 0))
+            (ProtocolSizeLimits (const maxBound))
             timeLimitsPeerSharing
             channel
             (peerSharingClientPeer psClient)
@@ -984,7 +968,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
       runPeerWithLimits
         (TraceLabelPeer them `contramap` tPeerSharingTracer)
         (cPeerSharingCodec (mkCodecs version))
-        (byteLimitsPeerSharing (const 0))
+        (ProtocolSizeLimits (const maxBound))
         timeLimitsPeerSharing
         channel
         $ peerSharingServerPeer

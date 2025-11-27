@@ -170,18 +170,18 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
 
             keepAliveProt  =
               MiniProtocolCb $ \_ctx channel ->
-                runPeer nullTracer cKeepAliveCodec (fromIntegral . BL.length) channel
+                runPeer nullTracer cKeepAliveCodec channel
                       $ keepAliveServerPeer keepAliveServer
             chainSyncProt  =
                 MiniProtocolCb $ \ctx channel ->
                 withRegistry
-              $ runPeer (traceMaybe (maybeShowSendRecvCS ctx) tracer) cChainSyncCodecSerialised (fromIntegral . BL.length) channel
+              $ runPeer (traceMaybe (maybeShowSendRecvCS ctx) tracer) cChainSyncCodecSerialised channel
               . chainSyncServerPeer
               . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint getSlotDelay
             blockFetchProt =
                 MiniProtocolCb $ \ctx channel ->
                 withRegistry
-              $ runPeer (traceMaybe (maybeShowSendRecvBF ctx) tracer) cBlockFetchCodecSerialised (fromIntegral . BL.length) channel
+              $ runPeer (traceMaybe (maybeShowSendRecvBF ctx) tracer) cBlockFetchCodecSerialised channel
               . blockFetchServerPeer
               . blockFetchServer immDB ChainDB.getSerialisedBlockWithPoint
             txSubmissionProt =
@@ -191,7 +191,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
                 MiniProtocolCb $ \_ctx channel -> id
               $ withRegistry $ \reg -> id
               $ mkLeiosNotifyContext reg >>= \leiosContext -> id
-              $ runPeer nullTracer cLeiosNotifyCodec (fromIntegral . BL.length) channel
+              $ runPeer nullTracer cLeiosNotifyCodec channel
               $ leiosNotifyServerPeer
                     (MVar.takeMVar (leiosMailbox leiosContext) <&> \case
                         (p, Just sz) -> MsgLeiosBlockOffer p sz
@@ -200,7 +200,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
             leiosFetchProt =
                 MiniProtocolCb $ \ctx channel -> id
               $ mkLeiosFetchContext >>= \(LeiosLogic.MkSomeLeiosFetchContext leiosContext) -> id
-              $ runPeer (traceMaybe (maybeShowSendRecvLF ctx) tracer) cLeiosFetchCodec (fromIntegral . BL.length) channel
+              $ runPeer (traceMaybe (maybeShowSendRecvLF ctx) tracer) cLeiosFetchCodec channel
               $ leiosFetchServerPeer
               $ pure (LeiosLogic.leiosFetchHandler nullTracer leiosContext)
 

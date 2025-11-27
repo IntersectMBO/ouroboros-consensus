@@ -76,7 +76,6 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.ResourceRegistry
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Lazy as BL
 import           Data.Functor.Contravariant (Predicate (..))
 import           Data.Hashable (Hashable)
 import           Data.Kind (Type)
@@ -662,7 +661,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           nodeKernel
           rnTraceNTC
           (NTC.defaultCodecs codecConfig blockVersion networkVersion)
-          (fromIntegral . BL.length, fromIntegral . BL.length, fromIntegral . BL.length, fromIntegral . BL.length)
           (NTC.mkHandlers nodeKernelArgs nodeKernel)
 
     mkDiffusionApplications

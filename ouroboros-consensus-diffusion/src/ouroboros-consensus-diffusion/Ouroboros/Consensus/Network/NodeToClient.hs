@@ -398,18 +398,16 @@ mkApps ::
      , ShowProxy (GenTxId blk)
      , ShowProxy (Query blk)
      , forall fp. ShowQuery (BlockQuery blk fp)
+     , BearerBytes bCS, BearerBytes bTX, BearerBytes bSQ, BearerBytes bTM
      )
   => NodeKernel m addrNTN addrNTC blk
   -> Tracers m addrNTC blk e
   -> Codecs blk e m bCS bTX bSQ bTM
-  -> (bCS -> Word, bTX -> Word, bSQ -> Word, bTM -> Word)
   -> Handlers m addrNTC blk
   -> Apps m addrNTC bCS bTX bSQ bTM ()
-mkApps kernel Tracers {..} Codecs {..} sizes Handlers {..} =
+mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
     Apps {..}
   where
-    (sizeCS, sizeTX, sizeSQ, sizeTM) = sizes
-
     aChainSyncServer
       :: addrNTC
       -> Channel m bCS
@@ -422,7 +420,7 @@ mkApps kernel Tracers {..} Codecs {..} sizes Handlers {..} =
         $ \flr ->
           runPeer
             (contramap (TraceLabelPeer them) tChainSyncTracer)
-            cChainSyncCodec sizeCS
+            cChainSyncCodec
             channel
             $ chainSyncServerPeer
             $ hChainSyncServer flr
@@ -435,7 +433,7 @@ mkApps kernel Tracers {..} Codecs {..} sizes Handlers {..} =
       labelThisThread "LocalTxSubmissionServer"
       runPeer
         (contramap (TraceLabelPeer them) tTxSubmissionTracer)
-        cTxSubmissionCodec sizeTX
+        cTxSubmissionCodec
         channel
         (localTxSubmissionServerPeer (pure hTxSubmissionServer))
 
@@ -448,7 +446,7 @@ mkApps kernel Tracers {..} Codecs {..} sizes Handlers {..} =
       withRegistry $ \rr ->
         Stateful.runPeer
           (contramap (TraceLabelPeer them) tStateQueryTracer)
-          cStateQueryCodec sizeSQ
+          cStateQueryCodec
           channel
           LocalStateQuery.StateIdle
           (localStateQueryServerPeer (hStateQueryServer rr))
@@ -461,7 +459,7 @@ mkApps kernel Tracers {..} Codecs {..} sizes Handlers {..} =
       labelThisThread "LocalTxMonitorServer"
       runPeer
         (contramap (TraceLabelPeer them) tTxMonitorTracer)
-        cTxMonitorCodec sizeTM
+        cTxMonitorCodec
         channel
         (localTxMonitorServerPeer hTxMonitorServer)
 
