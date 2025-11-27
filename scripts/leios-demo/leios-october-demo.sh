@@ -71,6 +71,10 @@ set -x
 sudo ip -n ns2 link add name br type bridge
 sudo ip -n ns2 link set dev br up
 
+# ifb for modeling buffer bloat
+sudo ip -n ns2 link add ifb2 type ifb
+sudo ip -n ns2 link set ifb2 up
+
 { set +x; } 2>/dev/null
 
 # attach to bridge
@@ -78,7 +82,7 @@ for i in 1 2 3; do set -x; sudo ip -n ns2 link set veth${i} master br; { set +x;
 
 # Shape traffic
 
-RATE_MBIT=20          # Target bandwidth (Mbit/s) per peer
+RATE_MBIT=20           # Target bandwidth (Mbit/s) per peer
 DELAY_MS=100          # Target one-way delay (ms)
 OVERHEAD_FACTOR=1.2   # Safety margin (20% extra for bursts/jitter)
 MSS=1448              # Typical TCP MSS (1500 - 40 IP+TCP+FLAGS headers)
@@ -114,16 +118,23 @@ for i in 1 2 3; do
     set -x
     sudo tc -n ns$i qdisc add dev veth${i}p root handle 1: tbf \
          rate ${RATE_MBIT}mbit burst $BURST latency 5ms
-    sudo tc -n ns$i qdisc add dev veth${i}p parent 1: fq_codel limit 100 \
+    sudo tc -n ns$i qdisc add dev veth${i}p parent 1: fq_codel \
          quantum 2000 target 5ms interval 10ms
     # shape netem at bridge port
-    sudo tc -n ns2 qdisc add dev veth${i} root netem delay ${DELAY_MS}ms limit 500
+    # limit sets buffer size
+    sudo tc -n ns2 qdisc add dev veth${i} root netem delay ${DELAY_MS}ms loss 15%
     { set +x; } 2>/dev/null
 done
 
-# benchmark harness
 set -x
 
+# model buffer bloat
+sudo tc -n ns2 qdisc add dev veth2p handle ffff: ingress
+sudo tc -n ns2 filter add dev veth2p parent ffff: \
+     protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb2
+# sudo tc -n ns2 qdisc add dev ifb2 root netem delay 500ms
+
+# benchmark harness
 # run iperf servers
 # sudo ip netns exec ns2 iperf3 -s -1 -p 3001 -B $IP2 1>/dev/null &
 # sudo ip netns exec ns2 iperf3 -s -1 -p 3003 -B $IP2 1>/dev/null &
