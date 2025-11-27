@@ -67,53 +67,53 @@ cleanup_netns() {
 trap cleanup_netns EXIT INT TERM
 
 for i in 1 2 3; do set -x; sudo ip netns add ns$i; { set +x; } 2>/dev/null; done
-set -x
-sudo ip link add veth12 netns ns1 type veth peer name veth21 netns ns2
-sudo ip link add veth23 netns ns2 type veth peer name veth32 netns ns3
-{ set +x; } 2>/dev/null
 
 # adapted from https://unix.stackexchange.com/a/558427
-add_addrs() {
+add_edge() {
     i=$1
     j=$2
     set -x
-    sudo ip -n ns$i link set veth$i$j up
-    sudo ip -n ns$j link set veth$j$i up
+    sudo ip link add veth$i$j netns ns$i type veth peer name veth$j$i netns ns$j
+
+    # TODO I don't remember what this line achieves.
     sudo ip -n ns$i addr add 10.0.0.$i/32 dev veth$i$j
+
+    # Setup routing rules.
     sudo ip -n ns$i addr add local 10.0.0.$i peer 10.0.0.$j dev veth$i$j
     sudo ip -n ns$j addr add local 10.0.0.$j peer 10.0.0.$i dev veth$j$i
+
+    # Allocate IFBs for applying qdiscs ingress policing.
+    sudo ip -n ns$i link add ifb$i$j type ifb
+    sudo ip -n ns$j link add ifb$j$i type ifb
+
+    # Bring the devices up.
+    sudo ip -n ns$i link set veth$i$j up
+    sudo ip -n ns$j link set veth$j$i up
+    sudo ip -n ns$i link set ifb$i$j up
+    sudo ip -n ns$j link set ifb$j$i up
+
     { set +x; } 2>/dev/null
 }
 
-add_addrs 1 2
-add_addrs 2 3
+add_edge 1 2
+add_edge 2 3
 
 # mydelay="netem delay 100ms"
 # myrate="tbf rate 20mbit burst 32kbit latency 70ms"   # burst and latency from Gemini 2.5 Pro
 add_qdiscs() {
     i=$1
     j=$2
-    # I Googled "netem delay after tbf of tbf after netem delay" and the AI
-    # Overview implied that I want netem as the child.
-    #
-    # Also, the netem man page gives an example where a tbf is the parent of a
-    # netem delay https://man7.org/linux/man-pages/man8/tc-netem.8.html
     set -x
 
-    # My inital setup, but Marcin Wójtowicz says the netem delay qdisc is too
-    # dumb and so still queueing too much, ie bufferbloat
-    #
-    # sudo tc -n ns$i qdisc add dev veth$i$j handle 1: root $myrate
-    # sudo tc -n ns$i qdisc add dev veth$i$j parent 1: handle 2: $mydelay
+    # Limit bandwidth of and pace outgoing traffic.
+    sudo tc -n ns$i qdisc add dev veth$i$j root handle 1: htb default 1
+    sudo tc -n ns$i class add dev veth$i$j parent 1: classid 1:1 htb rate 100mbit
+    sudo tc -n ns$i qdisc add dev veth$i$j parent 1:1 handle 10: fq_codel
 
-    # Gemini 2.5 Pro asserts the fq_codel defaults are both robust and also
-    # realistic for this long fat intercontinental scenario
-    #
-    # TODO compare and contrast once Marcin Wójtowicz sends recommendations
-    sudo tc -n ns$i qdisc add dev veth$i$j root handle 1: netem delay 20ms
-    sudo tc -n ns$i qdisc add dev veth$i$j parent 1:1 handle 10: htb default 1
-    sudo tc -n ns$i class add dev veth$i$j parent 10: classid 10:1 htb rate 100mbit
-    sudo tc -n ns$i qdisc add dev veth$i$j parent 10:1 handle 100: fq_codel
+    # Delay incoming traffic.
+    sudo tc -n ns$j qdisc add dev veth$j$i handle ffff: ingress
+    sudo tc -n ns$j filter add dev veth$j$i parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb$j$i
+    sudo tc -n ns$j qdisc add dev ifb$j$i root netem delay 20ms
 
     { set +x; } 2>/dev/null
 }
