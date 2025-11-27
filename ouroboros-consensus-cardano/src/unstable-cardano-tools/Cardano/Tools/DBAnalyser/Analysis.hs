@@ -2,15 +2,21 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Cardano.Tools.DBAnalyser.Analysis
   ( AnalysisEnv (..)
@@ -26,6 +32,7 @@ module Cardano.Tools.DBAnalyser.Analysis
   , runAnalysis
   ) where
 
+import Barbies
 import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
@@ -40,13 +47,18 @@ import Control.Monad (unless, void, when)
 import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), nullTracer, traceWith)
+import Data.Foldable
+import Data.Functor.Const
+import Data.Functor.Identity
 import Data.Int (Int64)
 import Data.List (intercalate)
 import qualified Data.Map.Strict as Map
 import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
+import GHC.Generics
 import qualified GHC.Stats as GC
+import Lens.Micro
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -83,6 +95,7 @@ import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Util.Condense (Condense (..))
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.SizeInBytes
@@ -111,6 +124,7 @@ runAnalysis analysisName = case go analysisName of
  where
   go :: AnalysisName -> SomeAnalysis blk
   go ShowSlotBlockNo = mkAnalysis $ showSlotBlockNo
+  go (DumpBlockHeader{blockFile, transactionFile}) = mkAnalysis $ dumpBlockHeader blockFile transactionFile
   go CountTxOutputs = mkAnalysis $ countTxOutputs
   go ShowBlockHeaderSize = mkAnalysis $ showHeaderSize
   go ShowBlockTxsSize = mkAnalysis $ showBlockTxsSize
@@ -174,8 +188,12 @@ startFromPoint = \case
 data TraceEvent blk
   = -- | triggered when given analysis has started
     StartedEvent AnalysisName
+  | -- | Free form message that an analysis can use when it needs too
+    Message String
   | -- | triggered when analysis has ended
     DoneEvent
+  | -- | Block number, slot number, body size
+    BlockHeader BlockNo SlotNo Word32
   | -- | triggered when block has been found, it holds:
     --   * block's number
     --   * slot number when the block was forged
@@ -243,7 +261,14 @@ data TraceEvent blk
 
 instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) where
   show (StartedEvent analysisName) = "Started " <> (show analysisName)
+  show (Message msg) = "Info: " ++ msg
   show DoneEvent = "Done"
+  show (BlockHeader bn sn sz) =
+    intercalate ", " $
+      [ show ((unBlockNo bn) :: Word64)
+      , show ((unSlotNo sn) :: Word64)
+      , show sz
+      ]
   show (BlockSlotEvent bn sn h) =
     intercalate "\t" $
       [ show bn
@@ -319,6 +344,135 @@ showSlotBlockNo AnalysisEnv{db, registry, startFrom, limit, tracer} =
   process hdr =
     traceWith tracer $
       BlockSlotEvent (blockNo hdr) (blockSlot hdr) (headerHash hdr)
+
+{-------------------------------------------------------------------------------
+  Analysis: dump metadata
+-------------------------------------------------------------------------------}
+
+-- | Avoids annoying `deriving` behaviour due to HeaderHash being a type family
+newtype WrappedHeaderHash blk = MkWHH (HeaderHash blk)
+
+deriving newtype instance Show (HeaderHash blk) => Show (WrappedHeaderHash blk)
+deriving newtype instance Condense (HeaderHash blk) => Condense (WrappedHeaderHash blk)
+
+data DumpQuery blk f = MkDumpQuery
+  { query_header :: f (Header blk)
+  , query_size :: f SizeInBytes
+  , query_is_ebb :: f IsEBB
+  , query_block :: f blk
+  }
+  deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
+
+data BlockFeatures blk f = MkBlockFeatures
+  { block_num :: f BlockNo
+  -- ^ The block's number
+  , slot_num :: f SlotNo
+  -- ^ The slot in which the block was minted
+  , block_hash :: f (WrappedHeaderHash blk)
+  -- ^ The block's hash
+  , block_size :: f Word32
+  -- ^ The blocks' size (in bytes)
+  , is_ebb :: f IsEBB
+  -- ^ Is the block an epoch-boundary block
+  , predecessor :: f (ChainHash blk)
+  -- ^ The hash of this block's predecessor
+  , num_transactions :: f Int
+  -- ^ Number of transaction in the block
+  }
+  deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
+
+data TxFeatures blk f = MkTxFeatures
+  { src_block :: f BlockNo
+  , num_script_wits :: f Int
+  -- , size_script_wits :: f Int
+  }
+  deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
+
+blockFeaturesNames :: BlockFeatures blk (Const String)
+blockFeaturesNames =
+  MkBlockFeatures
+    { block_num = Const "block_id"
+    , slot_num = Const "slot#"
+    , block_hash = Const "block_hash"
+    , block_size = Const "block_size"
+    , is_ebb = Const "is_ebb?"
+    , predecessor = Const "predecessor"
+    , num_transactions = Const "#transactions" -- TODO: compute in duckdb?
+    }
+
+txFeaturesNames :: TxFeatures blk (Const String)
+txFeaturesNames =
+  MkTxFeatures
+    { src_block = "block_id"
+    , num_script_wits = "#script_wits"
+    -- , size_script_wits = "script_wits_size"
+    }
+
+dumpBlockHeader ::
+  forall blk.
+  HasAnalysis blk =>
+  -- | Csv file where the block data is to be stored
+  FilePath ->
+  -- | Csv file where the transaction data is to be stored
+  FilePath ->
+  Analysis blk StartFromPoint
+dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tracer} = do
+  traceWith tracer $
+    Message $
+      "Saving block metadata to: " ++ blockFile
+  traceWith tracer $
+    Message $
+      "Saving transaction metadata to: " ++ txFile
+  withFile (Just blockFile) $ \outBlockHandle ->
+    withFile (Just txFile) $ \outTxHandle -> do
+      let blockHeader = csv $ Container blockFeaturesNames
+      let txHeader = csv $ Container txFeaturesNames
+      IO.hPutStrLn outBlockHandle blockHeader
+      IO.hPutStrLn outTxHandle txHeader
+      let
+        component :: BlockComponent blk (DumpQuery blk Identity)
+        component =
+          bsequence' $
+            MkDumpQuery
+              { query_header = GetHeader
+              , query_size = GetBlockSize
+              , query_is_ebb = GetIsEBB
+              , query_block = GetBlock
+              }
+      processAll_ db registry component startFrom limit (process outBlockHandle outTxHandle)
+        >> pure Nothing
+ where
+  process :: IO.Handle -> IO.Handle -> DumpQuery blk Identity -> IO ()
+  process bh th cmp = do
+    let
+      blockFeatures :: BlockFeatures blk Identity
+      blockFeatures =
+        MkBlockFeatures
+          { block_num = blockNo <$> query_header cmp
+          , slot_num = blockSlot <$> query_header cmp
+          , block_hash = MkWHH . headerHash <$> query_header cmp
+          , block_size = getSizeInBytes <$> query_size cmp
+          , is_ebb = query_is_ebb cmp
+          , predecessor = headerPrevHash <$> query_header cmp
+          , num_transactions = length . toListOf HasAnalysis.txs <$> query_block cmp
+          }
+    let line = csv $ Container $ bmapC @Condense (Const . condense . runIdentity) blockFeatures
+    IO.hPutStrLn bh line
+
+    let
+      txFeatures :: HasAnalysis.TxOf blk -> TxFeatures blk Identity
+      txFeatures tx =
+        MkTxFeatures
+          { src_block = blockNo <$> query_header cmp
+          , num_script_wits = Identity $ length $ toListOf (HasAnalysis.wits @blk . HasAnalysis.scriptWits @blk) tx
+          }
+    let txFeaturess = toListOf (HasAnalysis.txs @blk . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
+    let txlines = map (csv . Container . bmapC @Condense (Const . condense . runIdentity)) txFeaturess
+    forM_ txlines $ \txl ->
+      IO.hPutStrLn th txl
+
+  csv :: Foldable t => t String -> String
+  csv = intercalate ", " . toList
 
 {-------------------------------------------------------------------------------
   Analysis: show total number of tx outputs per block

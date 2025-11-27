@@ -365,10 +365,6 @@ instance (Typeable ptype, Eq ptype) => Condense (TestBlockWith ptype) where
 instance (Typeable ptype, Eq ptype) => Condense (Header (TestBlockWith ptype)) where
   condense = condense . testHeader
 
-instance Condense (ChainHash (TestBlockWith ptype)) where
-  condense GenesisHash = "genesis"
-  condense (BlockHash h) = show h
-
 data instance BlockConfig (TestBlockWith ptype) = TestBlockConfig
   { testBlockNumCoreNodes :: !NumCoreNodes
   -- ^ Number of core nodes

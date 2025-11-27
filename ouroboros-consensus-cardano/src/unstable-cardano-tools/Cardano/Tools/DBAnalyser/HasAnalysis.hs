@@ -1,4 +1,8 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Cardano.Tools.DBAnalyser.HasAnalysis
@@ -16,6 +20,9 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Storage.Serialisation (SizeInBytes)
 import Ouroboros.Consensus.Util.Condense (Condense)
 import TextBuilder (TextBuilder)
+import Lens.Micro
+import Data.Set (Set)
+import Cardano.Ledger.Api
 
 {-------------------------------------------------------------------------------
   HasAnalysis
@@ -30,6 +37,22 @@ data WithLedgerState blk = WithLedgerState
   }
 
 class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis blk where
+
+  type TxOf blk
+
+  txs :: SimpleFold blk (TxOf blk)
+
+  type WitsOf blk
+
+  wits :: SimpleFold (TxOf blk) (WitsOf blk)
+
+  addrWits :: Lens' (WitsOf blk) (Set (WitVKey Witness))
+
+  type ScriptType blk
+
+  scriptWits :: SimpleGetter (WitsOf blk) (Map ScriptHash (ScriptType blk))
+
+
   countTxOutputs :: blk -> Int
   blockTxSizes :: blk -> [SizeInBytes]
   knownEBBs :: proxy blk -> Map (HeaderHash blk) (ChainHash blk)

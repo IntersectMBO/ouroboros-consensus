@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# OPTIONS_GHC -Wno-partial-fields #-}
 
 module Cardano.Tools.DBAnalyser.Types (module Cardano.Tools.DBAnalyser.Types) where
 
@@ -21,6 +22,7 @@ data DBAnalyserConfig = DBAnalyserConfig
 
 data AnalysisName
   = ShowSlotBlockNo
+  | DumpBlockHeader { blockFile :: FilePath, transactionFile :: FilePath }
   | CountTxOutputs
   | ShowBlockHeaderSize
   | ShowBlockTxsSize

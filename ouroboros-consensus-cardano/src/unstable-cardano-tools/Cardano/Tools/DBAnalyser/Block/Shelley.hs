@@ -34,7 +34,7 @@ import Data.Maybe.Strict
 import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
 import Data.Word (Word64)
-import Lens.Micro ((^.))
+import Lens.Micro ((^.), folded, to)
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -54,6 +54,7 @@ import Ouroboros.Consensus.Shelley.Node
   )
 import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
 import TextBuilder (decimal)
+import qualified Cardano.Ledger.Core as Ledger
 
 -- | Usable for each Shelley-based era
 instance
@@ -62,6 +63,17 @@ instance
   ) =>
   HasAnalysis (ShelleyBlock proto era)
   where
+
+  type TxOf (ShelleyBlock proto era) = Ledger.Tx era
+
+  txs = to (Shelley.shelleyBlockRaw @proto @era)  . to SL.blockBody  . Ledger.txSeqBlockBodyL @era . folded
+
+  type WitsOf (ShelleyBlock proto era) = Ledger.TxWits era
+  type ScriptType (ShelleyBlock proto era) = Ledger.Script era
+  wits = Ledger.witsTxL
+  addrWits = Ledger.addrTxWitsL
+  scriptWits = Ledger.scriptTxWitsL
+
   countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
     SL.Block _ body -> getSum $ foldMap (Sum . countOutputs) (body ^. Core.txSeqBlockBodyL)
    where
@@ -96,12 +108,12 @@ instance
     [ decimal $ length $ blockTxSizes blk
     , decimal $ sum $ blockTxSizes blk
     ]
-      ++ [ decimal $ Foldable.foldl' (\acc tx -> acc + f tx) 0 txs
+      ++ [ decimal $ Foldable.foldl' (\acc tx -> acc + f tx) 0 the_txs
          | f <- maybeToList txExUnitsSteps
          ]
    where
-    txs :: StrictSeq (Core.Tx era)
-    txs = case Shelley.shelleyBlockRaw blk of
+    the_txs :: StrictSeq (Core.Tx era)
+    the_txs = case Shelley.shelleyBlockRaw blk of
       SL.Block _ body -> body ^. Core.txSeqBlockBodyL
 
   -- For the time being we do not support any block application

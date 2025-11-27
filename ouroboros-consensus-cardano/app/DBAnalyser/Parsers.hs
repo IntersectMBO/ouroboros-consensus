@@ -146,10 +146,22 @@ parseAnalysis =
                   <> "blocks to put in the mempool at once."
             , metavar "INT"
             ]
+    , dumpHeaderParser
     , benchmarkLedgerOpsParser
     , getBlockApplicationMetrics
     , pure OnlyValidation
     ]
+
+dumpHeaderParser :: Parser AnalysisName
+dumpHeaderParser =
+    (flag' DumpBlockHeader $
+        mconcat
+          [ long "dump"
+          , help "Prints block and transaction metadata as CSVs"])
+    <*>
+     (strOption (long "block-file" <> metavar "FILENAME"))
+    <*>
+     (strOption (long "transaction-file" <> metavar "FILENAME"))
 
 storeLedgerParser :: Parser AnalysisName
 storeLedgerParser = do

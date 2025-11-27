@@ -6,7 +6,8 @@
 module Cardano.Tools.DBAnalyser.Block.Byron
   ( Args (..)
   , ByronBlockArgs
-  , openGenesisByron
+  ,
+  openGenesisByron
   ) where
 
 import qualified Cardano.Chain.Block as Chain
@@ -30,8 +31,16 @@ import Ouroboros.Consensus.Byron.Node
   )
 import Ouroboros.Consensus.Node.ProtocolInfo
 import TextBuilder (decimal)
+import Data.Void
 
 instance HasAnalysis ByronBlock where
+  type TxOf ByronBlock = Void -- dummy
+  txs _ _ = mempty -- dummy
+  type WitsOf ByronBlock = Void -- dummy
+  type ScriptType ByronBlock = Void
+  wits _ = absurd
+  addrWits _ = absurd
+  scriptWits _ = absurd
   countTxOutputs = aBlockOrBoundary (const 0) countTxOutputsByron
   blockTxSizes = aBlockOrBoundary (const []) blockTxSizesByron
   knownEBBs = const Byron.knownEBBs

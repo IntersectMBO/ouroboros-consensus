@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -9,6 +10,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -47,6 +49,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.Compact as Compact
+import Data.Functor.Const
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe)
@@ -55,6 +58,7 @@ import Data.SOP.Functors
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
 import Data.String (IsString (..))
+import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger.Ledger as Byron.Ledger
@@ -299,7 +303,33 @@ instance Aeson.FromJSON CardanoConfig where
         , cfgHardForkTriggers = CardanoHardForkTriggers triggers
         }
 
+data SomeTx where
+  ATx :: HasAnalysis blk => TxOf blk -> SomeTx
+
+data SomeWit where
+  AWit :: HasAnalysis blk => WitsOf blk -> SomeWit
+
+data SomeScriptType where
+  AScriptType :: HasAnalysis blk => ScriptType blk -> SomeScriptType
+
 instance HasAnalysis (CardanoBlock StandardCrypto) where
+  type TxOf (CardanoBlock StandardCrypto) = SomeTx
+
+  txs inner =
+    -- A little bit of argument shuffling to satisfy `analyseBlock`'s
+    -- requirements.
+    -- The Const bit is quite unfortunate.
+    analyseBlock $ \ @blk -> Const . getConst . (txs @blk . to (ATx @blk)) inner
+
+  type WitsOf (CardanoBlock StandardCrypto) = SomeWit
+
+  wits inner (ATx @blk tx) = foldMapOf (wits @blk) (Const . getConst . inner . AWit @blk) tx
+  addrWits inner (AWit @blk wit) = AWit @blk <$> addrWits @blk inner wit
+
+  type ScriptType (CardanoBlock StandardCrypto) = SomeScriptType
+
+  scriptWits inner (AWit @blk wit) = foldMapOf (scriptWits @blk) (Const . getConst . inner . Map.map (AScriptType @blk)) wit
+
   countTxOutputs = analyseBlock countTxOutputs
   blockTxSizes = analyseBlock blockTxSizes
   knownEBBs _ =
