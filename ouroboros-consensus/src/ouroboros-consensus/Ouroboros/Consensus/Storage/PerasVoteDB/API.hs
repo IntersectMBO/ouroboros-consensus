@@ -56,7 +56,7 @@ data AddPerasVoteResult blk
   deriving anyclass NoThunks
 
 newtype PerasStakeSnapshot blk = PerasStakeSnapshot
-  {unPerasStakeSnapshot :: WithFingerprint (Map (PerasVoteTarget blk) (PerasVoteAggregate blk))}
+  {unPerasStakeSnapshot :: WithFingerprint (Map (PerasVoteTarget blk) (PerasVoteAggregateStatus blk))}
   deriving Generic
   deriving newtype NoThunks
 
@@ -65,7 +65,7 @@ getPerasCertsFromStakeSnapshot ::
   PerasStakeSnapshot blk ->
   Set (ValidatedPerasCert blk)
 getPerasCertsFromStakeSnapshot (PerasStakeSnapshot mp) =
-  Set.fromList $ Map.elems $ Map.mapMaybe pvaMaybeCert (forgetFingerprint mp)
+  Set.fromList $ Map.elems $ Map.mapMaybe pvasMaybeCert (forgetFingerprint mp)
 
 data PerasVoteSnapshot blk = PerasVoteSnapshot
   { containsVote :: IdOf (PerasVote blk) -> Bool

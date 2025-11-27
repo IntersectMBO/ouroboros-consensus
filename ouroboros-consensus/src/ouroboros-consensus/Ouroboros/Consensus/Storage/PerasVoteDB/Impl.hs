@@ -36,7 +36,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import GHC.Generics (Generic)
 import NoThunks.Class
-import Ouroboros.Consensus.Block hiding (UpdatePerasVoteAggregateResult (..))
+import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Block.SupportsPeras qualified as UPVAR
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (forgetArrivalTime))
 import Ouroboros.Consensus.Peras.Weight
@@ -182,11 +182,14 @@ implAddVote env vote = do
             (res, pvsVotesByTarget') =
               Map.alterF
                 ( \mExistingAggr ->
-                    let aggr = fromMaybe (emptyPerasVoteAggregate voteTarget) mExistingAggr
-                     in case updatePerasVoteAggregate aggr vote of
-                          UPVAR.IncorrectPerasVoteTarget -> error "The aggregate should match the vote target."
-                          UPVAR.AddedPerasVoteButDidntGenerateNewCert aggr' -> (AddedPerasVoteButDidntGenerateNewCert, Just aggr')
-                          UPVAR.AddedPerasVoteAndGeneratedNewCert aggr' cert -> (AddedPerasVoteAndGeneratedNewCert cert, Just aggr')
+                    let aggr = fromMaybe (emptyPerasVoteAggregateStatus voteTarget) mExistingAggr
+                        aggr' = updatePerasVoteAggregateStatus aggr vote
+                     in case (aggr, aggr') of
+                          -- if we observe a state transition, it means a certificate was emitted
+                          (PerasVoteAggregateQuorumNotReached{}, PerasVoteAggregateQuorumReachedAlready{pvasCert}) ->
+                            (AddedPerasVoteAndGeneratedNewCert pvasCert, Just aggr')
+                          _ ->
+                            (AddedPerasVoteButDidntGenerateNewCert, Just aggr')
                 )
                 voteTarget
                 pvsVotesByTarget
@@ -281,7 +284,7 @@ implGarbageCollect PerasVoteDbEnv{pvdbPerasVoteStateVar} roundNo =
 
 data PerasVoteState blk = PerasVoteState
   { pvsVoteIds :: !(Set (IdOf (PerasVote blk)))
-  , pvsVotesByTarget :: !(Map (PerasVoteTarget blk) (PerasVoteAggregate blk))
+  , pvsVotesByTarget :: !(Map (PerasVoteTarget blk) (PerasVoteAggregateStatus blk))
   , pvsVotesByTicket :: !(Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
   -- ^ The votes by 'PerasVoteTicketNo'.
   --
