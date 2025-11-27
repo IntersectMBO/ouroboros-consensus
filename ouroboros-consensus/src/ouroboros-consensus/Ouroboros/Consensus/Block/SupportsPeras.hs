@@ -12,6 +12,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-partial-fields #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
@@ -26,9 +28,11 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
   , PerasVoteAggregate (..)
-  , emptyPerasVoteAggregate
+  , PerasVoteAggregateStatus (..)
+  , pvasMaybeCert
+  , emptyPerasVoteAggregateStatus
   , updatePerasVoteAggregate
-  , UpdatePerasVoteAggregateResult (..)
+  , updatePerasVoteAggregateStatus
   , makePerasCfg
   , HasId (..)
   , HasPerasCertRound (..)
@@ -51,6 +55,8 @@ import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
 import Control.Applicative ((<|>))
 import Data.Coerce (coerce)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
 import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
@@ -212,69 +218,89 @@ const_PERAS_QUORUM_THRESHOLD = PerasVoteStake 0.75
 
 data PerasVoteAggregate blk = PerasVoteAggregate
   { pvaTarget :: !(PerasVoteTarget blk)
-  , pvaVotes :: !(Set (WithArrivalTime (ValidatedPerasVote blk)))
+  , pvaVotes :: !(Map (IdOf (PerasVote blk)) (WithArrivalTime (ValidatedPerasVote blk)))
   , pvaTotalStake :: !PerasVoteStake
-  , pvaMaybeCert :: !(Maybe (ValidatedPerasCert blk))
   }
   deriving stock (Generic, Eq, Ord, Show)
   deriving anyclass NoThunks
 
-emptyPerasVoteAggregate :: PerasVoteTarget blk -> PerasVoteAggregate blk
-emptyPerasVoteAggregate target =
-  PerasVoteAggregate
-    { pvaTotalStake = PerasVoteStake 0
-    , pvaTarget = target
-    , pvaVotes = Set.empty
-    , pvaMaybeCert = Nothing
-    }
-
-data UpdatePerasVoteAggregateResult blk
-  = IncorrectPerasVoteTarget
-  | AddedPerasVoteButDidntGenerateNewCert (PerasVoteAggregate blk)
-  | AddedPerasVoteAndGeneratedNewCert (PerasVoteAggregate blk) (ValidatedPerasCert blk)
+data PerasVoteAggregateStatus blk
+  = PerasVoteAggregateQuorumNotReached {pvasVoteAggregate :: !(PerasVoteAggregate blk)}
+  | PerasVoteAggregateQuorumReachedAlready
+      {pvasVoteAggregate :: !(PerasVoteAggregate blk), pvasCert :: ValidatedPerasCert blk}
   deriving stock (Generic, Eq, Ord, Show)
   deriving anyclass NoThunks
 
+pvasMaybeCert :: PerasVoteAggregateStatus blk -> Maybe (ValidatedPerasCert blk)
+pvasMaybeCert aggr = case aggr of
+  PerasVoteAggregateQuorumNotReached{} -> Nothing
+  PerasVoteAggregateQuorumReachedAlready{pvasCert} -> Just pvasCert
+
+emptyPerasVoteAggregateStatus :: PerasVoteTarget blk -> PerasVoteAggregateStatus blk
+emptyPerasVoteAggregateStatus target =
+  PerasVoteAggregateQuorumNotReached $
+    PerasVoteAggregate
+      { pvaTotalStake = PerasVoteStake 0
+      , pvaTarget = target
+      , pvaVotes = Map.empty
+      }
+
+-- | Add a vote to an existing aggregate if it isn't already present, and update
+-- the stake accordingly.
+-- PRECONDITION: the vote's target must match the aggregate's target.
 updatePerasVoteAggregate ::
   StandardHash blk =>
   PerasVoteAggregate blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
-  UpdatePerasVoteAggregateResult blk
+  PerasVoteAggregate blk
 updatePerasVoteAggregate
   pva@PerasVoteAggregate
     { pvaTarget = (roundNo, point)
     , pvaVotes = existingVotes
     , pvaTotalStake = initialStake
-    , pvaMaybeCert = mExistingCert
     }
   vote =
-    if getPerasVoteRound vote == roundNo && getPerasVoteVotedBlock vote == point
-      then
-        let pvaTotalStake = initialStake + vpvVoteStake (forgetArrivalTime vote)
-            pvaVotes = Set.insert vote existingVotes
-            mNewCert =
-              if isNothing mExistingCert && pvaTotalStake >= const_PERAS_QUORUM_THRESHOLD
-                then
-                  Just $
-                    ValidatedPerasCert
-                      { vpcCertBoost = boostPerCert
-                      , vpcCert =
-                          PerasCert
-                            { pcCertRound = roundNo
-                            , pcCertBoostedBlock = point
-                            }
-                      }
-                else Nothing
-            pva' =
-              pva
-                { pvaVotes
-                , pvaTotalStake
-                , pvaMaybeCert = mExistingCert <|> mNewCert
-                }
-         in case mNewCert of
-              Just cert -> AddedPerasVoteAndGeneratedNewCert pva' cert
-              Nothing -> AddedPerasVoteButDidntGenerateNewCert pva'
-      else IncorrectPerasVoteTarget
+    if not (getPerasVoteRound vote == roundNo && getPerasVoteVotedBlock vote == point)
+      then error "updatePerasVoteAggregate: vote target does not match aggregate target"
+      else
+        let (pvaVotes', pvaTotalStake') =
+              case Map.insertLookupWithKey
+                (\_k old _new -> old)
+                (getId vote)
+                vote
+                existingVotes of
+                (Nothing, votes') ->
+                  -- key was NOT present → inserted and stake updated
+                  (votes', initialStake + vpvVoteStake (forgetArrivalTime vote))
+                (Just _, _) ->
+                  -- key WAS already present → votes and stake unchanged
+                  (existingVotes, initialStake)
+         in pva{pvaVotes = pvaVotes', pvaTotalStake = pvaTotalStake'}
+
+updatePerasVoteAggregateStatus ::
+  StandardHash blk =>
+  PerasVoteAggregateStatus blk ->
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  PerasVoteAggregateStatus blk
+updatePerasVoteAggregateStatus aggr vote = case aggr of
+  PerasVoteAggregateQuorumNotReached{pvasVoteAggregate} ->
+    let aggr' = updatePerasVoteAggregate pvasVoteAggregate vote
+     in if pvaTotalStake aggr' >= const_PERAS_QUORUM_THRESHOLD
+          then
+            PerasVoteAggregateQuorumReachedAlready
+              { pvasVoteAggregate = aggr'
+              , pvasCert =
+                  ValidatedPerasCert
+                    { vpcCertBoost = boostPerCert
+                    , vpcCert = uncurry PerasCert (pvaTarget aggr')
+                    }
+              }
+          else PerasVoteAggregateQuorumNotReached{pvasVoteAggregate = aggr'}
+  PerasVoteAggregateQuorumReachedAlready{pvasVoteAggregate, pvasCert} ->
+    PerasVoteAggregateQuorumReachedAlready
+      { pvasVoteAggregate = updatePerasVoteAggregate pvasVoteAggregate vote
+      , pvasCert
+      }
 
 type PerasVoteTarget blk = (PerasRoundNo, Point blk)
 
