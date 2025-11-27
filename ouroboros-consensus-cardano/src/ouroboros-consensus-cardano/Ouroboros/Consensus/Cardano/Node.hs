@@ -430,6 +430,7 @@ instance
     Map.fromList $
       [ (NodeToNodeV_14, CardanoNodeToNodeVersion2)
       , (NodeToNodeV_15, CardanoNodeToNodeVersion2)
+      , (NodeToNodeV_16, CardanoNodeToNodeVersion2)
       ]
 
   supportedNodeToClientVersions _ =
