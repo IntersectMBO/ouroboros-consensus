@@ -54,6 +54,9 @@ tests =
         prop_smoke
     ]
 
+perasTestCfg :: PerasCfg TestBlock
+perasTestCfg = makePerasCfg Nothing
+
 genPoint :: Gen (Point (TestBlock))
 genPoint =
   -- Sometimes pick the genesis point
@@ -77,15 +80,19 @@ genPerasCert = do
 instance WithId (PerasCert blk) PerasRoundNo where
   getId = pcCertRound
 
-newCertDB :: (IOLike m, StandardHash blk) => [PerasCert blk] -> m (PerasCertDB m blk)
-newCertDB certs = do
+newCertDB ::
+  (IOLike m, StandardHash blk) =>
+  PerasCfg blk ->
+  [PerasCert blk] ->
+  m (PerasCertDB m blk)
+newCertDB perasCfg certs = do
   db <- PerasCertDB.openDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
   mapM_
     ( \cert -> do
         let validatedCert =
               ValidatedPerasCert
                 { vpcCert = cert
-                , vpcCertBoost = boostPerCert
+                , vpcCertBoost = perasCfgWeightBoost perasCfg
                 }
         result <- PerasCertDB.addCert db validatedCert
         case result of
@@ -123,8 +130,8 @@ prop_smoke =
             , m [PerasCert TestBlock]
             )
         mkPoolInterfaces = do
-          outboundPool <- newCertDB certs
-          inboundPool <- newCertDB []
+          outboundPool <- newCertDB perasTestCfg certs
+          inboundPool <- newCertDB perasTestCfg []
 
           let outboundPoolReader = makePerasCertPoolReaderFromCertDB outboundPool
               inboundPoolWriter = makePerasCertPoolWriterFromCertDB inboundPool
