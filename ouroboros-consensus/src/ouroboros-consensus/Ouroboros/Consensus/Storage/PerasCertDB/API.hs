@@ -17,12 +17,13 @@ import Data.Map (Map)
 import Data.Word (Word64)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 
 data PerasCertDB m blk = PerasCertDB
-  { addCert :: ValidatedPerasCert blk -> m AddPerasCertResult
+  { addCert :: WithArrivalTime (ValidatedPerasCert blk) -> m AddPerasCertResult
   -- ^ Add a Peras certificate to the database. The result indicates whether
   -- the certificate was actually added, or if it was already present.
   , getWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
@@ -34,6 +35,14 @@ data PerasCertDB m blk = PerasCertDB
   -- The 'Fingerprint' is updated every time a new certificate is added, but it
   -- stays the same when certificates are garbage-collected.
   , getCertSnapshot :: STM m (PerasCertSnapshot blk)
+  , getLatestCertSeen :: STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+  -- ^ Get the certificate with the highest round number that has been added to
+  -- the db since it has been opened. This certificate is not affected by garbage
+  -- collection, but it's forgotten when the db is closed.
+  --
+  -- NOTE: having seen a certificate is a precondition to start voting in every
+  -- round except for the first one (at origin). As a consequence, only caught-up
+  -- nodes can actively participate in the Peras protocol for now.
   , garbageCollect :: SlotNo -> m ()
   -- ^ Garbage-collect state older than the given slot number.
   , closeDB :: m ()
@@ -46,7 +55,9 @@ data AddPerasCertResult = AddedPerasCertToDB | PerasCertAlreadyInDB
 data PerasCertSnapshot blk = PerasCertSnapshot
   { containsCert :: PerasRoundNo -> Bool
   -- ^ Do we have the certificate for this round?
-  , getCertsAfter :: PerasCertTicketNo -> Map PerasCertTicketNo (ValidatedPerasCert blk)
+  , getCertsAfter ::
+      PerasCertTicketNo ->
+      Map PerasCertTicketNo (WithArrivalTime (ValidatedPerasCert blk))
   -- ^ Get certificates after the given ticket number (excluded).
   -- The result is a map of ticket numbers to validated certificates.
   }

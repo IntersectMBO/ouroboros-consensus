@@ -11,10 +11,17 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
   , makePerasCertPoolWriterFromChainDB
   ) where
 
+import Control.Monad ((>=>))
 import Data.Map (Map)
 import qualified Data.Map as Map
 import GHC.Exception (throw)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (WithArrivalTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( SystemTime (..)
+  , WithArrivalTime (..)
+  , addArrivalTime
+  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -31,7 +38,7 @@ takeAscMap :: Int -> Map k v -> Map k v
 takeAscMap n = Map.fromDistinctAscList . take n . Map.toAscList
 
 makePerasCertPoolReaderFromSnapshot ::
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   STM m (PerasCertSnapshot blk) ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromSnapshot getCertSnapshot =
@@ -43,7 +50,7 @@ makePerasCertPoolReaderFromSnapshot getCertSnapshot =
         let certsAfterLastKnown =
               PerasCertDB.getCertsAfter certSnapshot lastKnown
         let loadCertsAfterLastKnown =
-              pure (getPerasCert <$> takeAscMap (fromIntegral limit) certsAfterLastKnown)
+              pure (vpcCert . forgetArrivalTime <$> takeAscMap (fromIntegral limit) certsAfterLastKnown)
         pure $
           if Map.null certsAfterLastKnown
             then Nothing
@@ -51,40 +58,40 @@ makePerasCertPoolReaderFromSnapshot getCertSnapshot =
     }
 
 makePerasCertPoolReaderFromCertDB ::
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   PerasCertDB m blk -> ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromCertDB perasCertDB =
   makePerasCertPoolReaderFromSnapshot (PerasCertDB.getCertSnapshot perasCertDB)
 
 makePerasCertPoolWriterFromCertDB ::
   (StandardHash blk, IOLike m) =>
-  PerasCertDB m blk -> ObjectPoolWriter PerasRoundNo (PerasCert blk) m
-makePerasCertPoolWriterFromCertDB perasCertDB =
+  SystemTime m ->
+  PerasCertDB m blk ->
+  ObjectPoolWriter PerasRoundNo (PerasCert blk) m
+makePerasCertPoolWriterFromCertDB systemTime perasCertDB =
   ObjectPoolWriter
     { opwObjectId = getPerasCertRound
-    , opwAddObjects = \certs -> do
-        validatePerasCerts certs
-          >>= mapM_ (PerasCertDB.addCert perasCertDB)
+    , opwAddObjects = addPerasCerts systemTime (PerasCertDB.addCert perasCertDB)
     , opwHasObject = do
         certSnapshot <- PerasCertDB.getCertSnapshot perasCertDB
         pure $ PerasCertDB.containsCert certSnapshot
     }
 
 makePerasCertPoolReaderFromChainDB ::
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   ChainDB m blk -> ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromChainDB chainDB =
   makePerasCertPoolReaderFromSnapshot (ChainDB.getPerasCertSnapshot chainDB)
 
 makePerasCertPoolWriterFromChainDB ::
   (StandardHash blk, IOLike m) =>
-  ChainDB m blk -> ObjectPoolWriter PerasRoundNo (PerasCert blk) m
-makePerasCertPoolWriterFromChainDB chainDB =
+  SystemTime m ->
+  ChainDB m blk ->
+  ObjectPoolWriter PerasRoundNo (PerasCert blk) m
+makePerasCertPoolWriterFromChainDB systemTime chainDB =
   ObjectPoolWriter
     { opwObjectId = getPerasCertRound
-    , opwAddObjects = \certs -> do
-        validatePerasCerts certs
-          >>= mapM_ (ChainDB.addPerasCertAsync chainDB)
+    , opwAddObjects = addPerasCerts systemTime (ChainDB.addPerasCertAsync chainDB)
     , opwHasObject = do
         certSnapshot <- ChainDB.getPerasCertSnapshot chainDB
         pure $ PerasCertDB.containsCert certSnapshot
@@ -112,3 +119,23 @@ validatePerasCerts certs = do
   case traverse (validatePerasCert perasCfg) certs of
     Left validationErr -> throw (PerasCertValidationError validationErr)
     Right validatedCerts -> return validatedCerts
+
+-- | Add a list of 'PerasCert's into an object pool.
+--
+-- NOTE: we first validate the certificates, throwing an exception if any of
+-- them are invalid. We then wrap them with their arrival time, and finally add
+-- them to the pool using the provided adder function.
+--
+-- The order of the first two operations (i.e., validation and timestamping) are
+-- rather arbitrary, and the abstract Peras protocol just assumes it can happen
+-- "within" a slot.
+addPerasCerts ::
+  (StandardHash blk, MonadThrow m) =>
+  SystemTime m ->
+  (WithArrivalTime (ValidatedPerasCert blk) -> m a) ->
+  [PerasCert blk] ->
+  m ()
+addPerasCerts systemTime adder = do
+  validatePerasCerts
+    >=> mapM (addArrivalTime systemTime)
+    >=> mapM_ adder
