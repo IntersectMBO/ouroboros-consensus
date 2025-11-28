@@ -93,10 +93,10 @@ data ExtLedgerState blk mk = ExtLedgerState
   deriving Generic
 
 deriving instance
-  (EqMK mk, LedgerSupportsProtocol blk) =>
+  (Eq (LedgerState blk mk), LedgerSupportsProtocol blk) =>
   Eq (ExtLedgerState blk mk)
 deriving instance
-  (ShowMK mk, LedgerSupportsProtocol blk) =>
+  (Show (LedgerState blk mk), LedgerSupportsProtocol blk) =>
   Show (ExtLedgerState blk mk)
 
 -- | We override 'showTypeOf' to show the type of the block
@@ -104,7 +104,7 @@ deriving instance
 -- This makes debugging a bit easier, as the block gets used to resolve all
 -- kinds of type families.
 instance
-  (NoThunksMK mk, LedgerSupportsProtocol blk) =>
+  (NoThunks (LedgerState blk mk), LedgerSupportsProtocol blk) =>
   NoThunks (ExtLedgerState blk mk)
   where
   showTypeOf _ = show $ typeRep (Proxy @(ExtLedgerState blk))

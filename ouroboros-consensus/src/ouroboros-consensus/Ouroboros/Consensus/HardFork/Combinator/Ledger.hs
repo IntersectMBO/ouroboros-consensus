@@ -28,6 +28,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
   , HardForkLedgerError (..)
   , HardForkLedgerUpdate (..)
   , HardForkLedgerWarning (..)
+  , CanHardFork'
+  , InjectValues
 
     -- * Type family instances
   , FlipTickedLedgerState (..)
@@ -110,7 +112,6 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
 import Ouroboros.Consensus.Util.TypeLevel
 
 -- $setup
@@ -914,7 +915,7 @@ instance
   where
   projectLedgerTables ::
     forall mk.
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    (CanMapMK mk, ZeroableMK mk) =>
     LedgerState (HardForkBlock xs) mk ->
     LedgerTables (HardForkBlock xs) mk
   projectLedgerTables (HardForkLedgerState st) =
@@ -922,7 +923,7 @@ instance
       hcizipWith proxySingle projectOne (toStrict $ Dict.unAll_NP Dict.Dict) st
    where
     projectOne ::
-      SingleEraBlock x => -- HasLedgerTables LedgerState x =>
+      SingleEraBlock x =>
       Index xs x ->
       Dict.Dict (InjectValues xs) x ->
       Flip LedgerState mk x ->
@@ -935,20 +936,21 @@ instance
 
   withLedgerTables ::
     forall mk any.
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    (CanMapMK mk, ZeroableMK mk) =>
     LedgerState (HardForkBlock xs) any ->
     LedgerTables (HardForkBlock xs) mk ->
     LedgerState (HardForkBlock xs) mk
   withLedgerTables (HardForkLedgerState st) tables =
     HardForkLedgerState $
-      hcimap (Proxy @(HasLedgerTables LedgerState)) withLedgerTablesOne st
+      hcizipWith proxySingle withLedgerTablesOne (toStrict $ Dict.unAll_NP Dict.Dict) st
    where
     withLedgerTablesOne ::
-      HasLedgerTables LedgerState x =>
+      SingleEraBlock x =>
       Index xs x ->
+      Dict.Dict (InjectValues xs) x ->
       Flip LedgerState any x ->
       Flip LedgerState mk x
-    withLedgerTablesOne i l =
+    withLedgerTablesOne i Dict.Dict l =
       Flip $
         withLedgerTables (unFlip l) $
           ejectLedgerTables i tables
@@ -963,7 +965,7 @@ instance
   where
   projectLedgerTables ::
     forall mk.
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    (CanMapMK mk, ZeroableMK mk) =>
     TickedL LedgerState (HardForkBlock xs) mk ->
     LedgerTables (HardForkBlock xs) mk
   projectLedgerTables (TickedL st) =
@@ -989,7 +991,7 @@ instance
 
   withLedgerTables ::
     forall mk any.
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    (CanMapMK mk, ZeroableMK mk) =>
     TickedL LedgerState (HardForkBlock xs) any ->
     LedgerTables (HardForkBlock xs) mk ->
     TickedL LedgerState (HardForkBlock xs) mk
@@ -997,18 +999,20 @@ instance
     TickedL $
       st
         { tickedHardForkLedgerStatePerEra =
-            hcimap
-              (Proxy @(HasTickedLedgerTables LedgerState))
+            hcizipWith
+              proxySingle
               withLedgerTablesOne
+              (toStrict $ Dict.unAll_NP Dict.Dict)
               (tickedHardForkLedgerStatePerEra st)
         }
    where
     withLedgerTablesOne ::
-      HasTickedLedgerTables LedgerState x =>
+      SingleEraBlock x =>
       Index xs x ->
+      Dict.Dict (InjectValues xs) x ->
       FlipTickedLedgerState any x ->
       FlipTickedLedgerState mk x
-    withLedgerTablesOne i l =
+    withLedgerTablesOne i Dict.Dict l =
       FlipTickedLedgerState $
         unTickedL $
           withLedgerTables (TickedL $ getFlipTickedLedgerState l) $
@@ -1094,37 +1098,40 @@ injectLedgerTables idx (LedgerTables x) =
 
 ejectLedgerTables ::
   forall xs x mk.
-  ( CanMapKeysMK mk
-  , CanMapMK mk
+  ( CanMapMK mk
   , HasHardForkTxOut xs
   , ZeroableMK mk
-  , S.SingI (TablesForBlock x)
   , LedgerTableConstraints x
+  , InjectValues xs x
+  , All S.SingI (TablesForBlock x)
   ) =>
   Index xs x ->
   LedgerTables (HardForkBlock xs) mk ->
   LedgerTables x mk
-ejectLedgerTables idx (LedgerTables x) =
-  foldNP emptyLedgerTables x
+ejectLedgerTables idx tbs =
+  foldSing emptyLedgerTables (S.sing @(TablesForBlock x))
  where
-  foldNP ::
+  foldSing ::
     (All S.SingI xtags, All (InjectValue xs x) xtags) =>
     LedgerTables x mk ->
-    NP (Table mk (HardForkBlock xs)) xtags ->
+    S.SList xtags ->
     LedgerTables x mk
-  foldNP !acc Nil = acc
-  foldNP !acc (tb :* tbNext) = foldNP (actOnTable acc tb) tbNext
+  foldSing !acc S.SNil = acc
+  foldSing !acc (S.SCons tb tbNext) = foldSing (actOnTable acc tb) tbNext
 
   actOnTable ::
     forall tag.
     (InjectValue xs x tag, S.SingI tag) =>
     LedgerTables x mk ->
-    Table mk (HardForkBlock xs) tag ->
+    S.Sing tag ->
     LedgerTables x mk
-  actOnTable acc tb =
+  actOnTable acc stb =
     acc
       & onTable (Proxy @x) (Proxy @tag)
-        .~ (Table . mapMK (ejectValue (Proxy @tag) idx) . getTable $ tb)
+        .~ ( Table . mapMK (ejectValue (Proxy @tag) idx) . getTable $
+               fromMaybe (error "Impossible, HF block must have all tables in every block") $
+                 getTableByTag stb tbs
+           )
 
 --   bimapLedgerTables (ejectCanonicalTxIn idx) (ejectHardForkTxOut idx)
 
@@ -1141,9 +1148,11 @@ class InjectValue xs x tag where
 
 instance HasHardForkTxOut xs => InjectValue xs x UTxOTable where
   injectValue _ = injectHardForkTxOut
+  ejectValue _ = ejectHardForkTxOut
 
 instance InjectValue xs x InstantStakeTable where
   injectValue _ _ = id
+  ejectValue _ _ = id
 
 -- | Must be the 'HardForkTxOut' type
 type instance TxOut (HardForkBlock xs) = HardForkTxOut xs
@@ -1340,36 +1349,6 @@ injectHardForkTxOutDefault idx = injectNS idx . WrapTxOut
 --     . apFn (projectNP idx txOutEjections)
 --     . K
 
-composeTxOutTranslations ::
-  SListI xs =>
-  InPairs TranslateTxOut xs ->
-  NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
-composeTxOutTranslations = \case
-  PNil ->
-    fn (unZ . unK) :* Nil
-  PCons (TranslateTxOut t) ts ->
-    fn
-      ( eitherNS
-          id
-          (error "composeTranslations: anachrony")
-          . unK
-      )
-      :* hmap
-        ( \innerf ->
-            fn $
-              apFn innerf
-                . K
-                . eitherNS
-                  (Z . WrapTxOut . t . unwrapTxOut)
-                  id
-                . unK
-        )
-        (composeTxOutTranslations ts)
- where
-  eitherNS :: (f x -> c) -> (NS f xs -> c) -> NS f (x ': xs) -> c
-  eitherNS l r = \case
-    Z x -> l x
-    S x -> r x
 
 class MemPack (TxOut x) => MemPackTxOut x
 instance MemPack (TxOut x) => MemPackTxOut x

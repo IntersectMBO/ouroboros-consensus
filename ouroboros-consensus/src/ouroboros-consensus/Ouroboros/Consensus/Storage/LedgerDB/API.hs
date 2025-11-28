@@ -163,6 +163,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , TestInternals (..)
   , TestInternals'
   , WhereToTakeSnapshot (..)
+  , LedgerSupportsLedgerDB'
   ) where
 
 import Codec.CBOR.Decoding
@@ -189,7 +190,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.LedgerStateType
+-- import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
@@ -200,7 +201,7 @@ import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.IndexedMemPack
+-- import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Streaming
@@ -220,12 +221,9 @@ class
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , -- For InMemory LedgerDBs
-    All (SerializeTablesWithHint l blk) (TablesForBlock blk)
-  , -- For OnDisk LedgerDBs
-    IndexedMemPack (LedgerState blk EmptyMK) (TxOut blk)
+
   ) =>
-  LedgerDbSerialiseConstraints l blk
+  LedgerDbSerialiseConstraints blk
 
 instance
   ( Serialise (HeaderHash blk)
@@ -235,12 +233,8 @@ instance
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , -- For InMemory LedgerDBs
-    All (SerializeTablesWithHint l blk) (TablesForBlock blk)
-  , -- For OnDisk LedgerDBs
-    IndexedMemPack (LedgerState blk EmptyMK) (TxOut blk)
   ) =>
-  LedgerDbSerialiseConstraints l blk
+  LedgerDbSerialiseConstraints blk
 
 -- | The core API of the LedgerDB component
 type LedgerDB :: (Type -> Type) -> LedgerStateKind -> Type -> Type
@@ -804,29 +798,26 @@ instance
   LedgerSupportsInMemoryLedgerDB l blk
 
 class
-  MemPackIdx blk EmptyMK ~ l blk EmptyMK =>
-  LedgerSupportsLMDBLedgerDB l blk
+  MemPackIdx blk EmptyMK ~ LedgerState blk EmptyMK =>
+  LedgerSupportsLMDBLedgerDB blk
 instance
-  MemPackIdx blk EmptyMK ~ l blk EmptyMK =>
-  LedgerSupportsLMDBLedgerDB l blk
+  MemPackIdx blk EmptyMK ~ LedgerState blk EmptyMK =>
+  LedgerSupportsLMDBLedgerDB blk
 
 type LedgerSupportsV1LedgerDB l blk =
-  (LedgerSupportsInMemoryLedgerDB l blk, LedgerSupportsLMDBLedgerDB l blk)
+  (LedgerSupportsInMemoryLedgerDB l blk, LedgerSupportsLMDBLedgerDB blk)
 
 type LedgerSupportsV2LedgerDB l blk =
   (LedgerSupportsInMemoryLedgerDB l blk)
 
 type LedgerSupportsLedgerDB blk =
-  ( LedgerSupportsLedgerDB' LedgerState blk
-  , LedgerSupportsLedgerDB' (TickedL LedgerState) blk
-  , LedgerSupportsLedgerDB' ExtLedgerState blk
-  , LedgerSupportsLedgerDB' (TickedL ExtLedgerState) blk
+  ( LedgerSupportsLedgerDB' ExtLedgerState blk
   )
 
 type LedgerSupportsLedgerDB' l blk =
   ( LedgerSupportsV1LedgerDB l blk
   , LedgerSupportsV2LedgerDB l blk
-  , LedgerDbSerialiseConstraints l blk
+  , LedgerDbSerialiseConstraints blk
   )
 
 {-------------------------------------------------------------------------------

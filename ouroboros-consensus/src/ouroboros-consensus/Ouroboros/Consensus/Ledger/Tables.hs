@@ -194,7 +194,7 @@ class (LedgerTableConstraints blk, LedgerTableConstraintsMK blk DiffMK) => HasLe
   -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance
   -- uses them.
   projectLedgerTables ::
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    (CanMapMK mk, ZeroableMK mk) =>
     l blk mk ->
     LedgerTables blk mk
 
@@ -209,7 +209,7 @@ class (LedgerTableConstraints blk, LedgerTableConstraintsMK blk DiffMK) => HasLe
   -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance
   -- uses them.
   withLedgerTables ::
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    (CanMapMK mk, ZeroableMK mk) =>
     l blk any ->
     LedgerTables blk mk ->
     l blk mk

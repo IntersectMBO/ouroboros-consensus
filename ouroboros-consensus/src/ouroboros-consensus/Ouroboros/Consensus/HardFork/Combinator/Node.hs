@@ -1,3 +1,4 @@
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -27,6 +28,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck ()
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Storage.LedgerDB.API
 
 {-------------------------------------------------------------------------------
   ConfigSupportsNode
@@ -60,10 +62,11 @@ getSameConfigValue getValue blockConfig = getSameValue values
 -------------------------------------------------------------------------------}
 
 instance
-  ( CanHardFork xs
+  ( CanHardFork' xs
   , HasHardForkTxOut xs
   , BlockSupportsHFLedgerQuery xs
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
+  , LedgerSupportsLedgerDB (HardForkBlock xs)
   ) =>
   RunNode (HardForkBlock xs)

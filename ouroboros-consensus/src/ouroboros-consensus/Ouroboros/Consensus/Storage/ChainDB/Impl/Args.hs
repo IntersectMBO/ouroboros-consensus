@@ -137,7 +137,7 @@ defaultSpecificArgs =
 defaultArgs ::
   forall m blk.
   ( IOLike m
-  , LedgerDB.LedgerDbSerialiseConstraints ExtLedgerState blk
+  , LedgerDB.LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , LedgerDB.LedgerSupportsInMemoryLedgerDB ExtLedgerState blk
   ) =>

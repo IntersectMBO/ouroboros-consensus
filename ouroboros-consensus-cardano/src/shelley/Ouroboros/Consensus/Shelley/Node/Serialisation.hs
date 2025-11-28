@@ -27,6 +27,7 @@ import Codec.Serialise (decode, encode)
 import Control.Exception (Exception, throw)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor.Identity
+import Data.SOP.Constraint (All)
 import Data.Typeable (Typeable)
 import Data.Word
 import Ouroboros.Consensus.Block
@@ -38,7 +39,13 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables (EmptyMK)
+import Ouroboros.Consensus.Ledger.Tables
+  ( DiffMK
+  , EmptyMK
+  , KVConstraintsMK
+  , LedgerTableConstraints
+  , TablesForBlock
+  )
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Praos (PraosState)
@@ -64,7 +71,12 @@ import Ouroboros.Network.Block
 instance ShelleyCompatible proto era => HasBinaryBlockInfo (ShelleyBlock proto era) where
   getBinaryBlockInfo = shelleyBinaryBlockInfo
 
-instance ShelleyCompatible proto era => SerialiseDiskConstraints (ShelleyBlock proto era)
+instance
+  ( ShelleyCompatible proto era
+  , LedgerTableConstraints (ShelleyBlock proto era)
+  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
+  ) =>
+  SerialiseDiskConstraints (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (ShelleyBlock proto era) where
   encodeDisk _ = encodeShelleyBlock
@@ -88,7 +100,10 @@ instance
   where
   encodeDisk _ = encodeShelleyLedgerState
 instance
-  ShelleyCompatible proto era =>
+  ( ShelleyCompatible proto era
+  , LedgerTableConstraints (ShelleyBlock proto era)
+  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
+  ) =>
   DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK)
   where
   decodeDisk _ = decodeShelleyLedgerState

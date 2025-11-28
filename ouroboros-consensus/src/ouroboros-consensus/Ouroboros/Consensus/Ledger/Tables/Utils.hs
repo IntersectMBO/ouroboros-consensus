@@ -75,7 +75,6 @@ import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 ltwith ::
   ( HasLedgerTables l blk
   , CanMapMK mk'
-  , CanMapKeysMK mk'
   , ZeroableMK mk'
   ) =>
   l blk mk ->
@@ -84,7 +83,7 @@ ltwith ::
 ltwith = withLedgerTables
 
 ltprj ::
-  (HasLedgerTables l blk, CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+  (HasLedgerTables l blk, CanMapMK mk, ZeroableMK mk) =>
   l blk mk ->
   LedgerTables blk mk
 ltprj = projectLedgerTables

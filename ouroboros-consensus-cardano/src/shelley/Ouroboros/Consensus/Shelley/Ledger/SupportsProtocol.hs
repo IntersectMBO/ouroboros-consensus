@@ -1,3 +1,4 @@
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
@@ -45,9 +46,19 @@ import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
+import Data.SOP.Constraint (All)
+import NoThunks.Class
 
 instance
-  ShelleyCompatible (TPraos crypto) era =>
+  ( ShelleyCompatible (TPraos crypto) era
+  , CanStowLedgerTables (LedgerState (ShelleyBlock (TPraos crypto) era))
+  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock (TPraos crypto) era)))
+  , All (KVConstraintsMK (ShelleyBlock (TPraos crypto) era) DiffMK) (TablesForBlock (ShelleyBlock (TPraos crypto) era))
+  , LedgerTableConstraints (ShelleyBlock (TPraos crypto) era)
+  , forall mk. (Eq (LedgerState (ShelleyBlock (TPraos crypto) era) mk))
+  , forall mk. (Show (LedgerState (ShelleyBlock (TPraos crypto) era) mk))
+  , forall mk. (NoThunks (LedgerState (ShelleyBlock (TPraos crypto) era) mk))
+  ) =>
   LedgerSupportsProtocol (ShelleyBlock (TPraos crypto) era)
   where
   protocolLedgerView _cfg = SL.currentLedgerView . tickedShelleyLedgerState
@@ -87,6 +98,21 @@ instance
 instance
   ( ShelleyCompatible (Praos crypto) era
   , ShelleyCompatible (TPraos crypto) era
+  , CanStowLedgerTables (LedgerState (ShelleyBlock (Praos crypto) era))
+  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock (Praos crypto) era)))
+  , All (KVConstraintsMK (ShelleyBlock (Praos crypto) era) DiffMK) (TablesForBlock (ShelleyBlock (Praos crypto) era))
+  , All (KVConstraintsMK (ShelleyBlock (TPraos crypto) era) DiffMK) (TablesForBlock (ShelleyBlock (TPraos crypto) era))
+  , LedgerTableConstraints (ShelleyBlock (Praos crypto) era)
+  , forall mk. (Eq (LedgerState (ShelleyBlock (Praos crypto) era) mk))
+  , forall mk. (Show (LedgerState (ShelleyBlock (Praos crypto) era) mk))
+  , forall mk. (NoThunks (LedgerState (ShelleyBlock (Praos crypto) era) mk))
+  , CanStowLedgerTables (LedgerState (ShelleyBlock (TPraos crypto) era))
+  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock (TPraos crypto) era)))
+  , All (KVConstraintsMK (ShelleyBlock (TPraos crypto) era) DiffMK) (TablesForBlock (ShelleyBlock (TPraos crypto) era))
+  , LedgerTableConstraints (ShelleyBlock (TPraos crypto) era)
+  , forall mk. (Eq (LedgerState (ShelleyBlock (TPraos crypto) era) mk))
+  , forall mk. (Show (LedgerState (ShelleyBlock (TPraos crypto) era) mk))
+  , forall mk. (NoThunks (LedgerState (ShelleyBlock (TPraos crypto) era) mk))
   ) =>
   LedgerSupportsProtocol (ShelleyBlock (Praos crypto) era)
   where

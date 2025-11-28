@@ -254,7 +254,7 @@ implTablesSize _ tv = do
 
 snapshotManager ::
   ( IOLike m
-  , LedgerDbSerialiseConstraints ExtLedgerState blk
+  , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   ) =>
   CodecConfig blk ->
@@ -271,7 +271,7 @@ snapshotManager ccfg tracer fs =
 {-# INLINE implTakeSnapshot #-}
 implTakeSnapshot ::
   ( IOLike m
-  , LedgerDbSerialiseConstraints ExtLedgerState blk
+  , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   ) =>
   CodecConfig blk ->
@@ -312,7 +312,7 @@ implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
 --   from the one tracked by @'DiskSnapshot'@.
 loadSnapshot ::
   forall blk m.
-  ( LedgerDbSerialiseConstraints ExtLedgerState blk
+  ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , IOLike m
   , LedgerSupportsInMemoryLedgerDB ExtLedgerState blk
@@ -358,7 +358,7 @@ type data Mem
 
 instance
   ( IOLike m
-  , LedgerDbSerialiseConstraints ExtLedgerState blk
+  , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsInMemoryLedgerDB ExtLedgerState blk
   ) =>
@@ -382,7 +382,7 @@ instance
 -- | Create arguments for initializing the LedgerDB using the InMemory backend.
 mkInMemoryArgs ::
   ( IOLike m
-  , LedgerDbSerialiseConstraints ExtLedgerState blk
+  , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsInMemoryLedgerDB ExtLedgerState blk
   ) =>
