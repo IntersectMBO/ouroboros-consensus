@@ -17,7 +17,7 @@
 -- way to diffuse objects for Peras, i.e. Peras votes and certificates.
 --
 -- See the design document here: https://tweag.github.io/cardano-peras/peras-design.pdf
-module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
+module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1
   ( objectDiffusionInbound
   , TraceObjectDiffusionInbound (..)
   , ObjectDiffusionInboundError (..)
