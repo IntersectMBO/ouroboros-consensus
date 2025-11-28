@@ -13,6 +13,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -60,6 +61,7 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
   -- , AllKeys
   -- , AllValues
   , AllTables
+  , getTableByTag
   -- , defaultCastLedgerTables
   -- , defaultCastTable
   ) where
@@ -71,6 +73,7 @@ import Cardano.Ledger.TxIn
 import Data.Kind (Type)
 import Data.List.Singletons hiding (All)
 import Data.SOP.Constraint
+import Data.SOP.Index (Index (..), projectNP)
 import Data.SOP.Strict
 import Data.Singletons
 import Data.Type.Equality (TestEquality (testEquality), (:~:) (Refl))
@@ -121,7 +124,7 @@ instance TestEquality STABLE where
 type Value :: TABLE -> Type -> Type
 type family Value table blk where
   Value UTxOTable blk = TxOut blk
-  Value InstantStakeTable blk = Coin
+  Value InstantStakeTable blk = CompactForm Coin
 
 -- class All (Compose c (WrapKey blk)) (TablesForBlock blk) => AllKeys c blk
 -- instance All (Compose c (WrapKey blk)) (TablesForBlock blk) => AllKeys c blk
@@ -223,31 +226,25 @@ deriving newtype instance
 -- Type proof of inclusion
 ------------------------------------------------------------
 
-data Membership (xs :: [TABLE]) (x :: TABLE) where
-  MZ :: Membership (x ': xs) x
-  MS :: Membership xs x -> Membership (y ': xs) x
-
-deriving instance Show (Membership xs x)
-
-findMembership ::
+findIndex ::
   forall (xs :: [TABLE]) (x :: TABLE).
   SList xs ->
   Sing x ->
-  Maybe (Membership xs x)
-findMembership SNil _ = Nothing
-findMembership (SCons sy sxs) sx =
+  Maybe (Index xs x)
+findIndex SNil _ = Nothing
+findIndex (SCons sy sxs) sx =
   case testEquality sx sy of
-    Just Refl -> Just MZ
-    Nothing -> MS <$> findMembership sxs sx
+    Just Refl -> Just IZ
+    Nothing -> IS <$> findIndex sxs sx
 
 ------------------------------------------------------------
 -- Lenses
 ------------------------------------------------------------
 
 -- | Given a proof of inclusion, create a lens for the particular item in the NP
-ixNP :: Membership xs x -> Lens' (NP f xs) (f x)
-ixNP MZ f (x :* xs) = (:* xs) <$> f x
-ixNP (MS m) f (x :* xs) = (x :*) <$> ixNP m f xs
+ixNP :: Index xs x -> Lens' (NP f xs) (f x)
+ixNP IZ f (x :* xs) = (:* xs) <$> f x
+ixNP (IS m) f (x :* xs) = (x :*) <$> ixNP m f xs
 
 setterForSing ::
   forall l mk table.
@@ -255,7 +252,19 @@ setterForSing ::
   Sing table ->
   Maybe (ASetter' (LedgerTables l mk) (Table mk l table))
 setterForSing sxs sx =
-  (\mbm -> \f -> fmap LedgerTables . ixNP mbm f . getLedgerTables) <$> findMembership sxs sx
+  (\mbm -> \f -> fmap LedgerTables . ixNP mbm f . getLedgerTables) <$> findIndex sxs sx
+
+getTableByTag ::
+  forall tag mk l.
+  ( SListI (TablesForBlock l)
+  , SingI (TablesForBlock l)
+  ) =>
+  Sing tag ->
+  LedgerTables l mk ->
+  Maybe (Table mk l tag)
+getTableByTag stag (LedgerTables np) =
+  let mem = findIndex (sing @(TablesForBlock l)) stag
+   in fmap (flip projectNP np) mem
 
 --------------------------------------------------------------------------------
 -- Helpers

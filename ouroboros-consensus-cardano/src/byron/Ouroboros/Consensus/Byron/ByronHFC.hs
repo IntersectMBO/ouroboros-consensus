@@ -25,9 +25,9 @@ import qualified Cardano.Chain.Update as CC.Update
 import Control.Monad
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
-import Data.MemPack
+-- import Data.MemPack
 import Data.SOP.Index (Index (..))
-import Data.Void (Void, absurd)
+import Data.Void (Void) -- , absurd)
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
@@ -287,23 +287,11 @@ instance SerialiseNodeToClient ByronBlock ByronPartialLedgerConfig where
   Canonical TxIn
 -------------------------------------------------------------------------------}
 
-instance HasCanonicalTxIn '[ByronBlock] where
-  newtype CanonicalTxIn '[ByronBlock] = ByronHFCTxIn
-    { getByronHFCTxIn :: Void
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
-
-  injectCanonicalTxIn IZ key = absurd key
-  injectCanonicalTxIn (IS idx') _ = case idx' of {}
-
-  ejectCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
-
 instance HasHardForkTxOut '[ByronBlock] where
-  type HardForkTxOut '[ByronBlock] = Void
-  injectHardForkTxOut IZ txout = absurd txout
+  type HardForkTxOut '[ByronBlock] = ()
+  injectHardForkTxOut IZ txout = txout
   injectHardForkTxOut (IS idx') _ = case idx' of {}
-  ejectHardForkTxOut IZ txout = absurd txout
+  ejectHardForkTxOut IZ txout = txout
   ejectHardForkTxOut (IS idx') _ = case idx' of {}
 
 deriving via
@@ -321,7 +309,7 @@ instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
   queryLedgerGetTraversingFilter (IS is) _q = case is of {}
 
-deriving via
-  TrivialLedgerTables (LedgerState (HardForkBlock '[ByronBlock]))
-  instance
-    SerializeTablesWithHint (LedgerState (HardForkBlock '[ByronBlock]))
+-- deriving via
+--   TrivialLedgerTables (LedgerState (HardForkBlock '[ByronBlock]))
+--   instance
+--     SerializeTablesWithHint (LedgerState (HardForkBlock '[ByronBlock]))

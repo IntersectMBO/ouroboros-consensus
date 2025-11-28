@@ -48,7 +48,6 @@ openDB ::
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
-  , LedgerSupportsLedgerDB blk
   , GetBlockKeySets blk
   ) =>
   -- | Stateless initializaton arguments

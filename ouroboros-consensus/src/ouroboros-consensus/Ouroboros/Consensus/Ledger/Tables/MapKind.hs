@@ -12,8 +12,7 @@
 -- | Classes for 'MapKind's and concrete 'MapKind's
 module Ouroboros.Consensus.Ledger.Tables.MapKind
   ( -- * Classes
-    CanMapKeysMK (..)
-  , CanMapMK (..)
+    CanMapMK (..)
   , EqMK
   , NoThunksMK
   , ShowMK
@@ -35,7 +34,6 @@ import Data.Kind (Constraint)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
-import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Ledger.Tables.Basics
@@ -54,12 +52,6 @@ class ZeroableMK mk where
 type CanMapMK :: F2 -> Constraint
 class CanMapMK mk where
   mapMK :: (v -> v') -> mk k v -> mk k v'
-
-type CanMapKeysMK :: F2 -> Constraint
-class CanMapKeysMK mk where
-  -- | Instances defined for the standard mapkinds suffer from the same caveats
-  -- as 'Data.Map.Strict.mapKeys' or 'Data.Set.map'
-  mapKeysMK :: Ord k' => (k -> k') -> mk k v -> mk k' v
 
 -- | For convenience, such that we don't have to include @QuantifiedConstraints@
 -- everywhere.
@@ -93,9 +85,6 @@ instance ZeroableMK EmptyMK where
 instance CanMapMK EmptyMK where
   mapMK _ EmptyMK = EmptyMK
 
-instance CanMapKeysMK EmptyMK where
-  mapKeysMK _ EmptyMK = EmptyMK
-
 {-------------------------------------------------------------------------------
   KeysMK
 -------------------------------------------------------------------------------}
@@ -112,9 +101,6 @@ instance ZeroableMK KeysMK where
 instance CanMapMK KeysMK where
   mapMK _ (KeysMK ks) = KeysMK ks
 
-instance CanMapKeysMK KeysMK where
-  mapKeysMK f (KeysMK ks) = KeysMK $ Set.map f ks
-
 {-------------------------------------------------------------------------------
   ValuesMK
 -------------------------------------------------------------------------------}
@@ -130,9 +116,6 @@ instance ZeroableMK ValuesMK where
 instance CanMapMK ValuesMK where
   mapMK f (ValuesMK vs) = ValuesMK $ Map.map f vs
 
-instance CanMapKeysMK ValuesMK where
-  mapKeysMK f (ValuesMK vs) = ValuesMK $ Map.mapKeys f vs
-
 {-------------------------------------------------------------------------------
   DiffMK
 -------------------------------------------------------------------------------}
@@ -145,11 +128,6 @@ newtype DiffMK k v = DiffMK {getDiffMK :: Diff k v}
 
 instance ZeroableMK DiffMK where
   emptyMK = DiffMK mempty
-
-instance CanMapKeysMK DiffMK where
-  mapKeysMK f (DiffMK (Diff m)) =
-    DiffMK . Diff $
-      Map.mapKeys f m
 
 instance CanMapMK DiffMK where
   mapMK f (DiffMK d) = DiffMK $ fmap f d
@@ -167,24 +145,6 @@ instance ZeroableMK TrackingMK where
 
 instance CanMapMK TrackingMK where
   mapMK f (TrackingMK vs d) = TrackingMK (Map.map f vs) (fmap f d)
-
-instance CanMapKeysMK TrackingMK where
-  mapKeysMK f (TrackingMK vs d) =
-    TrackingMK
-      (getValuesMK . mapKeysMK f . ValuesMK $ vs)
-      (getDiffMK . mapKeysMK f . DiffMK $ d)
-
-{-------------------------------------------------------------------------------
-  SeqDiffMK
--------------------------------------------------------------------------------}
-
--- newtype SeqDiffMK k v = SeqDiffMK {getSeqDiffMK :: DiffSeq k v}
---   deriving stock (Generic, Eq, Show)
---   deriving anyclass NoThunks
---   deriving anyclass (ShowMK, EqMK, NoThunksMK)
-
--- instance ZeroableMK SeqDiffMK where
---   emptyMK = SeqDiffMK empty
 
 {-------------------------------------------------------------------------------
   CodecMK

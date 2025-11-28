@@ -80,7 +80,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -110,7 +109,6 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk
   , GetBlockKeySets blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
@@ -127,7 +125,6 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk
   , GetBlockKeySets blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
@@ -144,7 +141,6 @@ openDBInternal ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , HasCallStack
-  , LedgerSupportsLedgerDB blk
   , GetBlockKeySets blk
   ) =>
   Complete Args.ChainDbArgs m blk ->

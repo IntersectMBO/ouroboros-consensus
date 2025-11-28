@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
-module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (PrefixC, CanHardFork (..)) where
+module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (PrefixC, CanHardFork (..), NoThunksLedgerState) where
 
 import Data.Measure (Measure)
 import Data.SOP.Constraint
@@ -33,6 +33,10 @@ import Ouroboros.Consensus.Util.TypeLevel
   CanHardFork
 -------------------------------------------------------------------------------}
 
+
+class NoThunks (LedgerState blk mk) => NoThunksLedgerState mk blk
+instance NoThunks (LedgerState blk mk) => NoThunksLedgerState mk blk
+
 class PrefixI (TablesForBlock x) (TablesForBlock y) => PrefixC x y
 instance PrefixI (TablesForBlock x) (TablesForBlock y) => PrefixC x y
 
@@ -52,6 +56,7 @@ class
   , TxMeasureMetrics (HardForkTxMeasure xs)
   , InPairs.InPairsC PrefixC xs
   , All ToAllDictTables xs
+  , All (NoThunksLedgerState EmptyMK) xs
   ) =>
   CanHardFork xs
   where

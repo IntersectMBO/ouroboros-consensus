@@ -1,3 +1,6 @@
+{-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -19,11 +22,13 @@ import Ouroboros.Consensus.HardFork.Combinator.Protocol
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Basics
+--import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Storage.ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 
-instance SerialiseHFC xs => SerialiseDiskConstraints (HardForkBlock xs)
+instance (SerialiseHFC xs, LedgerSupportsLedgerDB (HardForkBlock xs)) => SerialiseDiskConstraints (HardForkBlock xs)
 
 {-------------------------------------------------------------------------------
   'ReconstructNestedCtxt'

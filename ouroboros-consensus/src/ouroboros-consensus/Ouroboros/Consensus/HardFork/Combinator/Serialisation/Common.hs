@@ -102,11 +102,10 @@ import Ouroboros.Consensus.HardFork.Combinator.NetworkVersion
 import Ouroboros.Consensus.HardFork.Combinator.State
 import Ouroboros.Consensus.HardFork.Combinator.State.Instances
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
+-- import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Network.Block (Serialised)
 
@@ -198,10 +197,10 @@ class
     All HasBinaryBlockInfo xs
   , All HasNetworkProtocolVersion xs
   , All BlockSupportsLedgerQuery xs
-  , -- LedgerTables on the HardForkBlock might not be compositionally
+   -- LedgerTables on the HardForkBlock might not be compositionally
     -- defined, but we need to require this instances for any instantiation.
-    HasLedgerTables LedgerState (HardForkBlock xs)
-  , LedgerSupportsLedgerDB (HardForkBlock xs)
+--    HasLedgerTables (TickedL LedgerState) (HardForkBlock xs)
+  -- , LedgerSupportsLedgerDB (HardForkBlock xs)
   ) =>
   SerialiseHFC xs
   where
@@ -258,7 +257,7 @@ class
   reconstructHfcNestedCtxt _ prefix blockSize =
     case nsFromIndex tag of
       Nothing -> error $ "invalid HardForkBlock with tag: " <> show tag
-      Just ns -> injSomeSecond $ hcmap proxySingle reconstructOne ns
+      Just ns -> injSomeSecond @xs $ hcmap proxySingle reconstructOne ns
    where
     tag :: Word8
     tag = Short.index prefix 1
@@ -274,7 +273,7 @@ class
       reconstructNestedCtxt (Proxy @(Header blk)) prefixOne blockSize
 
     injSomeSecond ::
-      NS (SomeSecond (NestedCtxt Header)) xs' ->
+      forall xs'. NS (SomeSecond (NestedCtxt Header)) xs' ->
       SomeSecond (NestedCtxt Header) (HardForkBlock xs')
     injSomeSecond (Z x) = case x of
       SomeSecond (NestedCtxt y) -> SomeSecond (NestedCtxt (NCZ y))

@@ -1,3 +1,4 @@
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -41,11 +42,14 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Ledger
+import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import Ouroboros.Consensus.Shelley.Node.DiffusionPipelining ()
 import Ouroboros.Consensus.Shelley.Node.Serialisation ()
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Shelley.Node.TPraos
+import NoThunks.Class
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , pHeaderIssuer
@@ -121,5 +125,11 @@ instance
   , TxLimits (ShelleyBlock proto era)
   , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
+  , LedgerSupportsLedgerDB (ShelleyBlock proto era)
+  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
+  , forall mk. Eq (LedgerState (ShelleyBlock proto era) mk)
+  , forall mk. Show (LedgerState (ShelleyBlock proto era) mk)
+  , forall mk. NoThunks (LedgerState (ShelleyBlock proto era) mk)
   ) =>
   RunNode (ShelleyBlock proto era)

@@ -1,3 +1,5 @@
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -56,11 +58,38 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId (CoreNodeId)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT
+
+import Ouroboros.Consensus.Storage.LedgerDB.API
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Util ((....:))
 import Ouroboros.Network.Magic (NetworkMagic (..))
+import Ouroboros.Consensus.Util
+import Data.Typeable (Typeable)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config.SupportsNode
+import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.CommonProtocolParams
+import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Node.InitStorage
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Storage.ChainDB
+  ( ImmutableDbSerialiseConstraints
+  , SerialiseDiskConstraints
+  , VolatileDbSerialiseConstraints
+  )
+import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util (ShowProxy)
+import Ouroboros.Network.Block (Serialised)
+
 
 {-------------------------------------------------------------------------------
   Credentials
@@ -314,4 +343,6 @@ deriving via
   instance
     BlockSupportsDiffusionPipelining ByronBlock
 
-instance RunNode ByronBlock
+instance
+  ( LedgerSupportsV1LedgerDB ExtLedgerState ByronBlock
+  ) => RunNode ByronBlock
