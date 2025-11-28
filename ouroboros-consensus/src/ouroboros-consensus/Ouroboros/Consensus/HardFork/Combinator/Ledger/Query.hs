@@ -124,8 +124,8 @@ class
   ( All (Compose NoThunks WrapTxOut) xs
   , All (Compose Show WrapTxOut) xs
   , All (Compose Eq WrapTxOut) xs
-  , All (Compose HasTickedLedgerTables LedgerState) xs
-  , All (Compose HasLedgerTables LedgerState) xs
+  , All (HasTickedLedgerTables LedgerState) xs
+  , All (HasLedgerTables LedgerState) xs
   ) =>
   BlockSupportsHFLedgerQuery xs
   where
@@ -153,7 +153,7 @@ class
   queryLedgerGetTraversingFilter ::
     Index xs x ->
     BlockQuery x QFTraverseTables result ->
-    TxOut (LedgerState (HardForkBlock xs)) ->
+    TxOut (HardForkBlock xs) ->
     Bool
 
 {-------------------------------------------------------------------------------

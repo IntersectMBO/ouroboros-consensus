@@ -1,10 +1,13 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
-module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (CanHardFork (..)) where
+module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (PrefixC, CanHardFork (..)) where
 
 import Data.Measure (Measure)
 import Data.SOP.Constraint
@@ -24,15 +27,22 @@ import Ouroboros.Consensus.HardFork.Combinator.Translation
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util.TypeLevel
 
 {-------------------------------------------------------------------------------
   CanHardFork
 -------------------------------------------------------------------------------}
 
+class PrefixI (TablesForBlock x) (TablesForBlock y) => PrefixC x y
+instance PrefixI (TablesForBlock x) (TablesForBlock y) => PrefixC x y
+
+class ToAllDict (KVConstraintsMK x DiffMK) (TablesForBlock x) => ToAllDictTables x
+instance ToAllDict (KVConstraintsMK x DiffMK) (TablesForBlock x) => ToAllDictTables x
+
 class
   ( All SingleEraBlock xs
-  , All (Compose HasLedgerTables LedgerState) xs
-  , All (Compose HasTickedLedgerTables LedgerState) xs
+  , All (HasLedgerTables LedgerState) xs
+  , All (HasTickedLedgerTables LedgerState) xs
   , Typeable xs
   , IsNonEmpty xs
   , Measure (HardForkTxMeasure xs)
@@ -40,6 +50,8 @@ class
   , NoThunks (HardForkTxMeasure xs)
   , Show (HardForkTxMeasure xs)
   , TxMeasureMetrics (HardForkTxMeasure xs)
+  , InPairs.InPairsC PrefixC xs
+  , All ToAllDictTables xs
   ) =>
   CanHardFork xs
   where

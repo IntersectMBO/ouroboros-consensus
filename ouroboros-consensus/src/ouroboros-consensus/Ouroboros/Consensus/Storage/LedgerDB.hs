@@ -1,5 +1,5 @@
-{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -21,6 +21,10 @@ import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
+-- import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
+-- import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
+
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -30,15 +34,12 @@ import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
--- import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
--- import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
-import Ouroboros.Consensus.Ledger.Abstract
 
 openDB ::
   forall m blk.
@@ -47,7 +48,8 @@ openDB ::
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
-  , LedgerSupportsLedgerDB blk, GetBlockKeySets blk
+  , LedgerSupportsLedgerDB blk
+  , GetBlockKeySets blk
   ) =>
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->

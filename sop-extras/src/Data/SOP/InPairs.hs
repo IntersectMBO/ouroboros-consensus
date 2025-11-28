@@ -8,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | Intended for qualified import
@@ -41,6 +42,8 @@ module Data.SOP.InPairs
     -- * Composing
   , Fn2 (..)
   , composeFromTo
+  , hczipWith'
+  , InPairsC
   ) where
 
 import Data.Kind (Type)
@@ -125,6 +128,21 @@ hczipWith _ f = go
   go PNil PNil = PNil
   go (PCons x xs) (PCons y ys) = PCons (f x y) (go xs ys)
 
+hczipWith' ::
+  forall proxy c proxy' c' f f' f'' xs.
+  (All c xs, InPairsC c' xs) =>
+  proxy c ->
+  proxy' c' ->
+  (forall x y. (c' x y, c x, c y) => f x y -> f' x y -> f'' x y) ->
+  InPairs f xs ->
+  InPairs f' xs ->
+  InPairs f'' xs
+hczipWith' _ _ f = go
+ where
+  go :: (All c xs', InPairsC c' xs') => InPairs f xs' -> InPairs f' xs' -> InPairs f'' xs'
+  go PNil PNil = PNil
+  go (PCons x xs) (PCons y ys) = PCons (f x y) (go xs ys)
+
 {-------------------------------------------------------------------------------
   RequiringBoth
 -------------------------------------------------------------------------------}
@@ -165,3 +183,12 @@ composeFromTo IZ (IS t) (PCons f next) = composeFromTo IZ t next . apFn2 f
 composeFromTo (IS _) IZ _ = const Nothing
 composeFromTo (IS oIdx) (IS tIdx) (PCons _ next) = composeFromTo oIdx tIdx next
 composeFromTo _ (IS idx) PNil = case idx of {}
+
+type family InPairsC c xs where
+  InPairsC c '[] = Top ()
+  InPairsC c '[x] = Top x
+  InPairsC c (x ': ys) = InPairsC1 c x ys
+
+type family InPairsC1 c x ys where
+  InPairsC1 c x '[] = Top x
+  InPairsC1 c x (y ': ys) = (c x y, InPairsC c (y ': ys))

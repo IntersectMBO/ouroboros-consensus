@@ -47,6 +47,7 @@ import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
+import Data.SOP.Constraint
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable
@@ -55,6 +56,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool.API
@@ -68,7 +70,6 @@ import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
-import Data.SOP.Constraint
 
 {-------------------------------------------------------------------------------
   Internal State
@@ -149,11 +150,11 @@ deriving instance
   ( NoThunks (Validated (GenTx blk))
   , NoThunks (GenTxId blk)
   , NoThunks (TickedLedgerState blk DiffMK)
-  -- , NoThunks (TxIn (LedgerState blk))
-  -- , NoThunks (TxOut (LedgerState blk))
-  , All (Compose NoThunks (Table ValuesMK blk)) (TablesForBlock blk)
+  , -- , NoThunks (TxIn (LedgerState blk))
+    -- , NoThunks (TxOut (LedgerState blk))
+    All (Compose NoThunks (Table ValuesMK blk)) (TablesForBlock blk)
   , All (Compose NoThunks (Table KeysMK blk)) (TablesForBlock blk)
-  , HasLedgerTables (LedgerState blk)
+  , HasLedgerTables LedgerState blk
   , NoThunks (TxMeasure blk)
   , StandardHash blk
   , Typeable blk
@@ -408,7 +409,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
             , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst) val
             , isTxKeys = keys
             , isTxValues = ltliftA2 restrictValuesMK values keys
-            , isLedgerState = trackingToDiffs st'
+            , isLedgerState = unTickedL $ trackingToDiffs (TickedL st')
             , isTip = castPoint $ getTip st
             , isSlotNo = slot
             , isLastTicketNo = lastTicketNo
@@ -459,7 +460,7 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
             -- the internal state.
             isTxKeys = emptyLedgerTables
           , isTxValues = emptyLedgerTables
-          , isLedgerState = trackingToDiffs st'
+          , isLedgerState = unTickedL $ trackingToDiffs $ TickedL st'
           , isTip = castPoint $ getTip st
           , isSlotNo = slot
           , isLastTicketNo = lastTicketNo

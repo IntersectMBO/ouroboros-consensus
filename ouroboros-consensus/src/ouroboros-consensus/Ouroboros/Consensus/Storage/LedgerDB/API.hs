@@ -109,6 +109,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.API
   ( -- * Main API
     CanUpgradeLedgerTables (..)
+  , CanUpgradeLedgerTable (..)
   , LedgerDB (..)
   , LedgerDB'
   , LedgerDbPrune (..)
@@ -175,7 +176,6 @@ import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind
-import Data.MemPack
 import Data.Proxy
 import Data.SOP.Constraint
 import Data.Set (Set)
@@ -189,6 +189,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
@@ -204,7 +205,6 @@ import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Streaming
 import System.FS.CRC
-import Ouroboros.Consensus.Ledger.LedgerStateType
 
 {-------------------------------------------------------------------------------
   Main API
@@ -221,8 +221,7 @@ class
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
   , -- For InMemory LedgerDBs
-    MemPack (TxIn blk)
-  , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
+    All (SerializeTablesWithHint l blk) (TablesForBlock blk)
   , -- For OnDisk LedgerDBs
     IndexedMemPack (LedgerState blk EmptyMK) (TxOut blk)
   ) =>
@@ -237,8 +236,7 @@ instance
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
   , -- For InMemory LedgerDBs
-    MemPack (TxIn blk)
-  , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
+    All (SerializeTablesWithHint l blk) (TablesForBlock blk)
   , -- For OnDisk LedgerDBs
     IndexedMemPack (LedgerState blk EmptyMK) (TxOut blk)
   ) =>
@@ -759,78 +757,72 @@ data TraceReplayProgressEvent blk
 -- No correctness property relies on this, as Consensus can work with TxOuts
 -- from multiple eras, but the performance depends on it as otherwise we will be
 -- upgrading the TxOuts every time we consult them.
-class CanUpgradeLedgerTables l where
+type CanUpgradeLedgerTable :: Type -> TABLE -> Constraint
+class CanUpgradeLedgerTable blk tag where
+  type UpgradeIndex blk :: Type
+  upgradeTable ::
+    -- | The original ledger state before the upgrade. This will be the
+    -- tip before applying the block.
+    UpgradeIndex blk ->
+    -- | The tables we want to maybe upgrade.
+    Table ValuesMK blk tag ->
+    Table ValuesMK blk tag
+
+type CanUpgradeLedgerTables :: StateKind -> Type -> Constraint
+class All (CanUpgradeLedgerTable blk) (TablesForBlock blk) => CanUpgradeLedgerTables l blk where
   upgradeTables ::
     -- | The original ledger state before the upgrade. This will be the
     -- tip before applying the block.
-    l mk1 ->
+    l blk mk1 ->
     -- | The ledger state after the upgrade, which might be in a
     -- different era than the one above.
-    l mk2 ->
+    l blk mk2 ->
     -- | The tables we want to maybe upgrade.
-    LedgerTables (LBlock l) ValuesMK ->
-    LedgerTables (LBlock l) ValuesMK
-
-
-
--- instance
---   LedgerTablesAreTrivial l =>
---   CanUpgradeLedgerTables (TrivialLedgerTables l)
---   where
---   upgradeTables _ _ (LedgerTables Nil) = LedgerTables Nil
+    LedgerTables blk ValuesMK ->
+    LedgerTables blk ValuesMK
 
 {-------------------------------------------------------------------------------
   LedgerDB constraints
 -------------------------------------------------------------------------------}
 
 class
-  ( CanUpgradeLedgerTables l
-  , All (SerializeTablesWithHint l (LBlock l)) (TablesForBlock (LBlock l))
-  , AllTables NoThunks ValuesMK (LBlock l)
-  , AllKeys NoThunks (LBlock l)
-  , AllValues NoThunks (LBlock l)
-  , HasLedgerTables l
+  ( CanUpgradeLedgerTables l blk
+  , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
+  , AllTables NoThunks ValuesMK blk
+  , HasLedgerTables l blk
   ) =>
-  LedgerSupportsInMemoryLedgerDB l
+  LedgerSupportsInMemoryLedgerDB l blk
 instance
-  ( CanUpgradeLedgerTables l
-  , All (SerializeTablesWithHint l (LBlock l)) (TablesForBlock (LBlock l))
-  , AllTables NoThunks ValuesMK (LBlock l)
-  , AllKeys NoThunks (LBlock l)
-  , AllValues NoThunks (LBlock l)
-  , HasLedgerTables l
+  ( CanUpgradeLedgerTables l blk
+  , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
+  , AllTables NoThunks ValuesMK blk
+  , HasLedgerTables l blk
   ) =>
-  LedgerSupportsInMemoryLedgerDB l
+  LedgerSupportsInMemoryLedgerDB l blk
 
 class
-  ( AllValues (IndexedMemPack (l EmptyMK)) (LBlock l)
-  , MemPackIdx (LBlock l) EmptyMK ~ l EmptyMK
-  , AllKeys MemPack (LBlock l)
-  ) =>
-  LedgerSupportsLMDBLedgerDB l
+  MemPackIdx blk EmptyMK ~ l blk EmptyMK =>
+  LedgerSupportsLMDBLedgerDB l blk
 instance
-  ( AllValues (IndexedMemPack (l EmptyMK)) (LBlock l)
-  , MemPackIdx (LBlock l) EmptyMK ~ l EmptyMK
-  , AllKeys MemPack (LBlock l)
-  ) =>
-  LedgerSupportsLMDBLedgerDB l
+  MemPackIdx blk EmptyMK ~ l blk EmptyMK =>
+  LedgerSupportsLMDBLedgerDB l blk
 
-type LedgerSupportsV1LedgerDB l =
-  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
+type LedgerSupportsV1LedgerDB l blk =
+  (LedgerSupportsInMemoryLedgerDB l blk, LedgerSupportsLMDBLedgerDB l blk)
 
-type LedgerSupportsV2LedgerDB l =
-  (LedgerSupportsInMemoryLedgerDB l, MemPack (TxIn (LBlock l)))
+type LedgerSupportsV2LedgerDB l blk =
+  (LedgerSupportsInMemoryLedgerDB l blk)
 
 type LedgerSupportsLedgerDB blk =
-  ( LedgerSupportsLedgerDB' (LedgerState blk) blk
-  , LedgerSupportsLedgerDB' (Ticked (LedgerState blk)) blk
-  , LedgerSupportsLedgerDB' (ExtLedgerState blk) blk
-  , LedgerSupportsLedgerDB' (Ticked (ExtLedgerState blk)) blk
+  ( LedgerSupportsLedgerDB' LedgerState blk
+  , LedgerSupportsLedgerDB' (TickedL LedgerState) blk
+  , LedgerSupportsLedgerDB' ExtLedgerState blk
+  , LedgerSupportsLedgerDB' (TickedL ExtLedgerState) blk
   )
 
 type LedgerSupportsLedgerDB' l blk =
-  ( LedgerSupportsV1LedgerDB l
-  , LedgerSupportsV2LedgerDB l
+  ( LedgerSupportsV1LedgerDB l blk
+  , LedgerSupportsV2LedgerDB l blk
   , LedgerDbSerialiseConstraints l blk
   )
 
@@ -864,7 +856,7 @@ class StreamingBackend m backend blk where
 type Yield m blk =
   LedgerState blk EmptyMK ->
   ( ( Stream
-        (Of (TxIn blk, TxOut blk))
+        (Of (TxIn, TxOut blk))
         (ExceptT DeserialiseFailure m)
         (Stream (Of ByteString) m (Maybe CRC)) ->
       ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
@@ -875,12 +867,12 @@ type Yield m blk =
 type Sink m blk =
   LedgerState blk EmptyMK ->
   Stream
-    (Of (TxIn blk, TxOut blk))
+    (Of (TxIn, TxOut blk))
     (ExceptT DeserialiseFailure m)
     (Stream (Of ByteString) m (Maybe CRC)) ->
   ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
 
 data Decoders blk
   = Decoders
-      (forall s. Decoder s (TxIn blk))
+      (forall s. Decoder s TxIn)
       (forall s. Decoder s (TxOut blk))

@@ -31,6 +31,7 @@ import Data.SOP.Constraint
 import Data.SOP.Index
 import Data.SOP.Match
 import Data.SOP.Strict
+import Data.Singletons (SingI)
 import qualified Data.Text as Text
 import Data.Void
 import Ouroboros.Consensus.Block
@@ -41,6 +42,7 @@ import Ouroboros.Consensus.HardFork.History (Bound, EraParams)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.LedgerStateType (TickedL)
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
@@ -48,8 +50,8 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Consensus.Util.TypeLevel (ToAllDict)
 
 {-------------------------------------------------------------------------------
   SingleEraBlock
@@ -75,8 +77,8 @@ class
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
   , -- LedgerTables
     CanStowLedgerTables (LedgerState blk)
-  , HasLedgerTables (LedgerState blk)
-  , HasLedgerTables (Ticked (LedgerState blk))
+  , HasLedgerTables LedgerState blk
+  , HasLedgerTables (TickedL LedgerState) blk
   , -- Instances required to support testing
     Eq (GenTx blk)
   , Eq (Validated (GenTx blk))
@@ -86,6 +88,9 @@ class
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
+  , GetBlockKeySets blk
+  , All SingI (TablesForBlock blk)
+  , ToAllDict (KVConstraintsMK blk DiffMK) (TablesForBlock blk)
   ) =>
   SingleEraBlock blk
   where

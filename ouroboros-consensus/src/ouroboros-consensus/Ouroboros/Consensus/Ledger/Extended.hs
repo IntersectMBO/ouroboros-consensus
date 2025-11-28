@@ -13,11 +13,11 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 
 module Ouroboros.Consensus.Ledger.Extended
   ( -- * Extended ledger state
@@ -34,7 +34,6 @@ module Ouroboros.Consensus.Ledger.Extended
     -- * Type family instances
   , LedgerTables (..)
   , Ticked (..)
-
   , valuesMKEncoder
   , valuesMKDecoder
   , SerializeTablesWithHint (..)
@@ -44,11 +43,19 @@ module Ouroboros.Consensus.Ledger.Extended
   ) where
 
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
+import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
+import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad.Except
 import Data.Functor ((<&>))
+import Data.Kind (Type)
+import qualified Data.Map.Strict as Map
+import Data.MemPack (packByteString, unpackMonadFail)
 import Data.Proxy
+import Data.SOP.BasicFunctors ((:.:) (..))
 import Data.SOP.Constraint
+import Data.SOP.Sing (lengthSList)
+import Data.SOP.Strict (hcfoldMap, hcpure, hsequence')
 import Data.Typeable
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
@@ -57,21 +64,11 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IndexedMemPack
-import Ouroboros.Consensus.Util.TypeLevel
-import Data.Kind (Type)
-import Ouroboros.Consensus.Ledger.LedgerStateType
-import qualified Codec.CBOR.Encoding as CBOR
-import qualified Codec.CBOR.Decoding as CBOR
-import Data.SOP.Sing (lengthSList)
-import Data.SOP.Strict (hcfoldMap, hsequence')
-import Data.SOP.Strict (hcpure)
-import Data.SOP.BasicFunctors ((:.:)(..))
-import qualified Data.Map.Strict as Map
-import Data.MemPack (packByteString, unpackMonadFail)
 
 {-------------------------------------------------------------------------------
   Extended ledger state
@@ -94,8 +91,6 @@ data ExtLedgerState blk mk = ExtLedgerState
   , headerState :: !(HeaderState blk)
   }
   deriving Generic
-
-type instance LBlock (ExtLedgerState blk) = LBlock (LedgerState blk)
 
 deriving instance
   (EqMK mk, LedgerSupportsProtocol blk) =>
@@ -229,8 +224,8 @@ applyHelper f opts cfg blk TickedExtLedgerState{..} = do
   pure $ (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
 
 instance
-  ( HasLedgerTables (ExtLedgerState blk)
-  , HasLedgerTables (Ticked (ExtLedgerState blk))
+  ( HasLedgerTables ExtLedgerState blk
+  , HasLedgerTables (TickedL ExtLedgerState) blk
   , LedgerSupportsProtocol blk
   ) =>
   ApplyBlock ExtLedgerState blk
@@ -332,23 +327,9 @@ decodeDiskExtLedgerState cfg =
   Ledger Tables
 -------------------------------------------------------------------------------}
 
--- instance
---   TableKV tag (LedgerState blk) ~ TableKV tag (ExtLedgerState blk) =>
---   CanCastTables (LedgerState blk) (ExtLedgerState blk) tag
--- instance
---   TableKV tag (LedgerState blk) ~ TableKV tag (ExtLedgerState blk) =>
---   CanCastTables (ExtLedgerState blk) (LedgerState blk) tag
--- instance
---   SameTablesTypes (LedgerState blk) (ExtLedgerState blk) mk =>
---   CanCastLedgerTables (LedgerState blk) (ExtLedgerState blk) mk
--- instance
---   SameTablesTypes (ExtLedgerState blk) (LedgerState blk) mk =>
---   CanCastLedgerTables (ExtLedgerState blk) (LedgerState blk) mk
-
 instance
-  ( HasLedgerTables (LedgerState blk)
-  ) =>
-  HasLedgerTables (ExtLedgerState blk)
+  HasLedgerTables LedgerState blk =>
+  HasLedgerTables ExtLedgerState blk
   where
   projectLedgerTables (ExtLedgerState lstate _) =
     projectLedgerTables lstate
@@ -357,33 +338,20 @@ instance
       (lstate `withLedgerTables` tables)
       hstate
 
--- instance
---   LedgerTablesAreTrivial (LedgerState blk) =>
---   LedgerTablesAreTrivial (ExtLedgerState blk)
---   where
---   convertMapKind (ExtLedgerState x y) = ExtLedgerState (convertMapKind x) y
-
--- instance
---   LedgerTablesAreTrivial (Ticked (LedgerState blk)) =>
---   LedgerTablesAreTrivial (Ticked (ExtLedgerState blk))
---   where
---   convertMapKind (TickedExtLedgerState x y z) =
---     TickedExtLedgerState (convertMapKind x) y z
-
 instance
-  ( HasLedgerTables (Ticked (LedgerState blk))
-  ) =>
-  HasLedgerTables (Ticked (ExtLedgerState blk))
+  HasLedgerTables (TickedL LedgerState) blk =>
+  HasLedgerTables (TickedL ExtLedgerState) blk
   where
-  projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =
-    projectLedgerTables lstate
+  projectLedgerTables (TickedL (TickedExtLedgerState lstate _view _hstate)) =
+    projectLedgerTables (TickedL lstate)
   withLedgerTables
-    (TickedExtLedgerState lstate view hstate)
+    (TickedL (TickedExtLedgerState lstate view hstate))
     tables =
-      TickedExtLedgerState
-        (lstate `withLedgerTables` tables)
-        view
-        hstate
+      TickedL $
+        TickedExtLedgerState
+          (unTickedL $ TickedL lstate `withLedgerTables` tables)
+          view
+          hstate
 
 instance
   CanStowLedgerTables (LedgerState blk) =>
@@ -411,28 +379,28 @@ instance
 -- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKEncoder ::
-  forall l.
-  All (SerializeTablesWithHint l (LBlock l)) (TablesForBlock (LBlock l)) =>
-  l EmptyMK ->
-  LedgerTables (LBlock l) ValuesMK ->
+  forall l blk.
+  All (SerializeTablesWithHint l blk) (TablesForBlock blk) =>
+  l blk EmptyMK ->
+  LedgerTables blk ValuesMK ->
   Encoding
 valuesMKEncoder st (LedgerTables tbs) =
   mconcat
-    [ CBOR.encodeListLen (fromIntegral $ lengthSList (Proxy @(TablesForBlock (LBlock l))))
-    , hcfoldMap (Proxy @(SerializeTablesWithHint l (LBlock l))) (encodeTablesWithHint st) tbs
+    [ CBOR.encodeListLen (fromIntegral $ lengthSList (Proxy @(TablesForBlock blk)))
+    , hcfoldMap (Proxy @(SerializeTablesWithHint l blk)) (encodeTablesWithHint st) tbs
     ]
 
 -- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKDecoder ::
-  forall l s.
-  All (SerializeTablesWithHint l (LBlock l)) (TablesForBlock (LBlock l)) =>
-  l EmptyMK ->
-  Decoder s (LedgerTables (LBlock l) ValuesMK)
+  forall l blk s.
+  All (SerializeTablesWithHint l blk) (TablesForBlock blk) =>
+  l blk EmptyMK ->
+  Decoder s (LedgerTables blk ValuesMK)
 valuesMKDecoder st = do
-  _ <- CBOR.decodeListLenOf (lengthSList (Proxy @(TablesForBlock (LBlock l))))
+  _ <- CBOR.decodeListLenOf (lengthSList (Proxy @(TablesForBlock blk)))
   LedgerTables
-    <$> hsequence' (hcpure (Proxy @(SerializeTablesWithHint l (LBlock l))) (Comp $ decodeTablesWithHint st))
+    <$> hsequence' (hcpure (Proxy @(SerializeTablesWithHint l blk)) (Comp $ decodeTablesWithHint st))
 
 -- | When decoding the tables and in particular the UTxO set we want
 -- to share data in the TxOuts in the same way the Ledger did (see the
@@ -459,13 +427,13 @@ class SerializeTablesWithHint l blk tag where
 -- we can inline it above.
 
 -- | The hint for 'SerializeTablesWithHint'
-type SerializeTablesHint :: LedgerStateKind -> Type -> Type
+type SerializeTablesHint :: StateKind -> Type -> Type
 type family SerializeTablesHint l values :: Type
 
-type instance SerializeTablesHint l (LedgerTables blk ValuesMK) = l EmptyMK
+type instance SerializeTablesHint l (LedgerTables blk ValuesMK) = l blk EmptyMK
 
 defaultEncodeTablesWithHint ::
-  (KVConstraints blk tag, MemPack (Snd (TableKV tag blk))) =>
+  (KVConstraints blk tag, MemPack (Value tag blk)) =>
   SerializeTablesHint l (LedgerTables blk ValuesMK) ->
   Table ValuesMK blk tag ->
   Encoding
@@ -483,7 +451,7 @@ defaultEncodeTablesWithHint _ (Table (ValuesMK tbs)) =
     ]
 
 defaultDecodeTablesWithHint ::
-  (KVConstraints blk tag, MemPack (Snd (TableKV tag blk))) =>
+  (KVConstraints blk tag, MemPack (Value tag blk)) =>
   SerializeTablesHint l (LedgerTables blk ValuesMK) ->
   Decoder s (Table ValuesMK blk tag)
 defaultDecodeTablesWithHint _ = do

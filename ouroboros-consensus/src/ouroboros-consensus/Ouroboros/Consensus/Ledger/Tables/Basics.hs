@@ -22,15 +22,15 @@
 module Ouroboros.Consensus.Ledger.Tables.Basics
   ( -- * Kinds
     LedgerStateKind
-  , MapKind
+  , StateKind
+  , F2
 
     -- * Ledger tables
   , LedgerTables (..)
   , Table (..)
-  , TableKV
 
     -- * Known tables
-  , TAG (..)
+  , TABLE (..)
   , TablesForBlock
 
     -- ** UTxO table
@@ -55,15 +55,19 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
   -- , CanCastTables (..)
   , Key
   , Value
-  , WrapKey (..)
-  , WrapValue (..)
-  , AllKeys
-  , AllValues
+  -- , WrapKey (..)
+  -- , WrapValue (..)
+  -- , AllKeys
+  -- , AllValues
   , AllTables
   -- , defaultCastLedgerTables
   -- , defaultCastTable
   ) where
 
+import Cardano.Ledger.Coin
+import Cardano.Ledger.Credential
+import Cardano.Ledger.Keys (KeyRole (Staking))
+import Cardano.Ledger.TxIn
 import Data.Kind (Type)
 import Data.List.Singletons hiding (All)
 import Data.SOP.Constraint
@@ -73,44 +77,37 @@ import Data.Type.Equality (TestEquality (testEquality), (:~:) (Refl))
 import GHC.Generics (Generic)
 import Lens.Micro
 import NoThunks.Class
-import Ouroboros.Consensus.Util.IndexedMemPack
-import Ouroboros.Consensus.Util.TypeLevel
 import Ouroboros.Consensus.Ledger.LedgerStateType
-
-{-------------------------------------------------------------------------------
-  Kinds
--------------------------------------------------------------------------------}
-
--- | Something that holds two types, which intend to represent /keys/ and
--- /values/.
-type MapKind = KV
-
--- | A LedgerState-like type that depends on a map-like type
-type LedgerStateKind = MapKind -> Type
+import Ouroboros.Consensus.Util.IndexedMemPack
 
 --------------------------------------------------------------------------------
 -- Keys and values
 --------------------------------------------------------------------------------
 
 -- | The possible tables that Consensus is aware of.
-type data TAG = UTxOTable | InstantStakeTable
+type data TABLE = UTxOTable | InstantStakeTable
+
+type Key :: TABLE -> Type
+type family Key table where
+  Key UTxOTable = TxIn
+  Key InstantStakeTable = Credential 'Staking
 
 ------------------------------------------------------------
 -- START Singletons
 ------------------------------------------------------------
 
-data STAG a where
-  SUTxOTable :: STAG UTxOTable
-  SInstantStakeTable :: STAG InstantStakeTable
+data STABLE a where
+  SUTxOTable :: STABLE UTxOTable
+  SInstantStakeTable :: STABLE InstantStakeTable
 
-type instance Sing = STAG
+type instance Sing = STABLE
 
 instance SingI UTxOTable where
   sing = SUTxOTable
 instance SingI InstantStakeTable where
   sing = SInstantStakeTable
 
-instance TestEquality STAG where
+instance TestEquality STABLE where
   testEquality SUTxOTable SUTxOTable = Just Refl
   testEquality SUTxOTable _ = Nothing
   testEquality SInstantStakeTable SInstantStakeTable = Just Refl
@@ -121,42 +118,27 @@ instance TestEquality STAG where
 ------------------------------------------------------------
 
 -- | The table keys and values for each table.
-type TableKV :: TAG -> Type -> (Type, Type)
-type family TableKV tag blk where
-  TableKV UTxOTable blk = '(TxIn blk, TxOut blk)
-  TableKV InstantStakeTable blk = '(Credential blk, Coin blk)
+type Value :: TABLE -> Type -> Type
+type family Value table blk where
+  Value UTxOTable blk = TxOut blk
+  Value InstantStakeTable blk = Coin
 
-class All (Compose c (WrapKey blk)) (TablesForBlock blk) => AllKeys c blk
-instance All (Compose c (WrapKey blk)) (TablesForBlock blk) => AllKeys c blk
-class All (Compose c (WrapValue blk)) (TablesForBlock blk) => AllValues c blk
-instance All (Compose c (WrapValue blk)) (TablesForBlock blk) => AllValues c blk
+-- class All (Compose c (WrapKey blk)) (TablesForBlock blk) => AllKeys c blk
+-- instance All (Compose c (WrapKey blk)) (TablesForBlock blk) => AllKeys c blk
+-- class All (Compose c (WrapValue blk)) (TablesForBlock blk) => AllValues c blk
+-- instance All (Compose c (WrapValue blk)) (TablesForBlock blk) => AllValues c blk
 
-type family Key blk tag where
-  Key blk tag = Fst (TableKV tag blk)
+-- newtype WrapKey blk table = WrapKey (Key blk table)
 
-newtype WrapKey blk tag = WrapKey (Key blk tag)
+-- deriving instance NoThunks (Fst (TableKV table blk)) => NoThunks (WrapKey blk table)
+-- deriving instance Show (Fst (TableKV table blk)) => Show (WrapKey blk table)
+-- deriving instance Eq (Fst (TableKV table blk)) => Eq (WrapKey blk table)
 
-deriving instance NoThunks (Fst (TableKV tag blk)) => NoThunks (WrapKey blk tag)
-deriving instance Show (Fst (TableKV tag blk)) => Show (WrapKey blk tag)
-deriving instance Eq (Fst (TableKV tag blk)) => Eq (WrapKey blk tag)
+-- newtype WrapValue blk table = WrapValue (Value blk table)
 
-type family Value blk tag where
-  Value blk tag = Snd (TableKV tag blk)
-
-newtype WrapValue blk tag = WrapValue (Value blk tag)
-
-deriving instance NoThunks (Snd (TableKV tag blk)) => NoThunks (WrapValue blk tag)
-deriving instance Show (Snd (TableKV tag blk)) => Show (WrapValue blk tag)
-deriving instance Eq (Snd (TableKV tag blk)) => Eq (WrapValue blk tag)
-
-type Credential :: Type -> Type
-type family Credential blk
-
-type Coin :: Type -> Type
-type family Coin blk
-
-type TxIn :: Type -> Type
-type family TxIn blk
+-- deriving instance NoThunks (Snd (TableKV table blk)) => NoThunks (WrapValue blk table)
+-- deriving instance Show (Snd (TableKV table blk)) => Show (WrapValue blk table)
+-- deriving instance Eq (Snd (TableKV table blk)) => Eq (WrapValue blk table)
 
 type TxOut :: Type -> Type
 type family TxOut blk
@@ -166,25 +148,27 @@ type family TxOut blk
 -------------------------------------------------------------------------------}
 
 -- | A table value
-type Table :: KV -> Type -> TAG -> Type
-newtype Table mk blk tag = Table {getTable :: mk (Fst (TableKV tag blk)) (Snd (TableKV tag blk))}
+type Table :: F2 -> Type -> TABLE -> Type
+newtype Table mk blk table = Table {getTable :: mk (Key table) (Value table blk)}
   deriving Generic
 
-deriving instance NoThunks (mk (Key blk tag) (Value blk tag)) => NoThunks (Table mk blk tag)
-deriving instance Show (mk (Key blk tag) (Value blk tag)) => Show (Table mk blk tag)
-deriving instance Eq (mk (Key blk tag) (Value blk tag)) => Eq (Table mk blk tag)
+deriving instance NoThunks (mk (Key table) (Value table blk)) => NoThunks (Table mk blk table)
+deriving instance Show (mk (Key table) (Value table blk)) => Show (Table mk blk table)
+deriving instance Eq (mk (Key table) (Value table blk)) => Eq (Table mk blk table)
 
 class All (Compose c (Table mk l)) (TablesForBlock l) => AllTables c mk l
 instance All (Compose c (Table mk l)) (TablesForBlock l) => AllTables c mk l
 
 -- | Each block will declare its tables.
 --
--- > TablesForBlock (LedgerState Byron) = '[]
+-- TablesForBlock (LedgerState Byron) = '[]
 --
--- > TablesForBlock (LedgerState Shelley) = '[UTxOTable]
+-- TablesForBlock (LedgerState Shelley) = '[UTxOTable]
+-- TablesForBlock (LedgerState Allegra) = '[UTxOTable]
+-- TablesForBlock (LedgerState Mary)    = '[UTxOTable]
 --
--- > TablesForBlock (LedgerState Conway) = '[UTxOTable, InstantStakeTable]
-type TablesForBlock :: Type -> [TAG]
+-- TablesForBlock (LedgerState Conway) = '[UTxOTable, InstantStakeTable]
+type TablesForBlock :: Type -> [TABLE]
 type family TablesForBlock blk
 
 -- | The Ledger Tables represent the portion of the data on disk that has been
@@ -206,11 +190,24 @@ type family TablesForBlock blk
 --
 -- The @mk@ can be instantiated to anything that is map-like, i.e. that expects
 -- two type parameters, the key and the value.
-type LedgerTables :: Type -> MapKind -> Type
+type LedgerTables :: StateKind
 newtype LedgerTables blk mk = LedgerTables
   { getLedgerTables :: NP (Table mk blk) (TablesForBlock blk)
   }
   deriving Generic
+
+{-
+Problem with design 1 is that we could do:
+
+type instance TablesForBlock ByronBlock = '[UTxOTable]
+type instance TxIn ByronBlock = Void
+-}
+
+-- data LedgerTables' l mk = LedgerTables'
+--   { getUTxOTable :: mk (TblKey UTxO blk) (TxOut l)  -- If TxIn l ~ Void => this can only be EmptyMK
+--   , getInstantStakeTable :: mk (TblKey InstantStake l) (Coin l)
+--   }
+--   deriving Generic
 
 deriving newtype instance
   AllTables NoThunks mk blk =>
@@ -226,14 +223,14 @@ deriving newtype instance
 -- Type proof of inclusion
 ------------------------------------------------------------
 
-data Membership (xs :: [TAG]) (x :: TAG) where
+data Membership (xs :: [TABLE]) (x :: TABLE) where
   MZ :: Membership (x ': xs) x
   MS :: Membership xs x -> Membership (y ': xs) x
 
 deriving instance Show (Membership xs x)
 
 findMembership ::
-  forall (xs :: [TAG]) (x :: TAG).
+  forall (xs :: [TABLE]) (x :: TABLE).
   SList xs ->
   Sing x ->
   Maybe (Membership xs x)
@@ -253,10 +250,10 @@ ixNP MZ f (x :* xs) = (:* xs) <$> f x
 ixNP (MS m) f (x :* xs) = (x :*) <$> ixNP m f xs
 
 setterForSing ::
-  forall l mk tag.
+  forall l mk table.
   SList (TablesForBlock l) ->
-  Sing tag ->
-  Maybe (ASetter' (LedgerTables l mk) (Table mk l tag))
+  Sing table ->
+  Maybe (ASetter' (LedgerTables l mk) (Table mk l table))
 setterForSing sxs sx =
   (\mbm -> \f -> fmap LedgerTables . ixNP mbm f . getLedgerTables) <$> findMembership sxs sx
 
@@ -266,7 +263,7 @@ setterForSing sxs sx =
 
 -- | Auxiliary information for @IndexedMemPack@. @mk@ is there only because the
 -- last instance needs to be a full type.
-type MemPackIdx :: Type -> MapKind -> Type
+type MemPackIdx :: StateKind
 type family MemPackIdx l mk where
   MemPackIdx blk mk = LedgerState blk mk
 
@@ -279,23 +276,27 @@ type family MemPackIdx l mk where
 ------------------------------------------------------------
 
 class
-  ( Ord (Fst (TableKV tag blk))
-  , MemPack (Fst (TableKV tag blk))
-  , Eq (Snd (TableKV tag blk))
-  , IndexedMemPack (MemPackIdx blk mk) (Snd (TableKV tag blk))
+  ( Ord (Key table)
+  , MemPack (Key table)
+  , Eq (Value table blk)
+  , IndexedMemPack (MemPackIdx blk mk) (Value table blk)
   ) =>
-  KVConstraintsMK blk mk tag
+  KVConstraintsMK blk mk table
 instance
-  ( Ord (Fst (TableKV tag blk))
-  , MemPack (Fst (TableKV tag blk))
-  , Eq (Snd (TableKV tag blk))
-  , IndexedMemPack (MemPackIdx blk mk) (Snd (TableKV tag blk))
+  ( Ord (Key table)
+  , MemPack (Key table)
+  , Eq (Value table blk)
+  , IndexedMemPack (MemPackIdx blk mk) (Value table blk)
   ) =>
-  KVConstraintsMK blk mk tag
+  KVConstraintsMK blk mk table
 
 class
-  (SingI (TablesForBlock blk), All (KVConstraintsMK blk mk) (TablesForBlock blk)) =>
+  ( SingI (TablesForBlock blk)
+  , All (KVConstraintsMK blk mk) (TablesForBlock blk)
+  ) =>
   LedgerTableConstraintsMK blk mk
 instance
-  (SingI (TablesForBlock blk), All (KVConstraintsMK blk mk) (TablesForBlock blk)) =>
+  ( SingI (TablesForBlock blk)
+  , All (KVConstraintsMK blk mk) (TablesForBlock blk)
+  ) =>
   LedgerTableConstraintsMK blk mk

@@ -1,17 +1,17 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | This module defines the 'LedgerTables', a portion of the Ledger notion of a
 -- /ledger state/ (not to confuse with our
@@ -172,29 +172,14 @@ module Ouroboros.Consensus.Ledger.Tables
     -- ** Extracting and injecting ledger tables
   , HasLedgerTables (..)
   , HasTickedLedgerTables
-
-  --   -- * Serialization
-  -- , SerializeTablesHint
-  -- , SerializeTablesWithHint (..)
-  -- , defaultDecodeTablesWithHint
-  -- , defaultEncodeTablesWithHint
-  -- , valuesMKDecoder
-  -- , valuesMKEncoder
-
-  --   -- * Special classes
-  -- , LedgerTablesAreTrivial
-  -- , TrivialLedgerTables (..)
-  -- , convertMapKind
-  -- , trivialLedgerTables
   ) where
 
+import Data.Kind (Type)
 import Data.SOP.Constraint
-import NoThunks.Class (NoThunks (..))
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.Tables.Basics
 import Ouroboros.Consensus.Ledger.Tables.Combinators
 import Ouroboros.Consensus.Ledger.Tables.MapKind
-import Ouroboros.Consensus.Ticked
-import Ouroboros.Consensus.Ledger.LedgerStateType
 
 {-------------------------------------------------------------------------------
   Basic LedgerState classes
@@ -202,24 +187,16 @@ import Ouroboros.Consensus.Ledger.LedgerStateType
 
 -- | Extracting @'LedgerTables'@ from @l mk@ (which will share the same @mk@),
 -- or replacing the @'LedgerTables'@ associated to a particular @l@.
-type HasLedgerTables :: LedgerStateKind -> Constraint
-class
-  ( AllKeys NoThunks (LBlock l)
-  , AllValues NoThunks (LBlock l)
-  , AllKeys Show (LBlock l)
-  , AllValues Show (LBlock l)
-  , LedgerTableConstraints (LBlock l)
-  ) =>
-  HasLedgerTables l
-  where
+type HasLedgerTables :: (Type -> LedgerStateKind) -> Type -> Constraint
+class (LedgerTableConstraints blk, LedgerTableConstraintsMK blk DiffMK) => HasLedgerTables l blk where
   -- | Extract the ledger tables from a ledger state
   --
   -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance
   -- uses them.
   projectLedgerTables ::
     (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
-    l mk ->
-    LedgerTables (LBlock l) mk
+    l blk mk ->
+    LedgerTables blk mk
 
   -- | Overwrite the tables in the given ledger state.
   --
@@ -233,18 +210,16 @@ class
   -- uses them.
   withLedgerTables ::
     (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
-    l any ->
-    LedgerTables (LBlock l) mk ->
-    l mk
-
-deriving newtype instance HasLedgerTables (Ticked (l blk)) => HasLedgerTables (TickedL l blk)
+    l blk any ->
+    LedgerTables blk mk ->
+    l blk mk
 
 -- | Convenience class, useful for partially applying the composition of
 -- 'HasLedgerTables' and 'Ticked'.
-type HasTickedLedgerTables :: LedgerStateKind -> Constraint
-class HasLedgerTables (Ticked l) => HasTickedLedgerTables l
+type HasTickedLedgerTables :: StateKind -> Type -> Constraint
+class HasLedgerTables (TickedL l) blk => HasTickedLedgerTables l blk
 
-instance HasLedgerTables (Ticked l) => HasTickedLedgerTables l
+instance HasLedgerTables (TickedL l) blk => HasTickedLedgerTables l blk
 
 -- | LedgerTables are projections of data from a LedgerState and as such they
 -- can be injected back into a LedgerState. This is necessary because the Ledger
@@ -260,72 +235,3 @@ type CanStowLedgerTables :: LedgerStateKind -> Constraint
 class CanStowLedgerTables l where
   stowLedgerTables :: l ValuesMK -> l EmptyMK
   unstowLedgerTables :: l EmptyMK -> l ValuesMK
-
--- {-------------------------------------------------------------------------------
---   Special classes of ledger states
--- -------------------------------------------------------------------------------}
-
--- -- | For some ledger states we won't be defining 'LedgerTables' and instead the
--- -- ledger state will be fully stored in memory, as before UTxO-HD. The ledger
--- -- states that are defined this way can be made instances of this class which
--- -- allows for easy manipulation of the types of @mk@ required at any step of the
--- -- program.
--- type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
--- class (TablesForBlock blk ~ '[], LedgerTableConstraints blk) => LedgerTablesAreTrivial blk where
---   -- | If the ledger state is always in memory, then @l mk@ will be isomorphic
---   -- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers
---   -- states indexed by different map kinds.
---   --
---   -- This function is useful to combine functions that operate on functions that
---   -- transform the map kind on a ledger state (eg @applyChainTickLedgerResult@).
---   convertMapKind :: l mk -> l mk'
-
--- trivialLedgerTables ::
---   forall mk l.
---   (ZeroableMK mk, LedgerTablesAreTrivial l) =>
---   LedgerTables l mk
--- trivialLedgerTables = LedgerTables $ hcpure (Proxy @(KVConstraints l)) $ Table emptyMK
-
--- -- | A newtype to @derive via@ the instances for blocks with trivial ledger
--- -- tables.
--- type TrivialLedgerTables :: LedgerStateKind -> MapKind -> Type
--- newtype TrivialLedgerTables l mk = TrivialLedgerTables {untrivialLedgerTables :: l mk}
-
--- type instance TxIn (TrivialLedgerTables l) = TxIn l
--- type instance TxOut (TrivialLedgerTables l) = TxOut l
--- type instance Credential (TrivialLedgerTables l) = Credential l
--- type instance Coin (TrivialLedgerTables l) = Coin l
--- type instance TablesForBlock (TrivialLedgerTables l) = '[]
-
--- instance
---   LedgerTablesAreTrivial l =>
---   LedgerTablesAreTrivial (TrivialLedgerTables l)
---   where
---   convertMapKind = TrivialLedgerTables . convertMapKind . untrivialLedgerTables
-
--- instance
---   (HasLedgerTables l, LedgerTablesAreTrivial l) =>
---   HasLedgerTables (TrivialLedgerTables l)
---   where
---   projectLedgerTables _ = trivialLedgerTables
---   withLedgerTables st _ = convertMapKind st
-
--- instance
---   LedgerTablesAreTrivial l =>
---   CanStowLedgerTables (TrivialLedgerTables l)
---   where
---   stowLedgerTables = convertMapKind
---   unstowLedgerTables = convertMapKind
-
--- instance IndexedMemPack (TrivialLedgerTables l EmptyMK) Void where
---   indexedTypeName _ = typeName @Void
---   indexedPackedByteCount _ = packedByteCount
---   indexedPackM _ = packM
---   indexedUnpackM _ = unpackM
-
--- instance
---   LedgerTablesAreTrivial l =>
---   SerializeTablesWithHint (TrivialLedgerTables l) tag
---   where
---   decodeTablesWithHint _ = error "decoding trivial ledger tables"
---   encodeTablesWithHint _ _ = mempty

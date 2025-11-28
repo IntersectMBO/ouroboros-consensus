@@ -61,7 +61,6 @@ getSameConfigValue getValue blockConfig = getSameValue values
 
 instance
   ( CanHardFork xs
-  , HasCanonicalTxIn xs
   , HasHardForkTxOut xs
   , BlockSupportsHFLedgerQuery xs
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
