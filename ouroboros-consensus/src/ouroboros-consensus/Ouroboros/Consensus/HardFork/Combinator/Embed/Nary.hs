@@ -60,7 +60,7 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 class Inject f where
   inject ::
     forall x xs.
-    (CanHardFork xs, HasCanonicalTxIn xs, HasHardForkTxOut xs) =>
+    (CanHardFork xs, HasHardForkTxOut xs) =>
     InjectionIndex xs x ->
     f x ->
     f (HardForkBlock xs)
@@ -69,7 +69,6 @@ inject' ::
   forall f a b x xs.
   ( Inject f
   , CanHardFork xs
-  , HasCanonicalTxIn xs
   , HasHardForkTxOut xs
   , Coercible a (f x)
   , Coercible b (f (HardForkBlock xs))
@@ -268,7 +267,7 @@ instance Inject (Flip ExtLedgerState mk) where
 -- not rely on that class.
 injectInitialExtLedgerState ::
   forall x xs.
-  (CanHardFork (x ': xs), HasLedgerTables (LedgerState (HardForkBlock (x : xs)))) =>
+  (CanHardFork (x ': xs), HasLedgerTables LedgerState (HardForkBlock (x : xs))) =>
   TopLevelConfig (HardForkBlock (x ': xs)) ->
   ExtLedgerState x ValuesMK ->
   ExtLedgerState (HardForkBlock (x ': xs)) ValuesMK

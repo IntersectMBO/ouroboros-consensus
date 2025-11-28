@@ -663,7 +663,8 @@ splitForFlushing ::
   DbChangelog l ->
   (Maybe (DiffsToFlush l), DbChangelog l)
 splitForFlushing dblog =
-  if getTipSlot immTip == Origin || maximum (hcollapse (ltcollapse (ltmap (K2 . DS.length . getSeqDiffMK) l))) == 0
+  if getTipSlot immTip == Origin
+    || maximum (hcollapse (ltcollapse (ltmap (K2 . DS.length . getSeqDiffMK) l))) == 0
     then (Nothing, dblog)
     else (Just ldblog, rdblog)
  where

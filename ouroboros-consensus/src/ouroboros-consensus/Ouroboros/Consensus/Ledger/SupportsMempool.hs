@@ -1,9 +1,9 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -46,8 +46,8 @@ import NoThunks.Class
 import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Ledger.LedgerStateType
+import Ouroboros.Consensus.Ledger.Tables.Utils
 
 -- | Generalized transaction
 --
@@ -192,17 +192,17 @@ class
     )
       $ Foldable.foldl'
         ( \(accE, accV, st') (tx, extra) ->
-            case runExcept (reapplyTx doDiffs cfg slot tx $ trackingToValues st') of
+            case runExcept (reapplyTx doDiffs cfg slot tx $ unTickedL $ trackingToValues $ TickedL st') of
               Left err -> (Invalidated tx err : accE, accV, st')
               Right st'' ->
                 ( accE
                 , (tx, extra) : accV
                 , case doDiffs of
-                    ComputeDiffs -> prependTrackingDiffs st' st''
+                    ComputeDiffs -> unTickedL $ prependTrackingDiffs (TickedL st') (TickedL st'')
                     IgnoreDiffs -> st''
                 )
         )
-        ([], [], attachEmptyDiffs st)
+        ([], [], unTickedL $ attachEmptyDiffs (TickedL st))
         txs
 
   -- | Discard the evidence that transaction has been previously validated
@@ -230,7 +230,8 @@ class
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk DiffMK
-  prependMempoolDiffs x y = unTickedL $ prependDiffs @(TickedL LedgerState) @(TickedL LedgerState) @blk (TickedL x) (TickedL y)
+  prependMempoolDiffs x y =
+    unTickedL $ prependDiffs @(TickedL LedgerState) @(TickedL LedgerState) @blk (TickedL x) (TickedL y)
 
   -- | Apply diffs on ledger states
   applyMempoolDiffs ::
@@ -238,7 +239,7 @@ class
     LedgerTables blk KeysMK ->
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk ValuesMK
-  applyMempoolDiffs = applyDiffForKeysOnTables @(TickedLedgerState blk) @(TickedLedgerState blk)
+  applyMempoolDiffs t1 t2 = unTickedL . applyDiffForKeysOnTables @(TickedL LedgerState) @blk t1 t2 . TickedL
 
 data ReapplyTxsResult extra blk
   = ReapplyTxsResult

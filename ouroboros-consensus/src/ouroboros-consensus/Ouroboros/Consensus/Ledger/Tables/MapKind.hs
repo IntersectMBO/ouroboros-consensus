@@ -24,7 +24,7 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind
   , DiffMK (..)
   , EmptyMK (..)
   , KeysMK (..)
---  , SeqDiffMK (..)
+  --  , SeqDiffMK (..)
   , TrackingMK (..)
   , ValuesMK (..)
   ) where
@@ -40,21 +40,22 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Ledger.Tables.Basics
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
+
 -- import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
 
 {-------------------------------------------------------------------------------
   Classes
 -------------------------------------------------------------------------------}
 
-type ZeroableMK :: MapKind -> Constraint
+type ZeroableMK :: F2 -> Constraint
 class ZeroableMK mk where
   emptyMK :: forall k v. (Ord k, Eq v) => mk k v
 
-type CanMapMK :: MapKind -> Constraint
+type CanMapMK :: F2 -> Constraint
 class CanMapMK mk where
   mapMK :: (v -> v') -> mk k v -> mk k v'
 
-type CanMapKeysMK :: MapKind -> Constraint
+type CanMapKeysMK :: F2 -> Constraint
 class CanMapKeysMK mk where
   -- | Instances defined for the standard mapkinds suffer from the same caveats
   -- as 'Data.Map.Strict.mapKeys' or 'Data.Set.map'
@@ -62,17 +63,17 @@ class CanMapKeysMK mk where
 
 -- | For convenience, such that we don't have to include @QuantifiedConstraints@
 -- everywhere.
-type ShowMK :: MapKind -> Constraint
+type ShowMK :: F2 -> Constraint
 class (forall k v. (Show k, Show v) => Show (mk k v)) => ShowMK mk
 
 -- | For convenience, such that we don't have to include @QuantifiedConstraints@
 -- everywhere.
-type EqMK :: MapKind -> Constraint
+type EqMK :: F2 -> Constraint
 class (forall k v. (Eq k, Eq v) => Eq (mk k v)) => EqMK mk
 
 -- | For convenience, such that we don't have to include @QuantifiedConstraints@
 -- everywhere.
-type NoThunksMK :: MapKind -> Constraint
+type NoThunksMK :: F2 -> Constraint
 class
   (forall k v. (NoThunks k, NoThunks v) => NoThunks (mk k v)) =>
   NoThunksMK mk

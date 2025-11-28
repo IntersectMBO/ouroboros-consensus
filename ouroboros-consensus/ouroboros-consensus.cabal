@@ -308,7 +308,7 @@ library
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
-    constraints,
+--    constraints,
     FailT ^>=0.1.2,
     microlens,
     singletons-base,
@@ -329,16 +329,16 @@ library
     containers >=0.5 && <0.8,
     contra-tracer,
     deepseq,
-    diff-containers >=1.2,
+--    diff-containers >=1.2,
     filelock,
     filepath,
-    fingertree-rm >=1.0,
+--     fingertree-rm >=1.0,
     fs-api ^>=0.4,
     hashable,
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm} ^>=1.8.0.1,
     measures,
     mempack,
-    monoid-subclasses,
+--    monoid-subclasses,
     mtl,
     multiset ^>=0.3,
     nothunks ^>=0.2 || ^>=0.3,

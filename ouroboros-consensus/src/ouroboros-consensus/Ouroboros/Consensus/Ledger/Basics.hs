@@ -50,8 +50,8 @@ module Ouroboros.Consensus.Ledger.Basics
 import Data.Kind (Constraint, Type)
 import GHC.Generics
 import Ouroboros.Consensus.Block.Abstract
-import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.LedgerStateType
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.IOLike
 

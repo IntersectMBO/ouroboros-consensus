@@ -1128,15 +1128,7 @@ instance
   decodeTablesWithHint hint = decodeTablesWithHint (dualLedgerStateMain hint)
 
 instance
-  ( Bridge m a
-  -- , NoThunks (TxOut (LedgerState m))
-  -- , NoThunks (TxIn (LedgerState m))
-  -- , Show (TxOut (LedgerState m))
-  -- , Show (TxIn (LedgerState m))
-  -- , Eq (TxOut (LedgerState m))
-  -- , Ord (TxIn (LedgerState m))
-  -- , MemPack (TxIn (LedgerState m))
-  ) =>
+  Bridge m a =>
   HasLedgerTables (LedgerState (DualBlock m a))
   where
   projectLedgerTables DualLedgerState{..} =
@@ -1152,15 +1144,7 @@ instance
       }
 
 instance
-  ( Bridge m a
-  -- , NoThunks (TxOut (LedgerState m))
-  -- , NoThunks (TxIn (LedgerState m))
-  -- , Show (TxOut (LedgerState m))
-  -- , Show (TxIn (LedgerState m))
-  -- , Eq (TxOut (LedgerState m))
-  -- , Ord (TxIn (LedgerState m))
-  -- , MemPack (TxIn (LedgerState m))
-  ) =>
+  Bridge m a =>
   HasLedgerTables (Ticked (LedgerState (DualBlock m a)))
   where
   projectLedgerTables TickedDualLedgerState{..} =

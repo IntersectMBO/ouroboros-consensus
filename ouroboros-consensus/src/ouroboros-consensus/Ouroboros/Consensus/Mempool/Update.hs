@@ -20,6 +20,7 @@ import qualified Data.Measure as Measure
 import qualified Data.Set as Set
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.LedgerStateType (TickedL (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Mempool.API
@@ -331,7 +332,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
               capacityOverride
               cfg
               (isSlotNo is)
-              (isLedgerState is `withLedgerTables` emptyLedgerTables)
+              (unTickedL $ TickedL (isLedgerState is) `withLedgerTables` emptyLedgerTables)
               tbs
               (isLastTicketNo is)
               toKeep

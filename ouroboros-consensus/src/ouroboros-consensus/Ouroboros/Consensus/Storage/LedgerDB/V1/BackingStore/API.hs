@@ -4,9 +4,9 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 
 -- | The 'BackingStore' is the component of the LedgerDB V1 implementation that
 -- stores a key-value map with the 'LedgerTable's at a specific slot on the

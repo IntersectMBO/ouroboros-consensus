@@ -28,7 +28,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , RangeQueryPrevious (..)
   , Statistics (..)
   , forkerCurrentPoint
-  , castRangeQueryPrevious
+  --  , castRangeQueryPrevious
   , ledgerStateReadOnlyForker
 
     -- ** Read only
@@ -109,7 +109,7 @@ data Forker m l blk = Forker
 
     forkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ Read ledger tables from disk.
-  , forkerRangeReadTables :: !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
+  , forkerRangeReadTables :: !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe TxIn))
   -- ^ Range-read ledger tables from disk.
   --
   -- This range read will return as many values as the 'QueryBatchSize' that was
@@ -159,12 +159,12 @@ instance
   where
   getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
 
-data RangeQueryPrevious blk = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo (TxIn blk)
+data RangeQueryPrevious blk = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo TxIn
 
-castRangeQueryPrevious :: TxIn l ~ TxIn l' => RangeQueryPrevious l -> RangeQueryPrevious l'
-castRangeQueryPrevious NoPreviousQuery = NoPreviousQuery
-castRangeQueryPrevious PreviousQueryWasFinal = PreviousQueryWasFinal
-castRangeQueryPrevious (PreviousQueryWasUpTo txin) = PreviousQueryWasUpTo txin
+-- castRangeQueryPrevious :: RangeQueryPrevious l -> RangeQueryPrevious l'
+-- castRangeQueryPrevious NoPreviousQuery = NoPreviousQuery
+-- castRangeQueryPrevious PreviousQueryWasFinal = PreviousQueryWasFinal
+-- castRangeQueryPrevious (PreviousQueryWasUpTo txin) = PreviousQueryWasUpTo txin
 
 data RangeQuery l = RangeQuery
   { rqPrev :: !(RangeQueryPrevious l)
@@ -214,8 +214,7 @@ forkerCurrentPoint forker =
     <$> forkerGetLedgerState forker
 
 ledgerStateReadOnlyForker ::
-  ( IOLike m
-  ) =>
+  IOLike m =>
   ReadOnlyForker m (ExtLedgerState blk) blk -> ReadOnlyForker m (LedgerState blk) blk
 ledgerStateReadOnlyForker frk =
   ReadOnlyForker
@@ -254,7 +253,7 @@ data ReadOnlyForker m l blk = ReadOnlyForker
   -- ^ See 'forkerClose'
   , roforkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ See 'forkerReadTables'
-  , roforkerRangeReadTables :: !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
+  , roforkerRangeReadTables :: !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe TxIn))
   -- ^ See 'forkerRangeReadTables'.
   , roforkerGetLedgerState :: !(STM m (l EmptyMK))
   -- ^ See 'forkerGetLedgerState'

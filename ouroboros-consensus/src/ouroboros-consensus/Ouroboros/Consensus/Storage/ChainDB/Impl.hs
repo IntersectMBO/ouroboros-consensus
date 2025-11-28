@@ -1,6 +1,6 @@
-{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -61,6 +61,7 @@ import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -95,7 +96,6 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( ChainSelStarvation (..)
   )
-import Ouroboros.Consensus.Ledger.Abstract
 
 {-------------------------------------------------------------------------------
   Initialization
@@ -110,7 +110,8 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk, GetBlockKeySets blk
+  , LedgerSupportsLedgerDB blk
+  , GetBlockKeySets blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -126,7 +127,8 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk, GetBlockKeySets blk
+  , LedgerSupportsLedgerDB blk
+  , GetBlockKeySets blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -142,7 +144,8 @@ openDBInternal ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , HasCallStack
-  , LedgerSupportsLedgerDB blk, GetBlockKeySets blk
+  , LedgerSupportsLedgerDB blk
+  , GetBlockKeySets blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks

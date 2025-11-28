@@ -200,7 +200,7 @@ class
   , All BlockSupportsLedgerQuery xs
   , -- LedgerTables on the HardForkBlock might not be compositionally
     -- defined, but we need to require this instances for any instantiation.
-    HasLedgerTables (LedgerState (HardForkBlock xs))
+    HasLedgerTables LedgerState (HardForkBlock xs)
   , LedgerSupportsLedgerDB (HardForkBlock xs)
   ) =>
   SerialiseHFC xs

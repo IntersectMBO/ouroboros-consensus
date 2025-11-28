@@ -22,11 +22,8 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTentativeHeaderState (..)
   , WrapTentativeHeaderView (..)
   , WrapTipInfo (..)
-  , WrapTxIn (..)
   , WrapTxMeasure (..)
   , WrapTxOut (..)
-  , WrapCoin (..)
-  , WrapCredential (..)
   , WrapValidatedGenTx (..)
 
     -- * Protocol based
@@ -91,10 +88,7 @@ newtype WrapValidatedGenTx blk = WrapValidatedGenTx {unwrapValidatedGenTx :: Val
 
 newtype WrapTxMeasure blk = WrapTxMeasure {unwrapTxMeasure :: TxMeasure blk}
 
-newtype WrapTxIn blk = WrapTxIn {unwrapTxIn :: TxIn blk}
 newtype WrapTxOut blk = WrapTxOut {unwrapTxOut :: TxOut blk}
-newtype WrapCredential blk = WrapCredential {unwrapCredential :: Credential blk}
-newtype WrapCoin blk = WrapCoin {unwrapCoin :: Coin blk}
 
 {-------------------------------------------------------------------------------
   Consensus based
@@ -162,11 +156,6 @@ deriving instance
   NoThunks (TipInfo blk) => NoThunks (WrapTipInfo blk)
 deriving instance
   NoThunks (Validated (GenTx blk)) => NoThunks (WrapValidatedGenTx blk)
-
-deriving instance Show (TxIn blk) => Show (WrapTxIn blk)
-deriving instance Eq (TxIn blk) => Eq (WrapTxIn blk)
-deriving instance Ord (TxIn blk) => Ord (WrapTxIn blk)
-deriving instance NoThunks (TxIn blk) => NoThunks (WrapTxIn blk)
 
 deriving instance Show (TxOut blk) => Show (WrapTxOut blk)
 deriving instance Eq (TxOut blk) => Eq (WrapTxOut blk)

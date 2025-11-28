@@ -83,8 +83,7 @@ data BackingStoreContents m l
   deriving Generic
 
 deriving instance
-  ( AllTables NoThunks ValuesMK l
-  ) =>
+  AllTables NoThunks ValuesMK l =>
   NoThunks (BackingStoreContents m l)
 
 -- | Use a 'TVar' as a trivial backing store
@@ -251,13 +250,12 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
     LedgerTables l ValuesMK ->
     (LedgerTables l ValuesMK, Maybe (TxIn l))
   rangeRead rq values = undefined -- TODO @js
-    -- let vs@(LedgerTables (ValuesMK m)) = case rqPrev rq of
-    --       Nothing ->
-    --         ltmap (rangeRead0' (rqCount rq)) values
-    --       Just keys ->
-    --         ltliftA2 (rangeRead' (rqCount rq)) keys values
-    --  in (vs, fst <$> Map.lookupMax m)
-
+  -- let vs@(LedgerTables (ValuesMK m)) = case rqPrev rq of
+  --       Nothing ->
+  --         ltmap (rangeRead0' (rqCount rq)) values
+  --       Just keys ->
+  --         ltliftA2 (rangeRead' (rqCount rq)) keys values
+  --  in (vs, fst <$> Map.lookupMax m)
   rangeRead0' ::
     Int ->
     ValuesMK k v ->
@@ -292,7 +290,6 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
 
   count :: LedgerTables l ValuesMK -> Int
   count = undefined -- TODO @js ltcollapse . ltmap (K2 . count')
-
   count' :: ValuesMK k v -> Int
   count' (ValuesMK values) = Map.size values
 

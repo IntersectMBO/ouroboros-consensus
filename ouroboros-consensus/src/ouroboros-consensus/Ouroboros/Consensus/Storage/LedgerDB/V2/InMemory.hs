@@ -1,4 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -9,13 +8,14 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
   ( Backend (..)
@@ -78,7 +78,6 @@ import System.FS.API
 import System.FS.CRC
 import qualified System.FilePath as F
 import Prelude hiding (read)
-import Ouroboros.Consensus.Ledger.LedgerStateType
 
 {-------------------------------------------------------------------------------
   InMemory implementation of LedgerTablesHandles
@@ -99,14 +98,14 @@ guardClosed LedgerTablesHandleClosed _ = error $ show InMemoryClosedExn
 guardClosed (LedgerTablesHandleOpen st) f = f st
 
 newInMemoryLedgerTablesHandle ::
-  forall m l.
+  forall m l blk.
   ( IOLike m
-  , LedgerSupportsInMemoryLedgerDB l
+  , LedgerSupportsInMemoryLedgerDB l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   SomeHasFS m ->
-  LedgerTables (LBlock l) ValuesMK ->
-  m (LedgerTablesHandle m l)
+  LedgerTables blk ValuesMK ->
+  m (LedgerTablesHandle m l blk)
 newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   !tv <- newTVarIO (LedgerTablesHandleOpen l)
   traceWith tracer TraceLedgerTablesHandleCreate
@@ -145,13 +144,13 @@ implClose tracer tv = do
 
 implDuplicate ::
   ( IOLike m
-  , LedgerSupportsInMemoryLedgerDB l
+  , LedgerSupportsInMemoryLedgerDB l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
-  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
+  StrictTVar m (LedgerTablesHandleState blk) ->
   SomeHasFS m ->
   ResourceRegistry m ->
-  m (ResourceKey m, LedgerTablesHandle m l)
+  m (ResourceKey m, LedgerTablesHandle m l blk)
 implDuplicate tracer tv someFS rr = do
   hs <- readTVarIO tv
   !x <- guardClosed hs $ \v ->
@@ -163,12 +162,12 @@ implDuplicate tracer tv someFS rr = do
 
 implRead ::
   ( IOLike m
-  , HasLedgerTables l
+  , HasLedgerTables l blk
   ) =>
-  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
-  l EmptyMK ->
-  LedgerTables (LBlock l) KeysMK ->
-  m (LedgerTables (LBlock l) ValuesMK)
+  StrictTVar m (LedgerTablesHandleState blk) ->
+  l blk EmptyMK ->
+  LedgerTables blk KeysMK ->
+  m (LedgerTables blk ValuesMK)
 implRead tv _ keys = do
   hs <- readTVarIO tv
   guardClosed
@@ -177,10 +176,10 @@ implRead tv _ keys = do
 
 implReadRange ::
   -- (IOLike m, HasLedgerTables l) =>
-  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
+  StrictTVar m (LedgerTablesHandleState blk) ->
   l EmptyMK ->
-  (Maybe (TxIn (LBlock l)), Int) ->
-  m (LedgerTables (LBlock l) ValuesMK, Maybe (TxIn (LBlock l)))
+  (Maybe TxIn, Int) ->
+  m (LedgerTables blk ValuesMK, Maybe TxIn)
 implReadRange = undefined -- tv _ (f, t) = undefined -- do
 -- hs <- readTVarIO tv
 -- guardClosed
@@ -192,20 +191,20 @@ implReadRange = undefined -- tv _ (f, t) = undefined -- do
 
 implReadAll ::
   IOLike m =>
-  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
+  StrictTVar m (LedgerTablesHandleState blk) ->
   l EmptyMK ->
-  m (LedgerTables (LBlock l) ValuesMK)
+  m (LedgerTables blk ValuesMK)
 implReadAll tv _ = do
   hs <- readTVarIO tv
   guardClosed hs pure
 
 implPushDiffs ::
   ( IOLike m
-  , LedgerSupportsInMemoryLedgerDB l
+  , LedgerSupportsInMemoryLedgerDB l blk
   ) =>
-  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
-  l mk1 ->
-  l DiffMK ->
+  StrictTVar m (LedgerTablesHandleState blk) ->
+  l blk mk1 ->
+  l blk DiffMK ->
   m ()
 implPushDiffs tv st0 !diffs =
   atomically $
@@ -223,10 +222,10 @@ implPushDiffs tv st0 !diffs =
       )
 
 implTakeHandleSnapshot ::
-  (IOLike m, LedgerSupportsInMemoryLedgerDB l) =>
-  StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
+  (IOLike m, LedgerSupportsInMemoryLedgerDB l blk) =>
+  StrictTVar m (LedgerTablesHandleState blk) ->
   HasFS m h ->
-  l EmptyMK ->
+  l blk EmptyMK ->
   String ->
   m (Maybe CRC)
 implTakeHandleSnapshot tv hasFS hint snapshotName = do
@@ -241,9 +240,10 @@ implTakeHandleSnapshot tv hasFS hint snapshotName = do
               valuesMKEncoder hint values
 
 implTablesSize ::
-  (IOLike m, LedgerSupportsInMemoryLedgerDB l) =>
-  Proxy l -> StrictTVar m (LedgerTablesHandleState (LBlock l)) ->
-  m (Maybe (NP (K Int) (TablesForBlock (LBlock l))))
+  (IOLike m, LedgerSupportsInMemoryLedgerDB l blk) =>
+  Proxy l ->
+  StrictTVar m (LedgerTablesHandleState blk) ->
+  m (Maybe (NP (K Int) (TablesForBlock blk)))
 implTablesSize _ tv = do
   hs <- readTVarIO tv
   guardClosed hs (pure . Just . hmap (K . Map.size . getValuesMK . getTable) . getLedgerTables)
@@ -254,13 +254,13 @@ implTablesSize _ tv = do
 
 snapshotManager ::
   ( IOLike m
-  , LedgerDbSerialiseConstraints (ExtLedgerState blk) blk
+  , LedgerDbSerialiseConstraints ExtLedgerState blk
   , LedgerSupportsProtocol blk
   ) =>
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
+  SnapshotManager m m blk (StateRef m ExtLedgerState blk)
 snapshotManager ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
@@ -271,14 +271,14 @@ snapshotManager ccfg tracer fs =
 {-# INLINE implTakeSnapshot #-}
 implTakeSnapshot ::
   ( IOLike m
-  , LedgerDbSerialiseConstraints (ExtLedgerState blk) blk
+  , LedgerDbSerialiseConstraints ExtLedgerState blk
   , LedgerSupportsProtocol blk
   ) =>
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
   Maybe String ->
-  StateRef m (ExtLedgerState blk) ->
+  StateRef m ExtLedgerState blk ->
   m (Maybe (DiskSnapshot, RealPoint blk))
 implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
@@ -312,10 +312,10 @@ implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
 --   from the one tracked by @'DiskSnapshot'@.
 loadSnapshot ::
   forall blk m.
-  ( LedgerDbSerialiseConstraints (ExtLedgerState blk) blk
+  ( LedgerDbSerialiseConstraints ExtLedgerState blk
   , LedgerSupportsProtocol blk
   , IOLike m
-  , LedgerSupportsInMemoryLedgerDB (ExtLedgerState blk)
+  , LedgerSupportsInMemoryLedgerDB ExtLedgerState blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   ResourceRegistry m ->
@@ -358,9 +358,9 @@ type data Mem
 
 instance
   ( IOLike m
-  , LedgerDbSerialiseConstraints (ExtLedgerState blk) blk
+  , LedgerDbSerialiseConstraints ExtLedgerState blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsInMemoryLedgerDB (ExtLedgerState blk)
+  , LedgerSupportsInMemoryLedgerDB ExtLedgerState blk
   ) =>
   Backend m Mem blk
   where
@@ -382,9 +382,9 @@ instance
 -- | Create arguments for initializing the LedgerDB using the InMemory backend.
 mkInMemoryArgs ::
   ( IOLike m
-  , LedgerDbSerialiseConstraints (ExtLedgerState blk) blk
+  , LedgerDbSerialiseConstraints ExtLedgerState blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsInMemoryLedgerDB (ExtLedgerState blk)
+  , LedgerSupportsInMemoryLedgerDB ExtLedgerState blk
   ) =>
   a -> (LedgerDbBackendArgs m blk, a)
 mkInMemoryArgs = (,) $ LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
@@ -402,7 +402,7 @@ instance IOLike m => StreamingBackend m Mem blk where
   data SinkArgs m Mem blk
     = SinkInMemory
         Int
-        (TxIn blk -> Encoding)
+        (TxIn -> Encoding)
         (TxOut blk -> Encoding)
         (SomeHasFS m)
         FilePath
@@ -479,7 +479,7 @@ yieldInMemoryS ::
   (MonadThrow m, MonadST m) =>
   (MountPoint -> SomeHasFS m) ->
   FilePath ->
-  (forall s. Decoder s (TxIn blk)) ->
+  (forall s. Decoder s TxIn) ->
   (forall s. Decoder s (TxOut blk)) ->
   Yield m blk
 yieldInMemoryS mkFs (F.splitFileName -> (fp, fname)) decK decV _ k =
@@ -490,7 +490,7 @@ sinkInMemoryS ::
   forall m blk.
   MonadThrow m =>
   Int ->
-  (TxIn blk -> Encoding) ->
+  (TxIn -> Encoding) ->
   (TxOut blk -> Encoding) ->
   SomeHasFS m ->
   FilePath ->

@@ -38,6 +38,7 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators
   ( -- * Common constraints
     LedgerTableConstraints
   , KVConstraints
+
     -- * Functor
   , ltmap
 
@@ -79,7 +80,6 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators
     -- * Basic bifunctors
   , K2 (..)
   , type (:..:) (..)
-
   , onUTxOTable
   , onInstantStakeTable
   , onTable
@@ -91,7 +91,7 @@ import Data.Bifunctor
 import Data.Kind
 import Data.List.Singletons (SList (..))
 import Data.Proxy
-import Data.SOP.BasicFunctors ((:.:) (..), K (..))
+import Data.SOP.BasicFunctors (K (..), (:.:) (..))
 import Data.SOP.Constraint
 import Data.SOP.Functors
 import Data.SOP.Strict
@@ -111,6 +111,7 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 -- deltas instead of us being the ones that compute them, we can probably drop
 -- this constraint.
 type LedgerTableConstraints blk = LedgerTableConstraintsMK blk EmptyMK
+
 type KVConstraints blk = KVConstraintsMK blk EmptyMK
 
 type RawLedgerTableConstraints blk k v =
@@ -131,7 +132,7 @@ onInstantStakeTable ::
 onInstantStakeTable p = onTable p (Proxy @InstantStakeTable)
 
 onTable ::
-  forall blk (tag :: TAG) mk.
+  forall blk (tag :: TABLE) mk.
   (SingI tag, SingI (TablesForBlock blk)) =>
   Proxy blk ->
   Proxy tag ->
@@ -219,14 +220,20 @@ ltsequence = lttraverse unComp2
 
 -- | Like 'bpure', but for ledger tables.
 ltpure ::
-  forall blk mk. LedgerTableConstraints blk =>
+  forall blk mk.
+  LedgerTableConstraints blk =>
   (forall k v. RawLedgerTableConstraints blk k v => mk k v) ->
   LedgerTables blk mk
 ltpure f = LedgerTables $ hcpure (Proxy @(KVConstraints blk)) (Table f)
 
 -- | Like 'bprod', but for ledger tables.
-ltprod :: forall blk f g.  LedgerTableConstraints blk => LedgerTables blk f -> LedgerTables blk g -> LedgerTables blk (f `Product2` g)
-ltprod (LedgerTables x) (LedgerTables y) = LedgerTables $ hczipWith (Proxy @(KVConstraints blk)) (\(Table tx) (Table ty) -> Table $ Pair2 tx ty) x y
+ltprod ::
+  forall blk f g.
+  LedgerTableConstraints blk =>
+  LedgerTables blk f -> LedgerTables blk g -> LedgerTables blk (f `Product2` g)
+ltprod (LedgerTables x) (LedgerTables y) =
+  LedgerTables $
+    hczipWith (Proxy @(KVConstraints blk)) (\(Table tx) (Table ty) -> Table $ Pair2 tx ty) x y
 
 --
 -- Utility functions
@@ -295,7 +302,8 @@ ltzipWith2A f = ltsequence .: ltliftA2 (Comp2 .: f)
   Collapsing
 -------------------------------------------------------------------------------}
 
-ltcollapse :: SListI (TablesForBlock blk) => LedgerTables blk (K2 a) -> NP (K a) (TablesForBlock blk)
+ltcollapse ::
+  SListI (TablesForBlock blk) => LedgerTables blk (K2 a) -> NP (K a) (TablesForBlock blk)
 ltcollapse (LedgerTables tbs) = hmap (\(Table (K2 t)) -> K t) tbs
 
 {-------------------------------------------------------------------------------

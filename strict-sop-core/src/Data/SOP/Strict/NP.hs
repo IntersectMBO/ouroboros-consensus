@@ -26,11 +26,13 @@ module Data.SOP.Strict.NP
   , npToSListI
   , singletonNP
   , tl
+  , toStrict
   ) where
 
 import Data.Coerce
 import Data.Kind (Type)
 import Data.SOP hiding (NP (..), hd, tl)
+import qualified Data.SOP as SOP
 import Data.SOP.Classes
 import Data.SOP.Constraint
 import NoThunks.Class
@@ -41,6 +43,10 @@ data NP f xs where
   (:*) :: !(f x) -> !(NP f xs) -> NP f (x ': xs)
 
 infixr 5 :*
+
+toStrict :: SOP.NP f xs -> NP f xs
+toStrict SOP.Nil = Nil
+toStrict (x SOP.:* xs) = x :* toStrict xs
 
 type instance CollapseTo NP a = [a]
 type instance AllN NP c = All c

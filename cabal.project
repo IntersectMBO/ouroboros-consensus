@@ -93,7 +93,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/lsm-tree
-  tag: 3c51ea5ac6400f32a7bdf17260325d4d0a360a98
+  tag: 8ca4ac80c9d177b4e4dee77de1f8c3f2f143d58f
   --sha256: sha256-44SHqtAciPhoI6ysLt8RdNvlVvN91GWHMnr68vOU2gQ=
   subdir:
     lsm-tree

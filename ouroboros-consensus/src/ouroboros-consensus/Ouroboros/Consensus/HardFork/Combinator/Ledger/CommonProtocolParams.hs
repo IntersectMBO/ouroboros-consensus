@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -11,16 +12,16 @@ import Data.SOP.Strict
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Ledger
-  ( HasCanonicalTxIn
-  , HasHardForkTxOut (..)
+  ( HasHardForkTxOut (..)
   )
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
+import Ouroboros.Consensus.Ledger.Tables (LedgerTableConstraints)
 
 instance
   ( CanHardFork xs
-  , HasCanonicalTxIn xs
   , HasHardForkTxOut xs
+  , LedgerTableConstraints (HardForkBlock xs)
   ) =>
   CommonProtocolParams (HardForkBlock xs)
   where
