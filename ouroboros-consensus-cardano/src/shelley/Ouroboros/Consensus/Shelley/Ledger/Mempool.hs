@@ -45,6 +45,7 @@ import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import Cardano.Ledger.Alonzo.Core
   ( BlockBody
+  , TopTx
   , Tx
   , allInputsTxBodyF
   , bodyTxL
@@ -86,6 +87,7 @@ import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
 import Data.DerivingVia (InstantiatedAt (..))
+import Data.Either (fromRight)
 import Data.Foldable (toList)
 import Data.Measure (Measure)
 import Data.Typeable (Typeable)
@@ -112,7 +114,7 @@ import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 
-data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx era)
+data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx TopTx era)
   deriving stock Generic
 
 deriving instance ShelleyBasedEra era => NoThunks (GenTx (ShelleyBlock proto era))
@@ -126,7 +128,7 @@ instance
 data instance Validated (GenTx (ShelleyBlock proto era))
   = ShelleyValidatedTx
       !SL.TxId
-      !(SL.Validated (Tx era))
+      !(SL.Validated (Tx TopTx era))
   deriving stock Generic
 
 deriving instance ShelleyBasedEra era => NoThunks (Validated (GenTx (ShelleyBlock proto era)))
@@ -186,13 +188,14 @@ instance
         coerceSet
           (tx ^. bodyTxL . allInputsTxBodyF)
 
-mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
+mkShelleyTx ::
+  forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (txIdTx tx) tx
 
 mkShelleyValidatedTx ::
   forall era proto.
   ShelleyBasedEra era =>
-  SL.Validated (Tx era) ->
+  SL.Validated (Tx TopTx era) ->
   Validated (GenTx (ShelleyBlock proto era))
 mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
  where
@@ -202,7 +205,7 @@ newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId SL.TxId
   deriving newtype (Eq, Ord, NoThunks)
 
 deriving newtype instance
-  (Typeable era, Typeable proto, Crypto (ProtoCrypto proto)) =>
+  Crypto (ProtoCrypto proto) =>
   EncCBOR (TxId (GenTx (ShelleyBlock proto era)))
 deriving newtype instance
   (Typeable era, Typeable proto, Crypto (ProtoCrypto proto)) =>
@@ -226,7 +229,7 @@ instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
       . SL.blockBody
       . shelleyBlockRaw
    where
-    blockBodyToTxList :: BlockBody era -> [Tx era]
+    blockBodyToTxList :: BlockBody era -> [Tx TopTx era]
     blockBodyToTxList blockBody = toList $ blockBody ^. txSeqBlockBodyL
 
 {-------------------------------------------------------------------------------
@@ -243,7 +246,7 @@ instance ShelleyCompatible proto era => FromCBOR (GenTx (ShelleyBlock proto era)
     fmap mkShelleyTx $
       unwrapCBORinCBOR $
         eraDecoder @era $
-          (. Full) . runAnnotator <$> decCBOR
+          (. Full) . (fromRight (error "TODO(geo2a): remove fromRight") .) . runAnnotator <$> decCBOR
 
 {-------------------------------------------------------------------------------
   Pretty-printing
