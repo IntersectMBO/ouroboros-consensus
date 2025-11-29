@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 import Control.RAWLock (RAWLock)
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Functor.Contravariant ((>$<))
 import Data.Maybe (fromMaybe)
 import GHC.Generics
 import NoThunks.Class
@@ -35,6 +36,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.NormalForm.StrictTVar ()
 import qualified Ouroboros.Network.AnchoredSeq as AS
@@ -66,6 +68,7 @@ data ForkerEnv m l blk = ForkerEnv
   -- LedgerDB and release the discarded ones.
   , foeLedgerDbLock :: !(RAWLock m ())
   -- ^ 'ldbOpenHandlesLock'.
+  , foeWasCommitted :: !(StrictTVar m Bool)
   }
   deriving Generic
 
@@ -79,36 +82,32 @@ deriving instance
   NoThunks (ForkerEnv m l blk)
 
 implForkerReadTables ::
-  (MonadSTM m, GetTip l) =>
+  (IOLike m, GetTip l) =>
   ForkerEnv m l blk ->
   LedgerTables l KeysMK ->
   m (LedgerTables l ValuesMK)
-implForkerReadTables env ks = do
-  traceWith (foeTracer env) ForkerReadTablesStart
-  lseq <- readTVarIO (foeLedgerSeq env)
-  let stateRef = currentHandle lseq
-  tbs <- read (tables stateRef) (state stateRef) ks
-  traceWith (foeTracer env) ForkerReadTablesEnd
-  pure tbs
+implForkerReadTables env ks =
+  encloseTimedWith (ForkerReadTables >$< foeTracer env) $ do
+    lseq <- readTVarIO (foeLedgerSeq env)
+    let stateRef = currentHandle lseq
+    read (tables stateRef) (state stateRef) ks
 
 implForkerRangeReadTables ::
-  (MonadSTM m, GetTip l, HasLedgerTables l) =>
+  (IOLike m, GetTip l, HasLedgerTables l) =>
   QueryBatchSize ->
   ForkerEnv m l blk ->
   RangeQueryPrevious l ->
   m (LedgerTables l ValuesMK, Maybe (TxIn l))
-implForkerRangeReadTables qbs env rq0 = do
-  traceWith (foeTracer env) ForkerRangeReadTablesStart
-  ldb <- readTVarIO $ foeLedgerSeq env
-  let n = fromIntegral $ defaultQueryBatchSize qbs
-      stateRef = currentHandle ldb
-  case rq0 of
-    NoPreviousQuery -> readRange (tables stateRef) (state stateRef) (Nothing, n)
-    PreviousQueryWasFinal -> pure (LedgerTables emptyMK, Nothing)
-    PreviousQueryWasUpTo k -> do
-      tbs <- readRange (tables stateRef) (state stateRef) (Just k, n)
-      traceWith (foeTracer env) ForkerRangeReadTablesEnd
-      pure tbs
+implForkerRangeReadTables qbs env rq0 =
+  encloseTimedWith (ForkerRangeReadTables >$< foeTracer env) $ do
+    ldb <- readTVarIO $ foeLedgerSeq env
+    let n = fromIntegral $ defaultQueryBatchSize qbs
+        stateRef = currentHandle ldb
+    case rq0 of
+      NoPreviousQuery -> readRange (tables stateRef) (state stateRef) (Nothing, n)
+      PreviousQueryWasFinal -> pure (LedgerTables emptyMK, Nothing)
+      PreviousQueryWasUpTo k ->
+        readRange (tables stateRef) (state stateRef) (Just k, n)
 
 implForkerGetLedgerState ::
   (MonadSTM m, GetTip l) =>
@@ -129,24 +128,23 @@ implForkerPush ::
   ForkerEnv m l blk ->
   l DiffMK ->
   m ()
-implForkerPush env newState = do
-  traceWith (foeTracer env) ForkerPushStart
-  lseq <- readTVarIO (foeLedgerSeq env)
+implForkerPush env newState =
+  encloseTimedWith (ForkerPush >$< foeTracer env) $ do
+    lseq <- readTVarIO (foeLedgerSeq env)
 
-  let st0 = current lseq
-      st = forgetLedgerTables newState
+    let st0 = current lseq
+        st = forgetLedgerTables newState
 
-  bracketOnError
-    (duplicate (tables $ currentHandle lseq) (foeResourceRegistry env))
-    (release . fst)
-    ( \(_, newtbs) -> do
-        pushDiffs newtbs st0 newState
+    bracketOnError
+      (duplicate (tables $ currentHandle lseq) (foeResourceRegistry env))
+      (release . fst)
+      ( \(_, newtbs) -> do
+          pushDiffs newtbs st0 newState
 
-        let lseq' = extend (StateRef st newtbs) lseq
+          let lseq' = extend (StateRef st newtbs) lseq
 
-        traceWith (foeTracer env) ForkerPushEnd
-        atomically $ writeTVar (foeLedgerSeq env) lseq'
-    )
+          atomically $ writeTVar (foeLedgerSeq env) lseq'
+      )
 
 implForkerCommit ::
   (IOLike m, GetTip l, StandardHash l) =>
@@ -183,6 +181,7 @@ implForkerCommit env = do
       )
   whenJust ldbToClose (modifyTVar foeLedgerDbToClose . (:))
   writeTVar foeCleanup transfer
+  writeTVar foeWasCommitted True
  where
   ForkerEnv
     { foeLedgerSeq
@@ -191,6 +190,7 @@ implForkerCommit env = do
     , foeLedgerDbRegistry
     , foeCleanup
     , foeLedgerDbToClose
+    , foeWasCommitted
     } = env
 
   theImpossible =

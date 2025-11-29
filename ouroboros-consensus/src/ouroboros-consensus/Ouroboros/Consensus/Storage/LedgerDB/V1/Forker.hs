@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
 import qualified Control.Monad as Monad
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Semigroup
 import qualified Data.Set as Set
@@ -43,6 +44,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
 
@@ -72,6 +74,7 @@ data ForkerEnv m l blk = ForkerEnv
   -- flushed, but 'forkerCommit' will take care of this.
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
+  , foeWasCommitted :: !(StrictTVar m Bool)
   }
   deriving Generic
 
@@ -132,16 +135,14 @@ implForkerReadTables ::
   ForkerEnv m l blk ->
   LedgerTables l KeysMK ->
   m (LedgerTables l ValuesMK)
-implForkerReadTables env ks = do
-  traceWith (foeTracer env) ForkerReadTablesStart
-  chlog <- readTVarIO (foeChangelog env)
-  bsvh <- getValueHandle env
-  unfwd <- readKeySetsWith bsvh (changelogLastFlushedState chlog) ks
-  case forwardTableKeySets chlog unfwd of
-    Left _err -> error "impossible!"
-    Right vs -> do
-      traceWith (foeTracer env) ForkerReadTablesEnd
-      pure vs
+implForkerReadTables env ks =
+  encloseTimedWith (ForkerReadTables >$< foeTracer env) $ do
+    chlog <- readTVarIO (foeChangelog env)
+    bsvh <- getValueHandle env
+    unfwd <- readKeySetsWith bsvh (changelogLastFlushedState chlog) ks
+    case forwardTableKeySets chlog unfwd of
+      Left _err -> error "impossible!"
+      Right vs -> pure vs
 
 implForkerRangeReadTables ::
   (IOLike m, GetTip l, HasLedgerTables l) =>
@@ -149,36 +150,35 @@ implForkerRangeReadTables ::
   ForkerEnv m l blk ->
   RangeQueryPrevious l ->
   m (LedgerTables l ValuesMK, Maybe (TxIn l))
-implForkerRangeReadTables qbs env rq0 = do
-  traceWith (foeTracer env) ForkerRangeReadTablesStart
-  ldb <- readTVarIO $ foeChangelog env
-  let
-    -- Get the differences without the keys that are greater or equal
-    -- than the maximum previously seen key.
-    diffs =
-      maybe
-        id
-        (ltliftA2 doDropLTE)
-        (BackingStore.rqPrev rq)
-        $ ltmap prj
-        $ changelogDiffs ldb
-    -- (1) Ensure that we never delete everything read from disk (ie if
-    --     our result is non-empty then it contains something read from
-    --     disk, as we only get an empty result if we reached the end of
-    --     the table).
-    --
-    -- (2) Also, read one additional key, which we will not include in
-    --     the result but need in order to know which in-memory
-    --     insertions to include.
-    maxDeletes = ltcollapse $ ltmap (K2 . numDeletesDiffMK) diffs
-    nrequested = 1 + max (BackingStore.rqCount rq) (1 + maxDeletes)
+implForkerRangeReadTables qbs env rq0 =
+  encloseTimedWith (ForkerRangeReadTables >$< foeTracer env) $ do
+    ldb <- readTVarIO $ foeChangelog env
+    let
+      -- Get the differences without the keys that are greater or equal
+      -- than the maximum previously seen key.
+      diffs =
+        maybe
+          id
+          (ltliftA2 doDropLTE)
+          (BackingStore.rqPrev rq)
+          $ ltmap prj
+          $ changelogDiffs ldb
+      -- (1) Ensure that we never delete everything read from disk (ie if
+      --     our result is non-empty then it contains something read from
+      --     disk, as we only get an empty result if we reached the end of
+      --     the table).
+      --
+      -- (2) Also, read one additional key, which we will not include in
+      --     the result but need in order to know which in-memory
+      --     insertions to include.
+      maxDeletes = ltcollapse $ ltmap (K2 . numDeletesDiffMK) diffs
+      nrequested = 1 + max (BackingStore.rqCount rq) (1 + maxDeletes)
 
-  let st = changelogLastFlushedState ldb
-  bsvh <- getValueHandle env
-  (values, mx) <- BackingStore.bsvhRangeRead bsvh st (rq{BackingStore.rqCount = nrequested})
-  traceWith (foeTracer env) ForkerRangeReadTablesEnd
-  let res = ltliftA2 (doFixupReadResult nrequested) diffs values
-  pure (res, mx)
+    let st = changelogLastFlushedState ldb
+    bsvh <- getValueHandle env
+    (values, mx) <- BackingStore.bsvhRangeRead bsvh st (rq{BackingStore.rqCount = nrequested})
+    let res = ltliftA2 (doFixupReadResult nrequested) diffs values
+    pure (res, mx)
  where
   rq = BackingStore.RangeQuery rq1 (fromIntegral $ defaultQueryBatchSize qbs)
 
@@ -309,17 +309,16 @@ implForkerReadStatistics env = do
           }
 
 implForkerPush ::
-  (MonadSTM m, GetTip l, HasLedgerTables l) =>
+  (IOLike m, GetTip l, HasLedgerTables l) =>
   ForkerEnv m l blk ->
   l DiffMK ->
   m ()
-implForkerPush env newState = do
-  traceWith (foeTracer env) ForkerPushStart
-  atomically $ do
-    chlog <- readTVar (foeChangelog env)
-    let chlog' = extend newState chlog
-    writeTVar (foeChangelog env) chlog'
-  traceWith (foeTracer env) ForkerPushEnd
+implForkerPush env newState =
+  encloseTimedWith (ForkerPush >$< foeTracer env) $ do
+    atomically $ do
+      chlog <- readTVar (foeChangelog env)
+      let chlog' = extend newState chlog
+      writeTVar (foeChangelog env) chlog'
 
 implForkerCommit ::
   (MonadSTM m, GetTip l, StandardHash l, HasLedgerTables l) =>
@@ -350,6 +349,7 @@ implForkerCommit env = do
           , changelogDiffs =
               ltliftA2 (doPrune s) (changelogDiffs orig) (changelogDiffs dblog)
           }
+  Monad.void $ swapTVar (foeWasCommitted env) True
  where
   -- Prune the diffs from the forker's log that have already been flushed to
   -- disk
