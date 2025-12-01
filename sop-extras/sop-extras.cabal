@@ -49,7 +49,7 @@ library
   build-depends:
     base >=4.14 && <4.22,
     constraints ^>=0.14,
-    nothunks ^>=0.2,
+    nothunks ^>=0.2 || ^>=0.3,
     sop-core ^>=0.5,
     strict-sop-core ^>=0.1,
     these ^>=1.2,

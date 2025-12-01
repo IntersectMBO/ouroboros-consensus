@@ -45,6 +45,9 @@ tests =
     [ adjustQuickCheckTests (* 100) $ testProperty "q-d" $ prop_qd
     ]
 
+perasTestCfg :: PerasCfg TestBlock
+perasTestCfg = makePerasCfg Nothing
+
 prop_qd :: Actions Model -> Property
 prop_qd actions = QC.monadic f $ property () <$ runActions actions
  where
@@ -82,7 +85,7 @@ instance StateModel Model where
                   { pcCertRound = roundNo
                   , pcCertBoostedBlock = boostedBlock
                   }
-            , vpcCertBoost = boostPerCert
+            , vpcCertBoost = perasCfgWeightBoost perasTestCfg
             }
 
     -- Generators are heavily skewed toward collisions, to get equivocating certificates
@@ -113,7 +116,18 @@ instance StateModel Model where
 
   precondition (Model model) = \case
     OpenDB -> not model.open
-    _ -> model.open
+    action ->
+      model.open && case action of
+        CloseDB -> True
+        -- Equivocating certificates are not possible by construction,
+        -- so we should ensure that adding a certificate with the same round
+        -- number but different content is rejected.
+        -- See https://tweag.github.io/cardano-peras/peras-design.pdf#subsection.2.2.2
+        AddCert cert -> all p model.certs
+         where
+          p cert' = getPerasCertRound cert /= getPerasCertRound cert' || cert == cert'
+        GetWeightSnapshot -> True
+        GarbageCollect _slot -> True
 
 deriving stock instance Show (Action Model a)
 deriving stock instance Eq (Action Model a)
