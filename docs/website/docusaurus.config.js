@@ -158,10 +158,6 @@ const config = {
                 label: 'Stack Overflow',
                 href: 'https://cardano.stackexchange.com/questions/tagged/consensus',
               },
-              {
-                label: 'Discord',
-                href: 'https://discord.gg/inputoutput',
-              },
             ],
           },
           {
