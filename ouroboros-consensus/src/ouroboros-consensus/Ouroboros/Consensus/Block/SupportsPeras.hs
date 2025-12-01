@@ -27,12 +27,6 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasCfg (..)
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
-  , PerasVoteAggregate (..)
-  , PerasVoteAggregateStatus (..)
-  , pvasMaybeCert
-  , emptyPerasVoteAggregateStatus
-  , updatePerasVoteAggregate
-  , updatePerasVoteAggregateStatus
   , makePerasCfg
   , HasId (..)
   , HasPerasCertRound (..)
@@ -132,6 +126,11 @@ instance Condense PerasWeight where
 boostPerCert :: PerasWeight
 boostPerCert = PerasWeight 15
 
+-- | TODO: this may become a Ledger protocol parameter
+-- see https://github.com/tweag/cardano-peras/issues/119
+quorumThreshold :: PerasVoteStake
+quorumThreshold = PerasVoteStake 0.75
+
 -- TODO using 'Validated' for extra safety? Or some @.Unsafe@ module?
 data ValidatedPerasCert blk = ValidatedPerasCert
   { vpcCert :: !(PerasCert blk)
@@ -202,6 +201,8 @@ class
 
   data PerasValidationErr blk
 
+  data PerasForgeErr blk
+
   validatePerasCert ::
     PerasCfg blk ->
     PerasCert blk ->
@@ -213,105 +214,23 @@ class
     PerasVoteStakeDistr ->
     Either (PerasValidationErr blk) (ValidatedPerasVote blk)
 
-const_PERAS_QUORUM_THRESHOLD :: PerasVoteStake
-const_PERAS_QUORUM_THRESHOLD = PerasVoteStake 0.75
-
-data PerasVoteAggregate blk = PerasVoteAggregate
-  { pvaTarget :: !(PerasVoteTarget blk)
-  , pvaVotes :: !(Map (IdOf (PerasVote blk)) (WithArrivalTime (ValidatedPerasVote blk)))
-  , pvaTotalStake :: !PerasVoteStake
-  }
-  deriving stock (Generic, Eq, Ord, Show)
-  deriving anyclass NoThunks
-
-data PerasVoteAggregateStatus blk
-  = PerasVoteAggregateQuorumNotReached {pvasVoteAggregate :: !(PerasVoteAggregate blk)}
-  | PerasVoteAggregateQuorumReachedAlready
-      {pvasVoteAggregate :: !(PerasVoteAggregate blk), pvasCert :: ValidatedPerasCert blk}
-  deriving stock (Generic, Eq, Ord, Show)
-  deriving anyclass NoThunks
-
-pvasMaybeCert :: PerasVoteAggregateStatus blk -> Maybe (ValidatedPerasCert blk)
-pvasMaybeCert aggr = case aggr of
-  PerasVoteAggregateQuorumNotReached{} -> Nothing
-  PerasVoteAggregateQuorumReachedAlready{pvasCert} -> Just pvasCert
-
-emptyPerasVoteAggregateStatus :: PerasVoteTarget blk -> PerasVoteAggregateStatus blk
-emptyPerasVoteAggregateStatus target =
-  PerasVoteAggregateQuorumNotReached $
-    PerasVoteAggregate
-      { pvaTotalStake = PerasVoteStake 0
-      , pvaTarget = target
-      , pvaVotes = Map.empty
-      }
-
--- | Add a vote to an existing aggregate if it isn't already present, and update
--- the stake accordingly.
--- PRECONDITION: the vote's target must match the aggregate's target.
-updatePerasVoteAggregate ::
-  StandardHash blk =>
-  PerasVoteAggregate blk ->
-  WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasVoteAggregate blk
-updatePerasVoteAggregate
-  pva@PerasVoteAggregate
-    { pvaTarget = (roundNo, point)
-    , pvaVotes = existingVotes
-    , pvaTotalStake = initialStake
-    }
-  vote =
-    if not (getPerasVoteRound vote == roundNo && getPerasVoteVotedBlock vote == point)
-      then error "updatePerasVoteAggregate: vote target does not match aggregate target"
-      else
-        let (pvaVotes', pvaTotalStake') =
-              case Map.insertLookupWithKey
-                (\_k old _new -> old)
-                (getId vote)
-                vote
-                existingVotes of
-                (Nothing, votes') ->
-                  -- key was NOT present → inserted and stake updated
-                  (votes', initialStake + vpvVoteStake (forgetArrivalTime vote))
-                (Just _, _) ->
-                  -- key WAS already present → votes and stake unchanged
-                  (existingVotes, initialStake)
-         in pva{pvaVotes = pvaVotes', pvaTotalStake = pvaTotalStake'}
-
-updatePerasVoteAggregateStatus ::
-  StandardHash blk =>
-  PerasVoteAggregateStatus blk ->
-  WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasVoteAggregateStatus blk
-updatePerasVoteAggregateStatus aggr vote = case aggr of
-  PerasVoteAggregateQuorumNotReached{pvasVoteAggregate} ->
-    let aggr' = updatePerasVoteAggregate pvasVoteAggregate vote
-     in if pvaTotalStake aggr' >= const_PERAS_QUORUM_THRESHOLD
-          then
-            PerasVoteAggregateQuorumReachedAlready
-              { pvasVoteAggregate = aggr'
-              , pvasCert =
-                  ValidatedPerasCert
-                    { vpcCertBoost = boostPerCert
-                    , vpcCert = uncurry PerasCert (pvaTarget aggr')
-                    }
-              }
-          else PerasVoteAggregateQuorumNotReached{pvasVoteAggregate = aggr'}
-  PerasVoteAggregateQuorumReachedAlready{pvasVoteAggregate, pvasCert} ->
-    PerasVoteAggregateQuorumReachedAlready
-      { pvasVoteAggregate = updatePerasVoteAggregate pvasVoteAggregate vote
-      , pvasCert
-      }
+  forgePerasCert ::
+    PerasCfg blk ->
+    PerasVoteTarget blk ->
+    [ValidatedPerasVote blk] ->
+    Either (PerasForgeErr blk) (ValidatedPerasCert blk)
 
 type PerasVoteTarget blk = (PerasRoundNo, Point blk)
 
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
 instance StandardHash blk => BlockSupportsPeras blk where
-  newtype PerasCfg blk = PerasCfg
+  data PerasCfg blk = PerasCfg
     { -- TODO: eventually, this will come from the
       -- protocol parameters from the ledger state
       -- see https://github.com/tweag/cardano-peras/issues/119
       perasCfgWeightBoost :: PerasWeight
+    , perasCfgQuorumThreshold :: PerasVoteStake
     }
     deriving stock (Show, Eq)
 
@@ -336,6 +255,11 @@ instance StandardHash blk => BlockSupportsPeras blk where
     = PerasValidationErr
     deriving stock (Show, Eq)
 
+  data PerasForgeErr blk
+    = PerasForgeErrMismatchedTarget
+    | PerasForgeErrInsufficientVotes
+    deriving stock (Show, Eq)
+
   -- TODO: perform actual validation against all
   -- possible 'PerasValidationErr' variants
   -- see https://github.com/tweag/cardano-peras/issues/120
@@ -349,6 +273,27 @@ instance StandardHash blk => BlockSupportsPeras blk where
   validatePerasVote _cfg vote stakeDistr =
     let stake = getPerasVoteStakeOf stakeDistr (pvVoteVoterId vote)
      in Right (ValidatedPerasVote{vpvVote = vote, vpvVoteStake = stake})
+
+  forgePerasCert cfg target votes =
+    let allMatchTarget = all (\v -> getPerasVoteTarget v == target) votes
+        hasSufficientStake =
+          let totalStake = mconcat (map vpvVoteStake votes)
+           in totalStake >= perasCfgQuorumThreshold cfg
+     in if not allMatchTarget
+          then Left PerasForgeErrMismatchedTarget
+          else
+            if not hasSufficientStake
+              then Left PerasForgeErrInsufficientVotes
+              else
+                Right
+                  ValidatedPerasCert
+                    { vpcCert =
+                        PerasCert
+                          { pcCertRound = fst target
+                          , pcCertBoostedBlock = snd target
+                          }
+                    , vpcCertBoost = perasCfgWeightBoost cfg
+                    }
 
 instance HasId (PerasCert blk) where
   type IdOf (PerasCert blk) = PerasRoundNo
@@ -402,6 +347,7 @@ makePerasCfg :: Maybe (BlockConfig blk) -> PerasCfg blk
 makePerasCfg _ =
   PerasCfg
     { perasCfgWeightBoost = boostPerCert
+    , perasCfgQuorumThreshold = quorumThreshold
     }
 
 -- | Extract the certificate round from a Peras certificate container

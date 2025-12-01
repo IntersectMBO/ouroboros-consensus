@@ -7,7 +7,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# OPTIONS_GHC -Wno-unused-imports #-}
+{-# OPTIONS_GHC -Wno-partial-fields #-}
 
 module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
   ( -- * Opening
@@ -22,29 +22,199 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
   , PerasVoteDbError (..)
   ) where
 
-import Control.Monad (when)
-import Control.Monad.Except (throwError)
 import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Foldable (for_)
 import Data.Foldable qualified as Foldable
-import Data.Functor ((<&>))
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Block.SupportsPeras qualified as UPVAR
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (forgetArrivalTime))
-import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
+
+-- | Update a 'Map' at a given key with a function, using a default value as the
+-- "old" value if the key is not present.
+-- Both the old and new values are returned, along with the updated map.
+updateWithDefault ::
+  forall k v.
+  Ord k =>
+  -- | default value if key not present
+  v ->
+  -- | update function
+  (v -> v) ->
+  -- | key
+  k ->
+  Map k v ->
+  -- | (old value, new value, updated map)
+  (v, v, Map k v)
+updateWithDefault def upd k m =
+  case Map.alterF go k m of
+    ((old, new), m') -> (old, new, m')
+ where
+  go :: Maybe v -> ((v, v), Maybe v)
+  go Nothing =
+    let old = def
+        new = upd old
+     in ((old, new), Just new)
+  go (Just old) =
+    let new = upd old
+     in ((old, new), Just new)
+
+-- | Aggregate of votes for a given target (round number and block point).
+data PerasTargetVoteAggregate blk = PerasTargetVoteAggregate
+  { ptvaTarget :: !(PerasVoteTarget blk)
+  , ptvaVotes :: !(Map (IdOf (PerasVote blk)) (WithArrivalTime (ValidatedPerasVote blk)))
+  , ptvaTotalStake :: !PerasVoteStake
+  }
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
+-- | View of votes for a given round number. This type is in charge of enforcing
+-- that only one certificate can be generated per round.
+data PerasRoundVoteAggregates blk
+  = PerasRoundVoteAggregatesQuorumNotReached
+      { prvaRoundNo :: PerasRoundNo
+      , prvaVoteAggregates :: !(Map (Point blk) (PerasTargetVoteAggregate blk))
+      }
+  | PerasRoundVoteAggregatesQuorumReachedAlready
+      { prvaRoundNo :: PerasRoundNo
+      , prvaVoteAggregates :: !(Map (Point blk) (PerasTargetVoteAggregate blk))
+      , prvaCert :: ValidatedPerasCert blk
+      }
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
+-- | Get the certificate if quorum was reached for the given round.
+prvaMaybeCert :: PerasRoundVoteAggregates blk -> Maybe (ValidatedPerasCert blk)
+prvaMaybeCert aggr = case aggr of
+  PerasRoundVoteAggregatesQuorumNotReached{} -> Nothing
+  PerasRoundVoteAggregatesQuorumReachedAlready{prvaCert} -> Just prvaCert
+
+-- | Create a new, target-level vote aggregate for the given target.
+newTargetVoteAggregate ::
+  PerasVoteTarget blk ->
+  PerasTargetVoteAggregate blk
+newTargetVoteAggregate target =
+  PerasTargetVoteAggregate
+    { ptvaTarget = target
+    , ptvaVotes = Map.empty
+    , ptvaTotalStake = PerasVoteStake 0
+    }
+
+-- | Create a new, round-level vote aggregate for the given round number.
+newRoundVoteAggregates ::
+  PerasRoundNo ->
+  PerasRoundVoteAggregates blk
+newRoundVoteAggregates roundNo =
+  PerasRoundVoteAggregatesQuorumNotReached
+    { prvaRoundNo = roundNo
+    , prvaVoteAggregates = Map.empty
+    }
+
+-- | Add a vote to an existing target aggregate if it isn't already present,
+-- and update the stake accordingly.
+-- PRECONDITION: the vote's target must match the aggregate's target.
+updateTargetVoteAggregate ::
+  StandardHash blk =>
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  PerasTargetVoteAggregate blk ->
+  PerasTargetVoteAggregate blk
+updateTargetVoteAggregate
+  vote
+  ptva@PerasTargetVoteAggregate
+    { ptvaTarget = (roundNo, point)
+    , ptvaVotes = existingVotes
+    , ptvaTotalStake = initialStake
+    } =
+    if getPerasVoteRound vote /= roundNo || getPerasVoteVotedBlock vote /= point
+      then error "updatePerasVoteAggregate: vote target does not match aggregate target"
+      else
+        let (pvaVotes', pvaTotalStake') =
+              case Map.insertLookupWithKey
+                (\_k old _new -> old)
+                (getId vote)
+                vote
+                existingVotes of
+                (Nothing, votes') ->
+                  -- key was NOT present → inserted and stake updated
+                  (votes', initialStake + vpvVoteStake (forgetArrivalTime vote))
+                (Just _, _) ->
+                  -- key WAS already present → votes and stake unchanged
+                  (existingVotes, initialStake)
+         in ptva{ptvaVotes = pvaVotes', ptvaTotalStake = pvaTotalStake'}
+
+-- | Add a vote to an existing round aggregate.
+-- PRECONDITION: the vote's round must match the aggregate's round.
+updatePerasRoundVoteAggregates ::
+  StandardHash blk =>
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  PerasCfg blk ->
+  PerasRoundVoteAggregates blk ->
+  PerasRoundVoteAggregates blk
+updatePerasRoundVoteAggregates vote cfg@PerasCfg{perasCfgQuorumThreshold} roundAggrs =
+  if getPerasVoteRound vote /= prvaRoundNo roundAggrs
+    then error "updatePerasRoundVoteAggregates: vote round does not match aggregate round"
+    else
+      let target = getPerasVoteTarget vote
+          point = snd target
+          (oldTargetAggr, newTargetAggr, prvaVoteAggregates') =
+            updateWithDefault
+              (newTargetVoteAggregate target)
+              (updateTargetVoteAggregate vote)
+              point
+              (prvaVoteAggregates roundAggrs)
+          mustEmitCert =
+            ptvaTotalStake oldTargetAggr < perasCfgQuorumThreshold
+              && ptvaTotalStake newTargetAggr >= perasCfgQuorumThreshold
+       in case (roundAggrs, mustEmitCert) of
+            (PerasRoundVoteAggregatesQuorumNotReached{prvaRoundNo}, True) ->
+              PerasRoundVoteAggregatesQuorumReachedAlready
+                { prvaRoundNo
+                , prvaVoteAggregates = prvaVoteAggregates'
+                , prvaCert = case forgePerasCert cfg target (forgetArrivalTime <$> Map.elems (ptvaVotes newTargetAggr)) of
+                    -- TODO: the forge error might be made into a PerasVoteDB error variant?
+                    Left err ->
+                      error
+                        ( "updatePerasRoundVoteAggregates: forging the "
+                            ++ "certificate should be valid when quorum is "
+                            ++ "reached, but got error: "
+                            ++ show err
+                        )
+                    Right cert -> cert
+                }
+            (PerasRoundVoteAggregatesQuorumNotReached{prvaRoundNo}, False) ->
+              PerasRoundVoteAggregatesQuorumNotReached
+                { prvaRoundNo
+                , prvaVoteAggregates = prvaVoteAggregates'
+                }
+            (PerasRoundVoteAggregatesQuorumReachedAlready{prvaRoundNo, prvaCert}, True) ->
+              -- TODO: the equivocating cert error might be made into a PerasVoteDB error variant?
+              error
+                ( "updatePerasRoundVoteAggregates: quorum was already reached for round "
+                    ++ show prvaRoundNo
+                    ++ " on point "
+                    ++ show (pcCertBoostedBlock . vpcCert $ prvaCert)
+                    ++ ", but we reached it again on point "
+                    ++ show point
+                    ++ "with "
+                    ++ show (ptvaTotalStake newTargetAggr)
+                    ++ " stake (quorum threshold = "
+                    ++ (show perasCfgQuorumThreshold)
+                    ++ ". Equivocating certificates should be impossible per design."
+                )
+            (PerasRoundVoteAggregatesQuorumReachedAlready{prvaRoundNo, prvaCert}, False) ->
+              PerasRoundVoteAggregatesQuorumReachedAlready
+                { prvaRoundNo
+                , prvaCert
+                , prvaVoteAggregates = prvaVoteAggregates'
+                }
 
 {------------------------------------------------------------------------------
   Opening the database
@@ -53,12 +223,14 @@ import Ouroboros.Consensus.Util.STM
 type PerasVoteDbArgs :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data PerasVoteDbArgs f m blk = PerasVoteDbArgs
   { pvdbaTracer :: Tracer m (TraceEvent blk)
+  , pvdbaPerasCfg :: HKD f (PerasCfg blk)
   }
 
 defaultArgs :: Applicative m => Incomplete PerasVoteDbArgs m blk
 defaultArgs =
   PerasVoteDbArgs
     { pvdbaTracer = nullTracer
+    , pvdbaPerasCfg = noDefault
     }
 
 openDB ::
@@ -68,7 +240,7 @@ openDB ::
   ) =>
   Complete PerasVoteDbArgs m blk ->
   m (PerasVoteDB m blk)
-openDB args = do
+openDB args@PerasVoteDbArgs{pvdbaPerasCfg} = do
   pvdbPerasVoteStateVar <-
     newTVarWithInvariantIO
       (either Just (const Nothing) . invariantForPerasVoteState)
@@ -82,9 +254,9 @@ openDB args = do
   traceWith pvdbTracer OpenedPerasVoteDB
   pure
     PerasVoteDB
-      { addVote = getEnv1 h implAddVote
-      , getStakeSnapshot = getEnvSTM h implGetStakeSnapshot
+      { addVote = getEnv1 h (implAddVote pvdbaPerasCfg)
       , getVoteSnapshot = getEnvSTM h implGetVoteSnapshot
+      , getForgedCertForRound = getEnvSTM1 h implForgedCertForRound
       , garbageCollect = getEnv1 h implGarbageCollect
       , closeDB = implCloseDB h
       }
@@ -140,6 +312,14 @@ getEnvSTM (PerasVoteDbHandle varState) f =
     PerasVoteDbOpen env -> f env
     PerasVoteDbClosed -> throwIO $ ClosedDBError prettyCallStack
 
+getEnvSTM1 ::
+  (IOLike m, HasCallStack) =>
+  PerasVoteDbHandle m blk ->
+  (PerasVoteDbEnv m blk -> a -> STM m r) ->
+  a ->
+  STM m r
+getEnvSTM1 h f a = getEnvSTM h (\env -> f env a)
+
 {-------------------------------------------------------------------------------
   API implementation
 -------------------------------------------------------------------------------}
@@ -158,79 +338,72 @@ implAddVote ::
   ( IOLike m
   , StandardHash blk
   ) =>
+  PerasCfg blk ->
   PerasVoteDbEnv m blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   m (AddPerasVoteResult blk)
-implAddVote env vote = do
-  traceWith pvdbTracer $ AddingPerasVote voteTarget voteId voteStake
-
-  res <- atomically $ do
-    WithFingerprint
-      PerasVoteState
-        { pvsVoteIds
-        , pvsVotesByTarget
-        , pvsVotesByTicket
-        , pvsLastTicketNo
-        }
-      fp <-
-      readTVar pvdbPerasVoteStateVar
-
-    if Set.member voteId (pvsVoteIds)
-      then pure PerasVoteAlreadyInDB
-      else do
-        let pvsVoteIds' = Set.insert voteId (pvsVoteIds)
-            (res, pvsVotesByTarget') =
-              Map.alterF
-                ( \mExistingAggr ->
-                    let aggr = fromMaybe (emptyPerasVoteAggregateStatus voteTarget) mExistingAggr
-                        aggr' = updatePerasVoteAggregateStatus aggr vote
-                     in case (aggr, aggr') of
-                          -- if we observe a state transition, it means a certificate was emitted
-                          (PerasVoteAggregateQuorumNotReached{}, PerasVoteAggregateQuorumReachedAlready{pvasCert}) ->
-                            (AddedPerasVoteAndGeneratedNewCert pvasCert, Just aggr')
-                          _ ->
-                            (AddedPerasVoteButDidntGenerateNewCert, Just aggr')
-                )
-                voteTarget
-                pvsVotesByTarget
-            pvsLastTicketNo' = succ pvsLastTicketNo
-            pvsVotesByTicket' = Map.insert pvsLastTicketNo' vote pvsVotesByTicket
-            fp' = succ fp
-        writeTVar pvdbPerasVoteStateVar $
-          WithFingerprint
-            PerasVoteState
-              { pvsVoteIds = pvsVoteIds'
-              , pvsVotesByTarget = pvsVotesByTarget'
-              , pvsVotesByTicket = pvsVotesByTicket'
-              , pvsLastTicketNo = pvsLastTicketNo'
-              }
-            fp'
-        pure res
-
-  case res of
-    PerasVoteAlreadyInDB -> traceWith pvdbTracer $ IgnoredVoteAlreadyInDB voteId
-    AddedPerasVoteButDidntGenerateNewCert -> traceWith pvdbTracer $ AddedPerasVote voteId
-    AddedPerasVoteAndGeneratedNewCert newCert -> do
-      traceWith pvdbTracer $ AddedPerasVote voteId
-      traceWith pvdbTracer $ GeneratedPerasCert newCert
-  pure res
- where
+implAddVote
+  perasCfg
   PerasVoteDbEnv
     { pvdbTracer
     , pvdbPerasVoteStateVar
-    } = env
+    }
+  vote = do
+    let voteId = getId vote
+        voteTarget = getPerasVoteTarget vote
+        voteStake = vpvVoteStake (forgetArrivalTime vote)
 
-  voteTarget = getPerasVoteTarget vote
-  voteId = getId vote
-  voteStake = vpvVoteStake . forgetArrivalTime $ vote
+    traceWith pvdbTracer $ AddingPerasVote voteTarget voteId voteStake
 
-implGetStakeSnapshot ::
-  IOLike m =>
-  PerasVoteDbEnv m blk -> STM m (PerasStakeSnapshot blk)
-implGetStakeSnapshot PerasVoteDbEnv{pvdbPerasVoteStateVar} = do
-  perasVoteState <- readTVar pvdbPerasVoteStateVar
-  let unPerasStakeSnapshot = pvsVotesByTarget <$> perasVoteState
-  pure $ PerasStakeSnapshot{unPerasStakeSnapshot}
+    res <- atomically $ do
+      WithFingerprint
+        PerasVoteState
+          { pvsVoteIds
+          , pvsVoteAggrsByRound
+          , pvsVotesByTicket
+          , pvsLastTicketNo
+          }
+        fp <-
+        readTVar pvdbPerasVoteStateVar
+
+      if Set.member voteId pvsVoteIds
+        then pure PerasVoteAlreadyInDB
+        else do
+          let pvsVoteIds' = Set.insert voteId pvsVoteIds
+              roundNo = getPerasVoteRound vote
+              (oldRoundAggrs, newRoundAggrs, pvsVoteAggrsByRound') =
+                updateWithDefault
+                  (newRoundVoteAggregates roundNo)
+                  (updatePerasRoundVoteAggregates vote perasCfg)
+                  roundNo
+                  pvsVoteAggrsByRound
+              res = case (oldRoundAggrs, newRoundAggrs) of
+                ( PerasRoundVoteAggregatesQuorumNotReached{}
+                  , PerasRoundVoteAggregatesQuorumReachedAlready{prvaCert}
+                  ) ->
+                  AddedPerasVoteAndGeneratedNewCert prvaCert
+                _ -> AddedPerasVoteButDidntGenerateNewCert
+              pvsLastTicketNo' = succ pvsLastTicketNo
+              pvsVotesByTicket' = Map.insert pvsLastTicketNo' vote pvsVotesByTicket
+              fp' = succ fp
+          writeTVar pvdbPerasVoteStateVar $
+            WithFingerprint
+              PerasVoteState
+                { pvsVoteIds = pvsVoteIds'
+                , pvsVoteAggrsByRound = pvsVoteAggrsByRound'
+                , pvsVotesByTicket = pvsVotesByTicket'
+                , pvsLastTicketNo = pvsLastTicketNo'
+                }
+              fp'
+          pure res
+
+    case res of
+      PerasVoteAlreadyInDB -> traceWith pvdbTracer $ IgnoredVoteAlreadyInDB voteId
+      AddedPerasVoteButDidntGenerateNewCert -> traceWith pvdbTracer $ AddedPerasVote voteId
+      AddedPerasVoteAndGeneratedNewCert newCert -> do
+        traceWith pvdbTracer $ AddedPerasVote voteId
+        traceWith pvdbTracer $ GeneratedPerasCert newCert
+    pure res
 
 implGetVoteSnapshot ::
   IOLike m =>
@@ -243,6 +416,17 @@ implGetVoteSnapshot PerasVoteDbEnv{pvdbPerasVoteStateVar} = do
       , getVotesAfter = \ticketNo ->
           snd $ Map.split ticketNo pvsVotesByTicket
       }
+
+implForgedCertForRound ::
+  IOLike m =>
+  PerasVoteDbEnv m blk ->
+  PerasRoundNo ->
+  STM m (Maybe (ValidatedPerasCert blk))
+implForgedCertForRound PerasVoteDbEnv{pvdbPerasVoteStateVar} roundNo = do
+  PerasVoteState{pvsVoteAggrsByRound} <- forgetFingerprint <$> readTVar pvdbPerasVoteStateVar
+  case Map.lookup roundNo pvsVoteAggrsByRound of
+    Nothing -> pure Nothing
+    Just aggr -> pure $ prvaMaybeCert aggr
 
 implGarbageCollect ::
   forall m blk.
@@ -257,14 +441,14 @@ implGarbageCollect PerasVoteDbEnv{pvdbPerasVoteStateVar} roundNo =
   gc
     PerasVoteState
       { pvsVoteIds
-      , pvsVotesByTarget
+      , pvsVoteAggrsByRound
       , pvsVotesByTicket
       , pvsLastTicketNo
       } =
-      let pvsVotesByTarget' =
+      let pvsVoteAggrsByRound' =
             Map.filterWithKey
-              (\(rNo, _) _ -> rNo >= roundNo)
-              pvsVotesByTarget
+              (\rNo _ -> rNo >= roundNo)
+              pvsVoteAggrsByRound
           (pvsVotesByTicket', votesToRemove) = Map.partition (\vote -> getPerasVoteRound vote >= roundNo) pvsVotesByTicket
           pvsVoteIds' =
             Foldable.foldl'
@@ -273,7 +457,7 @@ implGarbageCollect PerasVoteDbEnv{pvdbPerasVoteStateVar} roundNo =
               votesToRemove
        in PerasVoteState
             { pvsVoteIds = pvsVoteIds'
-            , pvsVotesByTarget = pvsVotesByTarget'
+            , pvsVoteAggrsByRound = pvsVoteAggrsByRound'
             , pvsVotesByTicket = pvsVotesByTicket'
             , pvsLastTicketNo = pvsLastTicketNo
             }
@@ -284,11 +468,11 @@ implGarbageCollect PerasVoteDbEnv{pvdbPerasVoteStateVar} roundNo =
 
 data PerasVoteState blk = PerasVoteState
   { pvsVoteIds :: !(Set (IdOf (PerasVote blk)))
-  , pvsVotesByTarget :: !(Map (PerasVoteTarget blk) (PerasVoteAggregateStatus blk))
+  , pvsVoteAggrsByRound :: !(Map PerasRoundNo (PerasRoundVoteAggregates blk))
   , pvsVotesByTicket :: !(Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
   -- ^ The votes by 'PerasVoteTicketNo'.
   --
-  -- INVARIANT: In sync with 'pvsVotesByTarget'.
+  -- INVARIANT: In sync with 'pvsVoteAggrsByRound'.
   , pvsLastTicketNo :: !PerasVoteTicketNo
   -- ^ The most recent 'PerasVoteTicketNo' (or 'zeroPerasVoteTicketNo'
   -- otherwise).
@@ -301,7 +485,7 @@ initialPerasVoteState =
   WithFingerprint
     PerasVoteState
       { pvsVoteIds = Set.empty
-      , pvsVotesByTarget = Map.empty
+      , pvsVoteAggrsByRound = Map.empty
       , pvsVotesByTicket = Map.empty
       , pvsLastTicketNo = zeroPerasVoteTicketNo
       }
