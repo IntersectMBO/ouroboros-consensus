@@ -13,9 +13,6 @@
 module Ouroboros.Consensus.Ledger.Tables.MapKind
   ( -- * Classes
     CanMapMK (..)
-  , EqMK
-  , NoThunksMK
-  , ShowMK
   , ZeroableMK (..)
 
     -- * Concrete MapKinds
@@ -53,23 +50,6 @@ type CanMapMK :: F2 -> Constraint
 class CanMapMK mk where
   mapMK :: (v -> v') -> mk k v -> mk k v'
 
--- | For convenience, such that we don't have to include @QuantifiedConstraints@
--- everywhere.
-type ShowMK :: F2 -> Constraint
-class (forall k v. (Show k, Show v) => Show (mk k v)) => ShowMK mk
-
--- | For convenience, such that we don't have to include @QuantifiedConstraints@
--- everywhere.
-type EqMK :: F2 -> Constraint
-class (forall k v. (Eq k, Eq v) => Eq (mk k v)) => EqMK mk
-
--- | For convenience, such that we don't have to include @QuantifiedConstraints@
--- everywhere.
-type NoThunksMK :: F2 -> Constraint
-class
-  (forall k v. (NoThunks k, NoThunks v) => NoThunks (mk k v)) =>
-  NoThunksMK mk
-
 {-------------------------------------------------------------------------------
   EmptyMK
 -------------------------------------------------------------------------------}
@@ -77,7 +57,6 @@ class
 data EmptyMK k v = EmptyMK
   deriving stock (Generic, Eq, Show)
   deriving anyclass NoThunks
-  deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
 instance ZeroableMK EmptyMK where
   emptyMK = EmptyMK
@@ -93,7 +72,6 @@ newtype KeysMK k v = KeysMK (Set k)
   deriving stock (Generic, Eq, Show)
   deriving newtype (Semigroup, Monoid)
   deriving anyclass NoThunks
-  deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
 instance ZeroableMK KeysMK where
   emptyMK = KeysMK mempty
@@ -108,7 +86,6 @@ instance CanMapMK KeysMK where
 newtype ValuesMK k v = ValuesMK {getValuesMK :: Map k v}
   deriving stock (Generic, Eq, Show)
   deriving anyclass NoThunks
-  deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
 instance ZeroableMK ValuesMK where
   emptyMK = ValuesMK mempty
@@ -124,7 +101,6 @@ newtype DiffMK k v = DiffMK {getDiffMK :: Diff k v}
   deriving stock (Generic, Eq, Show)
   deriving newtype Functor
   deriving anyclass NoThunks
-  deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
 instance ZeroableMK DiffMK where
   emptyMK = DiffMK mempty
@@ -138,7 +114,6 @@ instance CanMapMK DiffMK where
 
 data TrackingMK k v = TrackingMK !(Map k v) !(Diff k v)
   deriving (Generic, Eq, Show, NoThunks)
-  deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
 instance ZeroableMK TrackingMK where
   emptyMK = TrackingMK mempty mempty

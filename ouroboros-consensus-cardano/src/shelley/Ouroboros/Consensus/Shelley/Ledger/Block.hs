@@ -70,6 +70,8 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( HasPartialConsensusConfig
   )
 import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.LedgerStateType
+import Ouroboros.Consensus.Ledger.Tables (CanStowLedgerTables, LedgerTablesConstraints)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
@@ -129,6 +131,9 @@ class
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)
+  , LedgerTablesConstraints (ShelleyBlock proto era)
+  , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
+  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   ) =>
   ShelleyCompatible proto era
 

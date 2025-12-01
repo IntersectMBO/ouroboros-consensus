@@ -81,7 +81,6 @@ import Ouroboros.Consensus.Byron.Ledger.HeaderValidation ()
 import Ouroboros.Consensus.Byron.Ledger.PBFT
 import Ouroboros.Consensus.Byron.Ledger.Serialisation
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
@@ -89,12 +88,14 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util (ShowProxy (..))
+
 -- import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
@@ -227,7 +228,6 @@ instance HasLedgerTables (TickedL LedgerState) ByronBlock where
 instance CanStowLedgerTables (LedgerState ByronBlock) where
   stowLedgerTables ByronLedgerState{..} = ByronLedgerState{..}
   unstowLedgerTables ByronLedgerState{..} = ByronLedgerState{..}
-
 
 -- deriving via
 --   TrivialLedgerTables (LedgerState ByronBlock)

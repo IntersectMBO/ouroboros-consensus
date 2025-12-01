@@ -105,7 +105,7 @@ forgetLedgerTables :: HasLedgerTables l blk => l blk mk -> l blk EmptyMK
 forgetLedgerTables l = withLedgerTables l emptyLedgerTables
 
 -- | Empty values for every table
-emptyLedgerTables :: (ZeroableMK mk, LedgerTableConstraints l) => LedgerTables l mk
+emptyLedgerTables :: (ZeroableMK mk, LedgerTablesConstraints l) => LedgerTables l mk
 emptyLedgerTables = ltpure emptyMK
 
 --

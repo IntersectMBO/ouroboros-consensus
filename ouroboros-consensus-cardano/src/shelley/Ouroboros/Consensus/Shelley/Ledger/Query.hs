@@ -41,7 +41,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Query
   , shelleyQFTraverseTablesPredicate
   ) where
 
-import Data.Maybe (fromMaybe)
 import Cardano.Binary
   ( FromCBOR (..)
   , ToCBOR (..)
@@ -59,7 +58,6 @@ import Cardano.Ledger.Credential (StakeCredential)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
-import Ouroboros.Consensus.Ledger.Tables.Basics
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
   ( RewardProvenance
   )
@@ -75,16 +73,20 @@ import Data.Bifunctor (second)
 import Data.Coerce
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 -- import Data.MemPack
+
+-- import Data.Function ((&))
+
+import Data.SOP.Sing
 import Data.Sequence (Seq (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Singletons
 import Data.Typeable (Typeable)
 import qualified Data.VMap as VMap
 import GHC.Generics (Generic)
 import Lens.Micro
--- import Data.Function ((&))
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -96,6 +98,8 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Ledger.Tables.Basics
+import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Protocol.Praos.Common
 import qualified Ouroboros.Consensus.Shelley.Eras as SE
@@ -113,9 +117,8 @@ import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
+import Ouroboros.Consensus.Util (ShowProxy (..), coerceMapKeys, coerceSet)
 import Ouroboros.Consensus.Util.IndexedMemPack
-import Data.Singletons
 import Ouroboros.Network.Block
   ( Serialised (..)
   , decodePoint
@@ -124,7 +127,6 @@ import Ouroboros.Network.Block
   )
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import Ouroboros.Network.PeerSelection.LedgerPeers.Utils
-import Data.SOP.Sing
 
 {-------------------------------------------------------------------------------
   BlockSupportsLedgerQuery
@@ -1209,7 +1211,7 @@ answerShelleyLookupQueries ::
   forall proto era m result blk.
   ( Monad m
   , ShelleyCompatible proto era
-  , LedgerTableConstraints (ShelleyBlock proto era)
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   , SListI (TablesForBlock blk)
   , SingI (TablesForBlock blk)
   ) =>
@@ -1242,16 +1244,25 @@ answerShelleyLookupQueries injTables ejTxOut cfg q forker =
     tbs <-
       LedgerDB.roforkerReadTables
         forker
-        (injTables (emptyLedgerTables & onUTxOTable (Proxy @(ShelleyBlock proto era)) .~ Table (KeysMK $ coerceSet txins)))
-    pure $
-      SL.UTxO $
-        Map.mapMaybeWithKey
-            ( \k v ->
-                if k `Set.member` txins
-                  then Just $ ejTxOut v
-                  else Nothing
+        ( injTables
+            ( emptyLedgerTables
+                & onUTxOTable (Proxy @(ShelleyBlock proto era)) .~ Table (KeysMK $ coerceSet txins)
             )
-            ((\(ValuesMK v) -> v) $ getTable $ fromMaybe (error "Impossible, Shelley blocks always have UTxO table") $ getTableByTag (sing @UTxOTable) tbs)
+        )
+    pure
+      $ SL.UTxO
+      $ Map.mapMaybeWithKey
+        ( \k v ->
+            if k `Set.member` txins
+              then Just $ ejTxOut v
+              else Nothing
+        )
+      $ coerceMapKeys
+        ( (\(ValuesMK v) -> v) $
+            getTable $
+              fromMaybe (error "Impossible, Shelley blocks always have UTxO table") $
+                getTableByTag (sing @UTxOTable) tbs
+        )
 
 shelleyQFTraverseTablesPredicate ::
   forall proto era proto' era' result.
@@ -1282,8 +1293,8 @@ answerShelleyTraversingQueries ::
   forall proto era m result blk.
   ( ShelleyCompatible proto era
   , Eq (TxOut blk)
-  , IndexedMemPack (LedgerState blk EmptyMK) (TxOut blk)
-  , LedgerTableConstraints (ShelleyBlock proto era)
+  , IndexedMemPack LedgerState blk UTxOTable
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   , SListI (TablesForBlock blk)
   , SingI (TablesForBlock blk)
   ) =>
@@ -1321,12 +1332,17 @@ answerShelleyTraversingQueries ejTxOut filt cfg q forker = case q of
     Map SL.TxIn (LC.TxOut era)
   partial queryPredicate tbs =
     Map.mapMaybeWithKey
-        ( \_k v ->
-            if queryPredicate v
-              then Just $ ejTxOut v
-              else Nothing
+      ( \_k v ->
+          if queryPredicate v
+            then Just $ ejTxOut v
+            else Nothing
+      )
+      $ coerceMapKeys
+        ( (\(ValuesMK m) -> m) $
+            getTable $
+              fromMaybe (error "impossible") $
+                getTableByTag (sing @UTxOTable) tbs
         )
-        ((\(ValuesMK m) -> m) $ getTable $ fromMaybe (error "impossible") $ getTableByTag (sing @UTxOTable) tbs)
 
   loop queryPredicate !prev !acc = do
     (extValues, k) <- LedgerDB.roforkerRangeReadTables forker prev

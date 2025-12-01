@@ -35,7 +35,7 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
   , TablesForBlock
 
     -- ** UTxO table
-  , TxIn
+  , TxIn (..)
   , TxOut
 
     -- ** Instant stake table
@@ -43,10 +43,11 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
   , Credential
 
     -- * Helpers
-  , MemPackIdx
+
+  --   , MemPackIdx
   , setterForSing
-  , KVConstraintsMK
-  , LedgerTableConstraintsMK
+  --  , KVConstraintsMK
+  --  , LedgerTableConstraintsMK
 
     -- * Casting
 
@@ -66,22 +67,24 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
   -- , defaultCastTable
   ) where
 
+import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Ledger.Coin
 import Cardano.Ledger.Credential
 import Cardano.Ledger.Keys (KeyRole (Staking))
-import Cardano.Ledger.TxIn
+import qualified Cardano.Ledger.TxIn as SL
 import Data.Kind (Type)
 import Data.List.Singletons hiding (All)
+import Data.MemPack
 import Data.SOP.Constraint
 import Data.SOP.Index (Index (..), projectNP)
 import Data.SOP.Strict
 import Data.Singletons
 import Data.Type.Equality (TestEquality (testEquality), (:~:) (Refl))
+import Data.Word
 import GHC.Generics (Generic)
 import Lens.Micro
 import NoThunks.Class
 import Ouroboros.Consensus.Ledger.LedgerStateType
-import Ouroboros.Consensus.Util.IndexedMemPack
 
 --------------------------------------------------------------------------------
 -- Keys and values
@@ -89,11 +92,6 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 
 -- | The possible tables that Consensus is aware of.
 type data TABLE = UTxOTable | InstantStakeTable
-
-type Key :: TABLE -> Type
-type family Key table where
-  Key UTxOTable = TxIn
-  Key InstantStakeTable = Credential 'Staking
 
 ------------------------------------------------------------
 -- START Singletons
@@ -120,28 +118,42 @@ instance TestEquality STABLE where
 -- END Singletons
 ------------------------------------------------------------
 
--- | The table keys and values for each table.
+-- | The only purpose of this type is to modify the MemPack instance to use big
+-- endian serialization. This is necessary to ensure streaming functions of the
+-- UTxO set preserve the order of the entries, as otherwise we would get
+-- different sortings if sorting via the Serialized form and the Haskell Ord
+-- instance.
+--
+-- TODO: fix this in the Ledger. See cardano-ledger#5336.
+newtype TxIn = TxIn {getOriginalTxIn :: SL.TxIn}
+  deriving newtype (Eq, Show, Ord, NoThunks)
+
+newtype BigEndianTxIx = BigEndianTxIx {getOriginalTxIx :: SL.TxIx}
+
+instance MemPack BigEndianTxIx where
+  typeName = "BigEndianTxIx"
+  packedByteCount = packedByteCount . getOriginalTxIx
+  packM (BigEndianTxIx (SL.TxIx w)) = packM (byteSwap16 w)
+  unpackM = BigEndianTxIx . SL.TxIx . byteSwap16 <$> unpackM
+
+instance MemPack TxIn where
+  typeName = "BigEndianTxIn"
+  packedByteCount = packedByteCount . getOriginalTxIn
+  packM (TxIn (SL.TxIn txid txix)) = do
+    packM txid
+    packM (BigEndianTxIx txix)
+  unpackM = do
+    TxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
+
+type Key :: TABLE -> Type
+type family Key table where
+  Key UTxOTable = TxIn
+  Key InstantStakeTable = Credential 'Staking
+
 type Value :: TABLE -> Type -> Type
 type family Value table blk where
   Value UTxOTable blk = TxOut blk
   Value InstantStakeTable blk = CompactForm Coin
-
--- class All (Compose c (WrapKey blk)) (TablesForBlock blk) => AllKeys c blk
--- instance All (Compose c (WrapKey blk)) (TablesForBlock blk) => AllKeys c blk
--- class All (Compose c (WrapValue blk)) (TablesForBlock blk) => AllValues c blk
--- instance All (Compose c (WrapValue blk)) (TablesForBlock blk) => AllValues c blk
-
--- newtype WrapKey blk table = WrapKey (Key blk table)
-
--- deriving instance NoThunks (Fst (TableKV table blk)) => NoThunks (WrapKey blk table)
--- deriving instance Show (Fst (TableKV table blk)) => Show (WrapKey blk table)
--- deriving instance Eq (Fst (TableKV table blk)) => Eq (WrapKey blk table)
-
--- newtype WrapValue blk table = WrapValue (Value blk table)
-
--- deriving instance NoThunks (Snd (TableKV table blk)) => NoThunks (WrapValue blk table)
--- deriving instance Show (Snd (TableKV table blk)) => Show (WrapValue blk table)
--- deriving instance Eq (Snd (TableKV table blk)) => Eq (WrapValue blk table)
 
 type TxOut :: Type -> Type
 type family TxOut blk
@@ -199,19 +211,6 @@ newtype LedgerTables blk mk = LedgerTables
   }
   deriving Generic
 
-{-
-Problem with design 1 is that we could do:
-
-type instance TablesForBlock ByronBlock = '[UTxOTable]
-type instance TxIn ByronBlock = Void
--}
-
--- data LedgerTables' l mk = LedgerTables'
---   { getUTxOTable :: mk (TblKey UTxO blk) (TxOut l)  -- If TxIn l ~ Void => this can only be EmptyMK
---   , getInstantStakeTable :: mk (TblKey InstantStake l) (Coin l)
---   }
---   deriving Generic
-
 deriving newtype instance
   AllTables NoThunks mk blk =>
   NoThunks (LedgerTables blk mk)
@@ -265,47 +264,3 @@ getTableByTag ::
 getTableByTag stag (LedgerTables np) =
   let mem = findIndex (sing @(TablesForBlock l)) stag
    in fmap (flip projectNP np) mem
-
---------------------------------------------------------------------------------
--- Helpers
---------------------------------------------------------------------------------
-
--- | Auxiliary information for @IndexedMemPack@. @mk@ is there only because the
--- last instance needs to be a full type.
-type MemPackIdx :: StateKind
-type family MemPackIdx l mk where
-  MemPackIdx blk mk = LedgerState blk mk
-
---------------------------------------------------------------------------------
--- Auxiliary classes
---------------------------------------------------------------------------------
-
-------------------------------------------------------------
--- Single l
-------------------------------------------------------------
-
-class
-  ( Ord (Key table)
-  , MemPack (Key table)
-  , Eq (Value table blk)
-  , IndexedMemPack (MemPackIdx blk mk) (Value table blk)
-  ) =>
-  KVConstraintsMK blk mk table
-instance
-  ( Ord (Key table)
-  , MemPack (Key table)
-  , Eq (Value table blk)
-  , IndexedMemPack (MemPackIdx blk mk) (Value table blk)
-  ) =>
-  KVConstraintsMK blk mk table
-
-class
-  ( SingI (TablesForBlock blk)
-  , All (KVConstraintsMK blk mk) (TablesForBlock blk)
-  ) =>
-  LedgerTableConstraintsMK blk mk
-instance
-  ( SingI (TablesForBlock blk)
-  , All (KVConstraintsMK blk mk) (TablesForBlock blk)
-  ) =>
-  LedgerTableConstraintsMK blk mk

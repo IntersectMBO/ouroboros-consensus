@@ -116,8 +116,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbSerialiseConstraints
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
-  , LedgerSupportsLMDBLedgerDB
-  , LedgerSupportsV1LedgerDB
+  -- , LedgerSupportsLMDBLedgerDB
+  -- , LedgerSupportsV1LedgerDB
   , LedgerSupportsV2LedgerDB
   , ResolveBlock
   , currentPoint
@@ -202,6 +202,8 @@ import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
 -- import Ouroboros.Consensus.Util.IndexedMemPack
+
+-- import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Streaming
@@ -221,7 +223,6 @@ class
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-
   ) =>
   LedgerDbSerialiseConstraints blk
 
@@ -782,38 +783,38 @@ class All (CanUpgradeLedgerTable blk) (TablesForBlock blk) => CanUpgradeLedgerTa
 class
   ( CanUpgradeLedgerTables l blk
   , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
-  , AllTables NoThunks ValuesMK blk
-  , HasLedgerTables l blk
+  , NoThunks (LedgerTables blk ValuesMK)
+  , NoThunks (l blk EmptyMK)
   ) =>
   LedgerSupportsInMemoryLedgerDB l blk
 instance
   ( CanUpgradeLedgerTables l blk
   , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
-  , AllTables NoThunks ValuesMK blk
-  , HasLedgerTables l blk
+  , NoThunks (LedgerTables blk ValuesMK)
+  , NoThunks (l blk EmptyMK)
   ) =>
   LedgerSupportsInMemoryLedgerDB l blk
 
-class
-  MemPackIdx blk EmptyMK ~ LedgerState blk EmptyMK =>
-  LedgerSupportsLMDBLedgerDB blk
-instance
-  MemPackIdx blk EmptyMK ~ LedgerState blk EmptyMK =>
-  LedgerSupportsLMDBLedgerDB blk
+-- class
+--   All (IndexedMemPack l blk) (TablesForBlock blk) =>
+--   LedgerSupportsLMDBLedgerDB l blk
+-- instance
+--   All (IndexedMemPack l blk) (TablesForBlock blk) =>
+--   LedgerSupportsLMDBLedgerDB l blk
 
-type LedgerSupportsV1LedgerDB l blk =
-  (LedgerSupportsInMemoryLedgerDB l blk, LedgerSupportsLMDBLedgerDB blk)
+-- type LedgerSupportsV1LedgerDB l blk =
+--   (LedgerSupportsInMemoryLedgerDB l blk, LedgerSupportsLMDBLedgerDB l blk)
 
 type LedgerSupportsV2LedgerDB l blk =
   (LedgerSupportsInMemoryLedgerDB l blk)
 
 type LedgerSupportsLedgerDB blk =
-  ( LedgerSupportsLedgerDB' ExtLedgerState blk
-  )
+  (LedgerSupportsLedgerDB' LedgerState blk)
 
 type LedgerSupportsLedgerDB' l blk =
-  ( LedgerSupportsV1LedgerDB l blk
-  , LedgerSupportsV2LedgerDB l blk
+  ( -- LedgerSupportsV1LedgerDB l blk
+    -- ,
+    LedgerSupportsV2LedgerDB l blk
   , LedgerDbSerialiseConstraints blk
   )
 

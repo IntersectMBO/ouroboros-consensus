@@ -250,8 +250,7 @@ tickOne ei slot evs sopIdx partialCfg st =
 instance
   ( CanHardFork xs
   , HasHardForkTxOut xs
-  , LedgerTableConstraints (HardForkBlock xs)
-  , LedgerTableConstraintsMK (HardForkBlock xs) DiffMK
+  , LedgerTablesConstraints (HardForkBlock xs)
   , All (InjectValues xs) xs
   ) =>
   ApplyBlock LedgerState (HardForkBlock xs)
@@ -334,8 +333,7 @@ apply doValidate opts index (WrapLedgerConfig cfg) (Pair (I block) (FlipTickedLe
 instance
   ( CanHardFork xs
   , HasHardForkTxOut xs
-  , LedgerTableConstraints (HardForkBlock xs)
-  , LedgerTableConstraintsMK (HardForkBlock xs) DiffMK
+  , LedgerTablesConstraints (HardForkBlock xs)
   , All (InjectValues xs) xs
   ) =>
   UpdateLedger (HardForkBlock xs)
@@ -416,8 +414,7 @@ instance CanHardFork xs => ValidateEnvelope (HardForkBlock xs) where
 instance
   ( CanHardFork xs
   , HasHardForkTxOut xs
-  , LedgerTableConstraints (HardForkBlock xs)
-  , LedgerTableConstraintsMK (HardForkBlock xs) DiffMK
+  , LedgerTablesConstraints (HardForkBlock xs)
   , All (InjectValues xs) xs
   ) =>
   LedgerSupportsProtocol (HardForkBlock xs)
@@ -908,8 +905,7 @@ injectLedgerEvent index =
 instance
   ( CanHardFork' xs
   , HasHardForkTxOut xs
-  , LedgerTableConstraints (HardForkBlock xs)
-  , LedgerTableConstraintsMK (HardForkBlock xs) DiffMK
+  , LedgerTablesConstraints (HardForkBlock xs)
   ) =>
   HasLedgerTables LedgerState (HardForkBlock xs)
   where
@@ -958,8 +954,7 @@ instance
 instance
   ( CanHardFork' xs
   , HasHardForkTxOut xs
-  , LedgerTableConstraints (HardForkBlock xs)
-  , LedgerTableConstraintsMK (HardForkBlock xs) DiffMK
+  , LedgerTablesConstraints (HardForkBlock xs)
   ) =>
   HasLedgerTables (TickedL LedgerState) (HardForkBlock xs)
   where
@@ -1051,14 +1046,14 @@ instance
 class
   ( HasHardForkTxOut xs
   , CanHardFork xs
-  , LedgerTableConstraints (HardForkBlock xs)
+  , LedgerTablesConstraints (HardForkBlock xs)
   , All (InjectValues xs) xs
   ) =>
   CanHardFork' xs
 instance
   ( HasHardForkTxOut xs
   , CanHardFork xs
-  , LedgerTableConstraints (HardForkBlock xs)
+  , LedgerTablesConstraints (HardForkBlock xs)
   , All (InjectValues xs) xs
   ) =>
   CanHardFork' xs
@@ -1101,7 +1096,7 @@ ejectLedgerTables ::
   ( CanMapMK mk
   , HasHardForkTxOut xs
   , ZeroableMK mk
-  , LedgerTableConstraints x
+  , LedgerTablesConstraints x
   , InjectValues xs x
   , All S.SingI (TablesForBlock x)
   ) =>
@@ -1232,19 +1227,19 @@ type instance TxOut (HardForkBlock xs) = HardForkTxOut xs
 -- >>> :}
 type DefaultHardForkTxOut xs = NS WrapTxOut xs
 
--- type DefaultHardForkCoin xs = NS WrapCoin xs
+-- -- type DefaultHardForkCoin xs = NS WrapCoin xs
 
--- This is just necessary because GHC fails to parse the instance below otherwise
---
--- Try:
--- type instance TablesForBlock (HardForkBlock xs)
---   = S.Nub (Unions (S.Map (S.TyCon1 TablesForBlock) xs))
-data MapTablesForBlock :: Type S.~> [TABLE]
-type instance S.Apply MapTablesForBlock x = TablesForBlock x
+-- -- This is just necessary because GHC fails to parse the instance below otherwise
+-- --
+-- -- Try:
+-- -- type instance TablesForBlock (HardForkBlock xs)
+-- --   = S.Nub (Unions (S.Map (S.TyCon1 TablesForBlock) xs))
+-- data MapTablesForBlock :: Type S.~> [TABLE]
+-- type instance S.Apply MapTablesForBlock x = TablesForBlock x
 
-type instance
-  TablesForBlock (HardForkBlock xs) =
-    S.Nub (Unions (S.Map MapTablesForBlock xs))
+-- type instance
+--   TablesForBlock (HardForkBlock xs) =
+--     S.Nub (Unions (S.Map MapTablesForBlock xs))
 
 class
   HasLedgerTables LedgerState (HardForkBlock xs) =>
@@ -1348,7 +1343,6 @@ injectHardForkTxOutDefault idx = injectNS idx . WrapTxOut
 --   unwrapTxOut
 --     . apFn (projectNP idx txOutEjections)
 --     . K
-
 
 class MemPack (TxOut x) => MemPackTxOut x
 instance MemPack (TxOut x) => MemPackTxOut x

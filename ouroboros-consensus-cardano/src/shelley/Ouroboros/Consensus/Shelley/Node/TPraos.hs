@@ -193,8 +193,7 @@ protocolInfoTPraosShelleyBased ::
   ( ShelleyCompatible (TPraos c) era
   , TxLimits (ShelleyBlock (TPraos c) era)
   , KESAgentContext c m
-  , CanStowLedgerTables (LedgerState (ShelleyBlock (TPraos c) era))
-  , LedgerTableConstraints (ShelleyBlock (TPraos c) era)
+  ,
   ) =>
   ProtocolParamsShelleyBased c ->
   L.TransitionConfig era ->

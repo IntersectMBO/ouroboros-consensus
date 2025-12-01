@@ -216,18 +216,18 @@ translateLedgerTablesWith ::
   ( HasLedgerTables LedgerState y
   , All SingI (TablesForBlock x)
   , PrefixI (TablesForBlock x) (TablesForBlock y)
-  , ToAllDict (KVConstraintsMK y DiffMK) (TablesForBlock y)
+  , ToAllDict (TableConstraints y) (TablesForBlock y)
   ) =>
   TranslateLedgerTables x y ->
   LedgerTables x DiffMK ->
   LedgerTables y DiffMK
 translateLedgerTablesWith (TranslateLedgerTables f) (LedgerTables x) =
-  let dictY = toAllDict @(KVConstraintsMK y DiffMK) @(TablesForBlock y)
+  let dictY = toAllDict @(TableConstraints y) @(TablesForBlock y)
       dictX = prefixAll (prefix @(TablesForBlock x) @(TablesForBlock y)) dictY
    in withAllDict dictX $ foldNP emptyLedgerTables f x
  where
   foldNP ::
-    (All (KVConstraintsMK y DiffMK) xtags, All SingI xtags) =>
+    (All (TableConstraints y) xtags, All SingI xtags) =>
     LedgerTables y DiffMK ->
     NP (TranslateTable x y) xtags ->
     NP (Table DiffMK x) xtags ->

@@ -364,13 +364,14 @@ instance
     ExtLedgerState (unstowLedgerTables lstate) hstate
 
 instance
-  (txout ~ TxOut blk, IndexedMemPack (LedgerState blk EmptyMK) txout) =>
-  IndexedMemPack (ExtLedgerState blk EmptyMK) txout
+  IndexedMemPack LedgerState blk table =>
+  IndexedMemPack ExtLedgerState blk table
   where
-  indexedTypeName (ExtLedgerState st _) = indexedTypeName @(LedgerState blk EmptyMK) @txout st
-  indexedPackedByteCount (ExtLedgerState st _) = indexedPackedByteCount st
-  indexedPackM (ExtLedgerState st _) = indexedPackM st
-  indexedUnpackM (ExtLedgerState st _) = indexedUnpackM st
+  type IndexedValue ExtLedgerState table blk = IndexedValue LedgerState table blk
+  indexedTypeName _ p q = indexedTypeName (Proxy @LedgerState) p q
+  indexedPackedByteCount _ p q (ExtLedgerState st _) = indexedPackedByteCount (Proxy @LedgerState) p q st
+  indexedPackM _ p q (ExtLedgerState st _) = indexedPackM (Proxy @LedgerState) p q st
+  indexedUnpackM _ p q (ExtLedgerState st _) = indexedUnpackM (Proxy @LedgerState) p q st
 
 {-------------------------------------------------------------------------------
   Serialization Codecs
@@ -433,7 +434,7 @@ type family SerializeTablesHint l values :: Type
 type instance SerializeTablesHint l (LedgerTables blk ValuesMK) = l blk EmptyMK
 
 defaultEncodeTablesWithHint ::
-  (KVConstraints blk tag, MemPack (Value tag blk)) =>
+  (TableConstraints blk tag, MemPack (Value tag blk)) =>
   SerializeTablesHint l (LedgerTables blk ValuesMK) ->
   Table ValuesMK blk tag ->
   Encoding
@@ -451,7 +452,7 @@ defaultEncodeTablesWithHint _ (Table (ValuesMK tbs)) =
     ]
 
 defaultDecodeTablesWithHint ::
-  (KVConstraints blk tag, MemPack (Value tag blk)) =>
+  (TableConstraints blk tag, MemPack (Value tag blk)) =>
   SerializeTablesHint l (LedgerTables blk ValuesMK) ->
   Decoder s (Table ValuesMK blk tag)
 defaultDecodeTablesWithHint _ = do

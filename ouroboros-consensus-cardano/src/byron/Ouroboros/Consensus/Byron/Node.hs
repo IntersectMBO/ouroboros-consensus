@@ -1,8 +1,8 @@
-{-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -38,6 +38,7 @@ import Control.Monad (guard)
 import Data.Coerce (coerce)
 import Data.Maybe
 import Data.Text (Text)
+import Data.Typeable (Typeable)
 import Data.Void (Void)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (SystemStart (..))
@@ -49,29 +50,11 @@ import Ouroboros.Consensus.Byron.Node.Serialisation ()
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
+import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Node.InitStorage
-import Ouroboros.Consensus.Node.ProtocolInfo
-import Ouroboros.Consensus.Node.Run
-import Ouroboros.Consensus.NodeId (CoreNodeId)
-import Ouroboros.Consensus.Protocol.Abstract
-import Ouroboros.Consensus.Protocol.PBFT
-
-import Ouroboros.Consensus.Storage.LedgerDB.API
-import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
-import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
-import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
-import Ouroboros.Consensus.Util ((....:))
-import Ouroboros.Network.Magic (NetworkMagic (..))
-import Ouroboros.Consensus.Util
-import Data.Typeable (Typeable)
-import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config.SupportsNode
-import Ouroboros.Consensus.HardFork.Abstract
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
+import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -79,17 +62,27 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.NodeId (CoreNodeId)
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Protocol.PBFT
+import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB
   ( ImmutableDbSerialiseConstraints
   , SerialiseDiskConstraints
   , VolatileDbSerialiseConstraints
   )
+import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
+import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Util (ShowProxy)
+import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util (ShowProxy, (....:))
 import Ouroboros.Network.Block (Serialised)
-
+import Ouroboros.Network.Magic (NetworkMagic (..))
 
 {-------------------------------------------------------------------------------
   Credentials
@@ -343,6 +336,4 @@ deriving via
   instance
     BlockSupportsDiffusionPipelining ByronBlock
 
-instance
-  ( LedgerSupportsV1LedgerDB ExtLedgerState ByronBlock
-  ) => RunNode ByronBlock
+instance RunNode ByronBlock

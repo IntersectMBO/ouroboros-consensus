@@ -90,7 +90,7 @@ class
   , Show (ForgeStateUpdateError blk)
   , GetBlockKeySets blk
   , All SingI (TablesForBlock blk)
-  , ToAllDict (KVConstraintsMK blk DiffMK) (TablesForBlock blk)
+  , ToAllDict (TableConstraints blk) (TablesForBlock blk)
   ) =>
   SingleEraBlock blk
   where

@@ -110,6 +110,7 @@ withDB ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , GetBlockKeySets blk
+  , LedgerDB.LedgerSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -126,6 +127,7 @@ openDB ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , GetBlockKeySets blk
+  , LedgerDB.LedgerSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -142,6 +144,7 @@ openDBInternal ::
   , SerialiseDiskConstraints blk
   , HasCallStack
   , GetBlockKeySets blk
+  , LedgerDB.LedgerSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks

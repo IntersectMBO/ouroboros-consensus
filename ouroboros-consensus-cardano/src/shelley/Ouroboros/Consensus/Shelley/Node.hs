@@ -1,4 +1,3 @@
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -6,6 +5,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -31,29 +31,29 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Ledger
-import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import Ouroboros.Consensus.Shelley.Node.DiffusionPipelining ()
 import Ouroboros.Consensus.Shelley.Node.Serialisation ()
-import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Shelley.Node.TPraos
-import NoThunks.Class
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , pHeaderIssuer
   )
+import Ouroboros.Consensus.Storage.LedgerDB.API
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -126,10 +126,5 @@ instance
   , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
   , LedgerSupportsLedgerDB (ShelleyBlock proto era)
-  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
-  , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
-  , forall mk. Eq (LedgerState (ShelleyBlock proto era) mk)
-  , forall mk. Show (LedgerState (ShelleyBlock proto era) mk)
-  , forall mk. NoThunks (LedgerState (ShelleyBlock proto era) mk)
   ) =>
   RunNode (ShelleyBlock proto era)

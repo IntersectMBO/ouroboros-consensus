@@ -58,7 +58,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
 
     -- * Low-level UTxO manipulations
   , slUtxoL
-  , BigEndianTxIn (..)
   ) where
 
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
@@ -109,6 +108,7 @@ import Data.Map.Strict (Map)
 import Data.MemPack
 import Data.SOP.Constraint (All)
 import Data.SOP.Strict
+import Data.Singletons (SingI)
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
@@ -240,11 +240,7 @@ deriving instance
 
 instance
   ( ShelleyCompatible proto era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
-  , forall mk. (Eq (LedgerState (ShelleyBlock proto era) mk))
-  , forall mk. (Show (LedgerState (ShelleyBlock proto era) mk))
-  , forall mk. (NoThunks (LedgerState (ShelleyBlock proto era) mk))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
   , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   ) =>
@@ -340,42 +336,11 @@ shelleyLedgerTipPoint = shelleyTipToPoint . shelleyLedgerTip
 
 instance
   ( ShelleyCompatible proto era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
-  , forall mk. (Eq (LedgerState (ShelleyBlock proto era) mk))
-  , forall mk. (Show (LedgerState (ShelleyBlock proto era) mk))
-  , forall mk. (NoThunks (LedgerState (ShelleyBlock proto era) mk))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
   , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   ) =>
   UpdateLedger (ShelleyBlock proto era)
-
--- | The only purpose of this type is to modify the MemPack instance to use big
--- endian serialization. This is necessary to ensure streaming functions of the
--- UTxO set preserve the order of the entries, as otherwise we would get
--- different sortings if sorting via the Serialized form and the Haskell Ord
--- instance.
---
--- TODO: fix this in the Ledger. See cardano-ledger#5336.
-newtype BigEndianTxIn = BigEndianTxIn {getOriginalTxIn :: SL.TxIn}
-  deriving newtype (Eq, Show, Ord, NoThunks)
-
-newtype BigEndianTxIx = BigEndianTxIx {getOriginalTxIx :: SL.TxIx}
-
-instance MemPack BigEndianTxIx where
-  typeName = "BigEndianTxIx"
-  packedByteCount = packedByteCount . getOriginalTxIx
-  packM (BigEndianTxIx (SL.TxIx w)) = packM (byteSwap16 w)
-  unpackM = BigEndianTxIx . SL.TxIx . byteSwap16 <$> unpackM
-
-instance MemPack BigEndianTxIn where
-  typeName = "BigEndianTxIn"
-  packedByteCount = packedByteCount . getOriginalTxIn
-  packM (BigEndianTxIn (SL.TxIn txid txix)) = do
-    packM txid
-    packM (BigEndianTxIx txix)
-  unpackM = do
-    BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
 -- type instance TxIn (LedgerState (ShelleyBlock proto era)) = BigEndianTxIn
 type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
@@ -388,15 +353,16 @@ type instance TablesForBlock (ShelleyBlock proto BabbageEra) = '[UTxOTable]
 type instance TablesForBlock (ShelleyBlock proto ConwayEra) = '[UTxOTable]
 
 instance
-  (val ~ Value table (ShelleyBlock proto era), MemPack val) =>
-  IndexedMemPack (LedgerState (ShelleyBlock proto era) EmptyMK) table
+  MemPack (Value table (ShelleyBlock proto era)) =>
+  IndexedMemPack LedgerState (ShelleyBlock proto era) (table :: TABLE)
   where
-  type IndexValue (LedgerState (ShelleyBlock proto era) EmptyMK) table =
-         Value table (ShelleyBlock proto era)
-  indexedTypeName _ = typeName @val
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
+  type
+    IndexedValue LedgerState table (ShelleyBlock proto era) =
+      Value table (ShelleyBlock proto era)
+  indexedTypeName _ _ _ = typeName @(Value table (ShelleyBlock proto era))
+  indexedPackedByteCount _ _ _ _ = packedByteCount
+  indexedPackM _ _ _ _ = packM
+  indexedUnpackM _ _ _ _ = unpackM
 
 instance
   ShelleyCompatible proto era =>
@@ -418,8 +384,8 @@ instance
 
 instance
   ( ShelleyBasedEra era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
+  -- All (TableConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
   ) =>
   HasLedgerTables LedgerState (ShelleyBlock proto era)
   where
@@ -440,8 +406,7 @@ instance
 
 instance
   ( ShelleyBasedEra era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   ) =>
   HasLedgerTables (TickedL LedgerState) (ShelleyBlock proto era)
   where
@@ -488,7 +453,7 @@ t ::
   ( Ord (Key table)
   , MemPack (Key table)
   , Eq (Value table (ShelleyBlock proto era))
-  , IndexedMemPack (MemPackIdx (ShelleyBlock proto era) EmptyMK) (Value table (ShelleyBlock proto era))
+  , IndexedMemPack LedgerState (ShelleyBlock proto era) table
   ) =>
   Table EmptyMK (ShelleyBlock proto era) table
 t = Table emptyMK
@@ -503,13 +468,10 @@ stowUTxOAndInstantStakeLedgerTables st =
     { shelleyLedgerTip
     , shelleyLedgerState = shelleyLedgerState'
     , shelleyLedgerTransition
-    , shelleyLedgerTables =
-        let
-         in LedgerTables $
-              t @UTxOTable :* t @InstantStakeTable :* Nil
+    , shelleyLedgerTables = emptyLedgerTables
     }
  where
-  (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO m
+  (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys m)
   ShelleyLedgerState
     { shelleyLedgerTip
     , shelleyLedgerState
@@ -550,7 +512,7 @@ stowUTxOLedgerTables st =
     , shelleyLedgerTables = emptyLedgerTables
     }
  where
-  (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO m
+  (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys m)
   ShelleyLedgerState
     { shelleyLedgerTip
     , shelleyLedgerState
@@ -615,7 +577,7 @@ stowUTxOAndInstantStakeLedgerTablesTicked st =
     }
  where
   (_, tickedShelleyLedgerState') =
-    tickedShelleyLedgerState `slUtxoL` SL.UTxO tbs
+    tickedShelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys tbs)
   TickedShelleyLedgerState
     { untickedShelleyLedgerTip
     , tickedShelleyLedgerTransition
@@ -659,7 +621,7 @@ stowUTxOLedgerTablesTicked st =
     }
  where
   (_, tickedShelleyLedgerState') =
-    tickedShelleyLedgerState `slUtxoL` SL.UTxO tbs
+    tickedShelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys tbs)
   TickedShelleyLedgerState
     { untickedShelleyLedgerTip
     , tickedShelleyLedgerTransition
@@ -746,9 +708,8 @@ untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
 instance
   ( ShelleyBasedEra era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
-  , forall mk. (NoThunks (LedgerState (ShelleyBlock proto era) mk))
+  , All (TableConstraints (ShelleyBlock proto era)) (TablesForBlock (ShelleyBlock proto era))
+  , SingI (TablesForBlock (ShelleyBlock proto era))
   ) =>
   IsLedger (LedgerState (ShelleyBlock proto era))
   where
@@ -803,11 +764,7 @@ data ShelleyLedgerEvent era
 
 instance
   ( ShelleyCompatible proto era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
-  , forall mk. (Eq (LedgerState (ShelleyBlock proto era) mk))
-  , forall mk. (Show (LedgerState (ShelleyBlock proto era) mk))
-  , forall mk. (NoThunks (LedgerState (ShelleyBlock proto era) mk))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
   , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   ) =>
@@ -895,8 +852,7 @@ instance Exception.Exception ShelleyReapplyException
 applyHelper ::
   forall proto era.
   ( ShelleyCompatible proto era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
   , CanStowLedgerTables
       (Ticked (LedgerState (ShelleyBlock proto era)))
@@ -993,11 +949,7 @@ instance HasHardForkHistory (ShelleyBlock proto era) where
 
 instance
   ( ShelleyCompatible proto era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
-  , forall mk. (Eq (LedgerState (ShelleyBlock proto era) mk))
-  , forall mk. (Show (LedgerState (ShelleyBlock proto era) mk))
-  , forall mk. (NoThunks (LedgerState (ShelleyBlock proto era) mk))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
   , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   ) =>
@@ -1118,7 +1070,7 @@ encodeShelleyLedgerState
 decodeShelleyLedgerState ::
   forall era proto s.
   ( ShelleyCompatible proto era
-  , LedgerTableConstraints (ShelleyBlock proto era)
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   ) =>
   Decoder s (LedgerState (ShelleyBlock proto era) EmptyMK)
 decodeShelleyLedgerState =

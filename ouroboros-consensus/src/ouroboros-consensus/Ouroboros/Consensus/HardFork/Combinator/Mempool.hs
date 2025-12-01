@@ -122,7 +122,7 @@ type DecomposedReapplyTxsResult extra xs =
 instance
   ( CanHardFork' xs
   , HasHardForkTxOut xs
-  , LedgerTableConstraints (HardForkBlock xs)
+  , LedgerTablesConstraints (HardForkBlock xs)
   ) =>
   LedgerSupportsMempool (HardForkBlock xs)
   where
