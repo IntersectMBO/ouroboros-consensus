@@ -12,17 +12,17 @@ import Data.SOP.Strict
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Ledger
-  ( HasHardForkTxOut (..)
-  , CanHardFork'
+  ( CanHardFork'
+  , HasHardForkTxOut (..)
   )
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
-import Ouroboros.Consensus.Ledger.Tables (LedgerTableConstraints)
+import Ouroboros.Consensus.Ledger.Tables
 
 instance
   ( CanHardFork' xs
   , HasHardForkTxOut xs
-  , LedgerTableConstraints (HardForkBlock xs)
+  , LedgerTablesConstraints (HardForkBlock xs)
   ) =>
   CommonProtocolParams (HardForkBlock xs)
   where

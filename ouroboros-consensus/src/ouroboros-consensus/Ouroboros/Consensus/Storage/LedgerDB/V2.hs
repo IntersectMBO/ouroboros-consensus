@@ -70,6 +70,7 @@ mkInitDb ::
   , Backend m backend blk
   , IOLike m
   , GetBlockKeySets blk
+  , LedgerSupportsV2LedgerDB LedgerState blk
   ) =>
   Complete LedgerDbArgs m blk ->
   ResolveBlock m blk ->
@@ -152,6 +153,7 @@ implMkLedgerDb ::
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
   , GetBlockKeySets blk
+  , LedgerSupportsV2LedgerDB LedgerState blk
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   SnapshotManager m m blk (StateRef m ExtLedgerState blk) ->
@@ -179,6 +181,7 @@ mkInternals ::
   , LedgerSupportsProtocol blk
   , ApplyBlock ExtLedgerState blk
   , GetBlockKeySets blk
+  , LedgerSupportsV2LedgerDB LedgerState blk
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   SnapshotManager m m blk (StateRef m ExtLedgerState blk) ->
@@ -297,6 +300,7 @@ implValidate ::
   , LedgerSupportsProtocol blk
   , HasCallStack
   , GetBlockKeySets blk
+  , LedgerSupportsV2LedgerDB LedgerState blk
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   LedgerDBEnv m ExtLedgerState blk ->
@@ -625,6 +629,7 @@ newForkerAtTarget ::
   , HasLedgerTables ExtLedgerState blk
   , LedgerSupportsProtocol blk
   , StandardHash (ExtLedgerState blk)
+  , LedgerSupportsV2LedgerDB LedgerState blk
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   ResourceRegistry m ->
@@ -639,6 +644,7 @@ newForkerByRollback ::
   , StandardHash (ExtLedgerState blk)
   , HasLedgerTables ExtLedgerState blk
   , LedgerSupportsProtocol blk
+  , LedgerSupportsV2LedgerDB LedgerState blk
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   ResourceRegistry m ->

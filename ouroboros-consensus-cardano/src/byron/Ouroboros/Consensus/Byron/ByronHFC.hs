@@ -294,10 +294,10 @@ instance HasHardForkTxOut '[ByronBlock] where
   ejectHardForkTxOut IZ txout = txout
   ejectHardForkTxOut (IS idx') _ = case idx' of {}
 
-deriving via
-  Void
-  instance
-    IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
+-- deriving via
+--   Void
+--   instance
+--     IndexedMemPack LedgerState (HardForkBlock '[ByronBlock])
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}

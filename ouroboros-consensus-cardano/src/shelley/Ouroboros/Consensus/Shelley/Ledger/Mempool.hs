@@ -96,7 +96,7 @@ import qualified Data.Validation as V
 import Data.Word (Word32)
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
-import Lens.Micro hiding (set, lens)
+import Lens.Micro hiding (lens, set)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -174,11 +174,7 @@ perTxOverhead = 4
 instance
   ( ShelleyCompatible proto era
   , TxLimits (ShelleyBlock proto era)
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
-  , forall mk. (Eq (LedgerState (ShelleyBlock proto era) mk))
-  , forall mk. (Show (LedgerState (ShelleyBlock proto era) mk))
-  , forall mk. (NoThunks (LedgerState (ShelleyBlock proto era) mk))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
   , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   ) =>
@@ -283,8 +279,7 @@ instance Show (GenTxId (ShelleyBlock proto era)) where
 applyShelleyTx ::
   forall era proto.
   ( ShelleyBasedEra era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   ) =>
   LedgerConfig (ShelleyBlock proto era) ->
@@ -325,8 +320,7 @@ applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
 
 reapplyShelleyTx ::
   ( ShelleyBasedEra era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   ) =>
   ComputeDiffs ->

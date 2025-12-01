@@ -144,8 +144,9 @@ type IsLedger :: LedgerStateKind -> Constraint
 class
   ( -- Requirements on the ledger state itself
     -- Requirements on 'LedgerCfg'
-    NoThunks (l EmptyMK)
-  , NoThunks (LedgerCfg l)
+    -- NoThunks (l EmptyMK)
+    -- ,
+    NoThunks (LedgerCfg l)
   , -- Requirements on 'LedgerErr'
     Show (LedgerErr l)
   , Eq (LedgerErr l)

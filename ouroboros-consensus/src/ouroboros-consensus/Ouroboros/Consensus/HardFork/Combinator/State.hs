@@ -297,7 +297,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     , HasLedgerTables LedgerState blk
     , HasLedgerTables LedgerState blk'
     , PrefixI (TablesForBlock blk) (TablesForBlock blk')
-    , ToAllDict (KVConstraintsMK blk' DiffMK) (TablesForBlock blk')
+    , ToAllDict (TableConstraints blk') (TablesForBlock blk')
     ) =>
     TranslateLedgerState blk blk' ->
     TranslateLedgerTables blk blk' ->

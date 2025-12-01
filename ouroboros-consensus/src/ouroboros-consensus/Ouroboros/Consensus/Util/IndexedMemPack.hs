@@ -1,7 +1,11 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | This module is a derivative of "Data.MemPack" but we provide something that
 -- will be used to " index " the serialization.
@@ -26,73 +30,113 @@ import Control.Monad.Trans.Fail
 import Data.Array.Byte (ByteArray (..))
 import Data.Bifunctor (first)
 import Data.ByteString
+import Data.Kind (Constraint, Type)
 import Data.MemPack
 import Data.MemPack.Buffer
 import Data.MemPack.Error
+import Data.Proxy
 import GHC.Stack
+import Ouroboros.Consensus.Ledger.LedgerStateType
+import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK)
 
 -- | See 'MemPack'.
-class IndexedMemPack idx a where
-  indexedPackedByteCount :: idx -> a -> Int
-  indexedPackM :: idx -> a -> Pack s ()
-  indexedUnpackM :: Buffer b => forall s. idx -> Unpack s b a
-  indexedTypeName :: idx -> String
+type IndexedMemPack :: StateKind -> Type -> k -> Constraint
+class IndexedMemPack l blk table where
+  type IndexedValue l table blk
+  indexedPackedByteCount ::
+    Proxy l ->
+    Proxy blk ->
+    Proxy table ->
+    l blk EmptyMK ->
+    IndexedValue l table blk ->
+    Int
+
+  indexedPackM ::
+    Proxy l ->
+    Proxy blk ->
+    Proxy table ->
+    l blk EmptyMK ->
+    IndexedValue l table blk ->
+    Pack s ()
+
+  indexedUnpackM ::
+    Buffer b =>
+    Proxy l ->
+    Proxy blk ->
+    Proxy table ->
+    forall s. l blk EmptyMK -> Unpack s b (IndexedValue l table blk)
+
+  indexedTypeName :: Proxy l -> Proxy blk -> Proxy table -> String
 
 indexedPackByteString ::
-  forall a idx. (IndexedMemPack idx a, HasCallStack) => idx -> a -> ByteString
-indexedPackByteString idx = pinnedByteArrayToByteString . indexedPackByteArray True idx
+  forall table l blk.
+  (IndexedMemPack l blk table, HasCallStack) =>
+  l blk EmptyMK -> IndexedValue l table blk -> ByteString
+indexedPackByteString idx = pinnedByteArrayToByteString . indexedPackByteArray @table True idx
 {-# INLINE indexedPackByteString #-}
 
 indexedPackByteArray ::
-  forall a idx.
-  (IndexedMemPack idx a, HasCallStack) =>
+  forall table (l :: StateKind) blk.
+  (IndexedMemPack l blk table, HasCallStack) =>
   Bool ->
-  idx ->
-  a ->
+  l blk EmptyMK ->
+  IndexedValue l table blk ->
   ByteArray
 indexedPackByteArray isPinned idx a =
   packWithByteArray
     isPinned
-    (indexedTypeName @idx @a idx)
-    (indexedPackedByteCount idx a)
-    (indexedPackM idx a)
+    (indexedTypeName (Proxy @l) (Proxy @blk) (Proxy @table))
+    (indexedPackedByteCount (Proxy @l) (Proxy @blk) (Proxy @table) idx a)
+    (indexedPackM (Proxy @l) (Proxy @blk) (Proxy @table) idx a)
 {-# INLINE indexedPackByteArray #-}
 
 indexedUnpackError ::
-  forall idx a b. (Buffer b, IndexedMemPack idx a, HasCallStack) => idx -> b -> a
-indexedUnpackError idx = errorFail . indexedUnpackFail idx
+  forall table l blk b.
+  (Buffer b, IndexedMemPack l blk table, HasCallStack) =>
+  l blk EmptyMK -> b -> IndexedValue l table blk
+indexedUnpackError idx = errorFail . indexedUnpackFail @table idx
 {-# INLINEABLE indexedUnpackError #-}
 
 indexedUnpackFail ::
-  forall idx a b. (IndexedMemPack idx a, Buffer b, HasCallStack) => idx -> b -> Fail SomeError a
+  forall table l blk b.
+  (IndexedMemPack l blk table, Buffer b, HasCallStack) =>
+  l blk EmptyMK -> b -> Fail SomeError (IndexedValue l table blk)
 indexedUnpackFail idx b = do
   let len = bufferByteCount b
-  (a, consumedBytes) <- indexedUnpackLeftOver idx b
+  (a, consumedBytes) <- indexedUnpackLeftOver @table idx b
   Monad.when (consumedBytes /= len) $
-    unpackFailNotFullyConsumed (indexedTypeName @idx @a idx) consumedBytes len
+    unpackFailNotFullyConsumed
+      (indexedTypeName (Proxy @l) (Proxy @blk) (Proxy @table))
+      consumedBytes
+      len
   pure a
 {-# INLINEABLE indexedUnpackFail #-}
 
 indexedUnpackLeftOver ::
-  forall idx a b.
-  (IndexedMemPack idx a, Buffer b, HasCallStack) => idx -> b -> Fail SomeError (a, Int)
-indexedUnpackLeftOver idx b = FailT $ pure $ runST $ runFailAggT $ indexedUnpackLeftOverST idx b
+  forall table l blk b.
+  (IndexedMemPack l blk table, Buffer b, HasCallStack) =>
+  l blk EmptyMK -> b -> Fail SomeError (IndexedValue l table blk, Int)
+indexedUnpackLeftOver idx b = FailT $ pure $ runST $ runFailAggT $ indexedUnpackLeftOverST @table idx b
 {-# INLINEABLE indexedUnpackLeftOver #-}
 
 indexedUnpackLeftOverST ::
-  forall idx a b s.
-  (IndexedMemPack idx a, Buffer b, HasCallStack) => idx -> b -> FailT SomeError (ST s) (a, Int)
+  forall table l blk b s.
+  (IndexedMemPack l blk table, Buffer b, HasCallStack) =>
+  l blk EmptyMK -> b -> FailT SomeError (ST s) (IndexedValue l table blk, Int)
 indexedUnpackLeftOverST idx b = do
   let len = bufferByteCount b
-  res@(_, consumedBytes) <- runStateT (runUnpack (indexedUnpackM idx) b) 0
-  Monad.when (consumedBytes > len) $ errorLeftOver (indexedTypeName @idx @a idx) consumedBytes len
+  res@(_, consumedBytes) <-
+    runStateT (runUnpack (indexedUnpackM (Proxy @l) (Proxy @blk) (Proxy @table) idx) b) 0
+  Monad.when (consumedBytes > len) $
+    errorLeftOver (indexedTypeName (Proxy @l) (Proxy @blk) (Proxy @table)) consumedBytes len
   pure res
 {-# INLINEABLE indexedUnpackLeftOverST #-}
 
 indexedUnpackEither ::
-  forall idx a b.
-  (IndexedMemPack idx a, Buffer b, HasCallStack) => idx -> b -> Either SomeError a
-indexedUnpackEither idx = first fromMultipleErrors . runFailAgg . indexedUnpackFail idx
+  forall table l blk b.
+  (IndexedMemPack l blk table, Buffer b, HasCallStack) =>
+  l blk EmptyMK -> b -> Either SomeError (IndexedValue l table blk)
+indexedUnpackEither idx = first fromMultipleErrors . runFailAgg . indexedUnpackFail @table idx
 {-# INLINEABLE indexedUnpackEither #-}
 
 unpackEither ::

@@ -42,8 +42,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables
   ( DiffMK
   , EmptyMK
-  , KVConstraintsMK
-  , LedgerTableConstraints
+  , LedgerTablesConstraints
   , TablesForBlock
   )
 import Ouroboros.Consensus.Node.Run
@@ -73,8 +72,7 @@ instance ShelleyCompatible proto era => HasBinaryBlockInfo (ShelleyBlock proto e
 
 instance
   ( ShelleyCompatible proto era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
+  , LedgerTablesConstraints (ShelleyBlock proto era)
   ) =>
   SerialiseDiskConstraints (ShelleyBlock proto era)
 
@@ -100,10 +98,7 @@ instance
   where
   encodeDisk _ = encodeShelleyLedgerState
 instance
-  ( ShelleyCompatible proto era
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  , All (KVConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
-  ) =>
+  ShelleyCompatible proto era =>
   DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK)
   where
   decodeDisk _ = decodeShelleyLedgerState

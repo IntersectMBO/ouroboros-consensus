@@ -33,15 +33,14 @@ import Ouroboros.Consensus.Util.TypeLevel
   CanHardFork
 -------------------------------------------------------------------------------}
 
-
 class NoThunks (LedgerState blk mk) => NoThunksLedgerState mk blk
 instance NoThunks (LedgerState blk mk) => NoThunksLedgerState mk blk
 
 class PrefixI (TablesForBlock x) (TablesForBlock y) => PrefixC x y
 instance PrefixI (TablesForBlock x) (TablesForBlock y) => PrefixC x y
 
-class ToAllDict (KVConstraintsMK x DiffMK) (TablesForBlock x) => ToAllDictTables x
-instance ToAllDict (KVConstraintsMK x DiffMK) (TablesForBlock x) => ToAllDictTables x
+class ToAllDict (TableConstraints x) (TablesForBlock x) => ToAllDictTables x
+instance ToAllDict (TableConstraints x) (TablesForBlock x) => ToAllDictTables x
 
 class
   ( All SingleEraBlock xs
@@ -56,7 +55,6 @@ class
   , TxMeasureMetrics (HardForkTxMeasure xs)
   , InPairs.InPairsC PrefixC xs
   , All ToAllDictTables xs
-  , All (NoThunksLedgerState EmptyMK) xs
   ) =>
   CanHardFork xs
   where

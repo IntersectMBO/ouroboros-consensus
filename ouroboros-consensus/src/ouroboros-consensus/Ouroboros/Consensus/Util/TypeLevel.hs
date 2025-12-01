@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Util.TypeLevel
   , prefixAll
   , withAllDict
   , ToAllDict (..)
+  , AllDict (..)
   ) where
 
 import Data.Kind (Type)

@@ -188,7 +188,7 @@ import Ouroboros.Consensus.Ledger.Tables.MapKind
 -- | Extracting @'LedgerTables'@ from @l mk@ (which will share the same @mk@),
 -- or replacing the @'LedgerTables'@ associated to a particular @l@.
 type HasLedgerTables :: (Type -> LedgerStateKind) -> Type -> Constraint
-class (LedgerTableConstraints blk, LedgerTableConstraintsMK blk DiffMK) => HasLedgerTables l blk where
+class LedgerTablesConstraints blk => HasLedgerTables l blk where
   -- | Extract the ledger tables from a ledger state
   --
   -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance

@@ -124,21 +124,12 @@ instance
 
 instance
   ( ShelleyCompatible proto era
-  , ToAllDict
-      (KVConstraintsMK (ShelleyBlock proto era) DiffMK)
-      (TablesForBlock (ShelleyBlock proto era))
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
-  , Crypto (ProtoCrypto proto)
-  , CanStowLedgerTables
-      (Ticked (LedgerState (ShelleyBlock proto era)))
-  , CanStowLedgerTables
-      (LedgerState (ShelleyBlock proto era))
-  , All SingI (TablesForBlock (ShelleyBlock proto era))
   , GetBlockKeySets (ShelleyBlock proto era)
-  , forall mk. Eq (LedgerState (ShelleyBlock proto era) mk)
-  , forall mk. Show (LedgerState (ShelleyBlock proto era) mk)
-  , forall mk. NoThunks (LedgerState (ShelleyBlock proto era) mk)
+  , Crypto (ProtoCrypto proto)
+  , All SingI (TablesForBlock (ShelleyBlock proto era))
+  , ToAllDict (TableConstraints (ShelleyBlock proto era)) (TablesForBlock (ShelleyBlock proto era))
   ) =>
   NoHardForks (ShelleyBlock proto era)
   where
@@ -182,41 +173,23 @@ instance
 -- prepared for future hard forks without having to do any bit twiddling.
 instance
   ( ShelleyCompatible proto era
-  , ToAllDict
-      (KVConstraintsMK (ShelleyBlock proto era) DiffMK)
-      (TablesForBlock (ShelleyBlock proto era))
+  , GetBlockKeySets (ShelleyBlock proto era)
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
-  , CanStowLedgerTables
-      (Ticked (LedgerState (ShelleyBlock proto era)))
-  , CanStowLedgerTables
-      (LedgerState (ShelleyBlock proto era))
   , All SingI (TablesForBlock (ShelleyBlock proto era))
-  , GetBlockKeySets (ShelleyBlock proto era)
-  , forall mk. Eq (LedgerState (ShelleyBlock proto era) mk)
-  , forall mk. Show (LedgerState (ShelleyBlock proto era) mk)
-  , forall mk. NoThunks (LedgerState (ShelleyBlock proto era) mk)
+  , ToAllDict (TableConstraints (ShelleyBlock proto era)) (TablesForBlock (ShelleyBlock proto era))
   ) =>
   SerialiseHFC '[ShelleyBlock proto era]
 
 instance
   ( ShelleyCompatible proto era
-  , All SingI (TablesForBlock (ShelleyBlock proto era))
+  , GetBlockKeySets (ShelleyBlock proto era)
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
-  , ToAllDict
-      (KVConstraintsMK (ShelleyBlock proto era) DiffMK)
-      (TablesForBlock (ShelleyBlock proto era))
   , Crypto (ProtoCrypto proto)
-  , CanStowLedgerTables
-      (Ticked (LedgerState (ShelleyBlock proto era)))
-  , CanStowLedgerTables
-      (LedgerState (ShelleyBlock proto era))
-  , GetBlockKeySets (ShelleyBlock proto era)
-  , forall mk. Eq (LedgerState (ShelleyBlock proto era) mk)
-  , forall mk. Show (LedgerState (ShelleyBlock proto era) mk)
-  , forall mk. NoThunks (LedgerState (ShelleyBlock proto era) mk)
+  , All SingI (TablesForBlock (ShelleyBlock proto era))
+  , ToAllDict (TableConstraints (ShelleyBlock proto era)) (TablesForBlock (ShelleyBlock proto era))
   ) =>
   SerialiseConstraintsHFC (ShelleyBlock proto era)
 
@@ -270,19 +243,10 @@ instance
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , All SingI (TablesForBlock (ShelleyBlock proto era))
   , TxLimits (ShelleyBlock proto era)
-  , Crypto (ProtoCrypto proto)
-  , CanStowLedgerTables
-      (Ticked (LedgerState (ShelleyBlock proto era)))
-  , CanStowLedgerTables
-      (LedgerState (ShelleyBlock proto era))
-  , All SingI (TablesForBlock (ShelleyBlock proto era))
-  , ToAllDict
-      (KVConstraintsMK (ShelleyBlock proto era) DiffMK)
-      (TablesForBlock (ShelleyBlock proto era))
-  , forall mk. Eq (LedgerState (ShelleyBlock proto era) mk)
-  , forall mk. Show (LedgerState (ShelleyBlock proto era) mk)
-  , forall mk. NoThunks (LedgerState (ShelleyBlock proto era) mk)
   , GetBlockKeySets (ShelleyBlock proto era)
+  , Crypto (ProtoCrypto proto)
+  , All SingI (TablesForBlock (ShelleyBlock proto era))
+  , ToAllDict (TableConstraints (ShelleyBlock proto era)) (TablesForBlock (ShelleyBlock proto era))
   ) =>
   SingleEraBlock (ShelleyBlock proto era)
   where
@@ -415,8 +379,8 @@ instance
   , SL.TranslateEra era (ShelleyTip proto)
   , SL.TranslateEra era SL.NewEpochState
   , SL.TranslationError era SL.NewEpochState ~ Void
-  , LedgerTableConstraints (ShelleyBlock proto era)
-  --  , CanMapMK mk
+  , SingI (TablesForBlock (ShelleyBlock proto era))
+  , All (TableConstraints (ShelleyBlock proto era)) (TablesForBlock (ShelleyBlock proto era))
   ) =>
   SL.TranslateEra era (Flip LedgerState EmptyMK :.: ShelleyBlock proto)
   where
@@ -511,14 +475,15 @@ instance
 --     IZ -> shelleyQFTraverseTablesPredicate
 --     IS idx -> case idx of {}
 
-instance
-  (txout ~ SL.TxOut era, MemPack txout) =>
-  IndexedMemPack (LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK) txout
-  where
-  indexedTypeName _ = typeName @txout
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
+-- instance
+--   MemPack (Value table (HardForkBlock '[ShelleyBlock proto era])) =>
+--   IndexedMemPack LedgerState (HardForkBlock '[ShelleyBlock proto era]) (table :: TABLE)
+--   where
+--   type IndexedValue LedgerState table (HardForkBlock '[ShelleyBlock proto era]) = Value table (HardForkBlock '[ShelleyBlock proto era])
+--   indexedTypeName _ = typeName @txout
+--   indexedPackedByteCount _ = packedByteCount
+--   indexedPackM _ = packM
+--   indexedUnpackM _ = unpackM
 
 -- instance
 --   ShelleyCompatible proto era =>

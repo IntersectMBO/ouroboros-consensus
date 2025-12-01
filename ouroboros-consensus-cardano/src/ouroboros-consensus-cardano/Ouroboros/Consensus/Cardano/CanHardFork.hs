@@ -784,7 +784,11 @@ translateLedgerStateConwayToDijkstraWrapper =
           --     )
           -- )
           noNewTickingDiffs
-            . _
+            . unFlip
+            . unComp
+            . SL.translateEra' (getDijkstraTranslationContext cfgDijkstra)
+            . Comp
+            . Flip
       }
 
 translateLedgerTablesConwayToDijkstraWrapper ::

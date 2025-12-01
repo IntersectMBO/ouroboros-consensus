@@ -101,6 +101,7 @@ newInMemoryLedgerTablesHandle ::
   forall m l blk.
   ( IOLike m
   , LedgerSupportsInMemoryLedgerDB l blk
+  , HasLedgerTables l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   SomeHasFS m ->
@@ -145,6 +146,7 @@ implClose tracer tv = do
 implDuplicate ::
   ( IOLike m
   , LedgerSupportsInMemoryLedgerDB l blk
+  , HasLedgerTables l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   StrictTVar m (LedgerTablesHandleState blk) ->
@@ -201,6 +203,7 @@ implReadAll tv _ = do
 implPushDiffs ::
   ( IOLike m
   , LedgerSupportsInMemoryLedgerDB l blk
+  , HasLedgerTables l blk
   ) =>
   StrictTVar m (LedgerTablesHandleState blk) ->
   l blk mk1 ->
