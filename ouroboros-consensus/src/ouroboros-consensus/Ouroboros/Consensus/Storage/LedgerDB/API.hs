@@ -113,14 +113,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDB (..)
   , LedgerDB'
   , LedgerDbPrune (..)
+  , ResolveBlock
+  , currentPoint
+
+    -- * Constraints
   , LedgerDbSerialiseConstraints
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
-  -- , LedgerSupportsLMDBLedgerDB
-  -- , LedgerSupportsV1LedgerDB
-  , LedgerSupportsV2LedgerDB
-  , ResolveBlock
-  , currentPoint
 
     -- * Initialization
   , InitDB (..)
@@ -155,6 +154,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
 
     -- * Streaming
   , StreamingBackend (..)
+  , StreamOfTable (..)
   , Yield
   , Sink
   , Decoders (..)
@@ -179,6 +179,7 @@ import Data.Functor.Contravariant ((>$<))
 import Data.Kind
 import Data.Proxy
 import Data.SOP.Constraint
+import Data.SOP.Strict
 import Data.Set (Set)
 import Data.Word
 import GHC.Generics (Generic)
@@ -190,7 +191,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
--- import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
@@ -201,9 +201,6 @@ import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
--- import Ouroboros.Consensus.Util.IndexedMemPack
-
--- import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Streaming
@@ -785,6 +782,7 @@ class
   , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
   , NoThunks (LedgerTables blk ValuesMK)
   , NoThunks (l blk EmptyMK)
+  , All TableLabel (TablesForBlock blk)
   ) =>
   LedgerSupportsInMemoryLedgerDB l blk
 instance
@@ -792,29 +790,15 @@ instance
   , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
   , NoThunks (LedgerTables blk ValuesMK)
   , NoThunks (l blk EmptyMK)
+  , All TableLabel (TablesForBlock blk)
   ) =>
   LedgerSupportsInMemoryLedgerDB l blk
-
--- class
---   All (IndexedMemPack l blk) (TablesForBlock blk) =>
---   LedgerSupportsLMDBLedgerDB l blk
--- instance
---   All (IndexedMemPack l blk) (TablesForBlock blk) =>
---   LedgerSupportsLMDBLedgerDB l blk
-
--- type LedgerSupportsV1LedgerDB l blk =
---   (LedgerSupportsInMemoryLedgerDB l blk, LedgerSupportsLMDBLedgerDB l blk)
-
-type LedgerSupportsV2LedgerDB l blk =
-  (LedgerSupportsInMemoryLedgerDB l blk)
 
 type LedgerSupportsLedgerDB blk =
   (LedgerSupportsLedgerDB' LedgerState blk)
 
 type LedgerSupportsLedgerDB' l blk =
-  ( -- LedgerSupportsV1LedgerDB l blk
-    -- ,
-    LedgerSupportsV2LedgerDB l blk
+  ( LedgerSupportsInMemoryLedgerDB l blk
   , LedgerDbSerialiseConstraints blk
   )
 
@@ -845,12 +829,19 @@ class StreamingBackend m backend blk where
 
   sink :: Proxy backend -> SinkArgs m backend blk -> Sink m blk
 
+newtype StreamOfTable m blk table
+  = StreamOfTable
+      ( Stream
+          (Of (Key table, Value table blk))
+          (ExceptT DeserialiseFailure m)
+          (Stream (Of ByteString) m (Maybe CRC))
+      )
+
 type Yield m blk =
   LedgerState blk EmptyMK ->
-  ( ( Stream
-        (Of (TxIn, TxOut blk))
-        (ExceptT DeserialiseFailure m)
-        (Stream (Of ByteString) m (Maybe CRC)) ->
+  ( ( NP
+        (StreamOfTable m blk)
+        (TablesForBlock blk) ->
       ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
     )
   ) ->
@@ -858,13 +849,13 @@ type Yield m blk =
 
 type Sink m blk =
   LedgerState blk EmptyMK ->
-  Stream
-    (Of (TxIn, TxOut blk))
-    (ExceptT DeserialiseFailure m)
-    (Stream (Of ByteString) m (Maybe CRC)) ->
+  ( NP
+      (StreamOfTable m blk)
+      (TablesForBlock blk) ->
+    ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+  ) ->
   ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
 
 data Decoders blk
   = Decoders
-      (forall s. Decoder s TxIn)
       (forall s. Decoder s (TxOut blk))

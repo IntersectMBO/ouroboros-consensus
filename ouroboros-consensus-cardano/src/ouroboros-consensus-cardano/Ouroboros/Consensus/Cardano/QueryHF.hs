@@ -19,7 +19,6 @@
 
 module Ouroboros.Consensus.Cardano.QueryHF () where
 
-import Data.Coerce
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint

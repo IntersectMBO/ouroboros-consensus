@@ -70,6 +70,7 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( HasPartialConsensusConfig
   )
 import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Abstract (GetBlockKeySets)
 import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.Tables (CanStowLedgerTables, LedgerTablesConstraints)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -134,6 +135,7 @@ class
   , LedgerTablesConstraints (ShelleyBlock proto era)
   , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
   , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  , GetBlockKeySets (ShelleyBlock proto era)
   ) =>
   ShelleyCompatible proto era
 

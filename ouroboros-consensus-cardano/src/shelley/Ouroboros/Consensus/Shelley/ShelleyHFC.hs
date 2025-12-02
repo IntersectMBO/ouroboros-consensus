@@ -29,45 +29,23 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC
 
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion, unNonZero)
--- import Cardano.Ledger.Binary.Decoding
---   ( decShareCBOR
---   , decodeMap
---   , decodeMemPack
---   , internsFromMap
---   )
--- import Cardano.Ledger.Binary.Encoding
---   ( encodeMap
---   , encodeMemPack
---   , toPlainEncoding
---   )
--- import qualified Cardano.Ledger.Conway.State as SL
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
--- import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
--- import Codec.CBOR.Decoding
--- import Codec.CBOR.Encoding
 import Control.Monad (guard)
 import Control.Monad.Except (runExcept, throwError)
 import Data.Coerce
 import qualified Data.Map.Strict as Map
-import Data.MemPack
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
--- import Data.SOP.Index (Index (..))
--- import Data.SOP.Strict
--- import qualified Data.SOP.Tails as Tails
--- import qualified Data.SOP.Telescope as Telescope
 import Data.Singletons
 import qualified Data.Text as T (pack)
--- import Data.Typeable
 import Data.Void (Void)
 import Data.Word
 import Lens.Micro ((^.))
-import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
@@ -80,7 +58,6 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
--- import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
@@ -97,7 +74,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.TypeLevel
 
 {-------------------------------------------------------------------------------

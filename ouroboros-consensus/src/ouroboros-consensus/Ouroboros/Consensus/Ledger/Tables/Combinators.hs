@@ -81,11 +81,11 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators
     -- * Basic bifunctors
   , K2 (..)
   , type (:..:) (..)
+
+    -- * Operate on particular tables
   , onUTxOTable
   , onInstantStakeTable
   , onTable
-  , onAllTables
-  , onAllRawTables
   ) where
 
 import Data.Bifunctor
@@ -98,10 +98,8 @@ import Data.SOP.Functors
 import Data.SOP.Strict
 import Data.Singletons
 import Lens.Micro
--- import NoThunks.Class
 import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.Tables.Basics
-import Ouroboros.Consensus.Ledger.Tables.MapKind
 import Ouroboros.Consensus.Util ((...:), (..:), (.:))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -109,6 +107,7 @@ import Ouroboros.Consensus.Util.IndexedMemPack
   Common constraints
 -------------------------------------------------------------------------------}
 
+-- | What must a table satisfy to be considered a table?
 class
   ( Ord (Key table)
   , MemPack (Key table)
@@ -116,6 +115,7 @@ class
   , IndexedMemPack LedgerState blk table
   ) =>
   TableConstraints blk table
+
 instance
   ( Ord (Key table)
   , MemPack (Key table)
@@ -124,9 +124,11 @@ instance
   ) =>
   TableConstraints blk table
 
+-- | 'TableConstraints' for all tables for a block
 class
   (SingI (TablesForBlock blk), All (TableConstraints blk) (TablesForBlock blk)) =>
   LedgerTablesConstraints blk
+
 instance
   (SingI (TablesForBlock blk), All (TableConstraints blk) (TablesForBlock blk)) =>
   LedgerTablesConstraints blk
@@ -148,13 +150,13 @@ onInstantStakeTable ::
 onInstantStakeTable p = onTable p (Proxy @InstantStakeTable)
 
 onTable ::
-  forall blk (tag :: TABLE) mk.
-  (SingI tag, SingI (TablesForBlock blk)) =>
+  forall blk (table :: TABLE) mk.
+  (SingI table, SingI (TablesForBlock blk)) =>
   Proxy blk ->
-  Proxy tag ->
-  ASetter' (LedgerTables blk mk) (Table mk blk tag)
+  Proxy table ->
+  ASetter' (LedgerTables blk mk) (Table mk blk table)
 onTable _ _ =
-  case setterForSing (sing @(TablesForBlock blk)) (sing @tag) of
+  case setterForSing (sing @(TablesForBlock blk)) (sing @table) of
     Nothing -> \_ s -> pure s
     Just setter -> setter
 

@@ -212,7 +212,7 @@ data MempoolLedgerDBView m blk = MempoolLedgerDBView
   }
 
 instance
-  (StandardHash blk, UpdateLedger blk) =>
+  (StandardHash blk, ApplyBlock LedgerState blk) =>
   Eq (MempoolLedgerDBView m blk)
   where
   MempoolLedgerDBView a _ == MempoolLedgerDBView b _ =
@@ -303,7 +303,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride tracer topLevelRegistry = do
 -- | Tick the 'LedgerState' using the given 'BlockSlot'.
 tickLedgerState ::
   forall blk.
-  (UpdateLedger blk, ValidateEnvelope blk) =>
+  (ApplyBlock LedgerState blk, ValidateEnvelope blk) =>
   LedgerConfig blk ->
   ForgeLedgerState blk ->
   (SlotNo, TickedLedgerState blk DiffMK)

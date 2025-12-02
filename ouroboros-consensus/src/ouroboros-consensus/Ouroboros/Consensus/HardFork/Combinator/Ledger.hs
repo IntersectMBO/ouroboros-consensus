@@ -9,13 +9,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -112,7 +110,6 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.TypeLevel
 
 -- $setup
 -- >>> import Image.LaTeX.Render
@@ -325,18 +322,6 @@ apply doValidate opts index (WrapLedgerConfig cfg) (Pair (I block) (FlipTickedLe
     withExcept (injectLedgerError index) $
       fmap (Comp . fmap Flip . embedLedgerResult (injectLedgerEvent index)) $
         applyBlockLedgerResultWithValidation doValidate opts cfg block st
-
-{-------------------------------------------------------------------------------
-  UpdateLedger
--------------------------------------------------------------------------------}
-
-instance
-  ( CanHardFork xs
-  , HasHardForkTxOut xs
-  , LedgerTablesConstraints (HardForkBlock xs)
-  , All (InjectValues xs) xs
-  ) =>
-  UpdateLedger (HardForkBlock xs)
 
 {-------------------------------------------------------------------------------
   HasHardForkHistory
@@ -1227,20 +1212,6 @@ type instance TxOut (HardForkBlock xs) = HardForkTxOut xs
 -- >>> :}
 type DefaultHardForkTxOut xs = NS WrapTxOut xs
 
--- -- type DefaultHardForkCoin xs = NS WrapCoin xs
-
--- -- This is just necessary because GHC fails to parse the instance below otherwise
--- --
--- -- Try:
--- -- type instance TablesForBlock (HardForkBlock xs)
--- --   = S.Nub (Unions (S.Map (S.TyCon1 TablesForBlock) xs))
--- data MapTablesForBlock :: Type S.~> [TABLE]
--- type instance S.Apply MapTablesForBlock x = TablesForBlock x
-
--- type instance
---   TablesForBlock (HardForkBlock xs) =
---     S.Nub (Unions (S.Map MapTablesForBlock xs))
-
 class
   HasLedgerTables LedgerState (HardForkBlock xs) =>
   HasHardForkTxOut xs
@@ -1260,7 +1231,7 @@ class
   txOutTranslations =
     Tails.inPairsToTails $
       InPairs.hmap
-        (\translator -> InPairs.Fn2 $ WrapTxOut . undefined {- translateTxOutWith -} translator . unwrapTxOut)
+        (\translator -> InPairs.Fn2 $ WrapTxOut . translateTxOutWith translator . unwrapTxOut)
         (translateLedgerTables (hardForkEraTranslation @xs))
 
 instance
@@ -1286,7 +1257,9 @@ instance
       id
 
 instance
-  (SListI xs, All (CanUpgradeLedgerTable (HardForkBlock xs)) (TablesForBlock (HardForkBlock xs))) =>
+  ( SListI xs
+  , All (CanUpgradeLedgerTable (HardForkBlock xs)) (TablesForBlock (HardForkBlock xs))
+  ) =>
   CanUpgradeLedgerTables LedgerState (HardForkBlock xs)
   where
   upgradeTables

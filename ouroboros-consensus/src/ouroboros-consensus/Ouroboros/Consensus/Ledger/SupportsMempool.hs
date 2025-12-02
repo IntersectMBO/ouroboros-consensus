@@ -108,7 +108,7 @@ data ComputeDiffs
   deriving Show
 
 class
-  ( UpdateLedger blk
+  ( ApplyBlock LedgerState blk
   , TxLimits blk
   , NoThunks (GenTx blk)
   , NoThunks (Validated (GenTx blk))

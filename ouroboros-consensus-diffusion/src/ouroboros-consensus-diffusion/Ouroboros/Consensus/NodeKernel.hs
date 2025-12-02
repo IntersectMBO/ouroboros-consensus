@@ -62,6 +62,7 @@ import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.LedgerStateType (TickedL (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -646,7 +647,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
       snap <- getSnapshot mempool -- only used for its tip-like information
       pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
 
-    let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+    let readTables = roforkerReadTables forker
 
     mempoolSnapshot <-
       lift $
@@ -678,7 +679,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           cfg
           bcBlockNo
           currentSlot
-          (forgetLedgerTables tickedLedgerState)
+          (unTickedL $ forgetLedgerTables $ TickedL tickedLedgerState)
           txs
           proof
 
@@ -929,7 +930,7 @@ getPeersFromCurrentLedgerAfterSlot ::
   forall m blk addrNTN addrNTC.
   ( IOLike m
   , LedgerSupportsPeerSelection blk
-  , UpdateLedger blk
+  , ApplyBlock LedgerState blk
   ) =>
   NodeKernel m addrNTN addrNTC blk ->
   SlotNo ->
@@ -946,7 +947,7 @@ getPeersFromCurrentLedgerAfterSlot kernel slotNo =
 -- | Retrieve the slot of the immutable tip
 getImmTipSlot ::
   ( IOLike m
-  , UpdateLedger blk
+  , ApplyBlock LedgerState blk
   ) =>
   NodeKernel m addrNTN addrNTC blk ->
   STM m (WithOrigin SlotNo)

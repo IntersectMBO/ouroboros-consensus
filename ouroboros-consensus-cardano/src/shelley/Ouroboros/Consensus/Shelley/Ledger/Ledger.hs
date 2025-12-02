@@ -61,7 +61,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   ) where
 
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
-import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
+import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
   ( decShareCBOR
@@ -239,11 +239,7 @@ deriving instance
   NoThunks (ShelleyPartialLedgerConfig era)
 
 instance
-  ( ShelleyCompatible proto era
-  , LedgerTablesConstraints (ShelleyBlock proto era)
-  , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
-  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
-  ) =>
+  ShelleyCompatible proto era =>
   HasPartialLedgerConfig (ShelleyBlock proto era)
   where
   type PartialLedgerConfig (ShelleyBlock proto era) = ShelleyPartialLedgerConfig era
@@ -334,15 +330,6 @@ shelleyLedgerTipPoint ::
   Point (ShelleyBlock proto era)
 shelleyLedgerTipPoint = shelleyTipToPoint . shelleyLedgerTip
 
-instance
-  ( ShelleyCompatible proto era
-  , LedgerTablesConstraints (ShelleyBlock proto era)
-  , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
-  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
-  ) =>
-  UpdateLedger (ShelleyBlock proto era)
-
--- type instance TxIn (LedgerState (ShelleyBlock proto era)) = BigEndianTxIn
 type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
 type instance TablesForBlock (ShelleyBlock proto DijkstraEra) = '[UTxOTable, InstantStakeTable]
 type instance TablesForBlock (ShelleyBlock proto ShelleyEra) = '[UTxOTable]
@@ -447,16 +434,6 @@ instance CanStowLedgerTables (LedgerState (ShelleyBlock proto ConwayEra)) where
 instance CanStowLedgerTables (LedgerState (ShelleyBlock proto DijkstraEra)) where
   stowLedgerTables = stowUTxOAndInstantStakeLedgerTables
   unstowLedgerTables = unstowUTxOAndInstantStakeLedgerTables
-
-t ::
-  forall table proto era.
-  ( Ord (Key table)
-  , MemPack (Key table)
-  , Eq (Value table (ShelleyBlock proto era))
-  , IndexedMemPack LedgerState (ShelleyBlock proto era) table
-  ) =>
-  Table EmptyMK (ShelleyBlock proto era) table
-t = Table emptyMK
 
 stowUTxOAndInstantStakeLedgerTables ::
   forall proto era.
@@ -763,11 +740,7 @@ data ShelleyLedgerEvent era
     ShelleyLedgerEventTICK (STS.Event (Core.EraRule "TICK" era))
 
 instance
-  ( ShelleyCompatible proto era
-  , LedgerTablesConstraints (ShelleyBlock proto era)
-  , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
-  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
-  ) =>
+  ShelleyCompatible proto era =>
   ApplyBlock LedgerState (ShelleyBlock proto era)
   where
   -- Note: in the Shelley ledger, the @CHAIN@ rule is used to apply a whole
@@ -851,12 +824,7 @@ instance Exception.Exception ShelleyReapplyException
 
 applyHelper ::
   forall proto era.
-  ( ShelleyCompatible proto era
-  , LedgerTablesConstraints (ShelleyBlock proto era)
-  , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
-  , CanStowLedgerTables
-      (Ticked (LedgerState (ShelleyBlock proto era)))
-  ) =>
+  ShelleyCompatible proto era =>
   ( SL.Globals ->
     SL.NewEpochState era ->
     SL.Block SL.BHeaderView era ->
@@ -948,11 +916,7 @@ instance HasHardForkHistory (ShelleyBlock proto era) where
       shelleyEraParamsNeverHardForks . shelleyLedgerGenesis
 
 instance
-  ( ShelleyCompatible proto era
-  , LedgerTablesConstraints (ShelleyBlock proto era)
-  , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
-  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
-  ) =>
+  ShelleyCompatible proto era =>
   CommonProtocolParams (ShelleyBlock proto era)
   where
   maxHeaderSize = fromIntegral . view ppMaxBHSizeL . getPParams . shelleyLedgerState
@@ -1069,9 +1033,7 @@ encodeShelleyLedgerState
 
 decodeShelleyLedgerState ::
   forall era proto s.
-  ( ShelleyCompatible proto era
-  , LedgerTablesConstraints (ShelleyBlock proto era)
-  ) =>
+  ShelleyCompatible proto era =>
   Decoder s (LedgerState (ShelleyBlock proto era) EmptyMK)
 decodeShelleyLedgerState =
   decodeVersion

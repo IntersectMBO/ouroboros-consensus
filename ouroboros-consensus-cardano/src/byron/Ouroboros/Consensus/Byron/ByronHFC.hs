@@ -5,14 +5,11 @@
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -26,12 +23,6 @@ import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
 import Control.Monad
-import Data.Kind (Type)
--- import Data.MemPack
-
--- , absurd)
-
-import qualified Data.List.Singletons as S
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.SOP.Constraint
@@ -56,8 +47,6 @@ import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Util.IndexedMemPack
-import Ouroboros.Consensus.Util.TypeLevel
 
 {-------------------------------------------------------------------------------
   Synonym for convenience
@@ -311,11 +300,6 @@ instance
   ejectHardForkTxOut IZ txout = txout
   ejectHardForkTxOut (IS idx') _ = case idx' of {}
 
--- deriving via
---   Void
---   instance
---     IndexedMemPack LedgerState (HardForkBlock '[ByronBlock])
-
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
   answerBlockQueryHFLookup (IS is) _cfg _q _dlv = case is of {}
@@ -325,8 +309,3 @@ instance BlockSupportsHFLedgerQuery '[ByronBlock] where
 
   queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
   queryLedgerGetTraversingFilter (IS is) _q = case is of {}
-
--- deriving via
---   TrivialLedgerTables (LedgerState (HardForkBlock '[ByronBlock]))
---   instance
---     SerializeTablesWithHint (LedgerState (HardForkBlock '[ByronBlock]))

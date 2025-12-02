@@ -90,7 +90,6 @@ import Lens.Micro
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Basics
@@ -98,7 +97,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Basics
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -118,7 +116,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Util (ShowProxy (..), coerceMapKeys, coerceSet)
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
   ( Serialised (..)
   , decodePoint
@@ -1211,7 +1208,6 @@ answerShelleyLookupQueries ::
   forall proto era m result blk.
   ( Monad m
   , ShelleyCompatible proto era
-  , LedgerTablesConstraints (ShelleyBlock proto era)
   , SListI (TablesForBlock blk)
   , SingI (TablesForBlock blk)
   ) =>
@@ -1292,11 +1288,7 @@ shelleyQFTraverseTablesPredicate q = case q of
 answerShelleyTraversingQueries ::
   forall proto era m result blk.
   ( ShelleyCompatible proto era
-  , Eq (TxOut blk)
-  , IndexedMemPack LedgerState blk UTxOTable
-  , LedgerTablesConstraints (ShelleyBlock proto era)
-  , SListI (TablesForBlock blk)
-  , SingI (TablesForBlock blk)
+  , LedgerTablesConstraints blk
   ) =>
   Monad m =>
   -- | Eject TxOut
