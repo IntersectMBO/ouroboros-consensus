@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -11,6 +12,8 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Byron.ByronHFC
@@ -23,11 +26,18 @@ import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
 import Control.Monad
+import Data.Kind (Type)
+-- import Data.MemPack
+
+-- , absurd)
+
+import qualified Data.List.Singletons as S
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
--- import Data.MemPack
+import Data.SOP.Constraint
 import Data.SOP.Index (Index (..))
-import Data.Void (Void) -- , absurd)
+import qualified Data.Singletons as S
+import Data.Void (Void)
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
@@ -47,6 +57,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IndexedMemPack
+import Ouroboros.Consensus.Util.TypeLevel
 
 {-------------------------------------------------------------------------------
   Synonym for convenience
@@ -287,8 +298,14 @@ instance SerialiseNodeToClient ByronBlock ByronPartialLedgerConfig where
   Canonical TxIn
 -------------------------------------------------------------------------------}
 
-instance HasHardForkTxOut '[ByronBlock] where
-  type HardForkTxOut '[ByronBlock] = ()
+instance
+  ( All (TableConstraints (HardForkBlock '[ByronBlock])) (TablesForBlock (HardForkBlock '[ByronBlock]))
+  , S.SingI
+      (TablesForBlock (HardForkBlock '[ByronBlock]))
+  ) =>
+  HasHardForkTxOut '[ByronBlock]
+  where
+  type HardForkTxOut '[ByronBlock] = Void
   injectHardForkTxOut IZ txout = txout
   injectHardForkTxOut (IS idx') _ = case idx' of {}
   ejectHardForkTxOut IZ txout = txout

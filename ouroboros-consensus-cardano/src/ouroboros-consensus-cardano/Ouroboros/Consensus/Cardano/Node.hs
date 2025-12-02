@@ -65,12 +65,14 @@ import qualified Data.ByteString.Short as Short
 import Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
 import Data.SOP.BasicFunctors
+import Data.SOP.Constraint (All)
 import Data.SOP.Counting
 import Data.SOP.Functors (Flip (..))
 import Data.SOP.Index
 import Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
+import Data.Singletons (SingI)
 import Data.Word (Word16, Word64)
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block
@@ -949,7 +951,11 @@ protocolInfoCardano paramsCardano
           :* Nil
 
     injectIntoTestState ::
-      ShelleyBasedEra era =>
+      ( ShelleyBasedEra era
+      , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
+      , All (TableConstraints (ShelleyBlock proto era)) (TablesForBlock (ShelleyBlock proto era))
+      , SingI (TablesForBlock (ShelleyBlock proto era))
+      ) =>
       WrapTransitionConfig (ShelleyBlock proto era) ->
       (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (ShelleyBlock proto era)
     injectIntoTestState (WrapTransitionConfig tcfg) = fn $ \(Flip st) ->

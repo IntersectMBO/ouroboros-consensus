@@ -193,7 +193,6 @@ protocolInfoTPraosShelleyBased ::
   ( ShelleyCompatible (TPraos c) era
   , TxLimits (ShelleyBlock (TPraos c) era)
   , KESAgentContext c m
-  ,
   ) =>
   ProtocolParamsShelleyBased c ->
   L.TransitionConfig era ->
