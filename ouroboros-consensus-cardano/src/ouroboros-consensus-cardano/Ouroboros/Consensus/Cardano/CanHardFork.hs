@@ -36,7 +36,6 @@ import Cardano.Ledger.Allegra.Translation
   ( shelleyToAllegraAVVMsToDelete
   )
 import qualified Cardano.Ledger.BaseTypes as SL
-import Cardano.Ledger.Compactible
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Genesis as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -338,11 +337,7 @@ translateLedgerStateByronToShelleyWrapper =
 translateLedgerTablesByronToShelleyWrapper ::
   TranslateLedgerTables ByronBlock (ShelleyBlock (TPraos c) ShelleyEra)
 translateLedgerTablesByronToShelleyWrapper =
-  TranslateLedgerTables SOP.Nil
-
--- { translateTxInWith = absurd
--- , translateTxOutWith = absurd
--- }
+  TranslateLedgerTables absurd
 
 translateChainDepStateByronToShelleyWrapper ::
   RequiringBoth
@@ -520,7 +515,7 @@ translateLedgerTablesShelleyToAllegraWrapper ::
     (ShelleyBlock (TPraos c) ShelleyEra)
     (ShelleyBlock (TPraos c) AllegraEra)
 translateLedgerTablesShelleyToAllegraWrapper =
-  TranslateLedgerTables (TranslateTable SL.upgradeTxOut SOP.:* SOP.Nil)
+  TranslateLedgerTables SL.upgradeTxOut
 
 translateTxShelleyToAllegraWrapper ::
   InjectTx
@@ -565,7 +560,7 @@ translateLedgerTablesAllegraToMaryWrapper ::
     (ShelleyBlock (TPraos c) AllegraEra)
     (ShelleyBlock (TPraos c) MaryEra)
 translateLedgerTablesAllegraToMaryWrapper =
-  TranslateLedgerTables (TranslateTable SL.upgradeTxOut SOP.:* SOP.Nil)
+  TranslateLedgerTables SL.upgradeTxOut
 
 translateTxAllegraToMaryWrapper ::
   InjectTx
@@ -610,7 +605,7 @@ translateLedgerTablesMaryToAlonzoWrapper ::
     (ShelleyBlock (TPraos c) MaryEra)
     (ShelleyBlock (TPraos c) AlonzoEra)
 translateLedgerTablesMaryToAlonzoWrapper =
-  TranslateLedgerTables (TranslateTable SL.upgradeTxOut SOP.:* SOP.Nil)
+  TranslateLedgerTables SL.upgradeTxOut
 
 getAlonzoTranslationContext ::
   WrapLedgerConfig (ShelleyBlock (TPraos c) AlonzoEra) ->
@@ -681,7 +676,7 @@ translateLedgerTablesAlonzoToBabbageWrapper ::
     (ShelleyBlock (TPraos c) AlonzoEra)
     (ShelleyBlock (Praos c) BabbageEra)
 translateLedgerTablesAlonzoToBabbageWrapper =
-  TranslateLedgerTables (TranslateTable SL.upgradeTxOut SOP.:* SOP.Nil)
+  TranslateLedgerTables SL.upgradeTxOut
 
 translateTxAlonzoToBabbageWrapper ::
   SL.TranslationContext BabbageEra ->
@@ -747,7 +742,7 @@ translateLedgerTablesBabbageToConwayWrapper ::
     (ShelleyBlock (Praos c) BabbageEra)
     (ShelleyBlock (Praos c) ConwayEra)
 translateLedgerTablesBabbageToConwayWrapper =
-  TranslateLedgerTables (TranslateTable SL.upgradeTxOut SOP.:* SOP.Nil)
+  TranslateLedgerTables SL.upgradeTxOut
 
 getConwayTranslationContext ::
   WrapLedgerConfig (ShelleyBlock (Praos c) ConwayEra) ->
@@ -809,7 +804,7 @@ translateLedgerTablesConwayToDijkstraWrapper ::
     (ShelleyBlock (Praos c) ConwayEra)
     (ShelleyBlock (Praos c) DijkstraEra)
 translateLedgerTablesConwayToDijkstraWrapper =
-  TranslateLedgerTables (TranslateTable SL.upgradeTxOut SOP.:* SOP.Nil)
+  TranslateLedgerTables SL.upgradeTxOut
 
 getDijkstraTranslationContext ::
   WrapLedgerConfig (ShelleyBlock (Praos c) DijkstraEra) ->

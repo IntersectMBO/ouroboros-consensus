@@ -44,7 +44,6 @@ import Ouroboros.Network.Block
 implAddTx ::
   ( IOLike m
   , LedgerSupportsMempool blk
-  , ValidateEnvelope blk
   , HasTxId (GenTx blk)
   ) =>
   MempoolEnv m blk ->
@@ -143,7 +142,6 @@ data TransactionProcessed blk
 doAddTx ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
-  , ValidateEnvelope blk
   , IOLike m
   ) =>
   MempoolEnv m blk ->
@@ -308,7 +306,6 @@ implRemoveTxsEvenIfValid ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
-  , ValidateEnvelope blk
   ) =>
   MempoolEnv m blk ->
   NE.NonEmpty (GenTxId blk) ->

@@ -22,7 +22,6 @@ module Ouroboros.Consensus.Ledger.Abstract
   , ApplyBlock (..)
   , GetBlockKeySets (..)
   , ComputeLedgerEvents (..)
-  , UpdateLedger
   , defaultApplyBlockLedgerResult
   , defaultReapplyBlockLedgerResult
 
@@ -93,6 +92,7 @@ class
   , HasHeader (Header blk)
   , HasLedgerTables l blk
   , HasLedgerTables (TickedL l) blk
+  , GetBlockKeySets blk
   ) =>
   ApplyBlock l blk
   where
@@ -171,9 +171,6 @@ defaultReapplyBlockLedgerResult throwReapplyError =
   (either throwReapplyError id . runExcept)
     ...: applyBlockLedgerResultWithValidation STS.ValidateNone
 
--- | Interaction with the ledger layer
-class ApplyBlock LedgerState blk => UpdateLedger blk
-
 {-------------------------------------------------------------------------------
   Derived functionality
 -------------------------------------------------------------------------------}
@@ -202,7 +199,7 @@ reapplyLedgerBlock = lrResult ...: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
   forall (l :: Type -> LedgerStateKind) blk.
-  (ApplyBlock l blk, GetBlockKeySets blk) =>
+  ApplyBlock l blk =>
   ComputeLedgerEvents ->
   LedgerCfg (l blk) ->
   blk ->
@@ -224,7 +221,7 @@ tickThenApplyLedgerResult evs cfg blk l = do
 
 tickThenReapplyLedgerResult ::
   forall l blk.
-  (ApplyBlock l blk, GetBlockKeySets blk) =>
+  ApplyBlock l blk =>
   ComputeLedgerEvents ->
   LedgerCfg (l blk) ->
   blk ->
@@ -245,7 +242,7 @@ tickThenReapplyLedgerResult evs cfg blk l =
 
 tickThenApply ::
   forall l blk.
-  (ApplyBlock l blk, GetBlockKeySets blk) =>
+  ApplyBlock l blk =>
   ComputeLedgerEvents ->
   LedgerCfg (l blk) ->
   blk ->
@@ -255,7 +252,7 @@ tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
 
 tickThenReapply ::
   forall l blk.
-  (ApplyBlock l blk, GetBlockKeySets blk) =>
+  ApplyBlock l blk =>
   ComputeLedgerEvents ->
   LedgerCfg (l blk) ->
   blk ->
@@ -264,7 +261,7 @@ tickThenReapply ::
 tickThenReapply = lrResult ...: tickThenReapplyLedgerResult
 
 foldLedger ::
-  (ApplyBlock l blk, GetBlockKeySets blk) =>
+  ApplyBlock l blk =>
   ComputeLedgerEvents ->
   LedgerCfg (l blk) ->
   [blk] ->
@@ -275,7 +272,7 @@ foldLedger evs cfg =
     (\blk state -> applyDiffForKeys state (getBlockKeySets blk) <$> tickThenApply evs cfg blk state)
 
 refoldLedger ::
-  (ApplyBlock l blk, GetBlockKeySets blk) =>
+  ApplyBlock l blk =>
   ComputeLedgerEvents -> LedgerCfg (l blk) -> [blk] -> l blk ValuesMK -> l blk ValuesMK
 refoldLedger evs cfg =
   repeatedly
@@ -286,16 +283,16 @@ refoldLedger evs cfg =
 -------------------------------------------------------------------------------}
 
 ledgerTipPoint ::
-  UpdateLedger blk =>
+  ApplyBlock LedgerState blk =>
   LedgerState blk mk -> Point blk
 ledgerTipPoint = castPoint . getTip
 
 ledgerTipHash ::
-  UpdateLedger blk =>
+  ApplyBlock LedgerState blk =>
   LedgerState blk mk -> ChainHash blk
 ledgerTipHash = pointHash . ledgerTipPoint
 
 ledgerTipSlot ::
-  UpdateLedger blk =>
+  ApplyBlock LedgerState blk =>
   LedgerState blk mk -> WithOrigin SlotNo
 ledgerTipSlot = pointSlot . ledgerTipPoint

@@ -21,7 +21,7 @@ import Ouroboros.Consensus.Protocol.Abstract
 -- | Link protocol to ledger
 class
   ( BlockSupportsProtocol blk
-  , UpdateLedger blk
+  , ApplyBlock LedgerState blk
   , ValidateEnvelope blk
   ) =>
   LedgerSupportsProtocol blk

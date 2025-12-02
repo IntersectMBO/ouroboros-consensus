@@ -7,7 +7,6 @@
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -15,7 +14,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 -- TODO: can we un-orphan this module?
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -25,13 +23,11 @@ module Ouroboros.Consensus.Cardano.Ledger
   , eliminateCardanoTxOut
   ) where
 
-import qualified Cardano.Crypto.KES.Class as KES
 import Cardano.Ledger.Binary.Decoding hiding (Decoder)
 import Cardano.Ledger.Binary.Encoding hiding (Encoding)
 import Cardano.Ledger.Compactible
 import qualified Cardano.Ledger.Conway.State as SL
 import Cardano.Ledger.Core (Era, eraDecoder, eraProtVerLow)
-import qualified Cardano.Ledger.Crypto.Internal as KES
 import Cardano.Ledger.Shelley.LedgerState as SL
   ( esLStateL
   , lsCertStateL
@@ -39,24 +35,18 @@ import Cardano.Ledger.Shelley.LedgerState as SL
   )
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
-import Data.Kind (Type)
-import qualified Data.List.Singletons as S
 import qualified Data.Map as Map
 import Data.MemPack
 import Data.Proxy
 import Data.SOP.BasicFunctors
-import qualified Data.SOP.Dict as Dict
 import Data.SOP.Functors
 import Data.SOP.Index
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
-import qualified Data.Singletons as S
-import Data.Void
 import GHC.Generics (Generic)
 import Lens.Micro
 import NoThunks.Class
-import Ouroboros.Consensus.Byron.ByronHFC
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
@@ -74,7 +64,6 @@ import Ouroboros.Consensus.Shelley.Ledger
   )
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
-import Ouroboros.Consensus.Util.TypeLevel
 
 data CardanoTxOut c
   = ShelleyTxOut {-# UNPACK #-} !(TxOut (ShelleyBlock (TPraos c) ShelleyEra))

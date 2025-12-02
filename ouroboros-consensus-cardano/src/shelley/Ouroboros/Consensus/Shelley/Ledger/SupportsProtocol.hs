@@ -27,9 +27,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import Control.Monad.Except (MonadError (throwError))
 import Data.Coerce (coerce)
-import Data.SOP.Constraint (All)
 import qualified Lens.Micro
-import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.History.Util

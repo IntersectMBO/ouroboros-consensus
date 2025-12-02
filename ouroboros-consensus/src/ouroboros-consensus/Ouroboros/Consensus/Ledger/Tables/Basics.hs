@@ -27,11 +27,14 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
   , F2
 
     -- * Ledger tables
-  , LedgerTables (..)
   , Table (..)
+  , LedgerTables (..)
 
     -- * Known tables
   , TABLE (..)
+  , TableLabel (..)
+  , Key
+  , Value
   , TablesForBlock
 
     -- ** UTxO table
@@ -39,32 +42,15 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
   , TxOut
 
     -- ** Instant stake table
-  , Coin
   , Credential
+  , KeyRole (Staking)
+  , CompactForm
+  , Coin
 
     -- * Helpers
-
-  --   , MemPackIdx
   , setterForSing
-  --  , KVConstraintsMK
-  --  , LedgerTableConstraintsMK
-
-    -- * Casting
-
-  -- , SameTablesTypes
-  -- , SameTypesAsMyself
-  -- , CanCastLedgerTables (..)
-  -- , CanCastTables (..)
-  , Key
-  , Value
-  -- , WrapKey (..)
-  -- , WrapValue (..)
-  -- , AllKeys
-  -- , AllValues
-  , AllTables
   , getTableByTag
-  -- , defaultCastLedgerTables
-  -- , defaultCastTable
+  , AllTables
   ) where
 
 import qualified Cardano.Ledger.BaseTypes as SL
@@ -85,13 +71,23 @@ import GHC.Generics (Generic)
 import Lens.Micro
 import NoThunks.Class
 import Ouroboros.Consensus.Ledger.LedgerStateType
+import Ouroboros.Consensus.Util.TypeLevel
 
 --------------------------------------------------------------------------------
 -- Keys and values
 --------------------------------------------------------------------------------
 
--- | The possible tables that Consensus is aware of.
+-- | The possible tables that Consensus is aware of
 type data TABLE = UTxOTable | InstantStakeTable
+
+class TableLabel table where
+  tableLabel :: Proxy table -> String
+
+instance TableLabel UTxOTable where
+  tableLabel _ = "utxo"
+
+instance TableLabel InstantStakeTable where
+  tableLabel _ = "instantStake"
 
 ------------------------------------------------------------
 -- START Singletons
@@ -145,16 +141,19 @@ instance MemPack TxIn where
   unpackM = do
     TxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
+-- | Table-indexed type family for key type
 type Key :: TABLE -> Type
 type family Key table where
   Key UTxOTable = TxIn
   Key InstantStakeTable = Credential 'Staking
 
+-- | Table-indexed type family for value type
 type Value :: TABLE -> Type -> Type
 type family Value table blk where
   Value UTxOTable blk = TxOut blk
   Value InstantStakeTable blk = CompactForm Coin
 
+-- | Block-indexed type for TxOut, as TxOut is the only value that varies per era.
 type TxOut :: Type -> Type
 type family TxOut blk
 
@@ -162,7 +161,7 @@ type family TxOut blk
   Ledger tables
 -------------------------------------------------------------------------------}
 
--- | A table value
+-- | Useful for partially applying @Table mk blk@
 type Table :: F2 -> Type -> TABLE -> Type
 newtype Table mk blk table = Table {getTable :: mk (Key table) (Value table blk)}
   deriving Generic
@@ -171,20 +170,17 @@ deriving instance NoThunks (mk (Key table) (Value table blk)) => NoThunks (Table
 deriving instance Show (mk (Key table) (Value table blk)) => Show (Table mk blk table)
 deriving instance Eq (mk (Key table) (Value table blk)) => Eq (Table mk blk table)
 
-class All (Compose c (Table mk l)) (TablesForBlock l) => AllTables c mk l
-instance All (Compose c (Table mk l)) (TablesForBlock l) => AllTables c mk l
-
 -- | Each block will declare its tables.
 --
--- TablesForBlock (LedgerState Byron) = '[]
---
--- TablesForBlock (LedgerState Shelley) = '[UTxOTable]
--- TablesForBlock (LedgerState Allegra) = '[UTxOTable]
--- TablesForBlock (LedgerState Mary)    = '[UTxOTable]
---
--- TablesForBlock (LedgerState Conway) = '[UTxOTable, InstantStakeTable]
+-- > TablesForBlock ByronBlock = '[]
+-- > TablesForBlock (ShelleyBlock (TPraos c) ShelleyEra) = '[UTxOTable]
+-- > TablesForBlock (ShelleyBlock (Praos c) DijkstraEra) = '[UTxOTable, InstantStakeTable]
+-- > TablesForBlock (HardForkBlock (CardanoEras c)) = '[UTxOTable, InstantStakeTable]
 type TablesForBlock :: Type -> [TABLE]
 type family TablesForBlock blk
+
+class All (Compose c (Table mk l)) (TablesForBlock l) => AllTables c mk l
+instance All (Compose c (Table mk l)) (TablesForBlock l) => AllTables c mk l
 
 -- | The Ledger Tables represent the portion of the data on disk that has been
 -- pulled from disk and attached to the in-memory Ledger State or that will
@@ -225,17 +221,6 @@ deriving newtype instance
 -- Type proof of inclusion
 ------------------------------------------------------------
 
-findIndex ::
-  forall (xs :: [TABLE]) (x :: TABLE).
-  SList xs ->
-  Sing x ->
-  Maybe (Index xs x)
-findIndex SNil _ = Nothing
-findIndex (SCons sy sxs) sx =
-  case testEquality sx sy of
-    Just Refl -> Just IZ
-    Nothing -> IS <$> findIndex sxs sx
-
 ------------------------------------------------------------
 -- Lenses
 ------------------------------------------------------------
@@ -253,14 +238,15 @@ setterForSing ::
 setterForSing sxs sx =
   (\mbm -> \f -> fmap LedgerTables . ixNP mbm f . getLedgerTables) <$> findIndex sxs sx
 
+-- | Extract a table based on the singleton
 getTableByTag ::
-  forall tag mk l.
+  forall table mk l.
   ( SListI (TablesForBlock l)
   , SingI (TablesForBlock l)
   ) =>
-  Sing tag ->
+  Sing table ->
   LedgerTables l mk ->
-  Maybe (Table mk l tag)
+  Maybe (Table mk l table)
 getTableByTag stag (LedgerTables np) =
   let mem = findIndex (sing @(TablesForBlock l)) stag
    in fmap (flip projectNP np) mem

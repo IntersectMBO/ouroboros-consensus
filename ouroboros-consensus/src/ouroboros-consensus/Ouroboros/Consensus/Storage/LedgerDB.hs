@@ -21,10 +21,6 @@ import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
--- import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
--- import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
-
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -48,8 +44,7 @@ openDB ::
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
-  , GetBlockKeySets blk
-  , LedgerSupportsV2LedgerDB LedgerState blk
+  , LedgerSupportsLedgerDB blk
   ) =>
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->
@@ -73,16 +68,6 @@ openDB
   getBlock
   getVolatileSuffix =
     case lgrBackendArgs args of
-      -- LedgerDbBackendArgsV1 bss ->
-      --   let snapManager = V1.snapshotManager args
-      --       initDb =
-      --         V1.mkInitDb
-      --           args
-      --           bss
-      --           getBlock
-      --           snapManager
-      --           getVolatileSuffix
-      --    in doOpenDB args initDb snapManager stream replayGoal
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
         res <-
           mkResources

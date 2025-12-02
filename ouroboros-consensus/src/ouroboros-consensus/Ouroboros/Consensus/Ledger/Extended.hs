@@ -52,10 +52,9 @@ import Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import Data.MemPack (packByteString, unpackMonadFail)
 import Data.Proxy
-import Data.SOP.BasicFunctors ((:.:) (..))
+import Data.SOP.BasicFunctors (K (..), (:.:) (..))
 import Data.SOP.Constraint
-import Data.SOP.Sing (lengthSList)
-import Data.SOP.Strict (hcfoldMap, hcpure, hsequence')
+import Data.SOP.Strict (NP, hcmap, hcpure)
 import Data.Typeable
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
@@ -227,6 +226,7 @@ instance
   ( HasLedgerTables ExtLedgerState blk
   , HasLedgerTables (TickedL ExtLedgerState) blk
   , LedgerSupportsProtocol blk
+  , GetBlockKeySets blk
   ) =>
   ApplyBlock ExtLedgerState blk
   where
@@ -384,12 +384,9 @@ valuesMKEncoder ::
   All (SerializeTablesWithHint l blk) (TablesForBlock blk) =>
   l blk EmptyMK ->
   LedgerTables blk ValuesMK ->
-  Encoding
+  NP (K Encoding) (TablesForBlock blk)
 valuesMKEncoder st (LedgerTables tbs) =
-  mconcat
-    [ CBOR.encodeListLen (fromIntegral $ lengthSList (Proxy @(TablesForBlock blk)))
-    , hcfoldMap (Proxy @(SerializeTablesWithHint l blk)) (encodeTablesWithHint st) tbs
-    ]
+  hcmap (Proxy @(SerializeTablesWithHint l blk)) (K . encodeTablesWithHint st) tbs
 
 -- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
@@ -397,11 +394,9 @@ valuesMKDecoder ::
   forall l blk s.
   All (SerializeTablesWithHint l blk) (TablesForBlock blk) =>
   l blk EmptyMK ->
-  Decoder s (LedgerTables blk ValuesMK)
+  NP (Decoder s :.: Table ValuesMK blk) (TablesForBlock blk)
 valuesMKDecoder st = do
-  _ <- CBOR.decodeListLenOf (lengthSList (Proxy @(TablesForBlock blk)))
-  LedgerTables
-    <$> hsequence' (hcpure (Proxy @(SerializeTablesWithHint l blk)) (Comp $ decodeTablesWithHint st))
+  hcpure (Proxy @(SerializeTablesWithHint l blk)) (Comp $ decodeTablesWithHint st)
 
 -- | When decoding the tables and in particular the UTxO set we want
 -- to share data in the TxOuts in the same way the Ledger did (see the
@@ -423,6 +418,10 @@ class SerializeTablesWithHint l blk tag where
   decodeTablesWithHint ::
     SerializeTablesHint l (LedgerTables blk ValuesMK) ->
     Decoder s (Table ValuesMK blk tag)
+
+instance SerializeTablesWithHint LedgerState blk tag => SerializeTablesWithHint ExtLedgerState blk tag where
+  encodeTablesWithHint = encodeTablesWithHint . ledgerState
+  decodeTablesWithHint = decodeTablesWithHint . ledgerState
 
 -- This is just for the BackingStore Lockstep tests. Once V1 is gone
 -- we can inline it above.

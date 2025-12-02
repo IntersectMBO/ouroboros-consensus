@@ -128,7 +128,7 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- applying a block. See 'CanUpgradeLedgerTables'.
   --
   -- Note 'CanUpgradeLedgerTables' is only used in the InMemory backend.
-  , takeHandleSnapshot :: !(l blk EmptyMK -> String -> m (Maybe CRC))
+  , takeHandleSnapshot :: !(l blk EmptyMK -> String -> m (NP (K (Maybe CRC)) (TablesForBlock blk)))
   -- ^ Take a snapshot of a handle. The given ledger state is used to decide the
   -- encoding of the values based on the current era.
   --
@@ -235,7 +235,7 @@ closeLedgerSeq (LedgerSeq l) =
 --
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
-  (IOLike m, ApplyBlock l blk, GetBlockKeySets blk) =>
+  (IOLike m, ApplyBlock l blk) =>
   ResourceRegistry m ->
   LedgerDbCfg (l blk) ->
   blk ->
@@ -247,7 +247,7 @@ reapplyThenPush rr cfg ap db =
 
 reapplyBlock ::
   forall m l blk.
-  (ApplyBlock l blk, IOLike m, GetBlockKeySets blk) =>
+  (ApplyBlock l blk, IOLike m) =>
   ComputeLedgerEvents ->
   LedgerCfg (l blk) ->
   blk ->

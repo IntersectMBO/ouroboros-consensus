@@ -232,9 +232,8 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
   HardForkState
     . unI
     . Telescope.extend
-      ( InPairs.hczipWith'
+      ( InPairs.hczipWith
           proxySingle
-          (Proxy @(PrefixC))
           ( \f f' -> Require $ \(K t) ->
               Extend $ \cur ->
                 I $ howExtend f f' t cur
@@ -296,7 +295,6 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     ( All SingI (TablesForBlock blk)
     , HasLedgerTables LedgerState blk
     , HasLedgerTables LedgerState blk'
-    , PrefixI (TablesForBlock blk) (TablesForBlock blk')
     , ToAllDict (TableConstraints blk') (TablesForBlock blk')
     ) =>
     TranslateLedgerState blk blk' ->

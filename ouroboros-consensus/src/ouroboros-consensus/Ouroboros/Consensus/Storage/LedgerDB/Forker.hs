@@ -312,7 +312,6 @@ validate ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , HasCallStack
-  , GetBlockKeySets blk
   ) =>
   ComputeLedgerEvents ->
   ValidateArgs m blk ->
@@ -389,7 +388,7 @@ validate evs args = do
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm, GetBlockKeySets blk) =>
+  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
   (ResourceRegistry bm -> Word64 -> bm (Either GetForkerError (Forker bm (l blk) blk))) ->
   ResourceRegistry bm ->
   ComputeLedgerEvents ->
@@ -472,7 +471,7 @@ toRealPoint (Weaken ap) = toRealPoint ap
 -- | Apply blocks to the given forker
 applyBlock ::
   forall m bm c l blk.
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm, GetBlockKeySets blk) =>
+  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
   ComputeLedgerEvents ->
   LedgerCfg (l blk) ->
   Ap bm m (l blk) blk c ->
@@ -513,7 +512,7 @@ applyBlock evs cfg ap fo = case ap of
 -- Note that we require @c@ (from the particular choice of @Ap m l blk c@) so
 -- this sometimes can throw ledger errors.
 applyThenPush ::
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm, GetBlockKeySets blk) =>
+  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
   ComputeLedgerEvents ->
   LedgerCfg (l blk) ->
   Ap bm m (l blk) blk c ->
@@ -525,7 +524,7 @@ applyThenPush evs cfg ap fo =
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm, GetBlockKeySets blk) =>
+  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
   LedgerCfg (l blk) ->

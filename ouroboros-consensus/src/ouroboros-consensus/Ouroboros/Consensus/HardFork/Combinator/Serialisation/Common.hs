@@ -105,7 +105,6 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Storage.Serialisation
--- import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Network.Block (Serialised)
 
@@ -197,10 +196,6 @@ class
     All HasBinaryBlockInfo xs
   , All HasNetworkProtocolVersion xs
   , All BlockSupportsLedgerQuery xs
-   -- LedgerTables on the HardForkBlock might not be compositionally
-    -- defined, but we need to require this instances for any instantiation.
---    HasLedgerTables (TickedL LedgerState) (HardForkBlock xs)
-  -- , LedgerSupportsLedgerDB (HardForkBlock xs)
   ) =>
   SerialiseHFC xs
   where
@@ -273,7 +268,8 @@ class
       reconstructNestedCtxt (Proxy @(Header blk)) prefixOne blockSize
 
     injSomeSecond ::
-      forall xs'. NS (SomeSecond (NestedCtxt Header)) xs' ->
+      forall xs'.
+      NS (SomeSecond (NestedCtxt Header)) xs' ->
       SomeSecond (NestedCtxt Header) (HardForkBlock xs')
     injSomeSecond (Z x) = case x of
       SomeSecond (NestedCtxt y) -> SomeSecond (NestedCtxt (NCZ y))

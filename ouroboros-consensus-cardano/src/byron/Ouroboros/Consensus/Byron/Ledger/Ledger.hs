@@ -70,7 +70,6 @@ import qualified Control.State.Transition.Extended as STS
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
--- import Data.Void (Void)
 import Data.SOP.Strict
 import Data.Void
 import GHC.Generics (Generic)
@@ -96,8 +95,6 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util (ShowProxy (..))
-
--- import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   LedgerState
@@ -126,8 +123,6 @@ data ByronTransition
     -- proposals.
     ByronTransitionInfo !(Map Update.ProtocolVersion BlockNo)
   deriving (Eq, Show, Generic, NoThunks)
-
-instance UpdateLedger ByronBlock
 
 type instance LedgerCfg (LedgerState ByronBlock) = Gen.Config
 
@@ -229,23 +224,6 @@ instance HasLedgerTables (TickedL LedgerState) ByronBlock where
 instance CanStowLedgerTables (LedgerState ByronBlock) where
   stowLedgerTables ByronLedgerState{..} = ByronLedgerState{..}
   unstowLedgerTables ByronLedgerState{..} = ByronLedgerState{..}
-
--- deriving via
---   TrivialLedgerTables (LedgerState ByronBlock)
---   instance
---     HasLedgerTables (LedgerState ByronBlock)
--- deriving via
---   TrivialLedgerTables (Ticked (LedgerState ByronBlock))
---   instance
---     HasLedgerTables (Ticked (LedgerState ByronBlock))
--- deriving via
---   TrivialLedgerTables (LedgerState ByronBlock)
---   instance
---     CanStowLedgerTables (LedgerState ByronBlock)
--- deriving via
---   TrivialLedgerTables (LedgerState ByronBlock)
---   instance
---     SerializeTablesWithHint (LedgerState ByronBlock)
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces

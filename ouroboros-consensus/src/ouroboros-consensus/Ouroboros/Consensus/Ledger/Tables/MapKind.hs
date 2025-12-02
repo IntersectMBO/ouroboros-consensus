@@ -16,27 +16,21 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind
   , ZeroableMK (..)
 
     -- * Concrete MapKinds
-  , CodecMK (..)
   , DiffMK (..)
   , EmptyMK (..)
   , KeysMK (..)
-  --  , SeqDiffMK (..)
   , TrackingMK (..)
   , ValuesMK (..)
   ) where
 
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import Data.Kind (Constraint)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import GHC.Generics (Generic)
 import NoThunks.Class
-import Ouroboros.Consensus.Ledger.Tables.Basics
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
-
--- import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
 
 {-------------------------------------------------------------------------------
   Classes
@@ -120,31 +114,3 @@ instance ZeroableMK TrackingMK where
 
 instance CanMapMK TrackingMK where
   mapMK f (TrackingMK vs d) = TrackingMK (Map.map f vs) (fmap f d)
-
-{-------------------------------------------------------------------------------
-  CodecMK
--------------------------------------------------------------------------------}
-
--- | A codec 'MapKind' that will be used to refer to @'LedgerTables' l CodecMK@
--- as the codecs that can encode every key and value in the @'LedgerTables' l
--- mk@.
---
--- It is important to note that in the context of the HardForkCombinator, the
--- key @k@ has to be accessible from any era we are currently in, regardless of
--- which era it was created in. Because of that, we need that the serialization
--- of the key remains stable accross eras.
---
--- Ledger will provide more efficient encoders than CBOR, which will produce a
--- @'ShortByteString'@ directly.
---
--- See also 'HasCanonicalTxIn' in
--- "Ouroboros.Consensus.HardFork.Combinator.Ledger".
---
--- We will serialize UTxO maps as unstowed ledger tables when storing snapshots
--- while using an in-memory backend for the LedgerDB.
-data CodecMK k v = CodecMK
-  { encodeKey :: !(k -> CBOR.Encoding)
-  , encodeValue :: !(v -> CBOR.Encoding)
-  , decodeKey :: !(forall s. CBOR.Decoder s k)
-  , decodeValue :: !(forall s. CBOR.Decoder s v)
-  }

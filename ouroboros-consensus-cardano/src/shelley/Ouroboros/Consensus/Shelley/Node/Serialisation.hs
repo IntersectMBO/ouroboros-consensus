@@ -27,7 +27,6 @@ import Codec.Serialise (decode, encode)
 import Control.Exception (Exception, throw)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor.Identity
-import Data.SOP.Constraint (All)
 import Data.Typeable (Typeable)
 import Data.Word
 import Ouroboros.Consensus.Block
@@ -40,10 +39,8 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables
-  ( DiffMK
-  , EmptyMK
+  ( EmptyMK
   , LedgerTablesConstraints
-  , TablesForBlock
   )
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation

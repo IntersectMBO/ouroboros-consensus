@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Util.CRC
   ( CRCError (..)
@@ -16,6 +17,12 @@ import Data.Char hiding (isHexDigit)
 import System.FS.API
 import System.FS.API.Lazy
 import System.FS.CRC
+
+instance Semigroup CRC where
+  (<>) = crcOfConcat
+
+instance Monoid CRC where
+  mempty = initCRC
 
 crcOfConcat :: CRC -> CRC -> CRC
 crcOfConcat crc1 crc2 =

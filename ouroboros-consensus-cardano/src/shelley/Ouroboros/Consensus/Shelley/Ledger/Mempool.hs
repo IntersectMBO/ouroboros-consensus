@@ -89,7 +89,6 @@ import Control.Monad.Identity (Identity (..))
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
 import Data.Measure (Measure)
-import Data.SOP.Constraint (All)
 import Data.Singletons
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V

@@ -142,10 +142,7 @@ data ComputeLedgerEvents = ComputeLedgerEvents | OmitLedgerEvents
 
 type IsLedger :: LedgerStateKind -> Constraint
 class
-  ( -- Requirements on the ledger state itself
-    -- Requirements on 'LedgerCfg'
-    -- NoThunks (l EmptyMK)
-    -- ,
+  ( -- Requirements on 'LedgerCfg'
     NoThunks (LedgerCfg l)
   , -- Requirements on 'LedgerErr'
     Show (LedgerErr l)

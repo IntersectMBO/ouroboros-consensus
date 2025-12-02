@@ -32,8 +32,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   , completeLedgerConfig''
   , distribLedgerConfig
   , distribTopLevelConfig
-
   , NoThunksLedgerState
+
     -- ** Convenience re-exports
   , EpochInfo
   , Except
@@ -41,12 +41,9 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
 
 import Cardano.Slotting.EpochInfo
 import Data.Kind (Type)
-import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
-import qualified Data.SOP.Dict as Dict
 import Data.SOP.Functors
 import Data.SOP.Strict
-import qualified Data.SOP.Telescope as Telescope
 import Data.Typeable
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -82,44 +79,19 @@ type instance HeaderHash (HardForkBlock xs) = OneEraHash xs
 newtype instance LedgerState (HardForkBlock xs) mk = HardForkLedgerState
   { hardForkLedgerStatePerEra :: HardForkState (Flip LedgerState mk) xs
   }
+  deriving Generic
 
-class Show (LedgerState blk mk) => ShowLedgerState mk blk
-instance Show (LedgerState blk mk) => ShowLedgerState mk blk
-class Eq (LedgerState blk mk) => EqLedgerState mk blk
-instance Eq (LedgerState blk mk) => EqLedgerState mk blk
-
-instance
-  (All (ShowLedgerState mk) xs, All (Compose Show (K String)) xs, CanHardFork xs) =>
+deriving instance
+  Show (HardForkState (Flip LedgerState mk) xs) =>
   Show (LedgerState (HardForkBlock xs) mk)
-  where
-  show (HardForkLedgerState (HardForkState t)) =
-    show $
-      Telescope.bihzipWith g f (toStrict $ Dict.unAll_NP Dict.Dict) t
-   where
-    g :: Dict.Dict (ShowLedgerState mk) x -> K Past x -> K String x
-    g Dict.Dict x = K $ show x
 
-    f :: Dict.Dict (ShowLedgerState mk) x -> Current (Flip LedgerState mk) x -> K String x
-    f Dict.Dict x = K $ show x
-
-instance
-  (All (EqLedgerState mk) xs, CanHardFork xs) =>
+deriving newtype instance
+  Eq (HardForkState (Flip LedgerState mk) xs) =>
   Eq (LedgerState (HardForkBlock xs) mk)
-  where
-  (==) (HardForkLedgerState (HardForkState _t1)) (HardForkLedgerState (HardForkState _t2)) = undefined -- show $
-  --  Telescope.bihzipWith g f (toStrict $ Dict.unAll_NP Dict.Dict) t
-  -- where
-  --  g :: Dict.Dict (ShowLedgerState mk) x -> K Past x -> K String x
-  --  g Dict.Dict x = K $ show x
 
---  f :: Dict.Dict (ShowLedgerState mk) x -> Current (Flip LedgerState mk) x -> K String x
---  f Dict.Dict x = K $ show x
-instance
-  (All (NoThunksLedgerState mk) xs, CanHardFork xs) =>
-  NoThunks (LedgerState (HardForkBlock xs) mk) where
-  wNoThunks = undefined
-  noThunks = undefined
-  showTypeOf = undefined
+deriving newtype instance
+  NoThunks (HardForkState (Flip LedgerState mk) xs) =>
+  NoThunks (LedgerState (HardForkBlock xs) mk)
 
 {-------------------------------------------------------------------------------
   Protocol config

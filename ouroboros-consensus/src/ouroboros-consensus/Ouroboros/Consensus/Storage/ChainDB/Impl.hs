@@ -61,7 +61,6 @@ import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -109,7 +108,6 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , GetBlockKeySets blk
   , LedgerDB.LedgerSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
@@ -126,7 +124,6 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , GetBlockKeySets blk
   , LedgerDB.LedgerSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
@@ -143,7 +140,6 @@ openDBInternal ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , HasCallStack
-  , GetBlockKeySets blk
   , LedgerDB.LedgerSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->

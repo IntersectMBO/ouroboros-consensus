@@ -259,7 +259,6 @@ fromChain ::
   ( ApplyBlock ExtLedgerState blk
   , HasHardForkHistory blk
   , HasAnnTip blk
-  , GetBlockKeySets blk
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state
