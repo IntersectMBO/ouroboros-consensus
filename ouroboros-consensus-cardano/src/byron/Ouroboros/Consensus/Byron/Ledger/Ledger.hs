@@ -72,6 +72,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 -- import Data.Void (Void)
 import Data.SOP.Strict
+import Data.Void
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
@@ -204,7 +205,7 @@ instance IsLedger (LedgerState ByronBlock) where
         }
 
 -- type instance TxIn (LedgerState ByronBlock) = Void
-type instance TxOut ByronBlock = ()
+type instance TxOut ByronBlock = Void
 type instance TablesForBlock ByronBlock = '[]
 
 -- instance LedgerTablesAreTrivial (LedgerState ByronBlock) where

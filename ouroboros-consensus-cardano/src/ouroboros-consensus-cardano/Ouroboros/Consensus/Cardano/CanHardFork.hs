@@ -99,6 +99,19 @@ import Ouroboros.Consensus.Shelley.ShelleyHFC
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (coerceMapKeys, eitherToMaybe)
 
+type instance TablesForBlock (HardForkBlock (CardanoEras c)) = '[UTxOTable, InstantStakeTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto ShelleyEra]) = '[UTxOTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto AllegraEra]) = '[UTxOTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto MaryEra]) = '[UTxOTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto AlonzoEra]) = '[UTxOTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto BabbageEra]) = '[UTxOTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto ConwayEra]) = '[UTxOTable]
+type instance
+  TablesForBlock (HardForkBlock '[ShelleyBlock proto DijkstraEra]) =
+    '[UTxOTable, InstantStakeTable]
+
+type instance TablesForBlock (HardForkBlock '[ByronBlock]) = '[]
+
 {-------------------------------------------------------------------------------
   CanHardFork
 -------------------------------------------------------------------------------}

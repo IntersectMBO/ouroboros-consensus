@@ -56,6 +56,7 @@ import Data.Void
 import GHC.Generics (Generic)
 import Lens.Micro
 import NoThunks.Class
+import Ouroboros.Consensus.Byron.ByronHFC
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
@@ -74,131 +75,6 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.TypeLevel
-
--- instance
---   CardanoHardForkConstraints c =>
---   HasCanonicalTxIn (CardanoEras c)
---   where
---   newtype CanonicalTxIn (CardanoEras c) = CardanoTxIn
---     { getCardanoTxIn :: BigEndianTxIn
---     }
---     deriving stock (Show, Eq, Ord)
---     deriving newtype NoThunks
-
---   injectCanonicalTxIn IZ byronTxIn = absurd byronTxIn
---   injectCanonicalTxIn (IS idx) shelleyTxIn = case idx of
---     IZ -> CardanoTxIn shelleyTxIn
---     IS IZ -> CardanoTxIn shelleyTxIn
---     IS (IS IZ) -> CardanoTxIn shelleyTxIn
---     IS (IS (IS IZ)) -> CardanoTxIn shelleyTxIn
---     IS (IS (IS (IS IZ))) -> CardanoTxIn shelleyTxIn
---     IS (IS (IS (IS (IS IZ)))) -> CardanoTxIn shelleyTxIn
---     IS (IS (IS (IS (IS (IS IZ))))) -> CardanoTxIn shelleyTxIn
---     IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
-
---   ejectCanonicalTxIn IZ _ =
---     error "ejectCanonicalTxIn: Byron has no TxIns"
---   ejectCanonicalTxIn (IS idx) cardanoTxIn = case idx of
---     IZ -> getCardanoTxIn cardanoTxIn
---     IS IZ -> getCardanoTxIn cardanoTxIn
---     IS (IS IZ) -> getCardanoTxIn cardanoTxIn
---     IS (IS (IS IZ)) -> getCardanoTxIn cardanoTxIn
---     IS (IS (IS (IS IZ))) -> getCardanoTxIn cardanoTxIn
---     IS (IS (IS (IS (IS IZ)))) -> getCardanoTxIn cardanoTxIn
---     IS (IS (IS (IS (IS (IS IZ))))) -> getCardanoTxIn cardanoTxIn
---     IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
-
--- instance CardanoHardForkConstraints c => MemPack (CanonicalTxIn (CardanoEras c)) where
---   packM = packM . getCardanoTxIn
---   packedByteCount = packedByteCount . getCardanoTxIn
---   unpackM = CardanoTxIn <$> unpackM
-
-foo ::
-  CardanoHardForkConstraints c =>
-  Dict.Dict (TableConstraints (HardForkBlock (CardanoEras c))) UTxOTable
-foo = Dict.Dict
-
-bar ::
-  CardanoHardForkConstraints c =>
-  Dict.Dict (TableConstraints (HardForkBlock (CardanoEras c))) InstantStakeTable
-bar = Dict.Dict
-
-baz0 ::
-  Dict.Dict ((~) (TablesForBlock ByronBlock)) '[]
-baz0 = Dict.Dict
-
-baz1 ::
-  Dict.Dict ((~) (TablesForBlock (ShelleyBlock (TPraos c) ShelleyEra))) '[UTxOTable]
-baz1 = Dict.Dict
-
-baz2 ::
-  Dict.Dict ((~) (TablesForBlock (ShelleyBlock (TPraos c) AllegraEra))) '[UTxOTable]
-baz2 = Dict.Dict
-
-baz3 ::
-  Dict.Dict ((~) (TablesForBlock (ShelleyBlock (TPraos c) MaryEra))) '[UTxOTable]
-baz3 = Dict.Dict
-
-baz4 ::
-  Dict.Dict ((~) (TablesForBlock (ShelleyBlock (TPraos c) AlonzoEra))) '[UTxOTable]
-baz4 = Dict.Dict
-
-baz5 ::
-  Dict.Dict ((~) (TablesForBlock (ShelleyBlock (TPraos c) BabbageEra))) '[UTxOTable]
-baz5 = Dict.Dict
-
-baz6 ::
-  Dict.Dict ((~) (TablesForBlock (ShelleyBlock (TPraos c) ConwayEra))) '[UTxOTable]
-baz6 = Dict.Dict
-
-baz7 ::
-  Dict.Dict
-    ((~) (TablesForBlock (ShelleyBlock (TPraos c) DijkstraEra)))
-    '[UTxOTable, InstantStakeTable]
-baz7 = Dict.Dict
-
-baz8 ::
-  forall c.
-  Dict.Dict
-    ( (~)
-        ( NormalizeTablesForHardFork
-            (Xs c)
-        )
-    )
-    '[UTxOTable]
-baz8 = Dict.Dict
-
-type Xs c =
-  [ ByronBlock
-  , ShelleyBlock (TPraos c) ShelleyEra
-  , ShelleyBlock (TPraos c) AllegraEra
-  ]
-
-type family NormalizeTablesForHardFork (xs :: [Type]) :: [TABLE] where
-  NormalizeTablesForHardFork
-    '[ ByronBlock
-     , ShelleyBlock (TPraos c) ShelleyEra
-     , ShelleyBlock (TPraos c) AllegraEra
-     ] =
-    '[UTxOTable]
-  -- other concrete patterns...
-  NormalizeTablesForHardFork xs = S.Nub (Unions (S.Map MapTablesForBlock xs)) -- fallback if you want
-
-type instance TablesForBlock (HardForkBlock xs) = NormalizeTablesForHardFork xs
-
--- type DefaultHardForkCoin xs = NS WrapCoin xs
-
--- This is just necessary because GHC fails to parse the instance below otherwise
---
--- Try:
--- type instance TablesForBlock (HardForkBlock xs)
---   = S.Nub (Unions (S.Map (S.TyCon1 TablesForBlock) xs))
-data MapTablesForBlock :: Type S.~> [TABLE]
-type instance S.Apply MapTablesForBlock x = TablesForBlock x
-
-baz ::
-  Dict.Dict ((~) (TablesForBlock (HardForkBlock (CardanoEras c)))) '[UTxOTable, InstantStakeTable]
-baz = Dict.Dict
 
 data CardanoTxOut c
   = ShelleyTxOut {-# UNPACK #-} !(TxOut (ShelleyBlock (TPraos c) ShelleyEra))
