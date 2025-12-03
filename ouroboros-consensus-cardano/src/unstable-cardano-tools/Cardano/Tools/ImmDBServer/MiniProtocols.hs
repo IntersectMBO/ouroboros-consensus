@@ -227,7 +227,7 @@ maybeShowSendRecvLF ctx = \case
     N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockRequest{}) -> Just $ f Json.Recv "MsgLeiosBlockRequest"
     N2N.TraceSendMsg (AnyMessage MsgLeiosBlock{}) -> Just $ f Json.Send "MsgLeiosBlock"
     N2N.TraceRecvMsg (AnyMessage MsgLeiosBlockTxsRequest{}) -> Just $ f Json.Recv "MsgLeiosBlockTxsRequest"
-    N2N.TraceSendMsg (AnyMessage MsgLeiosBlockTxs{}) -> Just $ f Json.Send "MsgLeiosBlockTxs"
+    N2N.TraceSendMsg (AnyMessage (MsgLeiosBlockTxs txs)) -> Just $ f Json.Send $ "MsgLeiosBlockTxs (" <> show (length txs) <> ")"
     N2N.TraceRecvMsg (AnyMessage LF.MsgDone{}) -> Just $ f Json.Recv "MsgDone"
     _ -> Nothing
   where
