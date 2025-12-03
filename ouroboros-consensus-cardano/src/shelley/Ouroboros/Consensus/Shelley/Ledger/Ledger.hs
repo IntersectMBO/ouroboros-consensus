@@ -336,8 +336,8 @@ type instance TablesForBlock (ShelleyBlock proto ShelleyEra) = '[UTxOTable]
 type instance TablesForBlock (ShelleyBlock proto AllegraEra) = '[UTxOTable]
 type instance TablesForBlock (ShelleyBlock proto MaryEra) = '[UTxOTable]
 type instance TablesForBlock (ShelleyBlock proto AlonzoEra) = '[UTxOTable]
-type instance TablesForBlock (ShelleyBlock proto BabbageEra) = '[UTxOTable]
-type instance TablesForBlock (ShelleyBlock proto ConwayEra) = '[UTxOTable]
+type instance TablesForBlock (ShelleyBlock proto BabbageEra) = '[UTxOTable, InstantStakeTable]
+type instance TablesForBlock (ShelleyBlock proto ConwayEra) = '[UTxOTable, InstantStakeTable]
 
 instance
   MemPack (Value table (ShelleyBlock proto era)) =>
@@ -426,11 +426,11 @@ instance CanStowLedgerTables (LedgerState (ShelleyBlock proto AlonzoEra)) where
   stowLedgerTables = stowUTxOLedgerTables
   unstowLedgerTables = unstowUTxOLedgerTables
 instance CanStowLedgerTables (LedgerState (ShelleyBlock proto BabbageEra)) where
-  stowLedgerTables = stowUTxOLedgerTables
-  unstowLedgerTables = unstowUTxOLedgerTables
+  stowLedgerTables = stowUTxOAndInstantStakeLedgerTables
+  unstowLedgerTables = unstowUTxOAndInstantStakeLedgerTables
 instance CanStowLedgerTables (LedgerState (ShelleyBlock proto ConwayEra)) where
-  stowLedgerTables = stowUTxOLedgerTables
-  unstowLedgerTables = unstowUTxOLedgerTables
+  stowLedgerTables = stowUTxOAndInstantStakeLedgerTables
+  unstowLedgerTables = unstowUTxOAndInstantStakeLedgerTables
 instance CanStowLedgerTables (LedgerState (ShelleyBlock proto DijkstraEra)) where
   stowLedgerTables = stowUTxOAndInstantStakeLedgerTables
   unstowLedgerTables = unstowUTxOAndInstantStakeLedgerTables
@@ -529,11 +529,11 @@ instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto AlonzoEra)
   stowLedgerTables = stowUTxOLedgerTablesTicked
   unstowLedgerTables = unstowUTxOLedgerTablesTicked
 instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto BabbageEra))) where
-  stowLedgerTables = stowUTxOLedgerTablesTicked
-  unstowLedgerTables = unstowUTxOLedgerTablesTicked
+  stowLedgerTables = stowUTxOAndInstantStakeLedgerTablesTicked
+  unstowLedgerTables = unstowUTxOAndInstantStakeLedgerTablesTicked
 instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto ConwayEra))) where
-  stowLedgerTables = stowUTxOLedgerTablesTicked
-  unstowLedgerTables = unstowUTxOLedgerTablesTicked
+  stowLedgerTables = stowUTxOAndInstantStakeLedgerTablesTicked
+  unstowLedgerTables = unstowUTxOAndInstantStakeLedgerTablesTicked
 instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto DijkstraEra))) where
   stowLedgerTables = stowUTxOAndInstantStakeLedgerTablesTicked
   unstowLedgerTables = unstowUTxOAndInstantStakeLedgerTablesTicked
@@ -780,9 +780,9 @@ instance ShelleyCompatible proto MaryEra => GetBlockKeySets (ShelleyBlock proto 
 instance ShelleyCompatible proto AlonzoEra => GetBlockKeySets (ShelleyBlock proto AlonzoEra) where
   getBlockKeySets = getUTxOBlockKeySets
 instance ShelleyCompatible proto BabbageEra => GetBlockKeySets (ShelleyBlock proto BabbageEra) where
-  getBlockKeySets = getUTxOBlockKeySets
+  getBlockKeySets = getUTxOAndInstantStakeBlockKeySets
 instance ShelleyCompatible proto ConwayEra => GetBlockKeySets (ShelleyBlock proto ConwayEra) where
-  getBlockKeySets = getUTxOBlockKeySets
+  getBlockKeySets = getUTxOAndInstantStakeBlockKeySets
 instance ShelleyCompatible proto DijkstraEra => GetBlockKeySets (ShelleyBlock proto DijkstraEra) where
   getBlockKeySets = getUTxOAndInstantStakeBlockKeySets
 
