@@ -208,17 +208,17 @@ unpackRawBytes (LSM.RawBytes vec) =
 -------------------------------------------------------------------------------}
 
 newLSMLedgerTablesHandle ::
-  forall m l blk.
+  forall m blk.
   ( IOLike m
-  , HasLedgerTables l blk
-  , ToAllDict (MemAndDiskTable l blk) (TablesForBlock blk)
+  , HasLedgerTables LedgerState blk
+  , ToAllDict (MemAndDiskTable LedgerState blk) (TablesForBlock blk)
   , All TableLabel (TablesForBlock blk)
-  , IndexedValue l UTxOTable blk ~ Value UTxOTable blk
-  , IndexedMemPack l blk UTxOTable
+  , IndexedValue LedgerState UTxOTable blk ~ Value UTxOTable blk
+  , IndexedMemPack LedgerState blk UTxOTable
   ) =>
   Tracer m LedgerDBV2Trace ->
   (ResourceKey m, LSMTables m blk) ->
-  m (LedgerTablesHandle m l blk)
+  m (LedgerTablesHandle m LedgerState blk)
 newLSMLedgerTablesHandle tracer (origResKey, t) = do
   traceWith tracer TraceLedgerTablesHandleCreate
   tv <- newTVarIO origResKey
@@ -249,16 +249,16 @@ implClose tv =
 
 implDuplicate ::
   ( IOLike m
-  , HasLedgerTables l blk
-  , ToAllDict (MemAndDiskTable l blk) (TablesForBlock blk)
+  , HasLedgerTables LedgerState blk
+  , ToAllDict (MemAndDiskTable LedgerState blk) (TablesForBlock blk)
   , All TableLabel (TablesForBlock blk)
-  , IndexedValue l UTxOTable blk ~ Value UTxOTable blk
-  , IndexedMemPack l blk UTxOTable
+  , IndexedValue LedgerState UTxOTable blk ~ Value UTxOTable blk
+  , IndexedMemPack LedgerState blk UTxOTable
   ) =>
   ResourceRegistry m ->
   LSMTables m blk ->
   Tracer m LedgerDBV2Trace ->
-  m (ResourceKey m, LedgerTablesHandle m l blk)
+  m (ResourceKey m, LedgerTablesHandle m LedgerState blk)
 implDuplicate rr (LSMTables tbs) tracer = do
   (rk, tables) <-
     allocate
@@ -571,10 +571,10 @@ loadSnapshot ::
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , IOLike m
-  , ToAllDict (MemAndDiskTable ExtLedgerState blk) (TablesForBlock blk)
+  , ToAllDict (MemAndDiskTable LedgerState blk) (TablesForBlock blk)
   , All TableLabel (TablesForBlock blk)
-  , IndexedValue ExtLedgerState UTxOTable blk ~ TxOut blk
-  , IndexedMemPack ExtLedgerState blk UTxOTable
+  , IndexedValue LedgerState UTxOTable blk ~ TxOut blk
+  , IndexedMemPack LedgerState blk UTxOTable
   ) =>
   Tracer m LedgerDBV2Trace ->
   ResourceRegistry m ->
@@ -608,7 +608,7 @@ loadSnapshot tracer rr ccfg fs@(SomeHasFS hfs) session ds =
               ( \_ ->
                   fmap LSMTables $
                     htraverse' unComp $
-                      foldSing f (toAllDict @(MemAndDiskTable ExtLedgerState blk) @(TablesForBlock blk))
+                      foldSing f (toAllDict @(MemAndDiskTable LedgerState blk) @(TablesForBlock blk))
               )
               ( \(LSMTables tbs) -> do
                   traceWith tracer TraceLedgerTablesHandleClose
@@ -620,11 +620,11 @@ loadSnapshot tracer rr ccfg fs@(SomeHasFS hfs) session ds =
           $ InitFailureRead
             ReadSnapshotDataCorruption
         (,pt)
-          <$> lift (empty extLedgerSt (rk, values) (newLSMLedgerTablesHandle tracer))
+          <$> lift (empty extLedgerSt (rk, values) (fmap castLedgerTablesHandle . newLSMLedgerTablesHandle tracer))
  where
   f ::
     forall table.
-    Dict.Dict (MemAndDiskTable ExtLedgerState blk) table -> m (Table' m blk table)
+    Dict.Dict (MemAndDiskTable LedgerState blk) table -> m (Table' m blk table)
   f Dict.Dict =
     Table'
       <$> LSM.openTableFromSnapshot
@@ -633,8 +633,8 @@ loadSnapshot tracer rr ccfg fs@(SomeHasFS hfs) session ds =
         (LSM.SnapshotLabel $ Text.pack $ tableLabel (Proxy @table))
 
 foldSing ::
-  (forall table. Dict.Dict (MemAndDiskTable ExtLedgerState blk) table -> m (Table' m blk table)) ->
-  AllDict (MemAndDiskTable ExtLedgerState blk) tables ->
+  (forall table. Dict.Dict (MemAndDiskTable LedgerState blk) table -> m (Table' m blk table)) ->
+  AllDict (MemAndDiskTable LedgerState blk) tables ->
   NP (m :.: Table' m blk) tables
 foldSing _ Nil = Nil
 foldSing f (tb :* tbNext) = Comp (f tb) :* foldSing f tbNext
@@ -707,11 +707,11 @@ type data LSM
 mkLSMArgs ::
   ( LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
-  , ToAllDict (MemAndDiskTable ExtLedgerState blk) (TablesForBlock blk)
+  , ToAllDict (MemAndDiskTable LedgerState blk) (TablesForBlock blk)
   , All TableLabel (TablesForBlock blk)
-  , All (SerialiseTable ExtLedgerState blk) (TablesForBlock blk)
-  , IndexedValue ExtLedgerState UTxOTable blk ~ TxOut blk
-  , IndexedMemPack ExtLedgerState blk UTxOTable
+  , All (SerialiseTable LedgerState blk) (TablesForBlock blk)
+  , IndexedValue LedgerState UTxOTable blk ~ TxOut blk
+  , IndexedMemPack LedgerState blk UTxOTable
   ) =>
   Proxy blk -> FilePath -> FilePath -> StdGen -> (LedgerDbBackendArgs IO blk, StdGen)
 mkLSMArgs _ fp fastStorage gen =
@@ -728,12 +728,12 @@ instance
   , LedgerDbSerialiseConstraints blk
   , HasLedgerTables LedgerState blk
   , ToAllDict
-      (MemAndDiskTable ExtLedgerState blk)
+      (MemAndDiskTable LedgerState blk)
       (TablesForBlock blk)
   , All TableLabel (TablesForBlock blk)
-  , All (SerialiseTable ExtLedgerState blk) (TablesForBlock blk)
-  , IndexedMemPack ExtLedgerState blk UTxOTable
-  , IndexedValue ExtLedgerState UTxOTable blk ~ TxOut blk
+  , All (SerialiseTable LedgerState blk) (TablesForBlock blk)
+  , IndexedMemPack LedgerState blk UTxOTable
+  , IndexedValue LedgerState UTxOTable blk ~ TxOut blk
   ) =>
   Backend m LSM blk
   where
@@ -782,8 +782,8 @@ instance
 
   newHandleFromValues trcr reg res st = do
     table <-
-      tableFromValuesMK trcr reg (sessionResource res) (forgetLedgerTables st) (ltprj st)
-    newLSMLedgerTablesHandle trcr table
+      tableFromValuesMK trcr reg (sessionResource res) (ledgerState $ forgetLedgerTables st) (ltprj st)
+    castLedgerTablesHandle <$> newLSMLedgerTablesHandle trcr table
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 
