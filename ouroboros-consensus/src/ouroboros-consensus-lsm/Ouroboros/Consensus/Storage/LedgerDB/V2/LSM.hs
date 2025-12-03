@@ -39,6 +39,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     -- * Exported for tests
   , LSM.Salt
   , SomeHasFSAndBlockIO (..)
+  , MemAndDiskTable
   ) where
 
 import Cardano.Ledger.Coin
