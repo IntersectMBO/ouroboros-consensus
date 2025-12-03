@@ -96,7 +96,7 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
     answerCardanoQueryHF
       ( \idx ->
           answerShelleyLookupQueries
-            (undefined) -- injectLedgerTables idx)
+            (undefined ) -- injectLedgerTables idx)
             (ejectHardForkTxOut idx)
       )
   answerBlockQueryHFTraverse =

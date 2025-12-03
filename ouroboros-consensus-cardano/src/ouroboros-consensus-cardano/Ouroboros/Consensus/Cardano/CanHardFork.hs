@@ -669,7 +669,7 @@ translateLedgerStateAlonzoToBabbageWrapper =
 castLedgerTables ::
   LedgerTables (ShelleyBlock (TPraos c) AlonzoEra) mk ->
   LedgerTables (ShelleyBlock (Praos c) AlonzoEra) mk
-castLedgerTables = undefined
+castLedgerTables (LedgerTables tbs) = LedgerTables $ SOP.hcoerce tbs
 
 translateLedgerTablesAlonzoToBabbageWrapper ::
   TranslateLedgerTables
