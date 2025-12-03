@@ -52,6 +52,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.TypeLevel (ToAllDict)
+import NoThunks.Class
 
 {-------------------------------------------------------------------------------
   SingleEraBlock
@@ -91,6 +92,7 @@ class
   , GetBlockKeySets blk
   , All SingI (TablesForBlock blk)
   , ToAllDict (TableConstraints blk) (TablesForBlock blk)
+  , NoThunks (LedgerState blk EmptyMK)
   ) =>
   SingleEraBlock blk
   where
