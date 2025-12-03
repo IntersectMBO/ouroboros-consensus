@@ -288,9 +288,7 @@ instance
       )
 
 instance
-  ( CanHardFork' xs
-  , HasHardForkTxOut xs
-  ) =>
+  CanHardFork' xs =>
   GetBlockKeySets (HardForkBlock xs)
   where
   getBlockKeySets (HardForkBlock (OneEraBlock ns)) =
@@ -1079,7 +1077,7 @@ injectLedgerTables idx (LedgerTables x) =
 ejectLedgerTables ::
   forall xs x mk.
   ( CanMapMK mk
-  , HasHardForkTxOut xs
+  , HasLedgerTables LedgerState (HardForkBlock xs)
   , ZeroableMK mk
   , LedgerTablesConstraints x
   , InjectValues xs x
@@ -1213,7 +1211,6 @@ type instance TxOut (HardForkBlock xs) = HardForkTxOut xs
 type DefaultHardForkTxOut xs = NS WrapTxOut xs
 
 class
-  HasLedgerTables LedgerState (HardForkBlock xs) =>
   HasHardForkTxOut xs
   where
   type HardForkTxOut xs :: Type
@@ -1246,9 +1243,7 @@ instance
     (Table (ValuesMK vs)) = Table $ ValuesMK $ extendUTxOTable idx vs
 
 instance
-  ( CanHardFork xs
-  , HasHardForkTxOut xs
-  ) =>
+  CanHardFork xs =>
   CanUpgradeLedgerTable (HardForkBlock xs) InstantStakeTable
   where
   type UpgradeIndex (HardForkBlock xs) = NS (K ()) xs
