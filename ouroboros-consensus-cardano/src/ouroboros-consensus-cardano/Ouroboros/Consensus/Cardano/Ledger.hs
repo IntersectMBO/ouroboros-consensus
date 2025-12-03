@@ -167,6 +167,14 @@ instance
 
 instance
   CardanoHardForkConstraints c =>
+  SerializeTablesWithHint LedgerState (HardForkBlock (CardanoEras c)) InstantStakeTable
+  where
+  encodeTablesWithHint _ (Table (ValuesMK tbs)) =
+    toPlainEncoding (eraProtVerLow @DijkstraEra) $ encodeMap encodeMemPack encodeMemPack tbs
+  decodeTablesWithHint _ = Table . ValuesMK <$> eraDecoder @DijkstraEra (decodeMap decodeMemPack decodeMemPack)
+
+instance
+  CardanoHardForkConstraints c =>
   SerializeTablesWithHint LedgerState (HardForkBlock (CardanoEras c)) UTxOTable
   where
   encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (Table (ValuesMK tbs)) =
