@@ -72,7 +72,6 @@ import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract (GetBlockKeySets)
 import Ouroboros.Consensus.Ledger.LedgerStateType
-import Ouroboros.Consensus.Ledger.Tables (CanStowLedgerTables, LedgerTablesConstraints)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
@@ -99,6 +98,8 @@ import Ouroboros.Consensus.Storage.Serialisation
   )
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Consensus.Ledger.Tables
+import Data.SOP.Constraint
 
 {-------------------------------------------------------------------------------
   ShelleyCompatible
@@ -136,6 +137,7 @@ class
   , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
   , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   , GetBlockKeySets (ShelleyBlock proto era)
+  , All (Compose NoThunks (Table EmptyMK (ShelleyBlock proto era))) (TablesForBlock (ShelleyBlock proto era))
   ) =>
   ShelleyCompatible proto era
 
