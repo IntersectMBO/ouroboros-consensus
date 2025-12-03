@@ -14,6 +14,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 -- | The data structure that holds the cached ledger states.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
@@ -51,6 +52,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   , snapshots
   , tip
   , volatileStatesBimap
+  , castLedgerTablesHandle
   ) where
 
 import Cardano.Ledger.BaseTypes
@@ -138,6 +140,32 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- 'Nothing' in backends that do not support this operation.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l blk)
+
+castLedgerTablesHandle :: Functor m => LedgerTablesHandle m LedgerState blk -> LedgerTablesHandle m ExtLedgerState blk
+castLedgerTablesHandle h =
+   LedgerTablesHandle {
+      close
+      , transfer
+      , duplicate = \reg -> (\(x, y) -> (x, castLedgerTablesHandle y)) <$> duplicate reg
+      , read = \l -> read (ledgerState l)
+      , readRange = \l -> readRange (ledgerState l)
+      , readAll = \l -> readAll (ledgerState l)
+      , pushDiffs = \l1 l2 -> pushDiffs (ledgerState l1) (ledgerState l2)
+      , takeHandleSnapshot = \l -> takeHandleSnapshot (ledgerState l)
+      , tablesSize
+      }
+  where
+    LedgerTablesHandle {
+      close
+      , transfer
+      , duplicate
+      , read
+      , readRange
+      , readAll
+      , pushDiffs
+      , takeHandleSnapshot
+      , tablesSize
+      } = h
 
 {-------------------------------------------------------------------------------
   StateRef, represents a full ledger state, i.e. with a handle for its tables
