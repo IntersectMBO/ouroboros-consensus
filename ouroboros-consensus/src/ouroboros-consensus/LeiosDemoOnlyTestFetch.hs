@@ -162,7 +162,7 @@ deriving instance (Show point, Show eb, Show tx)
 -----
 
 byteLimitsLeiosFetch
-  :: (bytes -> Word) -> ProtocolSizeLimits (LeiosFetch point eb tx) bytes
+  :: ProtocolSizeLimits (LeiosFetch point eb tx) bytes
 byteLimitsLeiosFetch = ProtocolSizeLimits $ \case
   SingIdle     -> smallByteLimit
   SingBlock    -> largeByteLimit

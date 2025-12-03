@@ -52,10 +52,14 @@
       "severity": "Notice"
     },
     "BlockFetch.Remote": {
-      "severity": "Notice"
+        "severity": "Debug",
+        "detail": "DMinimal",
+        "maxFrequency": 0
     },
     "BlockFetch.Remote.Serialised": {
-      "severity": "Notice"
+        "severity": "Debug",
+        "detail": "DMinimal",
+        "maxFrequency": 0
     },
     "BlockFetch.Server": {
       "severity": "Debug"
@@ -97,10 +101,14 @@
       "severity": "Notice"
     },
     "ChainSync.Remote": {
-      "severity": "Notice"
+        "severity": "Debug",
+        "detail": "DMinimal",
+        "maxFrequency": 0
     },
     "ChainSync.Remote.Serialised": {
-      "severity": "Notice"
+        "severity": "Debug",
+        "detail": "DMinimal",
+        "maxFrequency": 0
     },
     "ChainSync.ServerBlock": {
       "severity": "Notice"
@@ -268,10 +276,10 @@
     "TxSubmission.TxOutbound": {
       "severity": "Notice"
     },
-    "LeiosNotify.Remote": { "severity": "Debug" },
-    "LeiosFetch.Remote": { "severity": "Debug" },
-    "Consensus.LeiosKernel": { "severity": "Debug" },
-    "Consensus.LeiosPeer": { "severity": "Debug" },
+    "LeiosNotify.Remote": { "severity": "Debug", "maxFrequency": 0 },
+    "LeiosFetch.Remote": { "severity": "Debug", "maxFrequency": 0 },
+    "Consensus.LeiosKernel": { "severity": "Debug", "maxFrequency": 0 },
+    "Consensus.LeiosPeer": { "severity": "Debug", "maxFrequency": 0 },
     "Version.NodeVersion": {
       "severity": "Info"
     }

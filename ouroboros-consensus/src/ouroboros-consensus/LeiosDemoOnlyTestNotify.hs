@@ -144,7 +144,7 @@ deriving instance (Show point, Show announcement)
 -----
 
 byteLimitsLeiosNotify
-  :: (bytes -> Word) -> ProtocolSizeLimits (LeiosNotify point announcement) bytes
+  :: ProtocolSizeLimits (LeiosNotify point announcement) bytes
 byteLimitsLeiosNotify = ProtocolSizeLimits $ \case
   SingIdle    -> smallByteLimit
   SingBusy    -> smallByteLimit
