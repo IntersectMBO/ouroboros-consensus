@@ -29,6 +29,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   , Trace (LSMTreeTrace)
   , LSM.LSMTreeTrace (..)
   , mkLSMArgs
+  , SerialiseTable
   , stdMkBlockIOFS
   --   -- * Streaming
   -- , YieldArgs (YieldLSM)
