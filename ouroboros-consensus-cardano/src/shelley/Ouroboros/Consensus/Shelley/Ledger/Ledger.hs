@@ -846,14 +846,17 @@ applyHelper ::
     )
 applyHelper f cfg blk stBefore = do
   let TickedShelleyLedgerState
-        { tickedShelleyLedgerTransition
-        , tickedShelleyLedgerState
+        { tickedShelleyLedgerTransition = transition
+        , tickedShelleyLedgerState = tState
         } = stowLedgerTables stBefore
+
+  -- (*) We extract the whole instant stake from the ledger state into the tables
+  let instantStakeBefore = slInstantStakeL $ tickedShelleyLedgerState stBefore
 
   ledgerResult <-
     f
       globals
-      tickedShelleyLedgerState
+      tState
       ( let b = shelleyBlockRaw blk
             h' = mkHeaderView (SL.blockHeader b)
          in SL.Block h' (SL.blockBody b)
@@ -862,12 +865,31 @@ applyHelper f cfg blk stBefore = do
   let track ::
         LedgerState (ShelleyBlock proto era) ValuesMK ->
         LedgerState (ShelleyBlock proto era) TrackingMK
-      track = calculateDifference (TickedL stBefore)
+      track =
+        calculateDifference
+          ( TickedL $
+              stBefore
+                { -- We push the whole instant stake into the tables, see (*)
+                  -- above.
+                  --
+                  -- If the block doesn't have an InstantStakeTable, this
+                  -- operation is void.
+                  --
+                  -- This is only necessary because the Ledger doesn't tell us
+                  -- which parts of the InstantStake it wants (in
+                  -- @getBlockKeySets@).
+                  tickedShelleyLedgerTables =
+                    tickedShelleyLedgerTables stBefore
+                      & onInstantStakeTable (Proxy @(ShelleyBlock proto era)) .~ Table (ValuesMK instantStakeBefore)
+                }
+          )
 
   return $
     ledgerResult <&> \newNewEpochState ->
       trackingToDiffs $
         track $
+          -- Unstowing the values __will__ get the instant stake from the state,
+          -- so calculating the difference will compare both instant stakes.
           unstowLedgerTables $
             ShelleyLedgerState
               { shelleyLedgerTip =
@@ -885,7 +907,7 @@ applyHelper f cfg blk stBefore = do
                         -- We count the number of blocks that have been applied after the
                         -- voting deadline has passed.
                         (if blockSlot blk >= votingDeadline then succ else id) $
-                          shelleyAfterVoting tickedShelleyLedgerTransition
+                          shelleyAfterVoting transition
                     }
               , shelleyLedgerTables = emptyLedgerTables
               }
