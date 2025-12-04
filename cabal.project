@@ -25,6 +25,7 @@ packages:
   ouroboros-consensus-diffusion
   sop-extras
   strict-sop-core
+  cardano-configuration
 
 -- We want to always build the test-suites and benchmarks
 tests: true
