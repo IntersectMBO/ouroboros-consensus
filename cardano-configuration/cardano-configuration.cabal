@@ -28,6 +28,10 @@ library cardano-configuration-lib
     Cardano.Node.Configuration.POM
     Cardano.Node.Configuration.Socket
     Cardano.Node.Configuration.TopologyP2P
+    Cardano.Node.Handlers.Shutdown
+    Cardano.Node.Orphans
+    Cardano.Node.Startup
+    Cardano.Node.Types
 
   ghc-options:
     -Wall
@@ -48,6 +52,7 @@ library cardano-configuration-lib
     base,
     base16-bytestring,
     bytestring,
+    cardano-crypto-class,
     cardano-crypto-wrapper,
     cardano-git-rev ^>=0.2.2,
     cardano-ledger-allegra,
@@ -97,6 +102,7 @@ library cardano-configuration-lib
     ouroboros-consensus-cardano ^>=0.26,
     ouroboros-consensus-diffusion ^>=0.24,
     ouroboros-consensus-protocol,
+    ouroboros-network:{cardano-diffusion, orphan-instances, ouroboros-network},
     ouroboros-network-api,
     ouroboros-network-framework,
     prettyprinter,
@@ -115,5 +121,4 @@ library cardano-configuration-lib
     tracer-transformers,
     transformers,
     transformers-except,
-    typed-protocols:{stateful, typed-protocols} >=1.0,
     yaml,

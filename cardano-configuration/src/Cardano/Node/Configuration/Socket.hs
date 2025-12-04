@@ -4,6 +4,7 @@
 
 module Cardano.Node.Configuration.Socket
   ( SocketConfig (..)
+  , mapSocketPath
   , gatherConfiguredSockets
   , SocketOrSocketInfo' (..)
   , SocketOrSocketInfo
@@ -43,6 +44,9 @@ newtype SocketPath = SocketPath
   { unSocketPath :: FilePath
   }
   deriving (Eq, Show)
+
+mapSocketPath :: (FilePath -> FilePath) -> SocketPath -> SocketPath
+mapSocketPath f (SocketPath fp) = SocketPath (f fp)
 
 {- HLINT ignore "Use =<<" -}
 
