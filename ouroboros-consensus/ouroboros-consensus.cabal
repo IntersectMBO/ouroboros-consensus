@@ -205,6 +205,7 @@ library
     Ouroboros.Consensus.NodeId
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
+    Ouroboros.Consensus.Peras.Voting
     Ouroboros.Consensus.Peras.Weight
     Ouroboros.Consensus.Protocol.Abstract
     Ouroboros.Consensus.Protocol.BFT
@@ -306,6 +307,7 @@ library
     Ouroboros.Consensus.Util.NormalForm.StrictMVar
     Ouroboros.Consensus.Util.NormalForm.StrictTVar
     Ouroboros.Consensus.Util.Orphans
+    Ouroboros.Consensus.Util.Pred
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.Time
@@ -672,8 +674,10 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
     Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke
     Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
+    Test.Consensus.Peras.Voting
     Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.MonadSTM.NormalForm
+    Test.Consensus.Util.Pred
     Test.Consensus.Util.Versioned
 
   build-depends:
