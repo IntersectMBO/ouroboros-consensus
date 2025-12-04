@@ -399,10 +399,6 @@ The core contributors to consensus codebase are:
 
 -   [Javier Sagredo](https://github.com/jasagredo)
 
--   [Alexander Esgen](https://github.com/amesgen)
-
--   [Joris Dral](https://github.com/jorisdral)
-
 -   [Fraser Murray](https://github.com/fraser-iohk)
 
 -   [Damian Nadales](https://github.com/dnadales)
