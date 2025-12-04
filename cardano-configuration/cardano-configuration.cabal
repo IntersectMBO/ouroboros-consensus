@@ -21,6 +21,14 @@ extra-doc-files:
 library cardano-configuration-lib
   default-language: Haskell2010
   hs-source-dirs: src
+  exposed-modules:
+    Cardano.Node.Configuration.LedgerDB
+    Cardano.Node.Configuration.Logging
+    Cardano.Node.Configuration.NodeAddress
+    Cardano.Node.Configuration.POM
+    Cardano.Node.Configuration.Socket
+    Cardano.Node.Configuration.TopologyP2P
+
   ghc-options:
     -Wall
     -Wcompat
@@ -33,3 +41,79 @@ library cardano-configuration-lib
     -Wunused-packages
     -Wno-unticked-promoted-constructors
 
+  build-depends:
+    -- avoid stm-2.5.2 https://github.com/haskell/stm/issues/76
+    aeson >=2.1.0.0,
+    async,
+    base,
+    base16-bytestring,
+    bytestring,
+    cardano-crypto-wrapper,
+    cardano-git-rev ^>=0.2.2,
+    cardano-ledger-allegra,
+    cardano-ledger-alonzo,
+    cardano-ledger-api,
+    cardano-ledger-babbage,
+    cardano-ledger-binary,
+    cardano-ledger-byron,
+    cardano-ledger-conway,
+    cardano-ledger-core,
+    cardano-ledger-dijkstra,
+    cardano-ledger-shelley,
+    cardano-prelude,
+    cardano-protocol-tpraos >=1.4,
+    cardano-slotting >=0.2,
+    cborg ^>=0.2.4,
+    containers,
+    contra-tracer,
+    data-default-class,
+    deepseq,
+    directory,
+    dns,
+    ekg-core,
+    ekg-wai,
+    filepath,
+    formatting,
+    generic-data,
+    hashable,
+    hostname,
+    io-classes:{io-classes, si-timers, strict-stm} >=1.5,
+    iohk-monitoring ^>=0.2,
+    iproute,
+    kes-agent ^>=0.2,
+    lobemo-backend-aggregation,
+    lobemo-backend-ekg ^>=0.2,
+    lobemo-backend-monitoring,
+    lobemo-backend-trace-forwarder,
+    microlens,
+    mmap,
+    mtl,
+    network,
+    network-mux,
+    network-mux >=0.8,
+    nothunks,
+    optparse-applicative-fork >=0.18.1,
+    ouroboros-consensus ^>=0.28,
+    ouroboros-consensus-cardano ^>=0.26,
+    ouroboros-consensus-diffusion ^>=0.24,
+    ouroboros-consensus-protocol,
+    ouroboros-network-api,
+    ouroboros-network-framework,
+    prettyprinter,
+    prettyprinter-ansi-terminal,
+    psqueues,
+    random,
+    resource-registry,
+    safe-exceptions,
+    scientific,
+    sop-core,
+    sop-extras,
+    stm <2.5.2 || >=2.5.3,
+    strict-sop-core,
+    text >=2.0,
+    time,
+    tracer-transformers,
+    transformers,
+    transformers-except,
+    typed-protocols:{stateful, typed-protocols} >=1.0,
+    yaml,
