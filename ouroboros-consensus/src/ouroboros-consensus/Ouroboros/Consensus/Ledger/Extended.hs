@@ -1,19 +1,14 @@
 {-# LANGUAGE BangPatterns #-}
-{- HLINT ignore "Unused LANGUAGE pragma" -}
--- False hint on TypeOperators
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -37,7 +32,6 @@ module Ouroboros.Consensus.Ledger.Extended
   , valuesMKEncoder
   , valuesMKDecoder
   , SerializeTablesWithHint (..)
-  , SerializeTablesHint
   , defaultEncodeTablesWithHint
   , defaultDecodeTablesWithHint
   ) where
@@ -48,7 +42,6 @@ import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad.Except
 import Data.Functor ((<&>))
-import Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import Data.MemPack (packByteString, unpackMonadFail)
 import Data.Proxy
@@ -399,7 +392,7 @@ valuesMKDecoder st = do
   hcpure (Proxy @(SerializeTablesWithHint l blk)) (Comp $ decodeTablesWithHint st)
 
 -- | When decoding the tables and in particular the UTxO set we want
--- to share data in the TxOuts in the same way the Ledger did (see the
+-- to share data in the Values in the same way the Ledger did (see the
 -- @Share (TxOut era)@ instances). We need to provide the state in the
 -- HFC case so that we can call 'eraDecoder' and also to extract the
 -- interns from the state.
@@ -407,34 +400,29 @@ valuesMKDecoder st = do
 -- As we will decode with 'eraDecoder' we also need to use such era
 -- for the encoding thus we need the hint also in the encoding.
 --
--- See @SerializeTablesWithHint (LedgerState (HardForkBlock
--- (CardanoBlock c)))@ for a good example, the rest of the instances
--- are somewhat degenerate.
+-- See @SerializeTablesWithHint (LedgerState (HardForkBlock (CardanoBlock c)))
+-- UTxOTable@ and @SerializeTablesWithHint (LedgerState (HardForkBlock
+-- (CardanoBlock c))) InstantStakeTable@ for good examples, the rest of the
+-- instances are somewhat degenerate.
 class SerializeTablesWithHint l blk tag where
   encodeTablesWithHint ::
-    SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+    l blk EmptyMK ->
     Table ValuesMK blk tag ->
     Encoding
   decodeTablesWithHint ::
-    SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+    l blk EmptyMK ->
     Decoder s (Table ValuesMK blk tag)
 
-instance SerializeTablesWithHint LedgerState blk tag => SerializeTablesWithHint ExtLedgerState blk tag where
+instance
+  SerializeTablesWithHint LedgerState blk tag =>
+  SerializeTablesWithHint ExtLedgerState blk tag
+  where
   encodeTablesWithHint = encodeTablesWithHint . ledgerState
   decodeTablesWithHint = decodeTablesWithHint . ledgerState
 
--- This is just for the BackingStore Lockstep tests. Once V1 is gone
--- we can inline it above.
-
--- | The hint for 'SerializeTablesWithHint'
-type SerializeTablesHint :: StateKind -> Type -> Type
-type family SerializeTablesHint l values :: Type
-
-type instance SerializeTablesHint l (LedgerTables blk ValuesMK) = l blk EmptyMK
-
 defaultEncodeTablesWithHint ::
   (TableConstraints blk tag, MemPack (Value tag blk)) =>
-  SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+  l blk EmptyMK ->
   Table ValuesMK blk tag ->
   Encoding
 defaultEncodeTablesWithHint _ (Table (ValuesMK tbs)) =
@@ -452,7 +440,7 @@ defaultEncodeTablesWithHint _ (Table (ValuesMK tbs)) =
 
 defaultDecodeTablesWithHint ::
   (TableConstraints blk tag, MemPack (Value tag blk)) =>
-  SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+  l blk EmptyMK ->
   Decoder s (Table ValuesMK blk tag)
 defaultDecodeTablesWithHint _ = do
   n <- CBOR.decodeMapLen

@@ -4,7 +4,9 @@
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
@@ -26,6 +28,7 @@ import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
 import Data.Maybe (fromMaybe)
 import GHC.Generics
+import Lens.Micro ((&), (.~))
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -92,7 +95,8 @@ implForkerReadTables env ks =
     read (tables stateRef) (state stateRef) ks
 
 implForkerRangeReadTables ::
-  (IOLike m, GetTip (l blk), HasLedgerTables l blk) =>
+  forall m l blk.
+  (IOLike m, GetTip (l blk), HasLedgerTables l blk, TableConstraints blk UTxOTable) =>
   QueryBatchSize ->
   ForkerEnv m l blk ->
   RangeQueryPrevious blk ->
@@ -103,10 +107,13 @@ implForkerRangeReadTables qbs env rq0 =
     let n = fromIntegral $ defaultQueryBatchSize qbs
         stateRef = currentHandle ldb
     case rq0 of
-      NoPreviousQuery -> readRange (tables stateRef) (state stateRef) (Nothing, n)
+      NoPreviousQuery ->
+        (\(t, k) -> (emptyLedgerTables & onUTxOTable (Proxy @blk) .~ t, k))
+          <$> readRange (tables stateRef) (Proxy @UTxOTable) (state stateRef) (Nothing, n)
       PreviousQueryWasFinal -> pure (emptyLedgerTables, Nothing)
       PreviousQueryWasUpTo k ->
-        readRange (tables stateRef) (state stateRef) (Just k, n)
+        (\(t, kk) -> (emptyLedgerTables & onUTxOTable (Proxy @blk) .~ t, kk))
+          <$> readRange (tables stateRef) (Proxy @UTxOTable) (state stateRef) (Just k, n)
 
 implForkerGetLedgerState ::
   (MonadSTM m, GetTip (l blk)) =>

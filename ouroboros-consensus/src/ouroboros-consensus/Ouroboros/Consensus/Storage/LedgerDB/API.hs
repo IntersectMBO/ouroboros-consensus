@@ -8,7 +8,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -155,9 +154,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
     -- * Streaming
   , StreamingBackend (..)
   , StreamOfTable (..)
-  , Yield
-  , Sink
-  , Decoders (..)
+  , Yield (..)
+  , Sink (..)
+  , TableCodec (..)
+  , TablesCodecs (..)
 
     -- * Testing
   , TestInternals (..)
@@ -205,6 +205,7 @@ import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Streaming
 import System.FS.CRC
+import Codec.CBOR.Encoding (Encoding)
 
 {-------------------------------------------------------------------------------
   Main API
@@ -783,6 +784,7 @@ class
   , NoThunks (LedgerTables blk ValuesMK)
   , NoThunks (l blk EmptyMK)
   , All TableLabel (TablesForBlock blk)
+  , LedgerTablesConstraints blk
   ) =>
   LedgerSupportsInMemoryLedgerDB l blk
 instance
@@ -791,6 +793,7 @@ instance
   , NoThunks (LedgerTables blk ValuesMK)
   , NoThunks (l blk EmptyMK)
   , All TableLabel (TablesForBlock blk)
+  , LedgerTablesConstraints blk
   ) =>
   LedgerSupportsInMemoryLedgerDB l blk
 
@@ -800,6 +803,7 @@ type LedgerSupportsLedgerDB blk =
 type LedgerSupportsLedgerDB' l blk =
   ( LedgerSupportsInMemoryLedgerDB l blk
   , LedgerDbSerialiseConstraints blk
+  , TableConstraints blk UTxOTable
   )
 
 {-------------------------------------------------------------------------------
@@ -825,9 +829,9 @@ class StreamingBackend m backend blk where
 
   data SinkArgs m backend blk
 
-  yield :: Proxy backend -> YieldArgs m backend blk -> Yield m blk
+  yield :: Proxy backend -> YieldArgs m backend blk -> NP (Yield m blk) (TablesForBlock blk)
 
-  sink :: Proxy backend -> SinkArgs m backend blk -> Sink m blk
+  sink :: Proxy backend -> SinkArgs m backend blk -> NP (Sink m blk) (TablesForBlock blk)
 
 newtype StreamOfTable m blk table
   = StreamOfTable
@@ -837,25 +841,36 @@ newtype StreamOfTable m blk table
           (Stream (Of ByteString) m (Maybe CRC))
       )
 
-type Yield m blk =
-  LedgerState blk EmptyMK ->
-  ( ( NP
-        (StreamOfTable m blk)
-        (TablesForBlock blk) ->
-      ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
-    )
-  ) ->
-  ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
+newtype Yield m blk table
+  = Yield
+      ( LedgerState blk EmptyMK ->
+        ( ( Stream
+              (Of (Key table, Value table blk))
+              (ExceptT DeserialiseFailure m)
+              (Stream (Of ByteString) m (Maybe CRC)) ->
+            ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+          )
+        ) ->
+        ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
+      )
 
-type Sink m blk =
-  LedgerState blk EmptyMK ->
-  ( NP
-      (StreamOfTable m blk)
-      (TablesForBlock blk) ->
-    ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
-  ) ->
-  ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+newtype Sink m blk table
+  = Sink
+      ( LedgerState blk EmptyMK ->
+        ( Stream
+            (Of (Key table, Value table blk))
+            (ExceptT DeserialiseFailure m)
+            (Stream (Of ByteString) m (Maybe CRC)) ->
+          ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+        )
+      )
 
-data Decoders blk
-  = Decoders
-      (forall s. Decoder s (TxOut blk))
+data TableCodec blk table = TableCodec
+  { decK :: forall s. Decoder s (Key table)
+  , decV :: forall s. Decoder s (Value table blk)
+  , encK :: Key table -> Encoding
+  , encV :: Value table blk -> Encoding
+  }
+
+data TablesCodecs blk
+  = TablesCodecs (NP (TableCodec blk) (TablesForBlock blk))

@@ -3,9 +3,9 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
@@ -113,6 +113,7 @@ class
   , MemPack (Key table)
   , Eq (Value table blk)
   , IndexedMemPack LedgerState blk table
+  , SingI table
   ) =>
   TableConstraints blk table
 
@@ -121,6 +122,7 @@ instance
   , MemPack (Key table)
   , Eq (Value table blk)
   , IndexedMemPack LedgerState blk table
+  , SingI table
   ) =>
   TableConstraints blk table
 

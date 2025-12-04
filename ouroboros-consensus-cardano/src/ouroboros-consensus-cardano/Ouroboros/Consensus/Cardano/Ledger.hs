@@ -25,7 +25,6 @@ module Ouroboros.Consensus.Cardano.Ledger
 
 import Cardano.Ledger.Binary.Decoding hiding (Decoder)
 import Cardano.Ledger.Binary.Encoding hiding (Encoding)
-import Cardano.Ledger.Compactible
 import qualified Cardano.Ledger.Conway.State as SL
 import Cardano.Ledger.Core (Era, eraDecoder, eraProtVerLow)
 import Cardano.Ledger.Shelley.LedgerState as SL
@@ -152,18 +151,6 @@ instance
             :* Nil
         )
     hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
-
-instance
-  CardanoHardForkConstraints c =>
-  IndexedMemPack LedgerState (HardForkBlock (CardanoEras c)) InstantStakeTable
-  where
-  type
-    IndexedValue LedgerState InstantStakeTable (HardForkBlock (CardanoEras c)) =
-      Value InstantStakeTable (HardForkBlock (CardanoEras c))
-  indexedTypeName _ _ _ = typeName @(CompactForm Coin)
-  indexedPackM _ _ _ _ = packM
-  indexedPackedByteCount _ _ _ _ = packedByteCount
-  indexedUnpackM _ _ _ _ = unpackM
 
 instance
   CardanoHardForkConstraints c =>

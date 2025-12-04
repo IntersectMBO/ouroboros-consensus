@@ -70,6 +70,7 @@ mkInitDb ::
   , Backend m backend blk
   , IOLike m
   , LedgerSupportsInMemoryLedgerDB LedgerState blk
+  , TableConstraints blk UTxOTable
   ) =>
   Complete LedgerDbArgs m blk ->
   ResolveBlock m blk ->
@@ -152,6 +153,7 @@ implMkLedgerDb ::
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
   , LedgerSupportsInMemoryLedgerDB LedgerState blk
+  , TableConstraints blk UTxOTable
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   SnapshotManager m m blk (StateRef m ExtLedgerState blk) ->
@@ -179,6 +181,7 @@ mkInternals ::
   , LedgerSupportsProtocol blk
   , ApplyBlock ExtLedgerState blk
   , LedgerSupportsInMemoryLedgerDB LedgerState blk
+  , TableConstraints blk UTxOTable
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   SnapshotManager m m blk (StateRef m ExtLedgerState blk) ->
@@ -297,6 +300,7 @@ implValidate ::
   , LedgerSupportsProtocol blk
   , HasCallStack
   , LedgerSupportsInMemoryLedgerDB LedgerState blk
+  , TableConstraints blk UTxOTable
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   LedgerDBEnv m ExtLedgerState blk ->
@@ -626,6 +630,7 @@ newForkerAtTarget ::
   , LedgerSupportsProtocol blk
   , StandardHash (ExtLedgerState blk)
   , LedgerSupportsInMemoryLedgerDB LedgerState blk
+  , TableConstraints blk UTxOTable
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   ResourceRegistry m ->
@@ -641,6 +646,7 @@ newForkerByRollback ::
   , HasLedgerTables ExtLedgerState blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsInMemoryLedgerDB LedgerState blk
+  , TableConstraints blk UTxOTable
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   ResourceRegistry m ->
@@ -741,6 +747,7 @@ newForker ::
   , NoThunks (ExtLedgerState blk EmptyMK)
   , GetTip (ExtLedgerState blk)
   , StandardHash (ExtLedgerState blk)
+  , TableConstraints blk UTxOTable
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   LedgerDBEnv m ExtLedgerState blk ->

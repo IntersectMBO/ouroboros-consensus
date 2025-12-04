@@ -331,7 +331,6 @@ library
     contra-tracer,
     deepseq,
     filelock,
-    filepath,
     fs-api ^>=0.4,
     hashable,
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm} ^>=1.8.0.1,

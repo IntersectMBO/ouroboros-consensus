@@ -1,4 +1,3 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -8,7 +7,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -71,6 +69,7 @@ import Lens.Micro
 import NoThunks.Class
 import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Util.TypeLevel
+import Ouroboros.Consensus.Util.IndexedMemPack
 
 --------------------------------------------------------------------------------
 -- Keys and values
@@ -155,6 +154,13 @@ type family Value table blk where
 -- | Block-indexed type for TxOut, as TxOut is the only value that varies per era.
 type TxOut :: Type -> Type
 type family TxOut blk
+
+instance IndexedMemPack l blk InstantStakeTable where
+  type IndexedValue l InstantStakeTable blk = Value InstantStakeTable blk
+  indexedTypeName _ _ _ = typeName @(CompactForm Coin)
+  indexedPackM _ _ _ _ = packM
+  indexedPackedByteCount _ _ _ _ = packedByteCount
+  indexedUnpackM _ _ _ _ = unpackM
 
 {-------------------------------------------------------------------------------
   Ledger tables

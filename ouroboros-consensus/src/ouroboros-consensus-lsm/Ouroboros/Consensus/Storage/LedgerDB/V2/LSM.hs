@@ -8,6 +8,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -17,8 +18,9 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 -- Needed for @NoThunks (Table m k v b)@
-{-# OPTIONS_GHC -Wno-orphans -Wno-unused-imports -Wno-unused-matches #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Implementation of the 'LedgerTablesHandle' interface with LSM trees.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
@@ -31,11 +33,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   , mkLSMArgs
   , SerialiseTable
   , stdMkBlockIOFS
-  --   -- * Streaming
-  -- , YieldArgs (YieldLSM)
-  -- , mkLSMYieldArgs
-  -- , SinkArgs (SinkLSM)
-  -- , mkLSMSinkArgs
+
+    -- * Streaming
+  , YieldArgs (YieldLSM)
+  , mkLSMYieldArgs
+  , SinkArgs (SinkLSM)
+  , mkLSMSinkArgs
 
     -- * Exported for tests
   , LSM.Salt
@@ -45,8 +48,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
 import Cardano.Ledger.Coin
 import Cardano.Ledger.Credential
-import Cardano.Ledger.Keys (KeyRole (Staking))
-import Codec.Serialise (decode)
+import Codec.Serialise (DeserialiseFailure, decode)
 import qualified Control.Monad as Monad
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Except
@@ -56,7 +58,6 @@ import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Product
 import qualified Data.List as List
-import qualified Data.List.Singletons as S
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.MemPack
@@ -79,7 +80,6 @@ import Database.LSMTree (Salt, Session)
 import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import Lens.Micro ((&), (.~))
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -119,6 +119,7 @@ class
   ( LSM.SerialiseKey (Key table)
   , LSM.SerialiseValue (Value' table blk)
   , LSM.ResolveValue (Value' table blk)
+  , TableLabel table
   ) =>
   SerialiseTable l blk table
   where
@@ -212,9 +213,8 @@ newLSMLedgerTablesHandle ::
   ( IOLike m
   , HasLedgerTables LedgerState blk
   , ToAllDict (MemAndDiskTable LedgerState blk) (TablesForBlock blk)
+  , forall table. SerialiseTable LedgerState blk table
   , All TableLabel (TablesForBlock blk)
-  , IndexedValue LedgerState UTxOTable blk ~ Value UTxOTable blk
-  , IndexedMemPack LedgerState blk UTxOTable
   ) =>
   Tracer m LedgerDBV2Trace ->
   (ResourceKey m, LSMTables m blk) ->
@@ -251,9 +251,8 @@ implDuplicate ::
   ( IOLike m
   , HasLedgerTables LedgerState blk
   , ToAllDict (MemAndDiskTable LedgerState blk) (TablesForBlock blk)
+  , forall table. SerialiseTable LedgerState blk table
   , All TableLabel (TablesForBlock blk)
-  , IndexedValue LedgerState UTxOTable blk ~ Value UTxOTable blk
-  , IndexedMemPack LedgerState blk UTxOTable
   ) =>
   ResourceRegistry m ->
   LSMTables m blk ->
@@ -334,35 +333,33 @@ implRead (LSMTables tbs) st (LedgerTables np) =
       $ V.zip vec' res
 
 implReadRange ::
-  forall m l blk.
+  forall m l blk table.
   ( IOLike m
   , ToAllDict (MemAndDiskTable l blk) (TablesForBlock blk)
   , HasLedgerTables l blk
-  , IndexedValue l UTxOTable blk ~ Value UTxOTable blk
-  , IndexedMemPack l blk UTxOTable
+  , TableConstraints blk table
+  , SerialiseTable l blk table
   ) =>
   LSMTables m blk ->
+  Proxy table ->
   l blk EmptyMK ->
-  (Maybe TxIn, Int) ->
-  m (LedgerTables blk ValuesMK, Maybe TxIn)
-implReadRange (LSMTables tbs) st (mPrev, num) =
-  case getNPByTag (S.sing @UTxOTable) tbs of
-    Nothing -> pure (emptyLedgerTables, Nothing)
+  (Maybe (Key table), Int) ->
+  m (Table ValuesMK blk table, Maybe (Key table))
+implReadRange (LSMTables tbs) _ st (mPrev, num) =
+  case getNPByTag (S.sing @table) tbs of
+    Nothing -> pure (Table (ValuesMK mempty), Nothing)
     Just (Table' utxoTable) -> do
       entries <- maybe (cursorFromStart utxoTable) (cursorFromKey utxoTable) mPrev
       pure
-        ( emptyLedgerTables
-            & onUTxOTable (Proxy @blk)
-              .~ ( Table
-                     . ValuesMK
-                     . V.foldl'
-                       ( \m -> \case
-                           LSM.Entry k v -> Map.insert k (des (Proxy @UTxOTable) (Proxy @blk) st v) m
-                           LSM.EntryWithBlob{} -> m
-                       )
-                       Map.empty
-                     $ entries
-                 )
+        ( Table
+            . ValuesMK
+            . V.foldl'
+              ( \m -> \case
+                  LSM.Entry k v -> Map.insert k (des (Proxy @table) (Proxy @blk) st v) m
+                  LSM.EntryWithBlob{} -> m
+              )
+              Map.empty
+            $ entries
         , case snd <$> V.unsnoc entries of
             Nothing -> Nothing
             Just (LSM.Entry k _) -> Just k
@@ -375,20 +372,29 @@ implReadRange (LSMTables tbs) st (mPrev, num) =
   cursorFromKey t k = fmap (V.drop 1) $ LSM.withCursorAtOffset t k (LSM.take $ num + 1)
 
 implReadAll ::
+  forall m blk.
   ( IOLike m
-  , HasLedgerTables l blk
-  , ToAllDict (MemAndDiskTable l blk) (TablesForBlock blk)
-  , IndexedValue l UTxOTable blk ~ Value UTxOTable blk
-  , IndexedMemPack l blk UTxOTable
+  , HasLedgerTables LedgerState blk
+  , ToAllDict (MemAndDiskTable LedgerState blk) (TablesForBlock blk)
   ) =>
   LSMTables m blk ->
-  l blk EmptyMK ->
+  LedgerState blk EmptyMK ->
   m (LedgerTables blk ValuesMK)
 implReadAll t st =
-  let readAll' m = do
-        (v, n) <- implReadRange t st (m, 100000)
-        maybe (pure v) (fmap (ltliftA2 unionValues v) . readAll' . Just) n
-   in readAll' Nothing
+  let
+    readAll' ::
+      forall table.
+      (TableConstraints blk table, SerialiseTable LedgerState blk table) =>
+      Maybe (Key table) ->
+      (m :.: Table ValuesMK blk) table
+    readAll' m = Comp $ do
+      (Table v, n) <- implReadRange t (Proxy @table) st (m, 100000)
+      maybe (pure $ Table v) (fmap (Table . unionValues v . getTable) . unComp . readAll' @table . Just) n
+   in
+    fmap LedgerTables $
+      htraverse' unComp $
+        hcpure (Proxy @(MemAndDiskTable LedgerState blk)) $
+          readAll' Nothing
 
 implPushDiffs ::
   forall m l mk blk.
@@ -438,7 +444,10 @@ implPushDiffs (LSMTables lsmtbs) _ !st1 = do
 implTakeHandleSnapshot ::
   forall m blk t a.
   (All TableLabel (TablesForBlock blk), IOLike m) =>
-  LSMTables m blk -> t -> String -> m (NP (K (Maybe a)) (TablesForBlock blk))
+  LSMTables m blk ->
+  t ->
+  String ->
+  m (NP (K (Maybe a)) (TablesForBlock blk))
 implTakeHandleSnapshot (LSMTables tbs) _ snapshotName = do
   Monad.void $ hctraverse' (Proxy @TableLabel) f tbs
   pure $ hpure (K Nothing)
@@ -573,8 +582,7 @@ loadSnapshot ::
   , IOLike m
   , ToAllDict (MemAndDiskTable LedgerState blk) (TablesForBlock blk)
   , All TableLabel (TablesForBlock blk)
-  , IndexedValue LedgerState UTxOTable blk ~ TxOut blk
-  , IndexedMemPack LedgerState blk UTxOTable
+  , forall table. SerialiseTable LedgerState blk table
   ) =>
   Tracer m LedgerDBV2Trace ->
   ResourceRegistry m ->
@@ -620,7 +628,8 @@ loadSnapshot tracer rr ccfg fs@(SomeHasFS hfs) session ds =
           $ InitFailureRead
             ReadSnapshotDataCorruption
         (,pt)
-          <$> lift (empty extLedgerSt (rk, values) (fmap castLedgerTablesHandle . newLSMLedgerTablesHandle tracer))
+          <$> lift
+            (empty extLedgerSt (rk, values) (fmap castLedgerTablesHandle . newLSMLedgerTablesHandle tracer))
  where
   f ::
     forall table.
@@ -643,7 +652,7 @@ foldSing f (tb :* tbNext) = Comp (f tb) :* foldSing f tbNext
 -- Genesis.
 tableFromValuesMK ::
   forall m l blk.
-  (IOLike m, All (SerialiseTable l blk) (TablesForBlock blk)) =>
+  (IOLike m, All (MemAndDiskTable l blk) (TablesForBlock blk)) =>
   Tracer m LedgerDBV2Trace ->
   ResourceRegistry m ->
   Session m ->
@@ -659,7 +668,7 @@ tableFromValuesMK tracer rr session st (LedgerTables tbs) = do
           traceWith tracer TraceLedgerTablesHandleClose
           Monad.void $ htraverse' (fmap K . LSM.closeTable . getTable') tb
       )
-  Monad.void $ hctraverse' (Proxy @(SerialiseTable l blk)) go $ hzipWith Pair tbs lsmtbs
+  Monad.void $ hctraverse' (Proxy @(MemAndDiskTable l blk)) go $ hzipWith Pair tbs lsmtbs
   pure (rk, LSMTables lsmtbs)
  where
   go ::
@@ -709,9 +718,7 @@ mkLSMArgs ::
   , LedgerDbSerialiseConstraints blk
   , ToAllDict (MemAndDiskTable LedgerState blk) (TablesForBlock blk)
   , All TableLabel (TablesForBlock blk)
-  , All (SerialiseTable LedgerState blk) (TablesForBlock blk)
-  , IndexedValue LedgerState UTxOTable blk ~ TxOut blk
-  , IndexedMemPack LedgerState blk UTxOTable
+  , forall table. SerialiseTable LedgerState blk table
   ) =>
   Proxy blk -> FilePath -> FilePath -> StdGen -> (LedgerDbBackendArgs IO blk, StdGen)
 mkLSMArgs _ fp fastStorage gen =
@@ -730,10 +737,8 @@ instance
   , ToAllDict
       (MemAndDiskTable LedgerState blk)
       (TablesForBlock blk)
+  , forall table. SerialiseTable LedgerState blk table
   , All TableLabel (TablesForBlock blk)
-  , All (SerialiseTable LedgerState blk) (TablesForBlock blk)
-  , IndexedMemPack LedgerState blk UTxOTable
-  , IndexedValue LedgerState UTxOTable blk ~ TxOut blk
   ) =>
   Backend m LSM blk
   where
@@ -790,7 +795,8 @@ instance
 instance
   ( All (IndexedMemPack LedgerState blk) (TablesForBlock blk)
   , IOLike m
-  , IndexedValue LedgerState UTxOTable blk ~ Value UTxOTable blk
+  , LedgerTablesConstraints blk
+  , All (SerialiseTable LedgerState blk) (TablesForBlock blk)
   ) =>
   StreamingBackend m LSM blk
   where
@@ -808,9 +814,11 @@ instance
         String
         (Session m)
 
-  yield _ (YieldLSM chunkSize hdl) = undefined -- yieldLsmS chunkSize hdl
+  yield _ (YieldLSM chunkSize hdl) =
+    hcpure (Proxy @(TableConstraints blk)) (yieldLsmS chunkSize hdl)
 
-  sink _ (SinkLSM chunkSize snapName session) = undefined -- sinkLsmS chunkSize snapName session
+  sink _ (SinkLSM chunkSize snapName session) =
+    hcpure (Proxy @(SerialiseTable LedgerState blk)) (sinkLsmS chunkSize snapName session)
 
 data SomeHasFSAndBlockIO m where
   SomeHasFSAndBlockIO ::
@@ -823,139 +831,148 @@ instance IOLike m => NoThunks (Resources m LSM) where
   Streaming
 -------------------------------------------------------------------------------}
 
--- yieldLsmS ::
---   Monad m =>
---   Int ->
---   LedgerTablesHandle m l blk ->
---   Yield m blk
--- yieldLsmS readChunkSize tb hint k = do
---   r <- k (go (Nothing, readChunkSize))
---   lift $ S.effects r
---  where
---   go p = do
---     (LedgerTables (ValuesMK values), mx) <- lift $ S.lift $ readRange tb hint p
---     if Map.null values
---       then pure $ pure Nothing
---       else do
---         S.each $ Map.toList values
---         go (mx, readChunkSize)
+yieldLsmS ::
+  forall m blk table.
+  (TableConstraints blk table, Monad m) =>
+  Int ->
+  LedgerTablesHandle m LedgerState blk ->
+  Yield m blk table
+yieldLsmS readChunkSize tb = Yield $ \hint k -> do
+  r <- k (go hint (Nothing, readChunkSize))
+  lift $ S.effects r
+ where
+  go hint p = do
+    (Table (ValuesMK values), mx) <- lift $ S.lift $ readRange tb (Proxy @table) hint p
+    if Map.null values
+      then pure $ pure Nothing
+      else do
+        S.each $ Map.toList values
+        go hint (mx, readChunkSize)
 
--- sinkLsmS ::
---   forall m l blk.
---   ( MonadAsync m
---   , MonadMVar m
---   , MonadThrow (STM m)
---   , MonadMask m
---   , MonadST m
---   , MonadEvaluate m
---   , IndexedMemPack LedgerState blk UTxOTable
---   , IndexedValue LedgerState UTxOTable blk ~ Value UTxOTable blk
---   ) =>
---   Int ->
---   String ->
---   Session m ->
---   Sink m blk
--- sinkLsmS writeChunkSize snapName session st s = do
---   tb :: LSMUTxOTable m <- lift $ LSM.newTable session
---   r <- go tb writeChunkSize mempty s
---   lift $
---     LSM.saveSnapshot
---       (LSM.toSnapshotName snapName)
---       (LSM.SnapshotLabel $ T.pack "UTxO table")
---       tb
---   lift $ LSM.closeTable tb
---   pure (fmap (,Nothing) r)
---  where
---   go tb 0 m s' = do
---     lift $
---       LSM.inserts tb $
---         V.fromList [(k, ser (Proxy @UTxOTable) (Proxy @blk) st v, Nothing) | (k, v) <- m]
---     go tb writeChunkSize mempty s'
---   go tb n m s' = do
---     mbs <- S.uncons s'
---     case mbs of
---       Nothing -> do
---         lift $
---           LSM.inserts tb $
---             V.fromList
---               [(k, ser (Proxy @UTxOTable) (Proxy @blk) st v, Nothing) | (k, v) <- m]
---         S.effects s'
---       Just (item, s'') -> go tb (n - 1) (item : m) s''
+sinkLsmS ::
+  forall m blk table.
+  ( MonadAsync m
+  , MonadMVar m
+  , MonadThrow (STM m)
+  , MonadMask m
+  , MonadST m
+  , MonadEvaluate m
+  , SerialiseTable LedgerState blk table
+  ) =>
+  Int ->
+  String ->
+  Session m ->
+  Sink m blk table
+sinkLsmS writeChunkSize snapName session = Sink $ \st s -> do
+  tb <- lift $ LSM.newTable session
+  r <- go st tb writeChunkSize mempty s
+  lift $
+    LSM.saveSnapshot
+      (LSM.toSnapshotName snapName)
+      (LSM.SnapshotLabel $ T.pack $ tableLabel (Proxy @table))
+      tb
+  lift $ LSM.closeTable tb
+  pure (fmap (,Nothing) r)
+ where
+  go ::
+    LedgerState blk EmptyMK ->
+    LSM.Table m (Key table) (Value' table blk) Void ->
+    Int ->
+    [(Key table, Value table blk)] ->
+    S.Stream (S.Of (Key table, Value table blk)) (ExceptT DeserialiseFailure m) b ->
+    ExceptT DeserialiseFailure m b
+  go st tb 0 m s' = do
+    lift $
+      LSM.inserts tb $
+        V.fromList [(k, ser (Proxy @table) (Proxy @blk) st v, Nothing) | (k, v) <- m]
+    go st tb writeChunkSize mempty s'
+  go st tb n m s' = do
+    mbs <- S.uncons s'
+    case mbs of
+      Nothing -> do
+        lift $
+          LSM.inserts tb $
+            V.fromList
+              [(k, ser (Proxy @table) (Proxy @blk) st v, Nothing) | (k, v) <- m]
+        S.effects s'
+      Just (item, s'') -> go st tb (n - 1) (item : m) s''
 
--- -- | Create Yield arguments for LSM
--- mkLSMYieldArgs ::
---   forall m l a blk.
---   ( IOLike m
---   , HasLedgerTables l blk
---   , IndexedMemPack l blk UTxOTable
---   ) =>
---   -- | The filepath in which the LSM database lives. Must not have a trailing slash!
---   FilePath ->
---   -- | The complete name of the snapshot to open, so @<slotno>[_<suffix>]@.
---   String ->
---   -- | Usually 'stdMkBlockIOFS'
---   (FilePath -> ResourceRegistry m -> m (a, SomeHasFSAndBlockIO m)) ->
---   -- | Usually 'newStdGen'
---   (m StdGen) ->
---   l blk EmptyMK ->
---   ResourceRegistry m ->
---   m (YieldArgs m LSM blk)
--- mkLSMYieldArgs fp snapName mkFS mkGen _ reg = do
---   (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkFS fp reg
---   salt <- fst . genWord64 <$> mkGen
---   (_, session) <-
---     allocate reg (\_ -> LSM.openSession nullTracer hasFS blockIO salt (mkFsPath [])) LSM.closeSession
---   tb <-
---     allocate
---       reg
---       ( \_ ->
---           fmap LSMTables $
---             htraverse' unComp $
---               foldSing (f session) (toAllDict @(MemAndDiskTable ExtLedgerState blk) @(TablesForBlock blk))
---       )
---       ( \(LSMTables tbs') ->
---           Monad.void $ htraverse' (fmap K . LSM.closeTable . getTable') tbs'
---       )
---   YieldLSM 1000 <$> newLSMLedgerTablesHandle nullTracer tb
---  where
---   f ::
---     forall table.
---     LSM.Session m -> Dict.Dict (MemAndDiskTable ExtLedgerState blk) table -> m (Table' m blk table)
---   f session Dict.Dict =
---     Table'
---       <$> LSM.openTableFromSnapshot
---         session
---         (LSM.toSnapshotName snapName)
---         (lsmTableLabel (Proxy @table))
+-- | Create Yield arguments for LSM
+mkLSMYieldArgs ::
+  forall m a blk.
+  ( IOLike m
+  , HasLedgerTables LedgerState blk
+  , ToAllDict (MemAndDiskTable LedgerState blk) (TablesForBlock blk)
+  , forall table. SerialiseTable LedgerState blk table
+  , All TableLabel (TablesForBlock blk)
+  ) =>
+  -- | The filepath in which the LSM database lives. Must not have a trailing slash!
+  FilePath ->
+  -- | The complete name of the snapshot to open, so @<slotno>[_<suffix>]@.
+  String ->
+  -- | Usually 'stdMkBlockIOFS'
+  (FilePath -> ResourceRegistry m -> m (a, SomeHasFSAndBlockIO m)) ->
+  -- | Usually 'newStdGen'
+  (m StdGen) ->
+  LedgerState blk EmptyMK ->
+  ResourceRegistry m ->
+  m (YieldArgs m LSM blk)
+mkLSMYieldArgs fp snapName mkFS mkGen _ reg = do
+  (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkFS fp reg
+  salt <- fst . genWord64 <$> mkGen
+  (_, session) <-
+    allocate reg (\_ -> LSM.openSession nullTracer hasFS blockIO salt (mkFsPath [])) LSM.closeSession
+  tb <-
+    allocate
+      reg
+      ( \_ ->
+          fmap LSMTables $
+            htraverse' unComp $
+              foldSing (f session) (toAllDict @(MemAndDiskTable LedgerState blk) @(TablesForBlock blk))
+      )
+      ( \(LSMTables tbs') ->
+          Monad.void $ htraverse' (fmap K . LSM.closeTable . getTable') tbs'
+      )
+  YieldLSM 1000 <$> newLSMLedgerTablesHandle nullTracer tb
+ where
+  f ::
+    forall table.
+    LSM.Session m -> Dict.Dict (MemAndDiskTable LedgerState blk) table -> m (Table' m blk table)
+  f session Dict.Dict =
+    Table'
+      <$> LSM.openTableFromSnapshot
+        session
+        (LSM.toSnapshotName snapName)
+        (LSM.SnapshotLabel $ T.pack $ tableLabel (Proxy @table))
 
--- -- | Create Sink arguments for LSM
--- mkLSMSinkArgs ::
---   IOLike m =>
---   -- | The filepath in which the LSM database should be opened. Must not have a trailing slash!
---   FilePath ->
---   -- | The complete name of the snapshot to be created, so @<slotno>[_<suffix>]@.
---   String ->
---   -- | Usually 'stdMkBlockIOFS'
---   (FilePath -> ResourceRegistry m -> m (a, SomeHasFSAndBlockIO m)) ->
---   -- | Usually 'newStdGen'
---   (m StdGen) ->
---   l blk EmptyMK ->
---   ResourceRegistry m ->
---   m (SinkArgs m LSM blk)
--- mkLSMSinkArgs
---   (splitFileName -> (fp, lsmDir))
---   snapName
---   mkFS
---   mkGen
---   _
---   reg =
---     do
---       (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkFS fp reg
---       removeDirectoryRecursive hasFS lsmFsPath
---       createDirectory hasFS lsmFsPath
---       salt <- fst . genWord64 <$> mkGen
---       (_, session) <-
---         allocate reg (\_ -> LSM.newSession nullTracer hasFS blockIO salt lsmFsPath) LSM.closeSession
---       pure (SinkLSM 1000 snapName session)
---    where
---     lsmFsPath = mkFsPath [lsmDir]
+-- | Create Sink arguments for LSM
+mkLSMSinkArgs ::
+  IOLike m =>
+  -- | The filepath in which the LSM database should be opened. Must not have a trailing slash!
+  FilePath ->
+  -- | The complete name of the snapshot to be created, so @<slotno>[_<suffix>]@.
+  String ->
+  -- | Usually 'stdMkBlockIOFS'
+  (FilePath -> ResourceRegistry m -> m (a, SomeHasFSAndBlockIO m)) ->
+  -- | Usually 'newStdGen'
+  (m StdGen) ->
+  l blk EmptyMK ->
+  ResourceRegistry m ->
+  m (SinkArgs m LSM blk)
+mkLSMSinkArgs
+  (splitFileName -> (fp, lsmDir))
+  snapName
+  mkFS
+  mkGen
+  _
+  reg =
+    do
+      (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkFS fp reg
+      removeDirectoryRecursive hasFS lsmFsPath
+      createDirectory hasFS lsmFsPath
+      salt <- fst . genWord64 <$> mkGen
+      (_, session) <-
+        allocate reg (\_ -> LSM.newSession nullTracer hasFS blockIO salt lsmFsPath) LSM.closeSession
+      pure (SinkLSM 1000 snapName session)
+   where
+    lsmFsPath = mkFsPath [lsmDir]

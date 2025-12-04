@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -16,8 +17,6 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
--- TODO @JS
-{-# OPTIONS_GHC -Wno-unused-imports -Wno-unused-matches #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
   ( Backend (..)
@@ -55,12 +54,11 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.MemPack
 import Data.SOP.BasicFunctors
-import Data.SOP.Constraint (Top)
+import Data.SOP.Constraint (All, Top)
 import Data.SOP.Strict
 import Data.Singletons
 import Data.Void
 import GHC.Generics (Generic)
-import Lens.Micro ((%~), (&))
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -82,7 +80,6 @@ import qualified Streaming as S
 import qualified Streaming.Prelude as S
 import System.FS.API
 import System.FS.CRC
-import qualified System.FilePath as F
 import Prelude hiding (read)
 
 {-------------------------------------------------------------------------------
@@ -183,32 +180,29 @@ implRead tv _ keys = do
     (pure . flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys)
 
 implReadRange ::
-  forall m l blk.
-  (IOLike m, HasLedgerTables l blk) =>
+  forall m l blk table.
+  (IOLike m, HasLedgerTables l blk, TableConstraints blk table) =>
   StrictTVar m (LedgerTablesHandleState blk) ->
+  Proxy table ->
   l blk EmptyMK ->
-  (Maybe TxIn, Int) ->
-  m (LedgerTables blk ValuesMK, Maybe TxIn)
-implReadRange tv _ (f, t) = do
+  (Maybe (Key table), Int) ->
+  m (Table ValuesMK blk table, Maybe (Key table))
+implReadRange tv _ _ (f, t) = do
   hs <- readTVarIO tv
   guardClosed
     hs
     ( \tbs ->
         let tbs' =
-              tbs
-                & onUTxOTable (Proxy @blk)
-                  %~ ( \(Table (ValuesMK m)) ->
-                         let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
-                          in Table (ValuesMK m')
-                     )
+              getTableByTag (sing @table) tbs
          in pure
-              ( tbs'
-              , fst
-                  <$> ( Map.lookupMax . (\(ValuesMK m) -> m) . getTable @ValuesMK @blk @UTxOTable
-                          =<< getTableByTag (sing @UTxOTable) tbs'
-                      )
+              ( maybe (Table (ValuesMK mempty)) g tbs'
+              , fst <$> (Map.lookupMax . ((\(ValuesMK m) -> m)) . getTable @ValuesMK @blk @table =<< tbs')
               )
     )
+ where
+  g (Table (ValuesMK m)) =
+    let m' = Map.take t . (maybe id (\k -> snd . Map.split k) f) $ m
+     in Table (ValuesMK m')
 
 implReadAll ::
   IOLike m =>
@@ -436,135 +430,145 @@ mkInMemoryArgs ::
   a -> (LedgerDbBackendArgs m blk, a)
 mkInMemoryArgs = (,) $ LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
 
-instance IOLike m => StreamingBackend m Mem blk where
+instance
+  (All SingI (TablesForBlock blk), IOLike m, All TableLabel (TablesForBlock blk)) =>
+  StreamingBackend m Mem blk
+  where
   data YieldArgs m Mem blk
     = -- \| Yield an in-memory snapshot
       YieldInMemory
         -- \| How to make a SomeHasFS for @m@
         (MountPoint -> SomeHasFS m)
-        -- \| The file path at which the HasFS has to be opened
+        -- \| The file path at which the HasFS has to be opened, must be the snapshot directory
         FilePath
-        (Decoders blk)
+        -- \| Codecs
+        (TablesCodecs blk)
 
   data SinkArgs m Mem blk
     = SinkInMemory
         Int
-        (TxOut blk -> Encoding)
+        -- \| Codecs
+        (TablesCodecs blk)
         (SomeHasFS m)
+        -- \| The file path at which the HasFS has to be opened, must be the snapshot directory
         FilePath
 
-  yield _ (YieldInMemory mkFs fp (Decoders decV)) =
-    undefined -- yieldInMemoryS mkFs fp decV
+  yield _ (YieldInMemory mkFs fp (TablesCodecs dec)) =
+    hcmap (Proxy @TableLabel) (\cdc -> yieldInMemoryS mkFs fp (decK cdc) (decV cdc)) dec
 
-  sink _ (SinkInMemory chunkSize encV shfs fp) =
-    undefined -- sinkInMemoryS chunkSize encV shfs fp
+  sink _ (SinkInMemory chunkSize (TablesCodecs dec) shfs fp) =
+    hcmap (Proxy @TableLabel) (\cdc -> sinkInMemoryS chunkSize (encK cdc) (encV cdc) shfs fp) dec
 
 {-------------------------------------------------------------------------------
   Streaming
 -------------------------------------------------------------------------------}
 
--- streamingFile ::
---   forall m blk.
---   MonadThrow m =>
---   SomeHasFS m ->
---   NP (K FsPath) (TablesForBlock blk) ->
---   ( NP (StreamOfTable m blk) (TablesForBlock blk) ->
---     ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
---   ) ->
---   ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
--- streamingFile (SomeHasFS fs') path cont =
---   ExceptT $ withFile fs' path ReadMode $ \hdl ->
---     runExceptT $ cont (getBS hdl initCRC) >>= noRemainingBytes
---  where
---   getBS h !crc = do
---     bs <- S.lift $ hGetSome fs' h (fromIntegral defaultChunkSize)
---     if BS.null bs
---       then pure (Just crc)
---       else do
---         S.yield bs
---         getBS h $! updateCRC bs crc
+streamingFile ::
+  forall m.
+  MonadThrow m =>
+  SomeHasFS m ->
+  FsPath ->
+  ( Stream (Of ByteString) m (Maybe CRC) ->
+    ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+  ) ->
+  ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
+streamingFile (SomeHasFS fs') path cont =
+  ExceptT $ withFile fs' path ReadMode $ \hdl ->
+    runExceptT $ cont (getBS hdl initCRC) >>= noRemainingBytes
+ where
+  getBS h !crc = do
+    bs <- S.lift $ hGetSome fs' h (fromIntegral defaultChunkSize)
+    if BS.null bs
+      then pure (Just crc)
+      else do
+        S.yield bs
+        getBS h $! updateCRC bs crc
 
---   noRemainingBytes s =
---     lift (S.uncons s) >>= \case
---       Nothing -> lift $ S.effects s
---       Just (BS.null -> True, s') -> noRemainingBytes s'
---       Just _ -> throwError $ DeserialiseFailure 0 "Remaining bytes"
+  noRemainingBytes s =
+    lift (S.uncons s) >>= \case
+      Nothing -> lift $ S.effects s
+      Just (BS.null -> True, s') -> noRemainingBytes s'
+      Just _ -> throwError $ DeserialiseFailure 0 "Remaining bytes"
 
--- yieldCborMapS ::
---   forall m a b.
---   MonadST m =>
---   (forall s. Decoder s a) ->
---   (forall s. Decoder s b) ->
---   Stream (Of ByteString) m (Maybe CRC) ->
---   Stream (Of (a, b)) (ExceptT DeserialiseFailure m) (Stream (Of ByteString) m (Maybe CRC))
--- yieldCborMapS decK decV = execStateT $ do
---   hoist lift (decodeCbor decodeListLen >> decodeCbor decodeMapLenOrIndef) >>= \case
---     Nothing -> go
---     Just n -> replicateM_ n yieldKV
---  where
---   yieldKV = do
---     kv <- hoist lift $ decodeCbor $ (,) <$> decK <*> decV
---     lift $ S.yield kv
+yieldCborMapS ::
+  forall m a b.
+  MonadST m =>
+  (forall s. Decoder s a) ->
+  (forall s. Decoder s b) ->
+  Stream (Of ByteString) m (Maybe CRC) ->
+  Stream (Of (a, b)) (ExceptT DeserialiseFailure m) (Stream (Of ByteString) m (Maybe CRC))
+yieldCborMapS decKey decValue = execStateT $ do
+  hoist lift (decodeCbor decodeListLen >> decodeCbor decodeMapLenOrIndef) >>= \case
+    Nothing -> go
+    Just n -> replicateM_ n yieldKV
+ where
+  yieldKV = do
+    kv <- hoist lift $ decodeCbor $ (,) <$> decKey <*> decValue
+    lift $ S.yield kv
 
---   go = do
---     doBreak <- hoist lift $ decodeCbor decodeBreakOr
---     unless doBreak $ yieldKV *> go
+  go = do
+    doBreak <- hoist lift $ decodeCbor decodeBreakOr
+    unless doBreak $ yieldKV *> go
 
---   decodeCbor dec =
---     StateT $ \s -> go' s =<< lift (stToIO (deserialiseIncremental dec))
---    where
---     go' s = \case
---       Partial k ->
---         lift (S.next s) >>= \case
---           Right (bs, s') -> go' s' =<< lift (stToIO (k (Just bs)))
---           Left r -> go' (pure r) =<< lift (stToIO (k Nothing))
---       Codec.CBOR.Read.Done bs _off a -> pure (a, S.yield bs *> s)
---       Codec.CBOR.Read.Fail _bs _off err -> throwError err
+  decodeCbor dec =
+    StateT $ \s -> go' s =<< lift (stToIO (deserialiseIncremental dec))
+   where
+    go' s = \case
+      Partial k ->
+        lift (S.next s) >>= \case
+          Right (bs, s') -> go' s' =<< lift (stToIO (k (Just bs)))
+          Left r -> go' (pure r) =<< lift (stToIO (k Nothing))
+      Codec.CBOR.Read.Done bs _off a -> pure (a, S.yield bs *> s)
+      Codec.CBOR.Read.Fail _bs _off err -> throwError err
 
--- yieldInMemoryS ::
---   (MonadThrow m, MonadST m) =>
---   (MountPoint -> SomeHasFS m) ->
---   FilePath ->
---   (forall s. Decoder s (TxOut blk)) ->
---   Yield m blk
--- yieldInMemoryS mkFs (F.splitFileName -> (fp, fname)) decV _ k =
---   streamingFile (mkFs $ MountPoint fp) (mkFsPath [fname]) $ \s -> do
---     k $ undefined -- yieldCborMapS unpack decV s
+yieldInMemoryS ::
+  forall m blk table.
+  (MonadThrow m, MonadST m, TableLabel table) =>
+  (MountPoint -> SomeHasFS m) ->
+  FilePath ->
+  (forall s. Decoder s (Key table)) ->
+  (forall s. Decoder s (Value table blk)) ->
+  Yield m blk table
+yieldInMemoryS mkFs fp decKey decValue = Yield $ \_ k ->
+  streamingFile (mkFs $ MountPoint fp) (mkFsPath [tableLabel (Proxy @table)]) $ \s -> do
+    k $ yieldCborMapS decKey decValue s
 
--- sinkInMemoryS ::
---   forall m blk.
---   MonadThrow m =>
---   Int ->
---   (TxOut blk -> Encoding) ->
---   SomeHasFS m ->
---   FilePath ->
---   Sink m blk
--- sinkInMemoryS writeChunkSize encV (SomeHasFS fs) fp _ s = undefined
-
--- --  ExceptT $ withFile fs (mkFsPath [fp]) (WriteMode MustBeNew) $ \hdl -> do
--- --    let bs = toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)
--- --    let !crc0 = updateCRC bs initCRC
--- --    void $ hPutSome fs hdl bs
--- --    e <- runExceptT $ go hdl crc0 writeChunkSize mempty s
--- --    case e of
--- --      Left err -> pure $ Left err
--- --      Right (r, crc1) -> do
--- --        let bs1 = toStrictByteString encodeBreak
--- --        void $ hPutSome fs hdl bs1
--- --        let !crc2 = updateCRC bs1 crc1
--- --        pure $ Right (fmap (,Just crc2) r)
--- -- where
--- --  go tb !crc 0 m s' = do
--- --    let bs = toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- reverse m]
--- --    lift $ void $ hPutSome fs tb bs
--- --    let !crc1 = updateCRC bs crc
--- --    go tb crc1 writeChunkSize mempty s'
--- --  go tb !crc n m s' = do
--- --    mbs <- S.uncons s'
--- --    case mbs of
--- --      Nothing -> do
--- --        let bs = toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- reverse m]
--- --        lift $ void $ hPutSome fs tb bs
--- --        let !crc1 = updateCRC bs crc
--- --        (,crc1) <$> S.effects s'
--- --      Just (item, s'') -> go tb crc (n - 1) (item : m) s''
+sinkInMemoryS ::
+  forall m blk table.
+  (MonadThrow m, TableLabel table) =>
+  Int ->
+  (Key table -> Encoding) ->
+  (Value table blk -> Encoding) ->
+  SomeHasFS m ->
+  FilePath ->
+  Sink m blk table
+sinkInMemoryS writeChunkSize encKey encValue (SomeHasFS fs) fp = Sink $ \_ s ->
+  ExceptT $
+    withFile fs (mkFsPath [fp, tableLabel (Proxy @table)]) (WriteMode MustBeNew) $
+      \hdl -> do
+        let bs = toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)
+        let !crc0 = updateCRC bs initCRC
+        void $ hPutSome fs hdl bs
+        e <- runExceptT $ go hdl crc0 writeChunkSize mempty s
+        case e of
+          Left err -> pure $ Left err
+          Right (r, crc1) -> do
+            let bs1 = toStrictByteString encodeBreak
+            void $ hPutSome fs hdl bs1
+            let !crc2 = updateCRC bs1 crc1
+            pure $ Right (fmap (,Just crc2) r)
+ where
+  go tb !crc 0 m s' = do
+    let bs = toStrictByteString $ mconcat [encKey k <> encValue v | (k, v) <- reverse m]
+    lift $ void $ hPutSome fs tb bs
+    let !crc1 = updateCRC bs crc
+    go tb crc1 writeChunkSize mempty s'
+  go tb !crc n m s' = do
+    mbs <- S.uncons s'
+    case mbs of
+      Nothing -> do
+        let bs = toStrictByteString $ mconcat [encKey k <> encValue v | (k, v) <- reverse m]
+        lift $ void $ hPutSome fs tb bs
+        let !crc1 = updateCRC bs crc
+        (,crc1) <$> S.effects s'
+      Just (item, s'') -> go tb crc (n - 1) (item : m) s''

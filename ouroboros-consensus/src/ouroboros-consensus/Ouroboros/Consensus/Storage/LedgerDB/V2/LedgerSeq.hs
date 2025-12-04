@@ -1,19 +1,16 @@
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 -- | The data structure that holds the cached ledger states.
@@ -103,7 +100,7 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   , read :: !(l blk EmptyMK -> LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
-  , readRange :: !(l blk EmptyMK -> (Maybe TxIn, Int) -> m (LedgerTables blk ValuesMK, Maybe TxIn))
+  , readRange :: !(forall table. TableConstraints blk table => Proxy table -> l blk EmptyMK -> (Maybe (Key table), Int) -> m (Table ValuesMK blk table, Maybe (Key table)))
   -- ^ Read the requested number of values, possibly starting from the given
   -- key, from the tables, and deserialize them as if they were from the same
   -- era as the given ledger state.
@@ -148,7 +145,7 @@ castLedgerTablesHandle h =
       , transfer
       , duplicate = \reg -> (\(x, y) -> (x, castLedgerTablesHandle y)) <$> duplicate reg
       , read = \l -> read (ledgerState l)
-      , readRange = \l -> readRange (ledgerState l)
+      , readRange = \p l -> readRange p (ledgerState l)
       , readAll = \l -> readAll (ledgerState l)
       , pushDiffs = \l1 l2 -> pushDiffs (ledgerState l1) (ledgerState l2)
       , takeHandleSnapshot = \l -> takeHandleSnapshot (ledgerState l)

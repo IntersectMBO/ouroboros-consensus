@@ -340,13 +340,13 @@ type instance TablesForBlock (ShelleyBlock proto BabbageEra) = '[UTxOTable]
 type instance TablesForBlock (ShelleyBlock proto ConwayEra) = '[UTxOTable]
 
 instance
-  MemPack (Value table (ShelleyBlock proto era)) =>
-  IndexedMemPack LedgerState (ShelleyBlock proto era) (table :: TABLE)
+  MemPack (Value UTxOTable (ShelleyBlock proto era)) =>
+  IndexedMemPack LedgerState (ShelleyBlock proto era) UTxOTable
   where
   type
-    IndexedValue LedgerState table (ShelleyBlock proto era) =
-      Value table (ShelleyBlock proto era)
-  indexedTypeName _ _ _ = typeName @(Value table (ShelleyBlock proto era))
+    IndexedValue LedgerState UTxOTable (ShelleyBlock proto era) =
+      Value UTxOTable (ShelleyBlock proto era)
+  indexedTypeName _ _ _ = typeName @(Value UTxOTable (ShelleyBlock proto era))
   indexedPackedByteCount _ _ _ _ = packedByteCount
   indexedPackM _ _ _ _ = packM
   indexedUnpackM _ _ _ _ = unpackM
