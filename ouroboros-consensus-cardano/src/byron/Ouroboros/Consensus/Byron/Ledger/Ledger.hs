@@ -15,6 +15,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Instances requires for consensus/ledger integration
 module Ouroboros.Consensus.Byron.Ledger.Ledger
@@ -95,6 +96,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   LedgerState
@@ -199,19 +201,15 @@ instance IsLedger (LedgerState ByronBlock) where
             byronLedgerTransition
         }
 
--- type instance TxIn (LedgerState ByronBlock) = Void
 type instance TxOut ByronBlock = Void
 type instance TablesForBlock ByronBlock = '[]
 
--- instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
---   convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
--- instance LedgerTablesAreTrivial (Ticked (LedgerState ByronBlock)) where
---   convertMapKind (TickedByronLedgerState x y) = TickedByronLedgerState x y
-
--- deriving via
---   Void
---   instance
---     IndexedMemPack (LedgerState ByronBlock EmptyMK) Void
+instance IndexedMemPack LedgerState ByronBlock UTxOTable where
+  type IndexedValue LedgerState UTxOTable ByronBlock  = Value UTxOTable ByronBlock
+  indexedPackM _ _ _ _ = absurd
+  indexedUnpackM _ _ _ _ = error "absurd"
+  indexedPackedByteCount _ _ _ _ = absurd
+  indexedTypeName _ _ _ = typeName @Void
 
 instance HasLedgerTables LedgerState ByronBlock where
   projectLedgerTables _ = LedgerTables Nil
