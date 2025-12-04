@@ -169,9 +169,69 @@ instance
   CardanoHardForkConstraints c =>
   SerializeTablesWithHint LedgerState (HardForkBlock (CardanoEras c)) InstantStakeTable
   where
-  encodeTablesWithHint _ (Table (ValuesMK tbs)) =
-    toPlainEncoding (eraProtVerLow @DijkstraEra) $ encodeMap encodeMemPack encodeMemPack tbs
-  decodeTablesWithHint _ = Table . ValuesMK <$> eraDecoder @DijkstraEra (decodeMap decodeMemPack decodeMemPack)
+  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (Table (ValuesMK tbs)) =
+    let
+      -- These could be made into a CAF to avoid recomputing it, but
+      -- it is only used in serialization so it is not critical.
+      np =
+        (Fn $ const $ K $ Codec.CBOR.Encoding.encodeMapLen 0)
+          :* (Fn $ const $ K $ encOne (Proxy @ShelleyEra))
+          :* (Fn $ const $ K $ encOne (Proxy @AllegraEra))
+          :* (Fn $ const $ K $ encOne (Proxy @MaryEra))
+          :* (Fn $ const $ K $ encOne (Proxy @AlonzoEra))
+          :* (Fn $ const $ K $ encOne (Proxy @BabbageEra))
+          :* (Fn $ const $ K $ encOne (Proxy @ConwayEra))
+          :* (Fn $ const $ K $ encOne (Proxy @DijkstraEra))
+          :* Nil
+     in
+      hcollapse $ hap np $ Telescope.tip idx
+   where
+    encOne :: forall era. Era era => Proxy era -> Encoding
+    encOne _ =
+      toPlainEncoding (eraProtVerLow @era) $ encCBOR tbs
+
+  decodeTablesWithHint  :: forall s.
+    LedgerState (HardForkBlock (CardanoEras c)) EmptyMK ->
+    Decoder s (Table ValuesMK (HardForkBlock (CardanoEras c)) InstantStakeTable)
+  decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
+    let
+      -- These could be made into a CAF to avoid recomputing it, but
+      -- it is only used in serialization so it is not critical.
+      np =
+        ( Fn $
+            const $
+              Comp $
+                K . Table . ValuesMK
+                  <$> (Codec.CBOR.Decoding.decodeMapLen >> pure Map.empty)
+        )
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* Nil
+     in
+      hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
+   where
+    getOne ::
+      forall proto era.
+      ShelleyCompatible proto era =>
+      LedgerState (ShelleyBlock proto era) EmptyMK ->
+      Decoder s (Table ValuesMK (HardForkBlock (CardanoEras c)) InstantStakeTable)
+    getOne st =
+      let certInterns =
+            internsFromMap $
+              shelleyLedgerState st
+                ^. SL.nesEsL
+                  . SL.esLStateL
+                  . SL.lsCertStateL
+                  . SL.certDStateL
+                  . SL.accountsL
+                  . SL.accountsMapL
+       in Table . ValuesMK
+            <$> eraDecoder @era (decShareCBOR (certInterns, mempty))
 
 instance
   CardanoHardForkConstraints c =>
