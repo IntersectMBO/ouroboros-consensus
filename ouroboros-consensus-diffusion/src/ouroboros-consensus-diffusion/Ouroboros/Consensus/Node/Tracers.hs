@@ -42,7 +42,6 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
   )
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
@@ -80,10 +79,6 @@ data Tracers' remotePeer localPeer blk f = Tracers
       f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
   , mempoolTracer :: f (TraceEventMempool blk)
-  , perasCertDiffusionInboundTracer ::
-      f (TraceLabelPeer remotePeer (TracePerasCertDiffusionInbound blk))
-  , perasCertDiffusionOutboundTracer ::
-      f (TraceLabelPeer remotePeer (TracePerasCertDiffusionOutbound blk))
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
@@ -114,8 +109,6 @@ instance
       , txOutboundTracer = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
       , mempoolTracer = f mempoolTracer
-      , perasCertDiffusionInboundTracer = f perasCertDiffusionInboundTracer
-      , perasCertDiffusionOutboundTracer = f perasCertDiffusionOutboundTracer
       , forgeTracer = f forgeTracer
       , blockchainTimeTracer = f blockchainTimeTracer
       , forgeStateInfoTracer = f forgeStateInfoTracer
@@ -153,8 +146,6 @@ nullTracers =
     , txOutboundTracer = nullTracer
     , localTxSubmissionServerTracer = nullTracer
     , mempoolTracer = nullTracer
-    , perasCertDiffusionInboundTracer = nullTracer
-    , perasCertDiffusionOutboundTracer = nullTracer
     , forgeTracer = nullTracer
     , blockchainTimeTracer = nullTracer
     , forgeStateInfoTracer = nullTracer
@@ -194,8 +185,6 @@ showTracers tr =
     , txOutboundTracer = showTracing tr
     , localTxSubmissionServerTracer = showTracing tr
     , mempoolTracer = showTracing tr
-    , perasCertDiffusionInboundTracer = showTracing tr
-    , perasCertDiffusionOutboundTracer = showTracing tr
     , forgeTracer = showTracing tr
     , blockchainTimeTracer = showTracing tr
     , forgeStateInfoTracer = showTracing tr
