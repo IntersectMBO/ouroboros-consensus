@@ -11,7 +11,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
   ) where
 
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
 import Ouroboros.Consensus.Storage.PerasCertDB.API

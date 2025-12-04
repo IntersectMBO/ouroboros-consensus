@@ -34,7 +34,7 @@ import Network.TypedProtocol.Channel (Channel, createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.V1
   ( objectDiffusionInbound
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
