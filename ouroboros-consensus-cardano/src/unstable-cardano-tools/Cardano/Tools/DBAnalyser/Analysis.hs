@@ -440,7 +440,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
     let ledgerCfg = ExtLedgerCfg cfg
     oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip initLedgerDB
     frk <-
-      LedgerDB.getForkerAtTarget initLedgerDB registry VolatileTip >>= \case
+      LedgerDB.getForkerAtTarget initLedgerDB "storeLedger" registry VolatileTip >>= \case
         Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
         Right f -> pure f
     tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
@@ -522,7 +522,7 @@ checkNoThunksEvery
     process _ blk = do
       oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
       frk <-
-        LedgerDB.getForkerAtTarget ldb registry VolatileTip >>= \case
+        LedgerDB.getForkerAtTarget ldb "checkNoThunks" registry VolatileTip >>= \case
           Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
           Right f -> pure f
       tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
@@ -580,7 +580,7 @@ traceLedgerProcessing
       IO ()
     process ledgerDB _ blk = do
       frk <-
-        LedgerDB.getForkerAtTarget ledgerDB registry VolatileTip >>= \case
+        LedgerDB.getForkerAtTarget ledgerDB "ledgerProcessing" registry VolatileTip >>= \case
           Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
           Right f -> pure f
       oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
@@ -660,7 +660,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     (blk, SizeInBytes) ->
     IO ()
   process ledgerDB intLedgerDB outFileHandle outFormat _ (blk, sz) = do
-    (prevLedgerState, tables) <- LedgerDB.withPrivateTipForker ledgerDB $ \frk -> do
+    (prevLedgerState, tables) <- LedgerDB.withPrivateTipForker ledgerDB "benchmarkLedgerOps" $ \frk -> do
       st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
       tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
       pure (st, tbs)
@@ -810,7 +810,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
     IO ()
   process ledgerDB intLedgerDB outFileHandle _ blk = do
     frk <-
-      LedgerDB.getForkerAtTarget ledgerDB registry VolatileTip >>= \case
+      LedgerDB.getForkerAtTarget ledgerDB "blockAppMetrics" registry VolatileTip >>= \case
         Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
         Right f -> pure f
     oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
@@ -876,7 +876,7 @@ reproMempoolForge numBlks env = do
                 MempoolLedgerDBView
                   (ledgerState st)
                   ( fmap (LedgerDB.ledgerStateReadOnlyForker . LedgerDB.readOnlyForker)
-                      <$> LedgerDB.getForkerAtTarget ledgerDB reg' (SpecificPoint (castPoint $ getTip st))
+                      <$> LedgerDB.getForkerAtTarget ledgerDB "reproMempoolForge-mempool" reg' (SpecificPoint (castPoint $ getTip st))
                   )
           }
         lCfg
@@ -948,7 +948,7 @@ reproMempoolForge numBlks env = do
       case scrutinee of
         Nothing -> pure ()
         Just blk -> do
-          LedgerDB.withPrivateTipForker ledgerDB $ \forker -> do
+          LedgerDB.withPrivateTipForker ledgerDB "reproMempoolForge-forge" $ \forker -> do
             st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState forker
 
             -- time the suspected slow parts of the forge thread that created

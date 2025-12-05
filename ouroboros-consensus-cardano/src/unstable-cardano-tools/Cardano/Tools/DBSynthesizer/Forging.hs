@@ -211,7 +211,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
         ( either
             (error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!")
             id
-            <$> getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
+            <$> getReadOnlyForkerAtPoint chainDB "gentxs" reg (SpecificPoint bcPrevPoint)
         )
         tickedLedgerState
 

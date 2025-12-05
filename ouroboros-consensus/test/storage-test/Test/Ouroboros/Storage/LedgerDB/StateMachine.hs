@@ -604,7 +604,7 @@ instance RunModel Model (StateT Environment IO) where
   perform _ OpenAndCloseForker _ = do
     Environment ldb _ _ _ _ _ _ <- get
     lift $ withRegistry $ \rr -> do
-      eFrk <- LedgerDB.getForkerAtTarget ldb rr VolatileTip
+      eFrk <- LedgerDB.getForkerAtTarget ldb "dummyForker" rr VolatileTip
       case eFrk of
         Left err -> error $ "Impossible: can't acquire forker at tip: " <> show err
         Right frk -> forkerClose frk
