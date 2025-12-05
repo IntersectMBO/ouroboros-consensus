@@ -775,7 +775,15 @@ withTransferrableReadAccess h rr f = getEnv h $ \ldbEnv -> do
           -- the forker was opened.
           join $ readTVarIO tv
       )
-  unsafeRunReadLocked (acquireAtTarget ldbEnv f >>= traverse (newForker h ldbEnv (rk, tv) rr))
+  unsafeRunReadLocked
+    ( acquireAtTarget ldbEnv f
+        >>= \case
+          Left err -> do
+            ReadLocked $ void $ release rk
+            pure (Left err)
+          Right chlog -> do
+            Right <$> newForker h ldbEnv (rk, tv) rr chlog
+    )
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
