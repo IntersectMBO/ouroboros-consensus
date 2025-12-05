@@ -317,14 +317,4 @@ instance SupportsTwoPhaseValidation ConwayEra where
     _ -> False
 
 instance SupportsTwoPhaseValidation DijkstraEra where
-  isIncorrectClaimedFlag _ = \case
-    SL.ConwayUtxowFailure
-      ( Conway.UtxoFailure
-          ( Conway.UtxosFailure
-              ( Conway.ValidationTagMismatch
-                  (Alonzo.IsValid _claimedFlag)
-                  _validationErrs
-                )
-            )
-        ) -> True
-    _ -> False
+  isIncorrectClaimedFlag _ = error "TODO(ledger)"
