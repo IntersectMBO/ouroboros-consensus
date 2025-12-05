@@ -42,7 +42,8 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
         Map (SL.KeyHash SL.StakePool) SL.StakePoolParams
     (futurePoolParams, poolParams) =
       ( SL.psFutureStakePoolParams pstate
-      , Map.mapWithKey SL.stakePoolStateToStakePoolParams (SL.psStakePools pstate)
+        -- TODO: undefined
+      , Map.mapWithKey (\k v -> SL.stakePoolStateToStakePoolParams k undefined v) (SL.psStakePools pstate)
       )
 
     -- Sort stake pools by descending stake

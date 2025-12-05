@@ -429,11 +429,13 @@ instance
       GetStakePools ->
         SL.getPools st
       GetStakePoolParams poolids ->
-        SL.queryPoolParameters st poolids
+        -- TODO: networkId here
+        SL.queryPoolParameters undefined st poolids
       GetRewardInfoPools ->
         SL.getRewardInfoPools globals st
       GetPoolState mPoolIds ->
-        SL.queryPoolState st mPoolIds
+        -- TODO: networkId here
+        SL.queryPoolState st mPoolIds undefined
       GetStakeSnapshots mPoolIds ->
         let SL.SnapShots
               { SL.ssStakeMark
