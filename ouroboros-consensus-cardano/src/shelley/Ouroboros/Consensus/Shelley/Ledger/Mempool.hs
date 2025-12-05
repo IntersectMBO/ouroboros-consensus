@@ -78,6 +78,7 @@ import Cardano.Ledger.Binary
 import qualified Cardano.Ledger.Conway.PParams as SL
 import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.UTxO as SL
+import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
@@ -487,9 +488,9 @@ instance MaxTxSizeUTxO ConwayEra where
 instance MaxTxSizeUTxO DijkstraEra where
   maxTxSizeUTxO txSize txSizeLimit =
     SL.ApplyTxError . pure $
-      ConwayEra.ConwayUtxowFailure $
-        ConwayEra.UtxoFailure $
-          ConwayEra.MaxTxSizeUTxO $
+      DijkstraEra.DijkstraUtxowFailure $
+        DijkstraEra.UtxoFailure $
+          DijkstraEra.MaxTxSizeUTxO $
             L.Mismatch
               { mismatchSupplied = txSize
               , mismatchExpected = txSizeLimit
@@ -624,9 +625,9 @@ instance ExUnitsTooBigUTxO ConwayEra where
 instance ExUnitsTooBigUTxO DijkstraEra where
   exUnitsTooBigUTxO txsz limit =
     SL.ApplyTxError . pure $
-      ConwayEra.ConwayUtxowFailure $
-        ConwayEra.UtxoFailure $
-          ConwayEra.ExUnitsTooBigUTxO $
+      DijkstraEra.DijkstraUtxowFailure $
+        DijkstraEra.UtxoFailure $
+          DijkstraEra.ExUnitsTooBigUTxO $
             L.Mismatch
               { mismatchSupplied = txsz
               , mismatchExpected = limit
@@ -768,7 +769,7 @@ instance TxRefScriptsSizeTooBig ConwayEra where
 instance TxRefScriptsSizeTooBig DijkstraEra where
   txRefScriptsSizeTooBig txsz limit =
     SL.ApplyTxError . pure $
-      ConwayEra.ConwayTxRefScriptsSizeTooBig $
+      DijkstraEra.DijkstraTxRefScriptsSizeTooBig $
         L.Mismatch
           { mismatchSupplied = txsz
           , mismatchExpected = limit
