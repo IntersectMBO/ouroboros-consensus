@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -31,6 +32,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   , completeLedgerConfig''
   , distribLedgerConfig
   , distribTopLevelConfig
+  , NoThunksLedgerState
 
     -- ** Convenience re-exports
   , EpochInfo
@@ -44,7 +46,7 @@ import Data.SOP.Functors
 import Data.SOP.Strict
 import Data.Typeable
 import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks)
+import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -77,15 +79,18 @@ type instance HeaderHash (HardForkBlock xs) = OneEraHash xs
 newtype instance LedgerState (HardForkBlock xs) mk = HardForkLedgerState
   { hardForkLedgerStatePerEra :: HardForkState (Flip LedgerState mk) xs
   }
+  deriving Generic
 
-deriving stock instance
-  (ShowMK mk, CanHardFork xs) =>
+deriving instance
+  Show (HardForkState (Flip LedgerState mk) xs) =>
   Show (LedgerState (HardForkBlock xs) mk)
-deriving stock instance
-  (EqMK mk, CanHardFork xs) =>
-  Eq (LedgerState (HardForkBlock xs) mk)
+
 deriving newtype instance
-  (NoThunksMK mk, CanHardFork xs) =>
+  Eq (HardForkState (Flip LedgerState mk) xs) =>
+  Eq (LedgerState (HardForkBlock xs) mk)
+
+deriving newtype instance
+  NoThunks (HardForkState (Flip LedgerState mk) xs) =>
   NoThunks (LedgerState (HardForkBlock xs) mk)
 
 {-------------------------------------------------------------------------------

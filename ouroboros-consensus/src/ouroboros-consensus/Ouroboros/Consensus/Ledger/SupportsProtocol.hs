@@ -1,6 +1,8 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.Ledger.SupportsProtocol
   ( GenesisWindow (..)
@@ -19,7 +21,7 @@ import Ouroboros.Consensus.Protocol.Abstract
 -- | Link protocol to ledger
 class
   ( BlockSupportsProtocol blk
-  , UpdateLedger blk
+  , ApplyBlock LedgerState blk
   , ValidateEnvelope blk
   ) =>
   LedgerSupportsProtocol blk

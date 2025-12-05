@@ -185,8 +185,10 @@ library snapshot-conversion
   hs-source-dirs: src/snapshot-conversion
   other-modules:
     Ouroboros.Consensus.Cardano.StreamingLedgerTables
+
   exposed-modules:
     Ouroboros.Consensus.Cardano.SnapshotConversion
+
   build-depends:
     ansi-terminal,
     base,
@@ -210,7 +212,6 @@ library snapshot-conversion
     strict-sop-core,
     terminal-progress-bar,
     text,
-
 
 library unstable-byronspec
   import: common-lib
@@ -728,7 +729,6 @@ executable immdb-server
 executable snapshot-converter
   import: common-exe
   hs-source-dirs: app
-
   main-is: snapshot-converter.hs
   build-depends:
     base,
@@ -736,7 +736,7 @@ executable snapshot-converter
     mtl,
     optparse-applicative,
     ouroboros-consensus,
-    ouroboros-consensus-cardano:{unstable-cardano-tools, ouroboros-consensus-cardano, snapshot-conversion},
+    ouroboros-consensus-cardano:{ouroboros-consensus-cardano, snapshot-conversion, unstable-cardano-tools},
     with-utf8,
 
   other-modules:

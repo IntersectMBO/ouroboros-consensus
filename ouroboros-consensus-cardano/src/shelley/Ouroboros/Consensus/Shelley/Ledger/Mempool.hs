@@ -9,6 +9,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -88,22 +89,23 @@ import Control.Monad.Identity (Identity (..))
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
 import Data.Measure (Measure)
+import Data.Singletons
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import Data.Word (Word32)
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
-import Lens.Micro ((^.))
+import Lens.Micro hiding (lens, set)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( BigEndianTxIn (..)
-  , ShelleyLedgerConfig (shelleyLedgerGlobals)
+  ( ShelleyLedgerConfig (shelleyLedgerGlobals)
   , Ticked (TickedShelleyLedgerState, tickedShelleyLedgerState)
   , getPParams
   )
@@ -169,7 +171,12 @@ perTxOverhead :: Num a => a
 perTxOverhead = 4
 
 instance
-  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era)) =>
+  ( ShelleyCompatible proto era
+  , TxLimits (ShelleyBlock proto era)
+  , LedgerTablesConstraints (ShelleyBlock proto era)
+  , CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
+  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  ) =>
   LedgerSupportsMempool (ShelleyBlock proto era)
   where
   txInvariant = const True
@@ -181,10 +188,13 @@ instance
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 
   getTransactionKeySets (ShelleyTx _ tx) =
-    LedgerTables $
-      KeysMK $
-        coerceSet
-          (tx ^. bodyTxL . allInputsTxBodyF)
+    emptyLedgerTables
+      & onUTxOTable (Proxy @(ShelleyBlock proto era))
+        .~ Table
+          ( KeysMK $
+              coerceSet
+                (tx ^. bodyTxL . allInputsTxBodyF)
+          )
 
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (txIdTx tx) tx
@@ -267,7 +277,10 @@ instance Show (GenTxId (ShelleyBlock proto era)) where
 
 applyShelleyTx ::
   forall era proto.
-  ShelleyBasedEra era =>
+  ( ShelleyBasedEra era
+  , LedgerTablesConstraints (ShelleyBlock proto era)
+  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  ) =>
   LedgerConfig (ShelleyBlock proto era) ->
   WhetherToIntervene ->
   SlotNo ->
@@ -295,15 +308,20 @@ applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
 
   let st' :: TickedLedgerState (ShelleyBlock proto era) DiffMK
       st' =
-        trackingToDiffs $
-          calculateDifference st0 $
-            unstowLedgerTables $
-              set theLedgerLens mempoolState' st1
+        unTickedL $
+          trackingToDiffs $
+            calculateDifference (TickedL st0) $
+              TickedL $
+                unstowLedgerTables $
+                  set theLedgerLens mempoolState' st1
 
   pure (st', mkShelleyValidatedTx vtx)
 
 reapplyShelleyTx ::
-  ShelleyBasedEra era =>
+  ( ShelleyBasedEra era
+  , LedgerTablesConstraints (ShelleyBlock proto era)
+  , CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  ) =>
   ComputeDiffs ->
   LedgerConfig (ShelleyBlock proto era) ->
   SlotNo ->
@@ -323,10 +341,12 @@ reapplyShelleyTx doDiffs cfg slot vgtx st0 = do
         vtx
 
   pure
+    $ unTickedL
     $ ( case doDiffs of
-          ComputeDiffs -> calculateDifference st0
+          ComputeDiffs -> calculateDifference (TickedL st0)
           IgnoreDiffs -> attachEmptyDiffs
       )
+    $ TickedL
     $ unstowLedgerTables
     $ set theLedgerLens mempoolState' st1
  where

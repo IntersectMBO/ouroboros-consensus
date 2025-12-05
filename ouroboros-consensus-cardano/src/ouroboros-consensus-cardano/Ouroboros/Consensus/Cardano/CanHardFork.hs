@@ -98,6 +98,19 @@ import Ouroboros.Consensus.Shelley.ShelleyHFC
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (coerceMapKeys, eitherToMaybe)
 
+type instance TablesForBlock (HardForkBlock (CardanoEras c)) = '[UTxOTable, InstantStakeTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto ShelleyEra]) = '[UTxOTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto AllegraEra]) = '[UTxOTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto MaryEra]) = '[UTxOTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto AlonzoEra]) = '[UTxOTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto BabbageEra]) = '[UTxOTable]
+type instance TablesForBlock (HardForkBlock '[ShelleyBlock proto ConwayEra]) = '[UTxOTable]
+type instance
+  TablesForBlock (HardForkBlock '[ShelleyBlock proto DijkstraEra]) =
+    '[UTxOTable, InstantStakeTable]
+
+type instance TablesForBlock (HardForkBlock '[ByronBlock]) = '[]
+
 {-------------------------------------------------------------------------------
   CanHardFork
 -------------------------------------------------------------------------------}
@@ -324,10 +337,7 @@ translateLedgerStateByronToShelleyWrapper =
 translateLedgerTablesByronToShelleyWrapper ::
   TranslateLedgerTables ByronBlock (ShelleyBlock (TPraos c) ShelleyEra)
 translateLedgerTablesByronToShelleyWrapper =
-  TranslateLedgerTables
-    { translateTxInWith = absurd
-    , translateTxOutWith = absurd
-    }
+  TranslateLedgerTables absurd
 
 translateChainDepStateByronToShelleyWrapper ::
   RequiringBoth
@@ -468,6 +478,8 @@ translateLedgerStateShelleyToAllegraWrapper =
               -- translation.
               avvmsAsDeletions =
                 LedgerTables
+                  . (SOP.:* SOP.Nil)
+                  . Table
                   . DiffMK
                   . Diff.fromMapDeletes
                   . coerceMapKeys
@@ -482,6 +494,8 @@ translateLedgerStateShelleyToAllegraWrapper =
                 stowLedgerTables
                   . withLedgerTables ls
                   . LedgerTables
+                  . (SOP.:* SOP.Nil)
+                  . Table
                   . ValuesMK
                   . coerceMapKeys
                   $ avvms
@@ -501,10 +515,7 @@ translateLedgerTablesShelleyToAllegraWrapper ::
     (ShelleyBlock (TPraos c) ShelleyEra)
     (ShelleyBlock (TPraos c) AllegraEra)
 translateLedgerTablesShelleyToAllegraWrapper =
-  TranslateLedgerTables
-    { translateTxInWith = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+  TranslateLedgerTables SL.upgradeTxOut
 
 translateTxShelleyToAllegraWrapper ::
   InjectTx
@@ -549,10 +560,7 @@ translateLedgerTablesAllegraToMaryWrapper ::
     (ShelleyBlock (TPraos c) AllegraEra)
     (ShelleyBlock (TPraos c) MaryEra)
 translateLedgerTablesAllegraToMaryWrapper =
-  TranslateLedgerTables
-    { translateTxInWith = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+  TranslateLedgerTables SL.upgradeTxOut
 
 translateTxAllegraToMaryWrapper ::
   InjectTx
@@ -597,10 +605,7 @@ translateLedgerTablesMaryToAlonzoWrapper ::
     (ShelleyBlock (TPraos c) MaryEra)
     (ShelleyBlock (TPraos c) AlonzoEra)
 translateLedgerTablesMaryToAlonzoWrapper =
-  TranslateLedgerTables
-    { translateTxInWith = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+  TranslateLedgerTables SL.upgradeTxOut
 
 getAlonzoTranslationContext ::
   WrapLedgerConfig (ShelleyBlock (TPraos c) AlonzoEra) ->
@@ -653,23 +658,25 @@ translateLedgerStateAlonzoToBabbageWrapper =
   transPraosLS ::
     LedgerState (ShelleyBlock (TPraos c) AlonzoEra) mk ->
     LedgerState (ShelleyBlock (Praos c) AlonzoEra) mk
-  transPraosLS (ShelleyLedgerState wo nes st tb) =
+  transPraosLS (ShelleyLedgerState wo nes st tbs) =
     ShelleyLedgerState
       { shelleyLedgerTip = fmap castShelleyTip wo
       , shelleyLedgerState = nes
       , shelleyLedgerTransition = st
-      , shelleyLedgerTables = coerce tb
+      , shelleyLedgerTables = castLedgerTables tbs
       }
+
+castLedgerTables ::
+  LedgerTables (ShelleyBlock (TPraos c) AlonzoEra) mk ->
+  LedgerTables (ShelleyBlock (Praos c) AlonzoEra) mk
+castLedgerTables (LedgerTables tbs) = LedgerTables $ SOP.hcoerce tbs
 
 translateLedgerTablesAlonzoToBabbageWrapper ::
   TranslateLedgerTables
     (ShelleyBlock (TPraos c) AlonzoEra)
     (ShelleyBlock (Praos c) BabbageEra)
 translateLedgerTablesAlonzoToBabbageWrapper =
-  TranslateLedgerTables
-    { translateTxInWith = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+  TranslateLedgerTables SL.upgradeTxOut
 
 translateTxAlonzoToBabbageWrapper ::
   SL.TranslationContext BabbageEra ->
@@ -735,10 +742,7 @@ translateLedgerTablesBabbageToConwayWrapper ::
     (ShelleyBlock (Praos c) BabbageEra)
     (ShelleyBlock (Praos c) ConwayEra)
 translateLedgerTablesBabbageToConwayWrapper =
-  TranslateLedgerTables
-    { translateTxInWith = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+  TranslateLedgerTables SL.upgradeTxOut
 
 getConwayTranslationContext ::
   WrapLedgerConfig (ShelleyBlock (Praos c) ConwayEra) ->
@@ -770,6 +774,7 @@ translateValidatedTxBabbageToConwayWrapper ctxt =
 -------------------------------------------------------------------------------}
 
 translateLedgerStateConwayToDijkstraWrapper ::
+  forall c.
   RequiringBoth
     WrapLedgerConfig
     TranslateLedgerState
@@ -779,6 +784,13 @@ translateLedgerStateConwayToDijkstraWrapper =
   RequireBoth $ \_cfgConway cfgDijkstra ->
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo ->
+          -- ( `withLedgerTables`
+          --     ( LedgerTables $
+          --         Table (DiffMK (mempty))
+          --           SOP.:* Table (DiffMK (mempty))
+          --           SOP.:* SOP.Nil
+          --     )
+          -- )
           noNewTickingDiffs
             . unFlip
             . unComp
@@ -792,10 +804,7 @@ translateLedgerTablesConwayToDijkstraWrapper ::
     (ShelleyBlock (Praos c) ConwayEra)
     (ShelleyBlock (Praos c) DijkstraEra)
 translateLedgerTablesConwayToDijkstraWrapper =
-  TranslateLedgerTables
-    { translateTxInWith = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+  TranslateLedgerTables SL.upgradeTxOut
 
 getDijkstraTranslationContext ::
   WrapLedgerConfig (ShelleyBlock (Praos c) DijkstraEra) ->

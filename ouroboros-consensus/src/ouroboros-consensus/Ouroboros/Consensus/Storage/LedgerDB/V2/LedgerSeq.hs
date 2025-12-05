@@ -1,19 +1,17 @@
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 -- | The data structure that holds the cached ledger states.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
@@ -51,11 +49,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   , snapshots
   , tip
   , volatileStatesBimap
+  , castLedgerTablesHandle
   ) where
 
 import Cardano.Ledger.BaseTypes
 import Control.ResourceRegistry
 import Data.Function (on)
+import Data.SOP.BasicFunctors
+import Data.SOP.Strict
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
@@ -81,12 +82,12 @@ import Prelude hiding (read)
 -------------------------------------------------------------------------------}
 
 -- | The interface fulfilled by handles on both the InMemory and LSM handles.
-data LedgerTablesHandle m l = LedgerTablesHandle
+data LedgerTablesHandle m l blk = LedgerTablesHandle
   { close :: !(m ())
   , transfer :: !(ResourceKey m -> m ())
   -- ^ Update the closing action in this handle with a new resource key, as the
   -- handle has moved to a different registry.
-  , duplicate :: !(ResourceRegistry m -> m (ResourceKey m, LedgerTablesHandle m l))
+  , duplicate :: !(ResourceRegistry m -> m (ResourceKey m, LedgerTablesHandle m l blk))
   -- ^ Create a copy of the handle.
   --
   -- A duplicated handle must provide access to all the data that was there in
@@ -96,10 +97,10 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- When applying diffs to a table, we will first duplicate the handle, then
   -- apply the diffs in the copy. It is expected that duplicating the handle
   -- takes constant time.
-  , read :: !(l EmptyMK -> LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  , read :: !(l blk EmptyMK -> LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
-  , readRange :: !(l EmptyMK -> (Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  , readRange :: !(forall table. TableConstraints blk table => Proxy table -> l blk EmptyMK -> (Maybe (Key table), Int) -> m (Table ValuesMK blk table, Maybe (Key table)))
   -- ^ Read the requested number of values, possibly starting from the given
   -- key, from the tables, and deserialize them as if they were from the same
   -- era as the given ledger state.
@@ -114,11 +115,11 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- back into the next iteration of the range read. If the function returns
   -- Nothing, it means the read returned no results, or in other words, we
   -- reached the end of the ledger tables.
-  , readAll :: !(l EmptyMK -> m (LedgerTables l ValuesMK))
+  , readAll :: !(l blk EmptyMK -> m (LedgerTables blk ValuesMK))
   -- ^ Costly read all operation, not to be used in Consensus but only in
   -- snapshot-converter executable. The values will be read as if they were from
   -- the same era as the given ledger state.
-  , pushDiffs :: !(forall mk. l mk -> l DiffMK -> m ())
+  , pushDiffs :: !(forall mk. l blk mk -> l blk DiffMK -> m ())
   -- ^ Push some diffs into the ledger tables handle.
   --
   -- The first argument has to be the ledger state before applying
@@ -126,16 +127,42 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- applying a block. See 'CanUpgradeLedgerTables'.
   --
   -- Note 'CanUpgradeLedgerTables' is only used in the InMemory backend.
-  , takeHandleSnapshot :: !(l EmptyMK -> String -> m (Maybe CRC))
+  , takeHandleSnapshot :: !(l blk EmptyMK -> String -> m (NP (K (Maybe CRC)) (TablesForBlock blk)))
   -- ^ Take a snapshot of a handle. The given ledger state is used to decide the
   -- encoding of the values based on the current era.
   --
   -- It returns a CRC only on backends that support it, as the InMemory backend.
-  , tablesSize :: !(m (Maybe Int))
+  , tablesSize :: !(m (Maybe (NP (K Int) (TablesForBlock blk))))
   -- ^ Consult the size of the ledger tables in the database. This will return
   -- 'Nothing' in backends that do not support this operation.
   }
-  deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l)
+  deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l blk)
+
+castLedgerTablesHandle :: Functor m => LedgerTablesHandle m LedgerState blk -> LedgerTablesHandle m ExtLedgerState blk
+castLedgerTablesHandle h =
+   LedgerTablesHandle {
+      close
+      , transfer
+      , duplicate = \reg -> (\(x, y) -> (x, castLedgerTablesHandle y)) <$> duplicate reg
+      , read = \l -> read (ledgerState l)
+      , readRange = \p l -> readRange p (ledgerState l)
+      , readAll = \l -> readAll (ledgerState l)
+      , pushDiffs = \l1 l2 -> pushDiffs (ledgerState l1) (ledgerState l2)
+      , takeHandleSnapshot = \l -> takeHandleSnapshot (ledgerState l)
+      , tablesSize
+      }
+  where
+    LedgerTablesHandle {
+      close
+      , transfer
+      , duplicate
+      , read
+      , readRange
+      , readAll
+      , pushDiffs
+      , takeHandleSnapshot
+      , tablesSize
+      } = h
 
 {-------------------------------------------------------------------------------
   StateRef, represents a full ledger state, i.e. with a handle for its tables
@@ -158,21 +185,21 @@ data LedgerTablesHandle m l = LedgerTablesHandle
 -- Therefore it sounds reasonable to hold a @LedgerState blk EmptyMK@ with no
 -- values, and a @LedgerTables blk ValuesMK@ next to it, that will live its
 -- entire lifetime as @LedgerTables@ of the @HardForkBlock@.
-data StateRef m l = StateRef
-  { state :: !(l EmptyMK)
-  , tables :: !(LedgerTablesHandle m l)
+data StateRef m l blk = StateRef
+  { state :: !(l blk EmptyMK)
+  , tables :: !(LedgerTablesHandle m l blk)
   }
   deriving Generic
 
-deriving instance (IOLike m, NoThunks (l EmptyMK)) => NoThunks (StateRef m l)
+deriving instance (IOLike m, NoThunks (l blk EmptyMK)) => NoThunks (StateRef m l blk)
 
-instance Eq (l EmptyMK) => Eq (StateRef m l) where
+instance Eq (l blk EmptyMK) => Eq (StateRef m l blk) where
   (==) = (==) `on` state
 
-instance Show (l EmptyMK) => Show (StateRef m l) where
+instance Show (l blk EmptyMK) => Show (StateRef m l blk) where
   show = show . state
 
-instance GetTip l => Anchorable (WithOrigin SlotNo) (StateRef m l) (StateRef m l) where
+instance GetTip (l blk) => Anchorable (WithOrigin SlotNo) (StateRef m l blk) (StateRef m l blk) where
   asAnchor = id
   getAnchorMeasure _ = getTipSlot . state
 
@@ -180,17 +207,17 @@ instance GetTip l => Anchorable (WithOrigin SlotNo) (StateRef m l) (StateRef m l
   The LedgerSeq
 -------------------------------------------------------------------------------}
 
-newtype LedgerSeq m l = LedgerSeq
-  { getLedgerSeq :: AnchoredSeq (WithOrigin SlotNo) (StateRef m l) (StateRef m l)
+newtype LedgerSeq m l blk = LedgerSeq
+  { getLedgerSeq :: AnchoredSeq (WithOrigin SlotNo) (StateRef m l blk) (StateRef m l blk)
   }
   deriving Generic
 
-deriving newtype instance (IOLike m, NoThunks (l EmptyMK)) => NoThunks (LedgerSeq m l)
+deriving newtype instance (IOLike m, NoThunks (l blk EmptyMK)) => NoThunks (LedgerSeq m l blk)
 
-deriving newtype instance Eq (l EmptyMK) => Eq (LedgerSeq m l)
-deriving newtype instance Show (l EmptyMK) => Show (LedgerSeq m l)
+deriving newtype instance Eq (l blk EmptyMK) => Eq (LedgerSeq m l blk)
+deriving newtype instance Show (l blk EmptyMK) => Show (LedgerSeq m l blk)
 
-type LedgerSeq' m blk = LedgerSeq m (ExtLedgerState blk)
+type LedgerSeq' m blk = LedgerSeq m ExtLedgerState blk
 
 {-------------------------------------------------------------------------------
   Construction
@@ -198,29 +225,29 @@ type LedgerSeq' m blk = LedgerSeq m (ExtLedgerState blk)
 
 -- | Creates an empty @LedgerSeq@
 empty ::
-  ( GetTip l
+  ( GetTip (l blk)
   , IOLike m
   ) =>
-  l EmptyMK ->
+  l blk EmptyMK ->
   init ->
-  (init -> m (LedgerTablesHandle m l)) ->
-  m (LedgerSeq m l)
+  (init -> m (LedgerTablesHandle m l blk)) ->
+  m (LedgerSeq m l blk)
 empty st tbs new = LedgerSeq . AS.Empty . StateRef st <$> new tbs
 
 -- | Creates an empty @LedgerSeq@
 empty' ::
-  ( GetTip l
+  ( GetTip (l blk)
   , IOLike m
-  , HasLedgerTables l
+  , HasLedgerTables l blk
   ) =>
-  l ValuesMK ->
-  (l ValuesMK -> m (LedgerTablesHandle m l)) ->
-  m (LedgerSeq m l)
+  l blk ValuesMK ->
+  (l blk ValuesMK -> m (LedgerTablesHandle m l blk)) ->
+  m (LedgerSeq m l blk)
 empty' st = empty (forgetLedgerTables st) st
 
 -- | Close all 'LedgerTablesHandle' in this 'LedgerSeq', in particular that on
 -- the anchor.
-closeLedgerSeq :: Monad m => LedgerSeq m l -> m ()
+closeLedgerSeq :: Monad m => LedgerSeq m l blk -> m ()
 closeLedgerSeq (LedgerSeq l) =
   mapM_ (close . tables) $ AS.anchor l : AS.toOldestFirst l
 
@@ -235,10 +262,10 @@ closeLedgerSeq (LedgerSeq l) =
 reapplyThenPush ::
   (IOLike m, ApplyBlock l blk) =>
   ResourceRegistry m ->
-  LedgerDbCfg l ->
+  LedgerDbCfg (l blk) ->
   blk ->
-  LedgerSeq m l ->
-  m (m (), LedgerSeq m l)
+  LedgerSeq m l blk ->
+  m (m (), LedgerSeq m l blk)
 reapplyThenPush rr cfg ap db =
   (\current' -> pruneToImmTipOnly $ extend current' db)
     <$> reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap rr db
@@ -247,11 +274,11 @@ reapplyBlock ::
   forall m l blk.
   (ApplyBlock l blk, IOLike m) =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   blk ->
   ResourceRegistry m ->
-  LedgerSeq m l ->
-  m (StateRef m l)
+  LedgerSeq m l blk ->
+  m (StateRef m l blk)
 reapplyBlock evs cfg b rr db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db
@@ -275,10 +302,10 @@ reapplyBlock evs cfg b rr db = do
 --
 -- where @lX@ is a ledger state from slot @X-1@ (or 'Origin' for @l0@).
 prune ::
-  (Monad m, GetTip l) =>
+  (Monad m, GetTip (l blk)) =>
   LedgerDbPrune ->
-  LedgerSeq m l ->
-  (m (), LedgerSeq m l)
+  LedgerSeq m l blk ->
+  (m (), LedgerSeq m l blk)
 prune howToPrune (LedgerSeq ldb) = case howToPrune of
   LedgerDbPruneAll ->
     (closeButHead before, LedgerSeq after)
@@ -316,10 +343,10 @@ prune howToPrune (LedgerSeq ldb) = case howToPrune of
 -- >>> AS.toOldestFirst ldb' == [l1, l2, l3, l4]
 -- True
 extend ::
-  GetTip l =>
-  StateRef m l ->
-  LedgerSeq m l ->
-  LedgerSeq m l
+  GetTip (l blk) =>
+  StateRef m l blk ->
+  LedgerSeq m l blk ->
+  LedgerSeq m l blk
 extend newState =
   LedgerSeq . (:> newState) . getLedgerSeq
 
@@ -334,9 +361,9 @@ extend newState =
 -- >>> AS.anchor ldb' == l3 && AS.toOldestFirst ldb' == []
 -- True
 pruneToImmTipOnly ::
-  (Monad m, GetTip l) =>
-  LedgerSeq m l ->
-  (m (), LedgerSeq m l)
+  (Monad m, GetTip (l blk)) =>
+  LedgerSeq m l blk ->
+  (m (), LedgerSeq m l blk)
 pruneToImmTipOnly = prune LedgerDbPruneAll
 
 {-------------------------------------------------------------------------------
@@ -352,10 +379,10 @@ pruneToImmTipOnly = prune LedgerDbPruneAll
 -- >>> fmap (([l1] ==) . AS.toOldestFirst . getLedgerSeq) (rollbackN 2 ldb)
 -- Just True
 rollbackN ::
-  GetTip l =>
+  GetTip (l blk) =>
   Word64 ->
-  LedgerSeq m l ->
-  Maybe (LedgerSeq m l)
+  LedgerSeq m l blk ->
+  Maybe (LedgerSeq m l blk)
 rollbackN n ldb
   | n <= maxRollback ldb =
       Just $ LedgerSeq (AS.dropNewest (fromIntegral n) $ getLedgerSeq ldb)
@@ -371,10 +398,10 @@ rollbackN n ldb
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> l3s == current ldb
 -- True
-current :: GetTip l => LedgerSeq m l -> l EmptyMK
+current :: GetTip (l blk) => LedgerSeq m l blk -> l blk EmptyMK
 current = state . currentHandle
 
-currentHandle :: GetTip l => LedgerSeq m l -> StateRef m l
+currentHandle :: GetTip (l blk) => LedgerSeq m l blk -> StateRef m l blk
 currentHandle = headAnchor . getLedgerSeq
 
 -- | The ledger state at the anchor of the Volatile chain (i.e. the immutable
@@ -383,10 +410,10 @@ currentHandle = headAnchor . getLedgerSeq
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> l0s == anchor ldb
 -- True
-anchor :: LedgerSeq m l -> l EmptyMK
+anchor :: LedgerSeq m l blk -> l blk EmptyMK
 anchor = state . anchorHandle
 
-anchorHandle :: LedgerSeq m l -> StateRef m l
+anchorHandle :: LedgerSeq m l blk -> StateRef m l blk
 anchorHandle = AS.anchor . getLedgerSeq
 
 -- | All snapshots currently stored by the ledger DB (new to old)
@@ -397,7 +424,7 @@ anchorHandle = AS.anchor . getLedgerSeq
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> [(0, l3s), (1, l2s), (2, l1s)] == snapshots ldb
 -- True
-snapshots :: LedgerSeq m l -> [(Word64, l EmptyMK)]
+snapshots :: LedgerSeq m l blk -> [(Word64, l blk EmptyMK)]
 snapshots =
   zip [0 ..]
     . map state
@@ -409,7 +436,7 @@ snapshots =
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> maxRollback ldb
 -- 3
-maxRollback :: GetTip l => LedgerSeq m l -> Word64
+maxRollback :: GetTip (l blk) => LedgerSeq m l blk -> Word64
 maxRollback =
   fromIntegral
     . AS.length
@@ -420,7 +447,7 @@ maxRollback =
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> tip ldb == getTip l3s
 -- True
-tip :: GetTip l => LedgerSeq m l -> Point l
+tip :: GetTip (l blk) => LedgerSeq m l blk -> Point (l blk)
 tip = castPoint . getTip . current
 
 -- | Have we seen at least @k@ blocks?
@@ -430,7 +457,7 @@ tip = castPoint . getTip . current
 -- True
 -- >>> isSaturated (SecurityParam (unsafeNonZero 4)) ldb
 -- False
-isSaturated :: GetTip l => SecurityParam -> LedgerSeq m l -> Bool
+isSaturated :: GetTip (l blk) => SecurityParam -> LedgerSeq m l blk -> Bool
 isSaturated (SecurityParam k) db =
   maxRollback db >= unNonZero k
 
@@ -448,13 +475,13 @@ isSaturated (SecurityParam k) db =
 -- True
 getPastLedgerAt ::
   ( HasHeader blk
-  , GetTip l
-  , HeaderHash l ~ HeaderHash blk
-  , StandardHash l
+  , GetTip (l blk)
+  , HeaderHash (l blk) ~ HeaderHash blk
+  , StandardHash (l blk)
   ) =>
   Point blk ->
-  LedgerSeq m l ->
-  Maybe (l EmptyMK)
+  LedgerSeq m l blk ->
+  Maybe (l blk EmptyMK)
 getPastLedgerAt pt db = current <$> rollback pt db
 
 -- | Roll back the volatile states up to the specified point.
@@ -469,10 +496,10 @@ getPastLedgerAt pt db = current <$> rollback pt db
 -- >>> AS.anchor ldb' == l0 && AS.toOldestFirst ldb' == [l1, l2]
 -- True
 rollbackToPoint ::
-  ( StandardHash l
-  , GetTip l
+  ( StandardHash (l blk)
+  , GetTip (l blk)
   ) =>
-  Point l -> LedgerSeq m l -> Maybe (LedgerSeq m l)
+  Point (l blk) -> LedgerSeq m l blk -> Maybe (LedgerSeq m l blk)
 rollbackToPoint pt (LedgerSeq ldb) = do
   LedgerSeq
     <$> AS.rollback
@@ -487,8 +514,8 @@ rollbackToPoint pt (LedgerSeq ldb) = do
 -- >>> AS.anchor ldb' == l0 && AS.toOldestFirst ldb' == []
 -- True
 rollbackToAnchor ::
-  GetTip l =>
-  LedgerSeq m l -> LedgerSeq m l
+  GetTip (l blk) =>
+  LedgerSeq m l blk -> LedgerSeq m l blk
 rollbackToAnchor (LedgerSeq vol) =
   LedgerSeq (AS.Empty (AS.anchor vol))
 
@@ -499,14 +526,14 @@ rollbackToAnchor (LedgerSeq vol) =
 -- When no ledger state (or anchor) has the given 'Point', 'Nothing' is
 -- returned.
 rollback ::
-  ( HasHeader blk
-  , GetTip l
-  , HeaderHash l ~ HeaderHash blk
-  , StandardHash l
+  ( GetTip (l blk)
+  , StandardHash (l blk)
+  , StandardHash blk
+  , HeaderHash (l blk) ~ HeaderHash blk
   ) =>
   Point blk ->
-  LedgerSeq m l ->
-  Maybe (LedgerSeq m l)
+  LedgerSeq m l blk ->
+  Maybe (LedgerSeq m l blk)
 rollback pt db
   | pt == castPoint (getTip (anchor db)) =
       Just $ rollbackToAnchor db
@@ -514,8 +541,8 @@ rollback pt db
       rollbackToPoint (castPoint pt) db
 
 immutableTipSlot ::
-  GetTip l =>
-  LedgerSeq m l -> WithOrigin SlotNo
+  GetTip (l blk) =>
+  LedgerSeq m l blk -> WithOrigin SlotNo
 immutableTipSlot =
   getTipSlot
     . state
@@ -525,9 +552,9 @@ immutableTipSlot =
 -- | Transform the underlying volatile 'AnchoredSeq' using the given functions.
 volatileStatesBimap ::
   AS.Anchorable (WithOrigin SlotNo) a b =>
-  (l EmptyMK -> a) ->
-  (l EmptyMK -> b) ->
-  LedgerSeq m l ->
+  (l blk EmptyMK -> a) ->
+  (l blk EmptyMK -> b) ->
+  LedgerSeq m l blk ->
   AS.AnchoredSeq (WithOrigin SlotNo) a b
 volatileStatesBimap f g =
   AS.bimap (f . state) (g . state)

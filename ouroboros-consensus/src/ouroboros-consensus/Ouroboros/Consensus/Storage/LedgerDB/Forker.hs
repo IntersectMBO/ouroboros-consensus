@@ -1,5 +1,3 @@
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -10,7 +8,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -28,7 +25,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , RangeQueryPrevious (..)
   , Statistics (..)
   , forkerCurrentPoint
-  , castRangeQueryPrevious
+  --  , castRangeQueryPrevious
   , ledgerStateReadOnlyForker
 
     -- ** Read only
@@ -67,8 +64,9 @@ import Control.Monad.Except
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.Trans (MonadTrans (..))
 import Control.ResourceRegistry
-import Data.Bifunctor (first)
 import Data.Kind
+import Data.SOP.BasicFunctors
+import Data.SOP.Strict
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
@@ -106,9 +104,9 @@ data Forker m l blk = Forker
   -- and not by the LedgerDB.
   , -- Queries
 
-    forkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+    forkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ Read ledger tables from disk.
-  , forkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  , forkerRangeReadTables :: !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe TxIn))
   -- ^ Range-read ledger tables from disk.
   --
   -- This range read will return as many values as the 'QueryBatchSize' that was
@@ -127,7 +125,7 @@ data Forker m l blk = Forker
   --
   -- If an empty ledger state is all you need, use 'getVolatileTip',
   -- 'getImmutableTip', or 'getPastLedgerState' instead of using a 'Forker'.
-  , forkerReadStatistics :: !(m (Maybe Statistics))
+  , forkerReadStatistics :: !(m (Maybe (Statistics blk)))
   -- ^ Get statistics about the current state of the handle if possible.
   --
   -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
@@ -158,12 +156,12 @@ instance
   where
   getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
 
-data RangeQueryPrevious l = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo (TxIn l)
+data RangeQueryPrevious blk = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo TxIn
 
-castRangeQueryPrevious :: TxIn l ~ TxIn l' => RangeQueryPrevious l -> RangeQueryPrevious l'
-castRangeQueryPrevious NoPreviousQuery = NoPreviousQuery
-castRangeQueryPrevious PreviousQueryWasFinal = PreviousQueryWasFinal
-castRangeQueryPrevious (PreviousQueryWasUpTo txin) = PreviousQueryWasUpTo txin
+-- castRangeQueryPrevious :: RangeQueryPrevious l -> RangeQueryPrevious l'
+-- castRangeQueryPrevious NoPreviousQuery = NoPreviousQuery
+-- castRangeQueryPrevious PreviousQueryWasFinal = PreviousQueryWasFinal
+-- castRangeQueryPrevious (PreviousQueryWasUpTo txin) = PreviousQueryWasUpTo txin
 
 data RangeQuery l = RangeQuery
   { rqPrev :: !(RangeQueryPrevious l)
@@ -175,8 +173,8 @@ data RangeQuery l = RangeQuery
 --
 -- This is for now the only metric that was requested from other components, but
 -- this type might be augmented in the future with more statistics.
-newtype Statistics = Statistics
-  { ledgerTableSize :: Int
+newtype Statistics blk = Statistics
+  { ledgerTableSize :: NP (K Int) (TablesForBlock blk)
   }
 
 -- | Errors that can be thrown while acquiring forkers.
@@ -213,13 +211,13 @@ forkerCurrentPoint forker =
     <$> forkerGetLedgerState forker
 
 ledgerStateReadOnlyForker ::
-  IOLike m => ReadOnlyForker m (ExtLedgerState blk) blk -> ReadOnlyForker m (LedgerState blk) blk
+  IOLike m =>
+  ReadOnlyForker m (ExtLedgerState blk) blk -> ReadOnlyForker m (LedgerState blk) blk
 ledgerStateReadOnlyForker frk =
   ReadOnlyForker
     { roforkerClose = roforkerClose
-    , roforkerReadTables = fmap castLedgerTables . roforkerReadTables . castLedgerTables
-    , roforkerRangeReadTables =
-        fmap (first castLedgerTables) . roforkerRangeReadTables . castRangeQueryPrevious
+    , roforkerReadTables = roforkerReadTables
+    , roforkerRangeReadTables = roforkerRangeReadTables
     , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
     , roforkerReadStatistics = roforkerReadStatistics
     }
@@ -250,13 +248,13 @@ type ReadOnlyForker :: (Type -> Type) -> LedgerStateKind -> Type -> Type
 data ReadOnlyForker m l blk = ReadOnlyForker
   { roforkerClose :: !(m ())
   -- ^ See 'forkerClose'
-  , roforkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  , roforkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ See 'forkerReadTables'
-  , roforkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  , roforkerRangeReadTables :: !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe TxIn))
   -- ^ See 'forkerRangeReadTables'.
   , roforkerGetLedgerState :: !(STM m (l EmptyMK))
   -- ^ See 'forkerGetLedgerState'
-  , roforkerReadStatistics :: !(m (Maybe Statistics))
+  , roforkerReadStatistics :: !(m (Maybe (Statistics blk)))
   -- ^ See 'forkerReadStatistics'
   }
   deriving Generic
@@ -388,16 +386,16 @@ validate evs args = do
 -- new blocks.
 switch ::
   (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
-  (ResourceRegistry bm -> Word64 -> bm (Either GetForkerError (Forker bm l blk))) ->
+  (ResourceRegistry bm -> Word64 -> bm (Either GetForkerError (Forker bm (l blk) blk))) ->
   ResourceRegistry bm ->
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   -- | How many blocks to roll back
   Word64 ->
   (TraceValidateEvent blk -> m ()) ->
   -- | New blocks to apply
-  [Ap bm m l blk c] ->
-  m (Either GetForkerError (Forker bm l blk))
+  [Ap bm m (l blk) blk c] ->
+  m (Either GetForkerError (Forker bm (l blk) blk))
 switch forkerAtFromTip rr evs cfg numRollbacks trace newBlocks = do
   foEith <- liftBase $ forkerAtFromTip rr numRollbacks
   case foEith of
@@ -472,10 +470,10 @@ applyBlock ::
   forall m bm c l blk.
   (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
-  Ap bm m l blk c ->
-  Forker bm l blk ->
-  m (ValidLedgerState (l DiffMK))
+  LedgerCfg (l blk) ->
+  Ap bm m (l blk) blk c ->
+  Forker bm (l blk) blk ->
+  m (ValidLedgerState (l blk DiffMK))
 applyBlock evs cfg ap fo = case ap of
   ReapplyVal b ->
     ValidLedgerState
@@ -497,7 +495,7 @@ applyBlock evs cfg ap fo = case ap of
   Weaken ap' ->
     applyBlock evs cfg ap' fo
  where
-  withValues :: blk -> (l ValuesMK -> m (l DiffMK)) -> m (l DiffMK)
+  withValues :: blk -> (l blk ValuesMK -> m (l blk DiffMK)) -> m (l blk DiffMK)
   withValues blk f = do
     l <- liftBase $ atomically $ forkerGetLedgerState fo
     vs <-
@@ -513,9 +511,9 @@ applyBlock evs cfg ap fo = case ap of
 applyThenPush ::
   (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
-  Ap bm m l blk c ->
-  Forker bm l blk ->
+  LedgerCfg (l blk) ->
+  Ap bm m (l blk) blk c ->
+  Forker bm (l blk) blk ->
   m ()
 applyThenPush evs cfg ap fo =
   liftBase . forkerPush fo . getValidLedgerState
@@ -526,9 +524,9 @@ applyThenPushMany ::
   (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
-  LedgerCfg l ->
-  [Ap bm m l blk c] ->
-  Forker bm l blk ->
+  LedgerCfg (l blk) ->
+  [Ap bm m (l blk) blk c] ->
+  Forker bm (l blk) blk ->
   m ()
 applyThenPushMany trace evs cfg aps fo = mapM_ pushAndTrace aps
  where

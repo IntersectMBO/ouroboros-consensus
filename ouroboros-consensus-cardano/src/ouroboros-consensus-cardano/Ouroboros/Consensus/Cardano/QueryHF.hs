@@ -1,25 +1,19 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilyDependencies #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Cardano.QueryHF () where
 
-import Data.Coerce
+import Ouroboros.Consensus.Ledger.Tables.Utils
+import Lens.Micro ((.~), (&))
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -88,25 +82,26 @@ shelleyCardanoFilter ::
   , ShelleyCompatible proto era
   ) =>
   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  TxOut (LedgerState (HardForkBlock (CardanoEras c))) ->
+  TxOut (HardForkBlock (CardanoEras c)) ->
   Bool
 shelleyCardanoFilter q = eliminateCardanoTxOut (\_ -> shelleyQFTraverseTablesPredicate q)
 
-instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras c) where
+instance
+  CardanoHardForkConstraints c =>
+  BlockSupportsHFLedgerQuery (CardanoEras c)
+  where
   answerBlockQueryHFLookup =
     answerCardanoQueryHF
       ( \idx ->
           answerShelleyLookupQueries
-            (injectLedgerTables idx)
+            castKeys
             (ejectHardForkTxOut idx)
-            (coerce . ejectCanonicalTxIn idx)
       )
   answerBlockQueryHFTraverse =
     answerCardanoQueryHF
       ( \idx ->
           answerShelleyTraversingQueries
             (ejectHardForkTxOut idx)
-            (coerce . ejectCanonicalTxIn idx)
             (queryLedgerGetTraversingFilter idx)
       )
 
@@ -123,8 +118,14 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
     IS (IS (IS (IS (IS (IS (IS IZ)))))) -> shelleyCardanoFilter q
     IS (IS (IS (IS (IS (IS (IS (IS idx'))))))) -> case idx' of {}
 
+castKeys :: forall blk blk'. (SListI (TablesForBlock blk), SingI (TablesForBlock blk), LedgerTablesConstraints blk') => LedgerTables blk KeysMK -> LedgerTables blk' KeysMK
+castKeys np =
+  emptyLedgerTables
+    & onUTxOTable (Proxy @blk') .~ maybe (Table (KeysMK mempty)) (\(Table (KeysMK km)) -> Table (KeysMK km)) (getTableByTag (sing @UTxOTable) np)
+    & onInstantStakeTable (Proxy @blk') .~ maybe (Table (KeysMK mempty)) (\(Table (KeysMK km)) -> Table (KeysMK km)) (getTableByTag (sing @InstantStakeTable) np)
+
 byronCardanoFilter ::
   BlockQuery ByronBlock QFTraverseTables result ->
-  TxOut (LedgerState (HardForkBlock (CardanoEras c))) ->
+  TxOut (HardForkBlock (CardanoEras c)) ->
   Bool
 byronCardanoFilter = \case {}

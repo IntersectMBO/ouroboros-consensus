@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -29,8 +30,6 @@ import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Util.Args
@@ -69,16 +68,6 @@ openDB
   getBlock
   getVolatileSuffix =
     case lgrBackendArgs args of
-      LedgerDbBackendArgsV1 bss ->
-        let snapManager = V1.snapshotManager args
-            initDb =
-              V1.mkInitDb
-                args
-                bss
-                getBlock
-                snapManager
-                getVolatileSuffix
-         in doOpenDB args initDb snapManager stream replayGoal
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
         res <-
           mkResources

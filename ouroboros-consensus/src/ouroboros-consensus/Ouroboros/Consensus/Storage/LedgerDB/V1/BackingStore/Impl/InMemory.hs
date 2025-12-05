@@ -83,18 +83,14 @@ data BackingStoreContents m l
   deriving Generic
 
 deriving instance
-  ( NoThunks (TxIn l)
-  , NoThunks (TxOut l)
-  ) =>
+  AllTables NoThunks ValuesMK l =>
   NoThunks (BackingStoreContents m l)
 
 -- | Use a 'TVar' as a trivial backing store
 newInMemoryBackingStore ::
   forall l m.
   ( IOLike m
-  , HasLedgerTables l
-  , CanUpgradeLedgerTables l
-  , SerializeTablesWithHint l
+  , LedgerSupportsInMemoryLedgerDB l
   ) =>
   Tracer m BackingStoreTrace ->
   SnapshotsFS m ->
@@ -253,14 +249,13 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
     RangeQuery (LedgerTables l KeysMK) ->
     LedgerTables l ValuesMK ->
     (LedgerTables l ValuesMK, Maybe (TxIn l))
-  rangeRead rq values =
-    let vs@(LedgerTables (ValuesMK m)) = case rqPrev rq of
-          Nothing ->
-            ltmap (rangeRead0' (rqCount rq)) values
-          Just keys ->
-            ltliftA2 (rangeRead' (rqCount rq)) keys values
-     in (vs, fst <$> Map.lookupMax m)
-
+  rangeRead rq values = undefined -- TODO @js
+  -- let vs@(LedgerTables (ValuesMK m)) = case rqPrev rq of
+  --       Nothing ->
+  --         ltmap (rangeRead0' (rqCount rq)) values
+  --       Just keys ->
+  --         ltliftA2 (rangeRead' (rqCount rq)) keys values
+  --  in (vs, fst <$> Map.lookupMax m)
   rangeRead0' ::
     Int ->
     ValuesMK k v ->
@@ -294,8 +289,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
     ValuesMK (Diff.applyDiff values diff)
 
   count :: LedgerTables l ValuesMK -> Int
-  count = ltcollapse . ltmap (K2 . count')
-
+  count = undefined -- TODO @js ltcollapse . ltmap (K2 . count')
   count' :: ValuesMK k v -> Int
   count' (ValuesMK values) = Map.size values
 
@@ -353,9 +347,7 @@ type data Mem
 
 instance
   ( IOLike m
-  , HasLedgerTables l
-  , CanUpgradeLedgerTables l
-  , SerializeTablesWithHint l
+  , LedgerSupportsInMemoryLedgerDB l
   ) =>
   Backend m Mem l
   where

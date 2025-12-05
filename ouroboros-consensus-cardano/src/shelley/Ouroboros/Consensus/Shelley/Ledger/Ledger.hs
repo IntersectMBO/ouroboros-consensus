@@ -11,6 +11,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -57,11 +58,10 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
 
     -- * Low-level UTxO manipulations
   , slUtxoL
-  , BigEndianTxIn (..)
   ) where
 
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
-import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
+import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
   ( decShareCBOR
@@ -80,6 +80,7 @@ import Cardano.Ledger.Binary.Plain
   , enforceSize
   )
 import qualified Cardano.Ledger.Block as Core
+import Cardano.Ledger.Compactible
 import Cardano.Ledger.Core
   ( Era
   , eraDecoder
@@ -103,7 +104,11 @@ import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import Data.Coerce
 import Data.Functor.Identity
+import Data.Map.Strict (Map)
 import Data.MemPack
+import Data.SOP.Constraint (All)
+import Data.SOP.Strict
+import Data.Singletons (SingI)
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
@@ -123,8 +128,10 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
+import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
@@ -231,7 +238,10 @@ deriving instance
   (NoThunks (Core.TranslationContext era), Core.Era era) =>
   NoThunks (ShelleyPartialLedgerConfig era)
 
-instance ShelleyCompatible proto era => HasPartialLedgerConfig (ShelleyBlock proto era) where
+instance
+  ShelleyCompatible proto era =>
+  HasPartialLedgerConfig (ShelleyBlock proto era)
+  where
   type PartialLedgerConfig (ShelleyBlock proto era) = ShelleyPartialLedgerConfig era
 
   -- Replace the dummy 'EpochInfo' with the real one
@@ -276,18 +286,18 @@ data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   { shelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
   , shelleyLedgerState :: !(SL.NewEpochState era)
   , shelleyLedgerTransition :: !ShelleyTransition
-  , shelleyLedgerTables :: !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+  , shelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   }
   deriving Generic
 
 deriving instance
-  (ShelleyBasedEra era, EqMK mk) =>
+  (ShelleyBasedEra era, AllTables Eq mk (ShelleyBlock proto era)) =>
   Eq (LedgerState (ShelleyBlock proto era) mk)
 deriving instance
-  (ShelleyBasedEra era, NoThunksMK mk) =>
+  (ShelleyBasedEra era, AllTables NoThunks mk (ShelleyBlock proto era)) =>
   NoThunks (LedgerState (ShelleyBlock proto era) mk)
 deriving instance
-  (ShelleyBasedEra era, ShowMK mk) =>
+  (ShelleyBasedEra era, AllTables Show mk (ShelleyBlock proto era)) =>
   Show (LedgerState (ShelleyBlock proto era) mk)
 
 -- | Information required to determine the hard fork point from Shelley to the
@@ -320,52 +330,32 @@ shelleyLedgerTipPoint ::
   Point (ShelleyBlock proto era)
 shelleyLedgerTipPoint = shelleyTipToPoint . shelleyLedgerTip
 
-instance ShelleyCompatible proto era => UpdateLedger (ShelleyBlock proto era)
-
--- | The only purpose of this type is to modify the MemPack instance to use big
--- endian serialization. This is necessary to ensure streaming functions of the
--- UTxO set preserve the order of the entries, as otherwise we would get
--- different sortings if sorting via the Serialized form and the Haskell Ord
--- instance.
---
--- TODO: fix this in the Ledger. See cardano-ledger#5336.
-newtype BigEndianTxIn = BigEndianTxIn {getOriginalTxIn :: SL.TxIn}
-  deriving newtype (Eq, Show, Ord, NoThunks)
-
-newtype BigEndianTxIx = BigEndianTxIx {getOriginalTxIx :: SL.TxIx}
-
-instance MemPack BigEndianTxIx where
-  typeName = "BigEndianTxIx"
-  packedByteCount = packedByteCount . getOriginalTxIx
-  packM (BigEndianTxIx (SL.TxIx w)) = packM (byteSwap16 w)
-  unpackM = BigEndianTxIx . SL.TxIx . byteSwap16 <$> unpackM
-
-instance MemPack BigEndianTxIn where
-  typeName = "BigEndianTxIn"
-  packedByteCount = packedByteCount . getOriginalTxIn
-  packM (BigEndianTxIn (SL.TxIn txid txix)) = do
-    packM txid
-    packM (BigEndianTxIx txix)
-  unpackM = do
-    BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
-
-type instance TxIn (LedgerState (ShelleyBlock proto era)) = BigEndianTxIn
-type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
+type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
+type instance TablesForBlock (ShelleyBlock proto DijkstraEra) = '[UTxOTable, InstantStakeTable]
+type instance TablesForBlock (ShelleyBlock proto ShelleyEra) = '[UTxOTable]
+type instance TablesForBlock (ShelleyBlock proto AllegraEra) = '[UTxOTable]
+type instance TablesForBlock (ShelleyBlock proto MaryEra) = '[UTxOTable]
+type instance TablesForBlock (ShelleyBlock proto AlonzoEra) = '[UTxOTable]
+type instance TablesForBlock (ShelleyBlock proto BabbageEra) = '[UTxOTable]
+type instance TablesForBlock (ShelleyBlock proto ConwayEra) = '[UTxOTable]
 
 instance
-  (txout ~ Core.TxOut era, MemPack txout) =>
-  IndexedMemPack (LedgerState (ShelleyBlock proto era) EmptyMK) txout
+  MemPack (Value UTxOTable (ShelleyBlock proto era)) =>
+  IndexedMemPack LedgerState (ShelleyBlock proto era) UTxOTable
   where
-  indexedTypeName _ = typeName @txout
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
+  type
+    IndexedValue LedgerState UTxOTable (ShelleyBlock proto era) =
+      Value UTxOTable (ShelleyBlock proto era)
+  indexedTypeName _ _ _ = typeName @(Value UTxOTable (ShelleyBlock proto era))
+  indexedPackedByteCount _ _ _ _ = packedByteCount
+  indexedPackM _ _ _ _ = packM
+  indexedUnpackM _ _ _ _ = unpackM
 
 instance
   ShelleyCompatible proto era =>
-  SerializeTablesWithHint (LedgerState (ShelleyBlock proto era))
+  SerializeTablesWithHint LedgerState (ShelleyBlock proto era) UTxOTable
   where
-  encodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
+  encodeTablesWithHint _ (Table (ValuesMK tbs)) =
     toPlainEncoding (Core.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
   decodeTablesWithHint st =
     let certInterns =
@@ -377,11 +367,14 @@ instance
                 . SL.certDStateL
                 . SL.accountsL
                 . SL.accountsMapL
-     in LedgerTables . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
+     in Table . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
 
 instance
-  ShelleyBasedEra era =>
-  HasLedgerTables (LedgerState (ShelleyBlock proto era))
+  ( ShelleyBasedEra era
+  , LedgerTablesConstraints (ShelleyBlock proto era)
+  -- All (TableConstraintsMK (ShelleyBlock proto era) DiffMK) (TablesForBlock (ShelleyBlock proto era))
+  ) =>
+  HasLedgerTables LedgerState (ShelleyBlock proto era)
   where
   projectLedgerTables = shelleyLedgerTables
   withLedgerTables st tables =
@@ -399,17 +392,20 @@ instance
       } = st
 
 instance
-  ShelleyBasedEra era =>
-  HasLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  ( ShelleyBasedEra era
+  , LedgerTablesConstraints (ShelleyBlock proto era)
+  ) =>
+  HasLedgerTables (TickedL LedgerState) (ShelleyBlock proto era)
   where
-  projectLedgerTables = castLedgerTables . tickedShelleyLedgerTables
-  withLedgerTables st tables =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      , tickedShelleyLedgerTables = castLedgerTables tables
-      }
+  projectLedgerTables = tickedShelleyLedgerTables . unTickedL
+  withLedgerTables (TickedL st) tables =
+    TickedL
+      TickedShelleyLedgerState
+        { untickedShelleyLedgerTip
+        , tickedShelleyLedgerTransition
+        , tickedShelleyLedgerState
+        , tickedShelleyLedgerTables = tables
+        }
    where
     TickedShelleyLedgerState
       { untickedShelleyLedgerTip
@@ -417,75 +413,218 @@ instance
       , tickedShelleyLedgerState
       } = st
 
-instance
-  ShelleyBasedEra era =>
-  CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
-  where
-  stowLedgerTables st =
-    ShelleyLedgerState
-      { shelleyLedgerTip = shelleyLedgerTip
-      , shelleyLedgerState = shelleyLedgerState'
-      , shelleyLedgerTransition = shelleyLedgerTransition
-      , shelleyLedgerTables = emptyLedgerTables
-      }
-   where
-    (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys m)
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      , shelleyLedgerTables = LedgerTables (ValuesMK m)
-      } = st
-  unstowLedgerTables st =
-    ShelleyLedgerState
-      { shelleyLedgerTip = shelleyLedgerTip
-      , shelleyLedgerState = shelleyLedgerState'
-      , shelleyLedgerTransition = shelleyLedgerTransition
-      , shelleyLedgerTables = LedgerTables (ValuesMK (coerceMapKeys $ SL.unUTxO tbs))
-      }
-   where
-    (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      } = st
+instance CanStowLedgerTables (LedgerState (ShelleyBlock proto ShelleyEra)) where
+  stowLedgerTables = stowUTxOLedgerTables
+  unstowLedgerTables = unstowUTxOLedgerTables
+instance CanStowLedgerTables (LedgerState (ShelleyBlock proto AllegraEra)) where
+  stowLedgerTables = stowUTxOLedgerTables
+  unstowLedgerTables = unstowUTxOLedgerTables
+instance CanStowLedgerTables (LedgerState (ShelleyBlock proto MaryEra)) where
+  stowLedgerTables = stowUTxOLedgerTables
+  unstowLedgerTables = unstowUTxOLedgerTables
+instance CanStowLedgerTables (LedgerState (ShelleyBlock proto AlonzoEra)) where
+  stowLedgerTables = stowUTxOLedgerTables
+  unstowLedgerTables = unstowUTxOLedgerTables
+instance CanStowLedgerTables (LedgerState (ShelleyBlock proto BabbageEra)) where
+  stowLedgerTables = stowUTxOLedgerTables
+  unstowLedgerTables = unstowUTxOLedgerTables
+instance CanStowLedgerTables (LedgerState (ShelleyBlock proto ConwayEra)) where
+  stowLedgerTables = stowUTxOLedgerTables
+  unstowLedgerTables = unstowUTxOLedgerTables
+instance CanStowLedgerTables (LedgerState (ShelleyBlock proto DijkstraEra)) where
+  stowLedgerTables = stowUTxOAndInstantStakeLedgerTables
+  unstowLedgerTables = unstowUTxOAndInstantStakeLedgerTables
 
-instance
+stowUTxOAndInstantStakeLedgerTables ::
+  forall proto era.
   ShelleyBasedEra era =>
-  CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
-  where
-  stowLedgerTables st =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip = untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState = tickedShelleyLedgerState'
-      , tickedShelleyLedgerTables = emptyLedgerTables
-      }
-   where
-    (_, tickedShelleyLedgerState') =
-      tickedShelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys tbs)
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      , tickedShelleyLedgerTables = LedgerTables (ValuesMK tbs)
-      } = st
+  TablesForBlock (ShelleyBlock proto era) ~ '[UTxOTable, InstantStakeTable] =>
+  LedgerState (ShelleyBlock proto era) ValuesMK -> LedgerState (ShelleyBlock proto era) EmptyMK
+stowUTxOAndInstantStakeLedgerTables st =
+  ShelleyLedgerState
+    { shelleyLedgerTip
+    , shelleyLedgerState = shelleyLedgerState'
+    , shelleyLedgerTransition
+    , shelleyLedgerTables = emptyLedgerTables
+    }
+ where
+  (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys m)
+  ShelleyLedgerState
+    { shelleyLedgerTip
+    , shelleyLedgerState
+    , shelleyLedgerTransition
+    , shelleyLedgerTables = LedgerTables (Table (ValuesMK m) :* Table (ValuesMK _n) :* Nil)
+    } = st
 
-  unstowLedgerTables st =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip = untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState = tickedShelleyLedgerState'
-      , tickedShelleyLedgerTables = LedgerTables (ValuesMK (coerceMapKeys (SL.unUTxO tbs)))
-      }
-   where
-    (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      } = st
+unstowUTxOAndInstantStakeLedgerTables ::
+  ShelleyBasedEra era =>
+  TablesForBlock (ShelleyBlock proto era) ~ '[UTxOTable, InstantStakeTable] =>
+  LedgerState (ShelleyBlock proto era) EmptyMK -> LedgerState (ShelleyBlock proto era) ValuesMK
+unstowUTxOAndInstantStakeLedgerTables st =
+  ShelleyLedgerState
+    { shelleyLedgerTip = shelleyLedgerTip
+    , shelleyLedgerState = shelleyLedgerState'
+    , shelleyLedgerTransition = shelleyLedgerTransition
+    , shelleyLedgerTables =
+        LedgerTables (Table (ValuesMK (coerceMapKeys $ SL.unUTxO tbs)) :* Table (ValuesMK istake) :* Nil)
+    }
+ where
+  (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
+  istake = slInstantStakeL shelleyLedgerState'
+  ShelleyLedgerState
+    { shelleyLedgerTip
+    , shelleyLedgerState
+    , shelleyLedgerTransition
+    } = st
+
+stowUTxOLedgerTables ::
+  ShelleyBasedEra era =>
+  TablesForBlock (ShelleyBlock proto era) ~ '[UTxOTable] =>
+  LedgerState (ShelleyBlock proto era) ValuesMK -> LedgerState (ShelleyBlock proto era) EmptyMK
+stowUTxOLedgerTables st =
+  ShelleyLedgerState
+    { shelleyLedgerTip = shelleyLedgerTip
+    , shelleyLedgerState = shelleyLedgerState'
+    , shelleyLedgerTransition = shelleyLedgerTransition
+    , shelleyLedgerTables = emptyLedgerTables
+    }
+ where
+  (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys m)
+  ShelleyLedgerState
+    { shelleyLedgerTip
+    , shelleyLedgerState
+    , shelleyLedgerTransition
+    , shelleyLedgerTables = LedgerTables (Table (ValuesMK m) :* Nil)
+    } = st
+
+unstowUTxOLedgerTables ::
+  ShelleyBasedEra era =>
+  TablesForBlock (ShelleyBlock proto era) ~ '[UTxOTable] =>
+  LedgerState (ShelleyBlock proto era) EmptyMK -> LedgerState (ShelleyBlock proto era) ValuesMK
+unstowUTxOLedgerTables st =
+  ShelleyLedgerState
+    { shelleyLedgerTip = shelleyLedgerTip
+    , shelleyLedgerState = shelleyLedgerState'
+    , shelleyLedgerTransition = shelleyLedgerTransition
+    , shelleyLedgerTables = LedgerTables (Table (ValuesMK (coerceMapKeys $ SL.unUTxO tbs)) :* Nil)
+    }
+ where
+  (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
+  ShelleyLedgerState
+    { shelleyLedgerTip
+    , shelleyLedgerState
+    , shelleyLedgerTransition
+    } = st
+
+instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto ShelleyEra))) where
+  stowLedgerTables = stowUTxOLedgerTablesTicked
+  unstowLedgerTables = unstowUTxOLedgerTablesTicked
+instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto AllegraEra))) where
+  stowLedgerTables = stowUTxOLedgerTablesTicked
+  unstowLedgerTables = unstowUTxOLedgerTablesTicked
+instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto MaryEra))) where
+  stowLedgerTables = stowUTxOLedgerTablesTicked
+  unstowLedgerTables = unstowUTxOLedgerTablesTicked
+instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto AlonzoEra))) where
+  stowLedgerTables = stowUTxOLedgerTablesTicked
+  unstowLedgerTables = unstowUTxOLedgerTablesTicked
+instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto BabbageEra))) where
+  stowLedgerTables = stowUTxOLedgerTablesTicked
+  unstowLedgerTables = unstowUTxOLedgerTablesTicked
+instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto ConwayEra))) where
+  stowLedgerTables = stowUTxOLedgerTablesTicked
+  unstowLedgerTables = unstowUTxOLedgerTablesTicked
+instance CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto DijkstraEra))) where
+  stowLedgerTables = stowUTxOAndInstantStakeLedgerTablesTicked
+  unstowLedgerTables = unstowUTxOAndInstantStakeLedgerTablesTicked
+
+stowUTxOAndInstantStakeLedgerTablesTicked ::
+  forall proto era.
+  ShelleyBasedEra era =>
+  TablesForBlock (ShelleyBlock proto era) ~ '[UTxOTable, InstantStakeTable] =>
+  Ticked (LedgerState (ShelleyBlock proto era)) ValuesMK ->
+  Ticked (LedgerState (ShelleyBlock proto era)) EmptyMK
+stowUTxOAndInstantStakeLedgerTablesTicked st =
+  TickedShelleyLedgerState
+    { untickedShelleyLedgerTip = untickedShelleyLedgerTip
+    , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
+    , tickedShelleyLedgerState = tickedShelleyLedgerState'
+    , tickedShelleyLedgerTables =
+        LedgerTables $ Table emptyMK :* Table emptyMK :* Nil
+    }
+ where
+  (_, tickedShelleyLedgerState') =
+    tickedShelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys tbs)
+  TickedShelleyLedgerState
+    { untickedShelleyLedgerTip
+    , tickedShelleyLedgerTransition
+    , tickedShelleyLedgerState
+    , tickedShelleyLedgerTables = LedgerTables (Table (ValuesMK tbs) :* Table (ValuesMK _tbs') :* Nil)
+    } = st
+
+unstowUTxOAndInstantStakeLedgerTablesTicked ::
+  ShelleyBasedEra era =>
+  TablesForBlock (ShelleyBlock proto era) ~ '[UTxOTable, InstantStakeTable] =>
+  Ticked (LedgerState (ShelleyBlock proto era)) EmptyMK ->
+  Ticked (LedgerState (ShelleyBlock proto era)) ValuesMK
+unstowUTxOAndInstantStakeLedgerTablesTicked st =
+  TickedShelleyLedgerState
+    { untickedShelleyLedgerTip = untickedShelleyLedgerTip
+    , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
+    , tickedShelleyLedgerState = tickedShelleyLedgerState'
+    , tickedShelleyLedgerTables =
+        LedgerTables (Table (ValuesMK (coerceMapKeys (SL.unUTxO tbs))) :* Table (ValuesMK istake) :* Nil)
+    }
+ where
+  (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
+  istake = slInstantStakeL tickedShelleyLedgerState'
+  TickedShelleyLedgerState
+    { untickedShelleyLedgerTip
+    , tickedShelleyLedgerTransition
+    , tickedShelleyLedgerState
+    } = st
+
+stowUTxOLedgerTablesTicked ::
+  ShelleyBasedEra era =>
+  TablesForBlock (ShelleyBlock proto era) ~ '[UTxOTable] =>
+  Ticked (LedgerState (ShelleyBlock proto era)) ValuesMK ->
+  Ticked (LedgerState (ShelleyBlock proto era)) EmptyMK
+stowUTxOLedgerTablesTicked st =
+  TickedShelleyLedgerState
+    { untickedShelleyLedgerTip = untickedShelleyLedgerTip
+    , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
+    , tickedShelleyLedgerState = tickedShelleyLedgerState'
+    , tickedShelleyLedgerTables = emptyLedgerTables
+    }
+ where
+  (_, tickedShelleyLedgerState') =
+    tickedShelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys tbs)
+  TickedShelleyLedgerState
+    { untickedShelleyLedgerTip
+    , tickedShelleyLedgerTransition
+    , tickedShelleyLedgerState
+    , tickedShelleyLedgerTables = LedgerTables (Table (ValuesMK tbs) :* Nil)
+    } = st
+
+unstowUTxOLedgerTablesTicked ::
+  ShelleyBasedEra era =>
+  TablesForBlock (ShelleyBlock proto era) ~ '[UTxOTable] =>
+  Ticked (LedgerState (ShelleyBlock proto era)) EmptyMK ->
+  Ticked (LedgerState (ShelleyBlock proto era)) ValuesMK
+unstowUTxOLedgerTablesTicked st =
+  TickedShelleyLedgerState
+    { untickedShelleyLedgerTip = untickedShelleyLedgerTip
+    , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
+    , tickedShelleyLedgerState = tickedShelleyLedgerState'
+    , tickedShelleyLedgerTables = LedgerTables (Table (ValuesMK (coerceMapKeys (SL.unUTxO tbs))) :* Nil)
+    }
+ where
+  (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
+  TickedShelleyLedgerState
+    { untickedShelleyLedgerTip
+    , tickedShelleyLedgerTransition
+    , tickedShelleyLedgerState
+    } = st
 
 slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState era)
 slUtxoL st vals =
@@ -495,6 +634,20 @@ slUtxoL st vals =
       . SL.lsUTxOStateL
       . SL.utxoL
       <<.~ vals
+
+slInstantStakeL ::
+  ShelleyBasedEra era =>
+  SL.NewEpochState era ->
+  Map
+    (Credential SL.Staking)
+    (Cardano.Ledger.Compactible.CompactForm Coin)
+slInstantStakeL st =
+  st
+    ^. SL.nesEsL
+      . SL.esLStateL
+      . SL.lsUTxOStateL
+      . SL.instantStakeL
+      . SL.instantStakeCredentialsL
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -521,7 +674,7 @@ data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLe
   --    must be reset when /ticking/, not when applying a block.
   , tickedShelleyLedgerState :: !(SL.NewEpochState era)
   , tickedShelleyLedgerTables ::
-      !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+      !(LedgerTables (ShelleyBlock proto era) mk)
   }
   deriving Generic
 
@@ -530,7 +683,13 @@ untickedShelleyLedgerTipPoint ::
   Point (ShelleyBlock proto era)
 untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
-instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) where
+instance
+  ( ShelleyBasedEra era
+  , All (TableConstraints (ShelleyBlock proto era)) (TablesForBlock (ShelleyBlock proto era))
+  , SingI (TablesForBlock (ShelleyBlock proto era))
+  ) =>
+  IsLedger (LedgerState (ShelleyBlock proto era))
+  where
   type LedgerErr (LedgerState (ShelleyBlock proto era)) = SL.BlockTransitionError era
 
   type AuxLedgerEvent (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerEvent era
@@ -582,7 +741,7 @@ data ShelleyLedgerEvent era
 
 instance
   ShelleyCompatible proto era =>
-  ApplyBlock (LedgerState (ShelleyBlock proto era)) (ShelleyBlock proto era)
+  ApplyBlock LedgerState (ShelleyBlock proto era)
   where
   -- Note: in the Shelley ledger, the @CHAIN@ rule is used to apply a whole
   -- block. In consensus, we split up the application of a block to the ledger
@@ -612,12 +771,46 @@ instance
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (\err -> Exception.throw $! ShelleyReapplyException @era err)
 
-  getBlockKeySets =
-    LedgerTables
-      . KeysMK
-      . coerceSet
-      . Core.neededTxInsForBlock
-      . shelleyBlockRaw
+instance ShelleyCompatible proto ShelleyEra => GetBlockKeySets (ShelleyBlock proto ShelleyEra) where
+  getBlockKeySets = getUTxOBlockKeySets
+instance ShelleyCompatible proto AllegraEra => GetBlockKeySets (ShelleyBlock proto AllegraEra) where
+  getBlockKeySets = getUTxOBlockKeySets
+instance ShelleyCompatible proto MaryEra => GetBlockKeySets (ShelleyBlock proto MaryEra) where
+  getBlockKeySets = getUTxOBlockKeySets
+instance ShelleyCompatible proto AlonzoEra => GetBlockKeySets (ShelleyBlock proto AlonzoEra) where
+  getBlockKeySets = getUTxOBlockKeySets
+instance ShelleyCompatible proto BabbageEra => GetBlockKeySets (ShelleyBlock proto BabbageEra) where
+  getBlockKeySets = getUTxOBlockKeySets
+instance ShelleyCompatible proto ConwayEra => GetBlockKeySets (ShelleyBlock proto ConwayEra) where
+  getBlockKeySets = getUTxOBlockKeySets
+instance ShelleyCompatible proto DijkstraEra => GetBlockKeySets (ShelleyBlock proto DijkstraEra) where
+  getBlockKeySets = getUTxOAndInstantStakeBlockKeySets
+
+getUTxOBlockKeySets ::
+  ShelleyCompatible proto era =>
+  TablesForBlock (ShelleyBlock proto era) ~ '[UTxOTable] =>
+  (ShelleyBlock proto era) -> LedgerTables (ShelleyBlock proto era) KeysMK
+getUTxOBlockKeySets =
+  LedgerTables
+    . (:* Nil)
+    . Table
+    . KeysMK
+    . coerceSet
+    . Core.neededTxInsForBlock
+    . shelleyBlockRaw
+
+getUTxOAndInstantStakeBlockKeySets ::
+  ShelleyCompatible proto era =>
+  TablesForBlock (ShelleyBlock proto era) ~ '[UTxOTable, InstantStakeTable] =>
+  (ShelleyBlock proto era) -> LedgerTables (ShelleyBlock proto era) KeysMK
+getUTxOAndInstantStakeBlockKeySets =
+  LedgerTables
+    . (:* Table emptyMK :* Nil)
+    . Table
+    . KeysMK
+    . coerceSet
+    . Core.neededTxInsForBlock
+    . shelleyBlockRaw
 
 data ShelleyReapplyException
   = forall era.
@@ -653,14 +846,17 @@ applyHelper ::
     )
 applyHelper f cfg blk stBefore = do
   let TickedShelleyLedgerState
-        { tickedShelleyLedgerTransition
-        , tickedShelleyLedgerState
+        { tickedShelleyLedgerTransition = transition
+        , tickedShelleyLedgerState = tState
         } = stowLedgerTables stBefore
+
+  -- (*) We extract the whole instant stake from the ledger state into the tables
+  let instantStakeBefore = slInstantStakeL $ tickedShelleyLedgerState stBefore
 
   ledgerResult <-
     f
       globals
-      tickedShelleyLedgerState
+      tState
       ( let b = shelleyBlockRaw blk
             h' = mkHeaderView (SL.blockHeader b)
          in SL.Block h' (SL.blockBody b)
@@ -669,12 +865,31 @@ applyHelper f cfg blk stBefore = do
   let track ::
         LedgerState (ShelleyBlock proto era) ValuesMK ->
         LedgerState (ShelleyBlock proto era) TrackingMK
-      track = calculateDifference stBefore
+      track =
+        calculateDifference
+          ( TickedL $
+              stBefore
+                { -- We push the whole instant stake into the tables, see (*)
+                  -- above.
+                  --
+                  -- If the block doesn't have an InstantStakeTable, this
+                  -- operation is void.
+                  --
+                  -- This is only necessary because the Ledger doesn't tell us
+                  -- which parts of the InstantStake it wants (in
+                  -- @getBlockKeySets@).
+                  tickedShelleyLedgerTables =
+                    tickedShelleyLedgerTables stBefore
+                      & onInstantStakeTable (Proxy @(ShelleyBlock proto era)) .~ Table (ValuesMK instantStakeBefore)
+                }
+          )
 
   return $
     ledgerResult <&> \newNewEpochState ->
       trackingToDiffs $
         track $
+          -- Unstowing the values __will__ get the instant stake from the state,
+          -- so calculating the difference will compare both instant stakes.
           unstowLedgerTables $
             ShelleyLedgerState
               { shelleyLedgerTip =
@@ -692,7 +907,7 @@ applyHelper f cfg blk stBefore = do
                         -- We count the number of blocks that have been applied after the
                         -- voting deadline has passed.
                         (if blockSlot blk >= votingDeadline then succ else id) $
-                          shelleyAfterVoting tickedShelleyLedgerTransition
+                          shelleyAfterVoting transition
                     }
               , shelleyLedgerTables = emptyLedgerTables
               }
@@ -861,5 +1076,18 @@ decodeShelleyLedgerState =
         , shelleyLedgerTables = emptyLedgerTables
         }
 
-instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
+instance CanUpgradeLedgerTable (ShelleyBlock proto era) UTxOTable where
+  type UpgradeIndex (ShelleyBlock proto era) = ()
+  upgradeTable _ = id
+
+instance CanUpgradeLedgerTable (ShelleyBlock proto DijkstraEra) InstantStakeTable where
+  type UpgradeIndex (ShelleyBlock proto DijkstraEra) = ()
+  upgradeTable _ = id
+
+instance
+  All
+    (CanUpgradeLedgerTable (ShelleyBlock proto era))
+    (TablesForBlock (ShelleyBlock proto era)) =>
+  CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era)
+  where
   upgradeTables _ _ = id

@@ -44,6 +44,7 @@ import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Strict
 import Data.SOP.Telescope (Extend (..), ScanNext (..), Telescope)
 import qualified Data.SOP.Telescope as Telescope
+import Data.Singletons (SingI)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -56,6 +57,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Util.TypeLevel
 import Prelude hiding (sequence)
 
 {-------------------------------------------------------------------------------
@@ -290,7 +292,11 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
         return endBound
 
   howExtend ::
-    (HasLedgerTables (LedgerState blk), HasLedgerTables (LedgerState blk')) =>
+    ( All SingI (TablesForBlock blk)
+    , HasLedgerTables LedgerState blk
+    , HasLedgerTables LedgerState blk'
+    , ToAllDict (TableConstraints blk') (TablesForBlock blk')
+    ) =>
     TranslateLedgerState blk blk' ->
     TranslateLedgerTables blk blk' ->
     History.Bound ->
@@ -312,7 +318,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
               -- will just be a no-op. See the haddock for
               -- 'translateLedgerTablesWith' and 'extendToSlot' for more
               -- information.
-              . prependDiffs
+              . prependDiffsT
                 ( translateLedgerTablesWith f'
                     . projectLedgerTables
                     . unFlip

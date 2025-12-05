@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -78,6 +79,7 @@ mkInitDb ::
   , IOLike m
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
+  , ApplyBlock (ExtLedgerState blk) blk
   ) =>
   Complete LedgerDbArgs m blk ->
   V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->

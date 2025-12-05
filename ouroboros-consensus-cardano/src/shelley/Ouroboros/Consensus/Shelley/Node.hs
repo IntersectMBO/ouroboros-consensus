@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -50,6 +51,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , pHeaderIssuer
   )
+import Ouroboros.Consensus.Storage.LedgerDB.API
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -121,5 +123,6 @@ instance
   , TxLimits (ShelleyBlock proto era)
   , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
+  , LedgerSupportsLedgerDB (ShelleyBlock proto era)
   ) =>
   RunNode (ShelleyBlock proto era)

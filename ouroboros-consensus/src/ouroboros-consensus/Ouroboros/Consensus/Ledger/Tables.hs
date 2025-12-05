@@ -1,15 +1,10 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | This module defines the 'LedgerTables', a portion of the Ledger notion of a
 -- /ledger state/ (not to confuse with our
@@ -170,34 +165,14 @@ module Ouroboros.Consensus.Ledger.Tables
     -- ** Extracting and injecting ledger tables
   , HasLedgerTables (..)
   , HasTickedLedgerTables
-
-    -- * Serialization
-  , SerializeTablesHint
-  , SerializeTablesWithHint (..)
-  , defaultDecodeTablesWithHint
-  , defaultEncodeTablesWithHint
-  , valuesMKDecoder
-  , valuesMKEncoder
-
-    -- * Special classes
-  , LedgerTablesAreTrivial
-  , TrivialLedgerTables (..)
-  , convertMapKind
-  , trivialLedgerTables
   ) where
 
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
-import Data.Kind (Constraint, Type)
-import qualified Data.Map.Strict as Map
-import Data.MemPack
-import Data.Void (Void)
-import NoThunks.Class (NoThunks (..))
+import Data.Kind (Type)
+import Data.SOP.Constraint
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.Tables.Basics
 import Ouroboros.Consensus.Ledger.Tables.Combinators
 import Ouroboros.Consensus.Ledger.Tables.MapKind
-import Ouroboros.Consensus.Ticked
-import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Basic LedgerState classes
@@ -205,27 +180,16 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 
 -- | Extracting @'LedgerTables'@ from @l mk@ (which will share the same @mk@),
 -- or replacing the @'LedgerTables'@ associated to a particular @l@.
-type HasLedgerTables :: LedgerStateKind -> Constraint
-class
-  ( Ord (TxIn l)
-  , Eq (TxOut l)
-  , Show (TxIn l)
-  , Show (TxOut l)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
-  , MemPack (TxIn l)
-  , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
-  ) =>
-  HasLedgerTables l
-  where
+type HasLedgerTables :: (Type -> LedgerStateKind) -> Type -> Constraint
+class LedgerTablesConstraints blk => HasLedgerTables l blk where
   -- | Extract the ledger tables from a ledger state
   --
   -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance
   -- uses them.
   projectLedgerTables ::
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
-    l mk ->
-    LedgerTables l mk
+    (CanMapMK mk, ZeroableMK mk) =>
+    l blk mk ->
+    LedgerTables blk mk
 
   -- | Overwrite the tables in the given ledger state.
   --
@@ -238,32 +202,17 @@ class
   -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance
   -- uses them.
   withLedgerTables ::
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
-    l any ->
-    LedgerTables l mk ->
-    l mk
-
-instance
-  ( Ord (TxIn l)
-  , Eq (TxOut l)
-  , Show (TxIn l)
-  , Show (TxOut l)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
-  , MemPack (TxIn l)
-  , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
-  ) =>
-  HasLedgerTables (LedgerTables l)
-  where
-  projectLedgerTables = castLedgerTables
-  withLedgerTables _ = castLedgerTables
+    (CanMapMK mk, ZeroableMK mk) =>
+    l blk any ->
+    LedgerTables blk mk ->
+    l blk mk
 
 -- | Convenience class, useful for partially applying the composition of
 -- 'HasLedgerTables' and 'Ticked'.
-type HasTickedLedgerTables :: LedgerStateKind -> Constraint
-class HasLedgerTables (Ticked l) => HasTickedLedgerTables l
+type HasTickedLedgerTables :: StateKind -> Type -> Constraint
+class HasLedgerTables (TickedL l) blk => HasTickedLedgerTables l blk
 
-instance HasLedgerTables (Ticked l) => HasTickedLedgerTables l
+instance HasLedgerTables (TickedL l) blk => HasTickedLedgerTables l blk
 
 -- | LedgerTables are projections of data from a LedgerState and as such they
 -- can be injected back into a LedgerState. This is necessary because the Ledger
@@ -279,143 +228,3 @@ type CanStowLedgerTables :: LedgerStateKind -> Constraint
 class CanStowLedgerTables l where
   stowLedgerTables :: l ValuesMK -> l EmptyMK
   unstowLedgerTables :: l EmptyMK -> l ValuesMK
-
-{-------------------------------------------------------------------------------
-  Serialization Codecs
--------------------------------------------------------------------------------}
-
--- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
--- in-memory backing store.
-valuesMKEncoder ::
-  forall l.
-  SerializeTablesWithHint l =>
-  l EmptyMK ->
-  LedgerTables l ValuesMK ->
-  CBOR.Encoding
-valuesMKEncoder st tbs =
-  CBOR.encodeListLen 1 <> encodeTablesWithHint st tbs
-
--- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
--- in-memory backing store.
-valuesMKDecoder ::
-  forall l s.
-  SerializeTablesWithHint l =>
-  l EmptyMK ->
-  CBOR.Decoder s (LedgerTables l ValuesMK)
-valuesMKDecoder st =
-  CBOR.decodeListLenOf 1 >> decodeTablesWithHint st
-
--- | When decoding the tables and in particular the UTxO set we want
--- to share data in the TxOuts in the same way the Ledger did (see the
--- @Share (TxOut era)@ instances). We need to provide the state in the
--- HFC case so that we can call 'eraDecoder' and also to extract the
--- interns from the state.
---
--- As we will decode with 'eraDecoder' we also need to use such era
--- for the encoding thus we need the hint also in the encoding.
---
--- See @SerializeTablesWithHint (LedgerState (HardForkBlock
--- (CardanoBlock c)))@ for a good example, the rest of the instances
--- are somewhat degenerate.
-class SerializeTablesWithHint l where
-  encodeTablesWithHint ::
-    SerializeTablesHint (LedgerTables l ValuesMK) ->
-    LedgerTables l ValuesMK ->
-    CBOR.Encoding
-  decodeTablesWithHint ::
-    SerializeTablesHint (LedgerTables l ValuesMK) ->
-    CBOR.Decoder s (LedgerTables l ValuesMK)
-
--- This is just for the BackingStore Lockstep tests. Once V1 is gone
--- we can inline it above.
-
--- | The hint for 'SerializeTablesWithHint'
-type family SerializeTablesHint values :: Type
-
-type instance SerializeTablesHint (LedgerTables l ValuesMK) = l EmptyMK
-
-defaultEncodeTablesWithHint ::
-  (MemPack (TxIn l), MemPack (TxOut l)) =>
-  SerializeTablesHint (LedgerTables l ValuesMK) ->
-  LedgerTables l ValuesMK ->
-  CBOR.Encoding
-defaultEncodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
-  mconcat
-    [ CBOR.encodeMapLen (fromIntegral $ Map.size tbs)
-    , Map.foldMapWithKey
-        ( \k v ->
-            mconcat
-              [ CBOR.encodeBytes (packByteString k)
-              , CBOR.encodeBytes (packByteString v)
-              ]
-        )
-        tbs
-    ]
-
-defaultDecodeTablesWithHint ::
-  (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l)) =>
-  SerializeTablesHint (LedgerTables l ValuesMK) ->
-  CBOR.Decoder s (LedgerTables l ValuesMK)
-defaultDecodeTablesWithHint _ = do
-  n <- CBOR.decodeMapLen
-  LedgerTables . ValuesMK <$> go n Map.empty
- where
-  go 0 m = pure m
-  go n !m = do
-    (k, v) <- (,) <$> (unpackMonadFail =<< CBOR.decodeBytes) <*> (unpackMonadFail =<< CBOR.decodeBytes)
-    go (n - 1) (Map.insert k v m)
-
-{-------------------------------------------------------------------------------
-  Special classes of ledger states
--------------------------------------------------------------------------------}
-
--- | For some ledger states we won't be defining 'LedgerTables' and instead the
--- ledger state will be fully stored in memory, as before UTxO-HD. The ledger
--- states that are defined this way can be made instances of this class which
--- allows for easy manipulation of the types of @mk@ required at any step of the
--- program.
-type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
-class (TxIn l ~ Void, TxOut l ~ Void) => LedgerTablesAreTrivial l where
-  -- | If the ledger state is always in memory, then @l mk@ will be isomorphic
-  -- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers
-  -- states indexed by different map kinds.
-  --
-  -- This function is useful to combine functions that operate on functions that
-  -- transform the map kind on a ledger state (eg @applyChainTickLedgerResult@).
-  convertMapKind :: l mk -> l mk'
-
-trivialLedgerTables ::
-  (ZeroableMK mk, LedgerTablesAreTrivial l) =>
-  LedgerTables l mk
-trivialLedgerTables = LedgerTables emptyMK
-
--- | A newtype to @derive via@ the instances for blocks with trivial ledger
--- tables.
-type TrivialLedgerTables :: LedgerStateKind -> MapKind -> Type
-newtype TrivialLedgerTables l mk = TrivialLedgerTables {untrivialLedgerTables :: l mk}
-
-type instance TxIn (TrivialLedgerTables l) = TxIn l
-type instance TxOut (TrivialLedgerTables l) = TxOut l
-
-instance LedgerTablesAreTrivial l => LedgerTablesAreTrivial (TrivialLedgerTables l) where
-  convertMapKind = TrivialLedgerTables . convertMapKind . untrivialLedgerTables
-
-instance LedgerTablesAreTrivial l => HasLedgerTables (TrivialLedgerTables l) where
-  projectLedgerTables _ = trivialLedgerTables
-  withLedgerTables st _ = convertMapKind st
-
-instance LedgerTablesAreTrivial l => CanStowLedgerTables (TrivialLedgerTables l) where
-  stowLedgerTables = convertMapKind
-  unstowLedgerTables = convertMapKind
-
-instance IndexedMemPack (TrivialLedgerTables l EmptyMK) Void where
-  indexedTypeName _ = typeName @Void
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
-
-instance SerializeTablesWithHint (TrivialLedgerTables l) where
-  decodeTablesWithHint _ = do
-    _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
-  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0

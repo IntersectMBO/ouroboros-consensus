@@ -34,6 +34,7 @@ import Data.Kind (Type)
 import qualified Data.Measure as Measure
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
+import qualified Data.SOP.Dict as Dict
 import Data.SOP.Functors
 import Data.SOP.InPairs (InPairs)
 import qualified Data.SOP.InPairs as InPairs
@@ -119,9 +120,9 @@ type DecomposedReapplyTxsResult extra xs =
     :.: FlipTickedLedgerState TrackingMK
 
 instance
-  ( CanHardFork xs
-  , HasCanonicalTxIn xs
+  ( CanHardFork' xs
   , HasHardForkTxOut xs
+  , LedgerTablesConstraints (HardForkBlock xs)
   ) =>
   LedgerSupportsMempool (HardForkBlock xs)
   where
@@ -243,14 +244,15 @@ instance
 
   getTransactionKeySets (HardForkGenTx (OneEraGenTx ns)) =
     hcollapse $
-      hcimap proxySingle f ns
+      hcizipWith proxySingle f (toStrict $ Dict.unAll_NP Dict.Dict) ns
    where
     f ::
       SingleEraBlock x =>
       Index xs x ->
+      Dict.Dict (InjectValues xs) x ->
       GenTx x ->
-      K (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) x
-    f idx tx = K $ injectLedgerTables idx $ getTransactionKeySets tx
+      K (LedgerTables (HardForkBlock xs) KeysMK) x
+    f idx Dict.Dict tx = K $ injectLedgerTables idx $ getTransactionKeySets tx
 
   -- This optimization is worthwile because we can save the projection and
   -- injection of ledger tables.
@@ -294,17 +296,25 @@ instance
     (TickedHardForkLedgerState tr (State.HardForkState st)) =
       TickedHardForkLedgerState tr $
         State.HardForkState $
-          hcimap
+          hcizipWith
             proxySingle
-            ( \idx (State.Current start (FlipTickedLedgerState a)) ->
-                State.Current start $
-                  FlipTickedLedgerState $
-                    applyMempoolDiffs
-                      (ejectLedgerTables idx vals)
-                      (ejectLedgerTables idx keys)
-                      a
-            )
+            f
+            (toStrict $ Dict.unAll_NP Dict.Dict)
             st
+     where
+      f ::
+        SingleEraBlock x =>
+        Index xs x ->
+        Dict.Dict (InjectValues xs) x ->
+        State.Current (FlipTickedLedgerState DiffMK) x ->
+        State.Current (FlipTickedLedgerState ValuesMK) x
+      f idx Dict.Dict (State.Current start (FlipTickedLedgerState a)) =
+        State.Current start $
+          FlipTickedLedgerState $
+            applyMempoolDiffs
+              (ejectLedgerTables idx vals)
+              (ejectLedgerTables idx keys)
+              a
 
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs

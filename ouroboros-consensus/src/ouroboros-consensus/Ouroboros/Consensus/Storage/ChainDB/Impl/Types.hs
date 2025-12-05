@@ -16,6 +16,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | Types used throughout the implementation: handle, state, environment,
 -- types, trace types, etc.
@@ -99,7 +100,9 @@ import Ouroboros.Consensus.Fragment.Diff (ChainDiff)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Ledger.Tables (HasLedgerTables)
 import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -221,7 +224,9 @@ getEnvSTM1 (CDBHandle varState) f a =
 data ChainDbState m blk
   = ChainDbOpen !(ChainDbEnv m blk)
   | ChainDbClosed
-  deriving (Generic, NoThunks)
+  deriving Generic
+
+deriving instance NoThunks (ChainDbEnv m blk) => NoThunks (ChainDbState m blk)
 
 -- | The current chain, both without and with slot times
 --
@@ -362,7 +367,11 @@ data ChainDbEnv m blk = CDB
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a
 -- constraint and still have it work with the simulator)
 instance
-  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsDiffusionPipelining blk) =>
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , HasLedgerTables LedgerState blk
+  , BlockSupportsDiffusionPipelining blk
+  ) =>
   NoThunks (ChainDbEnv m blk)
   where
   showTypeOf _ = "ChainDbEnv m " ++ show (typeRep (Proxy @blk))
@@ -510,7 +519,11 @@ data InvalidBlockInfo blk = InvalidBlockInfo
   { invalidBlockReason :: !(ExtValidationError blk)
   , invalidBlockSlotNo :: !SlotNo
   }
-  deriving (Eq, Show, Generic, NoThunks)
+  deriving Generic
+
+deriving instance Eq (ExtValidationError blk) => Eq (InvalidBlockInfo blk)
+deriving instance Show (ExtValidationError blk) => Show (InvalidBlockInfo blk)
+deriving instance NoThunks (ExtValidationError blk) => NoThunks (InvalidBlockInfo blk)
 
 {-------------------------------------------------------------------------------
   Blocks to add

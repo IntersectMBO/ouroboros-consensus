@@ -285,7 +285,7 @@ getReadOnlyForkerAtPoint ::
   m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
 getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
 
-getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe LedgerDB.Statistics)
+getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe (LedgerDB.Statistics blk))
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
 
 getPerasWeightSnapshot ::

@@ -1,10 +1,8 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -50,6 +48,7 @@ module Ouroboros.Consensus.Ledger.Basics
 import Data.Kind (Constraint, Type)
 import GHC.Generics
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.IOLike
@@ -141,11 +140,7 @@ data ComputeLedgerEvents = ComputeLedgerEvents | OmitLedgerEvents
 
 type IsLedger :: LedgerStateKind -> Constraint
 class
-  ( -- Requirements on the ledger state itself
-    forall mk. EqMK mk => Eq (l mk)
-  , forall mk. NoThunksMK mk => NoThunks (l mk)
-  , forall mk. ShowMK mk => Show (l mk)
-  , -- Requirements on 'LedgerCfg'
+  ( -- Requirements on 'LedgerCfg'
     NoThunks (LedgerCfg l)
   , -- Requirements on 'LedgerErr'
     Show (LedgerErr l)
@@ -219,35 +214,6 @@ applyChainTick ::
   l EmptyMK ->
   Ticked l DiffMK
 applyChainTick = lrResult ...: applyChainTickLedgerResult
-
-{-------------------------------------------------------------------------------
-  Link block to its ledger
--------------------------------------------------------------------------------}
-
--- | Ledger state associated with a block
---
--- This is the Consensus notion of a Ledger /ledger state/. Each block type is
--- associated with one of the Ledger types for the /ledger state/. Virtually
--- every concept in this codebase revolves around this type, or the referenced
--- @blk@. Whenever we use the type variable @l@ we intend to signal that the
--- expected instantiation is either a 'LedgerState' or some wrapper over it
--- (like the 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState').
---
--- This type is parametrized over @mk :: 'MapKind'@ to express the
--- 'LedgerTables' contained in such a 'LedgerState'. See 'LedgerTables' for a
--- more thorough description.
---
--- The main operations we can do with a 'LedgerState' are /ticking/ (defined in
--- 'IsLedger'), and /applying a block/ (defined in
--- 'Ouroboros.Consensus.Ledger.Abstract.ApplyBlock').
-type LedgerState :: Type -> LedgerStateKind
-data family LedgerState blk mk
-
-type TickedLedgerState blk = Ticked (LedgerState blk)
-
-type instance HeaderHash (LedgerState blk) = HeaderHash blk
-
-instance StandardHash blk => StandardHash (LedgerState blk)
 
 type LedgerConfig blk = LedgerCfg (LedgerState blk)
 type LedgerError blk = LedgerErr (LedgerState blk)

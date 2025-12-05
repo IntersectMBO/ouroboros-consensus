@@ -1,11 +1,10 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | Interface to the ledger layer
 --
@@ -18,8 +17,8 @@ module Ouroboros.Consensus.Ledger.Abstract
 
     -- * Apply block
   , ApplyBlock (..)
+  , GetBlockKeySets (..)
   , ComputeLedgerEvents (..)
-  , UpdateLedger
   , defaultApplyBlockLedgerResult
   , defaultReapplyBlockLedgerResult
 
@@ -48,6 +47,7 @@ import Data.Kind (Type)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util
@@ -83,12 +83,13 @@ data family Validated x :: Type
 -------------------------------------------------------------------------------}
 
 class
-  ( IsLedger l
-  , HeaderHash l ~ HeaderHash blk
+  ( IsLedger (l blk)
+  , HeaderHash (l blk) ~ HeaderHash blk
   , HasHeader blk
   , HasHeader (Header blk)
-  , HasLedgerTables l
-  , HasLedgerTables (Ticked l)
+  , HasLedgerTables l blk
+  , HasLedgerTables (TickedL l) blk
+  , GetBlockKeySets blk
   ) =>
   ApplyBlock l blk
   where
@@ -103,10 +104,10 @@ class
     HasCallStack =>
     STS.ValidationPolicy ->
     ComputeLedgerEvents ->
-    LedgerCfg l ->
+    LedgerCfg (l blk) ->
     blk ->
-    Ticked l ValuesMK ->
-    Except (LedgerErr l) (LedgerResult l (l DiffMK))
+    Ticked (l blk) ValuesMK ->
+    Except (LedgerErr (l blk)) (LedgerResult (l blk) (l blk DiffMK))
 
   -- | Apply a block to the ledger state.
   --
@@ -117,10 +118,10 @@ class
   applyBlockLedgerResult ::
     HasCallStack =>
     ComputeLedgerEvents ->
-    LedgerCfg l ->
+    LedgerCfg (l blk) ->
     blk ->
-    Ticked l ValuesMK ->
-    Except (LedgerErr l) (LedgerResult l (l DiffMK))
+    Ticked (l blk) ValuesMK ->
+    Except (LedgerErr (l blk)) (LedgerResult (l blk) (l blk DiffMK))
 
   -- | Re-apply a block to the very same ledger state it was applied in before.
   --
@@ -135,39 +136,37 @@ class
   reapplyBlockLedgerResult ::
     HasCallStack =>
     ComputeLedgerEvents ->
-    LedgerCfg l ->
+    LedgerCfg (l blk) ->
     blk ->
-    Ticked l ValuesMK ->
-    LedgerResult l (l DiffMK)
+    Ticked (l blk) ValuesMK ->
+    LedgerResult (l blk) (l blk DiffMK)
 
+class GetBlockKeySets blk where
   -- | Given a block, get the key-sets that we need to apply it to a ledger
   -- state.
-  getBlockKeySets :: blk -> LedgerTables l KeysMK
+  getBlockKeySets :: blk -> LedgerTables blk KeysMK
 
 defaultApplyBlockLedgerResult ::
   (HasCallStack, ApplyBlock l blk) =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   blk ->
-  Ticked l ValuesMK ->
-  Except (LedgerErr l) (LedgerResult l (l DiffMK))
+  Ticked (l blk) ValuesMK ->
+  Except (LedgerErr (l blk)) (LedgerResult (l blk) (l blk DiffMK))
 defaultApplyBlockLedgerResult =
   applyBlockLedgerResultWithValidation STS.ValidateAll
 
 defaultReapplyBlockLedgerResult ::
   (HasCallStack, ApplyBlock l blk) =>
-  (LedgerErr l -> LedgerResult l (l DiffMK)) ->
+  (LedgerErr (l blk) -> LedgerResult (l blk) (l blk DiffMK)) ->
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   blk ->
-  Ticked l ValuesMK ->
-  LedgerResult l (l DiffMK)
+  Ticked (l blk) ValuesMK ->
+  LedgerResult (l blk) (l blk DiffMK)
 defaultReapplyBlockLedgerResult throwReapplyError =
   (either throwReapplyError id . runExcept)
     ...: applyBlockLedgerResultWithValidation STS.ValidateNone
-
--- | Interaction with the ledger layer
-class ApplyBlock (LedgerState blk) blk => UpdateLedger blk
 
 {-------------------------------------------------------------------------------
   Derived functionality
@@ -178,10 +177,10 @@ applyLedgerBlock ::
   forall l blk.
   (ApplyBlock l blk, HasCallStack) =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   blk ->
-  Ticked l ValuesMK ->
-  Except (LedgerErr l) (l DiffMK)
+  Ticked (l blk) ValuesMK ->
+  Except (LedgerErr (l blk)) (l blk DiffMK)
 applyLedgerBlock = fmap lrResult ...: applyBlockLedgerResult
 
 -- | 'lrResult' after 'reapplyBlockLedgerResult'
@@ -189,19 +188,20 @@ reapplyLedgerBlock ::
   forall l blk.
   (ApplyBlock l blk, HasCallStack) =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   blk ->
-  Ticked l ValuesMK ->
-  l DiffMK
+  Ticked (l blk) ValuesMK ->
+  l blk DiffMK
 reapplyLedgerBlock = lrResult ...: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
+  forall (l :: Type -> LedgerStateKind) blk.
   ApplyBlock l blk =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   blk ->
-  l ValuesMK ->
-  Except (LedgerErr l) (LedgerResult l (l DiffMK))
+  l blk ValuesMK ->
+  Except (LedgerErr (l blk)) (LedgerResult (l blk) (l blk DiffMK))
 tickThenApplyLedgerResult evs cfg blk l = do
   let lrTick = applyChainTickLedgerResult evs cfg (blockSlot blk) (forgetLedgerTables l)
   lrBlock <-
@@ -209,21 +209,21 @@ tickThenApplyLedgerResult evs cfg blk l = do
       evs
       cfg
       blk
-      (applyDiffForKeys l (getBlockKeySets blk) (lrResult lrTick))
+      (unTickedL $ applyDiffForKeys l (getBlockKeySets blk) (TickedL $ lrResult lrTick))
   pure
     LedgerResult
       { lrEvents = lrEvents lrTick <> lrEvents lrBlock
-      , lrResult = prependDiffs (lrResult lrTick) (lrResult lrBlock)
+      , lrResult = prependDiffs @(TickedL l) @l @blk (TickedL $ lrResult lrTick) (lrResult lrBlock)
       }
 
 tickThenReapplyLedgerResult ::
   forall l blk.
   ApplyBlock l blk =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   blk ->
-  l ValuesMK ->
-  LedgerResult l (l DiffMK)
+  l blk ValuesMK ->
+  LedgerResult (l blk) (l blk DiffMK)
 tickThenReapplyLedgerResult evs cfg blk l =
   let lrTick = applyChainTickLedgerResult evs cfg (blockSlot blk) (forgetLedgerTables l)
       lrBlock =
@@ -231,42 +231,46 @@ tickThenReapplyLedgerResult evs cfg blk l =
           evs
           cfg
           blk
-          (applyDiffForKeys l (getBlockKeySets blk) (lrResult lrTick))
+          (unTickedL $ applyDiffForKeys l (getBlockKeySets blk) (TickedL $ lrResult lrTick))
    in LedgerResult
         { lrEvents = lrEvents lrTick <> lrEvents lrBlock
-        , lrResult = prependDiffs (lrResult lrTick) (lrResult lrBlock)
+        , lrResult = prependDiffs @(TickedL l) @l @blk (TickedL $ lrResult lrTick) (lrResult lrBlock)
         }
 
 tickThenApply ::
   forall l blk.
   ApplyBlock l blk =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   blk ->
-  l ValuesMK ->
-  Except (LedgerErr l) (l DiffMK)
+  l blk ValuesMK ->
+  Except (LedgerErr (l blk)) (l blk DiffMK)
 tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
 
 tickThenReapply ::
   forall l blk.
   ApplyBlock l blk =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg (l blk) ->
   blk ->
-  l ValuesMK ->
-  l DiffMK
+  l blk ValuesMK ->
+  l blk DiffMK
 tickThenReapply = lrResult ...: tickThenReapplyLedgerResult
 
 foldLedger ::
   ApplyBlock l blk =>
-  ComputeLedgerEvents -> LedgerCfg l -> [blk] -> l ValuesMK -> Except (LedgerErr l) (l ValuesMK)
+  ComputeLedgerEvents ->
+  LedgerCfg (l blk) ->
+  [blk] ->
+  l blk ValuesMK ->
+  Except (LedgerErr (l blk)) (l blk ValuesMK)
 foldLedger evs cfg =
   repeatedlyM
     (\blk state -> applyDiffForKeys state (getBlockKeySets blk) <$> tickThenApply evs cfg blk state)
 
 refoldLedger ::
   ApplyBlock l blk =>
-  ComputeLedgerEvents -> LedgerCfg l -> [blk] -> l ValuesMK -> l ValuesMK
+  ComputeLedgerEvents -> LedgerCfg (l blk) -> [blk] -> l blk ValuesMK -> l blk ValuesMK
 refoldLedger evs cfg =
   repeatedly
     (\blk state -> applyDiffForKeys state (getBlockKeySets blk) $ tickThenReapply evs cfg blk state)
@@ -276,16 +280,16 @@ refoldLedger evs cfg =
 -------------------------------------------------------------------------------}
 
 ledgerTipPoint ::
-  UpdateLedger blk =>
+  ApplyBlock LedgerState blk =>
   LedgerState blk mk -> Point blk
 ledgerTipPoint = castPoint . getTip
 
 ledgerTipHash ::
-  UpdateLedger blk =>
+  ApplyBlock LedgerState blk =>
   LedgerState blk mk -> ChainHash blk
 ledgerTipHash = pointHash . ledgerTipPoint
 
 ledgerTipSlot ::
-  UpdateLedger blk =>
+  ApplyBlock LedgerState blk =>
   LedgerState blk mk -> WithOrigin SlotNo
 ledgerTipSlot = pointSlot . ledgerTipPoint

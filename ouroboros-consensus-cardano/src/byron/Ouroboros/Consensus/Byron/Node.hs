@@ -1,6 +1,8 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -59,7 +61,7 @@ import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
-import Ouroboros.Consensus.Util ((....:))
+import Ouroboros.Consensus.Util
 import Ouroboros.Network.Magic (NetworkMagic (..))
 
 {-------------------------------------------------------------------------------

@@ -2,15 +2,21 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Ledger tables are barbie-types (see @barbies@ package), though unfortunately
@@ -31,7 +37,8 @@
 -- Type@, then we could reuse most of the @barbies@ machinery.
 module Ouroboros.Consensus.Ledger.Tables.Combinators
   ( -- * Common constraints
-    LedgerTableConstraints
+    LedgerTablesConstraints
+  , TableConstraints
 
     -- * Functor
   , ltmap
@@ -74,13 +81,25 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators
     -- * Basic bifunctors
   , K2 (..)
   , type (:..:) (..)
+
+    -- * Operate on particular tables
+  , onUTxOTable
+  , onInstantStakeTable
+  , onTable
   ) where
 
 import Data.Bifunctor
 import Data.Kind
+import Data.List.Singletons (SList (..))
+import Data.Proxy
+import Data.SOP.BasicFunctors (K (..), (:.:) (..))
+import Data.SOP.Constraint
 import Data.SOP.Functors
+import Data.SOP.Strict
+import Data.Singletons
+import Lens.Micro
+import Ouroboros.Consensus.Ledger.LedgerStateType
 import Ouroboros.Consensus.Ledger.Tables.Basics
-import Ouroboros.Consensus.Ledger.Tables.MapKind
 import Ouroboros.Consensus.Util ((...:), (..:), (.:))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -88,23 +107,97 @@ import Ouroboros.Consensus.Util.IndexedMemPack
   Common constraints
 -------------------------------------------------------------------------------}
 
--- | The @Eq (TxOut l)@ constraint is here only because of
--- 'Ouroboros.Consensus.Ledger.Tables.Diff.diff'. Once the ledger provides
--- deltas instead of us being the ones that compute them, we can probably drop
--- this constraint.
-type LedgerTableConstraints l =
-  ( Ord (TxIn l)
-  , Eq (TxOut l)
-  , MemPack (TxIn l)
-  , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
-  )
+-- | What must a table satisfy to be considered a table?
+class
+  ( Ord (Key table)
+  , MemPack (Key table)
+  , Eq (Value table blk)
+  , IndexedMemPack LedgerState blk table
+  , SingI table
+  ) =>
+  TableConstraints blk table
 
-type LedgerTableConstraints' l k v =
+instance
+  ( Ord (Key table)
+  , MemPack (Key table)
+  , Eq (Value table blk)
+  , IndexedMemPack LedgerState blk table
+  , SingI table
+  ) =>
+  TableConstraints blk table
+
+-- | 'TableConstraints' for all tables for a block
+class
+  (SingI (TablesForBlock blk), All (TableConstraints blk) (TablesForBlock blk)) =>
+  LedgerTablesConstraints blk
+
+instance
+  (SingI (TablesForBlock blk), All (TableConstraints blk) (TablesForBlock blk)) =>
+  LedgerTablesConstraints blk
+
+type RawLedgerTableConstraints blk k v =
   ( Ord k
   , Eq v
   , MemPack k
-  , IndexedMemPack (MemPackIdx l EmptyMK) v
   )
+
+onUTxOTable ::
+  SingI (TablesForBlock blk) =>
+  Proxy blk -> ASetter' (LedgerTables blk mk) (Table mk blk UTxOTable)
+onUTxOTable p = onTable p (Proxy @UTxOTable)
+
+onInstantStakeTable ::
+  SingI (TablesForBlock blk) =>
+  Proxy blk -> ASetter' (LedgerTables blk mk) (Table mk blk InstantStakeTable)
+onInstantStakeTable p = onTable p (Proxy @InstantStakeTable)
+
+onTable ::
+  forall blk (table :: TABLE) mk.
+  (SingI table, SingI (TablesForBlock blk)) =>
+  Proxy blk ->
+  Proxy table ->
+  ASetter' (LedgerTables blk mk) (Table mk blk table)
+onTable _ _ =
+  case setterForSing (sing @(TablesForBlock blk)) (sing @table) of
+    Nothing -> \_ s -> pure s
+    Just setter -> setter
+
+onAllTables ::
+  forall blk mk mk'.
+  LedgerTablesConstraints blk =>
+  Proxy blk ->
+  (forall k v. RawLedgerTableConstraints blk k v => mk k v -> mk' k v) ->
+  LedgerTables blk mk ->
+  LedgerTables blk mk'
+onAllTables p f (LedgerTables tbs) =
+  LedgerTables (onAllRawTables p f tbs)
+
+onAllRawTables ::
+  forall blk mk mk'.
+  LedgerTablesConstraints blk =>
+  Proxy blk ->
+  (forall k v. RawLedgerTableConstraints blk k v => mk k v -> mk' k v) ->
+  NP (Table mk blk) (TablesForBlock blk) ->
+  NP (Table mk' blk) (TablesForBlock blk)
+onAllRawTables _ f tbs = go (sing @(TablesForBlock blk)) tbs
+ where
+  go :: All (TableConstraints blk) xs => SList xs -> NP (Table mk blk) xs -> NP (Table mk' blk) xs
+  go SNil Nil = Nil
+  go (SCons _ sn) (Table mk :* next) = Table (f mk) :* go sn next
+
+onAllRawTablesF ::
+  forall blk f mk mk'.
+  (Applicative f, LedgerTablesConstraints blk) =>
+  Proxy blk ->
+  (forall k v. RawLedgerTableConstraints blk k v => mk k v -> f (mk' k v)) ->
+  NP (Table mk blk) (TablesForBlock blk) ->
+  f (NP (Table mk' blk) (TablesForBlock blk))
+onAllRawTablesF _ f tbs = hsequence' $ go (sing @(TablesForBlock blk)) tbs
+ where
+  go ::
+    All (TableConstraints blk) xs => SList xs -> NP (Table mk blk) xs -> NP (f :.: Table mk' blk) xs
+  go SNil Nil = Nil
+  go (SCons _ sn) (Table mk :* next) = Comp (Table <$> f mk) :* go sn next
 
 {-------------------------------------------------------------------------------
   Functor
@@ -112,11 +205,12 @@ type LedgerTableConstraints' l k v =
 
 -- | Like 'bmap', but for ledger tables.
 ltmap ::
-  LedgerTableConstraints l =>
-  (forall k v. LedgerTableConstraints' l k v => mk1 k v -> mk2 k v) ->
-  LedgerTables l mk1 ->
-  LedgerTables l mk2
-ltmap f (LedgerTables x) = LedgerTables $ f x
+  forall blk mk1 mk2.
+  LedgerTablesConstraints blk =>
+  (forall k v. RawLedgerTableConstraints blk k v => mk1 k v -> mk2 k v) ->
+  LedgerTables blk mk1 ->
+  LedgerTables blk mk2
+ltmap = onAllTables (Proxy @blk)
 
 {-------------------------------------------------------------------------------
   Traversable
@@ -124,20 +218,21 @@ ltmap f (LedgerTables x) = LedgerTables $ f x
 
 -- | Like 'btraverse', but for ledger tables.
 lttraverse ::
-  (Applicative f, LedgerTableConstraints l) =>
-  (forall k v. LedgerTableConstraints' l k v => mk1 k v -> f (mk2 k v)) ->
-  LedgerTables l mk1 ->
-  f (LedgerTables l mk2)
-lttraverse f (LedgerTables x) = LedgerTables <$> f x
+  forall blk f mk1 mk2.
+  (Applicative f, LedgerTablesConstraints blk) =>
+  (forall k v. RawLedgerTableConstraints blk k v => mk1 k v -> f (mk2 k v)) ->
+  LedgerTables blk mk1 ->
+  f (LedgerTables blk mk2)
+lttraverse f (LedgerTables x) = LedgerTables <$> onAllRawTablesF (Proxy @blk) f x
 
 --
 -- Utility functions
 --
 
 ltsequence ::
-  (Applicative f, LedgerTableConstraints l) =>
-  LedgerTables l (f :..: mk) ->
-  f (LedgerTables l mk)
+  (Applicative f, LedgerTablesConstraints blk) =>
+  LedgerTables blk (f :..: mk) ->
+  f (LedgerTables blk mk)
 ltsequence = lttraverse unComp2
 
 {-------------------------------------------------------------------------------
@@ -146,63 +241,69 @@ ltsequence = lttraverse unComp2
 
 -- | Like 'bpure', but for ledger tables.
 ltpure ::
-  LedgerTableConstraints l =>
-  (forall k v. LedgerTableConstraints' l k v => mk k v) ->
-  LedgerTables l mk
-ltpure = LedgerTables
+  forall blk mk.
+  LedgerTablesConstraints blk =>
+  (forall k v. RawLedgerTableConstraints blk k v => mk k v) ->
+  LedgerTables blk mk
+ltpure f = LedgerTables $ hcpure (Proxy @(TableConstraints blk)) (Table f)
 
 -- | Like 'bprod', but for ledger tables.
-ltprod :: LedgerTables l f -> LedgerTables l g -> LedgerTables l (f `Product2` g)
-ltprod (LedgerTables x) (LedgerTables y) = LedgerTables (Pair2 x y)
+ltprod ::
+  forall blk f g.
+  LedgerTablesConstraints blk =>
+  LedgerTables blk f -> LedgerTables blk g -> LedgerTables blk (f `Product2` g)
+ltprod (LedgerTables x) (LedgerTables y) =
+  LedgerTables $
+    hczipWith (Proxy @(TableConstraints blk)) (\(Table tx) (Table ty) -> Table $ Pair2 tx ty) x y
 
 --
 -- Utility functions
 --
 
 ltap ::
-  LedgerTableConstraints l =>
-  LedgerTables l (mk1 -..-> mk2) ->
-  LedgerTables l mk1 ->
-  LedgerTables l mk2
+  LedgerTablesConstraints blk =>
+  LedgerTables blk (mk1 -..-> mk2) ->
+  LedgerTables blk mk1 ->
+  LedgerTables blk mk2
 ltap f x = ltmap g $ ltprod f x
  where
   g (Pair2 f' x') = apFn2 f' x'
 
 ltliftA ::
-  LedgerTableConstraints l =>
-  (forall k v. LedgerTableConstraints' l k v => mk1 k v -> mk2 k v) ->
-  LedgerTables l mk1 ->
-  LedgerTables l mk2
+  LedgerTablesConstraints blk =>
+  (forall k v. RawLedgerTableConstraints blk k v => mk1 k v -> mk2 k v) ->
+  LedgerTables blk mk1 ->
+  LedgerTables blk mk2
 ltliftA f x = ltpure (fn2_1 f) `ltap` x
 
 ltliftA2 ::
-  LedgerTableConstraints l =>
-  (forall k v. LedgerTableConstraints' l k v => mk1 k v -> mk2 k v -> mk3 k v) ->
-  LedgerTables l mk1 ->
-  LedgerTables l mk2 ->
-  LedgerTables l mk3
+  LedgerTablesConstraints blk =>
+  (forall k v. RawLedgerTableConstraints blk k v => mk1 k v -> mk2 k v -> mk3 k v) ->
+  LedgerTables blk mk1 ->
+  LedgerTables blk mk2 ->
+  LedgerTables blk mk3
 ltliftA2 f x x' = ltpure (fn2_2 f) `ltap` x `ltap` x'
 
 ltliftA3 ::
-  LedgerTableConstraints l =>
-  (forall k v. LedgerTableConstraints' l k v => mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v) ->
-  LedgerTables l mk1 ->
-  LedgerTables l mk2 ->
-  LedgerTables l mk3 ->
-  LedgerTables l mk4
+  LedgerTablesConstraints blk =>
+  (forall k v. RawLedgerTableConstraints blk k v => mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v) ->
+  LedgerTables blk mk1 ->
+  LedgerTables blk mk2 ->
+  LedgerTables blk mk3 ->
+  LedgerTables blk mk4
 ltliftA3 f x x' x'' = ltpure (fn2_3 f) `ltap` x `ltap` x' `ltap` x''
 
 ltliftA4 ::
-  LedgerTableConstraints l =>
+  LedgerTablesConstraints blk =>
   ( forall k v.
-    LedgerTableConstraints' l k v =>
+    RawLedgerTableConstraints blk k v =>
     mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v -> mk5 k v
   ) ->
-  LedgerTables l mk1 ->
-  LedgerTables l mk2 ->
-  LedgerTables l mk3 ->
-  LedgerTables l mk4 ->
-  LedgerTables l mk5
+  LedgerTables blk mk1 ->
+  LedgerTables blk mk2 ->
+  LedgerTables blk mk3 ->
+  LedgerTables blk mk4 ->
+  LedgerTables blk mk5
 ltliftA4 f x x' x'' x''' =
   ltpure (fn2_4 f) `ltap` x `ltap` x' `ltap` x'' `ltap` x'''
 
@@ -211,40 +312,41 @@ ltliftA4 f x x' x'' x''' =
 -------------------------------------------------------------------------------}
 
 ltzipWith2A ::
-  (Applicative f, LedgerTableConstraints l) =>
-  (forall k v. LedgerTableConstraints' l k v => mk1 k v -> mk2 k v -> f (mk3 k v)) ->
-  LedgerTables l mk1 ->
-  LedgerTables l mk2 ->
-  f (LedgerTables l mk3)
+  (Applicative f, LedgerTablesConstraints blk) =>
+  (forall k v. RawLedgerTableConstraints blk k v => mk1 k v -> mk2 k v -> f (mk3 k v)) ->
+  LedgerTables blk mk1 ->
+  LedgerTables blk mk2 ->
+  f (LedgerTables blk mk3)
 ltzipWith2A f = ltsequence .: ltliftA2 (Comp2 .: f)
 
 {-------------------------------------------------------------------------------
   Collapsing
 -------------------------------------------------------------------------------}
 
-ltcollapse :: LedgerTables l (K2 a) -> a
-ltcollapse = unK2 . getLedgerTables
+ltcollapse ::
+  SListI (TablesForBlock blk) => LedgerTables blk (K2 a) -> NP (K a) (TablesForBlock blk)
+ltcollapse (LedgerTables tbs) = hmap (\(Table (K2 t)) -> K t) tbs
 
 {-------------------------------------------------------------------------------
   Semigroup and Monoid
 -------------------------------------------------------------------------------}
 
 instance
-  ( forall k v. LedgerTableConstraints' l k v => Semigroup (mk k v)
-  , LedgerTableConstraints l
+  ( forall k v. RawLedgerTableConstraints blk k v => Semigroup (mk k v)
+  , LedgerTablesConstraints blk
   ) =>
-  Semigroup (LedgerTables l mk)
+  Semigroup (LedgerTables blk mk)
   where
-  (<>) :: LedgerTables l mk -> LedgerTables l mk -> LedgerTables l mk
+  (<>) :: LedgerTables blk mk -> LedgerTables blk mk -> LedgerTables blk mk
   (<>) = ltliftA2 (<>)
 
 instance
-  ( forall k v. LedgerTableConstraints' l k v => Monoid (mk k v)
-  , LedgerTableConstraints l
+  ( forall k v. RawLedgerTableConstraints blk k v => Monoid (mk k v)
+  , LedgerTablesConstraints blk
   ) =>
-  Monoid (LedgerTables l mk)
+  Monoid (LedgerTables blk mk)
   where
-  mempty :: LedgerTables l mk
+  mempty :: LedgerTables blk mk
   mempty = ltpure mempty
 
 {-------------------------------------------------------------------------------

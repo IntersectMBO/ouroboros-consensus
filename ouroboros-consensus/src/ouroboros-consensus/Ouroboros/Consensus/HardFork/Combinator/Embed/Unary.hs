@@ -148,7 +148,7 @@ instance IsSOPLike NP where
   toSOPLike = (:* Nil)
 
 instance IsSOPLike HardForkState where
-  fromSOPLike = State.fromTZ
+  fromSOPLike = currentState . Telescope.fromTZ . getHardForkState
   toSOPLike = HardForkState . Telescope.TZ . State.Current History.initBound
 
 {-------------------------------------------------------------------------------

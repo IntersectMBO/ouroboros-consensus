@@ -64,7 +64,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     ResourceRegistry m ->
     Resources m backend ->
     ExtLedgerState blk ValuesMK ->
-    m (LedgerTablesHandle m (ExtLedgerState blk))
+    m (LedgerTablesHandle m ExtLedgerState blk)
 
   -- | Create a new handle from a snapshot.
   newHandleFromSnapshot ::
@@ -83,7 +83,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     CodecConfig blk ->
     Tracer m (TraceSnapshotEvent blk) ->
     SomeHasFS m ->
-    SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
+    SnapshotManager m m blk (StateRef m ExtLedgerState blk)
 
 {-------------------------------------------------------------------------------
   Existentials

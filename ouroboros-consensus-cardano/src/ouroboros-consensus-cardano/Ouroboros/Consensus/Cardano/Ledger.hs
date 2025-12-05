@@ -7,7 +7,6 @@
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -44,20 +43,20 @@ import Data.SOP.Index
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
-import Data.Void
 import GHC.Generics (Generic)
 import Lens.Micro
 import NoThunks.Class
+import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
+import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger
-  ( BigEndianTxIn
-  , IsShelleyBlock
+  ( IsShelleyBlock
   , ShelleyBlock
   , ShelleyCompatible
   , shelleyLedgerState
@@ -65,52 +64,14 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 
-instance
-  CardanoHardForkConstraints c =>
-  HasCanonicalTxIn (CardanoEras c)
-  where
-  newtype CanonicalTxIn (CardanoEras c) = CardanoTxIn
-    { getCardanoTxIn :: BigEndianTxIn
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving newtype NoThunks
-
-  injectCanonicalTxIn IZ byronTxIn = absurd byronTxIn
-  injectCanonicalTxIn (IS idx) shelleyTxIn = case idx of
-    IZ -> CardanoTxIn shelleyTxIn
-    IS IZ -> CardanoTxIn shelleyTxIn
-    IS (IS IZ) -> CardanoTxIn shelleyTxIn
-    IS (IS (IS IZ)) -> CardanoTxIn shelleyTxIn
-    IS (IS (IS (IS IZ))) -> CardanoTxIn shelleyTxIn
-    IS (IS (IS (IS (IS IZ)))) -> CardanoTxIn shelleyTxIn
-    IS (IS (IS (IS (IS (IS IZ))))) -> CardanoTxIn shelleyTxIn
-    IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
-
-  ejectCanonicalTxIn IZ _ =
-    error "ejectCanonicalTxIn: Byron has no TxIns"
-  ejectCanonicalTxIn (IS idx) cardanoTxIn = case idx of
-    IZ -> getCardanoTxIn cardanoTxIn
-    IS IZ -> getCardanoTxIn cardanoTxIn
-    IS (IS IZ) -> getCardanoTxIn cardanoTxIn
-    IS (IS (IS IZ)) -> getCardanoTxIn cardanoTxIn
-    IS (IS (IS (IS IZ))) -> getCardanoTxIn cardanoTxIn
-    IS (IS (IS (IS (IS IZ)))) -> getCardanoTxIn cardanoTxIn
-    IS (IS (IS (IS (IS (IS IZ))))) -> getCardanoTxIn cardanoTxIn
-    IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
-
-instance CardanoHardForkConstraints c => MemPack (CanonicalTxIn (CardanoEras c)) where
-  packM = packM . getCardanoTxIn
-  packedByteCount = packedByteCount . getCardanoTxIn
-  unpackM = CardanoTxIn <$> unpackM
-
 data CardanoTxOut c
-  = ShelleyTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) ShelleyEra)))
-  | AllegraTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) AllegraEra)))
-  | MaryTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) MaryEra)))
-  | AlonzoTxOut !(TxOut (LedgerState (ShelleyBlock (TPraos c) AlonzoEra)))
-  | BabbageTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) BabbageEra)))
-  | ConwayTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) ConwayEra)))
-  | DijkstraTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) DijkstraEra)))
+  = ShelleyTxOut {-# UNPACK #-} !(TxOut (ShelleyBlock (TPraos c) ShelleyEra))
+  | AllegraTxOut {-# UNPACK #-} !(TxOut (ShelleyBlock (TPraos c) AllegraEra))
+  | MaryTxOut {-# UNPACK #-} !(TxOut (ShelleyBlock (TPraos c) MaryEra))
+  | AlonzoTxOut !(TxOut (ShelleyBlock (TPraos c) AlonzoEra))
+  | BabbageTxOut !(TxOut (ShelleyBlock (Praos c) BabbageEra))
+  | ConwayTxOut !(TxOut (ShelleyBlock (Praos c) ConwayEra))
+  | DijkstraTxOut !(TxOut (ShelleyBlock (Praos c) DijkstraEra))
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
@@ -123,7 +84,7 @@ eliminateCardanoTxOut ::
     -- TODO ProtoCrypto constraint should be in IsShelleyBlock
     IsShelleyBlock x =>
     Index (CardanoEras c) x ->
-    TxOut (LedgerState x) ->
+    TxOut x ->
     r
   ) ->
   CardanoTxOut c ->
@@ -154,7 +115,7 @@ instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
     forall y.
     Index (CardanoEras c) y ->
     HardForkTxOut (CardanoEras c) ->
-    TxOut (LedgerState y)
+    TxOut y
   ejectHardForkTxOut targetIdx =
     eliminateCardanoTxOut
       ( \origIdx ->
@@ -166,12 +127,15 @@ instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
 
 instance
   CardanoHardForkConstraints c =>
-  IndexedMemPack (LedgerState (HardForkBlock (CardanoEras c)) EmptyMK) (CardanoTxOut c)
+  IndexedMemPack LedgerState (HardForkBlock (CardanoEras c)) UTxOTable
   where
-  indexedTypeName _ = "CardanoTxOut"
-  indexedPackM _ = eliminateCardanoTxOut (const packM)
-  indexedPackedByteCount _ = eliminateCardanoTxOut (const packedByteCount)
-  indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
+  type
+    IndexedValue LedgerState UTxOTable (HardForkBlock (CardanoEras c)) =
+      Value UTxOTable (HardForkBlock (CardanoEras c))
+  indexedTypeName _ _ _ = "CardanoTxOut"
+  indexedPackM _ _ _ _ = eliminateCardanoTxOut (const packM)
+  indexedPackedByteCount _ _ _ _ = eliminateCardanoTxOut (const packedByteCount)
+  indexedUnpackM _ _ _ (HardForkLedgerState (HardForkState idx)) = do
     let
       -- These could be made into a CAF to avoid recomputing it, but
       -- it is only used in serialization so it is not critical.
@@ -190,9 +154,77 @@ instance
 
 instance
   CardanoHardForkConstraints c =>
-  SerializeTablesWithHint (LedgerState (HardForkBlock (CardanoEras c)))
+  SerializeTablesWithHint LedgerState (HardForkBlock (CardanoEras c)) InstantStakeTable
   where
-  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
+  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (Table (ValuesMK tbs)) =
+    let
+      -- These could be made into a CAF to avoid recomputing it, but
+      -- it is only used in serialization so it is not critical.
+      np =
+        (Fn $ const $ K $ Codec.CBOR.Encoding.encodeMapLen 0)
+          :* (Fn $ const $ K $ encOne (Proxy @ShelleyEra))
+          :* (Fn $ const $ K $ encOne (Proxy @AllegraEra))
+          :* (Fn $ const $ K $ encOne (Proxy @MaryEra))
+          :* (Fn $ const $ K $ encOne (Proxy @AlonzoEra))
+          :* (Fn $ const $ K $ encOne (Proxy @BabbageEra))
+          :* (Fn $ const $ K $ encOne (Proxy @ConwayEra))
+          :* (Fn $ const $ K $ encOne (Proxy @DijkstraEra))
+          :* Nil
+     in
+      hcollapse $ hap np $ Telescope.tip idx
+   where
+    encOne :: forall era. Era era => Proxy era -> Encoding
+    encOne _ =
+      toPlainEncoding (eraProtVerLow @era) $ encCBOR tbs
+
+  decodeTablesWithHint  :: forall s.
+    LedgerState (HardForkBlock (CardanoEras c)) EmptyMK ->
+    Decoder s (Table ValuesMK (HardForkBlock (CardanoEras c)) InstantStakeTable)
+  decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
+    let
+      -- These could be made into a CAF to avoid recomputing it, but
+      -- it is only used in serialization so it is not critical.
+      np =
+        ( Fn $
+            const $
+              Comp $
+                K . Table . ValuesMK
+                  <$> (Codec.CBOR.Decoding.decodeMapLen >> pure Map.empty)
+        )
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne . unFlip . currentState)
+          :* Nil
+     in
+      hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
+   where
+    getOne ::
+      forall proto era.
+      ShelleyCompatible proto era =>
+      LedgerState (ShelleyBlock proto era) EmptyMK ->
+      Decoder s (Table ValuesMK (HardForkBlock (CardanoEras c)) InstantStakeTable)
+    getOne st =
+      let certInterns =
+            internsFromMap $
+              shelleyLedgerState st
+                ^. SL.nesEsL
+                  . SL.esLStateL
+                  . SL.lsCertStateL
+                  . SL.certDStateL
+                  . SL.accountsL
+                  . SL.accountsMapL
+       in Table . ValuesMK
+            <$> eraDecoder @era (decShareCBOR (certInterns, mempty))
+
+instance
+  CardanoHardForkConstraints c =>
+  SerializeTablesWithHint LedgerState (HardForkBlock (CardanoEras c)) UTxOTable
+  where
+  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (Table (ValuesMK tbs)) =
     let
       -- These could be made into a CAF to avoid recomputing it, but
       -- it is only used in serialization so it is not critical.
@@ -217,7 +249,7 @@ instance
   decodeTablesWithHint ::
     forall s.
     LedgerState (HardForkBlock (CardanoEras c)) EmptyMK ->
-    Decoder s (LedgerTables (LedgerState (HardForkBlock (CardanoEras c))) ValuesMK)
+    Decoder s (Table ValuesMK (HardForkBlock (CardanoEras c)) UTxOTable)
   decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
     let
       -- These could be made into a CAF to avoid recomputing it, but
@@ -226,7 +258,7 @@ instance
         ( Fn $
             const $
               Comp $
-                K . LedgerTables @(LedgerState (HardForkBlock (CardanoEras c))) . ValuesMK
+                K . Table . ValuesMK
                   <$> (Codec.CBOR.Decoding.decodeMapLen >> pure Map.empty)
         )
           :* (Fn $ Comp . fmap K . getOne ShelleyTxOut . unFlip . currentState)
@@ -243,9 +275,9 @@ instance
     getOne ::
       forall proto era.
       ShelleyCompatible proto era =>
-      (TxOut (LedgerState (ShelleyBlock proto era)) -> CardanoTxOut c) ->
+      (TxOut (ShelleyBlock proto era) -> CardanoTxOut c) ->
       LedgerState (ShelleyBlock proto era) EmptyMK ->
-      Decoder s (LedgerTables (LedgerState (HardForkBlock (CardanoEras c))) ValuesMK)
+      Decoder s (Table ValuesMK (HardForkBlock (CardanoEras c)) UTxOTable)
     getOne toCardanoTxOut st =
       let certInterns =
             internsFromMap $
@@ -256,5 +288,5 @@ instance
                   . SL.certDStateL
                   . SL.accountsL
                   . SL.accountsMapL
-       in LedgerTables . ValuesMK
+       in Table . ValuesMK
             <$> eraDecoder @era (decodeMap decodeMemPack (toCardanoTxOut <$> decShareCBOR certInterns))

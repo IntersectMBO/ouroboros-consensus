@@ -8,6 +8,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.PartialConfig
   ( HasPartialConsensusConfig (..)
@@ -77,7 +78,7 @@ class
 
 -- | Partial ledger config
 class
-  ( UpdateLedger blk
+  ( ApplyBlock LedgerState blk
   , Show (PartialLedgerConfig blk)
   , NoThunks (PartialLedgerConfig blk)
   ) =>

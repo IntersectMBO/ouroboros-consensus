@@ -137,9 +137,8 @@ defaultSpecificArgs =
 defaultArgs ::
   forall m blk.
   ( IOLike m
-  , LedgerDB.LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerDB.LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  , LedgerDB.LedgerSupportsLedgerDB blk
   ) =>
   Incomplete ChainDbArgs m blk
 defaultArgs =

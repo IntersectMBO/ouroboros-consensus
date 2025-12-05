@@ -1,9 +1,12 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
@@ -25,6 +28,7 @@ import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
 import Data.Maybe (fromMaybe)
 import GHC.Generics
+import Lens.Micro ((&), (.~))
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -47,14 +51,14 @@ import Prelude hiding (read)
 -------------------------------------------------------------------------------}
 
 data ForkerEnv m l blk = ForkerEnv
-  { foeLedgerSeq :: !(StrictTVar m (LedgerSeq m l))
+  { foeLedgerSeq :: !(StrictTVar m (LedgerSeq m l blk))
   -- ^ Local version of the LedgerSeq
-  , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l))
+  , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l blk))
   -- ^ This TVar is the same as the LedgerDB one
   , foeLedgerDbRegistry :: !(ResourceRegistry m)
   -- ^ The registry in the LedgerDB to move handles to in case we commit the
   -- forker.
-  , foeLedgerDbToClose :: !(StrictTVar m [LedgerSeq m l])
+  , foeLedgerDbToClose :: !(StrictTVar m [LedgerSeq m l blk])
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
   , foeResourceRegistry :: !(ResourceRegistry m)
@@ -75,17 +79,15 @@ data ForkerEnv m l blk = ForkerEnv
 deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , NoThunks (l EmptyMK)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
+  , NoThunks (l blk EmptyMK)
   ) =>
   NoThunks (ForkerEnv m l blk)
 
 implForkerReadTables ::
-  (IOLike m, GetTip l) =>
+  (IOLike m, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  LedgerTables l KeysMK ->
-  m (LedgerTables l ValuesMK)
+  LedgerTables blk KeysMK ->
+  m (LedgerTables blk ValuesMK)
 implForkerReadTables env ks =
   encloseTimedWith (ForkerReadTables >$< foeTracer env) $ do
     lseq <- readTVarIO (foeLedgerSeq env)
@@ -93,40 +95,44 @@ implForkerReadTables env ks =
     read (tables stateRef) (state stateRef) ks
 
 implForkerRangeReadTables ::
-  (IOLike m, GetTip l, HasLedgerTables l) =>
+  forall m l blk.
+  (IOLike m, GetTip (l blk), HasLedgerTables l blk, TableConstraints blk UTxOTable) =>
   QueryBatchSize ->
   ForkerEnv m l blk ->
-  RangeQueryPrevious l ->
-  m (LedgerTables l ValuesMK, Maybe (TxIn l))
+  RangeQueryPrevious blk ->
+  m (LedgerTables blk ValuesMK, Maybe TxIn)
 implForkerRangeReadTables qbs env rq0 =
   encloseTimedWith (ForkerRangeReadTables >$< foeTracer env) $ do
     ldb <- readTVarIO $ foeLedgerSeq env
     let n = fromIntegral $ defaultQueryBatchSize qbs
         stateRef = currentHandle ldb
     case rq0 of
-      NoPreviousQuery -> readRange (tables stateRef) (state stateRef) (Nothing, n)
-      PreviousQueryWasFinal -> pure (LedgerTables emptyMK, Nothing)
+      NoPreviousQuery ->
+        (\(t, k) -> (emptyLedgerTables & onUTxOTable (Proxy @blk) .~ t, k))
+          <$> readRange (tables stateRef) (Proxy @UTxOTable) (state stateRef) (Nothing, n)
+      PreviousQueryWasFinal -> pure (emptyLedgerTables, Nothing)
       PreviousQueryWasUpTo k ->
-        readRange (tables stateRef) (state stateRef) (Just k, n)
+        (\(t, kk) -> (emptyLedgerTables & onUTxOTable (Proxy @blk) .~ t, kk))
+          <$> readRange (tables stateRef) (Proxy @UTxOTable) (state stateRef) (Just k, n)
 
 implForkerGetLedgerState ::
-  (MonadSTM m, GetTip l) =>
+  (MonadSTM m, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  STM m (l EmptyMK)
+  STM m (l blk EmptyMK)
 implForkerGetLedgerState env = current <$> readTVar (foeLedgerSeq env)
 
 implForkerReadStatistics ::
-  (MonadSTM m, GetTip l) =>
+  (MonadSTM m, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  m (Maybe Statistics)
+  m (Maybe (Statistics blk))
 implForkerReadStatistics env = do
   traceWith (foeTracer env) ForkerReadStatistics
   fmap (fmap Statistics) . tablesSize . tables . currentHandle =<< readTVarIO (foeLedgerSeq env)
 
 implForkerPush ::
-  (IOLike m, GetTip l, HasLedgerTables l, HasCallStack) =>
+  (IOLike m, GetTip (l blk), HasLedgerTables l blk, HasCallStack) =>
   ForkerEnv m l blk ->
-  l DiffMK ->
+  l blk DiffMK ->
   m ()
 implForkerPush env newState =
   encloseTimedWith (ForkerPush >$< foeTracer env) $ do
@@ -147,7 +153,7 @@ implForkerPush env newState =
       )
 
 implForkerCommit ::
-  (IOLike m, GetTip l, StandardHash l) =>
+  (IOLike m, GetTip (l blk), StandardHash (l blk)) =>
   ForkerEnv m l blk ->
   STM m ()
 implForkerCommit env = do

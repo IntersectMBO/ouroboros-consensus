@@ -38,7 +38,10 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables (EmptyMK)
+import Ouroboros.Consensus.Ledger.Tables
+  ( EmptyMK
+  , LedgerTablesConstraints
+  )
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Praos (PraosState)
@@ -64,7 +67,11 @@ import Ouroboros.Network.Block
 instance ShelleyCompatible proto era => HasBinaryBlockInfo (ShelleyBlock proto era) where
   getBinaryBlockInfo = shelleyBinaryBlockInfo
 
-instance ShelleyCompatible proto era => SerialiseDiskConstraints (ShelleyBlock proto era)
+instance
+  ( ShelleyCompatible proto era
+  , LedgerTablesConstraints (ShelleyBlock proto era)
+  ) =>
+  SerialiseDiskConstraints (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (ShelleyBlock proto era) where
   encodeDisk _ = encodeShelleyBlock

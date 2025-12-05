@@ -15,6 +15,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | The Ledger DB is responsible for the following tasks:
 --
@@ -107,17 +108,17 @@
 module Ouroboros.Consensus.Storage.LedgerDB.API
   ( -- * Main API
     CanUpgradeLedgerTables (..)
+  , CanUpgradeLedgerTable (..)
   , LedgerDB (..)
   , LedgerDB'
   , LedgerDbPrune (..)
+  , ResolveBlock
+  , currentPoint
+
+    -- * Constraints
   , LedgerDbSerialiseConstraints
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
-  , LedgerSupportsLMDBLedgerDB
-  , LedgerSupportsV1LedgerDB
-  , LedgerSupportsV2LedgerDB
-  , ResolveBlock
-  , currentPoint
 
     -- * Initialization
   , InitDB (..)
@@ -152,14 +153,17 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
 
     -- * Streaming
   , StreamingBackend (..)
-  , Yield
-  , Sink
-  , Decoders (..)
+  , StreamOfTable (..)
+  , Yield (..)
+  , Sink (..)
+  , TableCodec (..)
+  , TablesCodecs (..)
 
     -- * Testing
   , TestInternals (..)
   , TestInternals'
   , WhereToTakeSnapshot (..)
+  , LedgerSupportsLedgerDB'
   ) where
 
 import Codec.CBOR.Decoding
@@ -173,11 +177,10 @@ import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind
-import qualified Data.Map.Strict as Map
-import Data.MemPack
 import Data.Proxy
+import Data.SOP.Constraint
+import Data.SOP.Strict
 import Data.Set (Set)
-import Data.Void (absurd)
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -198,11 +201,11 @@ import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Streaming
 import System.FS.CRC
+import Codec.CBOR.Encoding (Encoding)
 
 {-------------------------------------------------------------------------------
   Main API
@@ -210,7 +213,7 @@ import System.FS.CRC
 
 -- | Serialization constraints required by the 'LedgerDB' to be properly
 -- instantiated with a @blk@.
-type LedgerDbSerialiseConstraints blk =
+class
   ( Serialise (HeaderHash blk)
   , EncodeDisk blk (LedgerState blk EmptyMK)
   , DecodeDisk blk (LedgerState blk EmptyMK)
@@ -218,12 +221,19 @@ type LedgerDbSerialiseConstraints blk =
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , -- For InMemory LedgerDBs
-    MemPack (TxIn (LedgerState blk))
-  , SerializeTablesWithHint (LedgerState blk)
-  , -- For OnDisk LedgerDBs
-    IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
-  )
+  ) =>
+  LedgerDbSerialiseConstraints blk
+
+instance
+  ( Serialise (HeaderHash blk)
+  , EncodeDisk blk (LedgerState blk EmptyMK)
+  , DecodeDisk blk (LedgerState blk EmptyMK)
+  , EncodeDisk blk (AnnTip blk)
+  , DecodeDisk blk (AnnTip blk)
+  , EncodeDisk blk (ChainDepState (BlockProtocol blk))
+  , DecodeDisk blk (ChainDepState (BlockProtocol blk))
+  ) =>
+  LedgerDbSerialiseConstraints blk
 
 -- | The core API of the LedgerDB component
 type LedgerDB :: (Type -> Type) -> LedgerStateKind -> Type -> Type
@@ -418,7 +428,7 @@ withPrivateTipForker ldb =
 getTipStatistics ::
   IOLike m =>
   LedgerDB m l blk ->
-  m (Maybe Statistics)
+  m (Maybe (Statistics blk))
 getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
 
 getReadOnlyForker ::
@@ -740,54 +750,60 @@ data TraceReplayProgressEvent blk
 -- No correctness property relies on this, as Consensus can work with TxOuts
 -- from multiple eras, but the performance depends on it as otherwise we will be
 -- upgrading the TxOuts every time we consult them.
-class CanUpgradeLedgerTables l where
+type CanUpgradeLedgerTable :: Type -> TABLE -> Constraint
+class CanUpgradeLedgerTable blk tag where
+  type UpgradeIndex blk :: Type
+  upgradeTable ::
+    -- | The original ledger state before the upgrade. This will be the
+    -- tip before applying the block.
+    UpgradeIndex blk ->
+    -- | The tables we want to maybe upgrade.
+    Table ValuesMK blk tag ->
+    Table ValuesMK blk tag
+
+type CanUpgradeLedgerTables :: StateKind -> Type -> Constraint
+class All (CanUpgradeLedgerTable blk) (TablesForBlock blk) => CanUpgradeLedgerTables l blk where
   upgradeTables ::
     -- | The original ledger state before the upgrade. This will be the
     -- tip before applying the block.
-    l mk1 ->
+    l blk mk1 ->
     -- | The ledger state after the upgrade, which might be in a
     -- different era than the one above.
-    l mk2 ->
+    l blk mk2 ->
     -- | The tables we want to maybe upgrade.
-    LedgerTables l ValuesMK ->
-    LedgerTables l ValuesMK
-
-instance
-  CanUpgradeLedgerTables (LedgerState blk) =>
-  CanUpgradeLedgerTables (ExtLedgerState blk)
-  where
-  upgradeTables (ExtLedgerState st0 _) (ExtLedgerState st1 _) =
-    castLedgerTables . upgradeTables st0 st1 . castLedgerTables
-
-instance
-  LedgerTablesAreTrivial l =>
-  CanUpgradeLedgerTables (TrivialLedgerTables l)
-  where
-  upgradeTables _ _ (LedgerTables (ValuesMK mk)) =
-    LedgerTables (ValuesMK (Map.map absurd mk))
+    LedgerTables blk ValuesMK ->
+    LedgerTables blk ValuesMK
 
 {-------------------------------------------------------------------------------
   LedgerDB constraints
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsInMemoryLedgerDB l =
-  (CanUpgradeLedgerTables l, SerializeTablesWithHint l)
+class
+  ( CanUpgradeLedgerTables l blk
+  , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
+  , NoThunks (LedgerTables blk ValuesMK)
+  , NoThunks (l blk EmptyMK)
+  , All TableLabel (TablesForBlock blk)
+  , LedgerTablesConstraints blk
+  ) =>
+  LedgerSupportsInMemoryLedgerDB l blk
+instance
+  ( CanUpgradeLedgerTables l blk
+  , All (SerializeTablesWithHint l blk) (TablesForBlock blk)
+  , NoThunks (LedgerTables blk ValuesMK)
+  , NoThunks (l blk EmptyMK)
+  , All TableLabel (TablesForBlock blk)
+  , LedgerTablesConstraints blk
+  ) =>
+  LedgerSupportsInMemoryLedgerDB l blk
 
-type LedgerSupportsLMDBLedgerDB l =
-  (IndexedMemPack (l EmptyMK) (TxOut l), MemPackIdx l EmptyMK ~ l EmptyMK)
-
-type LedgerSupportsV1LedgerDB l =
-  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
-
-type LedgerSupportsV2LedgerDB l =
-  (LedgerSupportsInMemoryLedgerDB l, MemPack (TxIn l))
-
-type LedgerSupportsLedgerDB blk = LedgerSupportsLedgerDB' (LedgerState blk) blk
+type LedgerSupportsLedgerDB blk =
+  (LedgerSupportsLedgerDB' LedgerState blk)
 
 type LedgerSupportsLedgerDB' l blk =
-  ( LedgerSupportsV1LedgerDB l
-  , LedgerSupportsV2LedgerDB l
+  ( LedgerSupportsInMemoryLedgerDB l blk
   , LedgerDbSerialiseConstraints blk
+  , TableConstraints blk UTxOTable
   )
 
 {-------------------------------------------------------------------------------
@@ -808,35 +824,53 @@ data LedgerDbPrune
 -------------------------------------------------------------------------------}
 
 -- | A backend that supports streaming the ledger tables
-class StreamingBackend m backend l where
-  data YieldArgs m backend l
+class StreamingBackend m backend blk where
+  data YieldArgs m backend blk
 
-  data SinkArgs m backend l
+  data SinkArgs m backend blk
 
-  yield :: Proxy backend -> YieldArgs m backend l -> Yield m l
+  yield :: Proxy backend -> YieldArgs m backend blk -> NP (Yield m blk) (TablesForBlock blk)
 
-  sink :: Proxy backend -> SinkArgs m backend l -> Sink m l
+  sink :: Proxy backend -> SinkArgs m backend blk -> NP (Sink m blk) (TablesForBlock blk)
 
-type Yield m l =
-  l EmptyMK ->
-  ( ( Stream
-        (Of (TxIn l, TxOut l))
-        (ExceptT DeserialiseFailure m)
-        (Stream (Of ByteString) m (Maybe CRC)) ->
-      ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
-    )
-  ) ->
-  ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
+newtype StreamOfTable m blk table
+  = StreamOfTable
+      ( Stream
+          (Of (Key table, Value table blk))
+          (ExceptT DeserialiseFailure m)
+          (Stream (Of ByteString) m (Maybe CRC))
+      )
 
-type Sink m l =
-  l EmptyMK ->
-  Stream
-    (Of (TxIn l, TxOut l))
-    (ExceptT DeserialiseFailure m)
-    (Stream (Of ByteString) m (Maybe CRC)) ->
-  ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+newtype Yield m blk table
+  = Yield
+      ( LedgerState blk EmptyMK ->
+        ( ( Stream
+              (Of (Key table, Value table blk))
+              (ExceptT DeserialiseFailure m)
+              (Stream (Of ByteString) m (Maybe CRC)) ->
+            ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+          )
+        ) ->
+        ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
+      )
 
-data Decoders l
-  = Decoders
-      (forall s. Decoder s (TxIn l))
-      (forall s. Decoder s (TxOut l))
+newtype Sink m blk table
+  = Sink
+      ( LedgerState blk EmptyMK ->
+        ( Stream
+            (Of (Key table, Value table blk))
+            (ExceptT DeserialiseFailure m)
+            (Stream (Of ByteString) m (Maybe CRC)) ->
+          ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
+        )
+      )
+
+data TableCodec blk table = TableCodec
+  { decK :: forall s. Decoder s (Key table)
+  , decV :: forall s. Decoder s (Value table blk)
+  , encK :: Key table -> Encoding
+  , encV :: Value table blk -> Encoding
+  }
+
+data TablesCodecs blk
+  = TablesCodecs (NP (TableCodec blk) (TablesForBlock blk))
