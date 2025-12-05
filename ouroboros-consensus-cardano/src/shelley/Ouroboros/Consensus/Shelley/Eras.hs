@@ -53,6 +53,10 @@ import qualified Cardano.Ledger.Conway.Rules as SL
   )
 import qualified Cardano.Ledger.Conway.State as CG
 import Cardano.Ledger.Dijkstra (DijkstraEra)
+import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
+import qualified Cardano.Ledger.Dijkstra.Rules as SL
+  ( DijkstraLedgerPredFailure (..)
+  )
 import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -339,9 +343,9 @@ instance SupportsTwoPhaseValidation ConwayEra where
 
 instance SupportsTwoPhaseValidation DijkstraEra where
   isIncorrectClaimedFlag _ = \case
-    SL.ConwayUtxowFailure
-      ( Conway.UtxoFailure
-          ( Conway.UtxosFailure
+    SL.DijkstraUtxowFailure
+      ( Dijkstra.UtxoFailure
+          ( Dijkstra.UtxosFailure
               ( Conway.ValidationTagMismatch
                   (Alonzo.IsValid _claimedFlag)
                   _validationErrs
