@@ -306,6 +306,6 @@ for Ungrindable Blockchains" by Kiayias et al](https://eprint.iacr.org/2021/1698
 [Glossary]: https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/glossary/
 [db-analyser snapshot]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/README.md#saving-a-snapshot
 [preflight epic]: https://github.com/IntersectMBO/ouroboros-consensus/issues/887
-[Ouroboros Praos paper]: https://iohk.io/en/research/library/papers/ouroboros-praos-an-adaptively-secure-semi-synchronous-proof-of-stake-protocol/
+[Ouroboros Praos paper]: https://www.iog.io/papers/ouroboros-praos-an-adaptively-secure-semi-synchronous-proof-of-stake-protocol
 [scipy.stats]: https://docs.scipy.org/doc/scipy/reference/stats.html
 [order statistic]: https://en.wikipedia.org/wiki/Order_statistic

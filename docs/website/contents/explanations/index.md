@@ -2,7 +2,7 @@
 
 Welcome to the documentation for the [`ouroboros-consensus`](https://github.com/IntersectMBO/ouroboros-consensus) repository.
 This repository houses the Haskell implementation of three crucial components utilized by the [`cardano-node`](https://github.com/IntersectMBO/cardano-node): Consensus, Storage, and Mempool.
-- The [Consensus component](https://cardano-scaling.github.io/cardano-blueprint/consensus/index.html) implements the [Ouroboros](https://iohk.io/en/research/library/papers/ouroboros-a-provably-secure-proof-of-stake-blockchain-protocol/) family of Proof-of-Stake protocols.
+- The [Consensus component](https://cardano-scaling.github.io/cardano-blueprint/consensus/index.html) implements the [Ouroboros](https://www.iog.io/papers/ouroboros-a-provably-secure-proof-of-stake-blockchain-protocol) family of Proof-of-Stake protocols.
 - The [Storage component](https://cardano-scaling.github.io/cardano-blueprint/storage/index.html) is responsible for providing efficient access to the blockchain data, as well as maintaining the current and recent past ledger states, and storing ledger state snapshots.
 - The [Mempool component](https://cardano-scaling.github.io/cardano-blueprint/mempool/index.html) serves as a buffer for valid transactions that are waiting to be included in a block. It is used by the Consensus component when forging a block and by the Network layer's transaction submission mini-protocol to diffuse transactions among nodes.
 
