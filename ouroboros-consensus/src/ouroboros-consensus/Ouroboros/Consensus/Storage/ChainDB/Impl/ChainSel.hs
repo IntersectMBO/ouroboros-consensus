@@ -161,7 +161,7 @@ initialChainSelection
     -- We don't use 'LedgerDB.withTipForker' here, because 'curForker' might be
     -- returned as part of the selected chain.
     curForker <-
-      LedgerDB.getForkerAtTarget lgrDB rr VolatileTip >>= \case
+      LedgerDB.getForkerAtTarget lgrDB "chainsel" rr VolatileTip >>= \case
         Left{} -> error "Unreachable, VolatileTip MUST be in the LedgerDB"
         Right frk -> pure frk
 

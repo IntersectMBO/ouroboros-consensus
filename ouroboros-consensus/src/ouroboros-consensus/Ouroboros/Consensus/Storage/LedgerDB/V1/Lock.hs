@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import qualified Control.RAWLock as Lock
 import NoThunks.Class
 import Ouroboros.Consensus.Util.IOLike
+import qualified Debug.Trace as Debug
 
 {-------------------------------------------------------------------------------
   LedgerDB lock
@@ -67,9 +68,14 @@ readLocked :: m a -> ReadLocked m a
 readLocked = ReadLocked
 
 -- | Acquire the ledger DB read lock and hold it while performing an action
-withReadLock :: IOLike m => LedgerDBLock m -> ReadLocked m a -> m a
-withReadLock (LedgerDBLock lock) m =
-  Lock.withReadAccess lock (\() -> unsafeRunReadLocked m)
+withReadLock :: IOLike m => String -> LedgerDBLock m -> ReadLocked m a -> m a
+withReadLock purpose (LedgerDBLock lock) m = do
+  Debug.traceM $ "Read lock requested for " <> purpose
+  a <- Lock.withReadAccess lock (\() -> do
+                                Debug.traceM $ "Read locked for " <> purpose
+                                unsafeRunReadLocked m)
+  Debug.traceM $ "Read lock released for " <> purpose
+  pure a
 
 -- | An action in @m@ that has to hold the write lock. See @withWriteLock@.
 newtype WriteLocked m a = WriteLocked {runWriteLocked :: m a}
@@ -84,9 +90,15 @@ writeLocked :: m a -> WriteLocked m a
 writeLocked = WriteLocked
 
 -- | Acquire the ledger DB write lock and hold it while performing an action
-withWriteLock :: IOLike m => LedgerDBLock m -> WriteLocked m a -> m a
-withWriteLock (LedgerDBLock lock) m =
-  Lock.withWriteAccess lock (\() -> (,()) <$> runWriteLocked m)
+withWriteLock :: IOLike m => String -> LedgerDBLock m -> WriteLocked m a -> m a
+withWriteLock purpose (LedgerDBLock lock) m = do
+  Debug.traceM $ "Write lock requested for " <> purpose
+  a <- Lock.withWriteAccess lock (\() -> do
+                                Debug.traceM $ "Write locked for " <> purpose
+                                (,()) <$> runWriteLocked m)
+  Debug.traceM $ "Write lock released for " <> purpose
+  pure a
+
 
 unsafeAcquireReadAccess :: IOLike m => LedgerDBLock m -> STM m ()
 unsafeAcquireReadAccess (LedgerDBLock lock) = Lock.unsafeAcquireReadAccess lock

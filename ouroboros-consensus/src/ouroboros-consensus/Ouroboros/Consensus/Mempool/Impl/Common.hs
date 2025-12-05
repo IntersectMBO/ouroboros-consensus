@@ -226,7 +226,7 @@ chainDBLedgerInterface chainDB =
           $ MempoolLedgerDBView
             (ledgerState st)
           $ fmap (fmap ledgerStateReadOnlyForker)
-          $ ChainDB.getReadOnlyForkerAtPoint chainDB reg (SpecificPoint (castPoint $ getTip st))
+          $ ChainDB.getReadOnlyForkerAtPoint chainDB "mempool" reg (SpecificPoint (castPoint $ getTip st))
     }
 
 {-------------------------------------------------------------------------------

@@ -71,6 +71,7 @@ import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
+import qualified Debug.Trace as Debug
 
 type SnapshotManagerV1 m blk =
   SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
@@ -189,7 +190,7 @@ implMkLedgerDb h snapManager =
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = getEnvSTM1 h implGetPastLedgerState
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
-      , getForkerAtTarget = newForkerAtTarget h
+      , getForkerAtTarget = \p rr t -> newForkerAtTarget p h rr t
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
@@ -292,7 +293,7 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
           writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
       )
       (readTVar (ldbPrevApplied ldbEnv))
-      (newForkerByRollback h)
+      (newForkerByRollback "validate" h)
       rr
       tr
       cache
@@ -330,6 +331,7 @@ implTryTakeSnapshot snapManager env mTime nrBlocks =
     then do
       void $
         withReadLock
+          "snapshot"
           (ldbLock env)
           ( takeSnapshot
               snapManager
@@ -355,6 +357,7 @@ implTryFlush env = do
   when
     (ldbShouldFlush env $ DbCh.flushableLength ldb)
     ( withWriteLock
+        "flush"
         (ldbLock env)
         (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
     )
@@ -428,10 +431,11 @@ implIntTakeSnapshot ::
 implIntTakeSnapshot snapManager env whereTo suffix = do
   when (whereTo == TakeAtVolatileTip) $ atomically $ modifyTVar (ldbChangelog env) pruneToImmTipOnly
   withWriteLock
+    "flush"
     (ldbLock env)
     (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
   void $
-    withReadLock (ldbLock env) $
+    withReadLock "snapshot" (ldbLock env) $
       takeSnapshot
         snapManager
         suffix
@@ -722,11 +726,12 @@ newForkerAtTarget ::
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   Target (Point blk) ->
   m (Either GetForkerError (Forker m l blk))
-newForkerAtTarget h rr pt = withTransferrableReadAccess h rr (Right pt)
+newForkerAtTarget purpose h rr pt = withTransferrableReadAccess purpose h rr (Right pt)
 
 newForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
@@ -736,12 +741,13 @@ newForkerByRollback ::
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   -- | How many blocks to rollback from the tip
   Word64 ->
   m (Either GetForkerError (Forker m l blk))
-newForkerByRollback h rr n = withTransferrableReadAccess h rr (Left n)
+newForkerByRollback purpose h rr n = withTransferrableReadAccess purpose h rr (Left n)
 
 -- | Acquire read access and then allocate a forker, acquiring it at the given
 -- point or rollback.
@@ -753,29 +759,35 @@ withTransferrableReadAccess ::
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   Either Word64 (Target (Point blk)) ->
   m (Either GetForkerError (Forker m l blk))
-withTransferrableReadAccess h rr f = getEnv h $ \ldbEnv -> do
+withTransferrableReadAccess purpose h rr f = getEnv h $ \ldbEnv -> do
   -- This TVar will be used to maybe release the read lock by the resource
   -- registry. Once the forker was opened it will be emptied.
   tv <- newTVarIO (pure ())
   (rk, _) <-
     allocate
       rr
-      ( \_ -> atomically $ do
+      ( \_ -> do
+         Debug.traceM $ "Read lock requested for " <> purpose <> " transferrable"
+         atomically $ do
           -- Populate the tvar with the releasing action. Creating the forker will empty this
-          writeTVar tv (atomically $ unsafeReleaseReadAccess (ldbLock ldbEnv))
+          writeTVar tv (do
+                           Debug.traceM $ "Read lock released for " <> purpose <> " transferrable"
+                           atomically $ unsafeReleaseReadAccess (ldbLock ldbEnv))
           -- Acquire the read access
           unsafeAcquireReadAccess (ldbLock ldbEnv)
+         Debug.traceM $ "Read locked for " <> purpose <> " transferrable"
       )
       ( \_ ->
           -- Run the contents of the releasing TVar which will be `pure ()` if
           -- the forker was opened.
           join $ readTVarIO tv
       )
-  unsafeRunReadLocked (acquireAtTarget ldbEnv f >>= traverse (newForker h ldbEnv (rk, tv) rr))
+  unsafeRunReadLocked (acquireAtTarget ldbEnv f >>= traverse (newForker purpose h ldbEnv (rk, tv) rr))
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
@@ -840,13 +852,14 @@ newForker ::
   , GetTip l
   , StandardHash l
   ) =>
+  String ->
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
   (ResourceKey m, StrictTVar m (m ())) ->
   ResourceRegistry m ->
   DbChangelog l ->
   ReadLocked m (Forker m l blk)
-newForker h ldbEnv (rk, releaseVar) rr dblog =
+newForker purpose h ldbEnv (rk, releaseVar) rr dblog =
   readLocked $ do
     (rk', frk) <-
       allocate
@@ -873,6 +886,7 @@ newForker h ldbEnv (rk, releaseVar) rr dblog =
               -- it.
               writeTVar releaseVar (pure ())
             void $ release rk
+            Debug.traceM $ "Read lock released/promoted for " <> purpose
             traceWith (foeTracer forkerEnv) ForkerOpen
             pure $ (mkForker h (ldbQueryBatchSize ldbEnv) forkerKey forkerEnv)
         )

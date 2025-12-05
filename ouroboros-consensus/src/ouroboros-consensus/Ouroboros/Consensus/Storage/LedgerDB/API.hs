@@ -232,6 +232,7 @@ data LedgerDB m l blk = LedgerDB
       STM m (HeaderStateHistory blk)
   -- ^ Get the header state history for all ledger states in the LedgerDB.
   , getForkerAtTarget ::
+      String ->
       ResourceRegistry m ->
       Target (Point blk) ->
       m (Either GetForkerError (Forker m l blk))
@@ -376,13 +377,14 @@ data LedgerDbError blk
 withTipForker ::
   IOLike m =>
   LedgerDB m l blk ->
+  String ->
   ResourceRegistry m ->
   (Forker m l blk -> m a) ->
   m a
-withTipForker ldb rr =
+withTipForker ldb p rr =
   bracket
     ( do
-        eFrk <- getForkerAtTarget ldb rr VolatileTip
+        eFrk <- getForkerAtTarget ldb p rr VolatileTip
         case eFrk of
           Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
           Right frk -> pure frk
@@ -394,12 +396,13 @@ withTipForker ldb rr =
 withPrivateTipForker ::
   IOLike m =>
   LedgerDB m l blk ->
+  String ->
   (Forker m l blk -> m a) ->
   m a
-withPrivateTipForker ldb =
+withPrivateTipForker ldb p =
   bracketWithPrivateRegistry
     ( \rr -> do
-        eFrk <- getForkerAtTarget ldb rr VolatileTip
+        eFrk <- getForkerAtTarget ldb p rr VolatileTip
         case eFrk of
           Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
           Right frk -> pure frk
@@ -411,15 +414,16 @@ getTipStatistics ::
   IOLike m =>
   LedgerDB m l blk ->
   m (Maybe Statistics)
-getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
+getTipStatistics ldb = withPrivateTipForker ldb "stats" forkerReadStatistics
 
 getReadOnlyForker ::
   MonadSTM m =>
   LedgerDB m l blk ->
+  String ->
   ResourceRegistry m ->
   Target (Point blk) ->
   m (Either GetForkerError (ReadOnlyForker m l blk))
-getReadOnlyForker ldb rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb rr pt
+getReadOnlyForker ldb p rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb p rr pt
 
 {-------------------------------------------------------------------------------
   Snapshots

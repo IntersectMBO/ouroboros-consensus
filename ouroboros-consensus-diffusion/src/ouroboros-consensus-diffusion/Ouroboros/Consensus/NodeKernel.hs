@@ -541,7 +541,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     -- 'ChainDB.getReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
     -- is no longer on our chain. When that happens, we simply give up on the
     -- chance to produce a block.
-    forkerEith <- lift $ ChainDB.getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
+    forkerEith <- lift $ ChainDB.getReadOnlyForkerAtPoint chainDB "forging" reg (SpecificPoint bcPrevPoint)
     -- Remember to close this forker before exiting!
     forker <- case forkerEith of
       Left _ -> do
