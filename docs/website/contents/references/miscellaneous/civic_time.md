@@ -41,7 +41,7 @@ The are only two exceptions.
 
 - The node's (commodity) operating system cannot compute the current slot, merely the current civic time.
 
-- The Plutus interface exposes the validity range as POSIX time, in the [`txInfoValidRange` field](https://plutus.cardano.intersectmbo.org/haddock/latest/plutus-ledger-api/PlutusLedgerApi-V1.html#t:TxInfo) (see this [blog post](https://iohk.io/en/blog/posts/2022/12/08/time-handling-on-cardano-part-2-use-cases/) for high-level background).
+- The Plutus interface exposes the validity range as POSIX time, in the [`txInfoValidRange` field](https://plutus.cardano.intersectmbo.org/haddock/latest/plutus-ledger-api/PlutusLedgerApi-V1.html#t:TxInfo) (see this [blog post](https://www.iog.io/news/time-handling-on-cardano-part-2-use-cases) for high-level background).
   The Consensus Layer design would have been simpler if the Plutus API provided the validity range in terms of slots, but that ship has sailed.
   (And developers writing Plutus scripts are almost certainly relieved that it did.)
   The "Slot to time translation" paragraph within the Alonzo Ledger specification [`alonzo-ledger.pdf`](https://github.com/intersectmbo/cardano-ledger/releases/latest/download/alonzo-ledger.pdf) explains that this design prevents script authors from assuming the wrong translations between slot and civic time.

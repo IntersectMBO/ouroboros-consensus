@@ -391,7 +391,7 @@ The tip of the LoE fragment
 
 ### ;Long-range Attack
 
-An attack on Proof-of-Stake blockchain systems that refers to the ability of a minority set of stakeholders to execute the blockchain protocol starting from the genesis block (or any sufficiently old state) and produce a valid alternative history of the system. See [this blog post](https://blog.ethereum.org/2014/05/15/long-range-attacks-the-serious-problem-with-adaptive-proof-of-work) by Vitalik Buterin and [this paper](https://iohk.io/en/research/library/papers/stake-bleeding-attacks-on-proof-of-stake-blockchains/) for details.
+An attack on Proof-of-Stake blockchain systems that refers to the ability of a minority set of stakeholders to execute the blockchain protocol starting from the genesis block (or any sufficiently old state) and produce a valid alternative history of the system. See [this blog post](https://blog.ethereum.org/2014/05/15/long-range-attacks-the-serious-problem-with-adaptive-proof-of-work) by Vitalik Buterin and [this paper](https://www.iog.io/papers/stake-bleeding-attacks-on-proof-of-stake-blockchains) for details.
 
 ## ;Limit on Patience (LoP)
 
