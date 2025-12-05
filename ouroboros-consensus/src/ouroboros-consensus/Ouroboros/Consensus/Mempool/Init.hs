@@ -81,7 +81,7 @@ forkSyncStateOnTipPointChange topLevelRegistry menv = do
   -- Using the tip ('Point') allows for quicker equality checks
   getCurrentTip :: STM m (MempoolLedgerDBView m blk)
   getCurrentTip =
-    getCurrentLedgerState (mpEnvLedger menv) (mpEnvRegistry menv)
+    getCurrentLedgerState (mpEnvLedger menv) "watcher" (mpEnvRegistry menv)
 
 -- | Unlike 'openMempool', this function does not fork a background thread
 -- that synchronises with the ledger state whenever the later changes.

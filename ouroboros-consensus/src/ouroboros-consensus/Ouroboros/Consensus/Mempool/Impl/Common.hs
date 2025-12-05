@@ -193,7 +193,7 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
 
 -- | Abstract interface needed to run a Mempool.
 newtype LedgerInterface m blk = LedgerInterface
-  { getCurrentLedgerState :: ResourceRegistry m -> STM m (MempoolLedgerDBView m blk)
+  { getCurrentLedgerState :: String -> ResourceRegistry m -> STM m (MempoolLedgerDBView m blk)
   -- ^ The resource registry should be the one of the Mempool
   -- ('mpEnvRegistry'). It will be used to allocate the forker.
   }
@@ -220,13 +220,13 @@ chainDBLedgerInterface ::
   LedgerInterface m blk
 chainDBLedgerInterface chainDB =
   LedgerInterface
-    { getCurrentLedgerState = \reg -> do
+    { getCurrentLedgerState = \s reg -> do
         st <- ChainDB.getCurrentLedger chainDB
         pure
           $ MempoolLedgerDBView
             (ledgerState st)
           $ fmap (fmap ledgerStateReadOnlyForker)
-          $ ChainDB.getReadOnlyForkerAtPoint chainDB "mempool" reg (SpecificPoint (castPoint $ getTip st))
+          $ ChainDB.getReadOnlyForkerAtPoint chainDB ("mempool" <> s) reg (SpecificPoint (castPoint $ getTip st))
     }
 
 {-------------------------------------------------------------------------------
@@ -264,7 +264,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride tracer topLevelRegistry = do
   initMempoolEnv' mpEnvRegistry
  where
   initMempoolEnv' reg = do
-    MempoolLedgerDBView st meFrk <- atomically $ getCurrentLedgerState ledgerInterface reg
+    MempoolLedgerDBView st meFrk <- atomically $ getCurrentLedgerState ledgerInterface "initial" reg
     eFrk <- meFrk
     case eFrk of
       -- This should happen very rarely, if between getting the state and getting

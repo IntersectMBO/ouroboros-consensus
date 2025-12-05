@@ -424,7 +424,7 @@ implSyncWithLedger mpEnv =
       --
       -- Just for performance reasons, we will avoid re-validating the mempool
       -- if the state didn't change.
-      withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface registry) $
+      withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface "revalidate" registry) $
         \is (MempoolLedgerDBView ls meFrk) -> do
           let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
           if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
