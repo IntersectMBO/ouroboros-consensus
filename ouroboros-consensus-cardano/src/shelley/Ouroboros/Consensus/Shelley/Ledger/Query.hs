@@ -54,7 +54,6 @@ import Cardano.Ledger.Compactible (Compactible (fromCompact))
 import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.State as CG
 import qualified Cardano.Ledger.Core as SL
-import Cardano.Ledger.Credential (StakeCredential)
 import Cardano.Ledger.Keys (KeyHash)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
@@ -261,11 +260,11 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
       QFNoTables
       (PoolDistr (ProtoCrypto proto))
   GetStakeDelegDeposits ::
-    Set StakeCredential ->
+    Set (SL.Credential LC.Staking) ->
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (Map StakeCredential Coin)
+      (Map (SL.Credential LC.Staking) Coin)
   -- | Not supported in eras before Conway
   GetConstitution ::
     CG.ConwayEraGov era =>
