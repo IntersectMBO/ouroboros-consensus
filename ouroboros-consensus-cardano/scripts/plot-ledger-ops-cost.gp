@@ -2,9 +2,9 @@
 #
 # Usage
 #
-# gnuplot -e "bench_data='my-db-analyzer.data'" plot-ledger-ops-cost.gp
+# gnuplot -e "bench_data='my-db-analyser.data'" plot-ledger-ops-cost.gp
 #
-# where 'my-db-analyzer.data' is the path to the file that contains the output
+# where 'my-db-analyser.data' is the path to the file that contains the output
 # of the 'benchmark-ledger-ops' command. By default the plot is saved in a file
 # named "bench-ledger-ops.png". This can be changed by passing the 'out_file'
 # variable. For instance:
@@ -13,7 +13,7 @@
 #
 
 if (!exist("bench_data")) {
-    print "No input file path given. Expecting: gnuplot -e \"bench_data='my-db-analyzer.data'\" plot-ledger-ops-cost.gp"
+    print "No input file path given. Expecting: gnuplot -e \"bench_data='my-db-analyser.data'\" plot-ledger-ops-cost.gp"
     exit 1
 }
 

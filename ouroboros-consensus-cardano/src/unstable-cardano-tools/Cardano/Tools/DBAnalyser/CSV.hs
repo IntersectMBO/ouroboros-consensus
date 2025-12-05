@@ -2,7 +2,7 @@
 
 -- | This module provides functionality for helping writing data values as CSV entries.
 --
--- A couple of 'db-analyzer` analysis produce CSV files, which contain
+-- A couple of 'db-analyser` analysis produce CSV files, which contain
 -- the analysis' results. A way to populate these files is to write
 -- the headers first, and then, line by line, write the rows that
 -- contain the data. Each column in a row containing data must
