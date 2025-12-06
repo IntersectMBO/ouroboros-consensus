@@ -63,6 +63,7 @@ module Ouroboros.Consensus.Node
   , openChainDB
   ) where
 
+import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import qualified Cardano.Network.Diffusion as Cardano.Diffusion
 import Cardano.Network.Diffusion.Configuration (ChainSyncIdleTimeout (..))
 import qualified Cardano.Network.Diffusion.Policies as Cardano.Diffusion
@@ -87,6 +88,7 @@ import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isNothing)
+import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
@@ -235,6 +237,8 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   -- ^ Network PeerSharing miniprotocol willingness flag
   , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
   , rnGenesisConfig :: GenesisConfig
+  , rnFeatureFlags :: Set CardanoFeatureFlag
+  -- ^ Enabled experimental features
   }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -322,6 +326,8 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
   , llrnPublicPeerSelectionStateVar :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   , llrnLdbFlavorArgs :: LedgerDbBackendArgs m blk
   -- ^ The flavor arguments
+  , llrnFeatureFlags :: Set CardanoFeatureFlag
+  -- ^ Enabled experimental features
   }
 
 data NodeDatabasePaths
@@ -576,6 +582,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   gsmAntiThunderingHerd
                   keepAliveRng
                   cfg
+                  llrnFeatureFlags
                   rnTraceConsensus
                   btime
                   (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
@@ -851,6 +858,7 @@ mkNodeKernelArgs ::
   StdGen ->
   StdGen ->
   TopLevelConfig blk ->
+  Set CardanoFeatureFlag ->
   Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk ->
   BlockchainTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
@@ -870,6 +878,7 @@ mkNodeKernelArgs
   gsmAntiThunderingHerd
   rng
   cfg
+  featureFlags
   tracers
   btime
   chainSyncFutureCheck
@@ -889,6 +898,7 @@ mkNodeKernelArgs
           { tracers
           , registry
           , cfg
+          , featureFlags
           , btime
           , chainDB
           , initChainDB = nodeInitChainDB
@@ -1007,6 +1017,7 @@ stdLowLevelRunNodeArgsIO
     { rnProtocolInfo
     , rnPeerSharing
     , rnGenesisConfig
+    , rnFeatureFlags
     }
   $(SafeWildCards.fields 'StdRunNodeArgs) = do
     llrnBfcSalt <- stdBfcSaltIO
@@ -1056,6 +1067,7 @@ stdLowLevelRunNodeArgsIO
         , llrnPublicPeerSelectionStateVar =
             Diffusion.dcPublicPeerSelectionVar srnDiffusionConfiguration
         , llrnLdbFlavorArgs = ldbBackendArgs
+        , llrnFeatureFlags = rnFeatureFlags
         }
    where
     networkMagic :: NetworkMagic
