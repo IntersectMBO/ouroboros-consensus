@@ -185,6 +185,8 @@ data ReadSnapshotErr
     ReadSnapshotDataCorruption
   | -- | An error occurred while reading the snapshot metadata file
     ReadMetadataError FsPath MetadataErr
+  | -- | We were given a legacy snapshot
+    ReadSnapshotIsLegacy
   deriving (Eq, Show)
 
 data TablesCodecVersion = TablesCodecVersion1

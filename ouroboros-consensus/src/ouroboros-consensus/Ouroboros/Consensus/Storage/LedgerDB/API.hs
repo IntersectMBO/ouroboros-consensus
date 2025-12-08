@@ -582,13 +582,10 @@ initialize
           traceWith snapTracer $ InvalidSnapshot s err
           tryNewestFirst (acc . InitFailure s err) ss
 
-        -- If the snapshot has a checksum that doesn't match the actual data,
-        -- issue a warning, delete it, and try the next oldest snapshot
-        Left err@(InitFailureRead ReadSnapshotDataCorruption) -> do
+        -- If it is a legacy snapshot, issue a warning and try
+        -- the next oldest snapshot
+        Left err@(InitFailureRead ReadSnapshotIsLegacy) -> do
           traceWith snapTracer $ InvalidSnapshot s err
-          Monad.when (diskSnapshotIsTemporary s) $ do
-            traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot snapManager s
           tryNewestFirst (acc . InitFailure s err) ss
 
         -- If we fail to use this snapshot for any other reason, delete it and
