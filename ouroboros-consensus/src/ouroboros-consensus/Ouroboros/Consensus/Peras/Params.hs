@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Peras.Params
   , PerasCertArrivalThreshold (..)
   , PerasRoundLength (..)
   , PerasWeight (..)
+  , PerasQuorumStakeThreshold (..)
 
     -- * Protocol parameters bundle
   , PerasParams (..)
@@ -80,6 +81,13 @@ newtype PerasWeight
 deriving via Sum Word64 instance Semigroup PerasWeight
 deriving via Sum Word64 instance Monoid PerasWeight
 
+-- | Total stake needed to forge a Peras certificate.
+newtype PerasQuorumStakeThreshold
+  = PerasQuorumStakeThreshold {unPerasQuorumStakeThreshold :: Rational}
+  deriving Show via Quiet PerasQuorumStakeThreshold
+  deriving stock Generic
+  deriving newtype (Eq, Ord, NoThunks, Condense)
+
 {-------------------------------------------------------------------------------
   Protocol parameters bundle
 -------------------------------------------------------------------------------}
@@ -97,6 +105,7 @@ data PerasParams = PerasParams
   , perasCertArrivalThreshold :: PerasCertArrivalThreshold
   , perasRoundLength :: !PerasRoundLength
   , perasWeight :: !PerasWeight
+  , perasQuorumStakeThreshold :: !PerasQuorumStakeThreshold
   }
   deriving (Show, Eq, Generic, NoThunks)
 
@@ -118,4 +127,6 @@ mkPerasParams =
         PerasRoundLength 90
     , perasWeight =
         PerasWeight 15
+    , perasQuorumStakeThreshold =
+        PerasQuorumStakeThreshold (3 / 4)
     }

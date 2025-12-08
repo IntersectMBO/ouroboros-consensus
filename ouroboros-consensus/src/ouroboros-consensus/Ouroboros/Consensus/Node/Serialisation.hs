@@ -36,6 +36,7 @@ module Ouroboros.Consensus.Node.Serialisation
   , Some (..)
   ) where
 
+import qualified Cardano.Binary as KeyHash
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (Serialise (decode, encode))
@@ -195,6 +196,7 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (Tip blk) where
 instance SerialiseNodeToNode blk PerasRoundNo where
   encodeNodeToNode _ccfg _version = encode
   decodeNodeToNode _ccfg _version = decode
+
 instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
   -- Consistent with the 'Serialise' instance for 'PerasCert' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasCert{..} =
@@ -206,6 +208,24 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
     pcCertRound <- decodeNodeToNode ccfg version
     pcCertBoostedBlock <- decodeNodeToNode ccfg version
     pure $ PerasCert pcCertRound pcCertBoostedBlock
+
+instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote blk) where
+  -- Consistent with the 'Serialise' instance for 'PerasVote' defined in Ouroboros.Consensus.Block.SupportsPeras
+  encodeNodeToNode ccfg version PerasVote{..} =
+    encodeListLen 3
+      <> encodeNodeToNode ccfg version pvVoteRound
+      <> encodeNodeToNode ccfg version pvVoteBlock
+      <> encodeNodeToNode ccfg version pvVoteVoterId
+  decodeNodeToNode ccfg version = do
+    decodeListLenOf 3
+    pvVoteRound <- decodeNodeToNode ccfg version
+    pvVoteBlock <- decodeNodeToNode ccfg version
+    pvVoteVoterId <- decodeNodeToNode ccfg version
+    pure $ PerasVote pvVoteRound pvVoteBlock pvVoteVoterId
+
+instance SerialiseNodeToNode blk PerasVoterId where
+  encodeNodeToNode _ccfg _version = KeyHash.toCBOR . unPerasVoterId
+  decodeNodeToNode _ccfg _version = PerasVoterId <$> KeyHash.fromCBOR
 
 deriving newtype instance
   SerialiseNodeToClient blk (GenTxId blk) =>
