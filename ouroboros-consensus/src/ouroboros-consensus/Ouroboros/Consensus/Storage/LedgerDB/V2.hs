@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -108,7 +109,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
                 , ldbForkers = forkers
                 , ldbNextForkerKey = nextForkerKey
                 , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
-                , ldbTracer = lgrTracer
+                , ldbTracer = tr
                 , ldbCfg = lgrConfig
                 , ldbHasFS = lgrHasFS
                 , ldbResolveBlock = getBlock
@@ -127,13 +128,14 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
     , lgrGenesis
     , lgrHasFS
     , lgrSnapshotPolicyArgs
-    , lgrTracer
     , lgrQueryBatchSize
     , lgrRegistry
     } = args
 
   v2Tracer :: Tracer m V2.FlavorImplSpecificTrace
-  v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer
+  !v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< tr
+
+  !tr = lgrTracer args
 
   emptyF ::
     ExtLedgerState blk ValuesMK ->
