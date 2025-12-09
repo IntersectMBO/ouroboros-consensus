@@ -169,8 +169,11 @@ snapshotManager ::
 snapshotManager args =
   snapshotManager'
     (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
-    (LedgerDBSnapshotEvent >$< lgrTracer args)
+    snapTracer
     (lgrHasFS args)
+ where
+  !tr = lgrTracer args
+  !snapTracer = LedgerDBSnapshotEvent >$< tr
 
 snapshotManager' ::
   ( IOLike m
