@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-10-23T13:39:53Z
+  , hackage.haskell.org 2025-12-03T15:53:31Z
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2025-10-07T11:20:00Z
 
@@ -82,10 +82,10 @@ source-repository-package
 
 -- Backported version of https://github.com/IntersectMBO/ouroboros-network/pull/5161
 source-repository-package
-   type: git
-   location: https://github.com/IntersectMBO/ouroboros-network
-   tag: 1385b53cefb81e79553b6b0252537455833ea9c4
-   --sha256: sha256-zZ7WsMfRs1fG16bmvI5vIh4fhQ8RGyEvYGLSWlrxpg0=
-   subdir:
-     ouroboros-network-api
-     ouroboros-network
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: dfcb1f9c578ec8cd5114fea9696e7be6c9001323
+  --sha256: sha256-omXPdi/T/f3gq9rOH20zX+x3WvaxlB704g07RF/13Nk=
+  subdir:
+    ouroboros-network-api
+    ouroboros-network
