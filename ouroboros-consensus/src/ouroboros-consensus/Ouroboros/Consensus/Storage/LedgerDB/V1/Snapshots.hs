@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -175,8 +176,11 @@ snapshotManager ::
 snapshotManager args =
   snapshotManager'
     (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
-    (LedgerDBSnapshotEvent >$< lgrTracer args)
+    snapTracer
     (SnapshotsFS (lgrHasFS args))
+ where
+  !tr = lgrTracer args
+  !snapTracer = LedgerDBSnapshotEvent >$< tr
 
 snapshotManager' ::
   ( IOLike m
