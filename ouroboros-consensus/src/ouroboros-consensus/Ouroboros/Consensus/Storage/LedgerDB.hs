@@ -98,8 +98,8 @@ openDB
         let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
         doOpenDB args initDb snapManager stream replayGoal
        where
-         !tr = lgrTracer args
-         !snapTracer = LedgerDBSnapshotEvent >$< tr
+        !tr = lgrTracer args
+        !snapTracer = LedgerDBSnapshotEvent >$< tr
 
 {-------------------------------------------------------------------------------
   Opening a LedgerDB
