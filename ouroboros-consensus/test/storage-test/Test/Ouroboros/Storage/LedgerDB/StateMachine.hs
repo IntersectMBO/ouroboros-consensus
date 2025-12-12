@@ -718,8 +718,8 @@ mkTrackOpenHandles = do
   let tracer = Tracer $ \case
         LedgerDBFlavorImplEvent (FlavorImplSpecificTraceV2 ev) ->
           atomically $ modifyTVar varOpen $ case ev of
-            V2.TraceLedgerTablesHandleCreate -> succ
-            V2.TraceLedgerTablesHandleClose -> pred
+            V2.TraceLedgerTablesHandleCreate{} -> succ
+            V2.TraceLedgerTablesHandleClose{} -> pred
             _ -> id
         _ -> pure ()
   pure (tracer, readTVarIO varOpen)
