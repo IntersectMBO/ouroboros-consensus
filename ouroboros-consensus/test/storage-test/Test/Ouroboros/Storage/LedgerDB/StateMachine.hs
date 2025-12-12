@@ -73,6 +73,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util hiding (Some)
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -718,8 +719,8 @@ mkTrackOpenHandles = do
   let tracer = Tracer $ \case
         LedgerDBFlavorImplEvent (FlavorImplSpecificTraceV2 ev) ->
           atomically $ modifyTVar varOpen $ case ev of
-            V2.TraceLedgerTablesHandleCreate -> succ
-            V2.TraceLedgerTablesHandleClose -> pred
+            V2.TraceLedgerTablesHandleCreate FallingEdgeWith{} -> succ
+            V2.TraceLedgerTablesHandleClose FallingEdgeWith{} -> pred
             _ -> id
         _ -> pure ()
   pure (tracer, readTVarIO varOpen)
