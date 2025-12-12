@@ -44,6 +44,7 @@ import Cardano.Slotting.Block (BlockNo)
 import Cardano.Slotting.Slot (SlotNo)
 import Codec.Serialise (Serialise (..))
 import Control.Monad.Except (Except)
+import Data.Aeson.Types (FromJSON, ToJSON)
 import Data.Kind (Type)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
@@ -78,6 +79,7 @@ newtype ShelleyHash = ShelleyHash
   { unShelleyHash :: Hash.Hash HASH EraIndependentBlockHeader
   }
   deriving stock (Eq, Ord, Show, Generic)
+  deriving newtype (ToJSON, FromJSON)
   deriving anyclass NoThunks
 
 deriving newtype instance ToCBOR ShelleyHash
