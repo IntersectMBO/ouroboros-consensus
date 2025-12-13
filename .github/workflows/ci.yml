@@ -167,7 +167,7 @@ jobs:
         cp $(cabal list-bin mempool-bench) mempool-bench
 
     - name: Upload benchmark executables
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
         path: mempool-bench
@@ -195,7 +195,7 @@ jobs:
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
         && matrix.ghc=='9.10.2'
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: haddocks
         path: haddocks.tgz
@@ -258,7 +258,7 @@ jobs:
     # TODO: this will be necessary when we publish the benchmarks results.
     # - name: Upload mempool benchmark baseline results
     #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    #   uses: actions/upload-artifact@v5
+    #   uses: actions/upload-artifact@v6
     #   with:
     #     name: baseline-mempool-benchmarks
     #     path: baseline-mempool-benchmarks.csv
