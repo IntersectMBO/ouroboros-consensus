@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -34,6 +35,17 @@ import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike hiding (withMVar)
 import           Ouroboros.Consensus.Util.STM
 import           Ouroboros.Network.Block
+
+workFor :: IOLike m => DiffTime -> m ()
+workFor time = do
+  now <- getMonotonicTime
+  work (time `addTime` now)
+ where
+  work !doneAt = do
+    now <- getMonotonicTime
+    if now >= doneAt
+       then return ()
+       else work doneAt
 
 {-------------------------------------------------------------------------------
   Add transactions
@@ -72,7 +84,8 @@ implAddTx mpEnv onbehalf tx =
     case onbehalf of
       AddTxForRemotePeer ->
         withMVar remoteFifo $ \() ->
-        withMVar allFifo $ \() ->
+        withMVar allFifo $ \() -> do
+          workFor 10
           -- This action can also block. Holding the MVars means
           -- there is only a single such thread blocking at once.
           implAddTx'
