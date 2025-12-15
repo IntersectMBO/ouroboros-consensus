@@ -10,7 +10,7 @@ import           GHC.Generics (Generic)
 
 -- | The event as it appears in the log file.
 data SayEvent tm = MkSayEvent {
-        at :: tm
+        at  :: tm
       , msg :: String
       }
   deriving stock (Generic)

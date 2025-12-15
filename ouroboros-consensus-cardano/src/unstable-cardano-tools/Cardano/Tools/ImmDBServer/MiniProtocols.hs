@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -15,11 +14,13 @@
 
 -- | Implement ChainSync and BlockFetch servers on top of just the immutable DB.
 module Cardano.Tools.ImmDBServer.MiniProtocols (
-  LeiosNotifyContext (..),
-  immDBServer,
+    LeiosNotifyContext (..)
+  , immDBServer
   ) where
 
 import           Cardano.Slotting.Slot (WithOrigin (At))
+import qualified Cardano.Tools.ImmDBServer.Json as Json
+import qualified Cardano.Tools.ImmDBServer.Json.SendRecv as Json
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Control.Concurrent.Class.MonadMVar as MVar
@@ -31,10 +32,15 @@ import qualified Data.ByteString.Lazy as BL
 import           Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
-import           Data.Word (Word32)
 import           Data.Void (Void)
+import           Data.Word (Word32)
 import           GHC.Generics (Generic)
+import qualified LeiosDemoLogic as LeiosLogic
+import           LeiosDemoOnlyTestFetch as LF
+import           LeiosDemoOnlyTestNotify
+import qualified LeiosDemoTypes as Leios
 import qualified Network.Mux as Mux
+import           Network.TypedProtocol.Codec (AnyMessage (AnyMessage))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
                      (blockFetchServer')
@@ -64,20 +70,12 @@ import           Ouroboros.Network.NodeToNode (NodeToNodeVersionData (..),
 import qualified Ouroboros.Network.NodeToNode as N2N
 import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing (..))
 import           Ouroboros.Network.Protocol.BlockFetch.Server
+import qualified Ouroboros.Network.Protocol.BlockFetch.Type as BF
 import           Ouroboros.Network.Protocol.ChainSync.Server
+import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
 import           Ouroboros.Network.Protocol.Handshake.Version (Version (..))
 import           Ouroboros.Network.Protocol.KeepAlive.Server
                      (keepAliveServerPeer)
-
-import qualified Cardano.Tools.ImmDBServer.Json as Json
-import qualified Cardano.Tools.ImmDBServer.Json.SendRecv as Json
-import           LeiosDemoOnlyTestFetch as LF
-import           LeiosDemoOnlyTestNotify
-import qualified LeiosDemoLogic as LeiosLogic
-import qualified LeiosDemoTypes as Leios
-import           Network.TypedProtocol.Codec (AnyMessage (AnyMessage))
-import qualified Ouroboros.Network.Protocol.BlockFetch.Type as BF
-import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
 
 immDBServer ::
      forall m blk addr.
@@ -220,7 +218,7 @@ responderContextToConnectionIdString ctx =
 traceMaybe :: Monad m => (a -> Maybe b) -> Tracer m b -> Tracer m a
 traceMaybe f tr = Tracer $ \x -> case f x of
     Nothing -> pure ()
-    Just y -> traceWith tr y
+    Just y  -> traceWith tr y
 
 maybeShowSendRecvLF :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) -> Maybe Json.LogEvent
 maybeShowSendRecvLF ctx = \case
@@ -307,7 +305,7 @@ chainSyncServer immDB blockComponent getSlotDelay registry = ChainSyncServer $ d
                       pure Nothing
                     ImmutableDB.IteratorResult a  -> do
                       delay <- case pointSlot $ ChainDB.point a of
-                          Origin -> pure 0
+                          Origin  -> pure 0
                           At slot -> getSlotDelay slot
                       if delay <= 0 then pure $ Just $ AddBlock a else do
                           atomically $ writeTVar varForBlocking $ Delayed a
@@ -328,7 +326,7 @@ chainSyncServer immDB blockComponent getSlotDelay registry = ChainSyncServer $ d
                     Delayed a -> do
                       -- Wait until the slot of the current block has been reache
                       case pointSlot $ ChainDB.point a of
-                          Origin -> pure ()
+                          Origin  -> pure ()
                           At slot -> getSlotDelay slot >>= threadDelay
                       pure $ AddBlock a
 

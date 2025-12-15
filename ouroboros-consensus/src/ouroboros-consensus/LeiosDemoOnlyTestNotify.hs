@@ -13,17 +13,17 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module LeiosDemoOnlyTestNotify
-  ( LeiosNotify (..)
-  , SingLeiosNotify (..)
+module LeiosDemoOnlyTestNotify (
+    LeiosNotify (..)
   , Message (..)
+  , SingLeiosNotify (..)
   , leiosNotifyMiniProtocolNum
-  -- *
+    -- *
   , byteLimitsLeiosNotify
-  , timeLimitsLeiosNotify
   , codecLeiosNotify
   , codecLeiosNotifyId
-  -- *
+  , timeLimitsLeiosNotify
+    -- *
   , LeiosNotifyClientPeerPipelined
   , LeiosNotifyServerPeer
   , leiosNotifyClientPeer
@@ -200,7 +200,7 @@ encodeLeiosNotify encodeP encodeA = encode
       MsgLeiosNotificationRequestNext ->
            CBOR.encodeListLen 1
         <> CBOR.encodeWord 0
-      MsgLeiosBlockAnnouncement x -> 
+      MsgLeiosBlockAnnouncement x ->
            CBOR.encodeListLen 2
         <> CBOR.encodeWord 1
         <> encodeA x
@@ -328,8 +328,8 @@ leiosNotifyClientPeer checkDone =
             Yield ReflClientAgency MsgLeiosNotificationRequestNext
           $ Await ReflServerAgency $ \msg -> case msg of
                 MsgLeiosBlockAnnouncement{} -> react $ k msg
-                MsgLeiosBlockOffer{} -> react $ k msg
-                MsgLeiosBlockTxsOffer{} -> react $ k msg
+                MsgLeiosBlockOffer{}        -> react $ k msg
+                MsgLeiosBlockTxsOffer{}     -> react $ k msg
 
     react action = Effect $ fmap (\() -> go) action
 
@@ -415,8 +415,8 @@ leiosNotifyClientPeerPipelined checkDone k0 =
     receiver stop =
         ReceiverAwait ReflServerAgency $ \msg -> case msg of
             MsgLeiosBlockAnnouncement{} -> handler stop k0 msg
-            MsgLeiosBlockOffer{} -> handler stop k0 msg
-            MsgLeiosBlockTxsOffer{} -> handler stop k0 msg
+            MsgLeiosBlockOffer{}        -> handler stop k0 msg
+            MsgLeiosBlockTxsOffer{}     -> handler stop k0 msg
 
     handler ::
         MutVar (PrimState m) WhetherDraining

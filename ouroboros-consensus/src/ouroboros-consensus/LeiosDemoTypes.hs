@@ -16,7 +16,8 @@ import           Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import           Control.Monad.Class.MonadThrow (MonadThrow, bracket, generalBracket)
+import           Control.Monad.Class.MonadThrow (MonadThrow, bracket,
+                     generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
@@ -143,7 +144,7 @@ prettyBitmap (idx, bitmap) =
 
 data LeiosPeerVars m = MkLeiosPeerVars {
     -- written to only by the LeiosNotify client (TODO and eviction)
-    offerings :: !(MVar m (Set EbId, Set EbId))
+    offerings      :: !(MVar m (Set EbId, Set EbId))
   ,
     -- | written to by the fetch logic and the LeiosFetch client
     --
@@ -171,11 +172,11 @@ newLeiosPeerVars = do
 data LeiosEbBodies = MkLeiosEbBodies {
     acquiredEbBodies :: !(Set EbId)
   ,
-    missingEbBodies :: !(Map EbId BytesSize)
+    missingEbBodies  :: !(Map EbId BytesSize)
   ,
-    ebPoints :: !(IntMap {- SlotNo -} (Map EbHash EbId))
+    ebPoints         :: !(IntMap {- SlotNo -} (Map EbHash EbId))
   ,
-    ebPointsInverse :: !(IntMap {- EbId -} EbHash)
+    ebPointsInverse  :: !(IntMap {- EbId -} EbHash)
   }
 
 emptyLeiosEbBodies :: LeiosEbBodies
@@ -191,7 +192,7 @@ prettyLeiosEbBodies x =
   unwords
   [
         "LeiosEbBodies:"
-      , 
+      ,
         "acquiredEbBodies = " ++ show (Set.size acquiredEbBodies)
       ,
         "missingEbBodies = " ++ show (Map.size missingEbBodies)
@@ -204,16 +205,16 @@ prettyLeiosEbBodies x =
       } = x
 
 data LeiosOutstanding pid = MkLeiosOutstanding {
-    requestedEbPeers :: !(Map EbId (Set (PeerId pid)))
+    requestedEbPeers          :: !(Map EbId (Set (PeerId pid)))
   ,
-    requestedTxPeers :: !(Map TxHash (Set (PeerId pid)))
+    requestedTxPeers          :: !(Map TxHash (Set (PeerId pid)))
   ,
     requestedBytesSizePerPeer :: !(Map (PeerId pid) BytesSize)
   ,
-    requestedBytesSize :: !BytesSize
+    requestedBytesSize        :: !BytesSize
   ,
     -- TODO this might be far too big for the heap
-    cachedTxs :: !(Map TxHash BytesSize)
+    cachedTxs                 :: !(Map TxHash BytesSize)
   ,
     -- | The txs that still need to be sourced
     --
@@ -228,12 +229,12 @@ data LeiosOutstanding pid = MkLeiosOutstanding {
     --   will never be a no-op (except maybe in a race?).
     --
     -- TODO this is far too big for the heap
-    missingEbTxs :: !(Map EbId (IntMap (TxHash, BytesSize)))
+    missingEbTxs              :: !(Map EbId (IntMap (TxHash, BytesSize)))
   ,
     -- TODO this is far too big for the heap
     --
     -- inverse of missingEbTxs
-    txOffsetss :: !(Map TxHash (Map EbId Int))
+    txOffsetss                :: !(Map TxHash (Map EbId Int))
   ,
     -- | How many txs of each EB are not yet in the @ebTxs@ table
     --
@@ -255,13 +256,13 @@ data LeiosOutstanding pid = MkLeiosOutstanding {
     --
     -- * The EbTx is in 'toCopy' (and therefore not in 'missingEbTxs'). The
     --   handler shoulder also remove it from 'toCopy'.
-    blockingPerEb :: !(Map EbId Int)
+    blockingPerEb             :: !(Map EbId Int)
   ,
-    toCopy :: !(Map EbId (IntMap BytesSize))
+    toCopy                    :: !(Map EbId (IntMap BytesSize))
   ,
-    toCopyBytesSize :: !BytesSize
+    toCopyBytesSize           :: !BytesSize
   ,
-    toCopyCount :: !Int
+    toCopyCount               :: !Int
   }
 
 emptyLeiosOutstanding :: LeiosOutstanding pid
@@ -282,7 +283,7 @@ emptyLeiosOutstanding =
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
   unlines $ map ("    [leios] " ++) $
-  [ 
+  [
         "requestedEbPeers = " ++ unwords (map prettyEbId (Map.keys requestedEbPeers))
       ,
         "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
@@ -567,31 +568,31 @@ sql_attach_memTxPoints =
 -- request?
 data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv {
     -- | At most this many outstanding bytes requested from all peers together
-    maxRequestedBytesSize :: BytesSize
+    maxRequestedBytesSize        :: BytesSize
   ,
     -- | At most this many outstanding bytes requested from each peer
     maxRequestedBytesSizePerPeer :: BytesSize
   ,
     -- | At most this many outstanding bytes per request
-    maxRequestBytesSize :: BytesSize
+    maxRequestBytesSize          :: BytesSize
   ,
     -- | At most this many outstanding requests for each EB body
-    maxRequestsPerEb :: Int
+    maxRequestsPerEb             :: Int
   ,
     -- | At most this many outstanding requests for each individual tx
-    maxRequestsPerTx :: Int
+    maxRequestsPerTx             :: Int
   ,
     -- | At most this many bytes are scheduled to be copied from the TxCache to the EbStore
-    maxToCopyBytesSize :: BytesSize
+    maxToCopyBytesSize           :: BytesSize
   ,
     -- | At most this many txs are scheduled to be copied from the TxCache to the EbStore
-    maxToCopyCount :: Int
+    maxToCopyCount               :: Int
   ,
     -- | @maximumIngressQueue@ for LeiosNotify
-    maxLeiosNotifyIngressQueue :: BytesSize
+    maxLeiosNotifyIngressQueue   :: BytesSize
   ,
     -- | @maximumIngressQueue@ for LeiosFetch
-    maxLeiosFetchIngressQueue :: BytesSize
+    maxLeiosFetchIngressQueue    :: BytesSize
   }
 
 demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv

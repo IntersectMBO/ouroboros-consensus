@@ -4,7 +4,10 @@
 
 module Cardano.Tools.ImmDBServer.Json (module Cardano.Tools.ImmDBServer.Json) where
 
-import           Control.Concurrent.Class.MonadMVar (newMVar, modifyMVar_, withMVar)
+import           Cardano.Tools.ImmDBServer.Json.Say as Say
+import           Cardano.Tools.ImmDBServer.Json.SendRecv as SendRecv
+import           Control.Concurrent.Class.MonadMVar (modifyMVar_, newMVar,
+                     withMVar)
 import           Control.Monad.Class.MonadTime.SI (Time)
 import qualified Control.Monad.Class.MonadTime.SI as Time
 import           Control.Tracer
@@ -12,9 +15,6 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as BL8
 import qualified Data.Map.Strict as Map
 import           Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
-
-import           Cardano.Tools.ImmDBServer.Json.Say as Say
-import           Cardano.Tools.ImmDBServer.Json.SendRecv as SendRecv
 
 -----
 

@@ -25,7 +25,7 @@ import qualified Data.ByteString as BS
 import           Data.DList (DList)
 import qualified Data.DList as DList
 import           Data.Foldable (forM_)
-import           Data.Functor ((<&>), void)
+import           Data.Functor (void, (<&>))
 import           Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import           Data.IntSet (IntSet)
@@ -42,12 +42,17 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import           Data.Word (Word16, Word64)
 import qualified Database.SQLite3.Direct as DB
-import qualified LeiosDemoOnlyTestNotify as LN
 import qualified LeiosDemoOnlyTestFetch as LF
-import           LeiosDemoTypes (BytesSize, EbHash (..), EbId (..), LeiosEbBodies, LeiosOutstanding, LeiosPoint (..), LeiosDb (..), LeiosEb (..), LeiosFetchStaticEnv, LeiosTx (..), PeerId (..), TxHash (..))
-import           LeiosDemoTypes (LeiosBlockRequest (..), LeiosBlockTxsRequest (..), LeiosFetchRequest (..), LeiosNotification (..))
-import           LeiosDemoTypes (TraceLeiosKernel (..), TraceLeiosPeer (..))
-import           LeiosDemoTypes (dbBindBlob, dbBindInt64, dbColumnBlob, dbColumnInt64, dbExec, dbReset, dbStep, dbStep1, dbWithBEGIN, dbWithPrepare)
+import qualified LeiosDemoOnlyTestNotify as LN
+import           LeiosDemoTypes (BytesSize, EbHash (..), EbId (..),
+                     LeiosBlockRequest (..), LeiosBlockTxsRequest (..),
+                     LeiosDb (..), LeiosEb (..), LeiosEbBodies,
+                     LeiosFetchRequest (..), LeiosFetchStaticEnv,
+                     LeiosNotification (..), LeiosOutstanding, LeiosPoint (..),
+                     LeiosTx (..), PeerId (..), TraceLeiosKernel (..),
+                     TraceLeiosPeer (..), TxHash (..), dbBindBlob, dbBindInt64,
+                     dbColumnBlob, dbColumnInt64, dbExec, dbReset, dbStep,
+                     dbStep1, dbWithBEGIN, dbWithPrepare)
 import qualified LeiosDemoTypes as Leios
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 
@@ -71,7 +76,7 @@ ebIdFromPoint :: LeiosPoint -> LeiosEbBodies -> (EbId, Maybe LeiosEbBodies)
 ebIdFromPoint p x =
     case IntMap.lookup islot (Leios.ebPoints x) of
         Just m -> case Map.lookup ebHash m of
-            Just y -> (y, Nothing)
+            Just y  -> (y, Nothing)
             Nothing -> gen $ MkEbId $ zero + 99 - Map.size m
         Nothing -> gen $ MkEbId $ zero + 99
   where
@@ -142,10 +147,10 @@ data SomeLeiosFetchContext m =
     forall stmt. MkSomeLeiosFetchContext !(LeiosFetchContext stmt m)
 
 data LeiosFetchContext stmt m = MkLeiosFetchContext {
-    leiosDb :: !(LeiosDb stmt m)
-  , leiosEbBuffer :: !(MV.MVector (PrimState m) (TxHash, BytesSize))
-  , leiosEbTxsBuffer :: !(MV.MVector (PrimState m) LeiosTx)
-  , leiosWriteLock :: !(MVar m ())
+    leiosDb           :: !(LeiosDb stmt m)
+  , leiosEbBuffer     :: !(MV.MVector (PrimState m) (TxHash, BytesSize))
+  , leiosEbTxsBuffer  :: !(MV.MVector (PrimState m) LeiosTx)
+  , leiosWriteLock    :: !(MVar m ())
   , readLeiosEbBodies :: !(m LeiosEbBodies)
   }
 
@@ -202,7 +207,7 @@ msgLeiosBlockRequest _tracer leiosContext p = do
     (ebId, mbLeiosEbBodies') <- readLeiosEbBodies <&> ebIdFromPoint p
     case mbLeiosEbBodies' of
         Nothing -> pure ()
-        Just _ -> error "Unrecognized Leios point"
+        Just _  -> error "Unrecognized Leios point"
     n <- MVar.withMVar leiosWriteLock $ \() -> do
         -- get the EB items
         dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebBodies) $ \stmt -> do
@@ -243,7 +248,7 @@ msgLeiosBlockTxsRequest _tracer leiosContext p bitmaps = do
     (ebId, mbLeiosEbBodies') <- readLeiosEbBodies <&> ebIdFromPoint p
     case mbLeiosEbBodies' of
         Nothing -> pure ()
-        Just _ -> error "Unrecognized Leios point"
+        Just _  -> error "Unrecognized Leios point"
     do
         let idxs = map fst bitmaps
         let idxLimit = Leios.maxEbItems `div` 64
@@ -421,7 +426,7 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
           | otherwise
          -> let !txOffsets = case Map.lookup txHash (Leios.txOffsetss acc) of
                     Nothing -> error "impossible!"
-                    Just x -> x
+                    Just x  -> x
                 peerIds :: Set (PeerId pid)
                 peerIds = Map.findWithDefault Set.empty txHash (Leios.requestedTxPeers acc)
             in
@@ -483,7 +488,7 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
                 Just (ebId, txOffset) -> case Map.lookup ebId (Leios.missingEbTxs acc) of
                     Nothing -> error "impossible!"
                     Just v -> case IntMap.lookup txOffset v of
-                        Nothing -> error "impossible!"
+                        Nothing           -> error "impossible!"
                         Just (_txHash, x) -> x
             accNew' =
                 MkLeiosFetchDecisions
@@ -535,7 +540,7 @@ packRequests env ebBodies =
       $ DList.map
             (\(ebId, ebBytesSize) -> case ebIdToPoint ebId ebBodies of
                 Nothing -> error "impossible!"
-                Just p -> LeiosBlockRequest $ MkLeiosBlockRequest p ebBytesSize
+                Just p  -> LeiosBlockRequest $ MkLeiosBlockRequest p ebBytesSize
             )
             ebs
 
@@ -565,7 +570,7 @@ packRequests env ebBodies =
         , let (ebId, txOffset) =
                   case Map.lookupMax txOffsets of
                       Nothing -> error "impossible!"
-                      Just x -> x
+                      Just x  -> x
         ]
 
     goEb ::
@@ -717,7 +722,7 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, 
         ebId <- do
             let (x, mbLeiosEbBodies') = ebIdFromPoint p ebBodies
             case mbLeiosEbBodies' of
-                Just _ -> error "Unrecognized Leios point"
+                Just _  -> error "Unrecognized Leios point"
                 Nothing -> pure x
         let novel = not $ Set.member ebId (Leios.acquiredEbBodies ebBodies)
         when novel $ MVar.withMVar writeLock $ \() -> do   -- TODO don't hold the ebBodies mvar during this IO
@@ -866,7 +871,7 @@ msgLeiosBlockTxs ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVa
     ebId <- do
         let (x, mbLeiosEbBodies') = ebIdFromPoint p ebBodies
         case mbLeiosEbBodies' of
-            Just _ -> error "Unrecognized Leios point"
+            Just _  -> error "Unrecognized Leios point"
             Nothing -> pure x
     let nextOffset = \case
             [] -> Nothing
@@ -1152,7 +1157,7 @@ nextLeiosNotification _tracer (ebBodiesVar, var) = do
     ebBodies <- MVar.readMVar ebBodiesVar
     let f ebId = case ebIdToPoint ebId ebBodies of
             Nothing -> error "impossible!"
-            Just x -> x
+            Just x  -> x
     pure $ case notification of
         LeiosOfferBlock ebId ebBytesSize ->
             LN.MsgLeiosBlockOffer (f ebId) ebBytesSize
