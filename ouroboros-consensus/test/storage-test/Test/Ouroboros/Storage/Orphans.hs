@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -19,6 +20,7 @@ import Ouroboros.Consensus.Util.CallStack
 import System.FS.API.Types (FsError, sameFsError)
 import Test.QuickCheck.StateModel (HasVariables)
 import Test.QuickCheck.StateModel.Variables (HasVariables (..))
+import Cardano.Crypto.Hash.Class (PackedBytes)
 
 {-------------------------------------------------------------------------------
   PrettyCallStack
@@ -75,4 +77,18 @@ deriving instance StandardHash blk => Eq (ChainDbError blk)
 -------------------------------------------------------------------------------}
 
 instance HasVariables NominalDiffTime where
+  getAllVariables _ = mempty
+
+{-------------------------------------------------------------------------------
+  Rational
+-------------------------------------------------------------------------------}
+
+instance HasVariables Rational where
+  getAllVariables _ = mempty
+
+{-------------------------------------------------------------------------------
+  PackedBytes
+-------------------------------------------------------------------------------}
+
+instance HasVariables (PackedBytes a) where
   getAllVariables _ = mempty
