@@ -56,8 +56,6 @@ import           LeiosDemoTypes (BytesSize, EbHash (..), EbId (..),
 import qualified LeiosDemoTypes as Leios
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 
-type HASH = Hash.Blake2b_256
-
 ebIdSlot :: EbId -> SlotNo
 ebIdSlot (MkEbId y) =
     SlotNo (fromIntegral y `div` 1000)
@@ -710,11 +708,13 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, 
         let MkLeiosPoint _ebSlot ebHash = p
         let ebBytes :: ByteString
             ebBytes = serialize' $ Leios.encodeLeiosEb eb
+        -- REVIEW: use 'leiosEbBytesSize'?
         let ebBytesSize' = BS.length ebBytes
         when (ebBytesSize' /= fromIntegral ebBytesSize) $ do
             error $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
+        -- REVIEW: use 'hashLeiosEb'?
         let ebHash' :: EbHash
-            ebHash' = MkEbHash $ Hash.hashToBytes $ Hash.hashWith @HASH id ebBytes
+            ebHash' = MkEbHash $ Hash.hashToBytes $ Hash.hashWith @Leios.HASH id ebBytes
         when (ebHash' /= ebHash) $ do
             error $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
     -- ingest it
@@ -858,7 +858,7 @@ msgLeiosBlockTxs ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVa
     do
         when (V.length txs /= V.length txHashes) $ do
             error $ "MsgLeiosBlockTxs length mismatch: " ++ show (V.length txs, V.length txHashes)
-        let rehash :: ByteString -> Hash.Hash HASH ByteString
+        let rehash :: ByteString -> Hash.Hash Leios.HASH ByteString
             rehash = Hash.hashWith id
         let txHashes' = V.map (MkTxHash . Hash.hashToBytes . rehash) txBytess
         when (txHashes' /= txHashes) $ do

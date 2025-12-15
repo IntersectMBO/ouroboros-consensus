@@ -223,7 +223,7 @@ traceMaybe f tr = Tracer $ \x -> case f x of
 maybeShowSendRecvLF :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) -> Maybe Json.LogEvent
 maybeShowSendRecvLF ctx = \case
     N2N.TraceRecvMsg mbTm (AnyMessage MsgLeiosBlockRequest{}) -> Just $ recv mbTm "MsgLeiosBlockRequest"
-    N2N.TraceSendMsg tm (AnyMessage MsgLeiosBlock{}) -> Just $ send tm "MsgLeiosBlock"
+    N2N.TraceSendMsg tm (AnyMessage (MsgLeiosBlock leiosEb)) -> Just $ send tm "MsgLeiosBlock"
     N2N.TraceRecvMsg mbTm (AnyMessage MsgLeiosBlockTxsRequest{}) -> Just $ recv mbTm "MsgLeiosBlockTxsRequest"
     N2N.TraceSendMsg tm (AnyMessage MsgLeiosBlockTxs{}) -> Just $ send tm "MsgLeiosBlockTxs"
     N2N.TraceRecvMsg mbTm (AnyMessage LF.MsgDone{}) -> Just $ recv mbTm "MsgDone"

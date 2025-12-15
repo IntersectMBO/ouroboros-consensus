@@ -2,10 +2,12 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE TypeApplications #-}
 
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
-import           Cardano.Binary (enforceSize)
+import           Cardano.Binary (enforceSize, serialize')
+import qualified Cardano.Crypto.Hash as Hash
 import           Cardano.Slotting.Slot (SlotNo (SlotNo))
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -60,6 +62,9 @@ fromIntegralEbId (MkEbId x) = fromIntegral x
 
 newtype PeerId a = MkPeerId a
   deriving (Eq, Ord)
+
+-- Hash algorithm used in leios for EBs and txs
+type HASH = Hash.Blake2b_256
 
 newtype EbHash = MkEbHash ByteString
   deriving (Eq, Ord, Show)
@@ -352,7 +357,7 @@ data LeiosEb = MkLeiosEb !(V.Vector (TxHash, BytesSize))
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
-leiosEbBytesSize:: LeiosEb -> BytesSize
+leiosEbBytesSize :: LeiosEb -> BytesSize
 leiosEbBytesSize (MkLeiosEb items) =
     majorByte + argument + (V.sum $ V.map (each . snd) items)
   where
@@ -362,6 +367,10 @@ leiosEbBytesSize (MkLeiosEb items) =
 
     -- ASSUMPTION: greater than 55 and at most 2^14
     each sz = 1 + 32 + 1 + 1 + (if sz >= 2^(8::Int) then 1 else 0)
+
+hashLeiosEb :: LeiosEb -> EbHash
+hashLeiosEb =
+  MkEbHash . Hash.hashToBytes . Hash.hashWith @HASH id . serialize' . encodeLeiosEb
 
 encodeLeiosEb :: LeiosEb -> Encoding
 encodeLeiosEb (MkLeiosEb v) =
