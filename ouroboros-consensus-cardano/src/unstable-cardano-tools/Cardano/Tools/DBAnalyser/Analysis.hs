@@ -448,7 +448,6 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
       Right newLedger -> do
         LedgerDB.forkerPush frk newLedger
         IOLike.atomically $ LedgerDB.forkerCommit frk
-        when (blockSlot blk >= slotNo) storeLedgerState
         when (blockSlot blk > slotNo) $ issueWarning blk
         when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
         LedgerDB.tryFlush initLedgerDB
@@ -457,6 +456,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
           . pointSlot
           . getTip
           =<< IOLike.atomically (LedgerDB.getImmutableTip initLedgerDB)
+        when (blockSlot blk >= slotNo) storeLedgerState
         return (continue blk, ())
       Left err -> do
         traceWith tracer $ LedgerErrorEvent (blockPoint blk) err
@@ -721,7 +721,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
 
     F.writeDataPoint outFileHandle outFormat slotDataPoint
 
-    LedgerDB.push intLedgerDB $ ExtLedgerState newLedger newHeader
+    LedgerDB.push intLedgerDB $ ExtLedgerState (prependDiffs tkLdgrSt newLedger) newHeader
     LedgerDB.tryFlush ledgerDB
    where
     rp = blockRealPoint blk
