@@ -7,6 +7,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -27,6 +28,7 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.Monad (forever)
 import           Control.ResourceRegistry
 import           Control.Tracer
+import qualified Data.Aeson as Aeson
 import           Data.Bifunctor (bimap)
 import qualified Data.ByteString.Lazy as BL
 import           Data.Functor ((<&>))
@@ -38,6 +40,7 @@ import           GHC.Generics (Generic)
 import qualified LeiosDemoLogic as LeiosLogic
 import           LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoOnlyTestNotify
+import           LeiosDemoTypes (messageLeiosFetchToObject)
 import qualified LeiosDemoTypes as Leios
 import qualified Network.Mux as Mux
 import           Network.TypedProtocol.Codec (AnyMessage (AnyMessage))
@@ -220,39 +223,74 @@ traceMaybe f tr = Tracer $ \x -> case f x of
     Nothing -> pure ()
     Just y  -> traceWith tr y
 
-maybeShowSendRecvLF :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) -> Maybe Json.LogEvent
+maybeShowSendRecvLF ::
+  Show addr =>
+  N2N.ResponderContext addr ->
+  N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) ->
+  Maybe Json.LogEvent
 maybeShowSendRecvLF ctx = \case
-    N2N.TraceRecvMsg mbTm (AnyMessage MsgLeiosBlockRequest{}) -> Just $ recv mbTm "MsgLeiosBlockRequest"
-    N2N.TraceSendMsg tm (AnyMessage (MsgLeiosBlock leiosEb)) -> Just $ send tm "MsgLeiosBlock"
-    N2N.TraceRecvMsg mbTm (AnyMessage MsgLeiosBlockTxsRequest{}) -> Just $ recv mbTm "MsgLeiosBlockTxsRequest"
-    N2N.TraceSendMsg tm (AnyMessage MsgLeiosBlockTxs{}) -> Just $ send tm "MsgLeiosBlockTxs"
-    N2N.TraceRecvMsg mbTm (AnyMessage LF.MsgDone{}) -> Just $ recv mbTm "MsgDone"
-    _ -> Nothing
-  where
-    f tm x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.mux_at = tm, Json.msg = y }
-    send tm y = f tm Json.Send y
-    recv mbTm y = case mbTm of
-        Nothing -> error $ "impossible! " ++ y
-        Just tm -> f tm Json.Recv y
+  N2N.TraceRecvMsg Nothing (AnyMessage msg) ->
+    error $ "impossible! " ++ show msg
+  N2N.TraceRecvMsg (Just tm) (AnyMessage msg) ->
+    Just $ mkEvent tm Json.Recv (Aeson.Object $ messageLeiosFetchToObject msg)
+  N2N.TraceSendMsg tm (AnyMessage msg) ->
+    Just $ mkEvent tm Json.Send (Aeson.Object $ messageLeiosFetchToObject msg)
+ where
+  mkEvent tm dir msg =
+    Json.SendRecvEvent $
+      Json.MkSendRecvEvent
+        { Json.at = Json.TBD
+        , Json.prevCount = Json.TBD
+        , Json.connectionId = responderContextToConnectionIdString ctx
+        , Json.direction = dir
+        , Json.mux_at = tm
+        , Json.msg = msg
+        }
 
-maybeShowSendRecvCS :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (CS.ChainSync h p tip) -> Maybe Json.LogEvent
+maybeShowSendRecvCS ::
+  Show addr =>
+  N2N.ResponderContext addr ->
+  N2N.TraceSendRecv (CS.ChainSync h p tip) ->
+  Maybe Json.LogEvent
 maybeShowSendRecvCS ctx = \case
-    N2N.TraceSendMsg tm (AnyMessage CS.MsgRollForward{}) -> Just $ send tm "MsgRollForward"
-    _ -> Nothing
-  where
-    send tm y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = Json.Send, Json.mux_at = tm, Json.msg = y }
+  N2N.TraceSendMsg tm (AnyMessage CS.MsgRollForward{}) -> Just $ send tm "MsgRollForward"
+  _ -> Nothing
+ where
+  send tm y =
+    Json.SendRecvEvent $
+      Json.MkSendRecvEvent
+        { Json.at = Json.TBD
+        , Json.prevCount = Json.TBD
+        , Json.connectionId = responderContextToConnectionIdString ctx
+        , Json.direction = Json.Send
+        , Json.mux_at = tm
+        , Json.msg = y
+        }
 
-maybeShowSendRecvBF :: Show addr => N2N.ResponderContext addr -> N2N.TraceSendRecv (BF.BlockFetch blk p) -> Maybe Json.LogEvent
+maybeShowSendRecvBF ::
+  Show addr =>
+  N2N.ResponderContext addr ->
+  N2N.TraceSendRecv (BF.BlockFetch blk p) ->
+  Maybe Json.LogEvent
 maybeShowSendRecvBF ctx = \case
-    N2N.TraceRecvMsg mbTm (AnyMessage BF.MsgRequestRange{}) -> Just $ recv mbTm "MsgRequestRange"
-    N2N.TraceSendMsg tm (AnyMessage BF.MsgBlock{}) -> Just $ send tm "MsgBlock"
-    _ -> Nothing
-  where
-    f tm x y = Json.SendRecvEvent $ Json.MkSendRecvEvent { Json.at = Json.TBD, Json.prevCount = Json.TBD, Json.connectionId = responderContextToConnectionIdString ctx, Json.direction = x, Json.mux_at = tm, Json.msg = y }
-    send tm y = f tm Json.Send y
-    recv mbTm y = case mbTm of
-        Nothing -> error $ "impossible! " ++ y
-        Just tm -> f tm Json.Recv y
+  N2N.TraceRecvMsg mbTm (AnyMessage BF.MsgRequestRange{}) -> Just $ recv mbTm "MsgRequestRange"
+  N2N.TraceSendMsg tm (AnyMessage BF.MsgBlock{}) -> Just $ send tm "MsgBlock"
+  _ -> Nothing
+ where
+  f tm x y =
+    Json.SendRecvEvent $
+      Json.MkSendRecvEvent
+        { Json.at = Json.TBD
+        , Json.prevCount = Json.TBD
+        , Json.connectionId = responderContextToConnectionIdString ctx
+        , Json.direction = x
+        , Json.mux_at = tm
+        , Json.msg = y
+        }
+  send tm y = f tm Json.Send y
+  recv mbTm y = case mbTm of
+    Nothing -> error $ "impossible! " ++ show y
+    Just tm -> f tm Json.Recv y
 
 -- | The ChainSync specification requires sending a rollback instruction to the
 -- intersection point right after an intersection has been negotiated. (Opening

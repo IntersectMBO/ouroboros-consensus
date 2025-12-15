@@ -1,6 +1,8 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -21,6 +23,7 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Monad.Class.MonadThrow (MonadThrow, bracket,
                      generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
+import           Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
 import           Data.ByteString (ByteString)
@@ -42,6 +45,7 @@ import           Data.Word (Word16, Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
 import           GHC.Stack (HasCallStack)
 import qualified GHC.Stack
+import           LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified Numeric
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -352,6 +356,7 @@ encodeLeiosTx (MkLeiosTx bytes) = CBOR.encodeBytes bytes
 decodeLeiosTx :: Decoder s LeiosTx
 decodeLeiosTx = MkLeiosTx <$> CBOR.decodeBytes
 
+-- TODO: Keep track of the slot of an EB?
 data LeiosEb = MkLeiosEb !(V.Vector (TxHash, BytesSize))
   deriving (Show)
 
@@ -642,6 +647,37 @@ data LeiosNotification =
 
 -----
 
+messageLeiosFetchToObject ::
+  Message (LeiosFetch LeiosPoint LeiosEb LeiosTx) st st'
+  -> Aeson.Object
+messageLeiosFetchToObject = \case
+  MsgLeiosBlockRequest (MkLeiosPoint ebSlot ebHash) ->
+      mconcat [ "kind" .= Aeson.String "MsgLeiosBlockRequest"
+              , "ebSlot" .= ebSlot
+              , "ebHash" .= prettyEbHash ebHash
+              ]
+  MsgLeiosBlock eb ->
+      mconcat [ "kind" .= Aeson.String "MsgLeiosBlock"
+              , "ebHash" .= prettyEbHash (hashLeiosEb eb)
+              , "ebBytesSize" .= Aeson.Number (fromIntegral $ leiosEbBytesSize eb)
+              ]
+  MsgLeiosBlockTxsRequest (MkLeiosPoint ebSlot ebHash) bitmaps ->
+    mconcat [ "kind" .= Aeson.String "MsgLeiosBlockTxsRequest"
+            , "ebSlot" .= ebSlot
+            , "ebHash" .= prettyEbHash ebHash
+            , "numTxs" .= Aeson.Number (fromIntegral $ sum $ map (Bits.popCount . snd) bitmaps)
+            , "bitmaps" .= map prettyBitmap bitmaps
+            ]
+
+  MsgLeiosBlockTxs txs ->
+    mconcat [ "kind" .= Aeson.String "MsgLeiosBlockTxs"
+            , "numTxs" .= Aeson.Number (fromIntegral (V.length txs))
+            , "txsBytesSize" .= Aeson.Number (fromIntegral $ V.sum $ V.map leiosTxBytesSize txs)
+            , "txs" .= Aeson.String "<elided>"
+            ]
+  MsgDone ->
+    "kind" .= Aeson.String "MsgDone"
+
 data TraceLeiosKernel =
     MkTraceLeiosKernel String
   |
@@ -652,26 +688,23 @@ data TraceLeiosKernel =
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
-    MkTraceLeiosKernel s -> fromString "msg" Aeson..= Aeson.String (fromString s)
-    TraceLeiosBlockAcquired p ->
-        let MkLeiosPoint (SlotNo ebSlot) ebHash = p
-        in
-        (fromString "kind" Aeson..= Aeson.String (fromString "LeiosBlockAcquired"))
-        <>
-        (fromString "ebHash" Aeson..= Aeson.String (fromString $ prettyEbHash ebHash))
-        <>
-        (fromString "ebSlot" Aeson..= Aeson.String (fromString $ show ebSlot))
-    TraceLeiosBlockTxsAcquired p ->
-        let MkLeiosPoint (SlotNo ebSlot) ebHash = p
-        in
-        (fromString "kind" Aeson..= Aeson.String (fromString "LeiosBlockTxsAcquired"))
-        <>
-        (fromString "ebHash" Aeson..= Aeson.String (fromString $ prettyEbHash ebHash))
-        <>
-        (fromString "ebSlot" Aeson..= Aeson.String (fromString $ show ebSlot))
+  MkTraceLeiosKernel s ->
+    "msg" .= s
+  TraceLeiosBlockAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockAcquired"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= show ebSlot
+      ]
+  TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= show ebSlot
+      ]
 
 newtype TraceLeiosPeer = MkTraceLeiosPeer String
   deriving (Show)
 
 traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
-traceLeiosPeerToObject (MkTraceLeiosPeer s) = fromString "msg" Aeson..= Aeson.String (fromString s)
+traceLeiosPeerToObject (MkTraceLeiosPeer s) = fromString "msg" .= Aeson.String (fromString s)

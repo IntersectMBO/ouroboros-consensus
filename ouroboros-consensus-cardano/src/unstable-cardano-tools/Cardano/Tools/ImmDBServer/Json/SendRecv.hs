@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Cardano.Tools.ImmDBServer.Json.SendRecv (module Cardano.Tools.ImmDBServer.Json.SendRecv) where
 
@@ -23,7 +22,7 @@ data SendRecvEvent muxtm tm cnt = MkSendRecvEvent {
         -- For 'Send', when the mini protocol began trying to put these bytes
         -- into the muxer.
       , direction    :: Direction
-      , msg          :: String
+      , msg          :: Aeson.Value
         -- ^ which message
       , connectionId :: String
         -- ^ which peer
