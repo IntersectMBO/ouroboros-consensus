@@ -6,6 +6,7 @@ import qualified Test.Ouroboros.Storage.ChainDB as ChainDB
 import qualified Test.Ouroboros.Storage.ImmutableDB as ImmutableDB
 import qualified Test.Ouroboros.Storage.LedgerDB as LedgerDB
 import qualified Test.Ouroboros.Storage.PerasCertDB as PerasCertDB
+import qualified Test.Ouroboros.Storage.PerasVoteDB as PerasVoteDB
 import qualified Test.Ouroboros.Storage.VolatileDB as VolatileDB
 import Test.Tasty (TestTree, testGroup)
 
@@ -22,4 +23,5 @@ tests =
     , LedgerDB.tests
     , ChainDB.tests
     , PerasCertDB.tests
+    , PerasVoteDB.tests
     ]

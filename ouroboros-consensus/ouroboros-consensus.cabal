@@ -801,6 +801,9 @@ test-suite storage-test
     Test.Ouroboros.Storage.PerasCertDB
     Test.Ouroboros.Storage.PerasCertDB.Model
     Test.Ouroboros.Storage.PerasCertDB.StateMachine
+    Test.Ouroboros.Storage.PerasVoteDB
+    Test.Ouroboros.Storage.PerasVoteDB.Model
+    Test.Ouroboros.Storage.PerasVoteDB.StateMachine
     Test.Ouroboros.Storage.VolatileDB
     Test.Ouroboros.Storage.VolatileDB.Mock
     Test.Ouroboros.Storage.VolatileDB.Model
@@ -813,6 +816,7 @@ test-suite storage-test
     bifunctors,
     bytestring,
     cardano-binary,
+    cardano-crypto-class,
     cardano-ledger-binary:testlib,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-slotting:{cardano-slotting, testlib},
