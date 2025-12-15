@@ -12,6 +12,7 @@ module Cardano.Tools.ImmDBServer.Diffusion (
   , run
   ) where
 
+import           Cardano.Binary (ToCBOR)
 import qualified Cardano.Tools.ImmDBServer.Json as Json
 import qualified Cardano.Tools.ImmDBServer.Json.Say as Json
 import qualified Cardano.Tools.ImmDBServer.MiniProtocols as MP
@@ -44,6 +45,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Network.Block (Serialised)
 import           Ouroboros.Network.ErrorPolicy (nullErrorPolicies)
 import           Ouroboros.Network.IOManager (withIOManager)
 import           Ouroboros.Network.Mux

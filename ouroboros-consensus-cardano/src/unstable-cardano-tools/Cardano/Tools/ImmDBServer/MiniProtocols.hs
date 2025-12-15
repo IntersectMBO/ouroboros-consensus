@@ -19,6 +19,7 @@ module Cardano.Tools.ImmDBServer.MiniProtocols (
   , immDBServer
   ) where
 
+import           Cardano.Binary (ToCBOR, serialize')
 import           Cardano.Slotting.Slot (WithOrigin (At))
 import qualified Cardano.Tools.ImmDBServer.Json as Json
 import qualified Cardano.Tools.ImmDBServer.Json.SendRecv as Json
@@ -28,8 +29,11 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.Monad (forever)
 import           Control.ResourceRegistry
 import           Control.Tracer
+import           Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import           Data.Bifunctor (bimap)
+import           Data.ByteString.Base16 as BS16
+import           Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
 import           Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
@@ -61,7 +65,8 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Network.Block (ChainUpdate (..), Tip (..))
+import           Ouroboros.Network.Block (ChainUpdate (..), Serialised,
+                     Tip (..))
 import           Ouroboros.Network.Driver (runPeer)
 import           Ouroboros.Network.KeepAlive (keepAliveServer)
 import           Ouroboros.Network.Magic (NetworkMagic)
@@ -84,6 +89,8 @@ immDBServer ::
      forall m blk addr.
      ( IOLike m
      , HasHeader blk
+     , HasHeader (Serialised blk)
+     , ToCBOR (HeaderHash (Serialised blk))
      , ShowProxy blk
      , SerialiseNodeToNodeConstraints blk
      , Show addr
@@ -268,13 +275,20 @@ maybeShowSendRecvCS ctx = \case
         }
 
 maybeShowSendRecvBF ::
-  Show addr =>
+  forall addr blk p.
+  (HasHeader blk, ToCBOR (HeaderHash blk), Show addr) =>
   N2N.ResponderContext addr ->
-  N2N.TraceSendRecv (BF.BlockFetch blk p) ->
+  N2N.TraceSendRecv (BF.BlockFetch (Serialised blk) p) ->
   Maybe Json.LogEvent
 maybeShowSendRecvBF ctx = \case
   N2N.TraceRecvMsg mbTm (AnyMessage BF.MsgRequestRange{}) -> Just $ recv mbTm "MsgRequestRange"
-  N2N.TraceSendMsg tm (AnyMessage BF.MsgBlock{}) -> Just $ send tm "MsgBlock"
+  N2N.TraceSendMsg tm (AnyMessage (BF.MsgBlock blk)) ->
+    Just $
+      send tm $
+        Aeson.object
+          [ "kind" .= Aeson.String "MsgBlock"
+          , "blockHash" .= BS8.unpack (BS16.encode $ serialize' $ blockHash blk)
+          ]
   _ -> Nothing
  where
   f tm x y =

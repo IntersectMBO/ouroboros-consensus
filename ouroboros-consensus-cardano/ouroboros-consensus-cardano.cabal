@@ -544,6 +544,7 @@ library unstable-cardano-tools
     base >=4.14 && <4.22,
     base16-bytestring >=1.0,
     bytestring >=0.10 && <0.13,
+    cardano-binary,
     cardano-crypto,
     cardano-crypto-class,
     cardano-crypto-wrapper,
