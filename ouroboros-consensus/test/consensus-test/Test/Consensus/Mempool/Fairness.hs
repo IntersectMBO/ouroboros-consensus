@@ -109,7 +109,7 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
                         , roforkerReadTables = const $ pure emptyLedgerTables
                         , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
                         , roforkerGetLedgerState = pure $ testInitLedgerWithState NoPayLoadDependentState
-                        , roforkerReadStatistics = pure Nothing
+                        , roforkerReadStatistics = pure $ Statistics 0
                         }
                 )
         }

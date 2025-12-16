@@ -541,7 +541,7 @@ newLedgerInterface initialLedger = do
                     Right $
                       ReadOnlyForker
                         { roforkerClose = pure ()
-                        , roforkerReadStatistics = pure Nothing
+                        , roforkerReadStatistics = pure $ Statistics 0
                         , roforkerReadTables = pure . (projectLedgerTables st `restrictValues'`)
                         , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
                         , roforkerGetLedgerState = pure $ forgetLedgerTables st
