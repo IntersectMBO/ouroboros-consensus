@@ -458,7 +458,7 @@ main = withStdTerminalHandles $ do
         OutEnv
           fp
           ( \a b ->
-              SomeBackend <$> mkLSMSinkArgs lsmDbPath (last $ splitDirectories fp) stdMkBlockIOFS newStdGen a b
+              SomeBackend <$> mkLSMSinkArgs lsmDbPath fp (SomeHasFS . ioHasFS @IO) stdMkBlockIOFS newStdGen a b
           )
           Nothing
           (Just lsmDbPath)

@@ -131,9 +131,8 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- encoding of the values based on the current era.
   --
   -- It returns a CRC only on backends that support it, as the InMemory backend.
-  , tablesSize :: !(m (Maybe Int))
-  -- ^ Consult the size of the ledger tables in the database. This will return
-  -- 'Nothing' in backends that do not support this operation.
+  , tablesSize :: !(m Int)
+  -- ^ Consult the size of the ledger tables in the database.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l)
 

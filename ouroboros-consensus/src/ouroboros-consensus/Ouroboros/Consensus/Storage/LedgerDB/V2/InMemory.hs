@@ -243,10 +243,10 @@ implTakeHandleSnapshot tv hasFS hint snapshotName = do
 implTablesSize ::
   IOLike m =>
   StrictTVar m (LedgerTablesHandleState l) ->
-  m (Maybe Int)
+  m Int
 implTablesSize tv = do
   hs <- readTVarIO tv
-  guardClosed hs (pure . Just . Map.size . getValuesMK . getLedgerTables)
+  guardClosed hs (pure . Map.size . getValuesMK . getLedgerTables)
 
 {-------------------------------------------------------------------------------
   Snapshots
