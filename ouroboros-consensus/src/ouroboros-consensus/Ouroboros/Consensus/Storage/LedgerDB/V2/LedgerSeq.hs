@@ -131,9 +131,8 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- encoding of the values based on the current era.
   --
   -- It returns a CRC only on backends that support it, as the InMemory backend.
-  , tablesSize :: !(m (Maybe Int))
-  -- ^ Consult the size of the ledger tables in the database. This will return
-  -- 'Nothing' in backends that do not support this operation.
+  , tablesSize :: !(m Int)
+  -- ^ Consult the size of the ledger tables in the database.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l)
 
@@ -562,7 +561,7 @@ volatileStatesBimap f g =
 -- >>> instance LedgerTablesAreTrivial LS where convertMapKind (LS p) = LS p
 -- >>> s = [LS (Point Origin), LS (Point (At (Block 0 0))), LS (Point (At (Block 1 1))), LS (Point (At (Block 2 2))), LS (Point (At (Block 3 3)))]
 -- >>> [l0s, l1s, l2s, l3s, l4s] = s
--- >>> emptyHandle = LedgerTablesHandle (pure ()) (\_ -> pure ()) (\_ -> pure (undefined, emptyHandle)) (\_ -> undefined) (\_ -> undefined) (\_ -> pure trivialLedgerTables) (\_ _ _ -> undefined) (\_ -> undefined) (pure Nothing)
+-- >>> emptyHandle = LedgerTablesHandle (pure ()) (\_ -> pure ()) (\_ -> pure (undefined, emptyHandle)) (\_ -> undefined) (\_ -> undefined) (\_ -> pure trivialLedgerTables) (\_ _ _ -> undefined) (\_ -> undefined) (pure 0)
 -- >>> [l0, l1, l2, l3, l4] = map (flip StateRef emptyHandle) s
 -- >>> instance GetTip LS where getTip (LS p) = p
 -- >>> instance Eq (LS EmptyMK) where LS p1 == LS p2 = p1 == p2

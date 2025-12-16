@@ -96,7 +96,7 @@ openMockedMempool capacityOverride tracer initialParams = do
                           , roforkerGetLedgerState = pure (forgetLedgerTables st)
                           , roforkerReadTables = \keys ->
                               pure $ projectLedgerTables st `restrictValues'` keys
-                          , roforkerReadStatistics = pure Nothing
+                          , roforkerReadStatistics = pure $ Statistics 0
                           , roforkerRangeReadTables = \_ -> pure (emptyLedgerTables, Nothing)
                           }
                   )

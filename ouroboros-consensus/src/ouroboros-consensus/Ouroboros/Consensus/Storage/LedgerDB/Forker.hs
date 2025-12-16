@@ -127,7 +127,7 @@ data Forker m l blk = Forker
   --
   -- If an empty ledger state is all you need, use 'getVolatileTip',
   -- 'getImmutableTip', or 'getPastLedgerState' instead of using a 'Forker'.
-  , forkerReadStatistics :: !(m (Maybe Statistics))
+  , forkerReadStatistics :: !(m Statistics)
   -- ^ Get statistics about the current state of the handle if possible.
   --
   -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
@@ -256,7 +256,7 @@ data ReadOnlyForker m l blk = ReadOnlyForker
   -- ^ See 'forkerRangeReadTables'.
   , roforkerGetLedgerState :: !(STM m (l EmptyMK))
   -- ^ See 'forkerGetLedgerState'
-  , roforkerReadStatistics :: !(m (Maybe Statistics))
+  , roforkerReadStatistics :: !(m Statistics)
   -- ^ See 'forkerReadStatistics'
   }
   deriving Generic
