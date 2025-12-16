@@ -532,7 +532,7 @@ library unstable-consensus-testlib
     nothunks,
     optparse-applicative,
     ouroboros-consensus,
-    ouroboros-network:{ouroboros-network, api, api-tests-lib},
+    ouroboros-network:{ouroboros-network, api, api-tests-lib, protocols-tests-lib},
     pretty-simple,
     process,
     quickcheck-instances,
