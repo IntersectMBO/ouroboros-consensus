@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -108,7 +109,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbForkers = forkers
                 , ldbNextForkerKey = nextForkerKey
                 , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
-                , ldbTracer = lgrTracer
+                , ldbTracer = tr
                 , ldbCfg = lgrConfig
                 , ldbHasFS = lgrHasFS
                 , ldbResolveBlock = getBlock
@@ -128,14 +129,14 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
     , lgrGenesis
     , lgrHasFS
     , lgrSnapshotPolicyArgs
-    , lgrTracer
     , lgrQueryBatchSize
     , lgrRegistry
     } = args
 
   v2Tracer :: Tracer m LedgerDBV2Trace
-  v2Tracer =
-    LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer
+  !v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< tr
+
+  !tr = lgrTracer args
 
   emptyF ::
     ExtLedgerState blk ValuesMK ->
@@ -734,7 +735,9 @@ implForkerClose (LDBHandle varState) forkerKey forkerEnv = do
 
   case frk of
     Nothing -> pure ()
-    Just e -> traceWith (foeTracer e) DanglingForkerClosed
+    Just e -> do
+      wc <- readTVarIO (foeWasCommitted e)
+      traceWith (foeTracer e) (ForkerClose $ if wc then ForkerWasCommitted else ForkerWasUncommitted)
 
   closeForkerEnv forkerEnv
 
@@ -757,6 +760,7 @@ newForker h ldbEnv rr (rk, st) = do
   traceWith tr ForkerOpen
   lseqVar <- newTVarIO . LedgerSeq . AS.Empty $ st
   foeCleanup <- newTVarIO $ pure ()
+  forkerCommitted <- newTVarIO False
   let forkerEnv =
         ForkerEnv
           { foeLedgerSeq = lseqVar
@@ -768,6 +772,7 @@ newForker h ldbEnv rr (rk, st) = do
           , foeCleanup
           , foeLedgerDbLock = ldbOpenHandlesLock ldbEnv
           , foeLedgerDbToClose = ldbToClose ldbEnv
+          , foeWasCommitted = forkerCommitted
           }
   atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
   pure $

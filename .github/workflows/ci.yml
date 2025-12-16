@@ -113,7 +113,7 @@ jobs:
     # Otherwise, we could restore a cache from a previous month, which makes
     # caches grow unboundedly.
     - name: "Restore cache for cabal-store"
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       id: restore-cabal-store
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
@@ -133,7 +133,7 @@ jobs:
     #
     # See https://github.com/actions/cache/tree/v3/save#always-save-cache.
     - name: "Save cache for cabal-store"
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       id: save-cabal-store
       if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-store.outputs.cache-hit != 'true'
       with:
@@ -167,7 +167,7 @@ jobs:
         cp $(cabal list-bin mempool-bench) mempool-bench
 
     - name: Upload benchmark executables
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
         path: mempool-bench
@@ -195,7 +195,7 @@ jobs:
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
         && matrix.ghc=='9.10.2'
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: haddocks
         path: haddocks.tgz
@@ -220,7 +220,7 @@ jobs:
         use-sodium-vrf: false
 
     - name: Download benchmark executables
-      uses: actions/download-artifact@v6
+      uses: actions/download-artifact@v7
       with:
         name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
 
@@ -244,7 +244,7 @@ jobs:
     # run on the `main` branch. If we run this workflow in the context of a PR,
     # then we will save the same results we just restored.
     - name: Cache benchmark baseline results
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: baseline-mempool-benchmarks.csv
         key:  baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}-${{ github.run_id }}
@@ -258,7 +258,7 @@ jobs:
     # TODO: this will be necessary when we publish the benchmarks results.
     # - name: Upload mempool benchmark baseline results
     #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    #   uses: actions/upload-artifact@v5
+    #   uses: actions/upload-artifact@v6
     #   with:
     #     name: baseline-mempool-benchmarks
     #     path: baseline-mempool-benchmarks.csv
@@ -308,7 +308,7 @@ jobs:
           cp -r --no-preserve=mode,ownership result/ static/pdfs
 
       - name: Download haddocks
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: haddocks
 

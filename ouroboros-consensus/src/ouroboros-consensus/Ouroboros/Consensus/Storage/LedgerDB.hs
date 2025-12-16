@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -92,10 +93,13 @@ openDB
                 (Proxy @blk)
                 res
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
-                (LedgerDBSnapshotEvent >$< lgrTracer args)
+                snapTracer
                 (lgrHasFS args)
         let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
         doOpenDB args initDb snapManager stream replayGoal
+       where
+        !tr = lgrTracer args
+        !snapTracer = LedgerDBSnapshotEvent >$< tr
 
 {-------------------------------------------------------------------------------
   Opening a LedgerDB

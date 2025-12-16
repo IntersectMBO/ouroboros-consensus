@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -163,6 +164,7 @@ import Ouroboros.Consensus.Util.Args (Complete)
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
+import qualified System.FS.API as FS
 
 snapshotManager ::
   ( IOLike m
@@ -174,8 +176,11 @@ snapshotManager ::
 snapshotManager args =
   snapshotManager'
     (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
-    (LedgerDBSnapshotEvent >$< lgrTracer args)
+    snapTracer
     (SnapshotsFS (lgrHasFS args))
+ where
+  !tr = lgrTracer args
+  !snapTracer = LedgerDBSnapshotEvent >$< tr
 
 snapshotManager' ::
   ( IOLike m
@@ -293,7 +298,9 @@ loadSnapshot ::
     (SnapshotFailure blk)
     m
     ((DbChangelog' blk, ResourceKey m, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
-loadSnapshot tracer bArgs@(SomeBackendArgs bss) ccfg fs@(SnapshotsFS fs') reg s = do
+loadSnapshot tracer bArgs@(SomeBackendArgs bss) ccfg fs@(SnapshotsFS fs'@(SomeHasFS hfs)) reg s = do
+  fileEx <- Trans.lift $ FS.doesFileExist hfs (snapshotToDirPath s)
+  Monad.when fileEx $ throwError $ InitFailureRead ReadSnapshotIsLegacy
   (extLedgerSt, checksumAsRead) <-
     withExceptT (InitFailureRead . ReadSnapshotFailed) $
       readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)

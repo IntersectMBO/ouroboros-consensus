@@ -771,7 +771,15 @@ withTransferrableReadAccess h rr f = getEnv h $ \ldbEnv -> do
           -- the forker was opened.
           join $ readTVarIO tv
       )
-  unsafeRunReadLocked (acquireAtTarget ldbEnv f >>= traverse (newForker h ldbEnv (rk, tv) rr))
+  unsafeRunReadLocked
+    ( acquireAtTarget ldbEnv f
+        >>= \case
+          Left err -> do
+            ReadLocked $ void $ release rk
+            pure (Left err)
+          Right chlog -> do
+            Right <$> newForker h ldbEnv (rk, tv) rr chlog
+    )
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
@@ -852,6 +860,7 @@ newForker h ldbEnv (rk, releaseVar) rr dblog =
             dblogVar <- newTVarIO dblog
             forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
             forkerMVar <- newMVar $ Left (ldbLock ldbEnv, ldbBackingStore ldbEnv, rr)
+            forkerCommitted <- newTVarIO False
             let forkerEnv =
                   ForkerEnv
                     { foeBackingStoreValueHandle = forkerMVar
@@ -859,6 +868,7 @@ newForker h ldbEnv (rk, releaseVar) rr dblog =
                     , foeSwitchVar = ldbChangelog ldbEnv
                     , foeTracer =
                         LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
+                    , foeWasCommitted = forkerCommitted
                     }
             atomically $ do
               -- Note that we add the forkerEnv to the 'ldbForkers' so that an exception
@@ -921,5 +931,7 @@ implForkerClose (LDBHandle varState) forkerKey env = do
             (\m -> Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey m)
   case frk of
     Nothing -> pure ()
-    Just e -> traceWith (foeTracer e) DanglingForkerClosed
+    Just e -> do
+      wc <- readTVarIO (foeWasCommitted e)
+      traceWith (foeTracer e) (ForkerClose $ if wc then ForkerWasCommitted else ForkerWasUncommitted)
   closeForkerEnv env
