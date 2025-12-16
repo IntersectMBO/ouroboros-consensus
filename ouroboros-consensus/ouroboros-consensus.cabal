@@ -382,6 +382,7 @@ library ouroboros-consensus-lsm
   build-depends:
     base >=4.14 && <4.22,
     blockio,
+    bytestring,
     containers >=0.5 && <0.8,
     contra-tracer,
     filepath,
