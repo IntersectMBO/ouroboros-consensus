@@ -16,7 +16,7 @@ data Direction = Recv | Send
 data SendRecvEvent muxtm tm cnt = MkSendRecvEvent {
         at           :: tm
         -- ^ when
-      , mux_at       :: muxtm
+      , mux_at       :: Maybe muxtm
         -- ^ For 'Recv', when these bytes left the demuxer.
         --
         -- For 'Send', when the mini protocol began trying to put these bytes

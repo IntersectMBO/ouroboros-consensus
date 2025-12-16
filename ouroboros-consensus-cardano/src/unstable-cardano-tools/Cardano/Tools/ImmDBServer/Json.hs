@@ -48,8 +48,8 @@ mkUltimateTracer = do
             BL8.putStrLn $ Aeson.encode ev { Say.at = renderTime tm }
         SendRecvEvent ev -> modifyMVar_ lock $ \cntrs -> do
             tm <- getCurrentTime
-            let MkGet n cntrs' = Map.alterF updateCounter ev { SendRecv.mux_at = () } cntrs
-                mux_at' = renderTime $ tmf $ SendRecv.mux_at ev
+            let MkGet n cntrs' = Map.alterF updateCounter ev { SendRecv.mux_at = Just () } cntrs
+                mux_at' = renderTime . tmf <$> SendRecv.mux_at ev
             BL8.putStrLn $ Aeson.encode ev { SendRecv.at = renderTime tm, SendRecv.mux_at = mux_at', prevCount = n }
             pure cntrs'
   where

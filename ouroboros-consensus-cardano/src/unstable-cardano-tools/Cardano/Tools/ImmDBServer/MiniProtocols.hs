@@ -28,8 +28,11 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.Monad (forever)
 import           Control.ResourceRegistry
 import           Control.Tracer
+import           Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import           Data.Bifunctor (bimap)
+import qualified Data.ByteString.Base16 as BS16
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
 import           Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
@@ -46,7 +49,7 @@ import qualified Network.Mux as Mux
 import           Network.TypedProtocol.Codec (AnyMessage (AnyMessage))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
-                     (blockFetchServer')
+                     (TraceBlockFetchServerEvent (..), blockFetchServer')
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (chainSyncServerForFollower)
 import           Ouroboros.Consensus.Network.NodeToNode (Codecs (..))
@@ -184,7 +187,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
                 withRegistry
               $ runPeer (traceMaybe (maybeShowSendRecvBF ctx) tracer) cBlockFetchCodecSerialised channel
               . blockFetchServerPeer
-              . blockFetchServer immDB ChainDB.getSerialisedBlockWithPoint
+              . blockFetchServer (traceMaybe (mapBFEvent ctx) tracer) immDB ChainDB.getSerialisedBlockWithPoint
             txSubmissionProt =
                 -- never reply, there is no timeout
                 MiniProtocolCb $ \_ctx _channel -> forever $ threadDelay 10
@@ -243,7 +246,7 @@ maybeShowSendRecvLF ctx = \case
         , Json.prevCount = Json.TBD
         , Json.connectionId = responderContextToConnectionIdString ctx
         , Json.direction = dir
-        , Json.mux_at = tm
+        , Json.mux_at = Just tm
         , Json.msg = msg
         }
 
@@ -263,7 +266,7 @@ maybeShowSendRecvCS ctx = \case
         , Json.prevCount = Json.TBD
         , Json.connectionId = responderContextToConnectionIdString ctx
         , Json.direction = Json.Send
-        , Json.mux_at = tm
+        , Json.mux_at = Just tm
         , Json.msg = y
         }
 
@@ -274,7 +277,7 @@ maybeShowSendRecvBF ::
   Maybe Json.LogEvent
 maybeShowSendRecvBF ctx = \case
   N2N.TraceRecvMsg mbTm (AnyMessage BF.MsgRequestRange{}) -> Just $ recv mbTm "MsgRequestRange"
-  N2N.TraceSendMsg tm (AnyMessage BF.MsgBlock{}) -> Just $ send tm "MsgBlock"
+  N2N.TraceSendMsg _ (AnyMessage BF.MsgBlock{}) -> Nothing -- Replaced by 'mapBFEvent' in other tracer
   _ -> Nothing
  where
   f tm x y =
@@ -284,13 +287,40 @@ maybeShowSendRecvBF ctx = \case
         , Json.prevCount = Json.TBD
         , Json.connectionId = responderContextToConnectionIdString ctx
         , Json.direction = x
-        , Json.mux_at = tm
+        , Json.mux_at = Just tm
         , Json.msg = y
         }
-  send tm y = f tm Json.Send y
   recv mbTm y = case mbTm of
     Nothing -> error $ "impossible! " ++ show y
     Just tm -> f tm Json.Recv y
+
+-- NOTE: We trace the sending of a block with its hash here as have access to
+-- the point. In the TraceSendRecv we'd only have access to the blk which is a
+-- `Serialised blk` in case of the immdb server.
+mapBFEvent ::
+  forall blk addr.
+  SerialiseNodeToNodeConstraints blk =>
+  Show addr =>
+  N2N.ResponderContext addr ->
+  TraceBlockFetchServerEvent blk ->
+  Maybe Json.LogEvent
+mapBFEvent ctx = \case
+  TraceBlockFetchServerSendBlock p ->
+    Just . Json.SendRecvEvent $
+      Json.MkSendRecvEvent
+        { Json.at = Json.TBD
+        , Json.prevCount = Json.TBD
+        , Json.connectionId = responderContextToConnectionIdString ctx
+        , Json.direction = Json.Send
+        , Json.mux_at = Nothing
+        , Json.msg =
+            Aeson.object
+              [ "kind" .= Aeson.String "MsgBlock"
+              , "blockHash" .= case pointHash p of
+                                GenesisHash -> "origin"
+                                BlockHash h -> BS8.unpack . BS16.encode $ toRawHash (Proxy @blk) h
+              ]
+        }
 
 -- | The ChainSync specification requires sending a rollback instruction to the
 -- intersection point right after an intersection has been negotiated. (Opening
@@ -397,12 +427,13 @@ chainSyncServer immDB blockComponent getSlotDelay registry = ChainSyncServer $ d
 
 blockFetchServer ::
      forall m blk a. (IOLike m, StandardHash blk, Typeable blk)
-  => ImmutableDB m blk
+  => Tracer m (TraceBlockFetchServerEvent blk)
+  -> ImmutableDB m blk
   -> BlockComponent blk (ChainDB.WithPoint blk a)
   -> ResourceRegistry m
   -> BlockFetchServer a (Point blk) m ()
-blockFetchServer immDB blockComponent registry =
-    blockFetchServer' nullTracer stream
+blockFetchServer tracer immDB blockComponent registry =
+    blockFetchServer' tracer stream
   where
     stream from to =
             bimap convertError convertIterator
