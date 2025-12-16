@@ -266,6 +266,14 @@ data Cmd blk it flr
 -- something we are testing in 'prop_trace', see
 -- 'invalidBlockNeverValidatedAgain'.
 
+-- = No tests for waitForImmutableBlock
+--
+-- We do not test 'ChainDB.waitForImmutableBlock', because this test is
+-- sequential, and 'waitForImmutableBlock', which uses STM 'retry' and
+-- 'check', would block indefinitely.
+-- The core behaviour of 'waitForImmutableBlock' is tested in the ImmutableDB
+-- q-s-m test via testing 'ImmutableDB.getBlockAtOrAfterPoint'.
+
 deriving instance SOP.Generic (Cmd blk it flr)
 deriving instance SOP.HasDatatypeInfo (Cmd blk it flr)
 

@@ -405,6 +405,16 @@ data ChainDB m blk = ChainDB
   , getPerasCertSnapshot :: STM m (PerasCertSnapshot blk)
   -- ^ Get the Peras certificate snapshot, containing the currently-known
   -- certificates boosting blocks newer than the immutable tip.
+  , waitForImmutableBlock :: RealPoint blk -> m (Maybe (RealPoint blk))
+  -- ^ wait until the immutable tip gets past the given slot:
+  --   - returns the block when it becomes the immutable tip,
+  --     reading it from disk;
+  --   - if no block was found at the target slot, returns the immutable block
+  --     at the next filled slot;
+  --   - returns 'Nothing' if no block was found on disk at all.
+  --
+  -- Currently, the only use-case of this function is to verify the immutability
+  -- of a block from the big ledger peer snapshot file.
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --
