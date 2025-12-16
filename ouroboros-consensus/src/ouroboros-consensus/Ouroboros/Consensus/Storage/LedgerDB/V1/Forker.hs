@@ -274,7 +274,7 @@ implForkerGetLedgerState env = current <$> readTVar (foeChangelog env)
 implForkerReadStatistics ::
   (IOLike m, HasLedgerTables l, GetTip l) =>
   ForkerEnv m l blk ->
-  m (Maybe Forker.Statistics)
+  m Forker.Statistics
 implForkerReadStatistics env = do
   traceWith (foeTracer env) ForkerReadStatistics
   dblog <- readTVarIO (foeChangelog env)
@@ -303,7 +303,7 @@ implForkerReadStatistics env = do
             ltmap
               (K2 . getSum . numDeletes . getSeqDiffMK)
               diffs
-      pure . Just $
+      pure $
         Forker.Statistics
           { ledgerTableSize = n + nInserts - nDeletes
           }

@@ -420,7 +420,7 @@ withPrivateTipForker ldb =
 getTipStatistics ::
   IOLike m =>
   LedgerDB m l blk ->
-  m (Maybe Statistics)
+  m Statistics
 getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
 
 getReadOnlyForker ::
