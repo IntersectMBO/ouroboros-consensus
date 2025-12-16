@@ -2,6 +2,15 @@
 
 # Changelog entries
 
+<a id='changelog-0.28.0.3'></a>
+## 0.28.0.3 -- 2025-12-16
+
+### Patch
+
+- Fix leaky read lock acquisition that could lead to whole node deadlock.
+
+- Force snapshot tracer to avoid retaining the Genesis state.
+
 <a id='changelog-0.28.0.2'></a>
 ## 0.28.0.2 -- 2025-10-29
 
