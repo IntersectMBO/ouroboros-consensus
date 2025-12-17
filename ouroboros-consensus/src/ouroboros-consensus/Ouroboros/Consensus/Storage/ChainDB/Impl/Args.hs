@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -235,7 +236,7 @@ updateTracer ::
   Tracer m (TraceEvent blk) ->
   ChainDbArgs f m blk ->
   ChainDbArgs f m blk
-updateTracer trcr args =
+updateTracer !trcr args =
   args
     { cdbImmDbArgs = (cdbImmDbArgs args){ImmutableDB.immTracer = TraceImmutableDBEvent >$< trcr}
     , cdbVolDbArgs = (cdbVolDbArgs args){VolatileDB.volTracer = TraceVolatileDBEvent >$< trcr}
@@ -244,6 +245,8 @@ updateTracer trcr args =
         (cdbPerasCertDbArgs args){PerasCertDB.pcdbaTracer = TracePerasCertDbEvent >$< trcr}
     , cdbsArgs = (cdbsArgs args){cdbsTracer = trcr}
     }
+  where
+    !tr = TraceLedgerDBEvent >$< trcr
 
 updateSnapshotPolicyArgs ::
   SnapshotPolicyArgs ->
