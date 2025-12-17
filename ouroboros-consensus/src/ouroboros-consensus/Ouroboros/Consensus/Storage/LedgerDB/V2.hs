@@ -134,9 +134,9 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
     } = args
 
   v2Tracer :: Tracer m LedgerDBV2Trace
-  !v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< tr
+  v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< tr
 
-  !tr = lgrTracer args
+  tr = lgrTracer args
 
   emptyF ::
     ExtLedgerState blk ValuesMK ->
