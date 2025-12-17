@@ -178,13 +178,13 @@ newLSMLedgerTablesHandle tracer (origResKey, t) = do
   let !h = LedgerTablesHandle
             { close = implClose tv
             , duplicate = \rr -> implDuplicate rr t tracer
-            , read = implRead t
-            , readRange = implReadRange t
-            , readAll = implReadAll t
-            , pushDiffs = implPushDiffs t
-            , takeHandleSnapshot = implTakeHandleSnapshot t
+            , read = \l lt -> implRead t l lt
+            , readRange = \l m -> implReadRange t l m
+            , readAll = \l -> implReadAll t l
+            , pushDiffs = \l d -> implPushDiffs t l d
+            , takeHandleSnapshot = \l s -> implTakeHandleSnapshot t l s
             , tablesSize = pure Nothing
-            , transfer = atomically . writeTVar tv
+            , transfer = \rk -> atomically (writeTVar tv rk)
             }
   pure h
 

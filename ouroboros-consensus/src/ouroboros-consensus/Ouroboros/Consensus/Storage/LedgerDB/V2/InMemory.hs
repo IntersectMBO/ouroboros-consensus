@@ -110,14 +110,14 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   pure
     LedgerTablesHandle
       { close = implClose tracer tv
-      , duplicate = implDuplicate tracer tv someFS
-      , read = implRead tv
-      , readRange = implReadRange tv
-      , readAll = implReadAll tv
-      , pushDiffs = implPushDiffs tv
-      , takeHandleSnapshot = implTakeHandleSnapshot tv hasFS
+      , duplicate = \rr -> implDuplicate tracer tv someFS rr
+      , read = \l lt -> implRead tv l lt
+      , readRange = \l m -> implReadRange tv l m
+      , readAll = \l -> implReadAll tv l
+      , pushDiffs = \l d -> implPushDiffs tv l d
+      , takeHandleSnapshot = \l s -> implTakeHandleSnapshot tv hasFS l s
       , tablesSize = implTablesSize tv
-      , transfer = const (pure ())
+      , transfer = \_rk -> pure ()
       }
 
 {-# INLINE implClose #-}
