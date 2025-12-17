@@ -54,7 +54,6 @@ data ForkerEnv m l blk = ForkerEnv
   , foeLedgerDbRegistry :: !(ResourceRegistry m)
   -- ^ The registry in the LedgerDB to move handles to in case we commit the
   -- forker.
-  , foeLedgerDbToClose :: !(StrictTVar m [LedgerSeq m l])
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
   , foeResourceRegistry :: !(ResourceRegistry m)
@@ -172,6 +171,7 @@ implForkerCommit env = do
                 _ AS.:< closeOld' -> Just (LedgerSeq closeOld')
               transferCommitted = do
                 closeLedgerSeq (LedgerSeq toCloseForker)
+                whenJust ldbToClose closeLedgerSeq
 
                 -- All the other remaining handles are transferred to the LedgerDB registry
                 keys <- transferRegistry foeResourceRegistry foeLedgerDbRegistry
@@ -179,7 +179,6 @@ implForkerCommit env = do
 
           pure ((transferCommitted, ldbToClose), LedgerSeq newdb)
       )
-  whenJust ldbToClose (modifyTVar foeLedgerDbToClose . (:))
   writeTVar foeCleanup transfer
   writeTVar foeWasCommitted True
  where
@@ -189,7 +188,6 @@ implForkerCommit env = do
     , foeResourceRegistry
     , foeLedgerDbRegistry
     , foeCleanup
-    , foeLedgerDbToClose
     , foeWasCommitted
     } = env
 
