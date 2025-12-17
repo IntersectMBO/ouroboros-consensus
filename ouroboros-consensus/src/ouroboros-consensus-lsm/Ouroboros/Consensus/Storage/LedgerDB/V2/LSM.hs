@@ -207,7 +207,7 @@ implDuplicate rr t tracer = do
       rr
       (\_ -> LSM.duplicate t)
       ( \t' -> do
-          -- traceWith tracer TraceLedgerTablesHandleClose
+          traceWith tracer TraceLedgerTablesHandleClose
           LSM.closeTable t'
       )
   !h <- newLSMLedgerTablesHandle tracer (rk, table)
