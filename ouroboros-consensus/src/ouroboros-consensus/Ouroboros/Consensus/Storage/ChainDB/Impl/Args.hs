@@ -240,7 +240,7 @@ updateTracer !trcr args =
   args
     { cdbImmDbArgs = (cdbImmDbArgs args){ImmutableDB.immTracer = TraceImmutableDBEvent >$< trcr}
     , cdbVolDbArgs = (cdbVolDbArgs args){VolatileDB.volTracer = TraceVolatileDBEvent >$< trcr}
-    , cdbLgrDbArgs = (cdbLgrDbArgs args){LedgerDB.lgrTracer = TraceLedgerDBEvent >$< trcr}
+    , cdbLgrDbArgs = (cdbLgrDbArgs args){LedgerDB.lgrTracer = tr }
     , cdbPerasCertDbArgs =
         (cdbPerasCertDbArgs args){PerasCertDB.pcdbaTracer = TracePerasCertDbEvent >$< trcr}
     , cdbsArgs = (cdbsArgs args){cdbsTracer = trcr}
