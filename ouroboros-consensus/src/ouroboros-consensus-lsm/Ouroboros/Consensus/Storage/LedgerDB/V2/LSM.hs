@@ -202,7 +202,7 @@ implDuplicate ::
   Tracer m LedgerDBV2Trace ->
   m (ResourceKey m, LedgerTablesHandle m l)
 implDuplicate rr t tracer = do
-  (rk, !table) <-
+  (rk, table) <-
     allocate
       rr
       (\_ -> LSM.duplicate t)
