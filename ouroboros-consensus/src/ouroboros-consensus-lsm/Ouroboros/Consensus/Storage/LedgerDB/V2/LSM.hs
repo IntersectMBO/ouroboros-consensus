@@ -219,7 +219,8 @@ implDuplicate rr t tracer = do
           traceWith tracer TraceLedgerTablesHandleClose
           LSM.closeTable t'
       )
-  (rk,) <$> newLSMLedgerTablesHandle tracer (rk, table)
+  !h <- newLSMLedgerTablesHandle tracer (rk, table)
+  pure (rk, h)
 
 implRead ::
   forall m l.
