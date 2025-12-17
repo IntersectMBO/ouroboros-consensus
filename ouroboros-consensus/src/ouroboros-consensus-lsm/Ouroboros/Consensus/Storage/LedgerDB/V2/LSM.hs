@@ -175,8 +175,7 @@ newLSMLedgerTablesHandle ::
 newLSMLedgerTablesHandle tracer (origResKey, t) = do
   traceWith tracer TraceLedgerTablesHandleCreate
   tv <- newTVarIO origResKey
-  pure
-    LedgerTablesHandle
+  let !h = LedgerTablesHandle
       { close = implClose tv
       , duplicate = \rr -> implDuplicate rr t tracer
       , read = implRead t
@@ -187,6 +186,8 @@ newLSMLedgerTablesHandle tracer (origResKey, t) = do
       , tablesSize = pure Nothing
       , transfer = atomically . writeTVar tv
       }
+  pure h
+
 
 {-# INLINE implClose #-}
 {-# INLINE implDuplicate #-}
