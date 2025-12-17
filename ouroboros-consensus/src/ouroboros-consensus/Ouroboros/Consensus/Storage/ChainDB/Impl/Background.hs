@@ -42,7 +42,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   ) where
 
 import Control.Exception (assert)
-import Control.Monad (forM_, forever, void)
+import Control.Monad (forM_, forever, void, when)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -369,6 +369,7 @@ ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
                   cdbLedgerDB
                   ((,now) <$> prevSnapTime)
                   blocksSinceLast
+              when (ntBlocksSinceLastSnap == 0) $ traceMarkerIO "Took snapshot"
               atomically $ modifyTVar varSt $ \st ->
                 st
                   { ldbtsBlocksSinceLastSnapshot =

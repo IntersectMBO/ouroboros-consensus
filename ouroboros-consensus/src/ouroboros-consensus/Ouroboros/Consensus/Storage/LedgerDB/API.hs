@@ -552,6 +552,7 @@ initialize
       traceWith (TraceReplayStartEvent >$< replayTracer) ReplayFromGenesis
       let replayTracer'' = decorateReplayTracerWithStart (Point Origin) replayTracer'
       initDb <- initFromGenesis
+      traceMarkerIO "Genesis loaded"
       eDB <-
         runExceptT $
           replayStartingWith
@@ -597,6 +598,7 @@ initialize
           traceWith snapTracer . InvalidSnapshot s $ err
           tryNewestFirst (acc . InitFailure s err) ss
         Right (initDb, pt) -> do
+          traceMarkerIO "Snapshot loaded"
           let pt' = realPointToPoint pt
           traceWith (TraceReplayStartEvent >$< replayTracer) (ReplayFromSnapshot s (ReplayStart pt'))
           let replayTracer'' = decorateReplayTracerWithStart pt' replayTracer'
