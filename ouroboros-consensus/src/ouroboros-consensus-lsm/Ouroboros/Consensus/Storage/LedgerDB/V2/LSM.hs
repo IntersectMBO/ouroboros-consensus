@@ -188,15 +188,6 @@ newLSMLedgerTablesHandle tracer (origResKey, t) = do
             }
   pure h
 
-
-{-# INLINE implClose #-}
-{-# INLINE implDuplicate #-}
-{-# INLINE implRead #-}
-{-# INLINE implReadRange #-}
-{-# INLINE implReadAll #-}
-{-# INLINE implPushDiffs #-}
-{-# INLINE implTakeHandleSnapshot #-}
-
 implClose :: (HasCallStack, IOLike m) => StrictTVar m (ResourceKey m) -> m ()
 implClose tv =
   Monad.void $ release =<< readTVarIO tv
