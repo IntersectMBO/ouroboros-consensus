@@ -1,11 +1,15 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE TypeApplications #-}
 
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
-import           Cardano.Binary (enforceSize)
+import           Cardano.Binary (enforceSize, serialize')
+import qualified Cardano.Crypto.Hash as Hash
 import           Cardano.Slotting.Slot (SlotNo (SlotNo))
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -16,8 +20,10 @@ import           Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import           Control.Monad.Class.MonadThrow (MonadThrow, bracket, generalBracket)
+import           Control.Monad.Class.MonadThrow (MonadThrow, bracket,
+                     generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
+import           Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
 import           Data.ByteString (ByteString)
@@ -39,6 +45,7 @@ import           Data.Word (Word16, Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
 import           GHC.Stack (HasCallStack)
 import qualified GHC.Stack
+import           LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified Numeric
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -59,6 +66,9 @@ fromIntegralEbId (MkEbId x) = fromIntegral x
 
 newtype PeerId a = MkPeerId a
   deriving (Eq, Ord)
+
+-- Hash algorithm used in leios for EBs and txs
+type HASH = Hash.Blake2b_256
 
 newtype EbHash = MkEbHash ByteString
   deriving (Eq, Ord, Show)
@@ -143,7 +153,7 @@ prettyBitmap (idx, bitmap) =
 
 data LeiosPeerVars m = MkLeiosPeerVars {
     -- written to only by the LeiosNotify client (TODO and eviction)
-    offerings :: !(MVar m (Set EbId, Set EbId))
+    offerings      :: !(MVar m (Set EbId, Set EbId))
   ,
     -- | written to by the fetch logic and the LeiosFetch client
     --
@@ -171,11 +181,11 @@ newLeiosPeerVars = do
 data LeiosEbBodies = MkLeiosEbBodies {
     acquiredEbBodies :: !(Set EbId)
   ,
-    missingEbBodies :: !(Map EbId BytesSize)
+    missingEbBodies  :: !(Map EbId BytesSize)
   ,
-    ebPoints :: !(IntMap {- SlotNo -} (Map EbHash EbId))
+    ebPoints         :: !(IntMap {- SlotNo -} (Map EbHash EbId))
   ,
-    ebPointsInverse :: !(IntMap {- EbId -} EbHash)
+    ebPointsInverse  :: !(IntMap {- EbId -} EbHash)
   }
 
 emptyLeiosEbBodies :: LeiosEbBodies
@@ -191,7 +201,7 @@ prettyLeiosEbBodies x =
   unwords
   [
         "LeiosEbBodies:"
-      , 
+      ,
         "acquiredEbBodies = " ++ show (Set.size acquiredEbBodies)
       ,
         "missingEbBodies = " ++ show (Map.size missingEbBodies)
@@ -204,16 +214,16 @@ prettyLeiosEbBodies x =
       } = x
 
 data LeiosOutstanding pid = MkLeiosOutstanding {
-    requestedEbPeers :: !(Map EbId (Set (PeerId pid)))
+    requestedEbPeers          :: !(Map EbId (Set (PeerId pid)))
   ,
-    requestedTxPeers :: !(Map TxHash (Set (PeerId pid)))
+    requestedTxPeers          :: !(Map TxHash (Set (PeerId pid)))
   ,
     requestedBytesSizePerPeer :: !(Map (PeerId pid) BytesSize)
   ,
-    requestedBytesSize :: !BytesSize
+    requestedBytesSize        :: !BytesSize
   ,
     -- TODO this might be far too big for the heap
-    cachedTxs :: !(Map TxHash BytesSize)
+    cachedTxs                 :: !(Map TxHash BytesSize)
   ,
     -- | The txs that still need to be sourced
     --
@@ -228,12 +238,12 @@ data LeiosOutstanding pid = MkLeiosOutstanding {
     --   will never be a no-op (except maybe in a race?).
     --
     -- TODO this is far too big for the heap
-    missingEbTxs :: !(Map EbId (IntMap (TxHash, BytesSize)))
+    missingEbTxs              :: !(Map EbId (IntMap (TxHash, BytesSize)))
   ,
     -- TODO this is far too big for the heap
     --
     -- inverse of missingEbTxs
-    txOffsetss :: !(Map TxHash (Map EbId Int))
+    txOffsetss                :: !(Map TxHash (Map EbId Int))
   ,
     -- | How many txs of each EB are not yet in the @ebTxs@ table
     --
@@ -255,13 +265,13 @@ data LeiosOutstanding pid = MkLeiosOutstanding {
     --
     -- * The EbTx is in 'toCopy' (and therefore not in 'missingEbTxs'). The
     --   handler shoulder also remove it from 'toCopy'.
-    blockingPerEb :: !(Map EbId Int)
+    blockingPerEb             :: !(Map EbId Int)
   ,
-    toCopy :: !(Map EbId (IntMap BytesSize))
+    toCopy                    :: !(Map EbId (IntMap BytesSize))
   ,
-    toCopyBytesSize :: !BytesSize
+    toCopyBytesSize           :: !BytesSize
   ,
-    toCopyCount :: !Int
+    toCopyCount               :: !Int
   }
 
 emptyLeiosOutstanding :: LeiosOutstanding pid
@@ -282,7 +292,7 @@ emptyLeiosOutstanding =
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
   unlines $ map ("    [leios] " ++) $
-  [ 
+  [
         "requestedEbPeers = " ++ unwords (map prettyEbId (Map.keys requestedEbPeers))
       ,
         "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
@@ -346,12 +356,13 @@ encodeLeiosTx (MkLeiosTx bytes) = CBOR.encodeBytes bytes
 decodeLeiosTx :: Decoder s LeiosTx
 decodeLeiosTx = MkLeiosTx <$> CBOR.decodeBytes
 
+-- TODO: Keep track of the slot of an EB?
 data LeiosEb = MkLeiosEb !(V.Vector (TxHash, BytesSize))
   deriving (Show)
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
-leiosEbBytesSize:: LeiosEb -> BytesSize
+leiosEbBytesSize :: LeiosEb -> BytesSize
 leiosEbBytesSize (MkLeiosEb items) =
     majorByte + argument + (V.sum $ V.map (each . snd) items)
   where
@@ -361,6 +372,10 @@ leiosEbBytesSize (MkLeiosEb items) =
 
     -- ASSUMPTION: greater than 55 and at most 2^14
     each sz = 1 + 32 + 1 + 1 + (if sz >= 2^(8::Int) then 1 else 0)
+
+hashLeiosEb :: LeiosEb -> EbHash
+hashLeiosEb =
+  MkEbHash . Hash.hashToBytes . Hash.hashWith @HASH id . serialize' . encodeLeiosEb
 
 encodeLeiosEb :: LeiosEb -> Encoding
 encodeLeiosEb (MkLeiosEb v) =
@@ -567,31 +582,31 @@ sql_attach_memTxPoints =
 -- request?
 data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv {
     -- | At most this many outstanding bytes requested from all peers together
-    maxRequestedBytesSize :: BytesSize
+    maxRequestedBytesSize        :: BytesSize
   ,
     -- | At most this many outstanding bytes requested from each peer
     maxRequestedBytesSizePerPeer :: BytesSize
   ,
     -- | At most this many outstanding bytes per request
-    maxRequestBytesSize :: BytesSize
+    maxRequestBytesSize          :: BytesSize
   ,
     -- | At most this many outstanding requests for each EB body
-    maxRequestsPerEb :: Int
+    maxRequestsPerEb             :: Int
   ,
     -- | At most this many outstanding requests for each individual tx
-    maxRequestsPerTx :: Int
+    maxRequestsPerTx             :: Int
   ,
     -- | At most this many bytes are scheduled to be copied from the TxCache to the EbStore
-    maxToCopyBytesSize :: BytesSize
+    maxToCopyBytesSize           :: BytesSize
   ,
     -- | At most this many txs are scheduled to be copied from the TxCache to the EbStore
-    maxToCopyCount :: Int
+    maxToCopyCount               :: Int
   ,
     -- | @maximumIngressQueue@ for LeiosNotify
-    maxLeiosNotifyIngressQueue :: BytesSize
+    maxLeiosNotifyIngressQueue   :: BytesSize
   ,
     -- | @maximumIngressQueue@ for LeiosFetch
-    maxLeiosFetchIngressQueue :: BytesSize
+    maxLeiosFetchIngressQueue    :: BytesSize
   }
 
 demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
@@ -632,6 +647,37 @@ data LeiosNotification =
 
 -----
 
+messageLeiosFetchToObject ::
+  Message (LeiosFetch LeiosPoint LeiosEb LeiosTx) st st'
+  -> Aeson.Object
+messageLeiosFetchToObject = \case
+  MsgLeiosBlockRequest (MkLeiosPoint ebSlot ebHash) ->
+      mconcat [ "kind" .= Aeson.String "MsgLeiosBlockRequest"
+              , "ebSlot" .= ebSlot
+              , "ebHash" .= prettyEbHash ebHash
+              ]
+  MsgLeiosBlock eb ->
+      mconcat [ "kind" .= Aeson.String "MsgLeiosBlock"
+              , "ebHash" .= prettyEbHash (hashLeiosEb eb)
+              , "ebBytesSize" .= Aeson.Number (fromIntegral $ leiosEbBytesSize eb)
+              ]
+  MsgLeiosBlockTxsRequest (MkLeiosPoint ebSlot ebHash) bitmaps ->
+    mconcat [ "kind" .= Aeson.String "MsgLeiosBlockTxsRequest"
+            , "ebSlot" .= ebSlot
+            , "ebHash" .= prettyEbHash ebHash
+            , "numTxs" .= Aeson.Number (fromIntegral $ sum $ map (Bits.popCount . snd) bitmaps)
+            , "bitmaps" .= map prettyBitmap bitmaps
+            ]
+
+  MsgLeiosBlockTxs txs ->
+    mconcat [ "kind" .= Aeson.String "MsgLeiosBlockTxs"
+            , "numTxs" .= Aeson.Number (fromIntegral (V.length txs))
+            , "txsBytesSize" .= Aeson.Number (fromIntegral $ V.sum $ V.map leiosTxBytesSize txs)
+            , "txs" .= Aeson.String "<elided>"
+            ]
+  MsgDone ->
+    "kind" .= Aeson.String "MsgDone"
+
 data TraceLeiosKernel =
     MkTraceLeiosKernel String
   |
@@ -642,26 +688,23 @@ data TraceLeiosKernel =
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
-    MkTraceLeiosKernel s -> fromString "msg" Aeson..= Aeson.String (fromString s)
-    TraceLeiosBlockAcquired p ->
-        let MkLeiosPoint (SlotNo ebSlot) ebHash = p
-        in
-        (fromString "kind" Aeson..= Aeson.String (fromString "LeiosBlockAcquired"))
-        <>
-        (fromString "ebHash" Aeson..= Aeson.String (fromString $ prettyEbHash ebHash))
-        <>
-        (fromString "ebSlot" Aeson..= Aeson.String (fromString $ show ebSlot))
-    TraceLeiosBlockTxsAcquired p ->
-        let MkLeiosPoint (SlotNo ebSlot) ebHash = p
-        in
-        (fromString "kind" Aeson..= Aeson.String (fromString "LeiosBlockTxsAcquired"))
-        <>
-        (fromString "ebHash" Aeson..= Aeson.String (fromString $ prettyEbHash ebHash))
-        <>
-        (fromString "ebSlot" Aeson..= Aeson.String (fromString $ show ebSlot))
+  MkTraceLeiosKernel s ->
+    "msg" .= s
+  TraceLeiosBlockAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockAcquired"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= show ebSlot
+      ]
+  TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= show ebSlot
+      ]
 
 newtype TraceLeiosPeer = MkTraceLeiosPeer String
   deriving (Show)
 
 traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
-traceLeiosPeerToObject (MkTraceLeiosPeer s) = fromString "msg" Aeson..= Aeson.String (fromString s)
+traceLeiosPeerToObject (MkTraceLeiosPeer s) = fromString "msg" .= Aeson.String (fromString s)

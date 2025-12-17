@@ -12,21 +12,21 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module LeiosDemoOnlyTestFetch
-  ( LeiosFetch (..)
-  , SingLeiosFetch (..)
+module LeiosDemoOnlyTestFetch (
+    LeiosFetch (..)
   , Message (..)
+  , SingLeiosFetch (..)
   , leiosFetchMiniProtocolNum
-  -- *
+    -- *
   , byteLimitsLeiosFetch
-  , timeLimitsLeiosFetch
   , codecLeiosFetch
   , codecLeiosFetchId
-  -- *
+  , timeLimitsLeiosFetch
+    -- *
   , LeiosFetchClientPeer
   , LeiosFetchClientPeerPipelined
-  , LeiosFetchServerPeer
   , LeiosFetchRequestHandler (..)
+  , LeiosFetchServerPeer
   , SomeLeiosFetchJob (..)
   , leiosFetchClientPeer
   , leiosFetchClientPeerPipelined
@@ -224,7 +224,7 @@ encodeLeiosFetch encodeP encodeEb encodeTx = encode
            CBOR.encodeListLen 2
         <> CBOR.encodeWord 0
         <> encodeP p
-      MsgLeiosBlock x -> 
+      MsgLeiosBlock x ->
            CBOR.encodeListLen 2
         <> CBOR.encodeWord 1
         <> encodeEb x
@@ -525,7 +525,7 @@ leiosFetchClientPeerPipelined tryNext =
         Receiver (LeiosFetch point eb tx) AsClient (StBusy st') StIdle m C
     receiver stop k =
         ReceiverAwait ReflServerAgency $ \msg -> case msg of
-            MsgLeiosBlock{} -> handler stop k msg
+            MsgLeiosBlock{}    -> handler stop k msg
             MsgLeiosBlockTxs{} -> handler stop k msg
 
     handler ::

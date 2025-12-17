@@ -7,13 +7,18 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Cardano.Tools.ImmDBServer.Diffusion (run, LeiosSchedule (..)) where
+module Cardano.Tools.ImmDBServer.Diffusion (
+    LeiosSchedule (..)
+  , run
+  ) where
 
-import qualified Data.Aeson as Aeson
+import qualified Cardano.Tools.ImmDBServer.Json as Json
+import qualified Cardano.Tools.ImmDBServer.Json.Say as Json
 import qualified Cardano.Tools.ImmDBServer.MiniProtocols as MP
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import           Control.ResourceRegistry
 import           Control.Tracer
+import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as BL
 import           Data.Functor.Contravariant ((>$<))
@@ -23,6 +28,9 @@ import qualified Data.Text.Encoding as T
 import           Data.Void (Void)
 import           Data.Word (Word32, Word64)
 import           GHC.Generics (Generic)
+import qualified LeiosDemoLogic as LeiosLogic
+import qualified LeiosDemoOnlyTestFetch as LF
+import qualified LeiosDemoTypes as Leios
 import qualified Network.Mux as Mux
 import           Network.Socket (SockAddr (..))
 import           Ouroboros.Consensus.Block
@@ -49,13 +57,6 @@ import           System.Exit (die)
 import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types (MountPoint (MountPoint))
 import           System.FS.IO (ioHasFS)
-
-import qualified Cardano.Tools.ImmDBServer.Json as Json
-import qualified Cardano.Tools.ImmDBServer.Json.Say as Json
-import qualified LeiosDemoLogic as LeiosLogic
-import qualified LeiosDemoTypes as Leios
-
-import qualified LeiosDemoOnlyTestFetch as LF
 
 -- | Glue code for using just the bits from the Diffusion Layer that we need in
 -- this context.
