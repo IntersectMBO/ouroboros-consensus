@@ -172,7 +172,7 @@ newLSMLedgerTablesHandle ::
   Tracer m LedgerDBV2Trace ->
   (ResourceKey m, UTxOTable m) ->
   m (LedgerTablesHandle m l)
-newLSMLedgerTablesHandle tracer (origResKey, t) =
+newLSMLedgerTablesHandle !tracer (origResKey, t) =
   encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $ do
     tv <- newTVarIO origResKey
     pure
