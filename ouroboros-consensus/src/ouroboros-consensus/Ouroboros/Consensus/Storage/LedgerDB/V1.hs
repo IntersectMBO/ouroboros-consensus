@@ -105,7 +105,6 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
             (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
             lgrHasFS'
             lgrRegistry
-    , abortLedgerDbInit = \(_, r, _) -> void $ release r
     , initReapplyBlock = \cfg blk (chlog, r, bstore) -> do
         !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
         -- It's OK to flush without a lock here, since the `LedgerDB` has not
