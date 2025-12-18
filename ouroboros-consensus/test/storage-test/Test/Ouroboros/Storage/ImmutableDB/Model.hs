@@ -35,6 +35,7 @@ module Test.Ouroboros.Storage.ImmutableDB.Model
   , reopenModel
   , streamAllModel
   , streamModel
+  , getBlockAtOrAfterPointModel
   ) where
 
 import qualified Codec.CBOR.Write as CBOR
@@ -46,6 +47,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (catMaybes, listToMaybe)
 import qualified Data.Text as Text
 import Data.TreeDiff
 import Data.Word (Word64)
@@ -671,3 +673,25 @@ iteratorHasNextModel itId DBModel{dbmIterators} =
 iteratorCloseModel :: IteratorId -> DBModel blk -> DBModel blk
 iteratorCloseModel itId dbm@DBModel{dbmIterators} =
   dbm{dbmIterators = Map.delete itId dbmIterators}
+
+-- | Get the block at the target slot, or, if the target slot is empty,
+--   find the next block.
+--
+--   If a slot is occupied by an EBB only, return the EBB. If the slot is
+--   occupied by both an EBB and a normal block, check the hashes to disambiguate,
+--   and return the first block (i.e. the EBB) if the target hash does not match.
+getBlockAtOrAfterPointModel ::
+  forall blk. HasHeader blk => RealPoint blk -> DBModel blk -> Maybe (RealPoint blk)
+getBlockAtOrAfterPointModel (RealPoint targetSlot targetHash) DBModel{dbmSlots} =
+  let occupiedSlots = catMaybes . map getBlock . Map.toList $ dbmSlots
+      atOrAfterTarget = dropWhile ((< targetSlot) . fst) occupiedSlots
+   in (\(s, b) -> RealPoint s (blockHash b)) <$> listToMaybe atOrAfterTarget
+ where
+  getBlock :: (SlotNo, InSlot blk) -> Maybe (SlotNo, blk)
+  getBlock = \case
+    (slotNo, InSlotBlock b) -> Just (slotNo, b)
+    (slotNo, InSlotEBB ebb) -> Just (slotNo, ebb)
+    (slotNo, InSlotBoth ebb b)
+      | blockHash ebb == targetHash -> Just (slotNo, ebb)
+      | blockHash b == targetHash -> Just (slotNo, b)
+      | otherwise -> Just (slotNo, ebb)
