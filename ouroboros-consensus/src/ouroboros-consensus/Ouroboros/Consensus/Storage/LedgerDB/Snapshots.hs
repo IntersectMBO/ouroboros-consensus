@@ -171,7 +171,7 @@ data SnapshotFailure blk
     -- changed.
     InitFailureRead ReadSnapshotErr
   | -- | This snapshot is too recent (ahead of the tip of the immutable chain)
-    InitFailureTooRecent (RealPoint blk)
+    InitFailureTooRecent DiskSnapshot (Point blk)
   | -- | This snapshot was of the ledger state at genesis, even though we never
     -- take snapshots at genesis, so this is unexpected.
     InitFailureGenesis

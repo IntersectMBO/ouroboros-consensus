@@ -89,7 +89,6 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
             (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
             lgrHasFS
             res
-    , abortLedgerDbInit = closeLedgerSeq
     , initReapplyBlock = \a b c -> do
         (x, y) <- reapplyThenPush lgrRegistry a b c
         x
