@@ -94,6 +94,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
@@ -553,7 +554,7 @@ data ChainSelMessage m blk
     ChainSelAddBlock !(BlockToAdd m blk)
   | -- | Add a Peras certificate
     ChainSelAddPerasCert
-      !(ValidatedPerasCert blk)
+      !(WithArrivalTime (ValidatedPerasCert blk))
       -- | Used for 'AddPerasCertPromise'.
       !(StrictTMVar m ())
   | -- | Reprocess blocks that have been postponed by the LoE.
@@ -606,10 +607,10 @@ addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish
 
 -- | Add a Peras certificate to the background queue.
 addPerasCertToQueue ::
-  (IOLike m, StandardHash blk) =>
+  IOLike m =>
   Tracer m (TraceAddPerasCertEvent blk) ->
   ChainSelQueue m blk ->
-  ValidatedPerasCert blk ->
+  WithArrivalTime (ValidatedPerasCert blk) ->
   m (AddPerasCertPromise m)
 addPerasCertToQueue tracer ChainSelQueue{varChainSelQueue} cert = do
   varProcessed <- newEmptyTMVarIO
