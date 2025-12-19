@@ -37,11 +37,15 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
   ( objectDiffusionInbound
   )
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+  ( ObjectDiffusionInboundStateView (..)
+  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   ( ObjectPoolReader (..)
   , ObjectPoolWriter (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound (objectDiffusionOutbound)
+import qualified Ouroboros.Consensus.MiniProtocol.Util.Idling as Idling
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadDelay (..)
@@ -283,6 +287,11 @@ prop_smoke_object_diffusion
         controlMessage <- uncheckedNewTVarM Continue
 
         let
+          inboundState =
+            ObjectDiffusionInboundStateView
+              { odisvIdling = Idling.noIdling
+              }
+
           inbound =
             objectDiffusionInbound
               tracer
@@ -293,6 +302,7 @@ prop_smoke_object_diffusion
               inboundPoolWriter
               nodeToNodeVersion
               (readTVar controlMessage)
+              inboundState
 
           outbound =
             objectDiffusionOutbound
