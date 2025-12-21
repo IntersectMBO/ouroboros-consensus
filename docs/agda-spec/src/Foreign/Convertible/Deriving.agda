@@ -1,8 +1,8 @@
 module Foreign.Convertible.Deriving where
 
 open import Level
-open import MetaPrelude
-open import Meta
+open import Meta.Prelude
+open import Meta.Init
 
 import Data.List as L
 import Data.List.NonEmpty as NE
@@ -29,7 +29,7 @@ open import Class.Traversable
 open import Class.Show
 open import Class.MonadReader
 
-open import Tactic.Substitute
+open import Reflection.Utils.Substitute
 open import Foreign.Convertible
 open import Foreign.HaskellTypes
 open import Foreign.HaskellTypes.Deriving
@@ -37,16 +37,9 @@ open import Foreign.HaskellTypes.Deriving
 private instance
   _ = Functor-M {TC}
 
--- TODO: move to agda-stdlib-meta
-liftTC : ∀ {a} {A : Set a} → R.TC A → TC A
-liftTC m _ = m
-
 private
 
   open MonadReader ⦃...⦄
-
-  variable
-    A B C : Set
 
   TyViewTel = List (Abs (Arg Type))
 
@@ -139,7 +132,7 @@ doPatternLambda hole = patternLambda =<< initTCEnvWithGoal hole
 -- Deriving a Convertible instance. Usage
 --   unquoteDecl iName = deriveConvertible iName (quote AgdaTy) (quote HsTy)
 deriveConvertible : Name → Name → Name → R.TC ⊤
-deriveConvertible instName agdaName hsName = initUnquoteWithGoal ⦃ defaultTCOptions ⦄ (agda-sort (lit 0)) do
+deriveConvertible instName agdaName hsName = initUnquoteWithGoal ⦃ defaultTCOptions ⦄ (sort (lit 0)) do
   agdaDef ← getDefinition agdaName
   hsDef   ← getDefinition hsName
   -- instName ← freshName $ "Convertible" S.++ show hsName
