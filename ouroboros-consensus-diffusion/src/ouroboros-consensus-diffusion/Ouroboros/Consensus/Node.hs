@@ -2,6 +2,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
@@ -64,10 +65,28 @@ module Ouroboros.Consensus.Node
   ) where
 
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Cardano.Network.Diffusion as Cardano.Diffusion
 import Cardano.Network.Diffusion.Configuration (ChainSyncIdleTimeout (..))
+import qualified Cardano.Network.Diffusion.Configuration as Diffusion
 import qualified Cardano.Network.Diffusion.Policies as Cardano.Diffusion
 import qualified Cardano.Network.LedgerPeerConsensusInterface as Cardano
+import Cardano.Network.NodeToClient
+  ( ConnectionId
+  , LocalAddress
+  , NodeToClientVersionData (..)
+  , combineVersions
+  , simpleSingletonVersions
+  )
+import Cardano.Network.NodeToNode
+  ( DiffusionMode (..)
+  , ExceptionInHandler (..)
+  , MiniProtocolParameters
+  , NodeToNodeVersionData (..)
+  , RemoteAddress
+  , blockFetchPipeliningMax
+  , defaultMiniProtocolParameters
+  )
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers (..))
 import Cardano.Network.PeerSelection.Churn (ChurnMode (..))
 import qualified Codec.CBOR.Decoding as CBOR
@@ -75,11 +94,12 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (NFData)
-import Control.Monad (forever, forM_, when)
+import Control.Monad (forM_, when)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer, contramap, traceWith)
+import Data.Aeson (ToJSON (..))
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor (void)
 import Data.Functor.Contravariant (Predicate (..))
@@ -91,7 +111,6 @@ import Data.Maybe (fromMaybe, isNothing)
 import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
-
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
@@ -136,24 +155,6 @@ import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
-
-import qualified Cardano.Network.Diffusion.Configuration as Diffusion
-import Cardano.Network.NodeToClient
-  ( ConnectionId
-  , LocalAddress
-  , NodeToClientVersionData (..)
-  , combineVersions
-  , simpleSingletonVersions
-  )
-import Cardano.Network.NodeToNode
-  ( DiffusionMode (..)
-  , ExceptionInHandler (..)
-  , MiniProtocolParameters
-  , NodeToNodeVersionData (..)
-  , RemoteAddress
-  , blockFetchPipeliningMax
-  , defaultMiniProtocolParameters
-  )
 import Ouroboros.Network.BlockFetch
   ( BlockFetchConfiguration (..)
   )
@@ -165,6 +166,7 @@ import Ouroboros.Network.PeerSelection.Governor.Types
   )
 import Ouroboros.Network.PeerSelection.LedgerPeers
   ( LedgerPeersConsensusInterface (..)
+  , SomeHashableBlock (..)
   )
 import Ouroboros.Network.PeerSelection.PeerMetric
   ( PeerMetrics
@@ -245,7 +247,6 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   -- ^ Enabled experimental features
   -- | Version of the tx-submission logic to run.
   , rnTxSubmissionLogicVersion :: TxSubmissionLogicVersion
-
   , rnTxSubmissionInitDelay :: TxSubmissionInitDelay
   }
 
@@ -407,7 +408,11 @@ pure []
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
 run ::
   forall blk.
-  RunNode blk =>
+  ( RunNode blk
+  , ToCBOR (HeaderHash blk)
+  , FromCBOR (HeaderHash blk)
+  , ToJSON (HeaderHash blk)
+  ) =>
   RunNodeArgs IO RemoteAddress LocalAddress blk ->
   StdRunNodeArgs IO blk ->
   IO ()
@@ -486,6 +491,9 @@ runWith ::
   , NetworkIO m
   , NetworkAddr addrNTN
   , Show addrNTN
+  , ToCBOR (HeaderHash blk)
+  , FromCBOR (HeaderHash blk)
+  , ToJSON (HeaderHash blk)
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -618,11 +626,18 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                           { lpGetLatestSlot = getImmTipSlot nodeKernel
                           , lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger nodeKernel (const True)
                           , lpExtraAPI =
-                              -- TODO
                               Cardano.LedgerPeersConsensusInterface
                                 { Cardano.readFetchMode = getFetchMode nodeKernel
                                 , Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState nodeKernel
-                                , Cardano.getBlockHash = \_slotNo k -> k $ forever (pure ())
+                                , Cardano.getBlockHash = \targetBlock k -> do
+                                    case targetBlock of
+                                      GenesisPoint -> k (pure Nothing)
+                                      (BlockPoint targetSlot (SomeHashableBlock _ targetHash)) -> do
+                                        let targetPoint = RealPoint targetSlot (undefined targetHash)
+                                        ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
+                                          Nothing -> k (pure Nothing)
+                                          Just (RealPoint actualSlot actualHash) ->
+                                            k (pure . Just $ BlockPoint actualSlot (SomeHashableBlock (Proxy @blk) actualHash))
                                 , Cardano.updateOutboundConnectionsState =
                                     let varOcs = getOutboundConnectionsState nodeKernel
                                      in \newOcs -> do
