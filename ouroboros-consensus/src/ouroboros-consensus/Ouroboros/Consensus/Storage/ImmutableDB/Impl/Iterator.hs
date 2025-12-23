@@ -8,7 +8,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
   ( CurrentChunkInfo (..)
@@ -768,7 +767,7 @@ seekBlockForwards
   OpenState{currentIndex}
   immutableTip = go 0
    where
-    go !emptySlotsPassed targetPoint@(RealPoint !slot hash) =
+    go !emptySlotsPassed targetPoint@(RealPoint slot hash) =
       runExceptT (getSlotInfo chunkInfo currentIndex (NotOrigin immutableTip) targetPoint) >>= \case
         Left NewerThanTip{} ->
           -- Stop if the target slot is newer then tip
@@ -785,7 +784,7 @@ seekBlockForwards
           case hashes of
             -- always return the first found block, even if it's an EBB
             (actualHash NE.:| _) ->
-              pure . Right . Found emptySlotsPassed $ RealPoint @blk (realPointSlot targetPoint) actualHash
+              pure . Right . Found emptySlotsPassed $ RealPoint (realPointSlot targetPoint) actualHash
         Right{} ->
           pure . Right $ Found emptySlotsPassed targetPoint
 
