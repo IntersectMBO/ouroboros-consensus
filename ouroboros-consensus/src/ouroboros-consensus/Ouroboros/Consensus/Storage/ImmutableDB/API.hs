@@ -29,6 +29,8 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , tipToAnchor
   , tipToPoint
   , tipToRealPoint
+  , SeekBlockResult (..)
+  , SeekBlockError (..)
 
     -- * Errors
   , ApiMisuse (..)
@@ -178,12 +180,12 @@ data ImmutableDB m blk = ImmutableDB
   , getBlockAtOrAfterPoint_ ::
       HasCallStack =>
       (RealPoint blk) ->
-      m (Maybe (RealPoint blk))
+      m (Either SeekBlockError (SeekBlockResult blk))
   -- ^ Query the ImmutableDB for a block at the target slot. If the target slot is empty,
   --   return the block at the next occupied slot.
   --
   --   Output:
-  --   - returns 'Nothing' if the target slot is younger than the immutable tip
+  --   - returns 'Left' if the target slot is younger than the immutable tip
   --   - returns the block at the target slot if it's occupied
   --   - returns the block at the next occupied slot if the target slot is empty
   --
@@ -331,6 +333,19 @@ instance Ord (CompareTip blk) where
     compareIsEBB IsEBB IsNotEBB = LT
     compareIsEBB IsNotEBB IsEBB = GT
     compareIsEBB _ _ = EQ
+
+-- | Error type for 'seekBlockAtOrAfterPoint'
+data SeekBlockError
+  = -- | The requested slot is not yet immutable
+    TargetNewerThanTip
+  | -- | ImmutableDB is empty
+    TipIsOrigin
+  deriving (Show, Eq)
+
+-- | Result type for 'seekBlockAtOrAfterPoint'
+data SeekBlockResult blk
+  = Found (RealPoint blk)
+  deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Errors
@@ -496,7 +511,7 @@ getBlockAtOrAfterPoint ::
   HasCallStack =>
   ImmutableDB m blk ->
   (RealPoint blk) ->
-  m (Maybe (RealPoint blk))
+  m (Either SeekBlockError (SeekBlockResult blk))
 getBlockAtOrAfterPoint = getBlockAtOrAfterPoint_
 
 {-------------------------------------------------------------------------------

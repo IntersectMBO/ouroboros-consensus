@@ -304,16 +304,23 @@ getPerasCertSnapshot CDB{..} = PerasCertDB.getCertSnapshot cdbPerasCertDB
 --   and then return:
 --   - the block at the target slot if there is a block in the immutable DB at that slot;
 --   - the block from the next occupied slot.
+--
+-- This function will never return 'Left' as it will block until it could
+-- return a 'Right'. However, the type has to be an 'Either' to avoid a call
+-- to 'error'.
 waitForImmutableBlock ::
-  forall blk m. IOLike m => ChainDbEnv m blk -> RealPoint blk -> m (Maybe (RealPoint blk))
+  forall blk m.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  RealPoint blk ->
+  m (Either ImmutableDB.SeekBlockError (ImmutableDB.SeekBlockResult blk))
 waitForImmutableBlock CDB{cdbImmutableDB} targetRealPoint = do
   -- first, wait until the target slot is older than the immutable tip
-  _ <- atomically $ do
+  _ <- atomically $
     ImmutableDB.getTip cdbImmutableDB >>= \case
       Origin -> retry
-      At tip -> do
+      At tip ->
         check (ImmutableDB.tipSlotNo tip >= realPointSlot targetRealPoint)
-        pure (ImmutableDB.tipToRealPoint tip)
   -- then, query the DB for a point at or directly following the target slot
   ImmutableDB.getBlockAtOrAfterPoint cdbImmutableDB targetRealPoint
 

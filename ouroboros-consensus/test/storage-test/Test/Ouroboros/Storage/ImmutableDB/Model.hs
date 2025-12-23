@@ -47,7 +47,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes, listToMaybe)
+import Data.Maybe (catMaybes)
 import qualified Data.Text as Text
 import Data.TreeDiff
 import Data.Word (Word64)
@@ -681,11 +681,14 @@ iteratorCloseModel itId dbm@DBModel{dbmIterators} =
 --   occupied by both an EBB and a normal block, check the hashes to disambiguate,
 --   and return the first block (i.e. the EBB) if the target hash does not match.
 getBlockAtOrAfterPointModel ::
-  forall blk. HasHeader blk => RealPoint blk -> DBModel blk -> Maybe (RealPoint blk)
+  forall blk.
+  HasHeader blk => RealPoint blk -> DBModel blk -> (Either SeekBlockError (SeekBlockResult blk))
 getBlockAtOrAfterPointModel (RealPoint targetSlot targetHash) DBModel{dbmSlots} =
   let occupiedSlots = catMaybes . map getBlock . Map.toList $ dbmSlots
       atOrAfterTarget = dropWhile ((< targetSlot) . fst) occupiedSlots
-   in (\(s, b) -> RealPoint s (blockHash b)) <$> listToMaybe atOrAfterTarget
+   in case atOrAfterTarget of
+        [] -> if null dbmSlots then Left TipIsOrigin else Left TargetNewerThanTip
+        ((s, b) : _) -> Right . Found $ RealPoint s (blockHash b)
  where
   getBlock :: (SlotNo, InSlot blk) -> Maybe (SlotNo, blk)
   getBlock = \case

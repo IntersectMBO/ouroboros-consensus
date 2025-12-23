@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -8,7 +7,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
   ( CurrentChunkInfo (..)
@@ -18,7 +16,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
   , getBlockAtOrAfterPointImpl
   ) where
 
-import Cardano.Prelude (Natural, forceElemsToWHNF)
+import Cardano.Prelude (forceElemsToWHNF)
 import Cardano.Slotting.Slot (WithOrigin (..))
 import qualified Codec.CBOR.Read as CBOR
 import Control.Monad (unless, void, when)
@@ -747,17 +745,7 @@ extractBlockComponent
         throwUnexpectedFailure $
           ParseError (fsPathChunkFile chunk) pt err
 
--- | Error type for 'seekBlockForwards'
-data SeekBlockError
-  = TargetNewerThanTip
-  deriving (Show, Eq)
-
--- | Result type for 'seekBlockForwards'
-data SeekBlockResult blk
-  = Found Natural (RealPoint blk)
-  deriving (Show, Eq)
-
--- | Find a filled slot, starting from the target slot and going forwards in the immutable DB
+-- | Find a filled slot, starting from the target slot and going forwards in the ImmutableDB.
 --
 --   Because of EBBs, the new resulting slot may be filled with two blocks. This implementation
 --   returns the first one, even if it's an EBB. On mainnet, no new EBBs will be produced; hence,
@@ -776,9 +764,9 @@ seekBlockForwards ::
 seekBlockForwards
   ImmutableDBEnv{chunkInfo}
   OpenState{currentIndex}
-  immutableTip = go 0
+  immutableTip = go
    where
-    go !emptySlotsPassed targetPoint@(RealPoint !slot hash) =
+    go targetPoint@(RealPoint slot hash) =
       runExceptT (getSlotInfo chunkInfo currentIndex (NotOrigin immutableTip) targetPoint) >>= \case
         Left NewerThanTip{} ->
           -- Stop if the target slot is newer then tip
@@ -786,18 +774,18 @@ seekBlockForwards
         Left (EmptySlot{}) -> do
           if slot < (realPointSlot . tipToRealPoint $ immutableTip)
             -- otherwise, skip this slot and repeat with the next one
-            then go (emptySlotsPassed + 1) (RealPoint (slot + 1) hash)
+            then go (RealPoint (slot + 1) hash)
             -- we're past the immutable tip and did not find any blocks, so we can only return the tip.
             -- Note that this case is impossible, as the we would not get 'EmptySlot' from 'getSlotInfo',
             -- but we still return the tip for completeness' sake.
-            else pure . Right $ Found emptySlotsPassed (tipToRealPoint immutableTip)
+            else pure . Right $ Found (tipToRealPoint immutableTip)
         Left (WrongHash _ hashes) ->
           case hashes of
             -- always return the first found block, even if it's an EBB
             (actualHash NE.:| _) ->
-              pure . Right . Found emptySlotsPassed $ RealPoint @blk (realPointSlot targetPoint) actualHash
+              pure . Right . Found $ RealPoint (realPointSlot targetPoint) actualHash
         Right{} ->
-          pure . Right $ Found emptySlotsPassed targetPoint
+          pure . Right $ Found targetPoint
 
 -- | Query the immutable DB to for a block at the target slot. If the target slot is empty,
 --   return the block at the next occupied slot.
@@ -811,14 +799,9 @@ getBlockAtOrAfterPointImpl ::
   ) =>
   ImmutableDBEnv m blk ->
   (RealPoint blk) ->
-  m (Maybe (RealPoint blk))
+  m (Either SeekBlockError (SeekBlockResult blk))
 getBlockAtOrAfterPointImpl dbEnv targetPoint =
   withOpenState dbEnv $ \_hasFS dbState@OpenState{currentTip} -> do
     case currentTip of
-      Origin -> pure Nothing
-      At tip -> do
-        seekBlockForwards dbEnv dbState tip targetPoint >>= \case
-          Left TargetNewerThanTip ->
-            -- requested a point that is not immutable yet
-            pure Nothing
-          Right (Found _ point) -> pure . Just $ point
+      Origin -> pure . Left $ TipIsOrigin
+      At tip -> seekBlockForwards dbEnv dbState tip targetPoint
