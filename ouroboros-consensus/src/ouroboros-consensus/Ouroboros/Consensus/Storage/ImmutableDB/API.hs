@@ -29,6 +29,8 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , tipToAnchor
   , tipToPoint
   , tipToRealPoint
+  , SeekBlockResult (..)
+  , SeekBlockError (..)
 
     -- * Errors
   , ApiMisuse (..)
@@ -59,6 +61,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , withDB
   ) where
 
+import Cardano.Prelude (Natural)
 import qualified Codec.CBOR.Read as CBOR
 import Control.Monad.Except (ExceptT (..), runExceptT, throwError)
 import Control.Monad.Trans.Class (lift)
@@ -178,12 +181,12 @@ data ImmutableDB m blk = ImmutableDB
   , getBlockAtOrAfterPoint_ ::
       HasCallStack =>
       (RealPoint blk) ->
-      m (Maybe (RealPoint blk))
+      m (Either SeekBlockError (SeekBlockResult blk))
   -- ^ Query the ImmutableDB for a block at the target slot. If the target slot is empty,
   --   return the block at the next occupied slot.
   --
   --   Output:
-  --   - returns 'Nothing' if the target slot is younger than the immutable tip
+  --   - returns 'Left' if the target slot is younger than the immutable tip
   --   - returns the block at the target slot if it's occupied
   --   - returns the block at the next occupied slot if the target slot is empty
   --
@@ -331,6 +334,17 @@ instance Ord (CompareTip blk) where
     compareIsEBB IsEBB IsNotEBB = LT
     compareIsEBB IsNotEBB IsEBB = GT
     compareIsEBB _ _ = EQ
+
+-- | Error type for 'seekBlockAtOrAfterPoint'
+data SeekBlockError
+  = TargetNewerThanTip
+  | TipIsOrigin
+  deriving (Show, Eq)
+
+-- | Result type for 'seekBlockAtOrAfterPoint'
+data SeekBlockResult blk
+  = Found Natural (RealPoint blk)
+  deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Errors
@@ -496,7 +510,7 @@ getBlockAtOrAfterPoint ::
   HasCallStack =>
   ImmutableDB m blk ->
   (RealPoint blk) ->
-  m (Maybe (RealPoint blk))
+  m (Either SeekBlockError (SeekBlockResult blk))
 getBlockAtOrAfterPoint = getBlockAtOrAfterPoint_
 
 {-------------------------------------------------------------------------------

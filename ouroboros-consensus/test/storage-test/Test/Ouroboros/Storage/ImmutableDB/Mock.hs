@@ -40,7 +40,7 @@ openDBMock chunkInfo ccfg = do
       , appendBlock_ = updateE_ . appendBlockModel
       , stream_ =
           updateEE ...: \_rr bc s e -> fmap (fmap (first (iterator bc))) . streamModel s e
-      , getBlockAtOrAfterPoint_ = const (pure Nothing)
+      , getBlockAtOrAfterPoint_ = const (pure . Left $ TipIsOrigin) -- disabled in this model
       }
    where
     iterator :: BlockComponent blk b -> IteratorId -> Iterator m blk b

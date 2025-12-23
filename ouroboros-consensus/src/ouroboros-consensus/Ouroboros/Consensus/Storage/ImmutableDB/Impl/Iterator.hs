@@ -18,7 +18,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
   , getBlockAtOrAfterPointImpl
   ) where
 
-import Cardano.Prelude (Natural, forceElemsToWHNF)
+import Cardano.Prelude (forceElemsToWHNF)
 import Cardano.Slotting.Slot (WithOrigin (..))
 import qualified Codec.CBOR.Read as CBOR
 import Control.Monad (unless, void, when)
@@ -747,16 +747,6 @@ extractBlockComponent
         throwUnexpectedFailure $
           ParseError (fsPathChunkFile chunk) pt err
 
--- | Error type for 'seekBlockForwards'
-data SeekBlockError
-  = TargetNewerThanTip
-  deriving (Show, Eq)
-
--- | Result type for 'seekBlockForwards'
-data SeekBlockResult blk
-  = Found Natural (RealPoint blk)
-  deriving (Show, Eq)
-
 -- | Find a filled slot, starting from the target slot and going forwards in the immutable DB
 --
 --   Because of EBBs, the new resulting slot may be filled with two blocks. This implementation
@@ -811,14 +801,9 @@ getBlockAtOrAfterPointImpl ::
   ) =>
   ImmutableDBEnv m blk ->
   (RealPoint blk) ->
-  m (Maybe (RealPoint blk))
+  m (Either SeekBlockError (SeekBlockResult blk))
 getBlockAtOrAfterPointImpl dbEnv targetPoint =
   withOpenState dbEnv $ \_hasFS dbState@OpenState{currentTip} -> do
     case currentTip of
-      Origin -> pure Nothing
-      At tip -> do
-        seekBlockForwards dbEnv dbState tip targetPoint >>= \case
-          Left TargetNewerThanTip ->
-            -- requested a point that is not immutable yet
-            pure Nothing
-          Right (Found _ point) -> pure . Just $ point
+      Origin -> pure . Left $ TipIsOrigin
+      At tip -> seekBlockForwards dbEnv dbState tip targetPoint
