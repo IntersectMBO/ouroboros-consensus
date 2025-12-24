@@ -132,6 +132,7 @@ library
     Ouroboros.Consensus.Shelley.ShelleyHFC
 
   build-depends:
+    aeson,
     base >=4.14 && <4.22,
     base-deriving-via,
     bytestring >=0.10 && <0.13,
@@ -590,7 +591,7 @@ library unstable-cardano-tools
     ouroboros-consensus-cardano,
     ouroboros-consensus-diffusion ^>=0.24,
     ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib} ^>=0.13,
-    ouroboros-network:{ouroboros-network, api, framework, protocols} ^>=0.23,
+    ouroboros-network:{api, framework, ouroboros-network, protocols} ^>=0.23,
     random,
     resource-registry,
     singletons,
