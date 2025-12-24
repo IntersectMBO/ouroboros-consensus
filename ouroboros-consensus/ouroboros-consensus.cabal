@@ -205,6 +205,8 @@ library
     Ouroboros.Consensus.NodeId
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
+    Ouroboros.Consensus.Peras.Vote
+    Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Weight
     Ouroboros.Consensus.Protocol.Abstract
     Ouroboros.Consensus.Protocol.BFT
