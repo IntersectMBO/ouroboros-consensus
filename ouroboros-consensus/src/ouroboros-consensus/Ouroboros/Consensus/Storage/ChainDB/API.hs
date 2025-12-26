@@ -393,7 +393,7 @@ data ChainDB m blk = ChainDB
   , getChainSelStarvation :: STM m ChainSelStarvation
   -- ^ Whether ChainSel is currently starved, or when was last time it
   -- stopped being starved.
-  , getStatistics :: m (Maybe Statistics)
+  , getStatistics :: m Statistics
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
   , addPerasCertAsync :: ValidatedPerasCert blk -> m (AddPerasCertPromise m)
