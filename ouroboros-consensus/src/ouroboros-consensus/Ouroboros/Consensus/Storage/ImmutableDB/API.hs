@@ -29,6 +29,8 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , tipToAnchor
   , tipToPoint
   , tipToRealPoint
+  , SeekBlockResult (..)
+  , SeekBlockError (..)
 
     -- * Errors
   , ApiMisuse (..)
@@ -45,6 +47,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , getBlockComponent
   , getTip
   , stream
+  , getBlockAtOrAfterPoint
 
     -- * Derived functionality
   , getKnownBlockComponent
@@ -58,6 +61,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , withDB
   ) where
 
+import Cardano.Prelude (Natural)
 import qualified Codec.CBOR.Read as CBOR
 import Control.Monad.Except (ExceptT (..), runExceptT, throwError)
 import Control.Monad.Trans.Class (lift)
@@ -174,6 +178,22 @@ data ImmutableDB m blk = ImmutableDB
   --
   -- The iterator is automatically closed when exhausted, and can be
   -- prematurely closed with 'iteratorClose'.
+  , getBlockAtOrAfterPoint_ ::
+      HasCallStack =>
+      (RealPoint blk) ->
+      m (Either SeekBlockError (SeekBlockResult blk))
+  -- ^ Query the ImmutableDB for a block at the target slot. If the target slot is empty,
+  --   return the block at the next occupied slot.
+  --
+  --   Output:
+  --   - returns 'Left' if the target slot is younger than the immutable tip
+  --   - returns the block at the target slot if it's occupied
+  --   - returns the block at the next occupied slot if the target slot is empty
+  --
+  --   Note: in case a slot is occupied by two blocks, and EBB and a regular block,
+  --         return the first block, i.e. the EBB. In contemporary Cardano,
+  --         no new EBBs will be produced; hence, this implementation will always
+  --         return a regular block.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "ImmutableDB" (ImmutableDB m blk)
 
@@ -314,6 +334,17 @@ instance Ord (CompareTip blk) where
     compareIsEBB IsEBB IsNotEBB = LT
     compareIsEBB IsNotEBB IsEBB = GT
     compareIsEBB _ _ = EQ
+
+-- | Error type for 'seekBlockAtOrAfterPoint'
+data SeekBlockError
+  = TargetNewerThanTip
+  | TipIsOrigin
+  deriving (Show, Eq)
+
+-- | Result type for 'seekBlockAtOrAfterPoint'
+data SeekBlockResult blk
+  = Found Natural (RealPoint blk)
+  deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Errors
@@ -474,6 +505,13 @@ stream ::
   StreamTo blk ->
   m (Either (MissingBlock blk) (Iterator m blk b))
 stream = stream_
+
+getBlockAtOrAfterPoint ::
+  HasCallStack =>
+  ImmutableDB m blk ->
+  (RealPoint blk) ->
+  m (Either SeekBlockError (SeekBlockResult blk))
+getBlockAtOrAfterPoint = getBlockAtOrAfterPoint_
 
 {-------------------------------------------------------------------------------
   Derived functionality
