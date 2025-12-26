@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -41,7 +42,6 @@ import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (decCBOR)
   , EncCBOR (..)
-  , ToCBOR (..)
   , encodedSigKESSizeExpr
   , serialize'
   , unCBORGroup
@@ -58,15 +58,19 @@ import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader
   , HASH
+  , HashAnnotated (..)
   , SafeToHash
+  , extractHash
   , originalBytesSize
   )
 import Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
 import Cardano.Ledger.MemoBytes
   ( Mem
   , MemoBytes
+  , MemoHashIndex
   , Memoized (..)
   , getMemoRawType
+  , getMemoSafeHash
   , mkMemoized
   )
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
@@ -142,6 +146,11 @@ newtype Header crypto = HeaderConstr (MemoBytes (HeaderRaw crypto))
 instance Memoized (Header crypto) where
   type RawType (Header crypto) = HeaderRaw crypto
 
+type instance MemoHashIndex (HeaderRaw crypto) = EraIndependentBlockHeader
+
+instance HashAnnotated (Header crypto) EraIndependentBlockHeader where
+  hashAnnotated = getMemoSafeHash
+
 pattern Header ::
   Crypto crypto =>
   HeaderBody crypto ->
@@ -158,10 +167,9 @@ headerSize = originalBytesSize
 
 -- | Hash a header
 headerHash ::
-  Crypto crypto =>
   Header crypto ->
   Hash.Hash HASH EraIndependentBlockHeader
-headerHash = Hash.castHash . Hash.hashWithSerialiser toCBOR
+headerHash = extractHash . hashAnnotated
 
 --------------------------------------------------------------------------------
 -- Serialisation
