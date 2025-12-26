@@ -53,6 +53,10 @@ import qualified Cardano.Ledger.Conway.Rules as SL
   )
 import qualified Cardano.Ledger.Conway.State as CG
 import Cardano.Ledger.Dijkstra (DijkstraEra)
+import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
+import qualified Cardano.Ledger.Dijkstra.Rules as SL
+  (DijkstraLedgerPredFailure (..)
+  )
 import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -123,11 +127,11 @@ class
     SL.LedgerEnv era ->
     SL.LedgerState era ->
     WhetherToIntervene ->
-    Core.Tx era ->
+    Core.Tx TopTx era ->
     Except
       (SL.ApplyTxError era)
       ( SL.LedgerState era
-      , SL.Validated (Core.Tx era)
+      , SL.Validated (Core.Tx TopTx era)
       )
 
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
@@ -148,11 +152,11 @@ defaultApplyShelleyBasedTx ::
   SL.LedgerEnv era ->
   SL.LedgerState era ->
   WhetherToIntervene ->
-  Core.Tx era ->
+  Core.Tx TopTx era ->
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx era)
+    , SL.Validated (Core.Tx TopTx era)
     )
 defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
   liftEither $
@@ -210,11 +214,11 @@ applyAlonzoBasedTx ::
   SL.LedgerEnv era ->
   SL.LedgerState era ->
   WhetherToIntervene ->
-  Core.Tx era ->
+  Core.Tx TopTx era ->
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx era)
+    , SL.Validated (Core.Tx TopTx era)
     )
 applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   (mempoolState', vtx) <-
@@ -318,9 +322,9 @@ instance SupportsTwoPhaseValidation ConwayEra where
 
 instance SupportsTwoPhaseValidation DijkstraEra where
   isIncorrectClaimedFlag _ = \case
-    SL.ConwayUtxowFailure
-      ( Conway.UtxoFailure
-          ( Conway.UtxosFailure
+    SL.DijkstraUtxowFailure
+      ( Dijkstra.UtxoFailure
+          ( Dijkstra.UtxosFailure
               ( Conway.ValidationTagMismatch
                   (Alonzo.IsValid _claimedFlag)
                   _validationErrs
