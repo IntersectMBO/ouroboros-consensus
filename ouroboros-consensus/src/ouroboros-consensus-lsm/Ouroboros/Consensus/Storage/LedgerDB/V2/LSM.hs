@@ -25,7 +25,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     LSM
   , Backend (..)
   , Args (LSMArgs)
-  , Trace (LSMTreeTrace)
+  , Trace (..)
   , LSM.LSMTreeTrace (..)
   , mkLSMArgs
   , stdMkBlockIOFS
@@ -172,21 +172,21 @@ newLSMLedgerTablesHandle ::
   Tracer m LedgerDBV2Trace ->
   (ResourceKey m, UTxOTable m) ->
   m (LedgerTablesHandle m l)
-newLSMLedgerTablesHandle tracer (origResKey, t) = do
-  traceWith tracer TraceLedgerTablesHandleCreate
-  tv <- newTVarIO origResKey
-  pure
-    LedgerTablesHandle
-      { close = implClose tv
-      , duplicate = \rr -> implDuplicate rr t tracer
-      , read = implRead t
-      , readRange = implReadRange t
-      , readAll = implReadAll t
-      , pushDiffs = implPushDiffs t
-      , takeHandleSnapshot = implTakeHandleSnapshot t
-      , tablesSize = pure Nothing
-      , transfer = atomically . writeTVar tv
-      }
+newLSMLedgerTablesHandle tracer (origResKey, t) =
+  encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $ do
+    tv <- newTVarIO origResKey
+    pure
+      LedgerTablesHandle
+        { close = implClose tv
+        , duplicate = \rr -> implDuplicate rr t tracer
+        , read = implRead tracer t
+        , readRange = implReadRange t
+        , readAll = implReadAll t
+        , pushDiffs = implPushDiffs tracer t
+        , takeHandleSnapshot = implTakeHandleSnapshot tracer t
+        , tablesSize = pure Nothing
+        , transfer = atomically . writeTVar tv
+        }
 
 {-# INLINE implClose #-}
 {-# INLINE implDuplicate #-}
@@ -213,11 +213,8 @@ implDuplicate rr t tracer = do
   (rk, table) <-
     allocate
       rr
-      (\_ -> LSM.duplicate t)
-      ( \t' -> do
-          traceWith tracer TraceLedgerTablesHandleClose
-          LSM.closeTable t'
-      )
+      (\_ -> encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate t)
+      (encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) . LSM.closeTable)
   (rk,) <$> newLSMLedgerTablesHandle tracer (rk, table)
 
 implRead ::
@@ -226,28 +223,34 @@ implRead ::
   , HasLedgerTables l
   , IndexedMemPack (l EmptyMK) (TxOut l)
   ) =>
-  UTxOTable m -> l EmptyMK -> LedgerTables l KeysMK -> m (LedgerTables l ValuesMK)
-implRead t st (LedgerTables (KeysMK keys)) = do
-  let vec' = V.create $ do
-        vec <- VM.new (Set.size keys)
-        Monad.foldM_
-          (\i x -> VM.write vec i (toTxInBytes (Proxy @l) x) >> pure (i + 1))
-          0
-          keys
-        pure vec
-  res <- LSM.lookups t vec'
-  pure
-    . LedgerTables
-    . ValuesMK
-    . Foldable.foldl'
-      ( \m (k, item) ->
-          case item of
-            LSM.Found v -> Map.insert (fromTxInBytes (Proxy @l) k) (fromTxOutBytes st v) m
-            LSM.NotFound -> m
-            LSM.FoundWithBlob{} -> m
-      )
-      Map.empty
-    $ V.zip vec' res
+  Tracer m LedgerDBV2Trace ->
+  UTxOTable m ->
+  l EmptyMK ->
+  LedgerTables l KeysMK ->
+  m (LedgerTables l ValuesMK)
+implRead tracer t st (LedgerTables (KeysMK keys)) =
+  encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
+    let vec' = V.create $ do
+          vec <- VM.new (Set.size keys)
+          Monad.foldM_
+            (\i x -> VM.write vec i (toTxInBytes (Proxy @l) x) >> pure (i + 1))
+            0
+            keys
+          pure vec
+    res <-
+      encloseTimedWith (BackendTrace . SomeBackendTrace . LSMLookup >$< tracer) $ LSM.lookups t vec'
+    pure
+      . LedgerTables
+      . ValuesMK
+      . Foldable.foldl'
+        ( \m (k, item) ->
+            case item of
+              LSM.Found v -> Map.insert (fromTxInBytes (Proxy @l) k) (fromTxOutBytes st v) m
+              LSM.NotFound -> m
+              LSM.FoundWithBlob{} -> m
+        )
+        Map.empty
+      $ V.zip vec' res
 
 implReadRange ::
   forall m l.
@@ -300,27 +303,30 @@ implPushDiffs ::
   , HasLedgerTables l
   , IndexedMemPack (l EmptyMK) (TxOut l)
   ) =>
-  UTxOTable m -> l mk -> l DiffMK -> m ()
-implPushDiffs t _ !st1 = do
-  let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
-  let vec = V.create $ do
-        vec' <- VM.new (Map.size diffs)
-        Monad.foldM_
-          (\idx (k, item) -> VM.write vec' idx (toTxInBytes (Proxy @l) k, (f item)) >> pure (idx + 1))
-          0
-          $ Map.toList diffs
-        pure vec'
-  LSM.updates t vec
+  Tracer m LedgerDBV2Trace -> UTxOTable m -> l mk -> l DiffMK -> m ()
+implPushDiffs tracer t _ !st1 =
+  encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
+    let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
+    let vec = V.create $ do
+          vec' <- VM.new (Map.size diffs)
+          Monad.foldM_
+            (\idx (k, item) -> VM.write vec' idx (toTxInBytes (Proxy @l) k, (f item)) >> pure (idx + 1))
+            0
+            $ Map.toList diffs
+          pure vec'
+    encloseTimedWith (BackendTrace . SomeBackendTrace . LSMUpdate >$< tracer) $ LSM.updates t vec
  where
   f (Diff.Insert v) = LSM.Insert (toTxOutBytes (forgetLedgerTables st1) v) Nothing
   f Diff.Delete = LSM.Delete
 
-implTakeHandleSnapshot :: IOLike m => UTxOTable m -> t -> String -> m (Maybe a)
-implTakeHandleSnapshot t _ snapshotName = do
-  LSM.saveSnapshot
-    (fromString snapshotName)
-    (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
-    t
+implTakeHandleSnapshot ::
+  IOLike m => Tracer m LedgerDBV2Trace -> UTxOTable m -> t -> String -> m (Maybe a)
+implTakeHandleSnapshot tracer t _ snapshotName = do
+  encloseTimedWith (BackendTrace . SomeBackendTrace . LSMSnap >$< tracer) $
+    LSM.saveSnapshot
+      (fromString snapshotName)
+      (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
+      t
   pure Nothing
 
 {-------------------------------------------------------------------------------
@@ -473,15 +479,13 @@ loadSnapshot tracer rr ccfg fs@(SomeHasFS hfs) session ds =
             allocate
               rr
               ( \_ ->
-                  LSM.openTableFromSnapshot
-                    session
-                    (fromString $ snapshotToDirName ds)
-                    (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
+                  encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
+                    LSM.openTableFromSnapshot
+                      session
+                      (fromString $ snapshotToDirName ds)
+                      (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
               )
-              ( \t -> do
-                  traceWith tracer TraceLedgerTablesHandleClose
-                  LSM.closeTable t
-              )
+              (encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) . LSM.closeTable)
         Monad.when
           (checksumAsRead /= snapshotChecksum snapshotMeta)
           $ throwE
@@ -505,11 +509,11 @@ tableFromValuesMK tracer rr session st (LedgerTables (ValuesMK values)) = do
   (rk, table) <-
     allocate
       rr
-      (\_ -> LSM.newTable session)
-      ( \tb -> do
-          traceWith tracer TraceLedgerTablesHandleClose
-          LSM.closeTable tb
+      ( \_ ->
+          encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
+            LSM.newTable session
       )
+      (encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) . LSM.closeTable)
   mapM_ (go table) $ chunks 1000 $ Map.toList values
   pure (rk, table)
  where
@@ -577,6 +581,10 @@ instance
 
   data Trace LSM
     = LSMTreeTrace !LSM.LSMTreeTrace
+    | LSMLookup EnclosingTimed
+    | LSMUpdate EnclosingTimed
+    | LSMSnap EnclosingTimed
+    | LSMOpenSession EnclosingTimed
     deriving Show
 
   mkResources _ trcr (LSMArgs path salt mkFS) reg _ = do
@@ -586,12 +594,13 @@ instance
       allocate
         reg
         ( \_ ->
-            LSM.openSession
-              (BackendTrace . SomeBackendTrace . LSMTreeTrace >$< trcr)
-              fs
-              blockio
-              salt
-              path
+            encloseTimedWith (BackendTrace . SomeBackendTrace . LSMOpenSession >$< trcr) $
+              LSM.openSession
+                (BackendTrace . SomeBackendTrace . LSMTreeTrace >$< trcr)
+                fs
+                blockio
+                salt
+                path
         )
         LSM.closeSession
     pure (LSMResources (fst session) (snd session) rk1)

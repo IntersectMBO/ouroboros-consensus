@@ -30,6 +30,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import System.FS.API
 
 -- | Operations needed to open and operate a LedgerDB V2
@@ -114,9 +115,13 @@ instance NoThunks (SomeResources m blk) where
 data LedgerDBV2Trace
   = -- | Created a new 'LedgerTablesHandle', potentially by duplicating an
     -- existing one.
-    TraceLedgerTablesHandleCreate
+    TraceLedgerTablesHandleCreate EnclosingTimed
   | -- | Closed a 'LedgerTablesHandle'.
-    TraceLedgerTablesHandleClose
+    TraceLedgerTablesHandleClose EnclosingTimed
+  | TraceLedgerTablesHandleRead EnclosingTimed
+  | TraceLedgerTablesHandleDuplicate EnclosingTimed
+  | TraceLedgerTablesHandleCreateFirst EnclosingTimed
+  | TraceLedgerTablesHandlePush EnclosingTimed
   | BackendTrace SomeBackendTrace
 
 deriving instance Show SomeBackendTrace => Show LedgerDBV2Trace

@@ -104,21 +104,22 @@ newInMemoryLedgerTablesHandle ::
   SomeHasFS m ->
   LedgerTables l ValuesMK ->
   m (LedgerTablesHandle m l)
-newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
-  !tv <- newTVarIO (LedgerTablesHandleOpen l)
-  traceWith tracer TraceLedgerTablesHandleCreate
-  pure
-    LedgerTablesHandle
-      { close = implClose tracer tv
-      , duplicate = implDuplicate tracer tv someFS
-      , read = implRead tv
-      , readRange = implReadRange tv
-      , readAll = implReadAll tv
-      , pushDiffs = implPushDiffs tv
-      , takeHandleSnapshot = implTakeHandleSnapshot tv hasFS
-      , tablesSize = implTablesSize tv
-      , transfer = const (pure ())
-      }
+newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l =
+  encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $ do
+    !tv <- newTVarIO (LedgerTablesHandleOpen l)
+
+    pure
+      LedgerTablesHandle
+        { close = implClose tracer tv
+        , duplicate = implDuplicate tracer tv someFS
+        , read = implRead tv
+        , readRange = implReadRange tv
+        , readAll = implReadAll tv
+        , pushDiffs = implPushDiffs tv
+        , takeHandleSnapshot = implTakeHandleSnapshot tv hasFS
+        , tablesSize = implTablesSize tv
+        , transfer = const (pure ())
+        }
 
 {-# INLINE implClose #-}
 {-# INLINE implDuplicate #-}
@@ -137,7 +138,7 @@ implClose ::
 implClose tracer tv = do
   p <- atomically $ swapTVar tv LedgerTablesHandleClosed
   case p of
-    LedgerTablesHandleOpen{} -> traceWith tracer TraceLedgerTablesHandleClose
+    LedgerTablesHandleOpen{} -> encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) $ pure ()
     _ -> pure ()
 
 implDuplicate ::
