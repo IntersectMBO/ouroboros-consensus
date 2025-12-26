@@ -80,12 +80,19 @@ source-repository-package
     eras/byron/ledger/impl
     eras/byron/crypto
 
--- Backported version of https://github.com/IntersectMBO/ouroboros-network/pull/5161
+allow-newer:
+    -- https://github.com/phadej/vec/issues/121
+    , ral:QuickCheck
+    , fin:QuickCheck
+    , bin:QuickCheck
+
+-- Using https://github.com/IntersectMBO/ouroboros-network/tree/peras-staging/pr-5202-v2
 source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/ouroboros-network
-  tag: dfcb1f9c578ec8cd5114fea9696e7be6c9001323
-  --sha256: sha256-omXPdi/T/f3gq9rOH20zX+x3WvaxlB704g07RF/13Nk=
-  subdir:
-    ouroboros-network-api
-    ouroboros-network
+   type: git
+   location: https://github.com/IntersectMBO/ouroboros-network
+   tag: 0db8669b67982cba755e80bf2e413527def41244
+   --sha256: sha256-vEO721Xab0RTVKFQFKal5VCV5y+OUzELo8+7Z8TETJQ=
+   subdir:
+     ouroboros-network-protocols
+     ouroboros-network-api
+     ouroboros-network
