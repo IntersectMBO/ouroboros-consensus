@@ -41,6 +41,15 @@ module Ouroboros.Consensus.Network.NodeToClient
   , responder
   ) where
 
+import Cardano.Network.NodeToClient hiding
+  ( NodeToClientVersion (..)
+  )
+import qualified Cardano.Network.NodeToClient as N
+  ( NodeToClientVersion (..)
+  , NodeToClientVersionData
+  )
+import Cardano.Network.Protocol.LocalStateQuery.Codec
+import Cardano.Network.Protocol.LocalTxMonitor.Codec
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
 import Codec.CBOR.Read (DeserialiseFailure)
@@ -80,24 +89,14 @@ import Ouroboros.Network.Block
   )
 import Ouroboros.Network.BlockFetch
 import Ouroboros.Network.Channel
-import Ouroboros.Network.Context
 import Ouroboros.Network.Driver
 import qualified Ouroboros.Network.Driver.Stateful as Stateful
 import Ouroboros.Network.Mux
-import Ouroboros.Network.NodeToClient hiding
-  ( NodeToClientVersion (..)
-  )
-import qualified Ouroboros.Network.NodeToClient as N
-  ( NodeToClientVersion (..)
-  , NodeToClientVersionData
-  )
 import Ouroboros.Network.Protocol.ChainSync.Codec
 import Ouroboros.Network.Protocol.ChainSync.Server
 import Ouroboros.Network.Protocol.ChainSync.Type
-import Ouroboros.Network.Protocol.LocalStateQuery.Codec
 import Ouroboros.Network.Protocol.LocalStateQuery.Server
 import Ouroboros.Network.Protocol.LocalStateQuery.Type as LocalStateQuery
-import Ouroboros.Network.Protocol.LocalTxMonitor.Codec
 import Ouroboros.Network.Protocol.LocalTxMonitor.Server
 import Ouroboros.Network.Protocol.LocalTxMonitor.Type
 import Ouroboros.Network.Protocol.LocalTxSubmission.Codec

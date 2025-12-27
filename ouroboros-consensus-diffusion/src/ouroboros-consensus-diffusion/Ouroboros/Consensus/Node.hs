@@ -66,8 +66,25 @@ module Ouroboros.Consensus.Node
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import qualified Cardano.Network.Diffusion as Cardano.Diffusion
 import Cardano.Network.Diffusion.Configuration (ChainSyncIdleTimeout (..))
+import qualified Cardano.Network.Diffusion.Configuration as Diffusion
 import qualified Cardano.Network.Diffusion.Policies as Cardano.Diffusion
 import qualified Cardano.Network.LedgerPeerConsensusInterface as Cardano
+import Cardano.Network.NodeToClient
+  ( ConnectionId
+  , LocalAddress
+  , NodeToClientVersionData (..)
+  , combineVersions
+  , simpleSingletonVersions
+  )
+import Cardano.Network.NodeToNode
+  ( DiffusionMode (..)
+  , ExceptionInHandler (..)
+  , MiniProtocolParameters
+  , NodeToNodeVersionData (..)
+  , RemoteAddress
+  , blockFetchPipeliningMax
+  , defaultMiniProtocolParameters
+  )
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers (..))
 import Cardano.Network.PeerSelection.Churn (ChurnMode (..))
 import qualified Codec.CBOR.Decoding as CBOR
@@ -75,7 +92,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (NFData)
-import Control.Monad (forM_, when)
+import Control.Monad (forever, forM_, when)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
@@ -139,25 +156,8 @@ import Ouroboros.Network.BlockFetch
   ( BlockFetchConfiguration (..)
   )
 import qualified Ouroboros.Network.Diffusion as Diffusion
-import qualified Ouroboros.Network.Diffusion.Configuration as Diffusion
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
 import Ouroboros.Network.Magic
-import Ouroboros.Network.NodeToClient
-  ( ConnectionId
-  , LocalAddress
-  , NodeToClientVersionData (..)
-  , combineVersions
-  , simpleSingletonVersions
-  )
-import Ouroboros.Network.NodeToNode
-  ( DiffusionMode (..)
-  , ExceptionInHandler (..)
-  , MiniProtocolParameters
-  , NodeToNodeVersionData (..)
-  , RemoteAddress
-  , blockFetchPipeliningMax
-  , defaultMiniProtocolParameters
-  )
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PublicPeerSelectionState
   )
@@ -176,6 +176,8 @@ import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   )
 import Ouroboros.Network.Protocol.ChainSync.Codec (timeLimitsChainSync)
 import Ouroboros.Network.RethrowPolicy
+import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
 import qualified SafeWildCards
 import System.Exit (ExitCode (..))
 import System.FS.API (SomeHasFS (..))
@@ -239,6 +241,9 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   , rnGenesisConfig :: GenesisConfig
   , rnFeatureFlags :: Set CardanoFeatureFlag
   -- ^ Enabled experimental features
+  -- | Version of the tx-submission logic to run.
+  , rnTxSubmissionLogicVersion :: TxSubmissionLogicVersion
+  , rnTxSubmissionInitDelay :: TxSubmissionInitDelay
   }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -477,6 +482,7 @@ runWith ::
   , Hashable addrNTN -- the constraint comes from `initNodeKernel`
   , NetworkIO m
   , NetworkAddr addrNTN
+  , Show addrNTN
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -595,6 +601,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   llrnPublicPeerSelectionStateVar
                   genesisArgs
                   DiffusionPipeliningOn
+                  rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
             churnModeVar <- StrictSTM.newTVarIO ChurnModeNormal
@@ -608,9 +615,11 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                           { lpGetLatestSlot = getImmTipSlot nodeKernel
                           , lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger nodeKernel (const True)
                           , lpExtraAPI =
+                              -- TODO
                               Cardano.LedgerPeersConsensusInterface
                                 { Cardano.readFetchMode = getFetchMode nodeKernel
                                 , Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState nodeKernel
+                                , Cardano.getBlockHash = \_slotNo k -> k $ forever (pure ())
                                 , Cardano.updateOutboundConnectionsState =
                                     let varOcs = getOutboundConnectionsState nodeKernel
                                      in \newOcs -> do
@@ -675,7 +684,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       (gcChainSyncLoPBucketConfig llrnGenesisConfig)
       (gcCSJConfig llrnGenesisConfig)
       (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-      (NTN.mkHandlers nodeKernelArgs nodeKernel)
+      (NTN.mkHandlers nodeKernelArgs nodeKernel rnTxSubmissionLogicVersion)
 
   mkNodeToClientApps ::
     NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
@@ -871,6 +880,7 @@ mkNodeKernelArgs ::
   StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN) ->
   GenesisNodeKernelArgs m blk ->
   DiffusionPipeliningSupport ->
+  TxSubmissionInitDelay ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -890,9 +900,11 @@ mkNodeKernelArgs
   getUseBootstrapPeers
   publicPeerSelectionStateVar
   genesisArgs
-  getDiffusionPipeliningSupport =
+  getDiffusionPipeliningSupport
+  txSubmissionInitDelay =
     do
-      let (kaRng, psRng) = split rng
+      let (kaRng, rng') = split rng
+          (psRng, txRng) = split rng'
       return
         NodeKernelArgs
           { tracers
@@ -918,9 +930,11 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
+          , txSubmissionRng = txRng
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport
+          , txSubmissionInitDelay
           }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
