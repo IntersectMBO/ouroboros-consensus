@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasVoteTarget (..)
   , PerasVoterId (..)
   , PerasVoteStake (..)
+  , stakeAboveThreshold
   , PerasVoteStakeDistr (..)
   , lookupPerasVoteStake
   , BlockSupportsPeras (..)
@@ -108,6 +109,28 @@ newtype PerasVoteStake = PerasVoteStake
   deriving Show via Quiet PerasVoteStake
   deriving Semigroup via Sum Rational
   deriving Monoid via Sum Rational
+
+-- | Check whether a given vote stake is above the quorum threshold.
+--
+-- TODO: this function assumes that the 'PerasVoteStake' and the quorum
+-- threshold used in 'PerasParams' are expressed in the same units. That is,
+-- both are either absolute or relative (normalized) values. Under the current
+-- current implementation of 'PerasParams', this function only makes sense when
+-- both values are relative (normalized) values, so we should either normalize
+-- the 'PerasVoteStake' before calling this function, or change this function to
+-- accept a stake distribution and perform the normalization internally.
+stakeAboveThreshold :: PerasParams -> PerasVoteStake -> Bool
+stakeAboveThreshold params voteStake =
+  stake >= quorumThreshold + safetyMargin
+ where
+  stake =
+    unPerasVoteStake voteStake
+  quorumThreshold =
+    unPerasQuorumStakeThreshold
+      (perasQuorumStakeThreshold params)
+  safetyMargin =
+    unPerasQuorumStakeThresholdSafetyMargin
+      (perasQuorumStakeThresholdSafetyMargin params)
 
 newtype PerasVoteStakeDistr = PerasVoteStakeDistr
   { unPerasVoteStakeDistr :: Map PerasVoterId PerasVoteStake
@@ -271,8 +294,7 @@ instance StandardHash blk => BlockSupportsPeras blk where
       mconcat (vpvVoteStake <$> votes)
 
     votesHaveEnoughStake =
-      unPerasVoteStake totalVotesStake
-        >= unPerasQuorumStakeThreshold (perasQuorumStakeThreshold params)
+      stakeAboveThreshold params totalVotesStake
 
     allVotersMatchTarget =
       all ((target ==) . getPerasVoteTarget) votes
