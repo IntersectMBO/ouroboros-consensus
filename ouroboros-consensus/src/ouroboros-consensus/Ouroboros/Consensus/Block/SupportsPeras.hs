@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasVoteTarget (..)
   , PerasVoterId (..)
   , PerasVoteStake (..)
+  , stakeAboveThreshold
   , PerasVoteStakeDistr (..)
   , lookupPerasVoteStake
   , BlockSupportsPeras (..)
@@ -26,6 +27,12 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasVote (..)
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
+  , ValidatedPerasVotesWithQuorum
+    ( vpvqTarget
+    , vpvqVotes
+    , vpvqPerasCfg
+    )
+  , votesReachQuorum
   , HasPerasCertRound (..)
   , HasPerasCertBoostedBlock (..)
   , HasPerasCertBoost (..)
@@ -46,6 +53,7 @@ import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
 import Data.Coerce (coerce)
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
 import Data.Map.Strict (Map)
 import Data.Monoid (Sum (..))
@@ -109,6 +117,28 @@ newtype PerasVoteStake = PerasVoteStake
   deriving Semigroup via Sum Rational
   deriving Monoid via Sum Rational
 
+-- | Check whether a given vote stake is above the quorum threshold.
+--
+-- TODO: this function assumes that the 'PerasVoteStake' and the quorum
+-- threshold used in 'PerasParams' are expressed in the same units. That is,
+-- both are either absolute or relative (normalized) values. Under the current
+-- current implementation of 'PerasParams', this function only makes sense when
+-- both values are relative (normalized) values, so we should either normalize
+-- the 'PerasVoteStake' before calling this function, or change this function to
+-- accept a stake distribution and perform the normalization internally.
+stakeAboveThreshold :: PerasParams -> PerasVoteStake -> Bool
+stakeAboveThreshold params voteStake =
+  stake >= quorumThreshold + safetyMargin
+ where
+  stake =
+    unPerasVoteStake voteStake
+  quorumThreshold =
+    unPerasQuorumStakeThreshold
+      (perasQuorumStakeThreshold params)
+  safetyMargin =
+    unPerasQuorumStakeThresholdSafetyMargin
+      (perasQuorumStakeThresholdSafetyMargin params)
+
 newtype PerasVoteStakeDistr = PerasVoteStakeDistr
   { unPerasVoteStakeDistr :: Map PerasVoterId PerasVoteStake
   }
@@ -155,6 +185,59 @@ data ValidatedPerasVote blk = ValidatedPerasVote
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
 
+-- ** Votes with enough stake to reach quorum for a given target
+
+-- | A collection of validated Peras votes that:
+-- 1. are all for the same target, and
+-- 2. have total stake above the quorum threshold for a given 'PerasCfg'.
+data ValidatedPerasVotesWithQuorum blk = ValidatedPerasVotesWithQuorum
+  { vpvqTarget :: !(PerasVoteTarget blk)
+  -- ^ The target that all the votes are for
+  , vpvqVotes :: !(NonEmpty (ValidatedPerasVote blk))
+  -- ^ The votes that reached quorum for the given target
+  , vpvqPerasCfg :: !(PerasCfg blk)
+  -- ^ The Peras configuration used to validate that the votes reach quorum
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+-- | Smart constructor for 'ValidatedPerasVotesReachingQuorum'.
+--
+-- This function checks that all votes are for the same target, and that their
+-- total stake is above the quorum threshold defined in the given 'PerasCfg'.
+-- It returns 'Nothing' if either of these conditions is not met.
+votesReachQuorum ::
+  StandardHash blk =>
+  PerasCfg blk ->
+  [ValidatedPerasVote blk] ->
+  Maybe (ValidatedPerasVotesWithQuorum blk)
+votesReachQuorum cfg votes =
+  case votes of
+    -- We need at least one vote to determine who these votes are for, so we
+    -- can't vacuously reach a quorum, even if the quorum threshold is 0.
+    [] -> Nothing
+    -- If we have at least one vote, we must check that all votes are for the
+    -- same target, and that their total stake of is above the quorum threshold.
+    (v0 : vs)
+      | not (allVotesMatchTarget v0 vs) ->
+          Nothing
+      | not votesHaveEnoughStake ->
+          Nothing
+      | otherwise ->
+          Just
+            ValidatedPerasVotesWithQuorum
+              { vpvqTarget = getPerasVoteTarget v0
+              , vpvqVotes = v0 :| vs
+              , vpvqPerasCfg = cfg
+              }
+ where
+  totalVoteStake =
+    mconcat (vpvVoteStake <$> votes)
+  votesHaveEnoughStake =
+    stakeAboveThreshold cfg totalVoteStake
+  allVotesMatchTarget target =
+    all ((== (getPerasVoteTarget target)) . getPerasVoteTarget)
+
 {-------------------------------------------------------------------------------
 -- * BlockSupportsPeras class
 -------------------------------------------------------------------------------}
@@ -188,8 +271,7 @@ class
 
   forgePerasCert ::
     PerasCfg blk ->
-    PerasVoteTarget blk ->
-    [ValidatedPerasVote blk] ->
+    ValidatedPerasVotesWithQuorum blk ->
     Either (PerasForgeErr blk) (ValidatedPerasCert blk)
 
 -- TODO: degenerate instance for all blks to get things to compile
@@ -221,8 +303,7 @@ instance StandardHash blk => BlockSupportsPeras blk where
   -- TODO: enrich with actual error types
   -- see https://github.com/tweag/cardano-peras/issues/120
   data PerasForgeErr blk
-    = PerasForgeErrInsufficientVotes
-    | PerasForgeErrTargetMismatch
+    = PerasForgeErr
     deriving stock (Show, Eq)
 
   -- TODO: perform actual validation against all
@@ -251,31 +332,16 @@ instance StandardHash blk => BlockSupportsPeras blk where
   -- TODO: perform actual validation against all
   -- possible 'PerasForgeErr' variants
   -- see https://github.com/tweag/cardano-peras/issues/120
-  forgePerasCert params target votes
-    | not allVotersMatchTarget =
-        Left PerasForgeErrTargetMismatch
-    | not votesHaveEnoughStake =
-        Left PerasForgeErrInsufficientVotes
-    | otherwise =
-        return $
-          ValidatedPerasCert
-            { vpcCert =
-                PerasCert
-                  { pcCertRound = pvtRoundNo target
-                  , pcCertBoostedBlock = pvtBlock target
-                  }
-            , vpcCertBoost = perasWeight params
-            }
-   where
-    totalVotesStake =
-      mconcat (vpvVoteStake <$> votes)
-
-    votesHaveEnoughStake =
-      unPerasVoteStake totalVotesStake
-        >= unPerasQuorumStakeThreshold (perasQuorumStakeThreshold params)
-
-    allVotersMatchTarget =
-      all ((target ==) . getPerasVoteTarget) votes
+  forgePerasCert params votes =
+    return $
+      ValidatedPerasCert
+        { vpcCert =
+            PerasCert
+              { pcCertRound = pvtRoundNo (vpvqTarget votes)
+              , pcCertBoostedBlock = pvtBlock (vpvqTarget votes)
+              }
+        , vpcCertBoost = perasWeight params
+        }
 
 instance ShowProxy blk => ShowProxy (PerasCert blk) where
   showProxy _ = "PerasCert " <> showProxy (Proxy @blk)
