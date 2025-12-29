@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasVoteTarget (..)
   , PerasVoterId (..)
   , PerasVoteStake (..)
+  , stakeAboveThreshold
   , PerasVoteStakeDistr (..)
   , lookupPerasVoteStake
   , BlockSupportsPeras (..)
@@ -108,6 +109,12 @@ newtype PerasVoteStake = PerasVoteStake
   deriving Show via Quiet PerasVoteStake
   deriving Semigroup via Sum Rational
   deriving Monoid via Sum Rational
+
+-- | Check whether a given vote stake is above the quorum threshold
+stakeAboveThreshold :: PerasParams -> PerasVoteStake -> Bool
+stakeAboveThreshold params stake =
+  unPerasVoteStake stake
+    >= unPerasQuorumStakeThreshold (perasQuorumStakeThreshold params)
 
 newtype PerasVoteStakeDistr = PerasVoteStakeDistr
   { unPerasVoteStakeDistr :: Map PerasVoterId PerasVoteStake
@@ -271,8 +278,7 @@ instance StandardHash blk => BlockSupportsPeras blk where
       mconcat (vpvVoteStake <$> votes)
 
     votesHaveEnoughStake =
-      unPerasVoteStake totalVotesStake
-        >= unPerasQuorumStakeThreshold (perasQuorumStakeThreshold params)
+      stakeAboveThreshold params totalVotesStake
 
     allVotersMatchTarget =
       all ((target ==) . getPerasVoteTarget) votes
