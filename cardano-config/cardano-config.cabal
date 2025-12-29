@@ -1,0 +1,59 @@
+cabal-version: 3.0
+name: cardano-config
+version: 0.1.0.0
+-- synopsis:
+-- description:
+license: Apache-2.0
+license-file: LICENSE
+author: Javier Sagredo
+maintainer: javier.sagredo@iohk.io
+-- copyright:
+category: Data
+build-type: Simple
+extra-doc-files: CHANGELOG.md
+
+-- extra-source-files:
+common warnings
+  ghc-options: -Wall -Wunused-packages
+
+library
+  import: warnings
+  exposed-modules:
+    Cardano.Node.Configuration
+    Cardano.Node.Configuration.Basics
+    Cardano.Node.Configuration.CLIArgs
+    Cardano.Node.Configuration.Common
+    Cardano.Node.Configuration.File
+    Cardano.Node.Configuration.File.Consensus
+    Cardano.Node.Configuration.File.Network
+    Cardano.Node.Configuration.File.Protocol
+    Cardano.Node.Configuration.File.Storage
+    Cardano.Node.Configuration.File.Testing
+    Cardano.Node.Configuration.File.Tracing
+
+  build-depends:
+    aeson,
+    base,
+    bytestring,
+    cardano-crypto-class,
+    cardano-crypto-wrapper,
+    cardano-ledger-alonzo,
+    cardano-ledger-conway,
+    cardano-ledger-core,
+    cardano-ledger-dijkstra,
+    cardano-ledger-shelley,
+    data-default,
+    directory,
+    filepath,
+    iohk-monitoring,
+    iproute,
+    mtl,
+    network,
+    optparse-applicative,
+    sop-core,
+    strict-sop-core,
+    text,
+    time,
+
+  hs-source-dirs: src
+  default-language: Haskell2010
