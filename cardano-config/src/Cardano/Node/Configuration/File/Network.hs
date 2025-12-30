@@ -1,9 +1,12 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
-
-module Cardano.Node.Configuration.File.Network where
+-- | Configuration options related to networking
+module Cardano.Node.Configuration.File.Network
+  ( DiffusionMode (..)
+  , NetworkConfiguration (..)
+  , AcceptedConnectionsLimit (..)
+  , PeerSharing (..)
+  , ResponderCoreAffinityPolicy (..)
+  , LocalConnectionsConfig (..)
+  ) where
 
 import Cardano.Node.Configuration.Basics
 import Data.Aeson
@@ -13,6 +16,7 @@ import Data.Word
 import GHC.Generics (Generic)
 import Prelude hiding (FilePath)
 
+-- | TODO
 data DiffusionMode = InitiatorOnlyDiffusionMode | InitiatorAndResponderDiffusionMode
   deriving (Generic, Show)
 
@@ -23,6 +27,7 @@ instance FromJSON DiffusionMode where
       "InitiatorAndResponder" -> pure InitiatorAndResponderDiffusionMode
       x -> fail $ "Unknown diffusion mode: " <> T.unpack x
 
+-- | TODO
 data AcceptedConnectionsLimit = AcceptedConnectionsLimit Word32 Word32 DiffTime
   deriving (Generic, Show)
 
@@ -33,6 +38,7 @@ instance FromJSON AcceptedConnectionsLimit where
       <*> v .: "softLimit"
       <*> v .: "delay"
 
+-- | Whether to enable peer sharing
 data PeerSharing = PeerSharingEnabled | PeerSharingDisabled deriving (Generic, Show)
 
 instance FromJSON PeerSharing where
@@ -43,6 +49,7 @@ instance FromJSON PeerSharing where
           then PeerSharingEnabled
           else PeerSharingDisabled
 
+-- | TODO
 data ResponderCoreAffinityPolicy = NoResponderCoreAffinity | ResponderCoreAffinity
   deriving (Generic, Show)
 
@@ -53,32 +60,35 @@ instance FromJSON ResponderCoreAffinityPolicy where
       "ResponderCoreAffinity" -> pure ResponderCoreAffinity
       x -> fail $ "Unknown responder core affinity policy: " <> T.unpack x
 
+-- | Options related to Networking configuration. Most of the fields are
+-- @Override@ such that the networking layer can then set the appropriate
+-- defaults.
 data NetworkConfiguration = NetworkConfiguration
-  { pncDiffusionMode :: !DiffusionMode
-  , pncMaxConcurrencyBulkSync :: !(Override Word)
-  , pncMaxConcurrencyDeadline :: !(Override Word)
-  , pncProtocolIdleTimeout :: !(Override DiffTime)
-  , pncTimeWaitTimeout :: !(Override DiffTime)
-  , pncEgressPollInterval :: !(Override DiffTime)
-  , pncChainSyncIdleTimeout :: !(Override DiffTime)
-  , pncAcceptedConnectionsLimit :: !(Override AcceptedConnectionsLimit)
-  , pncDeadlineTargetOfRootPeers :: !(Override Int)
-  , pncDeadlineTargetOfKnownPeers :: !(Override Int)
-  , pncDeadlineTargetOfEstablishedPeers :: !(Override Int)
-  , pncDeadlineTargetOfActivePeers :: !(Override Int)
-  , pncDeadlineTargetOfKnownBigLedgerPeers :: !(Override Int)
-  , pncDeadlineTargetOfEstablishedBigLedgerPeers :: !(Override Int)
-  , pncDeadlineTargetOfActiveBigLedgerPeers :: !(Override Int)
-  , pncSyncTargetOfRootPeers :: !(Override Int)
-  , pncSyncTargetOfKnownPeers :: !(Override Int)
-  , pncSyncTargetOfEstablishedPeers :: !(Override Int)
-  , pncSyncTargetOfActivePeers :: !(Override Int)
-  , pncSyncTargetOfKnownBigLedgerPeers :: !(Override Int)
-  , pncSyncTargetOfEstablishedBigLedgerPeers :: !(Override Int)
-  , pncSyncTargetOfActiveBigLedgerPeers :: !(Override Int)
-  , pncMinBigLedgerPeersForTrustedState :: !(Override Int)
-  , pncPeerSharing :: !(Override PeerSharing)
-  , pncResponderCoreAffinityPolicy :: !(Override ResponderCoreAffinityPolicy)
+  { pncDiffusionMode :: DiffusionMode
+  , pncMaxConcurrencyBulkSync :: Override Word
+  , pncMaxConcurrencyDeadline :: Override Word
+  , pncProtocolIdleTimeout :: Override DiffTime
+  , pncTimeWaitTimeout :: Override DiffTime
+  , pncEgressPollInterval :: Override DiffTime
+  , pncChainSyncIdleTimeout :: Override DiffTime
+  , pncAcceptedConnectionsLimit :: Override AcceptedConnectionsLimit
+  , pncDeadlineTargetOfRootPeers :: Override Int
+  , pncDeadlineTargetOfKnownPeers :: Override Int
+  , pncDeadlineTargetOfEstablishedPeers :: Override Int
+  , pncDeadlineTargetOfActivePeers :: Override Int
+  , pncDeadlineTargetOfKnownBigLedgerPeers :: Override Int
+  , pncDeadlineTargetOfEstablishedBigLedgerPeers :: Override Int
+  , pncDeadlineTargetOfActiveBigLedgerPeers :: Override Int
+  , pncSyncTargetOfRootPeers :: Override Int
+  , pncSyncTargetOfKnownPeers :: Override Int
+  , pncSyncTargetOfEstablishedPeers :: Override Int
+  , pncSyncTargetOfActivePeers :: Override Int
+  , pncSyncTargetOfKnownBigLedgerPeers :: Override Int
+  , pncSyncTargetOfEstablishedBigLedgerPeers :: Override Int
+  , pncSyncTargetOfActiveBigLedgerPeers :: Override Int
+  , pncMinBigLedgerPeersForTrustedState :: Override Int
+  , pncPeerSharing :: Override PeerSharing
+  , pncResponderCoreAffinityPolicy :: Override ResponderCoreAffinityPolicy
   }
   deriving (Generic, Show)
 
@@ -112,8 +122,9 @@ instance FromJSON NetworkConfiguration where
         <*> v .:= "PeerSharing"
         <*> v .:= "ResponderCoreAffinityPolicy"
 
+-- | Connections for local clients
 data LocalConnectionsConfig = LocalConnectionsConfig
-  { pncSocketPath :: !(Maybe (FilePath "Socket"))
+  { pncSocketPath :: Maybe (FilePath "Socket")
   }
   deriving (Generic, Show)
 

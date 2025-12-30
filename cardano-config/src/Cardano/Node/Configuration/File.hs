@@ -1,12 +1,10 @@
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StandaloneDeriving #-}
 
+-- | The representation of the configuration file
 module Cardano.Node.Configuration.File
   ( -- * Configuration file
-    NodeConfiguration (..)
+    NodeConfigurationFromFile
+  , NodeConfigurationFromFileF (..)
   , parseConfigurationFiles
 
     -- * Specific components configurations
@@ -28,21 +26,25 @@ import Cardano.Node.Configuration.File.Tracing
 import Control.Applicative ((<|>))
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
-import Data.Aeson
-import Data.Aeson.Types
+import Data.Bifunctor (bimap)
 import qualified Data.ByteString as BS
 import Data.Functor.Identity (Identity (..))
 import Data.String (fromString)
-import Debug.Trace
+import Data.Yaml
 import GHC.Generics (Generic)
 import System.Directory (doesFileExist)
 import System.FilePath (takeDirectory, (</>))
 
-data NodeConfiguration f
-  = NodeConfigurationV1
-  { storageConfiguration :: f StorageConfiguration
+-- | The configuration from the files, parsed with 'parseConfigurationFiles'
+type NodeConfigurationFromFile = NodeConfigurationFromFileF Identity
+
+-- | The configuration from the files, initially maybe pointing to sub-files and
+-- finally fully parsed.
+data NodeConfigurationFromFileF f
+  = NodeConfigurationFromFileV1
+  { storageConfiguration :: f (StorageConfiguration Maybe)
   , consensusConfiguration :: f ConsensusConfiguration
-  , protocolConfiguration :: f ProtocolConfiguration
+  , protocolConfiguration :: f (ProtocolConfiguration Maybe)
   , networkConfiguration :: f NetworkConfiguration
   , localConnectionsConfig :: LocalConnectionsConfig
   , tracingConfiguration :: f TracingConfiguration
@@ -50,13 +52,16 @@ data NodeConfiguration f
   }
   deriving Generic
 
-deriving instance Show (NodeConfiguration (Either FilePath))
-deriving instance Show (NodeConfiguration Identity)
+deriving instance Show (NodeConfigurationFromFileF (Either FilePath))
+deriving instance Show (NodeConfigurationFromFileF Identity)
 
+-- | Either an action to parse another file, or directly a value
 data SubFileOrValue a
   = SubFile (IO (Either String a))
   | AValue a
 
+-- | If the consulted key is a filepath, then prepare an action to parse that
+-- other file.
 subFileParser ::
   FilePath ->
   String ->
@@ -65,7 +70,7 @@ subFileParser ::
   Parser (SubFileOrValue a)
 subFileParser root sectionName p v =
   withObject
-    "Config file"
+    ("Config file: " <> sectionName)
     ( ( \v' -> do
           fn <- v' .: fromString sectionName
           pure $
@@ -74,9 +79,9 @@ subFileParser root sectionName p v =
               if exists
                 then
                   parseEither p
-                    . either (\err -> error $ traceShowId $ "Invalid JSON: " <> err) id
-                    . eitherDecodeStrict
-                    <$> BS.readFile (traceShowId $ root </> fn)
+                    . either (\err -> error $ "Invalid JSON: " <> show err) id
+                    . decodeEither'
+                    <$> BS.readFile (root </> fn)
                 else pure $ parseEither p v
       )
     )
@@ -85,14 +90,14 @@ subFileParser root sectionName p v =
 
 parseSubFile :: SubFileOrValue a -> IO (Either String (Identity a))
 parseSubFile (AValue v) = pure $ Right $ Identity v
-parseSubFile (SubFile f) = fmap Identity <$> trace "running" f
+parseSubFile (SubFile f) = fmap Identity <$> f
 
 parseConfigurationVersion1 ::
   FilePath ->
   Value ->
-  Parser (NodeConfiguration SubFileOrValue)
+  Parser (NodeConfigurationFromFileF SubFileOrValue)
 parseConfigurationVersion1 root v =
-  NodeConfigurationV1
+  NodeConfigurationFromFileV1
     <$> subFileParser root "Storage" parseStorageConfiguration v
     <*> subFileParser root "Consensus" parseJSON v
     <*> subFileParser root "Protocol" parseJSON v
@@ -101,8 +106,10 @@ parseConfigurationVersion1 root v =
     <*> subFileParser root "Tracing" parseJSON v
     <*> parseJSON v
 
+-- | Parse the configuration file, but do not parse the children files
+-- referenced from it yet.
 parseConfigurationFile ::
-  FilePath -> Value -> Parser (NodeConfiguration SubFileOrValue)
+  FilePath -> Value -> Parser (NodeConfigurationFromFileF SubFileOrValue)
 parseConfigurationFile root v = do
   configVersion <- withObject "Configuration" (.:? "ConfigurationVersion") v
   case configVersion :: Maybe Int of
@@ -110,13 +117,15 @@ parseConfigurationFile root v = do
     Just 1 -> parseConfigurationVersion1 root v
     _ -> fail $ "Unknown configuration version: " <> show configVersion
 
-parseConfigurationFiles :: FilePath -> IO (Either String (NodeConfiguration Identity))
+-- | Parse the configuration file and parse any other children configuration
+-- files referenced from it.
+parseConfigurationFiles :: FilePath -> IO (Either String NodeConfigurationFromFile)
 parseConfigurationFiles cfgFile = runExceptT $ do
   bs <- lift $ BS.readFile cfgFile
   cfg <- liftEither $ do
-    v <- eitherDecodeStrict bs
+    v <- bimap show id (decodeEither' bs)
     parseEither (parseConfigurationFile (takeDirectory cfgFile)) v
-  NodeConfigurationV1
+  NodeConfigurationFromFileV1
     <$> ExceptT (parseSubFile (storageConfiguration cfg))
     <*> ExceptT (parseSubFile (consensusConfiguration cfg))
     <*> ExceptT (parseSubFile (protocolConfiguration cfg))

@@ -1,9 +1,8 @@
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
-
-module Cardano.Node.Configuration.File.Testing where
+-- | Values related to testing, which are unused by a real node
+module Cardano.Node.Configuration.File.Testing
+  ( MempoolCapacityBytes (..)
+  , TestingConfiguration (..)
+  ) where
 
 import Cardano.Node.Configuration.Basics
 import Cardano.Node.Configuration.File.Protocol
@@ -11,10 +10,12 @@ import Data.Aeson
 import Data.Word
 import GHC.Generics (Generic)
 
+-- | Overriding the maximum size of the mempool
 newtype MempoolCapacityBytes = MempoolCapacityBytes Word64
   deriving (Generic, Show)
   deriving newtype FromJSON
 
+-- | The testing configuration
 data TestingConfiguration = TestingConfiguration
   { pncMaybeMempoolCapacityOverride :: !(Override MempoolCapacityBytes)
   , pncExperimentalGenesis :: Maybe (EraGenesis ExperimentalCardanoEra)
