@@ -1,11 +1,18 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
+-- | Options related to the Cardano protocol
+module Cardano.Node.Configuration.File.Protocol
+  ( -- * Configuration
+    ProtocolConfiguration (..)
 
-module Cardano.Node.Configuration.File.Protocol where
+    -- * Hashed files
+  , Hashed (..)
+  , EraGenesis (..)
+  , parseEraGenesis
+
+    -- * Particular eras
+  , ByronGenesisConfiguration (..)
+  , CardanoErasWithGenesis
+  , ExperimentalCardanoEra
+  ) where
 
 import Cardano.Crypto (RequiresNetworkMagic (..))
 import Cardano.Crypto.Hash
@@ -18,6 +25,7 @@ import Cardano.Node.Configuration.Basics
 import Control.Applicative ((<|>))
 import Data.Aeson
 import Data.Aeson.Types
+import Data.Functor.Identity (Identity)
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Strict
@@ -26,6 +34,7 @@ import Data.Word
 import GHC.Generics
 import Prelude hiding (FilePath)
 
+-- | A maybe hashed entity, possibly a file.
 data Hashed a = Hashed
   { hashed :: a
   , hash :: Maybe (Hash Blake2b_256 ByteString)
@@ -42,52 +51,60 @@ parseEraGenesis =
       <$> v .: (fromString (eraName @era) <> "GenesisFile")
       <*> v .:? (fromString (eraName @era) <> "GenesisHash")
 
+-- | Configuration for byron era
 data ByronGenesisConfiguration = ByronGenesisConfiguration
-  { npcByronGenesisFile :: !(Hashed (FilePath "ByronGenesis"))
-  , npcByronReqNetworkMagic :: !RequiresNetworkMagic
-  , npcByronPbftSignatureThresh :: !(Maybe Double)
-  , npcByronSupportedProtocolVersionMajor :: !Word16
-  , npcByronSupportedProtocolVersionMinor :: !Word16
-  , npcByronSupportedProtocolVersionAlt :: !Word8
+  { byronGenesisFile :: !(Hashed (FilePath "ByronGenesis"))
+  , byronReqNetworkMagic :: !RequiresNetworkMagic
+  , byronPbftSignatureThresh :: !(Maybe Double)
+  , byronSupportedProtocolVersionMajor :: !Word16
+  , byronSupportedProtocolVersionMinor :: !Word16
+  , byronSupportedProtocolVersionAlt :: !Word8
   }
   deriving (Generic, Show)
 
 instance FromJSON ByronGenesisConfiguration where
   parseJSON =
     withObject "Configuration" $ \v -> do
-      npcByronGenesisFile <- Hashed <$> v .: "ByronGenesisFile" <*> v .:? "ByronGenesisHash"
-      npcByronReqNetworkMagic <- v .:? "RequiresNetworkMagic" .!= RequiresNoMagic
-      npcByronPbftSignatureThresh <- v .:? "PBftSignatureThreshold"
+      byronGenesisFile <- Hashed <$> v .: "ByronGenesisFile" <*> v .:? "ByronGenesisHash"
+      byronReqNetworkMagic <- v .:? "RequiresNetworkMagic" .!= RequiresNoMagic
+      byronPbftSignatureThresh <- v .:? "PBftSignatureThreshold"
       protVerMajor <- v .: "LastKnownBlockVersion-Major"
       protVerMinor <- v .: "LastKnownBlockVersion-Minor"
       protVerAlt <- v .: "LastKnownBlockVersion-Alt" .!= 0
 
       pure
         ByronGenesisConfiguration
-          { npcByronGenesisFile
-          , npcByronReqNetworkMagic
-          , npcByronPbftSignatureThresh
-          , npcByronSupportedProtocolVersionMajor = protVerMajor
-          , npcByronSupportedProtocolVersionMinor = protVerMinor
-          , npcByronSupportedProtocolVersionAlt = protVerAlt
+          { byronGenesisFile
+          , byronReqNetworkMagic
+          , byronPbftSignatureThresh
+          , byronSupportedProtocolVersionMajor = protVerMajor
+          , byronSupportedProtocolVersionMinor = protVerMinor
+          , byronSupportedProtocolVersionAlt = protVerAlt
           }
 
+-- | The eras in Cardano that require a Genesis
 type CardanoErasWithGenesis = '[ShelleyEra, AlonzoEra, ConwayEra]
+
+-- | The new upcoming era, still experimental
 type ExperimentalCardanoEra = DijkstraEra
 
-data ProtocolConfiguration = ProtocolConfiguration
-  { pncByronGenesis :: ByronGenesisConfiguration
-  , pncGeneses :: !(NP EraGenesis CardanoErasWithGenesis)
-  , pncStartAsNonProducingNode :: !Bool
+-- | Configuration for the protocol
+data ProtocolConfiguration f = ProtocolConfiguration
+  { byronGenesis :: ByronGenesisConfiguration
+  , geneses :: !(NP EraGenesis CardanoErasWithGenesis)
+  , startAsNonProducingNode :: !(f Bool)
   , checkpointsFile :: !(Maybe (Hashed (FilePath "Checkpoints")))
   }
-  deriving (Generic, Show)
+  deriving Generic
 
-instance FromJSON ProtocolConfiguration where
+deriving instance Show (ProtocolConfiguration Maybe)
+deriving instance Show (ProtocolConfiguration Identity)
+
+instance FromJSON (ProtocolConfiguration Maybe) where
   parseJSON =
     withObject "Configuration" $ \v ->
       ProtocolConfiguration
         <$> parseJSON (Object v)
         <*> hsequence' (hcpure (Proxy @Era) (Comp $ parseEraGenesis (Object v)))
-        <*> v .:? "StartAsNonProducingNode" .!= False
+        <*> v .:? "StartAsNonProducingNode"
         <*> ((fmap Just . Hashed <$> v .: "CheckpointsFile" <*> v .:? "CheckpointsFileHash") <|> pure Nothing)

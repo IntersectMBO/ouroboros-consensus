@@ -1,8 +1,4 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
-
+-- | Types that are common to CLI arguments and the configuration files
 module Cardano.Node.Configuration.Common
   ( NodeDatabasePaths (..)
   , parseNodeDatabasePaths
@@ -19,13 +15,13 @@ import Prelude hiding (FilePath)
 
 --------------------------------------------------------------------------------
 
--- * NodeDatabasePaths
-
---------------------------------------------------------------------------------
-
+-- | The databases that will be used by the node
 data NodeDatabasePaths
-  = Unique (FilePath "Database")
-  | Split (FilePath "ImmutableDB") (FilePath "VolatileDB")
+  = -- | Store everything in a single directory
+    Unique (FilePath "Database")
+  | -- | Store the immutable data in one (possibly slower) directory and the
+    -- volatile data in a different (possible faster) directory
+    Split (FilePath "ImmutableDB") (FilePath "VolatileDB")
   deriving (Generic, Show)
 
 instance Default NodeDatabasePaths where
@@ -77,6 +73,7 @@ parseImmutableDbPath =
       , completer (bashCompleter "file")
       ]
 
+-- | The value missing means "unset" not @False@, hence the @Maybe Bool@.
 parseStartAsNonProducingNode :: Parser (Maybe Bool)
 parseStartAsNonProducingNode =
   flag Nothing (Just True) $

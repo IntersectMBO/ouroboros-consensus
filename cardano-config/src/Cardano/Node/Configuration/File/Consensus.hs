@@ -1,8 +1,8 @@
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
-
-module Cardano.Node.Configuration.File.Consensus where
+-- | Options related to the Consensus layer
+module Cardano.Node.Configuration.File.Consensus
+  ( ConsensusConfiguration (..)
+  , GenesisConfigFlags (..)
+  ) where
 
 import Cardano.Ledger.BaseTypes
 import Cardano.Node.Configuration.Basics
@@ -11,6 +11,7 @@ import Data.Default
 import Data.Time.Clock (DiffTime)
 import GHC.Generics (Generic)
 
+-- | In which mode should the node run.
 data ConsensusConfiguration
   = PraosMode
   | GenesisMode GenesisConfigFlags
@@ -28,6 +29,7 @@ instance FromJSON ConsensusConfiguration where
 instance Default ConsensusConfiguration where
   def = PraosMode
 
+-- | Configuration options for Genesis parameters
 data GenesisConfigFlags = GenesisConfigFlags
   { gcfEnableCSJ :: Override Bool
   , gcfEnableLoEAndGDD :: Override Bool

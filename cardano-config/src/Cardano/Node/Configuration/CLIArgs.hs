@@ -1,8 +1,4 @@
 {-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StrictData #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Cardano.Node.Configuration.CLIArgs
   ( -- * CLI Arguments
@@ -20,6 +16,7 @@ module Cardano.Node.Configuration.CLIArgs
   ) where
 
 import Cardano.Ledger.BaseTypes (BlockNo (..), SlotNo (..))
+import qualified Cardano.Node.Configuration.Basics as QF
 import Cardano.Node.Configuration.Common
 import Control.Monad (when)
 import Data.Bifunctor (second)
@@ -63,12 +60,13 @@ data Credentials = Credentials
   }
   deriving Show
 
+-- | The CLI arguments, parsed with 'parseCLIArgs'
 data CLIArgs = CLIArgs
   { configFilePath :: FilePath
   , topologyFile :: FilePath
   , databasePathCLI :: Maybe NodeDatabasePaths
   , validateDatabase :: Bool
-  , socketPath :: Maybe FilePath
+  , socketPath :: Maybe (QF.FilePath "Socket")
   , credentials :: Credentials
   , startAsNonProducingNode :: Maybe Bool
   , hostAddr :: Maybe IPv4
@@ -97,7 +95,7 @@ parseCLIArgs =
     <*> parseTopologyFile
     <*> parserOptionGroup "Storage:" parseNodeDatabasePaths
     <*> parserOptionGroup "Storage:" parseValidateDB
-    <*> optional parseSocketPath
+    <*> optional (fmap QF.FilePath parseSocketPath)
     <*> parserOptionGroup "Credentials:" parseCredentials
     <*> parserOptionGroup "Credentials:" parseStartAsNonProducingNode
     <*> parserOptionGroup "Host:" (optional parseHostIPv4Addr)

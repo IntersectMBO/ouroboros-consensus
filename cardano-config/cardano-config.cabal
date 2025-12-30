@@ -1,20 +1,25 @@
 cabal-version: 3.0
 name: cardano-config
 version: 0.1.0.0
--- synopsis:
--- description:
+synopsis: Cardano-node configuration parsing
+description:
+  Datatypes and parsers for optparse-applicative and from YAML/JSON for the @cardano-node@ configuration.
+
 license: Apache-2.0
 license-file: LICENSE
 author: Javier Sagredo
 maintainer: javier.sagredo@iohk.io
--- copyright:
+copyright:
+  INTERSECT 2025
+
 category: Data
 build-type: Simple
 extra-doc-files: CHANGELOG.md
 
--- extra-source-files:
 common warnings
-  ghc-options: -Wall -Wunused-packages
+  ghc-options:
+    -Wall
+    -Wunused-packages
 
 library
   import: warnings
@@ -54,6 +59,24 @@ library
     strict-sop-core,
     text,
     time,
+    yaml,
 
   hs-source-dirs: src
   default-language: Haskell2010
+  default-extensions:
+    DataKinds
+    DeriveGeneric
+    DerivingStrategies
+    FlexibleContexts
+    FlexibleInstances
+    GeneralizedNewtypeDeriving
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    NamedFieldPuns
+    OverloadedStrings
+    ScopedTypeVariables
+    StandaloneDeriving
+    StrictData
+    TupleSections
+    TypeApplications

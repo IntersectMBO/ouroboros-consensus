@@ -1,10 +1,131 @@
+-- | Parse the configuration for a @cardano-node@, combining both the
+-- t'Cardano.Node.Configuration.CLIArgs' and the
+-- t'Cardano.Node.Configuration.NodeConfigurationFromFile'
+--
+-- The configuration file can be either in JSON or in YAML format.
 module Cardano.Node.Configuration
-  ( -- * Configuration file
-    module Cardano.Node.Configuration.File
+  ( -- * Configuration
+    NodeConfiguration (..)
+  , resolveConfiguration
 
-    -- * CLI arguments
-  , module Cardano.Node.Configuration.CLIArgs
+    -- ** Storage
+  , File.StorageConfiguration (..)
+  , File.LedgerDbConfiguration (..)
+  , File.NodeDatabasePaths (..)
+
+    -- ** Consensus
+  , File.ConsensusConfiguration (..)
+  , File.GenesisConfigFlags (..)
+
+    -- ** Protocol
+  , File.ProtocolConfiguration (..)
+  , File.ByronGenesisConfiguration (..)
+  , File.EraGenesis (..)
+  , File.CardanoErasWithGenesis
+  , File.Hashed (..)
+  , CLI.Credentials (..)
+
+    -- ** Network
+  , File.NetworkConfiguration (..)
+  , File.LocalConnectionsConfig (..)
+
+    -- ** Tracing
+  , File.TracingConfiguration (..)
+
+    -- ** Testing
+  , File.TestingConfiguration (..)
+  , CLI.TracerConnection (..)
+
+    -- ** Operational
+  , CLI.ShutdownOn (..)
+
+    -- * CLI
+  , CLI.CLIArgs
+  , CLI.parseCLIArgs
+
+    -- * Configuration file
+  , File.NodeConfigurationFromFile
+  , File.parseConfigurationFiles
+
+    -- * Basics
+  , Basics.FilePath (..)
+  , Basics.Override (..)
   ) where
 
-import Cardano.Node.Configuration.CLIArgs
-import Cardano.Node.Configuration.File
+import qualified Cardano.Node.Configuration.Basics as Basics
+import qualified Cardano.Node.Configuration.CLIArgs as CLI
+import qualified Cardano.Node.Configuration.Common as File
+import qualified Cardano.Node.Configuration.File as File
+import qualified Cardano.Node.Configuration.File.Consensus as File
+import qualified Cardano.Node.Configuration.File.Protocol as File
+import qualified Cardano.Node.Configuration.File.Storage as File
+import Data.Default
+import Data.Function (on)
+import Data.Functor.Identity
+import Data.IP
+import Data.Maybe
+import Data.Monoid (First (..))
+import Network.Socket
+import System.Posix.Types
+
+-- | The complete configuration for a cardano-node, combining the configuration
+-- file and the cli arguments
+data NodeConfiguration = NodeConfiguration
+  { storageConfiguration :: File.StorageConfiguration Identity
+  , consensusConfiguration :: File.ConsensusConfiguration
+  , protocolConfiguration :: File.ProtocolConfiguration Identity
+  , networkConfiguration :: File.NetworkConfiguration
+  , localConnectionsConfig :: File.LocalConnectionsConfig
+  , tracingConfiguration :: File.TracingConfiguration
+  , testingConfiguration :: File.TestingConfiguration
+  , configFilePath :: FilePath
+  , topologyFile :: FilePath
+  , validateDatabase :: Bool
+  , credentials :: CLI.Credentials
+  , hostAddr :: Maybe IPv4
+  , hostIPv6Addr :: Maybe IPv6
+  , port :: Maybe PortNumber
+  , tracerSocket :: Maybe CLI.TracerConnection
+  , shutdownIPC :: Maybe Fd
+  , shutdownOnTarget :: Maybe CLI.ShutdownOn
+  }
+
+maybeFirst :: Maybe a -> Maybe a -> Maybe a
+maybeFirst a b = getFirst $ ((<>) `on` First) a b
+
+-- | Combine the cli arguments and configuration file values into a full
+-- configuration
+resolveConfiguration :: CLI.CLIArgs -> File.NodeConfigurationFromFile -> NodeConfiguration
+resolveConfiguration cli file =
+  NodeConfiguration
+    { storageConfiguration =
+        let sc = runIdentity $ File.storageConfiguration file
+         in File.adjustDbPath
+              sc
+              (fromMaybe def $ maybeFirst (CLI.databasePathCLI cli) (File.databasePath sc))
+    , consensusConfiguration = runIdentity $ File.consensusConfiguration file
+    , protocolConfiguration =
+        let pc = runIdentity $ File.protocolConfiguration file
+         in pc
+              { File.startAsNonProducingNode =
+                  Identity $
+                    fromMaybe False $
+                      maybeFirst (CLI.startAsNonProducingNode cli) (File.startAsNonProducingNode pc)
+              }
+    , networkConfiguration = runIdentity $ File.networkConfiguration file
+    , localConnectionsConfig =
+        File.LocalConnectionsConfig
+          (maybeFirst (CLI.socketPath cli) (File.pncSocketPath $ File.localConnectionsConfig file))
+    , tracingConfiguration = runIdentity $ File.tracingConfiguration file
+    , testingConfiguration = File.testingConfiguration file
+    , configFilePath = CLI.configFilePath cli
+    , topologyFile = CLI.topologyFile cli
+    , validateDatabase = CLI.validateDatabase cli
+    , credentials = CLI.credentials cli
+    , hostAddr = CLI.hostAddr cli
+    , hostIPv6Addr = CLI.hostIPv6Addr cli
+    , port = CLI.port cli
+    , tracerSocket = CLI.tracerSocket cli
+    , shutdownIPC = CLI.shutdownIPC cli
+    , shutdownOnTarget = CLI.shutdownOnTarget cli
+    }

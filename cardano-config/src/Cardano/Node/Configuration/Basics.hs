@@ -1,18 +1,12 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings #-}
-
+-- | Basic types for configuration
 module Cardano.Node.Configuration.Basics
-  ( FilePath (..)
+  ( -- * FilePaths
+    FilePath (..)
   , (</>)
   , RelativeFilePath (..)
   , anchorRelativePath
-  , DefaultGiven (..)
+
+    -- * Defaults
   , Override (..)
   , (.:=)
   ) where
@@ -28,6 +22,7 @@ import qualified System.FilePath as F
 import Prelude hiding (FilePath)
 import qualified Prelude as P
 
+-- | A filepath annotated with the intended use for it
 newtype FilePath (s :: Symbol) = FilePath {getFilePath :: P.FilePath}
   deriving (Generic, Show)
   deriving newtype (FromJSON, IsString)
@@ -35,6 +30,7 @@ newtype FilePath (s :: Symbol) = FilePath {getFilePath :: P.FilePath}
 (</>) :: FilePath a -> FilePath b -> FilePath c
 FilePath a </> FilePath b = FilePath (a F.</> b)
 
+-- | A FilePath that requires a mount point
 newtype RelativeFilePath (s :: Symbol)
   = RelativeFilePath {relativeFilePath :: FilePath s}
   deriving (Generic, Show)
@@ -42,9 +38,11 @@ newtype RelativeFilePath (s :: Symbol)
 anchorRelativePath :: FilePath a -> RelativeFilePath b -> FilePath b
 anchorRelativePath fp1 (RelativeFilePath fp2) = fp1 </> fp2
 
-class DefaultGiven given a where
-  defGiven :: given -> a
+--------------------------------------------------------------------------------
 
+-- | Signal whether the default value should not be overriden, but don't provide
+-- a default at this level. The particular component will have to then apply
+-- whatever defaults it considers acceptable.
 data Override a = NoOverride | Override a deriving (Generic, Show, Eq)
 
 instance Default (Override a) where
@@ -61,5 +59,8 @@ instance FromJSON a => FromJSON (Override a) where
       v
       <|> Override <$> parseJSON v
 
+--------------------------------------------------------------------------------
+
+-- | If the key is missing, use the default value
 (.:=) :: (FromJSON a, Default a) => Object -> Key -> Parser a
 a .:= b = a .:? b .!= def
