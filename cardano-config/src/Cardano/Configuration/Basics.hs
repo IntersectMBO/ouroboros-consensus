@@ -7,11 +7,9 @@ module Cardano.Configuration.Basics
   , anchorRelativePath
 
     -- * Defaults
-  , Override (..)
   , (.:=)
   ) where
 
-import Control.Applicative ((<|>))
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.Default
@@ -38,27 +36,6 @@ newtype RelativeFile s
 -- be ignored. Make sure to only pass relative paths as the second argument.
 anchorRelativePath :: File a -> RelativeFile b -> File b
 anchorRelativePath fp1 (RelativeFile fp2) = fp1 </> fp2
-
---------------------------------------------------------------------------------
-
--- | Signal whether the default value should not be overriden, but don't provide
--- a default at this level. The particular component will have to then apply
--- whatever defaults it considers acceptable.
-data Override a = NoOverride | Override a deriving (Generic, Show, Eq)
-
-instance Default (Override a) where
-  def = NoOverride
-
-instance FromJSON a => FromJSON (Override a) where
-  parseJSON v =
-    withText
-      "Override"
-      ( \case
-          "NoOverride" -> pure NoOverride
-          _ -> fail "Not text"
-      )
-      v
-      <|> Override <$> parseJSON v
 
 --------------------------------------------------------------------------------
 

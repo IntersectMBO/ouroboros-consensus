@@ -17,7 +17,7 @@ newtype MempoolCapacityBytes = MempoolCapacityBytes Word64
 
 -- | The testing configuration
 data TestingConfiguration = TestingConfiguration
-  { pncMaybeMempoolCapacityOverride :: !(Override MempoolCapacityBytes)
+  { pncMaybeMempoolCapacityMaybe :: !(Maybe MempoolCapacityBytes)
   , pncExperimentalGenesis :: Maybe (EraGenesis ExperimentalCardanoEra)
   }
   deriving (Generic, Show)
@@ -26,7 +26,7 @@ instance FromJSON TestingConfiguration where
   parseJSON =
     withObject "Configuration" $ \v ->
       TestingConfiguration
-        <$> v .:= "MempoolCapacityBytesOverride"
+        <$> v .:= "MempoolCapacityBytesMaybe"
         <*> ( do
                 enabled <- v .:? "ExperimentalHardForksEnabled" .!= False
                 if enabled
