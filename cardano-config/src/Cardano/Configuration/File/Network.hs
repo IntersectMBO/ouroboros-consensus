@@ -1,5 +1,5 @@
 -- | Configuration options related to networking
-module Cardano.Node.Configuration.File.Network
+module Cardano.Configuration.File.Network
   ( DiffusionMode (..)
   , NetworkConfiguration (..)
   , AcceptedConnectionsLimit (..)
@@ -8,7 +8,7 @@ module Cardano.Node.Configuration.File.Network
   , LocalConnectionsConfig (..)
   ) where
 
-import Cardano.Node.Configuration.Basics
+import Cardano.Configuration.Basics
 import Data.Aeson
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
@@ -124,7 +124,7 @@ instance FromJSON NetworkConfiguration where
 
 -- | Connections for local clients
 data LocalConnectionsConfig = LocalConnectionsConfig
-  { pncSocketPath :: Maybe (FilePath "Socket")
+  { pncSocketPath :: Maybe (File "Socket")
   }
   deriving (Generic, Show)
 

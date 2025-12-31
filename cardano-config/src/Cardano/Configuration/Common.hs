@@ -1,27 +1,26 @@
 -- | Types that are common to CLI arguments and the configuration files
-module Cardano.Node.Configuration.Common
+module Cardano.Configuration.Common
   ( NodeDatabasePaths (..)
   , parseNodeDatabasePaths
   , parseStartAsNonProducingNode
   ) where
 
-import Cardano.Node.Configuration.Basics
+import Cardano.Configuration.Basics
 import Data.Aeson
 import Data.Default
 import qualified Data.Text as T
 import GHC.Generics
 import Options.Applicative
-import Prelude hiding (FilePath)
 
 --------------------------------------------------------------------------------
 
 -- | The databases that will be used by the node
 data NodeDatabasePaths
   = -- | Store everything in a single directory
-    Unique (FilePath "Database")
+    Unique (File "Database")
   | -- | Store the immutable data in one (possibly slower) directory and the
     -- volatile data in a different (possible faster) directory
-    Split (FilePath "ImmutableDB") (FilePath "VolatileDB")
+    Split (File "ImmutableDB") (File "VolatileDB")
   deriving (Generic, Show)
 
 instance Default NodeDatabasePaths where
@@ -29,7 +28,7 @@ instance Default NodeDatabasePaths where
 
 instance FromJSON NodeDatabasePaths where
   parseJSON v =
-    withText "OneDatabase" (pure . Unique . FilePath . T.unpack) v
+    withText "OneDatabase" (pure . Unique . File . T.unpack) v
       <|> withObject
         "MultipleDatabases"
         (\v' -> Split <$> v' .: "ImmutablePath" <*> v' .: "VolatilePath")
@@ -53,7 +52,7 @@ parseDbPath =
 parseMultipleDbPaths :: Parser NodeDatabasePaths
 parseMultipleDbPaths = Split <$> parseImmutableDbPath <*> parseVolatileDbPath
 
-parseVolatileDbPath :: Parser (FilePath "VolatileDB")
+parseVolatileDbPath :: Parser (File "VolatileDB")
 parseVolatileDbPath =
   strOption $
     mconcat
@@ -63,7 +62,7 @@ parseVolatileDbPath =
       , completer (bashCompleter "file")
       ]
 
-parseImmutableDbPath :: Parser (FilePath "ImmutableDB")
+parseImmutableDbPath :: Parser (File "ImmutableDB")
 parseImmutableDbPath =
   strOption $
     mconcat

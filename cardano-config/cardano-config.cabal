@@ -24,17 +24,17 @@ common warnings
 library
   import: warnings
   exposed-modules:
-    Cardano.Node.Configuration
-    Cardano.Node.Configuration.Basics
-    Cardano.Node.Configuration.CLIArgs
-    Cardano.Node.Configuration.Common
-    Cardano.Node.Configuration.File
-    Cardano.Node.Configuration.File.Consensus
-    Cardano.Node.Configuration.File.Network
-    Cardano.Node.Configuration.File.Protocol
-    Cardano.Node.Configuration.File.Storage
-    Cardano.Node.Configuration.File.Testing
-    Cardano.Node.Configuration.File.Tracing
+    Cardano.Configuration
+    Cardano.Configuration.Basics
+    Cardano.Configuration.CliArgs
+    Cardano.Configuration.Common
+    Cardano.Configuration.File
+    Cardano.Configuration.File.Consensus
+    Cardano.Configuration.File.Network
+    Cardano.Configuration.File.Protocol
+    Cardano.Configuration.File.Storage
+    Cardano.Configuration.File.Testing
+    Cardano.Configuration.File.Tracing
 
   build-depends:
     aeson,
@@ -75,6 +75,7 @@ library
     MultiParamTypeClasses
     NamedFieldPuns
     OverloadedStrings
+    PolyKinds
     ScopedTypeVariables
     StandaloneDeriving
     StrictData

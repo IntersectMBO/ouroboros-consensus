@@ -1,11 +1,11 @@
 -- | Values related to testing, which are unused by a real node
-module Cardano.Node.Configuration.File.Testing
+module Cardano.Configuration.File.Testing
   ( MempoolCapacityBytes (..)
   , TestingConfiguration (..)
   ) where
 
-import Cardano.Node.Configuration.Basics
-import Cardano.Node.Configuration.File.Protocol
+import Cardano.Configuration.Basics
+import Cardano.Configuration.File.Protocol
 import Data.Aeson
 import Data.Word
 import GHC.Generics (Generic)

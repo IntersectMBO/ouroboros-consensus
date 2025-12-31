@@ -2,7 +2,7 @@
 
 This package exposes a library that defines:
 
-- A parser for CLI options based on `optparse-applicative` (see `parseCLIArgs`).
+- A parser for CLI options based on `optparse-applicative` (see `parseCliArgs`).
 
 - Instances for parsing the configuration files from JSON/YAML (see `parseConfigurationFiles`).
 

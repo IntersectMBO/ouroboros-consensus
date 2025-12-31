@@ -1,5 +1,5 @@
 -- | Options related to the Cardano protocol
-module Cardano.Node.Configuration.File.Protocol
+module Cardano.Configuration.File.Protocol
   ( -- * Configuration
     ProtocolConfiguration (..)
 
@@ -14,6 +14,7 @@ module Cardano.Node.Configuration.File.Protocol
   , ExperimentalCardanoEra
   ) where
 
+import Cardano.Configuration.Basics
 import Cardano.Crypto (RequiresNetworkMagic (..))
 import Cardano.Crypto.Hash
 import Cardano.Ledger.Alonzo
@@ -21,7 +22,6 @@ import Cardano.Ledger.Conway
 import Cardano.Ledger.Core hiding (Value)
 import Cardano.Ledger.Dijkstra
 import Cardano.Ledger.Shelley
-import Cardano.Node.Configuration.Basics
 import Control.Applicative ((<|>))
 import Data.Aeson
 import Data.Aeson.Types
@@ -32,7 +32,6 @@ import Data.SOP.Strict
 import Data.String (fromString)
 import Data.Word
 import GHC.Generics
-import Prelude hiding (FilePath)
 
 -- | A maybe hashed entity, possibly a file.
 data Hashed a = Hashed
@@ -41,7 +40,7 @@ data Hashed a = Hashed
   }
   deriving (Generic, Show)
 
-newtype EraGenesis era = EraGenesis (Hashed (FilePath "Genesis"))
+newtype EraGenesis era = EraGenesis (Hashed (File "Genesis"))
   deriving (Generic, Show)
 
 parseEraGenesis :: forall era. Era era => Value -> Parser (EraGenesis era)
@@ -53,7 +52,7 @@ parseEraGenesis =
 
 -- | Configuration for byron era
 data ByronGenesisConfiguration = ByronGenesisConfiguration
-  { byronGenesisFile :: !(Hashed (FilePath "ByronGenesis"))
+  { byronGenesisFile :: !(Hashed (File "ByronGenesis"))
   , byronReqNetworkMagic :: !RequiresNetworkMagic
   , byronPbftSignatureThresh :: !(Maybe Double)
   , byronSupportedProtocolVersionMajor :: !Word16
@@ -93,7 +92,7 @@ data ProtocolConfiguration f = ProtocolConfiguration
   { byronGenesis :: ByronGenesisConfiguration
   , geneses :: !(NP EraGenesis CardanoErasWithGenesis)
   , startAsNonProducingNode :: !(f Bool)
-  , checkpointsFile :: !(Maybe (Hashed (FilePath "Checkpoints")))
+  , checkpointsFile :: !(Maybe (Hashed (File "Checkpoints")))
   }
   deriving Generic
 

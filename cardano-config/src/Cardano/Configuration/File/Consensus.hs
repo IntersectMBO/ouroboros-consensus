@@ -1,33 +1,42 @@
 -- | Options related to the Consensus layer
-module Cardano.Node.Configuration.File.Consensus
+module Cardano.Configuration.File.Consensus
   ( ConsensusConfiguration (..)
   , GenesisConfigFlags (..)
   ) where
 
+import Cardano.Configuration.Basics
 import Cardano.Ledger.BaseTypes
-import Cardano.Node.Configuration.Basics
 import Data.Aeson
 import Data.Default
 import Data.Time.Clock (DiffTime)
 import GHC.Generics (Generic)
 
--- | In which mode should the node run.
-data ConsensusConfiguration
+data ConsensusMode
   = PraosMode
   | GenesisMode GenesisConfigFlags
   deriving (Generic, Show)
 
-instance FromJSON ConsensusConfiguration where
-  parseJSON =
-    withObject "ConsensusMode" $ \v -> do
-      v .:? "ConsensusMode" >>= \case
-        Just "GenesisMode" -> GenesisMode <$> parseJSON (Object v)
-        Just "PraosMode" -> pure PraosMode
-        Nothing -> pure def
-        Just x -> fail $ "Unknown consensus mode: " <> x
-
-instance Default ConsensusConfiguration where
+instance Default ConsensusMode where
   def = PraosMode
+
+-- | In which mode should the node run.
+newtype ConsensusConfiguration f = ConsensusConfiguration {getConsensusConfiguration :: f ConsensusMode}
+
+deriving instance Show (ConsensusConfiguration Maybe)
+
+instance FromJSON (ConsensusConfiguration Maybe) where
+  parseJSON val =
+    ConsensusConfiguration
+      <$> withObject
+        "ConsensusMode"
+        ( \v -> do
+            v .:? "ConsensusMode" >>= \case
+              Just "GenesisMode" -> Just . GenesisMode <$> parseJSON val
+              Just "PraosMode" -> pure $ Just PraosMode
+              Nothing -> pure Nothing
+              Just x -> fail $ "Unknown consensus mode: " <> x
+        )
+        val
 
 -- | Configuration options for Genesis parameters
 data GenesisConfigFlags = GenesisConfigFlags
