@@ -39,13 +39,10 @@ Highlights include the following.
 - The `ss` tool is being used to sample socket statistics throughout the demo's execution, so that the TCP algorithm's state can be monitored.
   For example, the `rtt` and `notsent` fields are directly related to bufferbloat.
 
-# Monitoring with Grafana
+# Packaging and Monitoring with Grafana
 
-TODO
+See [this README](https://github.com/input-output-hk/ouroboros-leios/tree/main/demo/2025-11)
 
-# Packaging
-
-TODO
 
 # Building from Source
 
