@@ -49,7 +49,6 @@ module Cardano.Configuration
 
     -- * Basics
   , Basics.File (..)
-  , Basics.Override (..)
   ) where
 
 import qualified Cardano.Configuration.Basics as Basics
@@ -89,6 +88,7 @@ data NodeConfiguration = NodeConfiguration
   , shutdownIPC :: Maybe Fd
   , shutdownOnTarget :: Maybe CLI.ShutdownOn
   }
+  deriving Show
 
 -- | Combine the cli arguments and configuration file values into a full
 -- configuration

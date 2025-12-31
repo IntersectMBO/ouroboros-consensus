@@ -52,10 +52,10 @@ newtype MaxReaders = MaxReaders Word64
 -- | Selector for the backend
 data LedgerDbBackendSelector f
   = V1LMDB
-      (Override FlushFrequency)
+      (Maybe FlushFrequency)
       (f (File "LMDB"))
-      (Override MaxMapSize)
-      (Override MaxReaders)
+      (Maybe MaxMapSize)
+      (Maybe MaxReaders)
   | V2InMemory
   | V2LSM (f (File "LSM"))
   deriving Generic
@@ -82,9 +82,9 @@ newtype QueryBatchSize = QueryBatchSize Word64
 -- | The Ledger DB configuration
 data LedgerDbConfiguration f
   = LedgerDbConfiguration
-  { numOfDiskSnapshots :: Override NumOfDiskSnapshots
-  , snapshotInterval :: Override SnapshotInterval
-  , queryBatchSize :: Override QueryBatchSize
+  { numOfDiskSnapshots :: Maybe NumOfDiskSnapshots
+  , snapshotInterval :: Maybe SnapshotInterval
+  , queryBatchSize :: Maybe QueryBatchSize
   , backendSelector :: f (LedgerDbBackendSelector f)
   }
   deriving Generic
@@ -132,12 +132,12 @@ class DefaultGiven given a where
   defGiven :: given -> a
 
 instance DefaultGiven NodeDatabasePaths (File "LMDB") where
-  defGiven (Unique fp) = fp `anchorRelativePath` def
-  defGiven (Split _ fp) = fp `anchorRelativePath` def
+  defGiven (SingleDB fp) = fp `anchorRelativePath` def
+  defGiven (SplitDB _ fp) = fp `anchorRelativePath` def
 
 instance DefaultGiven NodeDatabasePaths (File "LSM") where
-  defGiven (Unique fp) = fp `anchorRelativePath` def
-  defGiven (Split _ fp) = fp `anchorRelativePath` def
+  defGiven (SingleDB fp) = fp `anchorRelativePath` def
+  defGiven (SplitDB _ fp) = fp `anchorRelativePath` def
 
 instance
   (Default (RelativeFile a), DefaultGiven b (File a)) =>

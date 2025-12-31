@@ -8,6 +8,7 @@ import Cardano.Configuration.Basics
 import Cardano.Ledger.BaseTypes
 import Data.Aeson
 import Data.Default
+import Data.Functor.Identity (Identity)
 import Data.Time.Clock (DiffTime)
 import GHC.Generics (Generic)
 
@@ -23,6 +24,7 @@ instance Default ConsensusMode where
 newtype ConsensusConfiguration f = ConsensusConfiguration {getConsensusConfiguration :: f ConsensusMode}
 
 deriving instance Show (ConsensusConfiguration Maybe)
+deriving instance Show (ConsensusConfiguration Identity)
 
 instance FromJSON (ConsensusConfiguration Maybe) where
   parseJSON val =
@@ -40,14 +42,14 @@ instance FromJSON (ConsensusConfiguration Maybe) where
 
 -- | Configuration options for Genesis parameters
 data GenesisConfigFlags = GenesisConfigFlags
-  { gcfEnableCSJ :: Override Bool
-  , gcfEnableLoEAndGDD :: Override Bool
-  , gcfEnableLoP :: Override Bool
-  , gcfBlockFetchGracePeriod :: Override DiffTime
-  , gcfBucketCapacity :: Override Integer
-  , gcfBucketRate :: Override Integer
-  , gcfCSJJumpSize :: Override SlotNo
-  , gcfGDDRateLimit :: Override DiffTime
+  { gcfEnableCSJ :: Maybe Bool
+  , gcfEnableLoEAndGDD :: Maybe Bool
+  , gcfEnableLoP :: Maybe Bool
+  , gcfBlockFetchGracePeriod :: Maybe DiffTime
+  , gcfBucketCapacity :: Maybe Integer
+  , gcfBucketRate :: Maybe Integer
+  , gcfCSJJumpSize :: Maybe SlotNo
+  , gcfGDDRateLimit :: Maybe DiffTime
   }
   deriving (Generic, Show)
 

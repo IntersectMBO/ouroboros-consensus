@@ -61,34 +61,34 @@ instance FromJSON ResponderCoreAffinityPolicy where
       x -> fail $ "Unknown responder core affinity policy: " <> T.unpack x
 
 -- | Options related to Networking configuration. Most of the fields are
--- @Override@ such that the networking layer can then set the appropriate
+-- @Maybe@ such that the networking layer can then set the appropriate
 -- defaults.
 data NetworkConfiguration = NetworkConfiguration
   { pncDiffusionMode :: DiffusionMode
-  , pncMaxConcurrencyBulkSync :: Override Word
-  , pncMaxConcurrencyDeadline :: Override Word
-  , pncProtocolIdleTimeout :: Override DiffTime
-  , pncTimeWaitTimeout :: Override DiffTime
-  , pncEgressPollInterval :: Override DiffTime
-  , pncChainSyncIdleTimeout :: Override DiffTime
-  , pncAcceptedConnectionsLimit :: Override AcceptedConnectionsLimit
-  , pncDeadlineTargetOfRootPeers :: Override Int
-  , pncDeadlineTargetOfKnownPeers :: Override Int
-  , pncDeadlineTargetOfEstablishedPeers :: Override Int
-  , pncDeadlineTargetOfActivePeers :: Override Int
-  , pncDeadlineTargetOfKnownBigLedgerPeers :: Override Int
-  , pncDeadlineTargetOfEstablishedBigLedgerPeers :: Override Int
-  , pncDeadlineTargetOfActiveBigLedgerPeers :: Override Int
-  , pncSyncTargetOfRootPeers :: Override Int
-  , pncSyncTargetOfKnownPeers :: Override Int
-  , pncSyncTargetOfEstablishedPeers :: Override Int
-  , pncSyncTargetOfActivePeers :: Override Int
-  , pncSyncTargetOfKnownBigLedgerPeers :: Override Int
-  , pncSyncTargetOfEstablishedBigLedgerPeers :: Override Int
-  , pncSyncTargetOfActiveBigLedgerPeers :: Override Int
-  , pncMinBigLedgerPeersForTrustedState :: Override Int
-  , pncPeerSharing :: Override PeerSharing
-  , pncResponderCoreAffinityPolicy :: Override ResponderCoreAffinityPolicy
+  , pncMaxConcurrencyBulkSync :: Maybe Word
+  , pncMaxConcurrencyDeadline :: Maybe Word
+  , pncProtocolIdleTimeout :: Maybe DiffTime
+  , pncTimeWaitTimeout :: Maybe DiffTime
+  , pncEgressPollInterval :: Maybe DiffTime
+  , pncChainSyncIdleTimeout :: Maybe DiffTime
+  , pncAcceptedConnectionsLimit :: Maybe AcceptedConnectionsLimit
+  , pncDeadlineTargetOfRootPeers :: Maybe Int
+  , pncDeadlineTargetOfKnownPeers :: Maybe Int
+  , pncDeadlineTargetOfEstablishedPeers :: Maybe Int
+  , pncDeadlineTargetOfActivePeers :: Maybe Int
+  , pncDeadlineTargetOfKnownBigLedgerPeers :: Maybe Int
+  , pncDeadlineTargetOfEstablishedBigLedgerPeers :: Maybe Int
+  , pncDeadlineTargetOfActiveBigLedgerPeers :: Maybe Int
+  , pncSyncTargetOfRootPeers :: Maybe Int
+  , pncSyncTargetOfKnownPeers :: Maybe Int
+  , pncSyncTargetOfEstablishedPeers :: Maybe Int
+  , pncSyncTargetOfActivePeers :: Maybe Int
+  , pncSyncTargetOfKnownBigLedgerPeers :: Maybe Int
+  , pncSyncTargetOfEstablishedBigLedgerPeers :: Maybe Int
+  , pncSyncTargetOfActiveBigLedgerPeers :: Maybe Int
+  , pncMinBigLedgerPeersForTrustedState :: Maybe Int
+  , pncPeerSharing :: Maybe PeerSharing
+  , pncResponderCoreAffinityPolicy :: Maybe ResponderCoreAffinityPolicy
   }
   deriving (Generic, Show)
 
