@@ -1,9 +1,8 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Options related to storage
-module Cardano.Node.Configuration.File.Storage
+module Cardano.Configuration.File.Storage
   ( adjustDbPath
-  , parseStorageConfiguration
   , StorageConfiguration (..)
 
     -- * LedgerDB
@@ -21,12 +20,13 @@ module Cardano.Node.Configuration.File.Storage
   , MaxReaders (..)
   ) where
 
-import Cardano.Node.Configuration.Basics
-import Cardano.Node.Configuration.Common
+import Cardano.Configuration.Basics
+import Cardano.Configuration.Common
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.Default
 import Data.Functor.Identity
+import Data.Maybe (fromMaybe)
 import Data.Word
 import Debug.Trace (trace)
 import GHC.Generics
@@ -53,11 +53,11 @@ newtype MaxReaders = MaxReaders Word64
 data LedgerDbBackendSelector f
   = V1LMDB
       (Override FlushFrequency)
-      (f (FilePath "LMDB"))
+      (f (File "LMDB"))
       (Override MaxMapSize)
       (Override MaxReaders)
   | V2InMemory
-  | V2LSM (f (FilePath "LSM"))
+  | V2LSM (f (File "LSM"))
   deriving Generic
 
 deriving instance Show (LedgerDbBackendSelector Maybe)
@@ -85,59 +85,63 @@ data LedgerDbConfiguration f
   { numOfDiskSnapshots :: Override NumOfDiskSnapshots
   , snapshotInterval :: Override SnapshotInterval
   , queryBatchSize :: Override QueryBatchSize
-  , backendSelector :: LedgerDbBackendSelector f
+  , backendSelector :: f (LedgerDbBackendSelector f)
   }
   deriving Generic
 
 deriving instance Show (LedgerDbConfiguration Maybe)
 deriving instance Show (LedgerDbConfiguration Identity)
 
+instance Default (LedgerDbConfiguration Identity) where
+  def = LedgerDbConfiguration def def def (Identity def)
+
 resolvePaths :: LedgerDbConfiguration Maybe -> NodeDatabasePaths -> LedgerDbConfiguration Identity
-resolvePaths ldb@(LedgerDbConfiguration _ _ _ (V1LMDB d Nothing e f)) ndb =
-  ldb{backendSelector = V1LMDB d (Identity (defGiven ndb)) e f}
-resolvePaths ldb@(LedgerDbConfiguration _ _ _ (V2LSM Nothing)) ndb =
-  ldb{backendSelector = V2LSM (Identity (defGiven ndb))}
-resolvePaths ldb@(LedgerDbConfiguration _ _ _ (V1LMDB d (Just e) f g)) _ =
-  ldb{backendSelector = V1LMDB d (Identity e) f g}
-resolvePaths ldb@(LedgerDbConfiguration _ _ _ (V2LSM (Just a))) _ =
-  ldb{backendSelector = V2LSM (Identity a)}
-resolvePaths ldb@(LedgerDbConfiguration _ _ _ V2InMemory) _ =
-  ldb{backendSelector = V2InMemory}
+resolvePaths ldb@(LedgerDbConfiguration _ _ _ (Just (V1LMDB d Nothing e f))) ndb =
+  ldb{backendSelector = Identity (V1LMDB d (Identity (defGiven ndb)) e f)}
+resolvePaths ldb@(LedgerDbConfiguration _ _ _ (Just (V2LSM Nothing))) ndb =
+  ldb{backendSelector = Identity (V2LSM (Identity (defGiven ndb)))}
+resolvePaths ldb@(LedgerDbConfiguration _ _ _ (Just (V1LMDB d (Just e) f g))) _ =
+  ldb{backendSelector = Identity (V1LMDB d (Identity e) f g)}
+resolvePaths ldb@(LedgerDbConfiguration _ _ _ (Just (V2LSM (Just a)))) _ =
+  ldb{backendSelector = Identity (V2LSM (Identity a))}
+resolvePaths ldb@(LedgerDbConfiguration _ _ _ (Just V2InMemory)) _ =
+  ldb{backendSelector = Identity V2InMemory}
+resolvePaths ldb _ = ldb{backendSelector = Identity def}
 
 -- | Finally resolve the LedgerDB configuration with a final NodeDatabasePaths
 adjustDbPath :: StorageConfiguration Maybe -> NodeDatabasePaths -> StorageConfiguration Identity
 adjustDbPath sc db =
   sc
     { databasePath = Identity db
-    , ledgerDbConfiguration = resolvePaths (ledgerDbConfiguration sc) db
+    , ledgerDbConfiguration =
+        Identity $
+          fromMaybe def $
+            fmap (flip resolvePaths db) (ledgerDbConfiguration sc)
     }
 
-instance Default (RelativeFilePath "LMDB") where
-  def = RelativeFilePath "lmdb"
+instance Default (RelativeFile "LMDB") where
+  def = RelativeFile "lmdb"
 
-instance Default (RelativeFilePath "LSM") where
-  def = RelativeFilePath "lsm"
+instance Default (RelativeFile "LSM") where
+  def = RelativeFile "lsm"
 
 instance Default (LedgerDbBackendSelector f) where
   def = V2InMemory
 
-instance Default (LedgerDbConfiguration f) where
-  def = LedgerDbConfiguration def def def def
-
 class DefaultGiven given a where
   defGiven :: given -> a
 
-instance DefaultGiven NodeDatabasePaths (FilePath "LMDB") where
+instance DefaultGiven NodeDatabasePaths (File "LMDB") where
   defGiven (Unique fp) = fp `anchorRelativePath` def
   defGiven (Split _ fp) = fp `anchorRelativePath` def
 
-instance DefaultGiven NodeDatabasePaths (FilePath "LSM") where
+instance DefaultGiven NodeDatabasePaths (File "LSM") where
   defGiven (Unique fp) = fp `anchorRelativePath` def
   defGiven (Split _ fp) = fp `anchorRelativePath` def
 
 instance
-  (Default (RelativeFilePath a), DefaultGiven b (FilePath a)) =>
-  DefaultGiven (Maybe b) (Maybe (FilePath a))
+  (Default (RelativeFile a), DefaultGiven b (File a)) =>
+  DefaultGiven (Maybe b) (Maybe (File a))
   where
   defGiven Nothing = Nothing
   defGiven (Just ndb) = Just $ defGiven ndb
@@ -152,43 +156,46 @@ parseLedgerDbConfig dbPath =
         <*> v .:= "QueryBatchSize"
         <*> parseLedgerDbBackend dbPath (Object v)
 
-parseLedgerDbBackend :: Maybe NodeDatabasePaths -> Value -> Parser (LedgerDbBackendSelector Maybe)
+parseLedgerDbBackend ::
+  Maybe NodeDatabasePaths -> Value -> Parser (Maybe (LedgerDbBackendSelector Maybe))
 parseLedgerDbBackend dbPath =
   withObject "LedgerDB" $ \v -> do
-    bknd <- v .: "Backend" :: Parser String
+    bknd <- v .:? "Backend" :: Parser (Maybe String)
     case bknd of
-      "V2InMemory" ->
-        pure V2InMemory
-      "V1LMDB" -> do
+      Just "V2InMemory" ->
+        pure $ Just V2InMemory
+      Just "V1LMDB" -> do
         ff <- v .:= "FlushFrequency"
         ltp <- (fmap Just <$> v .:? "LiveTablesPath") .!= defGiven dbPath
         sz <- v .:= "MaxMapSize"
         rds <- v .:= "MaxReaders"
-        pure $ V1LMDB ff ltp sz rds
-      "V2LSM" ->
-        V2LSM <$> (fmap Just <$> v .:? "LSMDatabasePath") .!= defGiven dbPath
-      _ -> fail $ "Unknown backend: " <> show bknd
+        pure $ Just $ V1LMDB ff ltp sz rds
+      Just "V2LSM" ->
+        Just . V2LSM <$> (fmap Just <$> v .:? "LSMDatabasePath") .!= defGiven dbPath
+      Just x -> fail $ "Unknown backend: " <> show x
+      Nothing -> pure Nothing
 
 parseLedgerDbConfiguration ::
-  Maybe NodeDatabasePaths -> Value -> Parser (LedgerDbConfiguration Maybe)
+  Maybe NodeDatabasePaths -> Value -> Parser (Maybe (LedgerDbConfiguration Maybe))
 parseLedgerDbConfiguration dbPath =
   withObject "NodeConfiguration" $ \v ->
-    maybe (pure def) (parseLedgerDbConfig dbPath)
-      =<< v .:? "LedgerDB"
+    v .:? "LedgerDB" >>= \case
+      Nothing -> pure Nothing
+      Just ldb' -> Just <$> parseLedgerDbConfig dbPath ldb'
 
 -- | The storage configuration
 data StorageConfiguration f = StorageConfiguration
   { databasePath :: f NodeDatabasePaths
-  , ledgerDbConfiguration :: LedgerDbConfiguration f
+  , ledgerDbConfiguration :: f (LedgerDbConfiguration f)
   }
   deriving Generic
 
 deriving instance Show (StorageConfiguration Maybe)
 deriving instance Show (StorageConfiguration Identity)
 
-parseStorageConfiguration :: Value -> Parser (StorageConfiguration Maybe)
-parseStorageConfiguration =
-  withObject "StorageConfiguration" $ \v -> do
-    dbPath <- v .:? "DatabasePath"
-    ldb <- parseLedgerDbConfiguration dbPath (Object v)
-    pure $ StorageConfiguration dbPath ldb
+instance FromJSON (StorageConfiguration Maybe) where
+  parseJSON =
+    withObject "StorageConfiguration" $ \v -> do
+      dbPath <- v .:? "DatabasePath"
+      ldb <- parseLedgerDbConfiguration dbPath (Object v)
+      pure $ StorageConfiguration dbPath ldb

@@ -1,8 +1,8 @@
 -- | Options related to tracing
-module Cardano.Node.Configuration.File.Tracing where
+module Cardano.Configuration.File.Tracing where
 
 import Cardano.BM.Data.Tracer (TracingVerbosity)
-import Cardano.Node.Configuration.Basics
+import Cardano.Configuration.Basics
 import Control.Applicative ((<|>))
 import Data.Aeson
 import qualified Data.Aeson.Key as Aeson

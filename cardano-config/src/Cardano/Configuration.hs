@@ -1,9 +1,9 @@
 -- | Parse the configuration for a @cardano-node@, combining both the
--- t'Cardano.Node.Configuration.CLIArgs' and the
--- t'Cardano.Node.Configuration.NodeConfigurationFromFile'
+-- t'Cardano.Configuration.CliArgs' and the
+-- t'Cardano.Configuration.NodeConfigurationFromFile'
 --
 -- The configuration file can be either in JSON or in YAML format.
-module Cardano.Node.Configuration
+module Cardano.Configuration
   ( -- * Configuration
     NodeConfiguration (..)
   , resolveConfiguration
@@ -40,31 +40,31 @@ module Cardano.Node.Configuration
   , CLI.ShutdownOn (..)
 
     -- * CLI
-  , CLI.CLIArgs
-  , CLI.parseCLIArgs
+  , CLI.CliArgs
+  , CLI.parseCliArgs
 
     -- * Configuration file
   , File.NodeConfigurationFromFile
   , File.parseConfigurationFiles
 
     -- * Basics
-  , Basics.FilePath (..)
+  , Basics.File (..)
   , Basics.Override (..)
   ) where
 
-import qualified Cardano.Node.Configuration.Basics as Basics
-import qualified Cardano.Node.Configuration.CLIArgs as CLI
-import qualified Cardano.Node.Configuration.Common as File
-import qualified Cardano.Node.Configuration.File as File
-import qualified Cardano.Node.Configuration.File.Consensus as File
-import qualified Cardano.Node.Configuration.File.Protocol as File
-import qualified Cardano.Node.Configuration.File.Storage as File
+import qualified Cardano.Configuration.Basics as Basics
+import qualified Cardano.Configuration.CliArgs as CLI
+import qualified Cardano.Configuration.Common as File
+import qualified Cardano.Configuration.File as File
+import Cardano.Configuration.File.Consensus
+import qualified Cardano.Configuration.File.Consensus as File
+import qualified Cardano.Configuration.File.Protocol as File
+import qualified Cardano.Configuration.File.Storage as File
+import Control.Applicative ((<|>))
 import Data.Default
-import Data.Function (on)
 import Data.Functor.Identity
 import Data.IP
 import Data.Maybe
-import Data.Monoid (First (..))
 import Network.Socket
 import System.Posix.Types
 
@@ -72,7 +72,7 @@ import System.Posix.Types
 -- file and the cli arguments
 data NodeConfiguration = NodeConfiguration
   { storageConfiguration :: File.StorageConfiguration Identity
-  , consensusConfiguration :: File.ConsensusConfiguration
+  , consensusConfiguration :: File.ConsensusConfiguration Identity
   , protocolConfiguration :: File.ProtocolConfiguration Identity
   , networkConfiguration :: File.NetworkConfiguration
   , localConnectionsConfig :: File.LocalConnectionsConfig
@@ -90,32 +90,33 @@ data NodeConfiguration = NodeConfiguration
   , shutdownOnTarget :: Maybe CLI.ShutdownOn
   }
 
-maybeFirst :: Maybe a -> Maybe a -> Maybe a
-maybeFirst a b = getFirst $ ((<>) `on` First) a b
-
 -- | Combine the cli arguments and configuration file values into a full
 -- configuration
-resolveConfiguration :: CLI.CLIArgs -> File.NodeConfigurationFromFile -> NodeConfiguration
+resolveConfiguration :: CLI.CliArgs -> File.NodeConfigurationFromFile -> NodeConfiguration
 resolveConfiguration cli file =
   NodeConfiguration
     { storageConfiguration =
         let sc = runIdentity $ File.storageConfiguration file
          in File.adjustDbPath
               sc
-              (fromMaybe def $ maybeFirst (CLI.databasePathCLI cli) (File.databasePath sc))
-    , consensusConfiguration = runIdentity $ File.consensusConfiguration file
+              (fromMaybe def $ CLI.databasePathCLI cli <|> File.databasePath sc)
+    , consensusConfiguration =
+        ConsensusConfiguration $
+          Identity $
+            fromMaybe def $
+              getConsensusConfiguration (runIdentity (File.consensusConfiguration file))
     , protocolConfiguration =
         let pc = runIdentity $ File.protocolConfiguration file
          in pc
               { File.startAsNonProducingNode =
                   Identity $
                     fromMaybe False $
-                      maybeFirst (CLI.startAsNonProducingNode cli) (File.startAsNonProducingNode pc)
+                      CLI.startAsNonProducingNode cli <|> File.startAsNonProducingNode pc
               }
     , networkConfiguration = runIdentity $ File.networkConfiguration file
     , localConnectionsConfig =
         File.LocalConnectionsConfig
-          (maybeFirst (CLI.socketPath cli) (File.pncSocketPath $ File.localConnectionsConfig file))
+          (CLI.socketPath cli <|> (File.pncSocketPath $ File.localConnectionsConfig file))
     , tracingConfiguration = runIdentity $ File.tracingConfiguration file
     , testingConfiguration = File.testingConfiguration file
     , configFilePath = CLI.configFilePath cli
