@@ -143,7 +143,6 @@ import Ouroboros.Network.PeerSharing
   , ps_POLICY_PEER_SHARE_STICKY_TIME
   )
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
-import Ouroboros.Network.SizeInBytes
 import Ouroboros.Network.TxSubmission.Inbound.V1
   ( TxSubmissionInitDelay
   , TxSubmissionMempoolWriter
