@@ -108,7 +108,7 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk
+  , LedgerSupportsLedgerDB blk, HasPerasCertRound (PerasCert blk), HasPerasCertBoostedBlock (PerasCert blk) blk, NoThunks (PerasCert blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -124,7 +124,7 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk
+  , LedgerSupportsLedgerDB blk, HasPerasCertRound (PerasCert blk), HasPerasCertBoostedBlock (PerasCert blk) blk, NoThunks (PerasCert blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -141,6 +141,9 @@ openDBInternal ::
   , SerialiseDiskConstraints blk
   , HasCallStack
   , LedgerSupportsLedgerDB blk
+  , HasPerasCertRound (PerasCert blk)
+  , HasPerasCertBoostedBlock (PerasCert blk) blk
+  , NoThunks (PerasCert blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks

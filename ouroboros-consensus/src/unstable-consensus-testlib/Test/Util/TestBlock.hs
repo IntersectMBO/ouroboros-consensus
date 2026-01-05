@@ -89,6 +89,12 @@ module Test.Util.TestBlock
   , testBlockLedgerConfigFrom
   , unsafeTestBlockWithPayload
   , updateToNextNumeral
+  , PerasCert (TestPerasCert)
+  , PerasVote (TestPerasVote)
+  , tpcCertRound
+  , tpcCertBoostedBlock
+  , tpvVoteRound
+  , tpvVoteBlock
   ) where
 
 import Cardano.Crypto.DSIGN
@@ -139,7 +145,10 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Params (PerasParams (..))
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
+import Ouroboros.Consensus.Peras.Vote (PerasVoteTarget (..), PerasVoterId, stakeAboveThreshold)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
@@ -736,6 +745,126 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow =
 
 instance ImmutableEraParams (TestBlockWith ptype) where
   immutableEraParams = tblcHardForkParams . topLevelConfigLedger
+
+{-------------------------------------------------------------------------------
+  Peras support
+-------------------------------------------------------------------------------}
+
+instance Typeable ptype => BlockSupportsPeras (TestBlockWith ptype) where
+  type PerasCfg (TestBlockWith ptype) = PerasParams
+
+  data PerasCert (TestBlockWith ptype) = TestPerasCert
+    { tpcCertRound :: PerasRoundNo
+    , tpcCertBoostedBlock :: Point (TestBlockWith ptype)
+    }
+    deriving stock (Generic, Eq, Ord, Show)
+    deriving anyclass NoThunks
+
+  data PerasVote (TestBlockWith ptype) = TestPerasVote
+    { tpvVoteRound :: PerasRoundNo
+    , tpvVoteBlock :: Point (TestBlockWith ptype)
+    , tpvVoteVoterId :: PerasVoterId
+    }
+    deriving stock (Generic, Eq, Ord, Show)
+    deriving anyclass NoThunks
+
+  mkPerasCert roundNo block =
+    TestPerasCert
+      { tpcCertRound = roundNo
+      , tpcCertBoostedBlock = block
+      }
+
+  mkPerasVote voterId roundNo block =
+    TestPerasVote
+      { tpvVoteRound = roundNo
+      , tpvVoteBlock = block
+      , tpvVoteVoterId = voterId
+      }
+
+  validatePerasCert params cert =
+    Right
+      ValidatedPerasCert
+        { vpcCert = cert
+        , vpcCertBoost = perasWeight params
+        }
+
+  validatePerasVote _params stakeDistr vote
+    | Just stake <- lookupPerasVoteStake vote stakeDistr =
+        Right
+          ValidatedPerasVote
+            { vpvVote = vote
+            , vpvVoteStake = stake
+            }
+    | otherwise =
+        Left PerasValidationErr
+
+  forgePerasCert params target votes
+    | not allVotersMatchTarget =
+        Left PerasForgeErrTargetMismatch
+    | not votesHaveEnoughStake =
+        Left PerasForgeErrInsufficientVotes
+    | otherwise =
+        return $
+          ValidatedPerasCert
+            { vpcCert =
+                TestPerasCert
+                  { tpcCertRound = pvtRoundNo target
+                  , tpcCertBoostedBlock = pvtBlock target
+                  }
+            , vpcCertBoost = perasWeight params
+            }
+   where
+    totalVotesStake =
+      mconcat (vpvVoteStake <$> votes)
+
+    votesHaveEnoughStake =
+      stakeAboveThreshold params totalVotesStake
+
+    allVotersMatchTarget =
+      all ((target ==) . getPerasVoteTarget) votes
+
+instance
+  HasPerasCertRound
+    (PerasCert (TestBlockWith ptype))
+  where
+  getPerasCertRound = tpcCertRound
+
+instance
+  HasPerasCertBoostedBlock
+    (PerasCert (TestBlockWith ptype))
+    (TestBlockWith ptype)
+  where
+  getPerasCertBoostedBlock = tpcCertBoostedBlock
+
+instance
+  HasPerasVoteRound
+    (PerasVote (TestBlockWith ptype))
+  where
+  getPerasVoteRound = tpvVoteRound
+
+instance
+  HasPerasVoteBlock
+    (PerasVote (TestBlockWith ptype))
+    (TestBlockWith ptype)
+  where
+  getPerasVoteBlock = tpvVoteBlock
+
+instance
+  HasPerasVoteVoterId
+    (PerasVote (TestBlockWith ptype))
+  where
+  getPerasVoteVoterId = tpvVoteVoterId
+
+instance
+  HasPerasVoteTarget
+    (PerasVote (TestBlockWith ptype))
+    (TestBlockWith ptype)
+  where
+  getPerasVoteTarget vote =
+    PerasVoteTarget
+      { pvtRoundNo = tpvVoteRound vote
+      , pvtBlock = tpvVoteBlock vote
+      }
 
 {-------------------------------------------------------------------------------
   Test blocks without payload

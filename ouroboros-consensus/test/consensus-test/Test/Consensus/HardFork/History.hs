@@ -52,6 +52,8 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as HF
 import Ouroboros.Consensus.Ledger.Tables.Combinators
+import Ouroboros.Consensus.Peras.Params (PerasRoundLength (..))
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo (..))
 import Ouroboros.Consensus.Util (nTimes)
 import Test.Cardano.Slotting.Numeric ()
 import Test.Consensus.HardFork.Infra
@@ -160,10 +162,11 @@ eventSlotToEpoch chain@ArbitraryChain{..} =
       conjoin
         [ epochNo === eventTimeEpochNo
         , epochSlot === eventTimeEpochSlot
-        , epochSlot + slotsLeft
-            === ( unEpochSize . HF.eraEpochSize $
-                    eventEraParams arbitraryEvent
-                )
+        , epochSlot
+            + slotsLeft
+              === ( unEpochSize . HF.eraEpochSize $
+                      eventEraParams arbitraryEvent
+                  )
         ]
  where
   EventTime{..} = eventTime arbitraryEvent
@@ -196,10 +199,11 @@ eventWallclockToSlot chain@ArbitraryChain{..} =
       conjoin
         [ slot === eventTimeSlot
         , inSlot === diff
-        , inSlot + timeSpent
-            === ( getSlotLength . HF.eraSlotLength $
-                    eventEraParams arbitraryEvent
-                )
+        , inSlot
+            + timeSpent
+              === ( getSlotLength . HF.eraSlotLength $
+                      eventEraParams arbitraryEvent
+                  )
         ]
  where
   EventTime{..} = eventTime arbitraryEvent
@@ -278,9 +282,9 @@ epochInfoSlotToEpoch :: ArbitraryChain -> Property
 epochInfoSlotToEpoch chain@ArbitraryChain{..} =
   counterexample ("view: " ++ view) $
     counterexample ("reconstructed: " ++ reconstructed) $
-      eventIsPreHorizon arbitraryEventIx ==>
-        runIdentity (epochInfoEpoch epochInfo eventTimeSlot)
-          === eventTimeEpochNo
+      eventIsPreHorizon arbitraryEventIx
+        ==> runIdentity (epochInfoEpoch epochInfo eventTimeSlot)
+        === eventTimeEpochNo
  where
   EventTime{..} = eventTime arbitraryEvent
   (epochInfo, view, reconstructed) = hardForkEpochInfo chain eventTimeSlot
@@ -289,11 +293,11 @@ epochInfoEpochToSlot :: ArbitraryChain -> Property
 epochInfoEpochToSlot chain@ArbitraryChain{..} =
   counterexample ("view: " ++ view) $
     counterexample ("reconstructed: " ++ reconstructed) $
-      eventIsPreHorizon arbitraryEventIx ==>
-        let startOfEpoch = runIdentity (epochInfoFirst epochInfo eventTimeEpochNo)
-         in counterexample ("startOfEpoch: " ++ show startOfEpoch) $
-              HF.addSlots eventTimeEpochSlot startOfEpoch
-                === eventTimeSlot
+      eventIsPreHorizon arbitraryEventIx
+        ==> let startOfEpoch = runIdentity (epochInfoFirst epochInfo eventTimeEpochNo)
+             in counterexample ("startOfEpoch: " ++ show startOfEpoch) $
+                  HF.addSlots eventTimeEpochSlot startOfEpoch
+                    === eventTimeSlot
  where
   EventTime{..} = eventTime arbitraryEvent
   (epochInfo, view, reconstructed) = hardForkEpochInfo chain eventTimeSlot

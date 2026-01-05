@@ -79,6 +79,7 @@ import Test.Util.HardFork.Future
 import Test.Util.SanityCheck (prop_sanityChecks)
 import Test.Util.Slots (NumSlots (..))
 import Test.Util.Time (dawnOfTime)
+import Ouroboros.Consensus.Peras.Params (PerasParams(..), mkPerasParams)
 
 tests :: TestTree
 tests =

@@ -72,6 +72,8 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Peras.Params (PerasRoundLength (..))
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo (..))
 import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepState
   , SecurityParam (..)

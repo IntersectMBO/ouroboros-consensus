@@ -14,6 +14,7 @@ import Data.Word
 import GHC.Stack
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Util.RedundantConstraints
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo (..))
 
 {-------------------------------------------------------------------------------
   Adding and subtracting slots/epochs

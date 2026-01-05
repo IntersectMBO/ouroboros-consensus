@@ -41,6 +41,7 @@ import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Util.AnchoredSeq (takeLongestSuffix)
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
 
 -- | Data structure for tracking the weight of blocks due to Peras boosts.
 newtype PerasWeightSnapshot blk = PerasWeightSnapshot

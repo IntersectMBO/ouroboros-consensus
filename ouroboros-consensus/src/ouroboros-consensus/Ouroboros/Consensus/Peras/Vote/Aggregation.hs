@@ -13,6 +13,8 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 -- for PerasRoundVoteState
 {-# OPTIONS_GHC -Wno-partial-fields #-}
@@ -37,6 +39,14 @@ import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime, forgetArrivalTime)
+import Ouroboros.Consensus.Peras.Params (PerasParams)
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
+import Ouroboros.Consensus.Peras.Vote
+  ( PerasVoteId
+  , PerasVoteStake (..)
+  , PerasVoteTarget (..)
+  , stakeAboveThreshold
+  )
 
 {-------------------------------------------------------------------------------
   Voting state for a given Peras round
@@ -54,8 +64,29 @@ data PerasRoundVoteState blk
       , prvsLoserStates :: !(Map (Point blk) (PerasTargetVoteState blk 'Loser))
       , prvsWinnerState :: !(PerasTargetVoteState blk 'Winner)
       }
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasCert blk)
+  , Eq (PerasVote blk)
+  ) =>
+  Eq (PerasRoundVoteState blk)
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasCert blk)
+  , Show (PerasVote blk)
+  ) =>
+  Show (PerasRoundVoteState blk)
+
+deriving instance Generic (PerasRoundVoteState blk)
+
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasCert blk)
+  , NoThunks (PerasVote blk)
+  ) =>
+  NoThunks (PerasRoundVoteState blk)
 
 instance HasPerasVoteRound (PerasRoundVoteState blk) where
   getPerasVoteRound = prvsRoundNo
@@ -96,8 +127,13 @@ data UpdateRoundVoteStateError blk
 -- quorum) or if forging the certificate fails.
 updatePerasRoundVoteState ::
   forall blk.
-  StandardHash blk =>
-  WithArrivalTime (ValidatedPerasVote blk) ->
+  ( BlockSupportsPeras blk
+  , PerasCfg blk ~ PerasParams
+  , HasPerasVoteId (PerasVote blk) blk
+  , HasPerasVoteRound (PerasVote blk)
+  , HasPerasVoteBlock (PerasVote blk) blk
+  , HasPerasVoteTarget (PerasVote blk) blk
+  ) =>WithArrivalTime (ValidatedPerasVote blk) ->
   PerasCfg blk ->
   PerasRoundVoteState blk ->
   Either (UpdateRoundVoteStateError blk) (PerasRoundVoteState blk)
@@ -187,8 +223,13 @@ updatePerasRoundVoteState vote cfg roundState = do
 -- quorum) or if forging the certificate fails.
 updatePerasRoundVoteStates ::
   forall blk.
-  StandardHash blk =>
-  WithArrivalTime (ValidatedPerasVote blk) ->
+  ( BlockSupportsPeras blk
+  , PerasCfg blk ~ PerasParams
+  , HasPerasVoteRound (PerasVote blk)
+  , HasPerasVoteBlock (PerasVote blk) blk
+  , HasPerasVoteTarget (PerasVote blk) blk
+  , HasPerasVoteId (PerasVote blk) blk
+  ) =>WithArrivalTime (ValidatedPerasVote blk) ->
   PerasCfg blk ->
   Map PerasRoundNo (PerasRoundVoteState blk) ->
   Either
@@ -277,8 +318,26 @@ data PerasTargetVoteTally blk = PerasTargetVoteTally
   , ptvtTotalStake :: !PerasVoteStake
   -- ^ Total stake of the votes received for this target
   }
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  ) =>
+  Eq (PerasTargetVoteTally blk)
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  ) =>
+  Show (PerasTargetVoteTally blk)
+
+deriving instance Generic (PerasTargetVoteTally blk)
+
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  ) =>
+  NoThunks (PerasTargetVoteTally blk)
 
 instance HasPerasVoteTarget (PerasTargetVoteTally blk) blk where
   getPerasVoteTarget = ptvtTarget
@@ -302,7 +361,10 @@ freshTargetVoteTally target =
 --
 -- PRECONDITION: the vote's target must match the tally's target.
 updateTargetVoteTally ::
-  StandardHash blk =>
+  ( StandardHash blk
+  , HasPerasVoteTarget (PerasVote blk) blk
+  , HasPerasVoteId (PerasVote blk) blk
+  ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteTally blk ->
   PerasTargetVoteTally blk
@@ -426,6 +488,7 @@ freshLoserVoteState target =
 -- This function is called on all candidates (except the winner) once a winner
 -- is elected.
 candidateToLoser ::
+  PerasCfg blk ~ PerasParams =>
   PerasCfg blk ->
   PerasTargetVoteState blk 'Candidate ->
   PerasTargetVoteState blk 'Loser
@@ -444,8 +507,11 @@ data PerasVoteStateCandidateOrWinner blk
 --
 -- May fail if the candidate is elected winner but forging the certificate fails.
 updateCandidateVoteState ::
-  StandardHash blk =>
-  PerasCfg blk ->
+  ( BlockSupportsPeras blk
+  , PerasCfg blk ~ PerasParams
+  , HasPerasVoteId (PerasVote blk) blk
+  , HasPerasVoteTarget (PerasVote blk) blk
+  ) =>PerasCfg blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Candidate ->
   Either
@@ -467,7 +533,11 @@ updateCandidateVoteState cfg vote oldState = do
 --
 -- May fail if the loser goes above quorum by adding the vote.
 updateLoserVoteState ::
-  StandardHash blk =>
+  ( StandardHash blk
+  , PerasCfg blk ~ PerasParams
+  , HasPerasVoteId (PerasVote blk) blk
+  , HasPerasVoteTarget (PerasVote blk) blk
+  ) =>
   PerasCfg blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Loser ->
@@ -483,7 +553,10 @@ updateLoserVoteState cfg vote oldState =
 --
 -- PRECONDITION: the vote's target must match the underlying tally's target.
 updateWinnerVoteState ::
-  StandardHash blk =>
+  ( StandardHash blk
+  , HasPerasVoteTarget (PerasVote blk) blk
+  , HasPerasVoteId (PerasVote blk) blk
+  ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Winner ->
   PerasTargetVoteState blk 'Winner

@@ -17,7 +17,7 @@ import Cardano.Ledger.BaseTypes.NonZero (knownNonZeroBounded)
 import Data.List (iterate')
 import Data.Word (Word64)
 import Numeric.Natural (Natural)
-import Ouroboros.Consensus.Block (PerasWeight (PerasWeight), SlotNo (..))
+import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
@@ -29,6 +29,7 @@ import Ouroboros.Network.AnchoredFragment qualified as AF
 import Test.Ouroboros.Storage.TestBlock (TestBlock (..), TestBody (..), TestHeader (..))
 import Test.Ouroboros.Storage.TestBlock qualified as TestBlock
 import Test.Tasty.Bench
+import Ouroboros.Consensus.Peras.Params (PerasWeight(..))
 
 data BenchmarkParams = BenchmarkParams
   { slotGap :: Word64

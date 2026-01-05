@@ -23,6 +23,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import GHC.Stack
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Params (PerasWeight)
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract

@@ -91,6 +91,8 @@ launchBgTasks ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , HasPerasCertBoostedBlock (PerasCert blk) blk
+  , HasPerasCertRound (PerasCert blk)
   ) =>
   ChainDbEnv m blk ->
   -- | Number of immutable blocks replayed on ledger DB startup
@@ -608,6 +610,8 @@ addBlockRunner ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , HasPerasCertBoostedBlock (PerasCert blk) blk
+  , HasPerasCertRound (PerasCert blk)
   ) =>
   Fuse m ->
   ChainDbEnv m blk ->

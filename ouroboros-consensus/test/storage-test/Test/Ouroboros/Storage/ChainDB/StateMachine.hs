@@ -117,6 +117,8 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
@@ -240,7 +242,16 @@ data Cmd blk it flr
     UpdateLedgerSnapshots
   | -- Corruption
     WipeVolatileDB
-  deriving (Generic, Show, Functor, Foldable, Traversable)
+  deriving (Generic, Functor, Foldable, Traversable)
+
+deriving instance
+  ( Show blk
+  , Show it
+  , Show flr
+  , StandardHash blk
+  , Show (PerasCert blk)
+  ) =>
+  Show (Cmd blk it flr)
 
 -- = Invalid blocks
 --
@@ -349,6 +360,9 @@ type TestConstraints blk =
   , LedgerTablesAreTrivial (LedgerState blk)
   , LedgerSupportsLedgerDB blk
   , ImmutableEraParams blk
+  , BlockSupportsPeras blk
+  , HasPerasCertRound (PerasCert blk)
+  , HasPerasCertBoostedBlock (PerasCert blk) blk
   )
 
 deriving instance
@@ -1208,11 +1222,7 @@ generator loe genBlock m@Model{..} =
     let certWithTime =
           WithArrivalTime now $
             ValidatedPerasCert
-              { vpcCert =
-                  PerasCert
-                    { pcCertRound = roundNo
-                    , pcCertBoostedBlock = blockPoint blk
-                    }
+              { vpcCert = mkPerasCert roundNo (blockPoint blk)
               , vpcCertBoost = boost
               }
     pure $ AddPerasCert certWithTime seenBlks
@@ -1498,6 +1508,7 @@ deriving instance
   , ToExpr (TipInfo blk)
   , ToExpr (LedgerState blk EmptyMK)
   , ToExpr (ExtValidationError blk)
+  , ToExpr (PerasCert blk)
   ) =>
   ToExpr (Model blk IO Concrete)
 

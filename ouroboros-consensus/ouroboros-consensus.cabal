@@ -129,6 +129,7 @@ library
     Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining
     Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage
     Ouroboros.Consensus.HardFork.Combinator.Node.Metrics
+    Ouroboros.Consensus.HardFork.Combinator.Node.Peras
     Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck
     Ouroboros.Consensus.HardFork.Combinator.PartialConfig
     Ouroboros.Consensus.HardFork.Combinator.Protocol
@@ -207,6 +208,8 @@ library
     Ouroboros.Consensus.NodeId
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
+    Ouroboros.Consensus.Peras.Cert
+    Ouroboros.Consensus.Peras.Round
     Ouroboros.Consensus.Peras.Vote
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Weight

@@ -109,6 +109,9 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Params (PerasParams (..), mkPerasParams)
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
+import Ouroboros.Consensus.Peras.Vote (PerasVoteTarget (..), PerasVoterId, stakeAboveThreshold)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.ModChainSel
@@ -896,6 +899,105 @@ shrinkCorruptions cs =
 -- | Return a list of all files that will be corrupted
 corruptionFiles :: Corruptions -> [FsPath]
 corruptionFiles = map snd . NE.toList
+
+{-------------------------------------------------------------------------------
+  Peras support
+-------------------------------------------------------------------------------}
+
+instance BlockSupportsPeras TestBlock where
+  type PerasCfg TestBlock = PerasParams
+
+  data PerasCert TestBlock = TestPerasCert
+    { tpcCertRound :: PerasRoundNo
+    , tpcCertBoostedBlock :: Point TestBlock
+    }
+    deriving stock (Generic, Eq, Ord, Show)
+    deriving anyclass NoThunks
+
+  data PerasVote TestBlock = TestPerasVote
+    { tpvVoteRound :: PerasRoundNo
+    , tpvVoteBlock :: Point TestBlock
+    , tpvVoteVoterId :: PerasVoterId
+    }
+    deriving stock (Generic, Eq, Ord, Show)
+    deriving anyclass NoThunks
+
+  mkPerasCert roundNo block =
+    TestPerasCert
+      { tpcCertRound = roundNo
+      , tpcCertBoostedBlock = block
+      }
+
+  mkPerasVote voterId roundNo block =
+    TestPerasVote
+      { tpvVoteRound = roundNo
+      , tpvVoteBlock = block
+      , tpvVoteVoterId = voterId
+      }
+
+  validatePerasCert params cert =
+    Right
+      ValidatedPerasCert
+        { vpcCert = cert
+        , vpcCertBoost = perasWeight params
+        }
+
+  validatePerasVote _params stakeDistr vote
+    | Just stake <- lookupPerasVoteStake vote stakeDistr =
+        Right
+          ValidatedPerasVote
+            { vpvVote = vote
+            , vpvVoteStake = stake
+            }
+    | otherwise =
+        Left PerasValidationErr
+
+  forgePerasCert params target votes
+    | not allVotersMatchTarget =
+        Left PerasForgeErrTargetMismatch
+    | not votesHaveEnoughStake =
+        Left PerasForgeErrInsufficientVotes
+    | otherwise =
+        return $
+          ValidatedPerasCert
+            { vpcCert =
+                TestPerasCert
+                  { tpcCertRound = pvtRoundNo target
+                  , tpcCertBoostedBlock = pvtBlock target
+                  }
+            , vpcCertBoost = perasWeight params
+            }
+   where
+    totalVotesStake =
+      mconcat (vpvVoteStake <$> votes)
+
+    votesHaveEnoughStake =
+      stakeAboveThreshold params totalVotesStake
+
+    allVotersMatchTarget =
+      all ((target ==) . getPerasVoteTarget) votes
+
+instance HasPerasCertRound (PerasCert TestBlock) where
+  getPerasCertRound = tpcCertRound
+
+instance HasPerasCertBoostedBlock (PerasCert TestBlock) TestBlock where
+  getPerasCertBoostedBlock = tpcCertBoostedBlock
+
+instance HasPerasVoteRound (PerasVote TestBlock) where
+  getPerasVoteRound = tpvVoteRound
+
+instance HasPerasVoteBlock (PerasVote TestBlock) TestBlock where
+  getPerasVoteBlock = tpvVoteBlock
+
+instance HasPerasVoteVoterId (PerasVote TestBlock) where
+  getPerasVoteVoterId = tpvVoteVoterId
+
+instance HasPerasVoteTarget (PerasVote TestBlock) TestBlock where
+  getPerasVoteTarget vote =
+    PerasVoteTarget
+      { pvtRoundNo = tpvVoteRound vote
+      , pvtBlock = tpvVoteBlock vote
+      }
 
 {-------------------------------------------------------------------------------
   Orphans
