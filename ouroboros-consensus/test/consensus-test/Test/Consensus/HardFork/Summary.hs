@@ -28,6 +28,8 @@ import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import qualified Ouroboros.Consensus.HardFork.History as HF
+import Ouroboros.Consensus.Peras.Params (PerasRoundLength (..))
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Test.Consensus.HardFork.Infra
 import Test.QuickCheck
 import Test.Tasty

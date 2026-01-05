@@ -24,6 +24,9 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.TxSeq
+import qualified Ouroboros.Consensus.Peras.Cert as Base
+import Ouroboros.Consensus.Peras.Params (PerasWeight)
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import Ouroboros.Consensus.Storage.ImmutableDB
@@ -126,9 +129,9 @@ deriving anyclass instance ToExpr PerasRoundNo
 
 deriving anyclass instance ToExpr PerasWeight
 
-deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (PerasCert blk)
+deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (Base.PerasCert blk)
 
-deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (ValidatedPerasCert blk)
+deriving anyclass instance ToExpr (PerasCert blk) => ToExpr (ValidatedPerasCert blk)
 
 deriving anyclass instance ToExpr a => ToExpr (WithArrivalTime a)
 

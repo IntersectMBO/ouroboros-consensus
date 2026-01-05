@@ -30,6 +30,8 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
+import Ouroboros.Consensus.Peras.Params (PerasParams (..), mkPerasParams)
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..), PerasCertDB)
@@ -43,7 +45,7 @@ import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding (Some (..))
-import Test.Util.TestBlock (TestBlock, TestHash (..))
+import Test.Util.TestBlock (PerasCert (..), TestBlock, TestHash (..))
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
@@ -95,9 +97,9 @@ instance StateModel Model where
             WithArrivalTime now $
               ValidatedPerasCert
                 { vpcCert =
-                    PerasCert
-                      { pcCertRound = roundNo
-                      , pcCertBoostedBlock = boostedBlock
+                    TestPerasCert
+                      { tpcCertRound = roundNo
+                      , tpcCertBoostedBlock = boostedBlock
                       }
                 , vpcCertBoost = perasWeight perasTestCfg
                 }

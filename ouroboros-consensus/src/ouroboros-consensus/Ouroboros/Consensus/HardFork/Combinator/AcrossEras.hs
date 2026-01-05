@@ -46,6 +46,8 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , OneEraLedgerUpdate (..)
   , OneEraLedgerWarning (..)
   , OneEraTiebreakerView (..)
+  , OneEraPerasCert (..)
+  , OneEraPerasVote (..)
   , OneEraTentativeHeaderState (..)
   , OneEraTentativeHeaderView (..)
   , OneEraTipInfo (..)
@@ -134,6 +136,8 @@ newtype OneEraLedgerError xs = OneEraLedgerError {getOneEraLedgerError :: NS Wra
 newtype OneEraLedgerEvent xs = OneEraLedgerEvent {getOneEraLedgerEvent :: NS WrapLedgerEvent xs}
 newtype OneEraLedgerUpdate xs = OneEraLedgerUpdate {getOneEraLedgerUpdate :: NS WrapLedgerUpdate xs}
 newtype OneEraLedgerWarning xs = OneEraLedgerWarning {getOneEraLedgerWarning :: NS WrapLedgerWarning xs}
+newtype OneEraPerasCert xs = OneEraPerasCert {getOneEraPerasCert :: NS WrapPerasCert xs}
+newtype OneEraPerasVote xs = OneEraPerasVote {getOneEraPerasVote :: NS WrapPerasVote xs}
 newtype OneEraTiebreakerView xs = OneEraTiebreakerView {getOneEraTiebreakerView :: NS WrapTiebreakerView xs}
 newtype OneEraTentativeHeaderState xs = OneEraTentativeHeaderState {getOneEraTentativeHeaderState :: NS WrapTentativeHeaderState xs}
 newtype OneEraTentativeHeaderView xs = OneEraTentativeHeaderView {getOneEraTentativeHeaderView :: NS WrapTentativeHeaderView xs}
@@ -333,6 +337,16 @@ deriving via
     CanHardFork xs => NoThunks (OneEraLedgerError xs)
 
 deriving via
+  LiftNamedNS "OneEraPerasCert" WrapPerasCert xs
+  instance
+    CanHardFork xs => NoThunks (OneEraPerasCert xs)
+
+deriving via
+  LiftNamedNS "OneEraPerasVote" WrapPerasVote xs
+  instance
+    CanHardFork xs => NoThunks (OneEraPerasVote xs)
+
+deriving via
   LiftNamedNS "OneEraTiebreakerView" WrapTiebreakerView xs
   instance
     CanHardFork xs => NoThunks (OneEraTiebreakerView xs)
@@ -402,6 +416,14 @@ deriving via
   instance
     CanHardFork xs => Show (OneEraLedgerWarning xs)
 deriving via
+  LiftNS WrapPerasCert xs
+  instance
+    CanHardFork xs => Show (OneEraPerasCert xs)
+deriving via
+  LiftNS WrapPerasVote xs
+  instance
+    CanHardFork xs => Show (OneEraPerasVote xs)
+deriving via
   LiftNS WrapTentativeHeaderState xs
   instance
     CanHardFork xs => Show (OneEraTentativeHeaderState xs)
@@ -436,6 +458,13 @@ deriving via
   LiftMismatch SingleEraInfo LedgerEraInfo xs
   instance
     All SingleEraBlock xs => Show (MismatchEraInfo xs)
+
+-- Peras certs and votes
+
+deriving via LiftNS WrapPerasCert xs instance CanHardFork xs => Eq (OneEraPerasCert xs)
+deriving via LiftNS WrapPerasVote xs instance CanHardFork xs => Eq (OneEraPerasVote xs)
+deriving via LiftNS WrapPerasCert xs instance CanHardFork xs => Ord (OneEraPerasCert xs)
+deriving via LiftNS WrapPerasVote xs instance CanHardFork xs => Ord (OneEraPerasVote xs)
 
 {-------------------------------------------------------------------------------
   Show instances used in tests only

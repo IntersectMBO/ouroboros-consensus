@@ -13,6 +13,7 @@ import Control.Exception (assert)
 import Data.Word
 import GHC.Stack
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo (..))
 import Ouroboros.Consensus.Util.RedundantConstraints
 
 {-------------------------------------------------------------------------------

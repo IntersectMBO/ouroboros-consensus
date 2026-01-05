@@ -4,6 +4,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -24,6 +25,8 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
+import Ouroboros.Consensus.Peras.Params (PerasParams (..), mkPerasParams)
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo (..))
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
   , PerasCertDB
@@ -38,7 +41,7 @@ import Ouroboros.Consensus.Util.IOLike
   , throwIO
   , uncheckedNewTVarM
   )
-import Ouroboros.Network.Block (Point (..), SlotNo (SlotNo), StandardHash)
+import Ouroboros.Network.Block (Point (..), SlotNo (SlotNo))
 import Ouroboros.Network.Point (Block (Block), WithOrigin (..))
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
@@ -87,12 +90,16 @@ genPoint =
 
 genPerasCert :: Gen (PerasCert TestBlock)
 genPerasCert = do
-  pcCertRound <- PerasRoundNo <$> arbitrary
-  pcCertBoostedBlock <- genPoint
-  pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
+  tpcCertRound <- PerasRoundNo <$> arbitrary
+  tpcCertBoostedBlock <- genPoint
+  pure $
+    TestPerasCert
+      { tpcCertRound
+      , tpcCertBoostedBlock
+      }
 
-instance WithId (PerasCert blk) PerasRoundNo where
-  getId = pcCertRound
+instance WithId (PerasCert TestBlock) PerasRoundNo where
+  getId = tpcCertRound
 
 mockSystemTime :: IOLike m => Int -> m (SystemTime m)
 mockSystemTime seed = do
@@ -106,7 +113,10 @@ mockSystemTime seed = do
       }
 
 newCertDB ::
-  (IOLike m, StandardHash blk) =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  , PerasCfg blk ~ PerasParams
+  ) =>
   PerasCfg blk ->
   SystemTime m ->
   [PerasCert blk] ->
@@ -162,7 +172,7 @@ prop_smoke =
             inboundPool <- newCertDB perasTestCfg systemTime []
 
             let outboundPoolReader = makePerasCertPoolReaderFromCertDB outboundPool
-                inboundPoolWriter = makePerasCertPoolWriterFromCertDB systemTime inboundPool
+                inboundPoolWriter = makePerasCertPoolWriterFromCertDB perasTestCfg systemTime inboundPool
                 getAllInboundPoolContent = atomically $ do
                   snap <- PerasCertDB.getCertSnapshot inboundPool
                   let rawContent =
