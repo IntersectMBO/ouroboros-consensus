@@ -8,6 +8,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -16,7 +17,6 @@
 module Test.Ouroboros.Storage.ChainDB.Unit (tests) where
 
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
-import Cardano.Slotting.Slot (WithOrigin (..))
 import Control.Monad (replicateM, unless, void)
 import Control.Monad.Except
   ( Except
@@ -32,7 +32,8 @@ import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
 import Data.Maybe (isJust)
 import Ouroboros.Consensus.Block.RealPoint
-  ( pointToWithOriginRealPoint
+  ( RealPoint (..)
+  , blockRealPoint
   )
 import Ouroboros.Consensus.Config
   ( TopLevelConfig
@@ -105,6 +106,18 @@ tests =
         (ouroborosNetworkIssue 3999)
         [ testCase "model" $ runModelIO API.LoEDisabled ouroboros_network_3999
         , testCase "system" $ runSystemIO ouroboros_network_3999
+        ]
+    , testGroup
+        "ChainDB.waitForImmutableBlock"
+        [ testGroup
+            "Existing block, returns same"
+            [testCase "system" $ runSystemIO waitForImmutableBlock_existingBlock]
+        , testGroup
+            "Wrong hash, returns the actual block at slot"
+            [testCase "system" $ runSystemIO waitForImmutableBlock_wrongHash]
+        , testGroup
+            "Empty slot, returns block at next filled slot"
+            [testCase "system" $ runSystemIO waitForImmutableBlock_emptySlot]
         ]
     ]
 
@@ -224,10 +237,70 @@ ouroboros_network_3999 = do
 
   inclusiveFrom = StreamFromInclusive . blockRealPoint
   inclusiveTo = StreamToInclusive . blockRealPoint
-  -- Do not call this function with `Genesis`
-  blockRealPoint blk = case pointToWithOriginRealPoint $ blockPoint blk of
-    At realPoint -> realPoint
-    _ -> error "Should not happen"
+
+-- | Tests that given an existing block, we get that same block back
+waitForImmutableBlock_existingBlock ::
+  forall m. (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
+waitForImmutableBlock_existingBlock = do
+  -- add three blocks, as @k@ is set to 2 in these test
+  b1 <- addBlock $ firstBlock 0 $ fork0
+  b2 <- addBlock $ mkNextBlock b1 1 $ fork0
+  _b3 <- addBlock $ mkNextBlock b2 2 $ fork0
+  -- copy the blocks older than @k@ into ImmutableDB,
+  -- should copy only b1
+  persistBlks DoNotGarbageCollect
+  -- request the immutable block
+  waitForImmutableBlock (blockRealPoint b1) >>= \case
+    Left e -> failWith (show e)
+    Right (API.Found result) -> assertEqual result (blockRealPoint b1) ""
+ where
+  fork0 = TestBody 0 True
+
+-- | Tests that given a block at a filled slot but with a wrong hash,
+--   we get the actual block at that slot
+waitForImmutableBlock_wrongHash ::
+  forall m. (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
+waitForImmutableBlock_wrongHash = do
+  -- add four blocks, as @k@ is set to 2 in these test
+  b1 <- addBlock $ firstBlock 0 $ fork0
+  b2 <- addBlock $ mkNextBlock b1 1 $ fork0
+  b3 <- addBlock $ mkNextBlock b2 2 $ fork0
+  _b4 <- addBlock $ mkNextBlock b3 3 $ fork0
+  -- copy the blocks older than @k@ into ImmutableDB,
+  -- should copy only b1 and b2
+  persistBlks DoNotGarbageCollect
+  -- request a block at a filled slot, but give the wrong hash
+  let targetPoint = RealPoint 0 (TestHeaderHash 0)
+  -- expect to get the block at slot 0 and the correct hash
+  let expectedPoint = blockRealPoint b1
+  waitForImmutableBlock targetPoint >>= \case
+    Left e -> failWith (show e)
+    Right (API.Found result) -> assertEqual result expectedPoint ""
+ where
+  fork0 = TestBody 0 True
+
+-- | Tests that given an empty slot, we get a block
+--   at the next filled slot
+waitForImmutableBlock_emptySlot ::
+  forall m. (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
+waitForImmutableBlock_emptySlot = do
+  -- add four blocks, as @k@ is set to 2 in these test
+  b1 <- addBlock $ firstBlock 1 $ fork0
+  b2 <- addBlock $ mkNextBlock b1 2 $ fork0
+  b3 <- addBlock $ mkNextBlock b2 3 $ fork0
+  _b4 <- addBlock $ mkNextBlock b3 4 $ fork0
+  -- copy the blocks older than @k@ into ImmutableDB,
+  -- should copy only b1
+  persistBlks DoNotGarbageCollect
+  -- request a block at an empty slot, the hash doesn't matter
+  let targetPoint = RealPoint 0 (TestHeaderHash 0)
+  -- expect to get the block at slot 1 and the correct hash
+  let expectedPoint = blockRealPoint b1
+  waitForImmutableBlock targetPoint >>= \case
+    Left e -> failWith (show e)
+    Right (API.Found result) -> assertEqual result expectedPoint ""
+ where
+  fork0 = TestBody 0 True
 
 streamAssertSuccess ::
   (MonadError TestFailure m, SupportsUnitTest m, Mock.HasHeader (Block m)) =>
@@ -342,6 +415,9 @@ class SupportsUnitTest m where
     IteratorId m ->
     m (API.IteratorResult (Block m) (AllComponents (Block m)))
 
+  waitForImmutableBlock ::
+    RealPoint (Block m) -> m (Either API.SeekBlockError (API.SeekBlockResult (Block m)))
+
 {-------------------------------------------------------------------------------
   Model
 -------------------------------------------------------------------------------}
@@ -416,6 +492,9 @@ instance
 
   iteratorNext iteratorId = withModelContext $ \model _ ->
     Model.iteratorNext iteratorId allComponents model
+
+  -- the implementation is intentionally left trivial
+  waitForImmutableBlock _ = pure . Left $ API.TargetNewerThanTip
 
 {-------------------------------------------------------------------------------
   System
@@ -531,3 +610,9 @@ instance IOLike m => SupportsUnitTest (SystemM blk m) where
       API.stream api (registry env) allComponents from to
 
   iteratorNext iterator = SystemM $ lift $ lift (API.iteratorNext iterator)
+
+  waitForImmutableBlock targetPoint = do
+    env <- ask
+    SystemM $ lift $ lift $ do
+      api <- chainDB <$> readTVarIO (varDB env)
+      API.waitForImmutableBlock api targetPoint

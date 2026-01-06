@@ -268,11 +268,13 @@ data Cmd blk it flr
 
 -- = No tests for waitForImmutableBlock
 --
--- We do not test 'ChainDB.waitForImmutableBlock', because this test is
+-- We do not test 'ChainDB.waitForImmutableBlock' here, because this test is
 -- sequential, and 'waitForImmutableBlock', which uses STM 'retry' and
 -- 'check', would block indefinitely.
 -- The core behaviour of 'waitForImmutableBlock' is tested in the ImmutableDB
 -- q-s-m test via testing 'ImmutableDB.getBlockAtOrAfterPoint'.
+-- See also the unit tests for 'ChainDB.waitForImmutableBlock' in
+-- 'Test.Ouroboros.Storage.ChainDB.Unit'.
 
 deriving instance SOP.Generic (Cmd blk it flr)
 deriving instance SOP.HasDatatypeInfo (Cmd blk it flr)
