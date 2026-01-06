@@ -313,7 +313,7 @@ waitForImmutableBlock ::
   IOLike m =>
   ChainDbEnv m blk ->
   RealPoint blk ->
-  m (Either ImmutableDB.SeekBlockError (ImmutableDB.SeekBlockResult blk))
+  m (Either ImmutableDB.SeekBlockError (RealPoint blk))
 waitForImmutableBlock CDB{cdbImmutableDB} targetRealPoint = do
   -- first, wait until the target slot is older than the immutable tip
   _ <- atomically $

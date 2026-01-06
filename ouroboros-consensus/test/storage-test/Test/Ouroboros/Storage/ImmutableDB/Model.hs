@@ -682,13 +682,13 @@ iteratorCloseModel itId dbm@DBModel{dbmIterators} =
 --   and return the first block (i.e. the EBB) if the target hash does not match.
 getBlockAtOrAfterPointModel ::
   forall blk.
-  HasHeader blk => RealPoint blk -> DBModel blk -> (Either SeekBlockError (SeekBlockResult blk))
+  HasHeader blk => RealPoint blk -> DBModel blk -> (Either SeekBlockError (RealPoint blk))
 getBlockAtOrAfterPointModel (RealPoint targetSlot targetHash) DBModel{dbmSlots} =
   let occupiedSlots = catMaybes . map getBlock . Map.toList $ dbmSlots
       atOrAfterTarget = dropWhile ((< targetSlot) . fst) occupiedSlots
    in case atOrAfterTarget of
         [] -> if null dbmSlots then Left TipIsOrigin else Left TargetNewerThanTip
-        ((s, b) : _) -> Right . Found $ RealPoint s (blockHash b)
+        ((s, b) : _) -> Right $ RealPoint s (blockHash b)
  where
   getBlock :: (SlotNo, InSlot blk) -> Maybe (SlotNo, blk)
   getBlock = \case

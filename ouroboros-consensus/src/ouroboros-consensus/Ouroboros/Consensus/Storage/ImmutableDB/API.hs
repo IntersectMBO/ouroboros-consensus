@@ -29,8 +29,6 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , tipToAnchor
   , tipToPoint
   , tipToRealPoint
-  , SeekBlockResult (..)
-  , SeekBlockError (..)
 
     -- * Errors
   , ApiMisuse (..)
@@ -40,6 +38,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , missingBlockPoint
   , throwApiMisuse
   , throwUnexpectedFailure
+  , SeekBlockError (..)
 
     -- * Wrappers that preserve 'HasCallStack'
   , appendBlock
@@ -180,7 +179,7 @@ data ImmutableDB m blk = ImmutableDB
   , getBlockAtOrAfterPoint_ ::
       HasCallStack =>
       (RealPoint blk) ->
-      m (Either SeekBlockError (SeekBlockResult blk))
+      m (Either SeekBlockError (RealPoint blk))
   -- ^ Query the ImmutableDB for a block at the target slot. If the target slot is empty,
   --   return the block at the next occupied slot.
   --
@@ -340,11 +339,6 @@ data SeekBlockError
     TargetNewerThanTip
   | -- | ImmutableDB is empty
     TipIsOrigin
-  deriving (Show, Eq)
-
--- | Result type for 'seekBlockAtOrAfterPoint'
-data SeekBlockResult blk
-  = Found (RealPoint blk)
   deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
@@ -511,7 +505,7 @@ getBlockAtOrAfterPoint ::
   HasCallStack =>
   ImmutableDB m blk ->
   (RealPoint blk) ->
-  m (Either SeekBlockError (SeekBlockResult blk))
+  m (Either SeekBlockError (RealPoint blk))
 getBlockAtOrAfterPoint = getBlockAtOrAfterPoint_
 
 {-------------------------------------------------------------------------------

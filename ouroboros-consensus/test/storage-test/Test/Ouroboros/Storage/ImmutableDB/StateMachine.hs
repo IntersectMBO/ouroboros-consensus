@@ -175,7 +175,7 @@ data Success it
   | IterResults [AllComponents TestBlock]
   | ImmTip (WithOrigin (Tip TestBlock))
   | HashForSlot (Maybe TestHeaderHash)
-  | BlockAtOrAfterPoint (Either SeekBlockError (SeekBlockResult TestBlock))
+  | BlockAtOrAfterPoint (Either SeekBlockError (RealPoint TestBlock))
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
 -- | Product of all 'BlockComponent's. As this is a GADT, generating random

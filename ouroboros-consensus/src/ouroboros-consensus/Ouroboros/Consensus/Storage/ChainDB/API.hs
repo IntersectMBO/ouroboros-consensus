@@ -66,7 +66,6 @@ module Ouroboros.Consensus.Storage.ChainDB.API
 
     -- * Seeking for an occupied immutable block
   , SeekBlockError (..)
-  , SeekBlockResult (..)
 
     -- * Recovery
   , ChainDbFailure (..)
@@ -94,7 +93,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
-import Ouroboros.Consensus.Storage.ImmutableDB.API (SeekBlockError (..), SeekBlockResult (..))
+import Ouroboros.Consensus.Storage.ImmutableDB.API (SeekBlockError (..))
 import Ouroboros.Consensus.Storage.LedgerDB
   ( GetForkerError
   , ReadOnlyForker'

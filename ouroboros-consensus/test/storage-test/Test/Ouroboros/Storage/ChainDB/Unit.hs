@@ -252,7 +252,7 @@ waitForImmutableBlock_existingBlock = do
   -- request the immutable block
   waitForImmutableBlock (blockRealPoint b1) >>= \case
     Left e -> failWith (show e)
-    Right (API.Found result) -> assertEqual result (blockRealPoint b1) ""
+    Right result -> assertEqual result (blockRealPoint b1) ""
  where
   fork0 = TestBody 0 True
 
@@ -275,7 +275,7 @@ waitForImmutableBlock_wrongHash = do
   let expectedPoint = blockRealPoint b1
   waitForImmutableBlock targetPoint >>= \case
     Left e -> failWith (show e)
-    Right (API.Found result) -> assertEqual result expectedPoint ""
+    Right result -> assertEqual result expectedPoint ""
  where
   fork0 = TestBody 0 True
 
@@ -298,7 +298,7 @@ waitForImmutableBlock_emptySlot = do
   let expectedPoint = blockRealPoint b1
   waitForImmutableBlock targetPoint >>= \case
     Left e -> failWith (show e)
-    Right (API.Found result) -> assertEqual result expectedPoint ""
+    Right result -> assertEqual result expectedPoint ""
  where
   fork0 = TestBody 0 True
 
@@ -416,7 +416,7 @@ class SupportsUnitTest m where
     m (API.IteratorResult (Block m) (AllComponents (Block m)))
 
   waitForImmutableBlock ::
-    RealPoint (Block m) -> m (Either API.SeekBlockError (API.SeekBlockResult (Block m)))
+    RealPoint (Block m) -> m (Either API.SeekBlockError (RealPoint (Block m)))
 
 {-------------------------------------------------------------------------------
   Model

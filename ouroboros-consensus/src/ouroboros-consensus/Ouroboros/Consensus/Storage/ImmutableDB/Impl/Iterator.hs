@@ -760,7 +760,7 @@ seekBlockForwards ::
   OpenState m blk h ->
   Tip blk ->
   RealPoint blk ->
-  m (Either SeekBlockError (SeekBlockResult blk))
+  m (Either SeekBlockError (RealPoint blk))
 seekBlockForwards
   ImmutableDBEnv{chunkInfo}
   OpenState{currentIndex}
@@ -778,14 +778,14 @@ seekBlockForwards
             -- we're past the immutable tip and did not find any blocks, so we can only return the tip.
             -- Note that this case is impossible, as the we would not get 'EmptySlot' from 'getSlotInfo',
             -- but we still return the tip for completeness' sake.
-            else pure . Right $ Found (tipToRealPoint immutableTip)
+            else pure . Right $ tipToRealPoint immutableTip
         Left (WrongHash _ hashes) ->
           case hashes of
             -- always return the first found block, even if it's an EBB
             (actualHash NE.:| _) ->
-              pure . Right . Found $ RealPoint (realPointSlot targetPoint) actualHash
+              pure . Right $ RealPoint (realPointSlot targetPoint) actualHash
         Right{} ->
-          pure . Right $ Found targetPoint
+          pure . Right $ targetPoint
 
 -- | Query the immutable DB to for a block at the target slot. If the target slot is empty,
 --   return the block at the next occupied slot.
@@ -799,7 +799,7 @@ getBlockAtOrAfterPointImpl ::
   ) =>
   ImmutableDBEnv m blk ->
   (RealPoint blk) ->
-  m (Either SeekBlockError (SeekBlockResult blk))
+  m (Either SeekBlockError (RealPoint blk))
 getBlockAtOrAfterPointImpl dbEnv targetPoint =
   withOpenState dbEnv $ \_hasFS dbState@OpenState{currentTip} -> do
     case currentTip of
