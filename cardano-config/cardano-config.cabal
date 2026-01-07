@@ -10,7 +10,7 @@ license-file: LICENSE
 author: Javier Sagredo
 maintainer: javier.sagredo@iohk.io
 copyright:
-  INTERSECT 2025
+  INTERSECT 2026
 
 category: Data
 build-type: Simple
@@ -52,7 +52,6 @@ library
     filepath,
     iohk-monitoring,
     iproute,
-    mtl,
     network,
     optparse-applicative,
     sop-core,
