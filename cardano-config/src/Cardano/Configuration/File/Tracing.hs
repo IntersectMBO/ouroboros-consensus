@@ -244,7 +244,7 @@ parseTracer p obj = obj .:= Aeson.fromText (proxyName p)
 
 data TracingSystem
   = LegacyTracing TraceSelection
-  | TraceDispatcher TraceSelection
+  | TraceDispatcher
   deriving (Generic, Show)
 
 data TracingConfiguration = TracingConfiguration
@@ -263,7 +263,7 @@ instance FromJSON TracingConfiguration where
           Just True -> do
             newSystem <- v .:? "UseTraceDispatcher"
             let tr = case newSystem of
-                  Just True -> TraceDispatcher
+                  Just True -> const TraceDispatcher
                   _ -> LegacyTracing
             Just . tr <$> parseJSON (Object v)
           _ ->
