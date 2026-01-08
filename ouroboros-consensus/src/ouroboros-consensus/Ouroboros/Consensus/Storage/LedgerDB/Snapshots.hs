@@ -532,6 +532,7 @@ data SnapshotPolicy = SnapshotPolicy
   -- sublist of 'sscSnapshotSlots'.
   --
   -- See also 'defaultSnapshotPolicy'
+  , onDiskSnapshotDelayRange :: (DiffTime, DiffTime)
   }
   deriving NoThunks via OnlyCheckWhnf SnapshotPolicy
 
@@ -581,6 +582,7 @@ data SnapshotFrequencyArgs = SnapshotFrequencyArgs
   -- ^ Ensure (if present) that at least this amount of time passes between
   -- writing snapshots. Setting this to a non-positive value disable the rate
   -- limit.
+  , sfaDelaySnapshotRange :: OverrideOrDefault (DiffTime, DiffTime)
   }
   deriving stock (Show, Eq)
 
@@ -599,7 +601,7 @@ data SnapshotPolicyArgs = SnapshotPolicyArgs
 defaultSnapshotPolicyArgs :: SnapshotPolicyArgs
 defaultSnapshotPolicyArgs =
   SnapshotPolicyArgs
-    (SnapshotFrequency $ SnapshotFrequencyArgs UseDefault UseDefault UseDefault)
+    (SnapshotFrequency $ SnapshotFrequencyArgs UseDefault UseDefault UseDefault UseDefault)
     UseDefault
 
 -- | Default on-disk policy suitable to use with cardano-node
@@ -611,6 +613,7 @@ defaultSnapshotPolicy (SecurityParam k) args =
   SnapshotPolicy
     { onDiskNumSnapshots
     , onDiskSnapshotSelector
+    , onDiskSnapshotDelayRange
     }
  where
   SnapshotPolicyArgs
@@ -661,6 +664,10 @@ defaultSnapshotPolicy (SecurityParam k) args =
               | rateLimit > 0 = maybeToList . lastMaybe
               | otherwise = id
 
+  onDiskSnapshotDelayRange = case spaFrequency of
+    DisableSnapshots -> (0, 0)
+    SnapshotFrequency sfa -> provideDefault (0, 0) $ sfaDelaySnapshotRange sfa
+
   passesRateLimitCheck t = case spaFrequency of
     SnapshotFrequency SnapshotFrequencyArgs{sfaRateLimit} ->
       t >= provideDefault defRateLimit sfaRateLimit
@@ -679,6 +686,10 @@ defaultSnapshotPolicy (SecurityParam k) args =
 data TraceSnapshotEvent blk
   = -- | An on disk snapshot was skipped because it was invalid.
     InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
+  | -- | A snapshot request was requested and delayed
+    SnapshotRequestDelayed Time DiffTime Int
+  | -- | A snapshot request was completed
+    SnapshotRequestCompleted
   | -- | A snapshot was written to disk.
     TookSnapshot DiskSnapshot (RealPoint blk) EnclosingTimed
   | -- | An old or invalid on-disk snapshot was deleted

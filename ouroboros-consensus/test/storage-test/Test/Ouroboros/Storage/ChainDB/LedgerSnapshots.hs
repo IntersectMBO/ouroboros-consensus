@@ -18,7 +18,7 @@
 module Test.Ouroboros.Storage.ChainDB.LedgerSnapshots (tests) where
 
 import Cardano.Ledger.BaseTypes.NonZero
-import Control.Monad (replicateM)
+import Control.Monad (guard, replicateM)
 import Control.Monad.IOSim (runSim)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -126,6 +126,7 @@ data TestSnapshotPolicyArgs = TestSnapshotPolicyArgs
   , tspaInterval :: NonZero Word64
   , tspaOffset :: SlotNo
   , tspaRateLimit :: DiffTime
+  , tspaDelaySnapshotRange :: (DiffTime, DiffTime)
   }
   deriving stock Show
 
@@ -139,13 +140,26 @@ instance Arbitrary TestSnapshotPolicyArgs where
         [ (2, pure 0)
         , (1, secondsToDiffTime <$> choose (1, 10))
         ]
+    tspaDelaySnapshotRange <- oneof [arbitraryDelaySnapshotRange, pure (0, 0)]
     pure
       TestSnapshotPolicyArgs
         { tspaNum
         , tspaInterval
         , tspaOffset
         , tspaRateLimit
+        , tspaDelaySnapshotRange
         }
+    where
+      arbitraryDelaySnapshotRange = do
+        minimumDelay <- fromInteger <$> choose (floor fiveMinutes, floor tenMinutes)
+        additionalDelay <- fromInteger <$> choose (0, floor fiveMinutes)
+        pure (minimumDelay, minimumDelay + additionalDelay)
+
+      fiveMinutes :: DiffTime
+      fiveMinutes = 5 * 60
+
+      tenMinutes :: DiffTime
+      tenMinutes = 10 * 60
 
 -- | Add blocks to the ChainDB in this order.
 tsBlocksToAdd :: TestSetup -> [TestBlock]
@@ -168,6 +182,7 @@ tsSnapshotPolicyArgs TestSetup{tsTestSnapshotPolicyArgs} =
         { sfaInterval = Override $ tspaInterval tsTestSnapshotPolicyArgs
         , sfaOffset = Override $ tspaOffset tsTestSnapshotPolicyArgs
         , sfaRateLimit = Override $ tspaRateLimit tsTestSnapshotPolicyArgs
+        , sfaDelaySnapshotRange = Override $ tspaDelaySnapshotRange tsTestSnapshotPolicyArgs
         }
 
 instance Arbitrary TestSetup where
@@ -249,11 +264,14 @@ runTest ::
 runTest lgrDbBackendArgs testSetup = withRegistry \registry -> do
   (withTime -> tracer, getTrace) <- recordingTracerTVar
 
-  (chainDB, lgrHasFS) <- openChainDB registry tracer
+  isSnapshottingTMVar :: StrictTMVar m () <- newEmptyTMVarIO
+
+  (chainDB, lgrHasFS) <- openChainDB registry (tracer <> isSnapshottingTracer isSnapshottingTMVar)
 
   for_ (tsBlocksToAdd testSetup) \blk -> do
     ChainDB.addBlock_ chainDB Punishment.noPunishment blk
     threadDelay 1
+    atomically $ isEmptyTMVar isSnapshottingTMVar >>= guard
 
   toutImmutableTip <-
     AF.castAnchor . AF.anchor <$> atomically (ChainDB.getCurrentChain chainDB)
@@ -300,6 +318,14 @@ runTest lgrDbBackendArgs testSetup = withRegistry \registry -> do
     pure (chainDB, LedgerDB.lgrHasFS . ChainDB.cdbLgrDbArgs $ chainDbArgs)
 
   withTime = contramapM \ev -> (,ev) <$> getMonotonicTime
+
+  isSnapshottingTracer :: StrictTMVar m () -> Tracer m (ChainDB.TraceEvent TestBlock)
+  isSnapshottingTracer tmvar = Tracer \case
+    ChainDB.TraceLedgerDBEvent (LedgerDB.LedgerDBSnapshotEvent (SnapshotRequestDelayed _ _ _)) ->
+      atomically $ putTMVar tmvar ()
+    ChainDB.TraceLedgerDBEvent (LedgerDB.LedgerDBSnapshotEvent SnapshotRequestCompleted) ->
+      atomically $ takeTMVar tmvar
+    _ -> pure ()
 
 {-------------------------------------------------------------------------------
   Assess a test outcome

@@ -49,6 +49,7 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
+import System.Random (StdGen)
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -93,6 +94,7 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
     cdbsLoE :: GetLoEFragment m blk
   -- ^ If this is 'LoEEnabled', it contains an action that returns the
   -- current LoE fragment.
+  , cdbsSnapshotDelayRNG :: HKD f StdGen
   }
 
 -- | Default arguments
@@ -127,6 +129,7 @@ defaultSpecificArgs =
     , cdbsHasFSGsmDB = noDefault
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled
+    , cdbsSnapshotDelayRNG = noDefault
     }
 
 -- | Default arguments
@@ -179,6 +182,7 @@ completeChainDbArgs ::
   (RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile  FS, see 'NodeDatabasePaths'
   (RelativeMountPoint -> SomeHasFS m) ->
+  StdGen ->
   LedgerDbBackendArgs m blk ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
@@ -191,6 +195,7 @@ completeChainDbArgs
   checkIntegrity
   mkImmFS
   mkVolFS
+  snapshotDelayRNG
   flavorArgs
   defArgs =
     defArgs
@@ -228,6 +233,7 @@ completeChainDbArgs
             { cdbsRegistry = registry
             , cdbsTopLevelConfig
             , cdbsHasFSGsmDB = mkVolFS $ RelativeMountPoint "gsm"
+            , cdbsSnapshotDelayRNG = snapshotDelayRNG
             }
       }
 
