@@ -558,6 +558,7 @@ data SnapshotPolicy = SnapshotPolicy
   --   blocks had to be replayed.
   --
   -- See also 'defaultSnapshotPolicy'
+  , onDiskSnapshotDelayRange :: (DiffTime, DiffTime)
   }
   deriving NoThunks via OnlyCheckWhnf SnapshotPolicy
 
@@ -583,6 +584,7 @@ defaultSnapshotPolicy
     SnapshotPolicy
       { onDiskNumSnapshots
       , onDiskShouldTakeSnapshot
+      , onDiskSnapshotDelayRange = (0, 0)
       }
    where
     onDiskNumSnapshots :: Word
