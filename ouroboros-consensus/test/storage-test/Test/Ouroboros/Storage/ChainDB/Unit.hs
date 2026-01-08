@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Ouroboros.Storage.ChainDB.Unit (tests) where
 
@@ -20,7 +21,7 @@ import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import Control.Monad (replicateM, unless, void)
 import Control.Monad.Except
   ( Except
-  , ExceptT
+  , ExceptT (..)
   , MonadError
   , runExcept
   , runExceptT
@@ -112,6 +113,9 @@ tests =
         [ testGroup
             "Existing block, returns same"
             [testCase "system" $ runSystemIO waitForImmutableBlock_existingBlock]
+        , testGroup
+            "Existing block, returns same, call 'wait' concurrently with adding blocks"
+            [testCase "system" $ runSystemIO waitForImmutableBlock_existingBlockConcurrent]
         , testGroup
             "Wrong hash, returns the actual block at slot"
             [testCase "system" $ runSystemIO waitForImmutableBlock_wrongHash]
@@ -254,6 +258,29 @@ waitForImmutableBlock_existingBlock = do
     Left e -> failWith (show e)
     Right result -> assertEqual result (blockRealPoint b1) ""
  where
+  fork0 = TestBody 0 True
+
+-- | Tests that given an existing block, we get that same block back,
+--   but we wait first and then add the blocks to test the waiting behaviour
+waitForImmutableBlock_existingBlockConcurrent ::
+  forall m. (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m, MonadFork m) => m ()
+waitForImmutableBlock_existingBlockConcurrent = do
+  _ <- forkIO addBlocksConcurrently
+  waitForImmutableBlock (blockRealPoint targetBlock) >>= \case
+    Left e -> failWith (show e)
+    Right result -> assertEqual result (blockRealPoint targetBlock) ""
+ where
+  addBlocksConcurrently :: m ()
+  addBlocksConcurrently = do
+    -- add three blocks, as @k@ is set to 2 in these test
+    b1 <- addBlock $ firstBlock 0 $ fork0
+    b2 <- addBlock $ mkNextBlock b1 1 $ fork0
+    _b3 <- addBlock $ mkNextBlock b2 2 $ fork0
+    -- copy the blocks older than @k@ into ImmutableDB,
+    -- should copy only b1
+    persistBlks DoNotGarbageCollect
+
+  targetBlock = firstBlock 0 fork0
   fork0 = TestBody 0 True
 
 -- | Tests that given a block at a filled slot but with a wrong hash,
@@ -510,7 +537,27 @@ newtype SystemM blk m a = SystemM
     , Monad
     , MonadReader (ChainDBEnv m blk)
     , MonadError TestFailure
+    , MonadThread
+    , MonadFork
     )
+
+-- this instance is needed for the concurrent tests of 'waitForImmutableBlock'
+instance MonadThread m => MonadThread (ExceptT e m) where
+  type ThreadId (ExceptT e m) = ThreadId m
+  myThreadId = lift myThreadId
+  labelThread t l = lift (labelThread t l)
+  threadLabel t = lift (threadLabel t)
+
+-- this instance is needed for the concurrent tests of 'waitForImmutableBlock',
+-- but we only need 'forkIO'
+instance MonadFork m => MonadFork (ExceptT e m) where
+  forkIO (ExceptT action) = lift $ forkIO (void action)
+  forkIOWithUnmask _ = error "Intentionally left unimplemented"
+  forkOn = error "Intentionally left unimplemented"
+  forkFinally = error "Intentionally left unimplemented"
+  throwTo = error "Intentionally left unimplemented"
+  yield = error "Intentionally left unimplemented"
+  getNumCapabilities = error "Intentionally left unimplemented"
 
 runSystem ::
   (forall a. (ChainDBEnv m blk -> m [TraceEvent blk] -> m a) -> m a) ->
