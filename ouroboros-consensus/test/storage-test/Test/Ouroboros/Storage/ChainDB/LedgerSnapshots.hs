@@ -126,6 +126,7 @@ data TestSnapshotPolicyArgs = TestSnapshotPolicyArgs
   , tspaInterval :: NonZero Word64
   , tspaOffset :: SlotNo
   , tspaRateLimit :: DiffTime
+  , tspaDelaySnapshotRange :: (DiffTime, DiffTime)
   }
   deriving stock Show
 
@@ -139,13 +140,26 @@ instance Arbitrary TestSnapshotPolicyArgs where
         [ (2, pure 0)
         , (1, secondsToDiffTime <$> choose (1, 10))
         ]
+    tspaDelaySnapshotRange <- oneof [arbitraryDelaySnapshotRange, pure (0, 0)]
     pure
       TestSnapshotPolicyArgs
         { tspaNum
         , tspaInterval
         , tspaOffset
         , tspaRateLimit
+        , tspaDelaySnapshotRange
         }
+    where
+      arbitraryDelaySnapshotRange = do
+        minimumDelay <- fromInteger <$> choose (floor fiveMinutes, floor tenMinutes)
+        additionalDelay <- fromInteger <$> choose (0, floor fiveMinutes)
+        pure (minimumDelay, minimumDelay + additionalDelay)
+
+      fiveMinutes :: DiffTime
+      fiveMinutes = 5 * 60
+
+      tenMinutes :: DiffTime
+      tenMinutes = 10 * 60
 
 -- | Add blocks to the ChainDB in this order.
 tsBlocksToAdd :: TestSetup -> [TestBlock]
@@ -168,6 +182,7 @@ tsSnapshotPolicyArgs TestSetup{tsTestSnapshotPolicyArgs} =
         { sfaInterval = Override $ tspaInterval tsTestSnapshotPolicyArgs
         , sfaOffset = Override $ tspaOffset tsTestSnapshotPolicyArgs
         , sfaRateLimit = Override $ tspaRateLimit tsTestSnapshotPolicyArgs
+        , sfaDelaySnapshotRange = Override $ tspaDelaySnapshotRange tsTestSnapshotPolicyArgs
         }
 
 instance Arbitrary TestSetup where
