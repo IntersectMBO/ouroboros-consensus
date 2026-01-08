@@ -1,6 +1,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
@@ -26,6 +28,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getTipBlock
   , getTipHeader
   , getTipPoint
+  , waitForImmutableBlock
 
     -- * Low-level queries
   , getAnyBlockComponent
@@ -34,6 +37,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getChainSelStarvation
   ) where
 
+import Cardano.Ledger.BaseTypes (WithOrigin (..))
 import Control.ResourceRegistry (ResourceRegistry)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -295,6 +299,40 @@ getPerasWeightSnapshot CDB{..} = PerasCertDB.getWeightSnapshot cdbPerasCertDB
 getPerasCertSnapshot ::
   ChainDbEnv m blk -> STM m (PerasCertSnapshot blk)
 getPerasCertSnapshot CDB{..} = PerasCertDB.getCertSnapshot cdbPerasCertDB
+
+-- | Wait until the slot of the given point is smaller or equal than the immutable tip slot,
+--   and then return:
+--   - the block at the target slot if there is a block in the immutable DB at that slot;
+--   - the block from the next occupied slot.
+--
+-- This function will never return 'Left' as it will block until it could
+-- return a 'Right'. However, the type has to be an 'Either' to avoid a call
+-- to 'error'.
+waitForImmutableBlock ::
+  forall blk m.
+  StandardHash blk =>
+  IOLike m =>
+  ChainDbEnv m blk ->
+  RealPoint blk ->
+  m (Either ImmutableDB.SeekBlockError (RealPoint blk))
+waitForImmutableBlock CDB{cdbImmutableDB} targetRealPoint = do
+  -- first, wait until the target slot is older than the immutable tip
+  _ <-
+    atomically $
+      ImmutableDB.getTip cdbImmutableDB >>= \case
+        Origin -> retry
+        At tip ->
+          check (ImmutableDB.tipSlotNo tip >= realPointSlot targetRealPoint)
+  -- then, query the DB for a point at or directly following the target slot
+  ImmutableDB.getBlockAtOrAfterPoint cdbImmutableDB targetRealPoint >>= \case
+    Left e ->
+      error $
+        "Impossible: waitForImmutableBlock called on "
+          <> show targetRealPoint
+          <> " returned "
+          <> show e
+          <> ". The ImmutableDB could have been concurrently truncated."
+    result@Right{} -> pure result
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent

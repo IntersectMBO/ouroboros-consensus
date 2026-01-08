@@ -13,9 +13,11 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
   , extractBlockComponent
   , getSlotInfo
   , streamImpl
+  , getBlockAtOrAfterPointImpl
   ) where
 
 import Cardano.Prelude (forceElemsToWHNF)
+import Cardano.Slotting.Slot (WithOrigin (..))
 import qualified Codec.CBOR.Read as CBOR
 import Control.Monad (unless, void, when)
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
@@ -742,3 +744,64 @@ extractBlockComponent
       Left err ->
         throwUnexpectedFailure $
           ParseError (fsPathChunkFile chunk) pt err
+
+-- | Find a filled slot, starting from the target slot and going forwards in the ImmutableDB.
+--
+--   Because of EBBs, the new resulting slot may be filled with two blocks. This implementation
+--   returns the first one, even if it's an EBB. On mainnet, no new EBBs will be produced; hence,
+--   this implementation will always return a regular block.
+seekBlockForwards ::
+  forall m blk h.
+  ( IOLike m
+  , HasHeader blk
+  , HasCallStack
+  ) =>
+  ImmutableDBEnv m blk ->
+  OpenState m blk h ->
+  Tip blk ->
+  RealPoint blk ->
+  m (Either SeekBlockError (RealPoint blk))
+seekBlockForwards
+  ImmutableDBEnv{chunkInfo}
+  OpenState{currentIndex}
+  immutableTip = go
+   where
+    go targetPoint@(RealPoint slot hash) =
+      runExceptT (getSlotInfo chunkInfo currentIndex (NotOrigin immutableTip) targetPoint) >>= \case
+        Left NewerThanTip{} ->
+          -- Stop if the target slot is newer then tip
+          pure . Left $ TargetNewerThanTip
+        Left (EmptySlot{}) -> do
+          if slot < (realPointSlot . tipToRealPoint $ immutableTip)
+            -- otherwise, skip this slot and repeat with the next one
+            then go (RealPoint (slot + 1) hash)
+            -- we're past the immutable tip and did not find any blocks, so we can only return the tip.
+            -- Note that this case is impossible, as the we would not get 'EmptySlot' from 'getSlotInfo',
+            -- but we still return the tip for completeness' sake.
+            else pure . Right $ tipToRealPoint immutableTip
+        Left (WrongHash _ hashes) ->
+          case hashes of
+            -- always return the first found block, even if it's an EBB
+            (actualHash NE.:| _) ->
+              pure . Right $ RealPoint (realPointSlot targetPoint) actualHash
+        Right{} ->
+          pure . Right $ targetPoint
+
+-- | Query the immutable DB to for a block at the target slot. If the target slot is empty,
+--   return the block at the next occupied slot.
+--
+--   See the haddock of 'ChainDB.getBlockAtOrAfterPoint_' for more details.
+getBlockAtOrAfterPointImpl ::
+  forall m blk.
+  ( IOLike m
+  , HasHeader blk
+  , HasCallStack
+  ) =>
+  ImmutableDBEnv m blk ->
+  (RealPoint blk) ->
+  m (Either SeekBlockError (RealPoint blk))
+getBlockAtOrAfterPointImpl dbEnv targetPoint =
+  withOpenState dbEnv $ \_hasFS dbState@OpenState{currentTip} -> do
+    case currentTip of
+      Origin -> pure . Left $ TipIsOrigin
+      At tip -> seekBlockForwards dbEnv dbState tip targetPoint

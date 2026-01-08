@@ -143,6 +143,7 @@ data Cmd it
   | Migrate ValidationPolicy
   | DeleteAfter (WithOrigin (Tip TestBlock))
   | GetHashForSlot SlotNo
+  | GetBlockAtOrAfterPoint (RealPoint TestBlock)
   | Corruption Corruption
   deriving (Generic, Show, Functor, Foldable, Traversable)
 
@@ -174,6 +175,7 @@ data Success it
   | IterResults [AllComponents TestBlock]
   | ImmTip (WithOrigin (Tip TestBlock))
   | HashForSlot (Maybe TestHeaderHash)
+  | BlockAtOrAfterPoint (Either SeekBlockError (RealPoint TestBlock))
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
 -- | Product of all 'BlockComponent's. As this is a GADT, generating random
@@ -257,6 +259,7 @@ run
       IteratorNext it -> IterResult <$> iteratorNext (unWithEq it)
       IteratorHasNext it -> IterHasNext <$> atomically (iteratorHasNext (unWithEq it))
       IteratorClose it -> Unit <$> iteratorClose' it
+      GetBlockAtOrAfterPoint pt -> BlockAtOrAfterPoint <$> getBlockAtOrAfterPoint db pt
       DeleteAfter tip -> do
         closeOpenIterators varIters
         Unit <$> deleteAfter internal tip
@@ -345,6 +348,7 @@ runPure = \case
   IteratorClose it -> ok Unit $ update_ (iteratorCloseModel it)
   DeleteAfter tip -> ok Unit $ update_ (deleteAfterModel tip)
   GetHashForSlot slot -> ok HashForSlot $ query (getHashForSlotModel slot)
+  GetBlockAtOrAfterPoint pt -> ok BlockAtOrAfterPoint (query (getBlockAtOrAfterPointModel pt))
   Corruption corr -> ok ImmTip $ update (simulateCorruptions (getCorruptions corr))
   Reopen _ -> ok ImmTip $ update reopenModel
   Migrate _ -> ok ImmTip $ update reopenModel
@@ -561,6 +565,7 @@ generateCmd Model{..} =
       , (1, Migrate <$> genValPol)
       , (1, DeleteAfter <$> genTip)
       , (1, GetHashForSlot <$> genGetHashForSlot)
+      , (1, GetBlockAtOrAfterPoint <$> genRandomBeforeSlotOrExisting lastSlot)
       , (if null dbFiles then 0 else 1, Corruption <$> genCorruption)
       ]
  where
@@ -617,6 +622,12 @@ generateCmd Model{..} =
       <$> arbitrary
       <*> (TestHeaderHash <$> arbitrary)
 
+  genRandomPointBeforeSlot :: SlotNo -> Gen (RealPoint TestBlock)
+  genRandomPointBeforeSlot slotNo =
+    RealPoint
+      <$> (chooseSlot (0, slotNo))
+      <*> (TestHeaderHash <$> arbitrary)
+
   genGetBlock :: Gen (RealPoint TestBlock)
   genGetBlock =
     frequency
@@ -668,6 +679,14 @@ generateCmd Model{..} =
   genRandomOrExisting =
     frequency
       [ (1, genRandomPoint)
+      , (if empty then 0 else 1, elements (map blockRealPoint blocks))
+      ]
+
+  -- Both random points and existing points
+  genRandomBeforeSlotOrExisting :: SlotNo -> Gen (RealPoint TestBlock)
+  genRandomBeforeSlotOrExisting slotNo =
+    frequency
+      [ (1, genRandomPointBeforeSlot slotNo)
       , (if empty then 0 else 1, elements (map blockRealPoint blocks))
       ]
 

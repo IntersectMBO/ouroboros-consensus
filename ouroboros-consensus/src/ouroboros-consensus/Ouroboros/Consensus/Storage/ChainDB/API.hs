@@ -64,6 +64,9 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , Follower (..)
   , traverseFollower
 
+    -- * Seeking for an occupied immutable block
+  , SeekBlockError (..)
+
     -- * Recovery
   , ChainDbFailure (..)
   , IsEBB (..)
@@ -90,6 +93,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
+import Ouroboros.Consensus.Storage.ImmutableDB.API (SeekBlockError (..))
 import Ouroboros.Consensus.Storage.LedgerDB
   ( GetForkerError
   , ReadOnlyForker'
@@ -405,6 +409,19 @@ data ChainDB m blk = ChainDB
   , getPerasCertSnapshot :: STM m (PerasCertSnapshot blk)
   -- ^ Get the Peras certificate snapshot, containing the currently-known
   -- certificates boosting blocks newer than the immutable tip.
+  , waitForImmutableBlock :: RealPoint blk -> m (Either SeekBlockError (RealPoint blk))
+  -- ^ Wait until the immutable tip's slot is equal or greater than the given slot:
+  --   - returns the block when it becomes the immutable tip,
+  --     reading it from disk;
+  --   - if no block was found at the target slot, returns the immutable block
+  --     at the next filled slot;
+  --
+  -- This function will never return 'Left' as it will block until it could
+  -- return a 'Right'. However, the type has to be an 'Either' to avoid a call
+  -- to 'error'.
+  --
+  -- Currently, the only use-case of this function is to verify the immutability
+  -- of a block from the big ledger peer snapshot file.
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --

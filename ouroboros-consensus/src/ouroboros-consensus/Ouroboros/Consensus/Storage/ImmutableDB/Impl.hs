@@ -302,6 +302,7 @@ openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} cont = cont $ do
           , getBlockComponent_ = getBlockComponentImpl dbEnv
           , appendBlock_ = appendBlockImpl dbEnv
           , stream_ = streamImpl dbEnv
+          , getBlockAtOrAfterPoint_ = getBlockAtOrAfterPointImpl dbEnv
           }
       internal =
         Internal
