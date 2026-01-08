@@ -310,19 +310,29 @@ getPerasCertSnapshot CDB{..} = PerasCertDB.getCertSnapshot cdbPerasCertDB
 -- to 'error'.
 waitForImmutableBlock ::
   forall blk m.
+  StandardHash blk =>
   IOLike m =>
   ChainDbEnv m blk ->
   RealPoint blk ->
   m (Either ImmutableDB.SeekBlockError (RealPoint blk))
 waitForImmutableBlock CDB{cdbImmutableDB} targetRealPoint = do
   -- first, wait until the target slot is older than the immutable tip
-  _ <- atomically $
-    ImmutableDB.getTip cdbImmutableDB >>= \case
-      Origin -> retry
-      At tip ->
-        check (ImmutableDB.tipSlotNo tip >= realPointSlot targetRealPoint)
+  _ <-
+    atomically $
+      ImmutableDB.getTip cdbImmutableDB >>= \case
+        Origin -> retry
+        At tip ->
+          check (ImmutableDB.tipSlotNo tip >= realPointSlot targetRealPoint)
   -- then, query the DB for a point at or directly following the target slot
-  ImmutableDB.getBlockAtOrAfterPoint cdbImmutableDB targetRealPoint
+  ImmutableDB.getBlockAtOrAfterPoint cdbImmutableDB targetRealPoint >>= \case
+    Left e ->
+      error $
+        "Impossible: waitForImmutableBlock called on "
+          <> show targetRealPoint
+          <> " returned "
+          <> show e
+          <> ". The ImmutableDB could have been concurrently truncated."
+    result@Right{} -> pure result
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent
