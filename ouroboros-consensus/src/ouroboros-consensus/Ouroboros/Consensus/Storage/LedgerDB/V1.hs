@@ -325,9 +325,9 @@ implTryTakeSnapshot ::
   SnapshotManagerV1 m blk ->
   LedgerDBEnv m l blk ->
   Time ->
-  DiffTime ->
+  (DiffTime -> DiffTime -> m DiffTime) ->
   m ()
-implTryTakeSnapshot snapManager env snapshotRequestTime delayBeforeSnapshotting = do
+implTryTakeSnapshot snapManager env snapshotRequestTime getRandomDelay = do
   timeSinceLastSnapshot <- do
     mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
     forM mLastSnapshotRequested $ \lastSnapshotRequested -> do
@@ -351,9 +351,12 @@ implTryTakeSnapshot snapManager env snapshotRequestTime delayBeforeSnapshotting 
   case snapshotSlots of
     [] -> pure ()
     _ -> do
+      let (minimumDelay, maximumDelay) = onDiskSnapshotDelayRange (ldbSnapshotPolicy env)
+      delayBeforeSnapshotting <- getRandomDelay minimumDelay maximumDelay
       traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
         SnapshotRequestDelayed snapshotRequestTime delayBeforeSnapshotting (length snapshotSlots)
       threadDelay delayBeforeSnapshotting
+
       forM_ snapshotSlots $ \slot -> do
         -- Prune the 'DbChangelog' such that the resulting anchor state has slot
         -- number @slot@.

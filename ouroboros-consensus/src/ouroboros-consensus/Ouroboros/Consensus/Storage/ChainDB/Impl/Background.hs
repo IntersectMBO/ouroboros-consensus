@@ -323,23 +323,18 @@ ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
     , wReader = blockUntilJust $ withOriginToMaybe <$> readTVar varSt
     , wNotify = \slotNo -> do
         LedgerDB.tryFlush cdbLedgerDB
-        randomizedDelay <-
-          atomically $
-            stateTVar cdbSnapshotDelayRNG randomSnapshotDelay
         now <- getMonotonicTime
-        LedgerDB.tryTakeSnapshot cdbLedgerDB now randomizedDelay
+        LedgerDB.tryTakeSnapshot cdbLedgerDB now mkRandomDelay
         LedgerDB.garbageCollect cdbLedgerDB slotNo
     }
  where
-  randomSnapshotDelay :: StdGen -> (DiffTime, StdGen)
-  randomSnapshotDelay rng =
-    first fromInteger $ uniformR (fiveMinutes, tenMinutes) rng
+  mkRandomDelay :: DiffTime -> DiffTime -> m DiffTime
+  mkRandomDelay minimumDelay maximumDelay = atomically $ do
+    stateTVar cdbSnapshotDelayRNG (randomSnapshotDelay (minimumDelay, maximumDelay))
 
-  fiveMinutes :: Integer
-  fiveMinutes = 5 * 60
-
-  tenMinutes :: Integer
-  tenMinutes = 10 * 60
+  randomSnapshotDelay :: (DiffTime, DiffTime) -> StdGen -> (DiffTime, StdGen)
+  randomSnapshotDelay (minimumDelay, maximumDelay) rng =
+    first fromInteger $ uniformR (floor minimumDelay, floor maximumDelay) rng
 
 {-------------------------------------------------------------------------------
   Executing garbage collection
