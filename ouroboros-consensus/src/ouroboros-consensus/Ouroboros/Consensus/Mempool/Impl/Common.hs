@@ -85,6 +85,7 @@ data InternalState blk = IS
   -- the normal way: by becoming invalid w.r.t. the updated ledger state.
   -- We treat a Mempool /over/ capacity in the same way as a Mempool /at/
   -- capacity.
+  , isTxHashes :: !(Set (GenTxHash blk)) -- TODO(bladyjoker)
   , isTxIds :: !(Set (GenTxId blk))
   -- ^ The cached IDs of transactions currently in the mempool.
   --
@@ -146,6 +147,7 @@ data InternalState blk = IS
 
 deriving instance
   ( NoThunks (Validated (GenTx blk))
+  , NoThunks (GenTxHash blk)
   , NoThunks (GenTxId blk)
   , NoThunks (TickedLedgerState blk DiffMK)
   , NoThunks (TxIn (LedgerState blk))
@@ -177,6 +179,7 @@ initInternalState ::
 initInternalState capacityOverride lastTicketNo cfg slot st =
   IS
     { isTxs = TxSeq.Empty
+    , isTxHashes = Set.empty -- TODO(bladyjoker)
     , isTxIds = Set.empty
     , isTxKeys = emptyLedgerTables
     , isTxValues = emptyLedgerTables
@@ -324,7 +327,7 @@ tickLedgerState cfg (ForgeInUnknownSlot st) =
 -- | Extend 'InternalState' with a new transaction (one which we have not
 -- previously validated) that may or may not be valid in this ledger state.
 validateNewTransaction ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk), HasTxHash (GenTx blk)) =>
   LedgerConfig blk ->
   WhetherToIntervene ->
   GenTx blk ->
@@ -350,6 +353,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
           , isTxKeys = isTxKeys <> getTransactionKeySets tx
           , isTxValues = ltliftA2 unionValues isTxValues origValues
           , isTxIds = Set.insert (txId tx) isTxIds
+          , isTxHashes = Set.insert (txHash tx) isTxHashes
           , isLedgerState = prependMempoolDiffs isLedgerState st'
           , isLastTicketNo = nextTicketNo
           }
@@ -357,6 +361,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
  where
   IS
     { isTxs
+    , isTxHashes
     , isTxIds
     , isTxKeys
     , isTxValues
@@ -401,6 +406,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
    in RevalidateTxsResult
         ( IS
             { isTxs = TxSeq.fromList $ map unwrap val
+            , isTxHashes = Set.empty -- TODO(bladyjoker)
             , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst) val
             , isTxKeys = keys
             , isTxValues = ltliftA2 restrictValuesMK values keys
@@ -449,6 +455,7 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
    in snapshotFromIS $
         IS
           { isTxs = TxSeq.fromList $ map unwrap val
+          , isTxHashes = Set.empty -- TODO(bladyjoker)
           , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst) val
           , -- These two can be empty since we don't need the resulting
             -- values at all when making a snapshot, as we won't update

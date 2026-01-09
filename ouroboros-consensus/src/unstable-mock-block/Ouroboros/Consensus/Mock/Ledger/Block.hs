@@ -654,6 +654,19 @@ instance
 instance HasTxId (GenTx (SimpleBlock c ext)) where
   txId = SimpleGenTxId . simpleGenTxId
 
+newtype instance TxHash (GenTx (SimpleBlock c ext)) = SimpleGenTxHash
+  { unSimpleGenTxHash :: Mock.TxHash
+  }
+  deriving stock Generic
+  deriving newtype (Show, Eq, Ord, Serialise, NoThunks)
+
+instance
+  (Typeable c, Typeable ext) =>
+  ShowProxy (TxHash (GenTx (SimpleBlock c ext)))
+
+instance HasTxHash (GenTx (SimpleBlock c ext)) where
+  txHash = SimpleGenTxHash . simpleGenTxId
+
 instance (Typeable p, Typeable c) => NoThunks (GenTx (SimpleBlock p c)) where
   showTypeOf _ = show $ typeRep (Proxy @(GenTx (SimpleBlock p c)))
 

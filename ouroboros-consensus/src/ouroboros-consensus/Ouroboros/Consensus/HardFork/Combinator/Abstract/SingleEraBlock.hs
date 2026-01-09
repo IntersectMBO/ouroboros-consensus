@@ -60,6 +60,7 @@ class
   , InspectLedger blk
   , LedgerSupportsMempool blk
   , ConvertRawTxId (GenTx blk)
+  , ConvertRawTxHash (GenTx blk)
   , BlockSupportsLedgerQuery blk
   , HasPartialConsensusConfig (BlockProtocol blk)
   , HasPartialLedgerConfig blk

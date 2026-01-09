@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Mock.Ledger.UTxO
   , Ix
   , Tx (Tx)
   , TxId
+  , TxHash
   , TxIn
   , TxOut
   , Utxo
@@ -87,6 +88,7 @@ instance Condense Tx where
 type Ix = Word
 type Amount = Word
 type TxId = Hash SHA256 Tx
+type TxHash = TxId
 type TxIn = (TxId, Ix)
 type TxOut = (Addr, Amount)
 type Utxo = Map TxIn TxOut

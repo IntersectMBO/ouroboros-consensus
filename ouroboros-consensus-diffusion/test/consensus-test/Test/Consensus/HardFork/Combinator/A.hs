@@ -403,7 +403,7 @@ instance TxLimits BlockA where
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
   txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
 
-newtype instance TxId (GenTx BlockA) = TxIdA Int
+newtype instance TxId (GenTx BlockA) = TxIdA {unTxIdA :: Int}
   deriving stock (Show, Eq, Ord, Generic)
   deriving newtype (NoThunks, Serialise)
 
@@ -412,6 +412,16 @@ instance HasTxId (GenTx BlockA) where
 
 instance ConvertRawTxId (GenTx BlockA) where
   toRawTxIdHash = SBS.toShort . Lazy.toStrict . serialise
+
+newtype instance TxHash (GenTx BlockA) = TxHashA Int
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving newtype (NoThunks, Serialise)
+
+instance HasTxHash (GenTx BlockA) where
+  txHash = TxHashA . unTxIdA . txA_id
+
+instance ConvertRawTxHash (GenTx BlockA) where
+  toRawTxHash = SBS.toShort . Lazy.toStrict . serialise
 
 instance ShowQuery (BlockQuery BlockA fp) where
   showResult qry = case qry of {}

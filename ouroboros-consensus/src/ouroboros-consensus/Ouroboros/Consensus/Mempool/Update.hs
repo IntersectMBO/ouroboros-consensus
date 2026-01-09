@@ -41,10 +41,12 @@ import Ouroboros.Network.Block
 
 -- | Add a single transaction to the mempool, blocking if there is no space.
 implAddTx ::
+  forall m blk.
   ( IOLike m
   , LedgerSupportsMempool blk
   , ValidateEnvelope blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   ) =>
   MempoolEnv m blk ->
   -- | Whether we're acting on behalf of a remote peer or a local client.
@@ -88,7 +90,6 @@ implAddTx mpEnv onbehalf tx =
     , mpEnvAddTxsAllFifo = allFifo
     , mpEnvTracer = trcr
     } = mpEnv
-
   implAddTx' = do
     TransactionProcessingResult _ result ev <-
       doAddTx
@@ -142,6 +143,7 @@ data TransactionProcessed blk
 doAddTx ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   , ValidateEnvelope blk
   , IOLike m
   ) =>
@@ -186,6 +188,7 @@ doAddTx mpEnv wti tx =
 pureTryAddTx ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   ) =>
   -- | The ledger configuration.
   LedgerCfg (LedgerState blk) ->

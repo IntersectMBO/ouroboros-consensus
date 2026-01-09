@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Byron.Ledger.Mempool
     GenTx (..)
   , TxId (..)
   , Validated (..)
+  , TxHash (..)
 
     -- * Transaction IDs
   , byronIdDlg
@@ -47,6 +48,7 @@ import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Chain.ValidationMode as CC
 import Cardano.Crypto (hashDecoded)
 import qualified Cardano.Crypto as CC
+import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Binary
   ( ByteSpan
   , DecoderError (..)
@@ -91,14 +93,11 @@ import Ouroboros.Consensus.Util.Condense
 -------------------------------------------------------------------------------}
 
 -- | Generalized transactions in Byron
---
--- This is effectively the same as 'CC.AMempoolPayload' but we cache the
--- transaction ID (a hash).
-data instance GenTx ByronBlock
-  = ByronTx !Utxo.TxId !(Utxo.ATxAux ByteString)
-  | ByronDlg !Delegation.CertificateId !(Delegation.ACertificate ByteString)
-  | ByronUpdateProposal !Update.UpId !(Update.AProposal ByteString)
-  | ByronUpdateVote !Update.VoteId !(Update.AVote ByteString)
+data instance GenTx ByronBlock = ByronGenTx
+  { byronGenTxHash :: !(GenTxHash ByronBlock)
+  , byronGenTxId :: !(GenTxId ByronBlock)
+  , byronGenTxPayload :: !(CC.AMempoolPayload ByteString)
+  }
   deriving (Eq, Generic)
   deriving NoThunks via InspectHeapNamed "GenTx ByronBlock" (GenTx ByronBlock)
 
@@ -118,19 +117,19 @@ instance ShowProxy CC.ApplyMempoolPayloadErr
 instance LedgerSupportsMempool ByronBlock where
   -- Check that the annotation is the canonical encoding. This is currently
   -- enforced by 'decodeByronGenTx', see its docstring for more context.
-  txInvariant tx =
-    CC.mempoolPayloadRecoverBytes tx' == CC.mempoolPayloadReencode tx'
+  txInvariant gtx =
+    CC.mempoolPayloadRecoverBytes mp == CC.mempoolPayloadReencode mp
    where
-    tx' = toMempoolPayload tx
+    mp = byronGenTxPayload gtx
 
-  applyTx cfg _wti slot tx st =
-    (\st' -> (st', ValidatedByronTx tx))
-      <$> applyByronGenTx validationMode cfg slot tx st
+  applyTx cfg _wti slot gtx st =
+    (\st' -> (st', ValidatedByronTx gtx))
+      <$> applyByronGenTx validationMode cfg slot gtx st
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
-  reapplyTx _ cfg slot vtx st =
-    applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st
+  reapplyTx _ cfg slot vgtx st =
+    applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vgtx) st
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
@@ -148,7 +147,7 @@ instance TxLimits ByronBlock where
    where
     cvs = tickedByronLedgerState st
 
-  txMeasure _cfg st tx =
+  txMeasure _cfg st gtx =
     if txszNat > maxTxSize
       then throwError err
       else
@@ -165,7 +164,7 @@ instance TxLimits ByronBlock where
     txsz =
       Strict.length $
         CC.mempoolPayloadRecoverBytes $
-          toMempoolPayload tx
+          byronGenTxPayload gtx
 
     err =
       CC.MempoolTxErr $
@@ -180,19 +179,31 @@ data instance TxId (GenTx ByronBlock)
   deriving (Eq, Ord)
   deriving NoThunks via InspectHeapNamed "TxId (GenTx ByronBlock)" (TxId (GenTx ByronBlock))
 
-instance ShowProxy (TxId (GenTx ByronBlock))
+instance ShowProxy (GenTxId ByronBlock)
 
 instance HasTxId (GenTx ByronBlock) where
-  txId (ByronTx i _) = ByronTxId i
-  txId (ByronDlg i _) = ByronDlgId i
-  txId (ByronUpdateProposal i _) = ByronUpdateProposalId i
-  txId (ByronUpdateVote i _) = ByronUpdateVoteId i
+  txId (ByronGenTx _gtxhash gtxid _pay) = gtxid
 
+-- TODO(bladyjoker): Losing a 'tag' and then hashing is safe? Not worried about colisions here?
 instance ConvertRawTxId (GenTx ByronBlock) where
   toRawTxIdHash (ByronTxId i) = CC.abstractHashToShort i
   toRawTxIdHash (ByronDlgId i) = CC.abstractHashToShort i
   toRawTxIdHash (ByronUpdateProposalId i) = CC.abstractHashToShort i
   toRawTxIdHash (ByronUpdateVoteId i) = CC.abstractHashToShort i
+
+-- TODO(bladyjoker): The hash needs to be specified as part of the protocol using it (unless used only internally)
+data instance TxHash (GenTx ByronBlock)
+  = ByronGenTxHash !(Hash.Hash Hash.SHA256 (CC.AMempoolPayload ByteString))
+  deriving (Eq, Ord)
+  deriving NoThunks via InspectHeapNamed "TxHash (GenTx ByronBlock)" (TxHash (GenTx ByronBlock))
+
+instance ShowProxy (GenTxHash ByronBlock)
+
+instance HasTxHash (GenTx ByronBlock) where
+  txHash (ByronGenTx gtxhash _gtxid _pay) = gtxhash
+
+instance ConvertRawTxHash (GenTx ByronBlock) where
+  toRawTxHash (ByronGenTxHash h) = Hash.hashToBytesShort h
 
 instance HasTxs ByronBlock where
   extractTxs blk = case byronBlockRaw blk of
@@ -214,27 +225,13 @@ instance HasTxs ByronBlock where
 -------------------------------------------------------------------------------}
 
 toMempoolPayload :: GenTx ByronBlock -> CC.AMempoolPayload ByteString
-toMempoolPayload = go
- where
-  -- Just extract the payload @p@
-  go :: GenTx ByronBlock -> CC.AMempoolPayload ByteString
-  go (ByronTx _ p) = CC.MempoolTx p
-  go (ByronDlg _ p) = CC.MempoolDlg p
-  go (ByronUpdateProposal _ p) = CC.MempoolUpdateProposal p
-  go (ByronUpdateVote _ p) = CC.MempoolUpdateVote p
+toMempoolPayload = byronGenTxPayload
 
 fromMempoolPayload :: CC.AMempoolPayload ByteString -> GenTx ByronBlock
-fromMempoolPayload = go
- where
-  -- Bundle the payload @p@ with its ID
-  go :: CC.AMempoolPayload ByteString -> GenTx ByronBlock
-  go (CC.MempoolTx p) = ByronTx (byronIdTx p) p
-  go (CC.MempoolDlg p) = ByronDlg (byronIdDlg p) p
-  go (CC.MempoolUpdateProposal p) = ByronUpdateProposal (byronIdProp p) p
-  go (CC.MempoolUpdateVote p) = ByronUpdateVote (byronIdVote p) p
+fromMempoolPayload mp = ByronGenTx (mpToGenTxHash mp) (mpToGenTxId mp) mp
 
 {-------------------------------------------------------------------------------
-  Auxiliary: transaction IDs
+  Auxiliary: transaction IDs and hashes
 -------------------------------------------------------------------------------}
 
 -- TODO: move to cardano-ledger-byron (cardano-ledger-byron#581)
@@ -250,18 +247,30 @@ byronIdProp = Update.recoverUpId
 byronIdVote :: Update.AVote ByteString -> Update.VoteId
 byronIdVote = Update.recoverVoteId
 
+mpToGenTxHash :: CC.AMempoolPayload ByteString -> GenTxHash ByronBlock
+mpToGenTxHash = ByronGenTxHash . Hash.hashWithSerialiser toByronCBOR
+
+mpToGenTxId :: CC.AMempoolPayload ByteString -> GenTxId ByronBlock
+mpToGenTxId (CC.MempoolTx p) = ByronTxId $ byronIdTx p
+mpToGenTxId (CC.MempoolDlg p) = ByronDlgId $ byronIdDlg p
+mpToGenTxId (CC.MempoolUpdateProposal p) = ByronUpdateProposalId $ byronIdProp p
+mpToGenTxId (CC.MempoolUpdateVote p) = ByronUpdateVoteId $ byronIdVote p
+
 {-------------------------------------------------------------------------------
   Pretty-printing
 -------------------------------------------------------------------------------}
 
 instance Condense (GenTx ByronBlock) where
-  condense = condense . toMempoolPayload
+  condense = condense . byronGenTxPayload
 
 instance Condense (GenTxId ByronBlock) where
   condense (ByronTxId i) = condense i
   condense (ByronDlgId i) = condense i
   condense (ByronUpdateProposalId i) = condense i
   condense (ByronUpdateVoteId i) = condense i
+
+instance Condense (GenTxHash ByronBlock) where
+  condense (ByronGenTxHash h) = condense h
 
 instance Show (GenTx ByronBlock) where
   show = condense
@@ -270,6 +279,9 @@ instance Show (Validated (GenTx ByronBlock)) where
   show vtx = "Validated-" <> condense (forgetValidatedByronTx vtx)
 
 instance Show (GenTxId ByronBlock) where
+  show = condense
+
+instance Show (GenTxHash ByronBlock) where
   show = condense
 
 {-------------------------------------------------------------------------------
@@ -283,13 +295,13 @@ applyByronGenTx ::
   GenTx ByronBlock ->
   TickedLedgerState ByronBlock mk1 ->
   Except (ApplyTxErr ByronBlock) (TickedLedgerState ByronBlock mk2)
-applyByronGenTx validationMode cfg slot genTx st =
+applyByronGenTx validationMode cfg slot gtx st =
   (\state -> st{tickedByronLedgerState = state})
     <$> CC.applyMempoolPayload
       validationMode
       cfg
       (toByronSlotNo slot)
-      (toMempoolPayload genTx)
+      (byronGenTxPayload gtx)
       (tickedByronLedgerState st)
 
 {-------------------------------------------------------------------------------
@@ -297,7 +309,7 @@ applyByronGenTx validationMode cfg slot genTx st =
 -------------------------------------------------------------------------------}
 
 encodeByronGenTx :: GenTx ByronBlock -> Encoding
-encodeByronGenTx genTx = toByronCBOR (toMempoolPayload genTx)
+encodeByronGenTx = toByronCBOR . byronGenTxPayload
 
 -- | The 'ByteString' annotation will be the canonical encoding.
 --
@@ -332,10 +344,10 @@ decodeByronGenTx = fromMempoolPayload . canonicalise <$> fromByronCBOR
     mp' = unsafeDeserialize byronProtVer canonicalBytes
 
 encodeByronGenTxId :: GenTxId ByronBlock -> Encoding
-encodeByronGenTxId genTxId =
+encodeByronGenTxId gtxid =
   mconcat
     [ CBOR.encodeListLen 2
-    , case genTxId of
+    , case gtxid of
         ByronTxId i -> toByronCBOR (0 :: Word8) <> toByronCBOR i
         ByronDlgId i -> toByronCBOR (1 :: Word8) <> toByronCBOR i
         ByronUpdateProposalId i -> toByronCBOR (2 :: Word8) <> toByronCBOR i

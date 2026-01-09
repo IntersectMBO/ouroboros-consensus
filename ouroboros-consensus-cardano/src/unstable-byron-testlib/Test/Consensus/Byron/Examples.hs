@@ -28,6 +28,7 @@ module Test.Consensus.Byron.Examples
 import qualified Cardano.Chain.Block as CC.Block
 import qualified Cardano.Chain.Byron.API as CC
 import qualified Cardano.Chain.Common as CC
+import qualified Cardano.Chain.MempoolPayload as CC
 import qualified Cardano.Chain.UTxO as CC
 import qualified Cardano.Chain.Update.Validation.Interface as CC.UPI
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
@@ -42,6 +43,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsMempool (HasTxId (txId))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.Abstract
@@ -229,10 +231,10 @@ exampleHeaderHash :: ByronHash
 exampleHeaderHash = blockHash exampleBlock
 
 exampleGenTx :: GenTx ByronBlock
-exampleGenTx = ByronTx CC.exampleTxId (CC.annotateTxAux CC.exampleTxAux)
+exampleGenTx = fromMempoolPayload $ CC.MempoolTx $ CC.annotateTxAux CC.exampleTxAux
 
 exampleGenTxId :: TxId (GenTx ByronBlock)
-exampleGenTxId = ByronTxId CC.exampleTxId
+exampleGenTxId = txId exampleGenTx
 
 exampleUPIState :: CC.UPI.State
 exampleUPIState = CC.UPI.initialState ledgerConfig

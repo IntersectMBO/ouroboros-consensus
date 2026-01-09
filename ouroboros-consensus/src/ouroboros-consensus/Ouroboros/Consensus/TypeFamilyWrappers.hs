@@ -13,6 +13,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapForgeStateInfo (..)
   , WrapForgeStateUpdateError (..)
   , WrapGenTxId (..)
+  , WrapGenTxHash (..)
   , WrapHeaderHash (..)
   , WrapLedgerConfig (..)
   , WrapLedgerErr (..)
@@ -66,6 +67,7 @@ newtype WrapEnvelopeErr blk = WrapEnvelopeErr {unwrapEnvelopeErr :: OtherHeaderE
 newtype WrapForgeStateInfo blk = WrapForgeStateInfo {unwrapForgeStateInfo :: ForgeStateInfo blk}
 newtype WrapForgeStateUpdateError blk = WrapForgeStateUpdateError {unwrapForgeStateUpdateError :: ForgeStateUpdateError blk}
 newtype WrapGenTxId blk = WrapGenTxId {unwrapGenTxId :: GenTxId blk}
+newtype WrapGenTxHash blk = WrapGenTxHash {unwrapGenTxHash :: GenTxHash blk}
 newtype WrapHeaderHash blk = WrapHeaderHash {unwrapHeaderHash :: HeaderHash blk}
 newtype WrapLedgerConfig blk = WrapLedgerConfig {unwrapLedgerConfig :: LedgerConfig blk}
 newtype WrapLedgerEvent blk = WrapLedgerEvent {unwrapLedgerEvent :: AuxLedgerEvent (LedgerState blk)}
@@ -120,6 +122,7 @@ newtype WrapNodeToClientVersion blk = WrapNodeToClientVersion {unwrapNodeToClien
 
 deriving instance Eq (ApplyTxErr blk) => Eq (WrapApplyTxErr blk)
 deriving instance Eq (GenTxId blk) => Eq (WrapGenTxId blk)
+deriving instance Eq (GenTxHash blk) => Eq (WrapGenTxHash blk)
 deriving instance Eq (LedgerError blk) => Eq (WrapLedgerErr blk)
 deriving instance Eq (LedgerUpdate blk) => Eq (WrapLedgerUpdate blk)
 deriving instance Eq (LedgerWarning blk) => Eq (WrapLedgerWarning blk)
@@ -130,6 +133,7 @@ deriving instance Eq (TipInfo blk) => Eq (WrapTipInfo blk)
 deriving instance Eq (Validated (GenTx blk)) => Eq (WrapValidatedGenTx blk)
 
 deriving instance Ord (GenTxId blk) => Ord (WrapGenTxId blk)
+deriving instance Ord (GenTxHash blk) => Ord (WrapGenTxHash blk)
 deriving instance Ord (TentativeHeaderState blk) => Ord (WrapTentativeHeaderState blk)
 
 deriving instance Show (ApplyTxErr blk) => Show (WrapApplyTxErr blk)
@@ -137,6 +141,7 @@ deriving instance Show (CannotForge blk) => Show (WrapCannotForge blk)
 deriving instance Show (ForgeStateInfo blk) => Show (WrapForgeStateInfo blk)
 deriving instance Show (ForgeStateUpdateError blk) => Show (WrapForgeStateUpdateError blk)
 deriving instance Show (GenTxId blk) => Show (WrapGenTxId blk)
+deriving instance Show (GenTxHash blk) => Show (WrapGenTxHash blk)
 deriving instance Show (LedgerError blk) => Show (WrapLedgerErr blk)
 deriving instance Show (LedgerUpdate blk) => Show (WrapLedgerUpdate blk)
 deriving instance Show (LedgerWarning blk) => Show (WrapLedgerWarning blk)
@@ -148,6 +153,8 @@ deriving instance Show (Validated (GenTx blk)) => Show (WrapValidatedGenTx blk)
 
 deriving instance
   NoThunks (GenTxId blk) => NoThunks (WrapGenTxId blk)
+deriving instance
+  NoThunks (GenTxHash blk) => NoThunks (WrapGenTxHash blk)
 deriving instance
   NoThunks (LedgerError blk) => NoThunks (WrapLedgerErr blk)
 deriving instance
@@ -208,6 +215,7 @@ deriving instance Eq (BlockNodeToClientVersion blk) => Eq (WrapNodeToClientVersi
 -------------------------------------------------------------------------------}
 
 deriving instance Serialise (GenTxId blk) => Serialise (WrapGenTxId blk)
+deriving instance Serialise (GenTxHash blk) => Serialise (WrapGenTxHash blk)
 deriving instance Serialise (ChainDepState (BlockProtocol blk)) => Serialise (WrapChainDepState blk)
 deriving instance Serialise (TipInfo blk) => Serialise (WrapTipInfo blk)
 

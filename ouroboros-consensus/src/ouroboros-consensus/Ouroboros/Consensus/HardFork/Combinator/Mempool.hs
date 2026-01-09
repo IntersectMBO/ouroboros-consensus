@@ -540,6 +540,22 @@ instance CanHardFork xs => HasTxId (GenTx (HardForkBlock xs)) where
       . getOneEraGenTx
       . getHardForkGenTx
 
+newtype instance TxHash (GenTx (HardForkBlock xs)) = HardForkGenTxHash
+  { getHardForkGenTxHash :: OneEraGenTxHash xs
+  }
+  deriving (Eq, Generic, Ord, Show)
+  deriving anyclass NoThunks
+
+instance Typeable xs => ShowProxy (TxHash (GenTx (HardForkBlock xs)))
+
+instance CanHardFork xs => HasTxHash (GenTx (HardForkBlock xs)) where
+  txHash =
+    HardForkGenTxHash
+      . OneEraGenTxHash
+      . hcmap proxySingle (WrapGenTxHash . txHash)
+      . getOneEraGenTx
+      . getHardForkGenTx
+
 {-------------------------------------------------------------------------------
   HasTxs
 

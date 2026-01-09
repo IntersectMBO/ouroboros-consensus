@@ -257,6 +257,14 @@ newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
 instance Ledger.HasTxId (Ledger.GenTx TestBlock) where
   txId (TestBlockGenTx tx) = TestBlockTxId tx
 
+newtype instance Ledger.TxHash (Ledger.GenTx TestBlock) = TestBlockTxHash Tx
+  deriving stock Generic
+  deriving newtype (Show, Ord, Eq)
+  deriving anyclass NoThunks
+
+instance Ledger.HasTxHash (Ledger.GenTx TestBlock) where
+  txHash (TestBlockGenTx tx) = TestBlockTxHash tx
+
 newtype instance Ledger.Validated (Ledger.GenTx TestBlock)
   = ValidatedGenTx (Ledger.GenTx TestBlock)
   deriving stock Generic

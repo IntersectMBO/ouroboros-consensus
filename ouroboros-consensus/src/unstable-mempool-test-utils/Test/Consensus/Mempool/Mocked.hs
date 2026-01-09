@@ -73,6 +73,7 @@ data InitialMempoolAndModelParams blk = MempoolAndModelParams
 openMockedMempool ::
   ( Ledger.LedgerSupportsMempool blk
   , Ledger.HasTxId (Ledger.GenTx blk)
+  , Ledger.HasTxHash (Ledger.GenTx blk)
   , Header.ValidateEnvelope blk
   ) =>
   Mempool.MempoolCapacityBytesOverride ->

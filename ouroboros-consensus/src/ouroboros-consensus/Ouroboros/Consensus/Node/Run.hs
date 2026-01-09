@@ -95,6 +95,7 @@ class
   , HasHardForkHistory blk
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   , BlockSupportsLedgerQuery blk
   , SupportedNetworkProtocolVersion blk
   , ConfigSupportsNode blk
