@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Byron.Ledger.Mempool
     GenTx (..)
   , TxId (..)
   , Validated (..)
+  , TxHash (..)
 
     -- * Transaction IDs
   , byronIdDlg
@@ -47,6 +48,7 @@ import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Chain.ValidationMode as CC
 import Cardano.Crypto (hashDecoded)
 import qualified Cardano.Crypto as CC
+import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Binary
   ( ByteSpan
   , DecoderError (..)
@@ -95,12 +97,20 @@ import Ouroboros.Consensus.Util.Condense
 -- This is effectively the same as 'CC.AMempoolPayload' but we cache the
 -- transaction ID (a hash).
 data instance GenTx ByronBlock
-  = ByronTx !Utxo.TxId !(Utxo.ATxAux ByteString)
-  | ByronDlg !Delegation.CertificateId !(Delegation.ACertificate ByteString)
-  | ByronUpdateProposal !Update.UpId !(Update.AProposal ByteString)
-  | ByronUpdateVote !Update.VoteId !(Update.AVote ByteString)
+  = ByronTx !(TxHash (GenTx ByronBlock)) !Utxo.TxId !(Utxo.ATxAux ByteString)
+  | ByronDlg
+      !(TxHash (GenTx ByronBlock))
+      !Delegation.CertificateId
+      !(Delegation.ACertificate ByteString)
+  | ByronUpdateProposal !(TxHash (GenTx ByronBlock)) !Update.UpId !(Update.AProposal ByteString)
+  | ByronUpdateVote !(TxHash (GenTx ByronBlock)) !Update.VoteId !(Update.AVote ByteString)
   deriving (Eq, Generic)
   deriving NoThunks via InspectHeapNamed "GenTx ByronBlock" (GenTx ByronBlock)
+
+-- data instance GenTx ByronBlock
+--   = ByronGenTx !(TxHash (GenTx ByronBlock)) !(TxId (GenTx ByronBlock)) !(CC.AMempoolPayload ByteString)
+--   deriving (Eq, Generic)
+--   deriving NoThunks via InspectHeapNamed "GenTx ByronBlock" (GenTx ByronBlock)
 
 instance ShowProxy (GenTx ByronBlock)
 
@@ -180,19 +190,42 @@ data instance TxId (GenTx ByronBlock)
   deriving (Eq, Ord)
   deriving NoThunks via InspectHeapNamed "TxId (GenTx ByronBlock)" (TxId (GenTx ByronBlock))
 
+-- data ByronPayloadId
+--   = ByronTxId !Utxo.TxId
+--   | ByronDlgId !Delegation.CertificateId
+--   | ByronUpdateProposalId !Update.UpId
+--   | ByronUpdateVoteId !Update.VoteId
+-- data instance TxId (GenTx ByronBlock) = ByronTxId !ByronPayloadId
+
 instance ShowProxy (TxId (GenTx ByronBlock))
 
 instance HasTxId (GenTx ByronBlock) where
-  txId (ByronTx i _) = ByronTxId i
-  txId (ByronDlg i _) = ByronDlgId i
-  txId (ByronUpdateProposal i _) = ByronUpdateProposalId i
-  txId (ByronUpdateVote i _) = ByronUpdateVoteId i
+  txId (ByronTx _payhash txid _tx) = ByronTxId txid
+  txId (ByronDlg _payhash certid _cert) = ByronDlgId certid
+  txId (ByronUpdateProposal _payhash upid _upd) = ByronUpdateProposalId upid
+  txId (ByronUpdateVote _payhash voteid _vote) = ByronUpdateVoteId voteid
 
 instance ConvertRawTxId (GenTx ByronBlock) where
   toRawTxIdHash (ByronTxId i) = CC.abstractHashToShort i
   toRawTxIdHash (ByronDlgId i) = CC.abstractHashToShort i
   toRawTxIdHash (ByronUpdateProposalId i) = CC.abstractHashToShort i
   toRawTxIdHash (ByronUpdateVoteId i) = CC.abstractHashToShort i
+
+data instance TxHash (GenTx ByronBlock)
+  = ByronPayloadHash !(Hash.Hash Hash.SHA256 (CC.AMempoolPayload ByteString))
+  deriving (Eq, Ord)
+  deriving NoThunks via InspectHeapNamed "TxHash (GenTx ByronBlock)" (TxHash (GenTx ByronBlock))
+
+instance ShowProxy (TxHash (GenTx ByronBlock))
+
+instance HasTxHash (GenTx ByronBlock) where
+  txHash (ByronTx payhash _txid _tx) = payhash
+  txHash (ByronDlg payhash _certid _cert) = payhash
+  txHash (ByronUpdateProposal payhash _upid _upd) = payhash
+  txHash (ByronUpdateVote payhash _voteid _vote) = payhash
+
+instance ConvertRawTxHash (GenTx ByronBlock) where
+  toRawTxHash (ByronPayloadHash h) = Hash.hashToBytesShort h
 
 instance HasTxs ByronBlock where
   extractTxs blk = case byronBlockRaw blk of
@@ -218,20 +251,23 @@ toMempoolPayload = go
  where
   -- Just extract the payload @p@
   go :: GenTx ByronBlock -> CC.AMempoolPayload ByteString
-  go (ByronTx _ p) = CC.MempoolTx p
-  go (ByronDlg _ p) = CC.MempoolDlg p
-  go (ByronUpdateProposal _ p) = CC.MempoolUpdateProposal p
-  go (ByronUpdateVote _ p) = CC.MempoolUpdateVote p
+  go (ByronTx _ _ p) = CC.MempoolTx p
+  go (ByronDlg _ _ p) = CC.MempoolDlg p
+  go (ByronUpdateProposal _ _ p) = CC.MempoolUpdateProposal p
+  go (ByronUpdateVote _ _ p) = CC.MempoolUpdateVote p
 
 fromMempoolPayload :: CC.AMempoolPayload ByteString -> GenTx ByronBlock
-fromMempoolPayload = go
+fromMempoolPayload mp = go mp
  where
   -- Bundle the payload @p@ with its ID
   go :: CC.AMempoolPayload ByteString -> GenTx ByronBlock
-  go (CC.MempoolTx p) = ByronTx (byronIdTx p) p
-  go (CC.MempoolDlg p) = ByronDlg (byronIdDlg p) p
-  go (CC.MempoolUpdateProposal p) = ByronUpdateProposal (byronIdProp p) p
-  go (CC.MempoolUpdateVote p) = ByronUpdateVote (byronIdVote p) p
+  go (CC.MempoolTx p) = ByronTx mphash (byronIdTx p) p
+  go (CC.MempoolDlg p) = ByronDlg mphash (byronIdDlg p) p
+  go (CC.MempoolUpdateProposal p) = ByronUpdateProposal mphash (byronIdProp p) p
+  go (CC.MempoolUpdateVote p) = ByronUpdateVote mphash (byronIdVote p) p
+
+  mphash :: TxHash (GenTx ByronBlock)
+  mphash = ByronPayloadHash . Hash.hashWithSerialiser toByronCBOR $ mp
 
 {-------------------------------------------------------------------------------
   Auxiliary: transaction IDs
@@ -263,6 +299,9 @@ instance Condense (GenTxId ByronBlock) where
   condense (ByronUpdateProposalId i) = condense i
   condense (ByronUpdateVoteId i) = condense i
 
+instance Condense (GenTxHash ByronBlock) where
+  condense (ByronPayloadHash h) = condense h
+
 instance Show (GenTx ByronBlock) where
   show = condense
 
@@ -270,6 +309,9 @@ instance Show (Validated (GenTx ByronBlock)) where
   show vtx = "Validated-" <> condense (forgetValidatedByronTx vtx)
 
 instance Show (GenTxId ByronBlock) where
+  show = condense
+
+instance Show (GenTxHash ByronBlock) where
   show = condense
 
 {-------------------------------------------------------------------------------

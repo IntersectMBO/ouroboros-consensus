@@ -683,7 +683,7 @@ translateTxAlonzoToBabbageWrapper ctxt =
   transPraosTx ::
     GenTx (ShelleyBlock (TPraos c) AlonzoEra) ->
     GenTx (ShelleyBlock (Praos c) AlonzoEra)
-  transPraosTx (ShelleyTx ti tx) = ShelleyTx ti (coerce tx)
+  transPraosTx (ShelleyTx txhash txid tx) = ShelleyTx txhash txid (coerce tx) -- TODO(bladyjoker): Is it safe to just pass on the hash? Only if the `tx` is not changed.
 
 translateValidatedTxAlonzoToBabbageWrapper ::
   forall c.
@@ -704,9 +704,9 @@ translateValidatedTxAlonzoToBabbageWrapper ctxt =
     WrapValidatedGenTx (ShelleyBlock (TPraos c) AlonzoEra) ->
     WrapValidatedGenTx (ShelleyBlock (Praos c) AlonzoEra)
   transPraosValidatedTx (WrapValidatedGenTx x) = case x of
-    ShelleyValidatedTx txid vtx ->
+    ShelleyValidatedTx txhash txid vtx ->
       WrapValidatedGenTx $
-        ShelleyValidatedTx txid (SL.coerceValidated vtx)
+        ShelleyValidatedTx txhash txid (SL.coerceValidated vtx) -- TODO(bladyjoker): Is it safe to just pass on the hash? Only if the `tx` is not changed.
 
 {-------------------------------------------------------------------------------
   Translation from Babbage to Conway

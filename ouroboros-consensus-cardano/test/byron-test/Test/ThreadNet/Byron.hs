@@ -23,6 +23,7 @@ import qualified Cardano.Chain.Block as Block
 import qualified Cardano.Chain.Common as Common
 import qualified Cardano.Chain.Delegation as Delegation
 import qualified Cardano.Chain.Genesis as Genesis
+import Cardano.Chain.MempoolPayload (AMempoolPayload (MempoolDlg))
 import Cardano.Chain.ProtocolConstants (kEpochSlots)
 import Cardano.Chain.Slotting (EpochNumber (..), unEpochSlots)
 import qualified Cardano.Crypto as Crypto
@@ -1561,4 +1562,4 @@ dlgTx cert =
               reAnnotate byronProtVer (Delegation.aEpoch cert)
           , Delegation.annotation = ann
           }
-   in Byron.ByronDlg (Delegation.recoverCertificateId cert') cert'
+   in Byron.fromMempoolPayload $ MempoolDlg cert'

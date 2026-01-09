@@ -342,6 +342,16 @@ instance HasTxId (GenTx BlockB) where
 instance ConvertRawTxId (GenTx BlockB) where
   toRawTxIdHash = \case {}
 
+data instance TxHash (GenTx BlockB)
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving anyclass (NoThunks, Serialise)
+
+instance HasTxHash (GenTx BlockB) where
+  txHash tx = case tx of {}
+
+instance ConvertRawTxHash (GenTx BlockB) where
+  toRawTxHash = \case {}
+
 instance ShowQuery (BlockQuery BlockB fp) where
   showResult qry = case qry of {}
 

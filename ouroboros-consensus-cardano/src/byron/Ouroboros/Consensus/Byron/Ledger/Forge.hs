@@ -184,14 +184,14 @@ forgeRegularBlock cfg bno sno st txs isLeader =
     -- 'recoverBytes') here as opposed to throwing away the serializations
     -- (the 'ByteString' annotations) with 'void' as we're currently doing.
     case txForgetValidated validatedGenTx of
-      ByronTx _ tx -> bp{bpTxs = void tx : bpTxs}
-      ByronDlg _ cert -> bp{bpDlgCerts = void cert : bpDlgCerts}
+      ByronTx _ _ tx -> bp{bpTxs = void tx : bpTxs}
+      ByronDlg _ _ cert -> bp{bpDlgCerts = void cert : bpDlgCerts}
       -- TODO: We should throw an error if we encounter multiple
       -- 'ByronUpdateProposal's (i.e. if 'bpUpProposal' 'isJust').
       -- This is because we should only be provided with a maximum of one
       -- 'ByronUpdateProposal' to include in a block payload.
-      ByronUpdateProposal _ prop -> bp{bpUpProposal = Just (void prop)}
-      ByronUpdateVote _ vote -> bp{bpUpVotes = void vote : bpUpVotes}
+      ByronUpdateProposal _ _ prop -> bp{bpUpProposal = Just (void prop)}
+      ByronUpdateVote _ _ vote -> bp{bpUpVotes = void vote : bpUpVotes}
 
   body :: CC.Block.Body
   body =

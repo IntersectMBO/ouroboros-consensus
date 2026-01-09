@@ -12,16 +12,20 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , ByteSize32 (..)
   , ComputeDiffs (..)
   , ConvertRawTxId (..)
+  , ConvertRawTxHash (..)
   , GenTx
   , GenTxId
+  , GenTxHash
   , HasByteSize (..)
   , HasTxId (..)
+  , HasTxHash (..)
   , HasTxs (..)
   , IgnoringOverflow (..)
   , Invalidated (..)
   , LedgerSupportsMempool (..)
   , ReapplyTxsResult (..)
   , TxId
+  , TxHash
   , TxLimits (..)
   , TxMeasureMetrics (..)
   , Validated
@@ -281,6 +285,24 @@ class HasTxId tx => ConvertRawTxId tx where
 
 -- | Shorthand: ID of a generalized transaction
 type GenTxId blk = TxId (GenTx blk)
+
+-- | Transacion hash
+type TxHash :: Type -> Type
+data family TxHash blk
+
+type GenTxHash blk = TxHash (GenTx blk)
+
+class
+  ( Show (TxHash tx)
+  , Ord (TxHash tx)
+  , NoThunks (TxHash tx)
+  ) =>
+  HasTxHash tx
+  where
+  txHash :: tx -> TxHash tx
+
+class HasTxHash tx => ConvertRawTxHash tx where
+  toRawTxHash :: TxHash tx -> ShortByteString
 
 -- | Collect all transactions from a block
 --

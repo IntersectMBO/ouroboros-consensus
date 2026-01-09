@@ -38,6 +38,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , OneEraForgeStateUpdateError (..)
   , OneEraGenTx (..)
   , OneEraGenTxId (..)
+  , OneEraGenTxHash (..)
   , OneEraHash (..)
   , OneEraHeader (..)
   , OneEraIsLeader (..)
@@ -128,6 +129,7 @@ newtype OneEraForgeStateInfo xs = OneEraForgeStateInfo {getOneEraForgeStateInfo 
 newtype OneEraForgeStateUpdateError xs = OneEraForgeStateUpdateError {getOneEraForgeStateUpdateError :: NS WrapForgeStateUpdateError xs}
 newtype OneEraGenTx xs = OneEraGenTx {getOneEraGenTx :: NS GenTx xs}
 newtype OneEraGenTxId xs = OneEraGenTxId {getOneEraGenTxId :: NS WrapGenTxId xs}
+newtype OneEraGenTxHash xs = OneEraGenTxHash {getOneEraGenTxHash :: NS WrapGenTxHash xs}
 newtype OneEraHeader xs = OneEraHeader {getOneEraHeader :: NS Header xs}
 newtype OneEraIsLeader xs = OneEraIsLeader {getOneEraIsLeader :: NS WrapIsLeader xs}
 newtype OneEraLedgerError xs = OneEraLedgerError {getOneEraLedgerError :: NS WrapLedgerErr xs}
@@ -178,6 +180,17 @@ instance CanHardFork xs => Eq (OneEraGenTxId xs) where
 -- | See the corresponding 'Eq' instance.
 instance CanHardFork xs => Ord (OneEraGenTxId xs) where
   compare = compare `on` oneEraGenTxIdRawHash
+
+{-------------------------------------------------------------------------------
+  OneEraGenTxHash
+-------------------------------------------------------------------------------}
+
+instance CanHardFork xs => Eq (OneEraGenTxHash xs) where
+  (==) = (==) `on` oneEraGenTxHashRaw
+
+-- | See the corresponding 'Eq' instance.
+instance CanHardFork xs => Ord (OneEraGenTxHash xs) where
+  compare = compare `on` oneEraGenTxHashRaw
 
 {-------------------------------------------------------------------------------
   Value for two /different/ eras
@@ -278,6 +291,12 @@ oneEraGenTxIdRawHash =
     . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
     . getOneEraGenTxId
 
+oneEraGenTxHashRaw :: CanHardFork xs => OneEraGenTxHash xs -> ShortByteString
+oneEraGenTxHashRaw =
+  hcollapse
+    . hcmap proxySingle (K . toRawTxHash . unwrapGenTxHash)
+    . getOneEraGenTxHash
+
 {-------------------------------------------------------------------------------
   NoThunks instances
 -------------------------------------------------------------------------------}
@@ -321,6 +340,11 @@ deriving via
   LiftNamedNS "OneEraGenTxId" WrapGenTxId xs
   instance
     CanHardFork xs => NoThunks (OneEraGenTxId xs)
+
+deriving via
+  LiftNamedNS "OneEraGenTxHash" WrapGenTxHash xs
+  instance
+    CanHardFork xs => NoThunks (OneEraGenTxHash xs)
 
 deriving via
   LiftNamedNS "OneEraHeader" Header xs
@@ -446,5 +470,6 @@ deriving via LiftNS I xs instance CanHardFork xs => Show (OneEraBlock xs)
 deriving via LiftNS WrapCannotForge xs instance CanHardFork xs => Show (OneEraCannotForge xs)
 deriving via LiftNS GenTx xs instance CanHardFork xs => Show (OneEraGenTx xs)
 deriving via LiftNS WrapGenTxId xs instance CanHardFork xs => Show (OneEraGenTxId xs)
+deriving via LiftNS WrapGenTxHash xs instance CanHardFork xs => Show (OneEraGenTxHash xs)
 deriving via LiftNS Header xs instance CanHardFork xs => Show (OneEraHeader xs)
 deriving via LiftNS WrapTiebreakerView xs instance CanHardFork xs => Show (OneEraTiebreakerView xs)

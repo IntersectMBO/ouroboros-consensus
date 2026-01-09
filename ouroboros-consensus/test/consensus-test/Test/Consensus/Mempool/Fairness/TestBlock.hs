@@ -49,7 +49,7 @@ type TestBlock = TestBlockWith Tx
 -- We do need to keep track of the transaction id.
 --
 -- All transactions will be accepted by the mempool.
-data Tx = Tx {txNumber :: Int, txSize :: Ledger.ByteSize32}
+data Tx = Tx {txNumber :: Int, txSize :: Ledger.ByteSize32} -- TODO(bladyjoker): r/txNumber/txId
   deriving stock (Eq, Ord, Generic, Show)
   deriving anyclass (NoThunks, NFData)
 
@@ -87,13 +87,21 @@ newtype instance Ledger.Validated (Ledger.GenTx TestBlock)
   deriving stock Generic
   deriving newtype (Show, NoThunks)
 
-newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
+newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx -- TODO(bladyjoker): huh? Why not txNumber?
   deriving stock Generic
   deriving newtype (Show, Ord, Eq)
   deriving anyclass NoThunks
 
 instance Ledger.HasTxId (Ledger.GenTx TestBlock) where
   txId (TestBlockGenTx tx) = TestBlockTxId tx
+
+newtype instance Ledger.TxHash (Ledger.GenTx TestBlock) = TestBlockTxHash Tx
+  deriving stock Generic
+  deriving newtype (Show, Ord, Eq)
+  deriving anyclass NoThunks
+
+instance Ledger.HasTxHash (Ledger.GenTx TestBlock) where
+  txHash (TestBlockGenTx tx) = TestBlockTxHash tx
 
 mkGenTx :: Int -> Ledger.ByteSize32 -> Ledger.GenTx TestBlock
 mkGenTx anId aSize = TestBlockGenTx $ Tx{txNumber = anId, txSize = aSize}

@@ -12,6 +12,7 @@ module Test.ThreadNet.DualByron (tests) where
 import qualified Byron.Spec.Chain.STS.Rule.Chain as Spec
 import qualified Byron.Spec.Ledger.Core as Spec
 import qualified Byron.Spec.Ledger.UTxO as Spec
+import Cardano.Chain.MempoolPayload (AMempoolPayload (MempoolTx))
 import qualified Cardano.Chain.ProtocolConstants as Impl
 import qualified Cardano.Chain.UTxO as Impl
 import Cardano.Ledger.BaseTypes (nonZeroOr)
@@ -320,7 +321,7 @@ genTx cfg st = do
 
   return $
     DualGenTx
-      { dualGenTxMain = ByronTx (byronIdTx main) main
+      { dualGenTxMain = fromMempoolPayload . MempoolTx $ main
       , dualGenTxAux = ByronSpecGenTx $ ByronSpecGenTxTx aux
       , dualGenTxBridge = specToImplTx aux main
       }
