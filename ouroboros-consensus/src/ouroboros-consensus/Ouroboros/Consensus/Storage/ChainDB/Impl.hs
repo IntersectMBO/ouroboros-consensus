@@ -41,6 +41,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
 
 import Control.Monad (void, when)
 import Control.Monad.Trans.Class (lift)
+import qualified Control.RAWLock as RAW
 import Control.ResourceRegistry
   ( WithTempRegistry
   , allocate
@@ -82,7 +83,7 @@ import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import Ouroboros.Consensus.Util (newFuse, whenJust, withFuse)
+import Ouroboros.Consensus.Util (newFuse, whenJust)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
@@ -227,7 +228,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     varNextIteratorKey <- newTVarIO (IteratorKey 0)
     varNextFollowerKey <- newTVarIO (FollowerKey 0)
     varKillBgThreads <- newTVarIO $ return ()
-    copyFuse <- newFuse "copy to immutable db"
+    immdbLock <- RAW.new ()
     chainSelFuse <- newFuse "chain selection"
     chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
@@ -246,7 +247,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbInvalid = varInvalid
             , cdbNextIteratorKey = varNextIteratorKey
             , cdbNextFollowerKey = varNextFollowerKey
-            , cdbCopyFuse = copyFuse
+            , cdbImmutableDBLock = immdbLock
             , cdbChainSelFuse = chainSelFuse
             , cdbTracer = tracer
             , cdbRegistry = Args.cdbsRegistry cdbSpecificArgs
@@ -293,15 +294,19 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             }
     addBlockTestFuse <- newFuse "test chain selection"
-    copyTestFuse <- newFuse "test copy to immutable db"
     let testing =
           Internal
-            { intCopyToImmutableDB = getEnv h (withFuse copyTestFuse . Background.copyToImmutableDB)
+            { intCopyToImmutableDB = getEnv h Background.copyToImmutableDB
             , intGarbageCollect = \slot -> getEnv h $ \e -> do
                 Background.garbageCollectBlocks e slot
                 LedgerDB.garbageCollect (cdbLedgerDB e) slot
             , intTryTakeSnapshot = getEnv h $ \env' ->
-                void $ LedgerDB.tryTakeSnapshot (cdbLedgerDB env') Nothing maxBound
+                void $
+                  LedgerDB.tryTakeSnapshot
+                    (cdbLedgerDB env')
+                    (void $ Background.copyToImmutableDB env')
+                    Nothing
+                    maxBound
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
             }
