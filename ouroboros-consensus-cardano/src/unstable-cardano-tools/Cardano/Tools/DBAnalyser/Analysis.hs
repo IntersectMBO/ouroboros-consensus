@@ -464,7 +464,7 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tra
       txFeatures tx =
         MkTxFeatures
           { src_block = blockNo <$> query_header cmp
-          , num_script_wits = Identity $ length $ toListOf (HasAnalysis.wits @blk . HasAnalysis.scriptWits @blk) tx
+          , num_script_wits = Identity $ length $ toListOf (HasAnalysis.wits @blk . HasAnalysis.scriptWits @blk . traverse) tx
           }
     let txFeaturess = toListOf (HasAnalysis.txs @blk . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
     let txlines = map (csv . Container . bmapC @Condense (Const . condense . runIdentity)) txFeaturess
