@@ -17,6 +17,7 @@ import qualified Cardano.Chain.Byron.API as CC
 import qualified Cardano.Chain.Common as CC.Common
 import qualified Cardano.Chain.Delegation as CC.Delegation
 import qualified Cardano.Chain.Genesis as CC.Genesis
+import qualified Cardano.Chain.MempoolPayload as CC
 import qualified Cardano.Chain.Slotting as CC.Slot
 import qualified Cardano.Chain.Ssc as CC.Ssc
 import qualified Cardano.Chain.UTxO as CC.UTxO
@@ -183,15 +184,15 @@ forgeRegularBlock cfg bno sno st txs isLeader =
     -- TODO: We should try to use 'recoverProof' (and other variants of
     -- 'recoverBytes') here as opposed to throwing away the serializations
     -- (the 'ByteString' annotations) with 'void' as we're currently doing.
-    case txForgetValidated validatedGenTx of
-      ByronTx _ _ tx -> bp{bpTxs = void tx : bpTxs}
-      ByronDlg _ _ cert -> bp{bpDlgCerts = void cert : bpDlgCerts}
+    case (byronGenTxPayload . txForgetValidated) validatedGenTx of
+      CC.MempoolTx tx -> bp{bpTxs = void tx : bpTxs}
+      CC.MempoolDlg cert -> bp{bpDlgCerts = void cert : bpDlgCerts}
       -- TODO: We should throw an error if we encounter multiple
       -- 'ByronUpdateProposal's (i.e. if 'bpUpProposal' 'isJust').
       -- This is because we should only be provided with a maximum of one
       -- 'ByronUpdateProposal' to include in a block payload.
-      ByronUpdateProposal _ _ prop -> bp{bpUpProposal = Just (void prop)}
-      ByronUpdateVote _ _ vote -> bp{bpUpVotes = void vote : bpUpVotes}
+      CC.MempoolUpdateProposal prop -> bp{bpUpProposal = Just (void prop)}
+      CC.MempoolUpdateVote vote -> bp{bpUpVotes = void vote : bpUpVotes}
 
   body :: CC.Block.Body
   body =
