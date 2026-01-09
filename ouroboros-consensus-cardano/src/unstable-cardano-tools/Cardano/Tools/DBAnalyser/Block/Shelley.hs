@@ -55,11 +55,14 @@ import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
 import TextBuilder (decimal)
 import qualified Cardano.Ledger.Core as Ledger
+import Ouroboros.Consensus.Util.IndexedMemPack
+import Cardano.Ledger.Allegra.Scripts
 
 -- | Usable for each Shelley-based era
 instance
   ( ShelleyCompatible proto era
   , PerEraAnalysis era
+  , Scriptitude (Ledger.Script era)
   ) =>
   HasAnalysis (ShelleyBlock proto era)
   where
@@ -73,6 +76,7 @@ instance
   wits = Ledger.witsTxL
   addrWits = Ledger.addrTxWitsL
   scriptWits = Ledger.scriptTxWitsL
+  scriptSize = scripty_size
 
   countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
     SL.Block _ body -> getSum $ foldMap (Sum . countOutputs) (body ^. Core.txSeqBlockBodyL)
@@ -120,6 +124,24 @@ instance
   -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
 
+class Scriptitude s where
+  scripty_size :: s -> Int
+
+instance Scriptitude (Timelock AllegraEra) where
+  scripty_size _ = 0 -- dummy
+  
+instance Scriptitude (Timelock MaryEra) where
+  scripty_size _ = 0 -- dummy
+  
+instance Scriptitude (SL.MultiSig ShelleyEra) where
+  scripty_size _ = 0 -- dummy
+  
+instance {-# OVERLAPPABLE #-} Scriptitude (Alonzo.AlonzoScript era) where
+  scripty_size _ = 0 -- dummy
+  
+instance Scriptitude (Alonzo.AlonzoScript ConwayEra) where
+  scripty_size scr = packedByteCount scr
+  
 class PerEraAnalysis era where
   txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
 

@@ -330,6 +330,8 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
 
   scriptWits inner (AWit @blk wit) = foldMapOf (scriptWits @blk) (Const . getConst . inner . Map.map (AScriptType @blk)) wit
 
+  scriptSize (AScriptType @blk scr) = scriptSize @blk scr
+
   countTxOutputs = analyseBlock countTxOutputs
   blockTxSizes = analyseBlock blockTxSizes
   knownEBBs _ =

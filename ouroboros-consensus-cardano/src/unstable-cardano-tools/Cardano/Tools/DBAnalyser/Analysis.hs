@@ -56,7 +56,7 @@ import qualified Data.Map.Strict as Map
 import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
-import GHC.Generics
+import GHC.Generics hiding (to)
 import qualified GHC.Stats as GC
 import Lens.Micro
 import NoThunks.Class (noThunks)
@@ -100,6 +100,7 @@ import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.SizeInBytes
 import qualified System.IO as IO
+import Data.Monoid
 
 {-------------------------------------------------------------------------------
   Run the requested analysis
@@ -384,7 +385,7 @@ data BlockFeatures blk f = MkBlockFeatures
 data TxFeatures blk f = MkTxFeatures
   { src_block :: f BlockNo
   , num_script_wits :: f Int
-  -- , size_script_wits :: f Int
+  , size_script_wits :: f Int
   }
   deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
 
@@ -405,7 +406,7 @@ txFeaturesNames =
   MkTxFeatures
     { src_block = "block_id"
     , num_script_wits = "#script_wits"
-    -- , size_script_wits = "script_wits_size"
+    , size_script_wits = "script_wits_size"
     }
 
 dumpBlockHeader ::
@@ -460,11 +461,15 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tra
     IO.hPutStrLn bh line
 
     let
+      script_wits :: SimpleFold (HasAnalysis.TxOf blk) (HasAnalysis.ScriptType blk)
+      script_wits = HasAnalysis.wits @blk . HasAnalysis.scriptWits @blk . traverse
+      
       txFeatures :: HasAnalysis.TxOf blk -> TxFeatures blk Identity
       txFeatures tx =
         MkTxFeatures
           { src_block = blockNo <$> query_header cmp
-          , num_script_wits = Identity $ length $ toListOf (HasAnalysis.wits @blk . HasAnalysis.scriptWits @blk . traverse) tx
+          , num_script_wits = Identity $ length $ toListOf script_wits tx
+          , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize @blk)) Sum tx
           }
     let txFeaturess = toListOf (HasAnalysis.txs @blk . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
     let txlines = map (csv . Container . bmapC @Condense (Const . condense . runIdentity)) txFeaturess

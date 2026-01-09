@@ -41,6 +41,7 @@ instance HasAnalysis ByronBlock where
   wits _ = absurd
   addrWits _ = absurd
   scriptWits _ = absurd
+  scriptSize = absurd
   countTxOutputs = aBlockOrBoundary (const 0) countTxOutputsByron
   blockTxSizes = aBlockOrBoundary (const []) blockTxSizesByron
   knownEBBs = const Byron.knownEBBs

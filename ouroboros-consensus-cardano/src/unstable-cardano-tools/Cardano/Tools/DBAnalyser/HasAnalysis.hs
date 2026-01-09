@@ -52,6 +52,8 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
 
   scriptWits :: SimpleGetter (WitsOf blk) (Map ScriptHash (ScriptType blk))
 
+  scriptSize :: ScriptType blk -> Int
+
 
   countTxOutputs :: blk -> Int
   blockTxSizes :: blk -> [SizeInBytes]
