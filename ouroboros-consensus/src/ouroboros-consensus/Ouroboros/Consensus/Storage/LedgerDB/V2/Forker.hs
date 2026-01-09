@@ -118,10 +118,10 @@ implForkerGetLedgerState env = current <$> readTVar (foeLedgerSeq env)
 implForkerReadStatistics ::
   (MonadSTM m, GetTip l) =>
   ForkerEnv m l blk ->
-  m (Maybe Statistics)
+  m Statistics
 implForkerReadStatistics env = do
   traceWith (foeTracer env) ForkerReadStatistics
-  fmap (fmap Statistics) . tablesSize . tables . currentHandle =<< readTVarIO (foeLedgerSeq env)
+  fmap Statistics . tablesSize . tables . currentHandle =<< readTVarIO (foeLedgerSeq env)
 
 implForkerPush ::
   (IOLike m, GetTip l, HasLedgerTables l, HasCallStack) =>
