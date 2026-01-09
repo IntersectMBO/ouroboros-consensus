@@ -44,6 +44,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
 import Control.Exception (assert)
 import Control.Monad (forM_, forever, void, when)
 import Control.Monad.Trans.Class (lift)
+import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Foldable (toList)
@@ -114,7 +115,7 @@ launchBgTasks cdb@CDB{..} replayed = do
 
   !copyToImmutableDBThread <-
     launch "ChainDB.copyToImmutableDBRunner" $
-      copyToImmutableDBRunner cdb ledgerDbTasksTrigger gcSchedule cdbCopyFuse
+      copyToImmutableDBRunner cdb ledgerDbTasksTrigger gcSchedule
 
   atomically $
     writeTVar cdbKillBgThreads $
@@ -153,8 +154,8 @@ copyToImmutableDB ::
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
-  Electric m (WithOrigin SlotNo)
-copyToImmutableDB cdb@CDB{..} = electric $ do
+  m (WithOrigin SlotNo)
+copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
   toCopy <- atomically $ do
     curChain <- icWithoutTime <$> readTVar cdbChain
     curChainVolSuffix <- Query.getCurrentChain cdb
@@ -193,7 +194,7 @@ copyToImmutableDB cdb@CDB{..} = electric $ do
       trace $ CopiedBlockToImmutableDB pt
 
   -- Get the /possibly/ updated tip of the ImmutableDB
-  atomically $ ImmutableDB.getTipSlot cdbImmutableDB
+  (,()) <$> atomically (ImmutableDB.getTipSlot cdbImmutableDB)
  where
   trace = traceWith (contramap TraceCopyToImmutableDBEvent cdbTracer)
 
@@ -249,9 +250,8 @@ copyToImmutableDBRunner ::
   ChainDbEnv m blk ->
   LedgerDbTasksTrigger m ->
   GcSchedule m ->
-  Fuse m ->
   m Void
-copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule fuse = do
+copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
   -- this first flush will persist the differences that come from the initial
   -- chain selection.
   LedgerDB.tryFlush cdbLedgerDB
@@ -271,7 +271,7 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule fuse = do
     --
     -- This is a synchronous operation: when it returns, the blocks have been
     -- copied to disk (though not flushed, necessarily).
-    gcSlotNo <- withFuse fuse (copyToImmutableDB cdb)
+    gcSlotNo <- copyToImmutableDB cdb
 
     triggerLedgerDbTasks ledgerDbTasksTrigger gcSlotNo numToWrite
     scheduleGC' gcSlotNo
@@ -342,11 +342,11 @@ triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) immTip numWritten =
 --  * Garbage collection.
 ledgerDbTaskWatcher ::
   forall m blk.
-  IOLike m =>
+  (IOLike m, ConsensusProtocol (BlockProtocol blk), GetHeader blk, HasHeader blk) =>
   ChainDbEnv m blk ->
   LedgerDbTasksTrigger m ->
   Watcher m LedgerDbTaskState (WithOrigin SlotNo)
-ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
+ledgerDbTaskWatcher cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
   Watcher
     { wFingerprint = ldbtsImmTip
     , wInitial = Nothing
@@ -367,6 +367,7 @@ ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
                 } <-
                 LedgerDB.tryTakeSnapshot
                   cdbLedgerDB
+                  (void $ copyToImmutableDB cdb)
                   ((,now) <$> prevSnapTime)
                   blocksSinceLast
               when (ntBlocksSinceLastSnap == 0) $ traceMarkerIO "Took snapshot"

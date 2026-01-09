@@ -81,6 +81,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   ) where
 
 import Control.Monad (when)
+import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Foldable (traverse_)
@@ -267,6 +268,7 @@ checkInternalChain (InternalChain cur curWithTime) =
 
 data ChainDbEnv m blk = CDB
   { cdbImmutableDB :: !(ImmutableDB m blk)
+  , cdbImmutableDBLock :: !(RAWLock m ())
   , cdbVolatileDB :: !(VolatileDB m blk)
   , cdbLedgerDB :: !(LedgerDB' m blk)
   , cdbChain :: !(StrictTVar m (InternalChain blk))
@@ -330,7 +332,6 @@ data ChainDbEnv m blk = CDB
   -- not when hashes are garbage-collected from the map.
   , cdbNextIteratorKey :: !(StrictTVar m IteratorKey)
   , cdbNextFollowerKey :: !(StrictTVar m FollowerKey)
-  , cdbCopyFuse :: !(Fuse m)
   , cdbChainSelFuse :: !(Fuse m)
   , cdbTracer :: !(Tracer m (TraceEvent blk))
   , cdbRegistry :: !(ResourceRegistry m)

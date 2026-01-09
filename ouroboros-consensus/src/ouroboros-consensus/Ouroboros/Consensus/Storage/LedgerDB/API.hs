@@ -272,6 +272,7 @@ data LedgerDB m l blk = LedgerDB
   --  * The set of previously applied points.
   , tryTakeSnapshot ::
       l ~ ExtLedgerState blk =>
+      m () ->
       Maybe (Time, Time) ->
       Word64 ->
       m SnapCounters
