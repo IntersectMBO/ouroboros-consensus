@@ -27,7 +27,7 @@ import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.IOManager (withIOManager)
 import Ouroboros.Network.Mux
-import qualified Ouroboros.Network.NodeToNode as N2N
+import qualified Cardano.Network.NodeToNode as N2N
 import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   ( decodeRemoteAddress
   , encodeRemoteAddress

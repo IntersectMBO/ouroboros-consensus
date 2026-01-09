@@ -57,11 +57,11 @@ import Ouroboros.Network.Mux
   , OuroborosApplicationWithMinimalCtx
   , RunMiniProtocol (..)
   )
-import Ouroboros.Network.NodeToNode
+import Cardano.Network.NodeToNode
   ( NodeToNodeVersionData (..)
   , Versions (..)
   )
-import qualified Ouroboros.Network.NodeToNode as N2N
+import qualified Cardano.Network.NodeToNode as N2N
 import Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing (..))
 import Ouroboros.Network.Protocol.BlockFetch.Server
 import Ouroboros.Network.Protocol.ChainSync.Server

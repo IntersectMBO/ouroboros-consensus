@@ -122,6 +122,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 instance Ledger.TxLimits TestBlock where
   type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
 
+  txWireSize = fromIntegral . Ledger.unByteSize32 . txSize . unGenTx
   blockCapacityTxMeasure _cfg _st =
     -- The tests will override this value. By using 1, @computeMempoolCapacity@
     -- can be exactly what each test requests.
