@@ -48,6 +48,7 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as L
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import qualified Data.SOP.Dict as Dict
 import Data.Word
 import Ouroboros.Consensus.Block
@@ -76,6 +77,7 @@ import Ouroboros.Consensus.Util hiding (Some)
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
+import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import qualified System.Directory as Dir
 import System.FS.API
@@ -176,6 +178,9 @@ initialEnvironment fsOps getDiskDir mkTestArguments cdb rr = do
   Arguments
 -------------------------------------------------------------------------------}
 
+instance {-# OVERLAPPING #-} Show TestBlock where
+  show = show . unSlotNo . tbSlot
+
 data TestArguments m = TestArguments
   { argFlavorArgs :: !(LedgerDbBackendArgs m TestBlock)
   , argLedgerDbCfg :: !(LedgerDbCfg (ExtLedgerState TestBlock))
@@ -272,6 +277,7 @@ data Model
   = UnInit
   | Model
       TheBlockChain
+      (Point TestBlock)
       SecurityParam
   deriving (Generic, Show)
 
@@ -294,15 +300,15 @@ modelUpdateLedger ::
     a ->
   Model ->
   Model
-modelUpdateLedger f model@(Model chain secParam) =
+modelUpdateLedger f model@(Model chain i secParam) =
   case runExcept (runStateT f chain) of
     Left{} -> model
-    Right (_, ledger') -> Model ledger' secParam
+    Right (_, ledger') -> Model ledger' i secParam
 modelUpdateLedger _ _ = error "Uninitialized model tried to apply blocks!"
 
 modelRollback :: Word64 -> Model -> Model
-modelRollback n (Model chain secParam) =
-  Model (AS.dropNewest (fromIntegral n) chain) secParam
+modelRollback n (Model chain i secParam) =
+  Model (AS.dropNewest (fromIntegral n) chain) i secParam
 modelRollback _ UnInit = error "Uninitialized model can't rollback!"
 
 {-------------------------------------------------------------------------------
@@ -342,7 +348,7 @@ instance StateModel Model where
   actionName OpenAndCloseForker = "OpenAndCloseForker"
 
   arbitraryAction _ UnInit = Some <$> (Init <$> QC.arbitrary <*> QC.arbitrary)
-  arbitraryAction _ model@(Model chain secParam) =
+  arbitraryAction _ model@(Model chain _ secParam) =
     frequency $
       [ (2, pure $ Some GetState)
       , (2, pure $ Some ForceTakeSnapshot)
@@ -365,7 +371,7 @@ instance StateModel Model where
             let
               chain' = case modelRollback numRollback model of
                 UnInit -> error "Impossible"
-                Model ch _ -> ch
+                Model ch _ _ -> ch
               blocks =
                 genBlocks
                   numNewBlocks
@@ -379,11 +385,24 @@ instance StateModel Model where
 
   initialState = UnInit
 
-  nextState _ (Init secParam _) _var = Model (AS.Empty genesis) secParam
+  nextState _ (Init secParam _) _var = Model (AS.Empty genesis) (Point Origin) secParam
   nextState state GetState _var = state
   nextState state ForceTakeSnapshot _var = state
-  nextState state@(Model _ secParam) (ValidateAndCommit n blks) _var =
-    modelUpdateLedger switch state
+  nextState state@(Model _ i secParam) (ValidateAndCommit n blks) _var =
+    case modelUpdateLedger switch state of
+      Model ch' _ _ ->
+        Model
+          ch'
+          ( -- The immutable tip must become the maximum of the old tip or the
+            -- block k-deep into the chain
+            max i $
+              castPoint $
+                getTip $
+                  AS.headAnchor $
+                    AS.dropNewest (fromIntegral $ BT.unNonZero $ maxRollbacks secParam) ch'
+          )
+          secParam
+      UnInit{} -> error "impossible"
    where
     push ::
       TestBlock ->
@@ -421,18 +440,26 @@ instance StateModel Model where
 
   precondition UnInit Init{} = True
   precondition UnInit _ = False
-  precondition (Model chain secParam) (ValidateAndCommit n blks) =
+  precondition (Model chain immTip secParam) (ValidateAndCommit n blks) =
+    -- Don't drop more than K blocks (or the chain length if shorter)
     n <= min (BT.unNonZero $ maxRollbacks secParam) (fromIntegral $ AS.length chain)
-      && case blks of
+      &&
+      -- Don't drop past the immutable tip
+      immTip <= castPoint (getTip (AS.headAnchor chain'))
+      &&
+      -- New blocks are successors of the truncated chain
+      case blks of
         [] -> True
         (b : _) -> tbSlot b == 1 + fromWithOrigin 0 (getTipSlot (AS.headAnchor chain'))
-         where
-          chain' = AS.dropNewest (fromIntegral n) chain
+   where
+    chain' = AS.dropNewest (fromIntegral n) chain
+  precondition (Model chain immTip _) (DropAndRestore n _) =
+    -- don't drop past the immutable chain
+    immTip <= castPoint (getTip (AS.headAnchor chain'))
+   where
+    chain' = AS.dropNewest (fromIntegral n) chain
   precondition _ Init{} = False
   precondition _ _ = True
-
-  validFailingAction Model{} ValidateAndCommit{} = True
-  validFailingAction _ _ = False
 
 {-------------------------------------------------------------------------------
   Mocked ChainDB
@@ -444,6 +471,8 @@ data ChainDB m = ChainDB
   -- ^ Block storage
   , dbChain :: StrictTVar m [RealPoint TestBlock]
   -- ^ Current chain and corresponding ledger state
+  , dbImmTip :: StrictTVar m (Point TestBlock)
+  -- ^ The immutable tip of the chain
   }
 
 initChainDB ::
@@ -453,23 +482,26 @@ initChainDB ::
 initChainDB = do
   dbBlocks <- uncheckedNewTVarM Map.empty
   dbChain <- uncheckedNewTVarM []
-  return $ ChainDB dbBlocks dbChain
+  dbImmTip <- uncheckedNewTVarM (Point Origin)
+  return $ ChainDB dbBlocks dbChain dbImmTip
 
 dbStreamAPI ::
   forall m.
   IOLike m =>
-  SecurityParam ->
   ChainDB m ->
   m (StreamAPI m TestBlock TestBlock, [TestBlock])
-dbStreamAPI secParam chainDb =
+dbStreamAPI chainDb =
   atomically $ do
-    points <- reverse . take (fromIntegral $ BT.unNonZero $ maxRollbacks secParam) <$> readTVar dbChain
+    immTip <- readTVar dbImmTip
+    -- Volatile blocks are those before the immutable tip, reversed
+    points <- reverse . takeWhile ((/= immTip) . realPointToPoint) <$> readTVar dbChain
     blks <- readTVar dbBlocks
     pure $ (StreamAPI streamAfter, map (blks Map.!) points)
  where
   ChainDB
     { dbBlocks
     , dbChain
+    , dbImmTip
     } = chainDb
 
   streamAfter ::
@@ -478,8 +510,12 @@ dbStreamAPI secParam chainDb =
     m a
   streamAfter tip k = do
     pts <-
-      atomically $
-        reverse . drop (fromIntegral $ BT.unNonZero $ maxRollbacks secParam) <$> readTVar dbChain
+      atomically $ do
+        immTip <- readTVar dbImmTip
+        -- Immutable blocks are those starting at the immutable tip, reversed
+        reverse
+          . dropWhile ((/= immTip) . realPointToPoint)
+          <$> readTVar dbChain
     case tip' of
       NotOrigin pt
         | pt `L.notElem` pts ->
@@ -536,7 +572,7 @@ openLedgerDB ::
   ResourceRegistry IO ->
   IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock, IO NumOpenHandles)
 openLedgerDB flavArgs env cfg fs rr = do
-  (stream, volBlocks) <- dbStreamAPI (ledgerDbCfgSecParam cfg) env
+  (stream, volBlocks) <- dbStreamAPI env
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
   replayGoal <- fmap (realPointToPoint . last . Map.keys) . atomically $ readTVar (dbBlocks env)
   (tracer, getNumOpenHandles) <- mkTrackOpenHandles
@@ -645,11 +681,14 @@ instance RunModel Model (StateT Environment IO) where
                 (reverse (map blockRealPoint blks) ++) . drop (fromIntegral n)
             atomically (forkerCommit forker)
             forkerClose forker
-            garbageCollect ldb . fromWithOrigin 0 . pointSlot . getTip =<< atomically (getImmutableTip ldb)
+            immTipPoint <- getTip <$> atomically (getImmutableTip ldb)
+
+            garbageCollect ldb . fromWithOrigin 0 $ pointSlot immTipPoint
+            atomically $ writeTVar (dbImmTip chainDb) $ castPoint immTipPoint
             pure $ pure ()
           ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
           ValidateLedgerError (AnnLedgerError forker _ err) -> forkerClose forker >> error ("Unexpected ledger error" <> show err)
-  perform state@(Model _ secParam) (DropAndRestore n salt) lk = do
+  perform state@(Model _ _ secParam) (DropAndRestore n salt) lk = do
     Environment _ testInternals chainDb _ _ _ _ _ <- get
     lift $ do
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
@@ -679,13 +718,15 @@ instance RunModel Model (StateT Environment IO) where
   -- volatile tip are the right ones. By the blocks validating one on top of
   -- each other it already implies that having the right volatile tip means that
   -- we have the right whole chain.
-  postcondition (Model chain secParam, _) GetState _ (imm, vol) =
+  postcondition (Model chain immTip _, _) GetState _ (imm, vol) =
     let volSt = either forgetLedgerTables (forgetLedgerTables . snd) (AS.head chain)
         immSt =
-          either
-            forgetLedgerTables
-            (forgetLedgerTables . snd)
-            (AS.head (AS.dropNewest (fromIntegral $ BT.unNonZero $ maxRollbacks secParam) chain))
+          forgetLedgerTables
+            ( AS.headAnchor $
+                fst $
+                  fromMaybe (error "impossible, the immutable tip is not on the chain?") $
+                    AS.splitAfterMeasure (pointSlot immTip) (const True) chain
+            )
      in do
           counterexamplePost $
             unlines
