@@ -15,6 +15,7 @@ implGetSnapshotFor ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   ) =>
   MempoolEnv m blk ->
   -- | Get snapshot for this slot number (usually the current slot)

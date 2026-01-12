@@ -359,6 +359,8 @@ data MempoolSnapshot blk = MempoolSnapshot
   , snapshotHasTx :: GenTxId blk -> Bool
   -- ^ Determine whether a specific transaction exists within the mempool
   -- snapshot.
+  , snapshotLookupTxByHash :: GenTxHash blk -> Maybe (Validated (GenTx blk))
+  -- ^ Lookup a transaction by its hash.
   , snapshotMempoolSize :: Cap.MempoolSize
   -- ^ Get the size of the mempool snapshot.
   , snapshotSlotNo :: SlotNo

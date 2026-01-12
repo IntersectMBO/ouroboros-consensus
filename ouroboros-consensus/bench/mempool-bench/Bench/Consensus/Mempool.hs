@@ -69,7 +69,7 @@ getCmdsTxIds = mapMaybe getCmdTxId
 -------------------------------------------------------------------------------}
 
 -- TODO: the interpretation of running the command should be defined elsewhere,
--- and tested by state-mathine tests.
+-- and tested by state-machine tests.
 run ::
   Monad m =>
   MockedMempool m blk -> [MempoolCmd blk] -> m ()

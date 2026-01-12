@@ -311,6 +311,7 @@ implRemoveTxsEvenIfValid ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   , ValidateEnvelope blk
   ) =>
   MempoolEnv m blk ->
@@ -356,6 +357,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
 pureRemoveTxs ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   ) =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
@@ -395,6 +397,7 @@ implSyncWithLedger ::
   , LedgerSupportsMempool blk
   , ValidateEnvelope blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   ) =>
   MempoolEnv m blk ->
   m (MempoolSnapshot blk)
@@ -483,7 +486,7 @@ implSyncWithLedger mpEnv =
 --
 -- See the documentation of 'runSyncWithLedger' for more context.
 pureSyncWithLedger ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk), HasTxHash (GenTx blk)) =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->

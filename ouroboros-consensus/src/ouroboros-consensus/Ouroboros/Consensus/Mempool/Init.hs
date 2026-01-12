@@ -52,6 +52,7 @@ forkSyncStateOnTipPointChange ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   , ValidateEnvelope blk
   ) =>
   MempoolEnv m blk ->
