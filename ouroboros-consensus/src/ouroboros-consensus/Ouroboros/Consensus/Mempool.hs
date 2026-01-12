@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Mempool (
     -- ** Mempool Size
   , MempoolSize (..)
     -- * Mempool initialization
+  , MempoolTimeoutConfig (..)
   , openMempool
   , openMempoolWithoutSyncThread
     -- * ChainDB interface
@@ -36,9 +37,10 @@ module Ouroboros.Consensus.Mempool (
 
 import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf (..),
                      ForgeLedgerState (..), Mempool (..),
-                     MempoolAddTxResult (..), MempoolSnapshot (..), SizeInBytes,
-                     TicketNo, addLocalTxs, addTxs, isMempoolTxAdded,
-                     isMempoolTxRejected, mempoolTxAddedToMaybe, zeroTicketNo)
+                     MempoolAddTxResult (..), MempoolSnapshot (..),
+                     MempoolTimeoutConfig (..), SizeInBytes, TicketNo,
+                     addLocalTxs, addTxs, isMempoolTxAdded, isMempoolTxRejected,
+                     mempoolTxAddedToMaybe, zeroTicketNo)
 import           Ouroboros.Consensus.Mempool.Capacity
                      (MempoolCapacityBytesOverride (..), MempoolSize (..),
                      computeMempoolCapacity)

@@ -72,6 +72,7 @@ import           Control.Monad.Except
 import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
 import           Data.List.NonEmpty (NonEmpty ((:|)))
+import           Data.Text (Text)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
                      (WhetherToIntervene (..))
@@ -169,6 +170,9 @@ class ( Core.EraSegWits era
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
+  mkMkMempoolShelleyPredicateFailure ::
+    proxy era -> Maybe (Text -> PredicateFailure (EraRule "LEDGER" era))
+
 data ConwayEraGovDict era where
     ConwayEraGovDict :: CG.ConwayEraGov era => ConwayEraGovDict era
 
@@ -206,30 +210,42 @@ instance ShelleyBasedEra ShelleyEra where
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+
 instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
+
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
 
 instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+
 instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
+
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
 
 instance ShelleyBasedEra BabbageEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+
 instance ShelleyBasedEra ConwayEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
+
+  mkMkMempoolShelleyPredicateFailure _prx = Just Conway.ConwayMempoolFailure
 
 applyAlonzoBasedTx :: forall era.
   ( ShelleyBasedEra era,

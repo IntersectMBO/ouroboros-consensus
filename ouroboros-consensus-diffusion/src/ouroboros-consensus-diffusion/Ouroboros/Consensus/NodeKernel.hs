@@ -193,6 +193,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
                               :: m GSM.GsmState -> HistoricityCheck m blk
     , blockFetchSize          :: Header blk -> SizeInBytes
     , mempoolCapacityOverride :: MempoolCapacityBytesOverride
+    , mempoolTimeoutConfig    :: Maybe MempoolTimeoutConfig
     , miniProtocolParameters  :: MiniProtocolParameters
     , blockFetchConfiguration :: BlockFetchConfiguration
     , keepAliveRng            :: StdGen
@@ -392,6 +393,7 @@ data InternalState m addrNTN addrNTC blk = IS {
 initInternalState ::
        forall m addrNTN addrNTC blk.
        ( IOLike m
+       , SI.MonadTimer m
        , Ord addrNTN
        , Typeable addrNTN
        , RunNode blk
@@ -401,6 +403,7 @@ initInternalState ::
 initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , blockFetchSize, btime
                                  , mempoolCapacityOverride
+                                 , mempoolTimeoutConfig
                                  , gsmArgs, getUseBootstrapPeers
                                  , getDiffusionPipeliningSupport
                                  , genesisArgs
@@ -418,6 +421,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  (chainDBLedgerInterface chainDB)
                                  (configLedger cfg)
                                  mempoolCapacityOverride
+                                 mempoolTimeoutConfig
                                  (mempoolTracer tracers)
 
     fetchClientRegistry <- newFetchClientRegistry
@@ -595,7 +599,8 @@ forkBlockForging IS{..} blockForging =
 
       lift $ roforkerClose forker
 
-      let txs = snapshotTake mempoolSnapshot
+      let (txs, txssz) =
+            snapshotTake mempoolSnapshot
               $ blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
                 -- NB respect the capacity of the ledger state we're extending,
                 -- which is /not/ 'snapshotLedgerState'
@@ -621,6 +626,7 @@ forkBlockForging IS{..} blockForging =
                 (ledgerTipPoint (ledgerState unticked))
                 newBlock
                 (snapshotMempoolSize mempoolSnapshot)
+                txssz
 
       -- Add the block to the chain DB
       let noPunish = InvalidBlockPunishment.noPunishment   -- no way to punish yourself

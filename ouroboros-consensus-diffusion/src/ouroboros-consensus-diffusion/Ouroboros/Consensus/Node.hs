@@ -95,6 +95,7 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.Ledger.Basics (ValuesMK)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
                      (HistoricityCheck)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
@@ -225,8 +226,9 @@ data RunNodeArgs m addrNTN addrNTC blk p2p = RunNodeArgs {
     , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
 
     , rnGenesisConfig :: GenesisConfig
-    }
 
+    , rnMempoolTimeoutConfig :: Maybe Mempool.MempoolTimeoutConfig
+    }
 
 -- | Arguments that usually only tests /directly/ specify.
 --
@@ -587,6 +589,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     llrnPublicPeerSelectionStateVar
                     genesisArgs
                     DiffusionPipeliningOn
+                    rnMempoolTimeoutConfig
           nodeKernel <- initNodeKernel nodeKernelArgs
           rnNodeKernelHook registry nodeKernel
 
@@ -837,6 +840,7 @@ mkNodeKernelArgs ::
   -> StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   -> GenesisNodeKernelArgs m blk
   -> DiffusionPipeliningSupport
+  -> Maybe Mempool.MempoolTimeoutConfig
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -856,6 +860,7 @@ mkNodeKernelArgs
   publicPeerSelectionStateVar
   genesisArgs
   getDiffusionPipeliningSupport
+  mempoolTimeoutConfig
   = do
     let (kaRng, psRng) = split rng
     return NodeKernelArgs
@@ -869,6 +874,7 @@ mkNodeKernelArgs
       , chainSyncHistoricityCheck
       , blockFetchSize          = estimateBlockSize
       , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
+      , mempoolTimeoutConfig    = mempoolTimeoutConfig
       , miniProtocolParameters  = defaultMiniProtocolParameters
       , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
       , gsmArgs = GsmNodeKernelArgs {

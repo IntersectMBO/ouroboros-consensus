@@ -43,6 +43,7 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable
 import           GHC.Generics (Generic)
+import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -73,7 +74,7 @@ data InternalState blk = IS {
       -- the normal way: by becoming invalid w.r.t. the updated ledger state.
       -- We treat a Mempool /over/ capacity in the same way as a Mempool /at/
       -- capacity.
-      isTxs          :: !(TxSeq (TxMeasure blk) (Validated (GenTx blk)))
+      isTxs          :: !(TxSeq (TxMeasureWithDiffTime blk) (Validated (GenTx blk)))
 
       -- | The cached IDs of transactions currently in the mempool.
       --
@@ -155,7 +156,7 @@ deriving instance ( NoThunks (Validated (GenTx blk))
 isMempoolSize :: TxLimits blk => InternalState blk -> MempoolSize
 isMempoolSize is = MempoolSize {
     msNumTxs   = fromIntegral $ length $ isTxs is
-  , msNumBytes = txMeasureByteSize $ TxSeq.toSize $ isTxs is
+  , msNumBytes = txMeasureByteSize $ forgetTxMeasureWithDiffTime $ TxSeq.toSize $ isTxs is
   }
 
 initInternalState ::
@@ -220,6 +221,7 @@ data MempoolEnv m blk = MempoolEnv {
     , mpEnvAddTxsAllFifo    :: MVar m ()
     , mpEnvTracer           :: Tracer m (TraceEventMempool blk)
     , mpEnvCapacityOverride :: MempoolCapacityBytesOverride
+    , mpEnvTimeoutConfig    :: Maybe MempoolTimeoutConfig
     }
 
 initMempoolEnv :: ( IOLike m
@@ -229,9 +231,10 @@ initMempoolEnv :: ( IOLike m
                => LedgerInterface m blk
                -> LedgerConfig blk
                -> MempoolCapacityBytesOverride
+               -> Maybe MempoolTimeoutConfig
                -> Tracer m (TraceEventMempool blk)
                -> m (MempoolEnv m blk)
-initMempoolEnv ledgerInterface cfg capacityOverride tracer = do
+initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
     st <- atomically $ getCurrentLedgerState ledgerInterface
     let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
     isVar <- newTMVarIO
@@ -246,6 +249,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride tracer = do
       , mpEnvAddTxsAllFifo    = addTxAllFifo
       , mpEnvTracer           = tracer
       , mpEnvCapacityOverride = capacityOverride
+      , mpEnvTimeoutConfig    = mbTimeoutConfig
       }
 
 {-------------------------------------------------------------------------------
@@ -294,14 +298,15 @@ validateNewTransaction
      -- 'txMeasure' before this function.
   -> InternalState blk
   -> ( Either (ApplyTxErr blk) (Validated (GenTx blk))
-     , InternalState blk
+     , DiffTimeMeasure -> InternalState blk
      )
 validateNewTransaction cfg wti tx txsz origValues st is =
     case runExcept (applyTx cfg wti isSlotNo tx st) of
-      Left err         -> ( Left err, is )
+      Left err         -> ( Left err, \_dur -> is )
       Right (st', vtx) ->
         ( Right vtx
-        , is { isTxs          = isTxs :> TxTicket vtx nextTicketNo txsz
+        , \dur -> is
+             { isTxs          = isTxs :> TxTicket vtx nextTicketNo (MkTxMeasureWithDiffTime txsz dur)
              , isTxKeys       = isTxKeys <> getTransactionKeySets tx
              , isTxValues     = ltliftA2 unionValues isTxValues origValues
              , isTxIds        = Set.insert (txId tx) isTxIds
@@ -339,7 +344,7 @@ revalidateTxsFor
   -> LedgerTables (LedgerState blk) ValuesMK
      -- ^ The tables with all the inputs for the transactions
   -> TicketNo -- ^ 'isLastTicketNo' and 'vrLastTicketNo'
-  -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
+  -> [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))]
   -> RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
   let theTxs = map wrap txTickets
@@ -387,7 +392,7 @@ computeSnapshot
   -> LedgerTables (LedgerState blk) ValuesMK
      -- ^ The tables with all the inputs for the transactions
   -> TicketNo -- ^ 'isLastTicketNo' and 'vrLastTicketNo'
-  -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
+  -> [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))]
   -> MempoolSnapshot blk
 computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
   let theTxs = map wrap txTickets
@@ -443,13 +448,18 @@ snapshotFromIS is = MempoolSnapshot {
                           -> TicketNo
                           -> [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxsAfter IS{isTxs} =
-    TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
+    (\x -> [(a, b, forgetTxMeasureWithDiffTime c) | (a, b, c) <- x])
+      . TxSeq.toTuples
+      . snd
+      . TxSeq.splitAfterTicketNo isTxs
 
   implSnapshotTake :: InternalState blk
                    -> TxMeasure blk
-                   -> [Validated (GenTx blk)]
-  implSnapshotTake IS{isTxs} =
-    map TxSeq.txTicketTx . TxSeq.toList . fst . TxSeq.splitAfterTxSize isTxs
+                   -> ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
+  implSnapshotTake IS{isTxs} limit =
+    (map TxSeq.txTicketTx (TxSeq.toList x), TxSeq.toSize x)
+   where
+    (x, _y) = TxSeq.splitAfterTxSize isTxs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
 
   implSnapshotGetTx :: InternalState blk
                     -> TicketNo

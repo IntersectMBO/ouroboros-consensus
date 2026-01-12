@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -35,12 +36,14 @@ module Test.Consensus.Mempool (tests) where
 import           Cardano.Binary (toCBOR)
 import           Cardano.Crypto.Hash
 import           Control.Monad (foldM, forM, forM_, void)
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Monad.Except (runExcept)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.State (State, evalState, get, modify)
 import           Control.Tracer (Tracer (..))
 import           Data.Bifunctor (first, second)
 import           Data.Either (isRight)
+import Data.Functor ((<&>))
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
@@ -54,6 +57,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mempool
+import           Ouroboros.Consensus.Mempool.API (ExnMempoolTimeout (..))
 import           Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Mock.Ledger hiding (TxId)
 import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM)
@@ -90,6 +94,7 @@ tests = testGroup "Mempool"
       , testProperty "Rejected invalid txs are traced"              prop_Mempool_TraceRejectedTxs
       , testProperty "Removed invalid txs are traced"               prop_Mempool_TraceRemovedTxs
       , testProperty "idx consistency"                              prop_Mempool_idx_consistency
+      , testProperty "Mempool timeout" prop_Mempool_timeout
       ]
   ]
 
@@ -358,11 +363,13 @@ genTestSetup :: Int -> Gen (TestSetup, LedgerState TestBlock ValuesMK)
 genTestSetup maxInitialTxs =
     genTestSetupWithExtraCapacity maxInitialTxs (ByteSize32 0)
 
--- | Random 'MempoolCapacityBytesOverride'
+-- | Random 'testMempoolCapOverride', but never smaller than the
+-- 'testInitialTxs'.
 instance Arbitrary TestSetup where
   arbitrary = sized $ \n -> do
     extraCapacity <- (ByteSize32 . fromIntegral) <$> choose (0, n)
     testSetup <- fst <$> genTestSetupWithExtraCapacity n extraCapacity
+    -- NB this @testSetup@ always has a @MempoolCapacityOverride@.
     noOverride <- arbitrary
     let initialSize = foldMap genTxSize $ testInitialTxs testSetup
         defaultCap  = simpleBlockCapacity <> simpleBlockCapacity
@@ -474,7 +481,7 @@ instance Arbitrary TestSetupWithTxs where
     (testSetup, ledger)  <- genTestSetup n
     (txs,      _ledger') <- genTxs nbTxs ledger
     testSetup' <- case testMempoolCapOverride testSetup of
-      NoMempoolCapacityBytesOverride     -> return testSetup
+      NoMempoolCapacityBytesOverride     -> error "unreachable"
       MempoolCapacityBytesOverride mpCap -> do
         noOverride <- arbitrary
         let initialSize = foldMap genTxSize $ testInitialTxs testSetup
@@ -492,8 +499,7 @@ instance Arbitrary TestSetupWithTxs where
         mempoolCap = computeMempoolCapacity
           testLedgerConfigNoSizeLimits
           (TickedSimpleLedgerState ledger)
-          (testMempoolCapOverride testSetup)
-
+          (testMempoolCapOverride testSetup')
 
     largeInvalidTx <- genLargeInvalidTx mempoolCap
     let txs'        = (largeInvalidTx, False) : txs
@@ -556,6 +562,11 @@ instance Arbitrary TestSetupWithTxInMempool where
     , tx' <- testInitialTxs testSetup'
     ]
 
+-- | 'testInitialTxs' is nonempty and the juxtaposed list of txs is
+-- 'testInitialTxs' with any number of elements randomly dropped.
+--
+-- FYI, the 'TestSetupWithTxsInMempoolToRemove' type is similar, but the list
+-- of txs is definitely nonempty.
 data TestSetupWithTxsInMempool = TestSetupWithTxsInMempool TestSetup [TestTx]
   deriving (Show)
 
@@ -622,6 +633,16 @@ data TestMempool m = TestMempool
   , getCurrentLedger :: STM m (LedgerState TestBlock ValuesMK)
   }
 
+withTestMempool ::
+  forall prop.
+  Testable prop =>
+  TestSetup ->
+  (forall m. (IOLike m, MonadTimer m) => TestMempool m -> m prop) ->
+  Property
+withTestMempool =
+  withTestMempoolWithTimeoutConfig
+    (Nothing :: Maybe MempoolTimeoutConfig)
+
 -- NOTE: at the end of the test, this function also checks whether the Mempool
 -- contents are valid w.r.t. the current ledger.
 --
@@ -629,12 +650,13 @@ data TestMempool m = TestMempool
 -- module "Ouroboros.Consensus.Mock.Ledger.Block". This is why the generators do
 -- not care about the mempool capacity when generating transactions for a
 -- mempool with the 'NoMempoolCapacityBytesOverride' option set.
-withTestMempool ::
+withTestMempoolWithTimeoutConfig ::
      forall prop. Testable prop
-  => TestSetup
-  -> (forall m. IOLike m => TestMempool m -> m prop)
+  => Maybe MempoolTimeoutConfig
+  -> TestSetup
+  -> (forall m. (IOLike m, MonadTimer m) => TestMempool m -> m prop)
   -> Property
-withTestMempool setup@TestSetup {..} prop =
+withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup {..} prop =
       counterexample (ppTestSetup setup)
     $ classify
         (isOverride testMempoolCapOverride)
@@ -649,7 +671,7 @@ withTestMempool setup@TestSetup {..} prop =
     isOverride (MempoolCapacityBytesOverride _) = True
     isOverride NoMempoolCapacityBytesOverride   = False
 
-    setUpAndRun :: forall m. IOLike m => m Property
+    setUpAndRun :: forall m. (IOLike m, MonadTimer m) => m Property
     setUpAndRun = do
 
       -- Set up the LedgerInterface
@@ -674,6 +696,7 @@ withTestMempool setup@TestSetup {..} prop =
           ledgerInterface
           testLedgerCfg
           testMempoolCapOverride
+          timeoutConfig
           tracer
       result  <- addTxs mempool testInitialTxs
 
@@ -872,6 +895,7 @@ prop_TxSeq_splitAfterTxSizeSpec tss =
   TxSizeSplitTestSetup
 -------------------------------------------------------------------------------}
 
+-- | No notable invariants.
 data TxSizeSplitTestSetup = TxSizeSplitTestSetup
   { tssTxSizes         :: ![TheMeasure]
   , tssTxSizeToSplitOn :: !TheMeasure
@@ -1111,3 +1135,91 @@ genActions genNbToAdd = go testInitLedger mempty mempty
           nbToAdd <- genNbToAdd
           (txs', ledger') <- genValidTxs nbToAdd ledger
           go ledger' (txs' <> txs) (AddTxs txs':actions) (n - 1)
+
+{-------------------------------------------------------------------------------
+  Mempool timeout
+-------------------------------------------------------------------------------}
+
+-- | Like 'TestSetupWithTxs', but also has a 'DiffTime' for each tx to add.
+--
+-- The 'testInitialTxs' effectively have a 'DiffTime' of 0.
+--
+-- TODO effectively vary the cumulative 'DiffTime' of the 'testInitialTxs'?
+data TestSetupWithTxsAndDiffTimes
+  = TestSetupWithTxsAndDiffTimes MempoolTimeoutConfig TestSetup [(TestTx, Bool, DiffTime)]
+  deriving Show
+
+instance Arbitrary TestSetupWithTxsAndDiffTimes where
+  arbitrary = do
+    soft <- choose (1, 2000)
+    hard <- choose (soft + 1, 10000)
+    cap <- choose (soft + 1, 10000)
+    let fromMs x = fromIntegral (x :: Int) / 1000 :: DiffTime
+        toCfg =
+          MempoolTimeoutConfig
+            { mempoolTimeoutSoft = fromMs soft
+            , mempoolTimeoutHard = fromMs hard
+            , mempoolTimeoutCapacity = fromMs cap
+            }
+    TestSetupWithTxs testSetup txs <- arbitrary
+    let genDiffTime valid = do
+          -- If the tx is valid, the the 'TestSetupWithTxs' expects it to pass.
+          --
+          -- So we usually want to avoid that. But not always, since we still
+          -- want "valid" txs to fail the timeout sometimes.
+          forceValid <- frequency [(95, pure valid), (5, pure False)]
+          fromMs <$> choose (1, if forceValid then soft else (3 * hard) `div` 2)
+    txs' <- sequence [genDiffTime valid <&> \dt -> (tx, valid, dt) | (tx, valid) <- txs]
+    pure $ TestSetupWithTxsAndDiffTimes toCfg testSetup txs'
+
+data MempoolTimeoutCategory = MtcAccepted | MtcRejected | MtcDiscard | MtcDisconnect | MtcNoSpace
+  deriving Show
+
+-- | Like 'prop_Mempool_addTxs_result', but also exercising mempool timeouts.
+prop_Mempool_timeout :: TestSetupWithTxsAndDiffTimes -> Property
+prop_Mempool_timeout (TestSetupWithTxsAndDiffTimes timeoutConfig testSetup txs) =
+  withTestMempoolWithTimeoutConfig (Just timeoutConfig) testSetup $ \TestMempool{mempool} -> do
+    let go !acc = \case
+          [] -> pure $ property ()
+          (tx, valid, dt) : txs' -> do
+            let eTxsz =
+                  -- check whether the tx's measure is immediately rejected
+                  runExcept $
+                    checkTxSize
+                      (simpleLedgerMockConfig $ testLedgerCfg testSetup)
+                      (simpleGenTx tx)
+            let expected
+                  | Left{} <- eTxsz = MtcRejected
+                  | acc > mempoolTimeoutCapacity timeoutConfig = MtcNoSpace
+                  -- Recall that the test setup generator ensures other
+                  -- dimensions of the mempool capacity are big enough to
+                  -- fit all the valid @txs@.
+                  | dt > mempoolTimeoutHard timeoutConfig = MtcDisconnect
+                  | dt > mempoolTimeoutSoft timeoutConfig = MtcDiscard
+                  | not valid = MtcRejected
+                  | otherwise = MtcAccepted
+            let notMempoolError = \case
+                  MockMempoolError{} -> False
+                  _ -> True
+            eRes <- try $ testTryAddTx mempool dt AddTxForRemotePeer tx
+            tabulate "addTextTx expectation" [show expected] <$> case (expected, eRes) of
+              (MtcAccepted, Right (Just MempoolTxAdded{})) ->
+                go (acc + dt) txs'
+              (MtcRejected, Right (Just (MempoolTxRejected _ err)))
+                | notMempoolError err ->
+                    go acc txs'
+              (MtcDiscard, Right (Just (MempoolTxRejected _ MockMempoolError{}))) ->
+                if valid
+                  then pure $ label "soft-timeout for otherwise-valid tx" ()
+                  else
+                    go acc txs'
+              (MtcDisconnect, Left MkExnMempoolTimeout{}) ->
+                pure $ property ()
+              (MtcNoSpace, Right Nothing) ->
+                pure $ property ()
+              _ ->
+                pure $
+                  counterexample ("Expected " <> show expected <> " but got...") $
+                    counterexample (show eRes) $
+                      False
+    go 0 txs
