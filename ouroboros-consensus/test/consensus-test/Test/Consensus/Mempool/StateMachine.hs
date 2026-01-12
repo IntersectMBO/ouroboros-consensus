@@ -28,6 +28,7 @@ module Test.Consensus.Mempool.StateMachine (tests) where
 import Cardano.Slotting.Slot
 import Control.Arrow (second)
 import Control.Concurrent.Class.MonadSTM.Strict.TChan
+import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry
 import qualified Control.Tracer as CT (Tracer (..), traceWith)
@@ -556,6 +557,7 @@ mkSUT ::
   forall m blk.
   ( NoThunks (MockedLedgerDB blk)
   , IOLike m
+  , MonadTimer m
   , LedgerSupportsProtocol blk
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
@@ -576,6 +578,7 @@ mkSUT cfg initialLedger = do
       lif
       cfg
       (MempoolCapacityBytesOverride $ unIgnoringOverflow txMaxBytes')
+      (Nothing :: Maybe MempoolTimeoutConfig)
       (CT.Tracer $ CT.traceWith trcr . Right)
   pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left, reg)
 
