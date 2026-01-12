@@ -737,6 +737,11 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
       . getTransactionKeySets @m
       . dualGenTxMain
 
+  mkMempoolPredicateFailure TickedDualLedgerState{..} txt = do
+      x <- mkMempoolPredicateFailure tickedDualLedgerStateMain txt
+      y <- mkMempoolPredicateFailure tickedDualLedgerStateAux txt
+      Just $ DualGenTxErr x y
+
 instance Bridge m a => TxLimits (DualBlock m a) where
   type TxMeasure (DualBlock m a) = TxMeasure m
 

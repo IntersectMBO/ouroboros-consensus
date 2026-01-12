@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
+  , nothingMkMempoolPredicateFailure
   ) where
 
 import Codec.Serialise (Serialise)
@@ -38,6 +39,7 @@ import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
 import Data.Measure (Measure)
 import qualified Data.Measure
+import Data.Text (Text)
 import Data.Word (Word32)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
@@ -236,6 +238,21 @@ class
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk ValuesMK
   applyMempoolDiffs = applyDiffForKeysOnTables
+
+  -- | The ledger rules' error type for the mempool's current era might allow
+  -- the mempool to reject a tx for its own reasons.
+  --
+  -- This function therefore constructs the type that the @LocalTxSubmission@
+  -- node-to-client mini protocol sends when a tx is rejected.
+  mkMempoolPredicateFailure ::
+    TickedLedgerState blk mk ->   -- ^ for the HFC
+    Text ->
+    Maybe (ApplyTxErr blk)
+
+-- | Value of 'mkMempoolPredicateFailure' when the block type can never
+-- construct the ledger error
+nothingMkMempoolPredicateFailure :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
+nothingMkMempoolPredicateFailure _ _ = Nothing
 
 data ReapplyTxsResult extra blk
   = ReapplyTxsResult

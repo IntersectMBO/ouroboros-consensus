@@ -33,6 +33,7 @@ module Test.Consensus.Mempool (tests) where
 import Cardano.Binary (toCBOR)
 import Cardano.Crypto.Hash
 import Control.Monad (foldM, forM, forM_, void)
+import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.Monad.State (State, evalState, get, modify)
@@ -682,7 +683,7 @@ withTestMempool ::
   forall prop.
   Testable prop =>
   TestSetup ->
-  (forall m. IOLike m => TestMempool m -> m prop) ->
+  (forall m. (IOLike m, MonadTimer m) => TestMempool m -> m prop) ->
   Property
 withTestMempool setup@TestSetup{..} prop =
   counterexample (ppTestSetup setup)
@@ -699,7 +700,7 @@ withTestMempool setup@TestSetup{..} prop =
   isOverride (MempoolCapacityBytesOverride _) = True
   isOverride NoMempoolCapacityBytesOverride = False
 
-  setUpAndRun :: forall m. IOLike m => m Property
+  setUpAndRun :: forall m. (IOLike m, MonadTimer m) => m Property
   setUpAndRun = do
     -- Set up the LedgerInterface
     varCurrentLedgerState <- uncheckedNewTVarM testLedgerState
@@ -736,6 +737,7 @@ withTestMempool setup@TestSetup{..} prop =
           ledgerInterface
           testLedgerCfg
           testMempoolCapOverride
+          (Nothing :: Maybe MempoolTimeoutConfig)
           tracer
       result <- addTxs mempool testInitialTxs
 

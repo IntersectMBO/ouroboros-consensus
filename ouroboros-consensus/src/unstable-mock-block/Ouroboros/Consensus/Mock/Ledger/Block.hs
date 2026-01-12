@@ -624,6 +624,8 @@ instance
   getTransactionKeySets =
     LedgerTables . KeysMK . Mock.txIns . simpleGenTx
 
+  mkMempoolPredicateFailure = nothingMkMempoolPredicateFailure
+
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasure (SimpleBlock c ext) = IgnoringOverflow ByteSize32
 

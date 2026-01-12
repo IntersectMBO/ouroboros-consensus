@@ -64,6 +64,7 @@ import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
 import Data.Data (Proxy (Proxy))
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.Text (Text)
 import Lens.Micro
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -133,6 +134,8 @@ class
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
+  mkMkMempoolShelleyPredicateFailure :: proxy era -> Maybe (Text -> PredicateFailure (EraRule "LEDGER" era))
+
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
 
@@ -170,35 +173,52 @@ instance ShelleyBasedEra ShelleyEra where
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+
 instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
+
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
 
 instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+
 instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
+
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
 
 instance ShelleyBasedEra BabbageEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+
 instance ShelleyBasedEra ConwayEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
+  mkMkMempoolShelleyPredicateFailure _prx = Just Conway.ConwayMempoolFailure
+
 instance ShelleyBasedEra DijkstraEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
+
+  -- TODO we'll need to change the mini protocol (backwards-incompatibly?) to
+  -- use MempoolFailure type family instead of just PredicateFailure type
+  -- family
+  mkMkMempoolShelleyPredicateFailure _prx = Nothing
 
 applyAlonzoBasedTx ::
   forall era.

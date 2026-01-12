@@ -1055,6 +1055,7 @@ runThreadNetwork
               , chainSyncHistoricityCheck = \_getGsmState -> HistoricityCheck.noCheck
               , blockFetchSize = estimateBlockSize
               , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
+              , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
               , miniProtocolParameters =
