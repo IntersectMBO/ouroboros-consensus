@@ -125,6 +125,7 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
         ledgerItf
         (testBlockLedgerConfigFrom eraParams)
         (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
+        (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
         Tracer.nullTracer
     ----------------------------------------------------------------------------
     --  Add and collect transactions
