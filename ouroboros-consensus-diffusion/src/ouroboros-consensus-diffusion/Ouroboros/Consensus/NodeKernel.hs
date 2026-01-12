@@ -69,6 +69,10 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Mempool
+import Ouroboros.Consensus.Mempool.API
+  ( DiffTimeMeasure (..)
+  , WithDiffTimeMeasure (..)
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandle (..)
@@ -208,6 +212,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ See 'HistoricityCheck' for details.
   , blockFetchSize :: Header blk -> SizeInBytes
   , mempoolCapacityOverride :: MempoolCapacityBytesOverride
+  , mempoolTimeoutConfig :: Maybe MempoolTimeoutConfig
   , miniProtocolParameters :: MiniProtocolParameters
   , blockFetchConfiguration :: BlockFetchConfiguration
   , keepAliveRng :: StdGen
@@ -427,6 +432,7 @@ data InternalState m addrNTN addrNTC blk = IS
 initInternalState ::
   forall m addrNTN addrNTC blk.
   ( IOLike m
+  , SI.MonadTimer m
   , Ord addrNTN
   , Typeable addrNTN
   , RunNode blk
@@ -442,6 +448,7 @@ initInternalState
     , blockFetchSize
     , btime
     , mempoolCapacityOverride
+    , mempoolTimeoutConfig
     , gsmArgs
     , getUseBootstrapPeers
     , getDiffusionPipeliningSupport
@@ -463,6 +470,7 @@ initInternalState
         (chainDBLedgerInterface chainDB)
         (configLedger cfg)
         mempoolCapacityOverride
+        mempoolTimeoutConfig
         (mempoolTracer tracers)
 
     fetchClientRegistry <- newFetchClientRegistry
@@ -663,7 +671,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
     let txs =
           snapshotTake mempoolSnapshot $
-            blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+            (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState `MkWithDiffTimeMeasure` InfiniteDiffTimeMeasure)
     -- NB respect the capacity of the ledger state we're extending,
     -- which is /not/ 'snapshotLedgerState'
 

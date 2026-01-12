@@ -51,6 +51,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable
 import GHC.Generics (Generic)
+import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -75,7 +76,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 -- | Internal state in the mempool
 data InternalState blk = IS
-  { isTxs :: !(TxSeq (TxMeasure blk) (Validated (GenTx blk)))
+  { isTxs :: !(TxSeq (WithDiffTimeMeasure (TxMeasure blk)) (Validated (GenTx blk)))
   -- ^ Transactions currently in the mempool
   --
   -- NOTE: the total size of the transactions in 'isTxs' may exceed the
@@ -162,7 +163,7 @@ isMempoolSize :: TxLimits blk => InternalState blk -> MempoolSize
 isMempoolSize is =
   MempoolSize
     { msNumTxs = fromIntegral $ length $ isTxs is
-    , msNumBytes = txMeasureByteSize $ TxSeq.toSize $ isTxs is
+    , msNumBytes = txMeasureByteSize $ forgetWithDiffTimeMeasure $ TxSeq.toSize $ isTxs is
     }
 
 initInternalState ::
@@ -246,6 +247,7 @@ data MempoolEnv m blk = MempoolEnv
   , mpEnvAddTxsAllFifo :: StrictMVar m ()
   , mpEnvTracer :: Tracer m (TraceEventMempool blk)
   , mpEnvCapacityOverride :: MempoolCapacityBytesOverride
+  , mpEnvTimeoutConfig :: Maybe MempoolTimeoutConfig
   }
 
 initMempoolEnv ::
@@ -256,10 +258,11 @@ initMempoolEnv ::
   LedgerInterface m blk ->
   LedgerConfig blk ->
   MempoolCapacityBytesOverride ->
+  Maybe MempoolTimeoutConfig ->
   Tracer m (TraceEventMempool blk) ->
   ResourceRegistry m ->
   m (MempoolEnv m blk)
-initMempoolEnv ledgerInterface cfg capacityOverride tracer topLevelRegistry = do
+initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer topLevelRegistry = do
   (_, mpEnvRegistry) <- allocate topLevelRegistry (\_ -> unsafeNewRegistry) closeRegistry
   initMempoolEnv' mpEnvRegistry
  where
@@ -289,6 +292,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride tracer topLevelRegistry = do
             , mpEnvAddTxsAllFifo = addTxAllFifo
             , mpEnvTracer = tracer
             , mpEnvCapacityOverride = capacityOverride
+            , mpEnvTimeoutConfig = mbTimeoutConfig
             }
 
 {-------------------------------------------------------------------------------
@@ -338,15 +342,15 @@ validateNewTransaction ::
   TickedLedgerState blk ValuesMK ->
   InternalState blk ->
   ( Either (ApplyTxErr blk) (Validated (GenTx blk))
-  , InternalState blk
+  , DiffTimeMeasure -> InternalState blk
   )
 validateNewTransaction cfg wti tx txsz origValues st is =
   case runExcept (applyTx cfg wti isSlotNo tx st) of
-    Left err -> (Left err, is)
+    Left err -> (Left err, \_dur -> is)
     Right (st', vtx) ->
       ( Right vtx
-      , is
-          { isTxs = isTxs :> TxTicket vtx nextTicketNo txsz
+      , \dur -> is
+          { isTxs = isTxs :> TxTicket vtx nextTicketNo (MkWithDiffTimeMeasure txsz dur)
           , isTxKeys = isTxKeys <> getTransactionKeySets tx
           , isTxValues = ltliftA2 unionValues isTxValues origValues
           , isTxIds = Set.insert (txId tx) isTxIds
@@ -385,7 +389,7 @@ revalidateTxsFor ::
   LedgerTables (LedgerState blk) ValuesMK ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
-  [TxTicket (TxMeasure blk) (Validated (GenTx blk))] ->
+  [TxTicket (WithDiffTimeMeasure (TxMeasure blk)) (Validated (GenTx blk))] ->
   RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
   let theTxs = map wrap txTickets
@@ -434,7 +438,7 @@ computeSnapshot ::
   LedgerTables (LedgerState blk) ValuesMK ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
-  [TxTicket (TxMeasure blk) (Validated (GenTx blk))] ->
+  [TxTicket (WithDiffTimeMeasure (TxMeasure blk)) (Validated (GenTx blk))] ->
   MempoolSnapshot blk
 computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
   let theTxs = map wrap txTickets
@@ -495,11 +499,11 @@ snapshotFromIS is =
     TicketNo ->
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxsAfter IS{isTxs} =
-    TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
+    (\x -> [ (a, b, forgetWithDiffTimeMeasure c) | (a, b, c) <- x ]) . TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
 
   implSnapshotTake ::
     InternalState blk ->
-    TxMeasure blk ->
+    WithDiffTimeMeasure (TxMeasure blk) ->
     [Validated (GenTx blk)]
   implSnapshotTake IS{isTxs} =
     map TxSeq.txTicketTx . TxSeq.toList . fst . TxSeq.splitAfterTxSize isTxs

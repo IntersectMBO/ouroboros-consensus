@@ -107,6 +107,7 @@ openMockedMempool capacityOverride tracer initialParams = do
       ledgerItf
       (immpLedgerConfig initialParams)
       capacityOverride
+      (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
       tracer
   pure
     MockedMempool

@@ -33,6 +33,7 @@ module Ouroboros.Consensus.Mempool
   , MempoolSize (..)
 
     -- * Mempool initialization
+  , MempoolTimeoutConfig (..)
   , openMempool
   , openMempoolWithoutSyncThread
 
@@ -50,6 +51,7 @@ import Ouroboros.Consensus.Mempool.API
   , Mempool (..)
   , MempoolAddTxResult (..)
   , MempoolSnapshot (..)
+  , MempoolTimeoutConfig (..)
   , SizeInBytes
   , TicketNo
   , addLocalTxs
