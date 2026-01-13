@@ -46,15 +46,16 @@ import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Bifunctor (second)
+import Data.Bifunctor (bimap, second)
 import Data.Data (Typeable)
 import Data.Foldable (traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
+import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Data.Maybe (isJust, mapMaybe)
+import Data.Maybe (isJust)
 import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Text as Text
@@ -925,12 +926,25 @@ getMempoolWriter ::
   , HasTxId (GenTx blk)
   ) =>
   Mempool m blk ->
-  TxSubmissionMempoolWriter (GenTxId blk) (GenTx blk) TicketNo m
+  TxSubmissionMempoolWriter (GenTxId blk) (GenTx blk) TicketNo m ()
 getMempoolWriter mempool =
   Inbound.TxSubmissionMempoolWriter
     { Inbound.txId = txId
     , mempoolAddTxs = \txs ->
-        map (txId . txForgetValidated) . mapMaybe mempoolTxAddedToMaybe
+        bimap
+          ( map
+              ( \case
+                  MempoolTxAdded tx -> txId (txForgetValidated tx)
+                  MempoolTxRejected{} -> error "impossible happened"
+              )
+          )
+          ( map
+              ( \case
+                  MempoolTxRejected tx _reason -> (txId tx, ())
+                  MempoolTxAdded{} -> error "impossible happened"
+              )
+          )
+          . List.partition isMempoolTxAdded
           <$> addTxs mempool txs
     }
 
