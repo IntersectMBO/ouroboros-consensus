@@ -15,13 +15,13 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Network.SizeInBytes
 import           Ouroboros.Network.TxSubmission.Inbound.V2.State
-                     (config_MAX_TX_SIZE_DISCREPANCY)
+                     (const_MAX_TX_SIZE_DISCREPENCY)
 import           Test.Tasty.QuickCheck
 import           Test.Util.Serialisation.Roundtrip (WithVersion (..))
 
 
 -- | Verify that `txWriteSize` agrees with the encoded `GenTx` size up to
--- `config_MX_TX_SIZE_DISCREPANCY` allowed by `tx-submission` mini-protocol.
+-- `const_MX_TX_SIZE_DISCREPENCY` allowed by `tx-submission` mini-protocol.
 --
 -- NOTE: `tx`s which do not satisfy this property will terminate connections.
 --
@@ -36,7 +36,7 @@ prop_txWireSize_txSubmission ccfg (WithVersion version tx) =
       counterexample ("encoded size " ++ show encSize ++ ", computed size " ++ show cmpSize)
     $ counterexample ("diff size " ++ show diffSize)
     $ label (show diffSize)
-    $ fromIntegral (abs diffSize) <= config_MAX_TX_SIZE_DISCREPANCY
+    $ fromIntegral (abs diffSize) <= const_MAX_TX_SIZE_DISCREPENCY
   where
     encSize, cmpSize :: SizeInBytes
 
