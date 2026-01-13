@@ -24,10 +24,18 @@ module Ouroboros.Consensus.Protocol.Abstract
     -- * Translation
   , TranslateProto (..)
 
+    -- * Reasons for switching to a fork
+  , ShouldSwitch (..)
+  , SelectViewReasonForSwitch (..)
+  , shouldSwitch
+  , shouldSwitchToMaybe
+  , Comparing (..)
+
     -- * Convenience re-exports
   , SecurityParam (..)
   ) where
 
+import Cardano.Slotting.Slot (WithOrigin (At))
 import Control.Monad.Except
 import Data.Function (on)
 import Data.Kind (Type)
@@ -227,6 +235,8 @@ instance TranslateProto singleProto singleProto where
 class Ord sv => ChainOrder sv where
   type ChainOrderConfig sv :: Type
 
+  type ReasonForSwitch sv :: Type
+
   -- | Compare a candidate chain to our own.
   --
   -- This method defines when a candidate chain is /strictly/ preferable to our
@@ -235,7 +245,8 @@ class Ord sv => ChainOrder sv where
   --
   -- === Requirements
   --
-  -- Write @ours ⊏ cand@ for @'preferCandidate' cfg ours cand@ for brevity.
+  -- Write @ours ⊏ cand@ for @'shouldSwitch' 'preferCandidate' cfg ours cand@
+  -- for brevity.
   --
   --  [__Consistency with 'Ord'__]: When @ours ⊏ cand@, then @ours < cand@.
   --
@@ -257,7 +268,20 @@ class Ord sv => ChainOrder sv where
     sv ->
     -- | Tip of the candidate
     sv ->
-    Bool
+    ShouldSwitch (ReasonForSwitch sv)
+
+data ShouldSwitch reason = ShouldNotSwitch Ordering | ShouldSwitch reason
+
+data Comparing a = Comparing {compareToThat :: a, compareThis :: a}
+  deriving Show
+
+shouldSwitch :: ShouldSwitch reason -> Bool
+shouldSwitch ShouldSwitch{} = True
+shouldSwitch ShouldNotSwitch{} = False
+
+shouldSwitchToMaybe :: ShouldSwitch reason -> Maybe reason
+shouldSwitchToMaybe (ShouldSwitch reason) = Just reason
+shouldSwitchToMaybe ShouldNotSwitch{} = Nothing
 
 -- | A @DerivingVia@ helper to implement 'preferCandidate' in terms of the 'Ord'
 -- instance.
@@ -267,7 +291,15 @@ newtype SimpleChainOrder sv = SimpleChainOrder sv
 instance Ord sv => ChainOrder (SimpleChainOrder sv) where
   type ChainOrderConfig (SimpleChainOrder sv) = ()
 
-  preferCandidate _cfg ours cand = ours < cand
+  -- All interesting protocols (PBFT, TPraos, Praos, HardForkProtocol) use a
+  -- proper TiebreakerView, so this is only for tests with Bft (or other testing
+  -- protocols), therefore we don't really elaborate the reasons.
+  type ReasonForSwitch (SimpleChainOrder sv) = ()
+
+  preferCandidate _cfg ours cand =
+    if ours < cand
+      then ShouldSwitch ()
+      else ShouldNotSwitch (compare ours cand)
 
 -- | Use no tiebreaker to decide between chains of equal length, cf
 -- 'TiebreakerView' and 'ChainOrder'.
@@ -306,14 +338,23 @@ instance Ord (TiebreakerView p) => Ord (SelectView p) where
       , compare `on` svTiebreakerView
       ]
 
+data SelectViewReasonForSwitch p
+  = Longer (Comparing (WithOrigin BlockNo))
+  | SelectViewTiebreak (ReasonForSwitch (TiebreakerView p))
+
+deriving instance Show (ReasonForSwitch (TiebreakerView p)) => Show (SelectViewReasonForSwitch p)
+
 -- | @cand@ is preferred to @ours@ if either @cand@ is longer than @ours@, or
 -- @cand@ and @ours@ are of equal length and we have
 --
 -- > preferCandidate cfg ourTiebreaker candTiebreaker
 instance ChainOrder (TiebreakerView p) => ChainOrder (SelectView p) where
   type ChainOrderConfig (SelectView p) = ChainOrderConfig (TiebreakerView p)
+  type ReasonForSwitch (SelectView p) = SelectViewReasonForSwitch p
 
   preferCandidate cfg ours cand = case compare (svBlockNo ours) (svBlockNo cand) of
-    LT -> True
-    EQ -> preferCandidate cfg (svTiebreakerView ours) (svTiebreakerView cand)
-    GT -> False
+    LT -> ShouldSwitch (Longer (Comparing (At (svBlockNo ours)) (At (svBlockNo cand))))
+    EQ -> case preferCandidate cfg (svTiebreakerView ours) (svTiebreakerView cand) of
+      ShouldSwitch r -> ShouldSwitch (SelectViewTiebreak r)
+      ShouldNotSwitch e -> ShouldNotSwitch e
+    GT -> ShouldNotSwitch GT

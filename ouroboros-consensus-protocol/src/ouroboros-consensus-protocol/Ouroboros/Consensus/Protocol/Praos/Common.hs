@@ -41,7 +41,7 @@ import Cardano.Slotting.Slot (SlotNo)
 import qualified Control.Tracer as Tracer
 import Data.Function (on)
 import Data.Map.Strict (Map)
-import Data.Ord (Down (Down))
+import Data.Ord (Down (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -88,6 +88,11 @@ data PraosTiebreakerView c = PraosTiebreakerView
   }
   deriving (Show, Eq, Generic, NoThunks)
 
+data PraosReasonForSwitch c
+  = HigherOCert (Comparing Word64)
+  | VRFTiebreak (Comparing (OutputVRF (VRF c)))
+  deriving Show
+
 -- | When to compare the VRF tiebreakers.
 data VRFTiebreakerFlavor
   = -- | Always compare the VRF tiebreakers. This is the behavior of all eras
@@ -121,20 +126,29 @@ comparePraos ::
   VRFTiebreakerFlavor ->
   PraosTiebreakerView c ->
   PraosTiebreakerView c ->
-  Ordering
-comparePraos tiebreakerFlavor =
-  when' issueNoArmed (compare `on` ptvIssueNo)
-    <> when' vrfArmed (compare `on` Down . ptvTieBreakVRF)
+  ShouldSwitch (PraosReasonForSwitch c)
+comparePraos tiebreakerFlavor ours cand =
+  case ( issueNoArmed ours cand
+       , (compare `on` ptvIssueNo) ours cand
+       , vrfArmed ours cand
+       , (compare `on` Down . ptvTieBreakVRF) ours cand
+       ) of
+    -- IssueNo armed: compare OCert issue numbers
+    (True, LT, _, _) -> ShouldSwitch (HigherOCert (Comparing (ptvIssueNo ours) (ptvIssueNo cand)))
+    (True, GT, _, _) -> ShouldNotSwitch GT
+    -- IssueNo armed and equal issue numbers, VRF armed: use VRF tiebreaker
+    (True, EQ, True, GT) -> ShouldNotSwitch GT -- ours has better VRF
+    (True, EQ, True, EQ) -> ShouldNotSwitch EQ
+    (True, EQ, True, LT) -> ShouldSwitch (VRFTiebreak (Comparing (ptvTieBreakVRF ours) (ptvTieBreakVRF cand)))
+    -- IssueNo armed and equal, VRF not armed: no tiebreaker
+    (True, EQ, False, _) -> ShouldNotSwitch EQ
+    -- IssueNo not armed, VRF armed: use VRF tiebreaker
+    (False, _, True, GT) -> ShouldNotSwitch GT -- ours has better VRF
+    (False, _, True, EQ) -> ShouldNotSwitch EQ
+    (False, _, True, LT) -> ShouldSwitch (VRFTiebreak (Comparing (ptvTieBreakVRF ours) (ptvTieBreakVRF cand)))
+    -- IssueNo not armed, VRF not armed: no tiebreaker
+    (False, _, False, _) -> ShouldNotSwitch EQ
  where
-  -- When the predicate @p@ returns 'True', use the given comparison function,
-  -- otherwise, no preference.
-  when' ::
-    (a -> a -> Bool) ->
-    (a -> a -> Ordering) ->
-    (a -> a -> Ordering)
-  when' p comp a1 a2 =
-    if p a1 a2 then comp a1 a2 else EQ
-
   -- Only compare the issue numbers when the issuers and slots are identical.
   -- Note that this case implies the VRFs also coincide.
   issueNoArmed v1 v2 =
@@ -165,7 +179,10 @@ comparePraos tiebreakerFlavor =
 -- IMPORTANT: This is not a complete picture of the Praos chain order, do also
 -- consult the documentation of 'ChainOrder'.
 instance Crypto c => Ord (PraosTiebreakerView c) where
-  compare = comparePraos UnrestrictedVRFTiebreaker
+  compare x y =
+    case comparePraos UnrestrictedVRFTiebreaker x y of
+      ShouldSwitch{} -> LT
+      ShouldNotSwitch o -> o
 
 -- | IMPORTANT: This is not a 'SimpleChainOrder'; rather, there are
 -- 'PraosTiebreakerView's @a, b@ such that @a < b@, but @'not' $
@@ -249,8 +266,8 @@ instance Crypto c => Ord (PraosTiebreakerView c) where
 --     which the VRF comparison takes place.
 instance Crypto c => ChainOrder (PraosTiebreakerView c) where
   type ChainOrderConfig (PraosTiebreakerView c) = VRFTiebreakerFlavor
-
-  preferCandidate cfg ours cand = comparePraos cfg ours cand == LT
+  type ReasonForSwitch (PraosTiebreakerView c) = PraosReasonForSwitch c
+  preferCandidate cfg ours cand = comparePraos cfg ours cand
 
 data PraosCanBeLeader c = PraosCanBeLeader
   { praosCanBeLeaderColdVerKey :: !(SL.VKey BlockIssuer)

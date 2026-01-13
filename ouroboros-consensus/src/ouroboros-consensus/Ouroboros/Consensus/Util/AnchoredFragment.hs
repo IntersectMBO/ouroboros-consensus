@@ -13,8 +13,10 @@ module Ouroboros.Consensus.Util.AnchoredFragment
   , forksAtMostKWeight
   , preferAnchoredCandidate
   , stripCommonPrefix
+  , ReasonForSwitch'
   ) where
 
+import Cardano.Slotting.Slot (WithOrigin (At))
 import Control.Monad.Except (throwError)
 import Data.Foldable (toList)
 import qualified Data.Foldable1 as F1
@@ -147,6 +149,12 @@ compareAnchoredFragments cfg weights frag1 frag2
             (weightedSelectView cfg weights oursSuffix)
             (weightedSelectView cfg weights candSuffix)
 
+-- | The combination of the reasons for switching when using Peras or not
+type ReasonForSwitch' blk =
+  Either
+    (ReasonForSwitch (WithEmptyFragment (WeightedSelectView (BlockProtocol blk))))
+    (ReasonForSwitch (SelectView (BlockProtocol blk)))
+
 -- | Lift 'preferCandidate' to 'AnchoredFragment'
 --
 -- PRECONDITION: The fragments must intersect.
@@ -175,27 +183,35 @@ preferAnchoredCandidate ::
   AnchoredFragment (h blk) ->
   -- | Candidate
   AnchoredFragment (h' blk) ->
-  Bool
+  ShouldSwitch (ReasonForSwitch' blk)
 preferAnchoredCandidate cfg weights ours cand
   | isEmptyPerasWeightSnapshot weights =
       assertWithMsg (precondition ours cand) $
         case (ours, cand) of
-          (_, Empty _) -> False
+          (Empty _, Empty _) -> ShouldNotSwitch EQ
+          (_, Empty _) -> ShouldNotSwitch GT
           (Empty ourAnchor, _ :> theirTip) ->
-            blockPoint theirTip /= castPoint (AF.anchorToPoint ourAnchor)
+            if blockPoint theirTip /= castPoint (AF.anchorToPoint ourAnchor)
+              then
+                ShouldSwitch (Right $ Longer $ Comparing (AF.anchorToBlockNo ourAnchor) (At (blockNo theirTip)))
+              else ShouldNotSwitch EQ
           (_ :> ourTip, _ :> theirTip) ->
-            preferCandidate
+            case preferCandidate
               (projectChainOrderConfig cfg)
               (selectView cfg (getHeader1 ourTip))
-              (selectView cfg (getHeader1 theirTip))
+              (selectView cfg (getHeader1 theirTip)) of
+              ShouldSwitch r -> ShouldSwitch (Right r)
+              ShouldNotSwitch o -> ShouldNotSwitch o
   | otherwise =
       case AF.intersect ours cand of
         Nothing -> error "precondition violated: fragments must intersect"
         Just (_oursPrefix, _candPrefix, oursSuffix, candSuffix) ->
-          preferCandidate
+          case preferCandidate
             (projectChainOrderConfig cfg)
             (weightedSelectView cfg weights oursSuffix)
-            (weightedSelectView cfg weights candSuffix)
+            (weightedSelectView cfg weights candSuffix) of
+            ShouldSwitch r -> ShouldSwitch (Left r)
+            ShouldNotSwitch o -> ShouldNotSwitch o
 
 -- For 'compareAnchoredFragment' and 'preferAnchoredCandidate'.
 precondition ::

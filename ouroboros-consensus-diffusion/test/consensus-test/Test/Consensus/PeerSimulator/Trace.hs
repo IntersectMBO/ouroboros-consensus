@@ -412,9 +412,9 @@ traceChainDBEventTestBlockWith ::
 traceChainDBEventTestBlockWith tracer = \case
   ChainDB.TraceAddBlockEvent event ->
     case event of
-      AddedToCurrentChain _ _ _ newFragment ->
+      AddedToCurrentChain _ _ _ newFragment _ ->
         trace $ "Added to current chain; now: " ++ terseHFragment newFragment
-      SwitchedToAFork _ _ _ newFragment ->
+      SwitchedToAFork _ _ _ newFragment _ ->
         trace $ "Switched to a fork; now: " ++ terseHFragment newFragment
       StoreButDontChange point ->
         trace $ "Did not select block due to LoE: " ++ terseRealPoint point

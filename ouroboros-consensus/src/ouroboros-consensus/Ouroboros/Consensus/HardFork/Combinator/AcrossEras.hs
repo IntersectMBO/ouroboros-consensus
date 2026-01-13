@@ -45,6 +45,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , OneEraLedgerEvent (..)
   , OneEraLedgerUpdate (..)
   , OneEraLedgerWarning (..)
+  , OneEraReasonForSwitch (..)
   , OneEraTiebreakerView (..)
   , OneEraTentativeHeaderState (..)
   , OneEraTentativeHeaderView (..)
@@ -89,6 +90,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Info
 import Ouroboros.Consensus.HardFork.Combinator.Lifting
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (allEqual)
@@ -448,3 +450,7 @@ deriving via LiftNS GenTx xs instance CanHardFork xs => Show (OneEraGenTx xs)
 deriving via LiftNS WrapGenTxId xs instance CanHardFork xs => Show (OneEraGenTxId xs)
 deriving via LiftNS Header xs instance CanHardFork xs => Show (OneEraHeader xs)
 deriving via LiftNS WrapTiebreakerView xs instance CanHardFork xs => Show (OneEraTiebreakerView xs)
+deriving via
+  LiftNS WrapReasonForSwitch xs
+  instance
+    CanHardFork xs => Show (OneEraReasonForSwitch xs)

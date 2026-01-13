@@ -59,6 +59,7 @@ import Ouroboros.Consensus.Node.Genesis (setGetLoEFragment)
 import Ouroboros.Consensus.Node.GsmState
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
+import Ouroboros.Consensus.Protocol.Abstract (shouldSwitch)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
@@ -302,7 +303,8 @@ mkGsmEntryPoints varChainSyncHandles chainDB writeGsmState =
       Just{} ->
         -- precondition requires intersection
         GSM.WhetherCandidateIsBetter $
-          preferAnchoredCandidate (configBlock cfg) weights selection candFrag
+          shouldSwitch $
+            preferAnchoredCandidate (configBlock cfg) weights selection candFrag
    where
     candFrag = csCandidate candidateState
 

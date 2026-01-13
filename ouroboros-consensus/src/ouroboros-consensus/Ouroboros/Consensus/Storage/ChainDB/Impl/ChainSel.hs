@@ -31,6 +31,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
 import Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
+import Data.Bifunctor (first)
 import Data.Function (on)
 import Data.Functor.Contravariant ((>$<))
 import Data.List (sortBy)
@@ -66,6 +67,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
+import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
@@ -181,14 +183,18 @@ initialChainSelection
     let curChain = Empty (AF.castAnchor i)
     curChainAndLedger <- VF.newM curChain curForker
 
-    case NE.nonEmpty (filter (preferAnchoredCandidate bcfg weights curChain) chains) of
+    case NE.nonEmpty
+      [ (chain, reason)
+      | chain <- chains
+      , ShouldSwitch reason <- [preferAnchoredCandidate bcfg weights curChain chain]
+      ] of
       -- If there are no candidates, no chain selection is needed
       Nothing -> return curChainAndLedger
       Just chains' ->
         chainSelection' curChainAndLedger chains' >>= \case
           -- The returned forker will be closed in 'openDBInternal'.
           Nothing -> pure curChainAndLedger
-          Just newChain -> forkerClose curForker >> toChainAndLedger newChain
+          Just (newChain, _) -> forkerClose curForker >> toChainAndLedger newChain
    where
     bcfg :: BlockConfig blk
     bcfg = configBlock cfg
@@ -257,15 +263,15 @@ initialChainSelection
       ChainAndLedger m blk ->
       -- \^ The current chain and ledger, corresponding to
       -- @i@.
-      NonEmpty (AnchoredFragment (Header blk)) ->
+      NonEmpty (AnchoredFragment (Header blk), ReasonForSwitch' blk) ->
       -- \^ Candidates anchored at @i@
-      m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
+      m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk), ReasonForSwitch' blk))
     chainSelection' curChainAndLedger candidates =
       atomically (forkerCurrentPoint (Proxy @blk) ledger) >>= \curpt ->
-        assert (all ((curpt ==) . castPoint . AF.anchorPoint) candidates) $
-          assert (all (preferAnchoredCandidate bcfg weights curChain) candidates) $ do
+        assert (all ((curpt ==) . castPoint . AF.anchorPoint . fst) candidates) $
+          assert (all (shouldSwitch . preferAnchoredCandidate bcfg weights curChain . fst) candidates) $ do
             cse <- chainSelEnv
-            chainSelection cse rr (Diff.extend <$> candidates)
+            chainSelection cse rr (first Diff.extend <$> candidates)
      where
       curChain = VF.validatedFragment curChainAndLedger
       ledger = VF.validatedLedger curChainAndLedger
@@ -402,17 +408,19 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
 
     chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
 
-  chainDiffs :: [[ChainDiff (Header blk)]] <-
-    for loePoints $ constructPreferableCandidates cdb weights curChain Map.empty
+  chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
+    for
+      loePoints
+      $ constructPreferableCandidates cdb weights curChain Map.empty
 
   -- Consider all candidates at once, to avoid transient chain switches.
   case NE.nonEmpty $ concat chainDiffs of
     Just chainDiffs' -> withRegistry $ \rr -> do
       -- Find the best valid candidate.
       chainSelection chainSelEnv rr chainDiffs' >>= \case
-        Just validatedChainDiff ->
+        Just (validatedChainDiff, reason) ->
           -- Switch to the new better chain.
-          switchTo cdb weights Nothing validatedChainDiff
+          switchTo cdb weights Nothing validatedChainDiff reason
         Nothing -> pure ()
     Nothing -> pure ()
 
@@ -669,9 +677,9 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
           Just chainDiffs' -> do
             -- Find the best valid candidate.
             chainSelection chainSelEnv rr chainDiffs' >>= \case
-              Just validatedChainDiff ->
+              Just (validatedChainDiff, reason) ->
                 -- Switch to the new better chain.
-                switchTo cdb weights (Just p) validatedChainDiff
+                switchTo cdb weights (Just p) validatedChainDiff reason
               -- No valid candidate better than our chain.
               Nothing -> noChange
           -- No candidate better than our chain.
@@ -707,7 +715,7 @@ constructPreferableCandidates ::
   RealPoint blk ->
   -- | All candidates involving @p@ (ie containing @p@ in 'getSuffix') which are
   -- preferable to the current chain.
-  m [ChainDiff (Header blk)]
+  m [(ChainDiff (Header blk), ReasonForSwitch' blk)]
 constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
   (succsOf, lookupBlockInfo) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
@@ -757,13 +765,17 @@ constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
               $ diff
         -- We cannot reach the block from the current selection.
         | otherwise -> pure []
+  let fragments =
+        -- Trim fragments so that they follow the LoE, that is, they extend the LoE
+        -- by at most @k@ blocks or are extended by the LoE.
+        fmap (trimToLoE loeFrag) $
+          diffs
   pure
-    -- Only keep candidates preferable to the current chain.
-    . filter (preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix)
-    -- Trim fragments so that they follow the LoE, that is, they extend the LoE
-    -- by at most @k@ blocks or are extended by the LoE.
-    . fmap (trimToLoE loeFrag)
-    $ diffs
+    [ (chain, reason)
+    | chain <- fragments
+    , -- Only keep candidates preferable to the current chain.
+    ShouldSwitch reason <- [preferAnchoredCandidate bcfg weights curChain $ Diff.getSuffix chain]
+    ]
  where
   bcfg = configBlock cdbTopLevelConfig
   k = unNonZero $ maxRollbacks $ configSecurityParam cdbTopLevelConfig
@@ -881,8 +893,9 @@ switchTo ::
   Maybe (RealPoint blk) ->
   -- | Chain and ledger to switch to
   ValidatedChainDiff (Header blk) (Forker' m blk) ->
+  ReasonForSwitch' blk ->
   m ()
-switchTo CDB{..} weights triggerPt vChainDiff = do
+switchTo CDB{..} weights triggerPt vChainDiff reason = do
   traceWith addBlockTracer $
     ChangingSelection $
       castPoint $
@@ -949,7 +962,7 @@ switchTo CDB{..} weights triggerPt vChainDiff = do
           (getChainDiff vChainDiff)
           newLedger
   traceWith addBlockTracer $
-    mkTraceEvent events selChangedInfo curChain newChain
+    mkTraceEvent events selChangedInfo curChain newChain reason
   whenJust (strictMaybeToMaybe prevTentativeHeader) $
     traceWith $
       PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
@@ -1100,28 +1113,29 @@ chainSelection ::
   ) =>
   ChainSelEnv m blk ->
   ResourceRegistry m ->
-  NonEmpty (ChainDiff (Header blk)) ->
+  NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
   -- | The (valid) chain diff and corresponding LedgerDB that was selected,
   -- or 'Nothing' if there is no valid chain diff preferred over the current
   -- chain.
-  m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
+  m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk), ReasonForSwitch' blk))
 chainSelection chainSelEnv rr chainDiffs =
   assert
     ( all
-        (preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix)
+        (shouldSwitch . preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix . fst)
         chainDiffs
     )
     $ assert
       ( all
-          (isJust . Diff.apply curChain)
+          (isJust . Diff.apply curChain . fst)
           chainDiffs
       )
     $ go (sortCandidates (NE.toList chainDiffs))
  where
   ChainSelEnv{..} = chainSelEnv
 
-  sortCandidates :: [ChainDiff (Header blk)] -> [ChainDiff (Header blk)]
-  sortCandidates = sortBy (flip $ compareChainDiffs bcfg weights curChain)
+  sortCandidates ::
+    [(ChainDiff (Header blk), ReasonForSwitch' blk)] -> [(ChainDiff (Header blk), ReasonForSwitch' blk)]
+  sortCandidates = sortBy ((flip $ compareChainDiffs bcfg weights curChain) `on` fst)
 
   -- 1. Take the first candidate from the list of sorted candidates
   -- 2. Validate it
@@ -1130,17 +1144,17 @@ chainSelection chainSelEnv rr chainDiffs =
   --        add it to the list, sort it and go to 1. See the comment
   --        [Ouroboros] below.
   go ::
-    [ChainDiff (Header blk)] ->
-    m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
+    [(ChainDiff (Header blk), ReasonForSwitch' blk)] ->
+    m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk), ReasonForSwitch' blk))
   go [] = return Nothing
-  go (candidate : candidates0) = do
+  go ((candidate, reason) : candidates0) = do
     mTentativeHeader <- setTentativeHeader
     validateCandidate chainSelEnv rr candidate >>= \case
       FullyValid validatedCandidate@(ValidatedChainDiff candidate' _) ->
         -- The entire candidate is valid
         assert (Diff.getTip candidate == Diff.getTip candidate') $
           return $
-            Just validatedCandidate
+            Just (validatedCandidate, reason)
       ValidPrefix candidate' -> do
         whenJust mTentativeHeader clearTentativeHeader
         -- Prefix of the candidate because it contained rejected blocks
@@ -1156,11 +1170,10 @@ chainSelection chainSelEnv rr chainDiffs =
         -- chain. When the candidate is now empty because of the truncation,
         -- it will be dropped here, as it will not be preferred over the
         -- current chain.
-        let candidates2
-              | preferAnchoredCandidate bcfg weights curChain (Diff.getSuffix candidate') =
-                  candidate' : candidates1
-              | otherwise =
-                  candidates1
+        let newReason = preferAnchoredCandidate bcfg weights curChain (Diff.getSuffix candidate')
+        let candidates2 = case newReason of
+              ShouldSwitch reason' -> (candidate', reason') : candidates1
+              ShouldNotSwitch{} -> candidates1
         go (sortCandidates candidates2)
    where
     -- \| Set and return the tentative header, if applicable. Also return the
@@ -1208,15 +1221,19 @@ chainSelection chainSelEnv rr chainDiffs =
   -- A block is rejected if it is invalid (present in 'varInvalid',
   -- i.e., 'cdbInvalid').
   truncateRejectedBlocks ::
-    [ChainDiff (Header blk)] ->
-    m [ChainDiff (Header blk)]
+    [(ChainDiff (Header blk), ReasonForSwitch' blk)] ->
+    m [(ChainDiff (Header blk), ReasonForSwitch' blk)]
   truncateRejectedBlocks cands = do
     invalid <- atomically $ readTVar varInvalid
     let isRejected hdr =
           Map.member (headerHash hdr) (forgetFingerprint invalid)
+        newCandidates = map (Diff.takeWhileOldest (not . isRejected) . fst) cands
     return $
-      filter (preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix) $
-        map (Diff.takeWhileOldest (not . isRejected)) cands
+      [ (chain, reason)
+      | chain <- newCandidates
+      , -- Only keep candidates preferable to the current chain.
+      ShouldSwitch reason <- [preferAnchoredCandidate bcfg weights curChain $ Diff.getSuffix chain]
+      ]
 
 -- [Ouroboros]
 --

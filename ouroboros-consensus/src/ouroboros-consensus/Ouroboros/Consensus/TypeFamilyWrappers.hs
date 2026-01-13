@@ -37,6 +37,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTiebreakerView (..)
   , WrapValidateView (..)
   , WrapValidationErr (..)
+  , WrapReasonForSwitch (..)
 
     -- * Versioning
   , WrapNodeToClientVersion (..)
@@ -107,6 +108,8 @@ newtype WrapTiebreakerView blk = WrapTiebreakerView {unwrapTiebreakerView :: Tie
 newtype WrapValidateView blk = WrapValidateView {unwrapValidateView :: ValidateView (BlockProtocol blk)}
 newtype WrapValidationErr blk = WrapValidationErr {unwrapValidationErr :: ValidationErr (BlockProtocol blk)}
 
+newtype WrapReasonForSwitch blk = WrapReasonForSwitch {unwrapReasonForSwitch :: ReasonForSwitch (WrapTiebreakerView blk)}
+
 {-------------------------------------------------------------------------------
   Versioning
 -------------------------------------------------------------------------------}
@@ -145,6 +148,7 @@ deriving instance Show (TentativeHeaderState blk) => Show (WrapTentativeHeaderSt
 deriving instance Show (TentativeHeaderView blk) => Show (WrapTentativeHeaderView blk)
 deriving instance Show (TipInfo blk) => Show (WrapTipInfo blk)
 deriving instance Show (Validated (GenTx blk)) => Show (WrapValidatedGenTx blk)
+deriving instance Show (ReasonForSwitch (WrapTiebreakerView blk)) => Show (WrapReasonForSwitch blk)
 
 deriving instance
   NoThunks (GenTxId blk) => NoThunks (WrapGenTxId blk)

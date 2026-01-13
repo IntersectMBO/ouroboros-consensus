@@ -303,11 +303,13 @@ initNodeKernel
                         Nothing -> GSM.CandidateDoesNotIntersect
                         Just{} ->
                           GSM.WhetherCandidateIsBetter $ -- precondition requires intersection
-                            preferAnchoredCandidate
-                              (configBlock cfg)
-                              (forgetFingerprint weights)
-                              headers
-                              (csCandidate state)
+                            shouldSwitch
+                              ( preferAnchoredCandidate
+                                  (configBlock cfg)
+                                  (forgetFingerprint weights)
+                                  headers
+                                  (csCandidate state)
+                              )
                 , GSM.peerIsIdle = csIdling
                 , GSM.durationUntilTooOld =
                     gsmDurationUntilTooOld

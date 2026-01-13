@@ -46,6 +46,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Condense
@@ -85,6 +86,7 @@ class
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
+  , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
   ) =>
   SingleEraBlock blk
   where
