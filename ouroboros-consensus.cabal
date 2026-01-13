@@ -1214,6 +1214,9 @@ test-suite consensus-diffusion-test
     Test.Consensus.Genesis.Setup
     Test.Consensus.Genesis.Setup.Classifiers
     Test.Consensus.Genesis.Setup.GenChains
+    Test.Consensus.Genesis.TestSuite
+    Test.Consensus.Genesis.TestSuite.SmallKey
+    Test.Consensus.Genesis.TestSuite.SmallKey.Tests
     Test.Consensus.Genesis.Tests
     Test.Consensus.Genesis.Tests.CSJ
     Test.Consensus.Genesis.Tests.DensityDisconnect
@@ -1276,6 +1279,7 @@ test-suite consensus-diffusion-test
     io-classes:{io-classes, si-timers, strict-stm},
     io-sim,
     mempack,
+    monoidal-containers ^>=0.6,
     mtl,
     nothunks,
     ouroboros-consensus:{diffusion, ouroboros-consensus, unstable-consensus-testlib},
@@ -1295,6 +1299,7 @@ test-suite consensus-diffusion-test
     tasty-hunit,
     tasty-quickcheck,
     temporary,
+    text,
     time,
     tree-diff,
     typed-protocols,

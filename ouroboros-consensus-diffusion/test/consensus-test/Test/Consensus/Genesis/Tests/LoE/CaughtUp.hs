@@ -79,9 +79,10 @@ import Test.Util.ChainDB
 import Test.Util.Header
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestBlock
+import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
-tests = testProperty "Select best chain when CaughtUp" prop_test
+tests = adjustQuickCheckTests (* 10) $ testProperty "Select best chain when CaughtUp" prop_test
 
 prop_test :: Property
 prop_test =
