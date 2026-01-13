@@ -42,8 +42,6 @@ import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (decCBOR)
   , EncCBOR (..)
-  , ToCBOR (..)
-  , encodedSigKESSizeExpr
   , serialize'
   , unCBORGroup
   )
