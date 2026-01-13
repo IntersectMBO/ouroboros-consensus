@@ -200,6 +200,7 @@ import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
+import Ouroboros.Network.Point
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Streaming
 import System.FS.CRC
@@ -271,6 +272,7 @@ data LedgerDB m l blk = LedgerDB
   --  * The set of previously applied points.
   , tryTakeSnapshot ::
       l ~ ExtLedgerState blk =>
+      m () ->
       Maybe (Time, Time) ->
       Word64 ->
       m SnapCounters
@@ -418,7 +420,7 @@ withPrivateTipForker ldb =
 getTipStatistics ::
   IOLike m =>
   LedgerDB m l blk ->
-  m (Maybe Statistics)
+  m Statistics
 getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
 
 getReadOnlyForker ::
@@ -474,9 +476,6 @@ data InitDB db m blk = InitDB
   -- ^ Create a DB from the genesis state
   , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
-  , abortLedgerDbInit :: !(db -> m ())
-  -- ^ Closing the database, to be reopened again with a different snapshot or
-  -- with the genesis state.
   , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
@@ -537,7 +536,7 @@ initialize
       Nothing -> listSnapshots snapManager >>= tryNewestFirst id
       Just snap -> tryNewestFirst id [snap]
    where
-    InitDB{initFromGenesis, initFromSnapshot, abortLedgerDbInit} = dbIface
+    InitDB{initFromGenesis, initFromSnapshot} = dbIface
 
     tryNewestFirst ::
       (InitLog blk -> InitLog blk) ->
@@ -553,71 +552,68 @@ initialize
       let replayTracer'' = decorateReplayTracerWithStart (Point Origin) replayTracer'
       initDb <- initFromGenesis
       traceMarkerIO "Genesis loaded"
-      eDB <-
-        runExceptT $
-          replayStartingWith
-            replayTracer''
-            cfg
-            stream
-            initDb
-            (Point Origin)
-            dbIface
-
-      case eDB of
-        Left err -> do
-          abortLedgerDbInit initDb
-          error $ "Invariant violation: invalid immutable chain " <> show err
-        Right (db, replayed) -> return (acc InitFromGenesis, db, replayed)
+      (db, replayed) <-
+        replayStartingWith
+          replayTracer''
+          cfg
+          stream
+          initDb
+          (Point Origin)
+          dbIface
+      return (acc InitFromGenesis, db, replayed)
     tryNewestFirst acc (s : ss) = do
-      eInitDb <- initFromSnapshot s
-      case eInitDb of
-        -- If the snapshot is missing a metadata file, issue a warning and try
-        -- the next oldest snapshot
-        Left err@(InitFailureRead (ReadMetadataError _ MetadataFileDoesNotExist)) -> do
-          traceWith snapTracer $ InvalidSnapshot s err
-          tryNewestFirst (acc . InitFailure s err) ss
-
-        -- If the snapshot's backend is incorrect, issue a warning and try
-        -- the next oldest snapshot
-        Left err@(InitFailureRead (ReadMetadataError _ MetadataBackendMismatch)) -> do
-          traceWith snapTracer $ InvalidSnapshot s err
-          tryNewestFirst (acc . InitFailure s err) ss
-
-        -- If it is a legacy snapshot, issue a warning and try
-        -- the next oldest snapshot
-        Left err@(InitFailureRead ReadSnapshotIsLegacy) -> do
-          traceWith snapTracer $ InvalidSnapshot s err
-          tryNewestFirst (acc . InitFailure s err) ss
-
-        -- If we fail to use this snapshot for any other reason, delete it and
-        -- try an older one
-        Left err -> do
-          Monad.when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $ do
-            traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot snapManager s
-          traceWith snapTracer . InvalidSnapshot s $ err
-          tryNewestFirst (acc . InitFailure s err) ss
-        Right (initDb, pt) -> do
-          traceMarkerIO "Snapshot loaded"
-          let pt' = realPointToPoint pt
-          traceWith (TraceReplayStartEvent >$< replayTracer) (ReplayFromSnapshot s (ReplayStart pt'))
-          let replayTracer'' = decorateReplayTracerWithStart pt' replayTracer'
-          eDB <-
-            runExceptT $
-              replayStartingWith
-                replayTracer''
-                cfg
-                stream
-                initDb
-                pt'
-                dbIface
-          case eDB of
-            Left err -> do
-              traceWith snapTracer . InvalidSnapshot s $ err
-              Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot snapManager s
-              abortLedgerDbInit initDb
+      if ( case pointSlot replayGoal of
+             Origin -> True
+             At p -> dsNumber s > unSlotNo p
+         )
+        then do
+          traceWith snapTracer $ DeletedSnapshot s
+          deleteSnapshot snapManager s
+          traceWith snapTracer . InvalidSnapshot s $ InitFailureTooRecent s replayGoal
+          tryNewestFirst (acc . InitFailure s (InitFailureTooRecent s replayGoal)) ss
+        else do
+          eInitDb <- initFromSnapshot s
+          case eInitDb of
+            -- If the snapshot is missing a metadata file, issue a warning and try
+            -- the next oldest snapshot
+            Left err@(InitFailureRead (ReadMetadataError _ MetadataFileDoesNotExist)) -> do
+              traceWith snapTracer $ InvalidSnapshot s err
               tryNewestFirst (acc . InitFailure s err) ss
-            Right (db, replayed) -> return (acc (InitFromSnapshot s pt), db, replayed)
+
+            -- If the snapshot's backend is incorrect, issue a warning and try
+            -- the next oldest snapshot
+            Left err@(InitFailureRead (ReadMetadataError _ MetadataBackendMismatch)) -> do
+              traceWith snapTracer $ InvalidSnapshot s err
+              tryNewestFirst (acc . InitFailure s err) ss
+
+            -- If it is a legacy snapshot, issue a warning and try
+            -- the next oldest snapshot
+            Left err@(InitFailureRead ReadSnapshotIsLegacy) -> do
+              traceWith snapTracer $ InvalidSnapshot s err
+              tryNewestFirst (acc . InitFailure s err) ss
+
+            -- If we fail to use this snapshot for any other reason, delete it and
+            -- try an older one
+            Left err -> do
+              Monad.when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $ do
+                traceWith snapTracer $ DeletedSnapshot s
+                deleteSnapshot snapManager s
+              traceWith snapTracer . InvalidSnapshot s $ err
+              tryNewestFirst (acc . InitFailure s err) ss
+            Right (initDb, pt) -> do
+              traceMarkerIO "Snapshot loaded"
+              let pt' = realPointToPoint pt
+              traceWith (TraceReplayStartEvent >$< replayTracer) (ReplayFromSnapshot s (ReplayStart pt'))
+              let replayTracer'' = decorateReplayTracerWithStart pt' replayTracer'
+              (db, replayed) <-
+                replayStartingWith
+                  replayTracer''
+                  cfg
+                  stream
+                  initDb
+                  pt'
+                  dbIface
+              return (acc (InitFromSnapshot s pt), db, replayed)
 
     replayTracer' =
       decorateReplayTracerWithGoal
@@ -641,14 +637,23 @@ replayStartingWith ::
   db ->
   Point blk ->
   InitDB db m blk ->
-  ExceptT (SnapshotFailure blk) m (db, Word64)
+  m (db, Word64)
 replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, currentTip} = do
-  streamAll
-    stream
-    from
-    InitFailureTooRecent
-    (initDb, 0)
-    push
+  res <-
+    runExceptT $
+      streamAll
+        stream
+        from
+        id
+        (initDb, 0)
+        push
+  case res of
+    Left _ ->
+      error $
+        "Critical invariant violation: block "
+          <> show from
+          <> " that was in immutable db is gone before we could open ledgerdb"
+    Right v -> pure v
  where
   push ::
     blk ->
