@@ -51,6 +51,9 @@ module Ouroboros.Consensus.Protocol.PBFT
   , ConsensusConfig (..)
   , Ticked (..)
 
+    -- * Reasons for switching to a fork
+  , ReasonForTiebreakerSwitch (..)
+
     -- * Exported for tracing errors
   , PBftValidationErr (..)
   ) where
@@ -79,6 +82,7 @@ import Ouroboros.Consensus.Protocol.PBFT.Crypto
 import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Protocol.Signed
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Orphans ()
@@ -169,6 +173,14 @@ instance Ord PBftTiebreakerView where
     score :: IsEBB -> Int
     score IsEBB = 1
     score IsNotEBB = 0
+
+instance ReasonForSwitchByTiebreaker (PBft c) where
+  data ReasonForTiebreakerSwitch (PBft c)
+    = SwitchIsEBB
+    | UnexplainedPBftSwitch
+  reasonForSwitchByTiebreaker _ (BeforeAndAfter beforeView afterView)
+    | compare beforeView afterView == LT = SwitchIsEBB
+    | otherwise = UnexplainedPBftSwitch
 
 {-------------------------------------------------------------------------------
   Block forging

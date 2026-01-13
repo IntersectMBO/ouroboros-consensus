@@ -974,8 +974,11 @@ switchTo CDB{..} weights triggerPt vChainDiff = do
       , newTipTrigger = triggerPt
       , newSuffixSelectView
       , oldSuffixSelectView =
-          withEmptyFragmentToMaybe $
-            weightedSelectView (configBlock cfg) weights oldSuffix
+          case withEmptyFragmentToMaybe $
+            weightedSelectView (configBlock cfg) weights oldSuffix of
+            Nothing -> ChainSelectionInfoBlockDistance $ fromIntegral $ AF.length $ getSuffix diff
+            Just sv -> ChainSelectionInfoSelectView sv
+      , chainOrderConfig = projectChainOrderConfig (configBlock cfg)
       }
    where
     cfg :: TopLevelConfig blk

@@ -29,6 +29,9 @@ module Ouroboros.Consensus.Protocol.Praos
   , forgePraosFields
   , praosCheckCanForge
 
+    -- * Reasons for switching to a fork
+  , ReasonForTiebreakerSwitch (..)
+
     -- * For testing purposes
   , doValidateKESSignature
   , doValidateVRFSignature
@@ -87,9 +90,11 @@ import Control.Exception (throw)
 import Control.Monad (unless)
 import Control.Monad.Except (Except, runExcept, throwError)
 import Data.Coerce (coerce)
+import Data.Function (on)
 import Data.Functor.Identity (runIdentity)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Ord (Down (..))
 import Data.Proxy (Proxy (Proxy))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -115,6 +120,7 @@ import Ouroboros.Consensus.Protocol.TPraos
   , TPraos
   , TPraosState (tpraosStateChainDepState, tpraosStateLastSlot)
   )
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import Ouroboros.Consensus.Ticked (Ticked)
 import Ouroboros.Consensus.Util.Versioned
   ( VersionDecoder (Decode)
@@ -384,6 +390,23 @@ deriving instance PraosCrypto c => Eq (PraosValidationErr c)
 deriving instance PraosCrypto c => NoThunks (PraosValidationErr c)
 
 deriving instance PraosCrypto c => Show (PraosValidationErr c)
+
+instance ReasonForSwitchByTiebreaker (Praos c) where
+  data ReasonForTiebreakerSwitch (Praos c)
+    = HigherOCert (BeforeAndAfter Word64)
+    | VRFTiebreak (BeforeAndAfter (VRF.OutputVRF (VRF c)))
+    | TiebreakUnexplainedSwitch (BeforeAndAfter (PraosTiebreakerView c))
+
+  reasonForSwitchByTiebreaker tiebreakerFlavor (BeforeAndAfter tiebreakBefore tiebreakAfter)
+    | (when' issueNoArmed (compare `on` ptvIssueNo)) tiebreakBefore tiebreakAfter == LT =
+        HigherOCert $ (BeforeAndAfter `on` ptvIssueNo) tiebreakBefore tiebreakAfter
+    | (when' (vrfArmed tiebreakerFlavor) (compare `on` Down . ptvTieBreakVRF))
+        tiebreakBefore
+        tiebreakAfter
+        == LT =
+        VRFTiebreak $ (BeforeAndAfter `on` ptvTieBreakVRF) tiebreakBefore tiebreakAfter
+    | otherwise =
+        TiebreakUnexplainedSwitch (BeforeAndAfter tiebreakBefore tiebreakAfter)
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PraosState

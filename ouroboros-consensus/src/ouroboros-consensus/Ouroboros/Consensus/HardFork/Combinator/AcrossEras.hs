@@ -101,6 +101,8 @@ import Ouroboros.Consensus.Util.Condense (Condense (..))
 
 newtype PerEraBlockConfig xs = PerEraBlockConfig {getPerEraBlockConfig :: NP BlockConfig xs}
 newtype PerEraChainOrderConfig xs = PerEraChainOrderConfig {getPerEraChainOrderConfig :: NP WrapChainOrderConfig xs}
+deriving instance All (Compose Show WrapChainOrderConfig) xs => Show (PerEraChainOrderConfig xs)
+
 newtype PerEraCodecConfig xs = PerEraCodecConfig {getPerEraCodecConfig :: NP CodecConfig xs}
 newtype PerEraConsensusConfig xs = PerEraConsensusConfig {getPerEraConsensusConfig :: NP WrapPartialConsensusConfig xs}
 newtype PerEraLedgerConfig xs = PerEraLedgerConfig {getPerEraLedgerConfig :: NP WrapPartialLedgerConfig xs}

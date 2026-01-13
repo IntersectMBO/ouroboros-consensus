@@ -38,6 +38,9 @@ module Ouroboros.Consensus.Protocol.TPraos
     -- * Type instances
   , ConsensusConfig (..)
   , Ticked (..)
+
+    -- * Reasons for switching to a fork
+  , ReasonForTiebreakerSwitch (..)
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
@@ -68,7 +71,9 @@ import Control.Monad.Except
   , withExceptT
   )
 import Data.Coerce (coerce)
+import Data.Function (on)
 import qualified Data.Map.Strict as Map
+import Data.Ord (Down (..))
 import qualified Data.Text as T (pack)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -81,6 +86,7 @@ import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Ledger.Util
 import Ouroboros.Consensus.Protocol.Praos.Common
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.CBOR
 import Ouroboros.Consensus.Util.Condense
@@ -301,6 +307,23 @@ data instance Ticked TPraosState = TickedChainDepState
   { tickedTPraosStateChainDepState :: SL.ChainDepState
   , tickedTPraosStateLedgerView :: SL.LedgerView
   }
+
+instance ReasonForSwitchByTiebreaker (TPraos c) where
+  data ReasonForTiebreakerSwitch (TPraos c)
+    = HigherOCert (BeforeAndAfter Word64)
+    | VRFTiebreak (BeforeAndAfter (VRF.OutputVRF (VRF c)))
+    | TiebreakUnexplainedSwitch (BeforeAndAfter (PraosTiebreakerView c))
+
+  reasonForSwitchByTiebreaker tiebreakerFlavor (BeforeAndAfter tiebreakBefore tiebreakAfter)
+    | (when' issueNoArmed (compare `on` ptvIssueNo)) tiebreakBefore tiebreakAfter == LT =
+        HigherOCert $ (BeforeAndAfter `on` ptvIssueNo) tiebreakBefore tiebreakAfter
+    | (when' (vrfArmed tiebreakerFlavor) (compare `on` Down . ptvTieBreakVRF))
+        tiebreakBefore
+        tiebreakAfter
+        == LT =
+        VRFTiebreak $ (BeforeAndAfter `on` ptvTieBreakVRF) tiebreakBefore tiebreakAfter
+    | otherwise =
+        TiebreakUnexplainedSwitch (BeforeAndAfter tiebreakBefore tiebreakAfter)
 
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type ChainDepState (TPraos c) = TPraosState

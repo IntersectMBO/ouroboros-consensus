@@ -78,6 +78,13 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , TraceOpenEvent (..)
   , TracePipeliningEvent (..)
   , TraceValidationEvent (..)
+
+    -- * Reasons for chain switch
+  , selectionChangedReason
+  , ReasonForSwitchByTiebreaker (..)
+  , ReasonForSwitch (..)
+  , BeforeAndAfter (..)
+  , SelectViewOrBlockDistance (..)
   ) where
 
 import Control.Monad (when)
@@ -85,6 +92,7 @@ import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Foldable (traverse_)
+import Data.Function (on)
 import Data.Map.Strict (Map)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.MultiSet (MultiSet)
@@ -101,7 +109,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView)
+import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
@@ -760,6 +768,7 @@ deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Show (SelectionChangedInfo blk)
   ) =>
   Show (TraceEvent blk)
 
@@ -833,16 +842,82 @@ data SelectionChangedInfo blk = SelectionChangedInfo
   -- > preferCandidate cfg
   -- >   (withEmptyFragmentFromMaybe oldSuffixSelectView)
   -- >   newSuffixSelectView
-  , oldSuffixSelectView :: Maybe (WeightedSelectView (BlockProtocol blk))
-  -- ^ The 'WeightedSelectView' of the orphaned suffix of our old selection.
-  -- This is 'Nothing' when we extended our selection.
+  , oldSuffixSelectView :: SelectViewOrBlockDistance (BlockProtocol blk)
+  -- ^ The 'WeightedSelectView' of the orphaned suffix of our old selection, or
+  -- the length in blocks of the new fragment if extending the same chain.
+  , chainOrderConfig :: ChainOrderConfig (TiebreakerView (BlockProtocol blk))
+  -- ^ The configuration, used to clarify some tie breaks when explaining why we
+  -- switched to a fork.
   }
   deriving Generic
 
+-- | For informational purposes, either the select view of the previous tip in
+-- case we are switching to a different fork, or the length in blocks of the new
+-- fragment if we are just extending the previous tip.
+data SelectViewOrBlockDistance proto
+  = ChainSelectionInfoSelectView (WeightedSelectView proto)
+  | ChainSelectionInfoBlockDistance Word64
+
+deriving stock instance Show (TiebreakerView proto) => Show (SelectViewOrBlockDistance proto)
+deriving stock instance Eq (TiebreakerView proto) => Eq (SelectViewOrBlockDistance proto)
+
 deriving stock instance
-  (Show (TiebreakerView (BlockProtocol blk)), StandardHash blk) => Show (SelectionChangedInfo blk)
+  ( Show (TiebreakerView (BlockProtocol blk))
+  , StandardHash blk
+  , Show (ChainOrderConfig (TiebreakerView (BlockProtocol blk)))
+  ) =>
+  Show (SelectionChangedInfo blk)
 deriving stock instance
-  (Eq (TiebreakerView (BlockProtocol blk)), StandardHash blk) => Eq (SelectionChangedInfo blk)
+  ( Eq (TiebreakerView (BlockProtocol blk))
+  , StandardHash blk
+  , Eq (ChainOrderConfig (TiebreakerView (BlockProtocol blk)))
+  ) =>
+  Eq (SelectionChangedInfo blk)
+
+-- | Informational type conveying the order of two values
+data BeforeAndAfter a = BeforeAndAfter {before :: a, after :: a}
+
+-- | Why did we perform a switch to a different chain.
+data ReasonForSwitch blk
+  = -- | We switched because the new chain was heavier.
+    Heavier (BeforeAndAfter PerasWeight)
+  | -- | We switched because the new chain was longer.
+    Longer (BeforeAndAfter BlockNo)
+  | -- | We switched because of a tie break.
+    Tiebreak (ReasonForTiebreakerSwitch (BlockProtocol blk))
+  | -- | We don't know why we switched, probably we should not have switched, so
+    -- this should be logged as a warning.
+    UnexplainedSwitch (BeforeAndAfter (WeightedSelectView (BlockProtocol blk)))
+
+-- | Each protocol defines why we would perform a switch.
+class ReasonForSwitchByTiebreaker proto where
+  -- | The different reasons for switching in this particular protocol
+  data ReasonForTiebreakerSwitch proto
+
+  -- | Compute the reason for switching if it was not by length or weight.
+  reasonForSwitchByTiebreaker ::
+    ChainOrderConfig (TiebreakerView proto) ->
+    BeforeAndAfter (TiebreakerView proto) ->
+    ReasonForTiebreakerSwitch proto
+
+-- | Explain why did we switch to a different candidate in terms of
+-- 'ReasonForSwitch'.
+selectionChangedReason ::
+  ReasonForSwitchByTiebreaker (BlockProtocol blk) =>
+  SelectionChangedInfo blk -> ReasonForSwitch blk
+selectionChangedReason (SelectionChangedInfo _ _ _ _ afterSV (ChainSelectionInfoBlockDistance i) _) =
+  Longer (BeforeAndAfter (BlockNo (unBlockNo (wsvBlockNo afterSV) - i)) (wsvBlockNo afterSV))
+selectionChangedReason (SelectionChangedInfo _ _ _ _ afterSV (ChainSelectionInfoSelectView beforeSV) cfg)
+  | (compare `on` wsvBlockNo) beforeSV afterSV == LT =
+      Longer ((BeforeAndAfter `on` wsvBlockNo) beforeSV afterSV)
+  | (compare `on` wsvBlockNo) beforeSV afterSV == GT =
+      UnexplainedSwitch (BeforeAndAfter beforeSV afterSV)
+  | (compare `on` wsvWeightBoost) beforeSV afterSV == LT =
+      Heavier ((BeforeAndAfter `on` wsvWeightBoost) beforeSV afterSV)
+  | (compare `on` wsvWeightBoost) beforeSV afterSV == GT =
+      UnexplainedSwitch (BeforeAndAfter beforeSV afterSV)
+  | otherwise =
+      Tiebreak $ reasonForSwitchByTiebreaker cfg $ (BeforeAndAfter `on` wsvTiebreaker) afterSV beforeSV
 
 -- | Trace type for the various events that occur when adding a block.
 data TraceAddBlockEvent blk
@@ -909,12 +984,14 @@ deriving instance
   ( Eq (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Eq (SelectionChangedInfo blk)
   ) =>
   Eq (TraceAddBlockEvent blk)
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Show (SelectionChangedInfo blk)
   ) =>
   Show (TraceAddBlockEvent blk)
 
