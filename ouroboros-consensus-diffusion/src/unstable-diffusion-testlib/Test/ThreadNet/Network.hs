@@ -119,7 +119,7 @@ import Ouroboros.Network.BlockFetch
 import Ouroboros.Network.Channel
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Mock.Chain (Chain (Genesis))
-import Ouroboros.Network.NodeToNode
+import Cardano.Network.NodeToNode
   ( ConnectionId (..)
   , ExpandedInitiatorContext (..)
   , IsBigLedgerPeer (..)

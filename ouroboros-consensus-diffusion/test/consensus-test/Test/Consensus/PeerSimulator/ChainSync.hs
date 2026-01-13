@@ -20,6 +20,7 @@ import Control.Tracer
   )
 import Data.Proxy (Proxy (..))
 import Network.TypedProtocol.Codec (AnyMessage)
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Consensus.Block (Header, Point)
 import Ouroboros.Consensus.BlockchainTime (RelativeTime (..))
 import Ouroboros.Consensus.Config
@@ -57,7 +58,6 @@ import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit)
   , runPipelinedPeerWithLimits
   )
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ChainSync.ClientPipelined
   ( ChainSyncClientPipelined
   , chainSyncClientPeerPipelined

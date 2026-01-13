@@ -53,8 +53,8 @@ if impl (ghc >= 9.12)
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: b87b35827c309d168af77571b6d44198136f1199
-  --sha256:
+  tag: 2b05803dd3e6f3f7d1e257eee4e941e2501adcd6
+  --sha256: sha256-hfWdTDdkCSXDqBuEf8DqZtXDxkBL3rlhfvRJh515424=
   subdir:
     cardano-diffusion
     network-mux
