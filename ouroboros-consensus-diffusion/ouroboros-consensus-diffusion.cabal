@@ -126,7 +126,7 @@ library unstable-diffusion-testlib
     QuickCheck,
     base,
     bytestring,
-    cardano-diffusion:{api, cardano-diffusion},
+    cardano-diffusion:{cardano-diffusion},
     cardano-ledger-core,
     cborg,
     containers,

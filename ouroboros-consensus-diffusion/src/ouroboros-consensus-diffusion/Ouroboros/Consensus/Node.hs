@@ -85,8 +85,8 @@ import Cardano.Network.NodeToNode
   , blockFetchPipeliningMax
   , defaultMiniProtocolParameters
   )
-import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers (..))
-import Cardano.Network.PeerSelection.Churn (ChurnMode (..))
+import Cardano.Network.PeerSelection (ChurnMode (..), PeerTrustable, UseBootstrapPeers (..))
+import Cardano.Network.Protocol.ChainSync.Codec.TimeLimits (timeLimitsChainSync)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (DeserialiseFailure)
@@ -175,7 +175,6 @@ import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   ( decodeRemoteAddress
   , encodeRemoteAddress
   )
-import Ouroboros.Network.Protocol.ChainSync.Codec (timeLimitsChainSync)
 import Ouroboros.Network.RethrowPolicy
 import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
@@ -315,6 +314,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
         addrNTC
         NodeToClientVersion
         NodeToClientVersionData
+        PeerTrustable
         m
         NodeToNodeInitiatorResult ->
       m ()
@@ -737,6 +737,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       addrNTC
       NodeToClientVersion
       NodeToClientVersionData
+      PeerTrustable
       m
       NodeToNodeInitiatorResult
   mkDiffusionApplications

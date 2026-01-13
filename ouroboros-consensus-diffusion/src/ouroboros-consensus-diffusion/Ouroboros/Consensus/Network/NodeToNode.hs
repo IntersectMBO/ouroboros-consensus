@@ -40,6 +40,7 @@ module Ouroboros.Consensus.Network.NodeToNode
   ) where
 
 import Cardano.Network.NodeToNode
+import Cardano.Network.PeerSelection (PeerTrustable (..))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
@@ -542,7 +543,7 @@ showTracers tr =
 -- | A node-to-node application
 type ClientApp m addr bytes a =
   NodeToNodeVersion ->
-  ExpandedInitiatorContext addr m ->
+  ExpandedInitiatorContext addr PeerTrustable m ->
   Channel m bytes ->
   m (a, Maybe bytes)
 
@@ -662,7 +663,7 @@ mkApps ::
   ByteLimits bCS bBF bTX bKA bPS ->
   -- Chain-Sync timeouts for chain-sync client (using `Header blk`) as well as
   -- the server (`SerialisedHeader blk`).
-  (forall header. ProtocolTimeLimitsWithRnd (ChainSync header (Point blk) (Tip blk))) ->
+  (forall header. PeerTrustable -> ProtocolTimeLimitsWithRnd (ChainSync header (Point blk) (Tip blk))) ->
   CsClient.ChainSyncLoPBucketConfig ->
   CsClient.CSJConfig ->
   ReportPeerMetrics m (ConnectionId addrNTN) ->
@@ -676,7 +677,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
 
   aChainSyncClient ::
     NodeToNodeVersion ->
-    ExpandedInitiatorContext addrNTN m ->
+    ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bCS ->
     m (NodeToNodeInitiatorResult, Maybe bCS)
   aChainSyncClient
@@ -685,6 +686,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       { eicConnectionId = them
       , eicControlMessage = controlMessageSTM
       , eicIsBigLedgerPeer = isBigLedgerPeer
+      , eicExtraFlags = peerTrustable
       }
     channel = do
       labelThisThread "ChainSyncClient"
@@ -714,7 +716,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
               chainSyncRng
               (cChainSyncCodec (mkCodecs version))
               blChainSync
-              chainSyncTimeouts
+              (chainSyncTimeouts peerTrustable)
               channel
               $ chainSyncClientPeerPipelined
               $ hChainSyncClient
@@ -754,14 +756,14 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
           chainSyncRng'
           (cChainSyncCodecSerialised (mkCodecs version))
           blChainSync
-          chainSyncTimeouts
+          (chainSyncTimeouts IsNotTrustable)
           channel
           $ chainSyncServerPeer
           $ hChainSyncServer them version flr
 
   aBlockFetchClient ::
     NodeToNodeVersion ->
-    ExpandedInitiatorContext addrNTN m ->
+    ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bBF ->
     m (NodeToNodeInitiatorResult, Maybe bBF)
   aBlockFetchClient
@@ -810,7 +812,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
 
   aTxSubmission2Client ::
     NodeToNodeVersion ->
-    ExpandedInitiatorContext addrNTN m ->
+    ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bTX ->
     m (NodeToNodeInitiatorResult, Maybe bTX)
   aTxSubmission2Client
@@ -869,7 +871,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
 
   aKeepAliveClient ::
     NodeToNodeVersion ->
-    ExpandedInitiatorContext addrNTN m ->
+    ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bKA ->
     m (NodeToNodeInitiatorResult, Maybe bKA)
   aKeepAliveClient
@@ -916,7 +918,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
 
   aPeerSharingClient ::
     NodeToNodeVersion ->
-    ExpandedInitiatorContext addrNTN m ->
+    ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bPS ->
     m (NodeToNodeInitiatorResult, Maybe bPS)
   aPeerSharingClient
@@ -971,7 +973,7 @@ initiator ::
   NodeToNodeVersion ->
   NodeToNodeVersionData ->
   Apps m addr b b b b b a c ->
-  OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr b m a Void
+  OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr PeerTrustable b m a Void
 initiator miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
     miniProtocolParameters
@@ -1007,7 +1009,7 @@ initiatorAndResponder ::
   NodeToNodeVersion ->
   NodeToNodeVersionData ->
   Apps m addr b b b b b a c ->
-  OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr b m a c
+  OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr PeerTrustable b m a c
 initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
     miniProtocolParameters

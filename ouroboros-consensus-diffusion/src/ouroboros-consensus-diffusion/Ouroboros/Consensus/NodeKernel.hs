@@ -48,13 +48,14 @@ import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
 import Data.Data (Typeable)
+import Data.Either (partitionEithers)
 import Data.Foldable (traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Data.Maybe (isJust, mapMaybe)
+import Data.Maybe (isJust)
 import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Text as Text
@@ -920,19 +921,28 @@ getMempoolReader mempool =
         }
 
 getMempoolWriter ::
+  forall blk m.
   ( LedgerSupportsMempool blk
   , IOLike m
   , HasTxId (GenTx blk)
   ) =>
   Mempool m blk ->
-  TxSubmissionMempoolWriter (GenTxId blk) (GenTx blk) TicketNo m
+  TxSubmissionMempoolWriter (GenTxId blk) (GenTx blk) TicketNo m ()
 getMempoolWriter mempool =
   Inbound.TxSubmissionMempoolWriter
     { Inbound.txId = txId
     , mempoolAddTxs = \txs ->
-        map (txId . txForgetValidated) . mapMaybe mempoolTxAddedToMaybe
-          <$> addTxs mempool txs
+        partitionTxIds <$> addTxs mempool txs
     }
+ where
+  partitionTxIds ::
+    [MempoolAddTxResult blk] -> ([TxId (GenTx blk)], [(TxId (GenTx blk), ())])
+  partitionTxIds = partitionEithers . map getTxId
+
+  getTxId :: MempoolAddTxResult blk -> Either (TxId (GenTx blk)) (TxId (GenTx blk), ())
+  getTxId = \case
+    MempoolTxAdded tx -> Left $ txId (txForgetValidated tx)
+    MempoolTxRejected tx _reason -> Right $ (txId tx, ())
 
 {-------------------------------------------------------------------------------
   PeerSelection integration

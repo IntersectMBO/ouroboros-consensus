@@ -39,8 +39,16 @@ module Test.ThreadNet.Network
   , TestOutput (..)
   ) where
 
-import Cardano.Network.PeerSelection.Bootstrap
-  ( UseBootstrapPeers (..)
+import Cardano.Network.NodeToNode
+  ( ConnectionId (..)
+  , ExpandedInitiatorContext (..)
+  , IsBigLedgerPeer (..)
+  , MiniProtocolParameters (..)
+  , ResponderContext (..)
+  )
+import Cardano.Network.PeerSelection
+  ( PeerTrustable (..)
+  , UseBootstrapPeers (..)
   )
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
@@ -1124,7 +1132,7 @@ runThreadNetwork
               (customNodeToNodeCodecs pInfoConfig)
               NTN.noByteLimits
               -- see #1882, tests that can't cope with timeouts.
-              (ProtocolTimeLimitsWithRnd $ \_state -> (waitForever,))
+              (\_ -> ProtocolTimeLimitsWithRnd $ \_state -> (waitForever,))
               CSClient.ChainSyncLoPBucketDisabled
               CSClient.CSJDisabled
               nullMetric
@@ -1389,7 +1397,7 @@ directedEdgeInner
           (String -> b -> RestartCause) ->
           ( LimitedApp' m NodeId blk ->
             NodeToNodeVersion ->
-            ExpandedInitiatorContext NodeId m ->
+            ExpandedInitiatorContext NodeId PeerTrustable m ->
             Channel m msg ->
             m (a, trailingBytes)
           ) ->
@@ -1416,6 +1424,7 @@ directedEdgeInner
               { eicConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
               , eicControlMessage = return Continue
               , eicIsBigLedgerPeer = IsNotBigLedgerPeer
+              , eicExtraFlags = IsNotTrustable
               }
           responderCtx =
             ResponderContext
