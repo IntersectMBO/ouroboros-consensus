@@ -65,7 +65,7 @@ instance
   countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
     SL.Block _ body -> getSum $ foldMap (Sum . countOutputs) (body ^. Core.txSeqBlockBodyL)
    where
-    countOutputs :: Core.Tx era -> Int
+    countOutputs :: Core.Tx Core.TopTx era -> Int
     countOutputs tx = length $ tx ^. Core.bodyTxL . Core.outputsTxBodyL
 
   blockTxSizes blk = case Shelley.shelleyBlockRaw blk of
@@ -100,7 +100,7 @@ instance
          | f <- maybeToList txExUnitsSteps
          ]
    where
-    txs :: StrictSeq (Core.Tx era)
+    txs :: StrictSeq (Core.Tx Core.TopTx era)
     txs = case Shelley.shelleyBlockRaw blk of
       SL.Block _ body -> body ^. Core.txSeqBlockBodyL
 
@@ -109,7 +109,7 @@ instance
   blockApplicationMetrics = []
 
 class PerEraAnalysis era where
-  txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
+  txExUnitsSteps :: Maybe (Core.Tx Core.TopTx era -> Word64)
 
 instance PerEraAnalysis ShelleyEra where txExUnitsSteps = Nothing
 instance PerEraAnalysis AllegraEra where txExUnitsSteps = Nothing

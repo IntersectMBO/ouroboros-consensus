@@ -42,6 +42,7 @@ import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (decCBOR)
   , EncCBOR (..)
+  , ToCBOR (..)
   , encodedSigKESSizeExpr
   , serialize'
   , unCBORGroup
@@ -92,7 +93,7 @@ data HeaderBody crypto = HeaderBody
   -- ^ block slot
   , hbPrev :: !PrevHash
   -- ^ Hash of the previous block header
-  , hbVk :: !(VKey 'BlockIssuer)
+  , hbVk :: !(VKey BlockIssuer)
   -- ^ verification key of block issuer
   , hbVrfVk :: !(VRF.VerKeyVRF (VRF crypto))
   -- ^ VRF verification key for block issuer
@@ -220,7 +221,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
 encodeHeaderRaw ::
   Crypto crypto =>
   HeaderRaw crypto ->
-  Encode ('Closed 'Dense) (HeaderRaw crypto)
+  Encode (Closed Dense) (HeaderRaw crypto)
 encodeHeaderRaw (HeaderRaw body sig) =
   Rec HeaderRaw !> To body !> E encodeSignedKES sig
 
@@ -233,11 +234,9 @@ instance Crypto crypto => DecCBOR (HeaderRaw crypto) where
 instance Crypto crypto => DecCBOR (Annotator (HeaderRaw crypto)) where
   decCBOR = pure <$> decCBOR
 
-instance Crypto c => EncCBOR (Header c) where
-  encodedSizeExpr size proxy =
-    1
-      + encodedSizeExpr size (headerBody <$> proxy)
-      + encodedSigKESSizeExpr (KES.getSig . headerSig <$> proxy)
+-- TODO(geo2a): can we derive this instance?
+-- previously, it had an additional method defined, which was removed
+instance Crypto c => EncCBOR (Header c)
 
 deriving via
   Mem (HeaderRaw crypto)
