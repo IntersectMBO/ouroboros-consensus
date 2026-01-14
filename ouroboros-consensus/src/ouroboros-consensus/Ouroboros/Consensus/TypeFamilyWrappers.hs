@@ -100,6 +100,8 @@ newtype WrapCanBeLeader blk = WrapCanBeLeader {unwrapCanBeLeader :: CanBeLeader 
 newtype WrapChainDepState blk = WrapChainDepState {unwrapChainDepState :: ChainDepState (BlockProtocol blk)}
 newtype WrapChainOrderConfig blk = WrapChainOrderConfig
   {unwrapChainOrderConfig :: ChainOrderConfig (TiebreakerView (BlockProtocol blk))}
+deriving instance
+  Show (ChainOrderConfig (TiebreakerView (BlockProtocol blk))) => Show (WrapChainOrderConfig blk)
 newtype WrapConsensusConfig blk = WrapConsensusConfig {unwrapConsensusConfig :: ConsensusConfig (BlockProtocol blk)}
 newtype WrapIsLeader blk = WrapIsLeader {unwrapIsLeader :: IsLeader (BlockProtocol blk)}
 newtype WrapLedgerView blk = WrapLedgerView {unwrapLedgerView :: LedgerView (BlockProtocol blk)}

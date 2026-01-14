@@ -1753,6 +1753,7 @@ type TracingConstraints blk =
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
+  , Show (ChainOrderConfig (TiebreakerView (BlockProtocol blk)))
   , HasNestedContent Header blk
   )
 

@@ -24,6 +24,11 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
   , instantiatePraosCredentials
+
+    -- * Exposed for 'ReasonForSwitchByTiebreaker'
+  , when'
+  , issueNoArmed
+  , vrfArmed
   ) where
 
 import qualified Cardano.Crypto.KES.Class as KES
@@ -124,29 +129,31 @@ comparePraos ::
   Ordering
 comparePraos tiebreakerFlavor =
   when' issueNoArmed (compare `on` ptvIssueNo)
-    <> when' vrfArmed (compare `on` Down . ptvTieBreakVRF)
+    <> when' (vrfArmed tiebreakerFlavor) (compare `on` Down . ptvTieBreakVRF)
+
+-- When the predicate @p@ returns 'True', use the given comparison function,
+-- otherwise, no preference.
+when' ::
+  (a -> a -> Bool) ->
+  (a -> a -> Ordering) ->
+  (a -> a -> Ordering)
+when' p comp a1 a2 =
+  if p a1 a2 then comp a1 a2 else EQ
+
+-- Only compare the issue numbers when the issuers and slots are identical.
+-- Note that this case implies the VRFs also coincide.
+issueNoArmed :: PraosTiebreakerView c -> PraosTiebreakerView c -> Bool
+issueNoArmed v1 v2 =
+  ptvSlotNo v1 == ptvSlotNo v2
+    && ptvIssuer v1 == ptvIssuer v2
+
+-- Whether to do a VRF comparison.
+vrfArmed :: VRFTiebreakerFlavor -> PraosTiebreakerView c -> PraosTiebreakerView c -> Bool
+vrfArmed tiebreakerFlavor v1 v2 = case tiebreakerFlavor of
+  UnrestrictedVRFTiebreaker -> True
+  RestrictedVRFTiebreaker maxDist ->
+    slotDist (ptvSlotNo v1) (ptvSlotNo v2) <= maxDist
  where
-  -- When the predicate @p@ returns 'True', use the given comparison function,
-  -- otherwise, no preference.
-  when' ::
-    (a -> a -> Bool) ->
-    (a -> a -> Ordering) ->
-    (a -> a -> Ordering)
-  when' p comp a1 a2 =
-    if p a1 a2 then comp a1 a2 else EQ
-
-  -- Only compare the issue numbers when the issuers and slots are identical.
-  -- Note that this case implies the VRFs also coincide.
-  issueNoArmed v1 v2 =
-    ptvSlotNo v1 == ptvSlotNo v2
-      && ptvIssuer v1 == ptvIssuer v2
-
-  -- Whether to do a VRF comparison.
-  vrfArmed v1 v2 = case tiebreakerFlavor of
-    UnrestrictedVRFTiebreaker -> True
-    RestrictedVRFTiebreaker maxDist ->
-      slotDist (ptvSlotNo v1) (ptvSlotNo v2) <= maxDist
-
   slotDist :: SlotNo -> SlotNo -> SlotNo
   slotDist s t
     -- slot numbers are unsigned, so have to take care with subtraction
