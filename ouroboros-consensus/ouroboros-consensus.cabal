@@ -67,6 +67,10 @@ library
   import: common-lib
   hs-source-dirs: src/ouroboros-consensus
   exposed-modules:
+    LeiosDemoLogic
+    LeiosDemoOnlyTestFetch
+    LeiosDemoOnlyTestNotify
+    LeiosDemoTypes
     Ouroboros.Consensus.Block
     Ouroboros.Consensus.Block.Abstract
     Ouroboros.Consensus.Block.EBB
@@ -315,6 +319,9 @@ library
     contra-tracer,
     deepseq,
     diff-containers >=1.2,
+    direct-sqlite,
+    directory,
+    dlist,
     filelock,
     fingertree-rm >=1.0,
     fs-api ^>=0.3,
@@ -325,6 +332,7 @@ library
     monoid-subclasses,
     mtl,
     multiset ^>=0.3,
+    network-mux ^>=0.8,
     nothunks ^>=0.2,
     ouroboros-network-api ^>=0.14,
     ouroboros-network-mock ^>=0.1,
@@ -353,6 +361,7 @@ library
     transformers,
     transformers-base,
     typed-protocols ^>=0.3,
+    typed-protocols-cborg ^>=0.3,
     vector ^>=0.13,
 
   x-docspec-extra-packages:
@@ -839,3 +848,30 @@ test-suite doctest
   build-depends:
     base,
     latex-svg-image,
+
+common common-exe
+  import: common-lib
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N -I0 -A16m"
+
+executable leiosdemo202510
+  import: common-exe
+  hs-source-dirs: app
+  main-is: leiosdemo202510.hs
+  build-depends:
+    aeson,
+    base,
+    base16-bytestring,
+    bytestring,
+    cardano-binary,
+    cardano-crypto-class,
+    cborg,
+    containers,
+    direct-sqlite,
+    directory,
+    dlist,
+    random,
+    text,
+    vector,

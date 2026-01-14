@@ -1,0 +1,21 @@
+;
+; LeiosFetch mini-protocol
+;
+
+leiosBlockFetchMessage
+     = msgClientDone
+     / msgLeiosBlockRequest
+     / msgLeiosBlock
+     / msgLeiosBlockTxsRequest
+     / msgLeiosBlockTxs
+
+msgClientDone   = [9] ; TODO: 9?
+msgLeiosBlockRequest = [0, point]
+msgLeiosBlock = [1, endorser_block]
+msgLeiosBlockTxsRequest = [2, point, bitmaps]
+msgLeiosBlockTxs = [3, txList] 
+
+endorser_block ; TODO
+bitmaps_block ; TODO
+txList = [ *tx.tx ] ; REVIEW: how to specify length-definite list?
+

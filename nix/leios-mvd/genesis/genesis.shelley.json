@@ -1,0 +1,97 @@
+{
+  "activeSlotsCoeff": 0.050,
+  "epochLength": 600,
+  "genDelegs": {},
+  "initialFunds": {
+    "00635eef9a08f327a0ce009466914e8f607cebf76e9f4c9f92b0a829f4eab4c172777c708cd0bcac1a16d41b513e3a0f3dff8d182c2878947c": 900000000000000,
+    "00f00bb672d5d2f064707e6c955234da597e9b43ed6e458a3d15870a8257ef7aac3c0f6e4fbc3e253e3f4e58039986e89492c02c812e703d69": 900000000000000,
+    "601c6db4e8b6b36e265b9eecba0cb9a653cdd8701f708beccd911f838b": 9000000000000
+  },
+  "maxKESEvolutions": 62,
+  "maxLovelaceSupply": 2010000000000000,
+  "networkId": "Testnet",
+  "networkMagic": 42,
+  "protocolParams": {
+    "a0": 0.3,
+    "decentralisationParam": 0,
+    "eMax": 18,
+    "extraEntropy": {
+      "tag": "NeutralNonce"
+    },
+    "keyDeposit": 2000000,
+    "maxBlockBodySize": 90112,
+    "maxBlockHeaderSize": 1100,
+    "maxTxSize": 16384,
+    "minFeeA": 44,
+    "minFeeB": 155381,
+    "minPoolCost": 340000000,
+    "minUTxOValue": 0,
+    "nOpt": 500,
+    "poolDeposit": 500000000,
+    "protocolVersion": {
+      "major": 10,
+      "minor": 0
+    },
+    "rho": 0.0030,
+    "tau": 0.2
+  },
+  "securityParam": 3,
+  "slotLength": 1,
+  "slotsPerKESPeriod": 129600,
+  "staking": {
+    "pools": {
+      "4c26da5ee3f61915d2df4167a53394b1f033623042a8d26ab7af5ef7": {
+        "cost": 0,
+        "margin": 0,
+        "metadata": null,
+        "owners": [],
+        "pledge": 0,
+        "publicKey": "4c26da5ee3f61915d2df4167a53394b1f033623042a8d26ab7af5ef7",
+        "relays": [
+          {
+            "single host name": {
+              "dnsName": "node-0",
+              "port": 30000
+            }
+          }
+        ],
+        "rewardAccount": {
+          "credential": {
+            "keyHash": "48d482deb658ae1aaa522a365e68f9747da98015500e1c260dca3c73"
+          },
+          "network": "Testnet"
+        },
+        "vrf": "03670fa208cb10b3452f04be890c931e4f34eff777dec589f1631d66c971c40c"
+      },
+      "68b23036da5530e5853357a8dc9d03dd8e851b0e29a3eaf61b55b6cc": {
+        "cost": 0,
+        "margin": 0,
+        "metadata": null,
+        "owners": [],
+        "pledge": 0,
+        "publicKey": "68b23036da5530e5853357a8dc9d03dd8e851b0e29a3eaf61b55b6cc",
+        "relays": [
+          {
+            "single host name": {
+              "dnsName": "node-1",
+              "port": 30001
+            }
+          }
+        ],
+        "rewardAccount": {
+          "credential": {
+            "keyHash": "df587edcea6b53ed8bdc416be16f00beaaef18b5c6b25294275bf117"
+          },
+          "network": "Testnet"
+        },
+        "vrf": "0a570d439272a91eca089a9d04d9a94f11bb86c8daa3991fa67b35468049d60e"
+      }
+    },
+    "stake": {
+      "57ef7aac3c0f6e4fbc3e253e3f4e58039986e89492c02c812e703d69": "4c26da5ee3f61915d2df4167a53394b1f033623042a8d26ab7af5ef7",
+      "eab4c172777c708cd0bcac1a16d41b513e3a0f3dff8d182c2878947c": "68b23036da5530e5853357a8dc9d03dd8e851b0e29a3eaf61b55b6cc"
+    }
+  },
+  "systemStart": "2025-10-08T19:43:34Z",
+  "updateQuorum": 5
+}
