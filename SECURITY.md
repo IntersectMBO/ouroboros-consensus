@@ -36,7 +36,7 @@ Please include as much details as needed to clearly qualify the issue:
 
    a. **Rejection**: If the team rejects the report, detailed explanations will be provided by email or commenting on the relevant issue and the latter will be made public and closed as `Won't fix`.
 
-   b. **Acceptance**: If the team accepts the report, a CVE identifier will be requested through GitHub and a [private fork](https://docs.github.com/en/code-security/security-advisories/working-with-repository-security-advisories/collaborating-in-a-temporary-private-fork-to-resolve-a-repository-security-vulnerability) opened to work on a fix to the issue
+   b. **Acceptance**: If the team accepts the report, a CVE identifier will be requested through GitHub and a [private fork](https://docs.github.com/en/code-security/tutorials/fix-reported-vulnerabilities/collaborate-in-a-fork) opened to work on a fix to the issue
 
 3. **Resolution**: The team works to resolve the vulnerability in a
    timely manner. The timeline for resolution will depend on the
