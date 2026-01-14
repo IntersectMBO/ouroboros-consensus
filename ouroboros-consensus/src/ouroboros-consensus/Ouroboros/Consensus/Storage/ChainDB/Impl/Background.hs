@@ -44,6 +44,7 @@ import Control.Monad (forM_, forever, void)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Bifunctor
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import Data.Sequence.Strict (StrictSeq (..))
@@ -76,6 +77,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (Watcher (..), blockUntilJust, forkLinkedWatcher)
 import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import System.Random
 
 {-------------------------------------------------------------------------------
   Launch background tasks
@@ -97,7 +99,7 @@ launchBgTasks cdb@CDB{..} = do
       addBlockRunner cdbChainSelFuse cdb
 
   ledgerDbTasksTrigger <- newLedgerDbTasksTrigger
-  !ledgerDbMaintenaceThread <-
+  !ledgerDbMaintenanceThread <-
     forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
       ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
 
@@ -115,7 +117,7 @@ launchBgTasks cdb@CDB{..} = do
     writeTVar cdbKillBgThreads $
       sequence_
         [ addBlockThread
-        , cancelThread ledgerDbMaintenaceThread
+        , cancelThread ledgerDbMaintenanceThread
         , gcThread
         , copyToImmutableDBThread
         ]
@@ -321,9 +323,18 @@ ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
     , wReader = blockUntilJust $ withOriginToMaybe <$> readTVar varSt
     , wNotify = \slotNo -> do
         LedgerDB.tryFlush cdbLedgerDB
-        LedgerDB.tryTakeSnapshot cdbLedgerDB
+        now <- getMonotonicTime
+        LedgerDB.tryTakeSnapshot cdbLedgerDB now mkRandomDelay
         LedgerDB.garbageCollect cdbLedgerDB slotNo
     }
+ where
+  mkRandomDelay :: DiffTime -> DiffTime -> m DiffTime
+  mkRandomDelay minimumDelay maximumDelay = atomically $ do
+    stateTVar cdbSnapshotDelayRNG (randomSnapshotDelay (minimumDelay, maximumDelay))
+
+  randomSnapshotDelay :: (DiffTime, DiffTime) -> StdGen -> (DiffTime, StdGen)
+  randomSnapshotDelay (minimumDelay, maximumDelay) rng =
+    first fromInteger $ uniformR (floor minimumDelay, floor maximumDelay) rng
 
 {-------------------------------------------------------------------------------
   Executing garbage collection
