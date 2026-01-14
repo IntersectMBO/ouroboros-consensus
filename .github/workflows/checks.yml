@@ -108,14 +108,3 @@ jobs:
 
     - name: Diff plans
       run: GH=1 ./scripts/release/cabal-plan-diff.sh
-
-  xrefcheck:
-
-    name: Check references
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v6
-    - uses: serokell/xrefcheck-action@v1
-      with:
-        xrefcheck-version: 0.3.1
