@@ -47,8 +47,8 @@ instance EncCBOR (LegacyPParams ShelleyEra) where
   encCBOR (LegacyPParams (PParams ShelleyPParams{..})) =
     encode
       ( Rec mkLegacyShelleyPParams
-          !> To sppMinFeeA
-          !> To sppMinFeeB
+          !> To sppTxFeePerByte
+          !> To sppTxFeeFixed
           !> To sppMaxBBSize
           !> To sppMaxTxSize
           !> To sppMaxBHSize
@@ -109,8 +109,8 @@ instance ToCBOR (LegacyPParams AllegraEra) where
     toPlainEncoding (eraProtVerLow @AllegraEra) $
       encode
         ( Rec mkLegacyAllegraPParams
-            !> To sppMinFeeA
-            !> To sppMinFeeB
+            !> To sppTxFeePerByte
+            !> To sppTxFeeFixed
             !> To sppMaxBBSize
             !> To sppMaxTxSize
             !> To sppMaxBHSize
@@ -169,8 +169,8 @@ instance ToCBOR (LegacyPParams MaryEra) where
     toPlainEncoding (eraProtVerLow @MaryEra) $
       encode
         ( Rec mkLegacyMaryPParams
-            !> To sppMinFeeA
-            !> To sppMinFeeB
+            !> To sppTxFeePerByte
+            !> To sppTxFeeFixed
             !> To sppMaxBBSize
             !> To sppMaxTxSize
             !> To sppMaxBHSize
@@ -229,8 +229,8 @@ instance ToCBOR (LegacyPParams AlonzoEra) where
     toPlainEncoding (eraProtVerLow @AlonzoEra) $
       encode
         ( Rec mkLegacyAlonzoPParams
-            !> To appMinFeeA
-            !> To appMinFeeB
+            !> To appTxFeePerByte
+            !> To appTxFeeFixed
             !> To appMaxBBSize
             !> To appMaxTxSize
             !> To appMaxBHSize
@@ -304,8 +304,8 @@ instance ToCBOR (LegacyPParams BabbageEra) where
     toPlainEncoding (eraProtVerLow @BabbageEra) $
       encode
         ( Rec mkLegacyBabbagePParams
-            !> To bppMinFeeA
-            !> To bppMinFeeB
+            !> To bppTxFeePerByte
+            !> To bppTxFeeFixed
             !> To bppMaxBBSize
             !> To bppMaxTxSize
             !> To bppMaxBHSize
