@@ -98,7 +98,7 @@ genTx ::
   Gen.GenEnv MockCrypto ShelleyEra ->
   Gen (Maybe (GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)))
 genTx _cfg slotNo TickedShelleyLedgerState{tickedShelleyLedgerState} genEnv =
-  Just . mkShelleyTx
+  Just . mkShelleyGenTx
     <$> Gen.genTx
       genEnv
       ledgerEnv

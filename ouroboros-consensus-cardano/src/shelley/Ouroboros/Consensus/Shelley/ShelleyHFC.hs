@@ -397,8 +397,8 @@ instance
   where
   type TranslationError era (GenTx :.: ShelleyBlock proto) = SL.TranslationError era SL.Tx
   translateEra ctxt (Comp gtx) =
-    Comp . mkShelleyTx
-      <$> SL.translateEra ctxt (shelleyTx gtx)
+    Comp . mkShelleyGenTx
+      <$> SL.translateEra ctxt (shelleyGenTx gtx)
 
 instance
   ( ShelleyBasedEra era
@@ -412,9 +412,9 @@ instance
   translateEra ctxt (Comp (WrapValidatedGenTx vgtx)) =
     Comp
       . WrapValidatedGenTx
-      . mkShelleyValidatedTx
+      . mkShelleyValidatedGenTx
       . SL.coerceValidated
-      <$> SL.translateValidated @era @SL.Tx ctxt (SL.coerceValidated (shelleyValidatedTx vgtx))
+      <$> SL.translateValidated @era @SL.Tx ctxt (SL.coerceValidated (shelleyValidatedGenTx vgtx))
 
 {-------------------------------------------------------------------------------
   Canonical TxIn

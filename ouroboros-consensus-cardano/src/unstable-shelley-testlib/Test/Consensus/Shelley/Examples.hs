@@ -151,7 +151,7 @@ fromShelleyLedgerExamples
     blk = mkShelleyBlock pleBlock
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = Serialised "<BLOCK>"
-    tx = mkShelleyTx leTx
+    tx = mkShelleyGenTx leTx
     slotNo = SlotNo 42
     serialisedHeader =
       SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
@@ -287,7 +287,7 @@ fromShelleyLedgerExamplesPraos
       hSig = coerce bhSig
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = Serialised "<BLOCK>"
-    tx = mkShelleyTx leTx
+    tx = mkShelleyGenTx leTx
     slotNo = SlotNo 42
     serialisedHeader =
       SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")

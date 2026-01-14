@@ -116,7 +116,7 @@ import Ouroboros.Consensus.Shelley.Ledger
   , ShelleyBasedEra
   , ShelleyBlock
   , ShelleyCompatible
-  , mkShelleyTx
+  , mkShelleyGenTx
   )
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
@@ -500,7 +500,7 @@ mkSetDecentralizationParamTxs ::
   [GenTx (ShelleyBlock (TPraos c) ShelleyEra)]
 mkSetDecentralizationParamTxs coreNodes pVer ttl dNew =
   (: []) $
-    mkShelleyTx $
+    mkShelleyGenTx $
       SL.mkBasicTx body & SL.witsTxL .~ witnesses
  where
   -- The funds touched by this transaction assume it's the first transaction
@@ -621,7 +621,7 @@ mkMASetDecentralizationParamTxs ::
   [GenTx (ShelleyBlock proto era)]
 mkMASetDecentralizationParamTxs coreNodes pVer ttl dNew =
   (: []) $
-    mkShelleyTx $
+    mkShelleyGenTx $
       SL.mkBasicTx body & SL.witsTxL .~ witnesses
  where
   -- The funds touched by this transaction assume it's the first transaction
