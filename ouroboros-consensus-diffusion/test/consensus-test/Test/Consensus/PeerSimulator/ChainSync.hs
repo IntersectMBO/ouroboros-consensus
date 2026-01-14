@@ -57,7 +57,7 @@ import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit)
   , runPipelinedPeerWithLimits
   )
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ChainSync.ClientPipelined
   ( ChainSyncClientPipelined
   , chainSyncClientPeerPipelined
