@@ -1,5 +1,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -17,7 +19,7 @@ import qualified Cardano.Chain.Update as Update
 import Cardano.Crypto (RequiresNetworkMagic (..))
 import qualified Cardano.Crypto as Crypto
 import Cardano.Crypto.Raw (Raw)
-import Cardano.Ledger.Binary (unAnnotated)
+import Cardano.Ledger.Binary (unAnnotated, natVersion)
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Control.Monad.Except
 import Data.ByteString (ByteString)
@@ -32,8 +34,12 @@ import Ouroboros.Consensus.Byron.Node
 import Ouroboros.Consensus.Node.ProtocolInfo
 import TextBuilder (decimal)
 import Data.Void
+import Cardano.Ledger.BaseTypes (ProtVer(..))
 
 instance HasAnalysis ByronBlock where
+  -- Byron uses a different representation of protocols, I don't want to deal at
+  -- the moment. So I'm just putting a dummy protocol version.
+  protVer _ = ProtVer { pvMajor = (natVersion @0), pvMinor = 0 }
   type TxOf ByronBlock = Void -- dummy
   txs _ _ = mempty -- dummy
   type WitsOf ByronBlock = Void -- dummy

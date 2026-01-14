@@ -102,6 +102,8 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.SizeInBytes
 import qualified System.IO as IO
 import Data.Monoid
+import Numeric.Natural
+import Cardano.Ledger.BaseTypes (ProtVer(..), getVersion64)
 
 {-------------------------------------------------------------------------------
   Run the requested analysis
@@ -381,6 +383,11 @@ data BlockFeatures blk f = MkBlockFeatures
   , num_transactions :: f Int
   -- ^ Number of transaction in the block
   , era :: f Text
+  -- ^ Name of the block's era. 
+  , prot_major :: f Word64
+  -- ^ Major protocol version
+  , prot_minor :: f Natural
+  -- ^ Minor protocol version
   }
   deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
 
@@ -402,6 +409,8 @@ blockFeaturesNames =
     , predecessor = Const "predecessor"
     , num_transactions = Const "#transactions" -- TODO: compute in duckdb?
     , era = "era_name"
+    , prot_major = "major_protocol_version"
+    , prot_minor = "minor_protocol_version"
     }
 
 txFeaturesNames :: TxFeatures blk (Const String)
@@ -460,6 +469,8 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tra
           , predecessor = headerPrevHash <$> query_header cmp
           , num_transactions = length . toListOf HasAnalysis.txs <$> query_block cmp
           , era = HasAnalysis.eraName <$> query_block cmp
+          , prot_major = getVersion64 . pvMajor . HasAnalysis.protVer <$> query_block cmp
+          , prot_minor = pvMinor . HasAnalysis.protVer <$> query_block cmp
           }
     let line = csv $ Container $ bmapC @Condense (Const . condense . runIdentity) blockFeatures
     IO.hPutStrLn bh line

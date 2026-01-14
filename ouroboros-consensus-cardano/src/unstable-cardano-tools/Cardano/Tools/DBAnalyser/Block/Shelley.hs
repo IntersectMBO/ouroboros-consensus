@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Cardano.Tools.DBAnalyser.Block.Shelley
   ( Args (..)
@@ -60,16 +61,26 @@ import qualified Cardano.Ledger.Core as Ledger
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Cardano.Ledger.Allegra.Scripts
 import Data.Text (Text)
+import Data.Function ((&))
+import Ouroboros.Consensus.Shelley.Protocol.Abstract (ShelleyProtocolHeader)
+import Cardano.Protocol.TPraos.BHeader (BHeader(..), BHeaderRaw (..), BHBody (..))
+import Cardano.Ledger.MemoBytes (MemoBytes(..))
+import qualified Ouroboros.Consensus.Protocol.Praos
+import Cardano.Protocol.Crypto (Crypto)
+import Ouroboros.Consensus.Protocol.Praos.Header (Header(..),HeaderBody(..))
 
 -- | Usable for each Shelley-based era
 instance
   ( ShelleyCompatible proto era
   , PerEraAnalysis era
+  , HasProtoVer proto 
   , Scriptitude (Ledger.Script era)
   , EraHasName era
   ) =>
   HasAnalysis (ShelleyBlock proto era)
   where
+
+  protVer blk = Shelley.shelleyBlockRaw blk & SL.blockHeader & eraProtoVer
 
   type TxOf (ShelleyBlock proto era) = Ledger.Tx era
 
@@ -130,6 +141,15 @@ instance
   -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
 
+class HasProtoVer proto where
+  eraProtoVer :: ShelleyProtocolHeader proto -> SL.ProtVer
+
+instance HasProtoVer (Ouroboros.Consensus.Protocol.TPraos.TPraos c) where
+  eraProtoVer blk = blk & (\ (BHeaderConstr h ) -> h) & (\ (Memo h _) -> h) & bhrBody & bprotver
+    
+instance Crypto c => HasProtoVer (Ouroboros.Consensus.Protocol.Praos.Praos c) where
+  eraProtoVer blk = blk & headerBody & hbProtVer
+    
 class Scriptitude s where
   scripty_size :: s -> Int
 

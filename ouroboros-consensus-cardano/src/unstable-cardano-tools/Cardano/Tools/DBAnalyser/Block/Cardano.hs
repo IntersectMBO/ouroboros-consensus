@@ -313,6 +313,8 @@ data SomeScriptType where
   AScriptType :: HasAnalysis blk => ScriptType blk -> SomeScriptType
 
 instance HasAnalysis (CardanoBlock StandardCrypto) where
+  protVer = analyseBlock protVer
+  
   type TxOf (CardanoBlock StandardCrypto) = SomeTx
 
   txs inner =
@@ -332,7 +334,7 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
 
   scriptSize (AScriptType @blk scr) = scriptSize @blk scr
 
-  eraName = analyseBlock $ \ blk -> eraName blk
+  eraName = analyseBlock eraName
 
   countTxOutputs = analyseBlock countTxOutputs
   blockTxSizes = analyseBlock blockTxSizes

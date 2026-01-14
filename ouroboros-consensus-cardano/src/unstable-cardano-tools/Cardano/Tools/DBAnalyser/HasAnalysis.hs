@@ -24,6 +24,7 @@ import Lens.Micro
 import Data.Set (Set)
 import Cardano.Ledger.Api
 import Data.Text (Text)
+import Cardano.Ledger.BaseTypes (ProtVer)
 
 {-------------------------------------------------------------------------------
   HasAnalysis
@@ -38,6 +39,8 @@ data WithLedgerState blk = WithLedgerState
   }
 
 class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis blk where
+
+  protVer :: blk -> ProtVer
 
   type TxOf blk
 
