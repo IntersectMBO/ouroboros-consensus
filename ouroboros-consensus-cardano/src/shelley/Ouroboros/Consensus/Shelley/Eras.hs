@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -36,23 +35,23 @@ module Ouroboros.Consensus.Shelley.Eras
 import Cardano.Binary
 import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Allegra.Translation ()
-import Cardano.Ledger.Alonzo (AlonzoEra)
+import Cardano.Ledger.Alonzo (AlonzoEra, ApplyTxError (AlonzoApplyTxError))
 import Cardano.Ledger.Alonzo.Core as Core
 import qualified Cardano.Ledger.Alonzo.Rules as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import qualified Cardano.Ledger.Api.Era as L
-import Cardano.Ledger.Babbage (BabbageEra)
+import Cardano.Ledger.Babbage (ApplyTxError (BabbageApplyTxError), BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import Cardano.Ledger.BaseTypes
 import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
-import Cardano.Ledger.Conway (ConwayEra)
+import Cardano.Ledger.Conway (ApplyTxError (ConwayApplyTxError), ConwayEra)
 import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as Conway
 import qualified Cardano.Ledger.Conway.Rules as SL
   ( ConwayLedgerPredFailure (..)
   )
 import qualified Cardano.Ledger.Conway.State as CG
-import Cardano.Ledger.Dijkstra (DijkstraEra)
+import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError), DijkstraEra)
 import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
@@ -257,7 +256,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
     Intervene -> tx
 
   handler e = case (wti, e) of
-    (DoNotIntervene, SL.ApplyTxError (err :| []))
+    (DoNotIntervene, err)
       | isIncorrectClaimedFlag (Proxy @era) err ->
           -- rectify the flag and include the transaction
           --
@@ -280,10 +279,10 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
 
 class SupportsTwoPhaseValidation era where
   -- NOTE: this class won't be needed once https://github.com/IntersectMBO/cardano-ledger/issues/4167 is implemented.
-  isIncorrectClaimedFlag :: proxy era -> SL.PredicateFailure (Core.EraRule "LEDGER" era) -> Bool
+  isIncorrectClaimedFlag :: proxy era -> SL.ApplyTxError era -> Bool
 
 instance SupportsTwoPhaseValidation AlonzoEra where
-  isIncorrectClaimedFlag _ = \case
+  isIncorrectClaimedFlag _ (AlonzoApplyTxError (err :| [])) = case err of
     SL.UtxowFailure
       ( Alonzo.ShelleyInAlonzoUtxowPredFailure
           ( SL.UtxoFailure
@@ -294,12 +293,12 @@ instance SupportsTwoPhaseValidation AlonzoEra where
                     )
                 )
             )
-        ) ->
-        True
+        ) -> True
     _ -> False
+  isIncorrectClaimedFlag _ _ = False
 
 instance SupportsTwoPhaseValidation BabbageEra where
-  isIncorrectClaimedFlag _ = \case
+  isIncorrectClaimedFlag _ (BabbageApplyTxError (err :| [])) = case err of
     SL.UtxowFailure
       ( Babbage.AlonzoInBabbageUtxowPredFailure
           ( Alonzo.ShelleyInAlonzoUtxowPredFailure
@@ -327,9 +326,10 @@ instance SupportsTwoPhaseValidation BabbageEra where
             )
         ) -> True
     _ -> False
+  isIncorrectClaimedFlag _ _ = False
 
 instance SupportsTwoPhaseValidation ConwayEra where
-  isIncorrectClaimedFlag _ = \case
+  isIncorrectClaimedFlag _ (ConwayApplyTxError (err :| [])) = case err of
     SL.ConwayUtxowFailure
       ( Conway.UtxoFailure
           ( Conway.UtxosFailure
@@ -340,16 +340,20 @@ instance SupportsTwoPhaseValidation ConwayEra where
             )
         ) -> True
     _ -> False
+  isIncorrectClaimedFlag _ _ = False
 
 instance SupportsTwoPhaseValidation DijkstraEra where
-  isIncorrectClaimedFlag _ = \case
-    SL.DijkstraUtxowFailure
-      ( Dijkstra.UtxoFailure
-          ( Dijkstra.UtxosFailure
-              ( Conway.ValidationTagMismatch
-                  (Alonzo.IsValid _claimedFlag)
-                  _validationErrs
+  isIncorrectClaimedFlag _ (DijkstraApplyTxError (err :| [])) = case err of
+    Dijkstra.LedgerFailure
+      ( SL.DijkstraUtxowFailure
+          ( Dijkstra.UtxoFailure
+              ( Dijkstra.UtxosFailure
+                  ( Conway.ValidationTagMismatch
+                      (Alonzo.IsValid _claimedFlag)
+                      _validationErrs
+                    )
                 )
             )
         ) -> True
     _ -> False
+  isIncorrectClaimedFlag _ _ = False
