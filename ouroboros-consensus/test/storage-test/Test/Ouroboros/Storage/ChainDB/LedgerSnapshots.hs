@@ -70,6 +70,11 @@ tests =
     [ testProperty "InMemV1" $ prop_ledgerSnapshots inMemV1
     , testProperty "InMemV2" $ prop_ledgerSnapshots inMemV2
     , testProperty "LSM" $ \salt -> prop_ledgerSnapshots (lsm salt)
+    , testGroup "addBlocks while a snapshot is enqueued"
+      [ testProperty "InMemV1" $ prop_addBlocksWhileSnapshotting inMemV1
+      , testProperty "InMemV2" $ prop_addBlocksWhileSnapshotting inMemV2
+      , testProperty "LSM" $ \salt -> prop_addBlocksWhileSnapshotting (lsm salt)
+      ]
     ]
  where
   inMemV1, inMemV2 :: IOLike m => LedgerDbBackendArgs m TestBlock
@@ -104,6 +109,92 @@ prop_ledgerSnapshots lgrDbBackendArgs testSetup =
   case runSim (runTest lgrDbBackendArgs testSetup) of
     Right testOutcome -> checkTestOutcome testSetup testOutcome
     Left err -> counterexample ("Failure: " <> show err) False
+
+prop_addBlocksWhileSnapshotting ::
+  (forall m . IOLike m => LedgerDbBackendArgs m TestBlock) ->
+  TestSetup ->
+  Property
+prop_addBlocksWhileSnapshotting lgrDbBackendArgs testSetup =
+  case runSim (runAddBlocks lgrDbBackendArgs testSetup) of
+    Right outcome -> do
+      label (show (blocksAddedWhileSnapshotting outcome) <> " blocks were added while a snapshot was enqueued") $
+        totalBlocksAdded outcome === length (tsBlocksToAdd testSetup)
+    Left err -> counterexample ("Failure: " <> show err) False
+
+data AddBlockCount = AddBlockCount
+  { blocksAddedWhileSnapshotting :: !Int
+  , totalBlocksAdded :: !Int
+  } deriving (Show, Eq, Ord)
+
+instance Semigroup AddBlockCount where
+  a <> b = AddBlockCount
+    (blocksAddedWhileSnapshotting a + blocksAddedWhileSnapshotting b)
+    (totalBlocksAdded a + totalBlocksAdded b)
+
+instance Monoid AddBlockCount where
+  mempty = AddBlockCount 0 0
+  mappend = (<>)
+
+runAddBlocks ::
+  forall m.
+  IOLike m =>
+  LedgerDbBackendArgs m TestBlock ->
+  TestSetup ->
+  m AddBlockCount
+runAddBlocks lgrDbBackendArgs testSetup = withRegistry \registry -> do
+  isSnapshottingTMVar :: StrictTMVar m () <- newEmptyTMVarIO
+
+  (chainDB, _lgrHasFS) <- openChainDB registry (isSnapshottingTracer isSnapshottingTMVar)
+
+  addBlockCount <- for (tsBlocksToAdd testSetup) \blk -> do
+    isNotSnapshotting <- atomically $ isEmptyTMVar isSnapshottingTMVar
+
+    ChainDB.addBlock_ chainDB Punishment.noPunishment blk
+    threadDelay 1
+    pure $ AddBlockCount (if isNotSnapshotting then 0 else 1) 1
+
+  pure $ mconcat addBlockCount
+ where
+  openChainDB ::
+    ResourceRegistry m ->
+    Tracer m (ChainDB.TraceEvent TestBlock) ->
+    m (ChainDB m TestBlock, SomeHasFS m)
+  openChainDB registry cdbTracer = do
+    chainDbArgs <- do
+      mcdbNodeDBs <- emptyNodeDBs
+      let mcdbTopLevelConfig = singleNodeTestConfigWithK (tsSecParam testSetup)
+          cdbArgs =
+            fromMinimalChainDbArgs
+              MinimalChainDbArgs
+                { mcdbTopLevelConfig
+                , mcdbNodeDBs
+                , mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
+                , mcdbInitLedger = testInitExtLedger
+                , mcdbRegistry = registry
+                }
+          updLgrDbArgs a =
+            a
+              { ChainDB.cdbLgrDbArgs =
+                  (ChainDB.cdbLgrDbArgs a)
+                    { LedgerDB.lgrBackendArgs = lgrDbBackendArgs
+                    , LedgerDB.lgrSnapshotPolicyArgs = tsSnapshotPolicyArgs testSetup
+                    }
+              }
+      pure $ updLgrDbArgs $ ChainDB.updateTracer cdbTracer cdbArgs
+    (_, chainDB) <-
+      allocate
+        registry
+        (\_ -> ChainDB.openDB chainDbArgs)
+        (ChainDB.closeDB)
+    pure (chainDB, LedgerDB.lgrHasFS $ ChainDB.cdbLgrDbArgs chainDbArgs)
+
+  isSnapshottingTracer :: StrictTMVar m () -> Tracer m (ChainDB.TraceEvent TestBlock)
+  isSnapshottingTracer tmvar = Tracer \case
+    ChainDB.TraceLedgerDBEvent (LedgerDB.LedgerDBSnapshotEvent (SnapshotRequestDelayed _ _ _)) ->
+      atomically $ putTMVar tmvar ()
+    ChainDB.TraceLedgerDBEvent (LedgerDB.LedgerDBSnapshotEvent SnapshotRequestCompleted) ->
+      atomically $ takeTMVar tmvar
+    _ -> pure ()
 
 {-------------------------------------------------------------------------------
   Test setup
@@ -140,7 +231,10 @@ instance Arbitrary TestSnapshotPolicyArgs where
         [ (2, pure 0)
         , (1, secondsToDiffTime <$> choose (1, 10))
         ]
-    tspaDelaySnapshotRange <- oneof [arbitraryDelaySnapshotRange, pure (0, 0)]
+    tspaDelaySnapshotRange <- oneof
+      [ arbitraryDelaySnapshotRange
+      , pure (0, 0)
+      ]
     pure
       TestSnapshotPolicyArgs
         { tspaNum
