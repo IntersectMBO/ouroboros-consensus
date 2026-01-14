@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-12-03T15:53:31Z
+  , hackage.haskell.org 2026-01-13T22:44:04Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2025-10-07T11:20:00Z
+  , cardano-haskell-packages 2026-01-08T17:40:53Z
 
 packages:
   ouroboros-consensus
@@ -45,6 +45,20 @@ if os (windows)
   constraints:
     bitvec -simd
 
+allow-newer:
+  cardano-data,
+  cardano-ledger-babbage,
+  cardano-ledger-binary,
+  cardano-ledger-byron,
+  cardano-ledger-core,
+  cardano-ledger-mary,
+  cardano-ledger-shelley,
+  cardano-protocol-tpraos,
+  cardano-crypto-class,
+  cardano-crypto-test,
+  cardano-crypto-tests,
+  cardano-crypto-wrapper
+
 if impl (ghc >= 9.10)
   allow-newer:
     -- https://github.com/phadej/regression-simple/pull/14
@@ -52,9 +66,25 @@ if impl (ghc >= 9.10)
 
 source-repository-package
   type: git
+  location: https://github.com/IntersectMBO/cardano-base.git
+  tag: 7965da1784b99a84a4b9561f5dae35316df715a4
+  subdir: cardano-crypto-peras
+          measures
+          orphans-deriving-via
+          cardano-git-rev
+          cardano-crypto-praos
+          cardano-base
+          base-deriving-via
+          cardano-crypto-class
+          cardano-strict-containers
+          cardano-binary
+          cardano-slotting
+  --sha256: sha256-iBGFR1mgiAIq/E0JR+xcFgJ6C/H1XIWNyD/CPMPzxI0=
+
+source-repository-package
+  type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: fb09078fa55015c881303a2ddb609c024cec258f
-  --sha256: sha256-9Y9CRiyMn0AWD+C4aNVMaJgrj3FDAYfCX4VrLvtoMaI=
+  tag: 8d6755b339ecc5fec84bcebe7e04412bae0c9333
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
@@ -73,12 +103,12 @@ source-repository-package
     libs/non-integral
     libs/small-steps
     libs/cardano-data
-    libs/set-algebra
     libs/vector-map
     eras/byron/chain/executable-spec
     eras/byron/ledger/executable-spec
     eras/byron/ledger/impl
     eras/byron/crypto
+  --sha256: 0zv8hc0gz6l1k4cavrw09wwdv2h1kn9bfk08w718gpfx6z8x3k9a
 
 -- Backported version of https://github.com/IntersectMBO/ouroboros-network/pull/5161
 source-repository-package
