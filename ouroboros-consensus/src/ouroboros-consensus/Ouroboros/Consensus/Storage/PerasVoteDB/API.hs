@@ -2,8 +2,11 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteDB (..)
@@ -19,8 +22,14 @@ import Data.Map (Map)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
-import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( PerasCert
+  , ValidatedPerasCert (..)
+  , ValidatedPerasVote
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
+import Ouroboros.Consensus.Peras.Vote (PerasVoteId)
 import Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM (STM))
 
 data PerasVoteDB m blk = PerasVoteDB
@@ -41,8 +50,12 @@ data AddPerasVoteResult blk
   = PerasVoteAlreadyInDB
   | AddedPerasVoteButDidntGenerateNewCert
   | AddedPerasVoteAndGeneratedNewCert (ValidatedPerasCert blk)
-  deriving stock (Generic, Eq, Ord, Show)
-  deriving anyclass NoThunks
+
+deriving instance Show (PerasCert blk) => Show (AddPerasVoteResult blk)
+deriving instance Eq (PerasCert blk) => Eq (AddPerasVoteResult blk)
+deriving instance Ord (PerasCert blk) => Ord (AddPerasVoteResult blk)
+deriving instance Generic (AddPerasVoteResult blk)
+deriving instance NoThunks (PerasCert blk) => NoThunks (AddPerasVoteResult blk)
 
 data PerasVoteSnapshot blk = PerasVoteSnapshot
   { containsVote :: PerasVoteId blk -> Bool

@@ -178,6 +178,7 @@ showTracers ::
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
+  , Show (PerasCert blk)
   , Show remotePeer
   , LedgerSupportsProtocol blk
   ) =>

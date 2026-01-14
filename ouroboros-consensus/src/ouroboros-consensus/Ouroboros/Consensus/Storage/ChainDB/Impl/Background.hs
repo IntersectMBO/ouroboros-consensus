@@ -89,6 +89,7 @@ launchBgTasks ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   ) =>
@@ -605,6 +606,7 @@ addBlockRunner ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack

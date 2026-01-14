@@ -2,10 +2,13 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.PerasCertDB.Impl
   ( -- * Opening
@@ -33,6 +36,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Storage.PerasCertDB.API
 import Ouroboros.Consensus.Util.Args
@@ -58,7 +62,7 @@ defaultArgs =
 openDB ::
   forall m blk.
   ( IOLike m
-  , StandardHash blk
+  , BlockSupportsPeras blk
   ) =>
   Complete PerasCertDbArgs m blk ->
   m (PerasCertDB m blk)
@@ -151,7 +155,7 @@ implCloseDB (PerasCertDbHandle varState) =
 -- see https://github.com/tweag/cardano-peras/issues/120
 implAddCert ::
   ( IOLike m
-  , StandardHash blk
+  , BlockSupportsPeras blk
   ) =>
   PerasCertDbEnv m blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
@@ -235,7 +239,9 @@ implGetLatestCertSeen PerasCertDbEnv{pcdbVolatileState} =
 
 implGarbageCollect ::
   forall m blk.
-  IOLike m =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   PerasCertDbEnv m blk -> SlotNo -> m ()
 implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
   -- No need to update the 'Fingerprint' as we only remove certificates that do
@@ -286,8 +292,14 @@ data PerasVolatileCertState blk = PerasVolatileCertState
   -- ^ The certificate with the highest round number that has been added to the
   -- db since it has been opened.
   }
-  deriving stock (Show, Generic)
-  deriving anyclass NoThunks
+
+deriving instance Generic (PerasVolatileCertState blk)
+deriving instance
+  (StandardHash blk, Show (PerasCert blk)) =>
+  Show (PerasVolatileCertState blk)
+deriving instance
+  (StandardHash blk, NoThunks (PerasCert blk)) =>
+  NoThunks (PerasVolatileCertState blk)
 
 initialPerasVolatileCertState :: WithFingerprint (PerasVolatileCertState blk)
 initialPerasVolatileCertState =
@@ -304,7 +316,7 @@ initialPerasVolatileCertState =
 -- | Check that the fields of 'PerasVolatileCertState' are in sync.
 invariantForPerasVolatileCertState ::
   forall blk.
-  StandardHash blk =>
+  BlockSupportsPeras blk =>
   WithFingerprint (PerasVolatileCertState blk) -> Either String ()
 invariantForPerasVolatileCertState pvcs = do
   for_ (Map.toList pvcsCerts) $ \(roundNo, vpc) ->

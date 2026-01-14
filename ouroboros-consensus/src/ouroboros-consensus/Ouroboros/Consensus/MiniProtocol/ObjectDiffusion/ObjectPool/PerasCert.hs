@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
@@ -21,6 +22,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , addArrivalTime
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
@@ -36,7 +38,9 @@ takeAscMap :: Int -> Map k v -> Map k v
 takeAscMap n = Map.fromDistinctAscList . take n . Map.toAscList
 
 makePerasCertPoolReaderFromSnapshot ::
-  IOLike m =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   STM m (PerasCertSnapshot blk) ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromSnapshot getCertSnapshot =
@@ -59,47 +63,70 @@ makePerasCertPoolReaderFromSnapshot getCertSnapshot =
     }
 
 makePerasCertPoolReaderFromCertDB ::
-  IOLike m =>
-  PerasCertDB m blk -> ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
+  PerasCertDB m blk ->
+  ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromCertDB perasCertDB =
   makePerasCertPoolReaderFromSnapshot (PerasCertDB.getCertSnapshot perasCertDB)
 
 makePerasCertPoolWriterFromCertDB ::
-  (StandardHash blk, IOLike m) =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
+  PerasCfg blk ->
   SystemTime m ->
   PerasCertDB m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
-makePerasCertPoolWriterFromCertDB systemTime perasCertDB =
+makePerasCertPoolWriterFromCertDB perasCfg systemTime perasCertDB =
   ObjectPoolWriter
     { opwObjectId = getPerasCertRound
-    , opwAddObjects = addPerasCerts systemTime (PerasCertDB.addCert perasCertDB)
+    , opwAddObjects =
+        addPerasCerts
+          perasCfg
+          systemTime
+          (PerasCertDB.addCert perasCertDB)
     , opwHasObject = do
         certSnapshot <- PerasCertDB.getCertSnapshot perasCertDB
         pure $ PerasCertDB.containsCert certSnapshot
     }
 
 makePerasCertPoolReaderFromChainDB ::
-  IOLike m =>
-  ChainDB m blk -> ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
+  ChainDB m blk ->
+  ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromChainDB chainDB =
   makePerasCertPoolReaderFromSnapshot (ChainDB.getPerasCertSnapshot chainDB)
 
 makePerasCertPoolWriterFromChainDB ::
-  (StandardHash blk, IOLike m) =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
+  PerasCfg blk ->
   SystemTime m ->
   ChainDB m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
-makePerasCertPoolWriterFromChainDB systemTime chainDB =
+makePerasCertPoolWriterFromChainDB perasCfg systemTime chainDB =
   ObjectPoolWriter
     { opwObjectId = getPerasCertRound
-    , opwAddObjects = addPerasCerts systemTime (ChainDB.addPerasCertAsync chainDB)
+    , opwAddObjects =
+        addPerasCerts
+          perasCfg
+          systemTime
+          (ChainDB.addPerasCertAsync chainDB)
     , opwHasObject = do
         certSnapshot <- ChainDB.getPerasCertSnapshot chainDB
         pure $ PerasCertDB.containsCert certSnapshot
     }
 
-data PerasCertInboundException
-  = forall blk. PerasCertValidationError (PerasValidationErr blk)
+data PerasCertInboundException where
+  PerasCertValidationError ::
+    BlockSupportsPeras blk =>
+    PerasValidationErr blk ->
+    PerasCertInboundException
 
 deriving instance Show PerasCertInboundException
 
@@ -108,15 +135,14 @@ instance Exception PerasCertInboundException
 -- | Validate a list of 'PerasCert's, throwing a 'PerasCertInboundException' if
 -- any of them are invalid.
 validatePerasCerts ::
-  (StandardHash blk, MonadThrow m) =>
+  ( BlockSupportsPeras blk
+  , MonadThrow m
+  ) =>
+  PerasCfg blk ->
   [PerasCert blk] ->
   m [ValidatedPerasCert blk]
-validatePerasCerts certs = do
-  let perasParams = mkPerasParams
-  -- TODO pass down 'BlockConfig' when all the plumbing is in place
-  -- see https://github.com/tweag/cardano-peras/issues/73
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  case traverse (validatePerasCert perasParams) certs of
+validatePerasCerts perasCfg certs = do
+  case traverse (validatePerasCert perasCfg) certs of
     Left validationErr -> throw (PerasCertValidationError validationErr)
     Right validatedCerts -> return validatedCerts
 
@@ -130,12 +156,15 @@ validatePerasCerts certs = do
 -- rather arbitrary, and the abstract Peras protocol just assumes it can happen
 -- "within" a slot.
 addPerasCerts ::
-  (StandardHash blk, MonadThrow m) =>
+  ( BlockSupportsPeras blk
+  , MonadThrow m
+  ) =>
+  PerasCfg blk ->
   SystemTime m ->
   (WithArrivalTime (ValidatedPerasCert blk) -> m a) ->
   [PerasCert blk] ->
   m ()
-addPerasCerts systemTime adder certs = do
-  validatePerasCerts certs
+addPerasCerts perasCfg systemTime adder certs = do
+  validatePerasCerts perasCfg certs
     >>= mapM (addArrivalTime systemTime)
     >>= mapM_ adder

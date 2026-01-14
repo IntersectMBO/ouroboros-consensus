@@ -23,6 +23,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
+import Ouroboros.Consensus.HardFork.Combinator.Node.Peras ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck ()
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.Node.NetworkProtocolVersion

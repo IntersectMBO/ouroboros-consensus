@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Peras.SelectView
 
 import Data.Function (on)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)

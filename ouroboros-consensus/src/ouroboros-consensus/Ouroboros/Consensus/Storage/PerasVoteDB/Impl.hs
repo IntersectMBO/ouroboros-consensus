@@ -11,8 +11,11 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
   ( -- * Opening
@@ -30,7 +33,6 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
 import Control.Monad (when)
 import Control.Monad.Except (throwError)
 import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Data (Typeable)
 import Data.Foldable (for_)
 import Data.Foldable qualified as Foldable
 import Data.Kind (Type)
@@ -42,6 +44,13 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (forgetArrivalTime))
+import Ouroboros.Consensus.Peras.Params (PerasParams)
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
+import Ouroboros.Consensus.Peras.Vote
+  ( PerasVoteId (..)
+  , PerasVoteStake
+  , PerasVoteTarget
+  )
 import Ouroboros.Consensus.Peras.Vote.Aggregation
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
 import Ouroboros.Consensus.Util.Args
@@ -69,8 +78,8 @@ defaultArgs =
 openDB ::
   forall m blk.
   ( IOLike m
-  , StandardHash blk
-  , Typeable blk
+  , BlockSupportsPeras blk
+  , PerasCfg blk ~ PerasParams
   ) =>
   Complete PerasVoteDbArgs m blk ->
   m (PerasVoteDB m blk)
@@ -121,7 +130,7 @@ data PerasVoteDbEnv m blk = PerasVoteDbEnv
 
 getEnv ::
   forall m r blk.
-  (IOLike m, HasCallStack, StandardHash blk, Typeable blk) =>
+  (IOLike m, HasCallStack, BlockSupportsPeras blk) =>
   PerasVoteDbHandle m blk ->
   (PerasVoteDbEnv m blk -> m r) ->
   m r
@@ -131,7 +140,7 @@ getEnv (PerasVoteDbHandle varState) f =
     PerasVoteDbClosed -> throwIO $ ClosedDBError @blk prettyCallStack
 
 getEnv1 ::
-  (IOLike m, HasCallStack, StandardHash blk, Typeable blk) =>
+  (IOLike m, HasCallStack, BlockSupportsPeras blk) =>
   PerasVoteDbHandle m blk ->
   (PerasVoteDbEnv m blk -> a -> m r) ->
   a ->
@@ -140,7 +149,7 @@ getEnv1 h f a = getEnv h (\env -> f env a)
 
 getEnvSTM ::
   forall m r blk.
-  (IOLike m, HasCallStack, StandardHash blk, Typeable blk) =>
+  (IOLike m, HasCallStack, BlockSupportsPeras blk) =>
   PerasVoteDbHandle m blk ->
   (PerasVoteDbEnv m blk -> STM m r) ->
   STM m r
@@ -150,7 +159,7 @@ getEnvSTM (PerasVoteDbHandle varState) f =
     PerasVoteDbClosed -> throwIO $ ClosedDBError @blk prettyCallStack
 
 getEnvSTM1 ::
-  (IOLike m, HasCallStack, StandardHash blk, Typeable blk) =>
+  (IOLike m, HasCallStack, BlockSupportsPeras blk) =>
   PerasVoteDbHandle m blk ->
   (PerasVoteDbEnv m blk -> a -> STM m r) ->
   a ->
@@ -173,8 +182,8 @@ implCloseDB (PerasVoteDbHandle varState) =
 -- see https://github.com/tweag/cardano-peras/issues/120
 implAddVote ::
   ( IOLike m
-  , StandardHash blk
-  , Typeable blk
+  , BlockSupportsPeras blk
+  , PerasCfg blk ~ PerasParams
   ) =>
   PerasCfg blk ->
   PerasVoteDbEnv m blk ->
@@ -230,14 +239,13 @@ implAddVote perasCfg PerasVoteDbEnv{pvdbTracer, pvdbPerasVoteStateVar} vote = do
         Right (VoteDidntGenerateNewCert, pvsRoundVoteStates') -> do
           pure (AddedPerasVoteButDidntGenerateNewCert, pvsRoundVoteStates')
         -- Adding the vote led to more than one winner => internal error
-        Left (RoundVoteStateLoserAboveQuorum winnerState loserState) ->
+        Left (RoundVoteStateLoserAboveQuorum winner loser) ->
           throwSTM $
             MultipleWinnersInRound
               (getPerasVoteRound vote)
-              (getPerasVoteBlock winnerState)
               (vpvVoteStake (forgetArrivalTime vote))
-              (getPerasVoteBlock loserState)
-              (vpvVoteStake (forgetArrivalTime vote))
+              winner
+              loser
         -- Reached quorum but failed to forge a certificate
         Left (RoundVoteStateForgingCertError forgeErr) ->
           throwSTM $
@@ -280,7 +288,9 @@ implForgedCertForRound PerasVoteDbEnv{pvdbPerasVoteStateVar} roundNo = do
 
 implGarbageCollect ::
   forall m blk.
-  IOLike m =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   PerasVoteDbEnv m blk -> PerasRoundNo -> m ()
 implGarbageCollect PerasVoteDbEnv{pvdbPerasVoteStateVar} roundNo =
   -- No need to update the 'Fingerprint' as we only remove votes that do
@@ -333,8 +343,22 @@ data PerasVolatileVoteState blk = PerasVolatileVoteState
   , pvvsLastTicketNo :: !PerasVoteTicketNo
   -- ^ The most recent 'PerasVoteTicketNo' (or 'zeroPerasVoteTicketNo' otherwise).
   }
-  deriving stock (Show, Generic)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasCert blk)
+  , Show (PerasVote blk)
+  ) =>
+  Show (PerasVolatileVoteState blk)
+
+deriving instance Generic (PerasVolatileVoteState blk)
+
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasCert blk)
+  , NoThunks (PerasVote blk)
+  ) =>
+  NoThunks (PerasVolatileVoteState blk)
 
 initialPerasVolatileVoteState :: WithFingerprint (PerasVolatileVoteState blk)
 initialPerasVolatileVoteState =
@@ -349,10 +373,12 @@ initialPerasVolatileVoteState =
 
 -- | Check that the fields of 'PerasVoteState' are in sync.
 invariantForPerasVolatileVoteState ::
-  WithFingerprint (PerasVolatileVoteState blk) -> Either String ()
+  BlockSupportsPeras blk =>
+  WithFingerprint (PerasVolatileVoteState blk) ->
+  Either String ()
 invariantForPerasVolatileVoteState pvs = do
   for_ (Map.toList pvvsRoundVoteStates) $ \(roundNo, prvs) ->
-    checkEqual "pvcRoundVoteStates rounds" roundNo (getPerasVoteRound prvs)
+    checkEqual "pvcRoundVoteStates rounds" roundNo (prvsRoundNo prvs)
   checkEqual
     "pvcsVotesByTicket"
     (Set.fromList (getPerasVoteRound <$> Map.elems pvvsVotesByTicket))
@@ -387,7 +413,10 @@ data TraceEvent blk
   | AddedPerasVote (PerasVoteId blk)
   | IgnoredVoteAlreadyInDB (PerasVoteId blk)
   | GeneratedPerasCert (ValidatedPerasCert blk)
-  deriving stock (Show, Eq, Generic)
+
+deriving instance BlockSupportsPeras blk => Show (TraceEvent blk)
+deriving instance BlockSupportsPeras blk => Eq (TraceEvent blk)
+deriving instance Generic (TraceEvent blk)
 
 {-------------------------------------------------------------------------------
   Exceptions
@@ -397,8 +426,10 @@ data PerasVoteDbError blk
   = -- | Attempted to use a closed database
     ClosedDBError PrettyCallStack
   | -- | Attempted to add a vote that would lead to multiple winners for the same round
-    MultipleWinnersInRound PerasRoundNo (Point blk) PerasVoteStake (Point blk) PerasVoteStake
+    MultipleWinnersInRound PerasRoundNo PerasVoteStake (Point blk) (Point blk)
   | -- | An error occurred while forging a certificate
     ForgingCertError (PerasForgeErr blk)
-  deriving stock Show
-  deriving anyclass Exception
+
+deriving instance BlockSupportsPeras blk => Show (PerasVoteDbError blk)
+
+instance BlockSupportsPeras blk => Exception (PerasVoteDbError blk)

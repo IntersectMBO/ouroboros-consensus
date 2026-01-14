@@ -39,6 +39,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.Peras.Params (PerasRoundLength (..))
 
 {-------------------------------------------------------------------------------
   OVERVIEW

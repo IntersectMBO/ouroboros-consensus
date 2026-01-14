@@ -38,6 +38,8 @@ import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.HardFork.History (Bound (..))
 import qualified Ouroboros.Consensus.HardFork.History as HF
 import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (..))
+import Ouroboros.Consensus.Peras.Params (PerasRoundLength (..))
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo (..))
 import Test.QuickCheck
 
 {-------------------------------------------------------------------------------

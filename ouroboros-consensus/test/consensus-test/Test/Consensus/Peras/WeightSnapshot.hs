@@ -23,6 +23,7 @@ import Data.Maybe (catMaybes, fromJust)
 import Data.Traversable (for)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -67,7 +68,8 @@ prop_perasWeightSnapshot testSetup =
               [ counterexample ("Incorrect volatile suffix for " <> condense frag) $
                   takeVolatileSuffixReference frag =:= volSuffix
               , counterexample ("Volatile suffix must be a suffix of" <> condense frag) $
-                  AF.headPoint frag =:= AF.headPoint volSuffix
+                  AF.headPoint frag
+                    =:= AF.headPoint volSuffix
                     .&&. AF.withinFragmentBounds (AF.anchorPoint volSuffix) frag
               , counterexample ("A longer volatile suffix still has total weight at most k") $
                   let isImproperSuffix = AF.length volSuffix == AF.length frag
@@ -134,7 +136,8 @@ prop_fragmentInduction snap =
       weightBoostOfFragment snap frag === mempty
     b AF.:< frag' ->
       weightBoostOfFragment snap frag
-        === weightBoostOfPoint snap (blockPoint b) <> weightBoostOfFragment snap frag'
+        === weightBoostOfPoint snap (blockPoint b)
+          <> weightBoostOfFragment snap frag'
 
   fromRight :: AnchoredFragment TestBlock -> Property
   fromRight frag = case frag of
@@ -142,7 +145,8 @@ prop_fragmentInduction snap =
       weightBoostOfFragment snap frag === mempty
     frag' AF.:> b ->
       weightBoostOfFragment snap frag
-        === weightBoostOfPoint snap (blockPoint b) <> weightBoostOfFragment snap frag'
+        === weightBoostOfPoint snap (blockPoint b)
+          <> weightBoostOfFragment snap frag'
 
 data TestSetup = TestSetup
   { tsWeights :: Map (Point TestBlock) PerasWeight

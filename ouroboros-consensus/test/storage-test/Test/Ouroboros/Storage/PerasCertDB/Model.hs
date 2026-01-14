@@ -34,7 +34,11 @@ data Model blk = Model
   }
   deriving Generic
 
-deriving instance StandardHash blk => Show (Model blk)
+deriving instance
+  ( StandardHash blk
+  , Show (PerasCert blk)
+  ) =>
+  Show (Model blk)
 
 initModel :: Model blk
 initModel = Model{open = False, certs = Set.empty, latestCertSeen = Nothing}
@@ -46,7 +50,7 @@ closeDB :: Model blk -> Model blk
 closeDB _ = Model{open = False, certs = Set.empty, latestCertSeen = Nothing}
 
 addCert ::
-  StandardHash blk =>
+  BlockSupportsPeras blk =>
   Model blk -> WithArrivalTime (ValidatedPerasCert blk) -> Model blk
 addCert model@Model{certs} cert
   | certs `hasRoundNo` cert = model
@@ -56,6 +60,7 @@ addCert model@Model{certs} cert
   roundNo = getPerasCertRound . forgetArrivalTime
 
 hasRoundNo ::
+  BlockSupportsPeras blk =>
   Set (WithArrivalTime (ValidatedPerasCert blk)) ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   Bool
@@ -63,7 +68,7 @@ hasRoundNo certs cert =
   (getPerasCertRound cert) `Set.member` (Set.map getPerasCertRound certs)
 
 getWeightSnapshot ::
-  StandardHash blk =>
+  BlockSupportsPeras blk =>
   Model blk -> PerasWeightSnapshot blk
 getWeightSnapshot Model{certs} =
   mkPerasWeightSnapshot
@@ -76,7 +81,9 @@ getLatestCertSeen ::
 getLatestCertSeen Model{latestCertSeen} =
   latestCertSeen
 
-garbageCollect :: SlotNo -> Model blk -> Model blk
+garbageCollect ::
+  BlockSupportsPeras blk =>
+  SlotNo -> Model blk -> Model blk
 garbageCollect slot model@Model{certs} =
   model{certs = Set.filter keepCert certs}
  where
