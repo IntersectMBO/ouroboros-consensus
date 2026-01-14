@@ -332,6 +332,8 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
 
   scriptSize (AScriptType @blk scr) = scriptSize @blk scr
 
+  eraName = analyseBlock $ \ blk -> eraName blk
+
   countTxOutputs = analyseBlock countTxOutputs
   blockTxSizes = analyseBlock blockTxSizes
   knownEBBs _ =

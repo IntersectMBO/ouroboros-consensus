@@ -23,6 +23,7 @@ import TextBuilder (TextBuilder)
 import Lens.Micro
 import Data.Set (Set)
 import Cardano.Ledger.Api
+import Data.Text (Text)
 
 {-------------------------------------------------------------------------------
   HasAnalysis
@@ -53,6 +54,8 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
   scriptWits :: SimpleGetter (WitsOf blk) (Map ScriptHash (ScriptType blk))
 
   scriptSize :: ScriptType blk -> Int
+
+  eraName :: blk -> Text
 
 
   countTxOutputs :: blk -> Int

@@ -1,3 +1,5 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -57,12 +59,14 @@ import TextBuilder (decimal)
 import qualified Cardano.Ledger.Core as Ledger
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Cardano.Ledger.Allegra.Scripts
+import Data.Text (Text)
 
 -- | Usable for each Shelley-based era
 instance
   ( ShelleyCompatible proto era
   , PerEraAnalysis era
   , Scriptitude (Ledger.Script era)
+  , EraHasName era
   ) =>
   HasAnalysis (ShelleyBlock proto era)
   where
@@ -77,6 +81,8 @@ instance
   addrWits = Ledger.addrTxWitsL
   scriptWits = Ledger.scriptTxWitsL
   scriptSize = scripty_size
+
+  eraName _ = eraEraName @era
 
   countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
     SL.Block _ body -> getSum $ foldMap (Sum . countOutputs) (body ^. Core.txSeqBlockBodyL)
@@ -141,6 +147,30 @@ instance {-# OVERLAPPABLE #-} Scriptitude (Alonzo.AlonzoScript era) where
   
 instance Scriptitude (Alonzo.AlonzoScript ConwayEra) where
   scripty_size scr = packedByteCount scr
+
+class EraHasName era where
+  eraEraName :: Text
+
+instance EraHasName ShelleyEra where
+  eraEraName = "Shelley"
+
+instance EraHasName AllegraEra where
+  eraEraName = "Allegra"
+
+instance EraHasName MaryEra where
+  eraEraName = "Mary"
+
+instance EraHasName AlonzoEra where
+  eraEraName = "Alonzo"
+
+instance EraHasName BabbageEra where
+  eraEraName = "Babbage"
+
+instance EraHasName ConwayEra where
+  eraEraName = "Conway"
+
+instance EraHasName DijkstraEra where
+  eraEraName = "Dijkstra"
   
 class PerEraAnalysis era where
   txExUnitsSteps :: Maybe (Core.Tx era -> Word64)

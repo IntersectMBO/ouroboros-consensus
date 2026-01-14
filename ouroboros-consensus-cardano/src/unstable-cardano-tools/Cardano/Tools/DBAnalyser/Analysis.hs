@@ -32,6 +32,7 @@ module Cardano.Tools.DBAnalyser.Analysis
   , runAnalysis
   ) where
 
+import Data.Text (Text)
 import Barbies
 import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
@@ -379,6 +380,7 @@ data BlockFeatures blk f = MkBlockFeatures
   -- ^ The hash of this block's predecessor
   , num_transactions :: f Int
   -- ^ Number of transaction in the block
+  , era :: f Text
   }
   deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
 
@@ -399,6 +401,7 @@ blockFeaturesNames =
     , is_ebb = Const "is_ebb?"
     , predecessor = Const "predecessor"
     , num_transactions = Const "#transactions" -- TODO: compute in duckdb?
+    , era = "era_name"
     }
 
 txFeaturesNames :: TxFeatures blk (Const String)
@@ -456,6 +459,7 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tra
           , is_ebb = query_is_ebb cmp
           , predecessor = headerPrevHash <$> query_header cmp
           , num_transactions = length . toListOf HasAnalysis.txs <$> query_block cmp
+          , era = HasAnalysis.eraName <$> query_block cmp
           }
     let line = csv $ Container $ bmapC @Condense (Const . condense . runIdentity) blockFeatures
     IO.hPutStrLn bh line
