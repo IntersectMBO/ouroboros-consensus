@@ -395,6 +395,7 @@ data TxFeatures blk f = MkTxFeatures
   { src_block :: f BlockNo
   , num_script_wits :: f Int
   , size_script_wits :: f Int
+  , size_datum :: f Int
   , num_inputs :: f Int
   , num_outputs :: f Int
   }
@@ -421,6 +422,7 @@ txFeaturesNames =
     { src_block = "block_id"
     , num_script_wits = "#script_wits"
     , size_script_wits = "script_wits_size"
+    , size_datum = "datum_size"
     , num_inputs = "#inputs"
     , num_outputs = "#outputs"
     }
@@ -489,6 +491,7 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tra
           { src_block = blockNo <$> query_header cmp
           , num_script_wits = Identity $ length $ toListOf script_wits tx
           , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize @blk)) Sum tx
+          , size_datum = Identity $ tx ^. (HasAnalysis.wits @blk . to (HasAnalysis.datumSize @blk))
           , num_inputs = Identity $ HasAnalysis.numInputs @blk tx
           , num_outputs = Identity $ HasAnalysis.numOutputs @blk tx
           }

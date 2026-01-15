@@ -51,9 +51,11 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
 
   type WitsOf blk
 
-  wits :: SimpleFold (TxOf blk) (WitsOf blk)
+  wits :: SimpleGetter (TxOf blk) (WitsOf blk)
 
   addrWits :: Lens' (WitsOf blk) (Set (WitVKey Witness))
+
+  datumSize :: WitsOf blk -> Int
 
   type ScriptType blk
 

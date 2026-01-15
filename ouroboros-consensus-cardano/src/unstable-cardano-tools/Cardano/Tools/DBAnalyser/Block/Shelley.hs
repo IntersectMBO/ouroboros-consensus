@@ -16,6 +16,7 @@ module Cardano.Tools.DBAnalyser.Block.Shelley
   , ShelleyBlockArgs
   ) where
 
+import qualified Data.ByteString.Short as ByteString.Short
 import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Alonzo (AlonzoEra)
 import qualified Cardano.Ledger.Alonzo.Scripts as Alonzo
@@ -64,10 +65,11 @@ import Data.Text (Text)
 import Data.Function ((&))
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ShelleyProtocolHeader)
 import Cardano.Protocol.TPraos.BHeader (BHeader(..), BHeaderRaw (..), BHBody (..))
-import Cardano.Ledger.MemoBytes (MemoBytes(..))
+import Cardano.Ledger.MemoBytes (MemoBytes(..), getMemoRawBytes)
 import qualified Ouroboros.Consensus.Protocol.Praos
 import Cardano.Protocol.Crypto (Crypto)
 import Ouroboros.Consensus.Protocol.Praos.Header (Header(..),HeaderBody(..))
+import Cardano.Ledger.Api.Tx.Wits
 
 -- | Usable for each Shelley-based era
 instance
@@ -76,6 +78,7 @@ instance
   , HasProtoVer proto 
   , Scriptitude (Ledger.Script era)
   , EraHasName era
+  , EraDatum era
   ) =>
   HasAnalysis (ShelleyBlock proto era)
   where
@@ -88,6 +91,8 @@ instance
 
   numInputs tx = length $ toListOf (Core.bodyTxL . Core.inputsTxBodyL) tx
   numOutputs tx = length $ toListOf (Core.bodyTxL . Core.outputsTxBodyL) tx
+
+  datumSize = eraDatumSize
 
   type WitsOf (ShelleyBlock proto era) = Ledger.TxWits era
   type ScriptType (ShelleyBlock proto era) = Ledger.Script era
@@ -194,7 +199,22 @@ instance EraHasName ConwayEra where
 
 instance EraHasName DijkstraEra where
   eraEraName = "Dijkstra"
-  
+
+class EraDatum era where
+  eraDatumSize :: Ledger.TxWits era -> Int
+
+instance AlonzoEraTxWits era => EraDatum era where
+  eraDatumSize = ByteString.Short.length . getMemoRawBytes . view datsTxWitsL
+
+instance {-# OVERLAPPING #-} EraDatum ShelleyEra where
+  eraDatumSize _ = 0 -- Shelley era has no datums
+
+instance {-# OVERLAPPING #-} EraDatum AllegraEra where
+  eraDatumSize _ = 0 -- Allegra era has no datums
+
+instance {-# OVERLAPPING #-} EraDatum MaryEra where
+  eraDatumSize _ = 0 -- Mary era has no datums
+
 class PerEraAnalysis era where
   txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
 

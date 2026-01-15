@@ -47,6 +47,7 @@ instance HasAnalysis ByronBlock where
   type WitsOf ByronBlock = Void -- dummy
   type ScriptType ByronBlock = Void
   wits _ = absurd
+  datumSize = absurd
   addrWits _ = absurd
   scriptWits _ = absurd
   scriptSize = absurd

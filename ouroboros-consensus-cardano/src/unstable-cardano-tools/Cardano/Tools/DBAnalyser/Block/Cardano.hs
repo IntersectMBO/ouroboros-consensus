@@ -328,7 +328,7 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
 
   type WitsOf (CardanoBlock StandardCrypto) = SomeWit
 
-  wits inner (ATx @blk tx) = foldMapOf (wits @blk) (Const . getConst . inner . AWit @blk) tx
+  wits inner (ATx @blk tx) = Const . getConst $ wits @blk (Const . getConst . inner . AWit @blk) tx
   addrWits inner (AWit @blk wit) = AWit @blk <$> addrWits @blk inner wit
 
   type ScriptType (CardanoBlock StandardCrypto) = SomeScriptType
@@ -336,6 +336,8 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
   scriptWits inner (AWit @blk wit) = foldMapOf (scriptWits @blk) (Const . getConst . inner . Map.map (AScriptType @blk)) wit
 
   scriptSize (AScriptType @blk scr) = scriptSize @blk scr
+
+  datumSize (AWit @blk wit) = datumSize @blk wit
 
   eraName = analyseBlock eraName
 
