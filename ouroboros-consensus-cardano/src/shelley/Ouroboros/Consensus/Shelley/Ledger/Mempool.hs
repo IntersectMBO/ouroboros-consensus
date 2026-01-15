@@ -1,5 +1,4 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -74,14 +73,11 @@ import qualified Cardano.Ledger.BaseTypes as L
 import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (..)
-  , DecoderError (..)
   , EncCBOR (..)
   , FromCBOR (..)
   , FullByteString (..)
   , ToCBOR (..)
   )
-import Codec.CBOR.Decoding (Decoder(..))
-import Data.ByteString.Lazy (ByteString)
 import Cardano.Ledger.Conway (ApplyTxError (ConwayApplyTxError))
 import qualified Cardano.Ledger.Conway.PParams as SL
 import qualified Cardano.Ledger.Conway.Rules as ConwayEra
@@ -253,22 +249,11 @@ instance ShelleyCompatible proto era => ToCBOR (GenTx (ShelleyBlock proto era)) 
   toCBOR (ShelleyTx _txid tx) = wrapCBORinCBOR toCBOR tx
 
 instance ShelleyCompatible proto era => FromCBOR (GenTx (ShelleyBlock proto era)) where
-  fromCBOR = do
-    unwrappedCBOR <-
-      unwrapCBORinCBOR @(Either DecoderError (Tx TopTx era)) $
+  fromCBOR =
+    fmap mkShelleyTx $
+      unwrapCBORinCBOR $
         eraDecoder @era $
-          (. Full) . runAnnotator <$> decCBOR
-    mkShelleyTx <$> failOnInnerDecoderError unwrappedCBOR
-   where
-    -- translate 'DecoderError' from 'runAnnotator' into
-    -- a 'Decoder''s error via its 'MonadFail' instance
-    failOnInnerDecoderError ::
-      Either DecoderError (Tx TopTx era) ->
-      forall s.
-      Decoder s (Tx TopTx era)
-    failOnInnerDecoderError = \case
-      Left e -> fail (show e)
-      Right r -> pure r
+          (. Full) . (fromRight (error "TODO(geo2a): remove fromRight") .) . runAnnotator <$> decCBOR
 
 {-------------------------------------------------------------------------------
   Pretty-printing
