@@ -355,7 +355,7 @@ implTryTakeSnapshot ::
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
   LedgerDBEnv m l blk ->
   Time ->
-  (DiffTime -> DiffTime -> m DiffTime) ->
+  (SnapshotDelayRange -> m DiffTime) ->
   m ()
 implTryTakeSnapshot snapManager env snapshotRequestTime getRandomDelay = do
   timeSinceLastSnapshot <- do
@@ -387,8 +387,7 @@ implTryTakeSnapshot snapManager env snapshotRequestTime getRandomDelay = do
   case handles of
     [] -> pure ()
     _ -> do
-      let (minimumDelay, maximumDelay) = onDiskSnapshotDelayRange (ldbSnapshotPolicy env)
-      delayBeforeSnapshotting <- getRandomDelay minimumDelay maximumDelay
+      delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
       traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
         SnapshotRequestDelayed snapshotRequestTime delayBeforeSnapshotting (length handles)
       threadDelay delayBeforeSnapshotting

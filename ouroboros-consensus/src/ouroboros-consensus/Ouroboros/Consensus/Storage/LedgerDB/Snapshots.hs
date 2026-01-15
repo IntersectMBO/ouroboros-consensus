@@ -75,6 +75,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 
     -- * Policy
   , SnapshotPolicy (..)
+  , SnapshotDelayRange (..)
   , SnapshotSelectorContext (..)
   , SnapshotFrequency (..)
   , SnapshotFrequencyArgs (..)
@@ -532,9 +533,24 @@ data SnapshotPolicy = SnapshotPolicy
   -- sublist of 'sscSnapshotSlots'.
   --
   -- See also 'defaultSnapshotPolicy'
-  , onDiskSnapshotDelayRange :: (DiffTime, DiffTime)
+  , onDiskSnapshotDelayRange :: SnapshotDelayRange
+  -- ^ Minimum and maximum durations of the random delay between requesting
+  -- a snapshot and taking that snapshot.
   }
   deriving NoThunks via OnlyCheckWhnf SnapshotPolicy
+
+-- | Range from which the randomised snapshot delay will be taken. The randomly
+-- chosen duration will be at least 'minimumDelay' and at most 'maximumDelay'.
+data SnapshotDelayRange = SnapshotDelayRange
+  { minimumDelay :: !DiffTime
+  -- ^ minimum acceptable delay between requesting a snapshot and taking the
+  -- snapshot
+  , maximumDelay :: !DiffTime
+  -- ^ maximum acceptable delay between requesting a snapshot and taking the
+  -- snapshot
+  } deriving (Show, Eq, Generic)
+
+instance NoThunks SnapshotDelayRange
 
 data SnapshotSelectorContext = SnapshotSelectorContext
   { sscTimeSinceLast :: Maybe DiffTime
@@ -582,7 +598,7 @@ data SnapshotFrequencyArgs = SnapshotFrequencyArgs
   -- ^ Ensure (if present) that at least this amount of time passes between
   -- writing snapshots. Setting this to a non-positive value disable the rate
   -- limit.
-  , sfaDelaySnapshotRange :: OverrideOrDefault (DiffTime, DiffTime)
+  , sfaDelaySnapshotRange :: OverrideOrDefault SnapshotDelayRange
   }
   deriving stock (Show, Eq)
 
@@ -665,8 +681,8 @@ defaultSnapshotPolicy (SecurityParam k) args =
               | otherwise = id
 
   onDiskSnapshotDelayRange = case spaFrequency of
-    DisableSnapshots -> (0, 0)
-    SnapshotFrequency sfa -> provideDefault (0, 0) $ sfaDelaySnapshotRange sfa
+    DisableSnapshots -> SnapshotDelayRange 0 0
+    SnapshotFrequency sfa -> provideDefault (SnapshotDelayRange 0 0) $ sfaDelaySnapshotRange sfa
 
   passesRateLimitCheck t = case spaFrequency of
     SnapshotFrequency SnapshotFrequencyArgs{sfaRateLimit} ->

@@ -217,7 +217,7 @@ data TestSnapshotPolicyArgs = TestSnapshotPolicyArgs
   , tspaInterval :: NonZero Word64
   , tspaOffset :: SlotNo
   , tspaRateLimit :: DiffTime
-  , tspaDelaySnapshotRange :: (DiffTime, DiffTime)
+  , tspaDelaySnapshotRange :: SnapshotDelayRange
   }
   deriving stock Show
 
@@ -233,7 +233,7 @@ instance Arbitrary TestSnapshotPolicyArgs where
         ]
     tspaDelaySnapshotRange <- oneof
       [ arbitraryDelaySnapshotRange
-      , pure (0, 0)
+      , pure $ SnapshotDelayRange 0 0
       ]
     pure
       TestSnapshotPolicyArgs
@@ -247,7 +247,7 @@ instance Arbitrary TestSnapshotPolicyArgs where
       arbitraryDelaySnapshotRange = do
         minimumDelay <- fromInteger <$> choose (floor fiveMinutes, floor tenMinutes)
         additionalDelay <- fromInteger <$> choose (0, floor fiveMinutes)
-        pure (minimumDelay, minimumDelay + additionalDelay)
+        pure $ SnapshotDelayRange minimumDelay (minimumDelay + additionalDelay)
 
       fiveMinutes :: DiffTime
       fiveMinutes = 5 * 60

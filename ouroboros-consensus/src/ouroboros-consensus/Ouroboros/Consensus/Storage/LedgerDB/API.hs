@@ -268,7 +268,7 @@ data LedgerDB m l blk = LedgerDB
   , tryTakeSnapshot ::
       l ~ ExtLedgerState blk =>
       Time ->
-      (DiffTime -> DiffTime -> m DiffTime) ->
+      (SnapshotDelayRange -> m DiffTime) ->
       m ()
   -- ^ If the provided arguments indicate so (based on the SnapshotPolicy with
   -- which this LedgerDB was opened), take a snapshot and delete stale ones.

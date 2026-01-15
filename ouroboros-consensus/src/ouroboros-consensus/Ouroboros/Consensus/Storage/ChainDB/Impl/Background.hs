@@ -69,6 +69,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
@@ -328,13 +329,13 @@ ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
         LedgerDB.garbageCollect cdbLedgerDB slotNo
     }
  where
-  mkRandomDelay :: DiffTime -> DiffTime -> m DiffTime
-  mkRandomDelay minimumDelay maximumDelay = atomically $ do
-    stateTVar cdbSnapshotDelayRNG (randomSnapshotDelay (minimumDelay, maximumDelay))
+  mkRandomDelay :: LedgerDB.SnapshotDelayRange -> m DiffTime
+  mkRandomDelay sdr = atomically $ do
+    stateTVar cdbSnapshotDelayRNG (randomSnapshotDelay sdr)
 
-  randomSnapshotDelay :: (DiffTime, DiffTime) -> StdGen -> (DiffTime, StdGen)
-  randomSnapshotDelay (minimumDelay, maximumDelay) rng =
-    first fromInteger $ uniformR (floor minimumDelay, floor maximumDelay) rng
+  randomSnapshotDelay :: LedgerDB.SnapshotDelayRange -> StdGen -> (DiffTime, StdGen)
+  randomSnapshotDelay sdr rng =
+    first fromInteger $ uniformR (floor (LedgerDB.minimumDelay sdr), floor (LedgerDB.maximumDelay sdr)) rng
 
 {-------------------------------------------------------------------------------
   Executing garbage collection
