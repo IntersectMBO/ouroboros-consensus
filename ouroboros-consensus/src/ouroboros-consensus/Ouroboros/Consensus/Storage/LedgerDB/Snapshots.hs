@@ -77,6 +77,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
     -- * Policy
   , SnapshotInterval (..)
   , SnapshotPolicy (..)
+  , SnapshotDelayRange (..)
   , defaultSnapshotPolicy
   , pattern DoDiskSnapshotChecksum
   , pattern NoDoDiskSnapshotChecksum
@@ -558,9 +559,24 @@ data SnapshotPolicy = SnapshotPolicy
   --   blocks had to be replayed.
   --
   -- See also 'defaultSnapshotPolicy'
-  , onDiskSnapshotDelayRange :: (DiffTime, DiffTime)
+  , onDiskSnapshotDelayRange :: SnapshotDelayRange
+  -- ^ Minimum and maximum durations of the random delay between requesting
+  -- a snapshot and taking that snapshot.
   }
   deriving NoThunks via OnlyCheckWhnf SnapshotPolicy
+
+-- | Range from which the randomised snapshot delay will be taken. The randomly
+-- chosen duration will be at least 'minimumDelay' and at most 'maximumDelay'.
+data SnapshotDelayRange = SnapshotDelayRange
+  { minimumDelay :: !DiffTime
+  -- ^ minimum acceptable delay between requesting a snapshot and taking the
+  -- snapshot
+  , maximumDelay :: !DiffTime
+  -- ^ maximum acceptable delay between requesting a snapshot and taking the
+  -- snapshot
+  } deriving (Show, Eq, Generic)
+
+instance NoThunks SnapshotDelayRange
 
 data SnapshotPolicyArgs = SnapshotPolicyArgs
   { spaInterval :: !SnapshotInterval
@@ -584,7 +600,7 @@ defaultSnapshotPolicy
     SnapshotPolicy
       { onDiskNumSnapshots
       , onDiskShouldTakeSnapshot
-      , onDiskSnapshotDelayRange = (0, 0)
+      , onDiskSnapshotDelayRange = SnapshotDelayRange 0 0
       }
    where
     onDiskNumSnapshots :: Word
