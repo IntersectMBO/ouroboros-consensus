@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Parser
   , parseChunkFile
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Codec.CBOR.Decoding (Decoder)
 import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as Lazy

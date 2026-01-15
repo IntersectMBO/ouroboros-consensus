@@ -26,6 +26,8 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC
   , translateChainDepStateAcrossShelley
   ) where
 
+import qualified Data.ByteString.Lazy as Lazy
+import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion, unNonZero)
 import Cardano.Ledger.Binary.Decoding

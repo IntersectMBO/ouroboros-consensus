@@ -311,10 +311,10 @@ decodeShelleyBlock ::
   forall proto era.
   ShelleyCompatible proto era =>
   forall s.
-  Plain.Decoder s (Lazy.ByteString -> ShelleyBlock proto era)
+  Plain.Decoder s (Lazy.ByteString -> Either Plain.DecoderError (ShelleyBlock proto era))
 decodeShelleyBlock =
   eraDecoder @era $
-    (. Full) . (fromRight (error "TODO(geo2a): remove fromRight") .) . runAnnotator <$> decCBOR
+    (. Full) . runAnnotator <$> decCBOR
 
 shelleyBinaryBlockInfo ::
   forall proto era. ShelleyCompatible proto era => ShelleyBlock proto era -> BinaryBlockInfo

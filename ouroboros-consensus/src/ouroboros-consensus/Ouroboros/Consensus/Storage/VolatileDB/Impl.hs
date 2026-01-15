@@ -115,6 +115,7 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl
   , mkBlocksPerFile
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Control.Monad (unless, when)
@@ -192,7 +193,7 @@ defaultArgs =
 -- | 'EncodeDisk' and 'DecodeDisk' constraints needed for the VolatileDB.
 type VolatileDbSerialiseConstraints blk =
   ( EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , HasNestedContent Header blk
   , HasBinaryBlockInfo blk

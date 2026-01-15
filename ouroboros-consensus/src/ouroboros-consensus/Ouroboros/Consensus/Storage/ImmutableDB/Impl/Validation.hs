@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
   , reconstructPrimaryIndex
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Control.Exception (assert)
 import Control.Monad (forM_, unless, when)
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
