@@ -459,7 +459,7 @@ getBlockComponentImpl ::
   forall m blk b.
   ( HasHeader blk
   , ReconstructNestedCtxt Header blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , IOLike m
   ) =>

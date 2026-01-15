@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
   , getBlockAtOrAfterPointImpl
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Prelude (forceElemsToWHNF)
 import Cardano.Slotting.Slot (WithOrigin (..))
 import qualified Codec.CBOR.Read as CBOR
@@ -118,7 +119,7 @@ streamImpl ::
   forall m blk b.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   , HasCallStack
@@ -429,7 +430,7 @@ iteratorNextImpl ::
   forall m blk b h.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   ) =>
@@ -604,7 +605,7 @@ extractBlockComponent ::
   forall m blk b h.
   ( HasHeader blk
   , ReconstructNestedCtxt Header blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , IOLike m
   ) =>

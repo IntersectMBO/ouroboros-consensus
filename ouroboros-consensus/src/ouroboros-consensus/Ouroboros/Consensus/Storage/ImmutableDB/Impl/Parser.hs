@@ -78,7 +78,7 @@ parseChunkFile ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   ) =>
   CodecConfig blk ->
   HasFS m h ->

@@ -498,7 +498,7 @@ roundtrip_SerialiseNodeToNode ::
   , ArbitraryWithVersion (BlockNodeToNodeVersion blk) (GenTxId blk)
   , -- Needed for testing the @Serialised blk@
     EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , -- Needed for testing the @Serialised (Header blk)@
     HasNestedContent Header blk
   , EncodeDiskDep (NestedCtxt Header) blk
@@ -641,7 +641,7 @@ roundtrip_SerialiseNodeToClient ::
   , BlockSupportsLedgerQuery blk
   , -- Needed for testing the @Serialised blk@
     EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   ) =>
   (TestName -> ShouldCheckCBORValidity) ->
   CodecConfig blk ->

@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -32,7 +33,7 @@ module Ouroboros.Consensus.Util.CBOR
   , encodeWithOrigin
   ) where
 
-import Cardano.Binary (decodeMaybe, encodeMaybe)
+import Cardano.Binary (decodeMaybe, encodeMaybe, DecoderError(..))
 import Cardano.Slotting.Slot
   ( WithOrigin (..)
   , withOriginFromMaybe
@@ -242,7 +243,7 @@ withStreamIncrementalOffsets ::
   forall m h a r.
   (IOLike m, HasCallStack) =>
   HasFS m h ->
-  (forall s. CBOR.D.Decoder s (LBS.ByteString -> a)) ->
+  (forall s. CBOR.D.Decoder s (LBS.ByteString -> Either DecoderError a)) ->
   FsPath ->
   (Stream (Of (Word64, (Word64, a))) m (Maybe (ReadIncrementalErr, Word64)) -> m r) ->
   m r
@@ -268,7 +269,7 @@ withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
     -- \^ Chunks pushed for this item (rev order)
     Word64 ->
     -- \^ Total file size
-    CBOR.R.IDecode (U.PrimState m) (LBS.ByteString -> a) ->
+    CBOR.R.IDecode (U.PrimState m) (LBS.ByteString -> Either DecoderError a) ->
     Stream (Of (Word64, (Word64, a))) m (Maybe (ReadIncrementalErr, Word64))
   go h offset mbUnconsumed bss fileSize dec = case dec of
     CBOR.R.Partial k -> do
@@ -298,7 +299,14 @@ withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
           -- putting a thunk that references the whole block in the list
           -- instead of merely the hash.
           !a = mkA aBytes
-      S.yield (offset, (fromIntegral size, a))
+      case a of
+        Left err ->
+          let convertError = undefined
+           -- TODO(geo2a): we want to bubble up the error,
+           -- but the following does not type-check
+           -- in pure $ (ReadFailed (convertError err), offset)
+           in pure ()
+        Right result -> S.yield (offset, (fromIntegral size, result))
       case checkEmpty leftover of
         Nothing
           | nextOffset == fileSize ->

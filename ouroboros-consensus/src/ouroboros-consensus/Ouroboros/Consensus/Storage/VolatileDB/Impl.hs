@@ -263,7 +263,7 @@ getBlockComponentImpl ::
   forall m blk b.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , HasNestedContent Header blk
   , DecodeDiskDep (NestedCtxt Header) blk
   , HasCallStack
@@ -339,12 +339,18 @@ getBlockComponentImpl env@VolatileDBEnv{codecConfig, checkIntegrity} blockCompon
     throwParseErrors ::
       forall b''.
       Lazy.ByteString ->
-      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b'') ->
+      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> Either Plain.DecoderError b'') ->
       m b''
     throwParseErrors fullBytes = \case
       Right (trailing, f)
         | Lazy.null trailing ->
-            return $ f fullBytes
+            case f fullBytes of
+              Left err ->
+                -- TODO(geo2a): augment the UnexpectedFailure type with a new
+                -- constructor for Plain.DecoderError and return it
+                error "TODO(geo2a)"
+              Right result -> pure result
+            -- return $ f fullBytes
         | otherwise ->
             throwIO $ UnexpectedFailure $ TrailingDataError ibiFile pt trailing
       Left err ->
