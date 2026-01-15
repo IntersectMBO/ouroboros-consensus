@@ -323,6 +323,9 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
     -- The Const bit is quite unfortunate.
     analyseBlock $ \ @blk -> Const . getConst . (txs @blk . to (ATx @blk)) inner
 
+  numInputs (ATx @blk tx)= numInputs @blk tx
+  numOutputs (ATx @blk tx) = numOutputs @blk tx
+
   type WitsOf (CardanoBlock StandardCrypto) = SomeWit
 
   wits inner (ATx @blk tx) = foldMapOf (wits @blk) (Const . getConst . inner . AWit @blk) tx

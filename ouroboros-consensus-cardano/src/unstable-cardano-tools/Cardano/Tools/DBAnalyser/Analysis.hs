@@ -395,6 +395,8 @@ data TxFeatures blk f = MkTxFeatures
   { src_block :: f BlockNo
   , num_script_wits :: f Int
   , size_script_wits :: f Int
+  , num_inputs :: f Int
+  , num_outputs :: f Int
   }
   deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
 
@@ -419,6 +421,8 @@ txFeaturesNames =
     { src_block = "block_id"
     , num_script_wits = "#script_wits"
     , size_script_wits = "script_wits_size"
+    , num_inputs = "#inputs"
+    , num_outputs = "#outputs"
     }
 
 dumpBlockHeader ::
@@ -485,6 +489,8 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tra
           { src_block = blockNo <$> query_header cmp
           , num_script_wits = Identity $ length $ toListOf script_wits tx
           , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize @blk)) Sum tx
+          , num_inputs = Identity $ HasAnalysis.numInputs @blk tx
+          , num_outputs = Identity $ HasAnalysis.numOutputs @blk tx
           }
     let txFeaturess = toListOf (HasAnalysis.txs @blk . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
     let txlines = map (csv . Container . bmapC @Condense (Const . condense . runIdentity)) txFeaturess

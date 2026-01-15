@@ -46,6 +46,9 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
 
   txs :: SimpleFold blk (TxOf blk)
 
+  numInputs :: TxOf blk -> Int
+  numOutputs :: TxOf blk -> Int
+
   type WitsOf blk
 
   wits :: SimpleFold (TxOf blk) (WitsOf blk)

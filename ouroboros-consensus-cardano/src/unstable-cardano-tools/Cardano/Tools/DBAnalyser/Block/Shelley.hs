@@ -37,7 +37,7 @@ import Data.Maybe.Strict
 import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
 import Data.Word (Word64)
-import Lens.Micro ((^.), folded, to)
+import Lens.Micro ((^.), folded, to, toListOf)
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -85,6 +85,9 @@ instance
   type TxOf (ShelleyBlock proto era) = Ledger.Tx era
 
   txs = to (Shelley.shelleyBlockRaw @proto @era)  . to SL.blockBody  . Ledger.txSeqBlockBodyL @era . folded
+
+  numInputs tx = length $ toListOf (Core.bodyTxL . Core.inputsTxBodyL) tx
+  numOutputs tx = length $ toListOf (Core.bodyTxL . Core.outputsTxBodyL) tx
 
   type WitsOf (ShelleyBlock proto era) = Ledger.TxWits era
   type ScriptType (ShelleyBlock proto era) = Ledger.Script era
