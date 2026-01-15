@@ -41,6 +41,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Block
   , toShelleyPrevHash
   ) where
 
+import Data.Functor.Contravariant (contramap)
 import qualified Cardano.Crypto.Hash as Crypto
 import Cardano.Ledger.Binary
   ( Annotator (..)
@@ -313,8 +314,19 @@ decodeShelleyBlock ::
   forall s.
   Plain.Decoder s (Lazy.ByteString -> ShelleyBlock proto era)
 decodeShelleyBlock =
+  failOnInnerDecoderError $
   eraDecoder @era $
-    (. Full) . (fromRight (error "TODO(geo2a): remove fromRight") .) . runAnnotator <$> decCBOR
+    (. Full) . runAnnotator <$> decCBOR
+  where
+    -- translate 'DecoderError' from 'runAnnotator' into
+    -- a 'Decoder''s error via its 'MonadFail' instance
+    failOnInnerDecoderError ::
+      forall s.
+      Plain.Decoder s (Lazy.ByteString -> Either Plain.DecoderError (ShelleyBlock proto era)) ->
+      Plain.Decoder s (Lazy.ByteString -> ShelleyBlock proto era)
+    failOnInnerDecoderError arg = undefined
+
+
 
 shelleyBinaryBlockInfo ::
   forall proto era. ShelleyCompatible proto era => ShelleyBlock proto era -> BinaryBlockInfo
