@@ -38,32 +38,24 @@ import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Allegra.Translation ()
 import Cardano.Ledger.Alonzo (AlonzoEra)
 import Cardano.Ledger.Alonzo.Core as Core
-import qualified Cardano.Ledger.Alonzo.Rules as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import qualified Cardano.Ledger.Api.Era as L
 import Cardano.Ledger.Babbage (BabbageEra)
-import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import Cardano.Ledger.BaseTypes
 import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import Cardano.Ledger.Conway (ConwayEra)
 import qualified Cardano.Ledger.Conway.Governance as CG
-import qualified Cardano.Ledger.Conway.Rules as Conway
-import qualified Cardano.Ledger.Conway.Rules as SL
-  ( ConwayLedgerPredFailure (..)
-  )
 import qualified Cardano.Ledger.Conway.State as CG
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
-import Data.Data (Proxy (Proxy))
-import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.Data (Proxy)
 import Lens.Micro
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -123,11 +115,11 @@ class
     SL.LedgerEnv era ->
     SL.LedgerState era ->
     WhetherToIntervene ->
-    Core.Tx era ->
+    Core.Tx TopTx era ->
     Except
       (SL.ApplyTxError era)
       ( SL.LedgerState era
-      , SL.Validated (Core.Tx era)
+      , SL.Validated (Core.Tx TopTx era)
       )
 
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
@@ -148,11 +140,11 @@ defaultApplyShelleyBasedTx ::
   SL.LedgerEnv era ->
   SL.LedgerState era ->
   WhetherToIntervene ->
-  Core.Tx era ->
+  Core.Tx TopTx era ->
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx era)
+    , SL.Validated (Core.Tx TopTx era)
     )
 defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
   liftEither $
@@ -204,17 +196,16 @@ applyAlonzoBasedTx ::
   forall era.
   ( AlonzoEraTx era
   , ShelleyBasedEra era
-  , SupportsTwoPhaseValidation era
   ) =>
   Globals ->
   SL.LedgerEnv era ->
   SL.LedgerState era ->
   WhetherToIntervene ->
-  Core.Tx era ->
+  Core.Tx TopTx era ->
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx era)
+    , SL.Validated (Core.Tx TopTx era)
     )
 applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   (mempoolState', vtx) <-
@@ -232,99 +223,20 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
     Intervene -> tx
 
   handler e = case (wti, e) of
-    (DoNotIntervene, SL.ApplyTxError (err :| []))
-      | isIncorrectClaimedFlag (Proxy @era) err ->
-          -- rectify the flag and include the transaction
-          --
-          -- This either lets the ledger punish the script author for sending
-          -- a bad script or else prevents our peer's buggy script validator
-          -- from preventing inclusion of a valid script.
-          --
-          -- TODO 'applyTx' et al needs to include a return value indicating
-          -- whether we took this branch; it's a reason to disconnect from
-          -- the peer who sent us the incorrect flag (ie Issue #3276)
-          defaultApplyShelleyBasedTx
-            globals
-            ledgerEnv
-            mempoolState
-            wti
-            (tx & Core.isValidTxL .~ Alonzo.IsValid False)
+    (DoNotIntervene, _) ->
+      -- rectify the flag and include the transaction
+      --
+      -- This either lets the ledger punish the script author for sending
+      -- a bad script or else prevents our peer's buggy script validator
+      -- from preventing inclusion of a valid script.
+      --
+      -- TODO 'applyTx' et al needs to include a return value indicating
+      -- whether we took this branch; it's a reason to disconnect from
+      -- the peer who sent us the incorrect flag (ie Issue #3276)
+      defaultApplyShelleyBasedTx
+        globals
+        ledgerEnv
+        mempoolState
+        wti
+        (tx & Core.isValidTxL .~ Alonzo.IsValid False)
     _ -> throwError e
-
--- reject the transaction, protecting the local wallet
-
-class SupportsTwoPhaseValidation era where
-  -- NOTE: this class won't be needed once https://github.com/IntersectMBO/cardano-ledger/issues/4167 is implemented.
-  isIncorrectClaimedFlag :: proxy era -> SL.PredicateFailure (Core.EraRule "LEDGER" era) -> Bool
-
-instance SupportsTwoPhaseValidation AlonzoEra where
-  isIncorrectClaimedFlag _ = \case
-    SL.UtxowFailure
-      ( Alonzo.ShelleyInAlonzoUtxowPredFailure
-          ( SL.UtxoFailure
-              ( Alonzo.UtxosFailure
-                  ( Alonzo.ValidationTagMismatch
-                      (Alonzo.IsValid _claimedFlag)
-                      _validationErrs
-                    )
-                )
-            )
-        ) ->
-        True
-    _ -> False
-
-instance SupportsTwoPhaseValidation BabbageEra where
-  isIncorrectClaimedFlag _ = \case
-    SL.UtxowFailure
-      ( Babbage.AlonzoInBabbageUtxowPredFailure
-          ( Alonzo.ShelleyInAlonzoUtxowPredFailure
-              ( SL.UtxoFailure
-                  ( Babbage.AlonzoInBabbageUtxoPredFailure
-                      ( Alonzo.UtxosFailure
-                          ( Alonzo.ValidationTagMismatch
-                              (Alonzo.IsValid _claimedFlag)
-                              _validationErrs
-                            )
-                        )
-                    )
-                )
-            )
-        ) -> True
-    SL.UtxowFailure
-      ( Babbage.UtxoFailure
-          ( Babbage.AlonzoInBabbageUtxoPredFailure
-              ( Alonzo.UtxosFailure
-                  ( Alonzo.ValidationTagMismatch
-                      (Alonzo.IsValid _claimedFlag)
-                      _validationErrs
-                    )
-                )
-            )
-        ) -> True
-    _ -> False
-
-instance SupportsTwoPhaseValidation ConwayEra where
-  isIncorrectClaimedFlag _ = \case
-    SL.ConwayUtxowFailure
-      ( Conway.UtxoFailure
-          ( Conway.UtxosFailure
-              ( Conway.ValidationTagMismatch
-                  (Alonzo.IsValid _claimedFlag)
-                  _validationErrs
-                )
-            )
-        ) -> True
-    _ -> False
-
-instance SupportsTwoPhaseValidation DijkstraEra where
-  isIncorrectClaimedFlag _ = \case
-    SL.ConwayUtxowFailure
-      ( Conway.UtxoFailure
-          ( Conway.UtxosFailure
-              ( Conway.ValidationTagMismatch
-                  (Alonzo.IsValid _claimedFlag)
-                  _validationErrs
-                )
-            )
-        ) -> True
-    _ -> False

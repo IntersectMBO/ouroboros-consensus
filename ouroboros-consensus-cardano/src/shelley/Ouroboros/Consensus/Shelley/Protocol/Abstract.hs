@@ -174,7 +174,7 @@ class ProtocolHeaderSupportsProtocol proto where
     ShelleyProtocolHeader proto -> ValidateView proto
 
   pHeaderIssuer ::
-    ShelleyProtocolHeader proto -> VKey 'BlockIssuer
+    ShelleyProtocolHeader proto -> VKey BlockIssuer
   pHeaderIssueNo ::
     ShelleyProtocolHeader proto -> Word64
 

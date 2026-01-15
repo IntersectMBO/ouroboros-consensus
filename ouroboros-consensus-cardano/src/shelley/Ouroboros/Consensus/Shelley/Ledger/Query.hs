@@ -127,15 +127,15 @@ import Ouroboros.Network.PeerSelection.LedgerPeers.Utils
 newtype NonMyopicMemberRewards = NonMyopicMemberRewards
   { unNonMyopicMemberRewards ::
       Map
-        (Either SL.Coin (SL.Credential 'SL.Staking))
-        (Map (SL.KeyHash 'SL.StakePool) SL.Coin)
+        (Either SL.Coin (SL.Credential SL.Staking))
+        (Map (SL.KeyHash SL.StakePool) SL.Coin)
   }
   deriving stock Show
   deriving newtype (Eq, ToCBOR, FromCBOR)
 
-type Delegations = Map (SL.Credential 'SL.Staking) (SL.KeyHash 'SL.StakePool)
+type Delegations = Map (SL.Credential SL.Staking) (SL.KeyHash SL.StakePool)
 
-type VoteDelegatees = Map (SL.Credential 'SL.Staking) SL.DRep
+type VoteDelegatees = Map (SL.Credential SL.Staking) SL.DRep
 
 {-# DEPRECATED GetProposedPParamsUpdates "Deprecated in ShelleyNodeToClientVersion12" #-}
 {-# DEPRECATED
@@ -153,7 +153,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   -- | Calculate the Non-Myopic Pool Member Rewards for a set of
   -- credentials. See 'SL.getNonMyopicMemberRewards'
   GetNonMyopicMemberRewards ::
-    Set (Either SL.Coin (SL.Credential 'SL.Staking)) ->
+    Set (Either SL.Coin (SL.Credential SL.Staking)) ->
     BlockQuery (ShelleyBlock proto era) QFNoTables NonMyopicMemberRewards
   GetCurrentPParams ::
     BlockQuery (ShelleyBlock proto era) QFNoTables (LC.PParams era)
@@ -200,11 +200,11 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery (ShelleyBlock proto era) fp result ->
     BlockQuery (ShelleyBlock proto era) fp (Serialised result)
   GetFilteredDelegationsAndRewardAccounts ::
-    Set (SL.Credential 'SL.Staking) ->
+    Set (SL.Credential SL.Staking) ->
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (Delegations, Map (SL.Credential 'Staking) Coin)
+      (Delegations, Map (SL.Credential Staking) Coin)
   GetGenesisConfig ::
     BlockQuery (ShelleyBlock proto era) QFNoTables CompactGenesis
   -- | Only for debugging purposes, we make no effort to ensure binary
@@ -226,46 +226,46 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (Set (SL.KeyHash 'SL.StakePool))
+      (Set (SL.KeyHash SL.StakePool))
   GetStakePoolParams ::
-    Set (SL.KeyHash 'SL.StakePool) ->
+    Set (SL.KeyHash SL.StakePool) ->
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (Map (SL.KeyHash 'SL.StakePool) SL.PoolParams)
+      (Map (SL.KeyHash SL.StakePool) SL.StakePoolParams)
   GetRewardInfoPools ::
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
       ( SL.RewardParams
       , Map
-          (SL.KeyHash 'SL.StakePool)
+          (SL.KeyHash SL.StakePool)
           (SL.RewardInfoPool)
       )
   GetPoolState ::
-    Maybe (Set (SL.KeyHash 'SL.StakePool)) ->
+    Maybe (Set (SL.KeyHash SL.StakePool)) ->
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
       SL.QueryPoolStateResult
   GetStakeSnapshots ::
-    Maybe (Set (SL.KeyHash 'SL.StakePool)) ->
+    Maybe (Set (SL.KeyHash SL.StakePool)) ->
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
       StakeSnapshots
   GetPoolDistr ::
-    Maybe (Set (SL.KeyHash 'SL.StakePool)) ->
+    Maybe (Set (SL.KeyHash SL.StakePool)) ->
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
       (PoolDistr (ProtoCrypto proto))
   GetStakeDelegDeposits ::
-    Set StakeCredential ->
+    Set (SL.Credential Staking) ->
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (Map StakeCredential Coin)
+      (Map (SL.Credential Staking) Coin)
   -- | Not supported in eras before Conway
   GetConstitution ::
     CG.ConwayEraGov era =>
@@ -280,12 +280,12 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   -- Not supported in eras before Conway.
   GetDRepState ::
     (CG.ConwayEraGov era, CG.ConwayEraCertState era) =>
-    Set (SL.Credential 'DRepRole) ->
+    Set (SL.Credential DRepRole) ->
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
       ( Map
-          (SL.Credential 'DRepRole)
+          (SL.Credential DRepRole)
           SL.DRepState
       )
   -- | Query the 'DRep' stake distribution. Note that this can be an expensive
@@ -305,8 +305,8 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   -- Not supported in eras before Conway.
   GetCommitteeMembersState ::
     (CG.ConwayEraGov era, CG.ConwayEraCertState era) =>
-    Set (SL.Credential 'ColdCommitteeRole) ->
-    Set (SL.Credential 'HotCommitteeRole) ->
+    Set (SL.Credential ColdCommitteeRole) ->
+    Set (SL.Credential HotCommitteeRole) ->
     Set SL.MemberStatus ->
     BlockQuery (ShelleyBlock proto era) QFNoTables SL.CommitteeMembersState
   -- | The argument specifies the credential of each account whose delegatee
@@ -316,7 +316,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   -- Not supported in eras before Conway.
   GetFilteredVoteDelegatees ::
     CG.ConwayEraGov era =>
-    Set (SL.Credential 'SL.Staking) ->
+    Set (SL.Credential SL.Staking) ->
     BlockQuery (ShelleyBlock proto era) QFNoTables VoteDelegatees
   GetAccountState ::
     BlockQuery (ShelleyBlock proto era) QFNoTables SL.ChainAccountState
@@ -328,8 +328,8 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   -- Not supported in eras before Conway.
   GetSPOStakeDistr ::
     CG.ConwayEraGov era =>
-    Set (KeyHash 'StakePool) ->
-    BlockQuery (ShelleyBlock proto era) QFNoTables (Map (KeyHash 'StakePool) Coin)
+    Set (KeyHash StakePool) ->
+    BlockQuery (ShelleyBlock proto era) QFNoTables (Map (KeyHash StakePool) Coin)
   GetProposals ::
     CG.ConwayEraGov era =>
     Set CG.GovActionId ->
@@ -347,10 +347,10 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery (ShelleyBlock proto era) QFNoTables LedgerPeerSnapshot
   QueryStakePoolDefaultVote ::
     CG.ConwayEraGov era =>
-    KeyHash 'StakePool ->
+    KeyHash StakePool ->
     BlockQuery (ShelleyBlock proto era) QFNoTables CG.DefaultVote
   GetPoolDistr2 ::
-    Maybe (Set (SL.KeyHash 'SL.StakePool)) ->
+    Maybe (Set (SL.KeyHash SL.StakePool)) ->
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
@@ -441,16 +441,16 @@ instance
               , SL.ssStakeGo
               } = SL.esSnapshots . SL.nesEs $ st
 
-            totalMarkByPoolId :: Map (KeyHash 'StakePool) Coin
+            totalMarkByPoolId :: Map (KeyHash StakePool) Coin
             totalMarkByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeMark) (SL.ssStake ssStakeMark)
 
-            totalSetByPoolId :: Map (KeyHash 'StakePool) Coin
+            totalSetByPoolId :: Map (KeyHash StakePool) Coin
             totalSetByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeSet) (SL.ssStake ssStakeSet)
 
-            totalGoByPoolId :: Map (KeyHash 'StakePool) Coin
+            totalGoByPoolId :: Map (KeyHash StakePool) Coin
             totalGoByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeGo) (SL.ssStake ssStakeGo)
 
-            getPoolStakes :: Set (KeyHash 'StakePool) -> Map (KeyHash 'StakePool) StakeSnapshot
+            getPoolStakes :: Set (KeyHash StakePool) -> Map (KeyHash StakePool) StakeSnapshot
             getPoolStakes poolIds = Map.fromSet mkStakeSnapshot poolIds
              where
               mkStakeSnapshot poolId =
@@ -821,14 +821,14 @@ getDState = view SL.certDStateL . SL.lsCertState . SL.esLState . SL.nesEs
 getFilteredDelegationsAndRewardAccounts ::
   SL.EraCertState era =>
   SL.NewEpochState era ->
-  Set (SL.Credential 'SL.Staking) ->
-  (Delegations, Map (SL.Credential 'Staking) Coin)
+  Set (SL.Credential SL.Staking) ->
+  (Delegations, Map (SL.Credential Staking) Coin)
 getFilteredDelegationsAndRewardAccounts = SL.queryStakePoolDelegsAndRewards
 
 getFilteredVoteDelegatees ::
   (SL.EraCertState era, CG.ConwayEraAccounts era) =>
   SL.NewEpochState era ->
-  Set (SL.Credential 'SL.Staking) ->
+  Set (SL.Credential SL.Staking) ->
   VoteDelegatees
 getFilteredVoteDelegatees ss creds
   | Set.null creds =
@@ -1163,7 +1163,7 @@ instance FromCBOR StakeSnapshot where
       <*> fromCBOR
 
 data StakeSnapshots = StakeSnapshots
-  { ssStakeSnapshots :: !(Map (SL.KeyHash 'SL.StakePool) StakeSnapshot)
+  { ssStakeSnapshots :: !(Map (SL.KeyHash SL.StakePool) StakeSnapshot)
   , ssMarkTotal :: !SL.Coin
   , ssSetTotal :: !SL.Coin
   , ssGoTotal :: !SL.Coin

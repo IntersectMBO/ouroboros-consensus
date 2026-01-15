@@ -155,7 +155,7 @@ deriving instance
 -- | Fields arising from praos execution which must be included in
 -- the block signature.
 data PraosToSign c = PraosToSign
-  { praosToSignIssuerVK :: SL.VKey 'SL.BlockIssuer
+  { praosToSignIssuerVK :: SL.VKey SL.BlockIssuer
   -- ^ Verification key for the issuer of this block.
   , praosToSignVrfVK :: VRF.VerKeyVRF (VRF c)
   , praosToSignVrfRes :: VRF.CertifiedVRF (VRF c) InputVRF
@@ -271,7 +271,7 @@ instance HasMaxMajorProtVer (Praos c) where
 -- an epoch.
 data PraosState = PraosState
   { praosStateLastSlot :: !(WithOrigin SlotNo)
-  , praosStateOCertCounters :: !(Map (KeyHash 'BlockIssuer) Word64)
+  , praosStateOCertCounters :: !(Map (KeyHash BlockIssuer) Word64)
   -- ^ Operation Certificate counters
   , praosStateEvolvingNonce :: !Nonce
   -- ^ Evolving nonce
@@ -376,7 +376,7 @@ data PraosValidationErr c
       !Word64 -- max KES evolutions
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
-      !(KeyHash 'BlockIssuer) -- stake pool key hash
+      !(KeyHash BlockIssuer) -- stake pool key hash
   deriving Generic
 
 deriving instance PraosCrypto c => Eq (PraosValidationErr c)
@@ -528,7 +528,7 @@ meetsLeaderThreshold ::
   forall c.
   ConsensusConfig (Praos c) ->
   LedgerView (Praos c) ->
-  SL.KeyHash 'SL.StakePool ->
+  SL.KeyHash SL.StakePool ->
   VRF.CertifiedVRF (VRF c) InputVRF ->
   Bool
 meetsLeaderThreshold
@@ -595,7 +595,7 @@ validateKESSignature ::
   PraosCrypto c =>
   ConsensusConfig (Praos c) ->
   LedgerView (Praos c) ->
-  Map (KeyHash 'BlockIssuer) Word64 ->
+  Map (KeyHash BlockIssuer) Word64 ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
 validateKESSignature

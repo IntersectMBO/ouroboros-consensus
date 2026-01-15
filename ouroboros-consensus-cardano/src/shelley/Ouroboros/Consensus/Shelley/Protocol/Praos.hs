@@ -199,6 +199,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsLedger (Praos c) where
       , bhviewHSize = headerSize hdr
       , bhviewBHash = hbBodyHash headerBody
       , bhviewSlot = hbSlotNo headerBody
+      , bhviewPrevEpochNonce = Nothing
       }
 
 type instance Signed (Header c) = HeaderBody c

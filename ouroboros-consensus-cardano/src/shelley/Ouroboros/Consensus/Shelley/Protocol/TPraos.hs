@@ -66,7 +66,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
     SL.chainChecks
       maxPV
       (SL.lvChainChecks lv)
-      (SL.makeHeaderView $ protocolHeaderView @(TPraos c) hdr)
+      (SL.makeHeaderView (protocolHeaderView @(TPraos c) hdr) Nothing)
    where
     MaxMajorProtVer maxPV = tpraosMaxMajorPV $ tpraosParams cfg
 
@@ -133,7 +133,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsProtocol (TPraos c) where
   pTieBreakVRFValue = certifiedOutput . SL.bheaderL . SL.bhbody
 
 instance PraosCrypto c => ProtocolHeaderSupportsLedger (TPraos c) where
-  mkHeaderView = SL.makeHeaderView
+  mkHeaderView x = SL.makeHeaderView x Nothing
 
 type instance Signed (SL.BHeader c) = SL.BHBody c
 

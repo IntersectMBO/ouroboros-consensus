@@ -82,7 +82,7 @@ class HasMaxMajorProtVer proto where
 -- length.
 data PraosTiebreakerView c = PraosTiebreakerView
   { ptvSlotNo :: SlotNo
-  , ptvIssuer :: SL.VKey 'SL.BlockIssuer
+  , ptvIssuer :: SL.VKey SL.BlockIssuer
   , ptvIssueNo :: Word64
   , ptvTieBreakVRF :: VRF.OutputVRF (VRF c)
   }
@@ -253,7 +253,7 @@ instance Crypto c => ChainOrder (PraosTiebreakerView c) where
   preferCandidate cfg ours cand = comparePraos cfg ours cand == LT
 
 data PraosCanBeLeader c = PraosCanBeLeader
-  { praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer)
+  { praosCanBeLeaderColdVerKey :: !(SL.VKey SL.BlockIssuer)
   -- ^ Stake pool cold key or genesis stakeholder delegate cold key.
   , praosCanBeLeaderSignKeyVRF :: !(SignKeyVRF (VRF c))
   , praosCanBeLeaderCredentialsSource :: !(PraosCredentialsSource c)
@@ -335,4 +335,4 @@ class ConsensusProtocol p => PraosProtocolSupportsNode p where
 
   getPraosNonces :: proxy p -> ChainDepState p -> PraosNonces
 
-  getOpCertCounters :: proxy p -> ChainDepState p -> Map (KeyHash 'BlockIssuer) Word64
+  getOpCertCounters :: proxy p -> ChainDepState p -> Map (KeyHash BlockIssuer) Word64

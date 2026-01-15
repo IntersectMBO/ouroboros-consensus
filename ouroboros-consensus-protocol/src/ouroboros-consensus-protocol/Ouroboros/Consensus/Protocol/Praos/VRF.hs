@@ -35,7 +35,6 @@ import Cardano.Crypto.Util
   )
 import Cardano.Crypto.VRF
   ( CertifiedVRF (certifiedOutput)
-  , OutputVRF (..)
   , getOutputVRFBytes
   )
 import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))

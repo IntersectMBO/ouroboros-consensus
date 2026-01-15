@@ -38,7 +38,7 @@ instance ShelleyCompatible proto era => BlockSupportsProtocol (ShelleyBlock prot
       , ptvTieBreakVRF = pTieBreakVRFValue shdr
       }
    where
-    hdrIssuer :: SL.VKey 'SL.BlockIssuer
+    hdrIssuer :: SL.VKey SL.BlockIssuer
     hdrIssuer = pHeaderIssuer shdr
 
   projectChainOrderConfig = shelleyVRFTiebreakerFlavor
