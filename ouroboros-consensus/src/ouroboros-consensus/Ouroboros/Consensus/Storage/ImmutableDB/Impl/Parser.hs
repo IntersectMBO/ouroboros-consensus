@@ -104,12 +104,14 @@ parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
         . fmap (fmap (first ChunkErrRead))
     )
  where
-  decoder :: forall s. Decoder s (Lazy.ByteString -> (blk, CRC))
+  decoder :: forall s. Decoder s (Lazy.ByteString -> Either Plain.DecoderError (blk, CRC))
   decoder =
-    decodeDisk ccfg <&> \mkBlk bs ->
-      let !blk = mkBlk bs
-          !checksum = computeCRC bs
-       in (blk, checksum)
+    -- TODO(geo2a)
+    undefined
+    -- decodeDisk ccfg <&> \mkBlk bs ->
+    --   let !blk = mkBlk bs
+    --       !checksum = computeCRC bs
+    --    in (blk, checksum)
 
   -- \| Go over the expected checksums and blocks in parallel. Stop with an
   -- error when a block is corrupt. Yield correct entries along the way.

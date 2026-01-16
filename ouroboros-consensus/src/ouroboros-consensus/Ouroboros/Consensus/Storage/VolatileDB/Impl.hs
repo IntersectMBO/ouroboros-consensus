@@ -327,11 +327,12 @@ getBlockComponentImpl env@VolatileDBEnv{codecConfig, checkIntegrity} blockCompon
     parseHeader bytes = throwParseErrors bytes $
       case ibiNestedCtxt of
         SomeSecond ctxt ->
-          CBOR.deserialiseFromBytes
-            ( (\f -> nest . DepPair ctxt . f)
-                <$> decodeDiskDep codecConfig ctxt
-            )
-            bytes
+          undefined -- TODO(geo2a)
+          -- CBOR.deserialiseFromBytes
+          --   ( (\f -> nest . DepPair ctxt . f)
+          --       <$> decodeDiskDep codecConfig ctxt
+          --   )
+          --   bytes
 
     pt :: RealPoint blk
     pt = RealPoint biSlotNo hash

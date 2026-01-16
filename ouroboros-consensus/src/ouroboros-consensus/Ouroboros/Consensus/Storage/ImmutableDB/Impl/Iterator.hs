@@ -725,20 +725,28 @@ extractBlockComponent
       Lazy.ByteString ->
       m (Header blk)
     parseHeader (SomeSecond ctxt) bytes =
-      throwParseErrors bytes $
-        CBOR.deserialiseFromBytes
-          ((\f -> nest . DepPair ctxt . f) <$> decodeDiskDep ccfg ctxt)
-          bytes
+      undefined -- TODO(geo2a)
+      -- throwParseErrors bytes $
+      --   CBOR.deserialiseFromBytes
+      --     ((\f -> nest . DepPair ctxt . f) <$> decodeDiskDep ccfg ctxt)
+      --     bytes
 
+    -- TODO(geo2a): consider unifying this function with the one in VolatileDB
     throwParseErrors ::
-      forall b'.
+      forall b''.
       Lazy.ByteString ->
-      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b') ->
-      m b'
+      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> Either Plain.DecoderError b'') ->
+      m b''
     throwParseErrors fullBytes = \case
       Right (trailing, f)
         | Lazy.null trailing ->
-            return $ f fullBytes
+            case f fullBytes of
+              Left err ->
+                -- TODO(geo2a): augment the UnexpectedFailure type with a new
+                -- constructor for Plain.DecoderError and return it
+                error "TODO(geo2a)"
+              Right result -> pure result
+            -- return $ f fullBytes
         | otherwise ->
             throwUnexpectedFailure $
               TrailingDataError (fsPathChunkFile chunk) pt trailing
