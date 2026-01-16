@@ -64,7 +64,7 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyGenTx)
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( tickedShelleyLedgerState
   )
@@ -218,7 +218,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
        in if Map.null picked
             then Nothing
             else
-              (Just . GenTxShelley . mkShelleyTx) $
+              (Just . GenTxShelley . mkShelleyGenTx) $
                 SL.mkBasicTx body
                   & SL.witsTxL . SL.addrTxWitsL .~ Set.fromList [delegWit, poolWit]
                   & SL.witsTxL . SL.bootAddrTxWitsL .~ Set.singleton byronWit

@@ -86,7 +86,7 @@ forgeShelleyBlock
     actualBodySize = SL.bBodySize protocolVersion body
 
     extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
-    extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx
+    extractTx = SL.extractTx . shelleyValidatedGenTx
 
     prevHash :: SL.PrevHash
     prevHash =

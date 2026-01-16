@@ -28,10 +28,11 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   ( GenTx (..)
   , SL.ApplyTxError (..)
   , TxId (..)
+  , TxHash (..)
   , Validated (..)
   , fixedBlockBodyOverhead
-  , mkShelleyTx
-  , mkShelleyValidatedTx
+  , mkShelleyGenTx
+  , mkShelleyValidatedGenTx
   , perTxOverhead
 
     -- * Exported for tests
@@ -112,7 +113,11 @@ import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 
-data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx era)
+data instance GenTx (ShelleyBlock proto era) = ShelleyGenTx
+  { shelleyGenTxHash :: !(GenTxHash (ShelleyBlock proto era))
+  , shelleyGenTxId :: !(GenTxId (ShelleyBlock proto era))
+  , shelleyGenTx :: !(Tx era)
+  }
   deriving stock Generic
 
 deriving instance ShelleyBasedEra era => NoThunks (GenTx (ShelleyBlock proto era))
@@ -124,9 +129,11 @@ instance
   ShowProxy (GenTx (ShelleyBlock proto era))
 
 data instance Validated (GenTx (ShelleyBlock proto era))
-  = ShelleyValidatedTx
-      !SL.TxId
-      !(SL.Validated (Tx era))
+  = ShelleyValidatedGenTx
+  { shelleyValidatedGenTxHash :: !(GenTxHash (ShelleyBlock proto era))
+  , shelleyValidatedGenTxId :: !(GenTxId (ShelleyBlock proto era))
+  , shelleyValidatedGenTx :: !(SL.Validated (Tx era))
+  }
   deriving stock Generic
 
 deriving instance ShelleyBasedEra era => NoThunks (Validated (GenTx (ShelleyBlock proto era)))
@@ -178,50 +185,57 @@ instance
 
   reapplyTx = reapplyShelleyTx
 
-  txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
+  txForgetValidated (ShelleyValidatedGenTx txhash txid vtx) = ShelleyGenTx txhash txid (SL.extractTx vtx)
 
-  getTransactionKeySets (ShelleyTx _ tx) =
+  getTransactionKeySets tx =
     LedgerTables $
       KeysMK $
         coerceSet
-          (tx ^. bodyTxL . allInputsTxBodyF)
+          (shelleyGenTx tx ^. bodyTxL . allInputsTxBodyF)
 
-mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
-mkShelleyTx tx = ShelleyTx (txIdTx tx) tx
+mkShelleyGenTxId :: ShelleyBasedEra era => Tx era -> GenTxId (ShelleyBlock proto era)
+mkShelleyGenTxId = ShelleyGenTxId . txIdTx
 
-mkShelleyValidatedTx ::
+mkShelleyGenTxHash :: ShelleyBasedEra era => Tx era -> GenTxHash (ShelleyBlock proto era)
+mkShelleyGenTxHash = ShelleyGenTxHash . Hash.hashWithSerialiser toCBOR
+
+mkShelleyGenTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
+mkShelleyGenTx tx = ShelleyGenTx (mkShelleyGenTxHash tx) (mkShelleyGenTxId tx) tx
+
+mkShelleyValidatedGenTx ::
   forall era proto.
   ShelleyBasedEra era =>
   SL.Validated (Tx era) ->
   Validated (GenTx (ShelleyBlock proto era))
-mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
+mkShelleyValidatedGenTx vtx = ShelleyValidatedGenTx (mkShelleyGenTxHash tx) (mkShelleyGenTxId tx) vtx
  where
-  txid = txIdTx (SL.extractTx vtx)
+  tx = SL.extractTx vtx
 
-newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId SL.TxId
+newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyGenTxId {unShelleyGenTxId :: SL.TxId}
   deriving newtype (Eq, Ord, NoThunks)
 
 deriving newtype instance
   (Typeable era, Typeable proto, Crypto (ProtoCrypto proto)) =>
-  EncCBOR (TxId (GenTx (ShelleyBlock proto era)))
+  EncCBOR (GenTxId (ShelleyBlock proto era))
+
 deriving newtype instance
   (Typeable era, Typeable proto, Crypto (ProtoCrypto proto)) =>
-  DecCBOR (TxId (GenTx (ShelleyBlock proto era)))
+  DecCBOR (GenTxId (ShelleyBlock proto era))
 
 instance
   (Typeable era, Typeable proto) =>
-  ShowProxy (TxId (GenTx (ShelleyBlock proto era)))
+  ShowProxy (GenTxId (ShelleyBlock proto era))
 
 instance ShelleyBasedEra era => HasTxId (GenTx (ShelleyBlock proto era)) where
-  txId (ShelleyTx i _) = ShelleyTxId i
+  txId = shelleyGenTxId
 
 instance ShelleyBasedEra era => ConvertRawTxId (GenTx (ShelleyBlock proto era)) where
-  toRawTxIdHash (ShelleyTxId i) =
+  toRawTxIdHash (ShelleyGenTxId i) =
     Hash.hashToBytesShort . SL.extractHash . SL.unTxId $ i
 
 instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
   extractTxs =
-    map mkShelleyTx
+    map mkShelleyGenTx
       . blockBodyToTxList
       . SL.blockBody
       . shelleyBlockRaw
@@ -229,18 +243,41 @@ instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
     blockBodyToTxList :: BlockBody era -> [Tx era]
     blockBodyToTxList blockBody = toList $ blockBody ^. txSeqBlockBodyL
 
+newtype instance TxHash (GenTx (ShelleyBlock proto era)) = ShelleyGenTxHash {unShelleyGenTxHash :: Hash.Hash Hash.SHA256 (Tx era)}
+  deriving newtype (Eq, Ord, NoThunks)
+
+deriving newtype instance
+  (Typeable era, Typeable proto, Crypto (ProtoCrypto proto)) =>
+  EncCBOR (GenTxHash (ShelleyBlock proto era))
+
+deriving newtype instance
+  (Typeable era, Typeable proto, Crypto (ProtoCrypto proto)) =>
+  DecCBOR (GenTxHash (ShelleyBlock proto era))
+
+instance
+  (Typeable era, Typeable proto) =>
+  ShowProxy (GenTxHash (ShelleyBlock proto era))
+
+instance ShelleyBasedEra era => HasTxHash (GenTx (ShelleyBlock proto era)) where
+  txHash = shelleyGenTxHash
+
+instance ShelleyBasedEra era => ConvertRawTxHash (GenTx (ShelleyBlock proto era)) where
+  toRawTxHash (ShelleyGenTxHash h) = Hash.hashToBytesShort h
+
 {-------------------------------------------------------------------------------
   Serialisation
 -------------------------------------------------------------------------------}
 
+-- TODO(bladyjoker): Why don't we carry around the original CBOR bytes for performance?
+
 instance ShelleyCompatible proto era => ToCBOR (GenTx (ShelleyBlock proto era)) where
   -- No need to encode the 'TxId', it's just a hash of the 'SL.TxBody' inside
   -- 'SL.Tx', so it can be recomputed.
-  toCBOR (ShelleyTx _txid tx) = wrapCBORinCBOR toCBOR tx
+  toCBOR = wrapCBORinCBOR toCBOR . shelleyGenTx
 
 instance ShelleyCompatible proto era => FromCBOR (GenTx (ShelleyBlock proto era)) where
   fromCBOR =
-    fmap mkShelleyTx $
+    fmap mkShelleyGenTx $
       unwrapCBORinCBOR $
         eraDecoder @era $
           (. Full) . runAnnotator <$> decCBOR
@@ -250,15 +287,21 @@ instance ShelleyCompatible proto era => FromCBOR (GenTx (ShelleyBlock proto era)
 -------------------------------------------------------------------------------}
 
 instance ShelleyBasedEra era => Condense (GenTx (ShelleyBlock proto era)) where
-  condense (ShelleyTx _ tx) = show tx
+  condense = show . shelleyGenTx
 
 instance Condense (GenTxId (ShelleyBlock proto era)) where
-  condense (ShelleyTxId i) = "txid: " <> show i
+  condense (ShelleyGenTxId i) = "txid: " <> show i
+
+instance Condense (GenTxHash (ShelleyBlock proto era)) where
+  condense (ShelleyGenTxHash h) = "txhash: " <> show h
 
 instance ShelleyBasedEra era => Show (GenTx (ShelleyBlock proto era)) where
   show = condense
 
 instance Show (GenTxId (ShelleyBlock proto era)) where
+  show = condense
+
+instance Show (GenTxHash (ShelleyBlock proto era)) where
   show = condense
 
 {-------------------------------------------------------------------------------
@@ -278,7 +321,7 @@ applyShelleyTx ::
     ( TickedLedgerState (ShelleyBlock proto era) DiffMK
     , Validated (GenTx (ShelleyBlock proto era))
     )
-applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
+applyShelleyTx cfg wti slot gtx st0 = do
   let st1 :: TickedLedgerState (ShelleyBlock proto era) EmptyMK
       st1 = stowLedgerTables st0
 
@@ -291,7 +334,7 @@ applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
       (SL.mkMempoolEnv innerSt slot)
       (SL.mkMempoolState innerSt)
       wti
-      tx
+      (shelleyGenTx gtx)
 
   let st' :: TickedLedgerState (ShelleyBlock proto era) DiffMK
       st' =
@@ -300,7 +343,7 @@ applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
             unstowLedgerTables $
               set theLedgerLens mempoolState' st1
 
-  pure (st', mkShelleyValidatedTx vtx)
+  pure (st', mkShelleyValidatedGenTx vtx)
 
 reapplyShelleyTx ::
   ShelleyBasedEra era =>
@@ -320,7 +363,7 @@ reapplyShelleyTx doDiffs cfg slot vgtx st0 = do
         (shelleyLedgerGlobals cfg)
         (SL.mkMempoolEnv innerSt slot)
         (SL.mkMempoolState innerSt)
-        vtx
+        (shelleyValidatedGenTx vgtx)
 
   pure
     $ ( case doDiffs of
@@ -329,8 +372,6 @@ reapplyShelleyTx doDiffs cfg slot vgtx st0 = do
       )
     $ unstowLedgerTables
     $ set theLedgerLens mempoolState' st1
- where
-  ShelleyValidatedTx _txid vtx = vgtx
 
 -- | The lens combinator
 set ::
@@ -391,12 +432,12 @@ txInBlockSize ::
   TickedLedgerState (ShelleyBlock proto era) mk ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) (IgnoringOverflow ByteSize32)
-txInBlockSize st (ShelleyTx _txid tx') =
+txInBlockSize st gtx =
   validateMaybe (maxTxSizeUTxO txsz limit) $ do
     guard $ txsz <= limit
     Just $ IgnoringOverflow $ ByteSize32 $ txsz + perTxOverhead
  where
-  txsz = tx' ^. sizeTxF
+  txsz = shelleyGenTx gtx ^. sizeTxF
 
   pparams = getPParams $ tickedShelleyLedgerState st
   limit = pparams ^. L.ppMaxTxSizeL
@@ -561,10 +602,10 @@ txMeasureAlonzo ::
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) AlonzoMeasure
-txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
-  AlonzoMeasure <$> txInBlockSize st tx <*> exunits
+txMeasureAlonzo st gtx@(ShelleyGenTx _txhash _txid tx) =
+  AlonzoMeasure <$> txInBlockSize st gtx <*> exunits
  where
-  txsz = totExUnits tx'
+  txsz = totExUnits tx
 
   pparams = getPParams $ tickedShelleyLedgerState st
   limit = pparams ^. L.ppMaxTxExUnitsL
@@ -731,11 +772,11 @@ txMeasureConway ::
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) ConwayMeasure
-txMeasureConway st tx@(ShelleyTx _txid tx') =
-  ConwayMeasure <$> txMeasureAlonzo st tx <*> refScriptBytes
+txMeasureConway st gtx@(ShelleyGenTx _txhash _txid tx) =
+  ConwayMeasure <$> txMeasureAlonzo st gtx <*> refScriptBytes
  where
   utxo = SL.getUTxO . tickedShelleyLedgerState $ st
-  txsz = SL.txNonDistinctRefScriptsSize utxo tx' :: Int
+  txsz = SL.txNonDistinctRefScriptsSize utxo tx :: Int
 
   pparams = getPParams $ tickedShelleyLedgerState st
 

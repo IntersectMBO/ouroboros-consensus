@@ -157,10 +157,10 @@ instance Arbitrary ShelleyHash where
   arbitrary = ShelleyHash <$> arbitrary
 
 instance CanMock proto era => Arbitrary (GenTx (ShelleyBlock proto era)) where
-  arbitrary = mkShelleyTx <$> arbitrary
+  arbitrary = mkShelleyGenTx <$> arbitrary
 
 instance CanMock proto era => Arbitrary (GenTxId (ShelleyBlock proto era)) where
-  arbitrary = ShelleyTxId <$> arbitrary
+  arbitrary = ShelleyGenTxId <$> arbitrary
 
 instance CanMock proto era => Arbitrary (SomeBlockQuery (BlockQuery (ShelleyBlock proto era))) where
   arbitrary =

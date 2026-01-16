@@ -559,6 +559,7 @@ mkSUT ::
   , LedgerSupportsProtocol blk
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   ) =>
   LedgerConfig blk ->
   LedgerState blk ValuesMK ->

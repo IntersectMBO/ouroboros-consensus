@@ -47,6 +47,8 @@ import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable
@@ -85,7 +87,9 @@ data InternalState blk = IS
   -- the normal way: by becoming invalid w.r.t. the updated ledger state.
   -- We treat a Mempool /over/ capacity in the same way as a Mempool /at/
   -- capacity.
-  , isTxIds :: !(Set (GenTxId blk))
+  , isTxHashes :: !(Map (GenTxHash blk) TicketNo) -- TODO(bladyjoker): Documentation
+  , isTxIds :: !(Set (GenTxId blk)) -- TODO(bladyjoker): These are indices to `isTxs`, would rather have a `Map (GenTxId blk) TicketNo` too
+
   -- ^ The cached IDs of transactions currently in the mempool.
   --
   -- This allows one to more quickly lookup transactions by ID from a
@@ -146,6 +150,7 @@ data InternalState blk = IS
 
 deriving instance
   ( NoThunks (Validated (GenTx blk))
+  , NoThunks (GenTxHash blk)
   , NoThunks (GenTxId blk)
   , NoThunks (TickedLedgerState blk DiffMK)
   , NoThunks (TxIn (LedgerState blk))
@@ -177,6 +182,7 @@ initInternalState ::
 initInternalState capacityOverride lastTicketNo cfg slot st =
   IS
     { isTxs = TxSeq.Empty
+    , isTxHashes = Map.empty
     , isTxIds = Set.empty
     , isTxKeys = emptyLedgerTables
     , isTxValues = emptyLedgerTables
@@ -324,7 +330,7 @@ tickLedgerState cfg (ForgeInUnknownSlot st) =
 -- | Extend 'InternalState' with a new transaction (one which we have not
 -- previously validated) that may or may not be valid in this ledger state.
 validateNewTransaction ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk), HasTxHash (GenTx blk)) =>
   LedgerConfig blk ->
   WhetherToIntervene ->
   GenTx blk ->
@@ -350,6 +356,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
           , isTxKeys = isTxKeys <> getTransactionKeySets tx
           , isTxValues = ltliftA2 unionValues isTxValues origValues
           , isTxIds = Set.insert (txId tx) isTxIds
+          , isTxHashes = Map.insert (txHash tx) nextTicketNo isTxHashes
           , isLedgerState = prependMempoolDiffs isLedgerState st'
           , isLastTicketNo = nextTicketNo
           }
@@ -357,6 +364,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
  where
   IS
     { isTxs
+    , isTxHashes
     , isTxIds
     , isTxKeys
     , isTxValues
@@ -375,7 +383,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
 -- revalidating the whole set of transactions onto a new state, or if we remove
 -- some transactions and revalidate the remaining ones.
 revalidateTxsFor ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk), HasTxHash (GenTx blk)) =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
@@ -401,7 +409,8 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
    in RevalidateTxsResult
         ( IS
             { isTxs = TxSeq.fromList $ map unwrap val
-            , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst) val
+            , isTxHashes = indexTxsByTxHash val
+            , isTxIds = indexTxsByTxId val
             , isTxKeys = keys
             , isTxValues = ltliftA2 restrictValuesMK values keys
             , isLedgerState = trackingToDiffs st'
@@ -412,6 +421,18 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
             }
         )
         err
+
+indexTxsByTxHash ::
+  (HasTxHash (GenTx blk), LedgerSupportsMempool blk) =>
+  [(Validated (GenTx blk), (TicketNo, TxMeasure blk))] -> Map (GenTxHash blk) TicketNo
+indexTxsByTxHash =
+  Map.fromList
+    . map (\(vgtx, (ticketno, _txmeasure)) -> (txHash . txForgetValidated $ vgtx, ticketno))
+
+indexTxsByTxId ::
+  (HasTxId (GenTx blk), LedgerSupportsMempool blk) =>
+  [(Validated (GenTx blk), (TicketNo, TxMeasure blk))] -> Set (GenTxId blk)
+indexTxsByTxId = Set.fromList . map (txId . txForgetValidated . fst)
 
 data RevalidateTxsResult blk
   = RevalidateTxsResult
@@ -424,7 +445,7 @@ data RevalidateTxsResult blk
 -- | Compute snapshot is largely the same as revalidate the transactions
 -- but we ignore the diffs.
 computeSnapshot ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk), HasTxHash (GenTx blk)) =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
@@ -449,7 +470,8 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
    in snapshotFromIS $
         IS
           { isTxs = TxSeq.fromList $ map unwrap val
-          , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst) val
+          , isTxHashes = indexTxsByTxHash val
+          , isTxIds = indexTxsByTxId val
           , -- These two can be empty since we don't need the resulting
             -- values at all when making a snapshot, as we won't update
             -- the internal state.
@@ -469,7 +491,7 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
 snapshotFromIS ::
   forall blk.
-  (HasTxId (GenTx blk), TxLimits blk, GetTip (TickedLedgerState blk)) =>
+  (HasTxId (GenTx blk), HasTxHash (GenTx blk), TxLimits blk, GetTip (TickedLedgerState blk)) =>
   InternalState blk ->
   MempoolSnapshot blk
 snapshotFromIS is =
@@ -478,6 +500,7 @@ snapshotFromIS is =
     , snapshotTxsAfter = implSnapshotGetTxsAfter is
     , snapshotLookupTx = implSnapshotGetTx is
     , snapshotHasTx = implSnapshotHasTx is
+    , snapshotLookupTxByHash = implSnapshotLookupTxByHash is
     , snapshotMempoolSize = implSnapshotGetMempoolSize is
     , snapshotSlotNo = isSlotNo is
     , snapshotStateHash = getTipHash $ isLedgerState is
@@ -515,6 +538,14 @@ snapshotFromIS is =
     GenTxId blk ->
     Bool
   implSnapshotHasTx IS{isTxIds} = flip Set.member isTxIds
+
+  implSnapshotLookupTxByHash ::
+    InternalState blk ->
+    GenTxHash blk ->
+    Maybe (Validated (GenTx blk))
+  implSnapshotLookupTxByHash is' txhash = do
+    ticketno <- Map.lookup txhash (isTxHashes is')
+    implSnapshotGetTx is' ticketno
 
   implSnapshotGetMempoolSize ::
     InternalState blk ->

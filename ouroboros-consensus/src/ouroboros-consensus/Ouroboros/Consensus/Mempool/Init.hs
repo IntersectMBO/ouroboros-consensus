@@ -31,6 +31,7 @@ openMempool ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   , ValidateEnvelope blk
   ) =>
   ResourceRegistry m ->
@@ -51,6 +52,7 @@ forkSyncStateOnTipPointChange ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   , ValidateEnvelope blk
   ) =>
   MempoolEnv m blk ->
@@ -84,6 +86,7 @@ openMempoolWithoutSyncThread ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   , ValidateEnvelope blk
   ) =>
   ResourceRegistry m ->
@@ -99,6 +102,7 @@ mkMempool ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasTxHash (GenTx blk)
   , ValidateEnvelope blk
   ) =>
   MempoolEnv m blk -> Mempool m blk

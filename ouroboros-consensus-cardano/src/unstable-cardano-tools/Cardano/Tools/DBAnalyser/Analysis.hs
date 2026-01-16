@@ -96,6 +96,7 @@ runAnalysis ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsMempool.HasTxId (LedgerSupportsMempool.GenTx blk)
+  , LedgerSupportsMempool.HasTxHash (LedgerSupportsMempool.GenTx blk)
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
@@ -854,6 +855,7 @@ reproMempoolForge ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsMempool.HasTxId (LedgerSupportsMempool.GenTx blk)
+  , LedgerSupportsMempool.HasTxHash (LedgerSupportsMempool.GenTx blk)
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk

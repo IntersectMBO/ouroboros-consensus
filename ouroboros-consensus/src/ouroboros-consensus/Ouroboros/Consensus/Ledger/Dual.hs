@@ -250,6 +250,7 @@ class
   , LedgerSupportsMempool m
   , CommonProtocolParams m
   , HasTxId (GenTx m)
+  , HasTxHash (GenTx m)
   , Show (ApplyTxErr m)
   , Show (LedgerConfig m)
   , -- Requirements on the auxiliary block
@@ -763,6 +764,18 @@ instance
 instance Bridge m a => HasTxId (GenTx (DualBlock m a)) where
   txId = DualGenTxId . txId . dualGenTxMain
 
+newtype instance TxHash (GenTx (DualBlock m a)) = DualGenTxHash
+  { dualGenTxHashMain :: GenTxHash m
+  }
+  deriving NoThunks via AllowThunk (TxHash (GenTx (DualBlock m a)))
+
+instance
+  (Typeable m, Typeable a) =>
+  ShowProxy (TxHash (GenTx (DualBlock m a)))
+
+instance Bridge m a => HasTxHash (GenTx (DualBlock m a)) where
+  txHash = DualGenTxHash . txHash . dualGenTxMain
+
 deriving instance Bridge m a => Show (GenTx (DualBlock m a))
 deriving instance Bridge m a => Show (Validated (GenTx (DualBlock m a)))
 deriving instance Bridge m a => Show (DualGenTxErr m a)
@@ -770,6 +783,10 @@ deriving instance Bridge m a => Show (DualGenTxErr m a)
 deriving instance Show (GenTxId m) => Show (TxId (GenTx (DualBlock m a)))
 deriving instance Eq (GenTxId m) => Eq (TxId (GenTx (DualBlock m a)))
 deriving instance Ord (GenTxId m) => Ord (TxId (GenTx (DualBlock m a)))
+
+deriving instance Show (GenTxHash m) => Show (TxHash (GenTx (DualBlock m a)))
+deriving instance Eq (GenTxHash m) => Eq (TxHash (GenTx (DualBlock m a)))
+deriving instance Ord (GenTxHash m) => Ord (TxHash (GenTx (DualBlock m a)))
 
 {-------------------------------------------------------------------------------
   Nested contents
