@@ -30,14 +30,21 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
+  , prop_tx_is_unique_consecutive
+  , prop_tx_is_unique
+  , prop_tx_id_valid_effect_is_same
+  , prop_validated_tx_forget_is_tx
+  , prop_tx_hash_effect_is_same
   ) where
 
 import Codec.Serialise (Serialise)
 import Control.DeepSeq (NFData)
+import Control.Monad (foldM)
 import Control.Monad.Except
 import Data.ByteString.Short (ShortByteString)
 import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
+import Data.Either (isLeft)
 import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
 import Data.Measure (Measure)
@@ -469,3 +476,119 @@ data Invalidated blk = Invalidated
   { getInvalidated :: !(Validated (GenTx blk))
   , getReason :: !(ApplyTxErr blk)
   }
+
+{-------------------------------------------------------------------------------
+  Properties
+
+  TODO(bladyjoker): Properties to add `reapplyTx`/`reapplyTxs`, `getTransactionKeySets`, `prependMempoolDiffs`.
+-------------------------------------------------------------------------------}
+
+-- | `prop_tx_is_unique_consecutive ctx st gtx` holds when `gtx` applied to ledger state `st` twice fails.
+-- [`st`] -> `gtx` -> `gtx` !
+-- In other words, applying the same transaction in sequence MUST always fail.
+-- Concretely, in Praos, every transaction must spend at least one UTxO, and UTxOs can't be spent twice, therefore the same transaction applied in sequence MUST fail.
+prop_tx_is_unique_consecutive ::
+  LedgerSupportsMempool blk => ApplyTxContext blk -> ApplyTxState blk -> GenTx blk -> Bool
+prop_tx_is_unique_consecutive = \ctx st gtx ->
+  isLeft . runExcept $ do
+    (vgtx, st') <- _applyTx ctx st gtx
+    _applyTx ctx st' (txForgetValidated vgtx)
+
+-- | `prop_tx_is_unique ctx st gtx betweengtxs` holds when `gtx` applied to ledger state `st` before and after `betweengtxs` are applied fails.
+-- [`st`] -> `gtx` -> ...`betweengtxs`... -> `gtx` !
+-- In other words, applying the same transaction twice, regardless of what happens in between, MUST fail.
+-- Concretely, in Praos, every transaction must spend at least one UTxO, and UTxOs can't be spent twice, therefore the same transaction applied twice MUST fail.
+-- This property subsumes `prop_tx_is_unique_consequtively`
+prop_tx_is_unique ::
+  LedgerSupportsMempool blk =>
+  ApplyTxContext blk ->
+  ApplyTxState blk ->
+  GenTx blk ->
+  [GenTx blk] ->
+  Bool
+prop_tx_is_unique = \ctx st gtx gtxs ->
+  isLeft . runExcept $ do
+    (vgtx, st') <- _applyTx ctx st gtx
+    st''' <-
+      foldM
+        (\st'' tx -> snd <$> _applyTx ctx st'' tx)
+        (st')
+        gtxs
+    _applyTx ctx st''' (txForgetValidated vgtx)
+
+-- | `prop_tx_id_valid_effect_is_same ctx st gtxA gtxB` holds when `txId` of `gtxA` and `gtxB` are the same and they both can be successfully applied to `st` with the same result.
+-- [`st`] -> `gtxA` -> [`stA`]
+-- [`st`] -> `gtxB` -> [`stB`]
+-- In other words, the `stA` and `stB` states MUST be the same.
+-- In other words, if the transaction identifiers are the same and both transactions succeed, that means they have the SAME ledger effect.
+-- In other words, it also means that one or both can fail (for example the witness sets differ such that one fails and one doesn't).
+prop_tx_id_valid_effect_is_same ::
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk), Eq (ApplyTxState blk)) =>
+  ApplyTxContext blk ->
+  ApplyTxState blk ->
+  GenTx blk ->
+  GenTx blk ->
+  Bool
+prop_tx_id_valid_effect_is_same = \ctx st gtxA gtxB ->
+  let bothSucceed = runExcept $ do
+        (_vgtxA, stA) <- _applyTx ctx st gtxA
+        (_vgtxB, stB) <- _applyTx ctx st gtxB
+        return (stA == stB)
+   in if txId gtxA == txId gtxB
+        then case bothSucceed of
+          Left _ -> True
+          Right isSameState -> isSameState
+        else False
+
+-- | `prop_tx_hash_effect_is_same ctx st gtxA gtxB` holds when `txHash` of `gtxA` and `gtxB` and their application to the ledger state `st` is the same.
+-- [`st`] -> `gtxA` -> [`stA`]
+-- [`st`] -> `gtxB` -> [`stB`]
+-- In other words, they both fail the same way and succeed the same way.
+prop_tx_hash_effect_is_same ::
+  ( LedgerSupportsMempool blk
+  , HasTxHash (GenTx blk)
+  , Eq (ApplyTxState blk)
+  , Eq (ApplyTxErr blk)
+  , Eq (Validated (GenTx blk))
+  ) =>
+  ApplyTxContext blk ->
+  ApplyTxState blk ->
+  GenTx blk ->
+  GenTx blk ->
+  Bool
+prop_tx_hash_effect_is_same = \ctx st gtxA gtxB ->
+  if txHash gtxA == txHash gtxB
+    then runExcept (_applyTx ctx st gtxA) == runExcept (_applyTx ctx st gtxB)
+    else False
+
+-- | `prop_validated_tx_forget_is_tx ctx st gtx` holds when `gtx` is successfully applied and the returned 'validated' version when `txForgetValidated`` is the same as the original `gtx`.
+-- [`st`] -> `gtx` -> [`st'`]
+-- In other words, the validated transaction MUST `txForgetValidated` into the same transaction that was originally applied.
+prop_validated_tx_forget_is_tx ::
+  (LedgerSupportsMempool blk, Eq (GenTx blk)) =>
+  ApplyTxContext blk ->
+  ApplyTxState blk ->
+  GenTx blk ->
+  Bool
+prop_validated_tx_forget_is_tx = \ctx st gtx ->
+  case runExcept ((txForgetValidated . fst) <$> _applyTx ctx st gtx) of
+    Left _ -> False
+    Right gtx' -> gtx == gtx'
+
+{-------------------------------------------------------------------------------
+  Properties - Utils
+-------------------------------------------------------------------------------}
+
+type ApplyTxContext blk =
+  (LedgerConfig blk, WhetherToIntervene, SlotNo)
+type ApplyTxState blk = TickedLedgerState blk ValuesMK
+
+_applyTx ::
+  LedgerSupportsMempool blk =>
+  ApplyTxContext blk ->
+  ApplyTxState blk ->
+  GenTx blk ->
+  Except (ApplyTxErr blk) (Validated (GenTx blk), ApplyTxState blk)
+_applyTx (lcfg, wti, slotno) lst gtx = do
+  (lstDiff, vgtx) <- applyTx lcfg wti slotno gtx lst
+  return (vgtx, applyDiffs lst lstDiff)

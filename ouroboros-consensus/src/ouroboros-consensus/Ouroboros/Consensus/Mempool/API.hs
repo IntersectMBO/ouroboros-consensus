@@ -33,10 +33,19 @@ module Ouroboros.Consensus.Mempool.API
   , SizeInBytes
   , TicketNo
   , zeroTicketNo
+  , prop_snapshot_after_zero_is_all
+  , prop_snapshot_ticket_no_is_strictly_monotone_increasing
+  , prop_snapshot_ticket_no_is_unique
+  , prop_snapshot_tx_id_is_unique
+  , prop_snapshot_tx_hash_is_unique
+  , prop_snapshot_txs_by_tx_id_is_correct
+  , prop_snapshot_txs_by_tx_hash_is_correct
   ) where
 
 import Control.ResourceRegistry
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Map as Map
+import qualified Data.Set as Set
 import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -370,3 +379,75 @@ data MempoolSnapshot blk = MempoolSnapshot
   -- transactions
   , snapshotPoint :: Point blk
   }
+
+{-------------------------------------------------------------------------------
+  Mempool snapshot properties
+  TODO(bladyjoker): What can we say about ticket numbers across snapshots (in a series of snapshots)?
+-------------------------------------------------------------------------------}
+
+-- | `prop_snapshot_after_zero_is_all ms` holds when transactions after 'zeroth' ticket numbers are the same to all the transactions in the snapshot `ms`.
+prop_snapshot_after_zero_is_all ::
+  (LedgerSupportsMempool blk, Eq (Validated (GenTx blk))) => MempoolSnapshot blk -> Bool
+prop_snapshot_after_zero_is_all = \ms -> snapshotTxsAfter ms zeroTicketNo == snapshotTxs ms
+
+-- | `prop_snapshot_ticket_no_is_monotone_increasing ms` holds when ticket numbers are strictly monotonically increasing in the snapshot `ms`.
+prop_snapshot_ticket_no_is_strictly_monotone_increasing :: MempoolSnapshot blk -> Bool
+prop_snapshot_ticket_no_is_strictly_monotone_increasing = \ms -> isStrictlyMonotoneIncreasing [tn | (_vgtx, tn, _tm) <- snapshotTxs ms]
+
+-- | `prop_snapshot_ticket_no_is_unique ms` holds when ticket numbers are unique in the snapshot `ms`.
+prop_snapshot_ticket_no_is_unique :: MempoolSnapshot blk -> Bool
+prop_snapshot_ticket_no_is_unique = \ms ->
+  let ticketNumbers = [tn | (_vgtx, tn, _tm) <- snapshotTxs ms]
+   in length (Set.fromList ticketNumbers) == length ticketNumbers
+
+-- | `prop_snapshot_tx_id_is_unique ms` holds when transacion identifiers are unique in the snapshot `ms`.
+-- This is a consequence of `Ouroboros.Consensus.Ledger.SupportsMempool.prop_tx_is_unique` property which says that each transaction can only occur once on the ledger.
+prop_snapshot_tx_id_is_unique ::
+  (HasTxId (GenTx blk), LedgerSupportsMempool blk) => MempoolSnapshot blk -> Bool
+prop_snapshot_tx_id_is_unique = \ms ->
+  let txIds = [txId . txForgetValidated $ vgtx | (vgtx, _tn, _tm) <- snapshotTxs ms]
+   in length (Set.fromList txIds) == length txIds
+
+-- | `prop_snapshot_tx_hash_is_unique ms` holds when transacion hashes are unique in the snapshot `ms`.
+-- This is a consequence of `Ouroboros.Consensus.Ledger.SupportsMempool.prop_tx_is_unique` property which says that each transaction can only occur once on the ledger.
+prop_snapshot_tx_hash_is_unique ::
+  (HasTxHash (GenTx blk), LedgerSupportsMempool blk) => MempoolSnapshot blk -> Bool
+prop_snapshot_tx_hash_is_unique = \ms ->
+  let txHashes = [txHash . txForgetValidated $ vgtx | (vgtx, _tn, _tm) <- snapshotTxs ms]
+   in length (Set.fromList txHashes) == length txHashes
+
+-- | `prop_snapshot_txs_by_tx_id_is_correct ms` holds when transacion id indices match the indexed in the snapshot `ms`.
+prop_snapshot_txs_by_tx_id_is_correct ::
+  ( LedgerSupportsMempool blk
+  , HasTxId (GenTx blk)
+  ) =>
+  MempoolSnapshot blk -> Bool
+prop_snapshot_txs_by_tx_id_is_correct = \ms ->
+  let txIds =
+        Set.fromList [txId . txForgetValidated $ vgtx | (vgtx, _tn, _tm) <- snapshotTxs ms]
+      txIds' = Set.fromList [txid | txid <- Set.toList txIds, snapshotHasTx ms txid]
+   in txIds == txIds'
+
+-- | `prop_snapshot_txs_by_tx_hash_is_correct ms` holds when transacion hash indices match the indexed in the snapshot `ms`.
+prop_snapshot_txs_by_tx_hash_is_correct ::
+  (HasTxHash (GenTx blk), LedgerSupportsMempool blk, Eq (Validated (GenTx blk))) =>
+  MempoolSnapshot blk -> Bool
+prop_snapshot_txs_by_tx_hash_is_correct = \ms ->
+  let txsByHash =
+        Map.fromList [(txHash . txForgetValidated $ vgtx, Just vgtx) | (vgtx, _tn, _tm) <- snapshotTxs ms]
+      txsByHash' = Map.fromList [(txhash, snapshotLookupTxByHash ms txhash) | (txhash, _tx) <- Map.toList txsByHash]
+   in txsByHash == txsByHash'
+
+-- | `isStrictlyMonotoneIncreasing xs` returns `True` when `xs` are strictly increasing and `False` otherwise.
+-- >>> isStrictlyMonotoneIncreasing ([] :: [Int])
+-- True
+-- >>> isStrictlyMonotoneIncreasing ([1] :: [Int])
+-- True
+-- >>> isStrictlyMonotoneIncreasing ([1,1] :: [Int])
+-- False
+-- >>> isStrictlyMonotoneIncreasing ([1,2,4,8,16] :: [Int])
+-- True
+-- >>> isStrictlyMonotoneIncreasing ([1,2,4,16,8] :: [Int])
+-- False
+isStrictlyMonotoneIncreasing :: Ord a => [a] -> Bool
+isStrictlyMonotoneIncreasing xs = and $ zipWith (<) xs (drop 1 xs)
