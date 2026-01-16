@@ -507,7 +507,7 @@ library unstable-consensus-testlib
     base16-bytestring,
     binary,
     bytestring,
-    cardano-binary:testlib,
+    cardano-binary:{cardano-binary, testlib},
     cardano-crypto-class,
     cardano-ledger-binary:testlib,
     cardano-ledger-core,
