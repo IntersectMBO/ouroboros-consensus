@@ -72,6 +72,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
   ) where
 
 import Cardano.Binary (enforceSize)
+import Cardano.Binary (enforceSize, DecoderError)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as Dec
 import Codec.CBOR.Encoding (Encoding)
@@ -218,9 +219,9 @@ class
   decodeDiskHfcBlock ::
     CodecConfig (HardForkBlock xs) ->
     forall s.
-    Decoder s (Lazy.ByteString -> HardForkBlock xs)
+    Decoder s (Lazy.ByteString -> Either DecoderError (HardForkBlock xs))
   decodeDiskHfcBlock cfg =
-    (\f -> HardForkBlock . OneEraBlock . f)
+    (\f -> fmap (HardForkBlock . OneEraBlock) . f)
       <$> decodeAnnNS (hcmap pSHFC aux cfgs)
    where
     cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
@@ -228,7 +229,8 @@ class
     aux ::
       SerialiseDiskConstraints blk =>
       CodecConfig blk -> AnnDecoder I blk
-    aux cfg' = AnnDecoder $ (I .) <$> decodeDisk cfg'
+    aux cfg' = AnnDecoder $ (fmap I .) <$>
+      decodeDisk cfg'
 
   -- | Used as the implementation of 'reconstructPrefixLen' for
   -- 'HardForkBlock'.
@@ -355,7 +357,7 @@ disabledEraException = HardForkEncoderDisabledEra . singleEraInfo
 -------------------------------------------------------------------------------}
 
 data AnnDecoder f blk = AnnDecoder
-  { annDecoder :: forall s. Decoder s (Lazy.ByteString -> f blk)
+  { annDecoder :: forall s. Decoder s (Lazy.ByteString -> Either DecoderError (f blk))
   }
 
 {-------------------------------------------------------------------------------
@@ -431,7 +433,7 @@ decodeAnnNS ::
   SListI xs =>
   NP (AnnDecoder f) xs ->
   forall s.
-  Decoder s (Lazy.ByteString -> NS f xs)
+  Decoder s (Lazy.ByteString -> Either DecoderError (NS f xs))
 decodeAnnNS ds = do
   enforceSize "decodeDiskAnnNS" 2
   i <- Dec.decodeWord8
@@ -443,8 +445,10 @@ decodeAnnNS ds = do
     Index xs blk ->
     AnnDecoder f blk ->
     K () blk ->
-    K (Decoder s (Lazy.ByteString -> NS f xs)) blk
-  aux index (AnnDecoder dec) (K ()) = K $ (injectNS index .) <$> dec
+    K (Decoder s (Lazy.ByteString -> Either DecoderError (NS f xs))) blk
+  aux index (AnnDecoder dec) (K ()) =
+    undefined -- TODO(geo2a)
+    -- K $ (injectNS index .) <$> dec
 
 {-------------------------------------------------------------------------------
   Dependent serialisation
@@ -472,17 +476,17 @@ encodeNested = \ccfg (NestedCtxt ctxt) a ->
 decodeNested ::
   All (DecodeDiskDep (NestedCtxt f)) xs =>
   CodecConfig (HardForkBlock xs) ->
-  NestedCtxt f (HardForkBlock xs) a ->
+  NestedCtxt f (HardForkBlock xs) (Either DecoderError a) ->
   forall s.
-  Decoder s (Lazy.ByteString -> a)
+  Decoder s (Lazy.ByteString -> Either DecoderError a)
 decodeNested = \ccfg (NestedCtxt ctxt) ->
   go (getPerEraCodecConfig (hardForkCodecConfigPerEra ccfg)) ctxt
  where
   go ::
     All (DecodeDiskDep (NestedCtxt f)) xs' =>
     NP CodecConfig xs' ->
-    NestedCtxt_ (HardForkBlock xs') f a ->
-    Decoder s (Lazy.ByteString -> a)
+    NestedCtxt_ (HardForkBlock xs') f (Either DecoderError a) ->
+    Decoder s (Lazy.ByteString -> Either DecoderError a)
   go Nil ctxt = case ctxt of {}
   go (c :* _) (NCZ ctxt) = decodeDiskDep c (NestedCtxt ctxt)
   go (_ :* cs) (NCS ctxt) = go cs ctxt

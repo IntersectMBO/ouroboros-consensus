@@ -1,5 +1,6 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -60,7 +61,7 @@ module Ouroboros.Consensus.Storage.Serialisation
   , encodeDepPair
   ) where
 
-import Cardano.Binary (enforceSize)
+import Cardano.Binary (enforceSize, DecoderError)
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
@@ -154,12 +155,12 @@ class DecodeDiskDepIx f blk where
 --
 -- Typical usage: @f = NestedCtxt Header@.
 class DecodeDiskDep f blk where
-  decodeDiskDep :: CodecConfig blk -> f blk a -> forall s. Decoder s (Lazy.ByteString -> a)
+  decodeDiskDep :: CodecConfig blk -> f blk (Either DecoderError a) -> forall s. Decoder s (Lazy.ByteString -> Either DecoderError a)
   default decodeDiskDep ::
     ( TrivialDependency (f blk)
     , DecodeDisk blk (Lazy.ByteString -> TrivialIndex (f blk))
     ) =>
-    CodecConfig blk -> f blk a -> forall s. Decoder s (Lazy.ByteString -> a)
+    CodecConfig blk -> f blk (Either DecoderError a) -> forall s. Decoder s (Lazy.ByteString -> Either DecoderError a)
   decodeDiskDep cfg ctxt =
     (\f -> toTrivialDependency ctxt . f) <$> decodeDisk cfg
 
