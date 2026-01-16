@@ -57,7 +57,6 @@ module Ouroboros.Consensus.Storage.Serialisation
   , SizeInBytes
 
     -- * Exported for the benefit of tests
-  , decodeDepPair
   , encodeDepPair
   ) where
 
@@ -170,12 +169,6 @@ instance
   where
   encodeDisk ccfg = encodeDisk ccfg . encodeDepPair ccfg
 
-instance
-  (DecodeDiskDepIx f blk, DecodeDiskDep f blk) =>
-  DecodeDisk blk (DepPair (f blk))
-  where
-  decodeDisk ccfg = decodeDisk ccfg >>= decodeDepPair ccfg
-
 {-------------------------------------------------------------------------------
   Internal: support for serialisation of dependent pairs
 -------------------------------------------------------------------------------}
@@ -187,14 +180,6 @@ encodeDepPair ::
   GenDepPair Serialised (f blk)
 encodeDepPair ccfg (DepPair fa a) =
   GenDepPair fa (mkSerialised (encodeDiskDep ccfg fa) a)
-
-decodeDepPair ::
-  DecodeDiskDep f blk =>
-  CodecConfig blk ->
-  GenDepPair Serialised (f blk) ->
-  Decoder s (DepPair (f blk))
-decodeDepPair ccfg (GenDepPair fa serialised) =
-  DepPair fa <$> fromSerialised (decodeDiskDep ccfg fa) serialised
 
 instance EncodeDiskDepIx f blk => EncodeDisk blk (GenDepPair Serialised (f blk)) where
   encodeDisk ccfg (GenDepPair fa serialised) =
