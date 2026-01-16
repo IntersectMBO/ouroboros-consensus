@@ -49,7 +49,7 @@ import Cardano.Ledger.Binary
   , toByronCBOR
   , toPlainDecoder
   )
-import Cardano.Ledger.Binary.Plain (Decoder, Encoding)
+import Cardano.Ledger.Binary.Plain (Decoder, Encoding, DecoderError)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..))
 import Control.Monad (guard)
@@ -89,14 +89,14 @@ type RawHeader = CC.AHeader Strict.ByteString
 data instance NestedCtxt_ ByronBlock f a where
   CtxtByronRegular ::
     !SizeInBytes ->
-    NestedCtxt_ ByronBlock Header RawHeader
+    NestedCtxt_ ByronBlock Header (Either DecoderError RawHeader)
   -- | In order to reconstruct 'Header ByronBlock' we need the 'SlotNo'
   --
   -- We could compute that using 'EpochSlots', but we don't have that available
   -- here.
   CtxtByronBoundary ::
     !SizeInBytes ->
-    NestedCtxt_ ByronBlock Header (SlotNo, RawBoundaryHeader)
+    NestedCtxt_ ByronBlock Header (Either DecoderError (SlotNo, RawBoundaryHeader))
 
 deriving instance Show (NestedCtxt_ ByronBlock f a)
 
@@ -112,17 +112,21 @@ instance SameDepIndex (NestedCtxt_ ByronBlock f) where
 
 instance HasNestedContent Header ByronBlock where
   unnest hdr = case byronHeaderRaw hdr of
-    CC.ABOBBoundaryHdr h -> DepPair (NestedCtxt (CtxtByronBoundary blockSize)) (slotNo, h)
-    CC.ABOBBlockHdr h -> DepPair (NestedCtxt (CtxtByronRegular blockSize)) h
+    CC.ABOBBoundaryHdr h -> DepPair (NestedCtxt (CtxtByronBoundary blockSize)) (Right (slotNo, h))
+    CC.ABOBBlockHdr h -> DepPair (NestedCtxt (CtxtByronRegular blockSize)) (Right h)
    where
     blockSize = byronHeaderBlockSizeHint hdr
     slotNo = byronHeaderSlotNo hdr
 
   nest = \case
-    DepPair (NestedCtxt (CtxtByronBoundary blockSize)) (slotNo, h) ->
-      mkBoundaryByronHeader slotNo h blockSize
-    DepPair (NestedCtxt (CtxtByronRegular blockSize)) h ->
-      mkRegularByronHeader h blockSize
+    -- DepPair (NestedCtxt (CtxtByronBoundary blockSize)) (slotNo, h) ->
+    --   mkBoundaryByronHeader slotNo h blockSize
+    -- DepPair (NestedCtxt (CtxtByronRegular blockSize)) h ->
+    --   mkRegularByronHeader h blockSize
+    DepPair (NestedCtxt (CtxtByronBoundary blockSize)) _x ->
+      undefined -- TODO(geo2a)
+    DepPair (NestedCtxt (CtxtByronRegular blockSize)) _x ->
+      undefined -- TODO(geo2a)
 
 {-------------------------------------------------------------------------------
   Serialisation

@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
   , reconstructPrimaryIndex
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Control.Exception (assert)
 import Control.Monad (forM_, unless, when)
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
@@ -82,7 +83,7 @@ validateAndReopen ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , ConvertRawHash blk
   , Eq h
   , HasCallStack
@@ -127,7 +128,7 @@ validate ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , ConvertRawHash blk
   , HasCallStack
   ) =>
@@ -178,7 +179,7 @@ validateAllChunks ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , ConvertRawHash blk
   , HasCallStack
   ) =>
@@ -261,7 +262,7 @@ validateMostRecentChunk ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , ConvertRawHash blk
   , HasCallStack
   ) =>
@@ -341,7 +342,7 @@ validateChunk ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , ConvertRawHash blk
   , HasCallStack
   ) =>

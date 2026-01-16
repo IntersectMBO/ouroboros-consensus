@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
   , getBlockAtOrAfterPointImpl
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Prelude (forceElemsToWHNF)
 import Cardano.Slotting.Slot (WithOrigin (..))
 import qualified Codec.CBOR.Read as CBOR
@@ -118,7 +119,7 @@ streamImpl ::
   forall m blk b.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   , HasCallStack
@@ -429,7 +430,7 @@ iteratorNextImpl ::
   forall m blk b h.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   ) =>
@@ -604,7 +605,7 @@ extractBlockComponent ::
   forall m blk b h.
   ( HasHeader blk
   , ReconstructNestedCtxt Header blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , IOLike m
   ) =>
@@ -724,20 +725,28 @@ extractBlockComponent
       Lazy.ByteString ->
       m (Header blk)
     parseHeader (SomeSecond ctxt) bytes =
-      throwParseErrors bytes $
-        CBOR.deserialiseFromBytes
-          ((\f -> nest . DepPair ctxt . f) <$> decodeDiskDep ccfg ctxt)
-          bytes
+      undefined -- TODO(geo2a)
+      -- throwParseErrors bytes $
+      --   CBOR.deserialiseFromBytes
+      --     ((\f -> nest . DepPair ctxt . f) <$> decodeDiskDep ccfg ctxt)
+      --     bytes
 
+    -- TODO(geo2a): consider unifying this function with the one in VolatileDB
     throwParseErrors ::
-      forall b'.
+      forall b''.
       Lazy.ByteString ->
-      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b') ->
-      m b'
+      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> Either Plain.DecoderError b'') ->
+      m b''
     throwParseErrors fullBytes = \case
       Right (trailing, f)
         | Lazy.null trailing ->
-            return $ f fullBytes
+            case f fullBytes of
+              Left err ->
+                -- TODO(geo2a): augment the UnexpectedFailure type with a new
+                -- constructor for Plain.DecoderError and return it
+                error "TODO(geo2a)"
+              Right result -> pure result
+            -- return $ f fullBytes
         | otherwise ->
             throwUnexpectedFailure $
               TrailingDataError (fsPathChunkFile chunk) pt trailing

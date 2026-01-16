@@ -115,6 +115,7 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl
   , mkBlocksPerFile
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Control.Monad (unless, when)
@@ -192,7 +193,7 @@ defaultArgs =
 -- | 'EncodeDisk' and 'DecodeDisk' constraints needed for the VolatileDB.
 type VolatileDbSerialiseConstraints blk =
   ( EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , HasNestedContent Header blk
   , HasBinaryBlockInfo blk
@@ -262,7 +263,7 @@ getBlockComponentImpl ::
   forall m blk b.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , HasNestedContent Header blk
   , DecodeDiskDep (NestedCtxt Header) blk
   , HasCallStack
@@ -326,11 +327,12 @@ getBlockComponentImpl env@VolatileDBEnv{codecConfig, checkIntegrity} blockCompon
     parseHeader bytes = throwParseErrors bytes $
       case ibiNestedCtxt of
         SomeSecond ctxt ->
-          CBOR.deserialiseFromBytes
-            ( (\f -> nest . DepPair ctxt . f)
-                <$> decodeDiskDep codecConfig ctxt
-            )
-            bytes
+          undefined -- TODO(geo2a)
+          -- CBOR.deserialiseFromBytes
+          --   ( (\f -> nest . DepPair ctxt . f)
+          --       <$> decodeDiskDep codecConfig ctxt
+          --   )
+          --   bytes
 
     pt :: RealPoint blk
     pt = RealPoint biSlotNo hash
@@ -338,12 +340,18 @@ getBlockComponentImpl env@VolatileDBEnv{codecConfig, checkIntegrity} blockCompon
     throwParseErrors ::
       forall b''.
       Lazy.ByteString ->
-      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b'') ->
+      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> Either Plain.DecoderError b'') ->
       m b''
     throwParseErrors fullBytes = \case
       Right (trailing, f)
         | Lazy.null trailing ->
-            return $ f fullBytes
+            case f fullBytes of
+              Left err ->
+                -- TODO(geo2a): augment the UnexpectedFailure type with a new
+                -- constructor for Plain.DecoderError and return it
+                error "TODO(geo2a)"
+              Right result -> pure result
+            -- return $ f fullBytes
         | otherwise ->
             throwIO $ UnexpectedFailure $ TrailingDataError ibiFile pt trailing
       Left err ->

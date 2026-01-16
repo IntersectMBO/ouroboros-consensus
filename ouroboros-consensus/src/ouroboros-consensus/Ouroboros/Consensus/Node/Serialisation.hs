@@ -33,6 +33,7 @@ module Ouroboros.Consensus.Node.Serialisation
   , Some (..)
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
 import Codec.Serialise (Serialise (decode, encode))
@@ -155,7 +156,7 @@ defaultEncodeCBORinCBOR = wrapCBORinCBOR encode
 
 -- | Inverse of 'defaultEncodeCBORinCBOR'
 defaultDecodeCBORinCBOR :: Serialise a => Decoder s a
-defaultDecodeCBORinCBOR = unwrapCBORinCBOR (const <$> decode)
+defaultDecodeCBORinCBOR = unwrapCBORinCBOR (const . Right <$> decode)
 
 {-------------------------------------------------------------------------------
   Forwarding instances

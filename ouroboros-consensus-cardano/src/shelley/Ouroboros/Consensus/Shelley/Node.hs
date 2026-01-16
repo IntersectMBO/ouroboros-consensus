@@ -26,6 +26,8 @@ module Ouroboros.Consensus.Shelley.Node
   , validateGenesis
   ) where
 
+import qualified Data.ByteString.Lazy as Lazy
+import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
 import Data.Map.Strict (Map)
@@ -107,8 +109,8 @@ instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto
    where
     issuerVKeys ::
       Map
-        (SL.KeyHash 'SL.BlockIssuer)
-        (SL.VKey 'SL.BlockIssuer)
+        (SL.KeyHash SL.BlockIssuer)
+        (SL.VKey SL.BlockIssuer)
     issuerVKeys = shelleyBlockIssuerVKeys cfg
 
 instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto era) where

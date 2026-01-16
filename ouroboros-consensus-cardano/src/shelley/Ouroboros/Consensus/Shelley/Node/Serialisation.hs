@@ -11,6 +11,7 @@
 
 module Ouroboros.Consensus.Shelley.Node.Serialisation () where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Binary
 import Cardano.Ledger.BaseTypes
 import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
@@ -64,13 +65,16 @@ import Ouroboros.Network.Block
 instance ShelleyCompatible proto era => HasBinaryBlockInfo (ShelleyBlock proto era) where
   getBinaryBlockInfo = shelleyBinaryBlockInfo
 
-instance ShelleyCompatible proto era => SerialiseDiskConstraints (ShelleyBlock proto era)
+instance
+  ( ShelleyCompatible proto era
+  ) =>
+  SerialiseDiskConstraints (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (ShelleyBlock proto era) where
   encodeDisk _ = encodeShelleyBlock
 instance
   ShelleyCompatible proto era =>
-  DecodeDisk (ShelleyBlock proto era) (Lazy.ByteString -> ShelleyBlock proto era)
+  DecodeDisk (ShelleyBlock proto era) (Lazy.ByteString -> Either Plain.DecoderError (ShelleyBlock proto era))
   where
   decodeDisk _ = decodeShelleyBlock
 
@@ -147,7 +151,11 @@ instance
   SerialiseNodeToNode (ShelleyBlock proto era) (ShelleyBlock proto era)
   where
   encodeNodeToNode _ _ = wrapCBORinCBOR encodeShelleyBlock
-  decodeNodeToNode _ _ = unwrapCBORinCBOR decodeShelleyBlock
+  decodeNodeToNode _ _ = do
+    x <- unwrapCBORinCBOR decodeShelleyBlock
+    case x of
+      Left e -> fail (show e)
+      Right r -> pure r
 
 -- | 'Serialised' uses CBOR-in-CBOR by default.
 instance SerialiseNodeToNode (ShelleyBlock proto era) (Serialised (ShelleyBlock proto era))
@@ -211,7 +219,11 @@ instance
   SerialiseNodeToClient (ShelleyBlock proto era) (ShelleyBlock proto era)
   where
   encodeNodeToClient _ _ = wrapCBORinCBOR encodeShelleyBlock
-  decodeNodeToClient _ _ = unwrapCBORinCBOR decodeShelleyBlock
+  decodeNodeToClient _ _ = do
+    x <- unwrapCBORinCBOR decodeShelleyBlock
+    case x of
+      Left e -> fail (show e)
+      Right r -> pure r
 
 -- | This instance uses the invariant that the 'EpochInfo' in a
 -- 'ShelleyLedgerConfig' is fixed i.e. has a constant 'EpochSize' and

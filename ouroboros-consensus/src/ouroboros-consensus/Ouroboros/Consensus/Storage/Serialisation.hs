@@ -1,5 +1,6 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -57,11 +58,10 @@ module Ouroboros.Consensus.Storage.Serialisation
   , SizeInBytes
 
     -- * Exported for the benefit of tests
-  , decodeDepPair
   , encodeDepPair
   ) where
 
-import Cardano.Binary (enforceSize)
+import Cardano.Binary (enforceSize, DecoderError)
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
@@ -155,12 +155,12 @@ class DecodeDiskDepIx f blk where
 --
 -- Typical usage: @f = NestedCtxt Header@.
 class DecodeDiskDep f blk where
-  decodeDiskDep :: CodecConfig blk -> f blk a -> forall s. Decoder s (Lazy.ByteString -> a)
+  decodeDiskDep :: CodecConfig blk -> f blk (Either DecoderError a) -> forall s. Decoder s (Lazy.ByteString -> Either DecoderError a)
   default decodeDiskDep ::
     ( TrivialDependency (f blk)
     , DecodeDisk blk (Lazy.ByteString -> TrivialIndex (f blk))
     ) =>
-    CodecConfig blk -> f blk a -> forall s. Decoder s (Lazy.ByteString -> a)
+    CodecConfig blk -> f blk (Either DecoderError a) -> forall s. Decoder s (Lazy.ByteString -> Either DecoderError a)
   decodeDiskDep cfg ctxt =
     (\f -> toTrivialDependency ctxt . f) <$> decodeDisk cfg
 
@@ -169,12 +169,6 @@ instance
   EncodeDisk blk (DepPair (f blk))
   where
   encodeDisk ccfg = encodeDisk ccfg . encodeDepPair ccfg
-
-instance
-  (DecodeDiskDepIx f blk, DecodeDiskDep f blk) =>
-  DecodeDisk blk (DepPair (f blk))
-  where
-  decodeDisk ccfg = decodeDisk ccfg >>= decodeDepPair ccfg
 
 {-------------------------------------------------------------------------------
   Internal: support for serialisation of dependent pairs
@@ -187,14 +181,6 @@ encodeDepPair ::
   GenDepPair Serialised (f blk)
 encodeDepPair ccfg (DepPair fa a) =
   GenDepPair fa (mkSerialised (encodeDiskDep ccfg fa) a)
-
-decodeDepPair ::
-  DecodeDiskDep f blk =>
-  CodecConfig blk ->
-  GenDepPair Serialised (f blk) ->
-  Decoder s (DepPair (f blk))
-decodeDepPair ccfg (GenDepPair fa serialised) =
-  DepPair fa <$> fromSerialised (decodeDiskDep ccfg fa) serialised
 
 instance EncodeDiskDepIx f blk => EncodeDisk blk (GenDepPair Serialised (f blk)) where
   encodeDisk ccfg (GenDepPair fa serialised) =
