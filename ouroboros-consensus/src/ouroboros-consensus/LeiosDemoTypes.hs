@@ -2,12 +2,12 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE NumericUnderscores #-}
 
-module LeiosDemoTypes where
+module LeiosDemoTypes (module LeiosDemoTypes) where
 
 import Cardano.Binary (enforceSize, serialize')
 import qualified Cardano.Crypto.Hash as Hash
@@ -51,6 +51,7 @@ import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified Numeric
+import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 import System.Directory (doesFileExist)
@@ -647,10 +648,10 @@ traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
 traceLeiosPeerToObject (MkTraceLeiosPeer s) = fromString "msg" .= Aeson.String (fromString s)
 
 leiosMempoolSize :: ByteSize32
-leiosMempoolSize = ByteSize32 500_000*2
+leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))
 
 leiosEBMaxSize :: ByteSize32
-leiosEBMaxSize = ByteSize32 500_000*2
+leiosEBMaxSize = ByteSize32 512_000
 
 leiosEBMaxClosureSize :: ByteSize32
-leiosEBMaxClosureSize = _
+leiosEBMaxClosureSize = ByteSize32 12_000_000
