@@ -5,8 +5,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE NumericUnderscores #-}
 
-module LeiosDemoTypes (module LeiosDemoTypes) where
+module LeiosDemoTypes where
 
 import Cardano.Binary (enforceSize, serialize')
 import qualified Cardano.Crypto.Hash as Hash
@@ -644,3 +645,12 @@ newtype TraceLeiosPeer = MkTraceLeiosPeer String
 
 traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
 traceLeiosPeerToObject (MkTraceLeiosPeer s) = fromString "msg" .= Aeson.String (fromString s)
+
+leiosMempoolSize :: ByteSize32
+leiosMempoolSize = ByteSize32 500_000*2
+
+leiosEBMaxSize :: ByteSize32
+leiosEBMaxSize = ByteSize32 500_000*2
+
+leiosEBMaxClosureSize :: ByteSize32
+leiosEBMaxClosureSize = _

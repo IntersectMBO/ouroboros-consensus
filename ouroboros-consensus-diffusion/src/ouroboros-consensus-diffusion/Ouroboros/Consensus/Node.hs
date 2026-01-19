@@ -995,7 +995,7 @@ mkNodeKernelArgs
           , chainSyncFutureCheck
           , chainSyncHistoricityCheck
           , blockFetchSize = estimateBlockSize
-          , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
+          , mempoolCapacityOverride = mkCapacityBytesOverride leiosMempoolSize
           , miniProtocolParameters = defaultMiniProtocolParameters
           , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
           , gsmArgs =
