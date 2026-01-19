@@ -8,6 +8,7 @@ praosState = [withOrigin<slotno>,
               nonce,
               nonce,
               nonce,
+              nonce,
               nonce]
 
 ;# import withOrigin, slotno, keyhash, word64, nonce from base
