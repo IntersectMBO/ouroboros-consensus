@@ -379,7 +379,7 @@ implTryTakeSnapshot snapManager env snapshotRequestTime getRandomDelay = do
               , sscSnapshotSlots = immutableSlots
               }
     Monad.forM snapshotSlots $ \slot -> do
-      -- Prune the 'DbChangelog' such that the resulting anchor state has slot
+      -- Prune the 'LedgerSeq' such that the resulting anchor state has slot
       -- number @slot@.
       let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
       duplicateStateRef $ anchorHandle $ snd $ prune pruneStrat lseq
