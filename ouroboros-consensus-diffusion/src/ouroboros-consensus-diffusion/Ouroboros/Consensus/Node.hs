@@ -78,7 +78,7 @@ import Control.Monad (forM_, when)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, contramap, traceWith)
+import Control.Tracer (Tracer, condTracing, contramap, traceWith)
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor.Contravariant (Predicate (..))
 import Data.Hashable (Hashable)
@@ -88,7 +88,10 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isNothing)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
+import qualified LeiosDemoOnlyTestFetch as LF
+import LeiosDemoTypes (SomeLeiosDb, leiosMempoolSize)
 import Network.DNS.Resolver (Resolver)
+import qualified Network.Mux as Mux
 import Network.Mux.Types
 import qualified Ouroboros.Cardano.Network.ArgumentsExtra as Cardano
 import qualified Ouroboros.Cardano.Network.LedgerPeerConsensusInterface as Cardano
@@ -99,6 +102,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Ledger.Basics (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Mempool.Capacity (mkCapacityBytesOverride)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
   )
@@ -166,6 +170,7 @@ import Ouroboros.Network.NodeToNode
   , blockFetchPipeliningMax
   , defaultMiniProtocolParameters
   )
+import qualified Ouroboros.Network.NodeToNode as N2N
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PeerSelectionState
   , PublicPeerSelectionState
@@ -195,12 +200,6 @@ import System.FS.API.Types (MountPoint (..))
 import System.FS.IO (ioHasFS)
 import System.FilePath ((</>))
 import System.Random (StdGen, newStdGen, randomIO, split)
-
-import Control.Tracer (condTracing)
-import qualified LeiosDemoOnlyTestFetch as LF
-import LeiosDemoTypes (SomeLeiosDb)
-import qualified Network.Mux as Mux
-import qualified Ouroboros.Network.NodeToNode as N2N
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -981,38 +980,38 @@ mkNodeKernelArgs
   publicPeerSelectionStateVar
   genesisArgs
   getDiffusionPipeliningSupport
-  nkaGetLeiosNewDbConnection =
-    do
-      let (kaRng, psRng) = split rng
-      return
-        NodeKernelArgs
-          { tracers
-          , registry
-          , cfg
-          , btime
-          , chainDB
-          , initChainDB = nodeInitChainDB
-          , chainSyncFutureCheck
-          , chainSyncHistoricityCheck
-          , blockFetchSize = estimateBlockSize
-          , mempoolCapacityOverride = mkCapacityBytesOverride leiosMempoolSize
-          , miniProtocolParameters = defaultMiniProtocolParameters
-          , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
-          , gsmArgs =
-              GsmNodeKernelArgs
-                { gsmAntiThunderingHerd
-                , gsmDurationUntilTooOld
-                , gsmMarkerFileView
-                , gsmMinCaughtUpDuration = maxCaughtUpAge
-                }
-          , getUseBootstrapPeers
-          , keepAliveRng = kaRng
-          , peerSharingRng = psRng
-          , publicPeerSelectionStateVar
-          , genesisArgs
-          , getDiffusionPipeliningSupport
-          , nkaGetLeiosNewDbConnection
-          }
+  nkaGetLeiosNewDbConnection = do
+    let (kaRng, psRng) = split rng
+    return
+      NodeKernelArgs
+        { tracers
+        , registry
+        , cfg
+        , btime
+        , chainDB
+        , initChainDB = nodeInitChainDB
+        , chainSyncFutureCheck
+        , chainSyncHistoricityCheck
+        , blockFetchSize = estimateBlockSize
+        , -- XXX: This gets overridden by the node-config based override
+          mempoolCapacityOverride = mkCapacityBytesOverride leiosMempoolSize
+        , miniProtocolParameters = defaultMiniProtocolParameters
+        , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
+        , gsmArgs =
+            GsmNodeKernelArgs
+              { gsmAntiThunderingHerd
+              , gsmDurationUntilTooOld
+              , gsmMarkerFileView
+              , gsmMinCaughtUpDuration = maxCaughtUpAge
+              }
+        , getUseBootstrapPeers
+        , keepAliveRng = kaRng
+        , peerSharingRng = psRng
+        , publicPeerSelectionStateVar
+        , genesisArgs
+        , getDiffusionPipeliningSupport
+        , nkaGetLeiosNewDbConnection
+        }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
 -- through 'llrnCustomiseNodeKernelArgs', but there are some limits to some
