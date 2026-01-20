@@ -114,7 +114,7 @@ data UpdateRoundVoteStateError blk
       (Point blk) -- the existing winner
       (Point blk) -- the loser that went above quorum
   | RoundVoteStateForgingCertError
-      (PerasForgeErr blk)
+      (PerasErr blk)
 
 -- | Add a vote to an existing round aggregate.
 --
@@ -125,10 +125,10 @@ data UpdateRoundVoteStateError blk
 updatePerasRoundVoteState ::
   forall blk.
   ( BlockSupportsPeras blk
-  , PerasCfg blk ~ PerasParams
+  , PerasConfig blk ~ PerasParams
   ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasCfg blk ->
+  PerasConfig blk ->
   PerasRoundVoteState blk ->
   Either (UpdateRoundVoteStateError blk) (PerasRoundVoteState blk)
 updatePerasRoundVoteState vote _ roundState
@@ -220,10 +220,10 @@ updatePerasRoundVoteState vote cfg roundState = do
 updatePerasRoundVoteStates ::
   forall blk.
   ( BlockSupportsPeras blk
-  , PerasCfg blk ~ PerasParams
+  , PerasConfig blk ~ PerasParams
   ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasCfg blk ->
+  PerasConfig blk ->
   Map PerasRoundNo (PerasRoundVoteState blk) ->
   Either
     (UpdateRoundVoteStateError blk)
@@ -460,8 +460,8 @@ freshLoserVoteState target =
 -- This function is called on all candidates (except the winner) once a winner
 -- is elected.
 candidateToLoser ::
-  PerasCfg blk ~ PerasParams =>
-  PerasCfg blk ->
+  PerasConfig blk ~ PerasParams =>
+  PerasConfig blk ->
   PerasTargetVoteState blk 'Candidate ->
   PerasTargetVoteState blk 'Loser
 candidateToLoser cfg (PerasTargetVoteCandidate tally) =
@@ -480,20 +480,21 @@ data PerasVoteStateCandidateOrWinner blk
 -- May fail if the candidate is elected winner but forging the certificate fails.
 updateCandidateVoteState ::
   ( BlockSupportsPeras blk
-  , PerasCfg blk ~ PerasParams
+  , PerasConfig blk ~ PerasParams
   ) =>
-  PerasCfg blk ->
+  PerasConfig blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Candidate ->
   Either
-    (PerasForgeErr blk)
+    (PerasErr blk)
     (PerasVoteStateCandidateOrWinner blk)
 updateCandidateVoteState cfg vote oldState = do
   let newVoteTally = updateTargetVoteTally vote (ptvsVoteTally oldState)
       voteList = forgetArrivalTime <$> Map.elems (ptvtVotes newVoteTally)
    in if stakeAboveThreshold cfg (ptvtTotalStake newVoteTally)
         then do
-          cert <- forgePerasCert cfg (ptvtTarget newVoteTally) voteList
+          let PerasVoteTarget{pvtRoundNo, pvtBlock} = ptvtTarget newVoteTally
+          cert <- forgePerasCert cfg pvtRoundNo pvtBlock voteList
           pure $ BecameWinner (PerasTargetVoteWinner newVoteTally cert)
         else
           pure $ RemainedCandidate (PerasTargetVoteCandidate newVoteTally)
@@ -504,10 +505,10 @@ updateCandidateVoteState cfg vote oldState = do
 --
 -- May fail if the loser goes above quorum by adding the vote.
 updateLoserVoteState ::
-  ( PerasCfg blk ~ PerasParams
+  ( PerasConfig blk ~ PerasParams
   , BlockSupportsPeras blk
   ) =>
-  PerasCfg blk ->
+  PerasConfig blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Loser ->
   Either (PerasTargetVoteState blk 'Loser) (PerasTargetVoteState blk 'Loser)

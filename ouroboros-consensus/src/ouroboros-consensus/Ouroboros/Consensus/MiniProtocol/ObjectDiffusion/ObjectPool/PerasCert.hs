@@ -22,6 +22,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , addArrivalTime
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+import Ouroboros.Consensus.Peras.Cert (vpcCert)
 import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -75,7 +76,7 @@ makePerasCertPoolWriterFromCertDB ::
   ( IOLike m
   , BlockSupportsPeras blk
   ) =>
-  PerasCfg blk ->
+  PerasConfig blk ->
   SystemTime m ->
   PerasCertDB m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
@@ -105,7 +106,7 @@ makePerasCertPoolWriterFromChainDB ::
   ( IOLike m
   , BlockSupportsPeras blk
   ) =>
-  PerasCfg blk ->
+  PerasConfig blk ->
   SystemTime m ->
   ChainDB m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
@@ -122,28 +123,18 @@ makePerasCertPoolWriterFromChainDB perasCfg systemTime chainDB =
         pure $ PerasCertDB.containsCert certSnapshot
     }
 
-data PerasCertInboundException where
-  PerasCertValidationError ::
-    BlockSupportsPeras blk =>
-    PerasValidationErr blk ->
-    PerasCertInboundException
-
-deriving instance Show PerasCertInboundException
-
-instance Exception PerasCertInboundException
-
--- | Validate a list of 'PerasCert's, throwing a 'PerasCertInboundException' if
+-- | Validate a list of 'PerasCert's, throwing a 'PerasErr blk' if
 -- any of them are invalid.
 validatePerasCerts ::
   ( BlockSupportsPeras blk
   , MonadThrow m
   ) =>
-  PerasCfg blk ->
+  PerasConfig blk ->
   [PerasCert blk] ->
   m [ValidatedPerasCert blk]
 validatePerasCerts perasCfg certs = do
   case traverse (validatePerasCert perasCfg) certs of
-    Left validationErr -> throw (PerasCertValidationError validationErr)
+    Left validationErr -> throw validationErr
     Right validatedCerts -> return validatedCerts
 
 -- | Add a list of 'PerasCert's into an object pool.
@@ -159,7 +150,7 @@ addPerasCerts ::
   ( BlockSupportsPeras blk
   , MonadThrow m
   ) =>
-  PerasCfg blk ->
+  PerasConfig blk ->
   SystemTime m ->
   (WithArrivalTime (ValidatedPerasCert blk) -> m a) ->
   [PerasCert blk] ->

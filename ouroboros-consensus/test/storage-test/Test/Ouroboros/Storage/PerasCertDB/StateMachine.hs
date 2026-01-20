@@ -55,7 +55,7 @@ tests =
     [ adjustQuickCheckTests (* 100) $ testProperty "q-d" $ prop_qd
     ]
 
-perasTestCfg :: PerasCfg TestBlock
+perasTestCfg :: PerasConfig TestBlock
 perasTestCfg = mkPerasParams
 
 prop_qd :: Actions Model -> Property

@@ -131,7 +131,7 @@ deriving anyclass instance ToExpr PerasWeight
 
 deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (Base.PerasCert blk)
 
-deriving anyclass instance ToExpr (PerasCert blk) => ToExpr (ValidatedPerasCert blk)
+deriving anyclass instance ToExpr (Base.PerasCert blk) => ToExpr (Base.ValidatedPerasCert blk)
 
 deriving anyclass instance ToExpr a => ToExpr (WithArrivalTime a)
 

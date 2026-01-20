@@ -1,5 +1,9 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -19,8 +23,12 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapLedgerEvent (..)
   , WrapLedgerUpdate (..)
   , WrapLedgerWarning (..)
+  , WrapPerasConfig (..)
+  , WrapPerasErr (..)
   , WrapPerasCert (..)
+  , WrapValidatedPerasCert (..)
   , WrapPerasVote (..)
+  , WrapValidatedPerasVote (..)
   , WrapTentativeHeaderState (..)
   , WrapTentativeHeaderView (..)
   , WrapTipInfo (..)
@@ -49,6 +57,8 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   ) where
 
 import Codec.Serialise (Serialise)
+import Control.Exception (Exception)
+import Data.Typeable (Typeable)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
@@ -74,8 +84,12 @@ newtype WrapLedgerEvent blk = WrapLedgerEvent {unwrapLedgerEvent :: AuxLedgerEve
 newtype WrapLedgerErr blk = WrapLedgerErr {unwrapLedgerErr :: LedgerError blk}
 newtype WrapLedgerUpdate blk = WrapLedgerUpdate {unwrapLedgerUpdate :: LedgerUpdate blk}
 newtype WrapLedgerWarning blk = WrapLedgerWarning {unwrapLedgerWarning :: LedgerWarning blk}
+newtype WrapPerasConfig blk = WrapPerasConfig {unwrapPerasConfig :: PerasConfig blk}
+newtype WrapPerasErr blk = WrapPerasErr {unwrapPerasErr :: PerasErr blk}
 newtype WrapPerasCert blk = WrapPerasCert {unwrapPerasCert :: PerasCert blk}
+newtype WrapValidatedPerasCert blk = WrapValidatedPerasCert {unwrapValidatedPerasCert :: ValidatedPerasCert blk}
 newtype WrapPerasVote blk = WrapPerasVote {unwrapPerasVote :: PerasVote blk}
+newtype WrapValidatedPerasVote blk = WrapValidatedPerasVote {unwrapValidatedPerasVote :: ValidatedPerasVote blk}
 newtype WrapTentativeHeaderState blk = WrapTentativeHeaderState {unwrapTentativeHeaderState :: TentativeHeaderState blk}
 newtype WrapTentativeHeaderView blk = WrapTentativeHeaderView {unwrapTentativeHeaderView :: TentativeHeaderView blk}
 newtype WrapTipInfo blk = WrapTipInfo {unwrapTipInfo :: TipInfo blk}
@@ -127,8 +141,12 @@ deriving instance Eq (GenTxId blk) => Eq (WrapGenTxId blk)
 deriving instance Eq (LedgerError blk) => Eq (WrapLedgerErr blk)
 deriving instance Eq (LedgerUpdate blk) => Eq (WrapLedgerUpdate blk)
 deriving instance Eq (LedgerWarning blk) => Eq (WrapLedgerWarning blk)
+deriving instance Eq (PerasConfig blk) => Eq (WrapPerasConfig blk)
+deriving instance Eq (PerasErr blk) => Eq (WrapPerasErr blk)
 deriving instance Eq (PerasCert blk) => Eq (WrapPerasCert blk)
+deriving instance Eq (ValidatedPerasCert blk) => Eq (WrapValidatedPerasCert blk)
 deriving instance Eq (PerasVote blk) => Eq (WrapPerasVote blk)
+deriving instance Eq (ValidatedPerasVote blk) => Eq (WrapValidatedPerasVote blk)
 deriving instance Eq (OtherHeaderEnvelopeError blk) => Eq (WrapEnvelopeErr blk)
 deriving instance Eq (TentativeHeaderState blk) => Eq (WrapTentativeHeaderState blk)
 deriving instance Eq (TentativeHeaderView blk) => Eq (WrapTentativeHeaderView blk)
@@ -137,7 +155,9 @@ deriving instance Eq (Validated (GenTx blk)) => Eq (WrapValidatedGenTx blk)
 
 deriving instance Ord (GenTxId blk) => Ord (WrapGenTxId blk)
 deriving instance Ord (PerasCert blk) => Ord (WrapPerasCert blk)
+deriving instance Ord (ValidatedPerasCert blk) => Ord (WrapValidatedPerasCert blk)
 deriving instance Ord (PerasVote blk) => Ord (WrapPerasVote blk)
+deriving instance Ord (ValidatedPerasVote blk) => Ord (WrapValidatedPerasVote blk)
 deriving instance Ord (TentativeHeaderState blk) => Ord (WrapTentativeHeaderState blk)
 
 deriving instance Show (ApplyTxErr blk) => Show (WrapApplyTxErr blk)
@@ -148,8 +168,12 @@ deriving instance Show (GenTxId blk) => Show (WrapGenTxId blk)
 deriving instance Show (LedgerError blk) => Show (WrapLedgerErr blk)
 deriving instance Show (LedgerUpdate blk) => Show (WrapLedgerUpdate blk)
 deriving instance Show (LedgerWarning blk) => Show (WrapLedgerWarning blk)
+deriving instance Show (PerasConfig blk) => Show (WrapPerasConfig blk)
+deriving instance Show (PerasErr blk) => Show (WrapPerasErr blk)
 deriving instance Show (PerasCert blk) => Show (WrapPerasCert blk)
+deriving instance Show (ValidatedPerasCert blk) => Show (WrapValidatedPerasCert blk)
 deriving instance Show (PerasVote blk) => Show (WrapPerasVote blk)
+deriving instance Show (ValidatedPerasVote blk) => Show (WrapValidatedPerasVote blk)
 deriving instance Show (OtherHeaderEnvelopeError blk) => Show (WrapEnvelopeErr blk)
 deriving instance Show (TentativeHeaderState blk) => Show (WrapTentativeHeaderState blk)
 deriving instance Show (TentativeHeaderView blk) => Show (WrapTentativeHeaderView blk)
@@ -161,9 +185,17 @@ deriving instance
 deriving instance
   NoThunks (LedgerError blk) => NoThunks (WrapLedgerErr blk)
 deriving instance
+  NoThunks (PerasConfig blk) => NoThunks (WrapPerasConfig blk)
+deriving instance
+  NoThunks (PerasErr blk) => NoThunks (WrapPerasErr blk)
+deriving instance
   NoThunks (PerasCert blk) => NoThunks (WrapPerasCert blk)
 deriving instance
+  NoThunks (ValidatedPerasCert blk) => NoThunks (WrapValidatedPerasCert blk)
+deriving instance
   NoThunks (PerasVote blk) => NoThunks (WrapPerasVote blk)
+deriving instance
+  NoThunks (ValidatedPerasVote blk) => NoThunks (WrapValidatedPerasVote blk)
 deriving instance
   NoThunks (OtherHeaderEnvelopeError blk) => NoThunks (WrapEnvelopeErr blk)
 deriving instance
@@ -205,8 +237,17 @@ deriving instance NoThunks (ChainDepState (BlockProtocol blk)) => NoThunks (Wrap
 deriving instance NoThunks (TiebreakerView (BlockProtocol blk)) => NoThunks (WrapTiebreakerView blk)
 deriving instance NoThunks (ValidationErr (BlockProtocol blk)) => NoThunks (WrapValidationErr blk)
 
-deriving instance HasPerasCert (PerasCert blk) => HasPerasCert (WrapPerasCert blk)
-deriving instance HasPerasVote (PerasVote blk) => HasPerasVote (WrapPerasVote blk)
+deriving instance IsPerasCert blk (PerasCert blk) => IsPerasCert blk (WrapPerasCert blk)
+deriving instance IsPerasVote blk (PerasVote blk) => IsPerasVote blk (WrapPerasVote blk)
+
+{-------------------------------------------------------------------------------
+  Exception instances for Peras error types
+-------------------------------------------------------------------------------}
+
+deriving instance Typeable blk => Typeable (WrapPerasErr blk)
+deriving instance
+  (Typeable blk, Show (PerasErr blk), Exception (PerasErr blk)) =>
+  Exception (WrapPerasErr blk)
 
 {-------------------------------------------------------------------------------
   Versioning

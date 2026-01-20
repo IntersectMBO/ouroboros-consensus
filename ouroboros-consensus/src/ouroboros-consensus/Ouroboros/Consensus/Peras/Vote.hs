@@ -6,11 +6,13 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Peras.Vote
   ( PerasVote (..)
+  , ValidatedPerasVote (..)
   , PerasVoterId (..)
   , PerasVoteStake (..)
   , PerasVoteStakeDistr (..)
@@ -111,3 +113,14 @@ stakeAboveThreshold :: PerasParams -> PerasVoteStake -> Bool
 stakeAboveThreshold params stake =
   unPerasVoteStake stake
     >= unPerasQuorumStakeThreshold (perasQuorumStakeThreshold params)
+
+data ValidatedPerasVote blk = ValidatedPerasVote
+  { vpvVote :: !(PerasVote blk)
+  , vpvVoteStake :: !PerasVoteStake
+  }
+
+deriving instance Show (PerasVote blk) => Show (ValidatedPerasVote blk)
+deriving instance Eq (PerasVote blk) => Eq (ValidatedPerasVote blk)
+deriving instance Ord (PerasVote blk) => Ord (ValidatedPerasVote blk)
+deriving instance Generic (ValidatedPerasVote blk)
+deriving instance NoThunks (PerasVote blk) => NoThunks (ValidatedPerasVote blk)

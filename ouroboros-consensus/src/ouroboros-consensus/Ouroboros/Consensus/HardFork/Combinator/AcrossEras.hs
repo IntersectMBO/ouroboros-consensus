@@ -25,6 +25,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , PerEraConsensusConfig (..)
   , PerEraLedgerConfig (..)
   , PerEraStorageConfig (..)
+  , PerEraPerasConfig (..)
 
     -- * Values for /some/ eras
   , SomeErasCanBeLeader (..)
@@ -47,7 +48,10 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , OneEraLedgerWarning (..)
   , OneEraTiebreakerView (..)
   , OneEraPerasCert (..)
+  , OneEraValidatedPerasCert (..)
   , OneEraPerasVote (..)
+  , OneEraValidatedPerasVote (..)
+  , OneEraPerasErr (..)
   , OneEraTentativeHeaderState (..)
   , OneEraTentativeHeaderView (..)
   , OneEraTipInfo (..)
@@ -68,6 +72,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   ) where
 
 import Codec.Serialise (Serialise (..))
+import Control.Exception (Exception)
 import Control.Monad.Except (throwError)
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BSC
@@ -107,6 +112,7 @@ newtype PerEraCodecConfig xs = PerEraCodecConfig {getPerEraCodecConfig :: NP Cod
 newtype PerEraConsensusConfig xs = PerEraConsensusConfig {getPerEraConsensusConfig :: NP WrapPartialConsensusConfig xs}
 newtype PerEraLedgerConfig xs = PerEraLedgerConfig {getPerEraLedgerConfig :: NP WrapPartialLedgerConfig xs}
 newtype PerEraStorageConfig xs = PerEraStorageConfig {getPerEraStorageConfig :: NP StorageConfig xs}
+newtype PerEraPerasConfig xs = PerEraPerasConfig {getPerEraPerasConfig :: NP WrapPerasConfig xs}
 
 {-------------------------------------------------------------------------------
   Values for /some/ eras
@@ -136,8 +142,13 @@ newtype OneEraLedgerError xs = OneEraLedgerError {getOneEraLedgerError :: NS Wra
 newtype OneEraLedgerEvent xs = OneEraLedgerEvent {getOneEraLedgerEvent :: NS WrapLedgerEvent xs}
 newtype OneEraLedgerUpdate xs = OneEraLedgerUpdate {getOneEraLedgerUpdate :: NS WrapLedgerUpdate xs}
 newtype OneEraLedgerWarning xs = OneEraLedgerWarning {getOneEraLedgerWarning :: NS WrapLedgerWarning xs}
+newtype OneEraPerasErr xs = OneEraPerasErr {getOneEraPerasErr :: NS WrapPerasErr xs}
+
 newtype OneEraPerasCert xs = OneEraPerasCert {getOneEraPerasCert :: NS WrapPerasCert xs}
+newtype OneEraValidatedPerasCert xs = OneEraValidatedPerasCert {getOneEraValidatedPerasCert :: NS WrapValidatedPerasCert xs}
 newtype OneEraPerasVote xs = OneEraPerasVote {getOneEraPerasVote :: NS WrapPerasVote xs}
+newtype OneEraValidatedPerasVote xs = OneEraValidatedPerasVote {getOneEraValidatedPerasVote :: NS WrapValidatedPerasVote xs}
+
 newtype OneEraTiebreakerView xs = OneEraTiebreakerView {getOneEraTiebreakerView :: NS WrapTiebreakerView xs}
 newtype OneEraTentativeHeaderState xs = OneEraTentativeHeaderState {getOneEraTentativeHeaderState :: NS WrapTentativeHeaderState xs}
 newtype OneEraTentativeHeaderView xs = OneEraTentativeHeaderView {getOneEraTentativeHeaderView :: NS WrapTentativeHeaderView xs}
@@ -312,6 +323,11 @@ deriving via
     CanHardFork xs => NoThunks (PerEraStorageConfig xs)
 
 deriving via
+  LiftNamedNP "PerEraPerasConfig" WrapPerasConfig xs
+  instance
+    CanHardFork xs => NoThunks (PerEraPerasConfig xs)
+
+deriving via
   LiftNamedNS "OneEraEnvelopeErr" WrapEnvelopeErr xs
   instance
     CanHardFork xs => NoThunks (OneEraEnvelopeErr xs)
@@ -345,6 +361,21 @@ deriving via
   LiftNamedNS "OneEraPerasVote" WrapPerasVote xs
   instance
     CanHardFork xs => NoThunks (OneEraPerasVote xs)
+
+deriving via
+  LiftNamedNS "OneEraValidatedPerasCert" WrapValidatedPerasCert xs
+  instance
+    CanHardFork xs => NoThunks (OneEraValidatedPerasCert xs)
+
+deriving via
+  LiftNamedNS "OneEraValidatedPerasVote" WrapValidatedPerasVote xs
+  instance
+    CanHardFork xs => NoThunks (OneEraValidatedPerasVote xs)
+
+deriving via
+  LiftNamedNS "OneEraPerasErr" WrapPerasErr xs
+  instance
+    CanHardFork xs => NoThunks (OneEraPerasErr xs)
 
 deriving via
   LiftNamedNS "OneEraTiebreakerView" WrapTiebreakerView xs
@@ -424,6 +455,14 @@ deriving via
   instance
     CanHardFork xs => Show (OneEraPerasVote xs)
 deriving via
+  LiftNS WrapValidatedPerasCert xs
+  instance
+    CanHardFork xs => Show (OneEraValidatedPerasCert xs)
+deriving via
+  LiftNS WrapValidatedPerasVote xs
+  instance
+    CanHardFork xs => Show (OneEraValidatedPerasVote xs)
+deriving via
   LiftNS WrapTentativeHeaderState xs
   instance
     CanHardFork xs => Show (OneEraTentativeHeaderState xs)
@@ -451,6 +490,16 @@ deriving via
     CanHardFork xs => Show (PerEraLedgerConfig xs)
 
 deriving via
+  LiftNP WrapPerasConfig xs
+  instance
+    CanHardFork xs => Eq (PerEraPerasConfig xs)
+
+deriving via
+  LiftNP WrapPerasConfig xs
+  instance
+    CanHardFork xs => Show (PerEraPerasConfig xs)
+
+deriving via
   LiftMismatch SingleEraInfo LedgerEraInfo xs
   instance
     All SingleEraBlock xs => Eq (MismatchEraInfo xs)
@@ -463,8 +512,31 @@ deriving via
 
 deriving via LiftNS WrapPerasCert xs instance CanHardFork xs => Eq (OneEraPerasCert xs)
 deriving via LiftNS WrapPerasVote xs instance CanHardFork xs => Eq (OneEraPerasVote xs)
+deriving via
+  LiftNS WrapValidatedPerasCert xs
+  instance
+    CanHardFork xs => Eq (OneEraValidatedPerasCert xs)
+deriving via
+  LiftNS WrapValidatedPerasVote xs
+  instance
+    CanHardFork xs => Eq (OneEraValidatedPerasVote xs)
 deriving via LiftNS WrapPerasCert xs instance CanHardFork xs => Ord (OneEraPerasCert xs)
 deriving via LiftNS WrapPerasVote xs instance CanHardFork xs => Ord (OneEraPerasVote xs)
+deriving via
+  LiftNS WrapValidatedPerasCert xs
+  instance
+    CanHardFork xs => Ord (OneEraValidatedPerasCert xs)
+deriving via
+  LiftNS WrapValidatedPerasVote xs
+  instance
+    CanHardFork xs => Ord (OneEraValidatedPerasVote xs)
+
+deriving via LiftNS WrapPerasErr xs instance CanHardFork xs => Eq (OneEraPerasErr xs)
+deriving via LiftNS WrapPerasErr xs instance CanHardFork xs => Show (OneEraPerasErr xs)
+
+-- Exception instance for OneEraPerasErr cannot be derived via LiftNS because
+-- Exception is not a functor. We define it manually.
+instance CanHardFork xs => Exception (OneEraPerasErr xs)
 
 {-------------------------------------------------------------------------------
   Show instances used in tests only
