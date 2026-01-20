@@ -761,7 +761,7 @@ data instance PerasCert (TestBlockWith ptype) = TestPerasCert
 instance ToExpr (PerasCert (TestBlockWith ptype)) where
   toExpr = defaultExprViaShow
 
-instance HasPerasCert (PerasCert (TestBlockWith ptype)) where
+instance IsPerasCert (PerasCert (TestBlockWith ptype)) where
   type CertBoostedBlock (PerasCert (TestBlockWith ptype)) = TestBlockWith ptype
   getPerasCertRound = tpcCertRound
   getPerasCertBoostedBlock = tpcCertBoostedBlock
@@ -777,7 +777,7 @@ data instance PerasVote (TestBlockWith ptype) = TestPerasVote
 instance ToExpr (PerasVote (TestBlockWith ptype)) where
   toExpr = defaultExprViaShow
 
-instance HasPerasVote (PerasVote (TestBlockWith ptype)) where
+instance IsPerasVote (PerasVote (TestBlockWith ptype)) where
   type VoteBlock (PerasVote (TestBlockWith ptype)) = TestBlockWith ptype
   getPerasVoteRound = tpvVoteRound
   getPerasVoteVoterId = tpvVoteVoterId

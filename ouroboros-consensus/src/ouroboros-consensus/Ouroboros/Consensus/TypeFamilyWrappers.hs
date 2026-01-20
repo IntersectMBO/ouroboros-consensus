@@ -3,6 +3,9 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE DerivingStrategies #-}
 
 -- | Newtypes around type families so that they can be partially applied
 module Ouroboros.Consensus.TypeFamilyWrappers
@@ -205,8 +208,8 @@ deriving instance NoThunks (ChainDepState (BlockProtocol blk)) => NoThunks (Wrap
 deriving instance NoThunks (TiebreakerView (BlockProtocol blk)) => NoThunks (WrapTiebreakerView blk)
 deriving instance NoThunks (ValidationErr (BlockProtocol blk)) => NoThunks (WrapValidationErr blk)
 
-deriving instance HasPerasCert (PerasCert blk) => HasPerasCert (WrapPerasCert blk)
-deriving instance HasPerasVote (PerasVote blk) => HasPerasVote (WrapPerasVote blk)
+deriving instance IsPerasCert blk (PerasCert blk) => IsPerasCert blk (WrapPerasCert blk)
+deriving instance IsPerasVote blk (PerasVote blk) => IsPerasVote blk (WrapPerasVote blk)
 
 {-------------------------------------------------------------------------------
   Versioning

@@ -11,24 +11,28 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Node.Peras
   (
   ) where
 
 import Data.Proxy (Proxy (..))
-import Data.SOP (K (..))
+import Data.SOP (K (..), NS (..), I (I), NP ((:*)))
 import Data.SOP.Strict (HCollapse (..), hcmap)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (..), Point (..))
+import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (..), Point (..), HeaderHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
-  , HasPerasCert (..)
-  , HasPerasVote (..)
+  , IsPerasCert (..)
+  , IsPerasVote (..)
   , PerasCert
-  , PerasForgeErr (..)
-  , PerasValidationErr (..)
+  , PerasCertForgeErr (..)
+  , PerasCertValidationErr (..)
   , PerasVote
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
@@ -56,87 +60,87 @@ import Ouroboros.Consensus.TypeFamilyWrappers
   ( WrapPerasCert (..)
   , WrapPerasVote (..)
   )
+import Ouroboros.Consensus.Peras.Vote qualified as Base
+import Ouroboros.Consensus.Peras.Cert qualified as Base
+import Data.Bifunctor (Bifunctor(bimap))
+import Data.Functor.Compose (Compose)
 
 {-------------------------------------------------------------------------------
   Peras
 -------------------------------------------------------------------------------}
 
-newtype instance PerasCert (HardForkBlock xs) = HardForkPerasCert
-  { getHardForkPerasCert :: OneEraPerasCert xs
-  }
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving newtype NoThunks
+sameEraTraverse :: Traversable t => t (NS f xs) -> Maybe (NS (Compose t f) xs)
+sameEraTraverse = undefined
 
-newtype instance PerasVote (HardForkBlock xs) = HardForkPerasVote
-  { getHardForkPerasVote :: OneEraPerasVote xs
-  }
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving newtype NoThunks
+newtype ZipFunctor f g x = ZipFunctor { unZipFunctor :: (f x, g x) }
+type family LZip xs ys where
+  LZip '[] _ = '[]
+  LZip _ '[] = '[]
+  LZip (x ': xs) (y ': ys) = (x, y) ': LZip xs ys
 
-instance CanHardFork xs => BlockSupportsPeras (HardForkBlock xs) where
-  type PerasCfg (HardForkBlock xs) = PerasParams
+sameEraZip :: NS f xs -> NS g ys -> Maybe (NS (ZipFunctor f g) (LZip xs ys))
+sameEraZip = undefined
 
-  mkPerasCert =
-    error "mkPerasCert: not implemented for HardForkBlock"
+type instance HeaderHash (NS I '[]) = NS I '[]
+type instance HeaderHash (NS I (x ': xs)) = AppendNS (HeaderHash x) (HeaderHash (NS I xs))
 
-  mkPerasVote =
-    error "mkPerasVote: not implemented for HardForkBlock"
+instance BlockSupportsPeras x => BlockSupportsPeras (NS I '[x]) where
+  type PerasCfg (NS I '[x]) = NP I '[PerasCfg x]
+  type PerasCert (NS I '[x]) = NS I '[PerasCert x]
+  type ValidatedPerasCert (NS I '[x]) = NS I '[ValidatedPerasCert x]
+  type PerasVote (NS I '[x]) = NS I '[PerasVote x]
+  type ValidatedPerasVote (NS I '[x]) = NS I '[ValidatedPerasVote x]
+  type PerasCertValidationErr (NS I '[x]) = NS I '[PerasCertValidationErr x]
+  type PerasCertForgeErr (NS I '[x]) = NS I '[PerasCertForgeErr x]
+  type PerasVoteValidationErr (NS I '[x]) = NS I '[PerasVoteValidationErr x]
+  type PerasVoteForgeErr (NS I '[x]) = NS I '[PerasVoteForgeErr x]
 
-  -- TODO: perform actual validation against all
-  -- possible 'PerasValidationErr' variants
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  validatePerasCert params cert =
-    Right
-      ValidatedPerasCert
-        { vpcCert = cert
-        , vpcCertBoost = perasWeight params
-        }
+  validatePerasCert (I params :* _) (Z (I cert)) = bimap (Z . I) (Z . I) $ validatePerasCert params cert
+  validatePerasCert _params (S impossible) = case impossible of {}
 
-  -- TODO: perform actual validation against all
-  -- possible 'PerasValidationErr' variants
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  validatePerasVote _params stakeDistr vote
-    | Just stake <- lookupPerasVoteStake vote stakeDistr =
-        Right
-          ValidatedPerasVote
-            { vpvVote = vote
-            , vpvVoteStake = stake
-            }
-    | otherwise =
-        Left PerasValidationErr
+  forgePerasCert (I (params :: PerasCfg x) :* _) roundNo block votes = case (do
+      votes' <- sameEraTraverse votes
+      case block of
+        GenesisPoint -> Just (GenesisPoint, votes')
+        BlockPoint s (h :: NS I '[HeaderHash x]) -> case sameEraZip votes' h of
+          
+          
+           (fmap (BlockPoint s)) <$> 
+    ) of
+    Just (Z (votes' :: [ValidatedPerasVote x])) ->
+      let res :: Either (PerasCertForgeErr x) (ValidatedPerasCert x) = forgePerasCert params roundNo block votes' in
+      bimap (Z . I) (Z . I) res
+    Just (S impossible) -> case impossible of {}
+    Nothing -> error "forgePerasCert: votes from multiple eras" -- TODO: replace with concrete forge error
 
-  -- TODO: perform actual validation against all
-  -- possible 'PerasForgeErr' variants
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  forgePerasCert params target votes
-    | not allVotersMatchTarget =
-        Left PerasForgeErrTargetMismatch
-    | not votesHaveEnoughStake =
-        Left PerasForgeErrInsufficientVotes
-    | otherwise =
-        return $
-          ValidatedPerasCert
-            { vpcCert =
-                mkPerasCert
-                  (pvtRoundNo target)
-                  (pvtBlock target)
-            , vpcCertBoost =
-                perasWeight params
-            }
-   where
-    totalVotesStake =
-      mconcat (vpvVoteStake <$> votes)
 
-    votesHaveEnoughStake =
-      stakeAboveThreshold params totalVotesStake
+  validatePerasVote _params _distr vote =
+    case vote of {}
 
-    allVotersMatchTarget =
-      all ((target ==) . getPerasVoteTarget) votes
+  forgePerasVote _params _roundNo _block =
+    undefined
 
-instance CanHardFork xs => HasPerasCert (PerasCert (HardForkBlock xs)) where
-  type CertBoostedBlock (PerasCert (HardForkBlock xs)) = HardForkBlock xs
+type family AppendNS x nsixs where
+  AppendNS x (NS I xs) = NS I (x ': xs)
 
-  getPerasCertRound (HardForkPerasCert (OneEraPerasCert hcert)) =
+type family AppendNP x npixs where
+  AppendNP x (NP I xs) = NP I (x ': xs)
+
+instance (BlockSupportsPeras x,
+ BlockSupportsPeras (NS I (x' ': xs))) => BlockSupportsPeras (NS I (x ': (x' ': xs))) where
+  type PerasCfg (NS I (x ': (x' ': xs))) = AppendNP (PerasCfg x) (PerasCfg (NP I (x' ': xs)))
+  type PerasCert (NS I (x ': (x' ': xs))) = AppendNS (PerasCert x) (PerasCert (NS I (x' ': xs)))
+  type PerasVote (NS I (x ': (x' ': xs))) = AppendNS (PerasVote x) (PerasVote (NS I (x' ': xs)))
+  type PerasCertValidationErr (NS I (x ': (x' ': xs))) = AppendNS (PerasCertValidationErr x) (PerasCertValidationErr (NS I (x' ': xs)))
+  type PerasCertForgeErr (NS I (x ': (x' ': xs))) = AppendNS (PerasCertForgeErr x) (PerasCertForgeErr (NS I (x' ': xs)))
+  type PerasVoteValidationErr (NS I (x ': (x' ': xs))) = AppendNS (PerasVoteValidationErr x) (PerasVoteValidationErr (NS I (x' ': xs)))
+  type PerasVoteForgeErr (NS I (x ': (x' ': xs))) = AppendNS (PerasVoteForgeErr x) (PerasVoteForgeErr (NS I (x' ': xs)))
+
+  validatePerasCert params cert = undefined
+
+
+instance CanHardFork xs => IsPerasCert (HardForkBlock xs) (OneEraPerasCert xs) where
+  getPerasCertRound (OneEraPerasCert hcert) =
     hcollapse
       $ hcmap
         proxySingle
@@ -146,7 +150,7 @@ instance CanHardFork xs => HasPerasCert (PerasCert (HardForkBlock xs)) where
         )
       $ hcert
 
-  getPerasCertBoostedBlock (HardForkPerasCert (OneEraPerasCert hcert)) =
+  getPerasCertBoostedBlock (OneEraPerasCert hcert) =
     hcollapse
       $ hcmap
         proxySingle
@@ -157,10 +161,8 @@ instance CanHardFork xs => HasPerasCert (PerasCert (HardForkBlock xs)) where
         )
       $ hcert
 
-instance CanHardFork xs => HasPerasVote (PerasVote (HardForkBlock xs)) where
-  type VoteBlock (PerasVote (HardForkBlock xs)) = HardForkBlock xs
-
-  getPerasVoteRound (HardForkPerasVote (OneEraPerasVote hvote)) =
+instance CanHardFork xs => IsPerasVote (HardForkBlock xs) (OneEraPerasVote xs) where
+  getPerasVoteRound (OneEraPerasVote hvote) =
     hcollapse
       $ hcmap
         proxySingle
@@ -170,7 +172,7 @@ instance CanHardFork xs => HasPerasVote (PerasVote (HardForkBlock xs)) where
         )
       $ hvote
 
-  getPerasVoteVoterId (HardForkPerasVote (OneEraPerasVote hvote)) =
+  getPerasVoteVoterId (OneEraPerasVote hvote) =
     hcollapse
       $ hcmap
         proxySingle
@@ -180,7 +182,7 @@ instance CanHardFork xs => HasPerasVote (PerasVote (HardForkBlock xs)) where
         )
       $ hvote
 
-  getPerasVoteTarget (HardForkPerasVote (OneEraPerasVote hvote)) =
+  getPerasVoteTarget (OneEraPerasVote hvote) =
     PerasVoteTarget
       { pvtRoundNo =
           hcollapse
@@ -204,7 +206,7 @@ instance CanHardFork xs => HasPerasVote (PerasVote (HardForkBlock xs)) where
             $ hvote
       }
 
-  getPerasVoteId (HardForkPerasVote (OneEraPerasVote hvote)) =
+  getPerasVoteId (OneEraPerasVote hvote) =
     PerasVoteId
       { pviRoundNo =
           hcollapse

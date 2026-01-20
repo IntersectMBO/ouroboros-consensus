@@ -1,48 +1,32 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( -- * BlockSupportsPeras class
-    PerasCert
-  , PerasVote
-  , BlockSupportsPeras (..)
-
-    -- * Validated types
-  , ValidatedPerasCert (..)
-  , ValidatedPerasVote (..)
-
-    -- * Error types
-  , PerasValidationErr (..)
-  , PerasForgeErr (..)
+    BlockSupportsPeras (..)
 
     -- * Utility functions
   , lookupPerasVoteStake
 
     -- * Field accessors
-  , HasPerasCert (..)
-  , HasPerasCertBoost (..)
-  , HasPerasVote (..)
-  , HasPerasVoteStake (..)
+  , IsPerasCert (..)
+  , IsValidatedPerasCert (..)
+  , IsPerasVote (..)
+  , IsValidatedPerasVote (..)
   ) where
 
-import Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import Data.Typeable (Typeable)
-import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block.Abstract (Point, StandardHash)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
-import qualified Ouroboros.Consensus.Peras.Cert as Base (PerasCert (..))
+import qualified Ouroboros.Consensus.Peras.Cert as Base (PerasCert (..), ValidatedPerasCert (..))
 import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
 import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Peras.Vote
@@ -52,15 +36,13 @@ import Ouroboros.Consensus.Peras.Vote
   , PerasVoteTarget (..)
   , PerasVoterId (..)
   )
-import qualified Ouroboros.Consensus.Peras.Vote as Base (PerasVote (..))
+import qualified Ouroboros.Consensus.Peras.Vote as Base (PerasVote (..), ValidatedPerasVote (..))
+
+import Control.Exception (Exception)
 
 {-------------------------------------------------------------------------------
 -- * BlockSupportsPeras class
 -------------------------------------------------------------------------------}
-
-data family PerasCert blk :: Type
-
-data family PerasVote blk :: Type
 
 class
   ( StandardHash blk
@@ -71,97 +53,72 @@ class
   , Ord (PerasVote blk)
   , Show (PerasCfg blk)
   , Show (PerasCert blk)
+  , Show (PerasCertValidationErr blk)
+  , Show (PerasCertForgeErr blk)
   , Show (PerasVote blk)
-  , Show (PerasValidationErr blk)
-  , Show (PerasForgeErr blk)
+  , Show (PerasVoteValidationErr blk)
+  , Show (PerasVoteForgeErr blk)
   , NoThunks (PerasCfg blk)
   , NoThunks (PerasCert blk)
+  , NoThunks (PerasCertForgeErr blk)
+  , NoThunks (PerasCertValidationErr blk)
   , NoThunks (PerasVote blk)
-  , NoThunks (PerasValidationErr blk)
-  , NoThunks (PerasForgeErr blk)
-  , HasPerasCert (PerasCert blk)
-  , HasPerasVote (PerasVote blk)
-  , CertBoostedBlock (PerasCert blk) ~ blk
-  , VoteBlock (PerasVote blk) ~ blk
+  , NoThunks (PerasVoteValidationErr blk)
+  , NoThunks (PerasVoteForgeErr blk)
+  , IsPerasCert blk (PerasCert blk)
+  , IsValidatedPerasCert (ValidatedPerasCert blk) blk
+  , IsPerasVote blk (PerasVote blk)
+  , IsValidatedPerasVote (ValidatedPerasVote blk) blk
+  , Exception (PerasCertValidationErr blk)
+  , Exception (PerasCertForgeErr blk)
+  , Exception (PerasVoteValidationErr blk)
+  , Exception (PerasVoteForgeErr blk)
   ) =>
   BlockSupportsPeras blk
   where
-  type PerasCfg blk :: Type
+  type PerasCfg blk
 
-  mkPerasCert ::
-    PerasRoundNo ->
-    Point blk ->
-    PerasCert blk
+  type PerasVote blk
+  type ValidatedPerasVote blk
+  type PerasVoteForgeErr blk
+  type PerasVoteValidationErr blk
 
-  mkPerasVote ::
+  forgePerasVote ::
+    PerasCfg blk ->
+    PerasVoteStakeDistr ->
     PerasVoterId ->
     PerasRoundNo ->
     Point blk ->
-    PerasVote blk
-
-  validatePerasCert ::
-    PerasCfg blk ->
-    PerasCert blk ->
-    Either (PerasValidationErr blk) (ValidatedPerasCert blk)
+    Either (PerasVoteForgeErr blk) (ValidatedPerasVote blk)
 
   validatePerasVote ::
     PerasCfg blk ->
     PerasVoteStakeDistr ->
     PerasVote blk ->
-    Either (PerasValidationErr blk) (ValidatedPerasVote blk)
+    Either (PerasVoteValidationErr blk) (ValidatedPerasVote blk)
+
+  type PerasCert blk
+  type ValidatedPerasCert blk
+  type PerasCertForgeErr blk
+  type PerasCertValidationErr blk
 
   forgePerasCert ::
     PerasCfg blk ->
-    PerasVoteTarget blk ->
+    PerasRoundNo ->
+    Point blk ->
     [ValidatedPerasVote blk] ->
-    Either (PerasForgeErr blk) (ValidatedPerasCert blk)
+    Either (PerasCertForgeErr blk) (ValidatedPerasCert blk)
 
--- * Error types
-
--- TODO: enrich with actual error types
--- see https://github.com/tweag/cardano-peras/issues/120
-data PerasValidationErr blk
-  = PerasValidationErr
-  deriving stock (Generic, Show, Eq)
-  deriving anyclass NoThunks
-
--- TODO: enrich with actual error types
--- see https://github.com/tweag/cardano-peras/issues/120
-data PerasForgeErr blk
-  = PerasForgeErrInsufficientVotes
-  | PerasForgeErrTargetMismatch
-  deriving stock (Generic, Show, Eq)
-  deriving anyclass NoThunks
-
--- * Validated types
-
-data ValidatedPerasCert blk = ValidatedPerasCert
-  { vpcCert :: !(PerasCert blk)
-  , vpcCertBoost :: !PerasWeight
-  }
-
-deriving instance Show (PerasCert blk) => Show (ValidatedPerasCert blk)
-deriving instance Eq (PerasCert blk) => Eq (ValidatedPerasCert blk)
-deriving instance Ord (PerasCert blk) => Ord (ValidatedPerasCert blk)
-deriving instance Generic (ValidatedPerasCert blk)
-deriving instance NoThunks (PerasCert blk) => NoThunks (ValidatedPerasCert blk)
-
-data ValidatedPerasVote blk = ValidatedPerasVote
-  { vpvVote :: !(PerasVote blk)
-  , vpvVoteStake :: !PerasVoteStake
-  }
-
-deriving instance Show (PerasVote blk) => Show (ValidatedPerasVote blk)
-deriving instance Eq (PerasVote blk) => Eq (ValidatedPerasVote blk)
-deriving instance Ord (PerasVote blk) => Ord (ValidatedPerasVote blk)
-deriving instance Generic (ValidatedPerasVote blk)
-deriving instance NoThunks (PerasVote blk) => NoThunks (ValidatedPerasVote blk)
+  validatePerasCert ::
+    PerasCfg blk ->
+    PerasCert blk ->
+    Either (PerasCertValidationErr blk) (ValidatedPerasCert blk)
 
 -- * Utility functions
 
 -- | Lookup the stake of a vote cast by a member of a given stake distribution
 lookupPerasVoteStake ::
-  HasPerasVote vote =>
+  IsPerasVote blk vote =>
   vote ->
   PerasVoteStakeDistr ->
   Maybe PerasVoteStake
@@ -175,42 +132,47 @@ lookupPerasVoteStake vote distr =
 -- * Field accessors
 
 -- | Extract fields from a Peras certificate
-class HasPerasCert cert where
-  type CertBoostedBlock cert :: Type
+class IsPerasCert blk cert | cert -> blk where
   getPerasCertRound :: cert -> PerasRoundNo
-  getPerasCertBoostedBlock :: cert -> Point (CertBoostedBlock cert)
+  getPerasCertBoostedBlock :: cert -> Point blk
 
-instance HasPerasCert (Base.PerasCert blk) where
-  type CertBoostedBlock (Base.PerasCert blk) = blk
+instance IsPerasCert blk (Base.PerasCert blk) where
   getPerasCertRound = Base.pcCertRound
   getPerasCertBoostedBlock = Base.pcCertBoostedBlock
 
 instance
-  HasPerasCert (PerasCert blk) =>
-  HasPerasCert (ValidatedPerasCert blk)
+  IsPerasCert blk (Base.ValidatedPerasCert blk)
   where
-  type CertBoostedBlock (ValidatedPerasCert blk) = CertBoostedBlock (PerasCert blk)
-  getPerasCertRound = getPerasCertRound . vpcCert
-  getPerasCertBoostedBlock = getPerasCertBoostedBlock . vpcCert
+  getPerasCertRound = getPerasCertRound . Base.vpcCert
+  getPerasCertBoostedBlock = getPerasCertBoostedBlock . Base.vpcCert
 
 instance
-  HasPerasCert cert =>
-  HasPerasCert (WithArrivalTime cert)
+  IsPerasCert blk cert =>
+  IsPerasCert blk (WithArrivalTime cert)
   where
-  type CertBoostedBlock (WithArrivalTime cert) = CertBoostedBlock cert
   getPerasCertRound = getPerasCertRound . forgetArrivalTime
   getPerasCertBoostedBlock = getPerasCertBoostedBlock . forgetArrivalTime
 
+class IsPerasCert blk cert => IsValidatedPerasCert blk cert | cert -> blk where
+  getPerasCertBoost :: cert -> PerasWeight
+
+instance IsValidatedPerasCert blk (Base.ValidatedPerasCert blk) where
+  getPerasCertBoost = Base.vpcCertBoost
+
+instance
+  IsValidatedPerasCert blk cert =>
+  IsValidatedPerasCert blk (WithArrivalTime cert)
+  where
+  getPerasCertBoost = getPerasCertBoost . forgetArrivalTime
+
 -- | Extract fields from a Peras vote
-class HasPerasVote vote where
-  type VoteBlock vote :: Type
+class IsPerasVote blk vote | vote -> blk where
   getPerasVoteRound :: vote -> PerasRoundNo
   getPerasVoteVoterId :: vote -> PerasVoterId
-  getPerasVoteTarget :: vote -> PerasVoteTarget (VoteBlock vote)
-  getPerasVoteId :: vote -> PerasVoteId (VoteBlock vote)
+  getPerasVoteTarget :: vote -> PerasVoteTarget blk
+  getPerasVoteId :: vote -> PerasVoteId blk
 
-instance HasPerasVote (Base.PerasVote blk) where
-  type VoteBlock (Base.PerasVote blk) = blk
+instance IsPerasVote blk (Base.PerasVote blk) where
   getPerasVoteRound = Base.pvVoteRound
   getPerasVoteVoterId = Base.pvVoteVoterId
   getPerasVoteTarget vote =
@@ -225,47 +187,30 @@ instance HasPerasVote (Base.PerasVote blk) where
       }
 
 instance
-  HasPerasVote (PerasVote blk) =>
-  HasPerasVote (ValidatedPerasVote blk)
+  IsPerasVote blk (Base.ValidatedPerasVote blk)
   where
-  type VoteBlock (ValidatedPerasVote blk) = VoteBlock (PerasVote blk)
-  getPerasVoteRound = getPerasVoteRound . vpvVote
-  getPerasVoteVoterId = getPerasVoteVoterId . vpvVote
-  getPerasVoteTarget = getPerasVoteTarget . vpvVote
-  getPerasVoteId = getPerasVoteId . vpvVote
+  getPerasVoteRound = getPerasVoteRound . Base.vpvVote
+  getPerasVoteVoterId = getPerasVoteVoterId . Base.vpvVote
+  getPerasVoteTarget = getPerasVoteTarget . Base.vpvVote
+  getPerasVoteId = getPerasVoteId . Base.vpvVote
 
 instance
-  HasPerasVote vote =>
-  HasPerasVote (WithArrivalTime vote)
+  IsPerasVote blk vote =>
+  IsPerasVote blk (WithArrivalTime vote)
   where
-  type VoteBlock (WithArrivalTime vote) = VoteBlock vote
   getPerasVoteRound = getPerasVoteRound . forgetArrivalTime
   getPerasVoteVoterId = getPerasVoteVoterId . forgetArrivalTime
   getPerasVoteTarget = getPerasVoteTarget . forgetArrivalTime
   getPerasVoteId = getPerasVoteId . forgetArrivalTime
 
--- | Extract the certificate boost from a Peras certificate container
-class HasPerasCertBoost cert where
-  getPerasCertBoost :: cert -> PerasWeight
-
-instance HasPerasCertBoost (ValidatedPerasCert blk) where
-  getPerasCertBoost = vpcCertBoost
-
-instance
-  HasPerasCertBoost cert =>
-  HasPerasCertBoost (WithArrivalTime cert)
-  where
-  getPerasCertBoost = getPerasCertBoost . forgetArrivalTime
-
--- | Extract the vote stake from a validated Peras vote container
-class HasPerasVoteStake vote where
+class IsPerasVote blk vote => IsValidatedPerasVote blk vote | vote -> blk where
   getPerasVoteStake :: vote -> PerasVoteStake
 
-instance HasPerasVoteStake (ValidatedPerasVote blk) where
-  getPerasVoteStake = vpvVoteStake
+instance IsValidatedPerasVote blk (Base.ValidatedPerasVote blk) where
+  getPerasVoteStake = Base.vpvVoteStake
 
 instance
-  HasPerasVoteStake vote =>
-  HasPerasVoteStake (WithArrivalTime vote)
+  IsValidatedPerasVote blk vote =>
+  IsValidatedPerasVote blk (WithArrivalTime vote)
   where
   getPerasVoteStake = getPerasVoteStake . forgetArrivalTime

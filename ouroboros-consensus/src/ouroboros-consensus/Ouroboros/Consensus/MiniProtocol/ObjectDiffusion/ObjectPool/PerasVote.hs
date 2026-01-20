@@ -96,16 +96,7 @@ makePerasVotePoolWriterFromVoteDB perasCfg distrVar systemTime perasVoteDB =
         pure $ PerasVoteDB.containsVote voteSnapshot
     }
 
-data PerasVoteInboundException where
-  PerasVoteValidationError ::
-    BlockSupportsPeras blk =>
-    PerasValidationErr blk -> PerasVoteInboundException
-
-deriving instance Show PerasVoteInboundException
-
-instance Exception PerasVoteInboundException
-
--- | Validate a list of 'PerasVote's, throwing a 'PerasVoteInboundException' if
+-- | Validate a list of 'PerasVote's, throwing a 'PerasVoteValidationErr' if
 -- any of them are invalid.
 validatePerasVotes ::
   (BlockSupportsPeras blk, MonadThrow m) =>
@@ -113,9 +104,9 @@ validatePerasVotes ::
   PerasVoteStakeDistr ->
   [PerasVote blk] ->
   m [ValidatedPerasVote blk]
-validatePerasVotes perasCfg distr votes = do
+validatePerasVotes perasCfg distr votes =
   case traverse (validatePerasVote perasCfg distr) votes of
-    Left validationErr -> throw (PerasVoteValidationError validationErr)
+    Left validationErr -> throw validationErr
     Right validatedVotes -> return validatedVotes
 
 -- | Add a list of 'PerasVote's into an object pool.

@@ -114,7 +114,7 @@ data UpdateRoundVoteStateError blk
       (Point blk) -- the existing winner
       (Point blk) -- the loser that went above quorum
   | RoundVoteStateForgingCertError
-      (PerasForgeErr blk)
+      (PerasCertForgeErr blk)
 
 -- | Add a vote to an existing round aggregate.
 --
@@ -486,14 +486,15 @@ updateCandidateVoteState ::
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Candidate ->
   Either
-    (PerasForgeErr blk)
+    (PerasCertForgeErr blk)
     (PerasVoteStateCandidateOrWinner blk)
 updateCandidateVoteState cfg vote oldState = do
   let newVoteTally = updateTargetVoteTally vote (ptvsVoteTally oldState)
       voteList = forgetArrivalTime <$> Map.elems (ptvtVotes newVoteTally)
    in if stakeAboveThreshold cfg (ptvtTotalStake newVoteTally)
         then do
-          cert <- forgePerasCert cfg (ptvtTarget newVoteTally) voteList
+          let PerasVoteTarget{pvtRoundNo, pvtBlock} = ptvtTarget newVoteTally
+          cert <- forgePerasCert cfg pvtRoundNo pvtBlock voteList
           pure $ BecameWinner (PerasTargetVoteWinner newVoteTally cert)
         else
           pure $ RemainedCandidate (PerasTargetVoteCandidate newVoteTally)

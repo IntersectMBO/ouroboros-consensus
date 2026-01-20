@@ -8,14 +8,18 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Ouroboros.Consensus.Peras.Vote
   ( PerasVote (..)
+  , ValidatedPerasVote (..)
   , PerasVoterId (..)
   , PerasVoteStake (..)
   , PerasVoteStakeDistr (..)
   , PerasVoteTarget (..)
   , PerasVoteId (..)
+  , PerasVoteValidationErr (..)
+  , PerasVoteForgeErr (..)
   , stakeAboveThreshold
   ) where
 
@@ -37,6 +41,7 @@ import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Quiet (Quiet (..))
+import Control.Exception (Exception)
 
 data PerasVote blk = PerasVote
   { pvVoteRound :: PerasRoundNo
@@ -106,8 +111,29 @@ data PerasVoteId blk = PerasVoteId
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
 
+data PerasVoteValidationErr blk
+  = PerasVoteValidationErr
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NoThunks, Exception)
+
+data PerasVoteForgeErr blk
+  = PerasVoteForgeErr
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NoThunks, Exception)
+
 -- | Check whether a given vote stake is above the quorum threshold
 stakeAboveThreshold :: PerasParams -> PerasVoteStake -> Bool
 stakeAboveThreshold params stake =
   unPerasVoteStake stake
     >= unPerasQuorumStakeThreshold (perasQuorumStakeThreshold params)
+
+data ValidatedPerasVote blk = ValidatedPerasVote
+  { vpvVote :: !(PerasVote blk)
+  , vpvVoteStake :: !PerasVoteStake
+  }
+
+deriving instance Show (PerasVote blk) => Show (ValidatedPerasVote blk)
+deriving instance Eq (PerasVote blk) => Eq (ValidatedPerasVote blk)
+deriving instance Ord (PerasVote blk) => Ord (ValidatedPerasVote blk)
+deriving instance Generic (ValidatedPerasVote blk)
+deriving instance NoThunks (PerasVote blk) => NoThunks (ValidatedPerasVote blk)
