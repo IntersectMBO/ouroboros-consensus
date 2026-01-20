@@ -79,8 +79,6 @@ class
   , HasLedgerTables (Ticked (LedgerState blk))
   , -- Peras
     BlockSupportsPeras blk
-  , HasPerasCert (PerasCert blk)
-  , HasPerasVote (PerasVote blk)
   , -- Instances required to support testing
     Eq (GenTx blk)
   , Eq (Validated (GenTx blk))

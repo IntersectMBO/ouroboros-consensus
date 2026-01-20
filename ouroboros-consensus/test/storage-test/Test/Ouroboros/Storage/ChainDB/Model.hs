@@ -178,12 +178,18 @@ deriving instance
   , ToExpr (ChainProducerState blk)
   , ToExpr (ExtLedgerState blk EmptyMK)
   , ToExpr (PerasCert blk)
+  , ToExpr (ValidatedPerasCert blk)
+  , ToExpr (PerasVote blk)
+  , ToExpr (ValidatedPerasVote blk)
   ) =>
   ToExpr (Model blk)
 
 deriving instance
   ( LedgerSupportsProtocol blk
   , Show (PerasCert blk)
+  , Show (ValidatedPerasCert blk)
+  , Show (PerasVote blk)
+  , Show (ValidatedPerasVote blk)
   , Show blk
   ) =>
   Show (Model blk)

@@ -923,7 +923,7 @@ data instance PerasCert TestBlock = TestPerasCert
 instance ToExpr (PerasCert TestBlock) where
   toExpr = defaultExprViaShow
 
-instance HasPerasCert (PerasCert TestBlock) where
+instance IsPerasCert (PerasCert TestBlock) where
   type CertBoostedBlock (PerasCert TestBlock) = TestBlock
   getPerasCertRound = tpcCertRound
   getPerasCertBoostedBlock = tpcCertBoostedBlock
@@ -939,7 +939,7 @@ data instance PerasVote TestBlock = TestPerasVote
 instance ToExpr (PerasVote TestBlock) where
   toExpr = defaultExprViaShow
 
-instance HasPerasVote (PerasVote TestBlock) where
+instance IsPerasVote (PerasVote TestBlock) where
   type VoteBlock (PerasVote TestBlock) = TestBlock
   getPerasVoteRound = tpvVoteRound
   getPerasVoteVoterId = tpvVoteVoterId
@@ -955,7 +955,7 @@ instance HasPerasVote (PerasVote TestBlock) where
       }
 
 instance BlockSupportsPeras TestBlock where
-  type PerasCfg TestBlock = PerasParams
+  type PerasConfig TestBlock = PerasParams
 
   mkPerasCert roundNo block =
     TestPerasCert
@@ -985,7 +985,7 @@ instance BlockSupportsPeras TestBlock where
             , vpvVoteStake = stake
             }
     | otherwise =
-        Left PerasValidationErr
+        Left PerasErr
 
   forgePerasCert params target votes
     | not allVotersMatchTarget =

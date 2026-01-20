@@ -65,25 +65,25 @@ import Ouroboros.Consensus.Util.STM
 type PerasVoteDbArgs :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data PerasVoteDbArgs f m blk = PerasVoteDbArgs
   { pvdbaTracer :: Tracer m (TraceEvent blk)
-  , pvdbaPerasCfg :: HKD f (PerasCfg blk)
+  , pvdbaPerasConfig :: HKD f (PerasConfig blk)
   }
 
 defaultArgs :: Applicative m => Incomplete PerasVoteDbArgs m blk
 defaultArgs =
   PerasVoteDbArgs
     { pvdbaTracer = nullTracer
-    , pvdbaPerasCfg = noDefault
+    , pvdbaPerasConfig = noDefault
     }
 
 openDB ::
   forall m blk.
   ( IOLike m
   , BlockSupportsPeras blk
-  , PerasCfg blk ~ PerasParams
+  , PerasConfig blk ~ PerasParams
   ) =>
   Complete PerasVoteDbArgs m blk ->
   m (PerasVoteDB m blk)
-openDB args@PerasVoteDbArgs{pvdbaPerasCfg} = do
+openDB args@PerasVoteDbArgs{pvdbaPerasConfig} = do
   pvdbPerasVoteStateVar <-
     newTVarWithInvariantIO
       (either Just (const Nothing) . invariantForPerasVolatileVoteState)
@@ -97,7 +97,7 @@ openDB args@PerasVoteDbArgs{pvdbaPerasCfg} = do
   traceWith pvdbTracer OpenedPerasVoteDB
   pure
     PerasVoteDB
-      { addVote = getEnv1 h (implAddVote pvdbaPerasCfg)
+      { addVote = getEnv1 h (implAddVote pvdbaPerasConfig)
       , getVoteSnapshot = getEnvSTM h implGetVoteSnapshot
       , getForgedCertForRound = getEnvSTM1 h implForgedCertForRound
       , garbageCollect = getEnv1 h implGarbageCollect
@@ -183,9 +183,9 @@ implCloseDB (PerasVoteDbHandle varState) =
 implAddVote ::
   ( IOLike m
   , BlockSupportsPeras blk
-  , PerasCfg blk ~ PerasParams
+  , PerasConfig blk ~ PerasParams
   ) =>
-  PerasCfg blk ->
+  PerasConfig blk ->
   PerasVoteDbEnv m blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   m (AddPerasVoteResult blk)

@@ -18,6 +18,7 @@ module Ouroboros.Consensus.HardFork.History.Qry
   , PastHorizonException (..)
   , qryFromExpr
   , runQuery
+  , runQueryNS
   , runQueryPure
   , runQueryThrow
 
@@ -73,6 +74,8 @@ import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Util (Some (..))
 import Ouroboros.Consensus.Util.IOLike
 import Quiet
+import Data.SOP (K (..))
+import Data.SOP.Strict (NS (..))
 
 {-------------------------------------------------------------------------------
   Internal: reified queries
@@ -434,19 +437,38 @@ instance Exception PastHorizonException
 -- NOTE: this means that queries about separate eras have to be run separately,
 -- they should not be composed into a single query. How could we know to which
 -- era which relative slot/time refers?
+--
+-- NOTE: 'runQuery' is implemented in terms of 'runQueryNS', and collapsing the 'NS' wrapper.
 runQuery ::
   forall a xs.
   HasCallStack =>
   Qry a -> Summary xs -> Either PastHorizonException a
-runQuery qry (Summary summary) = go summary
+runQuery qry summary = collapseNS <$> runQueryNS qry summary
  where
-  go :: NonEmpty xs' EraSummary -> Either PastHorizonException a
-  go (NonEmptyOne era) = tryEra era qry
-  go (NonEmptyCons era eras) = case tryEra era qry of
-    Left _ -> go eras
-    Right x -> Right x
+  collapseNS :: NS (K a) xs' -> a
+  collapseNS (Z (K x)) = x
+  collapseNS (S rest) = collapseNS rest
 
-  tryEra :: forall b. EraSummary -> Qry b -> Either PastHorizonException b
+-- | Like 'runQuery', but returns the result tagged with the era index in
+-- which the query was successfully evaluated.
+--
+-- Whereas 'runQuery' collapses the era information and returns a plain
+-- value, 'runQueryNS' preserves it by wrapping the result in an @'NS'
+-- ('K' a) xs@, where the position in the sum indicates the era.
+-- This is useful when the caller needs to know /which/ era the query
+-- resolved in.
+runQueryNS :: forall a xs.
+  HasCallStack =>
+  Qry a -> Summary xs -> Either PastHorizonException (NS (K a) xs)
+runQueryNS qry (Summary summary) = go summary
+ where
+  go :: NonEmpty xs' EraSummary -> Either PastHorizonException (NS (K a) xs')
+  go (NonEmptyOne era) = Z . K <$> tryEra era qry
+  go (NonEmptyCons era eras) = case tryEra era qry of
+    Left _  -> S <$> go eras
+    Right x -> Right (Z (K x))
+
+  tryEra :: forall b. HasCallStack => EraSummary -> Qry b -> Either PastHorizonException b
   tryEra era = \case
     QPure x -> Right x
     QExpr e k ->

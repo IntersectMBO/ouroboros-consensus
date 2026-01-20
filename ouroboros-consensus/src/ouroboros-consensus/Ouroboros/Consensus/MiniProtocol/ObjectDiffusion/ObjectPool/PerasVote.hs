@@ -21,7 +21,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , addArrivalTime
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-import Ouroboros.Consensus.Peras.Vote (PerasVoteId, PerasVoteStakeDistr)
+import Ouroboros.Consensus.Peras.Vote (PerasVoteId, PerasVoteStakeDistr, ValidatedPerasVote (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteDB
   , PerasVoteSnapshot
@@ -75,7 +75,7 @@ makePerasVotePoolWriterFromVoteDB ::
   -- TODO: We probably want to be able to fetch updated stake distribution throughout
   -- the lifetime of the writer
   -- But `StrictTVar m PerasVoteStakeDistr` might not be the best choice for that.
-  PerasCfg blk ->
+  PerasConfig blk ->
   StrictTVar m PerasVoteStakeDistr ->
   SystemTime m ->
   PerasVoteDB m blk ->
@@ -96,26 +96,17 @@ makePerasVotePoolWriterFromVoteDB perasCfg distrVar systemTime perasVoteDB =
         pure $ PerasVoteDB.containsVote voteSnapshot
     }
 
-data PerasVoteInboundException where
-  PerasVoteValidationError ::
-    BlockSupportsPeras blk =>
-    PerasValidationErr blk -> PerasVoteInboundException
-
-deriving instance Show PerasVoteInboundException
-
-instance Exception PerasVoteInboundException
-
--- | Validate a list of 'PerasVote's, throwing a 'PerasVoteInboundException' if
+-- | Validate a list of 'PerasVote's, throwing a 'PerasErr' if
 -- any of them are invalid.
 validatePerasVotes ::
   (BlockSupportsPeras blk, MonadThrow m) =>
-  PerasCfg blk ->
+  PerasConfig blk ->
   PerasVoteStakeDistr ->
   [PerasVote blk] ->
   m [ValidatedPerasVote blk]
-validatePerasVotes perasCfg distr votes = do
+validatePerasVotes perasCfg distr votes =
   case traverse (validatePerasVote perasCfg distr) votes of
-    Left validationErr -> throw (PerasVoteValidationError validationErr)
+    Left validationErr -> throw validationErr
     Right validatedVotes -> return validatedVotes
 
 -- | Add a list of 'PerasVote's into an object pool.
@@ -131,7 +122,7 @@ addPerasVotes ::
   ( BlockSupportsPeras blk
   , MonadThrow m
   ) =>
-  PerasCfg blk ->
+  PerasConfig blk ->
   PerasVoteStakeDistr ->
   SystemTime m ->
   (WithArrivalTime (ValidatedPerasVote blk) -> m a) ->

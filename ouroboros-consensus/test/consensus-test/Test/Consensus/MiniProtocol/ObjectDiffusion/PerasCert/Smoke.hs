@@ -71,7 +71,7 @@ tests =
         prop_smoke
     ]
 
-perasTestCfg :: PerasCfg TestBlock
+perasTestCfg :: PerasConfig TestBlock
 perasTestCfg = mkPerasParams
 
 genPoint :: Gen (Point (TestBlock))
@@ -115,9 +115,9 @@ mockSystemTime seed = do
 newCertDB ::
   ( IOLike m
   , BlockSupportsPeras blk
-  , PerasCfg blk ~ PerasParams
+  , PerasConfig blk ~ PerasParams
   ) =>
-  PerasCfg blk ->
+  PerasConfig blk ->
   SystemTime m ->
   [PerasCert blk] ->
   m (PerasCertDB m blk)
