@@ -136,6 +136,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
@@ -346,15 +347,19 @@ getBlockComponentImpl env@VolatileDBEnv{codecConfig, checkIntegrity} blockCompon
         | Lazy.null trailing ->
             case f fullBytes of
               Left err ->
-                -- TODO(10.7): augment the UnexpectedFailure type with a new
-                -- constructor for Plain.DecoderError and return it
-                undefined
+                throwIO $
+                  UnexpectedFailure $
+                    ParseError
+                      ibiFile
+                      pt
+                      err
               Right result -> pure result
-            -- return $ f fullBytes
         | otherwise ->
             throwIO $ UnexpectedFailure $ TrailingDataError ibiFile pt trailing
       Left err ->
-        throwIO $ UnexpectedFailure $ ParseError ibiFile pt err
+        throwIO $
+          UnexpectedFailure $
+            ParseError ibiFile pt (Plain.DecoderErrorDeserialiseFailure (Text.pack "") err)
 
 -- | This function follows the approach:
 -- (1) hPut bytes to the file
