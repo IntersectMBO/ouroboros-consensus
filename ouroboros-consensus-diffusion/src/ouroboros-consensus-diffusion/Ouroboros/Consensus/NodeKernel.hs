@@ -34,9 +34,9 @@ import Cardano.Network.PeerSelection.LocalRootPeers
 import Cardano.Network.Types (LedgerStateJudgement (..))
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import           Control.DeepSeq (force)
-import           Control.Monad
-import           Control.Monad.Class.MonadTime (getMonotonicTimeNSec)
+import Control.DeepSeq (force)
+import Control.Monad
+import Control.Monad.Class.MonadTime (getMonotonicTimeNSec)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.Except
 import Control.ResourceRegistry
@@ -152,157 +152,153 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
 import System.Random (StdGen)
 
-import           Control.Concurrent.Class.MonadMVar (MVar)
+import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
-import           Data.Map (Map)
+import Data.Map (Map)
 import qualified Data.Map as Map
-import           Data.Sequence (Seq)
-import           LeiosDemoTypes (LeiosEbBodies, LeiosOutstanding, LeiosPeerVars, SomeLeiosDb)
-import           LeiosDemoTypes (TraceLeiosKernel (..))
-import qualified LeiosDemoTypes as Leios
+import Data.Sequence (Seq)
 import qualified LeiosDemoLogic as Leios
+import LeiosDemoTypes
+  ( LeiosEbBodies
+  , LeiosOutstanding
+  , LeiosPeerVars
+  , SomeLeiosDb
+  , TraceLeiosKernel (..)
+  )
+import qualified LeiosDemoTypes as Leios
 
 {-------------------------------------------------------------------------------
   Relay node
 -------------------------------------------------------------------------------}
 
 -- | Interface against running relay node
-data NodeKernel m addrNTN addrNTC blk = NodeKernel {
-      -- | The 'ChainDB' of the node
-      getChainDB              :: ChainDB m blk
+data NodeKernel m addrNTN addrNTC blk = NodeKernel
+  { getChainDB :: ChainDB m blk
+  -- ^ The 'ChainDB' of the node
+  , getMempool :: Mempool m blk
+  -- ^ The node's mempool
+  , getTopLevelConfig :: TopLevelConfig blk
+  -- ^ The node's top-level static configuration
+  , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+  -- ^ The fetch client registry, used for the block fetch clients.
+  , getFetchMode :: STM m FetchMode
+  -- ^ The fetch mode, used by diffusion.
+  , getGsmState :: STM m GSM.GsmState
+  -- ^ The GSM state, used by diffusion. A ledger judgement can be derived
+  -- from it with 'GSM.gsmStateToLedgerJudgement'.
+  , getChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
+  -- ^ The kill handle and exposed state for each ChainSync client.
+  , getPeerSharingRegistry :: PeerSharingRegistry addrNTN m
+  -- ^ Read the current peer sharing registry, used for interacting with
+  -- the PeerSharing protocol
+  , getTracers :: Tracers m (ConnectionId addrNTN) addrNTC blk
+  -- ^ The node's tracers
+  , setBlockForging :: [BlockForging m blk] -> m ()
+  -- ^ Set block forging
+  --
+  -- When set with the empty list '[]' block forging will be disabled.
+  , getPeerSharingAPI :: PeerSharingAPI addrNTN StdGen m
+  , getOutboundConnectionsState ::
+      StrictTVar m OutboundConnectionsState
+  , getDiffusionPipeliningSupport ::
+      DiffusionPipeliningSupport
+  , getBlockchainTime :: BlockchainTime m
+  , -- ----------------------------------------
 
-      -- | The node's mempool
-    , getMempool              :: Mempool m blk
+    -- The following fields contain the information in the Leios model exe's
+    -- @LeiosFetchDynamicEnv@ and @LeiosFetchState@ data structures.
+    --
+    -- TODO this could all use TVars, but I'm curious whether MVars are a
+    -- noticeably awkward fit for this logic.
 
-      -- | The node's top-level static configuration
-    , getTopLevelConfig       :: TopLevelConfig blk
-
-      -- | The fetch client registry, used for the block fetch clients.
-    , getFetchClientRegistry  :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
-
-      -- | The fetch mode, used by diffusion.
-      --
-    , getFetchMode            :: STM m FetchMode
-
-      -- | The GSM state, used by diffusion. A ledger judgement can be derived
-      -- from it with 'GSM.gsmStateToLedgerJudgement'.
-      --
-    , getGsmState             :: STM m GSM.GsmState
-
-      -- | The kill handle and exposed state for each ChainSync client.
-    , getChainSyncHandles     :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
-
-      -- | Read the current peer sharing registry, used for interacting with
-      -- the PeerSharing protocol
-    , getPeerSharingRegistry  :: PeerSharingRegistry addrNTN m
-
-      -- | The node's tracers
-    , getTracers              :: Tracers m (ConnectionId addrNTN) addrNTC blk
-
-      -- | Set block forging
-      --
-      -- When set with the empty list '[]' block forging will be disabled.
-      --
-    , setBlockForging        :: [BlockForging m blk] -> m ()
-
-    , getPeerSharingAPI      :: PeerSharingAPI addrNTN StdGen m
-
-    , getOutboundConnectionsState
-                             :: StrictTVar m OutboundConnectionsState
-    , getDiffusionPipeliningSupport
-                             :: DiffusionPipeliningSupport
-    , getBlockchainTime      :: BlockchainTime m
-
-      -- ----------------------------------------
-
-      -- The following fields contain the information in the Leios model exe's
-      -- @LeiosFetchDynamicEnv@ and @LeiosFetchState@ data structures.
-      --
-      -- TODO this could all use TVars, but I'm curious whether MVars are a
-      -- noticeably awkward fit for this logic.
-
-      -- See 'LeiosPeerVars' for the write patterns
-    , getLeiosNewDbConnection :: m (SomeLeiosDb m)
-    , getLeiosPeersVars :: MVar m (Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
-      -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
-      -- eviction)
-    , getLeiosEbBodies :: MVar m LeiosEbBodies
-      -- written to by the fetch logic, by the LeiosNotify&LeiosFetch, and by LeiosCopier
-      -- clients (TODO and by eviction)
-    , getLeiosOutstanding :: MVar m (LeiosOutstanding (ConnectionId addrNTN))
-      -- | Leios fetch logic 'MVar.takeMVar's before it runs
-      --
-      -- LeiosNotify clients, LeiosFetch clients, and the LeiosCopier
-      -- 'MVar.tryPutMVar' whenever they make a change that might unblock a new
-      -- fetch decision.
-    , getLeiosReady :: MVar m ()
-      -- | Must be held before writing to the database
-      --
-      -- Preferable to dealing with SQLite's BUSY errors.
-      --
-      -- INVARIANT: never acquire 'MVar' while holding this lock.
-    , getLeiosWriteLock :: MVar m ()
-    , getLeiosNotifications ::
-          MVar m
-              (Map
-                  (Leios.PeerId (ConnectionId addrNTN))
-                  (StrictSTM.StrictTVar m
-                      (Map SlotNo (Seq Leios.LeiosNotification))
-                  )
-              )
-
-    }
+    -- See 'LeiosPeerVars' for the write patterns
+    getLeiosNewDbConnection :: m (SomeLeiosDb m)
+  , getLeiosPeersVars :: MVar m (Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
+  , -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
+    -- eviction)
+    getLeiosEbBodies :: MVar m LeiosEbBodies
+  , -- written to by the fetch logic, by the LeiosNotify&LeiosFetch, and by LeiosCopier
+    -- clients (TODO and by eviction)
+    getLeiosOutstanding :: MVar m (LeiosOutstanding (ConnectionId addrNTN))
+  , getLeiosReady :: MVar m ()
+  -- ^ Leios fetch logic 'MVar.takeMVar's before it runs
+  --
+  -- LeiosNotify clients, LeiosFetch clients, and the LeiosCopier
+  -- 'MVar.tryPutMVar' whenever they make a change that might unblock a new
+  -- fetch decision.
+  , getLeiosWriteLock :: MVar m ()
+  -- ^ Must be held before writing to the database
+  --
+  -- Preferable to dealing with SQLite's BUSY errors.
+  --
+  -- INVARIANT: never acquire 'MVar' while holding this lock.
+  , getLeiosNotifications ::
+      MVar
+        m
+        ( Map
+            (Leios.PeerId (ConnectionId addrNTN))
+            ( StrictSTM.StrictTVar
+                m
+                (Map SlotNo (Seq Leios.LeiosNotification))
+            )
+        )
+  }
 
 -- | Arguments required when initializing a node
-data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
-      tracers                 :: Tracers m (ConnectionId addrNTN) addrNTC blk
-    , registry                :: ResourceRegistry m
-    , cfg                     :: TopLevelConfig blk
-    , btime                   :: BlockchainTime m
-    , chainDB                 :: ChainDB m blk
-    , initChainDB             :: StorageConfig blk -> InitChainDB m blk -> m ()
-    , chainSyncFutureCheck    :: SomeHeaderInFutureCheck m blk
-      -- | See 'HistoricityCheck' for details.
-    , chainSyncHistoricityCheck
-                              :: m GSM.GsmState -> HistoricityCheck m blk
-    , blockFetchSize          :: Header blk -> SizeInBytes
-    , mempoolCapacityOverride :: MempoolCapacityBytesOverride
-    , miniProtocolParameters  :: MiniProtocolParameters
-    , blockFetchConfiguration :: BlockFetchConfiguration
-    , keepAliveRng            :: StdGen
-    , gsmArgs                 :: GsmNodeKernelArgs m blk
-    , getUseBootstrapPeers    :: STM m UseBootstrapPeers
-    , peerSharingRng          :: StdGen
-    , publicPeerSelectionStateVar
-                              :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
-    , genesisArgs             :: GenesisNodeKernelArgs m blk
-    , getDiffusionPipeliningSupport    :: DiffusionPipeliningSupport
-
-    , nkaGetLeiosNewDbConnection :: m (SomeLeiosDb m)
-    }
+data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
+  { tracers :: Tracers m (ConnectionId addrNTN) addrNTC blk
+  , registry :: ResourceRegistry m
+  , cfg :: TopLevelConfig blk
+  , btime :: BlockchainTime m
+  , chainDB :: ChainDB m blk
+  , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
+  , chainSyncFutureCheck :: SomeHeaderInFutureCheck m blk
+  , chainSyncHistoricityCheck ::
+      m GSM.GsmState ->
+      HistoricityCheck m blk
+  -- ^ See 'HistoricityCheck' for details.
+  , blockFetchSize :: Header blk -> SizeInBytes
+  , mempoolCapacityOverride :: MempoolCapacityBytesOverride
+  , miniProtocolParameters :: MiniProtocolParameters
+  , blockFetchConfiguration :: BlockFetchConfiguration
+  , keepAliveRng :: StdGen
+  , gsmArgs :: GsmNodeKernelArgs m blk
+  , getUseBootstrapPeers :: STM m UseBootstrapPeers
+  , peerSharingRng :: StdGen
+  , publicPeerSelectionStateVar ::
+      StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
+  , genesisArgs :: GenesisNodeKernelArgs m blk
+  , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
+  , nkaGetLeiosNewDbConnection :: m (SomeLeiosDb m)
+  }
 
 initNodeKernel ::
-       forall m addrNTN addrNTC blk.
-       ( IOLike m
-       , SI.MonadTimer m
-       , RunNode blk
-       , Ord addrNTN
-       , Hashable addrNTN
-       , Typeable addrNTN
-       )
-    => NodeKernelArgs m addrNTN addrNTC blk
-    -> m (NodeKernel m addrNTN addrNTC blk)
-initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
-                                   , chainDB, initChainDB
-                                   , blockFetchConfiguration
-                                   , btime
-                                   , gsmArgs
-                                   , peerSharingRng
-                                   , publicPeerSelectionStateVar
-                                   , genesisArgs
-                                   , getDiffusionPipeliningSupport
-                                   , nkaGetLeiosNewDbConnection
-                                   } = do
+  forall m addrNTN addrNTC blk.
+  ( IOLike m
+  , SI.MonadTimer m
+  , RunNode blk
+  , Ord addrNTN
+  , Hashable addrNTN
+  , Typeable addrNTN
+  ) =>
+  NodeKernelArgs m addrNTN addrNTC blk ->
+  m (NodeKernel m addrNTN addrNTC blk)
+initNodeKernel
+  args@NodeKernelArgs
+    { registry
+    , cfg
+    , tracers
+    , chainDB
+    , initChainDB
+    , blockFetchConfiguration
+    , btime
+    , gsmArgs
+    , peerSharingRng
+    , publicPeerSelectionStateVar
+    , genesisArgs
+    , getDiffusionPipeliningSupport
+    , nkaGetLeiosNewDbConnection
+    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
@@ -416,8 +412,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
 
     let getLeiosNewDbConnection = nkaGetLeiosNewDbConnection
     getLeiosPeersVars <- MVar.newMVar Map.empty
-    getLeiosEbBodies <- MVar.newMVar Leios.emptyLeiosEbBodies   -- TODO init from DB
-    getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding   -- TODO init from DB
+    getLeiosEbBodies <- MVar.newMVar Leios.emptyLeiosEbBodies -- TODO init from DB
+    getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
     getLeiosWriteLock <- MVar.newMVar ()
     getLeiosNotifications <- MVar.newMVar Map.empty
@@ -425,87 +421,96 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
     getLeiosCopyReady <- MVar.newEmptyMVar
 
     void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
-        let tracer = leiosKernelTracer tracers
-        () <- MVar.takeMVar getLeiosReady
-        iterationStart <- getMonotonicTime
-        leiosPeersVars <- MVar.readMVar getLeiosPeersVars
-        offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
-        ebBodies <- MVar.readMVar getLeiosEbBodies
-        (newDecisions, newCopy) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
-            let (!outstanding', newDecisions) =
-                    Leios.leiosFetchLogicIteration
-                        Leios.demoLeiosFetchStaticEnv
-                        (ebBodies, offerings)
-                        outstanding
-            let newCopy = Leios.toCopyCount outstanding' /= Leios.toCopyCount outstanding
-            pure (outstanding', (newDecisions, newCopy))
-        let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
-        traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: " ++ show (sum (fmap length newRequests)) ++ " new reqs, " ++ show newCopy ++ " new copy"
-        (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
-            atomically $ do
-                StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
-        when newCopy $ void $ MVar.tryPutMVar getLeiosCopyReady ()
-        iterationEnd <- getMonotonicTime
-        let loopInterval = 0.5 :: DiffTime    -- TODO magic number
-            duration = iterationEnd `diffTime` iterationStart
-        traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
-        threadDelay $ loopInterval - duration
+      let tracer = leiosKernelTracer tracers
+      () <- MVar.takeMVar getLeiosReady
+      iterationStart <- getMonotonicTime
+      leiosPeersVars <- MVar.readMVar getLeiosPeersVars
+      offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
+      ebBodies <- MVar.readMVar getLeiosEbBodies
+      (newDecisions, newCopy) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+        let (!outstanding', newDecisions) =
+              Leios.leiosFetchLogicIteration
+                Leios.demoLeiosFetchStaticEnv
+                (ebBodies, offerings)
+                outstanding
+        let newCopy = Leios.toCopyCount outstanding' /= Leios.toCopyCount outstanding
+        pure (outstanding', (newDecisions, newCopy))
+      let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
+      traceWith tracer $
+        MkTraceLeiosKernel $
+          "leiosFetchLogic: "
+            ++ show (sum (fmap length newRequests))
+            ++ " new reqs, "
+            ++ show newCopy
+            ++ " new copy"
+      (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
+        atomically $ do
+          StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
+      when newCopy $ void $ MVar.tryPutMVar getLeiosCopyReady ()
+      iterationEnd <- getMonotonicTime
+      let loopInterval = 0.5 :: DiffTime -- TODO magic number
+          duration = iterationEnd `diffTime` iterationStart
+      traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
+      threadDelay $ loopInterval - duration
 
     void $ forkLinkedThread registry "NodeKernel.leiosCopyLogic" $ do
-        let tracer = leiosKernelTracer tracers
-        Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
-        (\m -> let loop !i = do m i; loop (i+1 :: Int) in loop 0) $ \i -> do
-            () <- MVar.takeMVar getLeiosCopyReady
-            iterationStart <- getMonotonicTime
-            traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: running " ++ show i
-            t1 <- getMonotonicTimeNSec
-            moreTodo <-
-                Leios.doCacheCopy
-                    tracer
-                    db
-                    (getLeiosWriteLock, getLeiosOutstanding, getLeiosNotifications)
-                    (500 * 10^(3 :: Int))   -- TODO magic number
-            t2 <- getMonotonicTimeNSec
-            traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: done " ++ show (i, (t2 - t1) `div` (10^(6 :: Int)))
-            void $ MVar.tryPutMVar getLeiosReady ()
-            when moreTodo $ do
-                traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: more " ++ show i
-                void $ MVar.tryPutMVar getLeiosCopyReady ()
-            iterationEnd <- getMonotonicTime
-            let loopInterval = 0.050 :: DiffTime    -- TODO magic number
-                duration = iterationEnd `diffTime` iterationStart
-            traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: duration " ++ show duration
-            threadDelay $ loopInterval - duration
+      let tracer = leiosKernelTracer tracers
+      Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
+      (\m -> let loop !i = do m i; loop (i + 1 :: Int) in loop 0) $ \i -> do
+        () <- MVar.takeMVar getLeiosCopyReady
+        iterationStart <- getMonotonicTime
+        traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: running " ++ show i
+        t1 <- getMonotonicTimeNSec
+        moreTodo <-
+          Leios.doCacheCopy
+            tracer
+            db
+            (getLeiosWriteLock, getLeiosOutstanding, getLeiosNotifications)
+            (500 * 10 ^ (3 :: Int)) -- TODO magic number
+        t2 <- getMonotonicTimeNSec
+        traceWith tracer $
+          MkTraceLeiosKernel $
+            "leiosCopy: done " ++ show (i, (t2 - t1) `div` (10 ^ (6 :: Int)))
+        void $ MVar.tryPutMVar getLeiosReady ()
+        when moreTodo $ do
+          traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: more " ++ show i
+          void $ MVar.tryPutMVar getLeiosCopyReady ()
+        iterationEnd <- getMonotonicTime
+        let loopInterval = 0.050 :: DiffTime -- TODO magic number
+            duration = iterationEnd `diffTime` iterationStart
+        traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: duration " ++ show duration
+        threadDelay $ loopInterval - duration
 
-    return NodeKernel
-      { getChainDB              = chainDB
-      , getMempool              = mempool
-      , getTopLevelConfig       = cfg
-      , getFetchClientRegistry  = fetchClientRegistry
-      , getFetchMode            = readFetchMode blockFetchInterface
-      , getGsmState             = readTVar varGsmState
-      , getChainSyncHandles     = varChainSyncHandles
-      , getPeerSharingRegistry  = peerSharingRegistry
-      , getTracers              = tracers
-      , setBlockForging         = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
-      , getPeerSharingAPI       = peerSharingAPI
-      , getOutboundConnectionsState
-                                = varOutboundConnectionsState
-      , getDiffusionPipeliningSupport
-      , getBlockchainTime       = btime
-
-      , getLeiosNewDbConnection
-      , getLeiosPeersVars
-      , getLeiosEbBodies
-      , getLeiosOutstanding
-      , getLeiosReady
-      , getLeiosWriteLock
-      , getLeiosNotifications
-      }
-  where
-    blockForgingController :: InternalState m remotePeer localPeer blk
-                           -> STM m [BlockForging m blk]
-                           -> m Void
+    return
+      NodeKernel
+        { getChainDB = chainDB
+        , getMempool = mempool
+        , getTopLevelConfig = cfg
+        , getFetchClientRegistry = fetchClientRegistry
+        , getFetchMode = readFetchMode blockFetchInterface
+        , getGsmState = readTVar varGsmState
+        , getChainSyncHandles = varChainSyncHandles
+        , getPeerSharingRegistry = peerSharingRegistry
+        , getTracers = tracers
+        , setBlockForging = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
+        , getPeerSharingAPI = peerSharingAPI
+        , getOutboundConnectionsState =
+            varOutboundConnectionsState
+        , getDiffusionPipeliningSupport
+        , getBlockchainTime = btime
+        , getLeiosNewDbConnection
+        , getLeiosPeersVars
+        , getLeiosEbBodies
+        , getLeiosOutstanding
+        , getLeiosReady
+        , getLeiosWriteLock
+        , getLeiosNotifications
+        }
+   where
+    blockForgingController ::
+      InternalState m remotePeer localPeer blk ->
+      STM m [BlockForging m blk] ->
+      m Void
     blockForgingController st getBlockForging = go []
      where
       go :: [Thread m Void] -> m Void

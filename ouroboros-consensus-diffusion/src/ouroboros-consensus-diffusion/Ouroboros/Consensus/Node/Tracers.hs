@@ -59,7 +59,7 @@ import Ouroboros.Network.TxSubmission.Outbound
   ( TraceTxSubmissionOutbound
   )
 
-import           LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
+import LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
 
 {-------------------------------------------------------------------------------
   All tracers of a node bundled together
@@ -77,19 +77,20 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , txOutboundTracer ::
       f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
-  , mempoolTracer                 :: f (TraceEventMempool blk)
-  , forgeTracer                   :: f (TraceLabelCreds (TraceForgeEvent blk))
-  , blockchainTimeTracer          :: f (TraceBlockchainTimeEvent UTCTime)
-  , forgeStateInfoTracer          :: f (TraceLabelCreds (ForgeStateInfo blk))
-  , keepAliveClientTracer         :: f (TraceKeepAliveClient remotePeer)
-  , consensusSanityCheckTracer    :: f SanityCheckIssue
-  , consensusErrorTracer          :: f SomeException
-  , gsmTracer                     :: f (TraceGsmEvent (Tip blk))
-  , gddTracer                     :: f (TraceGDDEvent remotePeer blk)
-  , csjTracer                     :: f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
-  , dbfTracer                     :: f (CSJumping.TraceEventDbf remotePeer)
-  , leiosKernelTracer             :: f TraceLeiosKernel
-  , leiosPeerTracer               :: f (TraceLabelPeer remotePeer TraceLeiosPeer)
+  , mempoolTracer :: f (TraceEventMempool blk)
+  , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
+  , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
+  , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
+  , keepAliveClientTracer :: f (TraceKeepAliveClient remotePeer)
+  , consensusSanityCheckTracer :: f SanityCheckIssue
+  , consensusErrorTracer :: f SomeException
+  , gsmTracer :: f (TraceGsmEvent (Tip blk))
+  , gddTracer :: f (TraceGDDEvent remotePeer blk)
+  , csjTracer ::
+      f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
+  , dbfTracer :: f (CSJumping.TraceEventDbf remotePeer)
+  , leiosKernelTracer :: f TraceLeiosKernel
+  , leiosPeerTracer :: f (TraceLabelPeer remotePeer TraceLeiosPeer)
   }
 
 instance
@@ -107,19 +108,19 @@ instance
       , txInboundTracer = f txInboundTracer
       , txOutboundTracer = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
-      , mempoolTracer                 = f mempoolTracer
-      , forgeTracer                   = f forgeTracer
-      , blockchainTimeTracer          = f blockchainTimeTracer
-      , forgeStateInfoTracer          = f forgeStateInfoTracer
-      , keepAliveClientTracer         = f keepAliveClientTracer
-      , consensusSanityCheckTracer    = f consensusSanityCheckTracer
-      , consensusErrorTracer          = f consensusErrorTracer
-      , gsmTracer                     = f gsmTracer
-      , gddTracer                     = f gddTracer
-      , csjTracer                     = f csjTracer
-      , dbfTracer                     = f dbfTracer
-      , leiosKernelTracer             = f leiosKernelTracer
-      , leiosPeerTracer               = f leiosPeerTracer
+      , mempoolTracer = f mempoolTracer
+      , forgeTracer = f forgeTracer
+      , blockchainTimeTracer = f blockchainTimeTracer
+      , forgeStateInfoTracer = f forgeStateInfoTracer
+      , keepAliveClientTracer = f keepAliveClientTracer
+      , consensusSanityCheckTracer = f consensusSanityCheckTracer
+      , consensusErrorTracer = f consensusErrorTracer
+      , gsmTracer = f gsmTracer
+      , gddTracer = f gddTracer
+      , csjTracer = f csjTracer
+      , dbfTracer = f dbfTracer
+      , leiosKernelTracer = f leiosKernelTracer
+      , leiosPeerTracer = f leiosPeerTracer
       }
    where
     f ::
@@ -145,19 +146,19 @@ nullTracers =
     , txInboundTracer = nullTracer
     , txOutboundTracer = nullTracer
     , localTxSubmissionServerTracer = nullTracer
-    , mempoolTracer                 = nullTracer
-    , forgeTracer                   = nullTracer
-    , blockchainTimeTracer          = nullTracer
-    , forgeStateInfoTracer          = nullTracer
-    , keepAliveClientTracer         = nullTracer
-    , consensusSanityCheckTracer    = nullTracer
-    , consensusErrorTracer          = nullTracer
-    , gsmTracer                     = nullTracer
-    , gddTracer                     = nullTracer
-    , csjTracer                     = nullTracer
-    , dbfTracer                     = nullTracer
-    , leiosKernelTracer             = nullTracer
-    , leiosPeerTracer               = nullTracer
+    , mempoolTracer = nullTracer
+    , forgeTracer = nullTracer
+    , blockchainTimeTracer = nullTracer
+    , forgeStateInfoTracer = nullTracer
+    , keepAliveClientTracer = nullTracer
+    , consensusSanityCheckTracer = nullTracer
+    , consensusErrorTracer = nullTracer
+    , gsmTracer = nullTracer
+    , gddTracer = nullTracer
+    , csjTracer = nullTracer
+    , dbfTracer = nullTracer
+    , leiosKernelTracer = nullTracer
+    , leiosPeerTracer = nullTracer
     }
 
 showTracers ::
@@ -185,19 +186,19 @@ showTracers tr =
     , txInboundTracer = showTracing tr
     , txOutboundTracer = showTracing tr
     , localTxSubmissionServerTracer = showTracing tr
-    , mempoolTracer                 = showTracing tr
-    , forgeTracer                   = showTracing tr
-    , blockchainTimeTracer          = showTracing tr
-    , forgeStateInfoTracer          = showTracing tr
-    , keepAliveClientTracer         = showTracing tr
-    , consensusSanityCheckTracer    = showTracing tr
-    , consensusErrorTracer          = showTracing tr
-    , gsmTracer                     = showTracing tr
-    , gddTracer                     = showTracing tr
-    , csjTracer                     = showTracing tr
-    , dbfTracer                     = showTracing tr
-    , leiosKernelTracer             = showTracing tr
-    , leiosPeerTracer               = showTracing tr
+    , mempoolTracer = showTracing tr
+    , forgeTracer = showTracing tr
+    , blockchainTimeTracer = showTracing tr
+    , forgeStateInfoTracer = showTracing tr
+    , keepAliveClientTracer = showTracing tr
+    , consensusSanityCheckTracer = showTracing tr
+    , consensusErrorTracer = showTracing tr
+    , gsmTracer = showTracing tr
+    , gddTracer = showTracing tr
+    , csjTracer = showTracing tr
+    , dbfTracer = showTracing tr
+    , leiosKernelTracer = showTracing tr
+    , leiosPeerTracer = showTracing tr
     }
 
 {-------------------------------------------------------------------------------

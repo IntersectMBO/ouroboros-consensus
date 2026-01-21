@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Network.NodeToNode
     -- * Byte Limits
   , ByteLimits
   , byteLimits
+
     -- * Tracers
   , Tracers
   , Tracers' (..)
@@ -41,7 +42,6 @@ module Ouroboros.Consensus.Network.NodeToNode
 
     -- * Re-exports
   , ChainSyncTimeout (..)
-
   , leiosFetchProtocolLimits
   , leiosNotifyProtocolLimits
   ) where
@@ -50,30 +50,31 @@ import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import           Codec.CBOR.Read (DeserialiseFailure)
+import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
-import           Control.Monad.Class.MonadTime.SI (MonadTime)
-import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.ResourceRegistry
-import           Control.Tracer
-import           Data.ByteString.Lazy (ByteString)
-import           Data.Functor ((<&>), void)
-import           Data.Hashable (Hashable)
-import           Data.Map.Strict (Map)
-import           Data.Void (Void)
+import Control.Monad.Class.MonadTime.SI (MonadTime)
+import Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import Control.ResourceRegistry
+import Control.Tracer
+import Data.ByteString.Lazy (ByteString)
+import Data.Functor (void, (<&>))
+import Data.Hashable (Hashable)
+import Data.Map.Strict (Map)
+import Data.Void (Void)
 import qualified Network.Mux as Mux
-import           Network.TypedProtocol.Codec
-import           Network.TypedProtocol.Peer (Peer (Effect))
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
-import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
-import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncStateView (..))
+import Network.TypedProtocol.Codec
+import Network.TypedProtocol.Peer (Peer (Effect))
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
+import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
+import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+  ( ChainSyncStateView (..)
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.Node.ExitPolicy
@@ -83,68 +84,87 @@ import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import           Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
-import           Ouroboros.Consensus.Util (ShowProxy)
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.Orphans ()
-import           Ouroboros.Network.Block (Serialised (..), decodePoint,
-                     decodeTip, encodePoint, encodeTip)
-import           Ouroboros.Network.BlockFetch
-import           Ouroboros.Network.BlockFetch.Client (BlockFetchClient,
-                     blockFetchClient)
-import           Ouroboros.Network.Channel
-import           Ouroboros.Network.Context
-import           Ouroboros.Network.DeltaQ
-import           Ouroboros.Network.Driver
-import           Ouroboros.Network.Driver.Limits
-import           Ouroboros.Network.KeepAlive
-import           Ouroboros.Network.Mux
-import           Ouroboros.Network.NodeToNode
-import           Ouroboros.Network.PeerSelection.PeerMetric.Type
-                     (FetchedMetricsTracer, ReportPeerMetrics (..))
-import           Ouroboros.Network.PeerSharing (PeerSharingController,
-                     bracketPeerSharingClient, peerSharingClient,
-                     peerSharingServer)
-import           Ouroboros.Network.Protocol.BlockFetch.Codec
-import           Ouroboros.Network.Protocol.BlockFetch.Server (BlockFetchServer,
-                     blockFetchServerPeer)
-import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch (..))
-import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
-import           Ouroboros.Network.Protocol.ChainSync.Codec
-import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
-import           Ouroboros.Network.Protocol.ChainSync.Server
-import           Ouroboros.Network.Protocol.ChainSync.Type
-import           Ouroboros.Network.Protocol.KeepAlive.Client
-import           Ouroboros.Network.Protocol.KeepAlive.Codec
-import           Ouroboros.Network.Protocol.KeepAlive.Server
-import           Ouroboros.Network.Protocol.KeepAlive.Type
-import           Ouroboros.Network.Protocol.PeerSharing.Client
-                     (PeerSharingClient, peerSharingClientPeer)
-import           Ouroboros.Network.Protocol.PeerSharing.Codec
-                     (codecPeerSharing, codecPeerSharingId,
-                     timeLimitsPeerSharing)
-import           Ouroboros.Network.Protocol.PeerSharing.Server
-                     (PeerSharingServer, peerSharingServerPeer)
-import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
-import           Ouroboros.Network.Protocol.TxSubmission2.Client
-import           Ouroboros.Network.Protocol.TxSubmission2.Codec
-import           Ouroboros.Network.Protocol.TxSubmission2.Server
-import           Ouroboros.Network.Protocol.TxSubmission2.Type
-import           Ouroboros.Network.TxSubmission.Inbound
-import           Ouroboros.Network.TxSubmission.Mempool.Reader
-                     (mapTxSubmissionMempoolReader)
-import           Ouroboros.Network.TxSubmission.Outbound
-
+import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
+import Ouroboros.Consensus.Util (ShowProxy)
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.Orphans ()
+import Ouroboros.Network.Block
+  ( Serialised (..)
+  , decodePoint
+  , decodeTip
+  , encodePoint
+  , encodeTip
+  )
+import Ouroboros.Network.BlockFetch
+import Ouroboros.Network.BlockFetch.Client
+  ( BlockFetchClient
+  , blockFetchClient
+  )
+import Ouroboros.Network.Channel
+import Ouroboros.Network.Context
+import Ouroboros.Network.DeltaQ
+import Ouroboros.Network.Driver
+import Ouroboros.Network.Driver.Limits
+import Ouroboros.Network.KeepAlive
+import Ouroboros.Network.Mux
+import Ouroboros.Network.NodeToNode
+import Ouroboros.Network.PeerSelection.PeerMetric.Type
+  ( FetchedMetricsTracer
+  , ReportPeerMetrics (..)
+  )
+import Ouroboros.Network.PeerSharing
+  ( PeerSharingController
+  , bracketPeerSharingClient
+  , peerSharingClient
+  , peerSharingServer
+  )
+import Ouroboros.Network.Protocol.BlockFetch.Codec
+import Ouroboros.Network.Protocol.BlockFetch.Server
+  ( BlockFetchServer
+  , blockFetchServerPeer
+  )
+import Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch (..))
+import Ouroboros.Network.Protocol.ChainSync.ClientPipelined
+import Ouroboros.Network.Protocol.ChainSync.Codec
+import Ouroboros.Network.Protocol.ChainSync.PipelineDecision
+import Ouroboros.Network.Protocol.ChainSync.Server
+import Ouroboros.Network.Protocol.ChainSync.Type
+import Ouroboros.Network.Protocol.KeepAlive.Client
+import Ouroboros.Network.Protocol.KeepAlive.Codec
+import Ouroboros.Network.Protocol.KeepAlive.Server
+import Ouroboros.Network.Protocol.KeepAlive.Type
+import Ouroboros.Network.Protocol.PeerSharing.Client
+  ( PeerSharingClient
+  , peerSharingClientPeer
+  )
+import Ouroboros.Network.Protocol.PeerSharing.Codec
+  ( codecPeerSharing
+  , codecPeerSharingId
+  , timeLimitsPeerSharing
+  )
+import Ouroboros.Network.Protocol.PeerSharing.Server
+  ( PeerSharingServer
+  , peerSharingServerPeer
+  )
+import Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
+import Ouroboros.Network.Protocol.TxSubmission2.Client
+import Ouroboros.Network.Protocol.TxSubmission2.Codec
+import Ouroboros.Network.Protocol.TxSubmission2.Server
+import Ouroboros.Network.Protocol.TxSubmission2.Type
+import Ouroboros.Network.TxSubmission.Inbound
+import Ouroboros.Network.TxSubmission.Mempool.Reader
+  ( mapTxSubmissionMempoolReader
+  )
+import Ouroboros.Network.TxSubmission.Outbound
 
 import qualified Data.Map as Map
-import           Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
-import           LeiosDemoOnlyTestFetch
-import           LeiosDemoOnlyTestNotify
-import           LeiosDemoTypes (LeiosEb, LeiosPoint, LeiosTx)
-import           LeiosDemoTypes (TraceLeiosPeer (..))
-import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoLogic as Leios
+import LeiosDemoOnlyTestFetch
+import LeiosDemoOnlyTestNotify
+import LeiosDemoTypes (LeiosEb, LeiosPoint, LeiosTx, TraceLeiosPeer (..))
+import qualified LeiosDemoTypes as Leios
 import qualified Ouroboros.Network.Mux as ON
 
 {-------------------------------------------------------------------------------
@@ -168,85 +188,71 @@ data Handlers m addr blk = Handlers
     -- representation to support bracket-style initialisation so that we
     -- could have the closure include these and not need to be explicit
     -- about them here.
-
-    , hChainSyncServer
-        :: ConnectionId addr
-        -> NodeToNodeVersion
-        -> ChainDB.Follower m blk (ChainDB.WithPoint blk (SerialisedHeader blk))
-        -> ChainSyncServer (SerialisedHeader blk) (Point blk) (Tip blk) m ()
-
-    -- TODO block fetch client does not have GADT view of the handlers.
-    , hBlockFetchClient
-        :: NodeToNodeVersion
-        -> ControlMessageSTM m
-        -> FetchedMetricsTracer m
-        -> BlockFetchClient (HeaderWithTime blk) blk m ()
-
-    , hBlockFetchServer
-        :: ConnectionId addr
-        -> NodeToNodeVersion
-        -> ResourceRegistry m
-        -> BlockFetchServer (Serialised blk) (Point blk) m ()
-
-    , hTxSubmissionClient
-        :: NodeToNodeVersion
-        -> ControlMessageSTM m
-        -> ConnectionId addr
-        -> TxSubmissionClient (GenTxId blk) (GenTx blk) m ()
-
-    , hTxSubmissionServer
-        :: NodeToNodeVersion
-        -> ConnectionId addr
-        -> TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ()
-
-    , hKeepAliveClient
-        :: NodeToNodeVersion
-        -> ControlMessageSTM m
-        -> ConnectionId addr
-        -> TVar.Unchecked.StrictTVar m (Map (ConnectionId addr) PeerGSV)
-        -> KeepAliveInterval
-        -> KeepAliveClient m ()
-
-    , hKeepAliveServer
-        :: NodeToNodeVersion
-        -> ConnectionId addr
-        -> KeepAliveServer m ()
-
-    , hPeerSharingClient
-        :: NodeToNodeVersion
-        -> ControlMessageSTM m
-        -> ConnectionId addr
-        -> PeerSharingController addr m
-        -> m (PeerSharingClient addr m ())
-
-    , hPeerSharingServer
-        :: NodeToNodeVersion
-        -> ConnectionId addr
-        -> PeerSharingServer addr m
-
-    , hLeiosNotifyClient
-        :: NodeToNodeVersion
-        -> ControlMessageSTM m
-        -> ConnectionId addr
-        -> LeiosNotifyClientPeerPipelined LeiosPoint () m ()
-
-    , hLeiosNotifyServer
-        :: NodeToNodeVersion
-        -> ConnectionId addr
-        -> LeiosNotifyServerPeer LeiosPoint () m ()
-
-    , hLeiosFetchClient
-        :: NodeToNodeVersion
-        -> ControlMessageSTM m
-        -> ConnectionId addr
-        -> LeiosFetchClientPeerPipelined LeiosPoint LeiosEb LeiosTx m ()
-
-    , hLeiosFetchServer
-        :: NodeToNodeVersion
-        -> ConnectionId addr
-        -> LeiosFetchServerPeer LeiosPoint LeiosEb LeiosTx m ()
-
-    }
+    hChainSyncServer ::
+      ConnectionId addr ->
+      NodeToNodeVersion ->
+      ChainDB.Follower m blk (ChainDB.WithPoint blk (SerialisedHeader blk)) ->
+      ChainSyncServer (SerialisedHeader blk) (Point blk) (Tip blk) m ()
+  , -- TODO block fetch client does not have GADT view of the handlers.
+    hBlockFetchClient ::
+      NodeToNodeVersion ->
+      ControlMessageSTM m ->
+      FetchedMetricsTracer m ->
+      BlockFetchClient (HeaderWithTime blk) blk m ()
+  , hBlockFetchServer ::
+      ConnectionId addr ->
+      NodeToNodeVersion ->
+      ResourceRegistry m ->
+      BlockFetchServer (Serialised blk) (Point blk) m ()
+  , hTxSubmissionClient ::
+      NodeToNodeVersion ->
+      ControlMessageSTM m ->
+      ConnectionId addr ->
+      TxSubmissionClient (GenTxId blk) (GenTx blk) m ()
+  , hTxSubmissionServer ::
+      NodeToNodeVersion ->
+      ConnectionId addr ->
+      TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ()
+  , hKeepAliveClient ::
+      NodeToNodeVersion ->
+      ControlMessageSTM m ->
+      ConnectionId addr ->
+      TVar.Unchecked.StrictTVar m (Map (ConnectionId addr) PeerGSV) ->
+      KeepAliveInterval ->
+      KeepAliveClient m ()
+  , hKeepAliveServer ::
+      NodeToNodeVersion ->
+      ConnectionId addr ->
+      KeepAliveServer m ()
+  , hPeerSharingClient ::
+      NodeToNodeVersion ->
+      ControlMessageSTM m ->
+      ConnectionId addr ->
+      PeerSharingController addr m ->
+      m (PeerSharingClient addr m ())
+  , hPeerSharingServer ::
+      NodeToNodeVersion ->
+      ConnectionId addr ->
+      PeerSharingServer addr m
+  , hLeiosNotifyClient ::
+      NodeToNodeVersion ->
+      ControlMessageSTM m ->
+      ConnectionId addr ->
+      LeiosNotifyClientPeerPipelined LeiosPoint () m ()
+  , hLeiosNotifyServer ::
+      NodeToNodeVersion ->
+      ConnectionId addr ->
+      LeiosNotifyServerPeer LeiosPoint () m ()
+  , hLeiosFetchClient ::
+      NodeToNodeVersion ->
+      ControlMessageSTM m ->
+      ConnectionId addr ->
+      LeiosFetchClientPeerPipelined LeiosPoint LeiosEb LeiosTx m ()
+  , hLeiosFetchServer ::
+      NodeToNodeVersion ->
+      ConnectionId addr ->
+      LeiosFetchServerPeer LeiosPoint LeiosEb LeiosTx m ()
+  }
 
 mkHandlers ::
   forall m blk addrNTN addrNTC.
@@ -263,10 +269,16 @@ mkHandlers ::
   NodeKernel m addrNTN addrNTC blk ->
   Handlers m addrNTN blk
 mkHandlers
-      NodeKernelArgs {chainSyncFutureCheck, chainSyncHistoricityCheck, keepAliveRng, miniProtocolParameters, getDiffusionPipeliningSupport}
-      nodeKernel =
-    Handlers {
-        hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
+  NodeKernelArgs
+    { chainSyncFutureCheck
+    , chainSyncHistoricityCheck
+    , keepAliveRng
+    , miniProtocolParameters
+    , getDiffusionPipeliningSupport
+    }
+  nodeKernel =
+    Handlers
+      { hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
           CsClient.chainSyncClient
             CsClient.ConfigEnv
               { CsClient.cfg = getTopLevelConfig
@@ -313,95 +325,117 @@ mkHandlers
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
       , hLeiosNotifyClient = \_version controlMessageSTM peer -> toLeiosNotifyClientPeerPipelined $ Effect $ do
-            let tracer = leiosPeerTracer peer
-            MVar.modifyMVar_ getLeiosPeersVars $ \leiosPeersVars -> do
-                x <- Leios.newLeiosPeerVars
-                let !leiosPeersVars' = Map.insert (Leios.MkPeerId peer) x leiosPeersVars
-                pure leiosPeersVars'
-            pure $ leiosNotifyClientPeerPipelined
-                (atomically controlMessageSTM <&> \case
-                    Terminate -> Left ()
-                    _ -> Right 300 {- TODO magic number -})
-                (pure $ \case
-                    MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
-                    MsgLeiosBlockOffer p ebBytesSize -> do
-                        traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint p
-                        ebId <- MVar.modifyMVar getLeiosEbBodies $ \ebBodies1 -> do
-                            let (ebId, mbEbBodies2) = Leios.ebIdFromPoint p ebBodies1
-                                ebBodies2 = fromMaybe ebBodies1 mbEbBodies2
-                            let !ebBodies3 =
-                                    if Set.member ebId (Leios.acquiredEbBodies ebBodies2) then ebBodies2 else
-                                    ebBodies2 {
-                                        Leios.missingEbBodies =
-                                            Map.insert ebId ebBytesSize (Leios.missingEbBodies ebBodies2)
-                                      }
-                            pure (ebBodies3, ebId)
-                        traceWith tracer $ MkTraceLeiosPeer $  "leiosId: " ++ Leios.prettyLeiosPoint p ++ " ---> " ++ show (let Leios.MkEbId i = ebId in i)
-                        peerVars <- do
-                            peersVars <- MVar.readMVar getLeiosPeersVars
-                            case Map.lookup (Leios.MkPeerId peer) peersVars of
-                                Nothing -> error "impossible!"
-                                Just x -> pure x
-                        MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
-                            let !offers1' = Set.insert ebId offers1
-                            pure (offers1', offers2)
-                        void $ MVar.tryPutMVar getLeiosReady ()
-                    MsgLeiosBlockTxsOffer p -> do
-                        traceWith tracer $ MkTraceLeiosPeer $  "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
-                        ebId <- Leios.ebIdFromPointM getLeiosEbBodies p
-                        peerVars <- do
-                            peersVars <- MVar.readMVar getLeiosPeersVars
-                            case Map.lookup (Leios.MkPeerId peer) peersVars of
-                                Nothing -> error "impossible!"
-                                Just x -> pure x
-                        MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
-                            let !offers2' = Set.insert ebId offers2
-                            pure (offers1, offers2')
-                        void $ MVar.tryPutMVar getLeiosReady ()
-                )
+          let tracer = leiosPeerTracer peer
+          MVar.modifyMVar_ getLeiosPeersVars $ \leiosPeersVars -> do
+            x <- Leios.newLeiosPeerVars
+            let !leiosPeersVars' = Map.insert (Leios.MkPeerId peer) x leiosPeersVars
+            pure leiosPeersVars'
+          pure $
+            leiosNotifyClientPeerPipelined
+              ( atomically controlMessageSTM <&> \case
+                  Terminate -> Left ()
+                  _ -> Right 300 {- TODO magic number -}
+              )
+              ( pure $ \case
+                  MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
+                  MsgLeiosBlockOffer p ebBytesSize -> do
+                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint p
+                    ebId <- MVar.modifyMVar getLeiosEbBodies $ \ebBodies1 -> do
+                      let (ebId, mbEbBodies2) = Leios.ebIdFromPoint p ebBodies1
+                          ebBodies2 = fromMaybe ebBodies1 mbEbBodies2
+                      let !ebBodies3 =
+                            if Set.member ebId (Leios.acquiredEbBodies ebBodies2)
+                              then ebBodies2
+                              else
+                                ebBodies2
+                                  { Leios.missingEbBodies =
+                                      Map.insert ebId ebBytesSize (Leios.missingEbBodies ebBodies2)
+                                  }
+                      pure (ebBodies3, ebId)
+                    traceWith tracer $
+                      MkTraceLeiosPeer $
+                        "leiosId: " ++ Leios.prettyLeiosPoint p ++ " ---> " ++ show (let Leios.MkEbId i = ebId in i)
+                    peerVars <- do
+                      peersVars <- MVar.readMVar getLeiosPeersVars
+                      case Map.lookup (Leios.MkPeerId peer) peersVars of
+                        Nothing -> error "impossible!"
+                        Just x -> pure x
+                    MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
+                      let !offers1' = Set.insert ebId offers1
+                      pure (offers1', offers2)
+                    void $ MVar.tryPutMVar getLeiosReady ()
+                  MsgLeiosBlockTxsOffer p -> do
+                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
+                    ebId <- Leios.ebIdFromPointM getLeiosEbBodies p
+                    peerVars <- do
+                      peersVars <- MVar.readMVar getLeiosPeersVars
+                      case Map.lookup (Leios.MkPeerId peer) peersVars of
+                        Nothing -> error "impossible!"
+                        Just x -> pure x
+                    MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
+                      let !offers2' = Set.insert ebId offers2
+                      pure (offers1, offers2')
+                    void $ MVar.tryPutMVar getLeiosReady ()
+              )
       , hLeiosNotifyServer = \_version peer -> Effect $ do
-            var <- StrictSTM.newTVarIO Map.empty
-            MVar.modifyMVar_ getLeiosNotifications $ \x -> do
-                let !x' = Map.insert (Leios.MkPeerId peer) var x
-                pure x'
-            pure
-              $ leiosNotifyServerPeer
-                    (Leios.nextLeiosNotification (leiosPeerTracer peer) (getLeiosEbBodies, var))
+          var <- StrictSTM.newTVarIO Map.empty
+          MVar.modifyMVar_ getLeiosNotifications $ \x -> do
+            let !x' = Map.insert (Leios.MkPeerId peer) var x
+            pure x'
+          pure $
+            leiosNotifyServerPeer
+              (Leios.nextLeiosNotification (leiosPeerTracer peer) (getLeiosEbBodies, var))
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
-            Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection   -- TODO share DB connection for same peer?
-            reqVar <-
-                let loop = do
-                        leiosPeersVars <- MVar.readMVar getLeiosPeersVars
-                        case Map.lookup (Leios.MkPeerId peer) leiosPeersVars of
-                            Just x -> pure $ Leios.requestsToSend x
-                            Nothing -> do
-                                -- TODO the LeiosNotify client has not inserted it yet
-                                threadDelay (0.010 :: DiffTime)
-                                loop
-                in loop
-            pure
-              $ leiosFetchClientPeerPipelined
-              $ Leios.nextLeiosFetchClientCommand
-                    (Node.leiosKernelTracer tracers)
-                    (leiosPeerTracer peer)
-                    ((== Terminate) <$> controlMessageSTM)
-                    (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosNotifications)
-                    db
-                    (Leios.MkPeerId peer)
-                    reqVar
+          Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection -- TODO share DB connection for same peer?
+          reqVar <-
+            let loop = do
+                  leiosPeersVars <- MVar.readMVar getLeiosPeersVars
+                  case Map.lookup (Leios.MkPeerId peer) leiosPeersVars of
+                    Just x -> pure $ Leios.requestsToSend x
+                    Nothing -> do
+                      -- TODO the LeiosNotify client has not inserted it yet
+                      threadDelay (0.010 :: DiffTime)
+                      loop
+             in loop
+          pure $
+            leiosFetchClientPeerPipelined $
+              Leios.nextLeiosFetchClientCommand
+                (Node.leiosKernelTracer tracers)
+                (leiosPeerTracer peer)
+                ((== Terminate) <$> controlMessageSTM)
+                (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosNotifications)
+                db
+                (Leios.MkPeerId peer)
+                reqVar
       , hLeiosFetchServer = \_version peer -> Effect $ do
-            Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
-            leiosFetchContext <-
-                Leios.newLeiosFetchContext
-                    getLeiosWriteLock
-                    db
-                    (MVar.readMVar getLeiosEbBodies)
-            pure $ leiosFetchServerPeer
-                    (pure $ Leios.leiosFetchHandler (leiosPeerTracer peer) leiosFetchContext)
+          Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
+          leiosFetchContext <-
+            Leios.newLeiosFetchContext
+              getLeiosWriteLock
+              db
+              (MVar.readMVar getLeiosEbBodies)
+          pure $
+            leiosFetchServerPeer
+              (pure $ Leios.leiosFetchHandler (leiosPeerTracer peer) leiosFetchContext)
       }
-  where
-    NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} = nodeKernel
-    NodeKernel {getLeiosNewDbConnection, getLeiosNotifications, getLeiosPeersVars, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosWriteLock} = nodeKernel
+   where
+    NodeKernel
+      { getChainDB
+      , getMempool
+      , getTopLevelConfig
+      , getTracers = tracers
+      , getPeerSharingAPI
+      , getGsmState
+      } = nodeKernel
+    NodeKernel
+      { getLeiosNewDbConnection
+      , getLeiosNotifications
+      , getLeiosPeersVars
+      , getLeiosEbBodies
+      , getLeiosOutstanding
+      , getLeiosReady
+      , getLeiosWriteLock
+      } = nodeKernel
 
     leiosPeerTracer peer = TraceLabelPeer peer `contramap` Node.leiosPeerTracer tracers
 
@@ -410,32 +444,48 @@ mkHandlers
 -------------------------------------------------------------------------------}
 
 -- | Node-to-node protocol codecs needed to run 'Handlers'.
-data Codecs blk addr e m bCS bSCS bBF bSBF bTX bKA bPS bLN bLF = Codecs {
-      cChainSyncCodec            :: Codec (ChainSync (Header blk) (Point blk) (Tip blk))           e m bCS
-    , cChainSyncCodecSerialised  :: Codec (ChainSync (SerialisedHeader blk) (Point blk) (Tip blk)) e m bSCS
-    , cBlockFetchCodec           :: Codec (BlockFetch blk (Point blk))                             e m bBF
-    , cBlockFetchCodecSerialised :: Codec (BlockFetch (Serialised blk) (Point blk))                e m bSBF
-    , cTxSubmission2Codec        :: Codec (TxSubmission2 (GenTxId blk) (GenTx blk))                e m bTX
-    , cKeepAliveCodec            :: Codec KeepAlive                                                e m bKA
-    , cPeerSharingCodec          :: Codec (PeerSharing addr)                                       e m bPS
-    , cLeiosNotifyCodec          :: Codec (LeiosNotify LeiosPoint ())                              e m bLN
-    , cLeiosFetchCodec           :: Codec (LeiosFetch LeiosPoint LeiosEb LeiosTx)                  e m bLF
-    }
+data Codecs blk addr e m bCS bSCS bBF bSBF bTX bKA bPS bLN bLF = Codecs
+  { cChainSyncCodec :: Codec (ChainSync (Header blk) (Point blk) (Tip blk)) e m bCS
+  , cChainSyncCodecSerialised ::
+      Codec (ChainSync (SerialisedHeader blk) (Point blk) (Tip blk)) e m bSCS
+  , cBlockFetchCodec :: Codec (BlockFetch blk (Point blk)) e m bBF
+  , cBlockFetchCodecSerialised ::
+      Codec (BlockFetch (Serialised blk) (Point blk)) e m bSBF
+  , cTxSubmission2Codec :: Codec (TxSubmission2 (GenTxId blk) (GenTx blk)) e m bTX
+  , cKeepAliveCodec :: Codec KeepAlive e m bKA
+  , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
+  , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint ()) e m bLN
+  , cLeiosFetchCodec :: Codec (LeiosFetch LeiosPoint LeiosEb LeiosTx) e m bLF
+  }
 
 -- | Protocol codecs for the node-to-node protocols
-defaultCodecs :: forall m blk addr.
-                ( IOLike m
-                , SerialiseNodeToNodeConstraints blk
-                )
-              => CodecConfig       blk
-              -> BlockNodeToNodeVersion blk
-              -> (NodeToNodeVersion -> addr -> CBOR.Encoding)
-              -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addr)
-              -> NodeToNodeVersion
-              -> Codecs blk addr DeserialiseFailure m
-                   ByteString ByteString ByteString ByteString ByteString ByteString ByteString ByteString ByteString
-defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion = Codecs {
-      cChainSyncCodec =
+defaultCodecs ::
+  forall m blk addr.
+  ( IOLike m
+  , SerialiseNodeToNodeConstraints blk
+  ) =>
+  CodecConfig blk ->
+  BlockNodeToNodeVersion blk ->
+  (NodeToNodeVersion -> addr -> CBOR.Encoding) ->
+  (NodeToNodeVersion -> forall s. CBOR.Decoder s addr) ->
+  NodeToNodeVersion ->
+  Codecs
+    blk
+    addr
+    DeserialiseFailure
+    m
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion =
+  Codecs
+    { cChainSyncCodec =
         codecChainSync
           enc
           dec
@@ -471,14 +521,12 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion = Codecs {
           dec
     , cKeepAliveCodec = codecKeepAlive_v2
     , cPeerSharingCodec = codecPeerSharing (encAddr nodeToNodeVersion) (decAddr nodeToNodeVersion)
-
     , cLeiosNotifyCodec =
         codecLeiosNotify
           Leios.encodeLeiosPoint
           Leios.decodeLeiosPoint
           (\() -> CBOR.encodeNull)
           CBOR.decodeNull
-
     , cLeiosFetchCodec =
         codecLeiosFetch
           Leios.encodeLeiosPoint
@@ -499,27 +547,33 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion = Codecs {
   dec = decodeNodeToNode ccfg version
 
 -- | Identity codecs used in tests.
-identityCodecs :: Monad m
-               => Codecs blk addr CodecFailure m
-                    (AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk)))
-                    (AnyMessage (ChainSync (SerialisedHeader blk) (Point blk) (Tip blk)))
-                    (AnyMessage (BlockFetch blk (Point blk)))
-                    (AnyMessage (BlockFetch (Serialised blk) (Point blk)))
-                    (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
-                    (AnyMessage KeepAlive)
-                    (AnyMessage (PeerSharing addr))
-                    (AnyMessage (LeiosNotify LeiosPoint ()))
-                    (AnyMessage (LeiosFetch LeiosPoint LeiosEb LeiosTx))
-identityCodecs = Codecs {
-      cChainSyncCodec            = codecChainSyncId
-    , cChainSyncCodecSerialised  = codecChainSyncId
-    , cBlockFetchCodec           = codecBlockFetchId
+identityCodecs ::
+  Monad m =>
+  Codecs
+    blk
+    addr
+    CodecFailure
+    m
+    (AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk)))
+    (AnyMessage (ChainSync (SerialisedHeader blk) (Point blk) (Tip blk)))
+    (AnyMessage (BlockFetch blk (Point blk)))
+    (AnyMessage (BlockFetch (Serialised blk) (Point blk)))
+    (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
+    (AnyMessage KeepAlive)
+    (AnyMessage (PeerSharing addr))
+    (AnyMessage (LeiosNotify LeiosPoint ()))
+    (AnyMessage (LeiosFetch LeiosPoint LeiosEb LeiosTx))
+identityCodecs =
+  Codecs
+    { cChainSyncCodec = codecChainSyncId
+    , cChainSyncCodecSerialised = codecChainSyncId
+    , cBlockFetchCodec = codecBlockFetchId
     , cBlockFetchCodecSerialised = codecBlockFetchId
-    , cTxSubmission2Codec        = codecTxSubmission2Id
-    , cKeepAliveCodec            = codecKeepAliveId
-    , cPeerSharingCodec          = codecPeerSharingId
-    , cLeiosNotifyCodec          = codecLeiosNotifyId
-    , cLeiosFetchCodec           = codecLeiosFetchId
+    , cTxSubmission2Codec = codecTxSubmission2Id
+    , cKeepAliveCodec = codecKeepAliveId
+    , cPeerSharingCodec = codecPeerSharingId
+    , cLeiosNotifyCodec = codecLeiosNotifyId
+    , cLeiosFetchCodec = codecLeiosFetchId
     }
 
 {-------------------------------------------------------------------------------
@@ -530,17 +584,22 @@ identityCodecs = Codecs {
 type Tracers m ntnAddr blk e =
   Tracers' (ConnectionId ntnAddr) ntnAddr blk e (Tracer m)
 
-data Tracers' peer ntnAddr blk e f = Tracers {
-      tChainSyncTracer            :: f (TraceLabelPeer peer (TraceSendRecv (ChainSync (Header blk) (Point blk) (Tip blk))))
-    , tChainSyncSerialisedTracer  :: f (TraceLabelPeer peer (TraceSendRecv (ChainSync (SerialisedHeader blk) (Point blk) (Tip blk))))
-    , tBlockFetchTracer           :: f (TraceLabelPeer peer (TraceSendRecv (BlockFetch blk (Point blk))))
-    , tBlockFetchSerialisedTracer :: f (TraceLabelPeer peer (TraceSendRecv (BlockFetch (Serialised blk) (Point blk))))
-    , tTxSubmission2Tracer        :: f (TraceLabelPeer peer (TraceSendRecv (TxSubmission2 (GenTxId blk) (GenTx blk))))
-    , tKeepAliveTracer            :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
-    , tPeerSharingTracer          :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
-    , tLeiosNotifyTracer          :: f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify LeiosPoint ())))
-    , tLeiosFetchTracer           :: f (TraceLabelPeer peer (TraceSendRecv (LeiosFetch LeiosPoint LeiosEb LeiosTx)))
-    }
+data Tracers' peer ntnAddr blk e f = Tracers
+  { tChainSyncTracer ::
+      f (TraceLabelPeer peer (TraceSendRecv (ChainSync (Header blk) (Point blk) (Tip blk))))
+  , tChainSyncSerialisedTracer ::
+      f (TraceLabelPeer peer (TraceSendRecv (ChainSync (SerialisedHeader blk) (Point blk) (Tip blk))))
+  , tBlockFetchTracer :: f (TraceLabelPeer peer (TraceSendRecv (BlockFetch blk (Point blk))))
+  , tBlockFetchSerialisedTracer ::
+      f (TraceLabelPeer peer (TraceSendRecv (BlockFetch (Serialised blk) (Point blk))))
+  , tTxSubmission2Tracer ::
+      f (TraceLabelPeer peer (TraceSendRecv (TxSubmission2 (GenTxId blk) (GenTx blk))))
+  , tKeepAliveTracer :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
+  , tPeerSharingTracer :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
+  , tLeiosNotifyTracer :: f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify LeiosPoint ())))
+  , tLeiosFetchTracer ::
+      f (TraceLabelPeer peer (TraceSendRecv (LeiosFetch LeiosPoint LeiosEb LeiosTx)))
+  }
 
 instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f) where
   l <> r =
@@ -549,11 +608,11 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f
       , tChainSyncSerialisedTracer = f tChainSyncSerialisedTracer
       , tBlockFetchTracer = f tBlockFetchTracer
       , tBlockFetchSerialisedTracer = f tBlockFetchSerialisedTracer
-      , tTxSubmission2Tracer        = f tTxSubmission2Tracer
-      , tKeepAliveTracer            = f tKeepAliveTracer
-      , tPeerSharingTracer          = f tPeerSharingTracer
-      , tLeiosNotifyTracer          = f tLeiosNotifyTracer
-      , tLeiosFetchTracer           = f tLeiosFetchTracer
+      , tTxSubmission2Tracer = f tTxSubmission2Tracer
+      , tKeepAliveTracer = f tKeepAliveTracer
+      , tPeerSharingTracer = f tPeerSharingTracer
+      , tLeiosNotifyTracer = f tLeiosNotifyTracer
+      , tLeiosFetchTracer = f tLeiosFetchTracer
       }
    where
     f ::
@@ -571,11 +630,11 @@ nullTracers =
     , tChainSyncSerialisedTracer = nullTracer
     , tBlockFetchTracer = nullTracer
     , tBlockFetchSerialisedTracer = nullTracer
-    , tTxSubmission2Tracer        = nullTracer
-    , tKeepAliveTracer            = nullTracer
-    , tPeerSharingTracer          = nullTracer
-    , tLeiosNotifyTracer          = nullTracer
-    , tLeiosFetchTracer           = nullTracer
+    , tTxSubmission2Tracer = nullTracer
+    , tKeepAliveTracer = nullTracer
+    , tPeerSharingTracer = nullTracer
+    , tLeiosNotifyTracer = nullTracer
+    , tLeiosFetchTracer = nullTracer
     }
 
 showTracers ::
@@ -594,11 +653,11 @@ showTracers tr =
     , tChainSyncSerialisedTracer = showTracing tr
     , tBlockFetchTracer = showTracing tr
     , tBlockFetchSerialisedTracer = showTracing tr
-    , tTxSubmission2Tracer        = showTracing tr
-    , tKeepAliveTracer            = showTracing tr
-    , tPeerSharingTracer          = showTracing tr
-    , tLeiosNotifyTracer          = showTracing tr
-    , tLeiosFetchTracer           = showTracing tr
+    , tTxSubmission2Tracer = showTracing tr
+    , tKeepAliveTracer = showTracing tr
+    , tPeerSharingTracer = showTracing tr
+    , tLeiosNotifyTracer = showTracing tr
+    , tLeiosFetchTracer = showTracing tr
     }
 
 {-------------------------------------------------------------------------------
@@ -607,156 +666,151 @@ showTracers tr =
 
 -- | A node-to-node application
 type ClientApp m addr bytes a =
-     NodeToNodeVersion
-  -> ExpandedInitiatorContext addr m
-  -> Channel m bytes
-  -> m (a, Maybe (Reception bytes))
+  NodeToNodeVersion ->
+  ExpandedInitiatorContext addr m ->
+  Channel m bytes ->
+  m (a, Maybe (Reception bytes))
 
 type ServerApp m addr bytes a =
-     NodeToNodeVersion
-  -> ResponderContext addr
-  -> Channel m bytes
-  -> m (a, Maybe (Reception bytes))
+  NodeToNodeVersion ->
+  ResponderContext addr ->
+  Channel m bytes ->
+  m (a, Maybe (Reception bytes))
 
 -- | Applications for the node-to-node protocols
 --
 -- See 'Network.Mux.Types.MuxApplication'
-data Apps m addr bCS bBF bTX bKA bPS bLN bLF a b = Apps {
-      -- | Start a chain sync client that communicates with the given upstream
-      -- node.
-      aChainSyncClient     :: ClientApp m addr bCS a
-
-      -- | Start a chain sync server.
-    , aChainSyncServer     :: ServerApp m addr bCS b
-
-      -- | Start a block fetch client that communicates with the given
-      -- upstream node.
-    , aBlockFetchClient    :: ClientApp m addr bBF a
-
-      -- | Start a block fetch server.
-    , aBlockFetchServer    :: ServerApp m addr bBF b
-
-      -- | Start a transaction submission v2 client that communicates with the
-      -- given upstream node.
-    , aTxSubmission2Client :: ClientApp m addr bTX a
-
-      -- | Start a transaction submission v2 server.
-    , aTxSubmission2Server :: ServerApp m addr bTX b
-
-      -- | Start a keep-alive client.
-    , aKeepAliveClient     :: ClientApp m addr bKA a
-
-      -- | Start a keep-alive server.
-    , aKeepAliveServer     :: ServerApp m addr bKA b
-
-      -- | Start a peer-sharing client.
-    , aPeerSharingClient   :: ClientApp m addr bPS a
-
-      -- | Start a peer-sharing server.
-    , aPeerSharingServer   :: ServerApp m addr bPS b
-
-      -- | Start a LeiosNotify client.
-    , aLeiosNotifyClient    :: ClientApp m addr bLN a
-
-      -- | Start a LeiosNotify server.
-    , aLeiosNotifyServer    :: ServerApp m addr bLN b
-
-      -- | Start a LeiosFetch client.
-    , aLeiosFetchClient     :: ClientApp m addr bLF a
-
-      -- | Start a LeiosFetch server.
-    , aLeiosFetchServer     :: ServerApp m addr bLF b
-    }
-
+data Apps m addr bCS bBF bTX bKA bPS bLN bLF a b = Apps
+  { aChainSyncClient :: ClientApp m addr bCS a
+  -- ^ Start a chain sync client that communicates with the given upstream
+  -- node.
+  , aChainSyncServer :: ServerApp m addr bCS b
+  -- ^ Start a chain sync server.
+  , aBlockFetchClient :: ClientApp m addr bBF a
+  -- ^ Start a block fetch client that communicates with the given
+  -- upstream node.
+  , aBlockFetchServer :: ServerApp m addr bBF b
+  -- ^ Start a block fetch server.
+  , aTxSubmission2Client :: ClientApp m addr bTX a
+  -- ^ Start a transaction submission v2 client that communicates with the
+  -- given upstream node.
+  , aTxSubmission2Server :: ServerApp m addr bTX b
+  -- ^ Start a transaction submission v2 server.
+  , aKeepAliveClient :: ClientApp m addr bKA a
+  -- ^ Start a keep-alive client.
+  , aKeepAliveServer :: ServerApp m addr bKA b
+  -- ^ Start a keep-alive server.
+  , aPeerSharingClient :: ClientApp m addr bPS a
+  -- ^ Start a peer-sharing client.
+  , aPeerSharingServer :: ServerApp m addr bPS b
+  -- ^ Start a peer-sharing server.
+  , aLeiosNotifyClient :: ClientApp m addr bLN a
+  -- ^ Start a LeiosNotify client.
+  , aLeiosNotifyServer :: ServerApp m addr bLN b
+  -- ^ Start a LeiosNotify server.
+  , aLeiosFetchClient :: ClientApp m addr bLF a
+  -- ^ Start a LeiosFetch client.
+  , aLeiosFetchServer :: ServerApp m addr bLF b
+  -- ^ Start a LeiosFetch server.
+  }
 
 -- | Per mini-protocol byte limits;  For each mini-protocol they provide
 -- per-state byte size limits, i.e. how much data can arrive from the network.
 --
 -- They don't depend on the instantiation of the protocol parameters (which
 -- block type is used, etc.), hence the use of 'RankNTypes'.
---
-data ByteLimits bCS bBF bTX bKA bLN bLF = ByteLimits {
-      blChainSync     :: forall header point tip.
-                         ProtocolSizeLimits
-                           (ChainSync  header point tip)
-                           bCS
-
-    , blBlockFetch    :: forall block point.
-                         ProtocolSizeLimits
-                           (BlockFetch block point)
-                           bBF
-
-    , blTxSubmission2 :: forall txid tx.
-                         ProtocolSizeLimits
-                           (TxSubmission2 txid tx)
-                           bTX
-
-    , blKeepAlive     :: ProtocolSizeLimits
-                           KeepAlive
-                           bKA
-
-    , blLeiosNotify   :: forall point announcement.
-                         ProtocolSizeLimits
-                           (LeiosNotify point announcement)
-                           bLN
-
-    , blLeiosFetch    :: forall point eb tx.
-                         ProtocolSizeLimits
-                           (LeiosFetch point eb tx)
-                           bLF
-
-    }
+data ByteLimits bCS bBF bTX bKA bLN bLF = ByteLimits
+  { blChainSync ::
+      forall header point tip.
+      ProtocolSizeLimits
+        (ChainSync header point tip)
+        bCS
+  , blBlockFetch ::
+      forall block point.
+      ProtocolSizeLimits
+        (BlockFetch block point)
+        bBF
+  , blTxSubmission2 ::
+      forall txid tx.
+      ProtocolSizeLimits
+        (TxSubmission2 txid tx)
+        bTX
+  , blKeepAlive ::
+      ProtocolSizeLimits
+        KeepAlive
+        bKA
+  , blLeiosNotify ::
+      forall point announcement.
+      ProtocolSizeLimits
+        (LeiosNotify point announcement)
+        bLN
+  , blLeiosFetch ::
+      forall point eb tx.
+      ProtocolSizeLimits
+        (LeiosFetch point eb tx)
+        bLF
+  }
 
 byteLimits :: ByteLimits ByteString ByteString ByteString ByteString ByteString ByteString
-byteLimits = ByteLimits {
-      blChainSync     = byteLimitsChainSync
-    , blBlockFetch    = byteLimitsBlockFetch
+byteLimits =
+  ByteLimits
+    { blChainSync = byteLimitsChainSync
+    , blBlockFetch = byteLimitsBlockFetch
     , blTxSubmission2 = byteLimitsTxSubmission2
-    , blKeepAlive     = byteLimitsKeepAlive
-    , blLeiosNotify   = byteLimitsLeiosNotify
-    , blLeiosFetch    = byteLimitsLeiosFetch
+    , blKeepAlive = byteLimitsKeepAlive
+    , blLeiosNotify = byteLimitsLeiosNotify
+    , blLeiosFetch = byteLimitsLeiosFetch
     }
 
 -- | Construct the 'NetworkApplication' for the node-to-node protocols
 mkApps ::
-     forall m addrNTN addrNTC blk e bCS bBF bTX bKA bPS bLN bLF.
-     ( IOLike m
-     , MonadTimer m
-     , Ord addrNTN
-     , Exception e
-     , LedgerSupportsProtocol blk
-     , ShowProxy blk
-     , ShowProxy (Header blk)
-     , ShowProxy (TxId (GenTx blk))
-     , ShowProxy (GenTx blk)
-     , BearerBytes bCS, BearerBytes bBF, BearerBytes bTX, BearerBytes bKA, BearerBytes bPS, BearerBytes bLN, BearerBytes bLF
-     )
-  => NodeKernel m addrNTN addrNTC blk -- ^ Needed for bracketing only
-  -> Tracers m addrNTN blk e
-  -> (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bKA bPS bLN bLF)
-  -> ByteLimits bCS bBF bTX bKA bLN bLF
-  -> m ChainSyncTimeout
-  -> CsClient.ChainSyncLoPBucketConfig
-  -> CsClient.CSJConfig
-  -> ReportPeerMetrics m (ConnectionId addrNTN)
-  -> Handlers m addrNTN blk
-  -> Apps m addrNTN bCS bBF bTX bKA bPS bLN bLF NodeToNodeInitiatorResult ()
-mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucketConfig csjConfig ReportPeerMetrics {..} Handlers {..} =
-    Apps {..}
-  where
-    NodeKernel { getDiffusionPipeliningSupport } = kernel
+  forall m addrNTN addrNTC blk e bCS bBF bTX bKA bPS bLN bLF.
+  ( IOLike m
+  , MonadTimer m
+  , Ord addrNTN
+  , Exception e
+  , LedgerSupportsProtocol blk
+  , ShowProxy blk
+  , ShowProxy (Header blk)
+  , ShowProxy (TxId (GenTx blk))
+  , ShowProxy (GenTx blk)
+  , BearerBytes bCS
+  , BearerBytes bBF
+  , BearerBytes bTX
+  , BearerBytes bKA
+  , BearerBytes bPS
+  , BearerBytes bLN
+  , BearerBytes bLF
+  ) =>
+  -- | Needed for bracketing only
+  NodeKernel m addrNTN addrNTC blk ->
+  Tracers m addrNTN blk e ->
+  (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bKA bPS bLN bLF) ->
+  ByteLimits bCS bBF bTX bKA bLN bLF ->
+  m ChainSyncTimeout ->
+  CsClient.ChainSyncLoPBucketConfig ->
+  CsClient.CSJConfig ->
+  ReportPeerMetrics m (ConnectionId addrNTN) ->
+  Handlers m addrNTN blk ->
+  Apps m addrNTN bCS bBF bTX bKA bPS bLN bLF NodeToNodeInitiatorResult ()
+mkApps kernel Tracers{..} mkCodecs ByteLimits{..} genChainSyncTimeout lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
+  Apps{..}
+ where
+  NodeKernel{getDiffusionPipeliningSupport} = kernel
 
-    aChainSyncClient
-      :: NodeToNodeVersion
-      -> ExpandedInitiatorContext addrNTN m
-      -> Channel m bCS
-      -> m (NodeToNodeInitiatorResult, Maybe (Reception bCS))
-    aChainSyncClient version ExpandedInitiatorContext {
-                               eicConnectionId    = them,
-                               eicControlMessage  = controlMessageSTM,
-                               eicIsBigLedgerPeer = isBigLedgerPeer
-                             }
-                             channel = do
+  aChainSyncClient ::
+    NodeToNodeVersion ->
+    ExpandedInitiatorContext addrNTN m ->
+    Channel m bCS ->
+    m (NodeToNodeInitiatorResult, Maybe (Reception bCS))
+  aChainSyncClient
+    version
+    ExpandedInitiatorContext
+      { eicConnectionId = them
+      , eicControlMessage = controlMessageSTM
+      , eicIsBigLedgerPeer = isBigLedgerPeer
+      }
+    channel = do
       labelThisThread "ChainSyncClient"
       -- Note that it is crucial that we sync with the fetch client "outside"
       -- of registering the state for the sync client. This is needed to
@@ -802,64 +856,24 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                   }
           return (ChainSyncInitiatorResult r, trailing)
 
-    aChainSyncServer
-      :: NodeToNodeVersion
-      -> ResponderContext addrNTN
-      -> Channel m bCS
-      -> m ((), Maybe (Reception bCS))
-    aChainSyncServer version ResponderContext { rcConnectionId = them } channel = do
-      labelThisThread "ChainSyncServer"
-      chainSyncTimeout <- genChainSyncTimeout
-      bracketWithPrivateRegistry
-        (chainSyncHeaderServerFollower
-           (getChainDB kernel)
-           ( case getDiffusionPipeliningSupport of
-              DiffusionPipeliningOn  -> ChainDB.TentativeChain
+  aChainSyncServer ::
+    NodeToNodeVersion ->
+    ResponderContext addrNTN ->
+    Channel m bCS ->
+    m ((), Maybe (Reception bCS))
+  aChainSyncServer version ResponderContext{rcConnectionId = them} channel = do
+    labelThisThread "ChainSyncServer"
+    chainSyncTimeout <- genChainSyncTimeout
+    bracketWithPrivateRegistry
+      ( chainSyncHeaderServerFollower
+          (getChainDB kernel)
+          ( case getDiffusionPipeliningSupport of
+              DiffusionPipeliningOn -> ChainDB.TentativeChain
               DiffusionPipeliningOff -> ChainDB.SelectedChain
-           )
-        )
-        ChainDB.followerClose
-        $ \flr ->
-          runPeerWithLimits
-            (contramap (TraceLabelPeer them) tChainSyncSerialisedTracer)
-            (cChainSyncCodecSerialised (mkCodecs version))
-            blChainSync
-            (timeLimitsChainSync chainSyncTimeout)
-            channel
-            $ chainSyncServerPeer
-            $ hChainSyncServer them version flr
-
-    aBlockFetchClient
-      :: NodeToNodeVersion
-      -> ExpandedInitiatorContext addrNTN m
-      -> Channel m bBF
-      -> m (NodeToNodeInitiatorResult, Maybe (Reception bBF))
-    aBlockFetchClient version ExpandedInitiatorContext {
-                                eicConnectionId   = them,
-                                eicControlMessage = controlMessageSTM
-                              }
-                              channel = do
-      labelThisThread "BlockFetchClient"
-      bracketFetchClient (getFetchClientRegistry kernel) version
-                         them $ \clientCtx -> do
-        ((), trailing) <- runPipelinedPeerWithLimits
-          (contramap (TraceLabelPeer them) tBlockFetchTracer)
-          (cBlockFetchCodec (mkCodecs version))
-          blBlockFetch
-          timeLimitsBlockFetch
-          channel
-          $ hBlockFetchClient version controlMessageSTM
-                              (TraceLabelPeer them `contramap` reportFetch) clientCtx
-        return (NoInitiatorResult, trailing)
-
-    aBlockFetchServer
-      :: NodeToNodeVersion
-      -> ResponderContext addrNTN
-      -> Channel m bBF
-      -> m ((), Maybe (Reception bBF))
-    aBlockFetchServer version ResponderContext { rcConnectionId = them } channel = do
-      labelThisThread "BlockFetchServer"
-      withRegistry $ \registry ->
+          )
+      )
+      ChainDB.followerClose
+      $ \flr ->
         runPeerWithLimits
           (contramap (TraceLabelPeer them) tChainSyncSerialisedTracer)
           (cChainSyncCodecSerialised (mkCodecs version))
@@ -869,22 +883,51 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
           $ chainSyncServerPeer
           $ hChainSyncServer them version flr
 
-    aTxSubmission2Client
-      :: NodeToNodeVersion
-      -> ExpandedInitiatorContext addrNTN m
-      -> Channel m bTX
-      -> m (NodeToNodeInitiatorResult, Maybe (Reception bTX))
-    aTxSubmission2Client version ExpandedInitiatorContext {
-                                   eicConnectionId   = them,
-                                   eicControlMessage = controlMessageSTM
-                                 }
-                                 channel = do
-      labelThisThread "TxSubmissionClient"
-      ((), trailing) <- runPeerWithLimits
-        (contramap (TraceLabelPeer them) tTxSubmission2Tracer)
-        (cTxSubmission2Codec (mkCodecs version))
-        blTxSubmission2
-        timeLimitsTxSubmission2
+  aBlockFetchClient ::
+    NodeToNodeVersion ->
+    ExpandedInitiatorContext addrNTN m ->
+    Channel m bBF ->
+    m (NodeToNodeInitiatorResult, Maybe (Reception bBF))
+  aBlockFetchClient
+    version
+    ExpandedInitiatorContext
+      { eicConnectionId = them
+      , eicControlMessage = controlMessageSTM
+      }
+    channel = do
+      labelThisThread "BlockFetchClient"
+      bracketFetchClient
+        (getFetchClientRegistry kernel)
+        version
+        them
+        $ \clientCtx -> do
+          ((), trailing) <-
+            runPipelinedPeerWithLimits
+              (contramap (TraceLabelPeer them) tBlockFetchTracer)
+              (cBlockFetchCodec (mkCodecs version))
+              blBlockFetch
+              timeLimitsBlockFetch
+              channel
+              $ hBlockFetchClient
+                version
+                controlMessageSTM
+                (TraceLabelPeer them `contramap` reportFetch)
+                clientCtx
+          return (NoInitiatorResult, trailing)
+
+  aBlockFetchServer ::
+    NodeToNodeVersion ->
+    ResponderContext addrNTN ->
+    Channel m bBF ->
+    m ((), Maybe (Reception bBF))
+  aBlockFetchServer version ResponderContext{rcConnectionId = them} channel = do
+    labelThisThread "BlockFetchServer"
+    withRegistry $ \registry ->
+      runPeerWithLimits
+        (contramap (TraceLabelPeer them) tBlockFetchSerialisedTracer)
+        (cBlockFetchCodecSerialised (mkCodecs version))
+        blBlockFetch
+        timeLimitsBlockFetch
         channel
         $ blockFetchServerPeer
         $ hBlockFetchServer them version registry
@@ -893,7 +936,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN m ->
     Channel m bTX ->
-    m (NodeToNodeInitiatorResult, Maybe bTX)
+    m (NodeToNodeInitiatorResult, Maybe (Reception bTX))
   aTxSubmission2Client
     version
     ExpandedInitiatorContext
@@ -912,31 +955,33 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
           (txSubmissionClientPeer (hTxSubmissionClient version controlMessageSTM them))
       return (NoInitiatorResult, trailing)
 
-    aTxSubmission2Server
-      :: NodeToNodeVersion
-      -> ResponderContext addrNTN
-      -> Channel m bTX
-      -> m ((), Maybe (Reception bTX))
-    aTxSubmission2Server version ResponderContext { rcConnectionId = them } channel = do
-      labelThisThread "TxSubmissionServer"
-      runPipelinedPeerWithLimits
-        (contramap (TraceLabelPeer them) tTxSubmission2Tracer)
-        (cTxSubmission2Codec (mkCodecs version))
-        blTxSubmission2
-        timeLimitsTxSubmission2
-        channel
-        (txSubmissionServerPeerPipelined (hTxSubmissionServer version them))
+  aTxSubmission2Server ::
+    NodeToNodeVersion ->
+    ResponderContext addrNTN ->
+    Channel m bTX ->
+    m ((), Maybe (Reception bTX))
+  aTxSubmission2Server version ResponderContext{rcConnectionId = them} channel = do
+    labelThisThread "TxSubmissionServer"
+    runPipelinedPeerWithLimits
+      (contramap (TraceLabelPeer them) tTxSubmission2Tracer)
+      (cTxSubmission2Codec (mkCodecs version))
+      blTxSubmission2
+      timeLimitsTxSubmission2
+      channel
+      (txSubmissionServerPeerPipelined (hTxSubmissionServer version them))
 
-    aKeepAliveClient
-      :: NodeToNodeVersion
-      -> ExpandedInitiatorContext addrNTN m
-      -> Channel m bKA
-      -> m (NodeToNodeInitiatorResult, Maybe (Reception bKA))
-    aKeepAliveClient version ExpandedInitiatorContext {
-                               eicConnectionId   = them,
-                               eicControlMessage = controlMessageSTM
-                             }
-                             channel = do
+  aKeepAliveClient ::
+    NodeToNodeVersion ->
+    ExpandedInitiatorContext addrNTN m ->
+    Channel m bKA ->
+    m (NodeToNodeInitiatorResult, Maybe (Reception bKA))
+  aKeepAliveClient
+    version
+    ExpandedInitiatorContext
+      { eicConnectionId = them
+      , eicControlMessage = controlMessageSTM
+      }
+    channel = do
       labelThisThread "KeepAliveClient"
       let kacApp = \dqCtx ->
             runPeerWithLimits
@@ -956,129 +1001,139 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
       ((), trailing) <- bracketKeepAliveClient (getFetchClientRegistry kernel) them kacApp
       return (NoInitiatorResult, trailing)
 
-    aKeepAliveServer
-      :: NodeToNodeVersion
-      -> ResponderContext addrNTN
-      -> Channel m bKA
-      -> m ((), Maybe (Reception bKA))
-    aKeepAliveServer version ResponderContext { rcConnectionId = them } channel = do
-      labelThisThread "KeepAliveServer"
-      runPeerWithLimits
-        (TraceLabelPeer them `contramap` tKeepAliveTracer)
-        (cKeepAliveCodec (mkCodecs version))
-        (ProtocolSizeLimits (const maxBound)) -- TODO: Real Bytelimits, see #1727
-        timeLimitsKeepAlive
-        channel
-        $ keepAliveServerPeer
-        $ keepAliveServer
+  aKeepAliveServer ::
+    NodeToNodeVersion ->
+    ResponderContext addrNTN ->
+    Channel m bKA ->
+    m ((), Maybe (Reception bKA))
+  aKeepAliveServer version ResponderContext{rcConnectionId = them} channel = do
+    labelThisThread "KeepAliveServer"
+    runPeerWithLimits
+      (TraceLabelPeer them `contramap` tKeepAliveTracer)
+      (cKeepAliveCodec (mkCodecs version))
+      (ProtocolSizeLimits (const maxBound)) -- TODO: Real Bytelimits, see #1727
+      timeLimitsKeepAlive
+      channel
+      $ keepAliveServerPeer
+      $ keepAliveServer
 
-
-    aPeerSharingClient
-      :: NodeToNodeVersion
-      -> ExpandedInitiatorContext addrNTN m
-      -> Channel m bPS
-      -> m (NodeToNodeInitiatorResult, Maybe (Reception bPS))
-    aPeerSharingClient version ExpandedInitiatorContext {
-                                 eicConnectionId   = them,
-                                 eicControlMessage = controlMessageSTM
-                               }
-                               channel = do
+  aPeerSharingClient ::
+    NodeToNodeVersion ->
+    ExpandedInitiatorContext addrNTN m ->
+    Channel m bPS ->
+    m (NodeToNodeInitiatorResult, Maybe (Reception bPS))
+  aPeerSharingClient
+    version
+    ExpandedInitiatorContext
+      { eicConnectionId = them
+      , eicControlMessage = controlMessageSTM
+      }
+    channel = do
       labelThisThread "PeerSharingClient"
       bracketPeerSharingClient (getPeerSharingRegistry kernel) (remoteAddress them) $
         \controller -> do
           psClient <- hPeerSharingClient version controlMessageSTM them controller
-          ((), trailing) <- runPeerWithLimits
-            (TraceLabelPeer them `contramap` tPeerSharingTracer)
-            (cPeerSharingCodec (mkCodecs version))
-            (ProtocolSizeLimits (const maxBound))
-            timeLimitsPeerSharing
-            channel
-            (peerSharingClientPeer psClient)
+          ((), trailing) <-
+            runPeerWithLimits
+              (TraceLabelPeer them `contramap` tPeerSharingTracer)
+              (cPeerSharingCodec (mkCodecs version))
+              (ProtocolSizeLimits (const maxBound))
+              timeLimitsPeerSharing
+              channel
+              (peerSharingClientPeer psClient)
           return (NoInitiatorResult, trailing)
 
-    aPeerSharingServer
-      :: NodeToNodeVersion
-      -> ResponderContext addrNTN
-      -> Channel m bPS
-      -> m ((), Maybe (Reception bPS))
-    aPeerSharingServer version ResponderContext { rcConnectionId = them } channel = do
-      labelThisThread "PeerSharingServer"
-      runPeerWithLimits
-        (TraceLabelPeer them `contramap` tPeerSharingTracer)
-        (cPeerSharingCodec (mkCodecs version))
-        (ProtocolSizeLimits (const maxBound))
-        timeLimitsPeerSharing
-        channel
-        $ peerSharingServerPeer
-        $ hPeerSharingServer version them
+  aPeerSharingServer ::
+    NodeToNodeVersion ->
+    ResponderContext addrNTN ->
+    Channel m bPS ->
+    m ((), Maybe (Reception bPS))
+  aPeerSharingServer version ResponderContext{rcConnectionId = them} channel = do
+    labelThisThread "PeerSharingServer"
+    runPeerWithLimits
+      (TraceLabelPeer them `contramap` tPeerSharingTracer)
+      (cPeerSharingCodec (mkCodecs version))
+      (ProtocolSizeLimits (const maxBound))
+      timeLimitsPeerSharing
+      channel
+      $ peerSharingServerPeer
+      $ hPeerSharingServer version them
 
-    aLeiosNotifyClient
-      :: NodeToNodeVersion
-      -> ExpandedInitiatorContext addrNTN m
-      -> Channel m bLN
-      -> m (NodeToNodeInitiatorResult, Maybe (Reception bLN))
-    aLeiosNotifyClient version ExpandedInitiatorContext {
-                               eicConnectionId   = them,
-                               eicControlMessage = controlMessageSTM
-                             } channel = do
+  aLeiosNotifyClient ::
+    NodeToNodeVersion ->
+    ExpandedInitiatorContext addrNTN m ->
+    Channel m bLN ->
+    m (NodeToNodeInitiatorResult, Maybe (Reception bLN))
+  aLeiosNotifyClient
+    version
+    ExpandedInitiatorContext
+      { eicConnectionId = them
+      , eicControlMessage = controlMessageSTM
+      }
+    channel = do
       labelThisThread "LeiosNotifyClient"
-      ((), trailing) <- runPipelinedPeerWithLimits
-        (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
-        (cLeiosNotifyCodec (mkCodecs version))
-        blLeiosNotify
-        timeLimitsLeiosNotify
-        channel
-        $ hLeiosNotifyClient version controlMessageSTM them
+      ((), trailing) <-
+        runPipelinedPeerWithLimits
+          (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
+          (cLeiosNotifyCodec (mkCodecs version))
+          blLeiosNotify
+          timeLimitsLeiosNotify
+          channel
+          $ hLeiosNotifyClient version controlMessageSTM them
       pure (NoInitiatorResult, trailing)
 
-    aLeiosNotifyServer
-      :: NodeToNodeVersion
-      -> ResponderContext addrNTN
-      -> Channel m bLN
-      -> m ((), Maybe (Reception bLN))
-    aLeiosNotifyServer version ResponderContext { rcConnectionId = them } channel = do
-      labelThisThread "LeiosNotifyServer"
-      runPeerWithLimits
-        (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
-        (cLeiosNotifyCodec (mkCodecs version))
-        blLeiosNotify
-        timeLimitsLeiosNotify
-        channel
-        $ hLeiosNotifyServer version them
+  aLeiosNotifyServer ::
+    NodeToNodeVersion ->
+    ResponderContext addrNTN ->
+    Channel m bLN ->
+    m ((), Maybe (Reception bLN))
+  aLeiosNotifyServer version ResponderContext{rcConnectionId = them} channel = do
+    labelThisThread "LeiosNotifyServer"
+    runPeerWithLimits
+      (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
+      (cLeiosNotifyCodec (mkCodecs version))
+      blLeiosNotify
+      timeLimitsLeiosNotify
+      channel
+      $ hLeiosNotifyServer version them
 
-    aLeiosFetchClient
-      :: NodeToNodeVersion
-      -> ExpandedInitiatorContext addrNTN m
-      -> Channel m bLF
-      -> m (NodeToNodeInitiatorResult, Maybe (Reception bLF))
-    aLeiosFetchClient version ExpandedInitiatorContext {
-                               eicConnectionId   = them,
-                               eicControlMessage = controlMessageSTM
-                             } channel = do
+  aLeiosFetchClient ::
+    NodeToNodeVersion ->
+    ExpandedInitiatorContext addrNTN m ->
+    Channel m bLF ->
+    m (NodeToNodeInitiatorResult, Maybe (Reception bLF))
+  aLeiosFetchClient
+    version
+    ExpandedInitiatorContext
+      { eicConnectionId = them
+      , eicControlMessage = controlMessageSTM
+      }
+    channel = do
       labelThisThread "LeiosFetchClient"
-      ((), trailing) <- runPipelinedPeerWithLimits
-        (TraceLabelPeer them `contramap` tLeiosFetchTracer)
-        (cLeiosFetchCodec (mkCodecs version))
-        blLeiosFetch
-        timeLimitsLeiosFetch
-        channel
-        $ hLeiosFetchClient version controlMessageSTM them
+      ((), trailing) <-
+        runPipelinedPeerWithLimits
+          (TraceLabelPeer them `contramap` tLeiosFetchTracer)
+          (cLeiosFetchCodec (mkCodecs version))
+          blLeiosFetch
+          timeLimitsLeiosFetch
+          channel
+          $ hLeiosFetchClient version controlMessageSTM them
       pure (NoInitiatorResult, trailing)
 
-    aLeiosFetchServer
-      :: NodeToNodeVersion
-      -> ResponderContext addrNTN
-      -> Channel m bLF
-      -> m ((), Maybe (Reception bLF))
-    aLeiosFetchServer version ResponderContext { rcConnectionId = them } channel = do
-      labelThisThread "LeiosFetchServer"
-      runPeerWithLimits
-        (TraceLabelPeer them `contramap` tLeiosFetchTracer)
-        (cLeiosFetchCodec (mkCodecs version))
-        blLeiosFetch
-        timeLimitsLeiosFetch
-        channel
-        $ hLeiosFetchServer version them
+  aLeiosFetchServer ::
+    NodeToNodeVersion ->
+    ResponderContext addrNTN ->
+    Channel m bLF ->
+    m ((), Maybe (Reception bLF))
+  aLeiosFetchServer version ResponderContext{rcConnectionId = them} channel = do
+    labelThisThread "LeiosFetchServer"
+    runPeerWithLimits
+      (TraceLabelPeer them `contramap` tLeiosFetchTracer)
+      (cLeiosFetchCodec (mkCodecs version))
+      blLeiosFetch
+      timeLimitsLeiosFetch
+      channel
+      $ hLeiosFetchServer version them
 
 {-------------------------------------------------------------------------------
   Projections from 'Apps'
@@ -1091,52 +1146,56 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
 -- on the protocol version, but it eventually may; this is why @_version@ is
 -- currently unused.
 initiator ::
-     MiniProtocolParameters
-  -> NodeToNodeVersion
-  -> NodeToNodeVersionData
-  -> Apps m addr b b b b b b b a c
-  -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr b m a Void
-initiator miniProtocolParameters version versionData Apps {..} =
-    nodeToNodeProtocols
-      miniProtocolParameters
-      -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
-      -- This is currently ok, as we might accept multiple connections from the
-      -- same ip address, however this will change when we will switch to
-      -- p2p-governor & connection-manager.  Then consensus can use peer's ip
-      -- address & port number, rather than 'ConnectionId' (which is
-      -- a quadruple uniquely determining a connection).
-      (NodeToNodeProtocols {
-          chainSyncProtocol =
-            (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aChainSyncClient version ctx))),
-          blockFetchProtocol =
-            (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aBlockFetchClient version ctx))),
-          txSubmissionProtocol =
-            (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aTxSubmission2Client version ctx))),
-          keepAliveProtocol =
-            (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aKeepAliveClient version ctx))),
-          peerSharingProtocol =
+  MiniProtocolParameters ->
+  NodeToNodeVersion ->
+  NodeToNodeVersionData ->
+  Apps m addr b b b b b b b a c ->
+  OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr b m a Void
+initiator miniProtocolParameters version versionData Apps{..} =
+  nodeToNodeProtocols
+    miniProtocolParameters
+    -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
+    -- This is currently ok, as we might accept multiple connections from the
+    -- same ip address, however this will change when we will switch to
+    -- p2p-governor & connection-manager.  Then consensus can use peer's ip
+    -- address & port number, rather than 'ConnectionId' (which is
+    -- a quadruple uniquely determining a connection).
+    ( NodeToNodeProtocols
+        { chainSyncProtocol =
+            (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aChainSyncClient version ctx)))
+        , blockFetchProtocol =
+            (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aBlockFetchClient version ctx)))
+        , txSubmissionProtocol =
+            (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aTxSubmission2Client version ctx)))
+        , keepAliveProtocol =
+            (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aKeepAliveClient version ctx)))
+        , peerSharingProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aPeerSharingClient version ctx)))
-        })
-      version
-      versionData
- <>
-    mempty { ON.withHot = ON.WithHot [
-              ON.MiniProtocol {
-                ON.miniProtocolNum    = leiosNotifyMiniProtocolNum,
-                ON.miniProtocolStart  = ON.StartOnDemand,
-                ON.miniProtocolLimits = leiosNotifyProtocolLimits,
-                ON.miniProtocolRun    = InitiatorProtocolOnly
-                  (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
-              }
-            , ON.MiniProtocol {
-                ON.miniProtocolNum    = leiosFetchMiniProtocolNum,
-                ON.miniProtocolStart  = ON.StartOnDemand,
-                ON.miniProtocolLimits = leiosFetchProtocolLimits,
-                ON.miniProtocolRun    = InitiatorProtocolOnly
-                  (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx))
-              }
+        }
+    )
+    version
+    versionData
+    <> mempty
+      { ON.withHot =
+          ON.WithHot
+            [ ON.MiniProtocol
+                { ON.miniProtocolNum = leiosNotifyMiniProtocolNum
+                , ON.miniProtocolStart = ON.StartOnDemand
+                , ON.miniProtocolLimits = leiosNotifyProtocolLimits
+                , ON.miniProtocolRun =
+                    InitiatorProtocolOnly
+                      (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
+                }
+            , ON.MiniProtocol
+                { ON.miniProtocolNum = leiosFetchMiniProtocolNum
+                , ON.miniProtocolStart = ON.StartOnDemand
+                , ON.miniProtocolLimits = leiosFetchProtocolLimits
+                , ON.miniProtocolRun =
+                    InitiatorProtocolOnly
+                      (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx))
+                }
             ]
-           }
+      }
 
 -- | A bi-directional network application.
 --
@@ -1144,77 +1203,87 @@ initiator miniProtocolParameters version versionData Apps {..} =
 -- on the protocol version, but it eventually may; this is why @_version@ is
 -- currently unused.
 initiatorAndResponder ::
-     MiniProtocolParameters
-  -> NodeToNodeVersion
-  -> NodeToNodeVersionData
-  -> Apps m addr b b b b b b b a c
-  -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr b m a c
-initiatorAndResponder miniProtocolParameters version versionData Apps {..} =
-    nodeToNodeProtocols
-      miniProtocolParameters
-      (NodeToNodeProtocols {
-          chainSyncProtocol =
-            (InitiatorAndResponderProtocol
-              (MiniProtocolCb (\initiatorCtx -> aChainSyncClient version initiatorCtx))
-              (MiniProtocolCb (\responderCtx -> aChainSyncServer version responderCtx))),
-          blockFetchProtocol =
-            (InitiatorAndResponderProtocol
-              (MiniProtocolCb (\initiatorCtx -> aBlockFetchClient version initiatorCtx))
-              (MiniProtocolCb (\responderCtx -> aBlockFetchServer version responderCtx))),
-          txSubmissionProtocol =
-            (InitiatorAndResponderProtocol
-              (MiniProtocolCb (\initiatorCtx -> aTxSubmission2Client version initiatorCtx))
-              (MiniProtocolCb (\responderCtx -> aTxSubmission2Server version responderCtx))),
-          keepAliveProtocol =
-            (InitiatorAndResponderProtocol
-              (MiniProtocolCb (\initiatorCtx -> aKeepAliveClient version initiatorCtx))
-              (MiniProtocolCb (\responderCtx -> aKeepAliveServer version responderCtx))),
-
-          peerSharingProtocol =
-            (InitiatorAndResponderProtocol
-              (MiniProtocolCb (\initiatorCtx -> aPeerSharingClient version initiatorCtx))
-              (MiniProtocolCb (\responderCtx -> aPeerSharingServer version responderCtx)))
-        })
-      version
-      versionData
- <>
-    mempty { ON.withHot = ON.WithHot [
-              ON.MiniProtocol {
-                ON.miniProtocolNum    = leiosNotifyMiniProtocolNum,
-                ON.miniProtocolStart  = ON.StartOnDemand,
-                ON.miniProtocolLimits = leiosNotifyProtocolLimits,
-                ON.miniProtocolRun    = InitiatorAndResponderProtocol
-                  (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
-                  (MiniProtocolCb (\responderCtx -> aLeiosNotifyServer version responderCtx))
-              }
-            , ON.MiniProtocol {
-                ON.miniProtocolNum    = leiosFetchMiniProtocolNum,
-                ON.miniProtocolStart  = ON.StartOnDemand,
-                ON.miniProtocolLimits = leiosFetchProtocolLimits,
-                ON.miniProtocolRun    = InitiatorAndResponderProtocol
-                  (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx))
-                  (MiniProtocolCb (\responderCtx -> aLeiosFetchServer version responderCtx))
-              }
+  MiniProtocolParameters ->
+  NodeToNodeVersion ->
+  NodeToNodeVersionData ->
+  Apps m addr b b b b b b b a c ->
+  OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr b m a c
+initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
+  nodeToNodeProtocols
+    miniProtocolParameters
+    ( NodeToNodeProtocols
+        { chainSyncProtocol =
+            ( InitiatorAndResponderProtocol
+                (MiniProtocolCb (\initiatorCtx -> aChainSyncClient version initiatorCtx))
+                (MiniProtocolCb (\responderCtx -> aChainSyncServer version responderCtx))
+            )
+        , blockFetchProtocol =
+            ( InitiatorAndResponderProtocol
+                (MiniProtocolCb (\initiatorCtx -> aBlockFetchClient version initiatorCtx))
+                (MiniProtocolCb (\responderCtx -> aBlockFetchServer version responderCtx))
+            )
+        , txSubmissionProtocol =
+            ( InitiatorAndResponderProtocol
+                (MiniProtocolCb (\initiatorCtx -> aTxSubmission2Client version initiatorCtx))
+                (MiniProtocolCb (\responderCtx -> aTxSubmission2Server version responderCtx))
+            )
+        , keepAliveProtocol =
+            ( InitiatorAndResponderProtocol
+                (MiniProtocolCb (\initiatorCtx -> aKeepAliveClient version initiatorCtx))
+                (MiniProtocolCb (\responderCtx -> aKeepAliveServer version responderCtx))
+            )
+        , peerSharingProtocol =
+            ( InitiatorAndResponderProtocol
+                (MiniProtocolCb (\initiatorCtx -> aPeerSharingClient version initiatorCtx))
+                (MiniProtocolCb (\responderCtx -> aPeerSharingServer version responderCtx))
+            )
+        }
+    )
+    version
+    versionData
+    <> mempty
+      { ON.withHot =
+          ON.WithHot
+            [ ON.MiniProtocol
+                { ON.miniProtocolNum = leiosNotifyMiniProtocolNum
+                , ON.miniProtocolStart = ON.StartOnDemand
+                , ON.miniProtocolLimits = leiosNotifyProtocolLimits
+                , ON.miniProtocolRun =
+                    InitiatorAndResponderProtocol
+                      (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
+                      (MiniProtocolCb (\responderCtx -> aLeiosNotifyServer version responderCtx))
+                }
+            , ON.MiniProtocol
+                { ON.miniProtocolNum = leiosFetchMiniProtocolNum
+                , ON.miniProtocolStart = ON.StartOnDemand
+                , ON.miniProtocolLimits = leiosFetchProtocolLimits
+                , ON.miniProtocolRun =
+                    InitiatorAndResponderProtocol
+                      (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx))
+                      (MiniProtocolCb (\responderCtx -> aLeiosFetchServer version responderCtx))
+                }
             ]
-           }
+      }
 
 leiosNotifyProtocolLimits :: MiniProtocolLimits
-leiosNotifyProtocolLimits = ON.MiniProtocolLimits {
-    ON.maximumIngressQueue =
-        addSafetyMargin
-      $ fromIntegral
-      $ Leios.maxLeiosNotifyIngressQueue
-      $ Leios.demoLeiosFetchStaticEnv
-  }
+leiosNotifyProtocolLimits =
+  ON.MiniProtocolLimits
+    { ON.maximumIngressQueue =
+        addSafetyMargin $
+          fromIntegral $
+            Leios.maxLeiosNotifyIngressQueue $
+              Leios.demoLeiosFetchStaticEnv
+    }
 
 leiosFetchProtocolLimits :: MiniProtocolLimits
-leiosFetchProtocolLimits = ON.MiniProtocolLimits {
-    ON.maximumIngressQueue =
-        addSafetyMargin
-      $ fromIntegral
-      $ Leios.maxLeiosFetchIngressQueue
-      $ Leios.demoLeiosFetchStaticEnv
-  }
+leiosFetchProtocolLimits =
+  ON.MiniProtocolLimits
+    { ON.maximumIngressQueue =
+        addSafetyMargin $
+          fromIntegral $
+            Leios.maxLeiosFetchIngressQueue $
+              Leios.demoLeiosFetchStaticEnv
+    }
 
 -- | Copied from ouroboros-network
 addSafetyMargin :: Int -> Int

@@ -24,18 +24,18 @@ module Ouroboros.Consensus.Block.RealPoint
   , withOriginRealPointToPoint
   ) where
 
-import           Cardano.Binary (enforceSize)
-import           Codec.CBOR.Decoding (Decoder)
-import           Codec.CBOR.Encoding (Encoding, encodeListLen)
-import           Codec.Serialise (decode, encode)
-import           Data.Coerce
-import           Data.Proxy
-import           Data.Typeable (Typeable, typeRep)
-import           GHC.Generics
-import           NoThunks.Class (NoThunks (..))
-import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util (ShowProxy (..))
+import Cardano.Binary (enforceSize)
+import Codec.CBOR.Decoding (Decoder)
+import Codec.CBOR.Encoding (Encoding, encodeListLen)
+import Codec.Serialise (decode, encode)
+import Data.Coerce
+import Data.Proxy
+import Data.Typeable (Typeable, typeRep)
+import GHC.Generics
+import NoThunks.Class (NoThunks (..))
+import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
   Non-genesis point
@@ -51,12 +51,16 @@ deriving instance StandardHash blk => Eq (RealPoint blk)
 deriving instance StandardHash blk => Ord (RealPoint blk)
 deriving instance StandardHash blk => Show (RealPoint blk)
 
-instance ShowProxy blk
-      => ShowProxy (RealPoint blk) where
-    showProxy _ = "RealPoint " ++ showProxy (Proxy :: Proxy blk)
+instance
+  ShowProxy blk =>
+  ShowProxy (RealPoint blk)
+  where
+  showProxy _ = "RealPoint " ++ showProxy (Proxy :: Proxy blk)
 
-instance (StandardHash blk, Typeable blk)
-      => NoThunks (RealPoint blk) where
+instance
+  (StandardHash blk, Typeable blk) =>
+  NoThunks (RealPoint blk)
+  where
   showTypeOf _ = show $ typeRep (Proxy @(RealPoint blk))
 
 instance Condense (HeaderHash blk) => Condense (RealPoint blk) where

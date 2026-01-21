@@ -196,9 +196,9 @@ import System.FS.IO (ioHasFS)
 import System.FilePath ((</>))
 import System.Random (StdGen, newStdGen, randomIO, split)
 
-import           Control.Tracer (condTracing)
+import Control.Tracer (condTracing)
 import qualified LeiosDemoOnlyTestFetch as LF
-import           LeiosDemoTypes (SomeLeiosDb)
+import LeiosDemoTypes (SomeLeiosDb)
 import qualified Network.Mux as Mux
 import qualified Ouroboros.Network.NodeToNode as N2N
 
@@ -229,46 +229,37 @@ import qualified Ouroboros.Network.NodeToNode as N2N
 -- | Arguments expected from any invocation of 'runWith', whether by deployed
 -- code, tests, etc.
 type RunNodeArgs ::
-     (Type -> Type)
-  -> Type
-  -> Type
-  -> Type
-  -> Diffusion.P2P
-  -> Type
-data RunNodeArgs m addrNTN addrNTC blk p2p = RunNodeArgs {
-      -- | Consensus tracers
-      rnTraceConsensus :: Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
-
-      -- | Protocol tracers for node-to-node communication
-    , rnTraceNTN :: NTN.Tracers m addrNTN blk DeserialiseFailure
-
-      -- | Protocol tracers for node-to-client communication
-    , rnTraceNTC :: NTC.Tracers m (ConnectionId addrNTC) blk DeserialiseFailure
-
-      -- | Protocol info
-    , rnProtocolInfo :: ProtocolInfo blk
-
-      -- | Hook called after the initialisation of the 'NodeKernel'
-      --
-      -- Called on the 'NodeKernel' after creating it, but before the network
-      -- layer is initialised.
-    , rnNodeKernelHook :: ResourceRegistry m
-                       -> NodeKernel m addrNTN (ConnectionId addrNTC) blk
-                       -> m ()
-
-      -- | Network P2P Mode switch
-    , rnEnableP2P :: NetworkP2PMode p2p
-
-      -- | Network PeerSharing miniprotocol willingness flag
-    , rnPeerSharing :: PeerSharing
-
-    , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
-
-    , rnGenesisConfig :: GenesisConfig
-
-    , rnNewLeiosDbConnection :: m (SomeLeiosDb m)
-    }
-
+  (Type -> Type) ->
+  Type ->
+  Type ->
+  Type ->
+  Diffusion.P2P ->
+  Type
+data RunNodeArgs m addrNTN addrNTC blk p2p = RunNodeArgs
+  { rnTraceConsensus :: Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
+  -- ^ Consensus tracers
+  , rnTraceNTN :: NTN.Tracers m addrNTN blk DeserialiseFailure
+  -- ^ Protocol tracers for node-to-node communication
+  , rnTraceNTC :: NTC.Tracers m (ConnectionId addrNTC) blk DeserialiseFailure
+  -- ^ Protocol tracers for node-to-client communication
+  , rnProtocolInfo :: ProtocolInfo blk
+  -- ^ Protocol info
+  , rnNodeKernelHook ::
+      ResourceRegistry m ->
+      NodeKernel m addrNTN (ConnectionId addrNTC) blk ->
+      m ()
+  -- ^ Hook called after the initialisation of the 'NodeKernel'
+  --
+  -- Called on the 'NodeKernel' after creating it, but before the network
+  -- layer is initialised.
+  , rnEnableP2P :: NetworkP2PMode p2p
+  -- ^ Network P2P Mode switch
+  , rnPeerSharing :: PeerSharing
+  -- ^ Network PeerSharing miniprotocol willingness flag
+  , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
+  , rnGenesisConfig :: GenesisConfig
+  , rnNewLeiosDbConnection :: m (SomeLeiosDb m)
+  }
 
 -- | Arguments that usually only tests /directly/ specify.
 --
@@ -674,28 +665,28 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                       Nothing -> HistoricityCheck.noCheck
                       Just historicityCutoff ->
                         HistoricityCheck.mkCheck systemTime getGsmState historicityCutoff
-              fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs)
-                $ mkNodeKernelArgs
-                    registry
-                    llrnBfcSalt
-                    llrnGsmAntiThunderingHerd
-                    llrnKeepAliveRng
-                    cfg
-                    rnTraceConsensus
-                    btime
-                    (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
-                    historicityCheck
-                    chainDB
-                    llrnMaxCaughtUpAge
-                    (Just durationUntilTooOld)
-                    gsmMarkerFileView
-                    rnGetUseBootstrapPeers
-                    llrnPublicPeerSelectionStateVar
-                    genesisArgs
-                    DiffusionPipeliningOn
-                    rnNewLeiosDbConnection
-          nodeKernel <- initNodeKernel nodeKernelArgs
-          rnNodeKernelHook registry nodeKernel
+              fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs) $
+                mkNodeKernelArgs
+                  registry
+                  llrnBfcSalt
+                  llrnGsmAntiThunderingHerd
+                  llrnKeepAliveRng
+                  cfg
+                  rnTraceConsensus
+                  btime
+                  (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
+                  historicityCheck
+                  chainDB
+                  llrnMaxCaughtUpAge
+                  (Just durationUntilTooOld)
+                  gsmMarkerFileView
+                  rnGetUseBootstrapPeers
+                  llrnPublicPeerSelectionStateVar
+                  genesisArgs
+                  DiffusionPipeliningOn
+                  rnNewLeiosDbConnection
+            nodeKernel <- initNodeKernel nodeKernelArgs
+            rnNodeKernelHook registry nodeKernel
 
             peerMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
             let ntnApps = mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNtN decAddrNtN
@@ -719,35 +710,36 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
   codecConfig :: CodecConfig blk
   codecConfig = configCodec cfg
 
-    mkNodeToNodeApps
-      :: NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
-      -> NodeKernel     m addrNTN (ConnectionId addrNTC) blk
-      -> PeerMetrics m addrNTN
-      -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
-      -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addrNTN)
-      -> BlockNodeToNodeVersion blk
-      -> NTN.Apps m
-          addrNTN
-          ByteString
-          ByteString
-          ByteString
-          ByteString
-          ByteString
-          ByteString
-          ByteString
-          NodeToNodeInitiatorResult
-          ()
-    mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNTN decAddrNTN version =
-        NTN.mkApps
-          nodeKernel
-          rnTraceNTN
-          (NTN.defaultCodecs codecConfig version encAddrNTN decAddrNTN)
-          NTN.byteLimits
-          llrnChainSyncTimeout
-          (gcChainSyncLoPBucketConfig llrnGenesisConfig)
-          (gcCSJConfig llrnGenesisConfig)
-          (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-          (NTN.mkHandlers nodeKernelArgs nodeKernel)
+  mkNodeToNodeApps ::
+    NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
+    NodeKernel m addrNTN (ConnectionId addrNTC) blk ->
+    PeerMetrics m addrNTN ->
+    (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
+    (NodeToNodeVersion -> forall s. CBOR.Decoder s addrNTN) ->
+    BlockNodeToNodeVersion blk ->
+    NTN.Apps
+      m
+      addrNTN
+      ByteString
+      ByteString
+      ByteString
+      ByteString
+      ByteString
+      ByteString
+      ByteString
+      NodeToNodeInitiatorResult
+      ()
+  mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNTN decAddrNTN version =
+    NTN.mkApps
+      nodeKernel
+      rnTraceNTN
+      (NTN.defaultCodecs codecConfig version encAddrNTN decAddrNTN)
+      NTN.byteLimits
+      llrnChainSyncTimeout
+      (gcChainSyncLoPBucketConfig llrnGenesisConfig)
+      (gcCSJConfig llrnGenesisConfig)
+      (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
+      (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
   mkNodeToClientApps ::
     NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
@@ -762,44 +754,55 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       (NTC.defaultCodecs codecConfig blockVersion networkVersion)
       (NTC.mkHandlers nodeKernelArgs nodeKernel)
 
-    mkDiffusionApplications
-      :: NetworkP2PMode p2p
-      -> MiniProtocolParameters
-      -> (   BlockNodeToNodeVersion blk
-          -> NTN.Apps
-               m
-               addrNTN
-               ByteString
-               ByteString
-               ByteString
-               ByteString
-               ByteString
-               ByteString
-               ByteString
-               NodeToNodeInitiatorResult
-               ()
-        )
-      -> (   BlockNodeToClientVersion blk
-          -> NodeToClientVersion
-          -> NTC.Apps
-               m (ConnectionId addrNTC) ByteString ByteString ByteString ByteString ()
-        )
-      -> NodeKernel m addrNTN (ConnectionId addrNTC) blk
-      -> PeerMetrics m addrNTN
-      -> ( Diffusion.Applications
-             addrNTN NodeToNodeVersion   NodeToNodeVersionData
-             addrNTC NodeToClientVersion NodeToClientVersionData
-             (Cardano.LedgerPeersConsensusInterface m)
-             m NodeToNodeInitiatorResult
-         , Diffusion.ApplicationsExtra p2p addrNTN m NodeToNodeInitiatorResult
-         )
-    mkDiffusionApplications
-      enP2P
-      miniProtocolParams
-      ntnApps
-      ntcApps
-      kernel
-      peerMetrics =
+  mkDiffusionApplications ::
+    NetworkP2PMode p2p ->
+    MiniProtocolParameters ->
+    ( BlockNodeToNodeVersion blk ->
+      NTN.Apps
+        m
+        addrNTN
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        NodeToNodeInitiatorResult
+        ()
+    ) ->
+    ( BlockNodeToClientVersion blk ->
+      NodeToClientVersion ->
+      NTC.Apps
+        m
+        (ConnectionId addrNTC)
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ()
+    ) ->
+    NodeKernel m addrNTN (ConnectionId addrNTC) blk ->
+    PeerMetrics m addrNTN ->
+    ( Diffusion.Applications
+        addrNTN
+        NodeToNodeVersion
+        NodeToNodeVersionData
+        addrNTC
+        NodeToClientVersion
+        NodeToClientVersionData
+        (Cardano.LedgerPeersConsensusInterface m)
+        m
+        NodeToNodeInitiatorResult
+    , Diffusion.ApplicationsExtra p2p addrNTN m NodeToNodeInitiatorResult
+    )
+  mkDiffusionApplications
+    enP2P
+    miniProtocolParams
+    ntnApps
+    ntcApps
+    kernel
+    peerMetrics =
       case enP2P of
         EnabledP2PMode ->
           ( apps
@@ -939,26 +942,27 @@ openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs
    in (,args) <$> ChainDB.openDB args
 
 mkNodeKernelArgs ::
-     forall m addrNTN addrNTC blk. (RunNode blk, IOLike m)
-  => ResourceRegistry m
-  -> Int
-  -> StdGen
-  -> StdGen
-  -> TopLevelConfig blk
-  -> Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
-  -> BlockchainTime m
-  -> InFutureCheck.SomeHeaderInFutureCheck m blk
-  -> (m GSM.GsmState -> HistoricityCheck m blk)
-  -> ChainDB m blk
-  -> NominalDiffTime
-  -> Maybe (GSM.WrapDurationUntilTooOld m blk)
-  -> GSM.MarkerFileView m
-  -> STM m UseBootstrapPeers
-  -> StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
-  -> GenesisNodeKernelArgs m blk
-  -> DiffusionPipeliningSupport
-  -> m (SomeLeiosDb m)
-  -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
+  forall m addrNTN addrNTC blk.
+  (RunNode blk, IOLike m) =>
+  ResourceRegistry m ->
+  Int ->
+  StdGen ->
+  StdGen ->
+  TopLevelConfig blk ->
+  Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk ->
+  BlockchainTime m ->
+  InFutureCheck.SomeHeaderInFutureCheck m blk ->
+  (m GSM.GsmState -> HistoricityCheck m blk) ->
+  ChainDB m blk ->
+  NominalDiffTime ->
+  Maybe (GSM.WrapDurationUntilTooOld m blk) ->
+  GSM.MarkerFileView m ->
+  STM m UseBootstrapPeers ->
+  StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN) ->
+  GenesisNodeKernelArgs m blk ->
+  DiffusionPipeliningSupport ->
+  m (SomeLeiosDb m) ->
+  m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
   bfcSalt
@@ -977,36 +981,38 @@ mkNodeKernelArgs
   publicPeerSelectionStateVar
   genesisArgs
   getDiffusionPipeliningSupport
-  nkaGetLeiosNewDbConnection
-  = do
-    let (kaRng, psRng) = split rng
-    return NodeKernelArgs
-      { tracers
-      , registry
-      , cfg
-      , btime
-      , chainDB
-      , initChainDB             = nodeInitChainDB
-      , chainSyncFutureCheck
-      , chainSyncHistoricityCheck
-      , blockFetchSize          = estimateBlockSize
-      , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
-      , miniProtocolParameters  = defaultMiniProtocolParameters
-      , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
-      , gsmArgs = GsmNodeKernelArgs {
-          gsmAntiThunderingHerd
-        , gsmDurationUntilTooOld
-        , gsmMarkerFileView
-        , gsmMinCaughtUpDuration = maxCaughtUpAge
-        }
-      , getUseBootstrapPeers
-      , keepAliveRng = kaRng
-      , peerSharingRng = psRng
-      , publicPeerSelectionStateVar
-      , genesisArgs
-      , getDiffusionPipeliningSupport
-      , nkaGetLeiosNewDbConnection
-      }
+  nkaGetLeiosNewDbConnection =
+    do
+      let (kaRng, psRng) = split rng
+      return
+        NodeKernelArgs
+          { tracers
+          , registry
+          , cfg
+          , btime
+          , chainDB
+          , initChainDB = nodeInitChainDB
+          , chainSyncFutureCheck
+          , chainSyncHistoricityCheck
+          , blockFetchSize = estimateBlockSize
+          , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
+          , miniProtocolParameters = defaultMiniProtocolParameters
+          , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
+          , gsmArgs =
+              GsmNodeKernelArgs
+                { gsmAntiThunderingHerd
+                , gsmDurationUntilTooOld
+                , gsmMarkerFileView
+                , gsmMinCaughtUpDuration = maxCaughtUpAge
+                }
+          , getUseBootstrapPeers
+          , keepAliveRng = kaRng
+          , peerSharingRng = psRng
+          , publicPeerSelectionStateVar
+          , genesisArgs
+          , getDiffusionPipeliningSupport
+          , nkaGetLeiosNewDbConnection
+          }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
 -- through 'llrnCustomiseNodeKernelArgs', but there are some limits to some
@@ -1242,83 +1248,85 @@ stdLowLevelRunNodeArgsIO
                                 (Diffusion.P2P.daReadUseLedgerPeers extraArgs)
                                 rnPeerSharing
                                 rnGetUseBootstrapPeers
-                                (GSM.gsmStateToLedgerJudgement <$> getGsmState kernel))
-                             (myf srnDiffusionTracers)
-                             srnDiffusionTracersExtra
-                             srnDiffusionArguments
-                             srnDiffusionArgumentsExtra'
-                             apps extraApps
-
-              DisabledP2PMode ->
-                stdRunDataDiffusion
-                 (srnSigUSR1SignalHandler
-                    (Diffusion.NonP2PTracers NonP2P.nullTracers)
-                    (pure DontUseLedgerPeers)
-                    rnPeerSharing
-                    (pure DontUseBootstrapPeers)
-                    (pure TooOld))
-                 (myf srnDiffusionTracers)
-                 srnDiffusionTracersExtra
-                 srnDiffusionArguments
-                 (srnDiffusionArgumentsExtra
-                    (Diffusion.NonP2PDecision ())
-                    (Diffusion.NonP2PDecision ())
-                    (Diffusion.NonP2PDecision ()))
-                 apps extraApps
-      , llrnVersionDataNTC =
-          stdVersionDataNTC networkMagic
-      , llrnVersionDataNTN =
-          stdVersionDataNTN
-            networkMagic
-            (case rnEnableP2P of
-               EnabledP2PMode  -> Diffusion.daMode srnDiffusionArguments
-               -- Every connection in non-p2p mode is unidirectional; We connect
-               -- from an ephemeral port.  We still pass `srnDiffusionArguments`
-               -- to the diffusion layer, so the server side will be run also in
-               -- `InitiatorAndResponderDiffusionMode`.
-               DisabledP2PMode -> InitiatorOnlyDiffusionMode
-            )
-            rnPeerSharing
-      , llrnNodeToNodeVersions =
-          limitToLatestReleasedVersion
-            fst
-            (supportedNodeToNodeVersions (Proxy @blk))
-      , llrnNodeToClientVersions =
-          limitToLatestReleasedVersion
-            snd
-            (supportedNodeToClientVersions (Proxy @blk))
-      , llrnWithCheckedDB =
-          -- 'stdWithCheckedDB' uses the FS just to check for the clean file.
-          -- We put that one in the immutable path.
-          stdWithCheckedDB (Proxy @blk) srnTraceChainDB (immutableDbPath srnDatabasePath) networkMagic
-      , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60   -- 20 min
-      , llrnMaxClockSkew =
-          InFutureCheck.defaultClockSkew
-      , llrnPublicPeerSelectionStateVar =
-          Diffusion.daPublicPeerSelectionVar srnDiffusionArguments
-      , llrnLdbFlavorArgs =
-          srnLdbFlavorArgs
-      }
-  where
-    myf x = x { Diffusion.dtMuxTracer = condTracing muxCond $ Diffusion.dtMuxTracer x }
+                                (GSM.gsmStateToLedgerJudgement <$> getGsmState kernel)
+                            )
+                            (myf srnDiffusionTracers)
+                            srnDiffusionTracersExtra
+                            srnDiffusionArguments
+                            srnDiffusionArgumentsExtra'
+                            apps
+                            extraApps
+                DisabledP2PMode ->
+                  stdRunDataDiffusion
+                    ( srnSigUSR1SignalHandler
+                        (Diffusion.NonP2PTracers NonP2P.nullTracers)
+                        (pure DontUseLedgerPeers)
+                        rnPeerSharing
+                        (pure DontUseBootstrapPeers)
+                        (pure TooOld)
+                    )
+                    (myf srnDiffusionTracers)
+                    srnDiffusionTracersExtra
+                    srnDiffusionArguments
+                    ( srnDiffusionArgumentsExtra
+                        (Diffusion.NonP2PDecision ())
+                        (Diffusion.NonP2PDecision ())
+                        (Diffusion.NonP2PDecision ())
+                    )
+                    apps
+                    extraApps
+        , llrnVersionDataNTC =
+            stdVersionDataNTC networkMagic
+        , llrnVersionDataNTN =
+            stdVersionDataNTN
+              networkMagic
+              ( case rnEnableP2P of
+                  EnabledP2PMode -> Diffusion.daMode srnDiffusionArguments
+                  -- Every connection in non-p2p mode is unidirectional; We connect
+                  -- from an ephemeral port.  We still pass `srnDiffusionArguments`
+                  -- to the diffusion layer, so the server side will be run also in
+                  -- `InitiatorAndResponderDiffusionMode`.
+                  DisabledP2PMode -> InitiatorOnlyDiffusionMode
+              )
+              rnPeerSharing
+        , llrnNodeToNodeVersions =
+            limitToLatestReleasedVersion
+              fst
+              (supportedNodeToNodeVersions (Proxy @blk))
+        , llrnNodeToClientVersions =
+            limitToLatestReleasedVersion
+              snd
+              (supportedNodeToClientVersions (Proxy @blk))
+        , llrnWithCheckedDB =
+            -- 'stdWithCheckedDB' uses the FS just to check for the clean file.
+            -- We put that one in the immutable path.
+            stdWithCheckedDB (Proxy @blk) srnTraceChainDB (immutableDbPath srnDatabasePath) networkMagic
+        , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60 -- 20 min
+        , llrnMaxClockSkew =
+            InFutureCheck.defaultClockSkew
+        , llrnPublicPeerSelectionStateVar =
+            Diffusion.daPublicPeerSelectionVar srnDiffusionArguments
+        , llrnLdbFlavorArgs =
+            srnLdbFlavorArgs
+        }
+   where
+    myf x = x{Diffusion.dtMuxTracer = condTracing muxCond $ Diffusion.dtMuxTracer x}
 
     muxCond = (. Mux.wbEvent) $ \case
-        Mux.TraceRecvStart{} -> False
-        Mux.TraceRecvEnd{} -> False
-        Mux.TraceSendStart{} -> False
-        Mux.TraceSendEnd{} -> False
-        Mux.TraceChannelRecvStart mid -> midCond mid
-        Mux.TraceChannelRecvEnd mid _ -> midCond mid
-        Mux.TraceChannelSendStart mid _ -> midCond mid
-        Mux.TraceChannelSendEnd mid -> midCond mid
-        _ -> False
+      Mux.TraceRecvStart{} -> False
+      Mux.TraceRecvEnd{} -> False
+      Mux.TraceSendStart{} -> False
+      Mux.TraceSendEnd{} -> False
+      Mux.TraceChannelRecvStart mid -> midCond mid
+      Mux.TraceChannelRecvEnd mid _ -> midCond mid
+      Mux.TraceChannelSendStart mid _ -> midCond mid
+      Mux.TraceChannelSendEnd mid -> midCond mid
+      _ -> False
 
     midCond mid =
-        mid == N2N.chainSyncMiniProtocolNum
-     ||
-        mid == N2N.blockFetchMiniProtocolNum
-     ||
-        mid == LF.leiosFetchMiniProtocolNum
+      mid == N2N.chainSyncMiniProtocolNum
+        || mid == N2N.blockFetchMiniProtocolNum
+        || mid == LF.leiosFetchMiniProtocolNum
 
     networkMagic :: NetworkMagic
     networkMagic = getNetworkMagic $ configBlock $ pInfoConfig rnProtocolInfo

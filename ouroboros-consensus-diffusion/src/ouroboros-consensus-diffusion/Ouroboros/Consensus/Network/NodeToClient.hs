@@ -419,77 +419,67 @@ data Apps m peer bCS bTX bSQ bTM a = Apps
 
 -- | Construct the 'NetworkApplication' for the node-to-client protocols
 mkApps ::
-     forall m addrNTN addrNTC blk e bCS bTX bSQ bTM.
-     ( IOLike m
-     , Exception e
-     , ShowProxy blk
-     , ShowProxy (ApplyTxErr blk)
-     , ShowProxy (GenTx blk)
-     , ShowProxy (GenTxId blk)
-     , ShowProxy (Query blk)
-     , forall fp. ShowQuery (BlockQuery blk fp)
-     , BearerBytes bCS, BearerBytes bTX, BearerBytes bSQ, BearerBytes bTM
-     )
-  => NodeKernel m addrNTN addrNTC blk
-  -> Tracers m addrNTC blk e
-  -> Codecs blk e m bCS bTX bSQ bTM
-  -> Handlers m addrNTC blk
-  -> Apps m addrNTC bCS bTX bSQ bTM ()
-mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
-    Apps {..}
-  where
-    aChainSyncServer
-      :: addrNTC
-      -> Channel m bCS
-      -> m ((), Maybe (Reception bCS))
-    aChainSyncServer them channel = do
-      labelThisThread "LocalChainSyncServer"
-      bracketWithPrivateRegistry
-        (chainSyncBlockServerFollower (getChainDB kernel))
-        ChainDB.followerClose
-        $ \flr ->
-          runPeer
-            (contramap (TraceLabelPeer them) tChainSyncTracer)
-            cChainSyncCodec
-            channel
-            $ chainSyncServerPeer
-            $ hChainSyncServer flr
-
-    aTxSubmissionServer
-      :: addrNTC
-      -> Channel m bTX
-      -> m ((), Maybe (Reception bTX))
-    aTxSubmissionServer them channel = do
-      labelThisThread "LocalTxSubmissionServer"
-      runPeer
-        (contramap (TraceLabelPeer them) tTxSubmissionTracer)
-        cTxSubmissionCodec
-        channel
-        (localTxSubmissionServerPeer (pure hTxSubmissionServer))
-
-    aStateQueryServer
-      :: addrNTC
-      -> Channel m bSQ
-      -> m ((), Maybe (Reception bSQ))
-    aStateQueryServer them channel = do
-      labelThisThread "LocalStateQueryServer"
-      withRegistry $ \rr ->
-        Stateful.runPeer
-          (contramap (TraceLabelPeer them) tStateQueryTracer)
-          cStateQueryCodec
+  forall m addrNTN addrNTC blk e bCS bTX bSQ bTM.
+  ( IOLike m
+  , Exception e
+  , ShowProxy blk
+  , ShowProxy (ApplyTxErr blk)
+  , ShowProxy (GenTx blk)
+  , ShowProxy (GenTxId blk)
+  , ShowProxy (Query blk)
+  , forall fp. ShowQuery (BlockQuery blk fp)
+  , BearerBytes bCS
+  , BearerBytes bTX
+  , BearerBytes bSQ
+  , BearerBytes bTM
+  ) =>
+  NodeKernel m addrNTN addrNTC blk ->
+  Tracers m addrNTC blk e ->
+  Codecs blk e m bCS bTX bSQ bTM ->
+  Handlers m addrNTC blk ->
+  Apps m addrNTC bCS bTX bSQ bTM ()
+mkApps kernel Tracers{..} Codecs{..} Handlers{..} =
+  Apps{..}
+ where
+  aChainSyncServer ::
+    addrNTC ->
+    Channel m bCS ->
+    m ((), Maybe (Reception bCS))
+  aChainSyncServer them channel = do
+    labelThisThread "LocalChainSyncServer"
+    bracketWithPrivateRegistry
+      (chainSyncBlockServerFollower (getChainDB kernel))
+      ChainDB.followerClose
+      $ \flr ->
+        runPeer
+          (contramap (TraceLabelPeer them) tChainSyncTracer)
+          cChainSyncCodec
           channel
           $ chainSyncServerPeer
           $ hChainSyncServer flr
 
-    aTxMonitorServer
-      :: addrNTC
-      -> Channel m bTM
-      -> m ((), Maybe (Reception bTM))
-    aTxMonitorServer them channel = do
-      labelThisThread "LocalTxMonitorServer"
-      runPeer
-        (contramap (TraceLabelPeer them) tTxMonitorTracer)
-        cTxMonitorCodec
+  aTxSubmissionServer ::
+    addrNTC ->
+    Channel m bTX ->
+    m ((), Maybe (Reception bTX))
+  aTxSubmissionServer them channel = do
+    labelThisThread "LocalTxSubmissionServer"
+    runPeer
+      (contramap (TraceLabelPeer them) tTxSubmissionTracer)
+      cTxSubmissionCodec
+      channel
+      (localTxSubmissionServerPeer (pure hTxSubmissionServer))
+
+  aStateQueryServer ::
+    addrNTC ->
+    Channel m bSQ ->
+    m ((), Maybe (Reception bSQ))
+  aStateQueryServer them channel = do
+    labelThisThread "LocalStateQueryServer"
+    withRegistry $ \rr ->
+      Stateful.runPeer
+        (contramap (TraceLabelPeer them) tStateQueryTracer)
+        cStateQueryCodec
         channel
         LocalStateQuery.StateIdle
         (localStateQueryServerPeer (hStateQueryServer rr))
@@ -497,7 +487,7 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
   aTxMonitorServer ::
     addrNTC ->
     Channel m bTM ->
-    m ((), Maybe bTM)
+    m ((), Maybe (Reception bTM))
   aTxMonitorServer them channel = do
     labelThisThread "LocalTxMonitorServer"
     runPeer
