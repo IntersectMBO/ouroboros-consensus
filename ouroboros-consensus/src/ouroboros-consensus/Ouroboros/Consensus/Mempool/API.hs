@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
@@ -22,6 +23,7 @@ module Ouroboros.Consensus.Mempool.API
   ( -- * Mempool
     Mempool (..)
   , MempoolTimeoutConfig (..)
+  , ExnMempoolTimeout (..)
 
     -- * Transaction adding
   , AddTxOnBehalfOf (..)
@@ -217,6 +219,21 @@ data Mempool m blk = Mempool
   -- removed because they have become invalid.
   --
   -- This capacity excludes the `mempoolTimeoutCapacity`.
+  , addTestTx ::
+      DiffTime ->
+      AddTxOnBehalfOf ->
+      GenTx blk ->
+      m (Maybe (MempoolAddTxResult blk))
+  -- ^ ONLY FOR TESTS
+  --
+  -- This is exactly 'addTx' except for two differences. First, it also accepts
+  -- the amount of wallclock the test suite's model is assuming that the tx
+  -- takes to validate and then uses a 'threadDelay' call to inflate the actual
+  -- duration to match. It can't help if validation actually took longer than
+  -- intended, so avoid small intended durations. Also, avoid durations near
+  -- the soft and hard timeout, since their is plenty of inaccuracy. Second,
+  -- this function immediately returns 'Nothing' when the tx cannot fit instead
+  -- of trying again.
   , testSyncWithLedger :: m (MempoolSnapshot blk)
   -- ^ ONLY FOR TESTS
   --
@@ -451,6 +468,15 @@ instance Measure m => Measure (WithDiffTimeMeasure m) where
   min = binopViaTuple Data.Measure.min
   max = binopViaTuple Data.Measure.max
 
+instance HasByteSize m => HasByteSize (WithDiffTimeMeasure m) where
+  txMeasureByteSize = txMeasureByteSize . forgetWithDiffTimeMeasure
+
+instance TxMeasureMetrics m => TxMeasureMetrics (WithDiffTimeMeasure m) where
+  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . forgetWithDiffTimeMeasure
+  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . forgetWithDiffTimeMeasure
+  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . forgetWithDiffTimeMeasure
+  txMeasureMetricRefScriptsSizeBytes = txMeasureMetricRefScriptsSizeBytes . forgetWithDiffTimeMeasure
+
 -- | How long it took to validate a valid tx
 data DiffTimeMeasure = FiniteDiffTimeMeasure DiffTime | InfiniteDiffTimeMeasure
   deriving stock (Eq, Generic, Ord, Show)
@@ -476,3 +502,17 @@ instance Measure DiffTimeMeasure where
       (_, InfiniteDiffTimeMeasure) -> InfiniteDiffTimeMeasure
       (FiniteDiffTimeMeasure x, FiniteDiffTimeMeasure y) ->
         FiniteDiffTimeMeasure (max x y)
+
+-----
+
+-- | Thrown by 'addTx' or 'addTestTx' when 'mempoolTimeoutHard' is exceeded.
+data ExnMempoolTimeout =
+  forall blk. Show (GenTxId blk) => MkExnMempoolTimeout !DiffTime !(GenTxId blk)   -- TODO full tx hash
+
+instance Show ExnMempoolTimeout where
+    showsPrec p (MkExnMempoolTimeout dur txid)
+      = showParen
+          (p >= 11)
+          (showString "ExnMempoolTimeout " . showsPrec 11 dur . showString " " . showsPrec 11 txid)
+
+instance Exception ExnMempoolTimeout
