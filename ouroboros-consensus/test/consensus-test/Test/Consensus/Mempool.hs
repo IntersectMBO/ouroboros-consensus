@@ -338,9 +338,13 @@ prjTx (a, _b, _c) = a
 data TestSetup = TestSetup
   { testLedgerCfg :: LedgerConfig TestBlock
   , testLedgerState :: LedgerState TestBlock ValuesMK
+  -- ^ The ledger state resulting from the last of 'testInitialTxs'.
   , testInitialTxs :: [TestTx]
   -- ^ These are all valid and will be the initial contents of the Mempool.
   , testMempoolCapOverride :: MempoolCapacityBytesOverride
+  -- ^ An override. Most generators ensure the mempool capacity fits at least
+  -- 'testInitialTxs', but that's not a necessity. (Recall that mere time
+  -- passing can cause an epoch/era change, which can lower the capacity.)
   }
   deriving Show
 
@@ -393,11 +397,13 @@ genTestSetup :: Int -> Gen (TestSetup, LedgerState TestBlock ValuesMK)
 genTestSetup maxInitialTxs =
   genTestSetupWithExtraCapacity maxInitialTxs (ByteSize32 0)
 
--- | Random 'MempoolCapacityBytesOverride'
+-- | Random 'testMempoolCapOverride', but never smaller than the
+-- 'testInitialTxs'.
 instance Arbitrary TestSetup where
   arbitrary = sized $ \n -> do
     extraCapacity <- (ByteSize32 . fromIntegral) <$> choose (0, n)
     testSetup <- fst <$> genTestSetupWithExtraCapacity n extraCapacity
+    -- NB this @testSetup@ always has a @MempoolCapacityOverride@.
     noOverride <- arbitrary
     let initialSize = foldMap genTxSize $ testInitialTxs testSetup
         defaultCap = simpleBlockCapacity <> simpleBlockCapacity
@@ -475,7 +481,10 @@ validateTxs cfg = go []
 data TestSetupWithTxs = TestSetupWithTxs
   { testSetup :: TestSetup
   , txs :: [(TestTx, Bool)]
-  -- ^ The 'Bool' indicates whether the transaction is valid
+  -- ^ These txs are not yet in the mempool
+  --
+  -- The 'Bool' indicates whether the transaction is valid (when they're all
+  -- supplied in this order).
   }
   deriving Show
 
@@ -517,7 +526,7 @@ instance Arbitrary TestSetupWithTxs where
     (testSetup, ledger) <- genTestSetup n
     (txs, _ledger') <- genTxs nbTxs ledger
     testSetup' <- case testMempoolCapOverride testSetup of
-      NoMempoolCapacityBytesOverride -> return testSetup
+      NoMempoolCapacityBytesOverride -> error "unreachable"
       MempoolCapacityBytesOverride mpCap -> do
         noOverride <- arbitrary
         let initialSize = foldMap genTxSize $ testInitialTxs testSetup
@@ -608,6 +617,11 @@ instance Arbitrary TestSetupWithTxInMempool where
     , tx' <- testInitialTxs testSetup'
     ]
 
+-- | 'testInitialTxs' is nonempty and the juxtaposed list of txs is
+-- 'testInitialTxs' with any number of elements randomly dropped.
+--
+-- FYI, the 'TestSetupWithTxsInMempoolToRemove' type is similar, but the list
+-- of txs is definitely nonempty.
 data TestSetupWithTxsInMempool = TestSetupWithTxsInMempool TestSetup [TestTx]
   deriving Show
 
@@ -620,6 +634,7 @@ instance Arbitrary TestSetupWithTxsInMempool where
 
 -- TODO shrink
 
+-- | Like 'TestSetupWithTxsInMempool', but the list of txs is nonempty.
 data TestSetupWithTxsInMempoolToRemove
   = TestSetupWithTxsInMempoolToRemove TestSetup (NE.NonEmpty TestTx)
   deriving Show
@@ -952,6 +967,7 @@ prop_TxSeq_splitAfterTxSizeSpec tss =
   TxSizeSplitTestSetup
 -------------------------------------------------------------------------------}
 
+-- | No notable invariants.
 data TxSizeSplitTestSetup = TxSizeSplitTestSetup
   { tssTxSizes :: ![TheMeasure]
   , tssTxSizeToSplitOn :: !TheMeasure
