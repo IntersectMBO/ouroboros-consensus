@@ -9,7 +9,7 @@ import qualified Data.Aeson as JSON
 import           Cardano.Crypto.Init (cryptoInit)
 import           Cardano.Slotting.Slot (SlotNo (..))
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
-import           Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
+import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
 import qualified Cardano.Tools.ImmDBServer.Diffusion as ImmDBServer
 import           Data.Time.Clock (DiffTime)
 import qualified Data.Time.Clock.POSIX as POSIX
@@ -88,9 +88,9 @@ data Opts = Opts {
 
 optsParser :: ParserInfo Opts
 optsParser =
-    info (helper <*> parse) $ fullDesc <> progDesc desc
-  where
-    desc = "Serve an ImmutableDB via ChainSync and BlockFetch"
+  info (helper <*> parse) $ fullDesc <> progDesc desc
+ where
+  desc = "Serve an ImmutableDB via ChainSync and BlockFetch"
 
     parse = do
       immDBDir <- strOption $ mconcat

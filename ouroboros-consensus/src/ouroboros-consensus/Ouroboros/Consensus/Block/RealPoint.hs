@@ -7,11 +7,12 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Block.RealPoint (
-    -- * Non-genesis points
+module Ouroboros.Consensus.Block.RealPoint
+  ( -- * Non-genesis points
     RealPoint (..)
   , decodeRealPoint
   , encodeRealPoint
+
     -- * Derived
   , blockRealPoint
   , castRealPoint
@@ -42,12 +43,12 @@ import           Ouroboros.Consensus.Util (ShowProxy (..))
 
 -- | Point of an actual block (i.e., not genesis)
 data RealPoint blk = RealPoint !SlotNo !(HeaderHash blk)
-  deriving (Generic)
+  deriving Generic
 
 -- TODO: The Ord instance should go
 -- <https://github.com/IntersectMBO/ouroboros-network/issues/1693>
-deriving instance StandardHash blk => Eq   (RealPoint blk)
-deriving instance StandardHash blk => Ord  (RealPoint blk)
+deriving instance StandardHash blk => Eq (RealPoint blk)
+deriving instance StandardHash blk => Ord (RealPoint blk)
 deriving instance StandardHash blk => Show (RealPoint blk)
 
 instance ShowProxy blk
@@ -61,19 +62,22 @@ instance (StandardHash blk, Typeable blk)
 instance Condense (HeaderHash blk) => Condense (RealPoint blk) where
   condense (RealPoint s h) = "(Point " <> condense s <> ", " <> condense h <> ")"
 
-encodeRealPoint :: (HeaderHash blk -> Encoding)
-                -> (RealPoint  blk -> Encoding)
-encodeRealPoint encodeHash (RealPoint s h) = mconcat [
-      encodeListLen 2
+encodeRealPoint ::
+  (HeaderHash blk -> Encoding) ->
+  (RealPoint blk -> Encoding)
+encodeRealPoint encodeHash (RealPoint s h) =
+  mconcat
+    [ encodeListLen 2
     , encode s
     , encodeHash h
     ]
 
-decodeRealPoint :: (forall s. Decoder s (HeaderHash blk))
-                -> (forall s. Decoder s (RealPoint  blk))
+decodeRealPoint ::
+  (forall s. Decoder s (HeaderHash blk)) ->
+  (forall s. Decoder s (RealPoint blk))
 decodeRealPoint decodeHash = do
-    enforceSize "RealPoint" 2
-    RealPoint <$> decode <*> decodeHash
+  enforceSize "RealPoint" 2
+  RealPoint <$> decode <*> decodeHash
 
 {-------------------------------------------------------------------------------
   Derived
@@ -87,33 +91,35 @@ realPointHash (RealPoint _ h) = h
 
 blockRealPoint :: HasHeader blk => blk -> RealPoint blk
 blockRealPoint blk = RealPoint s h
-  where
-    HeaderFields { headerFieldSlot = s, headerFieldHash = h } = getHeaderFields blk
+ where
+  HeaderFields{headerFieldSlot = s, headerFieldHash = h} = getHeaderFields blk
 
 headerRealPoint ::
-       forall blk. HasHeader (Header blk)
-    => Header blk
-    -> RealPoint blk
+  forall blk.
+  HasHeader (Header blk) =>
+  Header blk ->
+  RealPoint blk
 headerRealPoint hdr = RealPoint s h
-  where
-    HeaderFields { headerFieldSlot = s, headerFieldHash = h } = hf
+ where
+  HeaderFields{headerFieldSlot = s, headerFieldHash = h} = hf
 
-    hf :: HeaderFields (Header blk)
-    hf = getHeaderFields hdr
+  hf :: HeaderFields (Header blk)
+  hf = getHeaderFields hdr
 
 realPointToPoint :: RealPoint blk -> Point blk
 realPointToPoint (RealPoint s h) = BlockPoint s h
 
 withOriginRealPointToPoint :: WithOrigin (RealPoint blk) -> Point blk
-withOriginRealPointToPoint Origin        = GenesisPoint
+withOriginRealPointToPoint Origin = GenesisPoint
 withOriginRealPointToPoint (NotOrigin p) = realPointToPoint p
 
 pointToWithOriginRealPoint :: Point blk -> WithOrigin (RealPoint blk)
-pointToWithOriginRealPoint GenesisPoint     = Origin
+pointToWithOriginRealPoint GenesisPoint = Origin
 pointToWithOriginRealPoint (BlockPoint s h) = NotOrigin $ RealPoint s h
 
 castRealPoint ::
-     forall blk blk'. Coercible (HeaderHash blk) (HeaderHash blk')
-  => RealPoint blk
-  -> RealPoint blk'
+  forall blk blk'.
+  Coercible (HeaderHash blk) (HeaderHash blk') =>
+  RealPoint blk ->
+  RealPoint blk'
 castRealPoint (RealPoint s h) = RealPoint s (coerce h)

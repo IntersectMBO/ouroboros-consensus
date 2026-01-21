@@ -24,15 +24,17 @@
 -- have the precise bytestring that we can pass in as the annotation). If we
 -- coupled the encoder to the decoder, we wouldn't be able to cleanly model
 -- this use case. Moreover, sometimes we only need a single direction.
-module Ouroboros.Consensus.Storage.Serialisation (
-    -- * Serialisation to/from disk storage
+module Ouroboros.Consensus.Storage.Serialisation
+  ( -- * Serialisation to/from disk storage
     DecodeDisk (..)
   , EncodeDisk (..)
+
     -- * Support for dependent pairs
   , DecodeDiskDep (..)
   , DecodeDiskDepIx (..)
   , EncodeDiskDep (..)
   , EncodeDiskDepIx (..)
+
     -- * Serialised header
   , SerialisedHeader (..)
   , castSerialisedHeader
@@ -40,39 +42,50 @@ module Ouroboros.Consensus.Storage.Serialisation (
   , encodeTrivialSerialisedHeader
   , serialisedHeaderFromPair
   , serialisedHeaderToPair
+
     -- * Reconstruct nested type
   , PrefixLen (..)
   , ReconstructNestedCtxt (..)
   , addPrefixLen
   , takePrefix
+
     -- * Binary block info
   , BinaryBlockInfo (..)
   , HasBinaryBlockInfo (..)
+
     -- * Re-exported for convenience
   , SizeInBytes
+
     -- * Exported for the benefit of tests
   , decodeDepPair
   , encodeDepPair
   ) where
 
-import           Cardano.Binary (enforceSize)
-import           Codec.CBOR.Decoding (Decoder)
-import           Codec.CBOR.Encoding (Encoding)
+import Cardano.Binary (enforceSize)
+import Codec.CBOR.Decoding (Decoder)
+import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import           Codec.Serialise
+import Codec.Serialise
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.ByteString.Short (ShortByteString)
-import           Data.SOP.BasicFunctors
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
-                     PrefixLen (..), addPrefixLen, takePrefix)
-import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Ouroboros.Consensus.Util (ShowProxy (..))
-import           Ouroboros.Consensus.Util.RedundantConstraints
-import           Ouroboros.Network.Block (Serialised (..), fromSerialised,
-                     mkSerialised)
-import           Ouroboros.Network.SizeInBytes (SizeInBytes)
+import Data.ByteString.Short (ShortByteString)
+import Data.SOP.BasicFunctors
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Storage.Common
+  ( BinaryBlockInfo (..)
+  , PrefixLen (..)
+  , addPrefixLen
+  , takePrefix
+  )
+import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util.RedundantConstraints
+import Ouroboros.Network.Block
+  ( Serialised (..)
+  , fromSerialised
+  , mkSerialised
+  )
+import Ouroboros.Network.SizeInBytes (SizeInBytes)
 
 {-------------------------------------------------------------------------------
   Serialisation to/from disk storage
@@ -85,12 +98,11 @@ import           Ouroboros.Network.SizeInBytes (SizeInBytes)
 -- compatibility.
 class EncodeDisk blk a where
   encodeDisk :: CodecConfig blk -> a -> Encoding
-
   -- When the config is not needed, we provide a default implementation using
   -- 'Serialise'
-  default encodeDisk
-    :: Serialise a
-    => CodecConfig blk -> a -> Encoding
+  default encodeDisk ::
+    Serialise a =>
+    CodecConfig blk -> a -> Encoding
   encodeDisk _ccfg = encode
 
 -- | Decode a type @a@ read from disk.
@@ -100,12 +112,11 @@ class EncodeDisk blk a where
 -- compatibility.
 class DecodeDisk blk a where
   decodeDisk :: CodecConfig blk -> forall s. Decoder s a
-
   -- When the config is not needed, we provide a default implementation using
   -- 'Serialise'
-  default decodeDisk
-    :: Serialise a
-    => CodecConfig blk -> forall s. Decoder s a
+  default decodeDisk ::
+    Serialise a =>
+    CodecConfig blk -> forall s. Decoder s a
   decodeDisk _ccfg = decode
 
 {-------------------------------------------------------------------------------
@@ -115,32 +126,29 @@ class DecodeDisk blk a where
 -- | Encode dependent index
 class EncodeDiskDepIx f blk where
   encodeDiskDepIx :: CodecConfig blk -> SomeSecond f blk -> Encoding
-
-  default encodeDiskDepIx
-    :: TrivialDependency (f blk)
-    => CodecConfig blk -> SomeSecond f blk -> Encoding
+  default encodeDiskDepIx ::
+    TrivialDependency (f blk) =>
+    CodecConfig blk -> SomeSecond f blk -> Encoding
   encodeDiskDepIx _ _ = encode ()
-    where
-      _ = keepRedundantConstraint (Proxy @(TrivialDependency (f blk)))
+   where
+    _ = keepRedundantConstraint (Proxy @(TrivialDependency (f blk)))
 
 -- | Encode a dependent value
 class EncodeDiskDep f blk where
   encodeDiskDep :: CodecConfig blk -> f blk a -> a -> Encoding
-
-  default encodeDiskDep
-    :: ( TrivialDependency (f blk)
-       , EncodeDisk blk (TrivialIndex (f blk))
-       )
-    => CodecConfig blk -> f blk a -> a -> Encoding
+  default encodeDiskDep ::
+    ( TrivialDependency (f blk)
+    , EncodeDisk blk (TrivialIndex (f blk))
+    ) =>
+    CodecConfig blk -> f blk a -> a -> Encoding
   encodeDiskDep cfg ctxt = encodeDisk cfg . fromTrivialDependency ctxt
 
 -- | Decode dependent index
 class DecodeDiskDepIx f blk where
   decodeDiskDepIx :: CodecConfig blk -> Decoder s (SomeSecond f blk)
-
-  default decodeDiskDepIx
-    :: TrivialDependency (f blk)
-    => CodecConfig blk -> Decoder s (SomeSecond f blk)
+  default decodeDiskDepIx ::
+    TrivialDependency (f blk) =>
+    CodecConfig blk -> Decoder s (SomeSecond f blk)
   decodeDiskDepIx _ = (\() -> SomeSecond indexIsTrivial) <$> decode
 
 -- | Decode a dependent value
@@ -148,52 +156,60 @@ class DecodeDiskDepIx f blk where
 -- Typical usage: @f = NestedCtxt Header@.
 class DecodeDiskDep f blk where
   decodeDiskDep :: CodecConfig blk -> f blk a -> forall s. Decoder s (Lazy.ByteString -> a)
-
-  default decodeDiskDep
-    :: ( TrivialDependency (f blk)
-       , DecodeDisk blk (Lazy.ByteString -> TrivialIndex (f blk))
-       )
-    => CodecConfig blk -> f blk a -> forall s. Decoder s (Lazy.ByteString -> a)
+  default decodeDiskDep ::
+    ( TrivialDependency (f blk)
+    , DecodeDisk blk (Lazy.ByteString -> TrivialIndex (f blk))
+    ) =>
+    CodecConfig blk -> f blk a -> forall s. Decoder s (Lazy.ByteString -> a)
   decodeDiskDep cfg ctxt =
-      (\f -> toTrivialDependency ctxt . f) <$> decodeDisk cfg
+    (\f -> toTrivialDependency ctxt . f) <$> decodeDisk cfg
 
-instance (EncodeDiskDepIx f blk, EncodeDiskDep f blk)
-       => EncodeDisk blk (DepPair (f blk)) where
+instance
+  (EncodeDiskDepIx f blk, EncodeDiskDep f blk) =>
+  EncodeDisk blk (DepPair (f blk))
+  where
   encodeDisk ccfg = encodeDisk ccfg . encodeDepPair ccfg
 
-instance (DecodeDiskDepIx f blk, DecodeDiskDep f blk)
-       => DecodeDisk blk (DepPair (f blk)) where
+instance
+  (DecodeDiskDepIx f blk, DecodeDiskDep f blk) =>
+  DecodeDisk blk (DepPair (f blk))
+  where
   decodeDisk ccfg = decodeDisk ccfg >>= decodeDepPair ccfg
 
 {-------------------------------------------------------------------------------
   Internal: support for serialisation of dependent pairs
 -------------------------------------------------------------------------------}
 
-encodeDepPair :: EncodeDiskDep f blk
-              => CodecConfig blk
-              -> DepPair (f blk) -> GenDepPair Serialised (f blk)
+encodeDepPair ::
+  EncodeDiskDep f blk =>
+  CodecConfig blk ->
+  DepPair (f blk) ->
+  GenDepPair Serialised (f blk)
 encodeDepPair ccfg (DepPair fa a) =
-    GenDepPair fa (mkSerialised (encodeDiskDep ccfg fa) a)
+  GenDepPair fa (mkSerialised (encodeDiskDep ccfg fa) a)
 
-decodeDepPair :: DecodeDiskDep f blk
-              => CodecConfig blk
-              -> GenDepPair Serialised (f blk) -> Decoder s (DepPair (f blk))
+decodeDepPair ::
+  DecodeDiskDep f blk =>
+  CodecConfig blk ->
+  GenDepPair Serialised (f blk) ->
+  Decoder s (DepPair (f blk))
 decodeDepPair ccfg (GenDepPair fa serialised) =
-    DepPair fa <$> fromSerialised (decodeDiskDep ccfg fa) serialised
+  DepPair fa <$> fromSerialised (decodeDiskDep ccfg fa) serialised
 
 instance EncodeDiskDepIx f blk => EncodeDisk blk (GenDepPair Serialised (f blk)) where
-  encodeDisk ccfg (GenDepPair fa serialised) = mconcat [
-        CBOR.encodeListLen 2
+  encodeDisk ccfg (GenDepPair fa serialised) =
+    mconcat
+      [ CBOR.encodeListLen 2
       , encodeDiskDepIx ccfg (SomeSecond fa)
       , encode serialised
       ]
 
 instance DecodeDiskDepIx f blk => DecodeDisk blk (GenDepPair Serialised (f blk)) where
   decodeDisk ccfg = do
-      enforceSize "DecodeDisk GenDepPair" 2
-      SomeSecond fa <- decodeDiskDepIx ccfg
-      serialised   <- decode
-      return $ GenDepPair fa serialised
+    enforceSize "DecodeDisk GenDepPair" 2
+    SomeSecond fa <- decodeDiskDepIx ccfg
+    serialised <- decode
+    return $ GenDepPair fa serialised
 
 {-------------------------------------------------------------------------------
   Serialised header
@@ -207,71 +223,81 @@ instance DecodeDiskDepIx f blk => DecodeDisk blk (GenDepPair Serialised (f blk))
 --
 -- The 'SerialiseNodeToNodeDep' for 'Header' will decide how to actually
 -- encode this.
-newtype SerialisedHeader blk = SerialisedHeaderFromDepPair {
-      serialisedHeaderToDepPair :: GenDepPair Serialised (NestedCtxt Header blk)
-    }
+newtype SerialisedHeader blk = SerialisedHeaderFromDepPair
+  { serialisedHeaderToDepPair :: GenDepPair Serialised (NestedCtxt Header blk)
+  }
 
 deriving instance HasNestedContent Header blk => Show (SerialisedHeader blk)
 instance ShowProxy blk => ShowProxy (SerialisedHeader blk) where
-    showProxy _ = "SerialisedHeader " ++ showProxy (Proxy :: Proxy blk)
+  showProxy _ = "SerialisedHeader " ++ showProxy (Proxy :: Proxy blk)
 
 -- | Only needed for the 'ChainSyncServer'
 type instance HeaderHash (SerialisedHeader blk) = HeaderHash blk
+
 instance StandardHash blk => StandardHash (SerialisedHeader blk)
 
 serialisedHeaderToPair ::
-     SerialisedHeader blk
-  -> (SomeSecond (NestedCtxt Header) blk, Lazy.ByteString)
+  SerialisedHeader blk ->
+  (SomeSecond (NestedCtxt Header) blk, Lazy.ByteString)
 serialisedHeaderToPair hdr =
-    case serialisedHeaderToDepPair hdr of
-      GenDepPair ctxt (Serialised bs) -> (SomeSecond ctxt, bs)
+  case serialisedHeaderToDepPair hdr of
+    GenDepPair ctxt (Serialised bs) -> (SomeSecond ctxt, bs)
 
 serialisedHeaderFromPair ::
-     (SomeSecond (NestedCtxt Header) blk, Lazy.ByteString)
-  -> SerialisedHeader blk
+  (SomeSecond (NestedCtxt Header) blk, Lazy.ByteString) ->
+  SerialisedHeader blk
 serialisedHeaderFromPair (SomeSecond ctxt, bs) =
-    SerialisedHeaderFromDepPair $
-      GenDepPair ctxt (Serialised bs)
+  SerialisedHeaderFromDepPair $
+    GenDepPair ctxt (Serialised bs)
 
 castSerialisedHeader ::
-     (forall a. NestedCtxt_ blk Header a -> NestedCtxt_ blk' Header a)
-  -> SerialisedHeader blk -> SerialisedHeader blk'
+  (forall a. NestedCtxt_ blk Header a -> NestedCtxt_ blk' Header a) ->
+  SerialisedHeader blk ->
+  SerialisedHeader blk'
 castSerialisedHeader f =
-      SerialisedHeaderFromDepPair
+  SerialisedHeaderFromDepPair
     . depPairFirst (castNestedCtxt f)
     . serialisedHeaderToDepPair
 
-instance EncodeDiskDepIx (NestedCtxt Header) blk
-      => EncodeDisk blk (SerialisedHeader blk) where
+instance
+  EncodeDiskDepIx (NestedCtxt Header) blk =>
+  EncodeDisk blk (SerialisedHeader blk)
+  where
   encodeDisk ccfg = encodeDisk ccfg . serialisedHeaderToDepPair
 
-instance DecodeDiskDepIx (NestedCtxt Header) blk
-      => DecodeDisk blk (SerialisedHeader blk) where
+instance
+  DecodeDiskDepIx (NestedCtxt Header) blk =>
+  DecodeDisk blk (SerialisedHeader blk)
+  where
   decodeDisk ccfg = SerialisedHeaderFromDepPair <$> decodeDisk ccfg
 
 -- | Encode the header without the 'NestedCtxt'
 --
 -- Uses CBOR-in-CBOR
 encodeTrivialSerialisedHeader ::
-     forall blk. TrivialDependency (NestedCtxt_ blk Header)
-  => SerialisedHeader blk -> Encoding
+  forall blk.
+  TrivialDependency (NestedCtxt_ blk Header) =>
+  SerialisedHeader blk -> Encoding
 encodeTrivialSerialisedHeader =
-      encode
+  encode
     . Serialised
     . snd
     . serialisedHeaderToPair
-  where
-    _ = keepRedundantConstraint (Proxy @(TrivialDependency (NestedCtxt_ blk Header)))
+ where
+  _ = keepRedundantConstraint (Proxy @(TrivialDependency (NestedCtxt_ blk Header)))
 
 -- | Inverse to 'encodeTrivialSerialisedHeader'
 decodeTrivialSerialisedHeader ::
-     forall blk. TrivialDependency (NestedCtxt_ blk Header)
-  => forall s. Decoder s (SerialisedHeader blk)
+  forall blk.
+  TrivialDependency (NestedCtxt_ blk Header) =>
+  forall s.
+  Decoder s (SerialisedHeader blk)
 decodeTrivialSerialisedHeader =
-    ( serialisedHeaderFromPair
-    . (SomeSecond (NestedCtxt indexIsTrivial), )
-    . unSerialised
-    ) <$> decode
+  ( serialisedHeaderFromPair
+      . (SomeSecond (NestedCtxt indexIsTrivial),)
+      . unSerialised
+  )
+    <$> decode
 
 {-------------------------------------------------------------------------------
   Reconstruct nested type
@@ -288,26 +314,30 @@ class HasNestedContent f blk => ReconstructNestedCtxt f blk where
   --
   -- TODO: Allow to fail.
   reconstructNestedCtxt ::
-       proxy (f blk)
-    -> ShortByteString  -- ^ First bytes ('reconstructPrefixLen') of the block
-    -> SizeInBytes      -- ^ Block size
-    -> SomeSecond (NestedCtxt f) blk
+    proxy (f blk) ->
+    -- | First bytes ('reconstructPrefixLen') of the block
+    ShortByteString ->
+    -- | Block size
+    SizeInBytes ->
+    SomeSecond (NestedCtxt f) blk
 
   -- Defaults if there is only one type
 
   default reconstructPrefixLen ::
-        TrivialDependency (NestedCtxt_ blk f)
-     => proxy (f blk) -> PrefixLen
+    TrivialDependency (NestedCtxt_ blk f) =>
+    proxy (f blk) -> PrefixLen
   reconstructPrefixLen _ = PrefixLen 0
-    where
-      _ = keepRedundantConstraint (Proxy @(TrivialDependency (NestedCtxt_ blk f)))
+   where
+    _ = keepRedundantConstraint (Proxy @(TrivialDependency (NestedCtxt_ blk f)))
 
   default reconstructNestedCtxt ::
-       TrivialDependency (NestedCtxt_ blk f)
-    => proxy (f blk)
-    -> ShortByteString  -- ^ First bytes ('reconstructPrefixLen') of the block
-    -> SizeInBytes      -- ^ Block size
-    -> SomeSecond (NestedCtxt f) blk
+    TrivialDependency (NestedCtxt_ blk f) =>
+    proxy (f blk) ->
+    -- | First bytes ('reconstructPrefixLen') of the block
+    ShortByteString ->
+    -- | Block size
+    SizeInBytes ->
+    SomeSecond (NestedCtxt f) blk
   reconstructNestedCtxt _ _ _ = SomeSecond indexIsTrivial
 
 {-------------------------------------------------------------------------------
@@ -323,22 +353,32 @@ class HasBinaryBlockInfo blk where
   Forwarding instances
 -------------------------------------------------------------------------------}
 
-instance EncodeDisk blk (ChainDepState (BlockProtocol blk))
-      => EncodeDisk blk (WrapChainDepState blk) where
+instance
+  EncodeDisk blk (ChainDepState (BlockProtocol blk)) =>
+  EncodeDisk blk (WrapChainDepState blk)
+  where
   encodeDisk cfg (WrapChainDepState st) = encodeDisk cfg st
 
-instance DecodeDisk blk (ChainDepState (BlockProtocol blk))
-      => DecodeDisk blk (WrapChainDepState blk) where
+instance
+  DecodeDisk blk (ChainDepState (BlockProtocol blk)) =>
+  DecodeDisk blk (WrapChainDepState blk)
+  where
   decodeDisk cfg = WrapChainDepState <$> decodeDisk cfg
 
-instance EncodeDisk blk blk
-      => EncodeDisk blk (I blk) where
+instance
+  EncodeDisk blk blk =>
+  EncodeDisk blk (I blk)
+  where
   encodeDisk cfg (I b) = encodeDisk cfg b
 
-instance DecodeDisk blk blk
-      => DecodeDisk blk (I blk) where
+instance
+  DecodeDisk blk blk =>
+  DecodeDisk blk (I blk)
+  where
   decodeDisk cfg = I <$> decodeDisk cfg
 
-instance DecodeDisk blk (a -> f blk)
-      => DecodeDisk blk (((->) a :.: f) blk) where
+instance
+  DecodeDisk blk (a -> f blk) =>
+  DecodeDisk blk (((->) a :.: f) blk)
+  where
   decodeDisk cfg = Comp <$> decodeDisk cfg

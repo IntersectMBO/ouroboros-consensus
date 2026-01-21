@@ -10,14 +10,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Intended for qualified import
-module Ouroboros.Consensus.Network.NodeToNode (
-    -- * Handlers
+module Ouroboros.Consensus.Network.NodeToNode
+  ( -- * Handlers
     Handlers (..)
   , mkHandlers
+
     -- * Codecs
   , Codecs (..)
   , defaultCodecs
   , identityCodecs
+
     -- * Byte Limits
   , ByteLimits
   , byteLimits
@@ -26,14 +28,17 @@ module Ouroboros.Consensus.Network.NodeToNode (
   , Tracers' (..)
   , nullTracers
   , showTracers
+
     -- * Applications
   , Apps (..)
   , ClientApp
   , ServerApp
   , mkApps
+
     -- ** Projections
   , initiator
   , initiatorAndResponder
+
     -- * Re-exports
   , ChainSyncTimeout (..)
 
@@ -41,9 +46,9 @@ module Ouroboros.Consensus.Network.NodeToNode (
   , leiosNotifyProtocolLimits
   ) where
 
-import           Codec.CBOR.Decoding (Decoder)
+import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
-import           Codec.CBOR.Encoding (Encoding)
+import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
@@ -70,13 +75,13 @@ import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncStateView (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
-import           Ouroboros.Consensus.Node.ExitPolicy
-import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-import           Ouroboros.Consensus.Node.Run
-import           Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
+import Ouroboros.Consensus.Node.ExitPolicy
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
-import           Ouroboros.Consensus.NodeKernel
+import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import           Ouroboros.Consensus.Util (ShowProxy)
@@ -147,18 +152,22 @@ import qualified Ouroboros.Network.Mux as ON
 -------------------------------------------------------------------------------}
 
 -- | Protocol handlers for node-to-node (remote) communication
-data Handlers m addr blk = Handlers {
-      hChainSyncClient
-        :: ConnectionId addr
-        -> IsBigLedgerPeer
-        -> CsClient.DynamicEnv m blk
-        -> ChainSyncClientPipelined (Header blk) (Point blk) (Tip blk) m
-             CsClient.ChainSyncClientResult
-        -- TODO: we should reconsider bundling these context parameters into a
-        -- record, perhaps instead extending the protocol handler
-        -- representation to support bracket-style initialisation so that we
-        -- could have the closure include these and not need to be explicit
-        -- about them here.
+data Handlers m addr blk = Handlers
+  { hChainSyncClient ::
+      ConnectionId addr ->
+      IsBigLedgerPeer ->
+      CsClient.DynamicEnv m blk ->
+      ChainSyncClientPipelined
+        (Header blk)
+        (Point blk)
+        (Tip blk)
+        m
+        CsClient.ChainSyncClientResult
+  , -- TODO: we should reconsider bundling these context parameters into a
+    -- record, perhaps instead extending the protocol handler
+    -- representation to support bracket-style initialisation so that we
+    -- could have the closure include these and not need to be explicit
+    -- about them here.
 
     , hChainSyncServer
         :: ConnectionId addr
@@ -240,35 +249,36 @@ data Handlers m addr blk = Handlers {
     }
 
 mkHandlers ::
-     forall m blk addrNTN addrNTC.
-     ( IOLike m
-     , MonadTime m
-     , MonadTimer m
-     , LedgerSupportsMempool blk
-     , HasTxId (GenTx blk)
-     , LedgerSupportsProtocol blk
-     , Ord addrNTN
-     , Hashable addrNTN
-     )
-  => NodeKernelArgs m addrNTN addrNTC blk
-  -> NodeKernel     m addrNTN addrNTC blk
-  -> Handlers       m addrNTN           blk
+  forall m blk addrNTN addrNTC.
+  ( IOLike m
+  , MonadTime m
+  , MonadTimer m
+  , LedgerSupportsMempool blk
+  , HasTxId (GenTx blk)
+  , LedgerSupportsProtocol blk
+  , Ord addrNTN
+  , Hashable addrNTN
+  ) =>
+  NodeKernelArgs m addrNTN addrNTC blk ->
+  NodeKernel m addrNTN addrNTC blk ->
+  Handlers m addrNTN blk
 mkHandlers
       NodeKernelArgs {chainSyncFutureCheck, chainSyncHistoricityCheck, keepAliveRng, miniProtocolParameters, getDiffusionPipeliningSupport}
       nodeKernel =
     Handlers {
         hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
           CsClient.chainSyncClient
-            CsClient.ConfigEnv {
-                CsClient.cfg                     = getTopLevelConfig
+            CsClient.ConfigEnv
+              { CsClient.cfg = getTopLevelConfig
               , CsClient.someHeaderInFutureCheck = chainSyncFutureCheck
-              , CsClient.historicityCheck        = chainSyncHistoricityCheck (atomically getGsmState)
-              , CsClient.chainDbView             =
+              , CsClient.historicityCheck = chainSyncHistoricityCheck (atomically getGsmState)
+              , CsClient.chainDbView =
                   CsClient.defaultChainDbView getChainDB
-              , CsClient.mkPipelineDecision0     = pipelineDecisionLowHighMark
-                  (chainSyncPipeliningLowMark  miniProtocolParameters)
-                  (chainSyncPipeliningHighMark miniProtocolParameters)
-              , CsClient.tracer                  =
+              , CsClient.mkPipelineDecision0 =
+                  pipelineDecisionLowHighMark
+                    (chainSyncPipeliningLowMark miniProtocolParameters)
+                    (chainSyncPipeliningHighMark miniProtocolParameters)
+              , CsClient.tracer =
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
               }
@@ -431,41 +441,35 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion = Codecs {
           dec
           (encodePoint (encodeRawHash p))
           (decodePoint (decodeRawHash p))
-          (encodeTip   (encodeRawHash p))
-          (decodeTip   (decodeRawHash p))
-
+          (encodeTip (encodeRawHash p))
+          (decodeTip (decodeRawHash p))
     , cChainSyncCodecSerialised =
         codecChainSync
           enc
           dec
           (encodePoint (encodeRawHash p))
           (decodePoint (decodeRawHash p))
-          (encodeTip   (encodeRawHash p))
-          (decodeTip   (decodeRawHash p))
-
+          (encodeTip (encodeRawHash p))
+          (decodeTip (decodeRawHash p))
     , cBlockFetchCodec =
         codecBlockFetch
           enc
           dec
           (encodePoint (encodeRawHash p))
           (decodePoint (decodeRawHash p))
-
     , cBlockFetchCodecSerialised =
         codecBlockFetch
           enc
           dec
           (encodePoint (encodeRawHash p))
           (decodePoint (decodeRawHash p))
-
     , cTxSubmission2Codec =
         codecTxSubmission2
           enc
           dec
           enc
           dec
-
     , cKeepAliveCodec = codecKeepAlive_v2
-
     , cPeerSharingCodec = codecPeerSharing (encAddr nodeToNodeVersion) (decAddr nodeToNodeVersion)
 
     , cLeiosNotifyCodec =
@@ -484,15 +488,15 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion = Codecs {
           Leios.encodeLeiosTx
           Leios.decodeLeiosTx
     }
-  where
-    p :: Proxy blk
-    p = Proxy
+ where
+  p :: Proxy blk
+  p = Proxy
 
-    enc :: SerialiseNodeToNode blk a => a -> Encoding
-    enc = encodeNodeToNode ccfg version
+  enc :: SerialiseNodeToNode blk a => a -> Encoding
+  enc = encodeNodeToNode ccfg version
 
-    dec :: SerialiseNodeToNode blk a => forall s. Decoder s a
-    dec = decodeNodeToNode ccfg version
+  dec :: SerialiseNodeToNode blk a => forall s. Decoder s a
+  dec = decodeNodeToNode ccfg version
 
 -- | Identity codecs used in tests.
 identityCodecs :: Monad m
@@ -524,7 +528,7 @@ identityCodecs = Codecs {
 
 -- | A record of 'Tracer's for the different protocols.
 type Tracers m ntnAddr blk e =
-     Tracers'  (ConnectionId ntnAddr) ntnAddr blk e (Tracer m)
+  Tracers' (ConnectionId ntnAddr) ntnAddr blk e (Tracer m)
 
 data Tracers' peer ntnAddr blk e f = Tracers {
       tChainSyncTracer            :: f (TraceLabelPeer peer (TraceSendRecv (ChainSync (Header blk) (Point blk) (Tip blk))))
@@ -539,10 +543,11 @@ data Tracers' peer ntnAddr blk e f = Tracers {
     }
 
 instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f) where
-  l <> r = Tracers {
-        tChainSyncTracer            = f tChainSyncTracer
-      , tChainSyncSerialisedTracer  = f tChainSyncSerialisedTracer
-      , tBlockFetchTracer           = f tBlockFetchTracer
+  l <> r =
+    Tracers
+      { tChainSyncTracer = f tChainSyncTracer
+      , tChainSyncSerialisedTracer = f tChainSyncSerialisedTracer
+      , tBlockFetchTracer = f tBlockFetchTracer
       , tBlockFetchSerialisedTracer = f tBlockFetchSerialisedTracer
       , tTxSubmission2Tracer        = f tTxSubmission2Tracer
       , tKeepAliveTracer            = f tKeepAliveTracer
@@ -550,18 +555,21 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f
       , tLeiosNotifyTracer          = f tLeiosNotifyTracer
       , tLeiosFetchTracer           = f tLeiosFetchTracer
       }
-    where
-      f :: forall a. Semigroup a
-        => (Tracers' peer ntnAddr blk e f -> a)
-        -> a
-      f prj = prj l <> prj r
+   where
+    f ::
+      forall a.
+      Semigroup a =>
+      (Tracers' peer ntnAddr blk e f -> a) ->
+      a
+    f prj = prj l <> prj r
 
 -- | Use a 'nullTracer' for each protocol.
 nullTracers :: Monad m => Tracers m ntnAddr blk e
-nullTracers = Tracers {
-      tChainSyncTracer            = nullTracer
-    , tChainSyncSerialisedTracer  = nullTracer
-    , tBlockFetchTracer           = nullTracer
+nullTracers =
+  Tracers
+    { tChainSyncTracer = nullTracer
+    , tChainSyncSerialisedTracer = nullTracer
+    , tBlockFetchTracer = nullTracer
     , tBlockFetchSerialisedTracer = nullTracer
     , tTxSubmission2Tracer        = nullTracer
     , tKeepAliveTracer            = nullTracer
@@ -570,19 +578,21 @@ nullTracers = Tracers {
     , tLeiosFetchTracer           = nullTracer
     }
 
-showTracers :: ( Show blk
-               , Show ntnAddr
-               , Show (Header blk)
-               , Show (GenTx blk)
-               , Show (GenTxId blk)
-               , HasHeader blk
-               , HasNestedContent Header blk
-               )
-            => Tracer m String -> Tracers m ntnAddr blk e
-showTracers tr = Tracers {
-      tChainSyncTracer            = showTracing tr
-    , tChainSyncSerialisedTracer  = showTracing tr
-    , tBlockFetchTracer           = showTracing tr
+showTracers ::
+  ( Show blk
+  , Show ntnAddr
+  , Show (Header blk)
+  , Show (GenTx blk)
+  , Show (GenTxId blk)
+  , HasHeader blk
+  , HasNestedContent Header blk
+  ) =>
+  Tracer m String -> Tracers m ntnAddr blk e
+showTracers tr =
+  Tracers
+    { tChainSyncTracer = showTracing tr
+    , tChainSyncSerialisedTracer = showTracing tr
+    , tBlockFetchTracer = showTracing tr
     , tBlockFetchSerialisedTracer = showTracing tr
     , tTxSubmission2Tracer        = showTracing tr
     , tKeepAliveTracer            = showTracing tr
@@ -754,42 +764,43 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
       -- each candidate chain there is a corresponding block fetch client that
       -- can be used to fetch blocks for that chain.
       bracketSyncWithFetchClient
-        (getFetchClientRegistry kernel) them $
-        CsClient.bracketChainSyncClient
-            (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
-            (contramap (TraceLabelPeer them) (Node.csjTracer             (getTracers kernel)))
-            (CsClient.defaultChainDbView (getChainDB kernel))
-            (getChainSyncHandles kernel)
-            (getGsmState       kernel)
-            them
-            version
-            lopBucketConfig
-            csjConfig
-            getDiffusionPipeliningSupport
-            $ \csState -> do
-              chainSyncTimeout <- genChainSyncTimeout
-              (r, trailing) <-
-                runPipelinedPeerWithLimits
-                  (contramap (TraceLabelPeer them) tChainSyncTracer)
-                  (cChainSyncCodec (mkCodecs version))
-                  blChainSync
-                  (timeLimitsChainSync chainSyncTimeout)
-                  channel
-                  $ chainSyncClientPeerPipelined
-                  $ hChainSyncClient
-                      them
-                      isBigLedgerPeer
-                      CsClient.DynamicEnv {
-                          CsClient.version
-                        , CsClient.controlMessageSTM
-                        , CsClient.headerMetricsTracer = TraceLabelPeer them `contramap` reportHeader
-                        , CsClient.setCandidate = csvSetCandidate csState
-                        , CsClient.idling = csvIdling csState
-                        , CsClient.loPBucket = csvLoPBucket csState
-                        , CsClient.setLatestSlot = csvSetLatestSlot csState
-                        , CsClient.jumping = csvJumping csState
-                        }
-              return (ChainSyncInitiatorResult r, trailing)
+        (getFetchClientRegistry kernel)
+        them
+        $ CsClient.bracketChainSyncClient
+          (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
+          (contramap (TraceLabelPeer them) (Node.csjTracer (getTracers kernel)))
+          (CsClient.defaultChainDbView (getChainDB kernel))
+          (getChainSyncHandles kernel)
+          (getGsmState kernel)
+          them
+          version
+          lopBucketConfig
+          csjConfig
+          getDiffusionPipeliningSupport
+        $ \csState -> do
+          chainSyncTimeout <- genChainSyncTimeout
+          (r, trailing) <-
+            runPipelinedPeerWithLimits
+              (contramap (TraceLabelPeer them) tChainSyncTracer)
+              (cChainSyncCodec (mkCodecs version))
+              blChainSync
+              (timeLimitsChainSync chainSyncTimeout)
+              channel
+              $ chainSyncClientPeerPipelined
+              $ hChainSyncClient
+                them
+                isBigLedgerPeer
+                CsClient.DynamicEnv
+                  { CsClient.version
+                  , CsClient.controlMessageSTM
+                  , CsClient.headerMetricsTracer = TraceLabelPeer them `contramap` reportHeader
+                  , CsClient.setCandidate = csvSetCandidate csState
+                  , CsClient.idling = csvIdling csState
+                  , CsClient.loPBucket = csvLoPBucket csState
+                  , CsClient.setLatestSlot = csvSetLatestSlot csState
+                  , CsClient.jumping = csvJumping csState
+                  }
+          return (ChainSyncInitiatorResult r, trailing)
 
     aChainSyncServer
       :: NodeToNodeVersion
@@ -850,13 +861,13 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
       labelThisThread "BlockFetchServer"
       withRegistry $ \registry ->
         runPeerWithLimits
-          (contramap (TraceLabelPeer them) tBlockFetchSerialisedTracer)
-          (cBlockFetchCodecSerialised (mkCodecs version))
-          blBlockFetch
-          timeLimitsBlockFetch
+          (contramap (TraceLabelPeer them) tChainSyncSerialisedTracer)
+          (cChainSyncCodecSerialised (mkCodecs version))
+          blChainSync
+          (timeLimitsChainSync chainSyncTimeout)
           channel
-          $ blockFetchServerPeer
-          $ hBlockFetchServer them version registry
+          $ chainSyncServerPeer
+          $ hChainSyncServer them version flr
 
     aTxSubmission2Client
       :: NodeToNodeVersion
@@ -875,7 +886,30 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
         blTxSubmission2
         timeLimitsTxSubmission2
         channel
-        (txSubmissionClientPeer (hTxSubmissionClient version controlMessageSTM them))
+        $ blockFetchServerPeer
+        $ hBlockFetchServer them version registry
+
+  aTxSubmission2Client ::
+    NodeToNodeVersion ->
+    ExpandedInitiatorContext addrNTN m ->
+    Channel m bTX ->
+    m (NodeToNodeInitiatorResult, Maybe bTX)
+  aTxSubmission2Client
+    version
+    ExpandedInitiatorContext
+      { eicConnectionId = them
+      , eicControlMessage = controlMessageSTM
+      }
+    channel = do
+      labelThisThread "TxSubmissionClient"
+      ((), trailing) <-
+        runPeerWithLimits
+          (contramap (TraceLabelPeer them) tTxSubmission2Tracer)
+          (cTxSubmission2Codec (mkCodecs version))
+          blTxSubmission2
+          timeLimitsTxSubmission2
+          channel
+          (txSubmissionClientPeer (hTxSubmissionClient version controlMessageSTM them))
       return (NoInitiatorResult, trailing)
 
     aTxSubmission2Server
@@ -905,15 +939,19 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                              channel = do
       labelThisThread "KeepAliveClient"
       let kacApp = \dqCtx ->
-                       runPeerWithLimits
-                         (TraceLabelPeer them `contramap` tKeepAliveTracer)
-                         (cKeepAliveCodec (mkCodecs version))
-                         blKeepAlive
-                         timeLimitsKeepAlive
-                         channel
-                         $ keepAliveClientPeer
-                         $ hKeepAliveClient version controlMessageSTM them dqCtx
-                             (KeepAliveInterval 10)
+            runPeerWithLimits
+              (TraceLabelPeer them `contramap` tKeepAliveTracer)
+              (cKeepAliveCodec (mkCodecs version))
+              blKeepAlive
+              timeLimitsKeepAlive
+              channel
+              $ keepAliveClientPeer
+              $ hKeepAliveClient
+                version
+                controlMessageSTM
+                them
+                dqCtx
+                (KeepAliveInterval 10)
 
       ((), trailing) <- bracketKeepAliveClient (getFetchClientRegistry kernel) them kacApp
       return (NoInitiatorResult, trailing)
@@ -946,8 +984,8 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                                }
                                channel = do
       labelThisThread "PeerSharingClient"
-      bracketPeerSharingClient (getPeerSharingRegistry kernel) (remoteAddress them)
-        $ \controller -> do
+      bracketPeerSharingClient (getPeerSharingRegistry kernel) (remoteAddress them) $
+        \controller -> do
           psClient <- hPeerSharingClient version controlMessageSTM them controller
           ((), trailing) <- runPeerWithLimits
             (TraceLabelPeer them `contramap` tPeerSharingTracer)

@@ -11,44 +11,66 @@
 -- server mocks that the peer simulator uses, in
 -- "Test.Consensus.PeerSimulator.ScheduledChainSyncServer" and
 -- "Test.Consensus.PeerSimulator.ScheduledBlockFetchServer".
-module Test.Consensus.PeerSimulator.Handlers (
-    handlerBlockFetch
+module Test.Consensus.PeerSimulator.Handlers
+  ( handlerBlockFetch
   , handlerFindIntersection
   , handlerRequestNext
   , handlerSendBlocks
   ) where
 
-import           Cardano.Slotting.Slot (WithOrigin (..))
-import           Control.Monad.Trans (lift)
-import           Control.Monad.Writer.Strict (MonadWriter (tell),
-                     WriterT (runWriterT))
-import           Data.List (isSuffixOf)
+import Cardano.Slotting.Slot (WithOrigin (..))
+import Control.Monad.Trans (lift)
+import Control.Monad.Writer.Strict
+  ( MonadWriter (tell)
+  , WriterT (runWriterT)
+  )
+import Data.List (isSuffixOf)
 import qualified Data.List.NonEmpty as NonEmpty
-import           Data.Maybe (fromJust, fromMaybe)
-import           Ouroboros.Consensus.Block (HasHeader, HeaderHash,
-                     Point (GenesisPoint), blockHash, getHeader, withOrigin)
-import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
-                     readTVar, writeTVar)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import Data.Maybe (fromJust, fromMaybe)
+import Ouroboros.Consensus.Block
+  ( HasHeader
+  , HeaderHash
+  , Point (GenesisPoint)
+  , blockHash
+  , getHeader
+  , withOrigin
+  )
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , STM
+  , StrictTVar
+  , readTVar
+  , writeTVar
+  )
+import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (Tip (TipGenesis), blockPoint,
-                     getTipPoint, tipFromHeader)
-import           Ouroboros.Network.BlockFetch.ClientState
-                     (ChainRange (ChainRange))
+import Ouroboros.Network.Block
+  ( Tip (TipGenesis)
+  , blockPoint
+  , getTipPoint
+  , tipFromHeader
+  )
+import Ouroboros.Network.BlockFetch.ClientState
+  ( ChainRange (ChainRange)
+  )
+import Test.Consensus.BlockTree (BlockTree)
 import qualified Test.Consensus.BlockTree as BT
-import           Test.Consensus.BlockTree (BlockTree)
-import           Test.Consensus.Network.AnchoredFragment.Extras (intersectWith)
-import           Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
-                     (BlockFetch (..), SendBlocks (..))
-import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
-                     (FindIntersect (..),
-                     RequestNext (AwaitReply, RollBackward, RollForward))
-import           Test.Consensus.PeerSimulator.Trace
-                     (TraceScheduledBlockFetchServerEvent (..),
-                     TraceScheduledChainSyncServerEvent (..))
-import           Test.Consensus.PointSchedule.NodeState
-import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
+import Test.Consensus.Network.AnchoredFragment.Extras (intersectWith)
+import Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
+  ( BlockFetch (..)
+  , SendBlocks (..)
+  )
+import Test.Consensus.PeerSimulator.ScheduledChainSyncServer
+  ( FindIntersect (..)
+  , RequestNext (AwaitReply, RollBackward, RollForward)
+  )
+import Test.Consensus.PeerSimulator.Trace
+  ( TraceScheduledBlockFetchServerEvent (..)
+  , TraceScheduledChainSyncServerEvent (..)
+  )
+import Test.Consensus.PointSchedule.NodeState
+import Test.Util.Orphans.IOLike ()
+import Test.Util.TestBlock (TestBlock, TestHash (TestHash))
 
 -- | More efficient implementation of a check used in some of the handlers,
 -- determining whether the first argument is on the chain that ends in the
@@ -68,9 +90,9 @@ isAncestorOf ::
   Bool
 isAncestorOf (At ancestor) (At descendant) =
   isSuffixOf (NonEmpty.toList hashA) (NonEmpty.toList hashD)
-  where
-    TestHash hashA = blockHash ancestor
-    TestHash hashD = blockHash descendant
+ where
+  TestHash hashA = blockHash ancestor
+  TestHash hashD = blockHash descendant
 isAncestorOf (At _) Origin = False
 isAncestorOf Origin _ = True
 
@@ -107,74 +129,78 @@ handlerFindIntersection currentIntersection blockTree clientPoints points = do
 -- - Anchor != intersection
 handlerRequestNext ::
   forall m.
-  (IOLike m) =>
+  IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
   NodeState TestBlock ->
-  STM m (Maybe (RequestNext TestBlock), [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock])
+  STM
+    m
+    ( Maybe (RequestNext TestBlock)
+    , [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock]
+    )
 handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
     intersection <- lift $ readTVar currentIntersection
     trace $ TraceLastIntersection intersection
     withHeader intersection (nsHeader points)
-  where
-    withHeader ::
-      Point TestBlock ->
-      WithOrigin TestBlock ->
-      WriterT
-        [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock]
-        (STM m)
-        (Maybe (RequestNext TestBlock))
-    withHeader intersection h =
-      maybe noPathError analysePath (BT.findPath intersection hp blockTree)
-      where
-        hp = withOrigin GenesisPoint blockPoint h
+ where
+  withHeader ::
+    Point TestBlock ->
+    WithOrigin TestBlock ->
+    WriterT
+      [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock]
+      (STM m)
+      (Maybe (RequestNext TestBlock))
+  withHeader intersection h =
+    maybe noPathError analysePath (BT.findPath intersection hp blockTree)
+   where
+    hp = withOrigin GenesisPoint blockPoint h
 
-    noPathError = error "serveHeader: intersection and headerPoint should always be in the block tree"
+  noPathError = error "serveHeader: intersection and headerPoint should always be in the block tree"
 
-    analysePath = \case
-      -- If the anchor is the intersection (the source of the path-finding) but
-      -- the fragment is empty, then the intersection is exactly our header
-      -- point and there is nothing to do. If additionally the header point is
-      -- also the tip point or a descendent of it (because we served our whole
-      -- chain, or we are stalling as an adversarial behaviour), then we ask the
-      -- client to wait; otherwise we just do nothing.
-      (BT.PathAnchoredAtSource True, AF.Empty _) | isAncestorOf (nsTip points) (nsHeader points) -> do
-        trace TraceChainIsFullyServed
-        pure (Just AwaitReply)
-      (BT.PathAnchoredAtSource True, AF.Empty _) -> do
-        trace TraceIntersectionIsHeaderPoint
-        pure Nothing
-      -- If the anchor is the intersection and the fragment is non-empty, then
-      -- we have something to serve.
-      (BT.PathAnchoredAtSource True, fragmentAhead@(next AF.:< _)) -> do
-        trace $ TraceIntersectionIsStrictAncestorOfHeaderPoint fragmentAhead
-        lift $ writeTVar currentIntersection $ blockPoint next
-        pure $ Just (RollForward (getHeader next) (nsTipTip points))
-      -- If the anchor is not the intersection but the fragment is empty, then
-      -- the intersection is further than the tip that we can serve.
-      (BT.PathAnchoredAtSource False, AF.Empty _) -> do
-        trace TraceIntersectionIsStrictDescendentOfHeaderPoint
-        -- REVIEW: The following is a hack that allows the honest peer to not
-        -- get disconnected when it falls behind. Why does a peer doing that not
-        -- get disconnected from?
-        --
-        -- We decided to hold off on making this work with timeouts, so we'll return
-        -- Nothing here for now.
-        -- The consequence of this is that a slow peer will just block until it reaches
-        -- the fork intersection in its schedule.
-        -- pure (Just AwaitReply)
-        pure Nothing
-      -- If the anchor is not the intersection and the fragment is non-empty,
-      -- then we require a rollback
-      (BT.PathAnchoredAtSource False, fragment) -> do
-        let point = AF.anchorPoint fragment
-        lift $ writeTVar currentIntersection point
-        pure $ Just (RollBackward point tip')
+  analysePath = \case
+    -- If the anchor is the intersection (the source of the path-finding) but
+    -- the fragment is empty, then the intersection is exactly our header
+    -- point and there is nothing to do. If additionally the header point is
+    -- also the tip point or a descendent of it (because we served our whole
+    -- chain, or we are stalling as an adversarial behaviour), then we ask the
+    -- client to wait; otherwise we just do nothing.
+    (BT.PathAnchoredAtSource True, AF.Empty _) | isAncestorOf (nsTip points) (nsHeader points) -> do
+      trace TraceChainIsFullyServed
+      pure (Just AwaitReply)
+    (BT.PathAnchoredAtSource True, AF.Empty _) -> do
+      trace TraceIntersectionIsHeaderPoint
+      pure Nothing
+    -- If the anchor is the intersection and the fragment is non-empty, then
+    -- we have something to serve.
+    (BT.PathAnchoredAtSource True, fragmentAhead@(next AF.:< _)) -> do
+      trace $ TraceIntersectionIsStrictAncestorOfHeaderPoint fragmentAhead
+      lift $ writeTVar currentIntersection $ blockPoint next
+      pure $ Just (RollForward (getHeader next) (nsTipTip points))
+    -- If the anchor is not the intersection but the fragment is empty, then
+    -- the intersection is further than the tip that we can serve.
+    (BT.PathAnchoredAtSource False, AF.Empty _) -> do
+      trace TraceIntersectionIsStrictDescendentOfHeaderPoint
+      -- REVIEW: The following is a hack that allows the honest peer to not
+      -- get disconnected when it falls behind. Why does a peer doing that not
+      -- get disconnected from?
+      --
+      -- We decided to hold off on making this work with timeouts, so we'll return
+      -- Nothing here for now.
+      -- The consequence of this is that a slow peer will just block until it reaches
+      -- the fork intersection in its schedule.
+      -- pure (Just AwaitReply)
+      pure Nothing
+    -- If the anchor is not the intersection and the fragment is non-empty,
+    -- then we require a rollback
+    (BT.PathAnchoredAtSource False, fragment) -> do
+      let point = AF.anchorPoint fragment
+      lift $ writeTVar currentIntersection point
+      pure $ Just (RollBackward point tip')
 
-    tip' = withOrigin TipGenesis tipFromHeader $ nsTip points
+  tip' = withOrigin TipGenesis tipFromHeader $ nsTip points
 
-    trace = tell . pure
+  trace = tell . pure
 
 -- REVIEW: We call this a lot, and I assume it creates some significant overhead.
 -- We should figure out a cheaper way to achieve what we're doing with the result.
@@ -183,8 +209,8 @@ handlerRequestNext currentIntersection blockTree points =
 fragmentUpTo :: HasHeader blk => BlockTree blk -> String -> Point blk -> AnchoredFragment blk
 fragmentUpTo blockTree desc b =
   fromMaybe fatal (BT.findFragment b blockTree)
-  where
-    fatal = error ("BlockFetch: Could not find " ++ desc ++ " in the block tree")
+ where
+  fatal = error ("BlockFetch: Could not find " ++ desc ++ " in the block tree")
 
 -- | Handle the BlockFetch message (it actually has only one unnamed entry point).
 --
@@ -194,33 +220,33 @@ fragmentUpTo blockTree desc b =
 handlerBlockFetch ::
   forall m blk.
   (IOLike m, HasHeader blk) =>
+  -- | The tree of blocks in this scenario -- aka. the “universe”.
   BlockTree blk ->
-  -- ^ The tree of blocks in this scenario -- aka. the “universe”.
-  ChainRange (Point blk) ->
-  -- ^ A requested range of blocks. If the client behaves correctly, they
+  -- | A requested range of blocks. If the client behaves correctly, they
   -- correspond to headers that have been sent before, and if the scheduled
   -- ChainSync server behaves correctly, then they are all in the block tree.
-  NodeState blk ->
-  -- ^ The current advertised points (tip point, header point and block point).
+  ChainRange (Point blk) ->
+  -- | The current advertised points (tip point, header point and block point).
   -- They are in the block tree.
+  NodeState blk ->
   STM m (Maybe (BlockFetch blk), [TraceScheduledBlockFetchServerEvent (NodeState blk) blk])
 handlerBlockFetch blockTree (ChainRange from to) _ =
   runWriterT (serveFromBpFragment (AF.sliceRange chain from to))
-  where
-    -- Check whether the requested range is contained in the fragment before the header point.
-    -- We may only initiate batch serving if the full range is available; if the server has only some of the blocks, it
-    -- must refuse.
-    serveFromBpFragment = \case
-      Just slice -> do
-        trace $ TraceStartingBatch slice
-        pure (Just (StartBatch (AF.toOldestFirst slice)))
-      Nothing    -> do
-        trace $ TraceWaitingForRange from to
-        pure Nothing
+ where
+  -- Check whether the requested range is contained in the fragment before the header point.
+  -- We may only initiate batch serving if the full range is available; if the server has only some of the blocks, it
+  -- must refuse.
+  serveFromBpFragment = \case
+    Just slice -> do
+      trace $ TraceStartingBatch slice
+      pure (Just (StartBatch (AF.toOldestFirst slice)))
+    Nothing -> do
+      trace $ TraceWaitingForRange from to
+      pure Nothing
 
-    chain = fragmentUpTo blockTree "upper range bound" to
+  chain = fragmentUpTo blockTree "upper range bound" to
 
-    trace = tell . pure
+  trace = tell . pure
 
 {-
 If we cannot serve blocks from the block point chain (that is the chain on which
@@ -302,53 +328,56 @@ The cases to consider follow:
 
 -}
 handlerSendBlocks ::
-  forall m .
+  forall m.
   IOLike m =>
   [TestBlock] ->
   NodeState TestBlock ->
-  STM m (Maybe (SendBlocks TestBlock), [TraceScheduledBlockFetchServerEvent (NodeState TestBlock) TestBlock])
-handlerSendBlocks blocks NodeState {nsHeader, nsBlock} =
+  STM
+    m
+    ( Maybe (SendBlocks TestBlock)
+    , [TraceScheduledBlockFetchServerEvent (NodeState TestBlock) TestBlock]
+    )
+handlerSendBlocks blocks NodeState{nsHeader, nsBlock} =
   runWriterT (checkDone blocks)
-  where
-    checkDone = \case
-      [] -> do
-        trace TraceBatchIsDone
-        pure (Just BatchDone)
-      (next : future) ->
-        blocksLeft next future
+ where
+  checkDone = \case
+    [] -> do
+      trace TraceBatchIsDone
+      pure (Just BatchDone)
+    (next : future) ->
+      blocksLeft next future
 
-    blocksLeft next future
-      | isAncestorOf (At next) nsBlock
-      || compensateForScheduleRollback next
-      = do
-        trace $ TraceSendingBlock next
-        pure (Just (SendBlock next future))
+  blocksLeft next future
+    | isAncestorOf (At next) nsBlock
+        || compensateForScheduleRollback next =
+        do
+          trace $ TraceSendingBlock next
+          pure (Just (SendBlock next future))
+    | otherwise =
+        do
+          trace TraceBlockPointIsBehind
+          pure Nothing
 
-      | otherwise
-      = do
-        trace TraceBlockPointIsBehind
-        pure Nothing
+  -- Here we encode the conditions for the special situation mentioned above.
+  -- These use aliases for @withinFragmentBounds@ to illustrate what we're testing.
+  -- The names don't precisely match semantically, but it's difficult to understand the
+  -- circumstances otherwise.
+  --
+  -- The involved points are BP, HP, and @next@, which is the block we're deciding whether to
+  -- send or not.
+  --
+  -- Remember that at this point, we already know that we cannot send @next@ regularly, i.e.
+  -- @next@ is not on the chain leading up to BP.
+  -- The conditions in which we send @next@ to compensate for rollbacks are:
+  --
+  -- \* @next@ is not on the chain leading up to HP – HP moved to another chain, and
+  --
+  -- \* BP is in the same chain as HP and is not an ancestor of @next@ - BP also moved away from the chain of @next@.
+  --
+  -- Precondition: @not (isAncestorOf (At next) bp)@
+  compensateForScheduleRollback next =
+    not (isAncestorOf (At next) nsHeader)
+      && isAncestorOf nsBlock nsHeader
+      && not (isAncestorOf nsBlock (At next))
 
-    -- Here we encode the conditions for the special situation mentioned above.
-    -- These use aliases for @withinFragmentBounds@ to illustrate what we're testing.
-    -- The names don't precisely match semantically, but it's difficult to understand the
-    -- circumstances otherwise.
-    --
-    -- The involved points are BP, HP, and @next@, which is the block we're deciding whether to
-    -- send or not.
-    --
-    -- Remember that at this point, we already know that we cannot send @next@ regularly, i.e.
-    -- @next@ is not on the chain leading up to BP.
-    -- The conditions in which we send @next@ to compensate for rollbacks are:
-    --
-    -- * @next@ is not on the chain leading up to HP – HP moved to another chain, and
-    --
-    -- * BP is in the same chain as HP and is not an ancestor of @next@ - BP also moved away from the chain of @next@.
-    --
-    -- Precondition: @not (isAncestorOf (At next) bp)@
-    compensateForScheduleRollback next =
-      not (isAncestorOf (At next) nsHeader)
-        && isAncestorOf nsBlock nsHeader
-        && not (isAncestorOf nsBlock (At next))
-
-    trace = tell . pure
+  trace = tell . pure

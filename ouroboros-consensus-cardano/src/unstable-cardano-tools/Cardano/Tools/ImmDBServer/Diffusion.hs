@@ -32,24 +32,27 @@ import qualified LeiosDemoLogic as LeiosLogic
 import qualified LeiosDemoOnlyTestFetch as LF
 import qualified LeiosDemoTypes as Leios
 import qualified Network.Mux as Mux
-import           Network.Socket (SockAddr (..))
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Config.SupportsNode
-import           Ouroboros.Consensus.Node.InitStorage
-                     (NodeInitStorage (nodeCheckIntegrity, nodeImmutableDbChunkInfo))
-import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-import           Ouroboros.Consensus.Node.Run (SerialiseNodeToNodeConstraints)
-import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDbArgs (..))
+import Network.Socket (SockAddr (..))
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Config.SupportsNode
+import Ouroboros.Consensus.Node.InitStorage
+  ( NodeInitStorage (nodeCheckIntegrity, nodeImmutableDbChunkInfo)
+  )
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.Run (SerialiseNodeToNodeConstraints)
+import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Util
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Network.ErrorPolicy (nullErrorPolicies)
-import           Ouroboros.Network.IOManager (withIOManager)
-import           Ouroboros.Network.Mux
+import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.ErrorPolicy (nullErrorPolicies)
+import Ouroboros.Network.IOManager (withIOManager)
+import Ouroboros.Network.Mux
 import qualified Ouroboros.Network.NodeToNode as N2N
-import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
-                     (decodeRemoteAddress, encodeRemoteAddress)
+import Ouroboros.Network.PeerSelection.PeerSharing.Codec
+  ( decodeRemoteAddress
+  , encodeRemoteAddress
+  )
 import qualified Ouroboros.Network.Snocket as Snocket
 import           Ouroboros.Network.Socket (configureSocket)
 import qualified System.Directory as Dir

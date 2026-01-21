@@ -3,8 +3,8 @@
 -- | Data types and resource allocating constructors for the concurrency
 -- primitives used by ChainSync and BlockFetch in the handlers that implement
 -- the block tree analysis specific to our peer simulator.
-module Test.Consensus.PeerSimulator.Resources (
-    BlockFetchResources (..)
+module Test.Consensus.PeerSimulator.Resources
+  ( BlockFetchResources (..)
   , ChainSyncResources (..)
   , PeerResources (..)
   , PeerSimulatorResources (..)
@@ -14,122 +14,126 @@ module Test.Consensus.PeerSimulator.Resources (
   , makePeerSimulatorResources
   ) where
 
-import           Control.Concurrent.Class.MonadSTM.Strict (atomically, dupTChan,
-                     newBroadcastTChan, readTChan, writeTChan)
-import           Control.Tracer (Tracer)
-import           Data.Foldable (toList)
-import           Data.List.NonEmpty (NonEmpty)
-import           Data.Map.Strict (Map)
+import Control.Concurrent.Class.MonadSTM.Strict
+  ( atomically
+  , dupTChan
+  , newBroadcastTChan
+  , readTChan
+  , writeTChan
+  )
+import Control.Tracer (Tracer)
+import Data.Foldable (toList)
+import Data.List.NonEmpty (NonEmpty)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Traversable (for)
-import           Ouroboros.Consensus.Block (WithOrigin (Origin))
-import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientHandleCollection,
-                     newChainSyncClientHandleCollection)
-import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
-                     StrictTVar, readTVar, uncheckedNewTVarM, writeTVar)
+import Data.Traversable (for)
+import Ouroboros.Consensus.Block (WithOrigin (Origin))
+import Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+  ( ChainSyncClientHandleCollection
+  , newChainSyncClientHandleCollection
+  )
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , MonadSTM (STM)
+  , StrictTVar
+  , readTVar
+  , uncheckedNewTVarM
+  , writeTVar
+  )
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (Tip (..))
-import           Ouroboros.Network.Protocol.BlockFetch.Server (BlockFetchServer)
-import           Ouroboros.Network.Protocol.ChainSync.Server
-                     (ChainSyncServer (..))
-import           Test.Consensus.BlockTree (BlockTree)
-import           Test.Consensus.PeerSimulator.Handlers
-import           Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
-                     (BlockFetchServerHandlers (..),
-                     runScheduledBlockFetchServer)
-import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
-import           Test.Consensus.PeerSimulator.Trace (TraceEvent)
-import           Test.Consensus.PointSchedule.NodeState
-import           Test.Consensus.PointSchedule.Peers (PeerId)
-import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TestBlock (TestBlock)
+import Ouroboros.Network.Block (Tip (..))
+import Ouroboros.Network.Protocol.BlockFetch.Server (BlockFetchServer)
+import Ouroboros.Network.Protocol.ChainSync.Server
+  ( ChainSyncServer (..)
+  )
+import Test.Consensus.BlockTree (BlockTree)
+import Test.Consensus.PeerSimulator.Handlers
+import Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
+  ( BlockFetchServerHandlers (..)
+  , runScheduledBlockFetchServer
+  )
+import Test.Consensus.PeerSimulator.ScheduledChainSyncServer
+import Test.Consensus.PeerSimulator.Trace (TraceEvent)
+import Test.Consensus.PointSchedule.NodeState
+import Test.Consensus.PointSchedule.Peers (PeerId)
+import Test.Util.Orphans.IOLike ()
+import Test.Util.TestBlock (TestBlock)
 
 -- | Resources used by both ChainSync and BlockFetch for a single peer.
-data SharedResources m blk =
-  SharedResources {
-    -- | The name of the peer.
-    srPeerId       :: PeerId,
-
-    -- | The block tree in which the test is taking place. In combination to
-    -- 'csssCurrentIntersection' and the current point schedule tick, it allows
-    -- to define which blocks to serve to the client.
-    srBlockTree    :: BlockTree blk,
-
-    -- | The currently active schedule point.
-    --
-    -- This is 'Maybe' because we cannot wait for the initial state otherwise.
-    srCurrentState :: StrictTVar m (Maybe (NodeState blk)),
-
-    srTracer       :: Tracer m (TraceEvent blk)
+data SharedResources m blk
+  = SharedResources
+  { srPeerId :: PeerId
+  -- ^ The name of the peer.
+  , srBlockTree :: BlockTree blk
+  -- ^ The block tree in which the test is taking place. In combination to
+  -- 'csssCurrentIntersection' and the current point schedule tick, it allows
+  -- to define which blocks to serve to the client.
+  , srCurrentState :: StrictTVar m (Maybe (NodeState blk))
+  -- ^ The currently active schedule point.
+  --
+  -- This is 'Maybe' because we cannot wait for the initial state otherwise.
+  , srTracer :: Tracer m (TraceEvent blk)
   }
 
 -- | The data used by the point scheduler to interact with the mocked protocol handler in
 -- "Test.Consensus.PeerSimulator.ScheduledChainSyncServer".
-data ChainSyncResources m blk =
-  ChainSyncResources {
-    -- | The current known intersection with the chain of the client.
-    csrCurrentIntersection :: StrictTVar m (Point blk),
-
-    -- | The final server passed to typed-protocols.
-    csrServer :: ChainSyncServer (Header blk) (Point blk) (Tip blk) m (),
-
-    -- | This action blocks while this peer is inactive in the point schedule.
-    csrTickStarted :: STM m ()
+data ChainSyncResources m blk
+  = ChainSyncResources
+  { csrCurrentIntersection :: StrictTVar m (Point blk)
+  -- ^ The current known intersection with the chain of the client.
+  , csrServer :: ChainSyncServer (Header blk) (Point blk) (Tip blk) m ()
+  -- ^ The final server passed to typed-protocols.
+  , csrTickStarted :: STM m ()
+  -- ^ This action blocks while this peer is inactive in the point schedule.
   }
 
 -- | The data used by the point scheduler to interact with the mocked protocol handler in
 -- "Test.Consensus.PeerSimulator.BlockFetch".
-data BlockFetchResources m blk =
-  BlockFetchResources {
-    -- | The final server passed to typed-protocols.
-    bfrServer      :: BlockFetchServer blk (Point blk) m (),
-
-    -- | This action blocks while this peer is inactive in the point schedule.
-    bfrTickStarted :: STM m ()
+data BlockFetchResources m blk
+  = BlockFetchResources
+  { bfrServer :: BlockFetchServer blk (Point blk) m ()
+  -- ^ The final server passed to typed-protocols.
+  , bfrTickStarted :: STM m ()
+  -- ^ This action blocks while this peer is inactive in the point schedule.
   }
 
 -- | The totality of resources used by a single peer in ChainSync and BlockFetch and by
 -- the scheduler to interact with it.
-data PeerResources m blk =
-  PeerResources {
-    -- | Resources used by ChainSync and BlockFetch.
-    prShared      :: SharedResources m blk,
-
-    -- | Resources used by ChainSync only.
-    prChainSync   :: ChainSyncResources m blk,
-
-    -- | Resources used by BlockFetch only.
-    prBlockFetch  :: BlockFetchResources m blk,
-
-    -- | An action used by the scheduler to update the peer's advertised points and
-    -- resume processing for the ChainSync and BlockFetch servers.
-    prUpdateState :: NodeState blk -> STM m ()
+data PeerResources m blk
+  = PeerResources
+  { prShared :: SharedResources m blk
+  -- ^ Resources used by ChainSync and BlockFetch.
+  , prChainSync :: ChainSyncResources m blk
+  -- ^ Resources used by ChainSync only.
+  , prBlockFetch :: BlockFetchResources m blk
+  -- ^ Resources used by BlockFetch only.
+  , prUpdateState :: NodeState blk -> STM m ()
+  -- ^ An action used by the scheduler to update the peer's advertised points and
+  -- resume processing for the ChainSync and BlockFetch servers.
   }
 
 -- | Resources for the peer simulator.
-data PeerSimulatorResources m blk =
-  PeerSimulatorResources {
-    -- | Resources for individual peers.
-    psrPeers   :: Map PeerId (PeerResources m blk),
-
-    -- | Handles to interact with the ChainSync client of each peer.
-    -- See 'ChainSyncClientHandle' for more details.
-    psrHandles :: ChainSyncClientHandleCollection PeerId m TestBlock
+data PeerSimulatorResources m blk
+  = PeerSimulatorResources
+  { psrPeers :: Map PeerId (PeerResources m blk)
+  -- ^ Resources for individual peers.
+  , psrHandles :: ChainSyncClientHandleCollection PeerId m TestBlock
+  -- ^ Handles to interact with the ChainSync client of each peer.
+  -- See 'ChainSyncClientHandle' for more details.
   }
 
 -- | Create 'ChainSyncServerHandlers' for our default implementation using 'NodeState'.
 makeChainSyncServerHandlers ::
-  (IOLike m) =>
+  IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
   ChainSyncServerHandlers m (NodeState TestBlock) TestBlock
 makeChainSyncServerHandlers currentIntersection blockTree =
-  ChainSyncServerHandlers {
-    csshFindIntersection = handlerFindIntersection currentIntersection blockTree,
-    csshRequestNext = handlerRequestNext currentIntersection blockTree
-  }
+  ChainSyncServerHandlers
+    { csshFindIntersection = handlerFindIntersection currentIntersection blockTree
+    , csshRequestNext = handlerRequestNext currentIntersection blockTree
+    }
 
 -- | Create all the resources used exclusively by the ChainSync handlers, and
 -- the ChainSync protocol server that uses the handlers to interface with the
@@ -137,35 +141,40 @@ makeChainSyncServerHandlers currentIntersection blockTree =
 --
 -- TODO move server construction to Run?
 makeChainSyncResources ::
-  (IOLike m) =>
+  IOLike m =>
   STM m () ->
   SharedResources m TestBlock ->
   m (ChainSyncResources m TestBlock)
-makeChainSyncResources csrTickStarted SharedResources {srPeerId, srTracer, srBlockTree, srCurrentState} = do
+makeChainSyncResources csrTickStarted SharedResources{srPeerId, srTracer, srBlockTree, srCurrentState} = do
   csrCurrentIntersection <- uncheckedNewTVarM $ AF.Point Origin
   let
     handlers = makeChainSyncServerHandlers csrCurrentIntersection srBlockTree
     csrServer = runScheduledChainSyncServer srPeerId csrTickStarted (readTVar srCurrentState) srTracer handlers
-  pure ChainSyncResources {csrTickStarted, csrServer, csrCurrentIntersection}
+  pure ChainSyncResources{csrTickStarted, csrServer, csrCurrentIntersection}
 
 makeBlockFetchResources ::
   IOLike m =>
   STM m () ->
   SharedResources m TestBlock ->
   BlockFetchResources m TestBlock
-makeBlockFetchResources bfrTickStarted SharedResources {srPeerId, srTracer, srBlockTree, srCurrentState} =
-  BlockFetchResources {
-    bfrTickStarted,
-    bfrServer
-  }
-  where
-    handlers = BlockFetchServerHandlers {
-      bfshBlockFetch = handlerBlockFetch srBlockTree,
-      bfshSendBlocks = handlerSendBlocks
+makeBlockFetchResources bfrTickStarted SharedResources{srPeerId, srTracer, srBlockTree, srCurrentState} =
+  BlockFetchResources
+    { bfrTickStarted
+    , bfrServer
     }
-    bfrServer =
-      runScheduledBlockFetchServer srPeerId bfrTickStarted (readTVar srCurrentState)
-        srTracer handlers
+ where
+  handlers =
+    BlockFetchServerHandlers
+      { bfshBlockFetch = handlerBlockFetch srBlockTree
+      , bfshSendBlocks = handlerSendBlocks
+      }
+  bfrServer =
+    runScheduledBlockFetchServer
+      srPeerId
+      bfrTickStarted
+      (readTVar srCurrentState)
+      srTracer
+      handlers
 
 -- | Create the concurrency transactions for communicating the begin of a peer's
 -- tick and its new state to the ChainSync and BlockFetch servers.
@@ -194,10 +203,10 @@ updateState srCurrentState =
     let
       newState points = do
         writeTVar srCurrentState =<< do
-            -- REVIEW: Is it ok to only unblock the peer when it is online?
-            -- So far we've handled Nothing in the ChainSync server by skipping the tick.
-            writeTChan publisher ()
-            pure (Just points)
+          -- REVIEW: Is it ok to only unblock the peer when it is online?
+          -- So far we've handled Nothing in the ChainSync server by skipping the tick.
+          writeTChan publisher ()
+          pure (Just points)
     pure (newState, readTChan consumer1, readTChan consumer2)
 
 -- | Create all concurrency resources and the ChainSync protocol server used
@@ -218,10 +227,10 @@ makePeerResources ::
 makePeerResources srTracer srBlockTree srPeerId = do
   srCurrentState <- uncheckedNewTVarM Nothing
   (prUpdateState, csrTickStarted, bfrTickStarted) <- updateState srCurrentState
-  let prShared = SharedResources {srTracer, srBlockTree, srPeerId, srCurrentState}
+  let prShared = SharedResources{srTracer, srBlockTree, srPeerId, srCurrentState}
       prBlockFetch = makeBlockFetchResources bfrTickStarted prShared
   prChainSync <- makeChainSyncResources csrTickStarted prShared
-  pure PeerResources {prShared, prChainSync, prBlockFetch, prUpdateState}
+  pure PeerResources{prShared, prChainSync, prBlockFetch, prUpdateState}
 
 -- | Create resources for all given peers operating on the given block tree.
 makePeerSimulatorResources ::
@@ -231,8 +240,8 @@ makePeerSimulatorResources ::
   NonEmpty PeerId ->
   m (PeerSimulatorResources m TestBlock)
 makePeerSimulatorResources tracer blockTree peers = do
-  resources <- for peers $ \ peerId -> do
+  resources <- for peers $ \peerId -> do
     peerResources <- makePeerResources tracer blockTree peerId
     pure (peerId, peerResources)
   psrHandles <- atomically newChainSyncClientHandleCollection
-  pure PeerSimulatorResources {psrPeers = Map.fromList $ toList resources, psrHandles}
+  pure PeerSimulatorResources{psrPeers = Map.fromList $ toList resources, psrHandles}

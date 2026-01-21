@@ -203,19 +203,19 @@ and improvements are always welcome.
 
 ## Formatting the code
 
-We use `stylish-haskell` 0.14.6.0 for Haskell code formatting.
+We use `fourmolu` for Haskell code formatting. See [tools.nix](./nix/tools.nix) for the `fourmolu` version used in CI.
 
 Either enable editor integration or call the script used by CI itself:
 
 ```bash
-./scripts/ci/run-stylish.sh
+./scripts/ci/run-fourmolu.sh
 ```
 
 When using Nix, you can use the following command, which will build and use
-the right version of `stylish-haskell`.
+the right version of `fourmolu`.
 
 ```bash
-nix develop -c ./scripts/ci/run-stylish.sh
+nix develop -c ./scripts/ci/run-fourmolu.sh
 ```
 
 # Generating documentation and setting up hoogle
