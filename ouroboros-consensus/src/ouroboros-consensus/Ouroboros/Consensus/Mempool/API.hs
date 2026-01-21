@@ -263,21 +263,36 @@ data Mempool m blk = Mempool
   -- the action forked in the thread.
   }
 
+-- | This configuration data controls a lightweight "defensive programming"
+-- feature in the Mempool.
+--
+-- The overall Praos design assumes that the 'TxLimits' strongly bounds how
+-- much CPU&allocation it will cost to determine whether a given tx is valid or
+-- invalid. But the June 2024 incident proved that such performance bugs might
+-- can slip through to @mainnet@. When they do, it'd be desirable for the
+-- Mempool to help prevent honest users from making regrettable mistakes (eg
+-- the November 2025 incident), at least inconvenience the adversary, etc.
+--
+-- To be clear: this timeout could never fully protect @mainnet@ from such
+-- performance bugs, since the adversary could always put slow txs directly
+-- into their own blocks, circumventing the Mempool entirely. But it at least
+-- forces the adversary to have enough stake to issue slow blocks often enough
+-- to matter and moreover forces them to public reveal whichever stake pools
+-- they use as untrustworthy, since the blocks with slow txs must be
+-- well-signed in order to affect the honest nodes.
+--
+-- Latency spikes (eg GC pauses, snapshot writing, OS sleeping the process,
+-- etc) will cause occasional false alarms for this timeout. But we don't
+-- expect them to be frequent enough to matter.
 data MempoolTimeoutConfig = MempoolTimeoutConfig
   { mempoolTimeoutSoft :: DiffTime
     -- ^ If the mempool takes longer than this to validate a tx, then it
-    -- discards the tx instead of adding it to the mempool.
-    --
-    -- TODO latency spikes (eg GC pauses, snapshot writing, process sleep, etc)
-    -- risk false alarms
+    -- discards the tx instead of adding it.
   , mempoolTimeoutHard :: DiffTime
     -- ^ If the mempool takes longer than this to validate a tx, then it
     -- disconnects from the peer.
     --
     -- INVARIANT: @'mempoolTimeoutHard' >= 'mempoolTimeoutSoft'@.
-    --
-    -- TODO latency spikes (eg GC pauses, snapshot writing, process sleep, etc)
-    -- risk false alarms
   , mempoolTimeoutCapacity :: DiffTime
     -- ^ If the txs in the mempool took longer than this cumulatively to
     -- validate when each entered the mempool, then the mempool is at capacity,
@@ -298,9 +313,9 @@ data MempoolTimeoutConfig = MempoolTimeoutConfig
     -- To avoid any risks of overflow, this value should be less than @maxBound
     -- - 'mempoolTimeoutSoft'@.
     --
-    -- Latency spikes (eg GC pauses, snapshot writing, process sleep, etc) do
-    -- risk "wasting" this capacity, but only up to 'mempoolTimeoutSoft' /per/
-    -- /validated/ /tx/.
+    -- Latency spikes (eg GC pauses, snapshot writing, OS sleeping the process,
+    -- etc) do risk "wasting" this capacity, but only up to
+    -- 'mempoolTimeoutSoft' /per/ /validated/ /tx/.
   }
   deriving (Eq, Show)
 
