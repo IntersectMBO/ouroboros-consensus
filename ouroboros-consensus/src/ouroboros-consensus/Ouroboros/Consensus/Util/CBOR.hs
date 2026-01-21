@@ -33,7 +33,7 @@ module Ouroboros.Consensus.Util.CBOR
   , encodeWithOrigin
   ) where
 
-import Cardano.Binary (decodeMaybe, encodeMaybe, DecoderError(..))
+import Cardano.Binary (DecoderError (..), decodeMaybe, encodeMaybe)
 import Cardano.Slotting.Slot
   ( WithOrigin (..)
   , withOriginFromMaybe
@@ -56,6 +56,7 @@ import Data.Foldable (toList)
 import Data.IORef
 import Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as Seq
+import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Util.IOLike as U
@@ -177,7 +178,7 @@ decodeAsFlatTerm bs0 =
 
 data ReadIncrementalErr
   = -- | Could not deserialise the data
-    ReadFailed CBOR.R.DeserialiseFailure
+    ReadFailed DecoderError
   | -- | Deserialisation was successful, but there was additional data
     TrailingBytes ByteString
   deriving (Eq, Show)
@@ -220,7 +221,7 @@ readIncremental = \(SomeHasFS hasFS) mkInitCRC decoder fp -> do
         then Right (a, checksum)
         else Left $ TrailingBytes leftover
   go _ _ _ (CBOR.R.Fail _ _ err) =
-    return $ Left $ ReadFailed err
+    return $ Left $ ReadFailed $ DecoderErrorDeserialiseFailure (Text.pack "") err
 
   checkEmpty :: ByteString -> Maybe ByteString
   checkEmpty bs
@@ -292,21 +293,15 @@ withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
             bs : bss' -> LBS.fromChunks (reverse (bs' : bss'))
              where
               bs' = BS.take (BS.length bs - BS.length leftover) bs
-          -- The bang on the @a'@ here allows the used 'Decoder' to force
-          -- its computation. For example, the decoder might decode a whole
-          -- block and then (maybe through a use of 'fmap') just return its
-          -- hash. If we don't force the value it returned here, we're just
-          -- putting a thunk that references the whole block in the list
-          -- instead of merely the hash.
-          !a = mkA aBytes
-      -- TODO(10.7): remove the bang above and the comment since the case forces mkA aBytes
-      case a of
+      -- The bang on the @a'@ here allows the used 'Decoder' to force
+      -- its computation. For example, the decoder might decode a whole
+      -- block and then (maybe through a use of 'fmap') just return its
+      -- hash. If we don't force the value it returned here, we're just
+      -- putting a thunk that references the whole block in the list
+      -- instead of merely the hash.
+      case mkA aBytes of
         Left err ->
-          let convertError = undefined
-           -- TODO(10.7): we want to bubble up the error,
-           -- but the following does not type-check
-           -- in pure $ (ReadFailed (convertError err), offset)
-           in pure . Just $ (ReadFailed (convertError err), offset)
+          pure . Just $ (ReadFailed err, offset)
         Right result -> do
           S.yield (offset, (fromIntegral size, result))
           case checkEmpty leftover of
@@ -318,7 +313,7 @@ withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
             mbLeftover ->
               S.lift (U.stToIO (CBOR.R.deserialiseIncremental decoder))
                 >>= go h nextOffset mbLeftover [] fileSize
-    CBOR.R.Fail _ _ err -> return $ Just (ReadFailed err, offset)
+    CBOR.R.Fail _ _ err -> return $ Just (ReadFailed (DecoderErrorDeserialiseFailure (Text.pack "") err), offset)
 
   checkEmpty :: ByteString -> Maybe ByteString
   checkEmpty bs

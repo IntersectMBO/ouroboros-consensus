@@ -60,7 +60,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , withDB
   ) where
 
-import qualified Codec.CBOR.Read as CBOR
+import Cardano.Binary (DecoderError)
 import Control.Monad.Except (ExceptT (..), runExceptT, throwError)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (ResourceRegistry)
@@ -404,7 +404,7 @@ data UnexpectedFailure blk
     -- one.
     ChecksumMismatchError (RealPoint blk) CRC CRC FsPath PrettyCallStack
   | -- | A block failed to parse
-    ParseError FsPath (RealPoint blk) CBOR.DeserialiseFailure
+    ParseError FsPath (RealPoint blk) DecoderError
   | -- | When parsing a block we got some trailing data
     TrailingDataError FsPath (RealPoint blk) Lazy.ByteString
   | -- | Block missing

@@ -36,6 +36,7 @@ import Data.Foldable (find)
 import Data.Functor ((<&>))
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Text as Text
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block hiding (headerHash)
@@ -729,8 +730,8 @@ extractBlockComponent
         CBOR.deserialiseFromBytes
           (aux <$> decodeDiskDep ccfg ctxt)
           bytes
-      where
-        aux = \f -> Right . nest . DepPair ctxt . f
+     where
+      aux = \f -> Right . nest . DepPair ctxt . f
 
     -- TODO(10.7): consider unifying this function with the one in VolatileDB
     throwParseErrors ::
@@ -743,19 +744,18 @@ extractBlockComponent
         | Lazy.null trailing ->
             case f fullBytes of
               Left err ->
-                -- TODO(10.7): must change the UnexpectedFailure type's ParseError constructor to
-                -- carry Plain.DecoderError and return it. CBOR.DeserialiseFailure could be subsumed
-                -- by Plain.DecoderError, there's a constructor for it
                 throwUnexpectedFailure $
-                  ParseError (fsPathChunkFile chunk) pt (CBOR.DeserialiseFailure 0 (show err))
+                  ParseError
+                    (fsPathChunkFile chunk)
+                    pt
+                    (Plain.DecoderErrorDeserialiseFailure (Text.pack "") $ CBOR.DeserialiseFailure 0 (show err))
               Right result -> pure result
-            -- return $ f fullBytes
         | otherwise ->
             throwUnexpectedFailure $
               TrailingDataError (fsPathChunkFile chunk) pt trailing
       Left err ->
         throwUnexpectedFailure $
-          ParseError (fsPathChunkFile chunk) pt err
+          ParseError (fsPathChunkFile chunk) pt (Plain.DecoderErrorDeserialiseFailure (Text.pack "") err)
 
 -- | Find a filled slot, starting from the target slot and going forwards in the ImmutableDB.
 --
