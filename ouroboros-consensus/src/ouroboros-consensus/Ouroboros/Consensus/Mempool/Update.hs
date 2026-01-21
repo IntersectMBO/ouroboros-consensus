@@ -1,11 +1,13 @@
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 
 -- | Operations that update the mempool. They are internally divided in the pure
 -- and impure sides of the operation.
 module Ouroboros.Consensus.Mempool.Update
-  ( implAddTx
+  ( WhichAddTx (..)
+  , implAddTx
   , implRemoveTxsEvenIfValid
   , implSyncWithLedger
   ) where
@@ -16,6 +18,8 @@ import Control.Monad.Class.MonadTimer.SI (MonadTimer, timeout)
 import Control.Tracer
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
+import Data.Functor.Identity (Identity (Identity))
+import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
@@ -42,21 +46,38 @@ import Ouroboros.Network.Block
   Add transactions
 -------------------------------------------------------------------------------}
 
--- | Add a single transaction to the mempool, blocking if there is no space.
+-- | A GADT that enables the shared implementation of 'addTx' and 'addTestTx'.
+type WhichAddTx :: (Type -> Type) -> Type
+data WhichAddTx f where
+  ProductionAddTx :: WhichAddTx Identity
+  -- | The argument unique to 'addTestTx'.
+  --
+  -- The 'Nothing' result means the tx would not fit in the current mempool;
+  -- the testing implementation gives up instead of retrying indefinitely.
+  TestingAddTx :: !DiffTime -> WhichAddTx Maybe
+
+-- | Add a single transaction to the mempool.
+--
+-- If there is no space, then the 'ProductionAddTx' caller will block until
+-- there space, and try again, repeatedly until it succeeds. It only releases
+-- the lock when this loop terminates.
+--
+-- If there is no space, the 'TestingAddTx' caller will immediately return
+-- 'Nothing'.
 implAddTx ::
   ( IOLike m
   , MonadTimer m
   , LedgerSupportsMempool blk
-  , ValidateEnvelope blk
   , HasTxId (GenTx blk)
   ) =>
   MempoolEnv m blk ->
+  WhichAddTx f ->
   -- | Whether we're acting on behalf of a remote peer or a local client.
   AddTxOnBehalfOf ->
   -- | The transaction to add to the mempool.
   GenTx blk ->
-  m (MempoolAddTxResult blk)
-implAddTx mpEnv onbehalf tx =
+  m (f (MempoolAddTxResult blk))
+implAddTx mpEnv caller onbehalf tx =
   -- To ensure fair behaviour between threads that are trying to add
   -- transactions, we make them all queue in a fifo. Only the one at the head
   -- of the queue gets to actually wait for space to get freed up in the
@@ -94,22 +115,28 @@ implAddTx mpEnv onbehalf tx =
     } = mpEnv
 
   implAddTx' = do
-    TransactionProcessingResult _ result ev <-
-      doAddTx
-        mpEnv
-        (whetherToIntervene onbehalf)
-        tx
-    traceWith trcr ev
-    return result
+    x <- doAddTx mpEnv caller wti tx
+    case (caller, x) of
+      (ProductionAddTx, Identity (TransactionProcessingResult _ result ev)) -> do
+        traceWith trcr ev
+        return $ Identity result
+      (TestingAddTx _, Just (TransactionProcessingResult _ result ev)) -> do
+        traceWith trcr ev
+        return $ Just result
+      (TestingAddTx _, Nothing) -> pure Nothing
 
-  whetherToIntervene :: AddTxOnBehalfOf -> WhetherToIntervene
-  whetherToIntervene AddTxForRemotePeer = DoNotIntervene
-  whetherToIntervene AddTxForLocalClient = Intervene
+  wti :: WhetherToIntervene
+  wti = case onbehalf of
+    AddTxForRemotePeer -> DoNotIntervene
+    AddTxForLocalClient -> Intervene
 
 -- | Tried to add a transaction, was it processed or is there no space left?
 data TriedToAddTx blk
   = -- | Adding the next transaction would put the mempool over capacity.
     NotEnoughSpaceLeft
+  | NotProcessed (TransactionProcessed blk)
+    -- ^ The tx was rejected based on the result 'txMeasure'; we didn't even
+    -- try to validate the tx.
   | Processed !(DiffTimeMeasure -> TransactionProcessed blk)
       -- ^ Implementation detail: this argument is strict in order to prevent
       -- this constructor from being floated out of both branches of the case
@@ -147,19 +174,19 @@ data TransactionProcessed blk
 --
 -- INVARIANT: The code needs that read and writes on the state are coupled
 -- together or inconsistencies will arise.
-doAddTx ::
+doAddTx :: forall m blk f.
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
-  , ValidateEnvelope blk
   , IOLike m
   , MonadTimer m
   ) =>
   MempoolEnv m blk ->
+  WhichAddTx f ->
   WhetherToIntervene ->
   -- | The transaction to add to the mempool.
   GenTx blk ->
-  m (TransactionProcessed blk)
-doAddTx mpEnv wti tx =
+  m (f (TransactionProcessed blk))
+doAddTx mpEnv caller wti tx = do
   doAddTx' Nothing
  where
   MempoolEnv
@@ -170,6 +197,7 @@ doAddTx mpEnv wti tx =
     , mpEnvTimeoutConfig = mbToCfg
     } = mpEnv
 
+  doAddTx' :: Maybe MempoolSize -> m (f (TransactionProcessed blk))
   doAddTx' mbPrevSize = do
     traceWith trcr $ TraceMempoolAttemptingAdd tx
 
@@ -180,7 +208,7 @@ doAddTx mpEnv wti tx =
             Nothing -> pure ()
             Just prevSize -> check $ isMempoolSize is /= prevSize
 
-    res <- withTMVarAnd istate additionalCheck $
+    eRes <- withTMVarAnd istate additionalCheck $
       \is () -> do
         frkr <- readMVar forker
         tbs <-
@@ -191,13 +219,31 @@ doAddTx mpEnv wti tx =
           let f m = case mbToCfg of
                 Nothing -> Just <$> m
                 Just toCfg -> timeout (mempoolTimeoutHard toCfg) m
-          f $ evaluate $ pureTryAddTx mpEnv cfg wti tx is tbs
+          f $ do
+            x <- evaluate $ pureTryAddTx mpEnv cfg wti tx is tbs
+            case (caller, x) of
+              (TestingAddTx testDiffTime, Processed{}) -> do
+                after <- getMonotonicTime
+                let sofar = after `diffTime` before
+                threadDelay $ testDiffTime - min testDiffTime sofar
+                -- Note that @sofar == 0@ always and this 'threadDelay' would
+                -- be perfectly precise in the @IOSim@ monad. Unfortunately,
+                -- the state machines tests are still only in IO.
+              _ -> pure ()
+            pure x
         dur <- do
+          -- Note that both the hard 'timeout' and the soft duration check use
+          -- the actual monotonic clock measurements instead of simply
+          -- deferring to 'TestingAddTx'. This means the test will fail if the
+          -- 'timeout' and the monotonic clock measurement primitives are not
+          -- as precise as the test expects (recall that the test suite chooses
+          -- intended validation times that are not "too close" to the
+          -- thresholds).
           after <- getMonotonicTime
           pure $ after `diffTime` before
         case mbX of
           Nothing -> do
-            throwIO $ MempoolTxTimeout dur (txId tx)
+            throwIO $ MkExnMempoolTimeout dur (txId tx)
           Just _
             | Just toCfg <- mbToCfg
             , dur > mempoolTimeoutSoft toCfg
@@ -219,22 +265,27 @@ doAddTx mpEnv wti tx =
               pure (Right outcome, is)
           Just NotEnoughSpaceLeft -> do
             pure (Left (isMempoolSize is), is)
+          Just (NotProcessed outcome) -> do
+            let TransactionProcessingResult is' _ _ = outcome
+            pure (Right outcome, fromMaybe is is')
           Just (Processed mkResult) -> do
-            let outcome = mkResult $ FiniteDiffTimeMeasure dur
+            let outcome = mkResult $ FiniteDiffTimeMeasure $ case caller of
+                  ProductionAddTx -> dur
+                  TestingAddTx testDiffTime ->
+                    -- For the sake of an accurate cumulative measure, pretend
+                    -- the tx took exactly as long to validate as the test
+                    -- suite intended.
+                    --
+                    -- Note that @testDiffTime == dur@ always in @IOSim@.
+                    -- Unfortunately, the state machines tests are still only
+                    -- in IO.
+                    testDiffTime
                 TransactionProcessingResult is' _ _ = outcome
             pure (Right outcome, fromMaybe is is')
-    either (doAddTx' . Just) pure res
-
-data MempoolTxTimeout =
-  forall blk. Show (GenTxId blk) => MempoolTxTimeout !DiffTime !(GenTxId blk)   -- TODO full tx hash
-
-instance Show MempoolTxTimeout where
-    showsPrec p (MempoolTxTimeout dur txid)
-      = showParen
-          (p >= 11)
-          (showString "MempoolTxTimeout " . showsPrec 11 dur . showString " " . showsPrec 11 txid)
-
-instance Exception MempoolTxTimeout
+    case (caller, eRes) of
+      (ProductionAddTx, _) -> either (doAddTx' . Just) (pure . Identity) eRes
+      (TestingAddTx _, Left _) -> pure Nothing
+      (TestingAddTx _, Right x) -> pure $ Just x
 
 pureTryAddTx ::
   ( LedgerSupportsMempool blk
@@ -272,7 +323,7 @@ pureTryAddTx mpEnv cfg wti tx is values =
           -- selection changed, even if the tx wouldn't fit. So it'd very much be
           -- as if the mempool were effectively over capacity! What's worse, each
           -- attempt would not be using 'extendVRPrevApplied'.
-          Processed $ \_dur ->
+          NotProcessed $
             TransactionProcessingResult
               Nothing
               (MempoolTxRejected tx err)
@@ -371,7 +422,6 @@ implRemoveTxsEvenIfValid ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
-  , ValidateEnvelope blk
   ) =>
   MempoolEnv m blk ->
   NE.NonEmpty (GenTxId blk) ->

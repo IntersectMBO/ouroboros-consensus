@@ -11,6 +11,7 @@ import Control.Monad (void)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Functor.Identity (runIdentity)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -110,7 +111,8 @@ mkMempool ::
   MempoolEnv m blk -> Mempool m blk
 mkMempool mpEnv =
   Mempool
-    { addTx = implAddTx mpEnv
+    { addTx = fmap runIdentity .: implAddTx mpEnv ProductionAddTx
+    , addTestTx = implAddTx mpEnv . TestingAddTx
     , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
     , getSnapshot = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
