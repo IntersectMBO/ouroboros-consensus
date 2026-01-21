@@ -63,11 +63,10 @@ import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Stack
-import Network.TypedProtocol.Codec
-  ( AnyMessage (..)
-  , CodecFailure
-  , mapFailureCodec
-  )
+import LeiosDemoOnlyTestFetch (LeiosFetch)
+import LeiosDemoOnlyTestNotify (LeiosNotify)
+import LeiosDemoTypes (LeiosEb, LeiosPoint, LeiosTx)
+import Network.TypedProtocol.Codec (AnyMessage (..), CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -1108,7 +1107,10 @@ runThreadNetwork
               -- node
               nullDebugProtocolTracers
               (customNodeToNodeCodecs pInfoConfig)
-              NTN.noByteLimits
+              -- REVIEW: This had "no limits" before using (const 0), this
+              -- now moved to the BearerBytes class and we would need to
+              -- select this size function via a new instance here
+              NTN.byteLimits
               -- see #1882, tests that can't cope with timeouts.
               ( pure $
                   NTN.ChainSyncTimeout
@@ -1190,6 +1192,8 @@ runThreadNetwork
         (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
         (AnyMessage KeepAlive)
         (AnyMessage (PeerSharing NodeId))
+        (AnyMessage (LeiosNotify LeiosPoint ()))
+        (AnyMessage (LeiosFetch LeiosPoint LeiosEb LeiosTx))
     customNodeToNodeCodecs cfg ntnVersion =
       NTN.Codecs
         { cChainSyncCodec =
@@ -1799,6 +1803,8 @@ type LimitedApp' m addr blk =
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
+    (AnyMessage (LeiosNotify LeiosPoint ()))
+    (AnyMessage (LeiosFetch LeiosPoint LeiosEb LeiosTx))
     NodeToNodeInitiatorResult
     ()
 
