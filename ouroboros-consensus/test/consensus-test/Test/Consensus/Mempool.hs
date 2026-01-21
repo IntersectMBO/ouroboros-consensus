@@ -480,6 +480,7 @@ validateTxs cfg = go []
 
 data TestSetupWithTxs = TestSetupWithTxs
   { testSetup :: TestSetup
+  -- ^ The capacity allows at least for (the valid) 'txs' to be added.
   , txs :: [(TestTx, Bool)]
   -- ^ These txs are not yet in the mempool
   --
@@ -546,7 +547,7 @@ instance Arbitrary TestSetupWithTxs where
           computeMempoolCapacity
             testLedgerConfigNoSizeLimits
             (TickedSimpleLedgerState ledger)
-            (testMempoolCapOverride testSetup)
+            (testMempoolCapOverride testSetup')
 
     largeInvalidTx <- genLargeInvalidTx mempoolCap
     let txs' = (largeInvalidTx, False) : txs
