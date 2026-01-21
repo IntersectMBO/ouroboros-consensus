@@ -54,6 +54,7 @@ import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity (Identity)
+import qualified Data.IntMap as IntMap
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
@@ -63,10 +64,7 @@ import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Stack
-import LeiosDemoOnlyTestFetch (LeiosFetch)
-import LeiosDemoOnlyTestNotify (LeiosNotify)
-import LeiosDemoTypes (LeiosEb, LeiosPoint, LeiosTx)
-import Network.TypedProtocol.Codec (AnyMessage (..), CodecFailure, mapFailureCodec)
+import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -130,11 +128,8 @@ import Ouroboros.Network.PeerSelection.Governor
 import Ouroboros.Network.PeerSelection.PeerMetric (nullMetric)
 import Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
-import Ouroboros.Network.Protocol.KeepAlive.Type
 import Ouroboros.Network.Protocol.Limits (waitForever)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
-import Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
-import Ouroboros.Network.Protocol.TxSubmission2.Type
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
 import System.Random (mkStdGen, split)
@@ -1189,11 +1184,11 @@ runThreadNetwork
         Lazy.ByteString
         Lazy.ByteString
         Lazy.ByteString
-        (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
-        (AnyMessage KeepAlive)
-        (AnyMessage (PeerSharing NodeId))
-        (AnyMessage (LeiosNotify LeiosPoint ()))
-        (AnyMessage (LeiosFetch LeiosPoint LeiosEb LeiosTx))
+        Lazy.ByteString -- TxSubmission2
+        Lazy.ByteString -- KeepAlive
+        Lazy.ByteString -- PeerSharing
+        Lazy.ByteString -- LeiosNotify
+        Lazy.ByteString -- LeiosFetch
     customNodeToNodeCodecs cfg ntnVersion =
       NTN.Codecs
         { cChainSyncCodec =
@@ -1209,14 +1204,14 @@ runThreadNetwork
             mapFailureCodec (CodecBytesFailure "BlockFetchSerialised") $
               NTN.cBlockFetchCodecSerialised binaryProtocolCodecs
         , cTxSubmission2Codec =
-            mapFailureCodec CodecIdFailure $
-              NTN.cTxSubmission2Codec NTN.identityCodecs
+            mapFailureCodec (CodecBytesFailure "TxSubmission2") $
+              NTN.cTxSubmission2Codec binaryProtocolCodecs
         , cKeepAliveCodec =
-            mapFailureCodec CodecIdFailure $
-              NTN.cKeepAliveCodec NTN.identityCodecs
+            mapFailureCodec (CodecBytesFailure "KeepAlive") $
+              NTN.cKeepAliveCodec binaryProtocolCodecs
         , cPeerSharingCodec =
-            mapFailureCodec CodecIdFailure $
-              NTN.cPeerSharingCodec NTN.identityCodecs
+            mapFailureCodec (CodecBytesFailure "PeerSharing") $
+              NTN.cPeerSharingCodec binaryProtocolCodecs
         }
      where
       binaryProtocolCodecs =
@@ -1800,11 +1795,11 @@ type LimitedApp' m addr blk =
     -- channel with the same type on both ends, i.e., 'Lazy.ByteString'.
     Lazy.ByteString
     Lazy.ByteString
-    (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
-    (AnyMessage KeepAlive)
-    (AnyMessage (PeerSharing addr))
-    (AnyMessage (LeiosNotify LeiosPoint ()))
-    (AnyMessage (LeiosFetch LeiosPoint LeiosEb LeiosTx))
+    Lazy.ByteString -- TxSubmission2
+    Lazy.ByteString -- KeepAlive
+    Lazy.ByteString -- PeerSharing
+    Lazy.ByteString -- LeiosNotify
+    Lazy.ByteString -- LeiosFetch
     NodeToNodeInitiatorResult
     ()
 
