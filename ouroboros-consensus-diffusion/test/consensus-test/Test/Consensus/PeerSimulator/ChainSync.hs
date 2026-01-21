@@ -50,7 +50,7 @@ import Ouroboros.Consensus.Util.IOLike
   , MonadCatch (try)
   )
 import Ouroboros.Network.Block (Tip)
-import Ouroboros.Network.Channel (Channel)
+import Ouroboros.Network.Channel (Channel, received)
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Driver (runPeer)
 import Ouroboros.Network.Driver.Limits
@@ -210,11 +210,11 @@ runChainSyncClient
                   )
               )
         case res of
-          Right res' ->
+          Right (res', mReception) ->
             traceWith svtPeerSimulatorResultsTracer $
               PeerSimulatorResult peerId $
                 SomeChainSyncClientResult $
-                  Right res'
+                  Right (res', received <$> mReception)
           Left exn -> traceException exn
    where
     traceException exn = do
@@ -235,8 +235,9 @@ runChainSyncClient
           traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceTerminatedByLoP
         _ -> pure ()
 
+-- REVIEW: This is not removing the limit anymore?
 chainSyncNoSizeLimits :: ProtocolSizeLimits (ChainSync header point tip) bytes
-chainSyncNoSizeLimits = byteLimitsChainSync (const 0)
+chainSyncNoSizeLimits = byteLimitsChainSync
 
 chainSyncNoTimeouts :: ChainSyncTimeout
 chainSyncNoTimeouts =
@@ -257,11 +258,11 @@ runChainSyncServer ::
   m ()
 runChainSyncServer tracer peerId StateViewTracers{svtPeerSimulatorResultsTracer} server channel =
   (try $ runPeer sendRecvTracer codecChainSyncId channel (chainSyncServerPeer server)) >>= \case
-    Right ((), msgRes) ->
+    Right ((), mReception) ->
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $
           SomeChainSyncServerResult $
-            Right msgRes
+            Right (received <$> mReception)
     Left exn -> do
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $
