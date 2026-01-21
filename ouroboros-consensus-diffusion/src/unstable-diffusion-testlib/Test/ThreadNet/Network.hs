@@ -1538,7 +1538,10 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
 
   chan q b =
     Channel
-      { recv = fmap Just $ atomically $ MonadSTM.takeTMVar b
+      { recv = do
+          tm <- getMonotonicTime
+          x <- atomically $ MonadSTM.takeTMVar b
+          pure . Just $ MkReception (IntMap.singleton 0 tm) x
       , send = atomically . MonadSTM.writeTQueue q
       }
 
