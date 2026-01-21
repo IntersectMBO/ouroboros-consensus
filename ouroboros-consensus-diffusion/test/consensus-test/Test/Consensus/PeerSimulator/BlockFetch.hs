@@ -57,7 +57,7 @@ import Ouroboros.Network.BlockFetch.Client (blockFetchClient)
 import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( FetchMode (..)
   )
-import Ouroboros.Network.Channel (Channel)
+import Ouroboros.Network.Channel (Channel, received)
 import Ouroboros.Network.ControlMessage (ControlMessageSTM)
 import Ouroboros.Network.Driver (runPeer)
 import Ouroboros.Network.Driver.Limits
@@ -194,11 +194,11 @@ runBlockFetchClient tracer peerId blockFetchTimeouts StateViewTracers{svtPeerSim
           channel
           (blockFetchClient ntnVersion controlMsgSTM nullTracer clientCtx)
     case res of
-      Right ((), msgRes) ->
+      Right ((), mReception) ->
         traceWith svtPeerSimulatorResultsTracer $
           PeerSimulatorResult peerId $
             SomeBlockFetchClientResult $
-              Right msgRes
+              Right (received <$> mReception)
       Left exn -> do
         traceWith svtPeerSimulatorResultsTracer $
           PeerSimulatorResult peerId $
@@ -214,8 +214,9 @@ runBlockFetchClient tracer peerId blockFetchTimeouts StateViewTracers{svtPeerSim
   ntnVersion :: NodeToNodeVersion
   ntnVersion = maxBound
 
+-- REVIEW: This is not removing the limit anymore?
 blockFetchNoSizeLimits :: ProtocolSizeLimits (BlockFetch block point) bytes
-blockFetchNoSizeLimits = byteLimitsBlockFetch (const 0)
+blockFetchNoSizeLimits = byteLimitsBlockFetch
 
 -- | Same as 'timeLimitsChainSync' for BlockFetch. NOTE: There exists a
 -- @timeLimitsBlockFetch@ in 'Ouroboros.Network.Protocol.BlockFetch.Codec' but
@@ -253,11 +254,11 @@ runBlockFetchServer ::
 runBlockFetchServer _tracer peerId StateViewTracers{svtPeerSimulatorResultsTracer} server channel = do
   res <- try $ runPeer nullTracer codecBlockFetchId channel (blockFetchServerPeer server)
   case res of
-    Right ((), msgRes) ->
+    Right ((), mReception) ->
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $
           SomeBlockFetchServerResult $
-            Right msgRes
+            Right (received <$> mReception)
     Left exn -> do
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $
