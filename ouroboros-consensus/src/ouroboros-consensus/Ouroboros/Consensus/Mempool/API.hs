@@ -302,6 +302,7 @@ data MempoolTimeoutConfig = MempoolTimeoutConfig
     -- risk "wasting" this capacity, but only up to 'mempoolTimeoutSoft' /per/
     -- /validated/ /tx/.
   }
+  deriving (Eq, Show)
 
 {-------------------------------------------------------------------------------
   Result of adding a transaction to the mempool
