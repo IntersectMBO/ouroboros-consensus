@@ -737,6 +737,7 @@ instance
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  ebCapacityTxMeasure _ _ = leiosEndorserBlockMeasure
 
 leiosEndorserBlockMeasure :: ConwayMeasure
 leiosEndorserBlockMeasure =

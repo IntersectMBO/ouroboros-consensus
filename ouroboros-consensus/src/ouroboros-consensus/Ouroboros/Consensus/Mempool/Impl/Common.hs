@@ -447,6 +447,7 @@ snapshotFromIS is =
     , snapshotSlotNo = isSlotNo is
     , snapshotStateHash = getTipHash $ isLedgerState is
     , snapshotTake = implSnapshotTake is
+    , snapshotSplit = implSnapshotSplit is
     }
  where
   implSnapshotGetTxs ::
@@ -484,6 +485,14 @@ snapshotFromIS is =
     InternalState blk ->
     MempoolSize
   implSnapshotGetMempoolSize = isMempoolSize
+
+  implSnapshotSplit ::
+    InternalState blk ->
+    TxMeasure blk ->
+    ([Validated (GenTx blk)], TxSeq (TxMeasure blk) (Validated (GenTx blk)))
+  implSnapshotSplit IS{isTxs} sz =
+    let (txsBefore, txsAfter) = TxSeq.splitAfterTxSize isTxs sz
+     in (map TxSeq.txTicketTx . TxSeq.toList $ txsBefore, txsAfter)
 
 {-------------------------------------------------------------------------------
   Tracing support for the mempool operations
