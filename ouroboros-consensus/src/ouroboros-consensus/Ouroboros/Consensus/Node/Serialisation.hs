@@ -43,12 +43,23 @@ import Codec.Serialise (Serialise (decode, encode))
 import Data.Kind
 import Data.SOP.BasicFunctors
 import Ouroboros.Consensus.Block
+  ( CodecConfig
+  , ConvertRawHash (..)
+  , Point
+  , Proxy (..)
+  , decodeRawHash
+  , encodeRawHash
+  )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , GenTxId
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import qualified Ouroboros.Consensus.Peras.Cert as Base (PerasCert (..))
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
+import Ouroboros.Consensus.Peras.Vote (PerasVoterId (..))
+import qualified Ouroboros.Consensus.Peras.Vote as Base (PerasVote (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (Some (..))
 import Ouroboros.Network.Block
@@ -197,9 +208,9 @@ instance SerialiseNodeToNode blk PerasRoundNo where
   encodeNodeToNode _ccfg _version = encode
   decodeNodeToNode _ccfg _version = decode
 
-instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
-  -- Consistent with the 'Serialise' instance for 'PerasCert' defined in Ouroboros.Consensus.Block.SupportsPeras
-  encodeNodeToNode ccfg version PerasCert{..} =
+instance ConvertRawHash blk => SerialiseNodeToNode blk (Base.PerasCert blk) where
+  -- Consistent with the 'Serialise' instance for 'PerasCert' defined in Ouroboros.Consensus.Peras.Cert
+  encodeNodeToNode ccfg version (Base.PerasCert{..}) =
     encodeListLen 2
       <> encodeNodeToNode ccfg version pcCertRound
       <> encodeNodeToNode ccfg version pcCertBoostedBlock
@@ -207,11 +218,11 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
     decodeListLenOf 2
     pcCertRound <- decodeNodeToNode ccfg version
     pcCertBoostedBlock <- decodeNodeToNode ccfg version
-    pure $ PerasCert pcCertRound pcCertBoostedBlock
+    pure $ Base.PerasCert pcCertRound pcCertBoostedBlock
 
-instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote blk) where
-  -- Consistent with the 'Serialise' instance for 'PerasVote' defined in Ouroboros.Consensus.Block.SupportsPeras
-  encodeNodeToNode ccfg version PerasVote{..} =
+instance ConvertRawHash blk => SerialiseNodeToNode blk (Base.PerasVote blk) where
+  -- Consistent with the 'Serialise' instance for 'PerasVote' defined in Ouroboros.Consensus.Peras.Vote
+  encodeNodeToNode ccfg version (Base.PerasVote{..}) =
     encodeListLen 3
       <> encodeNodeToNode ccfg version pvVoteRound
       <> encodeNodeToNode ccfg version pvVoteBlock
@@ -221,7 +232,7 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote blk) where
     pvVoteRound <- decodeNodeToNode ccfg version
     pvVoteBlock <- decodeNodeToNode ccfg version
     pvVoteVoterId <- decodeNodeToNode ccfg version
-    pure $ PerasVote pvVoteRound pvVoteBlock pvVoteVoterId
+    pure $ Base.PerasVote pvVoteRound pvVoteBlock pvVoteVoterId
 
 instance SerialiseNodeToNode blk PerasVoterId where
   encodeNodeToNode _ccfg _version = KeyHash.toCBOR . unPerasVoterId

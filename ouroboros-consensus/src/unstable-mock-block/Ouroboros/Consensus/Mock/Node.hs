@@ -70,6 +70,7 @@ instance
 
 instance
   ( LedgerSupportsProtocol (SimpleBlock SimpleMockCrypto ext)
+  , BlockSupportsPeras (SimpleBlock SimpleMockCrypto ext)
   , Show (CannotForge (SimpleBlock SimpleMockCrypto ext))
   , Show (ForgeStateInfo (SimpleBlock SimpleMockCrypto ext))
   , Show (ForgeStateUpdateError (SimpleBlock SimpleMockCrypto ext))

@@ -855,6 +855,7 @@ chainSyncClient ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  -- , BlockSupportsPeras blk
   ) =>
   ConfigEnv m blk ->
   DynamicEnv m blk ->

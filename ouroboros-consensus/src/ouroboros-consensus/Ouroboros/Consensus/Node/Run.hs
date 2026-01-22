@@ -108,6 +108,7 @@ class
   , NodeInitStorage blk
   , BlockSupportsMetrics blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , BlockSupportsSanityCheck blk
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)

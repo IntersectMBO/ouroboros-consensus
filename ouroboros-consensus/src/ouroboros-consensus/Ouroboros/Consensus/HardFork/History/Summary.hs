@@ -73,6 +73,8 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.HardFork.History.EraParams
 import Ouroboros.Consensus.HardFork.History.Util
+import Ouroboros.Consensus.Peras.Params (PerasRoundLength (..))
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo (..))
 
 {-------------------------------------------------------------------------------
   Bounds

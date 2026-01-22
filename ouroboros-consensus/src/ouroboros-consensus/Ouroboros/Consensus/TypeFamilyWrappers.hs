@@ -3,6 +3,9 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE DerivingStrategies #-}
 
 -- | Newtypes around type families so that they can be partially applied
 module Ouroboros.Consensus.TypeFamilyWrappers
@@ -19,6 +22,8 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapLedgerEvent (..)
   , WrapLedgerUpdate (..)
   , WrapLedgerWarning (..)
+  , WrapPerasCert (..)
+  , WrapPerasVote (..)
   , WrapTentativeHeaderState (..)
   , WrapTentativeHeaderView (..)
   , WrapTipInfo (..)
@@ -72,6 +77,8 @@ newtype WrapLedgerEvent blk = WrapLedgerEvent {unwrapLedgerEvent :: AuxLedgerEve
 newtype WrapLedgerErr blk = WrapLedgerErr {unwrapLedgerErr :: LedgerError blk}
 newtype WrapLedgerUpdate blk = WrapLedgerUpdate {unwrapLedgerUpdate :: LedgerUpdate blk}
 newtype WrapLedgerWarning blk = WrapLedgerWarning {unwrapLedgerWarning :: LedgerWarning blk}
+newtype WrapPerasCert blk = WrapPerasCert {unwrapPerasCert :: PerasCert blk}
+newtype WrapPerasVote blk = WrapPerasVote {unwrapPerasVote :: PerasVote blk}
 newtype WrapTentativeHeaderState blk = WrapTentativeHeaderState {unwrapTentativeHeaderState :: TentativeHeaderState blk}
 newtype WrapTentativeHeaderView blk = WrapTentativeHeaderView {unwrapTentativeHeaderView :: TentativeHeaderView blk}
 newtype WrapTipInfo blk = WrapTipInfo {unwrapTipInfo :: TipInfo blk}
@@ -123,6 +130,8 @@ deriving instance Eq (GenTxId blk) => Eq (WrapGenTxId blk)
 deriving instance Eq (LedgerError blk) => Eq (WrapLedgerErr blk)
 deriving instance Eq (LedgerUpdate blk) => Eq (WrapLedgerUpdate blk)
 deriving instance Eq (LedgerWarning blk) => Eq (WrapLedgerWarning blk)
+deriving instance Eq (PerasCert blk) => Eq (WrapPerasCert blk)
+deriving instance Eq (PerasVote blk) => Eq (WrapPerasVote blk)
 deriving instance Eq (OtherHeaderEnvelopeError blk) => Eq (WrapEnvelopeErr blk)
 deriving instance Eq (TentativeHeaderState blk) => Eq (WrapTentativeHeaderState blk)
 deriving instance Eq (TentativeHeaderView blk) => Eq (WrapTentativeHeaderView blk)
@@ -130,6 +139,8 @@ deriving instance Eq (TipInfo blk) => Eq (WrapTipInfo blk)
 deriving instance Eq (Validated (GenTx blk)) => Eq (WrapValidatedGenTx blk)
 
 deriving instance Ord (GenTxId blk) => Ord (WrapGenTxId blk)
+deriving instance Ord (PerasCert blk) => Ord (WrapPerasCert blk)
+deriving instance Ord (PerasVote blk) => Ord (WrapPerasVote blk)
 deriving instance Ord (TentativeHeaderState blk) => Ord (WrapTentativeHeaderState blk)
 
 deriving instance Show (ApplyTxErr blk) => Show (WrapApplyTxErr blk)
@@ -140,6 +151,8 @@ deriving instance Show (GenTxId blk) => Show (WrapGenTxId blk)
 deriving instance Show (LedgerError blk) => Show (WrapLedgerErr blk)
 deriving instance Show (LedgerUpdate blk) => Show (WrapLedgerUpdate blk)
 deriving instance Show (LedgerWarning blk) => Show (WrapLedgerWarning blk)
+deriving instance Show (PerasCert blk) => Show (WrapPerasCert blk)
+deriving instance Show (PerasVote blk) => Show (WrapPerasVote blk)
 deriving instance Show (OtherHeaderEnvelopeError blk) => Show (WrapEnvelopeErr blk)
 deriving instance Show (TentativeHeaderState blk) => Show (WrapTentativeHeaderState blk)
 deriving instance Show (TentativeHeaderView blk) => Show (WrapTentativeHeaderView blk)
@@ -150,6 +163,10 @@ deriving instance
   NoThunks (GenTxId blk) => NoThunks (WrapGenTxId blk)
 deriving instance
   NoThunks (LedgerError blk) => NoThunks (WrapLedgerErr blk)
+deriving instance
+  NoThunks (PerasCert blk) => NoThunks (WrapPerasCert blk)
+deriving instance
+  NoThunks (PerasVote blk) => NoThunks (WrapPerasVote blk)
 deriving instance
   NoThunks (OtherHeaderEnvelopeError blk) => NoThunks (WrapEnvelopeErr blk)
 deriving instance
@@ -190,6 +207,9 @@ deriving instance Show (ValidationErr (BlockProtocol blk)) => Show (WrapValidati
 deriving instance NoThunks (ChainDepState (BlockProtocol blk)) => NoThunks (WrapChainDepState blk)
 deriving instance NoThunks (TiebreakerView (BlockProtocol blk)) => NoThunks (WrapTiebreakerView blk)
 deriving instance NoThunks (ValidationErr (BlockProtocol blk)) => NoThunks (WrapValidationErr blk)
+
+deriving instance IsPerasCert blk (PerasCert blk) => IsPerasCert blk (WrapPerasCert blk)
+deriving instance IsPerasVote blk (PerasVote blk) => IsPerasVote blk (WrapPerasVote blk)
 
 {-------------------------------------------------------------------------------
   Versioning

@@ -65,6 +65,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -327,7 +328,9 @@ addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
 
 addPerasCertAsync ::
   forall m blk.
-  IOLike m =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   ChainDbEnv m blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   m (AddPerasCertPromise m)
@@ -356,6 +359,7 @@ chainSelSync ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack

@@ -72,10 +72,13 @@ class
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsMetrics blk
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
+  , StandardHash blk
   , -- LedgerTables
     CanStowLedgerTables (LedgerState blk)
   , HasLedgerTables (LedgerState blk)
   , HasLedgerTables (Ticked (LedgerState blk))
+  , -- Peras
+    BlockSupportsPeras blk
   , -- Instances required to support testing
     Eq (GenTx blk)
   , Eq (Validated (GenTx blk))

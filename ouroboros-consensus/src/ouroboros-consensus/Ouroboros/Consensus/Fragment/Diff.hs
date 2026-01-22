@@ -35,6 +35,7 @@ module Ouroboros.Consensus.Fragment.Diff
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Params (PerasWeight)
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Network.AnchoredFragment
   ( AnchoredFragment

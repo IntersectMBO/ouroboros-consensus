@@ -118,6 +118,7 @@ instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , BlockSupportsSanityCheck (ShelleyBlock proto era)
+  , BlockSupportsPeras (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)

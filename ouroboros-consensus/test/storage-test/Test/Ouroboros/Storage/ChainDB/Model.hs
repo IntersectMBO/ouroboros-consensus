@@ -110,6 +110,8 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
@@ -175,10 +177,16 @@ deriving instance
   , ToExpr (Chain blk)
   , ToExpr (ChainProducerState blk)
   , ToExpr (ExtLedgerState blk EmptyMK)
+  , ToExpr (PerasCert blk)
   ) =>
   ToExpr (Model blk)
 
-deriving instance (LedgerSupportsProtocol blk, Show blk) => Show (Model blk)
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , Show (PerasCert blk)
+  , Show blk
+  ) =>
+  Show (Model blk)
 
 {-------------------------------------------------------------------------------
   Queries
@@ -243,7 +251,11 @@ getMaxSlotNo = foldMap (MaxSlotNo . blockSlot) . blocks
 -- * After VolatileDB corruption, the whole chain might have more than weight
 --   @k@, but the tip of the ImmutableDB might be buried under significantly
 --   less than weight @k@ worth of blocks.
-maxActualRollback :: HasHeader blk => SecurityParam -> Model blk -> PerasWeight
+maxActualRollback ::
+  ( HasHeader blk
+  , BlockSupportsPeras blk
+  ) =>
+  SecurityParam -> Model blk -> PerasWeight
 maxActualRollback k m =
   foldMap' (weightBoostOfPoint weights)
     . takeWhile (/= immutableTipPoint)
@@ -271,7 +283,9 @@ maxActualRollback k m =
 -- ImmutableDB to know the most recent \"immutable\" block.
 immutableChain ::
   forall blk.
-  HasHeader blk =>
+  ( HasHeader blk
+  , BlockSupportsPeras blk
+  ) =>
   SecurityParam ->
   Model blk ->
   Chain blk
@@ -311,7 +325,10 @@ immutableChain k m =
 -- 2. The suffix of the current chain not part of the 'immutableDbChain', i.e.,
 --    the \"ImmutableDB\".
 volatileChain ::
-  (HasHeader a, HasHeader blk) =>
+  ( HasHeader a
+  , HasHeader blk
+  , BlockSupportsPeras blk
+  ) =>
   SecurityParam ->
   -- | Provided since 'AnchoredFragment' is not a functor
   (blk -> a) ->
@@ -336,7 +353,9 @@ volatileChain k f m =
 -- because the background thread copying blocks to the ImmutableDB might not
 -- have caught up.
 immutableBlockNo ::
-  HasHeader blk =>
+  ( HasHeader blk
+  , BlockSupportsPeras blk
+  ) =>
   SecurityParam -> Model blk -> WithOrigin BlockNo
 immutableBlockNo k = Chain.headBlockNo . immutableChain k
 
@@ -346,7 +365,9 @@ immutableBlockNo k = Chain.headBlockNo . immutableChain k
 -- This is used for garbage collection of the VolatileDB, which is done in
 -- terms of slot numbers, not in terms of block numbers.
 immutableSlotNo ::
-  HasHeader blk =>
+  ( HasHeader blk
+  , BlockSupportsPeras blk
+  ) =>
   SecurityParam ->
   Model blk ->
   WithOrigin SlotNo
@@ -379,7 +400,9 @@ isValid = flip getIsValid
 getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
 getLoEFragment = loeFragment
 
-perasWeights :: StandardHash blk => Model blk -> PerasWeightSnapshot blk
+perasWeights ::
+  BlockSupportsPeras blk =>
+  Model blk -> PerasWeightSnapshot blk
 perasWeights =
   mkPerasWeightSnapshot
     . fmap (\cert -> (getPerasCertBoostedBlock cert, getPerasCertBoost cert))
@@ -415,7 +438,10 @@ empty loe initLedger =
 
 addBlock ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial (ExtLedgerState blk)
+  , BlockSupportsPeras blk
+  ) =>
   TopLevelConfig blk ->
   blk ->
   Model blk ->
@@ -444,7 +470,10 @@ addBlock cfg blk m
 
 addPerasCert ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial (ExtLedgerState blk)
+  , BlockSupportsPeras blk
+  ) =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   Model blk ->
@@ -463,6 +492,7 @@ chainSelection ::
   forall blk.
   ( LedgerTablesAreTrivial (ExtLedgerState blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->
@@ -589,7 +619,10 @@ chainSelection cfg m =
         consideredCandidates
 
 addBlocks ::
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial (ExtLedgerState blk)
+  , BlockSupportsPeras blk
+  ) =>
   TopLevelConfig blk ->
   [blk] ->
   Model blk ->
@@ -599,7 +632,11 @@ addBlocks cfg = repeatedly (addBlock cfg)
 -- | Wrapper around 'addBlock' that returns an 'AddBlockPromise'.
 addBlockPromise ::
   forall m blk.
-  (LedgerSupportsProtocol blk, MonadSTM m, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( LedgerSupportsProtocol blk
+  , MonadSTM m
+  , LedgerTablesAreTrivial (ExtLedgerState blk)
+  , BlockSupportsPeras blk
+  ) =>
   TopLevelConfig blk ->
   blk ->
   Model blk ->
@@ -622,6 +659,7 @@ updateLoE ::
   forall blk.
   ( LedgerTablesAreTrivial (ExtLedgerState blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   TopLevelConfig blk ->
   AnchoredFragment blk ->
@@ -636,7 +674,9 @@ updateLoE cfg f m = (tipPoint m', m')
 -------------------------------------------------------------------------------}
 
 stream ::
-  GetPrevHash blk =>
+  ( GetPrevHash blk
+  , BlockSupportsPeras blk
+  ) =>
   SecurityParam ->
   StreamFrom blk ->
   StreamTo blk ->
@@ -789,6 +829,7 @@ class
   , Serialise blk
   , Serialise (Header blk)
   , HasNestedContent Header blk
+  , BlockSupportsPeras blk
   ) =>
   ModelSupportsBlock blk
 
@@ -876,7 +917,10 @@ chains bs = go Chain.Genesis
 
 validChains ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial (ExtLedgerState blk)
+  , BlockSupportsPeras blk
+  ) =>
   TopLevelConfig blk ->
   Model blk ->
   Map (HeaderHash blk) blk ->
@@ -932,7 +976,9 @@ successors = Map.unionsWith Map.union . map single
 
 between ::
   forall blk.
-  GetPrevHash blk =>
+  ( GetPrevHash blk
+  , BlockSupportsPeras blk
+  ) =>
   SecurityParam ->
   StreamFrom blk ->
   StreamTo blk ->
@@ -1034,7 +1080,9 @@ between k from to m = do
 -- tip).
 garbageCollectable ::
   forall blk.
-  HasHeader blk =>
+  ( HasHeader blk
+  , BlockSupportsPeras blk
+  ) =>
   SecurityParam -> Model blk -> blk -> Bool
 garbageCollectable secParam m b =
   -- Note: we don't use the block number but the slot number, as the
@@ -1050,7 +1098,9 @@ garbageCollectable secParam m b =
 -- case from a block that was never added to the model in the first place.
 garbageCollectablePoint ::
   forall blk.
-  HasHeader blk =>
+  ( HasHeader blk
+  , BlockSupportsPeras blk
+  ) =>
   SecurityParam -> Model blk -> RealPoint blk -> Bool
 garbageCollectablePoint secParam m pt
   | Just blk <- getBlock (realPointHash pt) m =
@@ -1081,7 +1131,9 @@ garbageCollectableIteratorNext secParam m itId =
 -- used in isolation and is not exported.
 garbageCollect ::
   forall blk.
-  HasHeader blk =>
+  ( HasHeader blk
+  , BlockSupportsPeras blk
+  ) =>
   SecurityParam -> Model blk -> Model blk
 garbageCollect secParam m@Model{..} =
   m
@@ -1107,7 +1159,9 @@ data ShouldGarbageCollect = GarbageCollect | DoNotGarbageCollect
 -- Idempotent.
 copyToImmutableDB ::
   forall blk.
-  HasHeader blk =>
+  ( HasHeader blk
+  , BlockSupportsPeras blk
+  ) =>
   SecurityParam -> ShouldGarbageCollect -> Model blk -> Model blk
 copyToImmutableDB secParam shouldCollectGarbage m =
   garbageCollectIf shouldCollectGarbage $
@@ -1131,7 +1185,10 @@ reopen m = m{isOpen = True}
 -- see https://github.com/tweag/cardano-peras/issues/122
 wipeVolatileDB ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial (ExtLedgerState blk)
+  , BlockSupportsPeras blk
+  ) =>
   TopLevelConfig blk ->
   Model blk ->
   (Point blk, Model blk)

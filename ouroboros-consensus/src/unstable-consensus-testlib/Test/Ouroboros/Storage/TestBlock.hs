@@ -61,6 +61,10 @@ module Test.Ouroboros.Storage.TestBlock
   , corruptionFiles
   , generateCorruptions
   , shrinkCorruptions
+
+    -- * Peras support
+  , PerasCert (..)
+  , PerasVote (..)
   ) where
 
 import Cardano.Crypto.DSIGN
@@ -109,6 +113,14 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Params (PerasParams (..), mkPerasParams)
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
+import Ouroboros.Consensus.Peras.Vote
+  ( PerasVoteId (..)
+  , PerasVoteTarget (..)
+  , PerasVoterId
+  , stakeAboveThreshold
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.ModChainSel
@@ -896,6 +908,109 @@ shrinkCorruptions cs =
 -- | Return a list of all files that will be corrupted
 corruptionFiles :: Corruptions -> [FsPath]
 corruptionFiles = map snd . NE.toList
+
+{-------------------------------------------------------------------------------
+  Peras support
+-------------------------------------------------------------------------------}
+
+data instance PerasCert TestBlock = TestPerasCert
+  { tpcCertRound :: PerasRoundNo
+  , tpcCertBoostedBlock :: Point TestBlock
+  }
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
+instance ToExpr (PerasCert TestBlock) where
+  toExpr = defaultExprViaShow
+
+instance IsPerasCert (PerasCert TestBlock) where
+  type CertBoostedBlock (PerasCert TestBlock) = TestBlock
+  getPerasCertRound = tpcCertRound
+  getPerasCertBoostedBlock = tpcCertBoostedBlock
+
+data instance PerasVote TestBlock = TestPerasVote
+  { tpvVoteRound :: PerasRoundNo
+  , tpvVoteBlock :: Point TestBlock
+  , tpvVoteVoterId :: PerasVoterId
+  }
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
+instance ToExpr (PerasVote TestBlock) where
+  toExpr = defaultExprViaShow
+
+instance IsPerasVote (PerasVote TestBlock) where
+  type VoteBlock (PerasVote TestBlock) = TestBlock
+  getPerasVoteRound = tpvVoteRound
+  getPerasVoteVoterId = tpvVoteVoterId
+  getPerasVoteTarget vote =
+    PerasVoteTarget
+      { pvtRoundNo = tpvVoteRound vote
+      , pvtBlock = tpvVoteBlock vote
+      }
+  getPerasVoteId vote =
+    PerasVoteId
+      { pviRoundNo = tpvVoteRound vote
+      , pviVoterId = tpvVoteVoterId vote
+      }
+
+instance BlockSupportsPeras TestBlock where
+  type PerasCfg TestBlock = PerasParams
+
+  mkPerasCert roundNo block =
+    TestPerasCert
+      { tpcCertRound = roundNo
+      , tpcCertBoostedBlock = block
+      }
+
+  mkPerasVote voterId roundNo block =
+    TestPerasVote
+      { tpvVoteRound = roundNo
+      , tpvVoteBlock = block
+      , tpvVoteVoterId = voterId
+      }
+
+  validatePerasCert params cert =
+    Right
+      ValidatedPerasCert
+        { vpcCert = cert
+        , vpcCertBoost = perasWeight params
+        }
+
+  validatePerasVote _params stakeDistr vote
+    | Just stake <- lookupPerasVoteStake vote stakeDistr =
+        Right
+          ValidatedPerasVote
+            { vpvVote = vote
+            , vpvVoteStake = stake
+            }
+    | otherwise =
+        Left PerasValidationErr
+
+  forgePerasCert params target votes
+    | not allVotersMatchTarget =
+        Left PerasForgeErrTargetMismatch
+    | not votesHaveEnoughStake =
+        Left PerasForgeErrInsufficientVotes
+    | otherwise =
+        return $
+          ValidatedPerasCert
+            { vpcCert =
+                TestPerasCert
+                  { tpcCertRound = pvtRoundNo target
+                  , tpcCertBoostedBlock = pvtBlock target
+                  }
+            , vpcCertBoost = perasWeight params
+            }
+   where
+    totalVotesStake =
+      mconcat (vpvVoteStake <$> votes)
+
+    votesHaveEnoughStake =
+      stakeAboveThreshold params totalVotesStake
+
+    allVotersMatchTarget =
+      all ((target ==) . getPerasVoteTarget) votes
 
 {-------------------------------------------------------------------------------
   Orphans

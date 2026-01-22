@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -20,6 +21,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , addArrivalTime
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+import Ouroboros.Consensus.Peras.Vote (PerasVoteId, PerasVoteStakeDistr)
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteDB
   , PerasVoteSnapshot
@@ -33,7 +35,9 @@ takeAscMap :: Int -> Map k v -> Map k v
 takeAscMap n = Map.fromDistinctAscList . take n . Map.toAscList
 
 makePerasVotePoolReaderFromSnapshot ::
-  IOLike m =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   STM m (PerasVoteSnapshot blk) ->
   ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReaderFromSnapshot getVoteSnapshot =
@@ -56,52 +60,53 @@ makePerasVotePoolReaderFromSnapshot getVoteSnapshot =
     }
 
 makePerasVotePoolReaderFromVoteDB ::
-  IOLike m =>
-  PerasVoteDB m blk -> ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
+  PerasVoteDB m blk ->
+  ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReaderFromVoteDB perasVoteDB =
   makePerasVotePoolReaderFromSnapshot (PerasVoteDB.getVoteSnapshot perasVoteDB)
 
 makePerasVotePoolWriterFromVoteDB ::
-  (StandardHash blk, IOLike m) =>
+  ( BlockSupportsPeras blk
+  , IOLike m
+  ) =>
   -- TODO: We probably want to be able to fetch updated stake distribution throughout
   -- the lifetime of the writer
   -- But `StrictTVar m PerasVoteStakeDistr` might not be the best choice for that.
+  PerasCfg blk ->
   StrictTVar m PerasVoteStakeDistr ->
   SystemTime m ->
   PerasVoteDB m blk ->
   ObjectPoolWriter (PerasVoteId blk) (PerasVote blk) m
-makePerasVotePoolWriterFromVoteDB distrVar systemTime perasVoteDB =
+makePerasVotePoolWriterFromVoteDB perasCfg distrVar systemTime perasVoteDB =
   ObjectPoolWriter
     { opwObjectId = getPerasVoteId
     , opwAddObjects = \votes -> do
         distr <- readTVarIO distrVar
-        addPerasVotes distr systemTime (PerasVoteDB.addVote perasVoteDB) votes
+        addPerasVotes
+          perasCfg
+          distr
+          systemTime
+          (PerasVoteDB.addVote perasVoteDB)
+          votes
     , opwHasObject = do
         voteSnapshot <- PerasVoteDB.getVoteSnapshot perasVoteDB
         pure $ PerasVoteDB.containsVote voteSnapshot
     }
 
-data PerasVoteInboundException
-  = forall blk. PerasVoteValidationError (PerasValidationErr blk)
-
-deriving instance Show PerasVoteInboundException
-
-instance Exception PerasVoteInboundException
-
--- | Validate a list of 'PerasVote's, throwing a 'PerasVoteInboundException' if
+-- | Validate a list of 'PerasVote's, throwing a 'PerasVoteValidationErr' if
 -- any of them are invalid.
 validatePerasVotes ::
-  (StandardHash blk, MonadThrow m) =>
+  (BlockSupportsPeras blk, MonadThrow m) =>
+  PerasCfg blk ->
   PerasVoteStakeDistr ->
   [PerasVote blk] ->
   m [ValidatedPerasVote blk]
-validatePerasVotes distr votes = do
-  let perasParams = mkPerasParams
-  -- TODO pass down 'BlockConfig' when all the plumbing is in place
-  -- see https://github.com/tweag/cardano-peras/issues/73
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  case traverse (validatePerasVote perasParams distr) votes of
-    Left validationErr -> throw (PerasVoteValidationError validationErr)
+validatePerasVotes perasCfg distr votes =
+  case traverse (validatePerasVote perasCfg distr) votes of
+    Left validationErr -> throw validationErr
     Right validatedVotes -> return validatedVotes
 
 -- | Add a list of 'PerasVote's into an object pool.
@@ -114,13 +119,16 @@ validatePerasVotes distr votes = do
 -- rather arbitrary, and the abstract Peras protocol just assumes it can happen
 -- "within" a slot.
 addPerasVotes ::
-  (StandardHash blk, MonadThrow m) =>
+  ( BlockSupportsPeras blk
+  , MonadThrow m
+  ) =>
+  PerasCfg blk ->
   PerasVoteStakeDistr ->
   SystemTime m ->
   (WithArrivalTime (ValidatedPerasVote blk) -> m a) ->
   [PerasVote blk] ->
   m ()
-addPerasVotes distr systemTime adder votes = do
-  validatePerasVotes distr votes
+addPerasVotes perasCfg distr systemTime adder votes = do
+  validatePerasVotes perasCfg distr votes
     >>= mapM (addArrivalTime systemTime)
     >>= mapM_ adder
