@@ -505,7 +505,7 @@ instance TxMeasureMetrics (TxMeasure blk) => TxMeasureMetrics (TxMeasureWithDiff
   txMeasureMetricRefScriptsSizeBytes = txMeasureMetricRefScriptsSizeBytes . forgetTxMeasureWithDiffTime
 
 -- | How long it took to validate a valid tx
-data DiffTimeMeasure = FiniteDiffTimeMeasure DiffTime | InfiniteDiffTimeMeasure
+data DiffTimeMeasure = FiniteDiffTimeMeasure !DiffTime | InfiniteDiffTimeMeasure
   deriving stock (Eq, Generic, Show)
   deriving anyclass NoThunks
   deriving
