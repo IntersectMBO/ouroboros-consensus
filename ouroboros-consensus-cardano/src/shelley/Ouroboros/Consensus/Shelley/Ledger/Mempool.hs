@@ -86,6 +86,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
+import LeiosDemoTypes (leiosEBMaxClosureSize)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -732,4 +733,21 @@ instance
   where
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
-  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  blockCapacityTxMeasure _cfg st = blockCapacityConwayMeasure st <> leiosEndorserBlockMeasure
+
+leiosEndorserBlockMeasure :: ConwayMeasure
+leiosEndorserBlockMeasure =
+  ConwayMeasure
+    { alonzoMeasure =
+        AlonzoMeasure
+          { byteSize = IgnoringOverflow leiosEBMaxClosureSize
+          , exUnits = undefined -- TODO
+          }
+    , refScriptsSize =
+        -- TODO: we have not defined this for Leios
+        IgnoringOverflow $
+          ByteSize32 $
+            fromIntegral $
+              -- For post-Conway eras, this will become a protocol parameter.
+              SL.maxRefScriptSizePerBlock
+    }
