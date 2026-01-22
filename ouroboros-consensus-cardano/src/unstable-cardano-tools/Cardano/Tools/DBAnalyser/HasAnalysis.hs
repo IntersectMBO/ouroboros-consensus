@@ -25,6 +25,7 @@ import Data.Set (Set)
 import Cardano.Ledger.Api
 import Data.Text (Text)
 import Cardano.Ledger.BaseTypes (ProtVer)
+import Cardano.Ledger.TxIn as Ledger
 
 {-------------------------------------------------------------------------------
   HasAnalysis
@@ -48,6 +49,8 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
 
   numInputs :: TxOf blk -> Int
   numOutputs :: TxOf blk -> Int
+
+  referenceInputs :: SimpleGetter (TxOf blk) (Set Ledger.TxIn)
 
   type WitsOf blk
 

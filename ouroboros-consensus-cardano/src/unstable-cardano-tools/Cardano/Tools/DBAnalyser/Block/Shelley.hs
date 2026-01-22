@@ -38,7 +38,7 @@ import Data.Maybe.Strict
 import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
 import Data.Word (Word64)
-import Lens.Micro ((^.), folded, to, toListOf)
+import Lens.Micro ((^.), folded, to, toListOf, SimpleGetter)
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -59,6 +59,7 @@ import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
 import TextBuilder (decimal)
 import qualified Cardano.Ledger.Core as Ledger
+import Cardano.Ledger.TxIn as Ledger
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Cardano.Ledger.Allegra.Scripts
 import Data.Text (Text)
@@ -70,6 +71,8 @@ import qualified Ouroboros.Consensus.Protocol.Praos
 import Cardano.Protocol.Crypto (Crypto)
 import Ouroboros.Consensus.Protocol.Praos.Header (Header(..),HeaderBody(..))
 import Cardano.Ledger.Api.Tx.Wits
+import Data.Set (Set)
+import Cardano.Ledger.Api (BabbageEraTxBody(..))
 
 -- | Usable for each Shelley-based era
 instance
@@ -79,6 +82,7 @@ instance
   , Scriptitude (Ledger.Script era)
   , EraHasName era
   , EraDatum era
+  , EraTx era
   ) =>
   HasAnalysis (ShelleyBlock proto era)
   where
@@ -91,6 +95,8 @@ instance
 
   numInputs tx = length $ toListOf (Core.bodyTxL . Core.inputsTxBodyL) tx
   numOutputs tx = length $ toListOf (Core.bodyTxL . Core.outputsTxBodyL) tx
+
+  referenceInputs = eraReferenceInputs
 
   datumSize = eraDatumSize
 
@@ -148,6 +154,24 @@ instance
   -- For the time being we do not support any block application
   -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
+
+class EraTx era where
+  eraReferenceInputs :: SimpleGetter (Ledger.Tx era) (Set Ledger.TxIn)
+
+instance {-# OVERLAPPABLE #-} (Ledger.EraTx era, BabbageEraTxBody era) => EraTx era where
+  eraReferenceInputs =  Core.bodyTxL . referenceInputsTxBodyL
+
+instance EraTx ShelleyEra where
+  eraReferenceInputs = to (const mempty)
+
+instance EraTx AllegraEra where
+  eraReferenceInputs = to (const mempty)
+
+instance EraTx MaryEra where
+  eraReferenceInputs = to (const mempty)
+
+instance EraTx AlonzoEra where
+  eraReferenceInputs = to (const mempty)
 
 class HasProtoVer proto where
   eraProtoVer :: ShelleyProtocolHeader proto -> SL.ProtVer

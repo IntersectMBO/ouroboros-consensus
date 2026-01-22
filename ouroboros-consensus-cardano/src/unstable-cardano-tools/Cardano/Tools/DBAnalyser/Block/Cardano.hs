@@ -326,6 +326,8 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
   numInputs (ATx @blk tx)= numInputs @blk tx
   numOutputs (ATx @blk tx) = numOutputs @blk tx
 
+  referenceInputs inner (ATx @blk tx) = Const . getConst $ referenceInputs @blk (Const . getConst . inner) tx
+
   type WitsOf (CardanoBlock StandardCrypto) = SomeWit
 
   wits inner (ATx @blk tx) = Const . getConst $ wits @blk (Const . getConst . inner . AWit @blk) tx

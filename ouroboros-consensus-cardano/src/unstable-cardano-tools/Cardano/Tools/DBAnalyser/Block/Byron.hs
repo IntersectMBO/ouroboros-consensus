@@ -35,6 +35,7 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import TextBuilder (decimal)
 import Data.Void
 import Cardano.Ledger.BaseTypes (ProtVer(..))
+import Lens.Micro
 
 instance HasAnalysis ByronBlock where
   -- Byron uses a different representation of protocols, I don't want to deal at
@@ -44,6 +45,7 @@ instance HasAnalysis ByronBlock where
   txs _ _ = mempty -- dummy
   numInputs _ = 0 -- dummy
   numOutputs _ = 0 -- dummy
+  referenceInputs = to (const mempty)
   type WitsOf ByronBlock = Void -- dummy
   type ScriptType ByronBlock = Void
   wits _ = absurd
