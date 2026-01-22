@@ -312,6 +312,9 @@ data SomeWit where
 data SomeScriptType where
   AScriptType :: HasAnalysis blk => ScriptType blk -> SomeScriptType
 
+data SomeCert where
+  ACert :: HasAnalysis blk => CertsOf blk -> SomeCert
+
 instance HasAnalysis (CardanoBlock StandardCrypto) where
   protVer = analyseBlock protVer
   
@@ -340,6 +343,10 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
   scriptSize (AScriptType @blk scr) = scriptSize @blk scr
 
   datumSize (AWit @blk wit) = datumSize @blk wit
+
+  type CertsOf (CardanoBlock StandardCrypto) = SomeCert
+
+  certs inner (ATx @blk cert) = Const . getConst $ certs @blk (Const . getConst . inner . ACert @blk) cert
 
   eraName = analyseBlock eraName
 

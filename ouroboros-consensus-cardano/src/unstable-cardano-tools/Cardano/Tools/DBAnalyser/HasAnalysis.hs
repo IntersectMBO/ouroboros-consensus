@@ -48,7 +48,7 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
   txs :: SimpleFold blk (TxOf blk)
 
   numInputs :: TxOf blk -> Int
-  numOutputs :: TxOf blk -> Int
+  numOutputs :: TxOf blk -> Int -- TODO: compare with countTxOutputs as a safety check
 
   referenceInputs :: SimpleGetter (TxOf blk) (Set Ledger.TxIn)
 
@@ -65,6 +65,10 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
   scriptWits :: SimpleGetter (WitsOf blk) (Map ScriptHash (ScriptType blk))
 
   scriptSize :: ScriptType blk -> Int
+
+  type CertsOf blk
+
+  certs :: SimpleFold (TxOf blk) (CertsOf blk)
 
   eraName :: blk -> Text
 

@@ -83,6 +83,7 @@ instance
   , EraHasName era
   , EraDatum era
   , EraTx era
+  , Core.EraTxBody era
   ) =>
   HasAnalysis (ShelleyBlock proto era)
   where
@@ -106,6 +107,9 @@ instance
   addrWits = Ledger.addrTxWitsL
   scriptWits = Ledger.scriptTxWitsL
   scriptSize = scripty_size
+
+  type CertsOf (ShelleyBlock proto era) = Core.TxCert era
+  certs = Core.bodyTxL . Core.certsTxBodyL . folded
 
   eraName _ = eraEraName @era
 

@@ -401,6 +401,7 @@ data TxFeatures blk f = MkTxFeatures
   , num_inputs :: f Int
   , num_outputs :: f Int
   , num_ref_inputs :: f Int
+  , num_certs :: f Int
   }
   deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
 
@@ -430,6 +431,7 @@ txFeaturesNames =
     , num_inputs = "#inputs"
     , num_outputs = "#outputs"
     , num_ref_inputs = "#reference_inputs"
+    , num_certs = "#certs"
     }
 
 dumpBlockHeader ::
@@ -501,6 +503,7 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tra
           , num_inputs = Identity $ HasAnalysis.numInputs @blk tx
           , num_outputs = Identity $ HasAnalysis.numOutputs @blk tx
           , num_ref_inputs = Identity $ length $ toListOf (HasAnalysis.referenceInputs @blk) tx
+          , num_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk) tx
           }
     let txFeaturess = toListOf (HasAnalysis.txs @blk . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
     let txlines = map (csv . Container . bmapC @Condense (Const . condense . runIdentity)) txFeaturess
