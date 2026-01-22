@@ -504,9 +504,11 @@ snapshotFromIS is =
   implSnapshotTake ::
     InternalState blk ->
     TxMeasure blk ->
-    [Validated (GenTx blk)]
-  implSnapshotTake IS{isTxs} =
-    map TxSeq.txTicketTx . TxSeq.toList . fst . TxSeq.splitAfterTxSize isTxs . (`MkTxMeasureWithDiffTime` InfiniteDiffTimeMeasure)
+    ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
+  implSnapshotTake IS{isTxs} limit =
+      (map TxSeq.txTicketTx (TxSeq.toList x), TxSeq.toSize x)
+    where
+      (x, _y) = TxSeq.splitAfterTxSize isTxs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
 
   implSnapshotGetTx ::
     InternalState blk ->

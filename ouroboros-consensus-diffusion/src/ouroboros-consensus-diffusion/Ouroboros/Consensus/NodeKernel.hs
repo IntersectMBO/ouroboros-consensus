@@ -665,7 +665,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
     lift $ roforkerClose forker
 
-    let txs =
+    let (txs, txssz) =
           snapshotTake mempoolSnapshot $
             blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
     -- NB respect the capacity of the ledger state we're extending,
@@ -695,6 +695,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
         (ledgerTipPoint (ledgerState unticked))
         newBlock
         (snapshotMempoolSize mempoolSnapshot)
+        txssz
 
     -- Add the block to the chain DB
     let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself

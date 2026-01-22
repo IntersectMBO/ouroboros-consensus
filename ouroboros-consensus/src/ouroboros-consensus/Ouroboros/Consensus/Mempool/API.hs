@@ -441,9 +441,9 @@ data MempoolSnapshot blk = MempoolSnapshot
   -- ^ Get all transactions (oldest to newest) in the mempool snapshot,
   -- along with their ticket number, which are associated with a ticket
   -- number greater than the one provided.
-  , snapshotTake :: TxMeasure blk -> [Validated (GenTx blk)]
+  , snapshotTake :: TxMeasure blk -> ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
   -- ^ Get the greatest prefix (oldest to newest) that respects the given
-  -- block capacity.
+  -- block capacity, and the prefix's total size.
   , snapshotLookupTx :: TicketNo -> Maybe (Validated (GenTx blk))
   -- ^ Get a specific transaction from the mempool snapshot by its ticket
   -- number, if it exists.
