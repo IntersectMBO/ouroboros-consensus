@@ -548,7 +548,8 @@ data SnapshotDelayRange = SnapshotDelayRange
   , maximumDelay :: !DiffTime
   -- ^ maximum acceptable delay between requesting a snapshot and taking the
   -- snapshot
-  } deriving (Show, Eq, Generic)
+  }
+  deriving (Show, Eq, Generic)
 
 instance NoThunks SnapshotDelayRange
 

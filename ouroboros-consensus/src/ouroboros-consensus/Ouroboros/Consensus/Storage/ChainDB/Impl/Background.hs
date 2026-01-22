@@ -335,7 +335,8 @@ ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
 
   randomSnapshotDelay :: LedgerDB.SnapshotDelayRange -> StdGen -> (DiffTime, StdGen)
   randomSnapshotDelay sdr rng =
-    first fromInteger $ uniformR (floor (LedgerDB.minimumDelay sdr), floor (LedgerDB.maximumDelay sdr)) rng
+    first fromInteger $
+      uniformR (floor (LedgerDB.minimumDelay sdr), floor (LedgerDB.maximumDelay sdr)) rng
 
 {-------------------------------------------------------------------------------
   Executing garbage collection

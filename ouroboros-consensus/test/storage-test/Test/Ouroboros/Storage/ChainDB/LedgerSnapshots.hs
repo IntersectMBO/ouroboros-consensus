@@ -70,11 +70,12 @@ tests =
     [ testProperty "InMemV1" $ prop_ledgerSnapshots inMemV1
     , testProperty "InMemV2" $ prop_ledgerSnapshots inMemV2
     , testProperty "LSM" $ \salt -> prop_ledgerSnapshots (lsm salt)
-    , testGroup "addBlocks while a snapshot is enqueued"
-      [ testProperty "InMemV1" $ prop_addBlocksWhileSnapshotting inMemV1
-      , testProperty "InMemV2" $ prop_addBlocksWhileSnapshotting inMemV2
-      , testProperty "LSM" $ \salt -> prop_addBlocksWhileSnapshotting (lsm salt)
-      ]
+    , testGroup
+        "addBlocks while a snapshot is enqueued"
+        [ testProperty "InMemV1" $ prop_addBlocksWhileSnapshotting inMemV1
+        , testProperty "InMemV2" $ prop_addBlocksWhileSnapshotting inMemV2
+        , testProperty "LSM" $ \salt -> prop_addBlocksWhileSnapshotting (lsm salt)
+        ]
     ]
  where
   inMemV1, inMemV2 :: IOLike m => LedgerDbBackendArgs m TestBlock
@@ -111,25 +112,28 @@ prop_ledgerSnapshots lgrDbBackendArgs testSetup =
     Left err -> counterexample ("Failure: " <> show err) False
 
 prop_addBlocksWhileSnapshotting ::
-  (forall m . IOLike m => LedgerDbBackendArgs m TestBlock) ->
+  (forall m. IOLike m => LedgerDbBackendArgs m TestBlock) ->
   TestSetup ->
   Property
 prop_addBlocksWhileSnapshotting lgrDbBackendArgs testSetup =
   case runSim (runAddBlocks lgrDbBackendArgs testSetup) of
     Right outcome -> do
-      label (show (blocksAddedWhileSnapshotting outcome) <> " blocks were added while a snapshot was enqueued") $
-        totalBlocksAdded outcome === length (tsBlocksToAdd testSetup)
+      label
+        (show (blocksAddedWhileSnapshotting outcome) <> " blocks were added while a snapshot was enqueued")
+        $ totalBlocksAdded outcome === length (tsBlocksToAdd testSetup)
     Left err -> counterexample ("Failure: " <> show err) False
 
 data AddBlockCount = AddBlockCount
   { blocksAddedWhileSnapshotting :: !Int
   , totalBlocksAdded :: !Int
-  } deriving (Show, Eq, Ord)
+  }
+  deriving (Show, Eq, Ord)
 
 instance Semigroup AddBlockCount where
-  a <> b = AddBlockCount
-    (blocksAddedWhileSnapshotting a + blocksAddedWhileSnapshotting b)
-    (totalBlocksAdded a + totalBlocksAdded b)
+  a <> b =
+    AddBlockCount
+      (blocksAddedWhileSnapshotting a + blocksAddedWhileSnapshotting b)
+      (totalBlocksAdded a + totalBlocksAdded b)
 
 instance Monoid AddBlockCount where
   mempty = AddBlockCount 0 0
@@ -231,10 +235,11 @@ instance Arbitrary TestSnapshotPolicyArgs where
         [ (2, pure 0)
         , (1, secondsToDiffTime <$> choose (1, 10))
         ]
-    tspaDelaySnapshotRange <- oneof
-      [ arbitraryDelaySnapshotRange
-      , pure $ SnapshotDelayRange 0 0
-      ]
+    tspaDelaySnapshotRange <-
+      oneof
+        [ arbitraryDelaySnapshotRange
+        , pure $ SnapshotDelayRange 0 0
+        ]
     pure
       TestSnapshotPolicyArgs
         { tspaNum
@@ -243,17 +248,17 @@ instance Arbitrary TestSnapshotPolicyArgs where
         , tspaRateLimit
         , tspaDelaySnapshotRange
         }
-    where
-      arbitraryDelaySnapshotRange = do
-        minimumDelay <- fromInteger <$> choose (floor fiveMinutes, floor tenMinutes)
-        additionalDelay <- fromInteger <$> choose (0, floor fiveMinutes)
-        pure $ SnapshotDelayRange minimumDelay (minimumDelay + additionalDelay)
+   where
+    arbitraryDelaySnapshotRange = do
+      minimumDelay <- fromInteger <$> choose (floor fiveMinutes, floor tenMinutes)
+      additionalDelay <- fromInteger <$> choose (0, floor fiveMinutes)
+      pure $ SnapshotDelayRange minimumDelay (minimumDelay + additionalDelay)
 
-      fiveMinutes :: DiffTime
-      fiveMinutes = 5 * 60
+    fiveMinutes :: DiffTime
+    fiveMinutes = 5 * 60
 
-      tenMinutes :: DiffTime
-      tenMinutes = 10 * 60
+    tenMinutes :: DiffTime
+    tenMinutes = 10 * 60
 
 -- | Add blocks to the ChainDB in this order.
 tsBlocksToAdd :: TestSetup -> [TestBlock]
