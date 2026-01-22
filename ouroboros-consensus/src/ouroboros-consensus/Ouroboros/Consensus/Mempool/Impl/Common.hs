@@ -349,14 +349,15 @@ validateNewTransaction cfg wti tx txsz origValues st is =
     Left err -> (Left err, \_dur -> is)
     Right (st', vtx) ->
       ( Right vtx
-      , \dur -> is
-          { isTxs = isTxs :> TxTicket vtx nextTicketNo (MkTxMeasureWithDiffTime txsz dur)
-          , isTxKeys = isTxKeys <> getTransactionKeySets tx
-          , isTxValues = ltliftA2 unionValues isTxValues origValues
-          , isTxIds = Set.insert (txId tx) isTxIds
-          , isLedgerState = prependMempoolDiffs isLedgerState st'
-          , isLastTicketNo = nextTicketNo
-          }
+      , \dur ->
+          is
+            { isTxs = isTxs :> TxTicket vtx nextTicketNo (MkTxMeasureWithDiffTime txsz dur)
+            , isTxKeys = isTxKeys <> getTransactionKeySets tx
+            , isTxValues = ltliftA2 unionValues isTxValues origValues
+            , isTxIds = Set.insert (txId tx) isTxIds
+            , isLedgerState = prependMempoolDiffs isLedgerState st'
+            , isLastTicketNo = nextTicketNo
+            }
       )
  where
   IS
@@ -499,16 +500,19 @@ snapshotFromIS is =
     TicketNo ->
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxsAfter IS{isTxs} =
-    (\x -> [ (a, b, forgetTxMeasureWithDiffTime c) | (a, b, c) <- x ]) . TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
+    (\x -> [(a, b, forgetTxMeasureWithDiffTime c) | (a, b, c) <- x])
+      . TxSeq.toTuples
+      . snd
+      . TxSeq.splitAfterTicketNo isTxs
 
   implSnapshotTake ::
     InternalState blk ->
     TxMeasure blk ->
     ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
   implSnapshotTake IS{isTxs} limit =
-      (map TxSeq.txTicketTx (TxSeq.toList x), TxSeq.toSize x)
-    where
-      (x, _y) = TxSeq.splitAfterTxSize isTxs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
+    (map TxSeq.txTicketTx (TxSeq.toList x), TxSeq.toSize x)
+   where
+    (x, _y) = TxSeq.splitAfterTxSize isTxs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
 
   implSnapshotGetTx ::
     InternalState blk ->

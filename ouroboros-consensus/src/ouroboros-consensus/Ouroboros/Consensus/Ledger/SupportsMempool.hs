@@ -245,7 +245,8 @@ class
   -- This function therefore constructs the type that the @LocalTxSubmission@
   -- node-to-client mini protocol sends when a tx is rejected.
   mkMempoolPredicateFailure ::
-    TickedLedgerState blk mk ->   -- ^ for the HFC
+    -- | for the HFC
+    TickedLedgerState blk mk ->
     Text ->
     Maybe (ApplyTxErr blk)
 
