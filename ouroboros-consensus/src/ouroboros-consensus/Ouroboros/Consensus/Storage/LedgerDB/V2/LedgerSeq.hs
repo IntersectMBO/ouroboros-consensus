@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -75,6 +76,8 @@ import Ouroboros.Network.AnchoredSeq hiding
 import qualified Ouroboros.Network.AnchoredSeq as AS hiding (map)
 import System.FS.CRC (CRC)
 import Prelude hiding (read)
+import GHC.Debug.Stub
+import System.IO.Unsafe
 
 {-------------------------------------------------------------------------------
   LedgerTablesHandles
@@ -204,7 +207,10 @@ empty ::
   init ->
   (init -> m (LedgerTablesHandle m l)) ->
   m (LedgerSeq m l)
-empty st tbs new = LedgerSeq . AS.Empty . StateRef st <$> new tbs
+empty st tbs new = do
+  h <- new tbs
+  let !_ = unsafePerformIO (saveClosures [Box h])
+  pure $ LedgerSeq $ AS.Empty $ StateRef st h
 
 -- | Creates an empty @LedgerSeq@
 empty' ::
