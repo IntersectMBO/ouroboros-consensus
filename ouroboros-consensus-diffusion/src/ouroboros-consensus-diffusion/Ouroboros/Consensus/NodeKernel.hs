@@ -671,7 +671,9 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
     let txs =
           snapshotTake mempoolSnapshot $
-            (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState `MkWithDiffTimeMeasure` InfiniteDiffTimeMeasure)
+            ( blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+                `MkWithDiffTimeMeasure` InfiniteDiffTimeMeasure
+            )
     -- NB respect the capacity of the ledger state we're extending,
     -- which is /not/ 'snapshotLedgerState'
 

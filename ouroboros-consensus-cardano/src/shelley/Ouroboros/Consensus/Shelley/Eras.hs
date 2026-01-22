@@ -134,7 +134,8 @@ class
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
-  mkMkMempoolShelleyPredicateFailure :: proxy era -> Maybe (Text -> PredicateFailure (EraRule "LEDGER" era))
+  mkMkMempoolShelleyPredicateFailure ::
+    proxy era -> Maybe (Text -> PredicateFailure (EraRule "LEDGER" era))
 
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era

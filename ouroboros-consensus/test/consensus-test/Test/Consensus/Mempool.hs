@@ -1263,9 +1263,9 @@ genActions genNbToAdd = go testInitLedger mempty mempty
 -- The 'testInitialTxs' effectively have a 'DiffTime' of 0.
 --
 -- TODO effectively vary the cumulative 'DiffTime' of the 'testInitialTxs'?
-data TestSetupWithTxsAndDiffTimes =
-  TestSetupWithTxsAndDiffTimes MempoolTimeoutConfig TestSetup [(TestTx, Bool, DiffTime)]
-  deriving (Show)
+data TestSetupWithTxsAndDiffTimes
+  = TestSetupWithTxsAndDiffTimes MempoolTimeoutConfig TestSetup [(TestTx, Bool, DiffTime)]
+  deriving Show
 
 instance Arbitrary TestSetupWithTxsAndDiffTimes where
   arbitrary = do
@@ -1281,13 +1281,13 @@ instance Arbitrary TestSetupWithTxsAndDiffTimes where
             }
     TestSetupWithTxs testSetup txs <- arbitrary
     let genDiffTime valid = do
-            -- If the tx is valid, the the 'TestSetupWithTxs' expects it to pass.
-            --
-            -- So we usually want to avoid that. But not always, since we still
-            -- want "valid" txs to fail the timeout sometimes.
-            forceValid <- frequency [(95, pure valid), (5, pure False)]
-            fromMs <$> choose (1, if forceValid then soft else (3 * hard) `div` 2)
-    txs' <- sequence [ genDiffTime valid <&> \dt -> (tx, valid, dt) | (tx, valid) <- txs ]
+          -- If the tx is valid, the the 'TestSetupWithTxs' expects it to pass.
+          --
+          -- So we usually want to avoid that. But not always, since we still
+          -- want "valid" txs to fail the timeout sometimes.
+          forceValid <- frequency [(95, pure valid), (5, pure False)]
+          fromMs <$> choose (1, if forceValid then soft else (3 * hard) `div` 2)
+    txs' <- sequence [genDiffTime valid <&> \dt -> (tx, valid, dt) | (tx, valid) <- txs]
     pure $ TestSetupWithTxsAndDiffTimes toCfg testSetup txs'
 
 data MempoolTimeoutCategory = MtcAccepted | MtcRejected | MtcDiscard | MtcDisconnect | MtcNoSpace
@@ -1300,41 +1300,44 @@ prop_Mempool_timeout (TestSetupWithTxsAndDiffTimes timeoutConfig testSetup txs) 
     let go !acc = \case
           [] -> pure $ property ()
           (tx, valid, dt) : txs' -> do
-            let eTxsz = -- check whether the tx's measure is immediately rejected
-                    runExcept
-                  $ checkTxSize
+            let eTxsz =
+                  -- check whether the tx's measure is immediately rejected
+                  runExcept $
+                    checkTxSize
                       (simpleLedgerMockConfig $ testLedgerCfg testSetup)
                       (simpleGenTx tx)
             let expected
                   | Left{} <- eTxsz = MtcRejected
                   | acc > mempoolTimeoutCapacity timeoutConfig = MtcNoSpace
-                      -- Recall that the test setup generator ensures other
-                      -- dimensions of the mempool capacity are big enough to
-                      -- fit all the valid @txs@.
+                  -- Recall that the test setup generator ensures other
+                  -- dimensions of the mempool capacity are big enough to
+                  -- fit all the valid @txs@.
                   | dt > mempoolTimeoutHard timeoutConfig = MtcDisconnect
                   | dt > mempoolTimeoutSoft timeoutConfig = MtcDiscard
                   | not valid = MtcRejected
                   | otherwise = MtcAccepted
             let notMempoolError = \case
-                    MockMempoolError{} -> False
-                    _ -> True
+                  MockMempoolError{} -> False
+                  _ -> True
             eRes <- try $ addTestTx mempool dt AddTxForRemotePeer tx
             tabulate "addTextTx expectation" [show expected] <$> case (expected, eRes) of
               (MtcAccepted, Right (Just MempoolTxAdded{})) ->
                 go (acc + dt) txs'
               (MtcRejected, Right (Just (MempoolTxRejected _ err)))
                 | notMempoolError err ->
-                  go acc txs'
+                    go acc txs'
               (MtcDiscard, Right (Just (MempoolTxRejected _ MockMempoolError{}))) ->
-                if valid then pure $ label "soft-timeout for otherwise-valid tx" () else
-                go acc txs'
+                if valid
+                  then pure $ label "soft-timeout for otherwise-valid tx" ()
+                  else
+                    go acc txs'
               (MtcDisconnect, Left MkExnMempoolTimeout{}) ->
                 pure $ property ()
               (MtcNoSpace, Right Nothing) ->
                 pure $ property ()
               _ ->
-                pure
-                  $ counterexample ("Expected " <> show expected <> " but got...")
-                  $ counterexample (show eRes)
-                  $ False
+                pure $
+                  counterexample ("Expected " <> show expected <> " but got...") $
+                    counterexample (show eRes) $
+                      False
     go 0 txs

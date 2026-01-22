@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -10,7 +9,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Exposes the @'Mempool'@ datatype which captures the public API of the
@@ -286,36 +284,36 @@ data Mempool m blk = Mempool
 -- expect them to be frequent enough to matter.
 data MempoolTimeoutConfig = MempoolTimeoutConfig
   { mempoolTimeoutSoft :: DiffTime
-    -- ^ If the mempool takes longer than this to validate a tx, then it
-    -- discards the tx instead of adding it.
+  -- ^ If the mempool takes longer than this to validate a tx, then it
+  -- discards the tx instead of adding it.
   , mempoolTimeoutHard :: DiffTime
-    -- ^ If the mempool takes longer than this to validate a tx, then it
-    -- disconnects from the peer.
-    --
-    -- INVARIANT: @'mempoolTimeoutHard' >= 'mempoolTimeoutSoft'@.
+  -- ^ If the mempool takes longer than this to validate a tx, then it
+  -- disconnects from the peer.
+  --
+  -- INVARIANT: @'mempoolTimeoutHard' >= 'mempoolTimeoutSoft'@.
   , mempoolTimeoutCapacity :: DiffTime
-    -- ^ If the txs in the mempool took longer than this cumulatively to
-    -- validate when each entered the mempool, then the mempool is at capacity,
-    -- ie it's full, ie no tx can be added.
-    --
-    -- A potential minor surprise: unlike the other components of the capacity
-    -- (ie those from `TxMeasure`), this component admits one tx above the
-    -- given limit. This is unavoidable, because we must not validate a tx
-    -- unless it could fit in the mempool but we can't know its validation time
-    -- before we validate it. If we validate it an it's less than
-    -- 'mempoolTimeoutSoft', then it'd be a waste of resources to ever not add
-    -- it.
-    --
-    -- Therefore, the recommended value of this parameter is @X -
-    -- 'mempoolTimeoutSoft'@, where @X@ is the forging thread's limit for how
-    -- much of this component it will put into a block.
-    --
-    -- To avoid any risks of overflow, this value should be less than @maxBound
-    -- - 'mempoolTimeoutSoft'@.
-    --
-    -- Latency spikes (eg GC pauses, snapshot writing, OS sleeping the process,
-    -- etc) do risk "wasting" this capacity, but only up to
-    -- 'mempoolTimeoutSoft' /per/ /validated/ /tx/.
+  -- ^ If the txs in the mempool took longer than this cumulatively to
+  -- validate when each entered the mempool, then the mempool is at capacity,
+  -- ie it's full, ie no tx can be added.
+  --
+  -- A potential minor surprise: unlike the other components of the capacity
+  -- (ie those from `TxMeasure`), this component admits one tx above the
+  -- given limit. This is unavoidable, because we must not validate a tx
+  -- unless it could fit in the mempool but we can't know its validation time
+  -- before we validate it. If we validate it an it's less than
+  -- 'mempoolTimeoutSoft', then it'd be a waste of resources to ever not add
+  -- it.
+  --
+  -- Therefore, the recommended value of this parameter is @X -
+  -- 'mempoolTimeoutSoft'@, where @X@ is the forging thread's limit for how
+  -- much of this component it will put into a block.
+  --
+  -- To avoid any risks of overflow, this value should be less than @maxBound
+  -- - 'mempoolTimeoutSoft'@.
+  --
+  -- Latency spikes (eg GC pauses, snapshot writing, OS sleeping the process,
+  -- etc) do risk "wasting" this capacity, but only up to
+  -- 'mempoolTimeoutSoft' /per/ /validated/ /tx/.
   }
   deriving (Eq, Show)
 
@@ -472,11 +470,14 @@ forgetWithDiffTimeMeasure (MkWithDiffTimeMeasure x _) = x
 
 deriving instance NoThunks m => NoThunks (WithDiffTimeMeasure m)
 
-binopViaTuple :: ((x, DiffTimeMeasure) -> (y, DiffTimeMeasure) -> (z, DiffTimeMeasure)) -> WithDiffTimeMeasure x -> WithDiffTimeMeasure y -> WithDiffTimeMeasure z
+binopViaTuple ::
+  ((x, DiffTimeMeasure) -> (y, DiffTimeMeasure) -> (z, DiffTimeMeasure)) ->
+  WithDiffTimeMeasure x ->
+  WithDiffTimeMeasure y ->
+  WithDiffTimeMeasure z
 binopViaTuple f (MkWithDiffTimeMeasure a b) (MkWithDiffTimeMeasure p q) =
   let (x, y) = f (a, b) (p, q)
-  in
-  MkWithDiffTimeMeasure x y
+   in MkWithDiffTimeMeasure x y
 
 instance Measure m => Measure (WithDiffTimeMeasure m) where
   zero = MkWithDiffTimeMeasure Data.Measure.zero Data.Measure.zero
@@ -496,7 +497,7 @@ instance TxMeasureMetrics m => TxMeasureMetrics (WithDiffTimeMeasure m) where
 -- | How long it took to validate a valid tx
 data DiffTimeMeasure = FiniteDiffTimeMeasure DiffTime | InfiniteDiffTimeMeasure
   deriving stock (Eq, Generic, Ord, Show)
-  deriving anyclass (NoThunks)
+  deriving anyclass NoThunks
   deriving
     (Monoid, Semigroup)
     via (InstantiatedAt Measure DiffTimeMeasure)
@@ -504,31 +505,31 @@ data DiffTimeMeasure = FiniteDiffTimeMeasure DiffTime | InfiniteDiffTimeMeasure
 instance Measure DiffTimeMeasure where
   zero = FiniteDiffTimeMeasure 0
   plus = curry $ \case
-      (InfiniteDiffTimeMeasure, _) -> InfiniteDiffTimeMeasure
-      (_, InfiniteDiffTimeMeasure) -> InfiniteDiffTimeMeasure
-      (FiniteDiffTimeMeasure x, FiniteDiffTimeMeasure y) ->
-        FiniteDiffTimeMeasure (x + y)
+    (InfiniteDiffTimeMeasure, _) -> InfiniteDiffTimeMeasure
+    (_, InfiniteDiffTimeMeasure) -> InfiniteDiffTimeMeasure
+    (FiniteDiffTimeMeasure x, FiniteDiffTimeMeasure y) ->
+      FiniteDiffTimeMeasure (x + y)
   min = curry $ \case
-      (InfiniteDiffTimeMeasure, y) -> y
-      (x, InfiniteDiffTimeMeasure) -> x
-      (FiniteDiffTimeMeasure x, FiniteDiffTimeMeasure y) ->
-        FiniteDiffTimeMeasure (min x y)
+    (InfiniteDiffTimeMeasure, y) -> y
+    (x, InfiniteDiffTimeMeasure) -> x
+    (FiniteDiffTimeMeasure x, FiniteDiffTimeMeasure y) ->
+      FiniteDiffTimeMeasure (min x y)
   max = curry $ \case
-      (InfiniteDiffTimeMeasure, _) -> InfiniteDiffTimeMeasure
-      (_, InfiniteDiffTimeMeasure) -> InfiniteDiffTimeMeasure
-      (FiniteDiffTimeMeasure x, FiniteDiffTimeMeasure y) ->
-        FiniteDiffTimeMeasure (max x y)
+    (InfiniteDiffTimeMeasure, _) -> InfiniteDiffTimeMeasure
+    (_, InfiniteDiffTimeMeasure) -> InfiniteDiffTimeMeasure
+    (FiniteDiffTimeMeasure x, FiniteDiffTimeMeasure y) ->
+      FiniteDiffTimeMeasure (max x y)
 
 -----
 
 -- | Thrown by 'addTx' or 'addTestTx' when 'mempoolTimeoutHard' is exceeded.
-data ExnMempoolTimeout =
-  forall blk. Show (GenTxId blk) => MkExnMempoolTimeout !DiffTime !(GenTxId blk)   -- TODO full tx hash
+data ExnMempoolTimeout
+  = forall blk. Show (GenTxId blk) => MkExnMempoolTimeout !DiffTime !(GenTxId blk) -- TODO full tx hash
 
 instance Show ExnMempoolTimeout where
-    showsPrec p (MkExnMempoolTimeout dur txid)
-      = showParen
-          (p >= 11)
-          (showString "ExnMempoolTimeout " . showsPrec 11 dur . showString " " . showsPrec 11 txid)
+  showsPrec p (MkExnMempoolTimeout dur txid) =
+    showParen
+      (p >= 11)
+      (showString "ExnMempoolTimeout " . showsPrec 11 dur . showString " " . showsPrec 11 txid)
 
 instance Exception ExnMempoolTimeout
