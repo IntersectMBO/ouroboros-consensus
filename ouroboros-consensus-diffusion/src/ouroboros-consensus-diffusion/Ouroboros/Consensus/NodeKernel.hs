@@ -792,6 +792,9 @@ forkBlockForging IS{..} blockForging =
 
     trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
+    -- FIXME: actually do it, but only if we have more than block size limit txs in the mempool
+    trace TraceForgedEndorserBlock
+
     -- Actually produce the block
     newBlock <-
       lift $

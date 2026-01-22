@@ -373,6 +373,7 @@ data TraceForgeEvent blk
   | -- | We adopted the block we produced, we also trace the transactions
     -- that were adopted.
     TraceAdoptedBlock SlotNo blk [Validated (GenTx blk)]
+  | TraceForgedEndorserBlock
 
 deriving instance
   ( LedgerSupportsProtocol blk
