@@ -34,6 +34,9 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   , AlonzoMeasure (..)
   , ConwayMeasure (..)
   , fromExUnits
+
+    -- * Leios
+  , leiosEndorserBlockMeasure
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
@@ -733,7 +736,7 @@ instance
   where
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
-  blockCapacityTxMeasure _cfg st = blockCapacityConwayMeasure st <> leiosEndorserBlockMeasure
+  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
 
 leiosEndorserBlockMeasure :: ConwayMeasure
 leiosEndorserBlockMeasure =

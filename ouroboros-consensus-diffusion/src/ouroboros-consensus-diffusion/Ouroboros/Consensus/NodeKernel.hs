@@ -166,6 +166,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import Ouroboros.Consensus.Shelley.Ledger (leiosEndorserBlockMeasure)
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -780,9 +781,10 @@ forkBlockForging IS{..} blockForging =
 
     lift $ roforkerClose forker
 
-    let txs =
-          snapshotTake mempoolSnapshot $
+    let (rbTxs, restTxs) =
+          splitSnapshot mempoolSnapshot $
             blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+    snapshotTake restTxs leiosEndorserBlockMeasure
     -- NB respect the capacity of the ledger state we're extending,
     -- which is /not/ 'snapshotLedgerState'
 
