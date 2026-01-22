@@ -375,9 +375,14 @@ data LedgerDB m l blk = LedgerDB
   --   and the current time.
   --
   -- - How many blocks have been processed since the last snapshot.
+  --
+  -- For V1, this MUST NOT be called concurrently with 'garbageCollect' and/or
+  -- 'tryFlush'.
   , tryFlush :: m ()
   -- ^ Flush V1 in-memory LedgerDB state to disk, if possible. This is a no-op
   -- for implementations that do not need an explicit flush function.
+  --
+  -- For V1, this MUST NOT be called concurrently with 'tryTakeSnapshot'.
   --
   -- Note that this is rate-limited by 'ldbShouldFlush'.
   , closeDB :: m ()
