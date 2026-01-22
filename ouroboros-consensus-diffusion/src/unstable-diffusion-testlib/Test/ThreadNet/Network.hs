@@ -1055,6 +1055,7 @@ runThreadNetwork
               , chainSyncHistoricityCheck = \_getGsmState -> HistoricityCheck.noCheck
               , blockFetchSize = estimateBlockSize
               , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
+              , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
               , miniProtocolParameters =
@@ -1684,7 +1685,7 @@ mkTestOutput vertexInfos = do
                 , nodeOutputFinalLedger = ldgr
                 , nodeOutputForges =
                     Map.fromList $
-                      [(s, b) | TraceForgedBlock s _ b _ <- nodeEventsForges]
+                      [(s, b) | TraceForgedBlock s _ b _ _ <- nodeEventsForges]
                 , nodeOutputHeaderAdds =
                     Map.fromListWith (flip (++)) $
                       [ (s, [(p, bno)])
@@ -1753,6 +1754,7 @@ type TracingConstraints blk =
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
+  , Show (TxMeasure blk)
   , HasNestedContent Header blk
   )
 

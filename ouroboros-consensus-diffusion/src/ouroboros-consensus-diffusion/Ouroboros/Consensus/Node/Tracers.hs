@@ -29,6 +29,7 @@ import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
+import Ouroboros.Consensus.Mempool.API (TxMeasureWithDiffTime (..))
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
   ( TraceBlockFetchServerEvent
   )
@@ -169,6 +170,7 @@ showTracers ::
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
+  , Show (TxMeasure blk)
   , Show remotePeer
   , LedgerSupportsProtocol blk
   ) =>
@@ -345,16 +347,16 @@ data TraceForgeEvent blk
   | -- | We forged a block
     --
     -- We record the current slot number, the point of the predecessor, the block
-    -- itself, and the total size of the mempool snapshot at the time we produced
+    -- itself, the total size of the mempool snapshot at the time we produced
     -- the block (which may be significantly larger than the block, due to
-    -- maximum block size)
+    -- maximum block size), and the size of the txs included in the block.
     --
     -- This will be followed by one of three messages:
     --
     -- * TraceAdoptedBlock (normally)
     -- * TraceDidntAdoptBlock (rarely)
     -- * TraceForgedInvalidBlock (hopefully never -- this would indicate a bug)
-    TraceForgedBlock SlotNo (Point blk) blk MempoolSize
+    TraceForgedBlock SlotNo (Point blk) blk MempoolSize (TxMeasureWithDiffTime blk)
   | -- | We did not adopt the block we produced, but the block was valid. We
     -- must have adopted a block that another leader of the same slot produced
     -- before we got the chance of adopting our own block. This is very rare,
@@ -377,6 +379,7 @@ deriving instance
   , Eq (Validated (GenTx blk))
   , Eq (ForgeStateUpdateError blk)
   , Eq (CannotForge blk)
+  , Eq (TxMeasure blk)
   ) =>
   Eq (TraceForgeEvent blk)
 deriving instance
@@ -385,6 +388,7 @@ deriving instance
   , Show (Validated (GenTx blk))
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
+  , Show (TxMeasure blk)
   ) =>
   Show (TraceForgeEvent blk)
 

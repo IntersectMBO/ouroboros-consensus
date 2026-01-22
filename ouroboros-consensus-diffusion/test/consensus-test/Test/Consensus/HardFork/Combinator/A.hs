@@ -398,6 +398,8 @@ instance LedgerSupportsMempool BlockA where
 
   getTransactionKeySets _tx = trivialLedgerTables
 
+  mkMempoolPredicateFailure = nothingMkMempoolPredicateFailure
+
 instance TxLimits BlockA where
   type TxMeasure BlockA = IgnoringOverflow ByteSize32
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary

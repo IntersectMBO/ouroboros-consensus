@@ -208,6 +208,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ See 'HistoricityCheck' for details.
   , blockFetchSize :: Header blk -> SizeInBytes
   , mempoolCapacityOverride :: MempoolCapacityBytesOverride
+  , mempoolTimeoutConfig :: Maybe MempoolTimeoutConfig
   , miniProtocolParameters :: MiniProtocolParameters
   , blockFetchConfiguration :: BlockFetchConfiguration
   , keepAliveRng :: StdGen
@@ -427,6 +428,7 @@ data InternalState m addrNTN addrNTC blk = IS
 initInternalState ::
   forall m addrNTN addrNTC blk.
   ( IOLike m
+  , SI.MonadTimer m
   , Ord addrNTN
   , Typeable addrNTN
   , RunNode blk
@@ -442,6 +444,7 @@ initInternalState
     , blockFetchSize
     , btime
     , mempoolCapacityOverride
+    , mempoolTimeoutConfig
     , gsmArgs
     , getUseBootstrapPeers
     , getDiffusionPipeliningSupport
@@ -463,6 +466,7 @@ initInternalState
         (chainDBLedgerInterface chainDB)
         (configLedger cfg)
         mempoolCapacityOverride
+        mempoolTimeoutConfig
         (mempoolTracer tracers)
 
     fetchClientRegistry <- newFetchClientRegistry
@@ -661,7 +665,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
     lift $ roforkerClose forker
 
-    let txs =
+    let (txs, txssz) =
           snapshotTake mempoolSnapshot $
             blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
     -- NB respect the capacity of the ledger state we're extending,
@@ -691,6 +695,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
         (ledgerTipPoint (ledgerState unticked))
         newBlock
         (snapshotMempoolSize mempoolSnapshot)
+        txssz
 
     -- Add the block to the chain DB
     let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
