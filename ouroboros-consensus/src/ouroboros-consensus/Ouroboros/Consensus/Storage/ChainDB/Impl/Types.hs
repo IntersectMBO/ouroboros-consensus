@@ -127,7 +127,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , LedgerDbSerialiseConstraints
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.Snapshots (SnapshotDelayRange(..))
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots (SnapshotDelayRange (..))
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.Serialisation
