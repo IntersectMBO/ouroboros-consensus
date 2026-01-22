@@ -112,13 +112,13 @@ mkMempool ::
 mkMempool mpEnv =
   Mempool
     { addTx = fmap runIdentity .: implAddTx mpEnv ProductionAddTx
-    , addTestTx = implAddTx mpEnv . TestingAddTx
     , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
     , getSnapshot = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getCapacity = isCapacity <$> readTMVar istate
     , testSyncWithLedger = implSyncWithLedger mpEnv
     , testForkMempoolThread = forkLinkedThread (mpEnvRegistry mpEnv)
+    , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }
  where
   MempoolEnv

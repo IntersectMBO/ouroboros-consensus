@@ -46,11 +46,11 @@ import Ouroboros.Network.Block
   Add transactions
 -------------------------------------------------------------------------------}
 
--- | A GADT that enables the shared implementation of 'addTx' and 'addTestTx'.
+-- | A GADT that enables the shared implementation of 'addTx' and 'testTryAddTx'.
 type WhichAddTx :: (Type -> Type) -> Type
 data WhichAddTx f where
   ProductionAddTx :: WhichAddTx Identity
-  -- | The argument unique to 'addTestTx'.
+  -- | The argument unique to 'testTryAddTx'.
   --
   -- The 'Nothing' result means the tx would not fit in the current mempool;
   -- the testing implementation gives up instead of retrying indefinitely.
@@ -243,7 +243,7 @@ doAddTx mpEnv caller wti tx = do
           pure $ after `diffTime` before
         case mbX of
           Nothing -> do
-            throwIO $ MkExnMempoolTimeout dur (txId tx)
+            throwIO $ MkExnMempoolTimeout dur tx
           Just _
             | Just toCfg <- mbToCfg
             , dur > mempoolTimeoutSoft toCfg
@@ -345,7 +345,7 @@ pureTryAddTx mpEnv cfg wti tx is values =
           -- 'isCapacity' are much smaller than the modulus, and so this should
           -- never happen. Despite that, blocking until adding the transaction
           -- doesn't overflow seems like a reasonable way to handle this case.
-          | not $ currentSize Measure.<= currentSize `Measure.plus` MkWithDiffTimeMeasure txsz Measure.zero ->
+          | not $ currentSize Measure.<= currentSize `Measure.plus` MkTxMeasureWithDiffTime txsz Measure.zero ->
               NotEnoughSpaceLeft
           -- We add the transaction if and only if it wouldn't overrun any component
           -- of the mempool capacity.
@@ -381,11 +381,11 @@ pureTryAddTx mpEnv cfg wti tx is values =
           -- never release the 'MVar'. In particular, we tacitly assume here that a
           -- tx that wouldn't even fit in an empty mempool would be rejected by
           -- 'txMeasure'.
-          | let MkWithDiffTimeMeasure txssz _txsdifftime = currentSize
+          | let MkTxMeasureWithDiffTime txssz _txsdifftime = currentSize
           , not $ txssz `Measure.plus` txsz Measure.<= isCapacity is
             -> NotEnoughSpaceLeft
           | Just toCfg <- mbToCfg
-          , let MkWithDiffTimeMeasure _txssz txsdifftime = currentSize
+          , let MkTxMeasureWithDiffTime _txssz txsdifftime = currentSize
           , not $ txsdifftime Measure.<= FiniteDiffTimeMeasure (mempoolTimeoutCapacity toCfg)
             -> NotEnoughSpaceLeft
           | otherwise ->
@@ -474,7 +474,7 @@ pureRemoveTxs ::
   LedgerTables (LedgerState blk) ValuesMK ->
   TicketNo ->
   -- | Txs to keep
-  [TxTicket (WithDiffTimeMeasure (TxMeasure blk)) (Validated (GenTx blk))] ->
+  [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
   -- | IDs to remove
   NE.NonEmpty (GenTxId blk) ->
   (InternalState blk, TraceEventMempool blk)

@@ -40,8 +40,8 @@ module Ouroboros.Consensus.Mempool.API
     -- * Mempool Snapshot
   , DiffTimeMeasure (..)
   , MempoolSnapshot (..)
-  , WithDiffTimeMeasure (..)
-  , forgetWithDiffTimeMeasure
+  , TxMeasureWithDiffTime (..)
+  , forgetTxMeasureWithDiffTime
 
     -- * Re-exports
   , SizeInBytes
@@ -219,7 +219,16 @@ data Mempool m blk = Mempool
   -- removed because they have become invalid.
   --
   -- This capacity excludes the `mempoolTimeoutCapacity`.
-  , addTestTx ::
+  , testForkMempoolThread :: forall a. String -> m a -> m (Thread m a)
+  -- ^ FOR TESTS ONLY
+  --
+  -- If we want to run a thread that can perform syncs in the mempool, it needs
+  -- to be registered in the mempool's internal registry. This function exposes
+  -- such functionality.
+  --
+  -- The 'String' passed will be used as the thread label, and the @m a@ will be
+  -- the action forked in the thread.
+  , testTryAddTx ::
       DiffTime ->
       AddTxOnBehalfOf ->
       GenTx blk ->
@@ -252,15 +261,6 @@ data Mempool m blk = Mempool
   -- n.b. in our current implementation, when one opens a mempool, we
   -- spawn a thread which performs this action whenever the 'ChainDB' tip
   -- point changes.
-  , testForkMempoolThread :: forall a. String -> m a -> m (Thread m a)
-  -- ^ FOR TESTS ONLY
-  --
-  -- If we want to run a thread that can perform syncs in the mempool, it needs
-  -- to be registered in the mempool's internal registry. This function exposes
-  -- such functionality.
-  --
-  -- The 'String' passed will be used as the thread label, and the @m a@ will be
-  -- the action forked in the thread.
   }
 
 -- | This configuration data controls a lightweight "defensive programming"
@@ -269,17 +269,17 @@ data Mempool m blk = Mempool
 -- The overall Praos design assumes that the 'TxLimits' strongly bounds how
 -- much CPU&allocation it will cost to determine whether a given tx is valid or
 -- invalid. But the June 2024 incident proved that such performance bugs might
--- can slip through to @mainnet@. When they do, it'd be desirable for the
--- Mempool to help prevent honest users from making regrettable mistakes (eg
--- the November 2025 incident), at least inconvenience the adversary, etc.
+-- can slip through to Cardano @mainnet@. When they do, it'd be desirable for
+-- the Mempool to help prevent honest users from making regrettable mistakes
+-- (eg the November 2025 incident), at least inconvenience the adversary, etc.
 --
--- To be clear: this timeout could never fully protect @mainnet@ from such
--- performance bugs, since the adversary could always put slow txs directly
--- into their own blocks, circumventing the Mempool entirely. But it at least
--- forces the adversary to have enough stake to issue slow blocks often enough
--- to matter and moreover forces them to public reveal whichever stake pools
--- they use as untrustworthy, since the blocks with slow txs must be
--- well-signed in order to affect the honest nodes.
+-- To be clear: this timeout could never fully protect Cardano @mainnet@ from
+-- such performance bugs, since the adversary could always put slow txs
+-- directly into their own blocks, circumventing the Mempool entirely. But it
+-- at least forces the adversary to have enough stake to issue slow blocks
+-- often enough to matter and moreover forces them to public reveal whichever
+-- stake pools they use as untrustworthy, since the blocks with slow txs must
+-- be well-signed in order to affect the honest nodes.
 --
 -- Latency spikes (eg GC pauses, snapshot writing, OS sleeping the process,
 -- etc) will cause occasional false alarms for this timeout. But we don't
@@ -292,7 +292,9 @@ data MempoolTimeoutConfig = MempoolTimeoutConfig
     -- ^ If the mempool takes longer than this to validate a tx, then it
     -- disconnects from the peer.
     --
-    -- INVARIANT: @'mempoolTimeoutHard' >= 'mempoolTimeoutSoft'@.
+    -- WARNING: if this is less than 'mempoolTimeoutSoft', then
+    -- 'mempoolTimeoutSoft' is irrelevant. If it's equal or just barely larger,
+    -- then the soft/hard distinction will likely be unreliable.
   , mempoolTimeoutCapacity :: DiffTime
     -- ^ If the txs in the mempool took longer than this cumulatively to
     -- validate when each entered the mempool, then the mempool is at capacity,
@@ -302,16 +304,13 @@ data MempoolTimeoutConfig = MempoolTimeoutConfig
     -- (ie those from `TxMeasure`), this component admits one tx above the
     -- given limit. This is unavoidable, because we must not validate a tx
     -- unless it could fit in the mempool but we can't know its validation time
-    -- before we validate it. If we validate it an it's less than
+    -- before we validate it. If we validate it and it's less than
     -- 'mempoolTimeoutSoft', then it'd be a waste of resources to ever not add
     -- it.
     --
     -- Therefore, the recommended value of this parameter is @X -
     -- 'mempoolTimeoutSoft'@, where @X@ is the forging thread's limit for how
     -- much of this component it will put into a block.
-    --
-    -- To avoid any risks of overflow, this value should be less than @maxBound
-    -- - 'mempoolTimeoutSoft'@.
     --
     -- Latency spikes (eg GC pauses, snapshot writing, OS sleeping the process,
     -- etc) do risk "wasting" this capacity, but only up to
@@ -442,7 +441,7 @@ data MempoolSnapshot blk = MempoolSnapshot
   -- ^ Get all transactions (oldest to newest) in the mempool snapshot,
   -- along with their ticket number, which are associated with a ticket
   -- number greater than the one provided.
-  , snapshotTake :: WithDiffTimeMeasure (TxMeasure blk) -> [Validated (GenTx blk)]
+  , snapshotTake :: TxMeasure blk -> [Validated (GenTx blk)]
   -- ^ Get the greatest prefix (oldest to newest) that respects the given
   -- block capacity.
   , snapshotLookupTx :: TicketNo -> Maybe (Validated (GenTx blk))
@@ -461,45 +460,59 @@ data MempoolSnapshot blk = MempoolSnapshot
   , snapshotPoint :: Point blk
   }
 
-data WithDiffTimeMeasure m = MkWithDiffTimeMeasure !m !DiffTimeMeasure
-  deriving stock (Eq, Ord, Generic, Show)
-  deriving
-    (Monoid, Semigroup)
-    via (InstantiatedAt Measure (WithDiffTimeMeasure m))
+data TxMeasureWithDiffTime blk = MkTxMeasureWithDiffTime !(TxMeasure blk) !DiffTimeMeasure
+  deriving stock (Generic)
 
-forgetWithDiffTimeMeasure :: WithDiffTimeMeasure m -> m
-forgetWithDiffTimeMeasure (MkWithDiffTimeMeasure x _) = x
+deriving instance Eq (TxMeasure blk) => Eq (TxMeasureWithDiffTime blk)
+deriving instance Ord (TxMeasure blk) => Ord (TxMeasureWithDiffTime blk)
+deriving instance Show (TxMeasure blk) => Show (TxMeasureWithDiffTime blk)
 
-deriving instance NoThunks m => NoThunks (WithDiffTimeMeasure m)
+deriving via (InstantiatedAt Measure (TxMeasureWithDiffTime blk))
+  instance Measure (TxMeasure blk) => Semigroup (TxMeasureWithDiffTime blk)
 
-binopViaTuple :: ((x, DiffTimeMeasure) -> (y, DiffTimeMeasure) -> (z, DiffTimeMeasure)) -> WithDiffTimeMeasure x -> WithDiffTimeMeasure y -> WithDiffTimeMeasure z
-binopViaTuple f (MkWithDiffTimeMeasure a b) (MkWithDiffTimeMeasure p q) =
+deriving via (InstantiatedAt Measure (TxMeasureWithDiffTime blk))
+  instance Measure (TxMeasure blk) => Monoid (TxMeasureWithDiffTime blk)
+
+forgetTxMeasureWithDiffTime :: TxMeasureWithDiffTime blk -> TxMeasure blk
+forgetTxMeasureWithDiffTime (MkTxMeasureWithDiffTime x _) = x
+
+deriving instance NoThunks (TxMeasure blk) => NoThunks (TxMeasureWithDiffTime blk)
+
+binopViaTuple :: ((TxMeasure x, DiffTimeMeasure) -> (TxMeasure y, DiffTimeMeasure) -> (TxMeasure z, DiffTimeMeasure)) -> TxMeasureWithDiffTime x -> TxMeasureWithDiffTime y -> TxMeasureWithDiffTime z
+binopViaTuple f (MkTxMeasureWithDiffTime a b) (MkTxMeasureWithDiffTime p q) =
   let (x, y) = f (a, b) (p, q)
   in
-  MkWithDiffTimeMeasure x y
+  MkTxMeasureWithDiffTime x y
 
-instance Measure m => Measure (WithDiffTimeMeasure m) where
-  zero = MkWithDiffTimeMeasure Data.Measure.zero Data.Measure.zero
+instance Measure (TxMeasure blk) => Measure (TxMeasureWithDiffTime blk) where
+  zero = MkTxMeasureWithDiffTime Data.Measure.zero Data.Measure.zero
   plus = binopViaTuple Data.Measure.plus
   min = binopViaTuple Data.Measure.min
   max = binopViaTuple Data.Measure.max
 
-instance HasByteSize m => HasByteSize (WithDiffTimeMeasure m) where
-  txMeasureByteSize = txMeasureByteSize . forgetWithDiffTimeMeasure
+instance HasByteSize (TxMeasure blk) => HasByteSize (TxMeasureWithDiffTime blk) where
+  txMeasureByteSize = txMeasureByteSize . forgetTxMeasureWithDiffTime
 
-instance TxMeasureMetrics m => TxMeasureMetrics (WithDiffTimeMeasure m) where
-  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . forgetWithDiffTimeMeasure
-  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . forgetWithDiffTimeMeasure
-  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . forgetWithDiffTimeMeasure
-  txMeasureMetricRefScriptsSizeBytes = txMeasureMetricRefScriptsSizeBytes . forgetWithDiffTimeMeasure
+instance TxMeasureMetrics (TxMeasure blk) => TxMeasureMetrics (TxMeasureWithDiffTime blk) where
+  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . forgetTxMeasureWithDiffTime
+  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . forgetTxMeasureWithDiffTime
+  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . forgetTxMeasureWithDiffTime
+  txMeasureMetricRefScriptsSizeBytes = txMeasureMetricRefScriptsSizeBytes . forgetTxMeasureWithDiffTime
 
 -- | How long it took to validate a valid tx
 data DiffTimeMeasure = FiniteDiffTimeMeasure DiffTime | InfiniteDiffTimeMeasure
-  deriving stock (Eq, Generic, Ord, Show)
+  deriving stock (Eq, Generic, Show)
   deriving anyclass (NoThunks)
   deriving
     (Monoid, Semigroup)
     via (InstantiatedAt Measure DiffTimeMeasure)
+
+instance Ord DiffTimeMeasure where
+  compare = curry $ \case
+      (InfiniteDiffTimeMeasure, InfiniteDiffTimeMeasure) -> EQ
+      (InfiniteDiffTimeMeasure, _) -> GT
+      (_, InfiniteDiffTimeMeasure) -> LT
+      (FiniteDiffTimeMeasure x, FiniteDiffTimeMeasure y) -> compare x y
 
 instance Measure DiffTimeMeasure where
   zero = FiniteDiffTimeMeasure 0
@@ -521,9 +534,10 @@ instance Measure DiffTimeMeasure where
 
 -----
 
--- | Thrown by 'addTx' or 'addTestTx' when 'mempoolTimeoutHard' is exceeded.
+-- | Thrown by 'addTx' or 'testTryAddTx' when 'mempoolTimeoutHard' is exceeded.
 data ExnMempoolTimeout =
-  forall blk. Show (GenTxId blk) => MkExnMempoolTimeout !DiffTime !(GenTxId blk)   -- TODO full tx hash
+  -- | The observed duration and the full tx that caused it.
+  forall blk. Show (GenTx blk) => MkExnMempoolTimeout !DiffTime !(GenTx blk)
 
 instance Show ExnMempoolTimeout where
     showsPrec p (MkExnMempoolTimeout dur txid)

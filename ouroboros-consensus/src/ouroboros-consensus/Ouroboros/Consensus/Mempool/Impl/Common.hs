@@ -76,7 +76,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 -- | Internal state in the mempool
 data InternalState blk = IS
-  { isTxs :: !(TxSeq (WithDiffTimeMeasure (TxMeasure blk)) (Validated (GenTx blk)))
+  { isTxs :: !(TxSeq (TxMeasureWithDiffTime blk) (Validated (GenTx blk)))
   -- ^ Transactions currently in the mempool
   --
   -- NOTE: the total size of the transactions in 'isTxs' may exceed the
@@ -163,7 +163,7 @@ isMempoolSize :: TxLimits blk => InternalState blk -> MempoolSize
 isMempoolSize is =
   MempoolSize
     { msNumTxs = fromIntegral $ length $ isTxs is
-    , msNumBytes = txMeasureByteSize $ forgetWithDiffTimeMeasure $ TxSeq.toSize $ isTxs is
+    , msNumBytes = txMeasureByteSize $ forgetTxMeasureWithDiffTime $ TxSeq.toSize $ isTxs is
     }
 
 initInternalState ::
@@ -350,7 +350,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
     Right (st', vtx) ->
       ( Right vtx
       , \dur -> is
-          { isTxs = isTxs :> TxTicket vtx nextTicketNo (MkWithDiffTimeMeasure txsz dur)
+          { isTxs = isTxs :> TxTicket vtx nextTicketNo (MkTxMeasureWithDiffTime txsz dur)
           , isTxKeys = isTxKeys <> getTransactionKeySets tx
           , isTxValues = ltliftA2 unionValues isTxValues origValues
           , isTxIds = Set.insert (txId tx) isTxIds
@@ -389,7 +389,7 @@ revalidateTxsFor ::
   LedgerTables (LedgerState blk) ValuesMK ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
-  [TxTicket (WithDiffTimeMeasure (TxMeasure blk)) (Validated (GenTx blk))] ->
+  [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
   RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
   let theTxs = map wrap txTickets
@@ -438,7 +438,7 @@ computeSnapshot ::
   LedgerTables (LedgerState blk) ValuesMK ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
-  [TxTicket (WithDiffTimeMeasure (TxMeasure blk)) (Validated (GenTx blk))] ->
+  [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
   MempoolSnapshot blk
 computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
   let theTxs = map wrap txTickets
@@ -499,14 +499,14 @@ snapshotFromIS is =
     TicketNo ->
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxsAfter IS{isTxs} =
-    (\x -> [ (a, b, forgetWithDiffTimeMeasure c) | (a, b, c) <- x ]) . TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
+    (\x -> [ (a, b, forgetTxMeasureWithDiffTime c) | (a, b, c) <- x ]) . TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
 
   implSnapshotTake ::
     InternalState blk ->
-    WithDiffTimeMeasure (TxMeasure blk) ->
+    TxMeasure blk ->
     [Validated (GenTx blk)]
   implSnapshotTake IS{isTxs} =
-    map TxSeq.txTicketTx . TxSeq.toList . fst . TxSeq.splitAfterTxSize isTxs
+    map TxSeq.txTicketTx . TxSeq.toList . fst . TxSeq.splitAfterTxSize isTxs . (`MkTxMeasureWithDiffTime` InfiniteDiffTimeMeasure)
 
   implSnapshotGetTx ::
     InternalState blk ->

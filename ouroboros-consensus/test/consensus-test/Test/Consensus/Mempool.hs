@@ -1318,7 +1318,7 @@ prop_Mempool_timeout (TestSetupWithTxsAndDiffTimes timeoutConfig testSetup txs) 
             let notMempoolError = \case
                     MockMempoolError{} -> False
                     _ -> True
-            eRes <- try $ addTestTx mempool dt AddTxForRemotePeer tx
+            eRes <- try $ testTryAddTx mempool dt AddTxForRemotePeer tx
             tabulate "addTextTx expectation" [show expected] <$> case (expected, eRes) of
               (MtcAccepted, Right (Just MempoolTxAdded{})) ->
                 go (acc + dt) txs'

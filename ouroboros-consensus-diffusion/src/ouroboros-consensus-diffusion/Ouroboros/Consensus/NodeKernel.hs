@@ -69,10 +69,6 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Mempool
-import Ouroboros.Consensus.Mempool.API
-  ( DiffTimeMeasure (..)
-  , WithDiffTimeMeasure (..)
-  )
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandle (..)
@@ -671,7 +667,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
     let txs =
           snapshotTake mempoolSnapshot $
-            (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState `MkWithDiffTimeMeasure` InfiniteDiffTimeMeasure)
+            blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
     -- NB respect the capacity of the ledger state we're extending,
     -- which is /not/ 'snapshotLedgerState'
 
