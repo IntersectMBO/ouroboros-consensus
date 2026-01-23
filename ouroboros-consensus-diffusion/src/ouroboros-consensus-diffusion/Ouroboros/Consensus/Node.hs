@@ -89,7 +89,8 @@ import Data.Maybe (fromMaybe, isNothing)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import qualified LeiosDemoOnlyTestFetch as LF
-import LeiosDemoTypes (SomeLeiosDb, leiosMempoolSize)
+import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoTypes (leiosMempoolSize)
 import Network.DNS.Resolver (Resolver)
 import qualified Network.Mux as Mux
 import Network.Mux.Types
@@ -257,7 +258,7 @@ data RunNodeArgs m addrNTN addrNTC blk p2p = RunNodeArgs
   -- ^ Network PeerSharing miniprotocol willingness flag
   , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
   , rnGenesisConfig :: GenesisConfig
-  , rnNewLeiosDbConnection :: m (SomeLeiosDb m)
+  , rnNewLeiosDbConnection :: m (LeiosDbHandle m)
   }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -960,7 +961,7 @@ mkNodeKernelArgs ::
   StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN) ->
   GenesisNodeKernelArgs m blk ->
   DiffusionPipeliningSupport ->
-  m (SomeLeiosDb m) ->
+  m (LeiosDbHandle m) ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry

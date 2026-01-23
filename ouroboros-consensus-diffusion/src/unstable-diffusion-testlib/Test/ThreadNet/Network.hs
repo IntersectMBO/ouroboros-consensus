@@ -103,6 +103,7 @@ import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
 import Ouroboros.Consensus.Util.IOLike
+import LeiosDemoDb (newInMemoryLeiosDb)
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.RedundantConstraints
 import Ouroboros.Consensus.Util.STM
@@ -1085,6 +1086,7 @@ runThreadNetwork
                     { gnkaLoEAndGDDArgs = LoEAndGDDDisabled
                     }
               , getDiffusionPipeliningSupport = DiffusionPipeliningOn
+              , nkaGetLeiosNewDbConnection = newInMemoryLeiosDb
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs

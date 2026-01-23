@@ -386,7 +386,7 @@ mkHandlers
             leiosNotifyServerPeer
               (Leios.nextLeiosNotification (leiosPeerTracer peer) (getLeiosEbBodies, var))
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
-          Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection -- TODO share DB connection for same peer?
+          db <- getLeiosNewDbConnection -- TODO share DB connection for same peer?
           reqVar <-
             let loop = do
                   leiosPeersVars <- MVar.readMVar getLeiosPeersVars
@@ -408,7 +408,7 @@ mkHandlers
                 (Leios.MkPeerId peer)
                 reqVar
       , hLeiosFetchServer = \_version peer -> Effect $ do
-          Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
+          db <- getLeiosNewDbConnection
           leiosFetchContext <-
             Leios.newLeiosFetchContext
               getLeiosWriteLock
