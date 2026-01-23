@@ -167,6 +167,7 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Mempool.TxSeq (splitAfterTxSize)
+import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -784,14 +785,15 @@ forkBlockForging IS{..} blockForging =
     let (rbTxs, restTxs) =
           snapshotSplit mempoolSnapshot $
             blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-    let (ebTxs, _) = splitAfterTxSize restTxs (ebCapacityTxMeasure (configLedger cfg) tickedLedgerState) -- TODO(bladyjoker): forge EBs
-    let txs = rbTxs -- TODO(bladyjoker): Rename properly
+    let ebTxs =
+          fmap TxSeq.txTicketTx . TxSeq.toList . fst $
+            splitAfterTxSize restTxs (ebCapacityTxMeasure (configLedger cfg) tickedLedgerState) -- TODO(bladyjoker): forge EBs
 
     -- NB respect the capacity of the ledger state we're extending,
     -- which is /not/ 'snapshotLedgerState'
 
     -- force the mempool's computation before the tracer event
-    _ <- evaluate (length txs)
+    _ <- evaluate (length rbTxs)
     _ <- evaluate mempoolHash
 
     trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
@@ -800,7 +802,7 @@ forkBlockForging IS{..} blockForging =
     trace TraceForgedEndorserBlock
 
     -- Actually produce the block
-    newBlock <-
+    (newBlock, mayEndorserBlock) <-
       lift $
         Block.forgeBlock
           blockForging
@@ -808,7 +810,8 @@ forkBlockForging IS{..} blockForging =
           bcBlockNo
           currentSlot
           (forgetLedgerTables tickedLedgerState)
-          txs
+          rbTxs
+          ebTxs
           proof
 
     trace $
@@ -853,7 +856,7 @@ forkBlockForging IS{..} blockForging =
             -- means that we'll throw away some good transactions in the
             -- process.
             whenJust
-              (NE.nonEmpty (map (txId . txForgetValidated) txs))
+              (NE.nonEmpty (map (txId . txForgetValidated) rbTxs))
               (lift . removeTxsEvenIfValid mempool)
         exitEarly
 
@@ -867,7 +870,7 @@ forkBlockForging IS{..} blockForging =
       -- assert this here because the ability to extract transactions from a
       -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
       -- e.g., @DualBlock@.
-      trace $ TraceAdoptedBlock currentSlot newBlock txs
+      trace $ TraceAdoptedBlock currentSlot newBlock rbTxs
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()
   trace =

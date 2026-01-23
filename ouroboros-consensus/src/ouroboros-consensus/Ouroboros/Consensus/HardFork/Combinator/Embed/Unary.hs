@@ -189,6 +189,8 @@ deriving via
   instance
     Isomorphic WrapChainDepState
 
+deriving via IsomorphicUnary NS WrapEndorserBlock instance Isomorphic WrapEndorserBlock
+
 {-------------------------------------------------------------------------------
   Hash
 -------------------------------------------------------------------------------}
@@ -454,14 +456,19 @@ instance Functor m => Isomorphic (BlockForging m) where
               )
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno tickedLgrSt txs isLeader ->
-          project' (Proxy @(I blk))
+      , forgeBlock = \cfg bno sno tickedLgrSt rbTxs ebTxs isLeader ->
+          ( \(hfRb :: HardForkBlock '[blk], mayHfEb :: Maybe (EndorserBlock (HardForkBlock '[blk]))) ->
+              ( project' (Proxy @(I blk)) hfRb
+              , project' (Proxy @(WrapEndorserBlock blk)) <$> mayHfEb
+              )
+          )
             <$> forgeBlock
               (inject cfg)
               bno
               sno
               (getFlipTickedLedgerState (inject (FlipTickedLedgerState tickedLgrSt)))
-              (inject' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
+              (inject' (Proxy @(WrapValidatedGenTx blk)) <$> rbTxs)
+              (inject' (Proxy @(WrapValidatedGenTx blk)) <$> ebTxs)
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
       }
    where
@@ -499,14 +506,19 @@ instance Functor m => Isomorphic (BlockForging m) where
               (projTickedChainDepSt tickedChainDepSt)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno tickedLgrSt txs isLeader ->
-          inject' (Proxy @(I blk))
+      , forgeBlock = \cfg bno sno tickedLgrSt rbTxs ebTxs isLeader ->
+          ( \(hfRb :: blk, mayHfEb :: Maybe (EndorserBlock (blk))) ->
+              ( inject' (Proxy @(I blk)) hfRb
+              , inject' (Proxy @(WrapEndorserBlock blk)) <$> mayHfEb
+              )
+          )
             <$> forgeBlock
               (project cfg)
               bno
               sno
               (getFlipTickedLedgerState (project (FlipTickedLedgerState tickedLgrSt)))
-              (project' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
+              (project' (Proxy @(WrapValidatedGenTx blk)) <$> rbTxs)
+              (project' (Proxy @(WrapValidatedGenTx blk)) <$> ebTxs)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
       }
    where

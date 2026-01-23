@@ -32,6 +32,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
     -- * Value for /one/ era
   , OneEraApplyTxErr (..)
   , OneEraBlock (..)
+  , OneEraEndorserBlock (..)
   , OneEraCannotForge (..)
   , OneEraEnvelopeErr (..)
   , OneEraForgeStateInfo (..)
@@ -122,6 +123,7 @@ newtype SomeErasCanBeLeader xs = SomeErasCanBeLeader {getSomeErasCanBeLeader :: 
 
 newtype OneEraApplyTxErr xs = OneEraApplyTxErr {getOneEraApplyTxErr :: NS WrapApplyTxErr xs}
 newtype OneEraBlock xs = OneEraBlock {getOneEraBlock :: NS I xs}
+newtype OneEraEndorserBlock xs = OneEraEndorserBlock {getOneEraEndorserBlock :: NS WrapEndorserBlock xs}
 newtype OneEraCannotForge xs = OneEraCannotForge {getOneEraCannotForge :: NS WrapCannotForge xs}
 newtype OneEraEnvelopeErr xs = OneEraEnvelopeErr {getOneEraEnvelopeErr :: NS WrapEnvelopeErr xs}
 newtype OneEraForgeStateInfo xs = OneEraForgeStateInfo {getOneEraForgeStateInfo :: NS WrapForgeStateInfo xs}
