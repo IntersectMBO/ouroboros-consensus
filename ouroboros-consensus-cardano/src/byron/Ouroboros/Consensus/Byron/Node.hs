@@ -59,7 +59,6 @@ import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
-import Ouroboros.Consensus.Util ((....:))
 import Ouroboros.Network.Magic (NetworkMagic (..))
 
 {-------------------------------------------------------------------------------
@@ -142,7 +141,11 @@ byronBlockForging creds =
           canBeLeader
           slot
           tickedPBftState
-    , forgeBlock = \cfg -> return ....: forgeByronBlock cfg
+    , forgeBlock = \cfg blkNo slotNo ledgerState rbTxs _ebTxs isLeader ->
+        let
+          byronBlock = forgeByronBlock cfg blkNo slotNo ledgerState rbTxs isLeader
+         in
+          return (byronBlock, Nothing)
     }
  where
   canBeLeader = mkPBftCanBeLeader creds

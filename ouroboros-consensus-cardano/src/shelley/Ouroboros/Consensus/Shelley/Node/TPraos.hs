@@ -136,11 +136,18 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
           (configConsensus cfg)
           forgingVRFHash
           curSlot
-    , forgeBlock = \cfg ->
-        forgeShelleyBlock
-          hotKey
-          canBeLeader
-          cfg
+    , forgeBlock = \cfg blkNo slotNo ledgerState rbTxs _ebTxs isLeader -> do
+        shelleyBlock <-
+          forgeShelleyBlock
+            hotKey
+            canBeLeader
+            cfg
+            blkNo
+            slotNo
+            ledgerState
+            rbTxs
+            isLeader
+        return (shelleyBlock, Nothing)
     }
  where
   ShelleyLeaderCredentials
