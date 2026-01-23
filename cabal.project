@@ -50,6 +50,8 @@ if impl (ghc >= 9.10)
     -- https://github.com/phadej/regression-simple/pull/14
     , regression-simple:base
 
+-- We need this s-r-p until ledger makes CHaP release that is compatible with
+-- mempack-0.2.0.0, which LSM-trees need.
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
@@ -80,7 +82,9 @@ source-repository-package
     eras/byron/ledger/impl
     eras/byron/crypto
 
--- Backported version of https://github.com/IntersectMBO/ouroboros-network/pull/5161
+-- We need this s-r-p until ouroboros-network makes a CHaP release that
+-- includes https://github.com/IntersectMBO/ouroboros-network/pull/5161, which
+-- the Peras PRs so far merged need.
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
