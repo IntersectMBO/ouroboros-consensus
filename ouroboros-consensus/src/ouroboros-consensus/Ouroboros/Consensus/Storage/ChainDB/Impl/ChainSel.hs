@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -29,7 +30,7 @@ import Control.Monad (forM_, when)
 import Control.Monad.Except ()
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
-import Control.ResourceRegistry (ResourceRegistry, withRegistry)
+import Control.ResourceRegistry (ResourceRegistry, withLabelledRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Function (on)
 import Data.Functor.Contravariant ((>$<))
@@ -407,7 +408,7 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
 
   -- Consider all candidates at once, to avoid transient chain switches.
   case NE.nonEmpty $ concat chainDiffs of
-    Just chainDiffs' -> withRegistry $ \rr -> do
+    Just chainDiffs' -> withLabelledRegistry "ChainSelSync" $ \rr -> do
       -- Find the best valid candidate.
       chainSelection chainSelEnv rr chainDiffs' >>= \case
         Just validatedChainDiff ->
@@ -617,7 +618,7 @@ chainSelectionForBlock ::
   Header blk ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
+chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withLabelledRegistry "ChainSelectionForBlock" $ \rr -> do
   (invalid, curChain, weights) <-
     atomically $
       (,,)

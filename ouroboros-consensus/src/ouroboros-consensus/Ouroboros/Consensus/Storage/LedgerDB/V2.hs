@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -591,7 +592,7 @@ withStateRef ::
   (t (ResourceKey m, StateRef m l) -> m a) ->
   m a
 withStateRef ldbEnv project f =
-  withRegistry $ \reg -> getStateRef ldbEnv reg project >>= f
+  withLabelledRegistry "withStateRef" $ \reg -> getStateRef ldbEnv reg project >>= f
 
 acquireAtTarget ::
   ( HeaderHash l ~ HeaderHash blk

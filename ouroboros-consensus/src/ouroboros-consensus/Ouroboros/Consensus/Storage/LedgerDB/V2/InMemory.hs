@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -154,7 +155,8 @@ implDuplicate ::
 implDuplicate tracer tv someFS rr = do
   hs <- readTVarIO tv
   !x <- guardClosed hs $ \v ->
-    allocate
+    allocateLabelled
+      "Duplicate"
       rr
       (\_ -> newInMemoryLedgerTablesHandle tracer someFS v)
       close

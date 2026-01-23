@@ -46,7 +46,7 @@ import Control.ResourceRegistry
   , allocate
   , runInnerWithTempRegistry
   , runWithTempRegistry
-  , withRegistry
+  , withLabelledRegistry
   )
 import Control.Tracer
 import Data.Functor ((<&>))
@@ -184,7 +184,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    chain <- withRegistry $ \rr -> do
+    chain <- withLabelledRegistry "InitialChainSelection" $ \rr -> do
       chainAndLedger <-
         ChainSel.initialChainSelection
           immutableDB

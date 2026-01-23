@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -260,7 +261,7 @@ initMempoolEnv ::
   ResourceRegistry m ->
   m (MempoolEnv m blk)
 initMempoolEnv ledgerInterface cfg capacityOverride tracer topLevelRegistry = do
-  (_, mpEnvRegistry) <- allocate topLevelRegistry (\_ -> unsafeNewRegistry) closeRegistry
+  (_, mpEnvRegistry) <- allocate topLevelRegistry (\_ -> unsafeNewLabelledRegistry "Mempool") closeRegistry
   initMempoolEnv' mpEnvRegistry
  where
   initMempoolEnv' reg = do

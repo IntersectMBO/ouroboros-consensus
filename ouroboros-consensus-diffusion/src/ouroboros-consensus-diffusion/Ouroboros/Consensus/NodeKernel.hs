@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
@@ -508,7 +509,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     blockForgingMLabel
     finalize
     ( \bf -> knownSlotWatcher btime $
-        \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go bf rr currentSlot)
+        \currentSlot -> withLabelledRegistry "Forging" (\rr -> withEarlyExit_ $ go bf rr currentSlot)
     )
  where
   label :: String

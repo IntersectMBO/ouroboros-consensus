@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
@@ -485,7 +486,7 @@ runWith ::
   m ()
 runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
   llrnWithCheckedDB $ \(LastShutDownWasClean lastShutDownWasClean) continueWithCleanChainDB ->
-    withRegistry $ \registry ->
+    withLabelledRegistry "Main" $ \registry ->
       handleJust
         -- Ignore exception thrown in connection handlers and diffusion.
         -- Also ignore 'ExitSuccess'.

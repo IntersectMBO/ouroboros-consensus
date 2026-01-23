@@ -50,6 +50,9 @@ if impl (ghc >= 9.10)
     -- https://github.com/phadej/regression-simple/pull/14
     , regression-simple:base
 
+constraints:
+  resource-registry +debug-labels
+
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
@@ -89,3 +92,11 @@ source-repository-package
   subdir:
     ouroboros-network-api
     ouroboros-network
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/io-classes-extra
+  tag: 37cd97661f107baac24bcf8894293ac4c3a1424e
+  --sha256: sha256-WsL2y2aFqtXlYyrK5Lk1jNLDj7U0OjJ7MHMz4ruT3oI=
+  subdir:
+    resource-registry
