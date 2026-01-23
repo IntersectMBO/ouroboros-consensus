@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.26.0.3'></a>
+## 0.26.0.3 -- 2026-01-23
+
+### Patch
+
+- Integrating upstream Breaking changes for the Mempool timeout.
+
 <a id='changelog-0.26.0.2'></a>
 ## 0.26.0.2 -- 2025-10-29
 

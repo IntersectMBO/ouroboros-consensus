@@ -2,6 +2,30 @@
 
 # Changelog entries
 
+<a id='changelog-0.29.0.0'></a>
+## 0.29.0.0 -- 2026-01-23
+
+### Patch
+
+- Fix leaky read lock acquisition that could lead to whole node deadlock.
+
+- Force snapshot tracer to avoid retaining the Genesis state.
+
+### Breaking
+
+- Added `mkMempoolPredicateFailure` method to `LedgerSupportsMempool`.
+- Added `ExnMempoolTimeout` exception to Mempool.
+- Added `addTestTx` field to Mempool `API` record type, for testing only.
+- Added `MempoolTimeoutConfig`, `DiffTimeMeasure`, `TxMeasureWithDiffTime` types.
+- Added the `DiffTimeMeasure` component alongside the `TxMeasure` that the
+  Mempool's finger-tree maintains, measuring how much monotonic clock each tx
+  took to validate.
+- Enriched argument of `snapshotTake` method in the `MempoolSnapshot` record
+  type. You can pass `InfiniteDiffTimeMeasure` if you don't care about limiting
+  the new dimension.
+- Added `Maybe MempoolTimeoutConfig` argument to `openMempool`. Passing
+  `Nothing` disables the timeout.
+
 <a id='changelog-0.28.0.2'></a>
 ## 0.28.0.2 -- 2025-10-29
 
