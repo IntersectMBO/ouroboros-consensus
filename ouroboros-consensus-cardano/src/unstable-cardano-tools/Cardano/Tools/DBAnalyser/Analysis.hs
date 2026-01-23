@@ -885,6 +885,7 @@ reproMempoolForge numBlks env = do
             LedgerSupportsMempool.ByteSize32 $
               1024 * 1024
         )
+        (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
         nullTracer
 
     void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks mempool)
