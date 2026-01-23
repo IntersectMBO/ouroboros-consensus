@@ -38,7 +38,7 @@ import Data.Maybe.Strict
 import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
 import Data.Word (Word64)
-import Lens.Micro ((^.), folded, to, toListOf, SimpleGetter)
+import Lens.Micro ((^.), folded, to, toListOf, SimpleGetter, SimpleFold)
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -73,6 +73,9 @@ import Ouroboros.Consensus.Protocol.Praos.Header (Header(..),HeaderBody(..))
 import Cardano.Ledger.Api.Tx.Wits
 import Data.Set (Set)
 import Cardano.Ledger.Api (BabbageEraTxBody(..))
+import qualified Cardano.Ledger.Conway.TxCert as Conway
+import qualified Cardano.Ledger.Shelley.TxCert as Shelley
+import qualified Cardano.Ledger.Dijkstra.TxCert as Dijkstra
 
 -- | Usable for each Shelley-based era
 instance
@@ -84,6 +87,7 @@ instance
   , EraDatum era
   , EraTx era
   , Core.EraTxBody era
+  , EraClassifyCert (Core.TxCert era)
   ) =>
   HasAnalysis (ShelleyBlock proto era)
   where
@@ -110,6 +114,10 @@ instance
 
   type CertsOf (ShelleyBlock proto era) = Core.TxCert era
   certs = Core.bodyTxL . Core.certsTxBodyL . folded
+
+  filterPoolCert = eraFilterPoolCert @(Core.TxCert era)
+  filterGovCert = eraFilterGovCert @(Core.TxCert era)
+  filterDelegCert = eraFilterDelegCert @(Core.TxCert era)
 
   eraName _ = eraEraName @era
 
@@ -158,6 +166,39 @@ instance
   -- For the time being we do not support any block application
   -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
+
+class EraClassifyCert cert where
+  eraFilterPoolCert :: SimpleFold cert cert
+  eraFilterGovCert :: SimpleFold cert cert
+  eraFilterDelegCert :: SimpleFold cert cert
+
+instance EraClassifyCert (Conway.ConwayTxCert era) where
+  eraFilterPoolCert inner cert@(Conway.ConwayTxCertPool _) = inner cert
+  eraFilterPoolCert _ _ = mempty
+
+  eraFilterGovCert inner cert@(Conway.ConwayTxCertGov _) = inner cert
+  eraFilterGovCert _ _ = mempty
+
+  eraFilterDelegCert inner cert@(Conway.ConwayTxCertDeleg _) = inner cert
+  eraFilterDelegCert _ _ = mempty
+
+instance EraClassifyCert (Shelley.ShelleyTxCert era) where
+  eraFilterPoolCert inner cert@(Shelley.ShelleyTxCertPool _) = inner cert
+  eraFilterPoolCert _ _ = mempty
+
+  eraFilterGovCert _ _ = mempty
+
+  eraFilterDelegCert inner cert@(Shelley.ShelleyTxCertDelegCert _) = inner cert
+  eraFilterDelegCert inner cert@(Shelley.ShelleyTxCertGenesisDeleg _) = inner cert
+  eraFilterDelegCert _ _ = mempty
+
+instance EraClassifyCert (Dijkstra.DijkstraTxCert era) where
+  eraFilterPoolCert inner cert@(Dijkstra.DijkstraTxCertPool _) = inner cert
+  eraFilterPoolCert _ _ = mempty
+  eraFilterGovCert inner cert@(Dijkstra.DijkstraTxCertGov _) = inner cert
+  eraFilterGovCert _ _ = mempty
+  eraFilterDelegCert inner cert@(Dijkstra.DijkstraTxCertDeleg _) = inner cert
+  eraFilterDelegCert _ _ = mempty
 
 class EraTx era where
   eraReferenceInputs :: SimpleGetter (Ledger.Tx era) (Set Ledger.TxIn)

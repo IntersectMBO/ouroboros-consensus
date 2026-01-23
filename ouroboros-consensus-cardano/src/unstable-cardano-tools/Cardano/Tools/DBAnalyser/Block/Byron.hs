@@ -55,6 +55,9 @@ instance HasAnalysis ByronBlock where
   scriptSize = absurd
   type CertsOf ByronBlock = Void -- dummy
   certs _ = absurd
+  filterPoolCert _ = absurd
+  filterGovCert _ = absurd
+  filterDelegCert _ = absurd
   eraName _ = "Byron"
   countTxOutputs = aBlockOrBoundary (const 0) countTxOutputsByron
   blockTxSizes = aBlockOrBoundary (const []) blockTxSizesByron

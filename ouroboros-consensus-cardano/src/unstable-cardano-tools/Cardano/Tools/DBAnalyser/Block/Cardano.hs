@@ -348,6 +348,10 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
 
   certs inner (ATx @blk cert) = Const . getConst $ certs @blk (Const . getConst . inner . ACert @blk) cert
 
+  filterPoolCert inner (ACert @blk cert) = Const . getConst $ filterPoolCert @blk (Const . getConst . inner . ACert @blk) cert
+  filterGovCert inner (ACert @blk cert) = Const . getConst $ filterGovCert @blk (Const . getConst . inner . ACert @blk) cert
+  filterDelegCert inner (ACert @blk cert) = Const . getConst $ filterDelegCert @blk (Const . getConst . inner . ACert @blk) cert  
+
   eraName = analyseBlock eraName
 
   countTxOutputs = analyseBlock countTxOutputs

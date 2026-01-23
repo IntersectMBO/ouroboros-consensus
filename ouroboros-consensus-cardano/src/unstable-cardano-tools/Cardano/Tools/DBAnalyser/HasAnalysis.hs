@@ -70,6 +70,13 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
 
   certs :: SimpleFold (TxOf blk) (CertsOf blk)
 
+  -- | These filters are meant to be an affine fold really. A one-way prism. It
+  -- should be fine not to encode this constraint.
+  filterPoolCert :: SimpleFold (CertsOf blk) (CertsOf blk)
+  filterGovCert :: SimpleFold (CertsOf blk) (CertsOf blk)
+  filterDelegCert :: SimpleFold (CertsOf blk) (CertsOf blk)
+  
+
   eraName :: blk -> Text
 
 
