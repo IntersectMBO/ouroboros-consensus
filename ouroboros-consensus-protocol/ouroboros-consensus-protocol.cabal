@@ -84,7 +84,7 @@ library
     mtl,
     network ^>=3.2.7,
     nothunks,
-    ouroboros-consensus >=0.23 && <0.29,
+    ouroboros-consensus >=0.23 && <0.30,
     ouroboros-network-framework ^>=0.19,
     ouroboros-network-testing ^>=0.8,
     serialise,

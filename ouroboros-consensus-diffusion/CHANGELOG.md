@@ -2,6 +2,14 @@
 
 # Changelog entries
 
+<a id='changelog-0.25.0.0'></a>
+## 0.25.0.0 -- 2026-01-23
+
+### Breaking
+
+- Added `rnMempoolTimeoutConfig` argument to `RunNodeArgs`.
+- Added `TxMeasureWithDiffTime` argument to the `TraceForgedBlock` event.
+
 <a id='changelog-0.24.0.0'></a>
 ## 0.24.0.0 -- 2025-09-29
 
