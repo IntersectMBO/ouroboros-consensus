@@ -83,6 +83,7 @@ import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert (PerasCertDiffusion)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node.ExitPolicy
 import qualified Ouroboros.Consensus.Node.GSM as GSM
@@ -123,8 +124,8 @@ import Ouroboros.Network.NodeToNode
   ( ConnectionId (..)
   , ExpandedInitiatorContext (..)
   , IsBigLedgerPeer (..)
-  , MiniProtocolParameters (..)
   , ResponderContext (..)
+  , defaultMiniProtocolParameters
   )
 import Ouroboros.Network.PeerSelection.Governor
   ( makePublicPeerSelectionStateVar
@@ -1058,13 +1059,7 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
-              , miniProtocolParameters =
-                  MiniProtocolParameters
-                    { chainSyncPipeliningHighMark = 4
-                    , chainSyncPipeliningLowMark = 2
-                    , blockFetchPipeliningMax = 10
-                    , txSubmissionMaxUnacked = 1000 -- TODO ?
-                    }
+              , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =
                   BlockFetchConfiguration
                     { bfcMaxConcurrencyBulkSync = 1
@@ -1190,6 +1185,7 @@ runThreadNetwork
         Lazy.ByteString
         Lazy.ByteString
         (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
+        (AnyMessage (PerasCertDiffusion blk))
         (AnyMessage KeepAlive)
         (AnyMessage (PeerSharing NodeId))
     customNodeToNodeCodecs cfg ntnVersion =
@@ -1209,6 +1205,9 @@ runThreadNetwork
         , cTxSubmission2Codec =
             mapFailureCodec CodecIdFailure $
               NTN.cTxSubmission2Codec NTN.identityCodecs
+        , cPerasCertDiffusionCodec =
+            mapFailureCodec CodecIdFailure $
+              NTN.cPerasCertDiffusionCodec NTN.identityCodecs
         , cKeepAliveCodec =
             mapFailureCodec CodecIdFailure $
               NTN.cKeepAliveCodec NTN.identityCodecs
@@ -1800,6 +1799,7 @@ type LimitedApp' m addr blk =
     Lazy.ByteString
     Lazy.ByteString
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
+    (AnyMessage (PerasCertDiffusion blk))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
     NodeToNodeInitiatorResult

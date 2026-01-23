@@ -116,7 +116,18 @@ instance StateModel Model where
 
   precondition (Model model) = \case
     OpenDB -> not model.open
-    _ -> model.open
+    action ->
+      model.open && case action of
+        CloseDB -> True
+        -- Equivocating certificates are not possible by construction,
+        -- so we should ensure that adding a certificate with the same round
+        -- number but different content is rejected.
+        -- See https://tweag.github.io/cardano-peras/peras-design.pdf#subsection.2.2.2
+        AddCert cert -> all p model.certs
+         where
+          p cert' = getPerasCertRound cert /= getPerasCertRound cert' || cert == cert'
+        GetWeightSnapshot -> True
+        GarbageCollect _slot -> True
 
 deriving stock instance Show (Action Model a)
 deriving stock instance Eq (Action Model a)
