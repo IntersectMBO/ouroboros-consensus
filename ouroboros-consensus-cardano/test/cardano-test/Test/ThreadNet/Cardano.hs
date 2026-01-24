@@ -73,7 +73,7 @@ import Test.Tasty.QuickCheck
 import Test.ThreadNet.General
 import qualified Test.ThreadNet.Infra.Byron as Byron
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
-import Test.ThreadNet.Infra.TwoEras
+import Test.ThreadNet.Infra.TwoEras hiding (TestSetup (..))
 import Test.ThreadNet.Network
   ( NodeOutput (..)
   , TestNodeInitialization (..)
