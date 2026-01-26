@@ -622,6 +622,7 @@ data TraceLeiosKernel
   = MkTraceLeiosKernel String
   | TraceLeiosBlockAcquired LeiosPoint
   | TraceLeiosBlockTxsAcquired LeiosPoint
+  | TraceLeiosBlockForged
   deriving Show
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
@@ -639,6 +640,10 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= show ebSlot
+      ]
+  TraceLeiosBlockForged ->
+    mconcat
+      [ "kind" .= Aeson.String "TraceLeiosBlockForged"
       ]
 
 newtype TraceLeiosPeer = MkTraceLeiosPeer String

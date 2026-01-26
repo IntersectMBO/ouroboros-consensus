@@ -823,7 +823,8 @@ forkBlockForging IS{..} blockForging =
         (snapshotMempoolSize mempoolSnapshot)
 
     -- FIXME: actually do create an eb if (not $ null ebTxs)
-    trace TraceForgedEndorserBlock
+    let leiosTracer = leiosKernelTracer tracers
+    lift $ traceWith leiosTracer TraceLeiosBlockForged
 
     -- Add the block to the chain DB
     let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
