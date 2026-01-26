@@ -250,7 +250,7 @@ instance ShelleyCompatible proto era => FromCBOR (GenTx (ShelleyBlock proto era)
     fmap mkShelleyTx $
       unwrapCBORinCBOR $
         eraDecoder @era $
-          (. Full) . runAnnotator <$> decCBOR
+          (Right .) . (. Full) . runAnnotator <$> decCBOR
 
 {-------------------------------------------------------------------------------
   Pretty-printing
