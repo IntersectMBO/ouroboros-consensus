@@ -493,7 +493,7 @@ instance SerialiseNodeToNode BlockB (GenTxId BlockB)
 -- the @Serialise (SerialisedHeader BlockB)@ instance below
 instance SerialiseNodeToNode BlockB (Header BlockB) where
   encodeNodeToNode _ _ = wrapCBORinCBOR encode
-  decodeNodeToNode _ _ = unwrapCBORinCBOR (const <$> decode)
+  decodeNodeToNode _ _ = unwrapCBORinCBOR (const . Right <$> decode)
 
 instance Serialise (SerialisedHeader BlockB) where
   encode = encodeTrivialSerialisedHeader

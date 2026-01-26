@@ -147,7 +147,7 @@ instance
   SerialiseNodeToNode (ShelleyBlock proto era) (ShelleyBlock proto era)
   where
   encodeNodeToNode _ _ = wrapCBORinCBOR encodeShelleyBlock
-  decodeNodeToNode _ _ = unwrapCBORinCBOR decodeShelleyBlock
+  decodeNodeToNode _ _ = unwrapCBORinCBOR ((Right .) <$> decodeShelleyBlock)
 
 -- | 'Serialised' uses CBOR-in-CBOR by default.
 instance SerialiseNodeToNode (ShelleyBlock proto era) (Serialised (ShelleyBlock proto era))
@@ -160,7 +160,7 @@ instance
   SerialiseNodeToNode (ShelleyBlock proto era) (Header (ShelleyBlock proto era))
   where
   encodeNodeToNode _ _ = wrapCBORinCBOR encodeShelleyHeader
-  decodeNodeToNode _ _ = unwrapCBORinCBOR decodeShelleyHeader
+  decodeNodeToNode _ _ = unwrapCBORinCBOR ((Right .) <$> decodeShelleyHeader)
 
 -- | We use CBOR-in-CBOR
 instance SerialiseNodeToNode (ShelleyBlock proto era) (SerialisedHeader (ShelleyBlock proto era)) where
@@ -211,7 +211,7 @@ instance
   SerialiseNodeToClient (ShelleyBlock proto era) (ShelleyBlock proto era)
   where
   encodeNodeToClient _ _ = wrapCBORinCBOR encodeShelleyBlock
-  decodeNodeToClient _ _ = unwrapCBORinCBOR decodeShelleyBlock
+  decodeNodeToClient _ _ = unwrapCBORinCBOR ((Right .) <$> decodeShelleyBlock)
 
 -- | This instance uses the invariant that the 'EpochInfo' in a
 -- 'ShelleyLedgerConfig' is fixed i.e. has a constant 'EpochSize' and
@@ -352,7 +352,10 @@ instance ShelleyBasedEra era => SerialiseNodeToClient (ShelleyBlock proto era) (
   decodeNodeToClient _ _ = fromEraCBOR @era
 
 instance
-  (ShelleyCompatible proto era, LedgerSupportsProtocol (ShelleyBlock proto era)) =>
+  ( ShelleyCompatible proto era
+  , LedgerSupportsProtocol (ShelleyBlock proto era)
+  , ConfigSupportsNode (ShelleyBlock proto era)
+  ) =>
   SerialiseNodeToClient
     (ShelleyBlock proto era)
     (SomeBlockQuery (BlockQuery (ShelleyBlock proto era)))
