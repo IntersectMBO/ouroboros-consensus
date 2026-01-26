@@ -353,8 +353,5 @@ data MempoolSnapshot blk = MempoolSnapshot
   , snapshotStateHash :: ChainHash (TickedLedgerState blk)
   -- ^ The resulting state currently in the mempool after applying the
   -- transactions
-  , snapshotSplit ::
-      TxMeasure blk ->
-      ([Validated (GenTx blk)], TxSeq (TxMeasure blk) (Validated (GenTx blk)))
-  -- ^ Like snapshot take, but operating on a snapshot instead of the mempool.
+  , snaposhotTxs2 :: TxSeq (TxMeasure blk) (Validated (GenTx blk))
   }
