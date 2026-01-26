@@ -56,7 +56,7 @@ forgeByronBlock ::
   SlotNo ->
   -- | Current ledger
   TickedLedgerState ByronBlock mk ->
-  -- | RbTxs to include
+  -- | Txs to include
   [Validated (GenTx ByronBlock)] ->
   -- | Leader proof ('IsLeader')
   PBftIsLeader PBftByronCrypto ->

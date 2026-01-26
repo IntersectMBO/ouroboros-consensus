@@ -787,22 +787,23 @@ forkBlockForging IS{..} blockForging =
             blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
     let ebTxs =
           fmap TxSeq.txTicketTx . TxSeq.toList . fst $
-            splitAfterTxSize restTxs (ebCapacityTxMeasure (configLedger cfg) tickedLedgerState) -- TODO(bladyjoker): forge EBs
+            splitAfterTxSize restTxs (ebCapacityTxMeasure (configLedger cfg) tickedLedgerState)
 
     -- NB respect the capacity of the ledger state we're extending,
     -- which is /not/ 'snapshotLedgerState'
 
     -- force the mempool's computation before the tracer event
+    -- REVIEW: also force ebTxs?
     _ <- evaluate (length rbTxs)
     _ <- evaluate mempoolHash
 
     trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
-    -- FIXME: actually do it, but only if we have more than block size limit txs in the mempool
-    trace TraceForgedEndorserBlock
-
     -- Actually produce the block
-    (newBlock, mayEndorserBlock) <-
+    -- TODO: Needs access to Leios certificate of (blockNo - 1), if it exists
+    -- and decide whether we want to put txs or the leios certificate into the
+    -- body.
+    (newBlock, _mayEndorserBlock) <-
       lift $
         Block.forgeBlock
           blockForging
@@ -820,6 +821,9 @@ forkBlockForging IS{..} blockForging =
         (ledgerTipPoint (ledgerState unticked))
         newBlock
         (snapshotMempoolSize mempoolSnapshot)
+
+    -- FIXME: actually do create an eb if (not $ null ebTxs)
+    trace TraceForgedEndorserBlock
 
     -- Add the block to the chain DB
     let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
