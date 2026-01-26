@@ -101,6 +101,7 @@ library
     Ouroboros.Consensus.Shelley.Eras
     Ouroboros.Consensus.Shelley.HFEras
     Ouroboros.Consensus.Shelley.Ledger
+    Ouroboros.Consensus.Shelley.Ledger.EndorserBlock
     Ouroboros.Consensus.Shelley.Ledger.Block
     Ouroboros.Consensus.Shelley.Ledger.Config
     Ouroboros.Consensus.Shelley.Ledger.Forge
