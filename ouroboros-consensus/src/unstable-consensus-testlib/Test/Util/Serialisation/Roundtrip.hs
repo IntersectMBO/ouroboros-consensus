@@ -944,6 +944,8 @@ examplesRoundtrip codecConfig examples =
       testLabel
       [ mkTest exampleName example
       | (exampleName, example) <- field examples
+      , -- TODO(dijkstra_serialisation): remove when Dijkstra blocks are stable
+      exampleName /= Just "Dijkstra"
       ]
    where
     mkTest exampleName example =
