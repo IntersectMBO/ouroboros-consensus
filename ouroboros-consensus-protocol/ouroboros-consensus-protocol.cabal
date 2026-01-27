@@ -85,8 +85,7 @@ library
     network ^>=3.2.7,
     nothunks,
     ouroboros-consensus >=0.23 && <0.29,
-    ouroboros-network-framework ^>=0.19,
-    ouroboros-network-testing ^>=0.8,
+    ouroboros-network:{framework, tests-lib} ^>=0.23,
     serialise,
     text,
 

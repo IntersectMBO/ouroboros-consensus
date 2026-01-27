@@ -5,8 +5,6 @@
 
 module Test.Consensus.Shelley.Serialisation (tests) where
 
-import qualified Cardano.Ledger.MemoBytes.Internal as SL
-import qualified Cardano.Ledger.Shelley.Tx.Internal as SL
 import qualified Codec.CBOR.Write as CBOR
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Constraint
@@ -30,8 +28,9 @@ import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Serialisation.Roundtrip
 import Test.Util.Serialisation.TxWireSize
 
+-- TODO(10.7): figure out how to implement it
 getTxBytes :: GenTx Block -> Maybe String
-getTxBytes (ShelleyTx _ (SL.TxConstr (SL.Memo _ bytes))) = Just $ show bytes
+getTxBytes _ = Nothing
 
 tests :: TestTree
 tests =
