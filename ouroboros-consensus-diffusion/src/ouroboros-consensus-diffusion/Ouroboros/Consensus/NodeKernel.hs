@@ -166,7 +166,6 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
-import Ouroboros.Consensus.Mempool.TxSeq (splitAfterTxSize)
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 
 {-------------------------------------------------------------------------------
@@ -817,13 +816,6 @@ forkBlockForging IS{..} blockForging =
           ebTxsList
           proof
 
-    trace $
-      TraceForgedBlock
-        currentSlot
-        (ledgerTipPoint (ledgerState unticked))
-        newBlock
-        (snapshotMempoolSize mempoolSnapshot)
-
     -- FIXME: actually do create an eb if (not $ null ebTxs)
     let leiosTracer = leiosKernelTracer tracers
     lift $ traceWith leiosTracer TraceLeiosBlockForged
@@ -831,7 +823,17 @@ forkBlockForging IS{..} blockForging =
         newEndoreserBlockTxSize = TxSeq.toSize ebTxs
         restTxSize = TxSeq.toSize restTxs'
 
-    -- TODO(bladyjoker): trace $ mkTraceForgedBlock2 currentSlot (ledgerTipPoint (ledgerState unticked)) newBlock newBlockTxSz newEndorserBlock newEndorserBlockTxSize
+    trace $
+      TraceForgedBlock currentSlot $
+        ForgedBlock
+          { fbLedgerTip = ledgerTipPoint (ledgerState unticked)
+          , fbNewBlock = newBlock
+          , fbNewBlockSize = newBlockTxSize
+          , fbMaybeNewEndorserBlock = mayNewEndorserBlock
+          , fbNewEndorserBlockSize = newEndoreserBlockTxSize
+          , fbMempoolSize = snapshotMempoolSize mempoolSnapshot
+          , fbMempoolRestSize = restTxSize
+          }
 
     -- Add the block to the chain DB
     let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
