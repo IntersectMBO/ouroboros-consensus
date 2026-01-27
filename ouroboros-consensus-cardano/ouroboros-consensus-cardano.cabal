@@ -132,8 +132,8 @@ library
     Ouroboros.Consensus.Shelley.ShelleyHFC
 
   build-depends:
-    base >=4.14 && <4.22,
     aeson,
+    base >=4.14 && <4.22,
     base-deriving-via,
     bytestring >=0.10 && <0.13,
     cardano-binary,
