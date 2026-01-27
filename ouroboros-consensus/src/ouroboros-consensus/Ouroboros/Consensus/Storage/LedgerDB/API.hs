@@ -243,7 +243,7 @@ data LedgerDB m l blk = LedgerDB
   , getForkerAtTarget ::
       ResourceRegistry m ->
       Target (Point blk) ->
-      m (Either GetForkerError (Forker m l blk))
+      m (Either GetForkerError (Forker m l))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
   -- 'GetForkerError'.
@@ -387,7 +387,7 @@ withTipForker ::
   IOLike m =>
   LedgerDB m l blk ->
   ResourceRegistry m ->
-  (Forker m l blk -> m a) ->
+  (Forker m l -> m a) ->
   m a
 withTipForker ldb rr =
   bracket
@@ -404,7 +404,7 @@ withTipForker ldb rr =
 withPrivateTipForker ::
   IOLike m =>
   LedgerDB m l blk ->
-  (Forker m l blk -> m a) ->
+  (Forker m l -> m a) ->
   m a
 withPrivateTipForker ldb =
   bracketWithPrivateRegistry
@@ -428,7 +428,7 @@ getReadOnlyForker ::
   LedgerDB m l blk ->
   ResourceRegistry m ->
   Target (Point blk) ->
-  m (Either GetForkerError (ReadOnlyForker m l blk))
+  m (Either GetForkerError (ReadOnlyForker m l))
 getReadOnlyForker ldb rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb rr pt
 
 {-------------------------------------------------------------------------------
