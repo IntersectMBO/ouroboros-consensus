@@ -1,6 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ViewPatterns #-}
 
@@ -514,7 +515,7 @@ prop_densityDisconnectMonotonic =
 -- it gets disconnected and then the selection progresses.
 prop_densityDisconnectTriggersChainSel :: Property
 prop_densityDisconnectTriggersChainSel =
-  forAllGenesisTest
+  forAllGenesisTest @TestBlock
     ( do
         gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
         let ps = lowDensitySchedule gtBlockTree

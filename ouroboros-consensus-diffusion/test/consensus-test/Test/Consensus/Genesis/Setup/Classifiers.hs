@@ -3,7 +3,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 
 module Test.Consensus.Genesis.Setup.Classifiers
   ( Classifiers (..)
@@ -12,20 +11,15 @@ module Test.Consensus.Genesis.Setup.Classifiers
   , classifiers
   , resultClassifiers
   , scheduleClassifiers
-  , simpleHash
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Data.List (sortOn, tails)
-import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
-import Data.Word (Word64)
 import Ouroboros.Consensus.Block.Abstract
-  ( ChainHash (..)
-  , HasHeader
-  , HeaderHash
+  ( HasHeader
   , SlotNo (SlotNo)
   , blockSlot
   , succWithOrigin
@@ -60,7 +54,6 @@ import Test.Consensus.PointSchedule
 import Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..))
 import Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import Test.Util.Orphans.IOLike ()
-import Test.Util.TestBlock (TestHash (TestHash))
 
 -- | Interesting categories to classify test inputs
 data Classifiers
@@ -284,11 +277,3 @@ scheduleClassifiers GenesisTest{gtSchedule = schedule, gtBlockTree} =
     (t0, _) : points -> all ((== t0) . fst) points
 
   allAdversariesTrivial = all id $ adversarialPeers $ isTrivial <$> psSchedule schedule
-
-simpleHash ::
-  HeaderHash block ~ TestHash =>
-  ChainHash block ->
-  [Word64]
-simpleHash = \case
-  BlockHash (TestHash h) -> reverse (NonEmpty.toList h)
-  GenesisHash -> []
