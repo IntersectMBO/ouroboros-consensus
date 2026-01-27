@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
   , module Ouroboros.Consensus.Storage.LedgerDB.Forker
   ) where
 
+import qualified Control.Monad as Monad
 import Control.RAWLock (RAWLock)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -158,24 +159,37 @@ implForkerCommit env = do
     stateTVar
       foeSwitchVar
       ( \(LedgerSeq olddb) -> fromMaybe theImpossible $ do
+          {-
+          An example of the flow in this complicated switch:
+
+                    olddb:       A :| [ B, C, D ]
+                    toKeepLdb:   A :| [ B, C ]
+                    toCloseLdb:            C :| [ D ]
+
+                    lseq:                  C' :| [ E, F ]
+
+                    newdb:       A :| [ B, C, E, F ]
+                    transfer:               [ E, F ]
+                    to close:               [ D ]
+          -}
+
           -- Split the selection at the intersection point. The snd component will
           -- have to be closed.
-          (toKeepBase, toCloseLdb) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
-          (toCloseForker, toKeepTip) <-
-            AS.splitAfterMeasure intersectionSlot (either predicate predicate) lseq
-          -- Join the prefix of the selection with the sequence in the forker
-          newdb <- AS.join (const $ const True) toKeepBase toKeepTip
-          -- Do /not/ close the anchor of @toClose@, as that is also the
-          -- tip of @olddb'@ which will be used in @newdb@.
+          (toKeepLdb, toCloseLdb) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
+          -- Do /not/ close the anchor of @toCloseLdb@, as that is also the
+          -- tip of @toKeepBase@ which will be used in @newdb@.
           let ldbToClose = case toCloseLdb of
                 AS.Empty _ -> Nothing
                 _ AS.:< closeOld' -> Just (LedgerSeq closeOld')
               transferCommitted = do
-                closeLedgerSeq (LedgerSeq toCloseForker)
+                Monad.void $ release (foeInitialHandleKey env)
 
                 -- All the other remaining handles are transferred to the LedgerDB registry
                 keys <- transferRegistry foeResourceRegistry foeLedgerDbRegistry
-                mapM_ (\(k, v) -> transfer (tables v) k) $ zip keys (AS.toOldestFirst toKeepTip)
+                mapM_ (\(k, v) -> transfer (tables v) k) $ zip keys (AS.toOldestFirst lseq)
+
+          -- Join the prefix of the selection with the sequence in the forker
+          newdb <- AS.join (const $ const True) toKeepLdb lseq
 
           pure ((transferCommitted, ldbToClose), LedgerSeq newdb)
       )

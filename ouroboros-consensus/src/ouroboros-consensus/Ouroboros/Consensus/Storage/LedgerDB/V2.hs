@@ -660,9 +660,8 @@ newForkerByRollback h rr n = getEnv h $ \ldbEnv ->
 
 closeForkerEnv ::
   IOLike m => ForkerEnv m l blk -> m ()
-closeForkerEnv ForkerEnv{foeLedgerDbLock, foeCleanup, foeInitialHandleKey} =
+closeForkerEnv ForkerEnv{foeLedgerDbLock, foeCleanup} =
   RAWLock.withWriteAccess foeLedgerDbLock $ \() -> do
-    Monad.void $ release foeInitialHandleKey
     Monad.join $ readTVarIO foeCleanup
     pure ((), ())
 
