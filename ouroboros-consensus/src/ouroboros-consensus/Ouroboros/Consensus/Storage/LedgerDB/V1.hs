@@ -733,7 +733,7 @@ newForkerAtTarget ::
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   Target (Point blk) ->
-  m (Either GetForkerError (Forker m l blk))
+  m (Either GetForkerError (Forker m l))
 newForkerAtTarget h rr pt = withTransferrableReadAccess h rr (Right pt)
 
 newForkerByRollback ::
@@ -748,7 +748,7 @@ newForkerByRollback ::
   ResourceRegistry m ->
   -- | How many blocks to rollback from the tip
   Word64 ->
-  m (Either GetForkerError (Forker m l blk))
+  m (Either GetForkerError (Forker m l))
 newForkerByRollback h rr n = withTransferrableReadAccess h rr (Left n)
 
 -- | Acquire read access and then allocate a forker, acquiring it at the given
@@ -764,7 +764,7 @@ withTransferrableReadAccess ::
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   Either Word64 (Target (Point blk)) ->
-  m (Either GetForkerError (Forker m l blk))
+  m (Either GetForkerError (Forker m l))
 withTransferrableReadAccess h rr f = getEnv h $ \ldbEnv -> do
   -- This TVar will be used to maybe release the read lock by the resource
   -- registry. Once the forker was opened it will be emptied.
@@ -862,7 +862,7 @@ newForker ::
   (ResourceKey m, StrictTVar m (m ())) ->
   ResourceRegistry m ->
   DbChangelog l ->
-  ReadLocked m (Forker m l blk)
+  ReadLocked m (Forker m l)
 newForker h ldbEnv (rk, releaseVar) rr dblog =
   readLocked $ do
     (rk', frk) <-
@@ -909,7 +909,7 @@ mkForker ::
   QueryBatchSize ->
   ForkerKey ->
   ForkerEnv m l blk ->
-  Forker m l blk
+  Forker m l
 mkForker h qbs forkerKey forkerEnv =
   Forker
     { forkerClose = implForkerClose h forkerKey forkerEnv

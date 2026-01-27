@@ -639,7 +639,7 @@ newForkerAtTarget ::
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   Target (Point blk) ->
-  m (Either GetForkerError (Forker m l blk))
+  m (Either GetForkerError (Forker m l))
 newForkerAtTarget h rr pt = getEnv h $ \ldbEnv ->
   acquireAtTarget ldbEnv (Right pt) rr >>= traverse (newForker h ldbEnv rr)
 
@@ -654,7 +654,7 @@ newForkerByRollback ::
   LedgerDBHandle m l blk ->
   ResourceRegistry m ->
   Word64 ->
-  m (Either GetForkerError (Forker m l blk))
+  m (Either GetForkerError (Forker m l))
 newForkerByRollback h rr n = getEnv h $ \ldbEnv ->
   acquireAtTarget ldbEnv (Left n) rr >>= traverse (newForker h ldbEnv rr)
 
@@ -755,7 +755,7 @@ newForker ::
   LedgerDBEnv m l blk ->
   ResourceRegistry m ->
   (ResourceKey m, StateRef m l) ->
-  m (Forker m l blk)
+  m (Forker m l)
 newForker h ldbEnv rr (rk, st) = do
   forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
   let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
