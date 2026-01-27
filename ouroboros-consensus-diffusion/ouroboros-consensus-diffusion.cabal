@@ -75,9 +75,11 @@ library
     Ouroboros.Consensus.Node.Run,
 
   build-depends:
+    aeson,
     base >=4.14 && <4.22,
     bytestring >=0.10 && <0.13,
     cardano-base,
+    cardano-binary,
     cardano-diffusion ^>=0.1,
     cardano-diffusion:{api, protocols},
     cardano-slotting,
