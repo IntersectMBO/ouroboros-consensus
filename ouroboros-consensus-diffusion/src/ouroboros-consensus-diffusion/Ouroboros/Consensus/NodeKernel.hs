@@ -788,8 +788,13 @@ forkBlockForging IS{..} blockForging =
             mempoolTxs
             (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
         rbTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ rbTxs
-        (ebTxs, restTxs') = TxSeq.splitAfterTxSize restTxs (ebCapacityTxMeasure (configLedger cfg) tickedLedgerState)
+
+        mayEndorserBlockCapacity = ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
+        (ebTxs, restTxs') = case mayEndorserBlockCapacity of
+          Nothing -> (TxSeq.fromList [], TxSeq.fromList [])
+          Just endorserBlockCapacity -> TxSeq.splitAfterTxSize restTxs endorserBlockCapacity
         ebTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ ebTxs
+
     -- NB respect the capacity of the ledger state we're extending,
     -- which is /not/ 'snapshotLedgerState'
 
@@ -813,12 +818,15 @@ forkBlockForging IS{..} blockForging =
           currentSlot
           (forgetLedgerTables tickedLedgerState)
           rbTxsList
-          ebTxsList
+          ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
           proof
 
-    -- FIXME: actually do create an eb if (not $ null ebTxs)
     let leiosTracer = leiosKernelTracer tracers
-    lift $ traceWith leiosTracer TraceLeiosBlockForged
+    lift $
+      traceWith leiosTracer $
+        MkTraceLeiosKernel $
+          show ("The ebCapacityMeasure", mayEndorserBlockCapacity)
+
     let newBlockTxSize = TxSeq.toSize rbTxs
         newEndoreserBlockTxSize = TxSeq.toSize ebTxs
         restTxSize = TxSeq.toSize restTxs'
@@ -829,7 +837,7 @@ forkBlockForging IS{..} blockForging =
           { fbLedgerTip = ledgerTipPoint (ledgerState unticked)
           , fbNewBlock = newBlock
           , fbNewBlockSize = newBlockTxSize
-          , fbMaybeNewEndorserBlock = mayNewEndorserBlock
+          , fbMaybeNewEndorserBlock = mayNewEndorserBlock -- FIXME: if (not $ null ebTxs)
           , fbNewEndorserBlockSize = newEndoreserBlockTxSize
           , fbMempoolSize = snapshotMempoolSize mempoolSnapshot
           , fbMempoolRestSize = restTxSize

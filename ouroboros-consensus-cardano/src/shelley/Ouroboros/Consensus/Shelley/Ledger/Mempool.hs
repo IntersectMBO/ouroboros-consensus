@@ -89,7 +89,6 @@ import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
-import LeiosDemoTypes (leiosEBMaxClosureSize)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -478,16 +477,19 @@ instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) 
   type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
   txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
+  ebCapacityTxMeasure _ _ = Nothing
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
   type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
   txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
+  ebCapacityTxMeasure _ _ = Nothing
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
   txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
+  ebCapacityTxMeasure _ _ = Nothing
 
 -----
 
@@ -607,6 +609,7 @@ instance
   type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+  ebCapacityTxMeasure _ _ = Nothing
 
 -----
 
@@ -729,6 +732,7 @@ instance
   type TxMeasure (ShelleyBlock p BabbageEra) = ConwayMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureBabbage st tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  ebCapacityTxMeasure _cfg = Just . leiosEndorserBlockMeasure
 
 instance
   ShelleyCompatible p ConwayEra =>
@@ -737,21 +741,14 @@ instance
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
-  ebCapacityTxMeasure _ _ = leiosEndorserBlockMeasure
+  ebCapacityTxMeasure _cfg = Just . leiosEndorserBlockMeasure
 
-leiosEndorserBlockMeasure :: ConwayMeasure
-leiosEndorserBlockMeasure =
+-- TODO(bladyjoker): Same as RB
+leiosEndorserBlockMeasure ::
+  forall proto era mk.
+  ( ShelleyCompatible proto era
+  , L.AlonzoEraPParams era
+  ) =>
+  TickedLedgerState (ShelleyBlock proto era) mk ->
   ConwayMeasure
-    { alonzoMeasure =
-        AlonzoMeasure
-          { byteSize = IgnoringOverflow leiosEBMaxClosureSize
-          , exUnits = undefined -- TODO
-          }
-    , refScriptsSize =
-        -- TODO: we have not defined this for Leios
-        IgnoringOverflow $
-          ByteSize32 $
-            fromIntegral $
-              -- For post-Conway eras, this will become a protocol parameter.
-              SL.maxRefScriptSizePerBlock
-    }
+leiosEndorserBlockMeasure = blockCapacityConwayMeasure

@@ -366,11 +366,9 @@ class
 
   -- | What is the allowed capacity for the txs in an Leios Endorser Block?
   ebCapacityTxMeasure ::
-    -- | at least for symmetry with 'txMeasure'
     LedgerConfig blk ->
     TickedLedgerState blk mk ->
-    TxMeasure blk
-  ebCapacityTxMeasure _ _ = Data.Measure.zero
+    Maybe (TxMeasure blk)
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for

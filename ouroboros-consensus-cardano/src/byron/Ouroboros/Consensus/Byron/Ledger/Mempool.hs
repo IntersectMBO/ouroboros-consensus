@@ -141,6 +141,8 @@ instance LedgerSupportsMempool ByronBlock where
 instance TxLimits ByronBlock where
   type TxMeasure ByronBlock = IgnoringOverflow ByteSize32
 
+  ebCapacityTxMeasure _cfg _st = Nothing
+
   blockCapacityTxMeasure _cfg st =
     IgnoringOverflow $
       ByteSize32 $
