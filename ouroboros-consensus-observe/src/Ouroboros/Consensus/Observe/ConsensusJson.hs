@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -74,3 +75,6 @@ instance ConsensusJson Core.MempoolSize where
       [ "txCount" .= Core.msNumTxs ms
       , "txBytes" .= toConsensusJson (Core.msNumBytes ms)
       ]
+
+instance ConsensusJson (Core.IgnoringOverflow Core.ByteSize32) where
+  toConsensusJson = toConsensusJson . Core.unIgnoringOverflow
