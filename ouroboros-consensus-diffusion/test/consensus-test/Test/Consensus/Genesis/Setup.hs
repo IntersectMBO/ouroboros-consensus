@@ -2,15 +2,19 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.Genesis.Setup
   ( module Test.Consensus.Genesis.Setup.GenChains
+  , castHeaderHash
   , forAllGenesisTest
+  , honestImmutableTip
   , runGenesisTest
   , runGenesisTest'
+  , selectedHonestChain
   ) where
 
 import Control.Exception (throw)
@@ -20,7 +24,12 @@ import Control.Monad.Class.MonadAsync
 import Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import Control.Tracer (debugTracer, traceWith)
 import Data.Maybe (mapMaybe)
-import Ouroboros.Consensus.Block.Abstract (ConvertRawHash, Header)
+import Ouroboros.Consensus.Block.Abstract
+  ( ChainHash (..)
+  , ConvertRawHash
+  , GetHeader
+  , Header
+  )
 import Ouroboros.Consensus.Block.SupportsDiffusionPipelining
   ( BlockSupportsDiffusionPipelining
   )
@@ -40,10 +49,12 @@ import Ouroboros.Consensus.Storage.LedgerDB.API
   )
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IOLike (Exception, fromException)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededTimeLimit)
   )
 import Ouroboros.Network.Util.ShowProxy
+import Test.Consensus.BlockTree (onTrunk)
 import Test.Consensus.Genesis.Setup.Classifiers
   ( Classifiers (..)
   , ResultClassifiers (..)
@@ -209,3 +220,25 @@ forAllGenesisTest generator schedulerConfig shrinker mkProperty = idempotentIOPr
     e :: Exception e => Maybe e
     e = fromException exn
     true = property True
+
+-- | The 'StateView.svSelectedChain' produces an 'AnchoredFragment (Header blk)';
+-- this function casts this type's hash to its instance, so that it can be used
+-- for lookups on a 'BlockTree'.
+castHeaderHash :: ChainHash (Header blk) -> ChainHash blk
+castHeaderHash = \case
+  BlockHash hash -> BlockHash hash
+  GenesisHash -> GenesisHash
+
+-- | Check if the immutable tip of the selected chain of a 'GenesisTest' is honest.
+-- In this setting, the immutable tip corresponds to the selected chain anchor
+-- (see 'Ouroboros.Consensus.Storage.ChainDB.API.getCurrentChain') and
+-- the honest chain is represented by the test 'BlockTree' trunk.
+honestImmutableTip :: GetHeader blk => GenesisTestFull blk -> StateView blk -> Bool
+honestImmutableTip GenesisTest{gtBlockTree} StateView{svSelectedChain} =
+  onTrunk gtBlockTree $ AF.anchorPoint svSelectedChain
+
+-- | Check if the tip of the selected chain of a 'GenesisTest' is honest.
+-- In this setting, the honest chain corresponds to the test 'BlockTree' trunk.
+selectedHonestChain :: GetHeader blk => GenesisTestFull blk -> StateView blk -> Bool
+selectedHonestChain GenesisTest{gtBlockTree} StateView{svSelectedChain} =
+  onTrunk gtBlockTree $ AF.headPoint $ svSelectedChain

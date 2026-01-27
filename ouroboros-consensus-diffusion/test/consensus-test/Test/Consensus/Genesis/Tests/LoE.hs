@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Test.Consensus.Genesis.Tests.LoE (tests) where
@@ -33,6 +34,7 @@ import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.IOLike ()
 import Test.Util.PartialAccessors
+import Test.Util.TestBlock (TestBlock)
 import Test.Util.TestEnv
   ( adjustQuickCheckMaxSize
   , adjustQuickCheckTests
@@ -66,7 +68,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
   -- at the end of the test for the adversaries to get disconnected, by adding an extra point.
   -- If this point gets removed by the shrinker, we lose that property and the test becomes useless.
   noShrinking $
-    forAllGenesisTest
+    forAllGenesisTest @TestBlock
       ( do
           gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
           let ps = delaySchedule gtBlockTree

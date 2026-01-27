@@ -4,6 +4,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Peer simulator tests based on randomly generated schedules. They share the
@@ -26,7 +27,11 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
-import Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
+import Ouroboros.Consensus.Block.Abstract
+  ( ChainHash (..)
+  , GetHeader
+  , WithOrigin (NotOrigin)
+  )
 import Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (blockNo, blockSlot, unBlockNo)
@@ -93,13 +98,10 @@ tests =
 --  * no honest peer has been disconnected,
 --  * the immutable tip is on the best chain, and
 --  * the immutable tip is no older than s + d + 1 slots
-theProperty ::
-  GenesisTestFull TestBlock ->
-  StateView TestBlock ->
-  Property
+theProperty :: (AF.HasHeader blk, GetHeader blk) => GenesisTestFull blk -> StateView blk -> Property
 theProperty genesisTest stateView@StateView{svSelectedChain} =
   classify genesisWindowAfterIntersection "Full genesis window after intersection" $
-    classify (isOrigin immutableTipHash) "Immutable tip is Origin" $
+    classify (immutableTipHash == GenesisHash) "Immutable tip is Origin" $
       label disconnectedLabel $
         classify (advCount < length (btBranches gtBlockTree)) "Some adversaries performed rollbacks" $
           counterexample killedPeers $
@@ -109,7 +111,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
               conjoin
                 [ counterexample "Honest peers shouldn't be disconnected" (not $ any isHonestPeerId disconnected)
                 , counterexample ("The immutable tip should be honest: " ++ show immutableTip) $
-                    property (isHonest immutableTipHash)
+                    honestImmutableTip genesisTest stateView
                 , immutableTipIsRecent
                 ]
  where
@@ -124,11 +126,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
     (At h, Origin) -> h
     _ -> 0
 
-  isOrigin = null
-
-  isHonest = all (0 ==)
-
-  immutableTipHash = simpleHash (AF.anchorToHash immutableTip)
+  immutableTipHash = AF.anchorToHash immutableTip
 
   immutableTip = AF.anchor svSelectedChain
 
@@ -370,22 +368,20 @@ prop_loeStalling =
     shrinkPeerSchedules
     prop
  where
-  prop GenesisTest{gtBlockTree = BlockTree{btTrunk, btBranches}} StateView{svSelectedChain} =
+  prop ::
+    forall blk. (AF.HasHeader blk, GetHeader blk) => GenesisTestFull blk -> StateView blk -> Property
+  prop gt@GenesisTest{gtBlockTree = BlockTree{btTrunk, btBranches}} sv@StateView{svSelectedChain} =
     classify (any (== selectionTip) allTips) "The selection is at a branch tip" $
       classify (any anchorIsImmutableTip suffixes) "The immutable tip is at a fork intersection" $
-        property (isHonest immutableTipHash)
+        honestImmutableTip gt sv
    where
-    anchorIsImmutableTip branch = simpleHash (AF.anchorToHash (AF.anchor branch)) == immutableTipHash
+    anchorIsImmutableTip branch = AF.anchorToHash (AF.anchor branch) == immutableTipHash
 
-    isHonest = all (0 ==)
+    immutableTipHash = castHeaderHash . AF.anchorToHash $ AF.anchor svSelectedChain
 
-    immutableTipHash = simpleHash (AF.anchorToHash immutableTip)
+    selectionTip = castHeaderHash $ AF.headHash svSelectedChain
 
-    immutableTip = AF.anchor svSelectedChain
-
-    selectionTip = simpleHash (AF.headHash svSelectedChain)
-
-    allTips = simpleHash . AF.headHash <$> (btTrunk : suffixes)
+    allTips = AF.headHash <$> (btTrunk : suffixes)
 
     suffixes = btbSuffix <$> btBranches
 
@@ -395,7 +391,7 @@ prop_loeStalling =
 -- This ensures that a user may shut down their machine while syncing without additional vulnerabilities.
 prop_downtime :: Property
 prop_downtime =
-  forAllGenesisTest
+  forAllGenesisTest @TestBlock
     ( genChains (QC.choose (1, 4)) `enrichedWith` \gt ->
         ensureScheduleDuration gt <$> stToGen (uniformPoints (pointsGeneratorParams gt) (gtBlockTree gt))
     )
