@@ -53,13 +53,20 @@ serve ::
 serve sockAddr application = withIOManager \iocp ->
   Server.with
     (Snocket.socketSnocket iocp)
+    (show >$< stdoutTracer)
+    ( Mux.Tracers
+        { Mux.tracer = show >$< stdoutTracer
+        , Mux.channelTracer = show >$< stdoutTracer
+        , Mux.bearerTracer = show >$< stdoutTracer
+        }
+    )
     Snocket.makeSocketBearer
     (\sock addr -> configureSocket sock (Just addr))
     sockAddr
     HandshakeArguments
       { haHandshakeTracer = show >$< stdoutTracer
       , haBearerTracer = show >$< stdoutTracer
-      , haHandshakeCodec = Handshake.nodeToNodeHandshakeCodec
+      , haHandshakeCodec = N2N.nodeToNodeHandshakeCodec
       , haVersionDataCodec = Handshake.cborTermVersionDataCodec N2N.nodeToNodeCodecCBORTerm
       , haAcceptVersion = Handshake.acceptableVersion
       , haQueryVersion = Handshake.queryVersion
