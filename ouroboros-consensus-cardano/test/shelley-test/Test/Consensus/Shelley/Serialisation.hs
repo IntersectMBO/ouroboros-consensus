@@ -6,7 +6,8 @@
 module Test.Consensus.Shelley.Serialisation (tests) where
 
 import qualified Cardano.Ledger.MemoBytes.Internal as SL
-import qualified Cardano.Ledger.Shelley.Tx.Internal as SL
+import qualified Cardano.Ledger.Shelley.Tx as SL
+import qualified Cardano.Ledger.Shelley.TxWits as SL
 import qualified Codec.CBOR.Write as CBOR
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Constraint

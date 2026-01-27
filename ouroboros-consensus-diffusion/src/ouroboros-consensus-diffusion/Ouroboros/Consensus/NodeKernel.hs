@@ -29,11 +29,15 @@ module Ouroboros.Consensus.NodeKernel
 
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
+import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
+import Cardano.Network.NodeToNode
+  ( ConnectionId
+  , MiniProtocolParameters (..)
+  )
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
   ( OutboundConnectionsState (..)
   )
-import Cardano.Network.Types (LedgerStateJudgement (..))
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
@@ -126,10 +130,6 @@ import Ouroboros.Network.BlockFetch.ClientState
   )
 import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent (..)
-  )
-import Ouroboros.Network.NodeToNode
-  ( ConnectionId
-  , MiniProtocolParameters (..)
   )
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PublicPeerSelectionState
@@ -357,7 +357,7 @@ initNodeKernel
         setGetLoEFragment
           (readTVar varGsmState)
           (readTVar varLoEFragment)
-          (lgnkaLoEFragmentTVar varGetLoEFragment)
+          (lgnkaLoEFragmentTVar lgArgs)
 
         void $
           forkLinkedWatcher registry "NodeKernel.GDD" $

@@ -142,16 +142,16 @@ genTestConfig k (EpochSize epochSize1, EpochSize epochSize2) = do
         Topo.unionNodeTopology oddTopo $
           topo0
 
-    txLogicVersion <- elements [minBound .. maxBound]
+  txLogicVersion <- elements [minBound .. maxBound]
 
-    pure
-      TestConfig
-        { initSeed
-        , nodeTopology
-        , numCoreNodes = NumCoreNodes ncn
-        , numSlots
-        , txLogicVersion
-        }
+  pure
+    TestConfig
+      { initSeed
+      , nodeTopology
+      , numCoreNodes = NumCoreNodes ncn
+      , numSlots
+      , txLogicVersion
+      }
 
 -- | Generate 'setupPartition'
 genPartition :: NumCoreNodes -> NumSlots -> SecurityParam -> Gen Partition
