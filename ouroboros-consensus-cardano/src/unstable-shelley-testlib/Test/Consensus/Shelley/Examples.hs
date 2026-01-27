@@ -184,7 +184,7 @@ fromShelleyLedgerExamples
           ( "GetBigLedgerPeerSnapshot"
           , SomeResult
               (GetLedgerPeerSnapshot BigLedgerPeers)
-              ( SomeLedgerPeerSnapshot $
+              ( SomeLedgerPeerSnapshot Proxy $
                   LedgerPeerSnapshotV2
                     ( NotOrigin slotNo
                     ,
@@ -321,7 +321,7 @@ fromShelleyLedgerExamplesPraos
           ( "GetBigLedgerPeerSnapshot"
           , SomeResult
               (GetLedgerPeerSnapshot BigLedgerPeers)
-              ( SomeLedgerPeerSnapshot $
+              ( SomeLedgerPeerSnapshot Proxy $
                   LedgerPeerSnapshotV2
                     ( NotOrigin slotNo
                     ,
