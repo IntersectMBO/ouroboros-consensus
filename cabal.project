@@ -82,15 +82,3 @@ source-repository-package
     eras/byron/ledger/executable-spec
     eras/byron/ledger/impl
     eras/byron/crypto
-
--- We need this s-r-p until ouroboros-network makes a CHaP release that
--- includes https://github.com/IntersectMBO/ouroboros-network/pull/5161, which
--- the Peras PRs so far merged need.
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/ouroboros-network
-  tag: dfcb1f9c578ec8cd5114fea9696e7be6c9001323
-  --sha256: sha256-omXPdi/T/f3gq9rOH20zX+x3WvaxlB704g07RF/13Nk=
-  subdir:
-    ouroboros-network-api
-    ouroboros-network
