@@ -42,7 +42,9 @@ module Ouroboros.Consensus.Mempool
   , chainDBLedgerInterface
 
     -- * Trace
+  , MempoolRejectionDetails (..)
   , TraceEventMempool (..)
+  , jsonMempoolRejectionDetails
   ) where
 
 import Ouroboros.Consensus.Mempool.API
@@ -68,8 +70,10 @@ import Ouroboros.Consensus.Mempool.Capacity
   )
 import Ouroboros.Consensus.Mempool.Impl.Common
   ( LedgerInterface (..)
+  , MempoolRejectionDetails (..)
   , TraceEventMempool (..)
   , chainDBLedgerInterface
+  , jsonMempoolRejectionDetails
   )
 import Ouroboros.Consensus.Mempool.Init
   ( openMempool

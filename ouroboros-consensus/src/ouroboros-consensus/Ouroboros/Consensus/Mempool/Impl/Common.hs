@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -32,7 +33,9 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   , validateNewTransaction
 
     -- * Tracing
+  , MempoolRejectionDetails (..)
   , TraceEventMempool (..)
+  , jsonMempoolRejectionDetails
 
     -- * Conversions
   , snapshotFromIS
@@ -45,10 +48,13 @@ import Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import Control.Monad.Trans.Except (runExcept)
 import Control.ResourceRegistry
 import Control.Tracer
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Text as Text
 import Data.Typeable
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -550,6 +556,8 @@ data TraceEventMempool blk
       (GenTx blk)
       -- | The reason for rejecting the transaction.
       (ApplyTxErr blk)
+      -- | More details about the reason
+      MempoolRejectionDetails
       -- | The current size of the Mempool.
       MempoolSize
   | TraceMempoolRemoveTxs
@@ -604,3 +612,23 @@ deriving instance
   , StandardHash blk
   ) =>
   Show (TraceEventMempool blk)
+
+data MempoolRejectionDetails
+  = -- | The ledger's @MEMPOOL@ rule rejected the tx
+    MempoolRejectedByLedger
+  | -- | The tx violated 'mempoolTimeoutSoft'
+    --
+    -- It did not violate 'mempoolTimeoutHard', since that would raise an
+    -- exception instead of merely rejecting the tx (not even constructing a
+    -- 'MempoolTxRejected').
+    MempoolRejectedByTimeoutSoft !DiffTime
+  deriving (Eq, Show)
+
+jsonMempoolRejectionDetails :: MempoolRejectionDetails -> Aeson.Value
+jsonMempoolRejectionDetails = \case
+  MempoolRejectedByLedger ->
+    Aeson.String
+      (Text.pack "MempoolRejectedByLedger")
+  MempoolRejectedByTimeoutSoft dt ->
+    Aeson.object
+      [AesonKey.fromString "MempoolRejectedByTimeoutSoft" Aeson..= dt]
