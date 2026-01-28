@@ -288,6 +288,8 @@ hardForkCheckCanForge
               isLeader'
               forgeStateInfo''
 
+type instance EndorserBlock (HardForkBlock xs) = OneEraEndorserBlock xs
+
 -- | PRECONDITION: the ticked 'LedgerState' and 'HardForkIsLeader' are from the
 -- same era, and we must have a 'BlockForging' for that era.
 --
@@ -302,30 +304,40 @@ hardForkForgeBlock ::
   SlotNo ->
   TickedLedgerState (HardForkBlock xs) EmptyMK ->
   [Validated (GenTx (HardForkBlock xs))] ->
+  [Validated (GenTx (HardForkBlock xs))] ->
   HardForkIsLeader xs ->
-  m (HardForkBlock xs)
+  m (HardForkBlock xs, Maybe (EndorserBlock (HardForkBlock xs)))
 hardForkForgeBlock
   blockForging
   cfg
   bno
   sno
   (TickedHardForkLedgerState transition ledgerState)
-  txs
+  rbTxs
+  ebTxs
   isLeader =
-    fmap (HardForkBlock . OneEraBlock)
-      $ hsequence
-      $ hizipWith3
-        forgeBlockOne
-        cfgs
-        (OptNP.toNP blockForging)
-      $ injectValidatedTxs (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) txs)
-      -- We know both NSs must be from the same era, because they were all
-      -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
-      -- it statically.
-      $ Match.mustMatchNS
-        "IsLeader"
-        (getOneEraIsLeader isLeader)
-        (State.tip ledgerState)
+    let
+      injectTxs =
+        injectValidatedTxs
+          (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) rbTxs)
+          (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) ebTxs)
+      isLeaderAndLedgerState :: NS (Product WrapIsLeader (FlipTickedLedgerState EmptyMK)) xs =
+        Match.mustMatchNS
+          "IsLeader"
+          (getOneEraIsLeader isLeader)
+          (State.tip ledgerState)
+      isLeaderAndLedgerStateAndBlocks :: NS (m :.: Product I (Maybe :.: WrapEndorserBlock)) xs =
+        hizipWith3
+          forgeBlockOne
+          cfgs
+          (OptNP.toNP blockForging)
+          $ injectTxs
+          -- We know both NSs must be from the same era, because they were all
+          -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
+          -- it statically.
+          $ isLeaderAndLedgerState
+     in
+      fmap undistrib $ hsequence' isLeaderAndLedgerStateAndBlocks
    where
     cfgs = distribTopLevelConfig ei cfg
     ei =
@@ -339,11 +351,23 @@ hardForkForgeBlock
       "impossible: current era lacks block forging but we have an IsLeader proof "
         <> show eraIndex
 
+    -- Helper to match your desired signature (Context * (RB * EB))
+    reassoc ::
+      Product (Product f g) h blk ->
+      Product f (Product g h) blk
+    reassoc (Pair (Pair f g) h) = Pair f (Pair g h)
+
     injectValidatedTxs ::
-      [NS WrapValidatedGenTx xs] ->
+      [NS WrapValidatedGenTx xs] -> -- rbTxs
+      [NS WrapValidatedGenTx xs] -> -- ebTxs
       NS f xs ->
-      NS (Product f ([] :.: WrapValidatedGenTx)) xs
-    injectValidatedTxs = noMismatches .: flip (matchValidatedTxsNS injTxs)
+      NS (Product f (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))) xs
+    injectValidatedTxs rb eb state =
+      hmap reassoc $
+        noMismatches $
+          flip (matchValidatedTxsNS injTxs) eb $ -- Inject EB (Outer)
+            noMismatches $
+              flip (matchValidatedTxsNS injTxs) rb state -- Inject RB (Inner)
      where
       injTxs :: InPairs InjectValidatedTx xs
       injTxs =
@@ -351,7 +375,6 @@ hardForkForgeBlock
           InPairs.requiringBoth
             (hmap (WrapLedgerConfig . configLedger) cfgs)
             hardForkInjectTxs
-
       -- \| We know the transactions must be valid w.r.t. the given ledger
       -- state, the Mempool maintains that invariant. That means they are
       -- either from the same era, or can be injected into that era.
@@ -360,6 +383,21 @@ hardForkForgeBlock
         NS (Product f ([] :.: WrapValidatedGenTx)) xs
       noMismatches ([], xs) = xs
       noMismatches (_errs, _) = error "unexpected unmatchable transactions"
+
+    undistrib ::
+      NS (Product I (Maybe :.: WrapEndorserBlock)) xs ->
+      (HardForkBlock xs, Maybe (EndorserBlock (HardForkBlock xs)))
+    undistrib = hcollapse . himap inj
+     where
+      inj ::
+        Index xs blk ->
+        Product I (Maybe :.: WrapEndorserBlock) blk ->
+        K (HardForkBlock xs, Maybe (EndorserBlock (HardForkBlock xs))) blk
+      inj index (Pair (I blk) (Comp mEndorser)) =
+        K $
+          ( HardForkBlock (OneEraBlock (injectNS index (I blk)))
+          , OneEraEndorserBlock . injectNS index <$> mEndorser
+          )
 
     -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
     forgeBlockOne ::
@@ -371,25 +409,28 @@ hardForkForgeBlock
             WrapIsLeader
             (FlipTickedLedgerState EmptyMK)
         )
-        ([] :.: WrapValidatedGenTx)
+        (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
         blk ->
-      m blk
+      (m :.: (Product I (Maybe :.: WrapEndorserBlock))) blk
     forgeBlockOne
       index
       cfg'
       (Comp mBlockForging')
       ( Pair
           (Pair (WrapIsLeader isLeader') (FlipTickedLedgerState ledgerState'))
-          (Comp txs')
+          (Pair (Comp rbTxs') (Comp ebTxs'))
         ) =
-        forgeBlock
-          ( fromMaybe
-              (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
-              mBlockForging'
-          )
-          cfg'
-          bno
-          sno
-          ledgerState'
-          (map unwrapValidatedGenTx txs')
-          isLeader'
+        Comp $
+          fmap (\(blk, mEndorser) -> Pair (I blk) (Comp (WrapEndorserBlock <$> mEndorser))) $
+            forgeBlock
+              ( fromMaybe
+                  (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
+                  mBlockForging'
+              )
+              cfg'
+              bno
+              sno
+              ledgerState'
+              (map unwrapValidatedGenTx rbTxs')
+              (map unwrapValidatedGenTx ebTxs')
+              isLeader'

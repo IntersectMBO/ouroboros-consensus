@@ -106,9 +106,15 @@ praosSharedBlockForging
           praosCheckCanForge
             (configConsensus cfg)
             curSlot
-      , forgeBlock = \cfg ->
+      , forgeBlock = \cfg blkNo slotNo ledgerState rbTxs ebTxs isLeader ->
           forgeShelleyBlock
             hotKey
             canBeLeader
             cfg
+            blkNo
+            slotNo
+            ledgerState
+            rbTxs
+            ebTxs
+            isLeader
       }

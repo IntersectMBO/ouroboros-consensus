@@ -34,6 +34,9 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   , AlonzoMeasure (..)
   , ConwayMeasure (..)
   , fromExUnits
+
+    -- * Leios
+  , leiosEndorserBlockMeasure
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
@@ -474,16 +477,19 @@ instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) 
   type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
   txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
+  ebCapacityTxMeasure _ _ = Nothing
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
   type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
   txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
+  ebCapacityTxMeasure _ _ = Nothing
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
   txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
+  ebCapacityTxMeasure _ _ = Nothing
 
 -----
 
@@ -603,6 +609,7 @@ instance
   type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+  ebCapacityTxMeasure _ _ = Nothing
 
 -----
 
@@ -725,6 +732,7 @@ instance
   type TxMeasure (ShelleyBlock p BabbageEra) = ConwayMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureBabbage st tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  ebCapacityTxMeasure _cfg = Just . leiosEndorserBlockMeasure
 
 instance
   ShelleyCompatible p ConwayEra =>
@@ -733,3 +741,14 @@ instance
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  ebCapacityTxMeasure _cfg = Just . leiosEndorserBlockMeasure
+
+-- TODO(bladyjoker): Same as RB
+leiosEndorserBlockMeasure ::
+  forall proto era mk.
+  ( ShelleyCompatible proto era
+  , L.AlonzoEraPParams era
+  ) =>
+  TickedLedgerState (ShelleyBlock proto era) mk ->
+  ConwayMeasure
+leiosEndorserBlockMeasure = blockCapacityConwayMeasure

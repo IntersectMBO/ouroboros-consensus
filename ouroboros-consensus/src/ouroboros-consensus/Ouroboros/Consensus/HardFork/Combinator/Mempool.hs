@@ -380,6 +380,32 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
             (getFlipTickedLedgerState st')
             tx'
 
+  ebCapacityTxMeasure
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState) =
+      hcollapse $
+        hcizipWith proxySingle aux pcfgs hardForkState
+     where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei =
+        State.epochInfoPrecomputedTransitionInfo
+          hardForkLedgerConfigShape
+          transition
+          hardForkState
+
+      aux ::
+        SingleEraBlock blk =>
+        Index xs blk ->
+        WrapPartialLedgerConfig blk ->
+        FlipTickedLedgerState mk blk ->
+        K (Maybe (HardForkTxMeasure xs)) blk
+      aux idx pcfg st' =
+        K $
+          hardForkInjTxMeasure . injectNS idx . WrapTxMeasure
+            <$> ebCapacityTxMeasure
+              (completeLedgerConfig' ei pcfg)
+              (getFlipTickedLedgerState st')
+
 -- | A private type used only to clarify the parameterization of 'applyHelper'
 data ApplyHelperMode :: (Type -> Type) -> Type where
   ModeApply :: ApplyHelperMode GenTx

@@ -23,6 +23,8 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
   )
+import Ouroboros.Consensus.Shelley.Ledger.EndorserBlock (mkEndorserBlock)
+import qualified Ouroboros.Consensus.Shelley.Ledger.EndorserBlock as Shelley
 import Ouroboros.Consensus.Shelley.Ledger.Integrity
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -47,10 +49,12 @@ forgeShelleyBlock ::
   SlotNo ->
   -- | Current ledger
   TickedLedgerState (ShelleyBlock proto era) mk ->
-  -- | Txs to include
+  -- | RB Txs to include
+  [Validated (GenTx (ShelleyBlock proto era))] ->
+  -- | EB Txs to include
   [Validated (GenTx (ShelleyBlock proto era))] ->
   IsLeader proto ->
-  m (ShelleyBlock proto era)
+  m (ShelleyBlock proto era, Maybe (Shelley.EndorserBlock proto era))
 forgeShelleyBlock
   hotKey
   cbl
@@ -58,7 +62,8 @@ forgeShelleyBlock
   curNo
   curSlot
   tickedLedger
-  txs
+  rbTxs
+  ebTxs
   isLeader = do
     hdr <-
       mkHeader @_ @(ProtoCrypto proto)
@@ -74,14 +79,16 @@ forgeShelleyBlock
     let blk = mkShelleyBlock $ SL.Block hdr body
     return $
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
-        blk
+        (blk, Just shelleyEndorserBlock)
    where
     protocolVersion = shelleyProtocolVersion $ configBlock cfg
 
     body =
       SL.toTxSeq @era $
         Seq.fromList $
-          fmap extractTx txs
+          fmap extractTx rbTxs
+
+    shelleyEndorserBlock = mkEndorserBlock ebTxs
 
     actualBodySize = SL.bBodySize protocolVersion body
 

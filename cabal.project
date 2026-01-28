@@ -23,6 +23,7 @@ packages:
   ouroboros-consensus-cardano
   ouroboros-consensus-protocol
   ouroboros-consensus-diffusion
+  ouroboros-consensus-observe
   sop-extras
   strict-sop-core
 

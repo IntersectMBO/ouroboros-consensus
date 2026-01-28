@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -15,6 +16,7 @@ module Ouroboros.Consensus.Node.Tracers
     -- * Specific tracers
   , TraceForgeEvent (..)
   , TraceLabelCreds (..)
+  , ForgedBlock (..)
   ) where
 
 import Control.Exception (SomeException)
@@ -60,6 +62,7 @@ import Ouroboros.Network.TxSubmission.Outbound
   )
 
 import LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
+import Ouroboros.Consensus.Mempool.TxSeq (TxSeqMeasure)
 
 {-------------------------------------------------------------------------------
   All tracers of a node bundled together
@@ -173,6 +176,8 @@ showTracers ::
   , Show (CannotForge blk)
   , Show remotePeer
   , LedgerSupportsProtocol blk
+  , Show (TxMeasure blk)
+  , Show (EndorserBlock blk)
   ) =>
   Tracer m String -> Tracers m remotePeer localPeer blk
 showTracers tr =
@@ -357,7 +362,7 @@ data TraceForgeEvent blk
     -- * TraceAdoptedBlock (normally)
     -- * TraceDidntAdoptBlock (rarely)
     -- * TraceForgedInvalidBlock (hopefully never -- this would indicate a bug)
-    TraceForgedBlock SlotNo (Point blk) blk MempoolSize
+    TraceForgedBlock SlotNo (ForgedBlock blk)
   | -- | We did not adopt the block we produced, but the block was valid. We
     -- must have adopted a block that another leader of the same slot produced
     -- before we got the chance of adopting our own block. This is very rare,
@@ -380,6 +385,8 @@ deriving instance
   , Eq (Validated (GenTx blk))
   , Eq (ForgeStateUpdateError blk)
   , Eq (CannotForge blk)
+  , Eq (TxSeqMeasure (TxMeasure blk))
+  , Eq (EndorserBlock blk)
   ) =>
   Eq (TraceForgeEvent blk)
 deriving instance
@@ -388,6 +395,8 @@ deriving instance
   , Show (Validated (GenTx blk))
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
+  , Show (TxMeasure blk)
+  , Show (EndorserBlock blk)
   ) =>
   Show (TraceForgeEvent blk)
 
@@ -397,3 +406,21 @@ deriving instance
 -- This is useful when a node is running with multiple sets of credentials.
 data TraceLabelCreds a = TraceLabelCreds Text a
   deriving (Eq, Show, Functor)
+
+data ForgedBlock blk = ForgedBlock
+  { fbLedgerTip :: Point blk
+  , fbNewBlock :: blk
+  , fbNewBlockSize :: TxSeqMeasure (TxMeasure blk)
+  , fbMaybeNewEndorserBlock :: Maybe (EndorserBlock blk)
+  , fbNewEndorserBlockSize :: TxSeqMeasure (TxMeasure blk)
+  , fbMempoolSize :: MempoolSize
+  , fbMempoolRestSize :: TxSeqMeasure (TxMeasure blk)
+  }
+
+deriving instance
+  (Eq (TxSeqMeasure (TxMeasure blk)), LedgerSupportsProtocol blk, Eq blk, Eq (EndorserBlock blk)) =>
+  Eq (ForgedBlock blk)
+
+deriving instance
+  (Show (TxMeasure blk), LedgerSupportsProtocol blk, Show blk, Show (EndorserBlock blk)) =>
+  Show (ForgedBlock blk)

@@ -39,7 +39,7 @@ import Ouroboros.Consensus.Block (ChainHash, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
-import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
+import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, TxSeq, zeroTicketNo)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Protocol.TxSubmission2.Type (SizeInBytes)
 
@@ -353,4 +353,5 @@ data MempoolSnapshot blk = MempoolSnapshot
   , snapshotStateHash :: ChainHash (TickedLedgerState blk)
   -- ^ The resulting state currently in the mempool after applying the
   -- transactions
+  , snaposhotTxs2 :: TxSeq (TxMeasure blk) (Validated (GenTx blk))
   }

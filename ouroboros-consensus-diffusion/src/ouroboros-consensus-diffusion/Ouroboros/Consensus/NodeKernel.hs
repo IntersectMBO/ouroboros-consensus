@@ -166,6 +166,8 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import qualified Ouroboros.Consensus.Mempool.TxSeq as Tx
+import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -764,6 +766,7 @@ forkBlockForging IS{..} blockForging =
     -- produce a block that fits onto the ledger we got above; if the
     -- ledger in the meantime changes, the block we produce here may or
     -- may not be adopted, but it won't be invalid.
+    -- TODO(bladyjoker): What's the point of this?
     (mempoolHash, mempoolSlotNo) <- lift $ atomically $ do
       snap <- getSnapshot mempool -- only used for its tip-like information
       pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
@@ -780,20 +783,34 @@ forkBlockForging IS{..} blockForging =
 
     lift $ roforkerClose forker
 
-    let txs =
-          snapshotTake mempoolSnapshot $
-            blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+    let mempoolTxs = snaposhotTxs2 mempoolSnapshot
+        (rbTxs, restTxs) =
+          TxSeq.splitAfterTxSize
+            mempoolTxs
+            (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
+        rbTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ rbTxs
+
+        mayEndorserBlockCapacity = ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
+        (ebTxs, restTxs') = case mayEndorserBlockCapacity of
+          Nothing -> (TxSeq.fromList [], TxSeq.fromList [])
+          Just endorserBlockCapacity -> TxSeq.splitAfterTxSize restTxs endorserBlockCapacity
+        ebTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ ebTxs
+
     -- NB respect the capacity of the ledger state we're extending,
     -- which is /not/ 'snapshotLedgerState'
 
     -- force the mempool's computation before the tracer event
-    _ <- evaluate (length txs)
+    -- REVIEW: also force ebTxs?
+    _ <- evaluate (length rbTxs)
     _ <- evaluate mempoolHash
 
-    trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
+    trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo -- TODO(bladyjoker): mempoolHash and mempoolSlotNo only for tracing? Why?
 
     -- Actually produce the block
-    newBlock <-
+    -- TODO: Needs access to Leios certificate of (blockNo - 1), if it exists
+    -- and decide whether we want to put txs or the leios certificate into the
+    -- body.
+    (newBlock, mayNewEndorserBlock) <-
       lift $
         Block.forgeBlock
           blockForging
@@ -801,15 +818,31 @@ forkBlockForging IS{..} blockForging =
           bcBlockNo
           currentSlot
           (forgetLedgerTables tickedLedgerState)
-          txs
+          rbTxsList
+          ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
           proof
 
+    let leiosTracer = leiosKernelTracer tracers
+    lift $
+      traceWith leiosTracer $
+        MkTraceLeiosKernel $
+          show ("The ebCapacityMeasure", mayEndorserBlockCapacity)
+
+    let newBlockSize = Tx.txSeqMeasure rbTxs
+        newEndoreserBlockSize = TxSeq.txSeqMeasure ebTxs
+        restSize = TxSeq.txSeqMeasure restTxs'
+
     trace $
-      TraceForgedBlock
-        currentSlot
-        (ledgerTipPoint (ledgerState unticked))
-        newBlock
-        (snapshotMempoolSize mempoolSnapshot)
+      TraceForgedBlock currentSlot $
+        ForgedBlock
+          { fbLedgerTip = ledgerTipPoint (ledgerState unticked)
+          , fbNewBlock = newBlock
+          , fbNewBlockSize = newBlockSize
+          , fbMaybeNewEndorserBlock = maybe Nothing (const mayNewEndorserBlock) mayEndorserBlockCapacity -- TODO(bladyjoker): Ugh basically the ebCapacityTxMeasure is what enables/disables EB production
+          , fbNewEndorserBlockSize = newEndoreserBlockSize
+          , fbMempoolSize = snapshotMempoolSize mempoolSnapshot
+          , fbMempoolRestSize = restSize
+          }
 
     -- Add the block to the chain DB
     let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
@@ -846,7 +879,7 @@ forkBlockForging IS{..} blockForging =
             -- means that we'll throw away some good transactions in the
             -- process.
             whenJust
-              (NE.nonEmpty (map (txId . txForgetValidated) txs))
+              (NE.nonEmpty (map (txId . txForgetValidated) rbTxsList))
               (lift . removeTxsEvenIfValid mempool)
         exitEarly
 
@@ -860,7 +893,7 @@ forkBlockForging IS{..} blockForging =
       -- assert this here because the ability to extract transactions from a
       -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
       -- e.g., @DualBlock@.
-      trace $ TraceAdoptedBlock currentSlot newBlock txs
+      trace $ TraceAdoptedBlock currentSlot newBlock rbTxsList
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()
   trace =

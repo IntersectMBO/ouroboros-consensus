@@ -63,5 +63,5 @@ instance TxLimits ByronSpecBlock where
 
   -- Dummy values, as these are not used in practice.
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 1
-
+  ebCapacityTxMeasure _ _ = Nothing
   txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0

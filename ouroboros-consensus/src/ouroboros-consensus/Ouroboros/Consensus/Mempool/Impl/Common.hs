@@ -447,6 +447,7 @@ snapshotFromIS is =
     , snapshotSlotNo = isSlotNo is
     , snapshotStateHash = getTipHash $ isLedgerState is
     , snapshotTake = implSnapshotTake is
+    , snaposhotTxs2 = isTxs is
     }
  where
   implSnapshotGetTxs ::

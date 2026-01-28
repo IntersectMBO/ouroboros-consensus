@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Block.Forging
   , ForgeStateUpdateError
   , ForgeStateUpdateInfo (..)
   , ShouldForge (..)
+  , EndorserBlock
   , castForgeStateUpdateInfo
   , checkShouldForge
   , forgeStateUpdateInfoFromUpdateInfo
@@ -74,6 +75,8 @@ castForgeStateUpdateInfo = \case
   ForgeStateUpdateFailed x -> ForgeStateUpdateFailed x
   ForgeStateUpdateSuppressed -> ForgeStateUpdateSuppressed
 
+type family EndorserBlock blk
+
 -- | Stateful wrapper around block production
 --
 -- NOTE: do not refer to the consensus or ledger config in the closure of this
@@ -123,9 +126,10 @@ data BlockForging m blk = BlockForging
       BlockNo -> -- Current block number
       SlotNo -> -- Current slot number
       TickedLedgerState blk EmptyMK -> -- Current ledger state
-      [Validated (GenTx blk)] -> -- Transactions to include
+      [Validated (GenTx blk)] -> -- Transactions to include in the Ranking Block
+      [Validated (GenTx blk)] -> -- Transaction to include in the EndorserBlock
       IsLeader (BlockProtocol blk) -> -- Proof we are leader
-      m blk
+      m (blk, Maybe (EndorserBlock blk))
   -- ^ Forge a block
   --
   -- The function is passed the prefix of the mempool that will fit within
