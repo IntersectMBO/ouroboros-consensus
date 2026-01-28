@@ -284,7 +284,7 @@ prop_Mempool_TraceRejectedTxs setup =
          in invalidTxs setup === rejectedTxs
  where
   isRejectedTxEvent :: TraceEventMempool blk -> Maybe (GenTx blk)
-  isRejectedTxEvent (TraceMempoolRejectedTx tx _ _) = Just tx
+  isRejectedTxEvent (TraceMempoolRejectedTx tx _ _ _) = Just tx
   isRejectedTxEvent _ = Nothing
 
 -- | Test that all transactions in the 'Mempool' that have become invalid
