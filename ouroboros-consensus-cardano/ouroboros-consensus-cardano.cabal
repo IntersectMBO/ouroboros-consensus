@@ -328,7 +328,7 @@ library unstable-shelley-testlib
     cardano-strict-containers,
     containers,
     contra-tracer,
-    kes-agent ^>=1.0,
+    kes-agent ^>=1.1,
     kes-agent-crypto ^>=1.0,
     microlens,
     mtl,
