@@ -38,8 +38,8 @@ tests =
         "GenTx"
         [ testGroup
             "txWireSize"
-            [ testProperty "GenTx.txWireSize.txSubmission" $ prop_txWireSize_txSubmission testCodecCfg
-            , testProperty "GenTx.txWireSize.tight" $ prop_txWireSize (const Nothing) testCodecCfg
+            [ testProperty "txSubmission" $ prop_txWireSize_txSubmission testCodecCfg
+            , testProperty "tight" $ prop_txWireSize (const Nothing) testCodecCfg
             ]
         ]
     , roundtrip_all_skipping
