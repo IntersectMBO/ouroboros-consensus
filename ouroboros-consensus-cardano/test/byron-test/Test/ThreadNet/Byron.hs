@@ -308,8 +308,7 @@ tests =
                   , setupTestConfig =
                       TestConfig
                         { numCoreNodes = ncn5
-                        , -- Still fails   if I increase numSlots.
-                          numSlots = NumSlots 54
+                        , numSlots = NumSlots 54
                         , nodeTopology = meshNodeTopology ncn5
                         , initSeed = Seed 0
                         , txLogicVersion = maxBound
