@@ -62,6 +62,7 @@ import Ouroboros.Network.TxSubmission.Outbound
   )
 
 import LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
+import Ouroboros.Consensus.Mempool.TxSeq (TxSeqMeasure)
 
 {-------------------------------------------------------------------------------
   All tracers of a node bundled together
@@ -384,7 +385,7 @@ deriving instance
   , Eq (Validated (GenTx blk))
   , Eq (ForgeStateUpdateError blk)
   , Eq (CannotForge blk)
-  , Eq (TxMeasure blk)
+  , Eq (TxSeqMeasure (TxMeasure blk))
   , Eq (EndorserBlock blk)
   ) =>
   Eq (TraceForgeEvent blk)
@@ -409,15 +410,15 @@ data TraceLabelCreds a = TraceLabelCreds Text a
 data ForgedBlock blk = ForgedBlock
   { fbLedgerTip :: Point blk
   , fbNewBlock :: blk
-  , fbNewBlockSize :: TxMeasure blk
+  , fbNewBlockSize :: TxSeqMeasure (TxMeasure blk)
   , fbMaybeNewEndorserBlock :: Maybe (EndorserBlock blk)
-  , fbNewEndorserBlockSize :: TxMeasure blk
+  , fbNewEndorserBlockSize :: TxSeqMeasure (TxMeasure blk)
   , fbMempoolSize :: MempoolSize
-  , fbMempoolRestSize :: TxMeasure blk
+  , fbMempoolRestSize :: TxSeqMeasure (TxMeasure blk)
   }
 
 deriving instance
-  (Eq (TxMeasure blk), LedgerSupportsProtocol blk, Eq blk, Eq (EndorserBlock blk)) =>
+  (Eq (TxSeqMeasure (TxMeasure blk)), LedgerSupportsProtocol blk, Eq blk, Eq (EndorserBlock blk)) =>
   Eq (ForgedBlock blk)
 
 deriving instance

@@ -166,6 +166,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import qualified Ouroboros.Consensus.Mempool.TxSeq as Tx
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 
 {-------------------------------------------------------------------------------
@@ -827,20 +828,20 @@ forkBlockForging IS{..} blockForging =
         MkTraceLeiosKernel $
           show ("The ebCapacityMeasure", mayEndorserBlockCapacity)
 
-    let newBlockTxSize = TxSeq.toSize rbTxs
-        newEndoreserBlockTxSize = TxSeq.toSize ebTxs
-        restTxSize = TxSeq.toSize restTxs'
+    let newBlockSize = Tx.txSeqMeasure rbTxs
+        newEndoreserBlockSize = TxSeq.txSeqMeasure ebTxs
+        restSize = TxSeq.txSeqMeasure restTxs'
 
     trace $
       TraceForgedBlock currentSlot $
         ForgedBlock
           { fbLedgerTip = ledgerTipPoint (ledgerState unticked)
           , fbNewBlock = newBlock
-          , fbNewBlockSize = newBlockTxSize
-          , fbMaybeNewEndorserBlock = mayNewEndorserBlock -- FIXME: if (not $ null ebTxs)
-          , fbNewEndorserBlockSize = newEndoreserBlockTxSize
+          , fbNewBlockSize = newBlockSize
+          , fbMaybeNewEndorserBlock = maybe Nothing (const mayNewEndorserBlock) mayEndorserBlockCapacity -- TODO(bladyjoker): Ugh basically the ebCapacityTxMeasure is what enables/disables EB production
+          , fbNewEndorserBlockSize = newEndoreserBlockSize
           , fbMempoolSize = snapshotMempoolSize mempoolSnapshot
-          , fbMempoolRestSize = restTxSize
+          , fbMempoolRestSize = restSize
           }
 
     -- Add the block to the chain DB

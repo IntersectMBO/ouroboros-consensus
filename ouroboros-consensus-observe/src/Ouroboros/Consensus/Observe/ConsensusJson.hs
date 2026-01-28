@@ -16,6 +16,8 @@ import qualified Data.Text.Encoding as Text
 import qualified Ouroboros.Consensus.HardFork.Combinator as HFC
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Core
 import qualified Ouroboros.Consensus.Mempool as Core
+import Ouroboros.Consensus.Mempool.TxSeq (TxSeqMeasure)
+import qualified Ouroboros.Consensus.Mempool.TxSeq as Core
 import qualified Ouroboros.Consensus.Node.Tracers as Core
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 
@@ -45,6 +47,15 @@ instance
         , "newEndorserBlockSize" .= toConsensusJson (Core.fbNewEndorserBlockSize fb)
         , "mempoolRestSize" .= toConsensusJson (Core.fbMempoolRestSize fb)
         ]
+
+instance ConsensusJson a => ConsensusJson (TxSeqMeasure a) where
+  toConsensusJson tsm =
+    Aeson.object $
+      [ "txCount" .= (Aeson.toJSON . Core.mCount $ tsm)
+      , "minTicketNo" .= (Aeson.toJSON . Core.unTicketNo . Core.mMinTicket $ tsm)
+      , "maxTicketNo" .= (Aeson.toJSON . Core.unTicketNo . Core.mMaxTicket $ tsm)
+      , "txSize" .= (toConsensusJson . Core.mSize $ tsm)
+      ]
 
 instance ConsensusJson (HeaderHash blk) => ConsensusJson (Point blk) where
   toConsensusJson GenesisPoint = "genesis (origin)"

@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Mempool.TxSeq
   ( TicketNo (..)
   , TxSeq (Empty, (:>), (:<))
   , TxTicket (..)
+  , TxSeqMeasure (..)
   , fromList
   , lookupByTicketNo
   , splitAfterTicketNo
@@ -28,6 +29,7 @@ module Ouroboros.Consensus.Mempool.TxSeq
 
     -- * Reference implementations for testing
   , splitAfterTxSizeSpec
+  , txSeqMeasure
   ) where
 
 import Control.Arrow ((***))
@@ -46,7 +48,7 @@ import NoThunks.Class (NoThunks)
 
 -- | We allocate each transaction a (monotonically increasing) ticket number
 -- as it enters the mempool.
-newtype TicketNo = TicketNo Word64
+newtype TicketNo = TicketNo {unTicketNo :: Word64}
   deriving stock (Eq, Ord, Show)
   deriving newtype (Enum, Bounded, NoThunks)
 
@@ -272,3 +274,6 @@ toSize :: Measure sz => TxSeq sz tx -> sz
 toSize (TxSeq ftree) = mSize
  where
   TxSeqMeasure{mSize} = FingerTree.measure ftree
+
+txSeqMeasure :: Measure sz => TxSeq sz tx -> TxSeqMeasure sz
+txSeqMeasure (TxSeq ftree) = FingerTree.measure ftree
