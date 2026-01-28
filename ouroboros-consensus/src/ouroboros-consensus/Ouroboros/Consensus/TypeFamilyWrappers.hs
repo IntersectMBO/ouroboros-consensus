@@ -44,7 +44,6 @@ module Ouroboros.Consensus.TypeFamilyWrappers
 
     -- * Type family instances
   , Ticked (..)
-  , WrapEndorserBlock (..)
   ) where
 
 import Codec.Serialise (Serialise)
@@ -76,11 +75,6 @@ newtype WrapLedgerWarning blk = WrapLedgerWarning {unwrapLedgerWarning :: Ledger
 newtype WrapTentativeHeaderState blk = WrapTentativeHeaderState {unwrapTentativeHeaderState :: TentativeHeaderState blk}
 newtype WrapTentativeHeaderView blk = WrapTentativeHeaderView {unwrapTentativeHeaderView :: TentativeHeaderView blk}
 newtype WrapTipInfo blk = WrapTipInfo {unwrapTipInfo :: TipInfo blk}
-
-newtype WrapEndorserBlock blk = WrapEndorserBlock {unwrapEndorserBlock :: EndorserBlock blk}
-
-deriving instance Eq (EndorserBlock blk) => Eq (WrapEndorserBlock blk)
-deriving instance Show (EndorserBlock blk) => Show (WrapEndorserBlock blk)
 
 -- | A data family wrapper for @'Validated' . 'GenTx'@
 --

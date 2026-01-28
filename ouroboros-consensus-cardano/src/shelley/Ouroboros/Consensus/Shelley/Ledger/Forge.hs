@@ -13,6 +13,7 @@ import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import qualified Data.Sequence.Strict as Seq
+import LeiosDemoTypes (LeiosEb, mkLeiosEb)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -23,8 +24,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
   )
-import Ouroboros.Consensus.Shelley.Ledger.EndorserBlock (mkEndorserBlock)
-import qualified Ouroboros.Consensus.Shelley.Ledger.EndorserBlock as Shelley
 import Ouroboros.Consensus.Shelley.Ledger.Integrity
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -54,7 +53,7 @@ forgeShelleyBlock ::
   -- | EB Txs to include
   [Validated (GenTx (ShelleyBlock proto era))] ->
   IsLeader proto ->
-  m (ShelleyBlock proto era, Maybe (Shelley.EndorserBlock proto era))
+  m (ShelleyBlock proto era, Maybe LeiosEb)
 forgeShelleyBlock
   hotKey
   cbl
@@ -77,9 +76,12 @@ forgeShelleyBlock
         actualBodySize
         protocolVersion
     let blk = mkShelleyBlock $ SL.Block hdr body
+
+    let eb = mkLeiosEb (extractTx <$> ebTxs)
+
     return $
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
-        (blk, Just shelleyEndorserBlock)
+        (blk, Just eb)
    where
     protocolVersion = shelleyProtocolVersion $ configBlock cfg
 
@@ -87,8 +89,6 @@ forgeShelleyBlock
       SL.toTxSeq @era $
         Seq.fromList $
           fmap extractTx rbTxs
-
-    shelleyEndorserBlock = mkEndorserBlock ebTxs
 
     actualBodySize = SL.bBodySize protocolVersion body
 

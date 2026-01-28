@@ -9,8 +9,9 @@
 
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
-import Cardano.Binary (enforceSize, serialize')
+import Cardano.Binary (enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.Core (EraTx, Tx)
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -330,9 +331,18 @@ decodeLeiosTx = MkLeiosTx <$> CBOR.decodeBytes
 
 -- TODO: Keep track of the slot of an EB?
 data LeiosEb = MkLeiosEb !(V.Vector (TxHash, BytesSize))
-  deriving Show
+  deriving (Show, Eq)
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
+
+mkLeiosEb :: EraTx era => [Tx era] -> LeiosEb
+mkLeiosEb txs =
+  MkLeiosEb . V.fromList $ map go txs
+ where
+  go tx =
+    let hash = Hash.hashWithSerialiser @HASH toCBOR tx
+        byteSize = fromIntegral $ BS.length $ serialize' tx
+     in (MkTxHash $ Hash.hashToBytes hash, byteSize)
 
 leiosEbBytesSize :: LeiosEb -> BytesSize
 leiosEbBytesSize (MkLeiosEb items) =
