@@ -80,10 +80,11 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , TraceValidationEvent (..)
 
     -- * Reasons for chain switch
-  , selectionChangedReason
-  , ReasonForSwitchByTiebreaker (..)
-  , ReasonForSwitch (..)
-  , BeforeAndAfter (..)
+
+  --  , selectionChangedReason
+  --  , ReasonForSwitchByTiebreaker (..)
+  --  , ReasonForSwitch (..)
+  --  , BeforeAndAfter (..)
   , SelectViewOrBlockDistance (..)
   ) where
 
@@ -92,7 +93,6 @@ import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Foldable (traverse_)
-import Data.Function (on)
 import Data.Map.Strict (Map)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.MultiSet (MultiSet)
@@ -145,6 +145,7 @@ import Ouroboros.Consensus.Storage.VolatileDB
   )
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (Fuse)
+import Ouroboros.Consensus.Util.AnchoredFragment (ReasonForSwitch')
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import Ouroboros.Consensus.Util.IOLike
@@ -769,6 +770,7 @@ deriving instance
   , LedgerSupportsProtocol blk
   , InspectLedger blk
   , Show (SelectionChangedInfo blk)
+  , Show (ReasonForSwitch' blk)
   ) =>
   Show (TraceEvent blk)
 
@@ -874,50 +876,50 @@ deriving stock instance
   ) =>
   Eq (SelectionChangedInfo blk)
 
--- | Informational type conveying the order of two values
-data BeforeAndAfter a = BeforeAndAfter {before :: a, after :: a}
+-- -- | Informational type conveying the order of two values
+-- data BeforeAndAfter a = BeforeAndAfter {before :: a, after :: a}
 
--- | Why did we perform a switch to a different chain.
-data ReasonForSwitch blk
-  = -- | We switched because the new chain was heavier.
-    Heavier (BeforeAndAfter PerasWeight)
-  | -- | We switched because the new chain was longer.
-    Longer (BeforeAndAfter BlockNo)
-  | -- | We switched because of a tie break.
-    Tiebreak (ReasonForTiebreakerSwitch (BlockProtocol blk))
-  | -- | We don't know why we switched, probably we should not have switched, so
-    -- this should be logged as a warning.
-    UnexplainedSwitch (BeforeAndAfter (WeightedSelectView (BlockProtocol blk)))
+-- -- | Why did we perform a switch to a different chain.
+-- data ReasonForSwitch blk
+--   = -- | We switched because the new chain was heavier.
+--     Heavier (BeforeAndAfter PerasWeight)
+--   | -- | We switched because the new chain was longer.
+--     Longer (BeforeAndAfter BlockNo)
+--   | -- | We switched because of a tie break.
+--     Tiebreak (ReasonForTiebreakerSwitch (BlockProtocol blk))
+--   | -- | We don't know why we switched, probably we should not have switched, so
+--     -- this should be logged as a warning.
+--     UnexplainedSwitch (BeforeAndAfter (WeightedSelectView (BlockProtocol blk)))
 
--- | Each protocol defines why we would perform a switch.
-class ReasonForSwitchByTiebreaker proto where
-  -- | The different reasons for switching in this particular protocol
-  data ReasonForTiebreakerSwitch proto
+-- -- | Each protocol defines why we would perform a switch.
+-- class ReasonForSwitchByTiebreaker proto where
+--   -- | The different reasons for switching in this particular protocol
+--   data ReasonForTiebreakerSwitch proto
 
-  -- | Compute the reason for switching if it was not by length or weight.
-  reasonForSwitchByTiebreaker ::
-    ChainOrderConfig (TiebreakerView proto) ->
-    BeforeAndAfter (TiebreakerView proto) ->
-    ReasonForTiebreakerSwitch proto
+--   -- | Compute the reason for switching if it was not by length or weight.
+--   reasonForSwitchByTiebreaker ::
+--     ChainOrderConfig (TiebreakerView proto) ->
+--     BeforeAndAfter (TiebreakerView proto) ->
+--     ReasonForTiebreakerSwitch proto
 
--- | Explain why did we switch to a different candidate in terms of
--- 'ReasonForSwitch'.
-selectionChangedReason ::
-  ReasonForSwitchByTiebreaker (BlockProtocol blk) =>
-  SelectionChangedInfo blk -> ReasonForSwitch blk
-selectionChangedReason (SelectionChangedInfo _ _ _ _ afterSV (ChainSelectionInfoBlockDistance i) _) =
-  Longer (BeforeAndAfter (BlockNo (unBlockNo (wsvBlockNo afterSV) - i)) (wsvBlockNo afterSV))
-selectionChangedReason (SelectionChangedInfo _ _ _ _ afterSV (ChainSelectionInfoSelectView beforeSV) cfg)
-  | (compare `on` wsvBlockNo) beforeSV afterSV == LT =
-      Longer ((BeforeAndAfter `on` wsvBlockNo) beforeSV afterSV)
-  | (compare `on` wsvBlockNo) beforeSV afterSV == GT =
-      UnexplainedSwitch (BeforeAndAfter beforeSV afterSV)
-  | (compare `on` wsvWeightBoost) beforeSV afterSV == LT =
-      Heavier ((BeforeAndAfter `on` wsvWeightBoost) beforeSV afterSV)
-  | (compare `on` wsvWeightBoost) beforeSV afterSV == GT =
-      UnexplainedSwitch (BeforeAndAfter beforeSV afterSV)
-  | otherwise =
-      Tiebreak $ reasonForSwitchByTiebreaker cfg $ (BeforeAndAfter `on` wsvTiebreaker) afterSV beforeSV
+-- -- | Explain why did we switch to a different candidate in terms of
+-- -- 'ReasonForSwitch'.
+-- selectionChangedReason ::
+--   ReasonForSwitchByTiebreaker (BlockProtocol blk) =>
+--   SelectionChangedInfo blk -> ReasonForSwitch blk
+-- selectionChangedReason (SelectionChangedInfo _ _ _ _ afterSV (ChainSelectionInfoBlockDistance i) _) =
+--   Longer (BeforeAndAfter (BlockNo (unBlockNo (wsvBlockNo afterSV) - i)) (wsvBlockNo afterSV))
+-- selectionChangedReason (SelectionChangedInfo _ _ _ _ afterSV (ChainSelectionInfoSelectView beforeSV) cfg)
+--   | (compare `on` wsvBlockNo) beforeSV afterSV == LT =
+--       Longer ((BeforeAndAfter `on` wsvBlockNo) beforeSV afterSV)
+--   | (compare `on` wsvBlockNo) beforeSV afterSV == GT =
+--       UnexplainedSwitch (BeforeAndAfter beforeSV afterSV)
+--   | (compare `on` wsvWeightBoost) beforeSV afterSV == LT =
+--       Heavier ((BeforeAndAfter `on` wsvWeightBoost) beforeSV afterSV)
+--   | (compare `on` wsvWeightBoost) beforeSV afterSV == GT =
+--       UnexplainedSwitch (BeforeAndAfter beforeSV afterSV)
+--   | otherwise =
+--       Tiebreak $ reasonForSwitchByTiebreaker cfg $ (BeforeAndAfter `on` wsvTiebreaker) afterSV beforeSV
 
 -- | Trace type for the various events that occur when adding a block.
 data TraceAddBlockEvent blk
@@ -962,6 +964,7 @@ data TraceAddBlockEvent blk
       (SelectionChangedInfo blk)
       (AnchoredFragment (Header blk))
       (AnchoredFragment (Header blk))
+      (ReasonForSwitch' blk)
   | -- | The new block fits onto some fork and we have switched to that fork
     -- (second fragment), as it is preferable to our (previous) current chain
     -- (first fragment).
@@ -970,6 +973,7 @@ data TraceAddBlockEvent blk
       (SelectionChangedInfo blk)
       (AnchoredFragment (Header blk))
       (AnchoredFragment (Header blk))
+      (ReasonForSwitch' blk)
   | -- | An event traced during validating performed while adding a block.
     AddBlockValidation (TraceValidationEvent blk)
   | -- | The tentative header (in the context of diffusion pipelining) has been
@@ -985,6 +989,7 @@ deriving instance
   , LedgerSupportsProtocol blk
   , InspectLedger blk
   , Eq (SelectionChangedInfo blk)
+  , Eq (ReasonForSwitch' blk)
   ) =>
   Eq (TraceAddBlockEvent blk)
 deriving instance
@@ -992,6 +997,7 @@ deriving instance
   , LedgerSupportsProtocol blk
   , InspectLedger blk
   , Show (SelectionChangedInfo blk)
+  , Show (ReasonForSwitch' blk)
   ) =>
   Show (TraceAddBlockEvent blk)
 

@@ -65,14 +65,21 @@ instance Ord (TiebreakerView proto) => Ord (WeightedSelectView proto) where
       , compare `on` wsvTiebreaker
       ]
 
+data WeightedSelectViewReasonForSwitch p
+  = Heavier
+  | WeightedSelectViewTiebreak (ReasonForSwitch (TiebreakerView p))
+
 instance ChainOrder (TiebreakerView proto) => ChainOrder (WeightedSelectView proto) where
   type ChainOrderConfig (WeightedSelectView proto) = ChainOrderConfig (TiebreakerView proto)
+  type ReasonForSwitch (WeightedSelectView proto) = WeightedSelectViewReasonForSwitch proto
 
   preferCandidate cfg ours cand =
     case compare (wsvTotalWeight ours) (wsvTotalWeight cand) of
-      LT -> True
-      EQ -> preferCandidate cfg (wsvTiebreaker ours) (wsvTiebreaker cand)
-      GT -> False
+      LT -> ShouldSwitch Heavier
+      EQ -> case preferCandidate cfg (wsvTiebreaker ours) (wsvTiebreaker cand) of
+        ShouldSwitch r -> ShouldSwitch (WeightedSelectViewTiebreak r)
+        ShouldNotSwitch -> ShouldNotSwitch
+      GT -> ShouldNotSwitch
 
 -- | Get the 'WeightedSelectView' for a fragment using the given
 -- 'PerasWeightSnapshot'. Note that this is only meanigful for comparisons
@@ -125,17 +132,25 @@ instance Ord a => Ord (WithEmptyFragment a) where
     NonEmptyFragment{} EmptyFragment -> GT
     (NonEmptyFragment a) (NonEmptyFragment b) -> compare a b
 
+data WithEmptyFragmentReasonForSwitch a = CandidateIsNonEmpty | OtherReason (ReasonForSwitch a)
+
+deriving instance Show (ReasonForSwitch a) => Show (WithEmptyFragmentReasonForSwitch a)
+
 -- | Prefer non-empty fragments to empty ones. This instance assumes that the
 -- underlying fragments all have the same anchor.
 instance ChainOrder a => ChainOrder (WithEmptyFragment a) where
   type ChainOrderConfig (WithEmptyFragment a) = ChainOrderConfig a
 
+  type ReasonForSwitch (WithEmptyFragment a) = WithEmptyFragmentReasonForSwitch a
+
   preferCandidate cfg = \cases
     -- We prefer any non-empty fragment to the empty fragment.
-    EmptyFragment NonEmptyFragment{} -> True
+    EmptyFragment NonEmptyFragment{} -> ShouldSwitch CandidateIsNonEmpty
     -- We never prefer the empty fragment to our selection (even if it is also
     -- empty).
-    _ EmptyFragment -> False
+    _ EmptyFragment -> ShouldNotSwitch
     -- Otherwise, defer to @'ChainOrder' a@.
     (NonEmptyFragment ours) (NonEmptyFragment cand) ->
-      preferCandidate cfg ours cand
+      case preferCandidate cfg ours cand of
+        ShouldSwitch r -> ShouldSwitch (OtherReason r)
+        ShouldNotSwitch -> ShouldNotSwitch

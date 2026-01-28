@@ -34,6 +34,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
+import Ouroboros.Consensus.Protocol.Abstract (isShouldSwitch)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise
   , ChainDB
@@ -281,7 +282,7 @@ mkBlockFetchConsensusInterface
         -- also just return 'False' in this case (and we remove the
         -- precondition).
         Nothing -> False
-        Just _ -> preferAnchoredCandidate bcfg weights ours cand
+        Just _ -> isShouldSwitch $ preferAnchoredCandidate bcfg weights ours cand
 
     compareCandidateChains ::
       PerasWeightSnapshot blk ->

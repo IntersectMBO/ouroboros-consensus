@@ -23,9 +23,13 @@ module Ouroboros.Consensus.Protocol.Abstract
 
     -- * Translation
   , TranslateProto (..)
+  , ShouldSwitch (..)
+  , SelectViewReasonForSwitch (..)
 
     -- * Convenience re-exports
   , SecurityParam (..)
+  , isShouldSwitch
+  , shouldSwitchToMaybe
   ) where
 
 import Control.Monad.Except
@@ -227,6 +231,8 @@ instance TranslateProto singleProto singleProto where
 class Ord sv => ChainOrder sv where
   type ChainOrderConfig sv :: Type
 
+  type ReasonForSwitch sv :: Type
+
   -- | Compare a candidate chain to our own.
   --
   -- This method defines when a candidate chain is /strictly/ preferable to our
@@ -257,7 +263,21 @@ class Ord sv => ChainOrder sv where
     sv ->
     -- | Tip of the candidate
     sv ->
-    Bool
+    ShouldSwitch (ReasonForSwitch sv)
+
+data ShouldSwitch reason = ShouldNotSwitch | ShouldSwitch reason
+
+isShouldSwitch :: ShouldSwitch reason -> Bool
+isShouldSwitch ShouldSwitch{} = True
+isShouldSwitch ShouldNotSwitch = False
+
+shouldSwitchToMaybe :: ShouldSwitch reason -> Maybe reason
+shouldSwitchToMaybe (ShouldSwitch reason) = Just reason
+shouldSwitchToMaybe ShouldNotSwitch = Nothing
+
+instance Semigroup (ShouldSwitch a) where
+  ShouldNotSwitch <> x = x
+  x <> _ = x
 
 -- | A @DerivingVia@ helper to implement 'preferCandidate' in terms of the 'Ord'
 -- instance.
@@ -266,8 +286,9 @@ newtype SimpleChainOrder sv = SimpleChainOrder sv
 
 instance Ord sv => ChainOrder (SimpleChainOrder sv) where
   type ChainOrderConfig (SimpleChainOrder sv) = ()
+  type ReasonForSwitch (SimpleChainOrder sv) = ()
 
-  preferCandidate _cfg ours cand = ours < cand
+  preferCandidate _cfg ours cand = if ours < cand then ShouldSwitch () else ShouldNotSwitch -- TODO @JS
 
 -- | Use no tiebreaker to decide between chains of equal length, cf
 -- 'TiebreakerView' and 'ChainOrder'.
@@ -306,14 +327,21 @@ instance Ord (TiebreakerView p) => Ord (SelectView p) where
       , compare `on` svTiebreakerView
       ]
 
+data SelectViewReasonForSwitch p
+  = Longer
+  | SelectViewTiebreak (ReasonForSwitch (TiebreakerView p))
+
 -- | @cand@ is preferred to @ours@ if either @cand@ is longer than @ours@, or
 -- @cand@ and @ours@ are of equal length and we have
 --
 -- > preferCandidate cfg ourTiebreaker candTiebreaker
 instance ChainOrder (TiebreakerView p) => ChainOrder (SelectView p) where
   type ChainOrderConfig (SelectView p) = ChainOrderConfig (TiebreakerView p)
+  type ReasonForSwitch (SelectView p) = SelectViewReasonForSwitch p
 
   preferCandidate cfg ours cand = case compare (svBlockNo ours) (svBlockNo cand) of
-    LT -> True
-    EQ -> preferCandidate cfg (svTiebreakerView ours) (svTiebreakerView cand)
-    GT -> False
+    LT -> ShouldSwitch (Longer)
+    EQ -> case preferCandidate cfg (svTiebreakerView ours) (svTiebreakerView cand) of
+      ShouldSwitch r -> ShouldSwitch (SelectViewTiebreak r)
+      ShouldNotSwitch -> ShouldNotSwitch
+    GT -> ShouldNotSwitch

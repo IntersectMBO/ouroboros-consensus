@@ -31,10 +31,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol
 
     -- * Type family instances
   , Ticked (..)
-
-    -- * Reasons for switch
-  , ReasonForTiebreakerSwitch (..)
-  , WrapReason (..)
   ) where
 
 import Control.Monad.Except
@@ -84,106 +80,6 @@ newtype HardForkTiebreakerView xs = HardForkTiebreakerView
   deriving (Show, Eq)
   deriving newtype NoThunks
 
-newtype WrapReason blk = WrapReason (ReasonForTiebreakerSwitch (BlockProtocol blk))
-
-instance
-  (CanHardFork xs, All ReasonForSwitchByTiebreaker' xs) =>
-  ReasonForSwitchByTiebreaker (HardForkProtocol xs)
-  where
-  data ReasonForTiebreakerSwitch (HardForkProtocol xs)
-    = OneEraHardForkTieBreakerReason
-        (NS WrapReason xs)
-    | UnexplainedHardForkSwitch
-  reasonForSwitchByTiebreaker cfg (BeforeAndAfter (HardForkTiebreakerView tv1) (HardForkTiebreakerView tv2)) =
-    acrossEraSelection'
-      (getPerEraChainOrderConfig cfg)
-      hardForkChainSel
-      (getOneEraTiebreakerView tv1)
-      (getOneEraTiebreakerView tv2)
-
-data FlipArgs = KeepArgs | FlipArgs
-
-class ReasonForSwitchByTiebreaker (BlockProtocol x) => ReasonForSwitchByTiebreaker' x
-instance ReasonForSwitchByTiebreaker (BlockProtocol x) => ReasonForSwitchByTiebreaker' x
-
-acrossEraSelection' ::
-  forall xs.
-  All ReasonForSwitchByTiebreaker' xs =>
-  NP WrapChainOrderConfig xs ->
-  Tails AcrossEraTiebreaker xs ->
-  NS WrapTiebreakerView xs ->
-  NS WrapTiebreakerView xs ->
-  ReasonForTiebreakerSwitch (HardForkProtocol xs)
-acrossEraSelection' = \cfg ffs l r ->
-  goBoth cfg ffs (l, r)
- where
-  goBoth ::
-    All ReasonForSwitchByTiebreaker' xs' =>
-    NP WrapChainOrderConfig xs' ->
-    Tails AcrossEraTiebreaker xs' ->
-    ( NS WrapTiebreakerView xs'
-    , NS WrapTiebreakerView xs'
-    ) ->
-    ReasonForTiebreakerSwitch (HardForkProtocol xs')
-  goBoth _ TNil = \(a, _) -> case a of {}
-  goBoth (cfg :* cfgs) (TCons fs ffs') = \case
-    (Z a, Z b) ->
-      OneEraHardForkTieBreakerReason
-        ( Z $
-            WrapReason $
-              reasonForSwitchByTiebreaker
-                (unwrapChainOrderConfig cfg)
-                ( BeforeAndAfter
-                    (unwrapTiebreakerView a)
-                    (unwrapTiebreakerView b)
-                )
-        )
-    (Z a, S b) -> shiftReason $ goOne KeepArgs a cfgs fs b
-    (S a, Z b) -> shiftReason $ goOne FlipArgs b cfgs fs a
-    (S a, S b) -> shiftReason $ goBoth cfgs ffs' (a, b)
-
-  goOne ::
-    forall x xs'.
-    All ReasonForSwitchByTiebreaker' xs' =>
-    FlipArgs ->
-    WrapTiebreakerView x ->
-    NP WrapChainOrderConfig xs' ->
-    NP (AcrossEraTiebreaker x) xs' ->
-    NS WrapTiebreakerView xs' ->
-    ReasonForTiebreakerSwitch (HardForkProtocol xs')
-  goOne flipArgs a = go
-   where
-    go ::
-      forall xs''.
-      All ReasonForSwitchByTiebreaker' xs'' =>
-      NP WrapChainOrderConfig xs'' ->
-      NP (AcrossEraTiebreaker x) xs'' ->
-      NS WrapTiebreakerView xs'' ->
-      ReasonForTiebreakerSwitch (HardForkProtocol xs'')
-    go _ Nil b = case b of {}
-    go (cfg :* _) (f :* _) (Z b) =
-      case f of
-        NoTiebreakerAcrossEras ->
-          UnexplainedHardForkSwitch
-        SameTiebreakerAcrossEras ->
-          OneEraHardForkTieBreakerReason
-            ( Z $
-                WrapReason $
-                  reasonForSwitchByTiebreaker
-                    (unwrapChainOrderConfig cfg)
-                    ( case flipArgs of
-                        KeepArgs -> (BeforeAndAfter (unwrapTiebreakerView a) (unwrapTiebreakerView b))
-                        FlipArgs -> (BeforeAndAfter (unwrapTiebreakerView b) (unwrapTiebreakerView a))
-                    )
-            )
-    go (_ :* cfgs) (_ :* fs) (S b) = shiftReason $ go cfgs fs b
-
-shiftReason ::
-  ReasonForTiebreakerSwitch (HardForkProtocol xs) ->
-  ReasonForTiebreakerSwitch (HardForkProtocol (x ': xs))
-shiftReason (OneEraHardForkTieBreakerReason r) = OneEraHardForkTieBreakerReason (S r)
-shiftReason UnexplainedHardForkSwitch = UnexplainedHardForkSwitch
-
 instance CanHardFork xs => Ord (HardForkTiebreakerView xs) where
   compare (HardForkTiebreakerView l) (HardForkTiebreakerView r) =
     acrossEraSelection
@@ -195,17 +91,22 @@ instance CanHardFork xs => Ord (HardForkTiebreakerView xs) where
 
 instance CanHardFork xs => ChainOrder (HardForkTiebreakerView xs) where
   type ChainOrderConfig (HardForkTiebreakerView xs) = PerEraChainOrderConfig xs
+  type ReasonForSwitch (HardForkTiebreakerView xs) = OneEraReasonForSwitch xs
 
   preferCandidate
     (PerEraChainOrderConfig cfg)
     (HardForkTiebreakerView ours)
     (HardForkTiebreakerView cand) =
-      acrossEraSelection
-        AcrossEraPreferCandidate
-        cfg
-        hardForkChainSel
-        (getOneEraTiebreakerView ours)
-        (getOneEraTiebreakerView cand)
+      case ( acrossEraSelection
+               AcrossEraPreferCandidate
+               cfg
+               hardForkChainSel
+               (getOneEraTiebreakerView ours)
+               (getOneEraTiebreakerView cand) ::
+               _
+           ) of
+        ShouldSwitch reason -> ShouldSwitch (OneEraTiebreakerView reason)
+        ShouldNotSwitch -> ShouldNotSwitch
 
 {-------------------------------------------------------------------------------
   ConsensusProtocol

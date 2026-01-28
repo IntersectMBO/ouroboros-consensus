@@ -24,11 +24,6 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
   , instantiatePraosCredentials
-
-    -- * Exposed for 'ReasonForSwitchByTiebreaker'
-  , when'
-  , issueNoArmed
-  , vrfArmed
   ) where
 
 import qualified Cardano.Crypto.KES.Class as KES
@@ -93,6 +88,10 @@ data PraosTiebreakerView c = PraosTiebreakerView
   }
   deriving (Show, Eq, Generic, NoThunks)
 
+data PraosReasonForSwitch c
+  = Issuer
+  | VRFTiebreak
+
 -- | When to compare the VRF tiebreakers.
 data VRFTiebreakerFlavor
   = -- | Always compare the VRF tiebreakers. This is the behavior of all eras
@@ -126,39 +125,46 @@ comparePraos ::
   VRFTiebreakerFlavor ->
   PraosTiebreakerView c ->
   PraosTiebreakerView c ->
-  Ordering
+  ShouldSwitch (PraosReasonForSwitch c)
 comparePraos tiebreakerFlavor =
-  when' issueNoArmed (compare `on` ptvIssueNo)
-    <> when' (vrfArmed tiebreakerFlavor) (compare `on` Down . ptvTieBreakVRF)
-
--- When the predicate @p@ returns 'True', use the given comparison function,
--- otherwise, no preference.
-when' ::
-  (a -> a -> Bool) ->
-  (a -> a -> Ordering) ->
-  (a -> a -> Ordering)
-when' p comp a1 a2 =
-  if p a1 a2 then comp a1 a2 else EQ
-
--- Only compare the issue numbers when the issuers and slots are identical.
--- Note that this case implies the VRFs also coincide.
-issueNoArmed :: PraosTiebreakerView c -> PraosTiebreakerView c -> Bool
-issueNoArmed v1 v2 =
-  ptvSlotNo v1 == ptvSlotNo v2
-    && ptvIssuer v1 == ptvIssuer v2
-
--- Whether to do a VRF comparison.
-vrfArmed :: VRFTiebreakerFlavor -> PraosTiebreakerView c -> PraosTiebreakerView c -> Bool
-vrfArmed tiebreakerFlavor v1 v2 = case tiebreakerFlavor of
-  UnrestrictedVRFTiebreaker -> True
-  RestrictedVRFTiebreaker maxDist ->
-    slotDist (ptvSlotNo v1) (ptvSlotNo v2) <= maxDist
+  when' issueNoArmed (\x y -> (compare `on` ptvIssueNo) x y `explainSwitchIfLTBecause` Issuer)
+    <> when'
+      vrfArmed
+      (\x y -> (compare `on` Down . ptvTieBreakVRF) x y `explainSwitchIfLTBecause` VRFTiebreak)
  where
-  slotDist :: SlotNo -> SlotNo -> SlotNo
-  slotDist s t
-    -- slot numbers are unsigned, so have to take care with subtraction
-    | s >= t = s - t
-    | otherwise = t - s
+  -- When the predicate @p@ returns 'True', use the given comparison function,
+  -- otherwise, no preference.
+  when' ::
+    (a -> a -> Bool) ->
+    (a -> a -> ShouldSwitch (PraosReasonForSwitch c)) ->
+    (a -> a -> ShouldSwitch (PraosReasonForSwitch c))
+  when' p comp a1 a2 =
+    if p a1 a2 then comp a1 a2 else ShouldNotSwitch
+
+  -- Only compare the issue numbers when the issuers and slots are identical.
+  -- Note that this case implies the VRFs also coincide.
+  issueNoArmed :: PraosTiebreakerView c -> PraosTiebreakerView c -> Bool
+  issueNoArmed v1 v2 =
+    ptvSlotNo v1 == ptvSlotNo v2
+      && ptvIssuer v1 == ptvIssuer v2
+
+  -- Whether to do a VRF comparison.
+  vrfArmed :: PraosTiebreakerView c -> PraosTiebreakerView c -> Bool
+  vrfArmed v1 v2 = case tiebreakerFlavor of
+    UnrestrictedVRFTiebreaker -> True
+    RestrictedVRFTiebreaker maxDist ->
+      slotDist (ptvSlotNo v1) (ptvSlotNo v2) <= maxDist
+   where
+    slotDist :: SlotNo -> SlotNo -> SlotNo
+    slotDist s t
+      -- slot numbers are unsigned, so have to take care with subtraction
+      | s >= t = s - t
+      | otherwise = t - s
+
+explainSwitchIfLTBecause ::
+  Ordering -> PraosReasonForSwitch c -> ShouldSwitch (PraosReasonForSwitch c)
+explainSwitchIfLTBecause LT = ShouldSwitch
+explainSwitchIfLTBecause _ = const ShouldNotSwitch
 
 -- | We order between chains of equal length as follows:
 --
@@ -172,7 +178,8 @@ vrfArmed tiebreakerFlavor v1 v2 = case tiebreakerFlavor of
 -- IMPORTANT: This is not a complete picture of the Praos chain order, do also
 -- consult the documentation of 'ChainOrder'.
 instance Crypto c => Ord (PraosTiebreakerView c) where
-  compare = comparePraos UnrestrictedVRFTiebreaker
+  compare x y =
+    if isShouldSwitch (comparePraos UnrestrictedVRFTiebreaker x y) then LT else GT
 
 -- | IMPORTANT: This is not a 'SimpleChainOrder'; rather, there are
 -- 'PraosTiebreakerView's @a, b@ such that @a < b@, but @'not' $
@@ -256,8 +263,8 @@ instance Crypto c => Ord (PraosTiebreakerView c) where
 --     which the VRF comparison takes place.
 instance Crypto c => ChainOrder (PraosTiebreakerView c) where
   type ChainOrderConfig (PraosTiebreakerView c) = VRFTiebreakerFlavor
-
-  preferCandidate cfg ours cand = comparePraos cfg ours cand == LT
+  type ReasonForSwitch (PraosTiebreakerView c) = PraosReasonForSwitch c
+  preferCandidate cfg ours cand = comparePraos cfg ours cand
 
 data PraosCanBeLeader c = PraosCanBeLeader
   { praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer)

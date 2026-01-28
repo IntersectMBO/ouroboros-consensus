@@ -52,6 +52,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , OneEraValidateView (..)
   , OneEraValidatedGenTx (..)
   , OneEraValidationErr (..)
+  , OneEraReasonForSwitch (..)
 
     -- * Value for two /different/ eras
   , EraMismatch (..)
@@ -89,6 +90,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Info
 import Ouroboros.Consensus.HardFork.Combinator.Lifting
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (allEqual)

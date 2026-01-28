@@ -44,6 +44,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers
 
     -- * Type family instances
   , Ticked (..)
+  , WrapReasonForSwitch (..)
   ) where
 
 import Codec.Serialise (Serialise)
@@ -108,6 +109,8 @@ newtype WrapLedgerView blk = WrapLedgerView {unwrapLedgerView :: LedgerView (Blo
 newtype WrapTiebreakerView blk = WrapTiebreakerView {unwrapTiebreakerView :: TiebreakerView (BlockProtocol blk)}
 newtype WrapValidateView blk = WrapValidateView {unwrapValidateView :: ValidateView (BlockProtocol blk)}
 newtype WrapValidationErr blk = WrapValidationErr {unwrapValidationErr :: ValidationErr (BlockProtocol blk)}
+
+newtype WrapReasonForSwitch blk = WrapReasonForSwitch {unwrapReasonForSwitch :: ReasonForSwitch (WrapTiebreakerView blk)}
 
 {-------------------------------------------------------------------------------
   Versioning

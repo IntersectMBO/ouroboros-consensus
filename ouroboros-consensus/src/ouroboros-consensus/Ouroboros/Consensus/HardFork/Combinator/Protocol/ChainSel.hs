@@ -11,9 +11,11 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
   ( AcrossEraMode (..)
   , AcrossEraTiebreaker (..)
   , acrossEraSelection
+  , OneEraReasonForSwitch (..)
   ) where
 
 import Data.Kind (Type)
+import Data.SOP.BasicFunctors (K (..))
 import Data.SOP.Constraint
 import Data.SOP.Strict
 import Data.SOP.Tails (Tails (..))
@@ -21,6 +23,8 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util ((.:))
+import Ouroboros.Consensus.Util.AnchoredFragment (ShouldSwitch')
 
 {-------------------------------------------------------------------------------
   Configuration
@@ -41,6 +45,11 @@ data AcrossEraTiebreaker :: Type -> Type -> Type where
     TiebreakerView (BlockProtocol x) ~ TiebreakerView (BlockProtocol y) =>
     AcrossEraTiebreaker x y
 
+newtype OneEraReasonForSwitch xs = OneEraReasonForSwitch {getOneEraReasonForSwitch :: NS WrapReasonForSwitch xs}
+
+shiftOneEraReasonForSwitch :: OneEraReasonForSwitch xs -> OneEraReasonForSwitch (x ': xs)
+shiftOneEraReasonForSwitch (OneEraReasonForSwitch reason) = OneEraReasonForSwitch (S reason)
+
 {-------------------------------------------------------------------------------
   Compare two eras
 -------------------------------------------------------------------------------}
@@ -48,21 +57,26 @@ data AcrossEraTiebreaker :: Type -> Type -> Type where
 -- | GADT indicating whether we are lifting 'compare' or 'preferCandidate' to
 -- the HFC, together with the type of configuration we need for that and the
 -- result type.
-data AcrossEraMode cfg a where
-  AcrossEraCompare :: AcrossEraMode Proxy Ordering
-  AcrossEraPreferCandidate :: AcrossEraMode WrapChainOrderConfig Bool
+data AcrossEraMode cfg r w a where
+  AcrossEraCompare :: AcrossEraMode Proxy r w Ordering
+  AcrossEraPreferCandidate ::
+    AcrossEraMode WrapChainOrderConfig r w (ShouldSwitch (w r))
 
 applyAcrossEraMode ::
+  forall cfg blk a tv.
   ChainOrder tv =>
   cfg blk ->
   (WrapChainOrderConfig blk -> ChainOrderConfig tv) ->
-  AcrossEraMode cfg a ->
+  (ReasonForSwitch tv -> WrapReasonForSwitch blk) ->
+  AcrossEraMode cfg blk WrapReasonForSwitch a ->
   tv ->
   tv ->
   a
-applyAcrossEraMode cfg f = \case
+applyAcrossEraMode cfg f g = \case
   AcrossEraCompare -> compare
-  AcrossEraPreferCandidate -> preferCandidate (f cfg)
+  AcrossEraPreferCandidate -> \x y -> case preferCandidate (f cfg) x y of
+    ShouldSwitch reason -> ShouldSwitch (g reason)
+    ShouldNotSwitch -> ShouldNotSwitch
 
 data FlipArgs = KeepArgs | FlipArgs
 
@@ -70,7 +84,7 @@ acrossEras ::
   forall blk blk' cfg a.
   SingleEraBlock blk =>
   FlipArgs ->
-  AcrossEraMode cfg a ->
+  AcrossEraMode cfg blk' WrapReasonForSwitch a ->
   -- | The configuration corresponding to the later block/era, also see
   -- 'SameTiebreakerAcrossEras'.
   cfg blk' ->
@@ -86,20 +100,28 @@ acrossEras
   (WrapTiebreakerView r) = \case
     NoTiebreakerAcrossEras -> maybeFlip cmp NoTiebreaker NoTiebreaker
      where
-      cmp = applyAcrossEraMode cfg (const ()) mode
+      cmp =
+        applyAcrossEraMode
+          cfg
+          (const ())
+          undefined
+          ( case mode of
+              AcrossEraCompare -> AcrossEraCompare
+              AcrossEraPreferCandidate -> AcrossEraPreferCandidate
+          )
     SameTiebreakerAcrossEras -> maybeFlip cmp l r
      where
-      cmp = applyAcrossEraMode cfg unwrapChainOrderConfig mode
+      cmp = applyAcrossEraMode cfg unwrapChainOrderConfig WrapReasonForSwitch mode
    where
-    maybeFlip :: (b -> b -> a) -> b -> b -> a
+    maybeFlip :: (b -> b -> c) -> b -> b -> c
     maybeFlip = case flipArgs of
       KeepArgs -> id
       FlipArgs -> flip
 
 acrossEraSelection ::
-  forall xs cfg a.
+  forall xs cfg tv a.
   All SingleEraBlock xs =>
-  AcrossEraMode cfg a ->
+  AcrossEraMode cfg blk WrapReasonForSwitch a ->
   NP cfg xs ->
   Tails AcrossEraTiebreaker xs ->
   NS WrapTiebreakerView xs ->
@@ -120,7 +142,7 @@ acrossEraSelection mode = \cfg ffs l r ->
   goBoth (cfg :* cfgs) (TCons fs ffs') = \case
     (Z a, Z b) -> cmp a b
      where
-      cmp = applyAcrossEraMode cfg unwrapChainOrderConfig mode
+      cmp = applyAcrossEraMode cfg unwrapChainOrderConfig undefined mode
     (Z a, S b) -> goOne KeepArgs a cfgs fs b
     (S a, Z b) -> goOne FlipArgs b cfgs fs a
     (S a, S b) -> goBoth cfgs ffs' (a, b)

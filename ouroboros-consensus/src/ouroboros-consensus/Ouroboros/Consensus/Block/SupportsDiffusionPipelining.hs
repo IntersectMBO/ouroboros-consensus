@@ -255,7 +255,8 @@ data SelectViewTentativeState proto
   deriving stock Generic
 
 deriving stock instance ConsensusProtocol proto => Show (SelectViewTentativeState proto)
-deriving stock instance ConsensusProtocol proto => Eq (SelectViewTentativeState proto)
+deriving stock instance
+  (Eq (SelectView proto), ConsensusProtocol proto) => Eq (SelectViewTentativeState proto)
 deriving anyclass instance ConsensusProtocol proto => NoThunks (SelectViewTentativeState proto)
 
 instance
