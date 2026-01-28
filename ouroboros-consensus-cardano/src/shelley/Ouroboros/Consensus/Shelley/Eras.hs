@@ -67,6 +67,7 @@ import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
 import Data.Data (Proxy (Proxy))
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
 import Lens.Micro
 import NoThunks.Class (NoThunks)
@@ -138,7 +139,7 @@ class
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
   mkMkMempoolShelleyPredicateFailure ::
-    proxy era -> Maybe (Text -> PredicateFailure (EraRule "LEDGER" era))
+    proxy era -> Maybe (Text -> SL.ApplyTxError era)
 
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
@@ -212,7 +213,8 @@ instance ShelleyBasedEra ConwayEra where
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Just Conway.ConwayMempoolFailure
+  mkMkMempoolShelleyPredicateFailure _prx =
+    Just $ \txt -> ConwayApplyTxError (NE.singleton (Conway.ConwayMempoolFailure txt))
 
 instance ShelleyBasedEra DijkstraEra where
   applyShelleyBasedTx = applyAlonzoBasedTx

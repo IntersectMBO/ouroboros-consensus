@@ -95,7 +95,6 @@ import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
-import qualified Data.List.NonEmpty as NE
 import Data.Measure (Measure)
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
@@ -195,10 +194,8 @@ instance
         coerceSet
           (tx ^. bodyTxL . allInputsTxBodyF)
 
-  mkMempoolPredicateFailure _tlst txt = do
-    f <- mkMkMempoolShelleyPredicateFailure (Proxy @era)
-    undefined -- TODO(geo2a): figure out which ApplyTxError constructor to use
-    -- Just $ SL.ShelleyApplyTxError $ f txt NE.:| []
+  mkMempoolPredicateFailure _tlst txt =
+    ($ txt) <$> mkMkMempoolShelleyPredicateFailure (Proxy @era)
 
 mkShelleyTx ::
   forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)
