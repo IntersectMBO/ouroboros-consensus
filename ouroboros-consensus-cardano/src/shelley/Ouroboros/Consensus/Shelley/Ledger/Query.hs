@@ -954,8 +954,8 @@ encodeShelleyQuery query = case query of
     CBOR.encodeListLen 1 <> CBOR.encodeWord8 32
   GetFuturePParams ->
     CBOR.encodeListLen 1 <> CBOR.encodeWord8 33
-  GetLedgerPeerSnapshot' _v15 kind ->
-    CBOR.encodeListLen 2 <> CBOR.encodeWord8 34 <> CBOR.encodeWord8 tag
+  GetLedgerPeerSnapshot' v15OrNewer kind ->
+    CBOR.encodeListLen 2 <> CBOR.encodeWord8 34 <> if v15OrNewer then CBOR.encodeWord8 tag else mempty
    where
     tag = case kind of AllLedgerPeers -> 0; BigLedgerPeers -> 1
   QueryStakePoolDefaultVote stakePoolKey ->
