@@ -34,8 +34,14 @@ tests =
     "Cardano"
     [ testGroup "Examples roundtrip" $
         examplesRoundtrip Cardano.Examples.codecConfig Cardano.Examples.examples
-    , testProperty "GenTx.txWireSize.txSubmission" $ prop_txWireSize_txSubmission testCodecCfg
-    , testProperty "GenTx.txWireSize.tight" $ prop_txWireSize (const Nothing) testCodecCfg
+    , testGroup
+        "GenTx"
+        [ testGroup
+            "txWireSize"
+            [ testProperty "GenTx.txWireSize.txSubmission" $ prop_txWireSize_txSubmission testCodecCfg
+            , testProperty "GenTx.txWireSize.tight" $ prop_txWireSize (const Nothing) testCodecCfg
+            ]
+        ]
     , roundtrip_all_skipping
         result
         testCodecCfg
