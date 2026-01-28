@@ -85,7 +85,7 @@ initialForgeState = ForgeState 0 0 0 0
 -- | An action to generate transactions for a given block
 type GenTxs blk mk =
   SlotNo ->
-  IO (ReadOnlyForker IO (ExtLedgerState blk) blk) ->
+  IO (ReadOnlyForker IO (ExtLedgerState blk)) ->
   TickedLedgerState blk DiffMK ->
   IO [Validated (GenTx blk)]
 
