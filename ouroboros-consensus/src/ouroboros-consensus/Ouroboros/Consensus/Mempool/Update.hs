@@ -262,6 +262,7 @@ doAddTx mpEnv caller wti tx = do
                           $ TraceMempoolRejectedTx
                             tx
                             txerr
+                            (MempoolRejectedByTimeoutSoft dur)
                             (isMempoolSize is)
                   pure (Right outcome, is)
           Just NotEnoughSpaceLeft -> do
@@ -331,6 +332,7 @@ pureTryAddTx mpEnv cfg wti tx is values =
               ( TraceMempoolRejectedTx
                   tx
                   err
+                  MempoolRejectedByLedger
                   (isMempoolSize is)
               )
         Right txsz
@@ -399,6 +401,7 @@ pureTryAddTx mpEnv cfg wti tx is values =
                       ( TraceMempoolRejectedTx
                           tx
                           err
+                          MempoolRejectedByLedger
                           (isMempoolSize is)
                       )
                 (Right vtx, is') ->
