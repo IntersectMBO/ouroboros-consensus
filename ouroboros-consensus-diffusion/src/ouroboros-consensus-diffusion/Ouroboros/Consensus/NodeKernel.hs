@@ -27,6 +27,7 @@ module Ouroboros.Consensus.NodeKernel
   , toConsensusMode
   ) where
 
+import Data.Either (partitionEithers)
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
@@ -46,13 +47,12 @@ import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Bifunctor (bimap, second)
+import Data.Bifunctor (second)
 import Data.Data (Typeable)
 import Data.Foldable (traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
-import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
@@ -921,6 +921,7 @@ getMempoolReader mempool =
         }
 
 getMempoolWriter ::
+  forall blk m.
   ( LedgerSupportsMempool blk
   , IOLike m
   , HasTxId (GenTx blk)
@@ -931,22 +932,17 @@ getMempoolWriter mempool =
   Inbound.TxSubmissionMempoolWriter
     { Inbound.txId = txId
     , mempoolAddTxs = \txs ->
-        bimap
-          ( map
-              ( \case
-                  MempoolTxAdded tx -> txId (txForgetValidated tx)
-                  MempoolTxRejected{} -> error "impossible happened"
-              )
-          )
-          ( map
-              ( \case
-                  MempoolTxRejected tx _reason -> (txId tx, ())
-                  MempoolTxAdded{} -> error "impossible happened"
-              )
-          )
-          . List.partition isMempoolTxAdded
-          <$> addTxs mempool txs
+        partitionTxIds <$> addTxs mempool txs
     }
+ where
+  partitionTxIds ::
+    [MempoolAddTxResult blk] -> ([TxId (GenTx blk)], [(TxId (GenTx blk), ())])
+  partitionTxIds = partitionEithers . map getTxId
+
+  getTxId :: MempoolAddTxResult blk -> Either (TxId (GenTx blk)) (TxId (GenTx blk), ())
+  getTxId = \case
+   MempoolTxAdded tx -> Left $ txId (txForgetValidated tx)
+   MempoolTxRejected tx _reason -> Right $ (txId tx, ())
 
 {-------------------------------------------------------------------------------
   PeerSelection integration
