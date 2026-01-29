@@ -43,7 +43,7 @@ import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
 import Data.Data (Typeable)
-import Data.Foldable (traverse_)
+import Data.Foldable (for_, traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
@@ -166,6 +166,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import Ouroboros.Consensus.Mempool.TxSeq (mSize)
 import qualified Ouroboros.Consensus.Mempool.TxSeq as Tx
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 
@@ -838,11 +839,13 @@ forkBlockForging IS{..} blockForging =
           , fbMempoolRestSize = restSize
           }
 
-    case mayNewEndorserBlock of
-      Just eb -> do
-        let leiosTracer = leiosKernelTracer tracers
-        lift $ traceWith leiosTracer TraceLeiosBlockForged{ebSlot = currentSlot, eb}
-      Nothing -> pure ()
+    for_ mayNewEndorserBlock $ \eb ->
+      traceLeios
+        TraceLeiosBlockForged
+          { ebSlot = currentSlot
+          , eb
+          , ebMeasure = mSize newEndoreserBlockSize
+          }
 
     -- Add the block to the chain DB
     let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
@@ -900,6 +903,8 @@ forkBlockForging IS{..} blockForging =
     lift
       . traceWith (forgeTracer tracers)
       . TraceLabelCreds (forgeLabel blockForging)
+
+  traceLeios = lift . traceWith (leiosKernelTracer tracers)
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext

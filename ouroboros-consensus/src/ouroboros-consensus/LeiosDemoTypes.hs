@@ -5,7 +5,9 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# OPTIONS_GHC -Wno-partial-fields #-}
 
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
@@ -52,8 +54,11 @@ import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified Numeric
-import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..), TxMeasure)
-import Ouroboros.Consensus.Mempool.TxSeq (TxSeqMeasure)
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32 (..)
+  , TxMeasureMetrics
+  , txMeasureMetricTxSizeBytes
+  )
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 import System.Directory (doesFileExist)
@@ -331,7 +336,7 @@ decodeLeiosTx :: Decoder s LeiosTx
 decodeLeiosTx = MkLeiosTx <$> CBOR.decodeBytes
 
 -- TODO: Keep track of the slot of an EB?
-data LeiosEb = MkLeiosEb !(V.Vector (TxHash, BytesSize))
+data LeiosEb = MkLeiosEb {leiosEbTxs :: !(V.Vector (TxHash, BytesSize))}
   deriving (Show, Eq)
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
@@ -633,11 +638,13 @@ data TraceLeiosKernel
   = MkTraceLeiosKernel String
   | TraceLeiosBlockAcquired LeiosPoint
   | TraceLeiosBlockTxsAcquired LeiosPoint
-  | TraceLeiosBlockForged
+  | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
       { ebSlot :: SlotNo
       , eb :: LeiosEb
+      , ebMeasure :: m
       }
-  deriving Show
+
+deriving instance Show TraceLeiosKernel
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
@@ -655,11 +662,14 @@ traceLeiosKernelToObject = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= show ebSlot
       ]
-  TraceLeiosBlockForged{ebSlot, eb} ->
+  TraceLeiosBlockForged{ebSlot, eb, ebMeasure} ->
     mconcat
       [ "kind" .= Aeson.String "TraceLeiosBlockForged"
-      , "ebSlot" .= show ebSlot
-      , "ebHash" .= prettyEbHash (hashLeiosEb eb)
+      , "slot" .= show ebSlot
+      , "hash" .= prettyEbHash (hashLeiosEb eb)
+      , "numTxs" .= V.length (leiosEbTxs eb)
+      , "ebSize" .= leiosEbBytesSize eb
+      , "closureSize" .= unByteSize32 (txMeasureMetricTxSizeBytes ebMeasure)
       ]
 
 newtype TraceLeiosPeer = MkTraceLeiosPeer String
