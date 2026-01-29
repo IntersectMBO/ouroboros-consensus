@@ -27,7 +27,6 @@ module Ouroboros.Consensus.NodeKernel
   , toConsensusMode
   ) where
 
-import Data.Either (partitionEithers)
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
@@ -49,6 +48,7 @@ import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
 import Data.Data (Typeable)
+import Data.Either (partitionEithers)
 import Data.Foldable (traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
@@ -941,8 +941,8 @@ getMempoolWriter mempool =
 
   getTxId :: MempoolAddTxResult blk -> Either (TxId (GenTx blk)) (TxId (GenTx blk), ())
   getTxId = \case
-   MempoolTxAdded tx -> Left $ txId (txForgetValidated tx)
-   MempoolTxRejected tx _reason -> Right $ (txId tx, ())
+    MempoolTxAdded tx -> Left $ txId (txForgetValidated tx)
+    MempoolTxRejected tx _reason -> Right $ (txId tx, ())
 
 {-------------------------------------------------------------------------------
   PeerSelection integration
