@@ -2,6 +2,14 @@
 
 # Changelog entries
 
+<a id='changelog-0.30.0.0'></a>
+## 0.30.0.0 -- 2026-01-29
+
+### Breaking
+
+- Add `MempoolRejectionDetails` to `TraceMempoolRejectedTx` (so defensive
+  mempool rejections are easy to spot and `CountM` downstream).
+
 <a id='changelog-0.29.0.0'></a>
 ## 0.29.0.0 -- 2026-01-23
 
