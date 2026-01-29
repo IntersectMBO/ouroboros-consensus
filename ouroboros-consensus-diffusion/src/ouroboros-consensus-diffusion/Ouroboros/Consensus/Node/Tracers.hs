@@ -177,7 +177,6 @@ showTracers ::
   , Show remotePeer
   , LedgerSupportsProtocol blk
   , Show (TxMeasure blk)
-  , Show (EndorserBlock blk)
   ) =>
   Tracer m String -> Tracers m remotePeer localPeer blk
 showTracers tr =
@@ -386,7 +385,6 @@ deriving instance
   , Eq (ForgeStateUpdateError blk)
   , Eq (CannotForge blk)
   , Eq (TxSeqMeasure (TxMeasure blk))
-  , Eq (EndorserBlock blk)
   ) =>
   Eq (TraceForgeEvent blk)
 deriving instance
@@ -396,7 +394,6 @@ deriving instance
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
   , Show (TxMeasure blk)
-  , Show (EndorserBlock blk)
   ) =>
   Show (TraceForgeEvent blk)
 
@@ -411,16 +408,14 @@ data ForgedBlock blk = ForgedBlock
   { fbLedgerTip :: Point blk
   , fbNewBlock :: blk
   , fbNewBlockSize :: TxSeqMeasure (TxMeasure blk)
-  , fbMaybeNewEndorserBlock :: Maybe (EndorserBlock blk)
-  , fbNewEndorserBlockSize :: TxSeqMeasure (TxMeasure blk)
   , fbMempoolSize :: MempoolSize
   , fbMempoolRestSize :: TxSeqMeasure (TxMeasure blk)
   }
 
 deriving instance
-  (Eq (TxSeqMeasure (TxMeasure blk)), LedgerSupportsProtocol blk, Eq blk, Eq (EndorserBlock blk)) =>
+  (Eq (TxSeqMeasure (TxMeasure blk)), LedgerSupportsProtocol blk, Eq blk) =>
   Eq (ForgedBlock blk)
 
 deriving instance
-  (Show (TxMeasure blk), LedgerSupportsProtocol blk, Show blk, Show (EndorserBlock blk)) =>
+  (Show (TxMeasure blk), LedgerSupportsProtocol blk, Show blk) =>
   Show (ForgedBlock blk)

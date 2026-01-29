@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Block.Forging
   , ForgeStateUpdateError
   , ForgeStateUpdateInfo (..)
   , ShouldForge (..)
-  , EndorserBlock
   , castForgeStateUpdateInfo
   , checkShouldForge
   , forgeStateUpdateInfoFromUpdateInfo
@@ -28,6 +27,7 @@ import Control.Tracer (Tracer, traceWith)
 import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Stack
+import LeiosDemoTypes (LeiosEb)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -74,8 +74,6 @@ castForgeStateUpdateInfo = \case
   ForgeStateUpdated x -> ForgeStateUpdated x
   ForgeStateUpdateFailed x -> ForgeStateUpdateFailed x
   ForgeStateUpdateSuppressed -> ForgeStateUpdateSuppressed
-
-type family EndorserBlock blk
 
 -- | Stateful wrapper around block production
 --
@@ -129,7 +127,7 @@ data BlockForging m blk = BlockForging
       [Validated (GenTx blk)] -> -- Transactions to include in the Ranking Block
       [Validated (GenTx blk)] -> -- Transaction to include in the EndorserBlock
       IsLeader (BlockProtocol blk) -> -- Proof we are leader
-      m (blk, Maybe (EndorserBlock blk))
+      m (blk, Maybe LeiosEb)
   -- ^ Forge a block
   --
   -- The function is passed the prefix of the mempool that will fit within

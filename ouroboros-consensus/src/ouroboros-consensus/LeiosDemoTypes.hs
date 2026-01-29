@@ -5,12 +5,16 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# OPTIONS_GHC -Wno-partial-fields #-}
 
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
-import Cardano.Binary (enforceSize, serialize')
+import Cardano.Binary (enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.Core (EraTx, Tx)
+import Cardano.Prelude (NonEmpty, toList, toString)
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -47,16 +51,22 @@ import Data.String (fromString)
 import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
+import Debug.Trace (trace)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified Numeric
-import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32 (..)
+  , TxMeasureMetrics
+  , txMeasureMetricTxSizeBytes
+  )
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
+import Text.Pretty.Simple (pShow)
 
 type BytesSize = Word32
 
@@ -329,10 +339,19 @@ decodeLeiosTx :: Decoder s LeiosTx
 decodeLeiosTx = MkLeiosTx <$> CBOR.decodeBytes
 
 -- TODO: Keep track of the slot of an EB?
-data LeiosEb = MkLeiosEb !(V.Vector (TxHash, BytesSize))
-  deriving Show
+data LeiosEb = MkLeiosEb {leiosEbTxs :: !(V.Vector (TxHash, BytesSize))}
+  deriving (Show, Eq)
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
+
+mkLeiosEb :: EraTx era => NonEmpty (Tx era) -> LeiosEb
+mkLeiosEb txs =
+  MkLeiosEb . V.fromList . map go $ toList txs
+ where
+  go tx =
+    let hash = Hash.hashWithSerialiser @HASH toCBOR tx
+        byteSize = fromIntegral $ BS.length $ serialize' tx
+     in (MkTxHash $ Hash.hashToBytes hash, byteSize)
 
 leiosEbBytesSize :: LeiosEb -> BytesSize
 leiosEbBytesSize (MkLeiosEb items) =
@@ -622,8 +641,14 @@ data TraceLeiosKernel
   = MkTraceLeiosKernel String
   | TraceLeiosBlockAcquired LeiosPoint
   | TraceLeiosBlockTxsAcquired LeiosPoint
-  | TraceLeiosBlockForged
-  deriving Show
+  | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
+      { ebSlot :: SlotNo
+      , eb :: LeiosEb
+      , ebMeasure :: m
+      , mempoolRestMeasure :: m
+      }
+
+deriving instance Show TraceLeiosKernel
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
@@ -633,17 +658,23 @@ traceLeiosKernelToObject = \case
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockAcquired"
       , "ebHash" .= prettyEbHash ebHash
-      , "ebSlot" .= show ebSlot
+      , "ebSlot" .= ebSlot
       ]
   TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
       , "ebHash" .= prettyEbHash ebHash
-      , "ebSlot" .= show ebSlot
+      , "ebSlot" .= ebSlot
       ]
-  TraceLeiosBlockForged ->
+  TraceLeiosBlockForged{ebSlot, eb, ebMeasure, mempoolRestMeasure} ->
     mconcat
       [ "kind" .= Aeson.String "TraceLeiosBlockForged"
+      , "slot" .= ebSlot
+      , "hash" .= prettyEbHash (hashLeiosEb eb)
+      , "numTxs" .= V.length (leiosEbTxs eb)
+      , "ebSize" .= leiosEbBytesSize eb
+      , "closureSize" .= unByteSize32 (txMeasureMetricTxSizeBytes ebMeasure)
+      , "mempoolRestSize" .= unByteSize32 (txMeasureMetricTxSizeBytes mempoolRestMeasure)
       ]
 
 newtype TraceLeiosPeer = MkTraceLeiosPeer String
@@ -660,3 +691,15 @@ leiosEBMaxSize = ByteSize32 512_000
 
 leiosEBMaxClosureSize :: ByteSize32
 leiosEBMaxClosureSize = ByteSize32 12_000_000
+
+-- * Utilities for prototyping
+
+-- | Like 'traceShow', but with pretty printing of the value.
+{-# WARNING spy "Use for debugging purposes only" #-}
+spy :: Show a => a -> a
+spy a = trace (toString $ pShow a) a
+
+-- | Like 'spy' but prefixed with a label.
+{-# WARNING spy' "Use for debugging purposes only" #-}
+spy' :: Show a => String -> a -> a
+spy' msg a = trace (msg <> ": " <> toString (pShow a)) a

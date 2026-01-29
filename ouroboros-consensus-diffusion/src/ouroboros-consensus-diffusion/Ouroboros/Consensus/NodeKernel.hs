@@ -43,7 +43,7 @@ import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
 import Data.Data (Typeable)
-import Data.Foldable (traverse_)
+import Data.Foldable (for_, traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
@@ -166,7 +166,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
-import qualified Ouroboros.Consensus.Mempool.TxSeq as Tx
+import Ouroboros.Consensus.Mempool.TxSeq (mSize)
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 
 {-------------------------------------------------------------------------------
@@ -822,26 +822,23 @@ forkBlockForging IS{..} blockForging =
           ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
           proof
 
-    let leiosTracer = leiosKernelTracer tracers
-    lift $
-      traceWith leiosTracer $
-        MkTraceLeiosKernel $
-          show ("The ebCapacityMeasure", mayEndorserBlockCapacity)
-
-    let newBlockSize = Tx.txSeqMeasure rbTxs
-        newEndoreserBlockSize = TxSeq.txSeqMeasure ebTxs
-        restSize = TxSeq.txSeqMeasure restTxs'
-
     trace $
       TraceForgedBlock currentSlot $
         ForgedBlock
           { fbLedgerTip = ledgerTipPoint (ledgerState unticked)
           , fbNewBlock = newBlock
-          , fbNewBlockSize = newBlockSize
-          , fbMaybeNewEndorserBlock = maybe Nothing (const mayNewEndorserBlock) mayEndorserBlockCapacity -- TODO(bladyjoker): Ugh basically the ebCapacityTxMeasure is what enables/disables EB production
-          , fbNewEndorserBlockSize = newEndoreserBlockSize
+          , fbNewBlockSize = TxSeq.txSeqMeasure rbTxs
           , fbMempoolSize = snapshotMempoolSize mempoolSnapshot
-          , fbMempoolRestSize = restSize
+          , fbMempoolRestSize = TxSeq.txSeqMeasure restTxs'
+          }
+
+    for_ mayNewEndorserBlock $ \eb ->
+      traceLeios
+        TraceLeiosBlockForged
+          { ebSlot = currentSlot
+          , eb
+          , ebMeasure = mSize $ TxSeq.txSeqMeasure ebTxs
+          , mempoolRestMeasure = mSize $ TxSeq.txSeqMeasure restTxs'
           }
 
     -- Add the block to the chain DB
@@ -900,6 +897,8 @@ forkBlockForging IS{..} blockForging =
     lift
       . traceWith (forgeTracer tracers)
       . TraceLabelCreds (forgeLabel blockForging)
+
+  traceLeios = lift . traceWith (leiosKernelTracer tracers)
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
