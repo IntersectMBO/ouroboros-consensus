@@ -14,6 +14,7 @@ module LeiosDemoTypes (module LeiosDemoTypes) where
 import Cardano.Binary (enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Core (EraTx, Tx)
+import Cardano.Prelude (toString)
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -50,6 +51,7 @@ import Data.String (fromString)
 import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64)
 import qualified Database.SQLite3.Direct as DB
+import Debug.Trace (trace)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
@@ -64,6 +66,7 @@ import Ouroboros.Consensus.Util.IOLike (IOLike)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
+import Text.Pretty.Simple (pShow)
 
 type BytesSize = Word32
 
@@ -342,6 +345,7 @@ data LeiosEb = MkLeiosEb {leiosEbTxs :: !(V.Vector (TxHash, BytesSize))}
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
 mkLeiosEb :: EraTx era => [Tx era] -> LeiosEb
+mkLeiosEb [] = error "FIXME: should not build an empty eb"
 mkLeiosEb txs =
   MkLeiosEb . V.fromList $ map go txs
  where
@@ -688,3 +692,15 @@ leiosEBMaxSize = ByteSize32 512_000
 
 leiosEBMaxClosureSize :: ByteSize32
 leiosEBMaxClosureSize = ByteSize32 12_000_000
+
+-- * Utilities for prototyping
+
+-- | Like 'traceShow', but with pretty printing of the value.
+{-# WARNING spy "Use for debugging purposes only" #-}
+spy :: Show a => a -> a
+spy a = trace (toString $ pShow a) a
+
+-- | Like 'spy' but prefixed with a label.
+{-# WARNING spy' "Use for debugging purposes only" #-}
+spy' :: Show a => String -> a -> a
+spy' msg a = trace (msg <> ": " <> toString (pShow a)) a

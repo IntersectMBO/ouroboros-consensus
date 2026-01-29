@@ -337,6 +337,7 @@ library
     ouroboros-network-api ^>=0.14,
     ouroboros-network-mock ^>=0.1,
     ouroboros-network-protocols ^>=0.14,
+    pretty-simple,
     primitive,
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
