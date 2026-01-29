@@ -4,8 +4,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Util.Condense (
-    Condense (..)
+module Ouroboros.Consensus.Util.Condense
+  ( Condense (..)
   , Condense1 (..)
   , CondenseList (..)
   , PaddingDirection (..)
@@ -14,39 +14,58 @@ module Ouroboros.Consensus.Util.Condense (
   , padListWith
   ) where
 
-import           Cardano.Crypto.DSIGN (Ed25519DSIGN, Ed448DSIGN, MockDSIGN,
-                     SigDSIGN, SignedDSIGN (..), VerKeyDSIGN,
-                     pattern SigEd25519DSIGN, pattern SigEd448DSIGN,
-                     pattern SigMockDSIGN)
-import           Cardano.Crypto.Hash (Hash)
-import           Cardano.Crypto.KES (MockKES, NeverKES, SigKES, SignedKES (..),
-                     SimpleKES, SingleKES, SumKES, VerKeyKES,
-                     pattern SigMockKES, pattern SigSimpleKES,
-                     pattern SigSingleKES, pattern SigSumKES,
-                     pattern SignKeyMockKES, pattern VerKeyMockKES,
-                     pattern VerKeySingleKES, pattern VerKeySumKES)
-import           Cardano.Slotting.Slot (EpochNo (..), WithOrigin (..))
-import           Control.Monad.Class.MonadTime.SI (Time (..))
+import Cardano.Crypto.DSIGN
+  ( Ed25519DSIGN
+  , Ed448DSIGN
+  , MockDSIGN
+  , SigDSIGN
+  , SignedDSIGN (..)
+  , VerKeyDSIGN
+  , pattern SigEd25519DSIGN
+  , pattern SigEd448DSIGN
+  , pattern SigMockDSIGN
+  )
+import Cardano.Crypto.Hash (Hash)
+import Cardano.Crypto.KES
+  ( MockKES
+  , NeverKES
+  , SigKES
+  , SignedKES (..)
+  , SimpleKES
+  , SingleKES
+  , SumKES
+  , VerKeyKES
+  , pattern SigMockKES
+  , pattern SigSimpleKES
+  , pattern SigSingleKES
+  , pattern SigSumKES
+  , pattern SignKeyMockKES
+  , pattern VerKeyMockKES
+  , pattern VerKeySingleKES
+  , pattern VerKeySumKES
+  )
+import Cardano.Slotting.Slot (EpochNo (..), WithOrigin (..))
+import Control.Monad.Class.MonadTime.SI (Time (..))
 import qualified Data.ByteString as BS.Strict
 import qualified Data.ByteString.Lazy as BS.Lazy
-import           Data.Int
-import           Data.List (intercalate, maximumBy)
-import           Data.Map.Strict (Map)
+import Data.Int
+import Data.List (intercalate, maximumBy)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Proxy
-import           Data.Set (Set)
+import Data.Proxy
+import Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Text (Text, unpack)
-import           Data.Void
-import           Data.Word
-import           Numeric.Natural
-import           Ouroboros.Consensus.Util.HList (All, HList (..))
+import Data.Text (Text, unpack)
+import Data.Void
+import Data.Word
+import Numeric.Natural
+import Ouroboros.Consensus.Util.HList (All, HList (..))
 import qualified Ouroboros.Consensus.Util.HList as HList
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block
-import           Ouroboros.Network.Mock.Chain hiding (length)
-import           Text.Printf (printf)
+import Ouroboros.Network.Block
+import Ouroboros.Network.Mock.Chain hiding (length)
+import Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
   Main class
@@ -67,15 +86,14 @@ condenseListWithPadding padding as = padListWith padding $ condense <$> as
 padListWith :: PaddingDirection -> [String] -> [String]
 padListWith padding strings =
   let maxLength = maximumBy compare $ length <$> strings
-  in
-    fmap
-      (\c ->
-        let spaces = replicate (maxLength - length c) ' '
-        in case padding of
-          PadLeft  -> spaces ++ c
-          PadRight -> c ++ spaces
-      )
-      strings
+   in fmap
+        ( \c ->
+            let spaces = replicate (maxLength - length c) ' '
+             in case padding of
+                  PadLeft -> spaces ++ c
+                  PadRight -> c ++ spaces
+        )
+        strings
 
 data PaddingDirection = PadLeft | PadRight
 
@@ -135,7 +153,7 @@ instance Condense a => Condense [a] where
 
 instance Condense a => Condense (Maybe a) where
   condense (Just a) = "Just " ++ condense a
-  condense Nothing  = "Nothing"
+  condense Nothing = "Nothing"
 
 instance Condense a => Condense (Set a) where
   condense = condense1
@@ -182,30 +200,32 @@ instance Condense EpochNo where
   condense (EpochNo n) = show n
 
 instance Condense (HeaderHash b) => Condense (ChainHash b) where
-  condense GenesisHash   = "genesis"
+  condense GenesisHash = "genesis"
   condense (BlockHash h) = condense h
 
 instance Condense (HeaderHash b) => Condense (Tip b) where
-  condense TipGenesis       = "genesis"
+  condense TipGenesis = "genesis"
   condense (Tip slot h bno) =
-      "b" <> condense bno <> "-s" <> condense slot <> "-h" <> condense h
+    "b" <> condense bno <> "-s" <> condense slot <> "-h" <> condense h
 
 instance Condense a => Condense (WithOrigin a) where
   condense Origin = "origin"
   condense (At a) = condense a
 
 instance Condense (HeaderHash block) => Condense (Point block) where
-    condense GenesisPoint     = "Origin"
-    condense (BlockPoint s h) = "(Point " <> condense s <> ", " <> condense h <> ")"
+  condense GenesisPoint = "Origin"
+  condense (BlockPoint s h) = "(Point " <> condense s <> ", " <> condense h <> ")"
 
 instance Condense block => Condense (Chain block) where
-    condense Genesis   = "Genesis"
-    condense (cs :> b) = condense cs <> " :> " <> condense b
+  condense Genesis = "Genesis"
+  condense (cs :> b) = condense cs <> " :> " <> condense b
 
-instance (Condense block, HasHeader block, Condense (HeaderHash block))
-    => Condense (AnchoredFragment block) where
-    condense (AF.Empty pt) = "EmptyAnchor " <> condense (AF.anchorToPoint pt)
-    condense (cs AF.:> b)  = condense cs <> " :> " <> condense b
+instance
+  (Condense block, HasHeader block, Condense (HeaderHash block)) =>
+  Condense (AnchoredFragment block)
+  where
+  condense (AF.Empty pt) = "EmptyAnchor " <> condense (AF.anchorToPoint pt)
+  condense (cs AF.:> b) = condense cs <> " :> " <> condense b
 
 {-------------------------------------------------------------------------------
   Instances for cardano-crypto-classes
@@ -227,37 +247,39 @@ instance Condense (SigKES v) => Condense (SignedKES v a) where
   condense (SignedKES sig) = condense sig
 
 instance Condense (SigKES (MockKES t)) where
-    condense (SigMockKES n (SignKeyMockKES (VerKeyMockKES v) j)) =
-           show n
-        <> ":"
-        <> show v
-        <> ":"
-        <> show j
+  condense (SigMockKES n (SignKeyMockKES (VerKeyMockKES v) j)) =
+    show n
+      <> ":"
+      <> show v
+      <> ":"
+      <> show j
 
 instance Condense (SigKES NeverKES) where
   condense = show
 
 instance Condense (SigDSIGN d) => Condense (SigKES (SimpleKES d t)) where
-    condense (SigSimpleKES sig) = condense sig
+  condense (SigSimpleKES sig) = condense sig
 
 instance Condense (SigDSIGN d) => Condense (SigKES (SingleKES d)) where
-    condense (SigSingleKES sig) = condense sig
+  condense (SigSingleKES sig) = condense sig
 
 instance Show (VerKeyDSIGN d) => Condense (VerKeyDSIGN d) where
   condense = show
 
-instance (Condense (SigKES d), Condense (VerKeyKES d))
-  => Condense (SigKES (SumKES h d)) where
-    condense (SigSumKES sk vk1 vk2) = condense (sk, vk1, vk2)
+instance
+  (Condense (SigKES d), Condense (VerKeyKES d)) =>
+  Condense (SigKES (SumKES h d))
+  where
+  condense (SigSumKES sk vk1 vk2) = condense (sk, vk1, vk2)
 
 instance Condense (VerKeyDSIGN d) => Condense (VerKeyKES (SingleKES d)) where
-    condense (VerKeySingleKES h) = condense h
+  condense (VerKeySingleKES h) = condense h
 
 instance Condense (VerKeyKES (SumKES h d)) where
-    condense (VerKeySumKES h) = condense h
+  condense (VerKeySumKES h) = condense h
 
 instance Condense (Hash h a) where
-    condense = show
+  condense = show
 
 instance Condense Time where
-    condense (Time dt) = show dt
+  condense (Time dt) = show dt

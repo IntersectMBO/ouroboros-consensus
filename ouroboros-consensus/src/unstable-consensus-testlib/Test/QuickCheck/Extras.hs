@@ -1,5 +1,5 @@
-module Test.QuickCheck.Extras (
-    sized1
+module Test.QuickCheck.Extras
+  ( sized1
   , unsafeMapSuchThatJust
   ) where
 

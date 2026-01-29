@@ -5,30 +5,32 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Ouroboros.Consensus.Mock.Node.Serialisation (
-    MockBlock
+module Ouroboros.Consensus.Mock.Node.Serialisation
+  ( MockBlock
   , NestedCtxt_ (..)
   ) where
 
-import           Codec.Serialise (Serialise, decode, encode, serialise)
+import Codec.Serialise (Serialise, decode, encode, serialise)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Typeable (Typeable)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HeaderValidation (AnnTip,
-                     defaultDecodeAnnTip, defaultEncodeAnnTip)
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Query
-import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mock.Ledger
-import           Ouroboros.Consensus.Mock.Node.Abstract
-import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-import           Ouroboros.Consensus.Node.Run
-import           Ouroboros.Consensus.Node.Serialisation
-import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Network.Block (Serialised)
+import Data.Typeable (Typeable)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.HeaderValidation
+  ( AnnTip
+  , defaultDecodeAnnTip
+  , defaultEncodeAnnTip
+  )
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Mock.Ledger
+import Ouroboros.Consensus.Mock.Node.Abstract
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Network.Block (Serialised)
 
 -- | Local shorthand to make the instances more readable
 type MockBlock ext = SimpleBlock SimpleMockCrypto ext
@@ -42,8 +44,9 @@ type MockBlock ext = SimpleBlock SimpleMockCrypto ext
 instance (Serialise ext, Typeable ext) => HasBinaryBlockInfo (MockBlock ext) where
   getBinaryBlockInfo = simpleBlockBinaryBlockInfo
 
-instance (Serialise ext, RunMockBlock SimpleMockCrypto ext)
-      => SerialiseDiskConstraints (MockBlock ext)
+instance
+  (Serialise ext, RunMockBlock SimpleMockCrypto ext) =>
+  SerialiseDiskConstraints (MockBlock ext)
 
 instance Serialise ext => EncodeDisk (MockBlock ext) (MockBlock ext)
 instance Serialise ext => DecodeDisk (MockBlock ext) (Lazy.ByteString -> MockBlock ext) where
@@ -70,15 +73,16 @@ instance DecodeDisk (MockBlock ext) (AnnTip (MockBlock ext)) where
   possible.
 -------------------------------------------------------------------------------}
 
-instance HasNetworkProtocolVersion (MockBlock ext) where
-  -- Use defaults
+instance HasNetworkProtocolVersion (MockBlock ext)
+
+-- Use defaults
 
 instance Serialise ext => SerialiseNodeToNodeConstraints (MockBlock ext) where
   estimateBlockSize hdr =
-      7 {- CBOR-in-CBOR -} + 1 {- encodeListLen 2 -} + hdrSize + bodySize
-    where
-      hdrSize  = fromIntegral (Lazy.length (serialise hdr))
-      bodySize = simpleBodySize (simpleHeaderStd hdr)
+    7 {- CBOR-in-CBOR -} + 1 {- encodeListLen 2 -} + hdrSize + bodySize
+   where
+    hdrSize = fromIntegral (Lazy.length (serialise hdr))
+    bodySize = simpleBodySize (simpleHeaderStd hdr)
 
 instance Serialise ext => SerialiseNodeToNode (MockBlock ext) (MockBlock ext) where
   encodeNodeToNode _ _ = defaultEncodeCBORinCBOR
@@ -102,8 +106,13 @@ instance SerialiseNodeToNode (MockBlock ext) (GenTxId (MockBlock ext))
   possible.
 -------------------------------------------------------------------------------}
 
-instance (Serialise ext, Typeable ext, Serialise (MockLedgerConfig SimpleMockCrypto ext), MockProtocolSpecific SimpleMockCrypto ext)
-      => SerialiseNodeToClientConstraints (MockBlock ext)
+instance
+  ( Serialise ext
+  , Typeable ext
+  , Serialise (MockLedgerConfig SimpleMockCrypto ext)
+  , MockProtocolSpecific SimpleMockCrypto ext
+  ) =>
+  SerialiseNodeToClientConstraints (MockBlock ext)
 
 instance Serialise ext => SerialiseNodeToClient (MockBlock ext) (MockBlock ext) where
   encodeNodeToClient _ _ = defaultEncodeCBORinCBOR
@@ -141,8 +150,8 @@ instance TrivialDependency (NestedCtxt_ (SimpleBlock c ext) f) where
 instance SameDepIndex (NestedCtxt_ (SimpleBlock c ext) f)
 instance HasNestedContent f (SimpleBlock c ext)
 
-instance Serialise ext => ReconstructNestedCtxt Header        (MockBlock ext)
+instance Serialise ext => ReconstructNestedCtxt Header (MockBlock ext)
 instance Serialise ext => EncodeDiskDepIx (NestedCtxt Header) (MockBlock ext)
-instance Serialise ext => EncodeDiskDep   (NestedCtxt Header) (MockBlock ext)
+instance Serialise ext => EncodeDiskDep (NestedCtxt Header) (MockBlock ext)
 instance Serialise ext => DecodeDiskDepIx (NestedCtxt Header) (MockBlock ext)
-instance Serialise ext => DecodeDiskDep   (NestedCtxt Header) (MockBlock ext)
+instance Serialise ext => DecodeDiskDep (NestedCtxt Header) (MockBlock ext)

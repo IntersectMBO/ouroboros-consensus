@@ -16,62 +16,68 @@
 --
 -- > import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
 -- > import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
-module Ouroboros.Consensus.HeaderStateHistory (
-    HeaderStateHistory (..)
+module Ouroboros.Consensus.HeaderStateHistory
+  ( HeaderStateHistory (..)
   , cast
   , current
   , rewind
   , trim
+
     -- * 'HeaderStateWithTime'
   , HeaderStateWithTime (..)
   , castHeaderStateWithTime
   , mkHeaderStateWithTime
   , mkHeaderStateWithTimeFromSummary
+
     -- * Validation
   , validateHeader
+
     -- * Support for tests
   , fromChain
   ) where
 
-import           Control.Monad.Except (Except)
-import           Data.Coerce (Coercible)
+import Control.Monad.Except (Except)
+import Data.Coerce (Coercible)
 import qualified Data.List.NonEmpty as NE
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.BlockchainTime (RelativeTime)
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
-import           Ouroboros.Consensus.HardFork.History (Summary)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (RelativeTime)
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
+import Ouroboros.Consensus.HardFork.History (Summary)
 import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
-import           Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
+import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import qualified Ouroboros.Consensus.HeaderValidation as HeaderValidation
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
-import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Util.CallStack (HasCallStack)
-import           Ouroboros.Network.AnchoredSeq (Anchorable, AnchoredSeq (..))
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Util.CallStack (HasCallStack)
+import Ouroboros.Network.AnchoredSeq (Anchorable, AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredSeq as AS
-import           Ouroboros.Network.Mock.Chain (Chain)
+import Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 
 -- | Maintain a history of 'HeaderStateWithTime's.
-newtype HeaderStateHistory blk = HeaderStateHistory {
-      unHeaderStateHistory ::
-           AnchoredSeq
-             (WithOrigin SlotNo)
-             (HeaderStateWithTime blk)
-             (HeaderStateWithTime blk)
-    }
-  deriving (Generic)
+newtype HeaderStateHistory blk = HeaderStateHistory
+  { unHeaderStateHistory ::
+      AnchoredSeq
+        (WithOrigin SlotNo)
+        (HeaderStateWithTime blk)
+        (HeaderStateWithTime blk)
+  }
+  deriving Generic
 
-deriving stock instance (BlockSupportsProtocol blk, HasAnnTip blk)
-                      => Eq (HeaderStateHistory blk)
-deriving stock instance (BlockSupportsProtocol blk, HasAnnTip blk)
-                      => Show (HeaderStateHistory blk)
-deriving newtype instance (BlockSupportsProtocol blk, HasAnnTip blk)
-                        => NoThunks (HeaderStateHistory blk)
+deriving stock instance
+  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  Eq (HeaderStateHistory blk)
+deriving stock instance
+  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  Show (HeaderStateHistory blk)
+deriving newtype instance
+  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  NoThunks (HeaderStateHistory blk)
 
 current :: HeaderStateHistory blk -> HeaderStateWithTime blk
 current = either id id . AS.head . unHeaderStateHistory
@@ -88,17 +94,18 @@ append h (HeaderStateHistory history) = HeaderStateHistory (history :> h)
 -- snapshot and an anchor.
 trim :: Int -> HeaderStateHistory blk -> HeaderStateHistory blk
 trim n (HeaderStateHistory history) =
-    HeaderStateHistory (AS.anchorNewest (fromIntegral n) history)
+  HeaderStateHistory (AS.anchorNewest (fromIntegral n) history)
 
 cast ::
-     ( Coercible (ChainDepState (BlockProtocol blk ))
-                 (ChainDepState (BlockProtocol blk'))
-     , TipInfo blk ~ TipInfo blk'
-     )
-  => HeaderStateHistory blk -> HeaderStateHistory blk'
+  ( Coercible
+      (ChainDepState (BlockProtocol blk))
+      (ChainDepState (BlockProtocol blk'))
+  , TipInfo blk ~ TipInfo blk'
+  ) =>
+  HeaderStateHistory blk -> HeaderStateHistory blk'
 cast (HeaderStateHistory history) =
-      HeaderStateHistory
-    $ AS.bimap castHeaderStateWithTime castHeaderStateWithTime history
+  HeaderStateHistory $
+    AS.bimap castHeaderStateWithTime castHeaderStateWithTime history
 
 -- | \( O\(n\) \). Rewind the header state history
 --
@@ -123,20 +130,21 @@ cast (HeaderStateHistory history) =
 -- rewinding that header state again by @j@ where @i + j > k@ is not possible
 -- and will yield 'Nothing'.
 rewind ::
-     forall blk. (HasAnnTip blk)
-  => Point blk
-  -> HeaderStateHistory blk
-  -> Maybe (HeaderStateHistory blk, Maybe (HeaderStateWithTime blk))
+  forall blk.
+  HasAnnTip blk =>
+  Point blk ->
+  HeaderStateHistory blk ->
+  Maybe (HeaderStateHistory blk, Maybe (HeaderStateWithTime blk))
 rewind p (HeaderStateHistory history) = do
-    (prefix, suffix) <- AS.splitAfterMeasure
+  (prefix, suffix) <-
+    AS.splitAfterMeasure
       (pointSlot p)
       ((== p) . headerStatePoint . hswtHeaderState . either id id)
       history
-    let oldestRewound = case suffix of
-          AS.Empty _   -> Nothing
-          hswt AS.:< _ -> Just hswt
-    pure (HeaderStateHistory prefix, oldestRewound)
-
+  let oldestRewound = case suffix of
+        AS.Empty _ -> Nothing
+        hswt AS.:< _ -> Just hswt
+  pure (HeaderStateHistory prefix, oldestRewound)
 
 {-------------------------------------------------------------------------------
   HeaderStateWithTime
@@ -145,61 +153,66 @@ rewind p (HeaderStateHistory history) = do
 -- | A 'HeaderState' together with the 'RelativeTime' corresponding to the tip
 -- slot of the state. For a state at 'Origin', we use the same time as for slot
 -- 0.
-data HeaderStateWithTime blk = HeaderStateWithTime {
-    hswtHeaderState :: !(HeaderState blk)
-  , hswtSlotTime    :: !RelativeTime
+data HeaderStateWithTime blk = HeaderStateWithTime
+  { hswtHeaderState :: !(HeaderState blk)
+  , hswtSlotTime :: !RelativeTime
   }
-  deriving stock (Generic)
+  deriving stock Generic
 
-deriving stock instance (BlockSupportsProtocol blk, HasAnnTip blk)
-                      => Eq (HeaderStateWithTime blk)
-deriving stock instance (BlockSupportsProtocol blk, HasAnnTip blk)
-                      => Show (HeaderStateWithTime blk)
-deriving anyclass instance (BlockSupportsProtocol blk, HasAnnTip blk)
-                         => NoThunks (HeaderStateWithTime blk)
+deriving stock instance
+  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  Eq (HeaderStateWithTime blk)
+deriving stock instance
+  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  Show (HeaderStateWithTime blk)
+deriving anyclass instance
+  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  NoThunks (HeaderStateWithTime blk)
 
 instance Anchorable (WithOrigin SlotNo) (HeaderStateWithTime blk) (HeaderStateWithTime blk) where
   asAnchor = id
   getAnchorMeasure _ = fmap annTipSlotNo . headerStateTip . hswtHeaderState
 
 castHeaderStateWithTime ::
-     ( Coercible (ChainDepState (BlockProtocol blk ))
-                 (ChainDepState (BlockProtocol blk'))
-     , TipInfo blk ~ TipInfo blk'
-     )
-  => HeaderStateWithTime blk -> HeaderStateWithTime blk'
-castHeaderStateWithTime hswt = HeaderStateWithTime {
-      hswtHeaderState = castHeaderState $ hswtHeaderState hswt
-    , hswtSlotTime    = hswtSlotTime hswt
+  ( Coercible
+      (ChainDepState (BlockProtocol blk))
+      (ChainDepState (BlockProtocol blk'))
+  , TipInfo blk ~ TipInfo blk'
+  ) =>
+  HeaderStateWithTime blk -> HeaderStateWithTime blk'
+castHeaderStateWithTime hswt =
+  HeaderStateWithTime
+    { hswtHeaderState = castHeaderState $ hswtHeaderState hswt
+    , hswtSlotTime = hswtSlotTime hswt
     }
 
 mkHeaderStateWithTimeFromSummary ::
-     (HasCallStack, HasAnnTip blk)
-  => Summary (HardForkIndices blk)
-     -- ^ Must be able to convert the tip slot of the 'HeaderState' to a time.
-  -> HeaderState blk
-  -> HeaderStateWithTime blk
+  (HasCallStack, HasAnnTip blk) =>
+  -- | Must be able to convert the tip slot of the 'HeaderState' to a time.
+  Summary (HardForkIndices blk) ->
+  HeaderState blk ->
+  HeaderStateWithTime blk
 mkHeaderStateWithTimeFromSummary summary hst =
-    HeaderStateWithTime {
-        hswtHeaderState = hst
-      , hswtSlotTime    = slotTime
-      }
-  where
-    (slotTime, _) = Qry.runQueryPure qry summary
-    qry           = Qry.slotToWallclock slot
-    slot          = fromWithOrigin 0 $ pointSlot $ headerStatePoint hst
+  HeaderStateWithTime
+    { hswtHeaderState = hst
+    , hswtSlotTime = slotTime
+    }
+ where
+  (slotTime, _) = Qry.runQueryPure qry summary
+  qry = Qry.slotToWallclock slot
+  slot = fromWithOrigin 0 $ pointSlot $ headerStatePoint hst
 
 mkHeaderStateWithTime ::
-     (HasCallStack, HasHardForkHistory blk, HasAnnTip blk)
-  => LedgerConfig blk
-  -> ExtLedgerState blk mk
-  -> HeaderStateWithTime blk
+  (HasCallStack, HasHardForkHistory blk, HasAnnTip blk) =>
+  LedgerConfig blk ->
+  ExtLedgerState blk mk ->
+  HeaderStateWithTime blk
 mkHeaderStateWithTime lcfg (ExtLedgerState lst hst) =
-    mkHeaderStateWithTimeFromSummary summary hst
-  where
-    -- A summary can always translate the tip slot of the ledger state it was
-    -- created from.
-    summary = hardForkSummary lcfg lst
+  mkHeaderStateWithTimeFromSummary summary hst
+ where
+  -- A summary can always translate the tip slot of the ledger state it was
+  -- created from.
+  summary = hardForkSummary lcfg lst
 
 {-------------------------------------------------------------------------------
   Validation
@@ -212,24 +225,26 @@ mkHeaderStateWithTime lcfg (ExtLedgerState lst hst) =
 --
 -- Note: this function does not trim the 'HeaderStateHistory'.
 validateHeader ::
-     forall blk. (BlockSupportsProtocol blk, ValidateEnvelope blk)
-  => TopLevelConfig blk
-  -> LedgerView (BlockProtocol blk)
-  -> Header blk
-  -> RelativeTime
-     -- ^ The time of the slot of the header.
-  -> HeaderStateHistory blk
-  -> Except (HeaderError blk) (HeaderStateHistory blk)
+  forall blk.
+  (BlockSupportsProtocol blk, ValidateEnvelope blk) =>
+  TopLevelConfig blk ->
+  LedgerView (BlockProtocol blk) ->
+  Header blk ->
+  -- | The time of the slot of the header.
+  RelativeTime ->
+  HeaderStateHistory blk ->
+  Except (HeaderError blk) (HeaderStateHistory blk)
 validateHeader cfg lv hdr slotTime history = do
-    st' <- HeaderValidation.validateHeader cfg lv hdr st
-    return $ append (HeaderStateWithTime st' slotTime) history
-  where
-    st :: Ticked (HeaderState blk)
-    st = tickHeaderState
-           (configConsensus cfg)
-           lv
-           (blockSlot hdr)
-           (hswtHeaderState $ current history)
+  st' <- HeaderValidation.validateHeader cfg lv hdr st
+  return $ append (HeaderStateWithTime st' slotTime) history
+ where
+  st :: Ticked (HeaderState blk)
+  st =
+    tickHeaderState
+      (configConsensus cfg)
+      lv
+      (blockSlot hdr)
+      (hswtHeaderState $ current history)
 
 {-------------------------------------------------------------------------------
   Support for tests
@@ -240,23 +255,23 @@ validateHeader cfg lv hdr slotTime history = do
 --
 -- PRECONDITION: the blocks in the chain are valid.
 fromChain ::
-     forall blk.
-     ( ApplyBlock (ExtLedgerState blk) blk
-     , HasHardForkHistory blk
-     , HasAnnTip blk
-     )
-  => TopLevelConfig blk
-  -> ExtLedgerState blk ValuesMK
-     -- ^ Initial ledger state
-  -> Chain blk
-  -> HeaderStateHistory blk
+  forall blk.
+  ( ApplyBlock (ExtLedgerState blk) blk
+  , HasHardForkHistory blk
+  , HasAnnTip blk
+  ) =>
+  TopLevelConfig blk ->
+  -- | Initial ledger state
+  ExtLedgerState blk ValuesMK ->
+  Chain blk ->
+  HeaderStateHistory blk
 fromChain cfg initState chain =
-    HeaderStateHistory (AS.fromOldestFirst anchorSnapshot snapshots)
-  where
-    anchorSnapshot NE.:| snapshots =
-          fmap (mkHeaderStateWithTime (configLedger cfg))
-        . NE.scanl
-            (\st blk -> applyDiffs st $ tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st)
-            initState
-        . Chain.toOldestFirst
-        $ chain
+  HeaderStateHistory (AS.fromOldestFirst anchorSnapshot snapshots)
+ where
+  anchorSnapshot NE.:| snapshots =
+    fmap (mkHeaderStateWithTime (configLedger cfg))
+      . NE.scanl
+        (\st blk -> applyDiffs st $ tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st)
+        initState
+      . Chain.toOldestFirst
+      $ chain
