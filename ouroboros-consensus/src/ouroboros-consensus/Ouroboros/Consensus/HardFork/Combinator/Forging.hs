@@ -14,6 +14,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Forging
   , hardForkBlockForging
   ) where
 
+import Data.Functor.Const (Const (..))
 import Data.Functor.Product
 import Data.Maybe (fromMaybe)
 import Data.SOP.BasicFunctors
@@ -26,6 +27,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP, ViewOptNP (..))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Text (Text)
+import LeiosDemoTypes (LeiosEb)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -288,8 +290,6 @@ hardForkCheckCanForge
               isLeader'
               forgeStateInfo''
 
-type instance EndorserBlock (HardForkBlock xs) = OneEraEndorserBlock xs
-
 -- | PRECONDITION: the ticked 'LedgerState' and 'HardForkIsLeader' are from the
 -- same era, and we must have a 'BlockForging' for that era.
 --
@@ -306,7 +306,7 @@ hardForkForgeBlock ::
   [Validated (GenTx (HardForkBlock xs))] ->
   [Validated (GenTx (HardForkBlock xs))] ->
   HardForkIsLeader xs ->
-  m (HardForkBlock xs, Maybe (EndorserBlock (HardForkBlock xs)))
+  m (HardForkBlock xs, Maybe LeiosEb)
 hardForkForgeBlock
   blockForging
   cfg
@@ -316,29 +316,27 @@ hardForkForgeBlock
   rbTxs
   ebTxs
   isLeader =
-    let
-      injectTxs =
-        injectValidatedTxs
-          (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) rbTxs)
-          (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) ebTxs)
-      isLeaderAndLedgerState :: NS (Product WrapIsLeader (FlipTickedLedgerState EmptyMK)) xs =
-        Match.mustMatchNS
+    fmap undistrib $ hsequence' isLeaderAndLedgerStateAndBlocks
+   where
+    isLeaderAndLedgerStateAndBlocks :: NS (m :.: Product I (Const (Maybe LeiosEb))) xs
+    isLeaderAndLedgerStateAndBlocks =
+      hizipWith3
+        forgeBlockOne
+        cfgs
+        (OptNP.toNP blockForging)
+        $ injectTxs
+        -- We know both NSs must be from the same era, because they were all
+        -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
+        -- it statically.
+        $ Match.mustMatchNS
           "IsLeader"
           (getOneEraIsLeader isLeader)
           (State.tip ledgerState)
-      isLeaderAndLedgerStateAndBlocks :: NS (m :.: Product I (Maybe :.: WrapEndorserBlock)) xs =
-        hizipWith3
-          forgeBlockOne
-          cfgs
-          (OptNP.toNP blockForging)
-          $ injectTxs
-          -- We know both NSs must be from the same era, because they were all
-          -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
-          -- it statically.
-          $ isLeaderAndLedgerState
-     in
-      fmap undistrib $ hsequence' isLeaderAndLedgerStateAndBlocks
-   where
+
+    injectTxs =
+      injectValidatedTxs
+        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) rbTxs)
+        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) ebTxs)
     cfgs = distribTopLevelConfig ei cfg
     ei =
       State.epochInfoPrecomputedTransitionInfo
@@ -385,19 +383,16 @@ hardForkForgeBlock
       noMismatches (_errs, _) = error "unexpected unmatchable transactions"
 
     undistrib ::
-      NS (Product I (Maybe :.: WrapEndorserBlock)) xs ->
-      (HardForkBlock xs, Maybe (EndorserBlock (HardForkBlock xs)))
+      NS (Product I (Const (Maybe LeiosEb))) xs ->
+      (HardForkBlock xs, Maybe LeiosEb)
     undistrib = hcollapse . himap inj
      where
       inj ::
         Index xs blk ->
-        Product I (Maybe :.: WrapEndorserBlock) blk ->
-        K (HardForkBlock xs, Maybe (EndorserBlock (HardForkBlock xs))) blk
-      inj index (Pair (I blk) (Comp mEndorser)) =
-        K $
-          ( HardForkBlock (OneEraBlock (injectNS index (I blk)))
-          , OneEraEndorserBlock . injectNS index <$> mEndorser
-          )
+        Product I (Const (Maybe LeiosEb)) blk ->
+        K (HardForkBlock xs, Maybe LeiosEb) blk
+      inj index (Pair (I blk) (Const mEb)) =
+        K (HardForkBlock (OneEraBlock (injectNS index (I blk))), mEb)
 
     -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
     forgeBlockOne ::
@@ -411,7 +406,7 @@ hardForkForgeBlock
         )
         (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
         blk ->
-      (m :.: (Product I (Maybe :.: WrapEndorserBlock))) blk
+      (m :.: Product I (Const (Maybe LeiosEb))) blk
     forgeBlockOne
       index
       cfg'
@@ -421,7 +416,7 @@ hardForkForgeBlock
           (Pair (Comp rbTxs') (Comp ebTxs'))
         ) =
         Comp $
-          fmap (\(blk, mEndorser) -> Pair (I blk) (Comp (WrapEndorserBlock <$> mEndorser))) $
+          fmap (\(blk, mEb) -> Pair (I blk) (Const mEb)) $
             forgeBlock
               ( fromMaybe
                   (error (missingBlockForgingImpossible (eraIndexFromIndex index)))

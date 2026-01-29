@@ -216,7 +216,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
         tickedLedgerState
 
     -- Actually produce the block
-    newBlock <-
+    (newBlock, _) <-
       lift $
         Block.forgeBlock
           blockForging'
@@ -225,6 +225,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
           currentSlot
           (forgetLedgerTables tickedLedgerState)
           txs
+          mempty
           proof
 
     -- Add the block to the chain DB (synchronously) and verify adoption

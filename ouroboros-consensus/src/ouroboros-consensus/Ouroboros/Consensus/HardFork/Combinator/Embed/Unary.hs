@@ -189,8 +189,6 @@ deriving via
   instance
     Isomorphic WrapChainDepState
 
-deriving via IsomorphicUnary NS WrapEndorserBlock instance Isomorphic WrapEndorserBlock
-
 {-------------------------------------------------------------------------------
   Hash
 -------------------------------------------------------------------------------}
@@ -457,9 +455,9 @@ instance Functor m => Isomorphic (BlockForging m) where
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
       , forgeBlock = \cfg bno sno tickedLgrSt rbTxs ebTxs isLeader ->
-          ( \(hfRb :: HardForkBlock '[blk], mayHfEb :: Maybe (EndorserBlock (HardForkBlock '[blk]))) ->
+          ( \(hfRb :: HardForkBlock '[blk], mayEb) ->
               ( project' (Proxy @(I blk)) hfRb
-              , project' (Proxy @(WrapEndorserBlock blk)) <$> mayHfEb
+              , mayEb
               )
           )
             <$> forgeBlock
@@ -507,9 +505,9 @@ instance Functor m => Isomorphic (BlockForging m) where
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
       , forgeBlock = \cfg bno sno tickedLgrSt rbTxs ebTxs isLeader ->
-          ( \(hfRb :: blk, mayHfEb :: Maybe (EndorserBlock (blk))) ->
+          ( \(hfRb :: blk, mayEb) ->
               ( inject' (Proxy @(I blk)) hfRb
-              , inject' (Proxy @(WrapEndorserBlock blk)) <$> mayHfEb
+              , mayEb
               )
           )
             <$> forgeBlock
