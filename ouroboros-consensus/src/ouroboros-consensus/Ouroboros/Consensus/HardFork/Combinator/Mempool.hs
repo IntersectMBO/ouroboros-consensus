@@ -306,7 +306,7 @@ instance
             )
             st
 
-  mkMempoolPredicateFailure (TickedHardForkLedgerState _transition hardForkState) txt =
+  mkMempoolApplyTxError (TickedHardForkLedgerState _transition hardForkState) txt =
     hcollapse $ hcimap proxySingle f hardForkState
    where
     f ::
@@ -315,7 +315,7 @@ instance
       FlipTickedLedgerState mk x ->
       K (Maybe (ApplyTxErr (HardForkBlock xs))) x
     f idx (FlipTickedLedgerState tlst) =
-      K $ injectApplyTxErr idx <$> mkMempoolPredicateFailure tlst txt
+      K $ injectApplyTxErr idx <$> mkMempoolApplyTxError tlst txt
 
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs

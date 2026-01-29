@@ -26,7 +26,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
-  , nothingMkMempoolPredicateFailure
+  , nothingMkMempoolApplyTxError
   ) where
 
 import Codec.Serialise (Serialise)
@@ -245,16 +245,16 @@ class
   --
   -- This function therefore constructs the type that the @LocalTxSubmission@
   -- node-to-client mini protocol sends when a tx is rejected.
-  mkMempoolPredicateFailure ::
+  mkMempoolApplyTxError ::
     -- | for the HFC
     TickedLedgerState blk mk ->
     Text ->
     Maybe (ApplyTxErr blk)
 
--- | Value of 'mkMempoolPredicateFailure' when the block type can never
+-- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
-nothingMkMempoolPredicateFailure :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
-nothingMkMempoolPredicateFailure _ _ = Nothing
+nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
+nothingMkMempoolApplyTxError _ _ = Nothing
 
 data ReapplyTxsResult extra blk
   = ReapplyTxsResult

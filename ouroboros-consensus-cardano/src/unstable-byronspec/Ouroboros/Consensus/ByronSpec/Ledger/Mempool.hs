@@ -58,7 +58,7 @@ instance LedgerSupportsMempool ByronSpecBlock where
 
   getTransactionKeySets _ = emptyLedgerTables
 
-  mkMempoolPredicateFailure = nothingMkMempoolPredicateFailure
+  mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
 instance TxLimits ByronSpecBlock where
   type TxMeasure ByronSpecBlock = IgnoringOverflow ByteSize32

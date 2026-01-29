@@ -249,7 +249,7 @@ doAddTx mpEnv caller wti tx = do
             | Just toCfg <- mbToCfg
             , dur > mempoolTimeoutSoft toCfg
             , let txt = T.pack $ "MempoolTxTooSlow (" <> show dur <> ") " <> show (txId tx)
-            , Just txerr <- mkMempoolPredicateFailure (isLedgerState is) txt ->
+            , Just txerr <- mkMempoolApplyTxError (isLedgerState is) txt ->
                 -- The txerr is not available in historical Cardano eras, but
                 -- it is starting from Conway. So this rejection will be
                 -- disabled prior to Conway. Which is irrelevant, since mainnet
