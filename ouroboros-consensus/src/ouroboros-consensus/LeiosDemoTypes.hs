@@ -492,6 +492,7 @@ data TraceLeiosKernel
       , ebMeasure :: m
       , mempoolRestMeasure :: m
       }
+  | TraceLeiosBlockStored
 
 deriving instance Show TraceLeiosKernel
 
@@ -513,7 +514,7 @@ traceLeiosKernelToObject = \case
       ]
   TraceLeiosBlockForged{ebSlot, eb, ebMeasure, mempoolRestMeasure} ->
     mconcat
-      [ "kind" .= Aeson.String "TraceLeiosBlockForged"
+      [ "kind" .= Aeson.String "LeiosBlockForged"
       , "slot" .= ebSlot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
       , "numTxs" .= V.length (leiosEbTxs eb)
@@ -521,6 +522,8 @@ traceLeiosKernelToObject = \case
       , "closureSize" .= unByteSize32 (txMeasureMetricTxSizeBytes ebMeasure)
       , "mempoolRestSize" .= unByteSize32 (txMeasureMetricTxSizeBytes mempoolRestMeasure)
       ]
+  TraceLeiosBlockStored ->
+    "kind" .= Aeson.String "LeiosBlockStored"
 
 newtype TraceLeiosPeer = MkTraceLeiosPeer String
   deriving Show

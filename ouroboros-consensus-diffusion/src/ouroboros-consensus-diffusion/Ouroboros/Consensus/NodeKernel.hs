@@ -893,6 +893,9 @@ forkBlockForging IS{..} blockForging =
       -- e.g., @DualBlock@.
       trace $ TraceAdoptedBlock currentSlot newBlock rbTxsList
 
+      -- FIXME: Should store produced EB in EBStore so it gets diffused
+      traceLeios TraceLeiosBlockStored
+
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()
   trace =
     lift
