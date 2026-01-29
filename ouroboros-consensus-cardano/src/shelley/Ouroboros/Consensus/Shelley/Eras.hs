@@ -138,7 +138,7 @@ class
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
-  mkMkMempoolShelleyPredicateFailure ::
+  mkEraMkMempoolApplyTxError ::
     proxy era -> Maybe (Text -> SL.ApplyTxError era)
 
 data ConwayEraGovDict era where
@@ -178,42 +178,42 @@ instance ShelleyBasedEra ShelleyEra where
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra BabbageEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra ConwayEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx =
+  mkEraMkMempoolApplyTxError _prx =
     Just $ \txt -> ConwayApplyTxError (NE.singleton (Conway.ConwayMempoolFailure txt))
 
 instance ShelleyBasedEra DijkstraEra where
@@ -224,7 +224,7 @@ instance ShelleyBasedEra DijkstraEra where
   -- TODO we'll need to change the mini protocol (backwards-incompatibly?) to
   -- use MempoolFailure type family instead of just PredicateFailure type
   -- family
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 applyAlonzoBasedTx ::
   forall era.

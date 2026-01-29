@@ -239,7 +239,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   getTransactionKeySets (TestBlockGenTx tx) = getPayloadKeySets tx
 
-  mkMempoolPredicateFailure = Ledger.nothingMkMempoolPredicateFailure
+  mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
 
 instance Ledger.TxLimits TestBlock where
   type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32

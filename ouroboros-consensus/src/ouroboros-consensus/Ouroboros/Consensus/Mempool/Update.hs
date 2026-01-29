@@ -259,7 +259,7 @@ doAddTx mpEnv caller wti tx = do
               -- prior to Conway. Which is irrelevant, since mainnet is already
               -- in Conway.
               let txt = T.pack $ "MempoolTxTooSlow (" <> show dur <> ") " <> show (txId tx)
-               in mkMempoolPredicateFailure (isLedgerState is) txt
+               in mkMempoolApplyTxError (isLedgerState is) txt
         case mbX of
           Nothing -> case (wti, mbTimeoutSoftTxErr) of
             (Intervene, Just txerr) -> do

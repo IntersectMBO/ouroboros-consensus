@@ -196,8 +196,8 @@ instance
         coerceSet
           (tx ^. bodyTxL . allInputsTxBodyF)
 
-  mkMempoolPredicateFailure _tlst txt =
-    ($ txt) <$> mkMkMempoolShelleyPredicateFailure (Proxy @era)
+  mkMempoolApplyTxError _tlst txt =
+    ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
 
 mkShelleyTx ::
   forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)
