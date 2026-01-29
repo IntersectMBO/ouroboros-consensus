@@ -822,12 +822,6 @@ forkBlockForging IS{..} blockForging =
           ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
           proof
 
-    let leiosTracer = leiosKernelTracer tracers
-    lift $
-      traceWith leiosTracer $
-        MkTraceLeiosKernel $
-          show ("The ebCapacityMeasure", mayEndorserBlockCapacity)
-
     let newBlockSize = Tx.txSeqMeasure rbTxs
         newEndoreserBlockSize = TxSeq.txSeqMeasure ebTxs
         restSize = TxSeq.txSeqMeasure restTxs'
@@ -843,6 +837,12 @@ forkBlockForging IS{..} blockForging =
           , fbMempoolSize = snapshotMempoolSize mempoolSnapshot
           , fbMempoolRestSize = restSize
           }
+
+    case mayNewEndorserBlock of
+      Just eb -> do
+        let leiosTracer = leiosKernelTracer tracers
+        lift $ traceWith leiosTracer TraceLeiosBlockForged{ebSlot = currentSlot, eb}
+      Nothing -> pure ()
 
     -- Add the block to the chain DB
     let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself

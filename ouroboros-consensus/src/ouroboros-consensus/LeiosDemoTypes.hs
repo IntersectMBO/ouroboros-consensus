@@ -52,7 +52,8 @@ import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified Numeric
-import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..), TxMeasure)
+import Ouroboros.Consensus.Mempool.TxSeq (TxSeqMeasure)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 import System.Directory (doesFileExist)
@@ -633,6 +634,9 @@ data TraceLeiosKernel
   | TraceLeiosBlockAcquired LeiosPoint
   | TraceLeiosBlockTxsAcquired LeiosPoint
   | TraceLeiosBlockForged
+      { ebSlot :: SlotNo
+      , eb :: LeiosEb
+      }
   deriving Show
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
@@ -651,9 +655,11 @@ traceLeiosKernelToObject = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= show ebSlot
       ]
-  TraceLeiosBlockForged ->
+  TraceLeiosBlockForged{ebSlot, eb} ->
     mconcat
       [ "kind" .= Aeson.String "TraceLeiosBlockForged"
+      , "ebSlot" .= show ebSlot
+      , "ebHash" .= prettyEbHash (hashLeiosEb eb)
       ]
 
 newtype TraceLeiosPeer = MkTraceLeiosPeer String
