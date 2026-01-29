@@ -43,10 +43,7 @@ import qualified Data.Set as Set
 import Data.String (fromString)
 import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64)
-import qualified Database.SQLite3.Direct as DB
 import Debug.Trace (trace)
-import GHC.Stack (HasCallStack)
-import qualified GHC.Stack
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -56,9 +53,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike)
-import System.Directory (doesFileExist)
-import System.Environment (lookupEnv)
-import System.Exit (die)
 import Text.Pretty.Simple (pShow)
 
 type BytesSize = Word32
