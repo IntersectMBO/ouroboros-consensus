@@ -64,6 +64,8 @@ import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Stack
+import LeiosDemoDb (newInMemoryLeiosDb)
+import LeiosDemoTypes (LeiosEb)
 import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
@@ -103,7 +105,6 @@ import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
 import Ouroboros.Consensus.Util.IOLike
-import LeiosDemoDb (newInMemoryLeiosDb)
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.RedundantConstraints
 import Ouroboros.Consensus.Util.STM
@@ -866,9 +867,10 @@ runThreadNetwork
             SlotNo ->
             TickedLedgerState blk mk ->
             [Validated (GenTx blk)] ->
+            [Validated (GenTx blk)] ->
             IsLeader (BlockProtocol blk) ->
-            m blk
-          customForgeBlock origBlockForging cfg' currentBno currentSlot tickedLdgSt txs prf = do
+            m (blk, Maybe LeiosEb)
+          customForgeBlock origBlockForging cfg' currentBno currentSlot tickedLdgSt txs ebTxs prf = do
             let currentEpoch = HFF.futureSlotToEpoch future currentSlot
 
             -- EBBs are only ever possible in the first era
@@ -894,6 +896,7 @@ runThreadNetwork
                   currentSlot
                   (forgetLedgerTables tickedLdgSt)
                   txs
+                  ebTxs
                   prf
               Just forgeEbbEnv -> do
                 -- The EBB shares its BlockNo with its predecessor (if
@@ -932,7 +935,7 @@ runThreadNetwork
 
                 -- forge the block usings the ledger state that includes
                 -- the EBB
-                blk <-
+                (blk, mayEb) <-
                   forgeBlock
                     origBlockForging
                     cfg'
@@ -940,6 +943,7 @@ runThreadNetwork
                     currentSlot
                     (forgetLedgerTables tickedLdgSt')
                     txs
+                    ebTxs
                     prf
 
                 -- If the EBB or the subsequent block is invalid, then the
@@ -947,7 +951,7 @@ runThreadNetwork
                 -- 'Test.ThreadNet.General.prop_general' will eventually fail
                 -- because of a block rejection.
                 void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment ebb
-                pure blk
+                pure (blk, mayEb)
 
       -- This variable holds the number of the earliest slot in which the
       -- crucial txs have not yet been added. In other words, it holds the
@@ -1687,7 +1691,7 @@ mkTestOutput vertexInfos = do
                 , nodeOutputFinalLedger = ldgr
                 , nodeOutputForges =
                     Map.fromList $
-                      [(s, b) | TraceForgedBlock s _ b _ <- nodeEventsForges]
+                      [(s, fbNewBlock) | TraceForgedBlock s (ForgedBlock{fbNewBlock}) <- nodeEventsForges]
                 , nodeOutputHeaderAdds =
                     Map.fromListWith (flip (++)) $
                       [ (s, [(p, bno)])
@@ -1756,6 +1760,7 @@ type TracingConstraints blk =
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
+  , Show (TxMeasure blk)
   , HasNestedContent Header blk
   )
 
