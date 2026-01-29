@@ -167,7 +167,6 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
-import qualified Ouroboros.Consensus.Mempool.TxSeq as Tx
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 
 {-------------------------------------------------------------------------------
@@ -823,20 +822,14 @@ forkBlockForging IS{..} blockForging =
           ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
           proof
 
-    let newBlockSize = Tx.txSeqMeasure rbTxs
-        newEndoreserBlockSize = TxSeq.txSeqMeasure ebTxs
-        restSize = TxSeq.txSeqMeasure restTxs'
-
     trace $
       TraceForgedBlock currentSlot $
         ForgedBlock
           { fbLedgerTip = ledgerTipPoint (ledgerState unticked)
           , fbNewBlock = newBlock
-          , fbNewBlockSize = newBlockSize
-          , fbMaybeNewEndorserBlock = mayNewEndorserBlock
-          , fbNewEndorserBlockSize = newEndoreserBlockSize
+          , fbNewBlockSize = TxSeq.txSeqMeasure rbTxs
           , fbMempoolSize = snapshotMempoolSize mempoolSnapshot
-          , fbMempoolRestSize = restSize
+          , fbMempoolRestSize = TxSeq.txSeqMeasure restTxs'
           }
 
     for_ mayNewEndorserBlock $ \eb ->
@@ -844,7 +837,8 @@ forkBlockForging IS{..} blockForging =
         TraceLeiosBlockForged
           { ebSlot = currentSlot
           , eb
-          , ebMeasure = mSize newEndoreserBlockSize
+          , ebMeasure = mSize $ TxSeq.txSeqMeasure ebTxs
+          , mempoolRestMeasure = mSize $ TxSeq.txSeqMeasure restTxs'
           }
 
     -- Add the block to the chain DB

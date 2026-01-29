@@ -37,16 +37,8 @@ instance
       , "newBlockHash" .= toConsensusJson (blockHash (Core.fbNewBlock fb))
       , "newBlockSize" .= toConsensusJson (Core.fbNewBlockSize fb)
       , "mempoolSize" .= toConsensusJson (Core.fbMempoolSize fb)
+      , "mempoolRestSize" .= toConsensusJson (Core.fbMempoolRestSize fb)
       ]
-        ++ optionalEndorserFields
-   where
-    optionalEndorserFields = case Core.fbMaybeNewEndorserBlock fb of
-      Nothing -> []
-      Just _newEndorserBlock ->
-        [ "newEndorserBlockHash" .= ("TODO: EB hash" :: String)
-        , "newEndorserBlockSize" .= toConsensusJson (Core.fbNewEndorserBlockSize fb)
-        , "mempoolRestSize" .= toConsensusJson (Core.fbMempoolRestSize fb)
-        ]
 
 instance ConsensusJson a => ConsensusJson (TxSeqMeasure a) where
   toConsensusJson tsm =

@@ -61,7 +61,7 @@ import Ouroboros.Network.TxSubmission.Outbound
   ( TraceTxSubmissionOutbound
   )
 
-import LeiosDemoTypes (LeiosEb, TraceLeiosKernel, TraceLeiosPeer)
+import LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
 import Ouroboros.Consensus.Mempool.TxSeq (TxSeqMeasure)
 
 {-------------------------------------------------------------------------------
@@ -408,8 +408,6 @@ data ForgedBlock blk = ForgedBlock
   { fbLedgerTip :: Point blk
   , fbNewBlock :: blk
   , fbNewBlockSize :: TxSeqMeasure (TxMeasure blk)
-  , fbMaybeNewEndorserBlock :: Maybe LeiosEb
-  , fbNewEndorserBlockSize :: TxSeqMeasure (TxMeasure blk)
   , fbMempoolSize :: MempoolSize
   , fbMempoolRestSize :: TxSeqMeasure (TxMeasure blk)
   }
