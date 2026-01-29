@@ -617,9 +617,11 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
   , ldbLastSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
-  -- ^ The time at which the latest snapshot was requested. Note that this is
-  --   not the the last time a snapshot was requested -- this is only updated
-  --   with the request time when a snapshot is successfully made.
+  -- ^ The time at which the latest successfully-completed snapshot was
+  -- requested. Note that this is not the the last time any snapshot was
+  -- requested -- there may be later snapshot requests that have failed, or that
+  -- are currently in progress (but may be blocked by a snapshot delay or
+  -- working).
   }
   deriving Generic
 
