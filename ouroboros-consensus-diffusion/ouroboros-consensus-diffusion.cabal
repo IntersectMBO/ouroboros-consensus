@@ -88,7 +88,7 @@ library
     io-classes:{io-classes, si-timers, strict-stm} ^>=1.8,
     mtl,
     network-mux ^>=0.9,
-    ouroboros-consensus ^>=0.30,
+    ouroboros-consensus >=0.29 && <0.31,
     ouroboros-consensus-protocol ^>=0.13,
     ouroboros-network:{cardano-diffusion, ouroboros-network} ^>=0.22.1,
     ouroboros-network-api ^>=0.16,
