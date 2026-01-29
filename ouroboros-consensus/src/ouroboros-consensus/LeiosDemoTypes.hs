@@ -655,18 +655,18 @@ traceLeiosKernelToObject = \case
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockAcquired"
       , "ebHash" .= prettyEbHash ebHash
-      , "ebSlot" .= show ebSlot
+      , "ebSlot" .= ebSlot
       ]
   TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
       , "ebHash" .= prettyEbHash ebHash
-      , "ebSlot" .= show ebSlot
+      , "ebSlot" .= ebSlot
       ]
   TraceLeiosBlockForged{ebSlot, eb, ebMeasure, mempoolRestMeasure} ->
     mconcat
       [ "kind" .= Aeson.String "TraceLeiosBlockForged"
-      , "slot" .= show ebSlot
+      , "slot" .= ebSlot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
       , "numTxs" .= V.length (leiosEbTxs eb)
       , "ebSize" .= leiosEbBytesSize eb
