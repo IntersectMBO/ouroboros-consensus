@@ -18,7 +18,7 @@ import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Network.SizeInBytes
 import Ouroboros.Network.TxSubmission.Inbound.V2.State
-  ( const_MAX_TX_SIZE_DISCREPENCY
+  ( const_MAX_TX_SIZE_DISCREPANCY
   )
 import Test.Tasty.QuickCheck
 import Test.Util.Serialisation.Roundtrip (WithVersion (..))
@@ -38,7 +38,7 @@ prop_txWireSize_txSubmission ccfg (WithVersion version tx) =
   counterexample ("encoded size " ++ show encSize ++ ", computed size " ++ show cmpSize) $
     counterexample ("diff size " ++ show diffSize) $
       label (show diffSize) $
-        fromIntegral (abs diffSize) <= const_MAX_TX_SIZE_DISCREPENCY
+        fromIntegral (abs diffSize) <= const_MAX_TX_SIZE_DISCREPANCY
  where
   encSize, cmpSize :: SizeInBytes
 
