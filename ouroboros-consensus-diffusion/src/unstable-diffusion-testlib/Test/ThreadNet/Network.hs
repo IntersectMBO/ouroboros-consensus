@@ -39,8 +39,16 @@ module Test.ThreadNet.Network
   , TestOutput (..)
   ) where
 
-import Cardano.Network.PeerSelection.Bootstrap
-  ( UseBootstrapPeers (..)
+import Cardano.Network.NodeToNode
+  ( ConnectionId (..)
+  , ExpandedInitiatorContext (..)
+  , IsBigLedgerPeer (..)
+  , MiniProtocolParameters (..)
+  , ResponderContext (..)
+  )
+import Cardano.Network.PeerSelection
+  ( PeerTrustable (..)
+  , UseBootstrapPeers (..)
   )
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
@@ -119,13 +127,6 @@ import Ouroboros.Network.BlockFetch
 import Ouroboros.Network.Channel
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Mock.Chain (Chain (Genesis))
-import Ouroboros.Network.NodeToNode
-  ( ConnectionId (..)
-  , ExpandedInitiatorContext (..)
-  , IsBigLedgerPeer (..)
-  , MiniProtocolParameters (..)
-  , ResponderContext (..)
-  )
 import Ouroboros.Network.PeerSelection.Governor
   ( makePublicPeerSelectionStateVar
   )
@@ -137,6 +138,14 @@ import Ouroboros.Network.Protocol.Limits (ProtocolTimeLimitsWithRnd (..), waitFo
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import Ouroboros.Network.Protocol.TxSubmission2.Type
+import Ouroboros.Network.TxSubmission.Inbound.V2
+  ( TxSubmissionInitDelay (..)
+  , TxSubmissionLogicVersion (..)
+  )
+import Ouroboros.Network.TxSubmission.Inbound.V2.Policy
+  ( TxDecisionPolicy (..)
+  , defaultTxDecisionPolicy
+  )
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
 import System.Random (mkStdGen, split)
@@ -245,6 +254,7 @@ data ThreadNetworkArgs m blk = ThreadNetworkArgs
   , tnaTxGenExtra :: TxGenExtra blk
   , tnaVersion :: NodeToNodeVersion
   , tnaBlockVersion :: BlockNodeToNodeVersion blk
+  , tnaTxLogicVersion :: TxSubmissionLogicVersion
   }
 
 {-------------------------------------------------------------------------------
@@ -333,6 +343,7 @@ runThreadNetwork
     , tnaTxGenExtra = txGenExtra
     , tnaVersion = version
     , tnaBlockVersion = blockVersion
+    , tnaTxLogicVersion = txLogicVersion
     } = withRegistry $ \sharedRegistry -> do
     mbRekeyM <- sequence mbMkRekeyM
 
@@ -1037,7 +1048,8 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, rng') = split rng
           (gsmRng, rng'') = split rng'
-          (psRng, chainSyncRng) = split rng''
+          (psRng, rng3) = split rng''
+          (txRng, chainSyncRng) = split rng3
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1058,12 +1070,14 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
+              , txSubmissionRng = txRng
               , miniProtocolParameters =
                   MiniProtocolParameters
                     { chainSyncPipeliningHighMark = 4
                     , chainSyncPipeliningLowMark = 2
                     , blockFetchPipeliningMax = 10
-                    , txSubmissionMaxUnacked = 1000 -- TODO ?
+                    , txDecisionPolicy =
+                        defaultTxDecisionPolicy{maxUnacknowledgedTxIds = 1000} -- TODO ?
                     }
               , blockFetchConfiguration =
                   BlockFetchConfiguration
@@ -1095,6 +1109,7 @@ runThreadNetwork
                     { gnkaLoEAndGDDArgs = LoEAndGDDDisabled
                     }
               , getDiffusionPipeliningSupport = DiffusionPipeliningOn
+              , txSubmissionInitDelay = NoTxSubmissionInitDelay
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs
@@ -1117,14 +1132,14 @@ runThreadNetwork
               (customNodeToNodeCodecs pInfoConfig)
               NTN.noByteLimits
               -- see #1882, tests that can't cope with timeouts.
-              (ProtocolTimeLimitsWithRnd $ \_state -> (waitForever,))
+              (\_ -> ProtocolTimeLimitsWithRnd $ \_state -> (waitForever,))
               CSClient.ChainSyncLoPBucketDisabled
               CSClient.CSJDisabled
               nullMetric
               -- The purpose of this test is not testing protocols, so
               -- returning constant empty list is fine if we have thorough
               -- tests about the peer sharing protocol itself.
-              (NTN.mkHandlers nodeKernelArgs nodeKernel)
+              (NTN.mkHandlers nodeKernelArgs nodeKernel txLogicVersion)
 
       -- Create a 'ReadOnlyForker' to be used in 'forkTxProducer'. This function
       -- needs the read-only forker to elaborate a complete UTxO set to generate
@@ -1382,7 +1397,7 @@ directedEdgeInner
           (String -> b -> RestartCause) ->
           ( LimitedApp' m NodeId blk ->
             NodeToNodeVersion ->
-            ExpandedInitiatorContext NodeId m ->
+            ExpandedInitiatorContext NodeId PeerTrustable m ->
             Channel m msg ->
             m (a, trailingBytes)
           ) ->
@@ -1409,6 +1424,7 @@ directedEdgeInner
               { eicConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
               , eicControlMessage = return Continue
               , eicIsBigLedgerPeer = IsNotBigLedgerPeer
+              , eicExtraFlags = IsNotTrustable
               }
           responderCtx =
             ResponderContext

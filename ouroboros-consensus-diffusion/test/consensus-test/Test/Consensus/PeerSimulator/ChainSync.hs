@@ -10,6 +10,7 @@ module Test.Consensus.PeerSimulator.ChainSync
   , runChainSyncServer
   ) where
 
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Control.Exception (SomeException)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Tracer
@@ -57,7 +58,6 @@ import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit)
   , runPipelinedPeerWithLimits
   )
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ChainSync.ClientPipelined
   ( ChainSyncClientPipelined
   , chainSyncClientPeerPipelined

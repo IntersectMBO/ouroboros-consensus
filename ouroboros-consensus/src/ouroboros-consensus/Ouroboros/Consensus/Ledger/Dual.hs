@@ -745,6 +745,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
 instance Bridge m a => TxLimits (DualBlock m a) where
   type TxMeasure (DualBlock m a) = TxMeasure m
 
+  txWireSize = txWireSize . dualGenTxMain
   txMeasure DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
     do
       mapExcept (inj +++ id)

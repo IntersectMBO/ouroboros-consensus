@@ -81,7 +81,7 @@ instance SerialiseNodeToNodeConstraints ByronBlock where
 -- wrapped ('Serialised') variant.
 instance SerialiseNodeToNode ByronBlock ByronBlock where
   encodeNodeToNode _ _ = wrapCBORinCBOR encodeByronBlock
-  decodeNodeToNode ccfg _ = unwrapCBORinCBOR (decodeByronBlock epochSlots)
+  decodeNodeToNode ccfg _ = unwrapCBORinCBOR ((Right .) <$> decodeByronBlock epochSlots)
    where
     epochSlots = getByronEpochSlots ccfg
 
@@ -96,7 +96,7 @@ instance SerialiseNodeToNode ByronBlock (Header ByronBlock) where
   decodeNodeToNode ccfg = \case
     ByronNodeToNodeVersion1 ->
       unwrapCBORinCBOR $
-        (flip joinSizeHint fakeByronBlockSizeHint .)
+        ((Right .) . (flip joinSizeHint fakeByronBlockSizeHint .))
           <$> decodeUnsizedHeader epochSlots
     ByronNodeToNodeVersion2 ->
       nest <$> decodeDisk ccfg
@@ -161,7 +161,7 @@ instance SerialiseNodeToClient ByronBlock Config where
 -- wrapped ('Serialised') variant.
 instance SerialiseNodeToClient ByronBlock ByronBlock where
   encodeNodeToClient _ _ = wrapCBORinCBOR encodeByronBlock
-  decodeNodeToClient ccfg _ = unwrapCBORinCBOR (decodeByronBlock epochSlots)
+  decodeNodeToClient ccfg _ = unwrapCBORinCBOR ((Right .) <$> decodeByronBlock epochSlots)
    where
     epochSlots = getByronEpochSlots ccfg
 

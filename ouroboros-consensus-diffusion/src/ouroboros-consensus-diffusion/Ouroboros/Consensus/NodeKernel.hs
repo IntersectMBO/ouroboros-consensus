@@ -29,11 +29,15 @@ module Ouroboros.Consensus.NodeKernel
 
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
+import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
+import Cardano.Network.NodeToNode
+  ( ConnectionId
+  , MiniProtocolParameters (..)
+  )
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
   ( OutboundConnectionsState (..)
   )
-import Cardano.Network.Types (LedgerStateJudgement (..))
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
@@ -44,13 +48,14 @@ import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
 import Data.Data (Typeable)
+import Data.Either (partitionEithers)
 import Data.Foldable (traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Data.Maybe (isJust, mapMaybe)
+import Data.Maybe (isJust)
 import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Text as Text
@@ -127,10 +132,6 @@ import Ouroboros.Network.BlockFetch.ClientState
 import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent (..)
   )
-import Ouroboros.Network.NodeToNode
-  ( ConnectionId
-  , MiniProtocolParameters (..)
-  )
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PublicPeerSelectionState
   )
@@ -143,11 +144,20 @@ import Ouroboros.Network.PeerSharing
   , ps_POLICY_PEER_SHARE_STICKY_TIME
   )
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
-import Ouroboros.Network.SizeInBytes
-import Ouroboros.Network.TxSubmission.Inbound
-  ( TxSubmissionMempoolWriter
+import Ouroboros.Network.TxSubmission.Inbound.V1
+  ( TxSubmissionInitDelay
+  , TxSubmissionMempoolWriter
   )
-import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
+import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
+import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
+  ( SharedTxStateVar
+  , TxChannelsVar
+  , TxMempoolSem
+  , decisionLogicThreads
+  , newSharedTxStateVar
+  , newTxChannelsVar
+  , newTxMempoolSem
+  )
 import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
   )
@@ -190,6 +200,13 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
   , getBlockchainTime :: BlockchainTime m
+  , getTxChannelsVar :: TxChannelsVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+  -- ^ Communication channels between `TxSubmission` client mini-protocol and
+  -- decision logic.
+  , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+  -- ^ Shared state of all `TxSubmission` clients.
+  , getTxMempoolSem :: TxMempoolSem m
+  -- ^ A semaphore used by tx-submission for submitting `tx`s to the mempool.
   }
 
 -- | Arguments required when initializing a node
@@ -215,6 +232,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , gsmArgs :: GsmNodeKernelArgs m blk
   , getUseBootstrapPeers :: STM m UseBootstrapPeers
   , peerSharingRng :: StdGen
+  , txSubmissionRng :: StdGen
+  , txSubmissionInitDelay :: TxSubmissionInitDelay
   , publicPeerSelectionStateVar ::
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   , genesisArgs :: GenesisNodeKernelArgs m blk
@@ -243,9 +262,11 @@ initNodeKernel
     , btime
     , gsmArgs
     , peerSharingRng
+    , txSubmissionRng
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
+    , miniProtocolParameters
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -326,6 +347,10 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_STICKY_TIME
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
+    txChannelsVar <- newTxChannelsVar
+    sharedTxStateVar <- newSharedTxStateVar txSubmissionRng
+    txMempoolSem <- newTxMempoolSem
+
     case gnkaLoEAndGDDArgs genesisArgs of
       LoEAndGDDDisabled -> pure ()
       LoEAndGDDEnabled lgArgs -> do
@@ -361,6 +386,15 @@ initNodeKernel
           fetchClientRegistry
           blockFetchConfiguration
 
+    void $
+      forkLinkedThread registry "NodeKernel.decisionLogicThreads" $
+        decisionLogicThreads
+          (txLogicTracer tracers)
+          (txCountersTracer tracers)
+          (txDecisionPolicy miniProtocolParameters)
+          txChannelsVar
+          sharedTxStateVar
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -378,6 +412,9 @@ initNodeKernel
             varOutboundConnectionsState
         , getDiffusionPipeliningSupport
         , getBlockchainTime = btime
+        , getTxChannelsVar = txChannelsVar
+        , getSharedTxStateVar = sharedTxStateVar
+        , getTxMempoolSem = txMempoolSem
         }
    where
     blockForgingController ::
@@ -875,28 +912,37 @@ getMempoolReader mempool =
         { mempoolTxIdsAfter = \idx ->
             [ ( txId (txForgetValidated tx)
               , idx'
-              , SizeInBytes $ unByteSize32 $ txMeasureByteSize msr
+              , txWireSize $ txForgetValidated tx
               )
-            | (tx, idx', msr) <- snapshotTxsAfter idx
+            | (tx, idx', _msr) <- snapshotTxsAfter idx
             ]
         , mempoolLookupTx = snapshotLookupTx
         , mempoolHasTx = snapshotHasTx
         }
 
 getMempoolWriter ::
+  forall blk m.
   ( LedgerSupportsMempool blk
   , IOLike m
   , HasTxId (GenTx blk)
   ) =>
   Mempool m blk ->
-  TxSubmissionMempoolWriter (GenTxId blk) (GenTx blk) TicketNo m
+  TxSubmissionMempoolWriter (GenTxId blk) (GenTx blk) TicketNo m ()
 getMempoolWriter mempool =
   Inbound.TxSubmissionMempoolWriter
     { Inbound.txId = txId
     , mempoolAddTxs = \txs ->
-        map (txId . txForgetValidated) . mapMaybe mempoolTxAddedToMaybe
-          <$> addTxs mempool txs
+        partitionTxIds <$> addTxs mempool txs
     }
+ where
+  partitionTxIds ::
+    [MempoolAddTxResult blk] -> ([TxId (GenTx blk)], [(TxId (GenTx blk), ())])
+  partitionTxIds = partitionEithers . map getTxId
+
+  getTxId :: MempoolAddTxResult blk -> Either (TxId (GenTx blk)) (TxId (GenTx blk), ())
+  getTxId = \case
+    MempoolTxAdded tx -> Left $ txId (txForgetValidated tx)
+    MempoolTxRejected tx _reason -> Right $ (txId tx, ())
 
 {-------------------------------------------------------------------------------
   PeerSelection integration

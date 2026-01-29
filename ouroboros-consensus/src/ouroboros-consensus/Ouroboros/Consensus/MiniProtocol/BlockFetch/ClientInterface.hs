@@ -12,11 +12,12 @@ module Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface
   ) where
 
 import Cardano.Network.ConsensusMode (ConsensusMode)
+import Cardano.Network.FetchMode (mkReadFetchMode)
+import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement)
 import Cardano.Network.PeerSelection.Bootstrap
   ( UseBootstrapPeers
   , requiresBootstrapPeers
   )
-import Cardano.Network.Types (LedgerStateJudgement)
 import Control.Monad
 import Control.Tracer (Tracer)
 import Data.Map.Strict (Map)
@@ -56,7 +57,6 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
   , ChainSelStarvation
   , FetchMode (..)
   , PraosFetchMode (..)
-  , mkReadFetchMode
   )
 import Ouroboros.Network.SizeInBytes
 

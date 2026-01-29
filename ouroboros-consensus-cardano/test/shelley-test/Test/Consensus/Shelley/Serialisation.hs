@@ -26,12 +26,19 @@ import Test.Tasty.QuickCheck
 import Test.Util.Corruption
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Serialisation.Roundtrip
+import Test.Util.Serialisation.TxWireSize
+
+-- TODO(10.7): figure out how to implement it
+getTxBytes :: GenTx Block -> Maybe String
+getTxBytes _ = Nothing
 
 tests :: TestTree
 tests =
   testGroup
     "Shelley"
     [ roundtrip_all testCodecCfg dictNestedHdr Nothing
+    , testProperty "GenTx.txWireSize.txSubmission" (prop_txWireSize_txSubmission testCodecCfg)
+    , testProperty "GenTx.txWireSize.tight" (prop_txWireSize getTxBytes testCodecCfg)
     , -- Test for real crypto too
       testProperty "hashSize real crypto" $ prop_hashSize pReal
     , testProperty "ConvertRawHash real crypto" $ roundtrip_ConvertRawHash pReal
