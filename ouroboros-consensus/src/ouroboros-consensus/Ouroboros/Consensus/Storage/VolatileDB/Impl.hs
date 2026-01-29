@@ -115,6 +115,7 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl
   , mkBlocksPerFile
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Control.Monad (unless, when)
@@ -135,6 +136,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
@@ -192,7 +194,7 @@ defaultArgs =
 -- | 'EncodeDisk' and 'DecodeDisk' constraints needed for the VolatileDB.
 type VolatileDbSerialiseConstraints blk =
   ( EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , HasNestedContent Header blk
   , HasBinaryBlockInfo blk
@@ -262,7 +264,7 @@ getBlockComponentImpl ::
   forall m blk b.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , HasNestedContent Header blk
   , DecodeDiskDep (NestedCtxt Header) blk
   , HasCallStack
@@ -327,7 +329,7 @@ getBlockComponentImpl env@VolatileDBEnv{codecConfig, checkIntegrity} blockCompon
       case ibiNestedCtxt of
         SomeSecond ctxt ->
           CBOR.deserialiseFromBytes
-            ( (\f -> nest . DepPair ctxt . f)
+            ( (\f -> Right . nest . DepPair ctxt . f)
                 <$> decodeDiskDep codecConfig ctxt
             )
             bytes
@@ -338,16 +340,26 @@ getBlockComponentImpl env@VolatileDBEnv{codecConfig, checkIntegrity} blockCompon
     throwParseErrors ::
       forall b''.
       Lazy.ByteString ->
-      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b'') ->
+      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> Either Plain.DecoderError b'') ->
       m b''
     throwParseErrors fullBytes = \case
       Right (trailing, f)
         | Lazy.null trailing ->
-            return $ f fullBytes
+            case f fullBytes of
+              Left err ->
+                throwIO $
+                  UnexpectedFailure $
+                    ParseError
+                      ibiFile
+                      pt
+                      err
+              Right result -> pure result
         | otherwise ->
             throwIO $ UnexpectedFailure $ TrailingDataError ibiFile pt trailing
       Left err ->
-        throwIO $ UnexpectedFailure $ ParseError ibiFile pt err
+        throwIO $
+          UnexpectedFailure $
+            ParseError ibiFile pt (Plain.DecoderErrorDeserialiseFailure (Text.pack "") err)
 
 -- | This function follows the approach:
 -- (1) hPut bytes to the file

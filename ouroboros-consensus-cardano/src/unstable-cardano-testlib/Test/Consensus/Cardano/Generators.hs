@@ -66,6 +66,14 @@ import Test.Util.Serialisation.Roundtrip
   , WithVersion (..)
   )
 
+-- TODO: Dijkstra blocks are currently unstable in Ledger, and we were
+-- advised by the Ledger team to not test their serialisation.
+-- We will start generating them when they are stable again.
+--
+-- The following instances will need to be changed:
+-- * Arbitrary (CardanoBlock StandardCrypto)
+-- * Arbitrary (Coherent (CardanoBlock StandardCrypto))
+
 {-------------------------------------------------------------------------------
   Disk
 -------------------------------------------------------------------------------}
@@ -86,7 +94,7 @@ instance Arbitrary (CardanoBlock StandardCrypto) where
         :* mk BlockAlonzo
         :* mk BlockBabbage
         :* mk BlockConway
-        :* mk BlockDijkstra
+        :* (K Nothing) -- TODO: re-enable generating Dijkstra blocks, see above
         :* Nil
 
     mk ::
@@ -112,7 +120,7 @@ instance Arbitrary (Coherent (CardanoBlock StandardCrypto)) where
         :* mk BlockAlonzo
         :* mk BlockBabbage
         :* mk BlockConway
-        :* mk BlockDijkstra
+        :* (K Nothing) -- TODO: re-enable generating Dijkstra blocks, see above
         :* Nil
 
     mk ::
@@ -173,7 +181,6 @@ arbitraryNodeToNode ::
   , Arbitrary (WithVersion ShelleyNodeToNodeVersion alonzo)
   , Arbitrary (WithVersion ShelleyNodeToNodeVersion babbage)
   , Arbitrary (WithVersion ShelleyNodeToNodeVersion conway)
-  , Arbitrary (WithVersion ShelleyNodeToNodeVersion dijkstra)
   ) =>
   (byron -> cardano) ->
   (shelley -> cardano) ->
@@ -184,7 +191,7 @@ arbitraryNodeToNode ::
   (conway -> cardano) ->
   (dijkstra -> cardano) ->
   Gen (WithVersion (HardForkNodeToNodeVersion (CardanoEras c)) cardano)
-arbitraryNodeToNode injByron injShelley injAllegra injMary injAlonzo injBabbage injConway injDijkstra =
+arbitraryNodeToNode injByron injShelley injAllegra injMary injAlonzo injBabbage injConway _injDijkstra =
   oneof
     [ -- Byron before HFC
       ( \(WithVersion versionByron b) ->
@@ -335,26 +342,27 @@ arbitraryNodeToNode injByron injShelley injAllegra injMary injAlonzo injBabbage 
         <*> arbitrary
         <*> arbitrary
         <*> arbitrary
-    , ( \versionByron versionShelley versionAllegra versionMary versionAlonzo versionBabbage versionConway (WithVersion versionDijkstra x) ->
-          distrib
-            versionByron
-            versionShelley
-            versionAllegra
-            versionMary
-            versionAlonzo
-            versionBabbage
-            versionConway
-            versionDijkstra
-            (injDijkstra x)
-      )
-        <$> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
+    -- TODO: uncommon the Dijkstra era case when Dijkstra is stable in Ledger
+    -- , ( \versionByron versionShelley versionAllegra versionMary versionAlonzo versionBabbage versionConway (WithVersion versionDijkstra x) ->
+    --       distrib
+    --         versionByron
+    --         versionShelley
+    --         versionAllegra
+    --         versionMary
+    --         versionAlonzo
+    --         versionBabbage
+    --         versionConway
+    --         versionDijkstra
+    --         (injDijkstra x)
+    --   )
+    --     <$> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
     ]
  where
   distrib
@@ -560,7 +568,6 @@ arbitraryNodeToClient ::
   , Arbitrary (WithVersion ShelleyNodeToClientVersion alonzo)
   , Arbitrary (WithVersion ShelleyNodeToClientVersion babbage)
   , Arbitrary (WithVersion ShelleyNodeToClientVersion conway)
-  , Arbitrary (WithVersion ShelleyNodeToClientVersion dijkstra)
   ) =>
   (byron -> cardano) ->
   (shelley -> cardano) ->
@@ -571,7 +578,7 @@ arbitraryNodeToClient ::
   (conway -> cardano) ->
   (dijkstra -> cardano) ->
   Gen (WithVersion (HardForkNodeToClientVersion (CardanoEras c)) cardano)
-arbitraryNodeToClient injByron injShelley injAllegra injMary injAlonzo injBabbage injConway injDijkstra =
+arbitraryNodeToClient injByron injShelley injAllegra injMary injAlonzo injBabbage injConway _injDijkstra =
   oneof
     -- Byron + HardFork disabled
     [ ( \(WithVersion versionByron b) ->
@@ -762,32 +769,33 @@ arbitraryNodeToClient injByron injShelley injAllegra injMary injAlonzo injBabbag
         <*> arbitrary
         <*> arbitrary
         <*> arbitrary
-    , -- Dijkstra + HardFork enabled
-      ( \versionByron versionShelley versionAllegra versionMary versionAlonzo versionBabbage versionConway (WithVersion versionDijkstra a) ->
-          WithVersion
-            ( HardForkNodeToClientEnabled
-                maxBound
-                ( EraNodeToClientEnabled versionByron
-                    :* EraNodeToClientEnabled versionShelley
-                    :* EraNodeToClientEnabled versionAllegra
-                    :* EraNodeToClientEnabled versionMary
-                    :* EraNodeToClientEnabled versionAlonzo
-                    :* EraNodeToClientEnabled versionBabbage
-                    :* EraNodeToClientEnabled versionConway
-                    :* EraNodeToClientEnabled versionDijkstra
-                    :* Nil
-                )
-            )
-            (injDijkstra a)
-      )
-        <$> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
+    -- TODO: uncommon the Dijkstra era case when Dijkstra is stable in Ledger
+    -- , -- Dijkstra + HardFork enabled
+    --   ( \versionByron versionShelley versionAllegra versionMary versionAlonzo versionBabbage versionConway (WithVersion versionDijkstra a) ->
+    --       WithVersion
+    --         ( HardForkNodeToClientEnabled
+    --             maxBound
+    --             ( EraNodeToClientEnabled versionByron
+    --                 :* EraNodeToClientEnabled versionShelley
+    --                 :* EraNodeToClientEnabled versionAllegra
+    --                 :* EraNodeToClientEnabled versionMary
+    --                 :* EraNodeToClientEnabled versionAlonzo
+    --                 :* EraNodeToClientEnabled versionBabbage
+    --                 :* EraNodeToClientEnabled versionConway
+    --                 :* EraNodeToClientEnabled versionDijkstra
+    --                 :* Nil
+    --             )
+    --         )
+    --         (injDijkstra a)
+    --   )
+    --     <$> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
+    --     <*> arbitrary
     ]
 
 instance

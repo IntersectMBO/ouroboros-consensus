@@ -155,7 +155,7 @@ defaultEncodeCBORinCBOR = wrapCBORinCBOR encode
 
 -- | Inverse of 'defaultEncodeCBORinCBOR'
 defaultDecodeCBORinCBOR :: Serialise a => Decoder s a
-defaultDecodeCBORinCBOR = unwrapCBORinCBOR (const <$> decode)
+defaultDecodeCBORinCBOR = unwrapCBORinCBOR (const . Right <$> decode)
 
 {-------------------------------------------------------------------------------
   Forwarding instances

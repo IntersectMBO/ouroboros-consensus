@@ -63,6 +63,7 @@ module Test.Ouroboros.Storage.TestBlock
   , shrinkCorruptions
   ) where
 
+import Cardano.Binary (DecoderError)
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Codec.CBOR.Read as CBOR
@@ -787,8 +788,8 @@ instance HasBinaryBlockInfo TestBlock where
 instance SerialiseDiskConstraints TestBlock
 
 instance EncodeDisk TestBlock TestBlock
-instance DecodeDisk TestBlock (Lazy.ByteString -> TestBlock) where
-  decodeDisk _ = const <$> decode
+instance DecodeDisk TestBlock (Lazy.ByteString -> Either DecoderError TestBlock) where
+  decodeDisk _ = const . Right <$> decode
 
 instance EncodeDisk TestBlock (Header TestBlock)
 instance DecodeDisk TestBlock (Lazy.ByteString -> Header TestBlock) where

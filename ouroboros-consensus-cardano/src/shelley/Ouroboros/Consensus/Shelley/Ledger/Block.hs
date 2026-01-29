@@ -310,8 +310,10 @@ decodeShelleyBlock ::
   forall proto era.
   ShelleyCompatible proto era =>
   forall s.
-  Plain.Decoder s (Lazy.ByteString -> ShelleyBlock proto era)
-decodeShelleyBlock = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+  Plain.Decoder s (Lazy.ByteString -> Either Plain.DecoderError (ShelleyBlock proto era))
+decodeShelleyBlock =
+  eraDecoder @era $
+    (. Full) . runAnnotator <$> decCBOR
 
 shelleyBinaryBlockInfo ::
   forall proto era. ShelleyCompatible proto era => ShelleyBlock proto era -> BinaryBlockInfo
@@ -335,7 +337,12 @@ decodeShelleyHeader ::
   ShelleyCompatible proto era =>
   forall s.
   Plain.Decoder s (Lazy.ByteString -> Header (ShelleyBlock proto era))
-decodeShelleyHeader = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+decodeShelleyHeader =
+  eraDecoder @era $
+    (. Full)
+      . (either (\e -> error ("Impossible, header decoder failed: " <> show e)) id .)
+      . runAnnotator
+      <$> decCBOR
 
 {-------------------------------------------------------------------------------
   Condense

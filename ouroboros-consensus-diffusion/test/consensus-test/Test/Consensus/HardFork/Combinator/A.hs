@@ -40,6 +40,7 @@ module Test.Consensus.HardFork.Combinator.A
   , TxId (..)
   ) where
 
+import Cardano.Binary (DecoderError)
 import Cardano.Ledger.BaseTypes.NonZero
 import Cardano.Slotting.EpochInfo
 import Codec.Serialise
@@ -628,8 +629,8 @@ instance EncodeDisk BlockA (LedgerState BlockA EmptyMK)
 instance DecodeDisk BlockA (LedgerState BlockA EmptyMK)
 
 instance EncodeDisk BlockA BlockA
-instance DecodeDisk BlockA (Lazy.ByteString -> BlockA) where
-  decodeDisk _ = const <$> decode
+instance DecodeDisk BlockA (Lazy.ByteString -> Either DecoderError BlockA) where
+  decodeDisk _ = const . Right <$> decode
 
 instance EncodeDisk BlockA (AnnTip BlockA)
 instance DecodeDisk BlockA (AnnTip BlockA)
@@ -654,7 +655,7 @@ instance SerialiseNodeToNode BlockA (GenTxId BlockA)
 -- the @Serialise (SerialisedHeader BlockA)@ instance below
 instance SerialiseNodeToNode BlockA (Header BlockA) where
   encodeNodeToNode _ _ = wrapCBORinCBOR encode
-  decodeNodeToNode _ _ = unwrapCBORinCBOR (const <$> decode)
+  decodeNodeToNode _ _ = unwrapCBORinCBOR (const . Right <$> decode)
 
 instance Serialise (SerialisedHeader BlockA) where
   encode = encodeTrivialSerialisedHeader

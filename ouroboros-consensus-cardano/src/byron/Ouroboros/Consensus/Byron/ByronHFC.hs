@@ -101,7 +101,7 @@ instance SerialiseHFC '[ByronBlock] where
   encodeDiskHfcBlock (DegenCodecConfig ccfg) (DegenBlock b) =
     encodeDisk ccfg b
   decodeDiskHfcBlock (DegenCodecConfig ccfg) =
-    fmap DegenBlock <$> decodeDisk ccfg
+    (fmap (fmap DegenBlock)) <$> decodeDisk ccfg
   reconstructHfcPrefixLen _ =
     reconstructPrefixLen (Proxy @(Header ByronBlock))
   reconstructHfcNestedCtxt _ prefix blockSize =

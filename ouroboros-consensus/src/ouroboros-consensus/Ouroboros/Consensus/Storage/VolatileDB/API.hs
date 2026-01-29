@@ -29,7 +29,7 @@ module Ouroboros.Consensus.Storage.VolatileDB.API
   , withDB
   ) where
 
-import qualified Codec.CBOR.Read as CBOR
+import Cardano.Binary (DecoderError)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Maybe (isJust)
 import Data.Set (Set)
@@ -195,7 +195,7 @@ newtype ApiMisuse
 data UnexpectedFailure blk
   = FileSystemError FsError
   | -- | A block failed to parse
-    ParseError FsPath (RealPoint blk) CBOR.DeserialiseFailure
+    ParseError FsPath (RealPoint blk) DecoderError
   | -- | When parsing a block we got some trailing data
     TrailingDataError FsPath (RealPoint blk) Lazy.ByteString
   | -- | Block missing

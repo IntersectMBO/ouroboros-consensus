@@ -91,6 +91,7 @@ module Test.Util.TestBlock
   , updateToNextNumeral
   ) where
 
+import Cardano.Binary (DecoderError)
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
 import Codec.Serialise (Serialise (..), serialise)
@@ -998,8 +999,11 @@ instance ConvertRawHash (TestBlockWith ptype) where
     pure $ TestHash h
 
 instance Serialise ptype => EncodeDisk (TestBlockWith ptype) (TestBlockWith ptype)
-instance Serialise ptype => DecodeDisk (TestBlockWith ptype) (BL.ByteString -> TestBlockWith ptype) where
-  decodeDisk _ = const <$> decode
+instance
+  Serialise ptype =>
+  DecodeDisk (TestBlockWith ptype) (BL.ByteString -> Either DecoderError (TestBlockWith ptype))
+  where
+  decodeDisk _ = const . Right <$> decode
 
 instance Serialise ptype => EncodeDisk (TestBlockWith ptype) (Header (TestBlockWith ptype))
 instance Serialise ptype => DecodeDisk (TestBlockWith ptype) (BL.ByteString -> Header (TestBlockWith ptype)) where

@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Mock.Node.Serialisation
   , NestedCtxt_ (..)
   ) where
 
+import Cardano.Binary (DecoderError)
 import Codec.Serialise (Serialise, decode, encode, serialise)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Typeable (Typeable)
@@ -49,8 +50,8 @@ instance
   SerialiseDiskConstraints (MockBlock ext)
 
 instance Serialise ext => EncodeDisk (MockBlock ext) (MockBlock ext)
-instance Serialise ext => DecodeDisk (MockBlock ext) (Lazy.ByteString -> MockBlock ext) where
-  decodeDisk _ = const <$> decode
+instance Serialise ext => DecodeDisk (MockBlock ext) (Lazy.ByteString -> Either DecoderError (MockBlock ext)) where
+  decodeDisk _ = const . Right <$> decode
 
 instance Serialise ext => EncodeDisk (MockBlock ext) (Header (MockBlock ext))
 instance Serialise ext => DecodeDisk (MockBlock ext) (Lazy.ByteString -> Header (MockBlock ext)) where

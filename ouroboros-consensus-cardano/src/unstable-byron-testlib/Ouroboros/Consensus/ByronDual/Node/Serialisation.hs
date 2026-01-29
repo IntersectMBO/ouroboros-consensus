@@ -59,8 +59,8 @@ instance SerialiseDiskConstraints DualByronBlock
 
 instance EncodeDisk DualByronBlock DualByronBlock where
   encodeDisk _ = encodeDualBlock encodeByronBlock
-instance DecodeDisk DualByronBlock (Lazy.ByteString -> DualByronBlock) where
-  decodeDisk ccfg = decodeDualBlock (decodeByronBlock epochSlots)
+instance DecodeDisk DualByronBlock (Lazy.ByteString -> Either DecoderError DualByronBlock) where
+  decodeDisk ccfg = (Right .) <$> decodeDualBlock (decodeByronBlock epochSlots)
    where
     epochSlots = extractEpochSlots ccfg
 
@@ -105,7 +105,7 @@ instance SerialiseNodeToNodeConstraints DualByronBlock where
 -- wrapped ('Serialised') variant.
 instance SerialiseNodeToNode DualByronBlock DualByronBlock where
   encodeNodeToNode _ _ = wrapCBORinCBOR (encodeDualBlock encodeByronBlock)
-  decodeNodeToNode ccfg _ = unwrapCBORinCBOR (decodeDualBlock (decodeByronBlock epochSlots))
+  decodeNodeToNode ccfg _ = unwrapCBORinCBOR ((Right .) <$> decodeDualBlock (decodeByronBlock epochSlots))
    where
     epochSlots = extractEpochSlots ccfg
 
@@ -155,7 +155,7 @@ instance SerialiseNodeToClient DualByronBlock (DualLedgerConfig ByronBlock Byron
 -- wrapped ('Serialised') variant.
 instance SerialiseNodeToClient DualByronBlock DualByronBlock where
   encodeNodeToClient _ _ = wrapCBORinCBOR (encodeDualBlock encodeByronBlock)
-  decodeNodeToClient ccfg _ = unwrapCBORinCBOR (decodeDualBlock (decodeByronBlock epochSlots))
+  decodeNodeToClient ccfg _ = unwrapCBORinCBOR ((Right .) <$> decodeDualBlock (decodeByronBlock epochSlots))
    where
     epochSlots = extractEpochSlots ccfg
 

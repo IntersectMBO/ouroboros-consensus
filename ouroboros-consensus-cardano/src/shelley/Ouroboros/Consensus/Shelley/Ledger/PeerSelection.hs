@@ -21,6 +21,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, mapMaybe)
 import Data.Ord (Down (..))
+import Data.Sequence.Strict (StrictSeq)
 import Data.Text.Encoding (encodeUtf8)
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
@@ -37,10 +38,16 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
     poolDistr :: SL.PoolDistr
     poolDistr = SL.nesPd shelleyLedgerState
 
+    futurePoolParams :: Map (SL.KeyHash SL.StakePool) SL.StakePoolParams
+    futurePoolParams = SL.psFutureStakePoolParams pstate
+
+    stakePoolsState :: Map (SL.KeyHash SL.StakePool) SL.StakePoolState
+    stakePoolsState = SL.psStakePools pstate
+
     -- Sort stake pools by descending stake
     orderByStake ::
       SL.PoolDistr ->
-      [(SL.KeyHash 'SL.StakePool, PoolStake)]
+      [(SL.KeyHash SL.StakePool, PoolStake)]
     orderByStake =
       sortOn (Down . snd)
         . map (second (PoolStake . SL.individualPoolStake))
@@ -70,26 +77,25 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
       Just $ LedgerRelayAccessSRVDomain (encodeUtf8 $ dnsToText dnsName)
 
     -- Note that a stake pool can have multiple registered relays
-    pparamsLedgerRelayAccessPoints ::
+    ledgerRelayAccessPoints ::
       (LedgerRelayAccessPoint -> StakePoolRelay) ->
-      SL.StakePoolState ->
+      StrictSeq SL.StakePoolRelay ->
       Maybe (NonEmpty StakePoolRelay)
-    pparamsLedgerRelayAccessPoints injStakePoolRelay =
+    ledgerRelayAccessPoints injStakePoolRelay =
       NE.nonEmpty
         . force
         . mapMaybe (fmap injStakePoolRelay . relayToLedgerRelayAccessPoint)
         . toList
-        . SL.spsRelays
 
     -- Combine the stake pools registered in the future and the current pool
     -- parameters, and remove duplicates.
     poolLedgerRelayAccessPoints ::
-      Map (SL.KeyHash 'SL.StakePool) (NonEmpty StakePoolRelay)
+      Map (SL.KeyHash SL.StakePool) (NonEmpty StakePoolRelay)
     poolLedgerRelayAccessPoints =
       Map.unionWith
         (\futureRelays currentRelays -> NE.nub (futureRelays <> currentRelays))
-        (Map.mapMaybe (pparamsLedgerRelayAccessPoints FutureRelay) (SL.psStakePools pstate))
-        (Map.mapMaybe (pparamsLedgerRelayAccessPoints CurrentRelay) (SL.psFutureStakePools pstate))
+        (Map.mapMaybe (ledgerRelayAccessPoints FutureRelay . SL.sppRelays) futurePoolParams)
+        (Map.mapMaybe (ledgerRelayAccessPoints CurrentRelay . SL.spsRelays) stakePoolsState)
 
     pstate :: SL.PState era
     pstate =
