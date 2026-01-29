@@ -10,6 +10,7 @@ import qualified Cardano.Ledger.Core as Core (Tx)
 import qualified Cardano.Ledger.Core as SL (hashTxSeq, toTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
+import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import qualified Data.Sequence.Strict as Seq
@@ -76,12 +77,11 @@ forgeShelleyBlock
         actualBodySize
         protocolVersion
     let blk = mkShelleyBlock $ SL.Block hdr body
-
-    let eb = mkLeiosEb (extractTx <$> ebTxs)
-
+    -- Only build an EB if ebTxs is not empty
+    let eb = mkLeiosEb <$> nonEmpty (extractTx <$> ebTxs)
     return $
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
-        (blk, Just eb)
+        (blk, eb)
    where
     protocolVersion = shelleyProtocolVersion $ configBlock cfg
 

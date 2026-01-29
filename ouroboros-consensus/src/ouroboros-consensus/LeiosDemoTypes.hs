@@ -14,7 +14,7 @@ module LeiosDemoTypes (module LeiosDemoTypes) where
 import Cardano.Binary (enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Core (EraTx, Tx)
-import Cardano.Prelude (toString)
+import Cardano.Prelude (NonEmpty, toList, toString)
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -344,10 +344,9 @@ data LeiosEb = MkLeiosEb {leiosEbTxs :: !(V.Vector (TxHash, BytesSize))}
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
-mkLeiosEb :: EraTx era => [Tx era] -> LeiosEb
-mkLeiosEb [] = error "FIXME: should not build an empty eb"
+mkLeiosEb :: EraTx era => NonEmpty (Tx era) -> LeiosEb
 mkLeiosEb txs =
-  MkLeiosEb . V.fromList $ map go txs
+  MkLeiosEb . V.fromList . map go $ toList txs
  where
   go tx =
     let hash = Hash.hashWithSerialiser @HASH toCBOR tx
