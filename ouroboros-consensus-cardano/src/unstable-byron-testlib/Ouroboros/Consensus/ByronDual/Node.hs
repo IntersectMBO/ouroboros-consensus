@@ -5,6 +5,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -65,7 +66,10 @@ dualByronBlockForging creds =
     , updateForgeState = \cfg ->
         fmap castForgeStateUpdateInfo .: updateForgeState (dualTopLevelConfigMain cfg)
     , checkCanForge = checkCanForge . dualTopLevelConfigMain
-    , forgeBlock = return .....: forgeDualByronBlock
+    , forgeBlock = \cfg b s ls txs _ebTxs isLeader ->
+        -- XXX: Adding Leios EB support here feels so wrong
+        return . (,Nothing) $
+          forgeDualByronBlock cfg b s ls txs isLeader
     }
  where
   BlockForging{..} = byronBlockForging creds
