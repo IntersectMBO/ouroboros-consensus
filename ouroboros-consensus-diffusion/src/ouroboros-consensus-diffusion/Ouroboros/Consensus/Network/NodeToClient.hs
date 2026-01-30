@@ -40,6 +40,7 @@ import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
 import           Codec.CBOR.Read (DeserialiseFailure)
 import           Codec.Serialise (Serialise)
+import           Control.DeepSeq (NFData)
 import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
@@ -392,6 +393,7 @@ mkApps ::
      forall m addrNTN addrNTC blk e bCS bTX bSQ bTM.
      ( IOLike m
      , Exception e
+     , NFData e
      , ShowProxy blk
      , ShowProxy (ApplyTxErr blk)
      , ShowProxy (GenTx blk)
