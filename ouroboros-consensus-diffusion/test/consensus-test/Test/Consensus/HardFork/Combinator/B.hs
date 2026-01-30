@@ -12,6 +12,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -297,8 +298,8 @@ blockForgingB =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot st txs proof ->
-        return $
+    , forgeBlock = \cfg bno slot st txs _ebTxs proof ->
+        return . (,Nothing) $
           forgeBlockB cfg bno slot st (fmap txForgetValidated txs) proof
     }
 
@@ -328,8 +329,9 @@ instance LedgerSupportsMempool BlockB where
 
 instance TxLimits BlockB where
   type TxMeasure BlockB = IgnoringOverflow ByteSize32
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
   txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
+  ebCapacityTxMeasure _ _ = Nothing
 
 data instance TxId (GenTx BlockB)
   deriving stock (Show, Eq, Ord, Generic)

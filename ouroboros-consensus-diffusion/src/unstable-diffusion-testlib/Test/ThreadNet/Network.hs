@@ -1218,6 +1218,12 @@ runThreadNetwork
         , cPeerSharingCodec =
             mapFailureCodec (CodecBytesFailure "PeerSharing") $
               NTN.cPeerSharingCodec binaryProtocolCodecs
+        , cLeiosNotifyCodec =
+            mapFailureCodec (CodecBytesFailure "LeiosNotify") $
+              NTN.cLeiosNotifyCodec binaryProtocolCodecs
+        , cLeiosFetchCodec =
+            mapFailureCodec (CodecBytesFailure "LeiosFetch") $
+              NTN.cLeiosFetchCodec binaryProtocolCodecs
         }
      where
       binaryProtocolCodecs =
