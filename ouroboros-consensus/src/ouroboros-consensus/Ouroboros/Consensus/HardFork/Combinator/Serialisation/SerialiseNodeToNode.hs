@@ -122,7 +122,7 @@ instance
   SerialiseNodeToNode (HardForkBlock xs) (HardForkBlock xs)
   where
   encodeNodeToNode ccfg _ = wrapCBORinCBOR (encodeDiskHfcBlock ccfg)
-  decodeNodeToNode ccfg _ = unwrapCBORinCBOR ((Right .) <$> decodeDiskHfcBlock ccfg)
+  decodeNodeToNode ccfg _ = unwrapCBORinCBOR (decodeDiskHfcBlock ccfg)
 
 instance
   SerialiseHFC xs =>

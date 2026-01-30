@@ -886,7 +886,7 @@ decodeThroughSerialised ::
   (forall s. Decoder s a)
 decodeThroughSerialised dec decSerialised = do
   serialised <- decSerialised
-  fromSerialised ((Right .) <$> dec) serialised
+  fromSerialised dec serialised
 
 {------------------------------------------------------------------------------
   Roundtrip tests for examples

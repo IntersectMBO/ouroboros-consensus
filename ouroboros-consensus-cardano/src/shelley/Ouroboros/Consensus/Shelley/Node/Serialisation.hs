@@ -153,7 +153,7 @@ instance
   SerialiseNodeToNode (ShelleyBlock proto era) (ShelleyBlock proto era)
   where
   encodeNodeToNode _ _ = wrapCBORinCBOR encodeShelleyBlock
-  decodeNodeToNode _ _ = unwrapCBORinCBOR ((Right .) <$> decodeShelleyBlock)
+  decodeNodeToNode _ _ = unwrapCBORinCBOR decodeShelleyBlock
 
 -- | 'Serialised' uses CBOR-in-CBOR by default.
 instance SerialiseNodeToNode (ShelleyBlock proto era) (Serialised (ShelleyBlock proto era))
@@ -217,7 +217,7 @@ instance
   SerialiseNodeToClient (ShelleyBlock proto era) (ShelleyBlock proto era)
   where
   encodeNodeToClient _ _ = wrapCBORinCBOR encodeShelleyBlock
-  decodeNodeToClient _ _ = unwrapCBORinCBOR ((Right .) <$> decodeShelleyBlock)
+  decodeNodeToClient _ _ = unwrapCBORinCBOR decodeShelleyBlock
 
 -- | This instance uses the invariant that the 'EpochInfo' in a
 -- 'ShelleyLedgerConfig' is fixed i.e. has a constant 'EpochSize' and
