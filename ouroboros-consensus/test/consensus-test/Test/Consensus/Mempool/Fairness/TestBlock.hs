@@ -127,6 +127,8 @@ instance Ledger.TxLimits TestBlock where
     -- can be exactly what each test requests.
     Ledger.IgnoringOverflow $ Ledger.ByteSize32 1
 
+  ebCapacityTxMeasure _ _ = Nothing
+
   txMeasure _cfg _st = pure . Ledger.IgnoringOverflow . txSize . unGenTx
 
 {-------------------------------------------------------------------------------
