@@ -50,6 +50,7 @@ import           Ouroboros.Network.Driver (runPeer)
 import           Ouroboros.Network.Driver.Limits
                      (ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit),
                      runPipelinedPeerWithLimits)
+import           Ouroboros.Network.Mock.OrphanedInstances ()
 import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import           Ouroboros.Network.Protocol.BlockFetch.Codec
                      (byteLimitsBlockFetch, codecBlockFetchId)
