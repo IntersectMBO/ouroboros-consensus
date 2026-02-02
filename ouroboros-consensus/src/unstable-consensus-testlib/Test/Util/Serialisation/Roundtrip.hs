@@ -12,6 +12,7 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -64,6 +65,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import Data.Typeable
 import GHC.Generics (Generic)
+import Language.Haskell.TH (runIO)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (AnnTip)
 import Ouroboros.Consensus.Ledger.Basics
@@ -892,6 +894,16 @@ decodeThroughSerialised dec decSerialised = do
   Roundtrip tests for examples
 ------------------------------------------------------------------------------}
 
+$( do
+     runIO $
+       putStrLn $
+         unlines
+           [ "Dijkstra serialisation tests are disabled!"
+           , "Remember to solve TODO(dijkstra_serialisation)"
+           , " when Dijkstra era block is stable."
+           ]
+     pure []
+ )
 examplesRoundtrip ::
   forall blk.
   (SerialiseDiskConstraints blk, Eq blk, Show blk, LedgerSupportsProtocol blk) =>
