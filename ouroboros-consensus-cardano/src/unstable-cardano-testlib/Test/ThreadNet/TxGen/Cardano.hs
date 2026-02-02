@@ -265,8 +265,8 @@ migrateUTxO migrationInfo curSlot lcfg lst
       , SL.sppOwners = Set.singleton $ Shelley.mkKeyHash poolSK
       , SL.sppPledge = pledge
       , SL.sppId = Shelley.mkKeyHash poolSK
-      , SL.sppRewardAccount =
-          SL.RewardAccount Shelley.networkId $ Shelley.mkCredential poolSK
+      , SL.sppAccountAddress =
+          SL.AccountAddress Shelley.networkId $ SL.AccountId (Shelley.mkCredential poolSK)
       , SL.sppRelays = StrictSeq.empty
       , SL.sppVrf = Shelley.mkKeyHashVrf @c vrfSK
       }

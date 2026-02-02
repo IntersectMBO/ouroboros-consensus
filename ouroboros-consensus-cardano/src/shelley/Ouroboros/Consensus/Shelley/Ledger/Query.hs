@@ -477,7 +477,7 @@ instance
                   }
 
             getAllStake :: SL.SnapShot -> SL.Coin
-            getAllStake (SL.SnapShot stake _ _) = VMap.foldMap fromCompact (SL.unStake stake)
+            getAllStake (SL.SnapShot stake _ _ _ _) = VMap.foldMap fromCompact (SL.unStake stake)
          in case mPoolIds of
               Nothing ->
                 let poolIds =

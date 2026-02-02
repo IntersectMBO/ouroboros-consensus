@@ -445,7 +445,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
               , SL.sppMargin = minBound
               , -- Reward accounts live in a separate "namespace" to other
                 -- accounts, so it should be fine to use the same address.
-                SL.sppRewardAccount = SL.RewardAccount networkId $ mkCredential cnDelegateKey
+                SL.sppAccountAddress = SL.AccountAddress networkId $ SL.AccountId (mkCredential cnDelegateKey)
               , SL.sppOwners = Set.singleton poolOwnerHash
               , SL.sppRelays = Seq.empty
               , SL.sppMetadata = SL.SNothing
