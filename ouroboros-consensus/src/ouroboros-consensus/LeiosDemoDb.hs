@@ -8,6 +8,7 @@ module LeiosDemoDb (module LeiosDemoDb) where
 
 import Cardano.Prelude (when)
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Concurrent.Class.MonadSTM (TChan)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( modifyTVar
   , newTVarIO
@@ -33,6 +34,7 @@ import qualified GHC.Stack
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
+  , LeiosNotification
   , LeiosPoint (..)
   , TxHash (..)
   )
@@ -53,19 +55,18 @@ import System.Exit (die)
 --
 -- TODO: use LeiosPoint and LeiosEb types in the interface instead of raw tuples.
 data LeiosDbHandle m = LeiosDbHandle
-  { -- EB Points operations
-    leiosDbScanEbPoints :: m [(SlotNo, EbHash)]
+  { subscribeEbNotifications :: m (TChan m LeiosNotification)
+  -- ^ Subscribe to new EBs and EBTxs being stored by the LeiosDB. This will
+  -- only inform about new additions, starting from when this function was
+  -- called.
+  , leiosDbScanEbPoints :: m [(SlotNo, EbHash)]
   , leiosDbInsertEbPoint :: SlotNo -> EbHash -> m ()
-  , -- EB Bodies operations
-    leiosDbLookupEbBody :: EbHash -> m [(TxHash, BytesSize)]
+  , leiosDbLookupEbBody :: EbHash -> m [(TxHash, BytesSize)]
   , leiosDbInsertEbBody :: EbHash -> [(Int, TxHash, BytesSize)] -> m ()
-  , -- Transaction operations
-    leiosDbUpdateEbTx :: EbHash -> Int -> ByteString -> m ()
+  , leiosDbUpdateEbTx :: EbHash -> Int -> ByteString -> m ()
   , leiosDbInsertTxCache :: TxHash -> ByteString -> BytesSize -> Int64 -> m ()
-  , -- Batch operations (using temp table in SQL, simple lookup in memory)
-    leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  , -- Copy from txCache to ebTxs in batch
-    -- TODO: Avoid needing this function
+  , leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  , -- TODO: Avoid needing this function
     leiosDbCopyFromTxCacheBatch ::
       Map LeiosPoint (IntMap BytesSize) ->
       BytesSize ->

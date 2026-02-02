@@ -15,7 +15,6 @@ import Cardano.Prelude (first)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadMVar (MVar, MonadMVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
-import Control.Concurrent.Class.MonadSTM (MonadSTM)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad (forM, when)
@@ -44,7 +43,6 @@ import qualified Data.Vector.Mutable as MV
 import Data.Word (Word16, Word64)
 import LeiosDemoDb (LeiosDbHandle (..))
 import qualified LeiosDemoOnlyTestFetch as LF
-import qualified LeiosDemoOnlyTestNotify as LN
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
@@ -634,20 +632,21 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, 
             }
     pure outstanding'
   void $ MVar.tryPutMVar readyVar ()
-  when novel $ do
-    traceWith ktracer $ TraceLeiosBlockAcquired point
-    vars <- MVar.readMVar notificationVars
-    forM_ vars $ \var -> do
-      traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlock!: " ++ Leios.prettyLeiosPoint point
-      StrictSTM.atomically $ do
-        x <- StrictSTM.readTVar var
-        let !x' =
-              Map.insertWith
-                (<>)
-                ebSlot
-                (Seq.singleton (LeiosOfferBlock point ebBytesSize))
-                x
-        StrictSTM.writeTVar var x'
+  -- FIXME: this must happen in the LeiosDbHandle now
+  -- when novel $ do
+  --   traceWith ktracer $ TraceLeiosBlockAcquired point
+  --   vars <- MVar.readMVar notificationVars
+  --   forM_ vars $ \var -> do
+  --     traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlock!: " ++ Leios.prettyLeiosPoint point
+  --     StrictSTM.atomically $ do
+  --       x <- StrictSTM.readTVar var
+  --       let !x' =
+  --             Map.insertWith
+  --               (<>)
+  --               ebSlot
+  --               (Seq.singleton (LeiosOfferBlock point ebBytesSize))
+  --               x
+  --       StrictSTM.writeTVar var x'
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
 
 -----
@@ -802,20 +801,21 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
             Leios.blockingPerEb outstanding `Map.difference` Leios.blockingPerEb outstanding'
     pure (outstanding', newNotifications)
   void $ MVar.tryPutMVar readyVar ()
-  when (not $ null newNotifications) $ do
-    notifications <- fmap Map.fromList . forM newNotifications $ \completedPoint -> do
-      traceWith ktracer $ TraceLeiosBlockTxsAcquired completedPoint
-      pure (completedPoint.pointSlotNo, Seq.singleton (LeiosOfferBlockTxs completedPoint))
+  -- FIXME: this must happen in the LeiosDbHandle now
+  -- when (not $ null newNotifications) $ do
+  --   notifications <- fmap Map.fromList . forM newNotifications $ \completedPoint -> do
+  --     traceWith ktracer $ TraceLeiosBlockTxsAcquired completedPoint
+  --     pure (completedPoint.pointSlotNo, Seq.singleton (LeiosOfferBlockTxs completedPoint))
 
-    vars <- MVar.readMVar notificationVars
-    forM_ vars $ \var -> do
-      traceWith tracer $
-        MkTraceLeiosPeer $
-          "leiosNotificationsBlockTxs!: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
-      StrictSTM.atomically $ do
-        x <- StrictSTM.readTVar var
-        let !x' = Map.unionWith (<>) x notifications
-        StrictSTM.writeTVar var x'
+  --   vars <- MVar.readMVar notificationVars
+  --   forM_ vars $ \var -> do
+  --     traceWith tracer $
+  --       MkTraceLeiosPeer $
+  --         "leiosNotificationsBlockTxs!: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
+  --     StrictSTM.atomically $ do
+  --       x <- StrictSTM.readTVar var
+  --       let !x' = Map.unionWith (<>) x notifications
+  --       StrictSTM.writeTVar var x'
   traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
 
 -----
@@ -869,51 +869,23 @@ doCacheCopy tracer db (writeLock, outstandingVar, notificationVars) bytesSize = 
           Map.keys $
             Leios.blockingPerEb outstanding `Map.difference` Leios.blockingPerEb outstanding'
     pure (outstanding', (0 /= Leios.toCopyCount outstanding', newNotifications))
-  when (not $ null newNotifications) $ do
-    let notifications =
-          Map.fromList $
-            [ (p.pointSlotNo, Seq.singleton (LeiosOfferBlockTxs p))
-            | p <- newNotifications
-            ]
-    traceWith tracer $
-      MkTraceLeiosKernel $
-        "leiosNotificationsCopy: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
-    vars <- MVar.readMVar notificationVars
-    forM_ vars $ \var -> do
-      traceWith tracer $
-        MkTraceLeiosKernel $
-          "leiosNotificationsCopy!: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
-      StrictSTM.atomically $ do
-        x <- StrictSTM.readTVar var
-        let !x' = Map.unionWith (<>) x notifications
-        StrictSTM.writeTVar var x'
+  -- FIXME: this must happen in the LeiosDbHandle now
+  -- when (not $ null newNotifications) $ do
+  --   let notifications =
+  --         Map.fromList $
+  --           [ (p.pointSlotNo, Seq.singleton (LeiosOfferBlockTxs p))
+  --           | p <- newNotifications
+  --           ]
+  --   traceWith tracer $
+  --     MkTraceLeiosKernel $
+  --       "leiosNotificationsCopy: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
+  --   vars <- MVar.readMVar notificationVars
+  --   forM_ vars $ \var -> do
+  --     traceWith tracer $
+  --       MkTraceLeiosKernel $
+  --         "leiosNotificationsCopy!: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
+  --     StrictSTM.atomically $ do
+  --       x <- StrictSTM.readTVar var
+  --       let !x' = Map.unionWith (<>) x notifications
+  --       StrictSTM.writeTVar var x'
   pure moreTodo
-
------
-
-nextLeiosNotification ::
-  ( MonadMVar m
-  , MonadSTM m
-  ) =>
-  Tracer m TraceLeiosPeer ->
-  StrictTVar m (Map SlotNo (Seq LeiosNotification)) ->
-  m (LN.Message (LN.LeiosNotify LeiosPoint announcement) LN.StBusy LN.StIdle)
-nextLeiosNotification _tracer var = do
-  notification <- StrictSTM.atomically $ StrictSTM.readTVar var >>= go1
-  pure $ case notification of
-    LeiosOfferBlock p ebBytesSize ->
-      LN.MsgLeiosBlockOffer p ebBytesSize
-    LeiosOfferBlockTxs p ->
-      LN.MsgLeiosBlockTxsOffer p
- where
-  go1 = go2 . Map.maxViewWithKey
-  go2 = \case
-    Nothing -> StrictSTM.retry
-    Just ((_slotNo, Seq.Empty), x') -> go1 x'
-    Just ((slotNo, notification Seq.:<| notifications), x') -> do
-      StrictSTM.writeTVar var $
-        if Seq.null notifications
-          then x'
-          else
-            Map.insert slotNo notifications x'
-      pure notification

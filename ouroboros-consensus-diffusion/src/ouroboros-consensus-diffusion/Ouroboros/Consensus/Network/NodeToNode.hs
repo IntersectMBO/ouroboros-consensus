@@ -52,7 +52,6 @@ import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
-import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -157,12 +156,14 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
   )
 import Ouroboros.Network.TxSubmission.Outbound
 
+import Control.Concurrent.Class.MonadSTM (readTChan)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import LeiosDemoDb (LeiosDbHandle (subscribeEbNotifications))
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
-import LeiosDemoTypes (LeiosEb, LeiosPoint (..), LeiosTx, TraceLeiosPeer (..))
+import LeiosDemoTypes (LeiosEb, LeiosNotification (..), LeiosPoint (..), LeiosTx, TraceLeiosPeer (..))
 import qualified LeiosDemoTypes as Leios
 import qualified Ouroboros.Network.Mux as ON
 
@@ -371,14 +372,15 @@ mkHandlers
                       pure (offers1, offers2')
                     void $ MVar.tryPutMVar getLeiosReady ()
               )
-      , hLeiosNotifyServer = \_version peer -> Effect $ do
-          var <- StrictSTM.newTVarIO Map.empty
-          MVar.modifyMVar_ getLeiosNotifications $ \x -> do
-            let !x' = Map.insert (Leios.MkPeerId peer) var x
-            pure x'
-          pure $
-            leiosNotifyServerPeer
-              (Leios.nextLeiosNotification (leiosPeerTracer peer) var)
+      , hLeiosNotifyServer = \_version _peer -> Effect $ do
+          db <- getLeiosNewDbConnection
+          chan <- subscribeEbNotifications db
+          pure . leiosNotifyServerPeer $ do
+            atomically (readTChan chan) >>= \case
+              LeiosOfferBlock{point, ebSize} ->
+                pure $ MsgLeiosBlockOffer point ebSize
+              LeiosOfferBlockTxs{point} ->
+                pure $ MsgLeiosBlockTxsOffer point
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           db <- getLeiosNewDbConnection -- TODO share DB connection for same peer?
           reqVar <-
