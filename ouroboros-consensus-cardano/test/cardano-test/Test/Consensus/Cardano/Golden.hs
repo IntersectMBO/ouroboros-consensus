@@ -56,4 +56,5 @@ instance
       CardanoNodeToClientVersion16 -> "CardanoNodeToClientVersion16"
       CardanoNodeToClientVersion17 -> "CardanoNodeToClientVersion17"
       CardanoNodeToClientVersion18 -> "CardanoNodeToClientVersion18"
+      CardanoNodeToClientVersion19 -> "CardanoNodeToClientVersion19"
       _ -> error $ "Unknown version: " <> show blockVersion

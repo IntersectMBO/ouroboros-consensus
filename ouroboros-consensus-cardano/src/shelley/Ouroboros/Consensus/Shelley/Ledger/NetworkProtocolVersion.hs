@@ -30,7 +30,11 @@ data ShelleyNodeToClientVersion
   | -- | New encoder for PParams, CompactGenesis
     ShelleyNodeToClientVersion13
   | -- | Support SRV in GetBigLedgerPeerSnapshot
+    -- TODO: remove the GetLedgerPeerSnapshot pattern synonym
+    -- when removing support of ShelleyNodeToClientVersion14
     ShelleyNodeToClientVersion14
+  | -- | Support retrieving all ledger peers by GetLedgerPeerSnapshot
+    ShelleyNodeToClientVersion15
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 ledgerPeerSnapshotSupportsSRV :: ShelleyNodeToClientVersion -> LedgerPeerSnapshotSRVSupport
@@ -58,6 +62,7 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
       , (NodeToClientV_20, ShelleyNodeToClientVersion12)
       , (NodeToClientV_21, ShelleyNodeToClientVersion13)
       , (NodeToClientV_22, ShelleyNodeToClientVersion14)
+      , (NodeToClientV_23, ShelleyNodeToClientVersion15)
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault

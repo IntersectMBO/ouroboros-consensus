@@ -32,12 +32,18 @@ import Test.Tasty.QuickCheck
 import Test.Util.Corruption
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Serialisation.Roundtrip
+import Test.Util.Serialisation.TxWireSize
 
 tests :: TestTree
 tests =
   testGroup
     "Byron"
     [ roundtrip_all testCodecCfg dictNestedHdr Nothing
+    , testGroup
+        "GenTx.txWireSize"
+        [ testProperty "txSubmission" (prop_txWireSize_txSubmission testCodecCfg)
+        , testProperty "tight" (prop_txWireSize (const Nothing) testCodecCfg)
+        ]
     , testProperty "BinaryBlockInfo sanity check" prop_byronBinaryBlockInfo
     , testGroup
         "Integrity"

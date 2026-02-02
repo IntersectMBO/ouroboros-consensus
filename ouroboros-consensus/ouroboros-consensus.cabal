@@ -316,6 +316,7 @@ library
     bytestring >=0.10 && <0.13,
     cardano-binary,
     cardano-crypto-class,
+    cardano-diffusion:api,
     cardano-ledger-core ^>=1.19,
     cardano-prelude,
     cardano-slotting,
@@ -337,9 +338,7 @@ library
     mtl,
     multiset ^>=0.3,
     nothunks ^>=0.2 || ^>=0.3,
-    ouroboros-network-api ^>=0.16,
-    ouroboros-network-mock ^>=0.1,
-    ouroboros-network-protocols ^>=0.15,
+    ouroboros-network:{api, api-tests-lib, protocols} ^>=0.24,
     primitive,
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
@@ -360,7 +359,7 @@ library
     time,
     transformers,
     transformers-base,
-    typed-protocols ^>=1.0,
+    typed-protocols ^>=1.1,
     vector ^>=0.13,
 
   x-docspec-extra-packages:
@@ -488,6 +487,7 @@ library unstable-consensus-testlib
     Test.Util.Serialisation.Golden
     Test.Util.Serialisation.Roundtrip
     Test.Util.Serialisation.SomeResult
+    Test.Util.Serialisation.TxWireSize
     Test.Util.Shrink
     Test.Util.Slots
     Test.Util.Split
@@ -533,8 +533,7 @@ library unstable-consensus-testlib
     nothunks,
     optparse-applicative,
     ouroboros-consensus,
-    ouroboros-network-api,
-    ouroboros-network-mock,
+    ouroboros-network:{api, api-tests-lib, ouroboros-network, protocols-tests-lib},
     pretty-simple,
     process,
     quickcheck-instances,
@@ -603,8 +602,7 @@ library unstable-mock-block
     mtl,
     nothunks,
     ouroboros-consensus,
-    ouroboros-network-api,
-    ouroboros-network-mock,
+    ouroboros-network:{api, api-tests-lib},
     serialise,
     text,
     time,
@@ -639,7 +637,7 @@ library unstable-tutorials
     mtl,
     nothunks,
     ouroboros-consensus,
-    ouroboros-network-api,
+    ouroboros-network:api,
     serialise,
 
 test-suite consensus-test
@@ -677,6 +675,7 @@ test-suite consensus-test
     cardano-binary,
     cardano-crypto-class ^>=2.2,
     cardano-crypto-tests ^>=2.2,
+    cardano-diffusion:api,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
@@ -696,10 +695,7 @@ test-suite consensus-test
     nonempty-containers,
     nothunks,
     ouroboros-consensus,
-    ouroboros-network,
-    ouroboros-network-api,
-    ouroboros-network-mock,
-    ouroboros-network-protocols:{ouroboros-network-protocols, testlib},
+    ouroboros-network:{api, api-tests-lib, ouroboros-network, protocols, protocols-tests-lib},
     quickcheck-classes,
     quickcheck-monoid-subclasses,
     quickcheck-state-machine:no-vendored-treediff,
@@ -717,7 +713,7 @@ test-suite consensus-test
     transformers,
     transformers-base,
     tree-diff,
-    typed-protocols:{examples, stateful, typed-protocols} ^>=1,
+    typed-protocols:{examples, stateful, typed-protocols} ^>=1.1,
     unstable-consensus-testlib,
     unstable-mock-block,
 
@@ -822,9 +818,7 @@ test-suite storage-test
     mtl,
     nothunks,
     ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lmdb, ouroboros-consensus-lsm},
-    ouroboros-network-api,
-    ouroboros-network-mock,
-    ouroboros-network-protocols,
+    ouroboros-network:{api, api-tests-lib, protocols, protocols-tests-lib},
     pretty-show,
     quickcheck-dynamic,
     quickcheck-lockstep ^>=0.8,
@@ -891,9 +885,7 @@ benchmark ChainSync-client-bench
     containers,
     contra-tracer,
     ouroboros-consensus,
-    ouroboros-network-api,
-    ouroboros-network-mock,
-    ouroboros-network-protocols,
+    ouroboros-network:{api, api-tests-lib, protocols},
     resource-registry,
     time,
     typed-protocols:examples,
@@ -910,7 +902,7 @@ benchmark PerasCertDB-bench
     base,
     cardano-ledger-core,
     ouroboros-consensus,
-    ouroboros-network-api,
+    ouroboros-network:api,
     tasty-bench,
     unstable-consensus-testlib,
 

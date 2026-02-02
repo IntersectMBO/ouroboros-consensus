@@ -339,7 +339,7 @@ instance
   SerialiseNodeToClient (HardForkBlock xs) (HardForkBlock xs)
   where
   encodeNodeToClient ccfg _ = wrapCBORinCBOR (encodeDiskHfcBlock ccfg)
-  decodeNodeToClient ccfg _ = unwrapCBORinCBOR (decodeDiskHfcBlock ccfg)
+  decodeNodeToClient ccfg _ = unwrapCBORinCBOR ((Right .) <$> decodeDiskHfcBlock ccfg)
 
 {-------------------------------------------------------------------------------
   Serialised blocks

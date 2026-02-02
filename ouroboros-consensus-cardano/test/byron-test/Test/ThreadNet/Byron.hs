@@ -119,6 +119,7 @@ genTestSetup k numCoreNodes numSlots setupSlotLength = do
   setupEBBs <- arbitrary
   initSeed <- arbitrary
   nodeTopology <- genNodeTopology numCoreNodes
+  txLogicVersion <- elements [minBound .. maxBound]
 
   let testConfig =
         TestConfig
@@ -126,6 +127,7 @@ genTestSetup k numCoreNodes numSlots setupSlotLength = do
           , nodeTopology
           , numCoreNodes
           , numSlots
+          , txLogicVersion
           }
   let params = byronPBftParams k numCoreNodes
 
@@ -171,6 +173,7 @@ tests =
                           , nodeTopology = meshNodeTopology ncn
                           , numCoreNodes = ncn
                           , numSlots = NumSlots 24
+                          , txLogicVersion = maxBound
                           }
                     , setupNodeJoinPlan =
                         NodeJoinPlan $
@@ -198,6 +201,7 @@ tests =
                         , numSlots = NumSlots 2
                         , nodeTopology = meshNodeTopology ncn
                         , initSeed = Seed 0
+                        , txLogicVersion = maxBound
                         }
                   , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0, SlotNo 0), (CoreNodeId 1, SlotNo 1)])
                   , setupNodeRestarts = noRestarts
@@ -219,6 +223,7 @@ tests =
                         , numSlots = NumSlots 4
                         , nodeTopology = meshNodeTopology ncn
                         , initSeed = Seed 0
+                        , txLogicVersion = maxBound
                         }
                   , setupNodeJoinPlan =
                       NodeJoinPlan
@@ -245,6 +250,7 @@ tests =
                         , numSlots = NumSlots 7
                         , nodeTopology = meshNodeTopology ncn
                         , initSeed = Seed 0
+                        , txLogicVersion = maxBound
                         }
                   , setupNodeJoinPlan =
                       NodeJoinPlan
@@ -273,6 +279,7 @@ tests =
                         , numSlots = NumSlots 58
                         , nodeTopology = meshNodeTopology ncn
                         , initSeed = Seed 0
+                        , txLogicVersion = maxBound
                         }
                   , setupNodeJoinPlan =
                       NodeJoinPlan $
@@ -301,10 +308,10 @@ tests =
                   , setupTestConfig =
                       TestConfig
                         { numCoreNodes = ncn5
-                        , -- Still fails if I increase numSlots.
-                          numSlots = NumSlots 54
+                        , numSlots = NumSlots 54
                         , nodeTopology = meshNodeTopology ncn5
                         , initSeed = Seed 0
+                        , txLogicVersion = maxBound
                         }
                   , setupNodeJoinPlan =
                       NodeJoinPlan $
@@ -351,6 +358,7 @@ tests =
                         , numSlots = NumSlots $ window + slotsPerEpoch + slotsPerRekey + window
                         , nodeTopology = meshNodeTopology ncn
                         , initSeed = seed
+                        , txLogicVersion = maxBound
                         }
                   , setupNodeJoinPlan = trivialNodeJoinPlan ncn
                   , setupNodeRestarts =
@@ -379,6 +387,7 @@ tests =
                       , numSlots = NumSlots 2
                       , nodeTopology = meshNodeTopology ncn
                       , initSeed = Seed 0
+                      , txLogicVersion = maxBound
                       }
                 , setupNodeJoinPlan = trivialNodeJoinPlan ncn
                 , setupNodeRestarts =
@@ -403,6 +412,7 @@ tests =
                         , numSlots = NumSlots 72
                         , nodeTopology = meshNodeTopology ncn4
                         , initSeed = Seed 0
+                        , txLogicVersion = maxBound
                         }
                   , setupNodeJoinPlan = trivialNodeJoinPlan ncn4
                   , setupNodeRestarts =
@@ -431,6 +441,7 @@ tests =
                       , numSlots = NumSlots 84
                       , nodeTopology = meshNodeTopology ncn3
                       , initSeed = Seed 0
+                      , txLogicVersion = maxBound
                       }
                 , setupNodeJoinPlan =
                     NodeJoinPlan
@@ -503,6 +514,7 @@ tests =
                           , (CoreNodeId 2, Set.fromList [CoreNodeId 0])
                           ]
                   , initSeed = Seed 0
+                  , txLogicVersion = maxBound
                   }
             , setupNodeJoinPlan =
                 NodeJoinPlan $
@@ -560,6 +572,7 @@ tests =
                                     ]
                                 )
                           , initSeed = Seed 0
+                          , txLogicVersion = maxBound
                           }
                     , setupNodeJoinPlan =
                         NodeJoinPlan
@@ -598,6 +611,7 @@ tests =
                         , numSlots = NumSlots 41
                         , nodeTopology = meshNodeTopology ncn
                         , initSeed = Seed 0
+                        , txLogicVersion = maxBound
                         }
                   , setupNodeJoinPlan = trivialNodeJoinPlan ncn
                   , setupNodeRestarts =
@@ -618,6 +632,7 @@ tests =
                         , numSlots = NumSlots 10
                         , nodeTopology = meshNodeTopology ncn
                         , initSeed = Seed 0
+                        , txLogicVersion = maxBound
                         }
                   , setupNodeJoinPlan =
                       NodeJoinPlan
@@ -641,6 +656,7 @@ tests =
                       , numSlots = NumSlots 1
                       , nodeTopology = meshNodeTopology ncn
                       , initSeed = Seed 0
+                      , txLogicVersion = maxBound
                       }
                 , setupNodeJoinPlan = trivialNodeJoinPlan ncn
                 , setupNodeRestarts = noRestarts
@@ -668,6 +684,7 @@ tests =
                       , numSlots = NumSlots 2
                       , nodeTopology = meshNodeTopology ncn
                       , initSeed = Seed 0
+                      , txLogicVersion = maxBound
                       }
                 , setupNodeJoinPlan = trivialNodeJoinPlan ncn
                 , setupNodeRestarts = noRestarts
@@ -691,6 +708,7 @@ tests =
                       , numSlots = NumSlots 5
                       , nodeTopology = meshNodeTopology ncn
                       , initSeed = Seed 0
+                      , txLogicVersion = maxBound
                       }
                 , setupNodeJoinPlan =
                     NodeJoinPlan $
@@ -717,6 +735,7 @@ tests =
                       , numSlots = NumSlots 12
                       , nodeTopology = meshNodeTopology ncn
                       , initSeed = Seed 0
+                      , txLogicVersion = maxBound
                       }
                 , setupNodeJoinPlan =
                     NodeJoinPlan $
@@ -745,6 +764,7 @@ tests =
                       , numSlots = NumSlots 17
                       , nodeTopology = meshNodeTopology ncn
                       , initSeed = Seed 0
+                      , txLogicVersion = maxBound
                       }
                 , setupNodeJoinPlan =
                     NodeJoinPlan $
@@ -773,6 +793,7 @@ tests =
                       , numSlots = NumSlots 21
                       , nodeTopology = meshNodeTopology ncn
                       , initSeed = Seed 0
+                      , txLogicVersion = maxBound
                       }
                 , setupNodeJoinPlan =
                     NodeJoinPlan $
@@ -825,6 +846,7 @@ tests =
                           , (CoreNodeId 4, Set.fromList [CoreNodeId 0, CoreNodeId 1, CoreNodeId 2, CoreNodeId 3])
                           ]
                   , initSeed = Seed 0
+                  , txLogicVersion = maxBound
                   }
             , setupNodeJoinPlan =
                 NodeJoinPlan $
@@ -862,6 +884,7 @@ tests =
                     , numSlots = NumSlots 81
                     , nodeTopology = meshNodeTopology (NumCoreNodes 3)
                     , initSeed = Seed 0
+                    , txLogicVersion = maxBound
                     }
               , setupNodeJoinPlan =
                   NodeJoinPlan
@@ -889,6 +912,7 @@ tests =
                     , numSlots = NumSlots 39
                     , nodeTopology = meshNodeTopology (NumCoreNodes 2)
                     , initSeed = Seed 0
+                    , txLogicVersion = maxBound
                     }
               , setupNodeJoinPlan =
                   NodeJoinPlan
@@ -927,6 +951,7 @@ tests =
                     , numSlots = NumSlots 21
                     , nodeTopology = meshNodeTopology (NumCoreNodes 3)
                     , initSeed = Seed 0
+                    , txLogicVersion = maxBound
                     }
               , setupNodeJoinPlan =
                   NodeJoinPlan

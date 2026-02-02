@@ -5,6 +5,7 @@
 
 module Cardano.Tools.ImmDBServer.Diffusion (run) where
 
+import qualified Cardano.Network.NodeToNode as N2N
 import Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -27,7 +28,6 @@ import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.IOManager (withIOManager)
 import Ouroboros.Network.Mux
-import qualified Ouroboros.Network.NodeToNode as N2N
 import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   ( decodeRemoteAddress
   , encodeRemoteAddress
@@ -53,13 +53,20 @@ serve ::
 serve sockAddr application = withIOManager \iocp ->
   Server.with
     (Snocket.socketSnocket iocp)
+    (show >$< stdoutTracer)
+    ( Mux.Tracers
+        { Mux.tracer = show >$< stdoutTracer
+        , Mux.channelTracer = show >$< stdoutTracer
+        , Mux.bearerTracer = show >$< stdoutTracer
+        }
+    )
     Snocket.makeSocketBearer
     (\sock addr -> configureSocket sock (Just addr))
     sockAddr
     HandshakeArguments
       { haHandshakeTracer = show >$< stdoutTracer
       , haBearerTracer = show >$< stdoutTracer
-      , haHandshakeCodec = Handshake.nodeToNodeHandshakeCodec
+      , haHandshakeCodec = N2N.nodeToNodeHandshakeCodec
       , haVersionDataCodec = Handshake.cborTermVersionDataCodec N2N.nodeToNodeCodecCBORTerm
       , haAcceptVersion = Handshake.acceptableVersion
       , haQueryVersion = Handshake.queryVersion

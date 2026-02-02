@@ -2,6 +2,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
@@ -64,12 +65,30 @@ module Ouroboros.Consensus.Node
   ) where
 
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import Cardano.Binary (FromCBOR, ToCBOR)
 import qualified Cardano.Network.Diffusion as Cardano.Diffusion
 import Cardano.Network.Diffusion.Configuration (ChainSyncIdleTimeout (..))
+import qualified Cardano.Network.Diffusion.Configuration as Diffusion
 import qualified Cardano.Network.Diffusion.Policies as Cardano.Diffusion
 import qualified Cardano.Network.LedgerPeerConsensusInterface as Cardano
-import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers (..))
-import Cardano.Network.PeerSelection.Churn (ChurnMode (..))
+import Cardano.Network.NodeToClient
+  ( ConnectionId
+  , LocalAddress
+  , NodeToClientVersionData (..)
+  , combineVersions
+  , simpleSingletonVersions
+  )
+import Cardano.Network.NodeToNode
+  ( DiffusionMode (..)
+  , ExceptionInHandler (..)
+  , MiniProtocolParameters
+  , NodeToNodeVersionData (..)
+  , RemoteAddress
+  , blockFetchPipeliningMax
+  , defaultMiniProtocolParameters
+  )
+import Cardano.Network.PeerSelection (ChurnMode (..), PeerTrustable, UseBootstrapPeers (..))
+import Cardano.Network.Protocol.ChainSync.Codec.TimeLimits (timeLimitsChainSync)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (DeserialiseFailure)
@@ -80,6 +99,7 @@ import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer, contramap, traceWith)
+import Data.Aeson (ToJSON)
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor (void)
 import Data.Functor.Contravariant (Predicate (..))
@@ -90,7 +110,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isNothing)
 import Data.Set (Set)
 import Data.Time (NominalDiffTime)
-import Data.Typeable (Typeable)
+import Data.Typeable (Typeable, cast)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
@@ -140,30 +160,14 @@ import Ouroboros.Network.BlockFetch
   ( BlockFetchConfiguration (..)
   )
 import qualified Ouroboros.Network.Diffusion as Diffusion
-import qualified Ouroboros.Network.Diffusion.Configuration as Diffusion
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
 import Ouroboros.Network.Magic
-import Ouroboros.Network.NodeToClient
-  ( ConnectionId
-  , LocalAddress
-  , NodeToClientVersionData (..)
-  , combineVersions
-  , simpleSingletonVersions
-  )
-import Ouroboros.Network.NodeToNode
-  ( DiffusionMode (..)
-  , ExceptionInHandler (..)
-  , MiniProtocolParameters
-  , NodeToNodeVersionData (..)
-  , RemoteAddress
-  , blockFetchPipeliningMax
-  , defaultMiniProtocolParameters
-  )
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PublicPeerSelectionState
   )
 import Ouroboros.Network.PeerSelection.LedgerPeers
   ( LedgerPeersConsensusInterface (..)
+  , SomeHashableBlock (..)
   )
 import Ouroboros.Network.PeerSelection.PeerMetric
   ( PeerMetrics
@@ -175,8 +179,9 @@ import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   ( decodeRemoteAddress
   , encodeRemoteAddress
   )
-import Ouroboros.Network.Protocol.ChainSync.Codec (timeLimitsChainSync)
 import Ouroboros.Network.RethrowPolicy
+import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
 import qualified SafeWildCards
 import System.Exit (ExitCode (..))
 import System.FS.API (SomeHasFS (..))
@@ -241,6 +246,11 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   , rnFeatureFlags :: Set CardanoFeatureFlag
   -- ^ Enabled experimental features
   , rnMempoolTimeoutConfig :: Maybe Mempool.MempoolTimeoutConfig
+  , rnTxSubmissionLogicVersion :: TxSubmissionLogicVersion
+  -- ^ Version of the tx-submission logic to run.
+  -- See the networking specs' section on tx-submission
+  -- https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf.
+  , rnTxSubmissionInitDelay :: TxSubmissionInitDelay
   }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -308,6 +318,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
         addrNTC
         NodeToClientVersion
         NodeToClientVersionData
+        PeerTrustable
         m
         NodeToNodeInitiatorResult ->
       m ()
@@ -401,7 +412,11 @@ pure []
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
 run ::
   forall blk.
-  RunNode blk =>
+  ( RunNode blk
+  , ToCBOR (HeaderHash blk)
+  , FromCBOR (HeaderHash blk)
+  , ToJSON (HeaderHash blk)
+  ) =>
   RunNodeArgs IO RemoteAddress LocalAddress blk ->
   StdRunNodeArgs IO blk ->
   IO ()
@@ -479,6 +494,10 @@ runWith ::
   , Hashable addrNTN -- the constraint comes from `initNodeKernel`
   , NetworkIO m
   , NetworkAddr addrNTN
+  , Show addrNTN
+  , ToCBOR (HeaderHash blk)
+  , FromCBOR (HeaderHash blk)
+  , ToJSON (HeaderHash blk)
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -598,6 +617,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   genesisArgs
                   DiffusionPipeliningOn
                   rnMempoolTimeoutConfig
+                  rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
             churnModeVar <- StrictSTM.newTVarIO ChurnModeNormal
@@ -619,6 +639,22 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                      in \newOcs -> do
                                           oldOcs <- readTVar varOcs
                                           when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
+                                , Cardano.getBlockHash = \targetBlock k -> do
+                                    case targetBlock of
+                                      GenesisPoint -> k (pure Nothing)
+                                      (BlockPoint targetSlot (SomeHashableBlock _ targetHash)) -> do
+                                        case (cast targetHash :: Maybe (HeaderHash blk)) of
+                                          Nothing ->
+                                            -- this case should be impossible
+                                            -- TODO(geo2a): add an error type into Network and
+                                            -- return `Either Error` instead of `Maybe`
+                                            k (pure Nothing)
+                                          Just targetHashBlk -> do
+                                            let targetPoint = RealPoint targetSlot targetHashBlk
+                                            ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
+                                              Left{} -> k (pure Nothing)
+                                              Right (RealPoint actualSlot actualHash) ->
+                                                k (pure . Just $ BlockPoint actualSlot (SomeHashableBlock (Proxy @blk) actualHash))
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
@@ -678,7 +714,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       (gcChainSyncLoPBucketConfig llrnGenesisConfig)
       (gcCSJConfig llrnGenesisConfig)
       (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-      (NTN.mkHandlers nodeKernelArgs nodeKernel)
+      (NTN.mkHandlers nodeKernelArgs nodeKernel rnTxSubmissionLogicVersion)
 
   mkNodeToClientApps ::
     NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
@@ -728,6 +764,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       addrNTC
       NodeToClientVersion
       NodeToClientVersionData
+      PeerTrustable
       m
       NodeToNodeInitiatorResult
   mkDiffusionApplications
@@ -875,6 +912,7 @@ mkNodeKernelArgs ::
   GenesisNodeKernelArgs m blk ->
   DiffusionPipeliningSupport ->
   Maybe Mempool.MempoolTimeoutConfig ->
+  TxSubmissionInitDelay ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -895,9 +933,11 @@ mkNodeKernelArgs
   publicPeerSelectionStateVar
   genesisArgs
   getDiffusionPipeliningSupport
-  mempoolTimeoutConfig =
+  mempoolTimeoutConfig
+  txSubmissionInitDelay =
     do
-      let (kaRng, psRng) = split rng
+      let (kaRng, rng') = split rng
+          (psRng, txRng) = split rng'
       return
         NodeKernelArgs
           { tracers
@@ -924,9 +964,11 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
+          , txSubmissionRng = txRng
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport
+          , txSubmissionInitDelay
           }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
