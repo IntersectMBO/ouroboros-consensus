@@ -157,13 +157,16 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Sequence (Seq)
-import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb (LeiosDbHandle, leiosDbInsertEbBody, leiosDbInsertEbPoint)
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
-  ( LeiosEbBodies
+  ( EbId (MkEbId)
+  , LeiosEbBodies
   , LeiosOutstanding
   , LeiosPeerVars
   , TraceLeiosKernel (..)
+  , hashLeiosEb
+  , leiosEbBodyItems
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
@@ -553,6 +556,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , varGsmState :: StrictTVar m GSM.GsmState
   , mempool :: Mempool m blk
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
+  , leiosDB :: LeiosDbHandle m
   }
 
 initInternalState ::
@@ -577,6 +581,7 @@ initInternalState
     , getUseBootstrapPeers
     , getDiffusionPipeliningSupport
     , genesisArgs
+    , nkaGetLeiosNewDbConnection
     } = do
     varGsmState <- do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -618,6 +623,8 @@ initInternalState
             getDiffusionPipeliningSupport
 
     peerSharingRegistry <- newPeerSharingRegistry
+
+    leiosDB <- nkaGetLeiosNewDbConnection
 
     return IS{..}
    where
@@ -836,7 +843,7 @@ forkBlockForging IS{..} blockForging =
     for_ mayNewEndorserBlock $ \eb ->
       traceLeios
         TraceLeiosBlockForged
-          { ebSlot = currentSlot
+          { slot = currentSlot
           , eb
           , ebMeasure = mSize $ TxSeq.txSeqMeasure ebTxs
           , mempoolRestMeasure = mSize $ TxSeq.txSeqMeasure restTxs'
@@ -893,8 +900,14 @@ forkBlockForging IS{..} blockForging =
       -- e.g., @DualBlock@.
       trace $ TraceAdoptedBlock currentSlot newBlock rbTxsList
 
-      -- FIXME: Should store produced EB in EBStore so it gets diffused
-      traceLeios TraceLeiosBlockStored
+      -- Store generated EB so it can be diffused
+      for_ mayNewEndorserBlock $ \eb -> do
+        -- HACK: Who created the EbId so far?
+        let ebId = MkEbId (fromEnum currentSlot * 1000)
+        lift $ leiosDbInsertEbPoint leiosDB currentSlot (hashLeiosEb eb) ebId
+        -- TODO: pass LeiosEb directly
+        lift $ leiosDbInsertEbBody leiosDB ebId (leiosEbBodyItems eb)
+        traceLeios TraceLeiosBlockStored{slot = currentSlot, eb}
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()
   trace =

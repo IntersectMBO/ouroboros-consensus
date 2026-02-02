@@ -14,7 +14,7 @@ module LeiosDemoTypes (module LeiosDemoTypes) where
 import Cardano.Binary (enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Core (EraTx, Tx)
-import Cardano.Prelude (NonEmpty, toList, toString)
+import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -57,6 +57,7 @@ import Text.Pretty.Simple (pShow)
 
 type BytesSize = Word32
 
+-- REVIEW: What's the difference between this and EbHash? Just smaller and easier to recognize?
 newtype EbId = MkEbId Int
   deriving (Eq, Ord)
 
@@ -340,6 +341,12 @@ mkLeiosEb txs =
         byteSize = fromIntegral $ BS.length $ serialize' tx
      in (MkTxHash $ Hash.hashToBytes hash, byteSize)
 
+leiosEbBodyItems :: LeiosEb -> [(Int, TxHash, BytesSize)]
+leiosEbBodyItems eb =
+  leiosEbTxs eb
+    & V.imap (\ix (txh, size) -> (ix, txh, size))
+    & toList
+
 leiosEbBytesSize :: LeiosEb -> BytesSize
 leiosEbBytesSize (MkLeiosEb items) =
   majorByte + argument + (V.sum $ V.map (each . snd) items)
@@ -487,12 +494,12 @@ data TraceLeiosKernel
   | TraceLeiosBlockAcquired LeiosPoint
   | TraceLeiosBlockTxsAcquired LeiosPoint
   | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
-      { ebSlot :: SlotNo
+      { slot :: SlotNo
       , eb :: LeiosEb
       , ebMeasure :: m
       , mempoolRestMeasure :: m
       }
-  | TraceLeiosBlockStored
+  | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
 
 deriving instance Show TraceLeiosKernel
 
@@ -512,18 +519,22 @@ traceLeiosKernelToObject = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
-  TraceLeiosBlockForged{ebSlot, eb, ebMeasure, mempoolRestMeasure} ->
+  TraceLeiosBlockForged{slot, eb, ebMeasure, mempoolRestMeasure} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockForged"
-      , "slot" .= ebSlot
+      , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
       , "numTxs" .= V.length (leiosEbTxs eb)
       , "ebSize" .= leiosEbBytesSize eb
       , "closureSize" .= unByteSize32 (txMeasureMetricTxSizeBytes ebMeasure)
       , "mempoolRestSize" .= unByteSize32 (txMeasureMetricTxSizeBytes mempoolRestMeasure)
       ]
-  TraceLeiosBlockStored ->
-    "kind" .= Aeson.String "LeiosBlockStored"
+  TraceLeiosBlockStored{slot, eb} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockStored"
+      , "slot" .= slot
+      , "hash" .= prettyEbHash (hashLeiosEb eb)
+      ]
 
 newtype TraceLeiosPeer = MkTraceLeiosPeer String
   deriving Show

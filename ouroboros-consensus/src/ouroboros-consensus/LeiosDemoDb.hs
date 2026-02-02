@@ -64,21 +64,23 @@ import System.Exit (die)
 -- original low-level SQL code where multiple operations could be grouped in a
 -- single BEGIN/COMMIT block. For use cases requiring multi-operation atomicity,
 -- consider adding batch operations to this interface.
+--
+-- TODO: use LeiosPoint and LeiosEb types in the interface instead of raw tuples.
 data LeiosDbHandle m = LeiosDbHandle
   { -- EB Points operations
-    leiosDbScanEbPoints :: !(m [(SlotNo, EbHash, EbId)])
-  , leiosDbInsertEbPoint :: !(SlotNo -> EbHash -> EbId -> m ())
+    leiosDbScanEbPoints :: m [(SlotNo, EbHash, EbId)]
+  , leiosDbInsertEbPoint :: SlotNo -> EbHash -> EbId -> m ()
   , -- EB Bodies operations
-    leiosDbLookupEbBody :: !(EbId -> m [(TxHash, BytesSize)])
-  , leiosDbInsertEbBody :: !(EbId -> [(Int, TxHash, BytesSize)] -> m ())
+    leiosDbLookupEbBody :: EbId -> m [(TxHash, BytesSize)]
+  , leiosDbInsertEbBody :: EbId -> [(Int, TxHash, BytesSize)] -> m ()
   , -- Transaction operations
-    leiosDbUpdateEbTx :: !(EbId -> Int -> ByteString -> m ())
-  , leiosDbInsertTxCache :: !(TxHash -> ByteString -> BytesSize -> Int64 -> m ())
+    leiosDbUpdateEbTx :: EbId -> Int -> ByteString -> m ()
+  , leiosDbInsertTxCache :: TxHash -> ByteString -> BytesSize -> Int64 -> m ()
   , -- Batch operations (using temp table in SQL, simple lookup in memory)
-    leiosDbBatchRetrieveTxs :: !(EbId -> [Int] -> m [(Int, TxHash, Maybe ByteString)])
+    leiosDbBatchRetrieveTxs :: EbId -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   , -- Copy from txCache to ebTxs in batch
     -- TODO: Avoid needing this function
-    leiosDbCopyFromTxCacheBatch :: !(Map EbId (IntMap BytesSize) -> BytesSize -> m (Map EbId IntSet))
+    leiosDbCopyFromTxCacheBatch :: Map EbId (IntMap BytesSize) -> BytesSize -> m (Map EbId IntSet)
   }
 
 -- * In-memory implementation of LeiosDbHandle
