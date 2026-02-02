@@ -165,7 +165,6 @@ import LeiosDemoTypes
   , LeiosPeerVars
   , TraceLeiosKernel (..)
   , hashLeiosEb
-  , leiosEbBodyItems
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
@@ -905,8 +904,7 @@ forkBlockForging IS{..} blockForging =
       for_ mayNewEndorserBlock $ \eb -> do
         let ebHash = hashLeiosEb eb
         lift $ leiosDbInsertEbPoint leiosDB currentSlot ebHash
-        -- TODO: pass LeiosEb directly
-        lift $ leiosDbInsertEbBody leiosDB ebHash (leiosEbBodyItems eb)
+        lift $ leiosDbInsertEbBody leiosDB ebHash eb
         traceLeios TraceLeiosBlockStored{slot = currentSlot, eb}
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()

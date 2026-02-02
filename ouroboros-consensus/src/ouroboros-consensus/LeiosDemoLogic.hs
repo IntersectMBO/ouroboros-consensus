@@ -565,16 +565,9 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, 
   novel <- MVar.modifyMVar ebBodiesVar $ \ebBodies -> do
     let novel = not $ Set.member ebHash (Leios.acquiredEbBodies ebBodies)
     when novel $ MVar.withMVar writeLock $ \() -> do
+      traceWith ktracer $ TraceLeiosBlockAcquired point
       -- TODO don't hold the ebBodies mvar during this IO
-      -- INSERT INTO ebTxs using new db
-      let items =
-            V.toList $
-              V.imap
-                ( \txOffset (txHash, txBytesSize) ->
-                    (txOffset, txHash, txBytesSize)
-                )
-                (let MkLeiosEb v = eb in v)
-      leiosDbInsertEbBody db ebHash items
+      leiosDbInsertEbBody db point eb
     -- update NodeKernel state
     let !ebBodies' =
           if not novel
