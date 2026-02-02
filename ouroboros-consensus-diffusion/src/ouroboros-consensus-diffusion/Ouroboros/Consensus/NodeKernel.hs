@@ -428,6 +428,7 @@ initNodeKernel
 
     void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
       let tracer = leiosKernelTracer tracers
+      traceWith tracer $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
       () <- MVar.takeMVar getLeiosReady
       iterationStart <- getMonotonicTime
       leiosPeersVars <- MVar.readMVar getLeiosPeersVars
@@ -463,6 +464,7 @@ initNodeKernel
       let tracer = leiosKernelTracer tracers
       db <- getLeiosNewDbConnection
       (\m -> let loop !i = do m i; loop (i + 1 :: Int) in loop 0) $ \i -> do
+        traceWith tracer $ MkTraceLeiosKernel "leiosCopy: wait for leios copy ready"
         () <- MVar.takeMVar getLeiosCopyReady
         iterationStart <- getMonotonicTime
         traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: running " ++ show i

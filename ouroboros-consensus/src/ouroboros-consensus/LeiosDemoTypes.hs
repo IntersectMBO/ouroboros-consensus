@@ -506,7 +506,10 @@ deriving instance Show TraceLeiosKernel
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
   MkTraceLeiosKernel s ->
-    "msg" .= s
+    mconcat
+      [ "kind" .= Aeson.String "LeiosKernelMsg"
+      , "msg" .= s
+      ]
   TraceLeiosBlockAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockAcquired"
