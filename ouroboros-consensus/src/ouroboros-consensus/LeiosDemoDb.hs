@@ -107,7 +107,6 @@ newInMemoryLeiosDb = do
         , imEbPoints = IntMap.empty
         , imEbBodies = Map.empty
         }
-
   pure $
     LeiosDbHandle
       { leiosDbScanEbPoints = atomically $ do
@@ -178,75 +177,6 @@ newInMemoryLeiosDb = do
       , leiosDbCopyFromTxCacheBatch = \_toCopy _bytesLimit ->
           error "TODO: implement leiosDbCopyFromTxCacheBatch"
       }
-
--- * Low-level terminating SQLite functions
-
-dbBindBlob :: HasCallStack => DB.Statement -> DB.ParamIndex -> ByteString -> IO ()
-dbBindBlob q p v = withDie $ DB.bindBlob q p v
-
-dbBindInt64 :: HasCallStack => DB.Statement -> DB.ParamIndex -> Int64 -> IO ()
-dbBindInt64 q p v = withDie $ DB.bindInt64 q p v
-
-dbExec :: HasCallStack => DB.Database -> DB.Utf8 -> IO ()
-dbExec db q = withDieMsg $ DB.exec db q
-
-dbFinalize :: HasCallStack => DB.Statement -> IO ()
-dbFinalize q = withDie $ DB.finalize q
-
-dbPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> IO DB.Statement
-dbPrepare db q = withDieJust $ DB.prepare db q
-
-dbWithPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> (DB.Statement -> IO a) -> IO a
-dbWithPrepare db q k = bracket (dbPrepare db q) dbFinalize k
-
-dbWithBEGIN :: DB.Database -> IO a -> IO a
-dbWithBEGIN db k =
-  do
-    fmap fst
-    $ generalBracket
-      (dbExec db (fromString "BEGIN"))
-      ( \() -> \case
-          MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
-          MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
-          MonadThrow.ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
-      )
-      (\() -> k)
-
-dbReset :: HasCallStack => DB.Statement -> IO ()
-dbReset stmt = withDie $ DB.reset stmt
-
-dbStep :: HasCallStack => DB.Statement -> IO DB.StepResult
-dbStep stmt = withDie $ DB.stepNoCB stmt
-
-dbStep1 :: HasCallStack => DB.Statement -> IO ()
-dbStep1 stmt = withDieDone $ DB.stepNoCB stmt
-
-withDiePoly :: (HasCallStack, Show b) => (e -> b) -> IO (Either e a) -> IO a
-withDiePoly f io =
-  io >>= \case
-    Left e -> dieStack $ "LeiosDb: " ++ show (f e)
-    Right x -> pure x
-
-withDieMsg :: HasCallStack => IO (Either (DB.Error, DB.Utf8) a) -> IO a
-withDieMsg = withDiePoly snd
-
-withDie :: HasCallStack => IO (Either DB.Error a) -> IO a
-withDie = withDiePoly id
-
-withDieJust :: HasCallStack => IO (Either DB.Error (Maybe a)) -> IO a
-withDieJust io =
-  withDie io >>= \case
-    Nothing -> dieStack $ "LeiosDb: [Just] " ++ "impossible!"
-    Just x -> pure x
-
-withDieDone :: HasCallStack => IO (Either DB.Error DB.StepResult) -> IO ()
-withDieDone io =
-  withDie io >>= \case
-    DB.Row -> dieStack $ "LeiosDb: [Done] " ++ "impossible!"
-    DB.Done -> pure ()
-
-dieStack :: HasCallStack => String -> IO a
-dieStack s = die $ s ++ "\n\n" ++ GHC.Stack.prettyCallStack GHC.Stack.callStack
 
 -- * SQLite implementation of LeiosDbHandle
 
@@ -498,3 +428,72 @@ sql_attach_memTxPoints =
   \    PRIMARY KEY (ebHashBytes ASC, txOffset ASC)\n\
   \  ) WITHOUT ROWID;\n\
   \"
+
+-- * Low-level terminating SQLite functions
+
+dbBindBlob :: HasCallStack => DB.Statement -> DB.ParamIndex -> ByteString -> IO ()
+dbBindBlob q p v = withDie $ DB.bindBlob q p v
+
+dbBindInt64 :: HasCallStack => DB.Statement -> DB.ParamIndex -> Int64 -> IO ()
+dbBindInt64 q p v = withDie $ DB.bindInt64 q p v
+
+dbExec :: HasCallStack => DB.Database -> DB.Utf8 -> IO ()
+dbExec db q = withDieMsg $ DB.exec db q
+
+dbFinalize :: HasCallStack => DB.Statement -> IO ()
+dbFinalize q = withDie $ DB.finalize q
+
+dbPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> IO DB.Statement
+dbPrepare db q = withDieJust $ DB.prepare db q
+
+dbWithPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> (DB.Statement -> IO a) -> IO a
+dbWithPrepare db q k = bracket (dbPrepare db q) dbFinalize k
+
+dbWithBEGIN :: DB.Database -> IO a -> IO a
+dbWithBEGIN db k =
+  do
+    fmap fst
+    $ generalBracket
+      (dbExec db (fromString "BEGIN"))
+      ( \() -> \case
+          MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
+          MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
+          MonadThrow.ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
+      )
+      (\() -> k)
+
+dbReset :: HasCallStack => DB.Statement -> IO ()
+dbReset stmt = withDie $ DB.reset stmt
+
+dbStep :: HasCallStack => DB.Statement -> IO DB.StepResult
+dbStep stmt = withDie $ DB.stepNoCB stmt
+
+dbStep1 :: HasCallStack => DB.Statement -> IO ()
+dbStep1 stmt = withDieDone $ DB.stepNoCB stmt
+
+withDiePoly :: (HasCallStack, Show b) => (e -> b) -> IO (Either e a) -> IO a
+withDiePoly f io =
+  io >>= \case
+    Left e -> dieStack $ "LeiosDb: " ++ show (f e)
+    Right x -> pure x
+
+withDieMsg :: HasCallStack => IO (Either (DB.Error, DB.Utf8) a) -> IO a
+withDieMsg = withDiePoly snd
+
+withDie :: HasCallStack => IO (Either DB.Error a) -> IO a
+withDie = withDiePoly id
+
+withDieJust :: HasCallStack => IO (Either DB.Error (Maybe a)) -> IO a
+withDieJust io =
+  withDie io >>= \case
+    Nothing -> dieStack $ "LeiosDb: [Just] " ++ "impossible!"
+    Just x -> pure x
+
+withDieDone :: HasCallStack => IO (Either DB.Error DB.StepResult) -> IO ()
+withDieDone io =
+  withDie io >>= \case
+    DB.Row -> dieStack $ "LeiosDb: [Done] " ++ "impossible!"
+    DB.Done -> pure ()
+
+dieStack :: HasCallStack => String -> IO a
+dieStack s = die $ s ++ "\n\n" ++ GHC.Stack.prettyCallStack GHC.Stack.callStack

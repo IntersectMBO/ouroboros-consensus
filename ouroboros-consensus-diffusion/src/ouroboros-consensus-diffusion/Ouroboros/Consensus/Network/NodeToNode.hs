@@ -377,9 +377,9 @@ mkHandlers
           chan <- subscribeEbNotifications db
           pure . leiosNotifyServerPeer $ do
             atomically (readTChan chan) >>= \case
-              LeiosOfferBlock{point, ebSize} ->
+              LeiosOfferBlock point _ ebSize ->
                 pure $ MsgLeiosBlockOffer point ebSize
-              LeiosOfferBlockTxs{point} ->
+              LeiosOfferBlockTxs point _ ->
                 pure $ MsgLeiosBlockTxsOffer point
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           db <- getLeiosNewDbConnection -- TODO share DB connection for same peer?
