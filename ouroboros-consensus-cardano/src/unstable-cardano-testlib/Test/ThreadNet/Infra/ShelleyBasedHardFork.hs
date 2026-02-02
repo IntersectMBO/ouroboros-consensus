@@ -8,7 +8,6 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -193,7 +192,6 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , -- At the moment, fix the protocols together
     ProtoCrypto proto1 ~ ProtoCrypto proto2
   , PraosCrypto (ProtoCrypto proto1)
-  , proto1 ~ TPraos (ProtoCrypto proto1)
   , proto1 ~ proto2
   , MemPack (TxOut (LedgerState (ShelleyBlock proto1 era1)))
   , MemPack (TxOut (LedgerState (ShelleyBlock proto2 era2)))
@@ -237,19 +235,19 @@ instance
 
   hardForkEraTranslation =
     EraTranslation
-      { translateLedgerState = PCons translateLedgerState PNil
-      , translateLedgerTables = PCons translateLedgerTables PNil
+      { translateLedgerState = PCons translateLedgerStateInstance PNil
+      , translateLedgerTables = PCons translateLedgerTablesInstance PNil
       , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil
       , crossEraForecast = PCons crossEraForecastAcrossShelley PNil
       }
    where
-    translateLedgerState ::
+    translateLedgerStateInstance ::
       InPairs.RequiringBoth
         WrapLedgerConfig
         TranslateLedgerState
         (ShelleyBlock proto1 era1)
         (ShelleyBlock proto2 era2)
-    translateLedgerState =
+    translateLedgerStateInstance =
       InPairs.RequireBoth $
         \_cfg1 cfg2 ->
           HFC.TranslateLedgerState
@@ -263,11 +261,11 @@ instance
                   . Flip
             }
 
-    translateLedgerTables ::
+    translateLedgerTablesInstance ::
       TranslateLedgerTables
         (ShelleyBlock proto1 era1)
         (ShelleyBlock proto2 era2)
-    translateLedgerTables =
+    translateLedgerTablesInstance =
       HFC.TranslateLedgerTables
         { translateTxInWith = coerce
         , translateTxOutWith = SL.upgradeTxOut
@@ -390,7 +388,23 @@ protocolInfoShelleyBasedHardFork ::
   ( KESAgentContext (ProtoCrypto proto2) m
   , ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   ) =>
+  ( ProtocolParamsShelleyBased (ProtoCrypto proto1) ->
+    L.TransitionConfig era1 ->
+    SL.ProtVer ->
+    ( ProtocolInfo (ShelleyBlock proto1 era1)
+    , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto1 era1)]
+    )
+  ) ->
+  ( ProtocolParamsShelleyBased (ProtoCrypto proto2) ->
+    L.TransitionConfig era2 ->
+    SL.ProtVer ->
+    ( ProtocolInfo (ShelleyBlock proto2 era2)
+    , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto2 era2)]
+    )
+  ) ->
   ProtocolParamsShelleyBased (ProtoCrypto proto1) ->
+  (ConsensusConfig proto1 -> PartialConsensusConfig proto1) ->
+  (ConsensusConfig proto2 -> PartialConsensusConfig proto2) ->
   SL.ProtVer ->
   SL.ProtVer ->
   L.TransitionConfig era2 ->
@@ -400,7 +414,11 @@ protocolInfoShelleyBasedHardFork ::
     m [MkBlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
   )
 protocolInfoShelleyBasedHardFork
+  protocolInfoProtoShelleyBased1 -- TODO(geo2a): come up with a better name for this argument
+  protocolInfoProtoShelleyBased2
   protocolParamsShelleyBased
+  toPartialConsensusConfig1
+  toPartialConsensusConfig2
   protVer1
   protVer2
   transCfg2
@@ -410,20 +428,15 @@ protocolInfoShelleyBasedHardFork
       protocolInfo1
       blockForging1
       eraParams1
-      tpraosParams
+      toPartialConsensusConfig1
       toPartialLedgerConfig1
       -- Era 2
       protocolInfo2
       blockForging2
       eraParams2
-      tpraosParams
+      toPartialConsensusConfig2
       toPartialLedgerConfig2
    where
-    ProtocolParamsShelleyBased
-      { shelleyBasedInitialNonce
-      , shelleyBasedLeaderCredentials
-      } = protocolParamsShelleyBased
-
     -- Era 1
 
     genesis :: SL.ShelleyGenesis
@@ -433,7 +446,7 @@ protocolInfoShelleyBasedHardFork
     blockForging1 ::
       Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto1 era1)]
     (protocolInfo1, blockForging1) =
-      protocolInfoTPraosShelleyBased
+      protocolInfoProtoShelleyBased1
         protocolParamsShelleyBased
         (transCfg2 ^. L.tcPreviousEraConfigL)
         protVer1
@@ -444,9 +457,9 @@ protocolInfoShelleyBasedHardFork
     toPartialLedgerConfig1 ::
       LedgerConfig (ShelleyBlock proto1 era1) ->
       PartialLedgerConfig (ShelleyBlock proto1 era1)
-    toPartialLedgerConfig1 cfg =
+    toPartialLedgerConfig1 cfg1 =
       ShelleyPartialLedgerConfig
-        { shelleyLedgerConfig = cfg
+        { shelleyLedgerConfig = cfg1
         , shelleyTriggerHardFork = hardForkTrigger
         }
 
@@ -456,11 +469,8 @@ protocolInfoShelleyBasedHardFork
     blockForging2 ::
       Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto2 era2)]
     (protocolInfo2, blockForging2) =
-      protocolInfoTPraosShelleyBased
-        ProtocolParamsShelleyBased
-          { shelleyBasedInitialNonce
-          , shelleyBasedLeaderCredentials
-          }
+      protocolInfoProtoShelleyBased2
+        protocolParamsShelleyBased
         transCfg2
         protVer2
 
@@ -470,9 +480,9 @@ protocolInfoShelleyBasedHardFork
     toPartialLedgerConfig2 ::
       LedgerConfig (ShelleyBlock proto2 era2) ->
       PartialLedgerConfig (ShelleyBlock proto2 era2)
-    toPartialLedgerConfig2 cfg =
+    toPartialLedgerConfig2 cfg2 =
       ShelleyPartialLedgerConfig
-        { shelleyLedgerConfig = cfg
+        { shelleyLedgerConfig = cfg2
         , shelleyTriggerHardFork = TriggerHardForkNotDuringThisExecution
         }
 

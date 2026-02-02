@@ -292,11 +292,14 @@ prop_simple_real_tpraos_convergence
                         if not includingDUpdateTx
                           then []
                           else
-                            mkSetDecentralizationParamTxs
-                              coreNodes
-                              nextProtVer
-                              sentinel -- Does not expire during test
-                              setupD2
+                            -- a single transation to update the protocol version
+                            -- and set the decentralisation parameter
+                            (: []) $
+                              mkSetDecentralizationParamTx
+                                coreNodes
+                                nextProtVer
+                                sentinel -- Does not expire during test
+                                setupD2
                     , tniBlockForging = blockForging nullTracer
                     }
           , mkRekeyM = Nothing

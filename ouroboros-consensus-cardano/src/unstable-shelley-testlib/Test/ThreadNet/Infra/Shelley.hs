@@ -28,9 +28,10 @@ module Test.ThreadNet.Infra.Shelley
   , mkKeyHashVrf
   , mkKeyPair
   , mkLeaderCredentials
-  , mkMASetDecentralizationParamTxs
   , mkProtocolShelley
-  , mkSetDecentralizationParamTxs
+  , mkSetDecentralizationParamTx
+  , mkUpdateProtVerTxShelley
+  , mkUpdateProtVerTxAllegra
   , mkVerKey
   , networkId
   , tpraosSlotLength
@@ -60,9 +61,7 @@ import Cardano.Crypto.VRF
 import qualified Cardano.Ledger.Allegra.Scripts as SL
 import Cardano.Ledger.BaseTypes (boundRational, unNonZero)
 import Cardano.Ledger.Hashes
-  ( EraIndependentTxBody
-  , HashAnnotated (..)
-  , SafeHash
+  ( HashAnnotated (..)
   , hashAnnotated
   )
 import qualified Cardano.Ledger.Keys as LK
@@ -81,7 +80,6 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import Control.Monad.Except (throwError)
 import qualified Control.Tracer as Tracer
 import qualified Data.ByteString as BS
-import Data.Coerce (coerce)
 import Data.ListMap (ListMap (ListMap))
 import qualified Data.ListMap as ListMap
 import Data.Map.Strict (Map)
@@ -128,7 +126,7 @@ import qualified Test.Cardano.Ledger.Core.KeyPair as TL
   )
 import qualified Test.Cardano.Ledger.Shelley.Generator.Core as Gen
 import Test.Cardano.Ledger.Shelley.Utils (unsafeBoundRational)
-import Test.QuickCheck
+import Test.QuickCheck hiding (Result (..))
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Slots (NumSlots (..))
 import Test.Util.Time (dawnOfTime)
@@ -484,74 +482,53 @@ mkProtocolShelley genesis initialNonce protVer coreNode =
   Necessary transactions for updating the 'DecentralizationParam'
 -------------------------------------------------------------------------------}
 
-incrementMinorProtVer :: SL.ProtVer -> SL.ProtVer
-incrementMinorProtVer (SL.ProtVer major minor) = SL.ProtVer major (succ minor)
+-- | A Shelley transaction to update the protocol version.
+--
+-- See 'mkUpdateProtVerTxAllegra' for later eras.
+mkUpdateProtVerTxShelley ::
+  forall proto.
+  [CoreNode (ProtoCrypto proto)] ->
+  -- | The proposed protocol version
+  ProtVer ->
+  -- | The TTL
+  SlotNo ->
+  GenTx (ShelleyBlock proto ShelleyEra)
+mkUpdateProtVerTxShelley coreNodes pVer ttl =
+  let txBody =
+        mkUpdateProtVerShelleyEraTxBody @proto @ShelleyEra coreNodes pVer
+          & (SL.ttlTxBodyL .~ ttl)
+   in mkShelleyTx $
+        SL.mkBasicTx txBody
+          & (SL.witsTxL .~ witnesses @proto coreNodes txBody)
 
-mkSetDecentralizationParamTxs ::
-  forall c.
-  ShelleyBasedEra ShelleyEra =>
-  [CoreNode c] ->
+-- | A Shelley transaction to update the protocol version
+--   and the decentralisation parameter.
+--
+--  It is very similar to 'mkUpdateProtVerTxShelley', but additionally
+--  includes the decentralisation parameter update.
+mkSetDecentralizationParamTx ::
+  forall proto.
+  [CoreNode (ProtoCrypto proto)] ->
   -- | The proposed protocol version
   ProtVer ->
   -- | The TTL
   SlotNo ->
   -- | The new value
   DecentralizationParam ->
-  [GenTx (ShelleyBlock (TPraos c) ShelleyEra)]
-mkSetDecentralizationParamTxs coreNodes pVer ttl dNew =
-  (: []) $
-    mkShelleyTx $
-      SL.mkBasicTx body & SL.witsTxL .~ witnesses
+  GenTx (ShelleyBlock proto ShelleyEra)
+mkSetDecentralizationParamTx coreNodes pVer ttl dNew =
+  let txBody =
+        mkUpdateProtVerShelleyEraTxBody @proto @ShelleyEra coreNodes pVer
+          & (SL.ttlTxBodyL .~ ttl)
+          & (SL.updateTxBodyL .~ SL.SJust update)
+   in mkShelleyTx $
+        SL.mkBasicTx txBody
+          & (SL.witsTxL .~ witnesses @proto coreNodes txBody)
  where
   -- The funds touched by this transaction assume it's the first transaction
   -- executed.
   scheduledEpoch :: EpochNo
   scheduledEpoch = EpochNo 0
-
-  witnesses :: SL.TxWits ShelleyEra
-  witnesses = SL.mkBasicTxWits & SL.addrTxWitsL .~ signatures
-
-  -- Every node signs the transaction body, since it includes a " vote " from
-  -- every node.
-  signatures :: Set (SL.WitVKey 'SL.Witness)
-  signatures =
-    TL.mkWitnessesVKey
-      (hashAnnotated body)
-      [ TL.KeyPair (SL.VKey vk) sk
-      | cn <- coreNodes
-      , let sk = cnDelegateKey cn
-      , let vk = deriveVerKeyDSIGN sk
-      ]
-
-  -- Nothing but the parameter update and the obligatory touching of an
-  -- input.
-  body :: SL.TxBody ShelleyEra
-  body =
-    SL.mkBasicTxBody
-      & SL.inputsTxBodyL .~ Set.singleton (fst touchCoins)
-      & SL.outputsTxBodyL .~ Seq.singleton (snd touchCoins)
-      & SL.ttlTxBodyL .~ ttl
-      & SL.updateTxBodyL .~ SL.SJust update
-
-  -- Every Shelley transaction requires one input.
-  --
-  -- We use the input of the first node, but we just put it all right back.
-  --
-  -- ASSUMPTION: This transaction runs in the first slot.
-  touchCoins :: (SL.TxIn, SL.TxOut ShelleyEra)
-  touchCoins = case coreNodes of
-    [] -> error "no nodes!"
-    cn : _ ->
-      ( SL.initialFundsPseudoTxIn addr
-      , SL.ShelleyTxOut addr coin
-      )
-     where
-      addr =
-        SL.Addr
-          networkId
-          (mkCredential (cnDelegateKey cn))
-          (SL.StakeRefBase (mkCredential (cnStakingKey cn)))
-      coin = SL.Coin $ fromIntegral initialLovelacePerCoreNode
 
   -- One replicant of the parameter update per each node.
   update :: SL.Update ShelleyEra
@@ -566,7 +543,107 @@ mkSetDecentralizationParamTxs coreNodes pVer ttl dNew =
                          boundRational $
                            decentralizationParamToRational dNew
                      )
-                & SL.ppuProtocolVersionL .~ SL.SJust pVer
+            )
+          | cn <- coreNodes
+          ]
+
+-- | An Allegra transaction to update the protocol version.
+--
+-- This transaction is also valid for Mary, Alonzo and Babbage.
+-- See 'mkUpdateProtVerTxConway' for later eras.
+mkUpdateProtVerTxAllegra ::
+  forall proto era.
+  ( ShelleyBasedEra era
+  , SL.ShelleyEraTxBody era
+  , SL.AllegraEraTxBody era
+  ) =>
+  [CoreNode (ProtoCrypto proto)] ->
+  -- | The proposed protocol version
+  ProtVer ->
+  -- | The TTL
+  SlotNo ->
+  GenTx (ShelleyBlock proto era)
+mkUpdateProtVerTxAllegra coreNodes pVer ttl =
+  let txBody =
+        mkUpdateProtVerShelleyEraTxBody @proto @era coreNodes pVer
+          & (SL.vldtTxBodyL .~ vldt)
+      vldt =
+        SL.ValidityInterval
+          { invalidBefore = SL.SNothing
+          , invalidHereafter = SL.SJust ttl
+          }
+   in mkShelleyTx $
+        SL.mkBasicTx txBody
+          & (SL.witsTxL .~ witnesses @proto coreNodes txBody)
+
+-- | A transaction body template for ThreadNet tests with the following features:
+--   - minimal era constraints
+--   - contains a protocol parameter update signed by all core nodes
+--
+--   The functions constructing the transations using this body will
+--   need to create the witnesses using the core node's signatures,
+--   see 'witnesses'.
+--
+--   This transaction uses the Shelley era governance to update the protocol version.
+--   Note that this transaction is not valid (and wouldn't even type check) in Conway.
+mkUpdateProtVerShelleyEraTxBody ::
+  forall proto era.
+  ( ShelleyBasedEra era
+  , SL.ShelleyEraTxBody era
+  ) =>
+  [CoreNode (ProtoCrypto proto)] ->
+  -- | The proposed protocol version
+  ProtVer ->
+  SL.TxBody era
+mkUpdateProtVerShelleyEraTxBody coreNodes pVer =
+  body
+ where
+  -- The funds touched by this transaction assume it's the first transaction
+  -- executed.
+  scheduledEpoch :: EpochNo
+  scheduledEpoch = EpochNo 0
+
+  -- Nothing but the parameter update and the obligatory touching of an
+  -- input.
+  body :: SL.TxBody era
+  body =
+    SL.mkBasicTxBody
+      & (SL.inputsTxBodyL .~ inputs)
+      & (SL.outputsTxBodyL .~ outputs)
+      & (SL.updateTxBodyL .~ SL.SJust update)
+   where
+    inputs = Set.singleton (fst touchCoins)
+    outputs = Seq.singleton (snd touchCoins)
+
+  -- Every Shelley transaction requires one input.
+  --
+  -- We use the input of the first node, but we just put it all right back.
+  --
+  -- ASSUMPTION: This transaction runs in the first slot.
+  touchCoins :: (SL.TxIn, SL.TxOut era)
+  touchCoins = case coreNodes of
+    [] -> error "no nodes!"
+    cn : _ ->
+      ( SL.initialFundsPseudoTxIn addr
+      , SL.mkBasicTxOut addr coin
+      )
+     where
+      addr =
+        SL.Addr
+          networkId
+          (mkCredential (cnDelegateKey cn))
+          (SL.StakeRefBase (mkCredential (cnStakingKey cn)))
+      coin = SL.inject $ SL.Coin $ fromIntegral initialLovelacePerCoreNode
+
+  -- One replicant of the protocol version update per each node.
+  update :: SL.Update era
+  update =
+    flip SL.Update scheduledEpoch $
+      SL.ProposedPPUpdates $
+        Map.fromList $
+          [ ( SL.hashKey $ SL.VKey $ deriveVerKeyDSIGN $ cnGenesisKey cn
+            , SL.emptyPParamsUpdate
+                & (SL.ppuProtocolVersionL .~ SL.SJust pVer)
             )
           | cn <- coreNodes
           ]
@@ -596,114 +673,25 @@ mkKeyHashVrf = hashVerKeyVRF @c . deriveVerKeyVRF
 networkId :: SL.Network
 networkId = SL.Testnet
 
-{-------------------------------------------------------------------------------
-  Temporary Workaround
--------------------------------------------------------------------------------}
+incrementMinorProtVer :: SL.ProtVer -> SL.ProtVer
+incrementMinorProtVer (SL.ProtVer major minor) = SL.ProtVer major (succ minor)
 
--- | TODO This is a copy-paste-edit of 'mkSetDecentralizationParamTxs'
+-- | Create a witness for a transaction body.
 --
--- Our current plan is to replace all of this infrastructure with the ThreadNet
--- rewrite; so we're minimizing the work and maintenance here for now.
-mkMASetDecentralizationParamTxs ::
+-- Every node signs the transaction body, since it includes a " vote " from
+-- every node.
+witnesses ::
   forall proto era.
-  ( ShelleyBasedEra era
-  , SL.AllegraEraTxBody era
-  , SL.ShelleyEraTxBody era
-  , SL.AtMostEra "Alonzo" era
-  ) =>
-  [CoreNode (ProtoCrypto proto)] ->
-  -- | The proposed protocol version
-  ProtVer ->
-  -- | The TTL
-  SlotNo ->
-  -- | The new value
-  DecentralizationParam ->
-  [GenTx (ShelleyBlock proto era)]
-mkMASetDecentralizationParamTxs coreNodes pVer ttl dNew =
-  (: []) $
-    mkShelleyTx $
-      SL.mkBasicTx body & SL.witsTxL .~ witnesses
+  ShelleyBasedEra era =>
+  [CoreNode (ProtoCrypto proto)] -> SL.TxBody era -> SL.TxWits era
+witnesses coreNodes body = SL.mkBasicTxWits & SL.addrTxWitsL .~ signatures
  where
-  -- The funds touched by this transaction assume it's the first transaction
-  -- executed.
-  scheduledEpoch :: EpochNo
-  scheduledEpoch = EpochNo 0
-
-  witnesses :: SL.TxWits era
-  witnesses = SL.mkBasicTxWits & SL.addrTxWitsL .~ signatures
-
-  -- Every node signs the transaction body, since it includes a " vote " from
-  -- every node.
   signatures :: Set (SL.WitVKey 'SL.Witness)
   signatures =
     TL.mkWitnessesVKey
-      (eraIndTxBodyHash' body)
+      (hashAnnotated body)
       [ TL.KeyPair (SL.VKey vk) sk
       | cn <- coreNodes
       , let sk = cnDelegateKey cn
       , let vk = deriveVerKeyDSIGN sk
       ]
-
-  -- Nothing but the parameter update and the obligatory touching of an
-  -- input.
-  body :: SL.TxBody era
-  body =
-    SL.mkBasicTxBody
-      & SL.inputsTxBodyL .~ inputs
-      & SL.outputsTxBodyL .~ outputs
-      & SL.vldtTxBodyL .~ vldt
-      & SL.updateTxBodyL .~ update'
-   where
-    inputs = Set.singleton (fst touchCoins)
-    outputs = Seq.singleton (snd touchCoins)
-    vldt =
-      SL.ValidityInterval
-        { invalidBefore = SL.SNothing
-        , invalidHereafter = SL.SJust ttl
-        }
-    update' = SL.SJust update
-
-  -- Every Shelley transaction requires one input.
-  --
-  -- We use the input of the first node, but we just put it all right back.
-  --
-  -- ASSUMPTION: This transaction runs in the first slot.
-  touchCoins :: (SL.TxIn, SL.TxOut era)
-  touchCoins = case coreNodes of
-    [] -> error "no nodes!"
-    cn : _ ->
-      ( SL.initialFundsPseudoTxIn addr
-      , SL.mkBasicTxOut addr coin
-      )
-     where
-      addr =
-        SL.Addr
-          networkId
-          (mkCredential (cnDelegateKey cn))
-          (SL.StakeRefBase (mkCredential (cnStakingKey cn)))
-      coin = SL.inject $ SL.Coin $ fromIntegral initialLovelacePerCoreNode
-
-  -- One replicant of the parameter update per each node.
-  update :: SL.Update era
-  update =
-    flip SL.Update scheduledEpoch $
-      SL.ProposedPPUpdates $
-        Map.fromList $
-          [ ( SL.hashKey $ SL.VKey $ deriveVerKeyDSIGN $ cnGenesisKey cn
-            , SL.emptyPParamsUpdate
-                & SL.ppuDL
-                  .~ ( maybeToStrictMaybe $
-                         boundRational $
-                           decentralizationParamToRational dNew
-                     )
-                & SL.ppuProtocolVersionL .~ SL.SJust pVer
-            )
-          | cn <- coreNodes
-          ]
-
-eraIndTxBodyHash' ::
-  HashAnnotated body EraIndependentTxBody =>
-  body ->
-  SafeHash
-    EraIndependentTxBody
-eraIndTxBodyHash' = coerce . hashAnnotated

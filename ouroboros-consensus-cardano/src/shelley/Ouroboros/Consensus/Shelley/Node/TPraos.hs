@@ -27,7 +27,6 @@ module Ouroboros.Consensus.Shelley.Node.TPraos
   , protocolInfoTPraosShelleyBased
   , shelleyBlockForging
   , shelleySharedBlockForging
-  , validateGenesis
   ) where
 
 import Cardano.Crypto.Hash (Hash)
@@ -44,9 +43,7 @@ import Cardano.Slotting.EpochInfo
 import Cardano.Slotting.Time (mkSlotLength)
 import Control.Monad.Except (Except)
 import qualified Control.Tracer as Tracer
-import Data.Bifunctor (first)
 import qualified Data.Text as T
-import qualified Data.Text as Text
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -72,6 +69,7 @@ import Ouroboros.Consensus.Shelley.Node.Common
   , ShelleyEraWithCrypto
   , ShelleyLeaderCredentials (..)
   , shelleyBlockIssuerVKey
+  , validateGenesis
   )
 import Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
@@ -153,17 +151,6 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
 {-------------------------------------------------------------------------------
   ProtocolInfo
 -------------------------------------------------------------------------------}
-
--- | Check the validity of the genesis config. To be used in conjunction with
--- 'assertWithMsg'.
-validateGenesis :: SL.ShelleyGenesis -> Either String ()
-validateGenesis = first errsToString . SL.validateGenesis
- where
-  errsToString :: [SL.ValidationErr] -> String
-  errsToString errs =
-    Text.unpack $
-      Text.unlines
-        ("Invalid genesis config:" : map SL.describeValidationErr errs)
 
 protocolInfoShelley ::
   forall m c.
