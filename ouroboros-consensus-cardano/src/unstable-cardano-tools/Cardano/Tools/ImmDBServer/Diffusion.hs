@@ -28,6 +28,7 @@ import qualified Data.Text.Encoding as T
 import Data.Void (Void)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
+import qualified LeiosDemoDb
 import qualified LeiosDemoLogic as LeiosLogic
 import qualified LeiosDemoOnlyTestFetch as LF
 import qualified LeiosDemoTypes as Leios
@@ -156,7 +157,7 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
         Dir.doesFileExist leiosDbFile >>= \case
           False -> die $ "The Leios database must already exist: " <> show leiosDbFile
           True -> pure ()
-        Leios.MkSomeLeiosDb leiosDb <- Leios.newLeiosDbConnectionIO leiosDbFile
+        leiosDb <- LeiosDemoDb.newLeiosDbConnectionIO leiosDbFile
         leiosEbBodies <- LeiosLogic.loadEbBodies leiosDb
         leiosWriteLock <- MVar.newMVar ()
         fmap LeiosLogic.MkSomeLeiosFetchContext $

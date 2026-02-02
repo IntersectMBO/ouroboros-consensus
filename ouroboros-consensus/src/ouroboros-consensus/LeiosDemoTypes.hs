@@ -25,12 +25,6 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Control.Monad.Class.MonadThrow
-  ( MonadThrow
-  , bracket
-  , generalBracket
-  )
-import qualified Control.Monad.Class.MonadThrow as MonadThrow
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
@@ -38,7 +32,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
-import Data.Int (Int64)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.Map (Map)
@@ -50,10 +43,7 @@ import qualified Data.Set as Set
 import Data.String (fromString)
 import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64)
-import qualified Database.SQLite3.Direct as DB
 import Debug.Trace (trace)
-import GHC.Stack (HasCallStack)
-import qualified GHC.Stack
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -63,9 +53,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike)
-import System.Directory (doesFileExist)
-import System.Environment (lookupEnv)
-import System.Exit (die)
 import Text.Pretty.Simple (pShow)
 
 type BytesSize = Word32
@@ -406,148 +393,6 @@ maxEbItems =
  where
   msgOverhead = 1 + 1 -- short list len + small word
   sequenceOverhead = 1 + 2 -- sequence major byte + a length > 255
-
------
-
-data SomeLeiosDb m = forall stmt. MkSomeLeiosDb (LeiosDb stmt m)
-
-data LeiosDb stmt m = MkLeiosDb
-  { dbBindBlob_ :: !(HasCallStack => stmt -> DB.ParamIndex -> ByteString -> m ())
-  , dbBindInt64_ :: !(HasCallStack => stmt -> DB.ParamIndex -> Int64 -> m ())
-  , dbColumnBlob_ :: !(HasCallStack => stmt -> DB.ColumnIndex -> m ByteString)
-  , dbColumnInt64_ :: !(HasCallStack => stmt -> DB.ColumnIndex -> m Int64)
-  , dbExec_ :: !(HasCallStack => DB.Utf8 -> m ())
-  , dbFinalize_ :: !(HasCallStack => stmt -> m ())
-  , dbPrepare_ :: !(HasCallStack => DB.Utf8 -> m stmt)
-  , dbReset_ :: !(HasCallStack => stmt -> m ())
-  , dbStep_ :: !(HasCallStack => stmt -> m DB.StepResult)
-  , dbStep1_ :: !(HasCallStack => stmt -> m ())
-  }
-
-dbBindBlob :: HasCallStack => LeiosDb stmt m -> stmt -> DB.ParamIndex -> ByteString -> m ()
-dbBindBlob = dbBindBlob_
-
-dbBindInt64 :: HasCallStack => LeiosDb stmt m -> stmt -> DB.ParamIndex -> Int64 -> m ()
-dbBindInt64 = dbBindInt64_
-
-dbColumnBlob :: HasCallStack => LeiosDb stmt m -> stmt -> DB.ColumnIndex -> m ByteString
-dbColumnBlob = dbColumnBlob_
-
-dbColumnInt64 :: HasCallStack => LeiosDb stmt m -> stmt -> DB.ColumnIndex -> m Int64
-dbColumnInt64 = dbColumnInt64_
-
-dbExec :: HasCallStack => LeiosDb stmt m -> DB.Utf8 -> m ()
-dbExec = dbExec_
-
-dbFinalize :: HasCallStack => LeiosDb stmt m -> stmt -> m ()
-dbFinalize = dbFinalize_
-
-dbPrepare :: HasCallStack => LeiosDb stmt m -> DB.Utf8 -> m stmt
-dbPrepare = dbPrepare_
-
-dbWithPrepare ::
-  (HasCallStack, MonadThrow m) =>
-  LeiosDb stmt m -> DB.Utf8 -> (stmt -> m r) -> m r
-dbWithPrepare db q k = bracket (dbPrepare db q) (dbFinalize db) k
-
-dbWithBEGIN ::
-  (HasCallStack, IOLike m) =>
-  LeiosDb stmt m -> m r -> m r
-dbWithBEGIN db k =
-  do
-    fmap fst
-    $ generalBracket
-      (dbExec db (fromString "BEGIN"))
-      ( \() -> \case
-          MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
-          MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
-          MonadThrow.ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
-      )
-      (\() -> k)
-
-dbReset :: HasCallStack => LeiosDb stmt m -> stmt -> m ()
-dbReset = dbReset_
-
-dbStep :: HasCallStack => LeiosDb stmt m -> stmt -> m DB.StepResult
-dbStep = dbStep_
-
-dbStep1 :: HasCallStack => LeiosDb stmt m -> stmt -> m ()
-dbStep1 = dbStep1_
-
-leiosDbFromSqliteDirect :: DB.Database -> LeiosDb DB.Statement IO
-leiosDbFromSqliteDirect db =
-  MkLeiosDb
-    { dbBindBlob_ = \stmt p v -> withDie $ DB.bindBlob stmt p v
-    , dbBindInt64_ = \stmt p v -> withDie $ DB.bindInt64 stmt p v
-    , dbColumnBlob_ = \stmt c -> DB.columnBlob stmt c
-    , dbColumnInt64_ = \stmt c -> DB.columnInt64 stmt c
-    , dbExec_ = \q -> withDieMsg $ DB.exec db q
-    , dbFinalize_ = \stmt -> withDie $ DB.finalize stmt
-    , dbPrepare_ = \q -> withDieJust $ DB.prepare db q
-    , dbReset_ = \stmt -> withDie $ DB.reset stmt
-    , dbStep_ = \stmt -> withDie $ DB.stepNoCB stmt
-    , dbStep1_ = \stmt -> withDieDone $ DB.stepNoCB stmt
-    }
-
-withDiePoly :: (HasCallStack, Show b) => (e -> b) -> IO (Either e a) -> IO a
-withDiePoly f io =
-  io >>= \case
-    Left e -> dieStack $ "LeiosDb: " ++ show (f e)
-    Right x -> pure x
-
-withDieMsg :: HasCallStack => IO (Either (DB.Error, DB.Utf8) a) -> IO a
-withDieMsg = withDiePoly snd
-
-withDie :: HasCallStack => IO (Either DB.Error a) -> IO a
-withDie = withDiePoly id
-
-withDieJust :: HasCallStack => IO (Either DB.Error (Maybe a)) -> IO a
-withDieJust io =
-  withDie io >>= \case
-    Nothing -> dieStack $ "LeiosDb: [Just] " ++ "impossible!"
-    Just x -> pure x
-
-withDieDone :: HasCallStack => IO (Either DB.Error DB.StepResult) -> IO ()
-withDieDone io =
-  withDie io >>= \case
-    DB.Row -> dieStack $ "LeiosDb: [Done] " ++ "impossible!"
-    DB.Done -> pure ()
-
-dieStack :: HasCallStack => String -> IO a
-dieStack s = die $ s ++ "\n\n" ++ GHC.Stack.prettyCallStack GHC.Stack.callStack
-
------
-
-demoNewLeiosDbConnectionIO :: IO (SomeLeiosDb IO)
-demoNewLeiosDbConnectionIO = do
-  dbPath <-
-    lookupEnv "LEIOS_DB_PATH" >>= \case
-      Nothing -> die "You must define the LEIOS_DB_PATH variable for this demo."
-      Just x -> pure x
-  newLeiosDbConnectionIO dbPath
-
-newLeiosDbConnectionIO :: FilePath -> IO (SomeLeiosDb IO)
-newLeiosDbConnectionIO dbPath = do
-  doesFileExist dbPath >>= \case
-    False -> die $ "No such LeiosDb file: " ++ dbPath
-    True -> do
-      db <- withDieMsg $ DB.open (fromString dbPath)
-      let db' = leiosDbFromSqliteDirect db
-      dbExec db' (fromString sql_attach_memTxPoints)
-      pure $ MkSomeLeiosDb db'
-
-sql_attach_memTxPoints :: String
-sql_attach_memTxPoints =
-  "ATTACH DATABASE ':memory:' AS mem;\n\
-  \\n\
-  \CREATE TABLE mem.txPoints (\n\
-  \    ebId INTEGER NOT NULL\n\
-  \  ,\n\
-  \    txOffset INTEGER NOT NULL\n\
-  \  ,\n\
-  \    PRIMARY KEY (ebId ASC, txOffset ASC)\n\
-  \  ) WITHOUT ROWID;\n\
-  \"
 
 -----
 

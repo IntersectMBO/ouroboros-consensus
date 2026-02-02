@@ -247,6 +247,8 @@ instance Ledger.TxLimits TestBlock where
   blockCapacityTxMeasure _cfg _st =
     Ledger.IgnoringOverflow $ Ledger.ByteSize32 20
 
+  ebCapacityTxMeasure _ _ = Nothing
+
   txMeasure _cfg _st = pure . Ledger.IgnoringOverflow . txSize
 
 newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx

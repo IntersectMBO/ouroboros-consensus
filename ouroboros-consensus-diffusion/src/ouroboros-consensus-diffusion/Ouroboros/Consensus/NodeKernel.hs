@@ -157,12 +157,12 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Sequence (Seq)
+import LeiosDemoDb (LeiosDbHandle)
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
   ( LeiosEbBodies
   , LeiosOutstanding
   , LeiosPeerVars
-  , SomeLeiosDb
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
@@ -214,7 +214,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
     -- noticeably awkward fit for this logic.
 
     -- See 'LeiosPeerVars' for the write patterns
-    getLeiosNewDbConnection :: m (SomeLeiosDb m)
+    getLeiosNewDbConnection :: m (LeiosDbHandle m)
   , getLeiosPeersVars :: MVar m (Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
     -- eviction)
@@ -234,6 +234,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- Preferable to dealing with SQLite's BUSY errors.
   --
   -- INVARIANT: never acquire 'MVar' while holding this lock.
+  -- TODO: can we move this "behind the curtain" of transactional interactions with the LeiosDb?
   , getLeiosNotifications ::
       MVar
         m
@@ -271,7 +272,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   , genesisArgs :: GenesisNodeKernelArgs m blk
   , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
-  , nkaGetLeiosNewDbConnection :: m (SomeLeiosDb m)
+  , nkaGetLeiosNewDbConnection :: m (LeiosDbHandle m)
   }
 
 initNodeKernel ::
@@ -457,7 +458,7 @@ initNodeKernel
 
     void $ forkLinkedThread registry "NodeKernel.leiosCopyLogic" $ do
       let tracer = leiosKernelTracer tracers
-      Leios.MkSomeLeiosDb db <- getLeiosNewDbConnection
+      db <- getLeiosNewDbConnection
       (\m -> let loop !i = do m i; loop (i + 1 :: Int) in loop 0) $ \i -> do
         () <- MVar.takeMVar getLeiosCopyReady
         iterationStart <- getMonotonicTime

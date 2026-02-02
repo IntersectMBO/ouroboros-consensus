@@ -624,16 +624,18 @@ instance
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasure (SimpleBlock c ext) = IgnoringOverflow ByteSize32
 
+  txMeasure cfg _st =
+    fmap IgnoringOverflow
+      . checkTxSize (simpleLedgerMockConfig cfg)
+      . simpleGenTx
+
   -- Large value so that the Mempool tests never run out of capacity when they
   -- don't override it.
   --
   -- But not 'maxbound'!, since the mempool sometimes holds multiple blocks worth.
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow simpleBlockCapacity
 
-  txMeasure cfg _st =
-    fmap IgnoringOverflow
-      . checkTxSize (simpleLedgerMockConfig cfg)
-      . simpleGenTx
+  ebCapacityTxMeasure _ _ = Nothing
 
 simpleBlockCapacity :: ByteSize32
 simpleBlockCapacity = ByteSize32 512

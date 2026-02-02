@@ -54,6 +54,7 @@ import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity (Identity)
+import qualified Data.IntMap as IntMap
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
@@ -63,11 +64,9 @@ import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Stack
-import Network.TypedProtocol.Codec
-  ( AnyMessage (..)
-  , CodecFailure
-  , mapFailureCodec
-  )
+import LeiosDemoDb (newInMemoryLeiosDb)
+import LeiosDemoTypes (LeiosEb)
+import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -131,11 +130,8 @@ import Ouroboros.Network.PeerSelection.Governor
 import Ouroboros.Network.PeerSelection.PeerMetric (nullMetric)
 import Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
-import Ouroboros.Network.Protocol.KeepAlive.Type
 import Ouroboros.Network.Protocol.Limits (waitForever)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
-import Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
-import Ouroboros.Network.Protocol.TxSubmission2.Type
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
 import System.Random (mkStdGen, split)
@@ -871,9 +867,10 @@ runThreadNetwork
             SlotNo ->
             TickedLedgerState blk mk ->
             [Validated (GenTx blk)] ->
+            [Validated (GenTx blk)] ->
             IsLeader (BlockProtocol blk) ->
-            m blk
-          customForgeBlock origBlockForging cfg' currentBno currentSlot tickedLdgSt txs prf = do
+            m (blk, Maybe LeiosEb)
+          customForgeBlock origBlockForging cfg' currentBno currentSlot tickedLdgSt txs ebTxs prf = do
             let currentEpoch = HFF.futureSlotToEpoch future currentSlot
 
             -- EBBs are only ever possible in the first era
@@ -899,6 +896,7 @@ runThreadNetwork
                   currentSlot
                   (forgetLedgerTables tickedLdgSt)
                   txs
+                  ebTxs
                   prf
               Just forgeEbbEnv -> do
                 -- The EBB shares its BlockNo with its predecessor (if
@@ -937,7 +935,7 @@ runThreadNetwork
 
                 -- forge the block usings the ledger state that includes
                 -- the EBB
-                blk <-
+                (blk, mayEb) <-
                   forgeBlock
                     origBlockForging
                     cfg'
@@ -945,6 +943,7 @@ runThreadNetwork
                     currentSlot
                     (forgetLedgerTables tickedLdgSt')
                     txs
+                    ebTxs
                     prf
 
                 -- If the EBB or the subsequent block is invalid, then the
@@ -952,7 +951,7 @@ runThreadNetwork
                 -- 'Test.ThreadNet.General.prop_general' will eventually fail
                 -- because of a block rejection.
                 void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment ebb
-                pure blk
+                pure (blk, mayEb)
 
       -- This variable holds the number of the earliest slot in which the
       -- crucial txs have not yet been added. In other words, it holds the
@@ -1091,6 +1090,7 @@ runThreadNetwork
                     { gnkaLoEAndGDDArgs = LoEAndGDDDisabled
                     }
               , getDiffusionPipeliningSupport = DiffusionPipeliningOn
+              , nkaGetLeiosNewDbConnection = newInMemoryLeiosDb
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs
@@ -1108,7 +1108,10 @@ runThreadNetwork
               -- node
               nullDebugProtocolTracers
               (customNodeToNodeCodecs pInfoConfig)
-              NTN.noByteLimits
+              -- REVIEW: This had "no limits" before using (const 0), this
+              -- now moved to the BearerBytes class and we would need to
+              -- select this size function via a new instance here
+              NTN.byteLimits
               -- see #1882, tests that can't cope with timeouts.
               ( pure $
                   NTN.ChainSyncTimeout
@@ -1187,9 +1190,11 @@ runThreadNetwork
         Lazy.ByteString
         Lazy.ByteString
         Lazy.ByteString
-        (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
-        (AnyMessage KeepAlive)
-        (AnyMessage (PeerSharing NodeId))
+        Lazy.ByteString -- TxSubmission2
+        Lazy.ByteString -- KeepAlive
+        Lazy.ByteString -- PeerSharing
+        Lazy.ByteString -- LeiosNotify
+        Lazy.ByteString -- LeiosFetch
     customNodeToNodeCodecs cfg ntnVersion =
       NTN.Codecs
         { cChainSyncCodec =
@@ -1205,14 +1210,20 @@ runThreadNetwork
             mapFailureCodec (CodecBytesFailure "BlockFetchSerialised") $
               NTN.cBlockFetchCodecSerialised binaryProtocolCodecs
         , cTxSubmission2Codec =
-            mapFailureCodec CodecIdFailure $
-              NTN.cTxSubmission2Codec NTN.identityCodecs
+            mapFailureCodec (CodecBytesFailure "TxSubmission2") $
+              NTN.cTxSubmission2Codec binaryProtocolCodecs
         , cKeepAliveCodec =
-            mapFailureCodec CodecIdFailure $
-              NTN.cKeepAliveCodec NTN.identityCodecs
+            mapFailureCodec (CodecBytesFailure "KeepAlive") $
+              NTN.cKeepAliveCodec binaryProtocolCodecs
         , cPeerSharingCodec =
-            mapFailureCodec CodecIdFailure $
-              NTN.cPeerSharingCodec NTN.identityCodecs
+            mapFailureCodec (CodecBytesFailure "PeerSharing") $
+              NTN.cPeerSharingCodec binaryProtocolCodecs
+        , cLeiosNotifyCodec =
+            mapFailureCodec (CodecBytesFailure "LeiosNotify") $
+              NTN.cLeiosNotifyCodec binaryProtocolCodecs
+        , cLeiosFetchCodec =
+            mapFailureCodec (CodecBytesFailure "LeiosFetch") $
+              NTN.cLeiosFetchCodec binaryProtocolCodecs
         }
      where
       binaryProtocolCodecs =
@@ -1539,7 +1550,10 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
 
   chan q b =
     Channel
-      { recv = fmap Just $ atomically $ MonadSTM.takeTMVar b
+      { recv = do
+          tm <- getMonotonicTime
+          x <- atomically $ MonadSTM.takeTMVar b
+          pure . Just $ MkReception (IntMap.singleton 0 tm) x
       , send = atomically . MonadSTM.writeTQueue q
       }
 
@@ -1683,7 +1697,7 @@ mkTestOutput vertexInfos = do
                 , nodeOutputFinalLedger = ldgr
                 , nodeOutputForges =
                     Map.fromList $
-                      [(s, b) | TraceForgedBlock s _ b _ <- nodeEventsForges]
+                      [(s, fbNewBlock) | TraceForgedBlock s (ForgedBlock{fbNewBlock}) <- nodeEventsForges]
                 , nodeOutputHeaderAdds =
                     Map.fromListWith (flip (++)) $
                       [ (s, [(p, bno)])
@@ -1752,6 +1766,7 @@ type TracingConstraints blk =
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
+  , Show (TxMeasure blk)
   , HasNestedContent Header blk
   )
 
@@ -1796,9 +1811,11 @@ type LimitedApp' m addr blk =
     -- channel with the same type on both ends, i.e., 'Lazy.ByteString'.
     Lazy.ByteString
     Lazy.ByteString
-    (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
-    (AnyMessage KeepAlive)
-    (AnyMessage (PeerSharing addr))
+    Lazy.ByteString -- TxSubmission2
+    Lazy.ByteString -- KeepAlive
+    Lazy.ByteString -- PeerSharing
+    Lazy.ByteString -- LeiosNotify
+    Lazy.ByteString -- LeiosFetch
     NodeToNodeInitiatorResult
     ()
 
