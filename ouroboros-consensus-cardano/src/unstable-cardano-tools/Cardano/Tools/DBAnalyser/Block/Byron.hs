@@ -59,6 +59,10 @@ instance HasAnalysis ByronBlock where
   filterGovCert _ = absurd
   filterDelegCert _ = absurd
   eraName _ = "Byron"
+
+  utxoSummary _ = mempty -- dummy (Byron has a different type of TxIn, that I
+                  -- don't want to investigate at the moment)
+  
   countTxOutputs = aBlockOrBoundary (const 0) countTxOutputsByron
   blockTxSizes = aBlockOrBoundary (const []) blockTxSizesByron
   knownEBBs = const Byron.knownEBBs

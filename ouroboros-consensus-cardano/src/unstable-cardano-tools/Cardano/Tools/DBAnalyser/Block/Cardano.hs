@@ -354,6 +354,8 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
 
   eraName = analyseBlock eraName
 
+  utxoSummary = analyseWithLedgerState utxoSummary
+
   countTxOutputs = analyseBlock countTxOutputs
   blockTxSizes = analyseBlock blockTxSizes
   knownEBBs _ =

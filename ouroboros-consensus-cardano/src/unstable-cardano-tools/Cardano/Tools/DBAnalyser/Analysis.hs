@@ -383,7 +383,7 @@ data BlockFeatures blk f = MkBlockFeatures
   , num_transactions :: f Int
   -- ^ Number of transaction in the block
   , era :: f Text
-  -- ^ Name of the block's era. 
+  -- ^ Name of the block's era.
   , prot_major :: f Word64
   -- ^ Major protocol version
   , prot_minor :: f Natural
@@ -399,6 +399,7 @@ data TxFeatures blk f = MkTxFeatures
   , size_script_wits :: f Int
   , size_datum :: f Int
   , num_inputs :: f Int
+  , size_inputs :: f Int
   , num_outputs :: f Int
   , num_ref_inputs :: f Int
   , num_certs :: f Int
@@ -432,6 +433,7 @@ txFeaturesNames =
     , size_script_wits = "script_wits_size"
     , size_datum = "datum_size"
     , num_inputs = "#inputs"
+    , size_inputs = "size_inputs"
     , num_outputs = "#outputs"
     , num_ref_inputs = "#reference_inputs"
     , num_certs = "#certs"
@@ -442,13 +444,15 @@ txFeaturesNames =
 
 dumpBlockHeader ::
   forall blk.
-  HasAnalysis blk =>
+  ( HasAnalysis blk
+  , LedgerSupportsProtocol blk)
+  =>
   -- | Csv file where the block data is to be stored
   FilePath ->
   -- | Csv file where the transaction data is to be stored
   FilePath ->
-  Analysis blk StartFromPoint
-dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tracer} = do
+  Analysis blk StartFromLedgerState
+dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, limit, tracer} = do
   traceWith tracer $
     Message $
       "Saving block metadata to: " ++ blockFile
@@ -474,8 +478,32 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tra
       processAll_ db registry component startFrom limit (process outBlockHandle outTxHandle)
         >> pure Nothing
  where
+  FromLedgerState ledgerDB intLedgerDB = startFrom
+
   process :: IO.Handle -> IO.Handle -> DumpQuery blk Identity -> IO ()
   process bh th cmp = do
+
+    -- Start: ledger state retrieval and update
+    frk <-
+      LedgerDB.getForkerAtTarget ledgerDB registry VolatileTip >>= \case
+        Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
+        Right f -> pure f
+    oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
+    oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets (runIdentity $ query_block cmp))
+    let oldLedger = oldLedgerSt `withLedgerTables` oldLedgerTbs
+    LedgerDB.forkerClose frk
+
+    let
+      nextLedgerSt = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) (runIdentity $ query_block cmp) oldLedger
+      nextLedger = applyDiffs oldLedger nextLedgerSt
+
+
+    LedgerDB.push intLedgerDB nextLedgerSt
+    LedgerDB.tryFlush ledgerDB
+    -- End: ledger state retrieval and update
+
+    let utxo_summary = HasAnalysis.utxoSummary @blk (HasAnalysis.WithLedgerState {HasAnalysis.wlsStateBefore=(ledgerState oldLedger), HasAnalysis.wlsStateAfter=(ledgerState nextLedger), HasAnalysis.wlsBlk=(runIdentity $ query_block cmp)})
+
     let
       blockFeatures :: BlockFeatures blk Identity
       blockFeatures =
@@ -497,7 +525,7 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tra
     let
       script_wits :: SimpleFold (HasAnalysis.TxOf blk) (HasAnalysis.ScriptType blk)
       script_wits = HasAnalysis.wits @blk . HasAnalysis.scriptWits @blk . traverse
-      
+
       txFeatures :: HasAnalysis.TxOf blk -> TxFeatures blk Identity
       txFeatures tx =
         MkTxFeatures
@@ -507,6 +535,11 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, limit, tra
           , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize @blk)) Sum tx
           , size_datum = Identity $ tx ^. (HasAnalysis.wits @blk . to (HasAnalysis.datumSize @blk))
           , num_inputs = Identity $ HasAnalysis.numInputs @blk tx
+          -- I find it a little dangerous to default to 0 when the TxIn isn't
+          -- there. We have to have a default because the Byron blocks have
+          -- their UTxO summary implemeted yet in their HasAnalysis instance.
+          -- But this may hide some bugs.
+          , size_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs @blk . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
           , num_outputs = Identity $ HasAnalysis.numOutputs @blk tx
           , num_ref_inputs = Identity $ length $ toListOf (HasAnalysis.referenceInputs @blk) tx
           , num_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk) tx

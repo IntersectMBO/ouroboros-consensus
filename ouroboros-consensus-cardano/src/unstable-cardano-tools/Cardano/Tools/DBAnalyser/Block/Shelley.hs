@@ -76,6 +76,7 @@ import Cardano.Ledger.Api (BabbageEraTxBody(..))
 import qualified Cardano.Ledger.Conway.TxCert as Conway
 import qualified Cardano.Ledger.Shelley.TxCert as Shelley
 import qualified Cardano.Ledger.Dijkstra.TxCert as Dijkstra
+import qualified Cardano.Ledger.State as LState
 
 -- | Usable for each Shelley-based era
 instance
@@ -120,6 +121,9 @@ instance
   filterDelegCert = eraFilterDelegCert @(Core.TxCert era)
 
   eraName _ = eraEraName @era
+
+  utxoSummary (WithLedgerState _blk lsb _lsa) =
+    view (to shelleyLedgerState . LState.utxoL . to LState.unUTxO . to (Map.map packedByteCount)) lsb
 
   countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
     SL.Block _ body -> getSum $ foldMap (Sum . countOutputs) (body ^. Core.txSeqBlockBodyL)

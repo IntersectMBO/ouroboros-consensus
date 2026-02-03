@@ -48,8 +48,8 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
   txs :: SimpleFold blk (TxOf blk)
 
   numInputs :: TxOf blk -> Int
-  numOutputs :: TxOf blk -> Int -- TODO: compare with countTxOutputs as a safety check
-
+  numOutputs :: TxOf blk -> Int -- TODO: compare with countTxOutputs as a safety
+                -- check
   referenceInputs :: SimpleGetter (TxOf blk) (Set Ledger.TxIn)
 
   type WitsOf blk
@@ -78,6 +78,11 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
   
 
   eraName :: blk -> Text
+
+  -- | Representing outputs as their sizes. Avoids introducing a new type
+  -- family, and should be enough for our purpose, there isn't much more that we
+  -- can analyse about an UtxO.
+  utxoSummary :: WithLedgerState blk -> Map Ledger.TxIn Int
 
 
   countTxOutputs :: blk -> Int
