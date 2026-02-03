@@ -242,29 +242,37 @@ doAddTx mpEnv caller wti tx = do
           -- thresholds).
           after <- getMonotonicTime
           pure $ after `diffTime` before
+        let rejectBecauseOfTimeoutSoft txerr = do
+              let outcome =
+                    TransactionProcessingResult
+                      Nothing
+                      (MempoolTxRejected tx txerr)
+                      $ TraceMempoolRejectedTx
+                        tx
+                        txerr
+                        (MempoolRejectedByTimeoutSoft dur)
+                        (isMempoolSize is)
+              pure (Right outcome, is)
+            mbTimeoutSoftTxErr =
+              -- This @txerr@ is not available in historical Cardano eras, but
+              -- it is starting from Conway. So this rejection will be disabled
+              -- prior to Conway. Which is irrelevant, since mainnet is already
+              -- in Conway.
+              let txt = T.pack $ "MempoolTxTooSlow (" <> show dur <> ") " <> show (txId tx)
+               in mkMempoolPredicateFailure (isLedgerState is) txt
         case mbX of
-          Nothing -> do
-            throwIO $ MkExnMempoolTimeout dur tx
+          Nothing -> case (wti, mbTimeoutSoftTxErr) of
+            (Intervene, Just txerr) -> do
+              rejectBecauseOfTimeoutSoft txerr
+            _ -> do
+              -- Either they're not a local client or the era doesn't allow for
+              -- soft rejections.
+              throwIO $ MkExnMempoolTimeout dur tx
           Just _
             | Just toCfg <- mbToCfg
             , dur > mempoolTimeoutSoft toCfg
-            , let txt = T.pack $ "MempoolTxTooSlow (" <> show dur <> ") " <> show (txId tx)
-            , Just txerr <- mkMempoolPredicateFailure (isLedgerState is) txt ->
-                -- The txerr is not available in historical Cardano eras, but
-                -- it is starting from Conway. So this rejection will be
-                -- disabled prior to Conway. Which is irrelevant, since mainnet
-                -- is already in Conway.
-                do
-                  let outcome =
-                        TransactionProcessingResult
-                          Nothing
-                          (MempoolTxRejected tx txerr)
-                          $ TraceMempoolRejectedTx
-                            tx
-                            txerr
-                            (MempoolRejectedByTimeoutSoft dur)
-                            (isMempoolSize is)
-                  pure (Right outcome, is)
+            , Just txerr <- mbTimeoutSoftTxErr -> do
+                rejectBecauseOfTimeoutSoft txerr
           Just NotEnoughSpaceLeft -> do
             pure (Left (isMempoolSize is), is)
           Just (NotProcessed outcome) -> do
