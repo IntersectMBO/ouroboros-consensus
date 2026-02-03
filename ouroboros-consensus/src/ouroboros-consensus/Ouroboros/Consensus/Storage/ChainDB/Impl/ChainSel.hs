@@ -261,7 +261,7 @@ initialChainSelection
       -- \^ Candidates anchored at @i@
       m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
     chainSelection' curChainAndLedger candidates =
-      atomically (forkerCurrentPoint ledger) >>= \curpt ->
+      atomically (forkerCurrentPoint (Proxy @blk) ledger) >>= \curpt ->
         assert (all ((curpt ==) . castPoint . AF.anchorPoint) candidates) $
           assert (all (preferAnchoredCandidate bcfg weights curChain) candidates) $ do
             cse <- chainSelEnv
@@ -1279,7 +1279,7 @@ ledgerValidateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
       -- connect to the immutable tip.
       error "found candidate requiring rolling back past the immutable tip"
     ValidateLedgerError (AnnLedgerError ledger' pt e) -> do
-      lastValid <- atomically $ forkerCurrentPoint ledger'
+      lastValid <- atomically $ forkerCurrentPoint (Proxy @blk) ledger'
       let chainDiff' = Diff.truncate (castPoint lastValid) chainDiff
       traceWith validationTracer (InvalidBlock e pt)
       addInvalidBlock e pt

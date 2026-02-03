@@ -208,7 +208,7 @@ newtype LedgerInterface m blk = LedgerInterface
 data MempoolLedgerDBView m blk = MempoolLedgerDBView
   { mldViewState :: LedgerState blk EmptyMK
   -- ^ The ledger state currently at the tip of the LedgerDB
-  , mldViewGetForker :: m (Either GetForkerError (ReadOnlyForker m (LedgerState blk) blk))
+  , mldViewGetForker :: m (Either GetForkerError (ReadOnlyForker m (LedgerState blk)))
   -- ^ An action to get a forker at 'mldViewState' or an error in the unlikely
   -- case that such state is now gone from the LedgerDB.
   }
@@ -245,7 +245,7 @@ chainDBLedgerInterface chainDB =
 -- different operations.
 data MempoolEnv m blk = MempoolEnv
   { mpEnvLedger :: LedgerInterface m blk
-  , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk) blk)
+  , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk))
   , mpEnvLedgerCfg :: LedgerConfig blk
   , mpEnvRegistry :: ResourceRegistry m
   , mpEnvStateVar :: StrictTMVar m (InternalState blk)

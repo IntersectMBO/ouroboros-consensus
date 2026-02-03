@@ -91,8 +91,8 @@ import Ouroboros.Consensus.Util.IOLike
 
 -- | An independent handle to a point in the LedgerDB, which can be advanced to
 -- evaluate forks in the chain.
-type Forker :: (Type -> Type) -> LedgerStateKind -> Type -> Type
-data Forker m l blk = Forker
+type Forker :: (Type -> Type) -> LedgerStateKind -> Type
+data Forker m l = Forker
   { forkerClose :: !(m ())
   -- ^ Close the current forker (idempotent).
   --
@@ -141,20 +141,20 @@ data Forker m l blk = Forker
   -- current version of the LedgerDB.
   }
   deriving Generic
-  deriving NoThunks via OnlyCheckWhnf (Forker m l blk)
+  deriving NoThunks via OnlyCheckWhnf (Forker m l)
 
 -- | An identifier for a 'Forker'. See 'ldbForkers'.
 newtype ForkerKey = ForkerKey Word16
   deriving stock (Show, Eq, Ord)
   deriving newtype (Enum, NoThunks, Num)
 
-type instance HeaderHash (Forker m l blk) = HeaderHash l
+type instance HeaderHash (Forker m l) = HeaderHash l
 
-type Forker' m blk = Forker m (ExtLedgerState blk) blk
+type Forker' m blk = Forker m (ExtLedgerState blk)
 
 instance
-  (GetTip l, HeaderHash l ~ HeaderHash blk, MonadSTM m) =>
-  GetTipSTM m (Forker m l blk)
+  (GetTip l, MonadSTM m) =>
+  GetTipSTM m (Forker m l)
   where
   getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
 
@@ -205,15 +205,16 @@ data ExceededRollback = ExceededRollback
 
 forkerCurrentPoint ::
   (GetTip l, HeaderHash l ~ HeaderHash blk, Functor (STM m)) =>
-  Forker m l blk ->
+  Proxy blk ->
+  Forker m l ->
   STM m (Point blk)
-forkerCurrentPoint forker =
+forkerCurrentPoint _ forker =
   castPoint
     . getTip
     <$> forkerGetLedgerState forker
 
 ledgerStateReadOnlyForker ::
-  IOLike m => ReadOnlyForker m (ExtLedgerState blk) blk -> ReadOnlyForker m (LedgerState blk) blk
+  IOLike m => ReadOnlyForker m (ExtLedgerState blk) -> ReadOnlyForker m (LedgerState blk)
 ledgerStateReadOnlyForker frk =
   ReadOnlyForker
     { roforkerClose = roforkerClose
@@ -246,8 +247,8 @@ ledgerStateReadOnlyForker frk =
 -- - Forging loop.
 --
 -- - Mempool.
-type ReadOnlyForker :: (Type -> Type) -> LedgerStateKind -> Type -> Type
-data ReadOnlyForker m l blk = ReadOnlyForker
+type ReadOnlyForker :: (Type -> Type) -> LedgerStateKind -> Type
+data ReadOnlyForker m l = ReadOnlyForker
   { roforkerClose :: !(m ())
   -- ^ See 'forkerClose'
   , roforkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
@@ -261,15 +262,15 @@ data ReadOnlyForker m l blk = ReadOnlyForker
   }
   deriving Generic
 
-instance NoThunks (ReadOnlyForker m l blk) where
+instance NoThunks (ReadOnlyForker m l) where
   wNoThunks _ _ = pure Nothing
   showTypeOf _ = "ReadOnlyForker"
 
-type instance HeaderHash (ReadOnlyForker m l blk) = HeaderHash l
+type instance HeaderHash (ReadOnlyForker m l) = HeaderHash l
 
-type ReadOnlyForker' m blk = ReadOnlyForker m (ExtLedgerState blk) blk
+type ReadOnlyForker' m blk = ReadOnlyForker m (ExtLedgerState blk)
 
-readOnlyForker :: Forker m l blk -> ReadOnlyForker m l blk
+readOnlyForker :: Forker m l -> ReadOnlyForker m l
 readOnlyForker forker =
   ReadOnlyForker
     { roforkerClose = forkerClose forker
@@ -388,7 +389,7 @@ validate evs args = do
 -- new blocks.
 switch ::
   (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
-  (ResourceRegistry bm -> Word64 -> bm (Either GetForkerError (Forker bm l blk))) ->
+  (ResourceRegistry bm -> Word64 -> bm (Either GetForkerError (Forker bm l))) ->
   ResourceRegistry bm ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -397,7 +398,7 @@ switch ::
   (TraceValidateEvent blk -> m ()) ->
   -- | New blocks to apply
   [Ap bm m l blk c] ->
-  m (Either GetForkerError (Forker bm l blk))
+  m (Either GetForkerError (Forker bm l))
 switch forkerAtFromTip rr evs cfg numRollbacks trace newBlocks = do
   foEith <- liftBase $ forkerAtFromTip rr numRollbacks
   case foEith of
@@ -474,7 +475,7 @@ applyBlock ::
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap bm m l blk c ->
-  Forker bm l blk ->
+  Forker bm l ->
   m (ValidLedgerState (l DiffMK))
 applyBlock evs cfg ap fo = case ap of
   ReapplyVal b ->
@@ -515,7 +516,7 @@ applyThenPush ::
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap bm m l blk c ->
-  Forker bm l blk ->
+  Forker bm l ->
   m ()
 applyThenPush evs cfg ap fo =
   liftBase . forkerPush fo . getValidLedgerState
@@ -528,7 +529,7 @@ applyThenPushMany ::
   ComputeLedgerEvents ->
   LedgerCfg l ->
   [Ap bm m l blk c] ->
-  Forker bm l blk ->
+  Forker bm l ->
   m ()
 applyThenPushMany trace evs cfg aps fo = mapM_ pushAndTrace aps
  where
@@ -541,7 +542,7 @@ applyThenPushMany trace evs cfg aps fo = mapM_ pushAndTrace aps
 -------------------------------------------------------------------------------}
 
 class Monad m => ThrowsLedgerError bm m l blk where
-  throwLedgerError :: Forker bm l blk -> RealPoint blk -> LedgerErr l -> m a
+  throwLedgerError :: Forker bm l -> RealPoint blk -> LedgerErr l -> m a
 
 instance Monad m => ThrowsLedgerError bm (ExceptT (AnnLedgerError bm l blk) m) l blk where
   throwLedgerError f l r = throwError $ AnnLedgerError f l r
@@ -607,7 +608,7 @@ instance
 
 -- | When validating a sequence of blocks, these are the possible outcomes.
 data ValidateResult m l blk
-  = ValidateSuccessful (Forker m l blk)
+  = ValidateSuccessful (Forker m l)
   | ValidateLedgerError (AnnLedgerError m l blk)
   | ValidateExceededRollBack ExceededRollback
 
@@ -619,7 +620,7 @@ type ValidateResult' m blk = ValidateResult m (ExtLedgerState blk) blk
 
 -- | Annotated ledger errors
 data AnnLedgerError m l blk = AnnLedgerError
-  { annLedgerState :: Forker m l blk
+  { annLedgerState :: Forker m l
   -- ^ The ledger DB just /before/ this block was applied
   , annLedgerErrRef :: RealPoint blk
   -- ^ Reference to the block that had the error
