@@ -130,6 +130,7 @@ library unstable-diffusion-testlib
     cborg,
     containers,
     contra-tracer,
+    deepseq,
     fgl,
     fs-sim ^>=0.4,
     graphviz >=2999.20.1.0,

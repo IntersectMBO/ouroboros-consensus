@@ -2,6 +2,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -45,6 +46,7 @@ import Cardano.Network.PeerSelection.Bootstrap
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
+import Control.DeepSeq (NFData (..))
 import qualified Control.Exception as Exn
 import Control.Monad
 import Control.Monad.Class.MonadTime.SI (MonadTime)
@@ -63,10 +65,11 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
+import GHC.Generics (Generic)
 import GHC.Stack
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
-  , CodecFailure
+  , CodecFailure (..)
   , mapFailureCodec
   )
 import qualified Network.TypedProtocol.Codec as Codec
@@ -119,6 +122,7 @@ import Ouroboros.Network.BlockFetch
 import Ouroboros.Network.Channel
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Mock.Chain (Chain (Genesis))
+import Ouroboros.Network.Mock.OrphanedInstances ()
 import Ouroboros.Network.NodeToNode
   ( ConnectionId (..)
   , ExpandedInitiatorContext (..)
@@ -1232,7 +1236,7 @@ data CodecError
       -- | Extra error message, e.g., the name of the codec
       String
       DeserialiseFailure
-  deriving (Show, Exception)
+  deriving (Show, Exception, Generic, NFData)
 
 {-------------------------------------------------------------------------------
   Running an edge
