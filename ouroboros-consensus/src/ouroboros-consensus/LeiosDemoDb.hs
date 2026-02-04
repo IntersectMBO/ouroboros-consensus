@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -45,6 +46,7 @@ import qualified GHC.Stack
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
+  , LeiosPoint (..)
   , TxHash (..)
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike, atomically)
@@ -77,7 +79,10 @@ data LeiosDbHandle m = LeiosDbHandle
     leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   , -- Copy from txCache to ebTxs in batch
     -- TODO: Avoid needing this function
-    leiosDbCopyFromTxCacheBatch :: Map EbHash (IntMap BytesSize) -> BytesSize -> m (Map EbHash IntSet)
+    leiosDbCopyFromTxCacheBatch ::
+      Map LeiosPoint (IntMap BytesSize) ->
+      BytesSize ->
+      m (Map LeiosPoint IntSet)
   }
 
 -- * In-memory implementation of LeiosDbHandle
@@ -404,25 +409,26 @@ leiosDbHandleFromSqlite db =
         pure results
     , leiosDbCopyFromTxCacheBatch = \toCopy bytesLimit -> do
         dbWithPrepare db (fromString sql_copy_from_txCache) $ \stmt -> do
-          let go1 !accCopied !accBytes !remaining
-                | accBytes < bytesLimit
-                , Just ((ebHash, txs), remaining') <- Map.maxViewWithKey remaining =
-                    go2 accCopied accBytes remaining' ebHash IntSet.empty txs
-                | otherwise = pure accCopied
+          let
+            go1 !accCopied !accBytes !remaining
+              | accBytes < bytesLimit
+              , Just ((point :: LeiosPoint, txs), remaining') <- Map.maxViewWithKey remaining =
+                  go2 accCopied accBytes remaining' point IntSet.empty txs
+              | otherwise = pure accCopied
 
-              go2 !accCopied !accBytes !remaining ebHash !copiedEbId txs
-                | Just ((offset, txBytesSize), txs') <- IntMap.minViewWithKey txs =
-                    if accBytes + txBytesSize > bytesLimit
-                      then pure accCopied'
-                      else do
-                        dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
-                        dbBindInt64 stmt 2 (fromIntegral offset)
-                        dbStep1 stmt
-                        dbReset stmt
-                        go2 accCopied (accBytes + txBytesSize) remaining ebHash (IntSet.insert offset copiedEbId) txs'
-                | otherwise = go1 accCopied' accBytes remaining
-               where
-                accCopied' = if IntSet.null copiedEbId then accCopied else Map.insert ebHash copiedEbId accCopied
+            go2 !accCopied !accBytes !remaining point !copiedPoint txs
+              | Just ((offset, txBytesSize), txs') <- IntMap.minViewWithKey txs =
+                  if accBytes + txBytesSize > bytesLimit
+                    then pure accCopied'
+                    else do
+                      dbBindBlob stmt 1 point.pointEbHash.ebHashBytes
+                      dbBindInt64 stmt 2 (fromIntegral offset)
+                      dbStep1 stmt
+                      dbReset stmt
+                      go2 accCopied (accBytes + txBytesSize) remaining point (IntSet.insert offset copiedPoint) txs'
+              | otherwise = go1 accCopied' accBytes remaining
+             where
+              accCopied' = if IntSet.null copiedPoint then accCopied else Map.insert point copiedPoint accCopied
 
           go1 Map.empty 0 toCopy
     }

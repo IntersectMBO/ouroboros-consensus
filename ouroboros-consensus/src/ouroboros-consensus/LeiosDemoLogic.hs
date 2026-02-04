@@ -30,7 +30,6 @@ import Data.Foldable (forM_)
 import Data.Functor (void)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 import Data.List (unfoldr)
 import Data.Map (Map)
@@ -230,19 +229,25 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
  where
   expand = \case
     [] -> []
-    (ebId, Left ebBytesSize) : vs -> Left (ebId, ebBytesSize) : expand vs
-    (ebId, Right v) : vs ->
-      [Right (ebId, txOffset, txHash) | (txOffset, (txHash, _txBytesSize)) <- IntMap.toAscList v]
+    (point, Left ebBytesSize) : vs -> Left (point, ebBytesSize) : expand vs
+    (point, Right v) : vs ->
+      [Right (point, txOffset, txHash) | (txOffset, (txHash, _txBytesSize)) <- IntMap.toAscList v]
         <> expand vs
+
+  go1 ::
+    LeiosOutstanding pid ->
+    LeiosFetchDecisions pid ->
+    [Either (LeiosPoint, BytesSize) (LeiosPoint, IntSet.Key, TxHash)] ->
+    (LeiosOutstanding pid, LeiosFetchDecisions pid)
   go1 !acc !accNew = \case
     [] ->
       (acc, accNew)
-    Left (ebHash, ebBytesSize) : targets
+    Left (point, ebBytesSize) : targets
       | let peerIds :: Set (PeerId pid)
-            peerIds = Map.findWithDefault Set.empty ebHash (Leios.requestedEbPeers acc) ->
-          goEb2 acc accNew targets ebHash ebBytesSize peerIds
-    Right (ebHash, txOffset, txHash) : targets
-      | Just _ <- Map.lookup ebHash (Leios.toCopy acc) >>= IntMap.lookup txOffset ->
+            peerIds = Map.findWithDefault Set.empty point.pointEbHash (Leios.requestedEbPeers acc) ->
+          goEb2 acc accNew targets point ebBytesSize peerIds
+    Right (point, txOffset, txHash) : targets
+      | Just _ <- Map.lookup point (Leios.toCopy acc) >>= IntMap.lookup txOffset ->
           -- it's already scheduled to be copied from TxCache
           go1 acc accNew targets
       | Just txBytesSize <- Map.lookup txHash (Leios.cachedTxs acc) -> -- it's in the TxCache
@@ -260,20 +265,20 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
                                 Nothing -> error "impossible!"
                                 Just x -> delIf IntMap.null $ IntMap.delete txOffset x
                             )
-                            ebHash
+                            point
                             (Leios.missingEbTxs acc)
                       , Leios.txOffsetss =
                           Map.alter
                             ( \case
                                 Nothing -> error "impossible!"
-                                Just x -> delIf Map.null $ Map.delete ebHash x
+                                Just x -> delIf Map.null $ Map.delete point.pointEbHash x
                             )
                             txHash
                             (Leios.txOffsetss acc)
                       , Leios.toCopy =
                           Map.insertWith
                             IntMap.union
-                            ebHash
+                            point
                             (IntMap.singleton txOffset txBytesSize)
                             (Leios.toCopy acc)
                       , Leios.toCopyBytesSize = Leios.toCopyBytesSize acc + txBytesSize
@@ -286,14 +291,14 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
                 Just x -> x
               peerIds :: Set (PeerId pid)
               peerIds = Map.findWithDefault Set.empty txHash (Leios.requestedTxPeers acc)
-           in goTx2 acc accNew targets (error "FIXME: ebIdSlot was here") txHash txOffsets peerIds
+           in goTx2 acc accNew targets point txHash txOffsets peerIds
 
-  goEb2 !acc !accNew targets ebHash ebBytesSize peerIds
+  goEb2 !acc !accNew targets point ebBytesSize peerIds
     | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
       =
         (acc, accNew)
     | Set.size peerIds < Leios.maxRequestsPerEb env -- we would like to request it from an additional peer
-    , Just peerId <- choosePeerEb peerIds acc ebHash =
+    , Just peerId <- choosePeerEb peerIds acc point.pointEbHash =
         -- there's a peer who offered it and we haven't already requested it from them
         let accNew' =
               MkLeiosFetchDecisions $
@@ -301,20 +306,20 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
                   (Map.unionWith (<>))
                   peerId
                   ( Map.singleton
-                      (error "FIXME: ebIdSlot was here")
-                      (DList.empty, DList.singleton (ebHash, ebBytesSize))
+                      point.pointSlotNo
+                      (DList.empty, DList.singleton (point.pointEbHash, ebBytesSize))
                   )
                   (let MkLeiosFetchDecisions x = accNew in x)
             acc' =
               acc
                 { Leios.requestedEbPeers =
-                    Map.insertWith Set.union ebHash (Set.singleton peerId) (Leios.requestedEbPeers acc)
+                    Map.insertWith Set.union point.pointEbHash (Set.singleton peerId) (Leios.requestedEbPeers acc)
                 , Leios.requestedBytesSizePerPeer =
                     Map.insertWith (+) peerId ebBytesSize (Leios.requestedBytesSizePerPeer acc)
                 , Leios.requestedBytesSize = ebBytesSize + Leios.requestedBytesSize acc
                 }
             peerIds' = Set.insert peerId peerIds
-         in goEb2 acc' accNew' targets ebHash ebBytesSize peerIds'
+         in goEb2 acc' accNew' targets point ebBytesSize peerIds'
     | otherwise =
         go1 acc accNew targets
 
@@ -332,7 +337,7 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
       ebHash `Set.member` ebHashes -- peer has offered this EB body
       ]
 
-  goTx2 !acc !accNew targets ebSlot txHash txOffsets peerIds
+  goTx2 !acc !accNew targets point txHash txOffsets peerIds
     | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
       =
         (acc, accNew)
@@ -343,7 +348,7 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
         -- there's a peer who offered it and we haven't already requested it from them
         let txBytesSize = case Map.lookupMax txOffsets' of
               Nothing -> error "impossible!"
-              Just (ebId, txOffset) -> case Map.lookup ebId (Leios.missingEbTxs acc) of
+              Just (_ebHash, txOffset) -> case Map.lookup point (Leios.missingEbTxs acc) of
                 Nothing -> error "impossible!"
                 Just v -> case IntMap.lookup txOffset v of
                   Nothing -> error "impossible!"
@@ -353,7 +358,7 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
                 Map.insertWith
                   (Map.unionWith (<>))
                   peerId
-                  (Map.singleton ebSlot (DList.singleton (txHash, txBytesSize, txOffsets'), DList.empty))
+                  (Map.singleton point.pointSlotNo (DList.singleton (txHash, txBytesSize, txOffsets'), DList.empty))
                   (let MkLeiosFetchDecisions x = accNew in x)
             acc' =
               acc
@@ -364,7 +369,7 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
                 , Leios.requestedBytesSize = txBytesSize + Leios.requestedBytesSize acc
                 }
             peerIds' = Set.insert peerId peerIds
-         in goTx2 acc' accNew' targets ebSlot txHash txOffsets peerIds'
+         in goTx2 acc' accNew' targets point txHash txOffsets peerIds'
     | otherwise =
         go1 acc accNew targets
 
@@ -543,9 +548,9 @@ msgLeiosBlock ::
   m ()
 msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req eb = do
   -- validate it
-  let MkLeiosBlockRequest p ebBytesSize = req
-  traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
-  let MkLeiosPoint ebSlot ebHash = p
+  let MkLeiosBlockRequest point ebBytesSize = req
+  traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
+  let MkLeiosPoint ebSlot ebHash = point
   do
     let ebBytes :: ByteString
         ebBytes = serialize' $ Leios.encodeLeiosEb eb
@@ -579,7 +584,7 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, 
             else
               ebBodies
                 { Leios.acquiredEbBodies = Set.insert ebHash (Leios.acquiredEbBodies ebBodies)
-                , Leios.missingEbBodies = Map.delete ebHash (Leios.missingEbBodies ebBodies)
+                , Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies ebBodies)
                 }
     pure (ebBodies', novel)
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
@@ -590,7 +595,7 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, 
                   then Leios.blockingPerEb outstanding
                   else
                     Map.insert
-                      ebHash
+                      point
                       (let MkLeiosEb v = eb in V.length v)
                       (Leios.blockingPerEb outstanding)
             , Leios.missingEbTxs =
@@ -598,7 +603,7 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, 
                   then Leios.missingEbTxs outstanding
                   else
                     Map.insert
-                      ebHash
+                      point
                       ( V.ifoldl
                           (\acc i x -> IntMap.insert i x acc)
                           IntMap.empty
@@ -630,20 +635,20 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, 
     pure outstanding'
   void $ MVar.tryPutMVar readyVar ()
   when novel $ do
-    traceWith ktracer $ TraceLeiosBlockAcquired p
+    traceWith ktracer $ TraceLeiosBlockAcquired point
     vars <- MVar.readMVar notificationVars
     forM_ vars $ \var -> do
-      traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlock!: " ++ Leios.prettyLeiosPoint p
+      traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlock!: " ++ Leios.prettyLeiosPoint point
       StrictSTM.atomically $ do
         x <- StrictSTM.readTVar var
         let !x' =
               Map.insertWith
                 (<>)
                 ebSlot
-                (Seq.singleton (LeiosOfferBlock p ebBytesSize))
+                (Seq.singleton (LeiosOfferBlock point ebBytesSize))
                 x
         StrictSTM.writeTVar var x'
-  traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint p
+  traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
 
 -----
 
@@ -672,8 +677,8 @@ msgLeiosBlockTxs ::
 msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req txs = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
   -- validate it
-  let MkLeiosBlockTxsRequest p bitmaps txHashes = req
-  let ebHash = p.pointEbHash
+  let MkLeiosBlockTxsRequest point bitmaps txHashes = req
+  let ebHash = point.pointEbHash
   --    forM_ txHashes $ \txHash -> do
   --        traceWith tracer $ MkTraceLeiosPeer $ "leiosRspTxHash: " ++ Leios.prettyTxHash txHash
   let txBytess :: V.Vector ByteString
@@ -731,12 +736,12 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
                 , accSz + BS.length txBytes
                 )
     let offsetsSet = IntSet.fromList offsets
-        checkBeat :: forall a. Map EbHash (IntMap a) -> IntMap a
+        checkBeat :: forall a. Map LeiosPoint (IntMap a) -> IntMap a
         checkBeat x =
           (`IntMap.restrictKeys` offsetsSet) $
             Map.findWithDefault
               IntMap.empty
-              ebHash
+              point
               x
         -- the requests that this MsgLeiosBlockTxs was the first to resolve
         beatOtherPeers = checkBeat $ Leios.missingEbTxs outstanding
@@ -749,7 +754,7 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
             , Leios.missingEbTxs =
                 Map.update
                   (delIf IntMap.null . (`IntMap.withoutKeys` offsetsSet))
-                  ebHash
+                  point
                   (Leios.missingEbTxs outstanding)
             , Leios.txOffsetss = txOffsetss'
             , Leios.blockingPerEb =
@@ -761,7 +766,7 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
                           Nothing -> Nothing
                           Just x -> delIf (== 0) $ x - IntMap.size beatOtherPeers - IntMap.size beatToCopy
                       )
-                      ebHash
+                      point
                       (Leios.blockingPerEb outstanding)
             , Leios.requestedBytesSize =
                 Leios.requestedBytesSize outstanding - fromIntegral txsBytesSize
@@ -785,7 +790,7 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
                             delIf IntMap.null $
                               x `IntMap.difference` beatToCopy
                       )
-                      ebHash
+                      point
                       (Leios.toCopy outstanding)
             , Leios.toCopyBytesSize =
                 Leios.toCopyBytesSize outstanding - sum beatToCopy
@@ -798,22 +803,15 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
     pure (outstanding', newNotifications)
   void $ MVar.tryPutMVar readyVar ()
   when (not $ null newNotifications) $ do
-    -- FIXME: we lost information by only keeping track of 'EbHash' in the
-    -- 'LeiosOutstanding'. So once we completed downloading an EB, we only know
-    -- which 'EbHash' we completed (newNotifications). In order to offer it to
-    -- downstream we must say which LeiosPoint this was for.
-    --
-    -- In summary: this is unlikely the correct slot (its the one we just fetched from)
-    notifications <- fmap Map.fromList . forM newNotifications $ \completedEbHash -> do
-      let p' = MkLeiosPoint p.pointSlotNo completedEbHash
-      traceWith ktracer $ TraceLeiosBlockTxsAcquired p'
-      pure (p.pointSlotNo, Seq.singleton (LeiosOfferBlockTxs p'))
+    notifications <- fmap Map.fromList . forM newNotifications $ \completedPoint -> do
+      traceWith ktracer $ TraceLeiosBlockTxsAcquired completedPoint
+      pure (completedPoint.pointSlotNo, Seq.singleton (LeiosOfferBlockTxs completedPoint))
 
     vars <- MVar.readMVar notificationVars
     forM_ vars $ \var -> do
       traceWith tracer $
         MkTraceLeiosPeer $
-          "leiosNotificationsBlockTxs!: " ++ unwords (map Leios.prettyEbHash newNotifications)
+          "leiosNotificationsBlockTxs!: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
       StrictSTM.atomically $ do
         x <- StrictSTM.readTVar var
         let !x' = Map.unionWith (<>) x notifications
@@ -838,7 +836,6 @@ doCacheCopy tracer db (writeLock, outstandingVar, notificationVars) bytesSize = 
     MVar.withMVar writeLock $ \() -> do
       leiosDbCopyFromTxCacheBatch db (Leios.toCopy outstanding) bytesSize
   (moreTodo, newNotifications) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
-    let _ = copied :: Map EbHash IntSet
     let usefulCopied =
           -- @copied@ might contain elements that were already accounted
           -- for by a @MsgLeiosBlockTxs@ that won the race. This
@@ -851,8 +848,8 @@ doCacheCopy tracer db (writeLock, outstandingVar, notificationVars) bytesSize = 
           outstanding
             { Leios.blockingPerEb =
                 Map.differenceWithKey
-                  ( \_ebId count copiedEbId ->
-                      delIf (== 0) $ count - IntMap.size copiedEbId
+                  ( \_point count copiedEbHash ->
+                      delIf (== 0) $ count - IntMap.size copiedEbHash
                   )
                   (Leios.blockingPerEb outstanding)
                   usefulCopied
@@ -875,18 +872,17 @@ doCacheCopy tracer db (writeLock, outstandingVar, notificationVars) bytesSize = 
   when (not $ null newNotifications) $ do
     let notifications =
           Map.fromList $
-            [ (error "FIXME: this was using ebIdSlot", Seq.singleton (LeiosOfferBlockTxs p))
-            | x <- newNotifications
-            , let p = MkLeiosPoint (error "FIXME") x
+            [ (p.pointSlotNo, Seq.singleton (LeiosOfferBlockTxs p))
+            | p <- newNotifications
             ]
     traceWith tracer $
       MkTraceLeiosKernel $
-        "leiosNotificationsCopy: " ++ unwords (map Leios.prettyEbHash newNotifications)
+        "leiosNotificationsCopy: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
     vars <- MVar.readMVar notificationVars
     forM_ vars $ \var -> do
       traceWith tracer $
         MkTraceLeiosKernel $
-          "leiosNotificationsCopy!: " ++ unwords (map Leios.prettyEbHash newNotifications)
+          "leiosNotificationsCopy!: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
       StrictSTM.atomically $ do
         x <- StrictSTM.readTVar var
         let !x' = Map.unionWith (<>) x notifications

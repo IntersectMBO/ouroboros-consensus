@@ -63,7 +63,7 @@ newtype PeerId a = MkPeerId a
 -- Hash algorithm used in leios for EBs and txs
 type HASH = Hash.Blake2b_256
 
-newtype EbHash = MkEbHash ByteString
+newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
   deriving (Eq, Ord, Show)
 
 prettyEbHash :: EbHash -> String
@@ -78,7 +78,7 @@ prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
 -- | Uniquely identifies an endorser block in Leios. Could use 'Block SlotNo
 -- EbHash' eventually, but a dedicated type is better to explore.
 data LeiosPoint = MkLeiosPoint {pointSlotNo :: SlotNo, pointEbHash :: EbHash}
-  deriving Show
+  deriving (Show, Eq, Ord)
 
 instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
 
@@ -171,9 +171,10 @@ newLeiosPeerVars = do
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
   pure MkLeiosPeerVars{offerings, requestsToSend}
 
+-- REVIEW: Is the acquired/missing here redundant to the maps in LeiosOutstanding?
 data LeiosEbBodies = MkLeiosEbBodies
   { acquiredEbBodies :: !(Set EbHash)
-  , missingEbBodies :: !(Map EbHash BytesSize)
+  , missingEbBodies :: !(Map LeiosPoint BytesSize)
   , ebPoints :: !(IntMap {- SlotNo -} EbHash)
   }
 
@@ -205,7 +206,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   , requestedBytesSize :: !BytesSize
   , -- TODO this might be far too big for the heap
     cachedTxs :: !(Map TxHash BytesSize)
-  , missingEbTxs :: !(Map EbHash (IntMap (TxHash, BytesSize)))
+  , missingEbTxs :: !(Map LeiosPoint (IntMap (TxHash, BytesSize)))
   -- ^ The txs that still need to be sourced
   --
   -- * A @MsgLeiosBlock@ inserts into 'missingEbTxs' if that EB has never
@@ -223,7 +224,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
     --
     -- inverse of missingEbTxs
     txOffsetss :: !(Map TxHash (Map EbHash Int))
-  , blockingPerEb :: !(Map EbHash Int)
+  , blockingPerEb :: !(Map LeiosPoint Int)
   -- ^ How many txs of each EB are not yet in the @ebTxs@ table
   --
   -- These NULLs are blocking the node from sending @MsgLeiosBlockTxsOffer@
@@ -244,7 +245,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   --
   -- * The EbTx is in 'toCopy' (and therefore not in 'missingEbTxs'). The
   --   handler shoulder also remove it from 'toCopy'.
-  , toCopy :: !(Map EbHash (IntMap BytesSize))
+  , toCopy :: !(Map LeiosPoint (IntMap BytesSize))
   , toCopyBytesSize :: !BytesSize
   , toCopyCount :: !Int
   }
@@ -273,11 +274,11 @@ prettyLeiosOutstanding x =
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
       , "requestedBytesSize = " ++ show requestedBytesSize
       , "missingEbTxs = "
-          ++ unwords [(prettyEbHash k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList missingEbTxs]
+          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList missingEbTxs]
       , "blockingPerEb = "
-          ++ unwords [(prettyEbHash k ++ "__" ++ show c) | (k, c) <- Map.toList blockingPerEb]
+          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show c) | (k, c) <- Map.toList blockingPerEb]
       , "toCopy = "
-          ++ unwords [(prettyEbHash k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList toCopy]
+          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList toCopy]
       , "toCopyBytesSize = " ++ show toCopyBytesSize
       , "toCopyCount = " ++ show toCopyCount
       , ""

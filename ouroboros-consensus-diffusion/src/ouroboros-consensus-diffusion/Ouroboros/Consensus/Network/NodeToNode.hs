@@ -337,9 +337,9 @@ mkHandlers
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
-                  MsgLeiosBlockOffer p ebBytesSize -> do
-                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint p
-                    let MkLeiosPoint{pointEbHash = ebHash} = p
+                  MsgLeiosBlockOffer point ebBytesSize -> do
+                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
+                    let MkLeiosPoint{pointEbHash = ebHash} = point
                     MVar.modifyMVar_ getLeiosEbBodies $ \ebBodies ->
                       pure $
                         if Set.member ebHash (Leios.acquiredEbBodies ebBodies)
@@ -347,7 +347,7 @@ mkHandlers
                           else
                             ebBodies
                               { Leios.missingEbBodies =
-                                  Map.insert ebHash ebBytesSize (Leios.missingEbBodies ebBodies)
+                                  Map.insert point ebBytesSize (Leios.missingEbBodies ebBodies)
                               }
                     peerVars <- do
                       peersVars <- MVar.readMVar getLeiosPeersVars
