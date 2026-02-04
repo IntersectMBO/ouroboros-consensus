@@ -140,8 +140,10 @@ type VoteDelegatees = Map (SL.Credential SL.Staking) SL.DRep
 -- convenience wrapper to hide the boolean, this pattern can be removed
 -- once support for ntcV22/shelleyV14 is removed
 pattern GetLedgerPeerSnapshot ::
+  () =>
+  (footprint ~ QFNoTables, result ~ SomeLedgerPeerSnapshot) =>
   LedgerPeersKind ->
-  BlockQuery (ShelleyBlock proto era) QFNoTables SomeLedgerPeerSnapshot
+  BlockQuery (ShelleyBlock proto era) footprint result
 pattern GetLedgerPeerSnapshot kind = GetLedgerPeerSnapshot' True kind
 
 data instance BlockQuery (ShelleyBlock proto era) fp result where
