@@ -20,6 +20,7 @@ module LeiosDemoDb
   , EbTxEntry (..)
   ) where
 
+import Cardano.Prelude (when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( modifyTVar
@@ -262,62 +263,26 @@ dieStack s = die $ s ++ "\n\n" ++ GHC.Stack.prettyCallStack GHC.Stack.callStack
 
 -- * SQLite implementation of LeiosDbHandle
 
--- FIXME: put Schema here and create db if not existing (instead of externally provided)
+-- | Create a new Leios database connection from environment variable.
+-- This looks up the LEIOS_DB_PATH environment variable and opens the database.
+demoNewLeiosDbConnectionIO :: IO (LeiosDbHandle IO)
+demoNewLeiosDbConnectionIO = do
+  dbPath <-
+    lookupEnv "LEIOS_DB_PATH" >>= \case
+      Nothing -> die "You must define the LEIOS_DB_PATH variable for this demo."
+      Just x -> pure x
+  newLeiosDbConnectionIO dbPath
 
-sql_scan_ebPoints :: String
-sql_scan_ebPoints =
-  "SELECT ebSlot, ebHashBytes\n\
-  \FROM ebPoints\n\
-  \ORDER BY ebSlot ASC\n\
-  \"
-
-sql_lookup_ebBodies :: String
-sql_lookup_ebBodies =
-  "SELECT txHashBytes, txBytesSize FROM ebTxs\n\
-  \WHERE ebHashBytes = ?\n\
-  \ORDER BY txOffset ASC\n\
-  \"
-
-sql_insert_ebBody :: String
-sql_insert_ebBody =
-  "INSERT INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, NULL)\n\
-  \"
-
-sql_update_ebTx :: String
-sql_update_ebTx =
-  "UPDATE ebTxs\n\
-  \SET txBytes = ?\n\
-  \WHERE ebHashBytes = ? AND txOffset = ?\n\
-  \"
-
-sql_insert_txCache :: String
-sql_insert_txCache =
-  "INSERT INTO txCache (txHashBytes, txBytes, txBytesSize, expiryUnixEpoch) VALUES (?, ?, ?, ?)\n\
-  \"
-
-sql_insert_memTxPoints :: String
-sql_insert_memTxPoints =
-  "INSERT INTO mem.txPoints (ebHashBytes, txOffset) VALUES (?, ?)\n\
-  \"
-
-sql_retrieve_from_ebTxs :: String
-sql_retrieve_from_ebTxs =
-  "SELECT txOffset, txHashBytes, txBytes FROM ebTxs\n\
-  \WHERE (ebHashBytes, txOffset) IN (SELECT ebHashBytes, txOffset FROM mem.txPoints)\n\
-  \ORDER BY txOffset ASC\n\
-  \"
-
-sql_flush_memTxPoints :: String
-sql_flush_memTxPoints =
-  "DELETE FROM mem.txPoints\n\
-  \"
-
-sql_copy_from_txCache :: String
-sql_copy_from_txCache =
-  "UPDATE ebTxs\n\
-  \SET txBytes = (SELECT txBytes FROM txCache WHERE txCache.txHashBytes = ebTxs.txHashBytes)\n\
-  \WHERE ebHashBytes = ? AND txOffset = ? AND txBytes IS NULL\n\
-  \"
+-- | Create a new Leios database connection from a file path.
+-- Opens the SQLite database and attaches the in-memory temp table.
+newLeiosDbConnectionIO :: FilePath -> IO (LeiosDbHandle IO)
+newLeiosDbConnectionIO dbPath = do
+  shouldInitSchema <- not <$> doesFileExist dbPath
+  db <- withDieMsg $ DB.open (fromString dbPath)
+  when shouldInitSchema $
+    dbExec db (fromString sql_schema)
+  dbExec db (fromString sql_attach_memTxPoints)
+  pure $ leiosDbHandleFromSqlite db
 
 -- | Create a LeiosDbHandle from a low-level SQLite LeiosDb.
 -- This allows production code to continue using SQLite while tests use in-memory.
@@ -433,6 +398,103 @@ leiosDbHandleFromSqlite db =
           go1 Map.empty 0 toCopy
     }
 
+sql_schema :: String
+sql_schema =
+  "CREATE TABLE txCache (\n\
+  \    txHashBytes BLOB NOT NULL PRIMARY KEY   -- raw bytes\n\
+  \  ,\n\
+  \    txBytes BLOB NOT NULL   -- valid CBOR\n\
+  \  ,\n\
+  \    txBytesSize INTEGER NOT NULL\n\
+  \  ,\n\
+  \    expiryUnixEpoch INTEGER NOT NULL\n\
+  \  ) WITHOUT ROWID;\n\
+  \CREATE TABLE ebPoints (\n\
+  \    ebSlot INTEGER NOT NULL\n\
+  \  ,\n\
+  \    ebHashBytes BLOB NOT NULL\n\
+  \  ,\n\
+  \    PRIMARY KEY (ebSlot, ebHashBytes)\n\
+  \  ) WITHOUT ROWID;\n\
+  \CREATE TABLE ebTxs (\n\
+  \    ebHashBytes BLOB NOT NULL   -- foreign key ebPoints.ebHashBytes\n\
+  \  ,\n\
+  \    txOffset INTEGER NOT NULL\n\
+  \  ,\n\
+  \    txHashBytes BLOB NOT NULL   -- raw bytes\n\
+  \  ,\n\
+  \    txBytesSize INTEGER NOT NULL\n\
+  \  ,\n\
+  \    txBytes BLOB   -- valid CBOR\n\
+  \  ,\n\
+  \    PRIMARY KEY (ebHashBytes, txOffset)\n\
+  \  ) WITHOUT ROWID;\n\
+  \CREATE INDEX ebPointsExpiry\n\
+  \    ON ebPoints (ebSlot ASC, ebHashBytes ASC);\n\
+  \CREATE INDEX txCacheExpiry\n\
+  \    ON txCache (expiryUnixEpoch ASC, txHashBytes);\n\
+  \CREATE INDEX missingEbTxs\n\
+  \    ON ebTxs (ebHashBytes DESC, txOffset ASC)\n\
+  \    WHERE txBytes IS NULL;\n\
+  \CREATE INDEX acquiredEbTxs\n\
+  \    ON ebTxs (ebHashBytes DESC, txOffset ASC)\n\
+  \    WHERE txBytes IS NOT NULL;"
+
+sql_scan_ebPoints :: String
+sql_scan_ebPoints =
+  "SELECT ebSlot, ebHashBytes\n\
+  \FROM ebPoints\n\
+  \ORDER BY ebSlot ASC\n\
+  \"
+
+sql_lookup_ebBodies :: String
+sql_lookup_ebBodies =
+  "SELECT txHashBytes, txBytesSize FROM ebTxs\n\
+  \WHERE ebHashBytes = ?\n\
+  \ORDER BY txOffset ASC\n\
+  \"
+
+sql_insert_ebBody :: String
+sql_insert_ebBody =
+  "INSERT INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, NULL)\n\
+  \"
+
+sql_update_ebTx :: String
+sql_update_ebTx =
+  "UPDATE ebTxs\n\
+  \SET txBytes = ?\n\
+  \WHERE ebHashBytes = ? AND txOffset = ?\n\
+  \"
+
+sql_insert_txCache :: String
+sql_insert_txCache =
+  "INSERT INTO txCache (txHashBytes, txBytes, txBytesSize, expiryUnixEpoch) VALUES (?, ?, ?, ?)\n\
+  \"
+
+sql_insert_memTxPoints :: String
+sql_insert_memTxPoints =
+  "INSERT INTO mem.txPoints (ebHashBytes, txOffset) VALUES (?, ?)\n\
+  \"
+
+sql_retrieve_from_ebTxs :: String
+sql_retrieve_from_ebTxs =
+  "SELECT txOffset, txHashBytes, txBytes FROM ebTxs\n\
+  \WHERE (ebHashBytes, txOffset) IN (SELECT ebHashBytes, txOffset FROM mem.txPoints)\n\
+  \ORDER BY txOffset ASC\n\
+  \"
+
+sql_flush_memTxPoints :: String
+sql_flush_memTxPoints =
+  "DELETE FROM mem.txPoints\n\
+  \"
+
+sql_copy_from_txCache :: String
+sql_copy_from_txCache =
+  "UPDATE ebTxs\n\
+  \SET txBytes = (SELECT txBytes FROM txCache WHERE txCache.txHashBytes = ebTxs.txHashBytes)\n\
+  \WHERE ebHashBytes = ? AND txOffset = ? AND txBytes IS NULL\n\
+  \"
+
 sql_attach_memTxPoints :: String
 sql_attach_memTxPoints =
   "ATTACH DATABASE ':memory:' AS mem;\n\
@@ -445,24 +507,3 @@ sql_attach_memTxPoints =
   \    PRIMARY KEY (ebHashBytes ASC, txOffset ASC)\n\
   \  ) WITHOUT ROWID;\n\
   \"
-
--- | Create a new Leios database connection from environment variable.
--- This looks up the LEIOS_DB_PATH environment variable and opens the database.
-demoNewLeiosDbConnectionIO :: IO (LeiosDbHandle IO)
-demoNewLeiosDbConnectionIO = do
-  dbPath <-
-    lookupEnv "LEIOS_DB_PATH" >>= \case
-      Nothing -> die "You must define the LEIOS_DB_PATH variable for this demo."
-      Just x -> pure x
-  newLeiosDbConnectionIO dbPath
-
--- | Create a new Leios database connection from a file path.
--- Opens the SQLite database and attaches the in-memory temp table.
-newLeiosDbConnectionIO :: FilePath -> IO (LeiosDbHandle IO)
-newLeiosDbConnectionIO dbPath = do
-  doesFileExist dbPath >>= \case
-    False -> die $ "No such LeiosDb file: " ++ dbPath
-    True -> do
-      db <- withDieMsg $ DB.open (fromString dbPath)
-      withDieMsg $ DB.exec db (fromString sql_attach_memTxPoints)
-      pure $ leiosDbHandleFromSqlite db
