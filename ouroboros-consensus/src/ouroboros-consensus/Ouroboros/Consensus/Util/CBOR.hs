@@ -32,7 +32,7 @@ module Ouroboros.Consensus.Util.CBOR
   , encodeWithOrigin
   ) where
 
-import Cardano.Binary (decodeMaybe, encodeMaybe)
+import Cardano.Binary (DecoderError (..), decodeMaybe, encodeMaybe)
 import Cardano.Slotting.Slot
   ( WithOrigin (..)
   , withOriginFromMaybe
@@ -55,6 +55,7 @@ import Data.Foldable (toList)
 import Data.IORef
 import Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as Seq
+import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Util.IOLike as U
@@ -176,7 +177,7 @@ decodeAsFlatTerm bs0 =
 
 data ReadIncrementalErr
   = -- | Could not deserialise the data
-    ReadFailed CBOR.R.DeserialiseFailure
+    ReadFailed DecoderError
   | -- | Deserialisation was successful, but there was additional data
     TrailingBytes ByteString
   deriving (Eq, Show)
@@ -219,7 +220,7 @@ readIncremental = \(SomeHasFS hasFS) mkInitCRC decoder fp -> do
         then Right (a, checksum)
         else Left $ TrailingBytes leftover
   go _ _ _ (CBOR.R.Fail _ _ err) =
-    return $ Left $ ReadFailed err
+    return $ Left $ ReadFailed $ DecoderErrorDeserialiseFailure (Text.pack "") err
 
   checkEmpty :: ByteString -> Maybe ByteString
   checkEmpty bs
@@ -242,7 +243,7 @@ withStreamIncrementalOffsets ::
   forall m h a r.
   (IOLike m, HasCallStack) =>
   HasFS m h ->
-  (forall s. CBOR.D.Decoder s (LBS.ByteString -> a)) ->
+  (forall s. CBOR.D.Decoder s (LBS.ByteString -> Either DecoderError a)) ->
   FsPath ->
   (Stream (Of (Word64, (Word64, a))) m (Maybe (ReadIncrementalErr, Word64)) -> m r) ->
   m r
@@ -268,7 +269,7 @@ withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
     -- \^ Chunks pushed for this item (rev order)
     Word64 ->
     -- \^ Total file size
-    CBOR.R.IDecode (U.PrimState m) (LBS.ByteString -> a) ->
+    CBOR.R.IDecode (U.PrimState m) (LBS.ByteString -> Either DecoderError a) ->
     Stream (Of (Word64, (Word64, a))) m (Maybe (ReadIncrementalErr, Word64))
   go h offset mbUnconsumed bss fileSize dec = case dec of
     CBOR.R.Partial k -> do
@@ -291,24 +292,21 @@ withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
             bs : bss' -> LBS.fromChunks (reverse (bs' : bss'))
              where
               bs' = BS.take (BS.length bs - BS.length leftover) bs
-          -- The bang on the @a'@ here allows the used 'Decoder' to force
-          -- its computation. For example, the decoder might decode a whole
-          -- block and then (maybe through a use of 'fmap') just return its
-          -- hash. If we don't force the value it returned here, we're just
-          -- putting a thunk that references the whole block in the list
-          -- instead of merely the hash.
-          !a = mkA aBytes
-      S.yield (offset, (fromIntegral size, a))
-      case checkEmpty leftover of
-        Nothing
-          | nextOffset == fileSize ->
-              -- We're at the end of the file, so stop
-              return Nothing
-        -- Some more bytes, so try to read the next @a@.
-        mbLeftover ->
-          S.lift (U.stToIO (CBOR.R.deserialiseIncremental decoder))
-            >>= go h nextOffset mbLeftover [] fileSize
-    CBOR.R.Fail _ _ err -> return $ Just (ReadFailed err, offset)
+      case mkA aBytes of
+        Left err ->
+          pure . Just $ (ReadFailed err, offset)
+        Right result -> do
+          S.yield (offset, (fromIntegral size, result))
+          case checkEmpty leftover of
+            Nothing
+              | nextOffset == fileSize ->
+                  -- We're at the end of the file, so stop
+                  return Nothing
+            -- Some more bytes, so try to read the next @a@.
+            mbLeftover ->
+              S.lift (U.stToIO (CBOR.R.deserialiseIncremental decoder))
+                >>= go h nextOffset mbLeftover [] fileSize
+    CBOR.R.Fail _ _ err -> return $ Just (ReadFailed (DecoderErrorDeserialiseFailure (Text.pack "") err), offset)
 
   checkEmpty :: ByteString -> Maybe ByteString
   checkEmpty bs

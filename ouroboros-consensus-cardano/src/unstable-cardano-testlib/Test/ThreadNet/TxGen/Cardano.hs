@@ -176,7 +176,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
             assert (pickedCoin > spentCoin) $
               pickedCoin <-> spentCoin
 
-          body :: SL.TxBody ShelleyEra
+          body :: SL.TxBody SL.TopTx ShelleyEra
           body =
             SL.mkBasicTxBody
               & SL.certsTxBodyL
@@ -203,14 +203,14 @@ migrateUTxO migrationInfo curSlot lcfg lst
               Byron.addrAttributes byronAddr
 
           -- Witness the stake delegation.
-          delegWit :: SL.WitVKey 'SL.Witness
+          delegWit :: SL.WitVKey SL.Witness
           delegWit =
             TL.mkWitnessVKey
               bodyHash
               (Shelley.mkKeyPair stakingSK)
 
           -- Witness the pool registration.
-          poolWit :: SL.WitVKey 'SL.Witness
+          poolWit :: SL.WitVKey SL.Witness
           poolWit =
             TL.mkWitnessVKey
               bodyHash
@@ -256,19 +256,19 @@ migrateUTxO migrationInfo curSlot lcfg lst
       (SL.StakeRefBase $ Shelley.mkCredential stakingSK)
 
   -- A simplistic individual pool
-  poolParams :: SL.Coin -> SL.PoolParams
+  poolParams :: SL.Coin -> SL.StakePoolParams
   poolParams pledge =
-    SL.PoolParams
-      { SL.ppCost = SL.Coin 1
-      , SL.ppMetadata = SL.SNothing
-      , SL.ppMargin = minBound
-      , SL.ppOwners = Set.singleton $ Shelley.mkKeyHash poolSK
-      , SL.ppPledge = pledge
-      , SL.ppId = Shelley.mkKeyHash poolSK
-      , SL.ppRewardAccount =
-          SL.RewardAccount Shelley.networkId $ Shelley.mkCredential poolSK
-      , SL.ppRelays = StrictSeq.empty
-      , SL.ppVrf = Shelley.mkKeyHashVrf @c vrfSK
+    SL.StakePoolParams
+      { SL.sppCost = SL.Coin 1
+      , SL.sppMetadata = SL.SNothing
+      , SL.sppMargin = minBound
+      , SL.sppOwners = Set.singleton $ Shelley.mkKeyHash poolSK
+      , SL.sppPledge = pledge
+      , SL.sppId = Shelley.mkKeyHash poolSK
+      , SL.sppAccountAddress =
+          SL.AccountAddress Shelley.networkId $ SL.AccountId (Shelley.mkCredential poolSK)
+      , SL.sppRelays = StrictSeq.empty
+      , SL.sppVrf = Shelley.mkKeyHashVrf @c vrfSK
       }
 
 -----

@@ -42,9 +42,12 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.Allegra (ApplyTxError (AllegraApplyTxError))
 import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
+import Cardano.Ledger.Alonzo (ApplyTxError (AlonzoApplyTxError))
 import Cardano.Ledger.Alonzo.Core
   ( BlockBody
+  , TopTx
   , Tx
   , allInputsTxBodyF
   , bodyTxL
@@ -65,6 +68,7 @@ import Cardano.Ledger.Alonzo.Scripts
   )
 import Cardano.Ledger.Alonzo.Tx (totExUnits)
 import qualified Cardano.Ledger.Api as L
+import Cardano.Ledger.Babbage (ApplyTxError (BabbageApplyTxError))
 import qualified Cardano.Ledger.Babbage.Rules as BabbageEra
 import qualified Cardano.Ledger.BaseTypes as L
 import Cardano.Ledger.Binary
@@ -75,10 +79,14 @@ import Cardano.Ledger.Binary
   , FullByteString (..)
   , ToCBOR (..)
   )
+import Cardano.Ledger.Conway (ApplyTxError (ConwayApplyTxError))
 import qualified Cardano.Ledger.Conway.PParams as SL
 import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.UTxO as SL
+import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError))
+import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
+import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
 import Cardano.Protocol.Crypto (Crypto)
@@ -88,7 +96,6 @@ import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
-import qualified Data.List.NonEmpty as NE
 import Data.Measure (Measure)
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
@@ -115,7 +122,7 @@ import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 import Ouroboros.Network.SizeInBytes
 
-data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx era)
+data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx TopTx era)
   deriving stock Generic
 
 deriving instance ShelleyBasedEra era => NoThunks (GenTx (ShelleyBlock proto era))
@@ -129,7 +136,7 @@ instance
 data instance Validated (GenTx (ShelleyBlock proto era))
   = ShelleyValidatedTx
       !SL.TxId
-      !(SL.Validated (Tx era))
+      !(SL.Validated (Tx TopTx era))
   deriving stock Generic
 
 deriving instance ShelleyBasedEra era => NoThunks (Validated (GenTx (ShelleyBlock proto era)))
@@ -189,17 +196,17 @@ instance
         coerceSet
           (tx ^. bodyTxL . allInputsTxBodyF)
 
-  mkMempoolPredicateFailure _tlst txt = do
-    f <- mkMkMempoolShelleyPredicateFailure (Proxy @era)
-    Just $ SL.ApplyTxError $ f txt NE.:| []
+  mkMempoolApplyTxError _tlst txt =
+    ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
 
-mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
+mkShelleyTx ::
+  forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (txIdTx tx) tx
 
 mkShelleyValidatedTx ::
   forall era proto.
   ShelleyBasedEra era =>
-  SL.Validated (Tx era) ->
+  SL.Validated (Tx TopTx era) ->
   Validated (GenTx (ShelleyBlock proto era))
 mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
  where
@@ -209,7 +216,7 @@ newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId SL.TxId
   deriving newtype (Eq, Ord, NoThunks)
 
 deriving newtype instance
-  (Typeable era, Typeable proto, Crypto (ProtoCrypto proto)) =>
+  Crypto (ProtoCrypto proto) =>
   EncCBOR (TxId (GenTx (ShelleyBlock proto era)))
 deriving newtype instance
   (Typeable era, Typeable proto, Crypto (ProtoCrypto proto)) =>
@@ -233,7 +240,7 @@ instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
       . SL.blockBody
       . shelleyBlockRaw
    where
-    blockBodyToTxList :: BlockBody era -> [Tx era]
+    blockBodyToTxList :: BlockBody era -> [Tx TopTx era]
     blockBodyToTxList blockBody = toList $ blockBody ^. txSeqBlockBodyL
 
 {-------------------------------------------------------------------------------
@@ -250,7 +257,7 @@ instance ShelleyCompatible proto era => FromCBOR (GenTx (ShelleyBlock proto era)
     fmap mkShelleyTx $
       unwrapCBORinCBOR $
         eraDecoder @era $
-          (Right .) . (. Full) . runAnnotator <$> decCBOR
+          (. Full) . runAnnotator <$> decCBOR
 
 {-------------------------------------------------------------------------------
   Pretty-printing
@@ -364,9 +371,7 @@ theLedgerLens f x =
 -- | A non-exported newtype wrapper just to give a 'Semigroup' instance
 newtype TxErrorSG era = TxErrorSG {unTxErrorSG :: SL.ApplyTxError era}
 
-instance Semigroup (TxErrorSG era) where
-  TxErrorSG (SL.ApplyTxError x) <> TxErrorSG (SL.ApplyTxError y) =
-    TxErrorSG (SL.ApplyTxError (x <> y))
+deriving newtype instance Semigroup (SL.ApplyTxError era) => Semigroup (TxErrorSG era)
 
 validateMaybe ::
   SL.ApplyTxError era ->
@@ -418,7 +423,7 @@ class MaxTxSizeUTxO era where
 
 instance MaxTxSizeUTxO ShelleyEra where
   maxTxSizeUTxO txSize txSizeLimit =
-    SL.ApplyTxError . pure $
+    SL.ShelleyApplyTxError . pure $
       ShelleyEra.UtxowFailure $
         ShelleyEra.UtxoFailure $
           ShelleyEra.MaxTxSizeUTxO $
@@ -429,7 +434,7 @@ instance MaxTxSizeUTxO ShelleyEra where
 
 instance MaxTxSizeUTxO AllegraEra where
   maxTxSizeUTxO txSize txSizeLimit =
-    SL.ApplyTxError . pure $
+    AllegraApplyTxError . pure $
       ShelleyEra.UtxowFailure $
         ShelleyEra.UtxoFailure $
           AllegraEra.MaxTxSizeUTxO $
@@ -440,7 +445,7 @@ instance MaxTxSizeUTxO AllegraEra where
 
 instance MaxTxSizeUTxO MaryEra where
   maxTxSizeUTxO txSize txSizeLimit =
-    SL.ApplyTxError . pure $
+    MaryApplyTxError . pure $
       ShelleyEra.UtxowFailure $
         ShelleyEra.UtxoFailure $
           AllegraEra.MaxTxSizeUTxO $
@@ -451,7 +456,7 @@ instance MaxTxSizeUTxO MaryEra where
 
 instance MaxTxSizeUTxO AlonzoEra where
   maxTxSizeUTxO txSize txSizeLimit =
-    SL.ApplyTxError . pure $
+    AlonzoApplyTxError . pure $
       ShelleyEra.UtxowFailure $
         AlonzoEra.ShelleyInAlonzoUtxowPredFailure $
           ShelleyEra.UtxoFailure $
@@ -463,7 +468,7 @@ instance MaxTxSizeUTxO AlonzoEra where
 
 instance MaxTxSizeUTxO BabbageEra where
   maxTxSizeUTxO txSize txSizeLimit =
-    SL.ApplyTxError . pure $
+    BabbageApplyTxError . pure $
       ShelleyEra.UtxowFailure $
         BabbageEra.UtxoFailure $
           BabbageEra.AlonzoInBabbageUtxoPredFailure $
@@ -475,7 +480,7 @@ instance MaxTxSizeUTxO BabbageEra where
 
 instance MaxTxSizeUTxO ConwayEra where
   maxTxSizeUTxO txSize txSizeLimit =
-    SL.ApplyTxError . pure $
+    ConwayApplyTxError . pure $
       ConwayEra.ConwayUtxowFailure $
         ConwayEra.UtxoFailure $
           ConwayEra.MaxTxSizeUTxO $
@@ -486,14 +491,15 @@ instance MaxTxSizeUTxO ConwayEra where
 
 instance MaxTxSizeUTxO DijkstraEra where
   maxTxSizeUTxO txSize txSizeLimit =
-    SL.ApplyTxError . pure $
-      ConwayEra.ConwayUtxowFailure $
-        ConwayEra.UtxoFailure $
-          ConwayEra.MaxTxSizeUTxO $
-            L.Mismatch
-              { mismatchSupplied = txSize
-              , mismatchExpected = txSizeLimit
-              }
+    DijkstraApplyTxError . pure $
+      DijkstraEra.LedgerFailure $
+        DijkstraEra.DijkstraUtxowFailure $
+          DijkstraEra.UtxoFailure $
+            DijkstraEra.MaxTxSizeUTxO $
+              L.Mismatch
+                { mismatchSupplied = txSize
+                , mismatchExpected = txSizeLimit
+                }
 
 -----
 
@@ -604,7 +610,7 @@ class ExUnitsTooBigUTxO era where
 
 instance ExUnitsTooBigUTxO AlonzoEra where
   exUnitsTooBigUTxO txsz limit =
-    SL.ApplyTxError . pure $
+    AlonzoApplyTxError . pure $
       ShelleyEra.UtxowFailure $
         AlonzoEra.ShelleyInAlonzoUtxowPredFailure $
           ShelleyEra.UtxoFailure $
@@ -616,7 +622,7 @@ instance ExUnitsTooBigUTxO AlonzoEra where
 
 instance ExUnitsTooBigUTxO BabbageEra where
   exUnitsTooBigUTxO txsz limit =
-    SL.ApplyTxError . pure $
+    BabbageApplyTxError . pure $
       ShelleyEra.UtxowFailure $
         BabbageEra.AlonzoInBabbageUtxowPredFailure $
           AlonzoEra.ShelleyInAlonzoUtxowPredFailure $
@@ -630,7 +636,7 @@ instance ExUnitsTooBigUTxO BabbageEra where
 
 instance ExUnitsTooBigUTxO ConwayEra where
   exUnitsTooBigUTxO txsz limit =
-    SL.ApplyTxError . pure $
+    ConwayApplyTxError . pure $
       ConwayEra.ConwayUtxowFailure $
         ConwayEra.UtxoFailure $
           ConwayEra.ExUnitsTooBigUTxO $
@@ -641,14 +647,15 @@ instance ExUnitsTooBigUTxO ConwayEra where
 
 instance ExUnitsTooBigUTxO DijkstraEra where
   exUnitsTooBigUTxO txsz limit =
-    SL.ApplyTxError . pure $
-      ConwayEra.ConwayUtxowFailure $
-        ConwayEra.UtxoFailure $
-          ConwayEra.ExUnitsTooBigUTxO $
-            L.Mismatch
-              { mismatchSupplied = txsz
-              , mismatchExpected = limit
-              }
+    DijkstraApplyTxError . pure $
+      DijkstraEra.LedgerFailure $
+        DijkstraEra.DijkstraUtxowFailure $
+          DijkstraEra.UtxoFailure $
+            DijkstraEra.ExUnitsTooBigUTxO $
+              L.Mismatch
+                { mismatchSupplied = txsz
+                , mismatchExpected = limit
+                }
 
 -----
 
@@ -777,7 +784,7 @@ class TxRefScriptsSizeTooBig era where
 
 instance TxRefScriptsSizeTooBig ConwayEra where
   txRefScriptsSizeTooBig txsz limit =
-    SL.ApplyTxError . pure $
+    ConwayApplyTxError . pure $
       ConwayEra.ConwayTxRefScriptsSizeTooBig $
         L.Mismatch
           { mismatchSupplied = txsz
@@ -786,12 +793,13 @@ instance TxRefScriptsSizeTooBig ConwayEra where
 
 instance TxRefScriptsSizeTooBig DijkstraEra where
   txRefScriptsSizeTooBig txsz limit =
-    SL.ApplyTxError . pure $
-      ConwayEra.ConwayTxRefScriptsSizeTooBig $
-        L.Mismatch
-          { mismatchSupplied = txsz
-          , mismatchExpected = limit
-          }
+    DijkstraApplyTxError . pure $
+      DijkstraEra.LedgerFailure $
+        DijkstraEra.DijkstraTxRefScriptsSizeTooBig $
+          L.Mismatch
+            { mismatchSupplied = txsz
+            , mismatchExpected = limit
+            }
 
 -- | We anachronistically use 'ConwayMeasure' in Babbage.
 instance

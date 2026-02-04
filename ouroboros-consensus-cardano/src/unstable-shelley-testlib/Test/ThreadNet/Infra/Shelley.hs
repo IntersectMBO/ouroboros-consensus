@@ -179,12 +179,12 @@ data CoreNode c = CoreNode
 
 data CoreNodeKeyInfo c = CoreNodeKeyInfo
   { cnkiKeyPair ::
-      ( TL.KeyPair 'SL.Payment
-      , TL.KeyPair 'SL.Staking
+      ( TL.KeyPair SL.Payment
+      , TL.KeyPair SL.Staking
       )
   , cnkiCoreNode ::
-      ( TL.KeyPair 'SL.Genesis
-      , Gen.AllIssuerKeys c 'SL.GenesisDelegate
+      ( TL.KeyPair SL.GenesisRole
+      , Gen.AllIssuerKeys c SL.GenesisDelegate
       )
   }
 
@@ -380,11 +380,11 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
       & SL.ppProtocolVersionL .~ pVer
 
   coreNodesToGenesisMapping ::
-    Map (SL.KeyHash 'SL.Genesis) SL.GenDelegPair
+    Map (SL.KeyHash SL.GenesisRole) SL.GenDelegPair
   coreNodesToGenesisMapping =
     Map.fromList
       [ let
-          gkh :: SL.KeyHash 'SL.Genesis
+          gkh :: SL.KeyHash SL.GenesisRole
           gkh = SL.hashKey . SL.VKey $ deriveVerKeyDSIGN cnGenesisKey
 
           gdpair :: SL.GenDelegPair
@@ -417,7 +417,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
       { sgsPools =
           ListMap
             [ (pk, pp)
-            | pp@SL.PoolParams{ppId = pk} <- Map.elems coreNodeToPoolMapping
+            | pp@SL.StakePoolParams{sppId = pk} <- Map.elems coreNodeToPoolMapping
             ]
       , -- The staking key maps to the key hash of the pool, which is set to the
         -- "delegate key" in order that nodes may issue blocks both as delegates
@@ -432,23 +432,23 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
       }
    where
     coreNodeToPoolMapping ::
-      Map (SL.KeyHash 'SL.StakePool) SL.PoolParams
+      Map (SL.KeyHash SL.StakePool) SL.StakePoolParams
     coreNodeToPoolMapping =
       Map.fromList
         [ ( SL.hashKey . SL.VKey . deriveVerKeyDSIGN $ cnStakingKey
-          , SL.PoolParams
-              { SL.ppId = poolHash
-              , SL.ppVrf = vrfHash
+          , SL.StakePoolParams
+              { SL.sppId = poolHash
+              , SL.sppVrf = vrfHash
               , -- Each core node pledges its full stake to the pool.
-                SL.ppPledge = SL.Coin $ fromIntegral initialLovelacePerCoreNode
-              , SL.ppCost = SL.Coin 1
-              , SL.ppMargin = minBound
+                SL.sppPledge = SL.Coin $ fromIntegral initialLovelacePerCoreNode
+              , SL.sppCost = SL.Coin 1
+              , SL.sppMargin = minBound
               , -- Reward accounts live in a separate "namespace" to other
                 -- accounts, so it should be fine to use the same address.
-                SL.ppRewardAccount = SL.RewardAccount networkId $ mkCredential cnDelegateKey
-              , SL.ppOwners = Set.singleton poolOwnerHash
-              , SL.ppRelays = Seq.empty
-              , SL.ppMetadata = SL.SNothing
+                SL.sppAccountAddress = SL.AccountAddress networkId $ SL.AccountId (mkCredential cnDelegateKey)
+              , SL.sppOwners = Set.singleton poolOwnerHash
+              , SL.sppRelays = Seq.empty
+              , SL.sppMetadata = SL.SNothing
               }
           )
         | CoreNode{cnDelegateKey, cnStakingKey, cnVRF} <- coreNodes
@@ -513,7 +513,7 @@ mkSetDecentralizationParamTxs coreNodes pVer ttl dNew =
 
   -- Every node signs the transaction body, since it includes a " vote " from
   -- every node.
-  signatures :: Set (SL.WitVKey 'SL.Witness)
+  signatures :: Set (SL.WitVKey SL.Witness)
   signatures =
     TL.mkWitnessesVKey
       (hashAnnotated body)
@@ -525,7 +525,7 @@ mkSetDecentralizationParamTxs coreNodes pVer ttl dNew =
 
   -- Nothing but the parameter update and the obligatory touching of an
   -- input.
-  body :: SL.TxBody ShelleyEra
+  body :: SL.TxBody SL.TopTx ShelleyEra
   body =
     SL.mkBasicTxBody
       & SL.inputsTxBodyL .~ Set.singleton (fst touchCoins)
@@ -634,7 +634,7 @@ mkMASetDecentralizationParamTxs coreNodes pVer ttl dNew =
 
   -- Every node signs the transaction body, since it includes a " vote " from
   -- every node.
-  signatures :: Set (SL.WitVKey 'SL.Witness)
+  signatures :: Set (SL.WitVKey SL.Witness)
   signatures =
     TL.mkWitnessesVKey
       (eraIndTxBodyHash' body)
@@ -646,7 +646,7 @@ mkMASetDecentralizationParamTxs coreNodes pVer ttl dNew =
 
   -- Nothing but the parameter update and the obligatory touching of an
   -- input.
-  body :: SL.TxBody era
+  body :: SL.TxBody SL.TopTx era
   body =
     SL.mkBasicTxBody
       & SL.inputsTxBodyL .~ inputs

@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -36,23 +35,27 @@ module Ouroboros.Consensus.Shelley.Eras
 import Cardano.Binary
 import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Allegra.Translation ()
-import Cardano.Ledger.Alonzo (AlonzoEra)
+import Cardano.Ledger.Alonzo (AlonzoEra, ApplyTxError (AlonzoApplyTxError))
 import Cardano.Ledger.Alonzo.Core as Core
 import qualified Cardano.Ledger.Alonzo.Rules as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import qualified Cardano.Ledger.Api.Era as L
-import Cardano.Ledger.Babbage (BabbageEra)
+import Cardano.Ledger.Babbage (ApplyTxError (BabbageApplyTxError), BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import Cardano.Ledger.BaseTypes
 import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
-import Cardano.Ledger.Conway (ConwayEra)
+import Cardano.Ledger.Conway (ApplyTxError (ConwayApplyTxError), ConwayEra)
 import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as Conway
 import qualified Cardano.Ledger.Conway.Rules as SL
   ( ConwayLedgerPredFailure (..)
   )
 import qualified Cardano.Ledger.Conway.State as CG
-import Cardano.Ledger.Dijkstra (DijkstraEra)
+import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError), DijkstraEra)
+import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
+import qualified Cardano.Ledger.Dijkstra.Rules as SL
+  ( DijkstraLedgerPredFailure (..)
+  )
 import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -64,6 +67,7 @@ import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
 import Data.Data (Proxy (Proxy))
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
 import Lens.Micro
 import NoThunks.Class (NoThunks)
@@ -124,18 +128,18 @@ class
     SL.LedgerEnv era ->
     SL.LedgerState era ->
     WhetherToIntervene ->
-    Core.Tx era ->
+    Core.Tx TopTx era ->
     Except
       (SL.ApplyTxError era)
       ( SL.LedgerState era
-      , SL.Validated (Core.Tx era)
+      , SL.Validated (Core.Tx TopTx era)
       )
 
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
-  mkMkMempoolShelleyPredicateFailure ::
-    proxy era -> Maybe (Text -> PredicateFailure (EraRule "LEDGER" era))
+  mkEraMkMempoolApplyTxError ::
+    proxy era -> Maybe (Text -> SL.ApplyTxError era)
 
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
@@ -152,11 +156,11 @@ defaultApplyShelleyBasedTx ::
   SL.LedgerEnv era ->
   SL.LedgerState era ->
   WhetherToIntervene ->
-  Core.Tx era ->
+  Core.Tx TopTx era ->
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx era)
+    , SL.Validated (Core.Tx TopTx era)
     )
 defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
   liftEither $
@@ -174,42 +178,43 @@ instance ShelleyBasedEra ShelleyEra where
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra BabbageEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra ConwayEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
-  mkMkMempoolShelleyPredicateFailure _prx = Just Conway.ConwayMempoolFailure
+  mkEraMkMempoolApplyTxError _prx =
+    Just $ \txt -> ConwayApplyTxError (NE.singleton (Conway.ConwayMempoolFailure txt))
 
 instance ShelleyBasedEra DijkstraEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -219,7 +224,7 @@ instance ShelleyBasedEra DijkstraEra where
   -- TODO we'll need to change the mini protocol (backwards-incompatibly?) to
   -- use MempoolFailure type family instead of just PredicateFailure type
   -- family
-  mkMkMempoolShelleyPredicateFailure _prx = Nothing
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 applyAlonzoBasedTx ::
   forall era.
@@ -231,11 +236,11 @@ applyAlonzoBasedTx ::
   SL.LedgerEnv era ->
   SL.LedgerState era ->
   WhetherToIntervene ->
-  Core.Tx era ->
+  Core.Tx TopTx era ->
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx era)
+    , SL.Validated (Core.Tx TopTx era)
     )
 applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   (mempoolState', vtx) <-
@@ -253,7 +258,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
     Intervene -> tx
 
   handler e = case (wti, e) of
-    (DoNotIntervene, SL.ApplyTxError (err :| []))
+    (DoNotIntervene, err)
       | isIncorrectClaimedFlag (Proxy @era) err ->
           -- rectify the flag and include the transaction
           --
@@ -276,10 +281,10 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
 
 class SupportsTwoPhaseValidation era where
   -- NOTE: this class won't be needed once https://github.com/IntersectMBO/cardano-ledger/issues/4167 is implemented.
-  isIncorrectClaimedFlag :: proxy era -> SL.PredicateFailure (Core.EraRule "LEDGER" era) -> Bool
+  isIncorrectClaimedFlag :: proxy era -> SL.ApplyTxError era -> Bool
 
 instance SupportsTwoPhaseValidation AlonzoEra where
-  isIncorrectClaimedFlag _ = \case
+  isIncorrectClaimedFlag _ (AlonzoApplyTxError (err :| [])) = case err of
     SL.UtxowFailure
       ( Alonzo.ShelleyInAlonzoUtxowPredFailure
           ( SL.UtxoFailure
@@ -290,12 +295,12 @@ instance SupportsTwoPhaseValidation AlonzoEra where
                     )
                 )
             )
-        ) ->
-        True
+        ) -> True
     _ -> False
+  isIncorrectClaimedFlag _ _ = False
 
 instance SupportsTwoPhaseValidation BabbageEra where
-  isIncorrectClaimedFlag _ = \case
+  isIncorrectClaimedFlag _ (BabbageApplyTxError (err :| [])) = case err of
     SL.UtxowFailure
       ( Babbage.AlonzoInBabbageUtxowPredFailure
           ( Alonzo.ShelleyInAlonzoUtxowPredFailure
@@ -323,9 +328,10 @@ instance SupportsTwoPhaseValidation BabbageEra where
             )
         ) -> True
     _ -> False
+  isIncorrectClaimedFlag _ _ = False
 
 instance SupportsTwoPhaseValidation ConwayEra where
-  isIncorrectClaimedFlag _ = \case
+  isIncorrectClaimedFlag _ (ConwayApplyTxError (err :| [])) = case err of
     SL.ConwayUtxowFailure
       ( Conway.UtxoFailure
           ( Conway.UtxosFailure
@@ -336,16 +342,20 @@ instance SupportsTwoPhaseValidation ConwayEra where
             )
         ) -> True
     _ -> False
+  isIncorrectClaimedFlag _ _ = False
 
 instance SupportsTwoPhaseValidation DijkstraEra where
-  isIncorrectClaimedFlag _ = \case
-    SL.ConwayUtxowFailure
-      ( Conway.UtxoFailure
-          ( Conway.UtxosFailure
-              ( Conway.ValidationTagMismatch
-                  (Alonzo.IsValid _claimedFlag)
-                  _validationErrs
+  isIncorrectClaimedFlag _ (DijkstraApplyTxError (err :| [])) = case err of
+    Dijkstra.LedgerFailure
+      ( SL.DijkstraUtxowFailure
+          ( Dijkstra.UtxoFailure
+              ( Dijkstra.UtxosFailure
+                  ( Conway.ValidationTagMismatch
+                      (Alonzo.IsValid _claimedFlag)
+                      _validationErrs
+                    )
                 )
             )
         ) -> True
     _ -> False
+  isIncorrectClaimedFlag _ _ = False

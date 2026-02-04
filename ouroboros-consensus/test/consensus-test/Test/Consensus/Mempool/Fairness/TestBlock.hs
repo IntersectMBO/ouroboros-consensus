@@ -119,7 +119,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   getTransactionKeySets _ = trivialLedgerTables
 
-  mkMempoolPredicateFailure = Ledger.nothingMkMempoolPredicateFailure
+  mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
 
 instance Ledger.TxLimits TestBlock where
   type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32

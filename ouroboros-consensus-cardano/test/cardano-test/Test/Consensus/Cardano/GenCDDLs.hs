@@ -45,14 +45,14 @@ withCDDLs f =
             setupCDDLCEnv
 
             ntnBlock <- cddlc "cddl/node-to-node/blockfetch/block.cddl"
-            ntnBlock' <- fixupBlockCDDL ntnBlock
+            ntnBlock' <- fixupLedgerCDDL ntnBlock
             BS.writeFile "ntnblock.cddl" . cddlSpec $ ntnBlock'
 
             ntnHeader <- cddlc "cddl/node-to-node/chainsync/header.cddl"
             BS.writeFile "ntnheader.cddl" . cddlSpec $ ntnHeader
 
             ntnTx <- cddlc "cddl/node-to-node/txsubmission2/tx.cddl"
-            ntnTx' <- fixupBlockCDDL ntnTx
+            ntnTx' <- fixupLedgerCDDL ntnTx
             BS.writeFile "ntntx.cddl" . cddlSpec $ ntnTx'
 
             ntnTxId <- cddlc "cddl/node-to-node/txsubmission2/txId.cddl"
@@ -66,17 +66,20 @@ withCDDLs f =
         )
         (\_ -> f)
 
--- | The Ledger CDDL specs are not _exactly_ correct. Here we do some dirty
--- sed-replace to make them able to validate blocks. See cardano-ledger#5054.
-fixupBlockCDDL :: CDDLSpec -> IO CDDLSpec
-fixupBlockCDDL spec =
+-- | The Ledger CDDL specs for transactions and blocks are too restrictive.
+-- Here we do some dirty sed-replace to make them able to validate blocks.
+-- See cardano-ledger#5054.
+fixupLedgerCDDL :: CDDLSpec -> IO CDDLSpec
+fixupLedgerCDDL spec =
   withTempFile "." "block-temp.cddl" $ \fp h -> do
     hClose h
     BS.writeFile fp . cddlSpec $ spec
     -- For plutus, the type is actually `bytes`, but the distinct construct is
     -- for forcing generation of different values. See cardano-ledger#5054
-    sed fp ["-i", "s/\\(conway\\.distinct_VBytes = \\)/\\1 bytes ;\\//g"]
-    sed fp ["-i", "s/\\(dijkstra\\.distinct_VBytes = \\)/\\1 bytes ;\\//g"]
+    sed fp ["-i", "s/\\(alonzo\\.distinct_bytes = \\)/\\1 bytes ;\\//g"]
+    sed fp ["-i", "s/\\(babbage\\.distinct_bytes = \\)/\\1 bytes ;\\//g"]
+    sed fp ["-i", "s/\\(conway\\.distinct_bytes = \\)/\\1 bytes ;\\//g"]
+    sed fp ["-i", "s/\\(dijkstra\\.distinct_bytes = \\)/\\1 bytes ;\\//g"]
     -- These 3 below are hardcoded for generation. See cardano-ledger#5054
     sed fp ["-i", "s/\\([yaoye]\\.address = \\)/\\1 bytes ;/g"]
     sed fp ["-i", "s/\\(reward_account = \\)/\\1 bytes ;/g"]

@@ -49,8 +49,8 @@ instance SerialiseDiskConstraints ByronBlock
 
 instance EncodeDisk ByronBlock ByronBlock where
   encodeDisk _ = encodeByronBlock
-instance DecodeDisk ByronBlock (Lazy.ByteString -> ByronBlock) where
-  decodeDisk ccfg = decodeByronBlock (getByronEpochSlots ccfg)
+instance DecodeDisk ByronBlock (Lazy.ByteString -> Either DecoderError ByronBlock) where
+  decodeDisk ccfg = (Right .) <$> decodeByronBlock (getByronEpochSlots ccfg)
 
 instance EncodeDisk ByronBlock (LedgerState ByronBlock mk) where
   encodeDisk _ = encodeByronLedgerState
@@ -96,7 +96,7 @@ instance SerialiseNodeToNode ByronBlock (Header ByronBlock) where
   decodeNodeToNode ccfg = \case
     ByronNodeToNodeVersion1 ->
       unwrapCBORinCBOR $
-        ((Right .) . (flip joinSizeHint fakeByronBlockSizeHint .))
+        (Right .) . (flip joinSizeHint fakeByronBlockSizeHint .)
           <$> decodeUnsizedHeader epochSlots
     ByronNodeToNodeVersion2 ->
       nest <$> decodeDisk ccfg

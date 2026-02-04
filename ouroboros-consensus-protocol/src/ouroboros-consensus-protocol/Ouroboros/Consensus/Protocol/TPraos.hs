@@ -106,7 +106,7 @@ deriving instance
 -- | Fields arising from transitional praos execution which must be included in
 -- the block signature.
 data TPraosToSign c = TPraosToSign
-  { tpraosToSignIssuerVK :: SL.VKey 'SL.BlockIssuer
+  { tpraosToSignIssuerVK :: SL.VKey SL.BlockIssuer
   -- ^ Verification key for the issuer of this block.
   --
   -- Note that unlike in Classic/BFT where we have a key for the genesis
@@ -432,7 +432,7 @@ meetsLeaderThreshold ::
   SL.PraosCrypto c =>
   ConsensusConfig (TPraos c) ->
   LedgerView (TPraos c) ->
-  SL.KeyHash 'SL.StakePool ->
+  SL.KeyHash SL.StakePool ->
   VRF.CertifiedVRF (VRF c) SL.Seed ->
   Bool
 meetsLeaderThreshold
