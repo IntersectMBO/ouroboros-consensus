@@ -68,9 +68,10 @@ data LeiosDbHandle m = LeiosDbHandle
   , leiosDbScanEbPoints :: m [(SlotNo, EbHash)]
   , leiosDbInsertEbPoint :: SlotNo -> EbHash -> m ()
   , leiosDbLookupEbBody :: EbHash -> m [(TxHash, BytesSize)]
-  , -- NOTE: yields a LeiosNotification
+  , -- NOTE: yields a LeiosOfferBlock notification
     leiosDbInsertEbBody :: LeiosPoint -> LeiosEb -> m ()
-  , leiosDbUpdateEbTx :: EbHash -> Int -> ByteString -> m ()
+  , -- NOTE: yields a LeiosOfferBlockTxs notification once complete
+    leiosDbUpdateEbTx :: EbHash -> Int -> ByteString -> m ()
   , leiosDbInsertTxCache :: TxHash -> ByteString -> BytesSize -> Int64 -> m ()
   , leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   , -- TODO: Avoid needing this function
@@ -162,6 +163,7 @@ newInMemoryLeiosDb = do
               }
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
       , leiosDbUpdateEbTx = \ebHash txOffset txBytes -> atomically $ do
+          -- TODO: notify once complete? how to do this performantly?
           modifyTVar stateVar $ \s ->
             s
               { imEbBodies =
@@ -263,6 +265,7 @@ newLeiosDbFromSqlite db = do
               (leiosEbBodyItems eb)
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
       , leiosDbUpdateEbTx = \ebHash txOffset txBytes ->
+          -- TODO: notify once complete? how to do this without querying the db again?
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_update_ebTx) $ \stmt -> do
             dbBindBlob stmt 1 txBytes
             dbBindBlob stmt 2 (let MkEbHash bytes = ebHash in bytes)

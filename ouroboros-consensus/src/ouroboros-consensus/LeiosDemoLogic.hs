@@ -625,21 +625,6 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, 
             }
     pure outstanding'
   void $ MVar.tryPutMVar readyVar ()
-  -- FIXME: this must happen in the LeiosDbHandle now
-  -- when novel $ do
-  --   traceWith ktracer $ TraceLeiosBlockAcquired point
-  --   vars <- MVar.readMVar notificationVars
-  --   forM_ vars $ \var -> do
-  --     traceWith tracer $ MkTraceLeiosPeer $ "leiosNotificationsBlock!: " ++ Leios.prettyLeiosPoint point
-  --     StrictSTM.atomically $ do
-  --       x <- StrictSTM.readTVar var
-  --       let !x' =
-  --             Map.insertWith
-  --               (<>)
-  --               ebSlot
-  --               (Seq.singleton (LeiosOfferBlock point ebBytesSize))
-  --               x
-  --       StrictSTM.writeTVar var x'
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
 
 -----
