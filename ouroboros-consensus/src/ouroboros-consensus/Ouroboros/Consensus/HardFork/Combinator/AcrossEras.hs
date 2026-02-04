@@ -66,6 +66,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , oneEraBlockHeader
   ) where
 
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad.Except (throwError)
@@ -157,7 +158,7 @@ newtype OneEraValidationErr xs = OneEraValidationErr {getOneEraValidationErr :: 
 -- So, the type parameter @xs@ here is merely a phantom one, and we just store
 -- the underlying raw hash.
 newtype OneEraHash (xs :: [k]) = OneEraHash {getOneEraHash :: ShortByteString}
-  deriving newtype (Eq, Ord, NoThunks, Serialise, NFData)
+  deriving newtype (Eq, Ord, NoThunks, Serialise, NFData, FromCBOR, ToCBOR)
 
 instance Show (OneEraHash xs) where
   show = BSC.unpack . B16.encode . Short.fromShort . getOneEraHash
