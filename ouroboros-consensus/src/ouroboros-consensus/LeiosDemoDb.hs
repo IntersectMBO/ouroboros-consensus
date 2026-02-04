@@ -24,7 +24,6 @@ import Control.Concurrent.Class.MonadSTM.Strict
   ( modifyTVar
   , newTVarIO
   , readTVar
-  , writeTVar
   )
 import Control.Monad.Class.MonadThrow
   ( bracket
@@ -46,9 +45,7 @@ import qualified GHC.Stack
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
-  , EbId (..)
   , TxHash (..)
-  , fromIntegralEbId
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike, atomically)
 import System.Directory (doesFileExist)
@@ -68,19 +65,19 @@ import System.Exit (die)
 -- TODO: use LeiosPoint and LeiosEb types in the interface instead of raw tuples.
 data LeiosDbHandle m = LeiosDbHandle
   { -- EB Points operations
-    leiosDbScanEbPoints :: m [(SlotNo, EbHash, EbId)]
-  , leiosDbInsertEbPoint :: SlotNo -> EbHash -> EbId -> m ()
+    leiosDbScanEbPoints :: m [(SlotNo, EbHash)]
+  , leiosDbInsertEbPoint :: SlotNo -> EbHash -> m ()
   , -- EB Bodies operations
-    leiosDbLookupEbBody :: EbId -> m [(TxHash, BytesSize)]
-  , leiosDbInsertEbBody :: EbId -> [(Int, TxHash, BytesSize)] -> m ()
+    leiosDbLookupEbBody :: EbHash -> m [(TxHash, BytesSize)]
+  , leiosDbInsertEbBody :: EbHash -> [(Int, TxHash, BytesSize)] -> m ()
   , -- Transaction operations
-    leiosDbUpdateEbTx :: EbId -> Int -> ByteString -> m ()
+    leiosDbUpdateEbTx :: EbHash -> Int -> ByteString -> m ()
   , leiosDbInsertTxCache :: TxHash -> ByteString -> BytesSize -> Int64 -> m ()
   , -- Batch operations (using temp table in SQL, simple lookup in memory)
-    leiosDbBatchRetrieveTxs :: EbId -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+    leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   , -- Copy from txCache to ebTxs in batch
     -- TODO: Avoid needing this function
-    leiosDbCopyFromTxCacheBatch :: Map EbId (IntMap BytesSize) -> BytesSize -> m (Map EbId IntSet)
+    leiosDbCopyFromTxCacheBatch :: Map EbHash (IntMap BytesSize) -> BytesSize -> m (Map EbHash IntSet)
   }
 
 -- * In-memory implementation of LeiosDbHandle
@@ -88,9 +85,8 @@ data LeiosDbHandle m = LeiosDbHandle
 -- | In-memory database state
 data InMemoryLeiosDb = InMemoryLeiosDb
   { imTxCache :: !(Map TxHash TxCacheEntry)
-  , imEbPoints :: !(IntMap (Map EbHash EbId)) -- slot -> (hash -> ebId)
-  , imEbPointsInverse :: !(IntMap EbHash) -- ebId -> hash
-  , imEbBodies :: !(IntMap (IntMap EbTxEntry)) -- ebId -> (txOffset -> entry)
+  , imEbPoints :: !(IntMap {- SlotNo -} EbHash)
+  , imEbBodies :: !(Map EbHash (IntMap {- txOffset -} EbTxEntry))
   }
 
 -- | Transaction cache entry
@@ -116,8 +112,7 @@ newInMemoryLeiosDb = do
       InMemoryLeiosDb
         { imTxCache = Map.empty
         , imEbPoints = IntMap.empty
-        , imEbPointsInverse = IntMap.empty
-        , imEbBodies = IntMap.empty
+        , imEbBodies = Map.empty
         }
 
   pure $
@@ -125,31 +120,28 @@ newInMemoryLeiosDb = do
       { leiosDbScanEbPoints = atomically $ do
           state <- readTVar stateVar
           pure
-            [ (SlotNo (fromIntegral slot), hash, ebId)
-            | (slot, hashMap) <- IntMap.toAscList (imEbPoints state)
-            , (hash, ebId) <- Map.toList hashMap
+            [ (SlotNo (fromIntegral slot), hash)
+            | (slot, hash) <- IntMap.toAscList (imEbPoints state)
             ]
-      , leiosDbInsertEbPoint = \slot hash ebId -> atomically $ do
+      , leiosDbInsertEbPoint = \slot hash -> atomically $ do
           modifyTVar stateVar $ \s ->
             s
               { imEbPoints =
-                  IntMap.insertWith
-                    Map.union
+                  IntMap.insert
                     (fromIntegral $ unSlotNo slot)
-                    (Map.singleton hash ebId)
+                    hash
                     (imEbPoints s)
-              , imEbPointsInverse = IntMap.insert (fromIntegralEbId ebId) hash (imEbPointsInverse s)
               }
-      , leiosDbLookupEbBody = \ebId -> atomically $ do
+      , leiosDbLookupEbBody = \ebHash -> atomically $ do
           state <- readTVar stateVar
-          case IntMap.lookup (fromIntegralEbId ebId) (imEbBodies state) of
+          case Map.lookup ebHash (imEbBodies state) of
             Nothing -> pure []
             Just offsetMap ->
               pure
                 [ (eteTxHash e, eteTxBytesSize e)
                 | e <- IntMap.elems offsetMap
                 ]
-      , leiosDbInsertEbBody = \ebId items -> atomically $ do
+      , leiosDbInsertEbBody = \ebHash items -> atomically $ do
           let entries =
                 IntMap.fromList
                   [ ( offset
@@ -163,15 +155,15 @@ newInMemoryLeiosDb = do
                   ]
           modifyTVar stateVar $ \s ->
             s
-              { imEbBodies = IntMap.insert (fromIntegralEbId ebId) entries (imEbBodies s)
+              { imEbBodies = Map.insert ebHash entries (imEbBodies s)
               }
-      , leiosDbUpdateEbTx = \ebId txOffset txBytes -> atomically $ do
+      , leiosDbUpdateEbTx = \ebHash txOffset txBytes -> atomically $ do
           modifyTVar stateVar $ \s ->
             s
               { imEbBodies =
-                  IntMap.adjust
+                  Map.adjust
                     (IntMap.adjust (\e -> e{eteTxBytes = Just txBytes}) txOffset)
-                    (fromIntegralEbId ebId)
+                    ebHash
                     (imEbBodies s)
               }
       , leiosDbInsertTxCache = \txHash txBytes txBytesSize expiry -> atomically $ do
@@ -180,9 +172,9 @@ newInMemoryLeiosDb = do
             s
               { imTxCache = Map.insert txHash entry (imTxCache s)
               }
-      , leiosDbBatchRetrieveTxs = \ebId offsets -> atomically $ do
+      , leiosDbBatchRetrieveTxs = \ebHash offsets -> atomically $ do
           state <- readTVar stateVar
-          case IntMap.lookup (fromIntegralEbId ebId) (imEbBodies state) of
+          case Map.lookup ebHash (imEbBodies state) of
             Nothing -> pure []
             Just offsetMap ->
               pure
@@ -190,38 +182,8 @@ newInMemoryLeiosDb = do
                 | offset <- offsets
                 , Just entry <- [IntMap.lookup offset offsetMap]
                 ]
-      , leiosDbCopyFromTxCacheBatch = \toCopy bytesLimit -> atomically $ do
-          -- REVIEW: I'm doubtful this is correct
-          state <- readTVar stateVar
-          -- Process toCopy map up to bytesLimit
-          let go !accCopied !accBytes !remaining
-                | accBytes >= bytesLimit = pure (accCopied, state)
-                | Just ((ebId, txs), remaining') <- Map.maxViewWithKey remaining =
-                    let processOffsets !copiedEbId' !bytes !offsetMap
-                          | bytes >= bytesLimit = (copiedEbId', bytes, state)
-                          | Just ((offset, txBytesSize), offsetMap') <- IntMap.minViewWithKey offsetMap =
-                              case IntMap.lookup (fromIntegralEbId ebId) (imEbBodies state) of
-                                Nothing -> processOffsets copiedEbId' bytes offsetMap'
-                                Just ebEntries -> case IntMap.lookup offset ebEntries of
-                                  Nothing -> processOffsets copiedEbId' bytes offsetMap'
-                                  Just entry -> case Map.lookup (eteTxHash entry) (imTxCache state) of
-                                    Nothing -> processOffsets copiedEbId' bytes offsetMap'
-                                    Just _cacheEntry ->
-                                      if bytes + txBytesSize > bytesLimit
-                                        then (copiedEbId', bytes, state)
-                                        else
-                                          -- let updatedEntry = entry{eteTxBytes = Just (tceBytes cacheEntry)}
-                                          --     updatedEbEntries = IntMap.insert offset updatedEntry ebEntries
-                                          --     updatedState = state{imEbBodies = IntMap.insert (fromIntegralEbId ebId) updatedEbEntries (imEbBodies state)}
-                                          processOffsets (IntSet.insert offset copiedEbId') (bytes + txBytesSize) offsetMap'
-                          | otherwise = (copiedEbId', bytes, state)
-                        (copiedEbId, newBytes, _newState) = processOffsets IntSet.empty accBytes txs
-                        accCopied' = if IntSet.null copiedEbId then accCopied else Map.insert ebId copiedEbId accCopied
-                     in go accCopied' newBytes remaining'
-                | otherwise = pure (accCopied, state)
-          (copied, finalState) <- go Map.empty 0 toCopy
-          writeTVar stateVar finalState
-          pure copied
+      , leiosDbCopyFromTxCacheBatch = \_toCopy _bytesLimit ->
+          error "TODO: implement leiosDbCopyFromTxCacheBatch"
       }
 
 -- * Low-level terminating SQLite functions
@@ -295,30 +257,32 @@ dieStack s = die $ s ++ "\n\n" ++ GHC.Stack.prettyCallStack GHC.Stack.callStack
 
 -- * SQLite implementation of LeiosDbHandle
 
-sql_scan_ebId :: String
-sql_scan_ebId =
-  "SELECT ebSlot, ebHashBytes, ebId\n\
+-- FIXME: put Schema here and create db if not existing (instead of externally provided)
+
+sql_scan_ebPoints :: String
+sql_scan_ebPoints =
+  "SELECT ebSlot, ebHashBytes\n\
   \FROM ebPoints\n\
-  \ORDER BY ebId ASC\n\
+  \ORDER BY ebSlot ASC\n\
   \"
 
 sql_lookup_ebBodies :: String
 sql_lookup_ebBodies =
   "SELECT txHashBytes, txBytesSize FROM ebTxs\n\
-  \WHERE ebId = ?\n\
+  \WHERE ebHashBytes = ?\n\
   \ORDER BY txOffset ASC\n\
   \"
 
 sql_insert_ebBody :: String
 sql_insert_ebBody =
-  "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, NULL)\n\
+  "INSERT INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, NULL)\n\
   \"
 
 sql_update_ebTx :: String
 sql_update_ebTx =
   "UPDATE ebTxs\n\
   \SET txBytes = ?\n\
-  \WHERE ebId = ? AND txOffset = ?\n\
+  \WHERE ebHashBytes = ? AND txOffset = ?\n\
   \"
 
 sql_insert_txCache :: String
@@ -328,13 +292,13 @@ sql_insert_txCache =
 
 sql_insert_memTxPoints :: String
 sql_insert_memTxPoints =
-  "INSERT INTO mem.txPoints (ebId, txOffset) VALUES (?, ?)\n\
+  "INSERT INTO mem.txPoints (ebHashBytes, txOffset) VALUES (?, ?)\n\
   \"
 
 sql_retrieve_from_ebTxs :: String
 sql_retrieve_from_ebTxs =
   "SELECT txOffset, txHashBytes, txBytes FROM ebTxs\n\
-  \WHERE (ebId, txOffset) IN (SELECT ebId, txOffset FROM mem.txPoints)\n\
+  \WHERE (ebHashBytes, txOffset) IN (SELECT ebHashBytes, txOffset FROM mem.txPoints)\n\
   \ORDER BY txOffset ASC\n\
   \"
 
@@ -347,7 +311,7 @@ sql_copy_from_txCache :: String
 sql_copy_from_txCache =
   "UPDATE ebTxs\n\
   \SET txBytes = (SELECT txBytes FROM txCache WHERE txCache.txHashBytes = ebTxs.txHashBytes)\n\
-  \WHERE ebId = ? AND txOffset = ? AND txBytes IS NULL\n\
+  \WHERE ebHashBytes = ? AND txOffset = ? AND txBytes IS NULL\n\
   \"
 
 -- | Create a LeiosDbHandle from a low-level SQLite LeiosDb.
@@ -356,25 +320,23 @@ leiosDbHandleFromSqlite :: DB.Database -> LeiosDbHandle IO
 leiosDbHandleFromSqlite db =
   LeiosDbHandle
     { leiosDbScanEbPoints =
-        dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_ebId) $ \stmt -> do
+        dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_ebPoints) $ \stmt -> do
           let loop acc =
                 dbStep stmt >>= \case
                   DB.Done -> pure (reverse acc)
                   DB.Row -> do
                     slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
                     hash <- MkEbHash <$> DB.columnBlob stmt 1
-                    ebId <- MkEbId . fromIntegral <$> DB.columnInt64 stmt 2
-                    loop ((slot, hash, ebId) : acc)
+                    loop ((slot, hash) : acc)
           loop []
-    , leiosDbInsertEbPoint = \slot hash ebId ->
-        dbWithBEGIN db $ dbWithPrepare db (fromString "INSERT INTO ebPoints (ebSlot, ebHashBytes, ebId) VALUES (?, ?, ?)") $ \stmt -> do
+    , leiosDbInsertEbPoint = \slot hash ->
+        dbWithBEGIN db $ dbWithPrepare db (fromString "INSERT INTO ebPoints (ebSlot, ebHashBytes) VALUES (?, ?)") $ \stmt -> do
           dbBindInt64 stmt 1 (fromIntegral $ unSlotNo slot)
           dbBindBlob stmt 2 (let MkEbHash bytes = hash in bytes)
-          dbBindInt64 stmt 3 (fromIntegralEbId ebId)
           dbStep1 stmt
-    , leiosDbLookupEbBody = \ebId ->
+    , leiosDbLookupEbBody = \ebHash ->
         dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebBodies) $ \stmt -> do
-          dbBindInt64 stmt 1 (fromIntegralEbId ebId)
+          dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
           let loop acc =
                 dbStep stmt >>= \case
                   DB.Done -> pure (reverse acc)
@@ -383,11 +345,11 @@ leiosDbHandleFromSqlite db =
                     size <- fromIntegral <$> DB.columnInt64 stmt 1
                     loop ((txHash, size) : acc)
           loop []
-    , leiosDbInsertEbBody = \ebId items ->
+    , leiosDbInsertEbBody = \ebHash items ->
         dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebBody) $ \stmt -> do
           mapM_
             ( \(txOffset, txHash, txBytesSize) -> do
-                dbBindInt64 stmt 1 (fromIntegralEbId ebId)
+                dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
                 dbBindInt64 stmt 2 (fromIntegral txOffset)
                 dbBindBlob stmt 3 (let MkTxHash bytes = txHash in bytes)
                 dbBindInt64 stmt 4 (fromIntegral txBytesSize)
@@ -395,10 +357,10 @@ leiosDbHandleFromSqlite db =
                 dbReset stmt
             )
             items
-    , leiosDbUpdateEbTx = \ebId txOffset txBytes ->
+    , leiosDbUpdateEbTx = \ebHash txOffset txBytes ->
         dbWithBEGIN db $ dbWithPrepare db (fromString sql_update_ebTx) $ \stmt -> do
           dbBindBlob stmt 1 txBytes
-          dbBindInt64 stmt 2 (fromIntegralEbId ebId)
+          dbBindBlob stmt 2 (let MkEbHash bytes = ebHash in bytes)
           dbBindInt64 stmt 3 (fromIntegral txOffset)
           dbStep1 stmt
     , leiosDbInsertTxCache = \txHash txBytes txBytesSize expiry ->
@@ -408,12 +370,12 @@ leiosDbHandleFromSqlite db =
           dbBindInt64 stmt 3 (fromIntegral txBytesSize)
           dbBindInt64 stmt 4 expiry
           dbStep1 stmt
-    , leiosDbBatchRetrieveTxs = \ebId offsets -> do
+    , leiosDbBatchRetrieveTxs = \ebHash offsets -> do
         -- First, insert offsets into temp table
         dbWithPrepare db (fromString sql_insert_memTxPoints) $ \stmtInsert -> do
           mapM_
             ( \offset -> do
-                dbBindInt64 stmtInsert 1 (fromIntegralEbId ebId)
+                dbBindBlob stmtInsert 1 (let MkEbHash bytes = ebHash in bytes)
                 dbBindInt64 stmtInsert 2 (fromIntegral offset)
                 dbStep1 stmtInsert
                 dbReset stmtInsert
@@ -444,23 +406,23 @@ leiosDbHandleFromSqlite db =
         dbWithPrepare db (fromString sql_copy_from_txCache) $ \stmt -> do
           let go1 !accCopied !accBytes !remaining
                 | accBytes < bytesLimit
-                , Just ((ebId, txs), remaining') <- Map.maxViewWithKey remaining =
-                    go2 accCopied accBytes remaining' ebId IntSet.empty txs
+                , Just ((ebHash, txs), remaining') <- Map.maxViewWithKey remaining =
+                    go2 accCopied accBytes remaining' ebHash IntSet.empty txs
                 | otherwise = pure accCopied
 
-              go2 !accCopied !accBytes !remaining ebId !copiedEbId txs
+              go2 !accCopied !accBytes !remaining ebHash !copiedEbId txs
                 | Just ((offset, txBytesSize), txs') <- IntMap.minViewWithKey txs =
                     if accBytes + txBytesSize > bytesLimit
                       then pure accCopied'
                       else do
-                        dbBindInt64 stmt 1 (fromIntegralEbId ebId)
+                        dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
                         dbBindInt64 stmt 2 (fromIntegral offset)
                         dbStep1 stmt
                         dbReset stmt
-                        go2 accCopied (accBytes + txBytesSize) remaining ebId (IntSet.insert offset copiedEbId) txs'
+                        go2 accCopied (accBytes + txBytesSize) remaining ebHash (IntSet.insert offset copiedEbId) txs'
                 | otherwise = go1 accCopied' accBytes remaining
                where
-                accCopied' = if IntSet.null copiedEbId then accCopied else Map.insert ebId copiedEbId accCopied
+                accCopied' = if IntSet.null copiedEbId then accCopied else Map.insert ebHash copiedEbId accCopied
 
           go1 Map.empty 0 toCopy
     }
@@ -470,11 +432,11 @@ sql_attach_memTxPoints =
   "ATTACH DATABASE ':memory:' AS mem;\n\
   \\n\
   \CREATE TABLE mem.txPoints (\n\
-  \    ebId INTEGER NOT NULL\n\
+  \    ebHashBytes INTEGER NOT NULL\n\
   \  ,\n\
   \    txOffset INTEGER NOT NULL\n\
   \  ,\n\
-  \    PRIMARY KEY (ebId ASC, txOffset ASC)\n\
+  \    PRIMARY KEY (ebHashBytes ASC, txOffset ASC)\n\
   \  ) WITHOUT ROWID;\n\
   \"
 
