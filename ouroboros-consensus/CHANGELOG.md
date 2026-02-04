@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.30.0.1'></a>
+## 0.30.0.1 -- 2026-02-03
+
+### Patch
+
+- Downgrade hard mempool timeouts to soft timeouts for local clients.
+
 <a id='changelog-0.30.0.0'></a>
 ## 0.30.0.0 -- 2026-01-29
 
