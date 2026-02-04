@@ -4,21 +4,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module LeiosDemoDb
-  ( -- * High-level database interface
-    LeiosDbHandle (..)
-  , newInMemoryLeiosDb
-  , leiosDbHandleFromSqlite
-
-    -- * SQLite connection helpers
-  , demoNewLeiosDbConnectionIO
-  , newLeiosDbConnectionIO
-
-    -- * In-memory state types
-  , InMemoryLeiosDb (..)
-  , TxCacheEntry (..)
-  , EbTxEntry (..)
-  ) where
+module LeiosDemoDb (module LeiosDemoDb) where
 
 import Cardano.Prelude (when)
 import Cardano.Slotting.Slot (SlotNo (..))
@@ -300,7 +286,7 @@ leiosDbHandleFromSqlite db =
                     loop ((slot, hash) : acc)
           loop []
     , leiosDbInsertEbPoint = \slot hash ->
-        dbWithBEGIN db $ dbWithPrepare db (fromString "INSERT INTO ebPoints (ebSlot, ebHashBytes) VALUES (?, ?)") $ \stmt -> do
+        dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebPoint) $ \stmt -> do
           dbBindInt64 stmt 1 (fromIntegral $ unSlotNo slot)
           dbBindBlob stmt 2 (let MkEbHash bytes = hash in bytes)
           dbStep1 stmt
@@ -446,6 +432,10 @@ sql_scan_ebPoints =
   \FROM ebPoints\n\
   \ORDER BY ebSlot ASC\n\
   \"
+
+sql_insert_ebPoint :: String
+sql_insert_ebPoint =
+  "INSERT INTO ebPoints (ebSlot, ebHashBytes) VALUES (?, ?)"
 
 sql_lookup_ebBodies :: String
 sql_lookup_ebBodies =
