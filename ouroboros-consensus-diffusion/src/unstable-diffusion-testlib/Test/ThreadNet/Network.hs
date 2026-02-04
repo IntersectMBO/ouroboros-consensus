@@ -1,8 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -40,9 +40,9 @@ module Test.ThreadNet.Network (
 import           Cardano.Network.PeerSelection.Bootstrap
                      (UseBootstrapPeers (..))
 import           Codec.CBOR.Read (DeserialiseFailure)
-import           Control.DeepSeq (NFData (..))
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
+import           Control.DeepSeq (NFData (..))
 import qualified Control.Exception as Exn
 import           Control.Monad
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
@@ -61,8 +61,8 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import           Data.Void (Void)
-import           GHC.Stack
 import           GHC.Generics
+import           GHC.Stack
 import           Network.TypedProtocol.Codec (AnyMessage (..), CodecFailure,
                      mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
