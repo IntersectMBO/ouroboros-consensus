@@ -1,0 +1,188 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+
+-- | Tests for the LeiosDemoDb notification mechanism.
+--
+-- These tests verify that subscribers to 'subscribeEbNotifications' receive
+-- 'LeiosNotification' events when 'leiosDbInsertEbBody' is called.
+module Test.LeiosDemoDb (tests) where
+
+import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadTChan)
+import Control.Monad (replicateM)
+import qualified Data.ByteString as BS
+import qualified Data.Vector as V
+import LeiosDemoDb
+  ( LeiosDbHandle (..)
+  , newInMemoryLeiosDb
+  , newLeiosDbConnectionIO
+  )
+import LeiosDemoTypes
+  ( EbHash (..)
+  , LeiosEb (..)
+  , LeiosNotification (..)
+  , LeiosPoint (..)
+  , TxHash (..)
+  , leiosEbBytesSize
+  )
+import System.IO.Temp (withSystemTempDirectory)
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
+
+tests :: TestTree
+tests =
+  testGroup "LeiosDemoDb" . forEachImplementation $ \dbTest ->
+    [ dbTest "single subscriber" test_singleSubscriber
+    , dbTest "multiple subscribers" test_multipleSubscribers
+    , dbTest "correct data" test_correctData
+    , dbTest "late subscriber" test_lateSubscriber
+    , dbTest "multiple notifications" test_multipleNotifications
+    ]
+
+-- | Run test cases for each database implementation (InMemory and SQLite).
+-- Provides a test runner function that creates a test case with the appropriate setup.
+forEachImplementation ::
+  ((String -> (LeiosDbHandle IO -> IO ()) -> TestTree) -> [TestTree]) ->
+  [TestTree]
+forEachImplementation mkTests =
+  [ testGroup "InMemory" $ mkTests inMemoryTest
+  , testGroup "SQLite" $ mkTests sqliteTest
+  ]
+ where
+  inMemoryTest name test =
+    testCase name $
+      newInMemoryLeiosDb >>= test
+
+  sqliteTest name test =
+    testCase name $
+      withTestSqliteDb test
+
+-- | Run a test with a temporary SQLite database.
+withTestSqliteDb :: (LeiosDbHandle IO -> IO a) -> IO a
+withTestSqliteDb action =
+  withSystemTempDirectory "leios-test" $ \tmpDir -> do
+    let dbPath = tmpDir <> "/test.db"
+    db <- newLeiosDbConnectionIO dbPath
+    action db
+
+-- * Test fixtures
+
+-- | Create a simple test EbHash from a seed byte.
+mkTestEbHash :: Word -> EbHash
+mkTestEbHash seed = MkEbHash $ BS.pack $ replicate 32 (fromIntegral seed)
+
+-- | Create a simple test TxHash from a seed byte.
+mkTestTxHash :: Word -> TxHash
+mkTestTxHash seed = MkTxHash $ BS.pack $ replicate 32 (fromIntegral seed)
+
+-- | Create a test LeiosPoint.
+mkTestPoint :: SlotNo -> Word -> LeiosPoint
+mkTestPoint slot seed = MkLeiosPoint slot (mkTestEbHash seed)
+
+-- | Create a test LeiosEb with the given number of transactions.
+mkTestEb :: Int -> LeiosEb
+mkTestEb numTxs =
+  MkLeiosEb $
+    V.fromList
+      [ (mkTestTxHash (fromIntegral i), 100 + fromIntegral i)
+      | i <- [0 .. numTxs - 1]
+      ]
+
+-- * Test cases (interface-level, work with any LeiosDbHandle)
+
+-- | Test that a single subscriber receives a notification when insertEbBody is called.
+test_singleSubscriber :: LeiosDbHandle IO -> IO ()
+test_singleSubscriber db = do
+  chan <- subscribeEbNotifications db
+  let point = mkTestPoint (SlotNo 1) 1
+      eb = mkTestEb 3
+  leiosDbInsertEbBody db point eb
+  notification <- atomically $ readTChan chan
+  case notification of
+    LeiosOfferBlock notifPoint _ ->
+      notifPoint @?= point
+    LeiosOfferBlockTxs _ ->
+      assertFailure "expected LeiosOfferBlock, got LeiosOfferBlockTxs"
+
+-- | Test that multiple subscribers each receive the notification.
+test_multipleSubscribers :: LeiosDbHandle IO -> IO ()
+test_multipleSubscribers db = do
+  chan1 <- subscribeEbNotifications db
+  chan2 <- subscribeEbNotifications db
+  chan3 <- subscribeEbNotifications db
+  let point = mkTestPoint (SlotNo 42) 42
+      eb = mkTestEb 5
+  leiosDbInsertEbBody db point eb
+  -- All subscribers should receive the notification
+  notif1 <- atomically $ readTChan chan1
+  notif2 <- atomically $ readTChan chan2
+  notif3 <- atomically $ readTChan chan3
+  assertOfferBlock point notif1
+  assertOfferBlock point notif2
+  assertOfferBlock point notif3
+
+-- | Test that the notification contains the correct LeiosOfferBlock data.
+test_correctData :: LeiosDbHandle IO -> IO ()
+test_correctData db = do
+  chan <- subscribeEbNotifications db
+  let point = mkTestPoint (SlotNo 100) 55
+      eb = mkTestEb 10
+      expectedSize = leiosEbBytesSize eb
+  leiosDbInsertEbBody db point eb
+  notification <- atomically $ readTChan chan
+  case notification of
+    LeiosOfferBlock notifPoint notifSize -> do
+      notifPoint.pointSlotNo @?= point.pointSlotNo
+      notifPoint.pointEbHash @?= point.pointEbHash
+      notifSize @?= expectedSize
+    LeiosOfferBlockTxs _ ->
+      assertFailure "expected LeiosOfferBlock, got LeiosOfferBlockTxs"
+
+-- | Test that a subscriber who subscribes after an insertion does not receive
+-- the past notification.
+test_lateSubscriber :: LeiosDbHandle IO -> IO ()
+test_lateSubscriber db = do
+  -- Insert before subscribing
+  let point1 = mkTestPoint (SlotNo 1) 1
+      eb1 = mkTestEb 2
+  leiosDbInsertEbBody db point1 eb1
+  -- Now subscribe
+  chan <- subscribeEbNotifications db
+  -- The channel should be empty (no past notifications)
+  maybeNotif <- atomically $ tryReadTChan chan
+  case maybeNotif of
+    Nothing -> pure () -- Expected: no notification
+    Just _ -> assertFailure "late subscriber should not receive past notifications"
+  -- But new insertions should be received
+  let point2 = mkTestPoint (SlotNo 2) 2
+      eb2 = mkTestEb 3
+  leiosDbInsertEbBody db point2 eb2
+  notification <- atomically $ readTChan chan
+  assertOfferBlock point2 notification
+
+-- | Test that multiple insertions yield multiple notifications in order.
+test_multipleNotifications :: LeiosDbHandle IO -> IO ()
+test_multipleNotifications db = do
+  chan <- subscribeEbNotifications db
+  let points =
+        [ mkTestPoint (SlotNo i) (fromIntegral i)
+        | i <- [1 .. 5]
+        ]
+      ebs = [mkTestEb (fromIntegral i) | i <- [1 .. 5]]
+  -- Insert all
+  mapM_ (uncurry $ leiosDbInsertEbBody db) (zip points ebs)
+  -- Read all notifications and verify order
+  notifications <- replicateM 5 (atomically $ readTChan chan)
+  mapM_
+    (uncurry assertOfferBlock)
+    (zip points notifications)
+
+-- * Test utilities
+
+-- | Assert that a notification is LeiosOfferBlock with the expected point.
+assertOfferBlock :: LeiosPoint -> LeiosNotification -> IO ()
+assertOfferBlock expectedPoint = \case
+  LeiosOfferBlock actualPoint _ ->
+    actualPoint @?= expectedPoint
+  LeiosOfferBlockTxs _ ->
+    assertFailure "expected LeiosOfferBlock, got LeiosOfferBlockTxs"

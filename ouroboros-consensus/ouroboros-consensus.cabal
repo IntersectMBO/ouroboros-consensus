@@ -601,12 +601,14 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Versioned
+    Test.LeiosDemoDb
 
   build-depends:
     QuickCheck,
     async,
     base,
     base-deriving-via,
+    bytestring,
     cardano-binary,
     cardano-crypto-class ^>=2.2,
     cardano-crypto-tests ^>=2.2,
@@ -618,6 +620,7 @@ test-suite consensus-test
     contra-tracer,
     deepseq,
     diff-containers,
+    directory,
     fingertree-rm,
     fs-api ^>=0.3,
     fs-sim,
@@ -649,6 +652,7 @@ test-suite consensus-test
     tasty,
     tasty-hunit,
     tasty-quickcheck,
+    temporary,
     time,
     transformers,
     transformers-base,
@@ -658,6 +662,7 @@ test-suite consensus-test
     typed-protocols-stateful,
     unstable-consensus-testlib,
     unstable-mock-block,
+    vector,
 
 test-suite infra-test
   import: common-test
