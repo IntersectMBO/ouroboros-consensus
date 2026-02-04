@@ -460,7 +460,7 @@ instance
       , (NodeToClientV_23, CardanoNodeToClientVersion19)
       ]
 
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_22)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_23)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
