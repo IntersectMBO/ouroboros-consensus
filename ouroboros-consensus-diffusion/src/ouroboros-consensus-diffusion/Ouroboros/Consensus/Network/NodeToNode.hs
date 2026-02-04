@@ -378,7 +378,7 @@ mkHandlers
             pure x'
           pure $
             leiosNotifyServerPeer
-              (Leios.nextLeiosNotification (leiosPeerTracer peer) (getLeiosEbBodies, var))
+              (Leios.nextLeiosNotification (leiosPeerTracer peer) var)
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           db <- getLeiosNewDbConnection -- TODO share DB connection for same peer?
           reqVar <-

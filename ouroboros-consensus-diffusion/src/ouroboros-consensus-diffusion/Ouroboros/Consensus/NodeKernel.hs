@@ -441,7 +441,7 @@ initNodeKernel
                 outstanding
         let newCopy = Leios.toCopyCount outstanding' /= Leios.toCopyCount outstanding
         pure (outstanding', (newDecisions, newCopy))
-      let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
+      let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
       traceWith tracer $
         MkTraceLeiosKernel $
           "leiosFetchLogic: "

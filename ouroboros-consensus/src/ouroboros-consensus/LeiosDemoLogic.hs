@@ -386,10 +386,9 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
 
 packRequests ::
   LeiosFetchStaticEnv ->
-  LeiosEbBodies ->
   LeiosFetchDecisions pid ->
   Map (PeerId pid) (Seq LeiosFetchRequest)
-packRequests env ebBodies =
+packRequests env =
   \(MkLeiosFetchDecisions x) -> Map.map goPeer x
  where
   goPeer =
@@ -670,7 +669,7 @@ msgLeiosBlockTxs ::
   LeiosBlockTxsRequest ->
   V.Vector LeiosTx ->
   m ()
-msgLeiosBlockTxs ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req txs = do
+msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyVar, notificationVars) db peerId req txs = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
   -- validate it
   let MkLeiosBlockTxsRequest p bitmaps txHashes = req
@@ -901,9 +900,9 @@ nextLeiosNotification ::
   , MonadSTM m
   ) =>
   Tracer m TraceLeiosPeer ->
-  (MVar m LeiosEbBodies, StrictTVar m (Map SlotNo (Seq LeiosNotification))) ->
+  StrictTVar m (Map SlotNo (Seq LeiosNotification)) ->
   m (LN.Message (LN.LeiosNotify LeiosPoint announcement) LN.StBusy LN.StIdle)
-nextLeiosNotification _tracer (ebBodiesVar, var) = do
+nextLeiosNotification _tracer var = do
   notification <- StrictSTM.atomically $ StrictSTM.readTVar var >>= go1
   pure $ case notification of
     LeiosOfferBlock p ebBytesSize ->
