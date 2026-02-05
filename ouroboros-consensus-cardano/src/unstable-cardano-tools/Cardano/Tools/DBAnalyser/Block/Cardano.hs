@@ -326,7 +326,7 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
     -- The Const bit is quite unfortunate.
     analyseBlock $ \ @blk -> Const . getConst . (txs @blk . to (ATx @blk)) inner
 
-  numInputs (ATx @blk tx)= numInputs @blk tx
+  inputs inner (ATx @blk tx)= Const . getConst $ inputs @blk (Const . getConst . inner) tx
   numOutputs (ATx @blk tx) = numOutputs @blk tx
 
   referenceInputs inner (ATx @blk tx) = Const . getConst $ referenceInputs @blk (Const . getConst . inner) tx

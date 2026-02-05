@@ -402,6 +402,7 @@ data TxFeatures blk f = MkTxFeatures
   , size_inputs :: f Int
   , num_outputs :: f Int
   , num_ref_inputs :: f Int
+  , size_ref_inputs :: f Int
   , num_certs :: f Int
   , num_pool_certs :: f Int
   , num_gov_certs :: f Int
@@ -436,6 +437,7 @@ txFeaturesNames =
     , size_inputs = "size_inputs"
     , num_outputs = "#outputs"
     , num_ref_inputs = "#reference_inputs"
+    , size_ref_inputs = "size_reference_inputs"
     , num_certs = "#certs"
     , num_pool_certs = "#pool_certs"
     , num_gov_certs = "#gov_certs"
@@ -534,14 +536,19 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, limit
           , num_addr_wits = Identity $ length $ toListOf (HasAnalysis.wits @blk . HasAnalysis.addrWits @blk . folded) tx
           , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize @blk)) Sum tx
           , size_datum = Identity $ tx ^. (HasAnalysis.wits @blk . to (HasAnalysis.datumSize @blk))
-          , num_inputs = Identity $ HasAnalysis.numInputs @blk tx
+          , num_inputs = Identity $ length $ toListOf (HasAnalysis.inputs @blk . folded) tx
           -- I find it a little dangerous to default to 0 when the TxIn isn't
           -- there. We have to have a default because the Byron blocks have
           -- their UTxO summary implemeted yet in their HasAnalysis instance.
           -- But this may hide some bugs.
-          , size_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs @blk . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
+          , size_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.inputs @blk . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
           , num_outputs = Identity $ HasAnalysis.numOutputs @blk tx
           , num_ref_inputs = Identity $ length $ toListOf (HasAnalysis.referenceInputs @blk) tx
+          -- I find it a little dangerous to default to 0 when the TxIn isn't
+          -- there. We have to have a default because the Byron blocks have
+          -- their UTxO summary implemeted yet in their HasAnalysis instance.
+          -- But this may hide some bugs.
+          , size_ref_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs @blk . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
           , num_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk) tx
           , num_pool_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterPoolCert @blk) tx
           , num_gov_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterGovCert @blk) tx

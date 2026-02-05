@@ -99,8 +99,8 @@ instance
 
   txs = to (Shelley.shelleyBlockRaw @proto @era)  . to SL.blockBody  . Ledger.txSeqBlockBodyL @era . folded
 
-  numInputs tx = length $ toListOf (Core.bodyTxL . Core.inputsTxBodyL) tx
-  numOutputs tx = length $ toListOf (Core.bodyTxL . Core.outputsTxBodyL) tx
+  inputs = Core.bodyTxL . Core.inputsTxBodyL
+  numOutputs tx = length $ toListOf (Core.bodyTxL . Core.outputsTxBodyL . folded) tx
 
   referenceInputs = eraReferenceInputs
 

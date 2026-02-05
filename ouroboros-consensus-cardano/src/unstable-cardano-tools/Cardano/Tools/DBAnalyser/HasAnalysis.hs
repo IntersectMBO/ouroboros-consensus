@@ -47,7 +47,7 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
 
   txs :: SimpleFold blk (TxOf blk)
 
-  numInputs :: TxOf blk -> Int
+  inputs :: SimpleGetter (TxOf blk) (Set Ledger.TxIn)
   numOutputs :: TxOf blk -> Int -- TODO: compare with countTxOutputs as a safety
                 -- check
   referenceInputs :: SimpleGetter (TxOf blk) (Set Ledger.TxIn)

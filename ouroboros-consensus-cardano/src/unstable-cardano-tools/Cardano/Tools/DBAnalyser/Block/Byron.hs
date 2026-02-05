@@ -43,7 +43,7 @@ instance HasAnalysis ByronBlock where
   protVer _ = ProtVer { pvMajor = (natVersion @0), pvMinor = 0 }
   type TxOf ByronBlock = Void -- dummy
   txs _ _ = mempty -- dummy
-  numInputs _ = 0 -- dummy
+  inputs _ = absurd
   numOutputs _ = 0 -- dummy
   referenceInputs = to (const mempty)
   type WitsOf ByronBlock = Void -- dummy
