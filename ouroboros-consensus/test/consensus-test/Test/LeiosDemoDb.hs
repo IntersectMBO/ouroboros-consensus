@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 -- | Tests for the LeiosDemoDb notification mechanism.
@@ -10,8 +11,9 @@ module Test.LeiosDemoDb (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadTChan)
-import Control.Monad (replicateM)
+import Control.Monad (forM_, replicateM, when)
 import qualified Data.ByteString as BS
+import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import qualified Data.Vector as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
@@ -24,15 +26,31 @@ import LeiosDemoTypes
   , LeiosNotification (..)
   , LeiosPoint (..)
   , TxHash (..)
+  , leiosEBMaxClosureSize
+  , leiosEBMaxSize
   , leiosEbBytesSize
+  , maxTxsPerEb
   )
-import System.IO.Temp (withSystemTempDirectory)
+import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
+import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory, withSystemTempDirectory)
+import Test.QuickCheck
+  ( Gen
+  , Property
+  , choose
+  , counterexample
+  , forAllShrinkBlind
+  , ioProperty
+  , listOf
+  , once
+  , vectorOf
+  )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
+import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests =
-  testGroup "LeiosDemoDb" . forEachImplementation $ \dbTest ->
+  testGroup "LeiosDemoDb" . forEachImplementation $ \dbTest dbPropTest ->
     [ dbTest "single subscriber" test_singleSubscriber
     , dbTest "multiple subscribers" test_multipleSubscribers
     , dbTest "correct data" test_correctData
@@ -40,33 +58,52 @@ tests =
     , dbTest "multiple notifications" test_multipleNotifications
     , dbTest "no offerBlockTxs before last update" test_noOfferBlockTxsBeforeComplete
     , dbTest "offerBlockTxs on last update" test_offerBlockTxs
+    , dbPropTest "reasonable update performance" prop_reasonableUpdatePerformance
     ]
 
 -- | Run test cases for each database implementation (InMemory and SQLite).
--- Provides a test runner function that creates a test case with the appropriate setup.
+-- Provides two test runner functions: one for unit tests (with a pre-built
+-- handle) and one for property tests (with a DB creation action).
 forEachImplementation ::
-  ((String -> (LeiosDbHandle IO -> IO ()) -> TestTree) -> [TestTree]) ->
+  ( (String -> (LeiosDbHandle IO -> IO ()) -> TestTree) ->
+    (String -> (IO (LeiosDbHandle IO) -> Property) -> TestTree) ->
+    [TestTree]
+  ) ->
   [TestTree]
 forEachImplementation mkTests =
-  [ testGroup "InMemory" $ mkTests inMemoryTest
-  , testGroup "SQLite" $ mkTests sqliteTest
+  [ testGroup "InMemory" $ mkTests inMemoryTest inMemoryPropTest
+  , testGroup "SQLite" $ mkTests sqliteTest sqlitePropTest
   ]
  where
   inMemoryTest name test =
     testCase name $
       newInMemoryLeiosDb >>= test
 
+  inMemoryPropTest name prop =
+    testProperty name $ prop newInMemoryLeiosDb
+
   sqliteTest name test =
     testCase name $
       withTestSqliteDb test
 
--- | Run a test with a temporary SQLite database.
+  sqlitePropTest name prop =
+    testProperty name $ prop mkTestSqliteDb
+
+-- | Run a test with a temporary SQLite database (bracket-style).
 withTestSqliteDb :: (LeiosDbHandle IO -> IO a) -> IO a
 withTestSqliteDb action =
   withSystemTempDirectory "leios-test" $ \tmpDir -> do
     let dbPath = tmpDir <> "/test.db"
     db <- newLeiosDbConnectionIO dbPath
     action db
+
+-- | Create a temporary SQLite database (no automatic cleanup).
+-- Suitable for property tests where the DB must outlive the creation action.
+mkTestSqliteDb :: IO (LeiosDbHandle IO)
+mkTestSqliteDb = do
+  sysTmp <- getCanonicalTemporaryDirectory
+  tmpDir <- createTempDirectory sysTmp "leios-test"
+  newLeiosDbConnectionIO (tmpDir <> "/test.db")
 
 -- * Test fixtures
 
@@ -216,6 +253,59 @@ test_offerBlockTxs db = do
   leiosDbUpdateEbTx db point.pointEbHash 2 (BS.pack [7, 8, 9])
   notification <- atomically $ readTChan chan
   assertOfferBlockTxs point notification
+
+-- * Property tests
+
+-- | Maximum transaction size as on mainnet.
+maxTxByteSize :: Int
+maxTxByteSize = 16_000_000
+
+-- | Generate a performance test scenario: a list of (numTxs, completionRatio)
+-- for arbitrary background EBs, plus a target EB size and the offset to update.
+genPerfScenario :: Gen ([(Int, Double)], Int, Int)
+genPerfScenario = do
+  -- TODO: scale or size
+  bgEbs <- listOf $ do
+    numTxs <- choose (1, maxTxsPerEb)
+    ratio <- choose (0.0 :: Double, 1.0)
+    pure (numTxs, ratio)
+  targetSize <- choose (1, maxTxsPerEb)
+  targetOffset <- choose (0, targetSize - 1)
+  pure (bgEbs, targetSize, targetOffset)
+
+-- | Property: leiosDbUpdateEbTx completes within 1ms even with 10k EB bodies
+-- in the database with randomly completed/sparse transaction closures.
+prop_reasonableUpdatePerformance :: IO (LeiosDbHandle IO) -> Property
+prop_reasonableUpdatePerformance mkDb =
+  once $
+    forAllShrinkBlind genPerfScenario (const []) $ \(bgEbs, targetSize, targetOffset) ->
+      ioProperty $ do
+        db <- mkDb
+        -- Prime the database with background EB bodies
+        putStrLn $ "Priming database with " <> show (length bgEbs) <> " ebs"
+        forM_ (zip [1 :: Int ..] bgEbs) $ \(i, (numTxs, completionRatio)) -> do
+          let point = mkTestPoint (SlotNo $ fromIntegral i) (fromIntegral i)
+              eb = mkTestEb numTxs
+          leiosDbInsertEbBody db point eb
+          -- Deterministically complete the first N txs based on the ratio
+          let numCompleted = floor (completionRatio * fromIntegral numTxs)
+          forM_ [0 .. numCompleted - 1] $ \j ->
+            leiosDbUpdateEbTx db point.pointEbHash j (BS.replicate maxTxByteSize 0)
+        -- Create the target EB and fill all but the target offset
+        putStrLn $ "Priming target eb"
+        let targetPoint = mkTestPoint (SlotNo 99999) 99999
+            targetEb = mkTestEb targetSize
+        leiosDbInsertEbBody db targetPoint targetEb
+        forM_ [0 .. targetSize - 1] $ \j ->
+          when (j /= targetOffset) $
+            leiosDbUpdateEbTx db targetPoint.pointEbHash j (BS.replicate maxTxByteSize 0)
+        -- Time the final update
+        -- TODO: use monotonic clock
+        start <- getCurrentTime
+        leiosDbUpdateEbTx db targetPoint.pointEbHash targetOffset (BS.replicate maxTxByteSize 0)
+        end <- getCurrentTime
+        let elapsedMs = realToFrac (diffUTCTime end start) * 1000 :: Double
+        pure $ counterexample ("leiosDbUpdateEbTx took " ++ show elapsedMs ++ "ms") (elapsedMs < 1.0)
 
 -- * Test utilities
 

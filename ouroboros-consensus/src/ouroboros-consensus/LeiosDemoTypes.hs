@@ -384,8 +384,8 @@ minEbItemBytesSize = (32 - hashOverhead) + minSizeOverhead
   hashOverhead = 1 + 1 -- bytestring major byte + a length = 32
   minSizeOverhead = 1 + 1 -- int major byte + a value at low as 55
 
-maxEbItems :: Int
-maxEbItems =
+maxTxsPerEb :: Int
+maxTxsPerEb =
   fromIntegral $
     (maxMsgLeiosBlockBytesSize - msgOverhead - sequenceOverhead)
       `div` minEbItemBytesSize

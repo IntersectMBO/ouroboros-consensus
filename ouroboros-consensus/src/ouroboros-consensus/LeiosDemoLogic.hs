@@ -13,11 +13,11 @@ import Cardano.Binary (decodeFullDecoder', serialize')
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Prelude (first)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent.Class.MonadMVar (MVar, MonadMVar)
+import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Control.Monad (forM, when)
+import Control.Monad (when)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.Bits as Bits
@@ -60,6 +60,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   , TxHash (..)
+  , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -93,8 +94,8 @@ newLeiosFetchContext ::
   m (LeiosFetchContext m)
 newLeiosFetchContext leiosWriteLock leiosDb readLeiosEbBodies = do
   -- each LeiosFetch server calls this when it initializes
-  leiosEbBuffer <- MV.new Leios.maxEbItems
-  leiosEbTxsBuffer <- MV.new Leios.maxEbItems
+  leiosEbBuffer <- MV.new maxTxsPerEb
+  leiosEbTxsBuffer <- MV.new maxTxsPerEb
   pure
     MkLeiosFetchContext{leiosDb, leiosEbBuffer, leiosEbTxsBuffer, leiosWriteLock, readLeiosEbBodies}
 
@@ -147,7 +148,7 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
   let MkLeiosFetchContext{leiosDb = db, leiosEbTxsBuffer = buf, leiosWriteLock} = leiosContext
   do
     let idxs = map fst bitmaps
-    let idxLimit = Leios.maxEbItems `div` 64
+    let idxLimit = maxTxsPerEb `div` 64
     when (any (== 0) $ map snd bitmaps) $ do
       error "A bitmap is zero"
     when (flip any idxs (> fromIntegral idxLimit)) $ do
