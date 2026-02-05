@@ -2,6 +2,14 @@
 
 # Changelog entries
 
+<a id='changelog-0.25.1.1'></a>
+## 0.25.1.1 -- 2026-02-05
+
+### Patch
+
+- Added an upper bound on `cardano-binary`, the version `1.7.3` is incompatible
+  with `cardano-ledger-byron-1.1.0.0`.
+
 <a id='changelog-0.25.1.0'></a>
 ## 0.25.1.0 -- 2025-05-15
 
