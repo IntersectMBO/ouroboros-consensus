@@ -163,6 +163,7 @@ import LeiosDemoTypes
   ( LeiosEbBodies
   , LeiosOutstanding
   , LeiosPeerVars
+  , LeiosPoint (..)
   , TraceLeiosKernel (..)
   , hashLeiosEb
   )
@@ -902,9 +903,9 @@ forkBlockForging IS{..} blockForging =
 
       -- Store generated EB so it can be diffused
       for_ mayNewEndorserBlock $ \eb -> do
-        let ebHash = hashLeiosEb eb
-        lift $ leiosDbInsertEbPoint leiosDB currentSlot ebHash
-        lift $ leiosDbInsertEbBody leiosDB ebHash eb
+        let point = MkLeiosPoint currentSlot (hashLeiosEb eb)
+        lift $ leiosDbInsertEbPoint leiosDB point
+        lift $ leiosDbInsertEbBody leiosDB point eb
         traceLeios TraceLeiosBlockStored{slot = currentSlot, eb}
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()

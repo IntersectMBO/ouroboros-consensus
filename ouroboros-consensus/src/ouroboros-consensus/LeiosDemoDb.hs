@@ -67,7 +67,7 @@ data LeiosDbHandle m = LeiosDbHandle
   -- only inform about new additions, starting from when this function was
   -- called.
   , leiosDbScanEbPoints :: m [(SlotNo, EbHash)]
-  , leiosDbInsertEbPoint :: SlotNo -> EbHash -> m ()
+  , leiosDbInsertEbPoint :: LeiosPoint -> m ()
   , leiosDbLookupEbBody :: EbHash -> m [(TxHash, BytesSize)]
   , -- NOTE: yields a LeiosOfferBlock notification
     leiosDbInsertEbBody :: LeiosPoint -> LeiosEb -> m ()
@@ -130,13 +130,13 @@ newInMemoryLeiosDb = do
             [ (SlotNo (fromIntegral slot), hash)
             | (slot, hash) <- IntMap.toAscList (imEbPoints state)
             ]
-      , leiosDbInsertEbPoint = \slot hash -> atomically $ do
+      , leiosDbInsertEbPoint = \point -> atomically $ do
           modifyTVar stateVar $ \s ->
             s
               { imEbPoints =
                   IntMap.insert
-                    (fromIntegral $ unSlotNo slot)
-                    hash
+                    (fromIntegral $ unSlotNo point.pointSlotNo)
+                    point.pointEbHash
                     (imEbPoints s)
               }
       , leiosDbLookupEbBody = \ebHash -> atomically $ do
@@ -249,10 +249,10 @@ newLeiosDbFromSqlite db = do
                       hash <- MkEbHash <$> DB.columnBlob stmt 1
                       loop ((slot, hash) : acc)
             loop []
-      , leiosDbInsertEbPoint = \slot hash ->
+      , leiosDbInsertEbPoint = \point ->
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebPoint) $ \stmt -> do
-            dbBindInt64 stmt 1 (fromIntegral $ unSlotNo slot)
-            dbBindBlob stmt 2 (let MkEbHash bytes = hash in bytes)
+            dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
+            dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
             dbStep1 stmt
       , leiosDbLookupEbBody = \ebHash ->
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebBodies) $ \stmt -> do

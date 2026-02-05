@@ -52,6 +52,7 @@ import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -60,8 +61,22 @@ import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor (void, (<&>))
 import Data.Hashable (Hashable)
+import qualified Data.Map as Map
 import Data.Map.Strict (Map)
+import qualified Data.Set as Set
 import Data.Void (Void)
+import LeiosDemoDb (LeiosDbHandle (subscribeEbNotifications))
+import qualified LeiosDemoLogic as Leios
+import LeiosDemoOnlyTestFetch
+import LeiosDemoOnlyTestNotify
+import LeiosDemoTypes
+  ( LeiosEb
+  , LeiosNotification (..)
+  , LeiosPoint (..)
+  , LeiosTx
+  , TraceLeiosPeer (..)
+  )
+import qualified LeiosDemoTypes as Leios
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
@@ -106,6 +121,7 @@ import Ouroboros.Network.Driver
 import Ouroboros.Network.Driver.Limits
 import Ouroboros.Network.KeepAlive
 import Ouroboros.Network.Mux
+import qualified Ouroboros.Network.Mux as ON
 import Ouroboros.Network.NodeToNode
 import Ouroboros.Network.PeerSelection.PeerMetric.Type
   ( FetchedMetricsTracer
@@ -155,17 +171,6 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( mapTxSubmissionMempoolReader
   )
 import Ouroboros.Network.TxSubmission.Outbound
-
-import Control.Concurrent.Class.MonadSTM (readTChan)
-import qualified Data.Map as Map
-import qualified Data.Set as Set
-import LeiosDemoDb (LeiosDbHandle (subscribeEbNotifications))
-import qualified LeiosDemoLogic as Leios
-import LeiosDemoOnlyTestFetch
-import LeiosDemoOnlyTestNotify
-import LeiosDemoTypes (LeiosEb, LeiosNotification (..), LeiosPoint (..), LeiosTx, TraceLeiosPeer (..))
-import qualified LeiosDemoTypes as Leios
-import qualified Ouroboros.Network.Mux as ON
 
 {-------------------------------------------------------------------------------
   Handlers
@@ -377,9 +382,9 @@ mkHandlers
           chan <- subscribeEbNotifications db
           pure . leiosNotifyServerPeer $ do
             atomically (readTChan chan) >>= \case
-              LeiosOfferBlock point _ ebSize ->
+              LeiosOfferBlock point ebSize ->
                 pure $ MsgLeiosBlockOffer point ebSize
-              LeiosOfferBlockTxs point _ ->
+              LeiosOfferBlockTxs point ->
                 pure $ MsgLeiosBlockTxsOffer point
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           db <- getLeiosNewDbConnection -- TODO share DB connection for same peer?
