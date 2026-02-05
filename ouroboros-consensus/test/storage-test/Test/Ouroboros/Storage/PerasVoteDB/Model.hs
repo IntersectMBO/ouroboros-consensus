@@ -137,7 +137,12 @@ addVote ::
   , Model blk
   )
 addVote vote model
-  -- This voter has already voted in this round => ignore the vote
+  -- The ID of a vote is a pair (voterId, roundNo).
+  -- So checking if the voter has already voted in this round means
+  -- checking if the pair (voterId, roundNo) is already present in the model
+  -- i.e. if the vote is already in the model. In which case, we can ignore it.
+  -- (this is under the assumption that a voter doesn't cast two different
+  -- votes for the same round, that would have the same ID but different body)
   | voterAlreadyVotedInRound =
       ( Right $
           PerasVoteAlreadyInDB
@@ -201,7 +206,7 @@ addVote vote model
     PerasVoteTarget{pvtRoundNo = roundNo, pvtBlock = votedBlock}
   voteEntry =
     VoteEntry{veTicketNo = nextTicketNo, veVoter = voter, veVote = vote}
-  -- Has this  voter already voted in this round?
+  -- Has this voter already voted in this round?
   voterAlreadyVotedInRound =
     hasVote voteId model
   -- The existing votes for this round and block
