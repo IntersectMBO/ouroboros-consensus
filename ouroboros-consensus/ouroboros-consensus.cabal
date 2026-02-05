@@ -701,6 +701,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.ChainDB.StateMachine.Utils.RunOnRepl
     Test.Ouroboros.Storage.ChainDB.Unit
     Test.Ouroboros.Storage.ImmutableDB
+    Test.Ouroboros.Storage.ImmutableDB.Chunks
     Test.Ouroboros.Storage.ImmutableDB.Mock
     Test.Ouroboros.Storage.ImmutableDB.Model
     Test.Ouroboros.Storage.ImmutableDB.Primary
