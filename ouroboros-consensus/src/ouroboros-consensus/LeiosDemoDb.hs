@@ -30,6 +30,7 @@ import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
@@ -88,6 +89,7 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   { imTxCache :: !(Map TxHash TxCacheEntry)
   , imEbPoints :: !(IntMap {- SlotNo -} EbHash)
   , imEbBodies :: !(Map EbHash (IntMap {- txOffset -} EbTxEntry))
+  , imEbSlots :: !(Map EbHash SlotNo)
   }
 
 -- | Transaction cache entry
@@ -116,6 +118,7 @@ newInMemoryLeiosDb = do
         { imTxCache = Map.empty
         , imEbPoints = IntMap.empty
         , imEbBodies = Map.empty
+        , imEbSlots = Map.empty
         }
   pure $
     LeiosDbHandle
@@ -160,10 +163,10 @@ newInMemoryLeiosDb = do
           modifyTVar stateVar $ \s ->
             s
               { imEbBodies = Map.insert point.pointEbHash entries (imEbBodies s)
+              , imEbSlots = Map.insert point.pointEbHash point.pointSlotNo (imEbSlots s)
               }
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
       , leiosDbUpdateEbTx = \ebHash txOffset txBytes -> atomically $ do
-          -- TODO: notify once complete? how to do this performantly?
           modifyTVar stateVar $ \s ->
             s
               { imEbBodies =
@@ -172,6 +175,16 @@ newInMemoryLeiosDb = do
                     ebHash
                     (imEbBodies s)
               }
+          state <- readTVar stateVar
+          case Map.lookup ebHash (imEbBodies state) of
+            Just entries
+              | not (IntMap.null entries)
+              , all (isJust . eteTxBytes) entries ->
+                  case Map.lookup ebHash (imEbSlots state) of
+                    Just slotNo ->
+                      notify $ LeiosOfferBlockTxs (MkLeiosPoint slotNo ebHash)
+                    Nothing -> pure ()
+            _ -> pure ()
       , leiosDbInsertTxCache = \txHash txBytes txBytesSize expiry -> atomically $ do
           let entry = TxCacheEntry txBytes txBytesSize expiry
           modifyTVar stateVar $ \s ->
@@ -221,6 +234,7 @@ newLeiosDbFromSqlite :: DB.Database -> IO (LeiosDbHandle IO)
 newLeiosDbFromSqlite db = do
   notificationChan <- atomically newBroadcastTChan
   let notify = atomically . writeTChan notificationChan
+  slotsVar <- newTVarIO Map.empty
   pure
     LeiosDbHandle
       { subscribeEbNotifications =
@@ -263,14 +277,27 @@ newLeiosDbFromSqlite db = do
                   dbReset stmt
               )
               (leiosEbBodyItems eb)
+          atomically $ modifyTVar slotsVar $ Map.insert point.pointEbHash point.pointSlotNo
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
-      , leiosDbUpdateEbTx = \ebHash txOffset txBytes ->
-          -- TODO: notify once complete? how to do this without querying the db again?
+      , leiosDbUpdateEbTx = \ebHash txOffset txBytes -> do
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_update_ebTx) $ \stmt -> do
             dbBindBlob stmt 1 txBytes
             dbBindBlob stmt 2 (let MkEbHash bytes = ebHash in bytes)
             dbBindInt64 stmt 3 (fromIntegral txOffset)
             dbStep1 stmt
+          -- Check if all txBytes are now filled
+          nullCount <- dbWithBEGIN db $ dbWithPrepare db (fromString sql_count_null_ebTxs) $ \stmt -> do
+            dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+            dbStep stmt >>= \case
+              DB.Done -> pure 1
+              DB.Row -> DB.columnInt64 stmt 0
+          -- XXX: The slotsVar lookup table is only used for this. Can we change the DB interface to take a point instead?
+          when (nullCount == 0) $ do
+            mSlotNo <- atomically $ Map.lookup ebHash <$> readTVar slotsVar
+            case mSlotNo of
+              Just slotNo ->
+                notify $ LeiosOfferBlockTxs (MkLeiosPoint slotNo ebHash)
+              Nothing -> pure ()
       , leiosDbInsertTxCache = \txHash txBytes txBytesSize expiry ->
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_txCache) $ \stmt -> do
             dbBindBlob stmt 1 (let MkTxHash bytes = txHash in bytes)
@@ -406,6 +433,11 @@ sql_update_ebTx =
   "UPDATE ebTxs\n\
   \SET txBytes = ?\n\
   \WHERE ebHashBytes = ? AND txOffset = ?\n\
+  \"
+
+sql_count_null_ebTxs :: String
+sql_count_null_ebTxs =
+  "SELECT COUNT(*) FROM ebTxs WHERE ebHashBytes = ? AND txBytes IS NULL\n\
   \"
 
 sql_insert_txCache :: String
