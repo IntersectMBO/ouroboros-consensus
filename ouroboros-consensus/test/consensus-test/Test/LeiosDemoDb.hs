@@ -4,7 +4,8 @@
 -- | Tests for the LeiosDemoDb notification mechanism.
 --
 -- These tests verify that subscribers to 'subscribeEbNotifications' receive
--- 'LeiosNotification' events when 'leiosDbInsertEbBody' is called.
+-- 'LeiosNotification' events when 'leiosDbInsertEbBody' or 'leiosDbUpdateEbTx'
+-- is called.
 module Test.LeiosDemoDb (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
@@ -37,6 +38,8 @@ tests =
     , dbTest "correct data" test_correctData
     , dbTest "late subscriber" test_lateSubscriber
     , dbTest "multiple notifications" test_multipleNotifications
+    , dbTest "no offerBlockTxs before last update" test_noOfferBlockTxsBeforeComplete
+    , dbTest "offerBlockTxs on last update" test_offerBlockTxs
     ]
 
 -- | Run test cases for each database implementation (InMemory and SQLite).
@@ -168,7 +171,7 @@ test_multipleNotifications db = do
         [ mkTestPoint (SlotNo i) (fromIntegral i)
         | i <- [1 .. 5]
         ]
-      ebs = [mkTestEb (fromIntegral i) | i <- [1 .. 5]]
+      ebs = [mkTestEb i | i <- [1 .. 5]]
   -- Insert all
   mapM_ (uncurry $ leiosDbInsertEbBody db) (zip points ebs)
   -- Read all notifications and verify order
@@ -176,6 +179,43 @@ test_multipleNotifications db = do
   mapM_
     (uncurry assertOfferBlock)
     (zip points notifications)
+
+-- | Test that no LeiosOfferBlockTxs notification is produced when only some
+-- transactions have been updated via leiosDbUpdateEbTx.
+test_noOfferBlockTxsBeforeComplete :: LeiosDbHandle IO -> IO ()
+test_noOfferBlockTxsBeforeComplete db = do
+  chan <- subscribeEbNotifications db
+  let point = mkTestPoint (SlotNo 1) 1
+      eb = mkTestEb 3 -- 3 transactions
+  leiosDbInsertEbBody db point eb
+  -- Consume the LeiosOfferBlock notification
+  _ <- atomically $ readTChan chan
+  -- Update only 2 of 3 txs
+  leiosDbUpdateEbTx db point.pointEbHash 0 (BS.pack [1, 2, 3])
+  leiosDbUpdateEbTx db point.pointEbHash 1 (BS.pack [4, 5, 6])
+  -- No LeiosOfferBlockTxs notification should be available
+  maybeNotif <- atomically $ tryReadTChan chan
+  case maybeNotif of
+    Nothing -> pure ()
+    Just _ -> assertFailure "should not notify before all txs are updated"
+
+-- | Test that a LeiosOfferBlockTxs notification is produced when the last
+-- transaction is inserted via leiosDbUpdateEbTx.
+test_offerBlockTxs :: LeiosDbHandle IO -> IO ()
+test_offerBlockTxs db = do
+  chan <- subscribeEbNotifications db
+  let point = mkTestPoint (SlotNo 1) 1
+      eb = mkTestEb 3 -- 3 transactions
+      -- Insert the EB body (creates entries with NULL txBytes)
+  leiosDbInsertEbBody db point eb
+  -- Consume the LeiosOfferBlock notification
+  _ <- atomically $ readTChan chan
+  -- Update all txs
+  leiosDbUpdateEbTx db point.pointEbHash 0 (BS.pack [1, 2, 3])
+  leiosDbUpdateEbTx db point.pointEbHash 1 (BS.pack [4, 5, 6])
+  leiosDbUpdateEbTx db point.pointEbHash 2 (BS.pack [7, 8, 9])
+  notification <- atomically $ readTChan chan
+  assertOfferBlockTxs point notification
 
 -- * Test utilities
 
@@ -186,3 +226,11 @@ assertOfferBlock expectedPoint = \case
     actualPoint @?= expectedPoint
   LeiosOfferBlockTxs _ ->
     assertFailure "expected LeiosOfferBlock, got LeiosOfferBlockTxs"
+
+-- | Assert that a notification is LeiosOfferBlockTxs with the expected point.
+assertOfferBlockTxs :: LeiosPoint -> LeiosNotification -> IO ()
+assertOfferBlockTxs expectedPoint = \case
+  LeiosOfferBlockTxs actualPoint ->
+    actualPoint @?= expectedPoint
+  LeiosOfferBlock _ _ ->
+    assertFailure "expected LeiosOfferBlockTxs, got LeiosOfferBlock"
