@@ -23,6 +23,7 @@ import Control.Monad.State
   )
 import Control.Tracer (nullTracer)
 import Data.Char (chr)
+import Data.Functor (($>))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Ratio ((%))
@@ -65,14 +66,13 @@ import qualified Test.Ouroboros.Storage.PerasVoteDB.Model as Model
 import Test.QuickCheck
   ( Arbitrary (..)
   , Property
-  , Testable (..)
   , choose
   , elements
   , frequency
   , ioProperty
   , tabulate
   )
-import Test.QuickCheck.Monadic (monadic)
+import Test.QuickCheck.Monadic (PropertyM, monadic)
 import Test.QuickCheck.StateModel
   ( Actions
   , Any (..)
@@ -101,10 +101,26 @@ perasTestCfg :: PerasCfg TestBlock
 perasTestCfg = mkPerasParams
 
 prop_qd :: Actions Model -> Property
-prop_qd actions = monadic f $ property () <$ runActions actions
+prop_qd actions = monadic runActualImplemMonad resultAsPropertyM
  where
-  f :: StateT (PerasVoteDB IO TestBlock) IO Property -> Property
-  f = ioProperty . flip evalStateT (error "unreachable")
+  -- This runs actions on the model and the actual implementation alongside,
+  -- and checks the postconditions after each action.
+  -- The `PropertyM` wrapper is keeping track of success/failure of the
+  -- postconditions, so we don't care about the payload returned by `runActions`.
+  resultAsPropertyM :: PropertyM (StateT (PerasVoteDB IO TestBlock) IO) ()
+  resultAsPropertyM = runActions actions $> ()
+
+  -- This function is in charge of collapsing/running the different monadic
+  -- layers on top of our property.
+  runActualImplemMonad :: StateT (PerasVoteDB IO TestBlock) IO Property -> Property
+  runActualImplemMonad statefulIoProp =
+    -- The _Model_ starts in `Model.open = False`, so `precondition` dictates
+    -- that the first action must be `OpenDB`, and this `OpenDB` action will
+    -- initialize the `StateT` state with a valid `PerasVoteDB` instance.
+    -- The actual implementation state can only be read in `postcondition`, so
+    -- we are sure that the `StateT` state will be properly initialized beforehand.
+    let ioProp = evalStateT statefulIoProp (error "Trying to access uninitialized PerasVoteDB")
+     in ioProperty ioProp
 
 newtype Model = Model (Model.Model TestBlock)
   deriving (Show, Generic)
