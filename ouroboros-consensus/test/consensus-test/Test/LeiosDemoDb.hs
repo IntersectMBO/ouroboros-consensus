@@ -43,6 +43,7 @@ import Test.QuickCheck
   , listOf
   , once
   , vectorOf
+  , within
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
@@ -103,6 +104,8 @@ mkTestSqliteDb :: IO (LeiosDbHandle IO)
 mkTestSqliteDb = do
   sysTmp <- getCanonicalTemporaryDirectory
   tmpDir <- createTempDirectory sysTmp "leios-test"
+  print tmpDir
+  -- FIXME: this leaks temp files
   newLeiosDbConnectionIO (tmpDir <> "/test.db")
 
 -- * Test fixtures
@@ -279,33 +282,41 @@ prop_reasonableUpdatePerformance :: IO (LeiosDbHandle IO) -> Property
 prop_reasonableUpdatePerformance mkDb =
   once $
     forAllShrinkBlind genPerfScenario (const []) $ \(bgEbs, targetSize, targetOffset) ->
-      ioProperty $ do
-        db <- mkDb
-        -- Prime the database with background EB bodies
-        putStrLn $ "Priming database with " <> show (length bgEbs) <> " ebs"
-        forM_ (zip [1 :: Int ..] bgEbs) $ \(i, (numTxs, completionRatio)) -> do
-          let point = mkTestPoint (SlotNo $ fromIntegral i) (fromIntegral i)
-              eb = mkTestEb numTxs
-          leiosDbInsertEbBody db point eb
-          -- Deterministically complete the first N txs based on the ratio
-          let numCompleted = floor (completionRatio * fromIntegral numTxs)
-          forM_ [0 .. numCompleted - 1] $ \j ->
-            leiosDbUpdateEbTx db point.pointEbHash j (BS.replicate maxTxByteSize 0)
-        -- Create the target EB and fill all but the target offset
-        putStrLn $ "Priming target eb"
-        let targetPoint = mkTestPoint (SlotNo 99999) 99999
-            targetEb = mkTestEb targetSize
-        leiosDbInsertEbBody db targetPoint targetEb
-        forM_ [0 .. targetSize - 1] $ \j ->
-          when (j /= targetOffset) $
-            leiosDbUpdateEbTx db targetPoint.pointEbHash j (BS.replicate maxTxByteSize 0)
-        -- Time the final update
-        -- TODO: use monotonic clock
-        start <- getCurrentTime
-        leiosDbUpdateEbTx db targetPoint.pointEbHash targetOffset (BS.replicate maxTxByteSize 0)
-        end <- getCurrentTime
-        let elapsedMs = realToFrac (diffUTCTime end start) * 1000 :: Double
-        pure $ counterexample ("leiosDbUpdateEbTx took " ++ show elapsedMs ++ "ms") (elapsedMs < 1.0)
+      -- Definitely stop after 10 seconds even including preparation
+      within 10_000_000 $
+        ioProperty $ do
+          db <- mkDb
+          -- Prime the database with background EB bodies
+          putStrLn $ "Priming database with " <> show (length bgEbs) <> " EBs:"
+          forM_ (zip [1 :: Int ..] bgEbs) $ \(i, (numTxs, completionRatio)) -> do
+            let point = mkTestPoint (SlotNo $ fromIntegral i) (fromIntegral i)
+                eb = mkTestEb numTxs
+            putStrLn $ "EB with " <> show numTxs <> " txs"
+            leiosDbInsertEbBody db point eb
+            -- Deterministically complete the first N txs based on the ratio
+            let numCompleted = floor (completionRatio * fromIntegral numTxs)
+            forM_ [0 .. numCompleted - 1] $ \j -> do
+              putStr "."
+              leiosDbUpdateEbTx db point.pointEbHash j (BS.replicate maxTxByteSize 1)
+            putStrLn ""
+          -- Create the target EB and fill all but the target offset
+          putStrLn $ "Priming target EB with " <> show (targetSize - 1) <> " txs"
+          let targetPoint = mkTestPoint (SlotNo 99999) 99999
+              targetEb = mkTestEb targetSize
+          leiosDbInsertEbBody db targetPoint targetEb
+          forM_ [0 .. targetSize - 1] $ \j ->
+            when (j /= targetOffset) $ do
+              putStrLn $ "  " <> show j
+              leiosDbUpdateEbTx db targetPoint.pointEbHash j (BS.replicate maxTxByteSize 1)
+          putStrLn ""
+          -- Time the final update
+          putStrLn "Final update, timing.."
+          -- TODO: use monotonic clock
+          start <- getCurrentTime
+          leiosDbUpdateEbTx db targetPoint.pointEbHash targetOffset (BS.replicate maxTxByteSize 0)
+          end <- getCurrentTime
+          let elapsedMs = realToFrac (diffUTCTime end start) * 1000 :: Double
+          pure $ counterexample ("leiosDbUpdateEbTx took " ++ show elapsedMs ++ "ms") (elapsedMs < 1.0)
 
 -- * Test utilities
 

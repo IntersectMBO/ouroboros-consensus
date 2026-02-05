@@ -280,18 +280,23 @@ newLeiosDbFromSqlite db = do
           atomically $ modifyTVar slotsVar $ Map.insert point.pointEbHash point.pointSlotNo
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
       , leiosDbUpdateEbTx = \ebHash txOffset txBytes -> do
-          dbWithBEGIN db $ dbWithPrepare db (fromString sql_update_ebTx) $ \stmt -> do
-            dbBindBlob stmt 1 txBytes
-            dbBindBlob stmt 2 (let MkEbHash bytes = ebHash in bytes)
-            dbBindInt64 stmt 3 (fromIntegral txOffset)
-            dbStep1 stmt
-          -- Check if all txBytes are now filled
-          nullCount <- dbWithBEGIN db $ dbWithPrepare db (fromString sql_count_null_ebTxs) $ \stmt -> do
-            dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
-            dbStep stmt >>= \case
-              DB.Done -> pure 1
-              DB.Row -> DB.columnInt64 stmt 0
-          -- XXX: The slotsVar lookup table is only used for this. Can we change the DB interface to take a point instead?
+          -- TODO: Not have a transaction per tx, but group them up again (even
+          -- across fetch clients) using a write thread
+          nullCount <- dbWithBEGIN db $ do
+            -- TODO: update the schema to not do UPDATE, but INSERT INTO a dedicated txs table
+            dbWithPrepare db (fromString sql_update_ebTx) $ \stmt -> do
+              dbBindBlob stmt 1 txBytes
+              dbBindBlob stmt 2 (let MkEbHash bytes = ebHash in bytes)
+              dbBindInt64 stmt 3 (fromIntegral txOffset)
+              dbStep1 stmt
+            -- TODO: do not SELECT on each UPDATE, use an index or other means to keep track?
+            dbWithPrepare db (fromString sql_count_null_ebTxs) $ \stmt -> do
+              dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+              dbStep stmt >>= \case
+                DB.Done -> pure 1
+                DB.Row -> DB.columnInt64 stmt 0
+          -- XXX: avoid needing this slotsVar, can we pass in the point? otherwise
+          -- use the db to look-up
           when (nullCount == 0) $ do
             mSlotNo <- atomically $ Map.lookup ebHash <$> readTVar slotsVar
             case mSlotNo of

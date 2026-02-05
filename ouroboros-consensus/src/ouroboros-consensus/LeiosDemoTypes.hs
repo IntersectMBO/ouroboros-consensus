@@ -540,6 +540,7 @@ traceLeiosPeerToObject (MkTraceLeiosPeer s) = fromString "msg" .= Aeson.String (
 leiosMempoolSize :: ByteSize32
 leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))
 
+-- TODO: dry with maxMsgLeiosBlockBytesSize
 leiosEBMaxSize :: ByteSize32
 leiosEBMaxSize = ByteSize32 512_000
 
