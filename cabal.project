@@ -64,3 +64,32 @@ if impl (ghc >= 9.12)
 
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
+
+-- Prevent the large increase in the CHaP index-state from pulling in updates we didn't intend
+--
+-- This is from the cabal-plan diff from CHaP.
+constraints:
+  byron-spec-chain <= 1.0.1.0,
+  byron-spec-ledger <= 1.1.0.0,
+  bytestring-strict-builder <= 0.4.5.8,
+  cardano-binary <= 1.7.1.0,
+  cardano-crypto-class <= 2.2.2.0,
+  cardano-crypto-praos <= 2.2.1.0,
+  cardano-crypto-tests <= 2.2.1.0,
+  cardano-crypto-wrapper <= 1.6.0.0,
+  cardano-data <= 1.2.4.0,
+  cardano-git-rev <= 0.2.2.0,
+  cardano-lmdb-simple <= 0.8.0.1,
+  cardano-slotting <= 0.2.0.0,
+  cardano-strict-containers <= 0.1.4.0,
+  contra-tracer <= 0.1.0.1,
+  flat <= 0.6,
+  measures <= 0.1.0.2,
+  monoidal-synchronisation <= 0.1.0.6,
+  plutus-core <= 1.46.0.0,
+  plutus-ledger-api <= 1.46.0.0,
+  plutus-tx <= 1.46.0.0,
+  quickcheck-monoids <= 0.1.0.1,
+  set-algebra <= 1.1.0.3,
+  small-steps <= 1.1.1.0,
+  vector-map <= 1.1.0.0,
