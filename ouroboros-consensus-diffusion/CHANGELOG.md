@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.23.1.0'></a>
+## 0.23.1.0 -- 2026-02-05
+
+### Non-Breaking
+
+- Updated to `ouroboros-network-0.21.6.1`.  `NFData` constraints are added to `NodeTo{Node,Client}.mkApps` functions.
+
 <a id='changelog-0.23.0.0'></a>
 ## 0.23.0.0 -- 2025-05-15
 
