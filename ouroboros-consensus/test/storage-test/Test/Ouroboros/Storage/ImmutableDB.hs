@@ -15,6 +15,7 @@
 -- checking.
 module Test.Ouroboros.Storage.ImmutableDB (tests) where
 
+import qualified Test.Ouroboros.Storage.ImmutableDB.Chunks as Chunks
 import qualified Test.Ouroboros.Storage.ImmutableDB.Primary as Primary
 import qualified Test.Ouroboros.Storage.ImmutableDB.StateMachine as StateMachine
 import Test.Tasty (TestTree, testGroup)
@@ -27,6 +28,7 @@ tests :: TestTree
 tests =
   testGroup
     "ImmutableDB"
-    [ Primary.tests
+    [ Chunks.tests
+    , Primary.tests
     , StateMachine.tests
     ]
