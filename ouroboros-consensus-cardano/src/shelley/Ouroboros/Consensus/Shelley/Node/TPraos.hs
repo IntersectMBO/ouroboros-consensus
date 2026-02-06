@@ -45,6 +45,7 @@ import Cardano.Slotting.Time (mkSlotLength)
 import Control.Monad.Except (Except)
 import qualified Control.Tracer as Tracer
 import Data.Bifunctor (first)
+import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Lens.Micro ((^.))
@@ -295,6 +296,7 @@ protocolInfoTPraosShelleyBased
                 L.createInitialState transitionCfg
           , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
           , shelleyLedgerTables = emptyLedgerTables
+          , shelleyLedgerLatestPerasCertRound = SNothing
           }
 
     initChainDepState :: TPraosState
