@@ -17,7 +17,7 @@ let
     src = ./..;
     compiler-nix-name = "ghc967";
     flake.variants = {
-      ghc910 = { compiler-nix-name = lib.mkForce "ghc9102"; };
+      ghc910 = { compiler-nix-name = lib.mkForce "ghc9103"; };
       ghc912 = { compiler-nix-name = lib.mkForce "ghc9122"; };
     };
     inputMap = {
