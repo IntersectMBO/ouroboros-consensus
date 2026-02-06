@@ -38,7 +38,7 @@ import Data.Maybe.Strict
 import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
 import Data.Word (Word64)
-import Lens.Micro ((^.), folded, to, toListOf, SimpleGetter, SimpleFold)
+import Lens.Micro ((^.), folded, to, toListOf, SimpleGetter, SimpleFold, foldMapOf)
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -125,11 +125,7 @@ instance
   utxoSummary (WithLedgerState _blk lsb _lsa) =
     view (to shelleyLedgerState . LState.utxoL . to LState.unUTxO . to (Map.map packedByteCount)) lsb
 
-  countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
-    SL.Block _ body -> getSum $ foldMap (Sum . countOutputs) (body ^. Core.txSeqBlockBodyL)
-   where
-    countOutputs :: Core.Tx era -> Int
-    countOutputs tx = length $ tx ^. Core.bodyTxL . Core.outputsTxBodyL
+  countTxOutputs blk = getSum $ foldMapOf txs (Sum . numOutputs @(ShelleyBlock proto era)) blk
 
   blockTxSizes blk = case Shelley.shelleyBlockRaw blk of
     SL.Block _ body ->
