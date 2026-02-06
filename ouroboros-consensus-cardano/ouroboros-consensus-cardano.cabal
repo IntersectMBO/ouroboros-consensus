@@ -594,7 +594,7 @@ library unstable-cardano-tools
     nothunks,
     ouroboros-consensus >=0.29 && <0.31,
     ouroboros-consensus-cardano,
-    ouroboros-consensus-diffusion ^>=0.25,
+    ouroboros-consensus-diffusion ^>=0.25 || ^>=0.26,
     ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib} ^>=0.13,
     ouroboros-network,
     ouroboros-network-api,
