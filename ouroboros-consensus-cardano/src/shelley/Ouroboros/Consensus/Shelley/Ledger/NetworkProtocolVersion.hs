@@ -34,6 +34,7 @@ data ShelleyNodeToClientVersion
     -- when removing support of ShelleyNodeToClientVersion14
     ShelleyNodeToClientVersion14
   | -- | Support retrieving all ledger peers by GetLedgerPeerSnapshot
+    -- New queries introduced: QueryDRepDelegations
     ShelleyNodeToClientVersion15
   deriving (Show, Eq, Ord, Enum, Bounded)
 
