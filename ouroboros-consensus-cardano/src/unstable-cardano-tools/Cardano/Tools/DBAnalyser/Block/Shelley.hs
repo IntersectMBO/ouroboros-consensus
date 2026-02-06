@@ -92,39 +92,6 @@ instance
   ) =>
   HasAnalysis (ShelleyBlock proto era)
   where
-
-  protVer blk = Shelley.shelleyBlockRaw blk & SL.blockHeader & eraProtoVer
-
-  type TxOf (ShelleyBlock proto era) = Ledger.Tx era
-
-  txs = to (Shelley.shelleyBlockRaw @proto @era)  . to SL.blockBody  . Ledger.txSeqBlockBodyL @era . folded
-
-  inputs = Core.bodyTxL . Core.inputsTxBodyL
-  numOutputs tx = length $ toListOf (Core.bodyTxL . Core.outputsTxBodyL . folded) tx
-
-  referenceInputs = eraReferenceInputs
-
-  datumSize = eraDatumSize
-
-  type WitsOf (ShelleyBlock proto era) = Ledger.TxWits era
-  type ScriptType (ShelleyBlock proto era) = Ledger.Script era
-  wits = Ledger.witsTxL
-  addrWits = Ledger.addrTxWitsL
-  scriptWits = Ledger.scriptTxWitsL
-  scriptSize = scripty_size
-
-  type CertsOf (ShelleyBlock proto era) = Core.TxCert era
-  certs = Core.bodyTxL . Core.certsTxBodyL . folded
-
-  filterPoolCert = eraFilterPoolCert @(Core.TxCert era)
-  filterGovCert = eraFilterGovCert @(Core.TxCert era)
-  filterDelegCert = eraFilterDelegCert @(Core.TxCert era)
-
-  eraName _ = eraEraName @era
-
-  utxoSummary (WithLedgerState _blk lsb _lsa) =
-    view (to shelleyLedgerState . LState.utxoL . to LState.unUTxO . to (Map.map packedByteCount)) lsb
-
   countTxOutputs blk = getSum $ foldMapOf txs (Sum . numOutputs @(ShelleyBlock proto era)) blk
 
   blockTxSizes blk = case Shelley.shelleyBlockRaw blk of
@@ -166,6 +133,51 @@ instance
   -- For the time being we do not support any block application
   -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
+
+instance
+  ( ShelleyCompatible proto era
+  , HasProtoVer proto 
+  , Scriptitude (Ledger.Script era)
+  , EraHasName era
+  , EraDatum era
+  , EraTx era
+  , Core.EraTxBody era
+  , EraClassifyCert (Core.TxCert era)
+  ) =>
+  HasFeatures (ShelleyBlock proto era) where
+  protVer blk = Shelley.shelleyBlockRaw blk & SL.blockHeader & eraProtoVer
+
+  type TxOf (ShelleyBlock proto era) = Ledger.Tx era
+
+  txs = to (Shelley.shelleyBlockRaw @proto @era)  . to SL.blockBody  . Ledger.txSeqBlockBodyL @era . folded
+
+  inputs = Core.bodyTxL . Core.inputsTxBodyL
+  numOutputs tx = length $ toListOf (Core.bodyTxL . Core.outputsTxBodyL . folded) tx
+
+  referenceInputs = eraReferenceInputs
+
+  datumSize = eraDatumSize
+
+  type WitsOf (ShelleyBlock proto era) = Ledger.TxWits era
+  type ScriptType (ShelleyBlock proto era) = Ledger.Script era
+  wits = Ledger.witsTxL
+  addrWits = Ledger.addrTxWitsL
+  scriptWits = Ledger.scriptTxWitsL
+  scriptSize = scripty_size
+
+  type CertsOf (ShelleyBlock proto era) = Core.TxCert era
+  certs = Core.bodyTxL . Core.certsTxBodyL . folded
+
+  filterPoolCert = eraFilterPoolCert @(Core.TxCert era)
+  filterGovCert = eraFilterGovCert @(Core.TxCert era)
+  filterDelegCert = eraFilterDelegCert @(Core.TxCert era)
+
+  eraName _ = eraEraName @era
+
+  utxoSummary (WithLedgerState _blk lsb _lsa) =
+    view (to shelleyLedgerState . LState.utxoL . to LState.unUTxO . to (Map.map packedByteCount)) lsb
+
+
 
 class EraClassifyCert cert where
   eraFilterPoolCert :: SimpleFold cert cert

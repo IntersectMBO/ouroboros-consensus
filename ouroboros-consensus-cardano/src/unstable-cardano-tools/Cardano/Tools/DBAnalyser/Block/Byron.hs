@@ -38,31 +38,6 @@ import Cardano.Ledger.BaseTypes (ProtVer(..))
 import Lens.Micro
 
 instance HasAnalysis ByronBlock where
-  -- Byron uses a different representation of protocols, I don't want to deal at
-  -- the moment. So I'm just putting a dummy protocol version.
-  protVer _ = ProtVer { pvMajor = (natVersion @0), pvMinor = 0 }
-  type TxOf ByronBlock = Void -- dummy
-  txs _ _ = mempty -- dummy
-  inputs _ = absurd
-  numOutputs _ = 0 -- dummy
-  referenceInputs = to (const mempty)
-  type WitsOf ByronBlock = Void -- dummy
-  type ScriptType ByronBlock = Void
-  wits _ = absurd
-  datumSize = absurd
-  addrWits _ = absurd
-  scriptWits _ = absurd
-  scriptSize = absurd
-  type CertsOf ByronBlock = Void -- dummy
-  certs _ = absurd
-  filterPoolCert _ = absurd
-  filterGovCert _ = absurd
-  filterDelegCert _ = absurd
-  eraName _ = "Byron"
-
-  utxoSummary _ = mempty -- dummy (Byron has a different type of TxIn, that I
-                  -- don't want to investigate at the moment)
-  
   countTxOutputs = aBlockOrBoundary (const 0) countTxOutputsByron
   blockTxSizes = aBlockOrBoundary (const []) blockTxSizesByron
   knownEBBs = const Byron.knownEBBs
@@ -159,3 +134,29 @@ mkByronProtocolInfo genesisConfig signatureThreshold =
       , byronSoftwareVersion = Update.SoftwareVersion (Update.ApplicationName "db-analyser") 2
       , byronLeaderCredentials = Nothing
       }
+
+instance HasFeatures ByronBlock where
+  -- Byron uses a different representation of protocols, I don't want to deal at
+  -- the moment. So I'm just putting a dummy protocol version.
+  protVer _ = ProtVer { pvMajor = (natVersion @0), pvMinor = 0 }
+  type TxOf ByronBlock = Void -- dummy
+  txs _ _ = mempty -- dummy
+  inputs _ = absurd
+  numOutputs _ = 0 -- dummy
+  referenceInputs = to (const mempty)
+  type WitsOf ByronBlock = Void -- dummy
+  type ScriptType ByronBlock = Void
+  wits _ = absurd
+  datumSize = absurd
+  addrWits _ = absurd
+  scriptWits _ = absurd
+  scriptSize = absurd
+  type CertsOf ByronBlock = Void -- dummy
+  certs _ = absurd
+  filterPoolCert _ = absurd
+  filterGovCert _ = absurd
+  filterDelegCert _ = absurd
+  eraName _ = "Byron"
+
+  utxoSummary _ = mempty -- dummy (Byron has a different type of TxIn, that I
+                  -- don't want to investigate at the moment)

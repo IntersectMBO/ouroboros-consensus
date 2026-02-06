@@ -8,6 +8,7 @@
 module Cardano.Tools.DBAnalyser.HasAnalysis
   ( HasAnalysis (..)
   , HasProtocolInfo (..)
+  , HasFeatures (..)
   , SizeInBytes
   , WithLedgerState (..)
   ) where
@@ -39,8 +40,42 @@ data WithLedgerState blk = WithLedgerState
   -- ^ This ledger state contains only the values produced by the block
   }
 
-class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis blk where
+class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk), HasFeatures blk) => HasAnalysis blk where
+  countTxOutputs :: blk -> Int
+  blockTxSizes :: blk -> [SizeInBytes]
+  knownEBBs :: proxy blk -> Map (HeaderHash blk) (ChainHash blk)
 
+  -- | Emit trace markers at points in processing.
+  emitTraces :: WithLedgerState blk -> [String]
+
+  -- | This method was introduced for the sake of the 'BenchmarkLedgerOps' pass.
+  blockStats :: blk -> [TextBuilder]
+
+  -- | This function allows to define different metrics about block application.
+  --
+  -- The block application metrics will be stored in a CSV file. This
+  -- method is used by 'db-analyser' to define the headers of the
+  -- resulting data, and how to compute, for a given row, each column
+  -- of the metrics.
+  --
+  -- The first component of each element in 'blockApplicationMetrics'
+  -- represents a header in the resulting CSV file.
+  --
+  -- Given a block application 'x :: WithLedgerState blk', the metrics
+  -- for that block application are calculated using the second
+  -- component of 'blockApplicationMetrics'.
+  --
+  -- The block application metrics are mapped to an IO action because
+  -- certain metrics such as the size of data need to be performed in
+  -- the IO monad.
+  blockApplicationMetrics :: [(TextBuilder, WithLedgerState blk -> IO TextBuilder)]
+
+class HasProtocolInfo blk where
+  data Args blk
+  mkProtocolInfo :: Args blk -> IO (ProtocolInfo blk)
+
+-- | These are the methods that go into the dumpBlockFeatures analysis
+class HasFeatures blk where
   protVer :: blk -> ProtVer
 
   type TxOf blk
@@ -83,37 +118,3 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
   -- family, and should be enough for our purpose, there isn't much more that we
   -- can analyse about an UtxO.
   utxoSummary :: WithLedgerState blk -> Map Ledger.TxIn Int
-
-
-  countTxOutputs :: blk -> Int
-  blockTxSizes :: blk -> [SizeInBytes]
-  knownEBBs :: proxy blk -> Map (HeaderHash blk) (ChainHash blk)
-
-  -- | Emit trace markers at points in processing.
-  emitTraces :: WithLedgerState blk -> [String]
-
-  -- | This method was introduced for the sake of the 'BenchmarkLedgerOps' pass.
-  blockStats :: blk -> [TextBuilder]
-
-  -- | This function allows to define different metrics about block application.
-  --
-  -- The block application metrics will be stored in a CSV file. This
-  -- method is used by 'db-analyser' to define the headers of the
-  -- resulting data, and how to compute, for a given row, each column
-  -- of the metrics.
-  --
-  -- The first component of each element in 'blockApplicationMetrics'
-  -- represents a header in the resulting CSV file.
-  --
-  -- Given a block application 'x :: WithLedgerState blk', the metrics
-  -- for that block application are calculated using the second
-  -- component of 'blockApplicationMetrics'.
-  --
-  -- The block application metrics are mapped to an IO action because
-  -- certain metrics such as the size of data need to be performed in
-  -- the IO monad.
-  blockApplicationMetrics :: [(TextBuilder, WithLedgerState blk -> IO TextBuilder)]
-
-class HasProtocolInfo blk where
-  data Args blk
-  mkProtocolInfo :: Args blk -> IO (ProtocolInfo blk)

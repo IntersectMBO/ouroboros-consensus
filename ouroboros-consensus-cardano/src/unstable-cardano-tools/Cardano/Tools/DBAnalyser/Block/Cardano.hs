@@ -316,46 +316,6 @@ data SomeCert where
   ACert :: HasAnalysis blk => CertsOf blk -> SomeCert
 
 instance HasAnalysis (CardanoBlock StandardCrypto) where
-  protVer = analyseBlock protVer
-  
-  type TxOf (CardanoBlock StandardCrypto) = SomeTx
-
-  txs inner =
-    -- A little bit of argument shuffling to satisfy `analyseBlock`'s
-    -- requirements.
-    -- The Const bit is quite unfortunate.
-    analyseBlock $ \ @blk -> Const . getConst . (txs @blk . to (ATx @blk)) inner
-
-  inputs inner (ATx @blk tx)= Const . getConst $ inputs @blk (Const . getConst . inner) tx
-  numOutputs (ATx @blk tx) = numOutputs @blk tx
-
-  referenceInputs inner (ATx @blk tx) = Const . getConst $ referenceInputs @blk (Const . getConst . inner) tx
-
-  type WitsOf (CardanoBlock StandardCrypto) = SomeWit
-
-  wits inner (ATx @blk tx) = Const . getConst $ wits @blk (Const . getConst . inner . AWit @blk) tx
-  addrWits inner (AWit @blk wit) = AWit @blk <$> addrWits @blk inner wit
-
-  type ScriptType (CardanoBlock StandardCrypto) = SomeScriptType
-
-  scriptWits inner (AWit @blk wit) = foldMapOf (scriptWits @blk) (Const . getConst . inner . Map.map (AScriptType @blk)) wit
-
-  scriptSize (AScriptType @blk scr) = scriptSize @blk scr
-
-  datumSize (AWit @blk wit) = datumSize @blk wit
-
-  type CertsOf (CardanoBlock StandardCrypto) = SomeCert
-
-  certs inner (ATx @blk cert) = Const . getConst $ certs @blk (Const . getConst . inner . ACert @blk) cert
-
-  filterPoolCert inner (ACert @blk cert) = Const . getConst $ filterPoolCert @blk (Const . getConst . inner . ACert @blk) cert
-  filterGovCert inner (ACert @blk cert) = Const . getConst $ filterGovCert @blk (Const . getConst . inner . ACert @blk) cert
-  filterDelegCert inner (ACert @blk cert) = Const . getConst $ filterDelegCert @blk (Const . getConst . inner . ACert @blk) cert  
-
-  eraName = analyseBlock eraName
-
-  utxoSummary = analyseWithLedgerState utxoSummary
-
   countTxOutputs = analyseBlock countTxOutputs
   blockTxSizes = analyseBlock blockTxSizes
   knownEBBs _ =
@@ -506,3 +466,44 @@ castChainHash ::
   ChainHash (CardanoBlock StandardCrypto)
 castChainHash GenesisHash = GenesisHash
 castChainHash (BlockHash h) = BlockHash $ castHeaderHash h
+
+instance HasFeatures (CardanoBlock StandardCrypto) where
+  protVer = analyseBlock protVer
+  
+  type TxOf (CardanoBlock StandardCrypto) = SomeTx
+
+  txs inner =
+    -- A little bit of argument shuffling to satisfy `analyseBlock`'s
+    -- requirements.
+    -- The Const bit is quite unfortunate.
+    analyseBlock $ \ @blk -> Const . getConst . (txs @blk . to (ATx @blk)) inner
+
+  inputs inner (ATx @blk tx)= Const . getConst $ inputs @blk (Const . getConst . inner) tx
+  numOutputs (ATx @blk tx) = numOutputs @blk tx
+
+  referenceInputs inner (ATx @blk tx) = Const . getConst $ referenceInputs @blk (Const . getConst . inner) tx
+
+  type WitsOf (CardanoBlock StandardCrypto) = SomeWit
+
+  wits inner (ATx @blk tx) = Const . getConst $ wits @blk (Const . getConst . inner . AWit @blk) tx
+  addrWits inner (AWit @blk wit) = AWit @blk <$> addrWits @blk inner wit
+
+  type ScriptType (CardanoBlock StandardCrypto) = SomeScriptType
+
+  scriptWits inner (AWit @blk wit) = foldMapOf (scriptWits @blk) (Const . getConst . inner . Map.map (AScriptType @blk)) wit
+
+  scriptSize (AScriptType @blk scr) = scriptSize @blk scr
+
+  datumSize (AWit @blk wit) = datumSize @blk wit
+
+  type CertsOf (CardanoBlock StandardCrypto) = SomeCert
+
+  certs inner (ATx @blk cert) = Const . getConst $ certs @blk (Const . getConst . inner . ACert @blk) cert
+
+  filterPoolCert inner (ACert @blk cert) = Const . getConst $ filterPoolCert @blk (Const . getConst . inner . ACert @blk) cert
+  filterGovCert inner (ACert @blk cert) = Const . getConst $ filterGovCert @blk (Const . getConst . inner . ACert @blk) cert
+  filterDelegCert inner (ACert @blk cert) = Const . getConst $ filterDelegCert @blk (Const . getConst . inner . ACert @blk) cert  
+
+  eraName = analyseBlock eraName
+
+  utxoSummary = analyseWithLedgerState utxoSummary
