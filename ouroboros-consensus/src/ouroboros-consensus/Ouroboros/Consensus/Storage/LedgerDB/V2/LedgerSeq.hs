@@ -86,7 +86,7 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   , transfer :: !(ResourceKey m -> m ())
   -- ^ Update the closing action in this handle with a new resource key, as the
   -- handle has moved to a different registry.
-  , duplicate :: !(ResourceRegistry m -> m (ResourceKey m, LedgerTablesHandle m l))
+  , duplicate :: !(ResourceRegistry m -> String -> m (ResourceKey m, LedgerTablesHandle m l))
   -- ^ Create a copy of the handle.
   --
   -- A duplicated handle must provide access to all the data that was there in
@@ -254,7 +254,7 @@ reapplyBlock ::
 reapplyBlock evs cfg b rr db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db
-  (_, newtbs) <- duplicate tbs rr
+  (_, newtbs) <- duplicate tbs rr ""
   vals <- read newtbs st ks
   let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
       newst = forgetLedgerTables st'

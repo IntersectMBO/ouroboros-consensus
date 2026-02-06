@@ -108,6 +108,7 @@ import Control.Monad (replicateM_, unless, when)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.State.Strict (get, modify, put)
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import GHC.Stack (HasCallStack)
@@ -156,6 +157,7 @@ data ImmutableDbArgs f m blk = ImmutableDbArgs
   , immHasFS :: HKD f (SomeHasFS m)
   , immRegistry :: HKD f (ResourceRegistry m)
   , immTracer :: Tracer m (TraceEvent blk)
+  , immRegTracer :: Tracer m (RR.Trace m)
   , immValidationPolicy :: ValidationPolicy
   -- ^ Which chunks of the ImmutableDB to validate on opening: all chunks, or
   -- only the most recent chunk?
@@ -175,6 +177,7 @@ defaultArgs =
     , immHasFS = noDefault
     , immRegistry = noDefault
     , immTracer = nullTracer
+    , immRegTracer = nullTracer
     , immValidationPolicy = ValidateMostRecentChunk
     }
  where
@@ -294,6 +297,7 @@ openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} cont = cont $ do
           , tracer = immTracer
           , cacheConfig = immCacheConfig
           , codecConfig = immCodecConfig
+          , regTracer = immRegTracer
           }
       db =
         ImmutableDB

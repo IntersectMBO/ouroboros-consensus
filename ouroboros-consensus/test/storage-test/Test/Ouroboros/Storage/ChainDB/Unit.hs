@@ -579,8 +579,8 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
   bracket openChainDbEnv closeChainDbEnv (uncurry cont)
  where
   openChainDbEnv = do
-    threadRegistry <- unsafeNewRegistry
-    iteratorRegistry <- unsafeNewRegistry
+    threadRegistry <- unsafeNewRegistry undefined undefined
+    iteratorRegistry <- unsafeNewRegistry undefined undefined
     varNextId <- uncheckedNewTVarM 0
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
     nodeDbs <- emptyNodeDBs

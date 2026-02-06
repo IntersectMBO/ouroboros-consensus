@@ -492,7 +492,7 @@ data VolatileDBEnv = VolatileDBEnv
 -- Does not close the current VolatileDB stored in 'varDB'.
 reopenDB :: VolatileDBEnv -> IO ()
 reopenDB VolatileDBEnv{varDB, args} = do
-  db <- openDB args runWithTempRegistry
+  db <- openDB args (runWithTempRegistry undefined undefined)
   void $ atomically $ swapTVar varDB db
 
 semanticsImpl :: VolatileDBEnv -> At CmdErr Concrete -> IO (At Resp Concrete)
@@ -605,7 +605,7 @@ test cmds = do
           }
 
   (hist, res, trace) <- bracket
-    (openDB args runWithTempRegistry >>= newTVarIO)
+    (openDB args (runWithTempRegistry undefined undefined) >>= newTVarIO)
     -- Note: we might be closing a different VolatileDB than the one we
     -- opened, as we can reopen it the VolatileDB, swapping the VolatileDB
     -- in the TVar.

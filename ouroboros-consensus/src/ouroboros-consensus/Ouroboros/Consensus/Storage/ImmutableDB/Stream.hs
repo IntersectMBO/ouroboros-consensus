@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -13,6 +14,8 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Stream
 
 import Control.Monad.Except
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
+import Control.Tracer (Tracer)
 import GHC.Stack
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Common
@@ -83,24 +86,25 @@ streamAll StreamAPI{..} tip notFound e f = ExceptT $
 
 streamAPI ::
   (IOLike m, HasHeader blk) =>
-  ImmutableDB m blk -> StreamAPI m blk blk
-streamAPI = streamAPI' (return . NextItem) GetBlock
+  Tracer m (RR.Trace m) -> ImmutableDB m blk -> StreamAPI m blk blk
+streamAPI trcr = streamAPI' trcr (return . NextItem) GetBlock
 
 streamAPI' ::
   forall m blk a.
   (IOLike m, HasHeader blk) =>
+  Tracer m (RR.Trace m) ->
   -- | Stop condition
   (a -> m (NextItem a)) ->
   BlockComponent blk a ->
   ImmutableDB m blk ->
   StreamAPI m blk a
-streamAPI' shouldStop blockComponent immutableDB = StreamAPI streamAfter
+streamAPI' trcr shouldStop blockComponent immutableDB = StreamAPI streamAfter
  where
   streamAfter ::
     Point blk ->
     (Either (RealPoint blk) (m (NextItem a)) -> m b) ->
     m b
-  streamAfter tip k = withRegistry $ \registry -> do
+  streamAfter tip k = withRegistry trcr "ImmDB stream" $ \registry -> do
     eItr <-
       ImmutableDB.streamAfterPoint
         immutableDB

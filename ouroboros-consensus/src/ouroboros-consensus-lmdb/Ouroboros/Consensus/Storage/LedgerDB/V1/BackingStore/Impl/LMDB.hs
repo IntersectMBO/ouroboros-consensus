@@ -7,6 +7,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
@@ -43,7 +44,7 @@ import Control.Monad (forM_, unless, void, when)
 import qualified Control.Monad.Class.MonadSTM as IOLike
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans (lift)
-import Control.ResourceRegistry
+import Control.ResourceRegistry hiding (Trace)
 import qualified Control.Tracer as Trace
 import Data.Bifunctor (first)
 import Data.Functor (($>), (<&>))
@@ -952,11 +953,13 @@ mkLMDBYieldArgs fp limits hint reg = do
   _ <-
     allocate
       reg
+      ""
       (\_ -> createDirectory lmdbTemp)
       (\_ -> removePathForcibly lmdbTemp)
   (_, bs) <-
     allocate
       reg
+      "lmdb backing store"
       ( \_ -> do
           newLMDBBackingStore
             Trace.nullTracer
@@ -966,7 +969,7 @@ mkLMDBYieldArgs fp limits hint reg = do
             (InitFromCopy hint (FS.mkFsPath [snapName]))
       )
       bsClose
-  (_, bsvh) <- allocate reg (\_ -> bsValueHandle bs) bsvhClose
+  (_, bsvh) <- allocate reg "value handle" (\_ -> bsValueHandle bs) bsvhClose
   pure (YieldLMDB 1000 bsvh)
 
 -- | Create Sink args for LMDB
@@ -986,10 +989,11 @@ mkLMDBSinkArgs fp limits hint reg = do
   tempDir <- getCanonicalTemporaryDirectory
   let lmdbTemp = tempDir FilePath.</> "lmdb_streaming_out"
   removePathForcibly lmdbTemp
-  _ <- allocate reg (\_ -> createDirectory lmdbTemp) (\_ -> removePathForcibly lmdbTemp)
+  _ <- allocate reg "" (\_ -> createDirectory lmdbTemp) (\_ -> removePathForcibly lmdbTemp)
   (_, bs) <-
     allocate
       reg
+      "lmdb backing store"
       ( \_ ->
           newLMDBBackingStore
             Trace.nullTracer

@@ -49,6 +49,7 @@ import Control.ResourceRegistry
   , runWithTempRegistry
   , withRegistry
   )
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer
 import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
@@ -147,10 +148,12 @@ openDBInternal ::
   -- | 'True' = Launch background tasks
   Bool ->
   m (ChainDB m blk, Internal m blk)
-openDBInternal args launchBgTasks = runWithTempRegistry $ do
+openDBInternal args launchBgTasks = runWithTempRegistry (Args.cdbsRegTracer $ Args.cdbsArgs args) "InitialTempRegistry" $ do
   lift $ traceWith tracer $ TraceOpenEvent StartedOpeningDB
   lift $ traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
-  immutableDB <- ImmutableDB.openDB argsImmutableDb $ innerOpenCont ImmutableDB.closeDB
+  immutableDB <-
+    ImmutableDB.openDB argsImmutableDb $
+      innerOpenCont (Args.cdbsRegTracer $ Args.cdbsArgs args) "innerOpenImmDB" ImmutableDB.closeDB
   immutableDbTipPoint <- lift $ atomically $ ImmutableDB.getTipPoint immutableDB
   let immutableDbTipChunk =
         chunkIndexOfPoint (ImmutableDB.immChunkInfo argsImmutableDb) immutableDbTipPoint
@@ -160,7 +163,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         OpenedImmutableDB immutableDbTipPoint immutableDbTipChunk
 
   lift $ traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
-  volatileDB <- VolatileDB.openDB argsVolatileDb $ innerOpenCont VolatileDB.closeDB
+  volatileDB <-
+    VolatileDB.openDB argsVolatileDb $
+      innerOpenCont (Args.cdbsRegTracer $ Args.cdbsArgs args) "innerOpenVolDB" VolatileDB.closeDB
   maxSlot <- lift $ atomically $ VolatileDB.getMaxSlotNo volatileDB
   (chainDB, testing, env) <- lift $ do
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
@@ -170,7 +175,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     (lgrDB, replayed) <-
       LedgerDB.openDB
         argsLgrDb
-        (ImmutableDB.streamAPI immutableDB)
+        (ImmutableDB.streamAPI (Args.cdbsRegTracer $ Args.cdbsArgs args) immutableDB)
         immutableDbTipPoint
         (Query.getAnyKnownBlock immutableDB volatileDB)
         ledgerDbGetVolatileSuffix
@@ -185,7 +190,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    chain <- withRegistry $ \rr -> do
+    chain <- withRegistry (Args.cdbsRegTracer $ Args.cdbsArgs args) "initialChainSelection" $ \rr -> do
       chainAndLedger <-
         ChainSel.initialChainSelection
           immutableDB
@@ -250,6 +255,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbImmutableDBLock = immdbLock
             , cdbChainSelFuse = chainSelFuse
             , cdbTracer = tracer
+            , cdbRegTracer = Args.cdbsRegTracer cdbSpecificArgs
             , cdbRegistry = Args.cdbsRegistry cdbSpecificArgs
             , cdbGcDelay = Args.cdbsGcDelay cdbSpecificArgs
             , cdbGcInterval = Args.cdbsGcInterval cdbSpecificArgs
@@ -321,7 +327,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
     return (chainDB, testing, env)
 
-  _ <- lift $ allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return chainDB) API.closeDB
+  _ <-
+    lift $ allocate (Args.cdbsRegistry cdbSpecificArgs) "chaindb" (\_ -> return chainDB) API.closeDB
 
   return ((chainDB, testing), env)
  where
@@ -368,11 +375,15 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 -- | We use 'runInnerWithTempRegistry' for the component databases.
 innerOpenCont ::
   IOLike m =>
+  Tracer m (RR.Trace m) ->
+  RR.RegistryLabel ->
   (innerDB -> m ()) ->
   WithTempRegistry st m (innerDB, st) ->
   WithTempRegistry (ChainDbEnv m blk) m innerDB
-innerOpenCont closer m =
+innerOpenCont trcr lbl closer m =
   runInnerWithTempRegistry
+    trcr
+    lbl
     (fmap (\(innerDB, st) -> (innerDB, st, innerDB)) m)
     ((True <$) . closer)
     (\_env _innerDB -> True)

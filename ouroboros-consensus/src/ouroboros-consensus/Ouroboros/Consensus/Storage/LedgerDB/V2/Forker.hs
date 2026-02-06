@@ -124,7 +124,7 @@ implForkerReadStatistics env = do
   fmap Statistics . tablesSize . tables . currentHandle =<< readTVarIO (foeLedgerSeq env)
 
 implForkerPush ::
-  (IOLike m, GetTip l, HasLedgerTables l, HasCallStack) =>
+  (IOLike m, GetTip l, HasLedgerTables l, HasCallStack, StandardHash l) =>
   ForkerEnv m l blk ->
   l DiffMK ->
   m ()
@@ -136,7 +136,11 @@ implForkerPush env newState =
         st = forgetLedgerTables newState
 
     bracketOnError
-      (duplicate (tables $ currentHandle lseq) (foeResourceRegistry env))
+      ( duplicate
+          (tables $ currentHandle lseq)
+          (foeResourceRegistry env)
+          ("for state " <> show (getTip newState))
+      )
       (release . fst)
       ( \(_, newtbs) -> do
           pushDiffs newtbs st0 newState

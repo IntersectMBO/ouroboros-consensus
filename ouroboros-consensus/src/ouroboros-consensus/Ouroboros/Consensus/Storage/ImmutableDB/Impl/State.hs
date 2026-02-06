@@ -4,6 +4,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -29,6 +30,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.State
 import Control.Monad (unless)
 import Control.Monad.State.Strict (StateT, lift)
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer (Tracer)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -58,6 +60,7 @@ data ImmutableDBEnv m blk = forall h. Eq h => ImmutableDBEnv
   , checkIntegrity :: !(blk -> Bool)
   , chunkInfo :: !ChunkInfo
   , tracer :: !(Tracer m (TraceEvent blk))
+  , regTracer :: !(Tracer m (RR.Trace m))
   , cacheConfig :: !Index.CacheConfig
   , codecConfig :: !(CodecConfig blk)
   }
@@ -135,7 +138,7 @@ mkOpenState hasFS@HasFS{..} index chunk tip existing = do
   allocateHandle getHandle open =
     -- To check whether the handle made it in the final state, we check for
     -- equality.
-    allocateTemp open (hClose' hasFS) ((==) . getHandle)
+    allocateTemp "immdb handle" open (hClose' hasFS) ((==) . getHandle)
 
 -- | Get the 'OpenState' of the given database, throw a 'ClosedDBError' in
 -- case it is closed.
@@ -190,7 +193,7 @@ modifyOpenState ::
   (forall h. Eq h => HasFS m h -> ModifyOpenState m blk h a) ->
   m a
 modifyOpenState ImmutableDBEnv{hasFS = hasFS :: HasFS m h, ..} modSt =
-  wrapFsError (Proxy @blk) $ modifyWithTempRegistry getSt putSt (modSt hasFS)
+  wrapFsError (Proxy @blk) $ modifyWithTempRegistry regTracer "temp-immdb" getSt putSt (modSt hasFS)
  where
   getSt :: m (OpenState m blk h)
   getSt =

@@ -221,7 +221,7 @@ closeOpenIterators varIters = do
 
 open :: ImmutableDbArgs Identity IO TestBlock -> IO ImmutableDBState
 open args = do
-  (db, internal) <- openDBInternal args runWithTempRegistry
+  (db, internal) <- openDBInternal args (runWithTempRegistry undefined undefined)
   return ImmutableDBState{db, internal}
 
 -- | Opens a new ImmutableDB and stores it in 'varDB'.
@@ -1258,7 +1258,7 @@ test cacheConfig chunkInfo cmds = do
   varIters <- uncheckedNewTVarM []
   (tracer, getTrace) <- recordingTracerIORef
 
-  withRegistry $ \registry -> do
+  withRegistry undefined undefined $ \registry -> do
     let hasFS = simErrorHasFS fsVar (unsafeToUncheckedStrictTVar varErrors)
         args =
           ImmutableDbArgs
@@ -1269,6 +1269,7 @@ test cacheConfig chunkInfo cmds = do
             , immHasFS = SomeHasFS hasFS
             , immRegistry = registry
             , immTracer = tracer
+            , immRegTracer = undefined
             , immValidationPolicy = ValidateMostRecentChunk
             }
 

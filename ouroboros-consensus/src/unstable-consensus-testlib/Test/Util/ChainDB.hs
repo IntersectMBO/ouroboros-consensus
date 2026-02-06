@@ -106,6 +106,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , immHasFS = SomeHasFS $ simHasFS (nodeDBsImm mcdbNodeDBs)
           , immRegistry = mcdbRegistry
           , immTracer = nullTracer
+          , immRegTracer = nullTracer
           , immCodecConfig = configCodec mcdbTopLevelConfig
           , immValidationPolicy = ImmutableDB.ValidateAllChunks
           }
@@ -116,6 +117,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , volHasFS = SomeHasFS $ simHasFS (nodeDBsVol mcdbNodeDBs)
           , volMaxBlocksPerFile = VolatileDB.mkBlocksPerFile 4
           , volTracer = nullTracer
+          , volRegTracer = nullTracer
           , volValidationPolicy = VolatileDB.ValidateAll
           }
     , cdbLgrDbArgs =
@@ -129,6 +131,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
             lgrGenesis = return mcdbInitLedger
           , lgrHasFS = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
           , lgrTracer = nullTracer
+          , lgrRegTracer = nullTracer
           , lgrRegistry = mcdbRegistry
           , lgrConfig = configLedgerDb mcdbTopLevelConfig OmitLedgerEvents
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
@@ -147,6 +150,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsGcInterval = 1
           , cdbsRegistry = mcdbRegistry
           , cdbsTracer = nullTracer
+          , cdbsRegTracer = nullTracer
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
           }

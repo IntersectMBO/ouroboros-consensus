@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -47,6 +48,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import Control.Monad.Trans.Except (runExcept)
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
@@ -265,11 +267,17 @@ initMempoolEnv ::
   LedgerConfig blk ->
   MempoolCapacityBytesOverride ->
   Maybe MempoolTimeoutConfig ->
+  Tracer m (RR.Trace m) ->
   Tracer m (TraceEventMempool blk) ->
   ResourceRegistry m ->
   m (MempoolEnv m blk)
-initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer topLevelRegistry = do
-  (_, mpEnvRegistry) <- allocate topLevelRegistry (\_ -> unsafeNewRegistry) closeRegistry
+initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig regTrcr tracer topLevelRegistry = do
+  (_, mpEnvRegistry) <-
+    allocate
+      topLevelRegistry
+      "mempoolRegistryResource"
+      (\_ -> unsafeNewRegistry regTrcr "mempoolRegistry")
+      closeRegistry
   initMempoolEnv' mpEnvRegistry
  where
   initMempoolEnv' reg = do

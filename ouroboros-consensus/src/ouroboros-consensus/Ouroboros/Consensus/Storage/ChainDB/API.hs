@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -81,6 +82,8 @@ module Ouroboros.Consensus.Storage.ChainDB.API
 
 import Control.Monad (void)
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
+import Control.Tracer (Tracer)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
@@ -601,8 +604,10 @@ getSerialisedHeaderWithPoint =
 toChain ::
   forall m blk.
   (HasCallStack, IOLike m, HasHeader blk) =>
-  ChainDB m blk -> m (Chain blk)
-toChain chainDB = withRegistry $ \registry ->
+  Tracer m (RR.Trace m) ->
+  ChainDB m blk ->
+  m (Chain blk)
+toChain t chainDB = withRegistry t "toChain" $ \registry ->
   streamAll chainDB registry GetBlock >>= go Genesis
  where
   go :: Chain blk -> Iterator m blk blk -> m (Chain blk)

@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -113,7 +114,7 @@ getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} =
   modifyMVar foeBackingStoreValueHandle $ \case
     r@(Right (_, bsvh)) -> pure (r, bsvh)
     Left (l, bs, rr) -> do
-      (k, bsvh) <- allocate rr (\_ -> bsValueHandle bs) bsvhClose
+      (k, bsvh) <- allocate rr "value handle" (\_ -> bsValueHandle bs) bsvhClose
       dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
       if bsvhAtSlot bsvh == dblogSlot
         then do

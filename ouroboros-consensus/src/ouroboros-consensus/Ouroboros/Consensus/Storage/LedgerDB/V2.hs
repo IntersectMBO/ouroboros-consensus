@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -20,6 +21,7 @@ import Control.Monad.Except
 import Control.RAWLock
 import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
@@ -109,6 +111,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbNextForkerKey = nextForkerKey
                 , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
                 , ldbTracer = tr
+                , ldbRegTracer = lgrRegTracer args
                 , ldbCfg = lgrConfig
                 , ldbHasFS = lgrHasFS
                 , ldbResolveBlock = getBlock
@@ -132,7 +135,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
     , lgrRegistry
     } = args
 
-  v2Tracer :: Tracer m LedgerDBV2Trace
+  v2Tracer :: Tracer m (LedgerDBV2Trace (ExtLedgerState blk))
   !v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< tr
 
   !tr = lgrTracer args
@@ -196,14 +199,14 @@ mkInternals h snapManager =
               st
     , wipeLedgerDB = destroySnapshots snapManager
     , truncateSnapshots = getEnv h $ implIntTruncateSnapshots snapManager . ldbHasFS
-    , push = \st -> withRegistry $ \reg -> do
+    , push = \st -> getEnv h $ \env -> withRegistry (ldbRegTracer env) "push" $ \reg -> do
         eFrk <- newForkerAtTarget h reg VolatileTip
         case eFrk of
           Left{} -> error "Unreachable, Volatile tip MUST be in LedgerDB"
           Right frk -> do
             forkerPush frk st >> atomically (forkerCommit frk) >> forkerClose frk
             getEnv h pruneLedgerSeq
-    , reapplyThenPushNOW = \blk -> getEnv h $ \env -> withRegistry $ \reg -> do
+    , reapplyThenPushNOW = \blk -> getEnv h $ \env -> withRegistry (ldbRegTracer env) "push now" $ \reg -> do
         eFrk <- newForkerAtTarget h reg VolatileTip
         case eFrk of
           Left{} -> error "Unreachable, Volatile tip MUST be in LedgerDB"
@@ -333,12 +336,16 @@ implGarbageCollect env slotNo = do
   atomically $
     modifyTVar (ldbPrevApplied env) $
       Set.dropWhileAntitone ((< slotNo) . realPointSlot)
+  traceWith (ldbTracer env) LedgerDBGCingLdbToClose
   mapM_ closeLedgerSeq =<< readTVarIO (ldbToClose env)
+  traceWith (ldbTracer env) LedgerDBGCedLdbToClose
   -- It is safe to close the handles outside of the locked region, which reduces
   -- contention. See the docs of 'ldbOpenHandlesLock'.
+  traceWith (ldbTracer env) LedgerDBPruning
   Monad.join $ RAWLock.withWriteAccess (ldbOpenHandlesLock env) $ \() -> do
     close <- atomically $ stateTVar (ldbSeq env) $ prune (LedgerDbPruneBeforeSlot slotNo)
     pure (close, ())
+  traceWith (ldbTracer env) LedgerDBPruned
 
 implTryTakeSnapshot ::
   forall m l blk.
@@ -430,6 +437,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbNextForkerKey :: !(StrictTVar m ForkerKey)
   , ldbSnapshotPolicy :: !SnapshotPolicy
   , ldbTracer :: !(Tracer m (TraceEvent blk))
+  , ldbRegTracer :: !(Tracer m (RR.Trace m))
   , ldbCfg :: !(LedgerDbCfg l)
   , ldbHasFS :: !(SomeHasFS m)
   , ldbResolveBlock :: !(ResolveBlock m blk)
@@ -581,7 +589,7 @@ getStateRef ldbEnv reg project =
   RAWLock.withReadAccess (ldbOpenHandlesLock ldbEnv) $ \() -> do
     tst <- project <$> atomically (getVolatileLedgerSeq ldbEnv)
     for tst $ \st -> do
-      (key, tables') <- duplicate (tables st) reg
+      (key, tables') <- duplicate (tables st) reg ""
       pure (key, st{tables = tables'})
 
 -- | Like 'StateRef', but takes care of closing the handle when the given action
@@ -593,7 +601,7 @@ withStateRef ::
   (t (ResourceKey m, StateRef m l) -> m a) ->
   m a
 withStateRef ldbEnv project f =
-  withRegistry $ \reg -> getStateRef ldbEnv reg project >>= f
+  withRegistry (ldbRegTracer ldbEnv) "withStateRef" $ \reg -> getStateRef ldbEnv reg project >>= f
 
 acquireAtTarget ::
   ( HeaderHash l ~ HeaderHash blk

@@ -178,13 +178,14 @@ forkLinkedWatcherAllocate ::
   ResourceRegistry m ->
   -- | Label for the thread
   String ->
+  ResourceLabel ->
   m r ->
   (r -> m ()) ->
   (r -> Watcher m a fp) ->
   m (Thread m Void)
-forkLinkedWatcherAllocate registry label allocater finalizer f =
+forkLinkedWatcherAllocate registry label resLabel allocater finalizer f =
   forkLinkedThread registry label $ do
-    (rk, r) <- allocate registry (const allocater) finalizer
+    (rk, r) <- allocate registry resLabel (const allocater) finalizer
     runWatcher (f r) `finally` release rk
 
 -- | Spawn a new thread that runs a 'Watcher', executing a finalizer when the

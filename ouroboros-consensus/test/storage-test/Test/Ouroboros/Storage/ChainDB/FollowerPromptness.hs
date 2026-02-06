@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
@@ -121,7 +122,7 @@ runFollowerPromptnessTest ::
   IOLike m =>
   FollowerPromptnessTestSetup ->
   m FollowerPromptnessOutcome
-runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \registry -> do
+runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry undefined undefined \registry -> do
   varTentativeSetTimings <- uncheckedNewTVarM Map.empty
   varTentativeUnsetTimings <- uncheckedNewTVarM Map.empty
   varFollowerInstrTimings <- uncheckedNewTVarM Map.empty
@@ -186,6 +187,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
       allocate
         registry
+        "ChainDB"
         (\_ -> ChainDBImpl.openDBInternal chainDbArgs False)
         (ChainDB.closeDB . fst)
     _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner

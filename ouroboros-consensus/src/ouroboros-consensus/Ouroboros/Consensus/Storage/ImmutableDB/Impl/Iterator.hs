@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -540,6 +541,7 @@ iteratorStateForChunk
     (key, eHnd) <-
       allocate
         registry
+        "chunk file"
         (\_key -> hOpen (fsPathChunkFile chunk) ReadMode)
         hClose
 

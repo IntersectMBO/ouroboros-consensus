@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args
   ) where
 
 import Control.ResourceRegistry (ResourceRegistry)
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer (Tracer, nullTracer)
 import Data.Function ((&))
 import Data.Functor.Contravariant ((>$<))
@@ -87,6 +88,7 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   -- 'cdbsGcInterval'.
   , cdbsRegistry :: HKD f (ResourceRegistry m)
   , cdbsTracer :: Tracer m (TraceEvent blk)
+  , cdbsRegTracer :: Tracer m (RR.Trace m)
   , cdbsHasFSGsmDB :: HKD f (SomeHasFS m)
   , cdbsTopLevelConfig :: HKD f (TopLevelConfig blk)
   , -- Limit on Eagerness
@@ -124,6 +126,7 @@ defaultSpecificArgs =
     , cdbsGcInterval = secondsToDiffTime 10
     , cdbsRegistry = noDefault
     , cdbsTracer = nullTracer
+    , cdbsRegTracer = nullTracer
     , cdbsHasFSGsmDB = noDefault
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled

@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -42,6 +43,7 @@ import Control.ResourceRegistry
   , allocateTemp
   , modifyWithTempRegistry
   )
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.List as List (foldl')
@@ -77,6 +79,7 @@ data VolatileDBEnv m blk = forall h. Eq h => VolatileDBEnv
   , checkIntegrity :: !(blk -> Bool)
   , codecConfig :: !(CodecConfig blk)
   , tracer :: !(Tracer m (TraceEvent blk))
+  , regTracer :: !(Tracer m (RR.Trace m))
   }
 
 data InternalState blk h
@@ -132,9 +135,9 @@ modifyOpenState ::
   m a
 modifyOpenState
   appendOrWrite
-  VolatileDBEnv{hasFS = hasFS :: HasFS m h, varInternalState}
+  VolatileDBEnv{hasFS = hasFS :: HasFS m h, varInternalState, regTracer}
   modSt =
-    wrapFsError (Proxy @blk) $ modifyWithTempRegistry getSt putSt (modSt hasFS)
+    wrapFsError (Proxy @blk) $ modifyWithTempRegistry regTracer "voldb-temp" getSt putSt (modSt hasFS)
    where
     -- NOTE: we can't use the bracketed variants, as that's incompatible with
     -- 'modifyWithTempRegistry', which takes a function to put back the state,
@@ -393,6 +396,7 @@ mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPer
 
   currentWriteHandle <-
     allocateTemp
+      "current voldb file"
       (hOpen hasFS currentWritePath (AppendMode AllowExisting))
       (hClose' hasFS)
       ((==) . currentWriteHandle)

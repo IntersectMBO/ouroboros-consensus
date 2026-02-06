@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -323,6 +324,7 @@ loadSnapshot tracer bArgs@(SomeBackendArgs bss) ccfg fs@(SnapshotsFS fs'@(SomeHa
         Trans.lift
           ( allocate
               reg
+              "snapshot handle"
               (\_ -> restoreBackingStore tracer bArgs fs extLedgerSt (snapshotToTablesPath s))
               bsClose
           )

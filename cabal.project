@@ -93,3 +93,10 @@ source-repository-package
     ouroboros-network
     cardano-diffusion
     network-mux
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/io-classes-extra
+  tag: 280ca32cb931f891b1a7aaec4123492b7c215e60
+  subdir:
+    resource-registry

@@ -8,6 +8,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -169,6 +170,7 @@ import qualified Control.Monad as Monad
 import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
@@ -403,11 +405,15 @@ withTipForker ldb rr =
 -- de-allocate the forker.
 withPrivateTipForker ::
   IOLike m =>
+  Tracer m (RR.Trace m) ->
   LedgerDB m l blk ->
   (Forker m l -> m a) ->
   m a
-withPrivateTipForker ldb =
+withPrivateTipForker trcr ldb =
   bracketWithPrivateRegistry
+    trcr
+    "Private tip forker registry"
+    "Private tip"
     ( \rr -> do
         eFrk <- getForkerAtTarget ldb rr VolatileTip
         case eFrk of
@@ -419,9 +425,10 @@ withPrivateTipForker ldb =
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
   IOLike m =>
+  Tracer m (RR.Trace m) ->
   LedgerDB m l blk ->
   m Statistics
-getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
+getTipStatistics t ldb = withPrivateTipForker t ldb forkerReadStatistics
 
 getReadOnlyForker ::
   MonadSTM m =>

@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Args
 
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer
 import Data.Kind
 import Data.Word
@@ -58,6 +59,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   , lgrHasFS :: HKD f (SomeHasFS m)
   , lgrConfig :: LedgerDbCfgF f (ExtLedgerState blk)
   , lgrTracer :: !(Tracer m (TraceEvent blk))
+  , lgrRegTracer :: !(Tracer m (RR.Trace m))
   , lgrBackendArgs :: LedgerDbBackendArgs m blk
   , lgrRegistry :: HKD f (ResourceRegistry m)
   , lgrQueryBatchSize :: QueryBatchSize
@@ -80,6 +82,7 @@ defaultArgs backendArgs =
     , lgrConfig = LedgerDbCfg NoDefault NoDefault OmitLedgerEvents
     , lgrQueryBatchSize = DefaultQueryBatchSize
     , lgrTracer = nullTracer
+    , lgrRegTracer = nullTracer
     , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
       -- will be the default for end-users.
       lgrBackendArgs = LedgerDbBackendArgsV2 backendArgs

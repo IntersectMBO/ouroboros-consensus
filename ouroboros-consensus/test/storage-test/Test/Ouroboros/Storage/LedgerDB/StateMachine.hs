@@ -12,6 +12,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -130,7 +131,7 @@ prop_sequential maxSuccess mkTestArguments getDiskDir fsOps actions =
   setup :: IO Environment
   setup = do
     cdb <- initChainDB
-    rr <- unsafeNewRegistry
+    rr <- unsafeNewRegistry undefined "test registry"
     initialEnvironment fsOps getDiskDir mkTestArguments cdb rr
 
   cleanup :: Environment -> IO ()
@@ -583,6 +584,7 @@ openLedgerDB flavArgs env cfg fs rr = do
           fs
           cfg
           tracer
+          undefined
           flavArgs
           rr
           DefaultQueryBatchSize
@@ -615,7 +617,7 @@ openLedgerDB flavArgs env cfg fs rr = do
               (lgrHasFS args)
       let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
       openDBInternal args initDb snapManager stream replayGoal
-  withRegistry $ \reg -> do
+  withRegistry undefined undefined $ \reg -> do
     vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
     case vr of
       ValidateSuccessful forker -> do
@@ -672,7 +674,7 @@ instance RunModel Model (StateT Environment IO) where
       atomically $
         modifyTVar (dbBlocks chainDb) $
           repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) blks)
-      withRegistry $ \rr -> do
+      withRegistry undefined undefined $ \rr -> do
         vr <- validateFork ldb rr (const $ pure ()) BlockCache.empty n (map getHeader blks)
         case vr of
           ValidateSuccessful forker -> do
@@ -697,7 +699,7 @@ instance RunModel Model (StateT Environment IO) where
     perform state (Init secParam salt) lk
   perform _ OpenAndCloseForker _ = do
     Environment ldb _ _ _ _ _ _ _ <- get
-    lift $ withRegistry $ \rr -> do
+    lift $ withRegistry undefined undefined $ \rr -> do
       eFrk <- LedgerDB.getForkerAtTarget ldb rr VolatileTip
       case eFrk of
         Left err -> error $ "Impossible: can't acquire forker at tip: " <> show err
@@ -761,7 +763,7 @@ mkTrackOpenHandles = do
         LedgerDBFlavorImplEvent (FlavorImplSpecificTraceV2 ev) ->
           atomically $ modifyTVar varOpen $ case ev of
             V2.TraceLedgerTablesHandleCreate FallingEdgeWith{} -> succ
-            V2.TraceLedgerTablesHandleClose FallingEdgeWith{} -> pred
+            V2.TraceLedgerTablesHandleClose _ FallingEdgeWith{} -> pred
             _ -> id
         _ -> pure ()
   pure (tracer, readTVarIO varOpen)

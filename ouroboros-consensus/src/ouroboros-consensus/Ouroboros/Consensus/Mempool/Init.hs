@@ -10,6 +10,7 @@ module Ouroboros.Consensus.Mempool.Init
 import Control.Monad (void)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer
 import Data.Functor.Identity (runIdentity)
 import Ouroboros.Consensus.HeaderValidation
@@ -41,10 +42,11 @@ openMempool ::
   LedgerConfig blk ->
   MempoolCapacityBytesOverride ->
   Maybe MempoolTimeoutConfig ->
+  Tracer m (RR.Trace m) ->
   Tracer m (TraceEventMempool blk) ->
   m (Mempool m blk)
-openMempool topLevelRegistry ledger cfg capacityOverride timeoutConfig tracer = do
-  env <- initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer topLevelRegistry
+openMempool topLevelRegistry ledger cfg capacityOverride timeoutConfig regTracer tracer = do
+  env <- initMempoolEnv ledger cfg capacityOverride timeoutConfig regTracer tracer topLevelRegistry
   forkSyncStateOnTipPointChange env
   return $ mkMempool env
 
@@ -96,10 +98,11 @@ openMempoolWithoutSyncThread ::
   LedgerConfig blk ->
   MempoolCapacityBytesOverride ->
   Maybe MempoolTimeoutConfig ->
+  Tracer m (RR.Trace m) ->
   Tracer m (TraceEventMempool blk) ->
   m (Mempool m blk)
-openMempoolWithoutSyncThread registry ledger cfg capacityOverride timeoutConfig tracer =
-  mkMempool <$> initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer registry
+openMempoolWithoutSyncThread registry ledger cfg capacityOverride timeoutConfig rt tracer =
+  mkMempool <$> initMempoolEnv ledger cfg capacityOverride timeoutConfig rt tracer registry
 
 mkMempool ::
   ( IOLike m

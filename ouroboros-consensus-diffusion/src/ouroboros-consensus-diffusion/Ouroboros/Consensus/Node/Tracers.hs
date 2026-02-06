@@ -18,6 +18,7 @@ module Ouroboros.Consensus.Node.Tracers
   ) where
 
 import Control.Exception (SomeException)
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer (Tracer, nullTracer, showTracing)
 import Data.Text (Text)
 import Data.Time (UTCTime)
@@ -90,6 +91,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
       f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
   , dbfTracer :: f (CSJumping.TraceEventDbf remotePeer)
   , kesAgentTracer :: f KESAgentClientTrace
+  , resourceRegistryTracer :: f (RR.Trace m)
   }
 
 instance

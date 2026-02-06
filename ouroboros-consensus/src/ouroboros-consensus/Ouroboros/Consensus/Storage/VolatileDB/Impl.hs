@@ -128,6 +128,7 @@ import Control.Monad.State.Strict
   )
 import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.List as List (foldl')
@@ -169,6 +170,7 @@ data VolatileDbArgs f m blk = VolatileDbArgs
   , volHasFS :: HKD f (SomeHasFS m)
   , volMaxBlocksPerFile :: BlocksPerFile
   , volTracer :: Tracer m (TraceEvent blk)
+  , volRegTracer :: Tracer m (RR.Trace m)
   , volValidationPolicy :: BlockValidationPolicy
   -- ^ Should the parser for the VolatileDB fail when it encounters a
   -- corrupt/invalid block?
@@ -186,6 +188,7 @@ defaultArgs =
     , volHasFS = noDefault
     , volMaxBlocksPerFile = mkBlocksPerFile 1000
     , volTracer = nullTracer
+    , volRegTracer = nullTracer
     , volValidationPolicy = NoValidation
     }
 
@@ -227,6 +230,7 @@ openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} cont = cont $ do
           , tracer = volTracer
           , codecConfig = volCodecConfig
           , checkIntegrity = volCheckIntegrity
+          , regTracer = volRegTracer
           }
       volatileDB =
         VolatileDB
@@ -578,6 +582,7 @@ nextFile hasFS = do
   hndl <-
     lift $
       allocateTemp
+        "next file voldb"
         (hOpen hasFS file (AppendMode MustBeNew))
         (hClose' hasFS)
         ((==) . currentWriteHandle)

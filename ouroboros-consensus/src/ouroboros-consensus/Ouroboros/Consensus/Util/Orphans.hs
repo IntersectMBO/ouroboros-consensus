@@ -17,7 +17,7 @@ import Cardano.Crypto.Hash (Hash, SizeHash)
 import Cardano.Ledger.Genesis (NoGenesis (..))
 import Codec.CBOR.Decoding (Decoder)
 import Codec.Serialise (Serialise (..))
-import Control.Tracer (Tracer)
+import Control.ResourceRegistry ()
 import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
 import Data.MultiSet (MultiSet)
@@ -74,8 +74,6 @@ instance
       . PSQ.toList
 
 deriving via OnlyCheckWhnfNamed "Decoder" (Decoder s a) instance NoThunks (Decoder s a)
-
-deriving via OnlyCheckWhnfNamed "Tracer" (Tracer m ev) instance NoThunks (Tracer m ev)
 
 instance NoThunks a => NoThunks (K a b) where
   showTypeOf _ = showTypeOf (Proxy @a)

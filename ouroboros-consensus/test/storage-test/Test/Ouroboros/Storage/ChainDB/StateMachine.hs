@@ -10,6 +10,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -77,6 +78,7 @@ import Cardano.Ledger.BaseTypes (NonZero (..), unsafeNonZero)
 import Codec.Serialise (Serialise)
 import Control.Monad (replicateM, void)
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer as CT
 import Data.Bifoldable
 import Data.Bifunctor
@@ -86,6 +88,7 @@ import Data.ByteString.Lazy (ByteString)
 import Data.Function (on)
 import Data.Functor (($>))
 import Data.Functor.Classes (Eq1, Show1)
+import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity (Identity)
 import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
@@ -126,6 +129,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
+import Ouroboros.Consensus.Storage.LedgerDB.Args (lgrRegTracer)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
@@ -1915,9 +1919,9 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
       , Property
       )
   test cmds' = do
-    threadRegistry <- unsafeNewRegistry
-    iteratorRegistry <- unsafeNewRegistry
     (tracer, getTrace) <- recordingTracerIORef
+    threadRegistry <- unsafeNewRegistry (Left >$< tracer) "threadReg"
+    iteratorRegistry <- unsafeNewRegistry (Left >$< tracer) "iteratorReg"
     varNextId <- uncheckedNewTVarM 0
     nodeDBs <- emptyNodeDBs
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
@@ -1928,7 +1932,8 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
             (testInitExtLedger `withLedgerTables` emptyLedgerTables)
             threadRegistry
             nodeDBs
-            tracer
+            (Right >$< tracer)
+            (Left >$< tracer)
             (loe $> varLoEFragment)
 
     (hist, model, res, trace) <- bracket
@@ -1995,7 +2000,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
                           (remainingCleanups === 0)
     return (hist, prop)
 
-prop_trace :: TopLevelConfig Blk -> DBModel Blk -> [TraceEvent Blk] -> Property
+prop_trace :: TopLevelConfig Blk -> DBModel Blk -> [Either (Trace m) (TraceEvent Blk)] -> Property
 prop_trace cfg dbModel trace =
   invalidBlockNeverValidatedAgain
     .&&. tentativeHeaderMonotonicity
@@ -2014,17 +2019,17 @@ prop_trace cfg dbModel trace =
             counterexample "An invalid block is validated twice" $
               invalidPoint =/= invalidPoint'
 
-  invalidBlock :: TraceEvent blk -> Maybe (RealPoint blk)
+  invalidBlock :: Either a (TraceEvent blk) -> Maybe (RealPoint blk)
   invalidBlock = \case
-    TraceAddBlockEvent (AddBlockValidation ev) -> extract ev
-    TraceInitChainSelEvent (InitChainSelValidation ev) -> extract ev
+    Right (TraceAddBlockEvent (AddBlockValidation ev)) -> extract ev
+    Right (TraceInitChainSelEvent (InitChainSelValidation ev)) -> extract ev
     _ -> Nothing
    where
     extract (ChainDB.InvalidBlock _ pt) = Just pt
     extract _ = Nothing
 
-  isOpened :: TraceEvent blk -> Bool
-  isOpened (TraceOpenEvent (OpenedDB{})) = True
+  isOpened :: Either a (TraceEvent blk) -> Bool
+  isOpened (Right (TraceOpenEvent (OpenedDB{}))) = True
   isOpened _ = False
 
   tentativeHeaderMonotonicity =
@@ -2034,7 +2039,7 @@ prop_trace cfg dbModel trace =
     trapTentativeSelectViews :: [[SelectView (BlockProtocol Blk)]]
     trapTentativeSelectViews =
       [ [ selectView (configBlock cfg) hdr
-        | TraceAddBlockEvent (PipeliningEvent ev) <- trace'
+        | Right (TraceAddBlockEvent (PipeliningEvent ev)) <- trace'
         , SetTentativeHeader hdr FallingEdge <- [ev]
         , Map.member (headerHash hdr) (Model.invalid dbModel)
         ]
@@ -2055,29 +2060,31 @@ whenOccurs evs occurs k = go evs
     | otherwise =
         go evs'
 
-traceEventName :: TraceEvent blk -> String
+traceEventName :: Either (Trace m) (TraceEvent blk) -> String
 traceEventName = \case
-  TraceAddBlockEvent ev ->
-    "AddBlock." <> case ev of
-      AddBlockValidation ev' -> constrName ev'
-      _ -> constrName ev
-  TraceFollowerEvent ev -> "Follower." <> constrName ev
-  TraceCopyToImmutableDBEvent ev -> "CopyToImmutableDB." <> constrName ev
-  TraceInitChainSelEvent ev ->
-    "InitChainSel." <> case ev of
-      InitChainSelValidation ev' -> constrName ev'
-      StartedInitChainSelection -> "StartedInitChainSelection"
-      InitialChainSelected -> "InitialChainSelected"
-  TraceOpenEvent ev -> "Open." <> constrName ev
-  TraceGCEvent ev -> "GC." <> constrName ev
-  TraceIteratorEvent ev -> "Iterator." <> constrName ev
-  TraceLedgerDBEvent ev -> "Ledger." <> constrName ev
-  TraceImmutableDBEvent ev -> "ImmutableDB." <> constrName ev
-  TraceVolatileDBEvent ev -> "VolatileDB." <> constrName ev
-  TracePerasCertDbEvent ev -> "PerasCertDB." <> constrName ev
-  TraceLastShutdownUnclean -> "LastShutdownUnclean"
-  TraceChainSelStarvationEvent ev -> "ChainSelStarvation." <> constrName ev
-  TraceAddPerasCertEvent ev -> "AddPerasCert." <> constrName ev
+  Left _ -> "Registry"
+  Right ev0 -> case ev0 of
+    TraceAddBlockEvent ev ->
+      "AddBlock." <> case ev of
+        AddBlockValidation ev' -> constrName ev'
+        _ -> constrName ev
+    TraceFollowerEvent ev -> "Follower." <> constrName ev
+    TraceCopyToImmutableDBEvent ev -> "CopyToImmutableDB." <> constrName ev
+    TraceInitChainSelEvent ev ->
+      "InitChainSel." <> case ev of
+        InitChainSelValidation ev' -> constrName ev'
+        StartedInitChainSelection -> "StartedInitChainSelection"
+        InitialChainSelected -> "InitialChainSelected"
+    TraceOpenEvent ev -> "Open." <> constrName ev
+    TraceGCEvent ev -> "GC." <> constrName ev
+    TraceIteratorEvent ev -> "Iterator." <> constrName ev
+    TraceLedgerDBEvent ev -> "Ledger." <> constrName ev
+    TraceImmutableDBEvent ev -> "ImmutableDB." <> constrName ev
+    TraceVolatileDBEvent ev -> "VolatileDB." <> constrName ev
+    TracePerasCertDbEvent ev -> "PerasCertDB." <> constrName ev
+    TraceLastShutdownUnclean -> "LastShutdownUnclean"
+    TraceChainSelStarvationEvent ev -> "ChainSelStarvation." <> constrName ev
+    TraceAddPerasCertEvent ev -> "AddPerasCert." <> constrName ev
 
 mkArgs ::
   IOLike m =>
@@ -2087,9 +2094,10 @@ mkArgs ::
   ResourceRegistry m ->
   NodeDBs (StrictTMVar m MockFS) ->
   CT.Tracer m (TraceEvent Blk) ->
+  CT.Tracer m (RR.Trace m) ->
   LoE (StrictTVar m (AnchoredFragment (HeaderWithTime Blk))) ->
   ChainDbArgs Identity m Blk
-mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
+mkArgs cfg chunkInfo initLedger registry nodeDBs tracer regTracer varLoEFragment =
   let args =
         fromMinimalChainDbArgs
           MinimalChainDbArgs
@@ -2105,14 +2113,21 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
               (cdbsArgs args)
                 { ChainDB.cdbsBlocksToAddSize = 2
                 , ChainDB.cdbsLoE = traverse (atomically . readTVar) varLoEFragment
+                , ChainDB.cdbsRegTracer = regTracer
                 }
           , cdbImmDbArgs =
               (cdbImmDbArgs args)
                 { ImmutableDB.immCheckIntegrity = testBlockIsValid
+                , ImmutableDB.immRegTracer = regTracer
                 }
           , cdbVolDbArgs =
               (cdbVolDbArgs args)
                 { VolatileDB.volCheckIntegrity = testBlockIsValid
+                , VolatileDB.volRegTracer = regTracer
+                }
+          , cdbLgrDbArgs =
+              (cdbLgrDbArgs args)
+                { lgrRegTracer = regTracer
                 }
           }
 

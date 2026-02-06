@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -94,6 +95,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
         (bsKey, backingStore) <-
           allocate
             lgrRegistry
+            "backing store"
             (\_ -> newBackingStore bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st))
             bsClose
         pure (chlog, bsKey, backingStore)
@@ -772,6 +774,7 @@ withTransferrableReadAccess h rr f = getEnv h $ \ldbEnv -> do
   (rk, _) <-
     allocate
       rr
+      "read lock"
       ( \_ -> atomically $ do
           -- Populate the tvar with the releasing action. Creating the forker will empty this
           writeTVar tv (atomically $ unsafeReleaseReadAccess (ldbLock ldbEnv))
@@ -868,6 +871,7 @@ newForker h ldbEnv (rk, releaseVar) rr dblog =
     (rk', frk) <-
       allocate
         rr
+        "forker"
         ( \_ -> do
             dblogVar <- newTVarIO dblog
             forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)

@@ -83,6 +83,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import Control.Monad (when)
 import Control.RAWLock
 import Control.ResourceRegistry
+import qualified Control.ResourceRegistry as RR
 import Control.Tracer
 import Data.Foldable (traverse_)
 import Data.Map.Strict (Map)
@@ -334,6 +335,7 @@ data ChainDbEnv m blk = CDB
   , cdbNextFollowerKey :: !(StrictTVar m FollowerKey)
   , cdbChainSelFuse :: !(Fuse m)
   , cdbTracer :: !(Tracer m (TraceEvent blk))
+  , cdbRegTracer :: !(Tracer m (RR.Trace m))
   , cdbRegistry :: !(ResourceRegistry m)
   , cdbGcDelay :: !DiffTime
   -- ^ How long to wait between copying a block from the VolatileDB to

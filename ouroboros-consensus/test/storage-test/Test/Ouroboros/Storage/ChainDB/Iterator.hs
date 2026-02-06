@@ -366,7 +366,7 @@ runIterator ::
   StreamFrom TestBlock ->
   StreamTo TestBlock ->
   ([TraceIteratorEvent TestBlock], IterRes)
-runIterator setup from to = runSimOrThrow $ withRegistry $ \r -> do
+runIterator setup from to = runSimOrThrow $ withRegistry undefined undefined $ \r -> do
   (tracer, getTrace) <- recordingTracerTVar
   itEnv <- initIteratorEnv setup tracer
   res <- runExceptT $ do

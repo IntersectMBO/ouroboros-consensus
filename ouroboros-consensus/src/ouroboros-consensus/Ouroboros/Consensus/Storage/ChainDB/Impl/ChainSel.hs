@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -407,7 +408,7 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
 
   -- Consider all candidates at once, to avoid transient chain switches.
   case NE.nonEmpty $ concat chainDiffs of
-    Just chainDiffs' -> withRegistry $ \rr -> do
+    Just chainDiffs' -> withRegistry cdbRegTracer "chainSelSync" $ \rr -> do
       -- Find the best valid candidate.
       chainSelection chainSelEnv rr chainDiffs' >>= \case
         Just validatedChainDiff ->
@@ -617,7 +618,7 @@ chainSelectionForBlock ::
   Header blk ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
+chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegistry cdbRegTracer "chainSelectionForBlock" $ \rr -> do
   (invalid, curChain, weights) <-
     atomically $
       (,,)

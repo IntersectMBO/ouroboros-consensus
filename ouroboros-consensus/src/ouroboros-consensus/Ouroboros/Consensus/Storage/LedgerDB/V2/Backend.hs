@@ -20,7 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
   ) where
 
 import Control.Monad.Except
-import Control.ResourceRegistry
+import Control.ResourceRegistry hiding (Trace)
 import Control.Tracer
 import Data.Proxy
 import Data.Typeable
@@ -49,7 +49,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   -- 'LedgerDbArgs'.
   mkResources ::
     Proxy blk ->
-    Tracer m LedgerDBV2Trace ->
+    Tracer m (LedgerDBV2Trace (ExtLedgerState blk)) ->
     Args m backend ->
     ResourceRegistry m ->
     SomeHasFS m ->
@@ -61,7 +61,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   -- | Create a new handle from the given values. This will only be called when
   -- starting Consensus from Genesis.
   newHandleFromValues ::
-    Tracer m LedgerDBV2Trace ->
+    Tracer m (LedgerDBV2Trace (ExtLedgerState blk)) ->
     ResourceRegistry m ->
     Resources m backend ->
     ExtLedgerState blk ValuesMK ->
@@ -69,7 +69,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
 
   -- | Create a new handle from a snapshot.
   newHandleFromSnapshot ::
-    Tracer m LedgerDBV2Trace ->
+    Tracer m (LedgerDBV2Trace (ExtLedgerState blk)) ->
     ResourceRegistry m ->
     CodecConfig blk ->
     SomeHasFS m ->
@@ -112,16 +112,18 @@ instance NoThunks (SomeResources m blk) where
   Tracing
 -------------------------------------------------------------------------------}
 
-data LedgerDBV2Trace
+data LedgerDBV2Trace l
   = -- | Created a new 'LedgerTablesHandle', potentially by duplicating an
     -- existing one.
     TraceLedgerTablesHandleCreate EnclosingTimed
   | -- | Closed a 'LedgerTablesHandle'.
-    TraceLedgerTablesHandleClose EnclosingTimed
+    TraceLedgerTablesHandleClose (Point l) EnclosingTimed
+  | TraceLedgerTablesHandleAlreadyClosed
   | TraceLedgerTablesHandleRead EnclosingTimed
   | TraceLedgerTablesHandleDuplicate EnclosingTimed
   | TraceLedgerTablesHandleCreateFirst EnclosingTimed
   | TraceLedgerTablesHandlePush EnclosingTimed
+  | TraceLedgerTablesUpdateRk ResourceId ResourceId
   | BackendTrace SomeBackendTrace
 
-deriving instance Show SomeBackendTrace => Show LedgerDBV2Trace
+deriving instance (StandardHash l, Show SomeBackendTrace) => Show (LedgerDBV2Trace l)
