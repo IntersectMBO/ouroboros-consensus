@@ -196,8 +196,6 @@ data TraceEvent blk
     Message String
   | -- | triggered when analysis has ended
     DoneEvent
-  | -- | Block number, slot number, body size
-    BlockHeader BlockNo SlotNo Word32
   | -- | triggered when block has been found, it holds:
     --   * block's number
     --   * slot number when the block was forged
@@ -267,12 +265,6 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
   show (StartedEvent analysisName) = "Started " <> (show analysisName)
   show (Message msg) = "Info: " ++ msg
   show DoneEvent = "Done"
-  show (BlockHeader bn sn sz) =
-    intercalate ", " $
-      [ show ((unBlockNo bn) :: Word64)
-      , show ((unSlotNo sn) :: Word64)
-      , show sz
-      ]
   show (BlockSlotEvent bn sn h) =
     intercalate "\t" $
       [ show bn
