@@ -192,6 +192,14 @@ class
     [ValidatedPerasVote blk] ->
     Either (PerasForgeErr blk) (ValidatedPerasCert blk)
 
+  -- | Extract a Peras certificate optionally stored in a block.
+  --
+  -- Returns 'Nothing' if the block does not contain a Peras certificate, or
+  -- if the block is from an era that does not support Peras certificates.
+  getPerasCertInBlock ::
+    blk ->
+    Maybe (PerasCert blk)
+
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
 instance StandardHash blk => BlockSupportsPeras blk where
@@ -276,6 +284,10 @@ instance StandardHash blk => BlockSupportsPeras blk where
 
     allVotersMatchTarget =
       all ((target ==) . getPerasVoteTarget) votes
+
+  -- TODO: extract actual Peras certificates from blocks when the HFC plumbing
+  -- is in place.
+  getPerasCertInBlock _ = Nothing
 
 instance ShowProxy blk => ShowProxy (PerasCert blk) where
   showProxy _ = "PerasCert " <> showProxy (Proxy @blk)
