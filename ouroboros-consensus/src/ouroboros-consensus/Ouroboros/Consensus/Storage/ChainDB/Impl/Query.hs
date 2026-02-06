@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getPastLedger
   , getPerasWeightSnapshot
   , getPerasCertSnapshot
+  , getLatestPerasCertOnChainRound
   , getReadOnlyForkerAtPoint
   , getStatistics
   , getTipBlock
@@ -49,6 +50,7 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , takeVolatileSuffix
@@ -333,6 +335,28 @@ waitForImmutableBlock CDB{cdbImmutableDB} targetRealPoint = do
           <> show e
           <> ". The ImmutableDB could have been concurrently truncated."
     result@Right{} -> pure result
+
+getLatestPerasCertOnChainRound ::
+  (IOLike m, LedgerSupportsPeras blk) =>
+  ChainDbEnv m blk ->
+  STM m (Maybe PerasRoundNo)
+getLatestPerasCertOnChainRound CDB{..} = do
+  immutableLedger <- ledgerState <$> LedgerDB.getImmutableTip cdbLedgerDB
+  volatileLedger <- ledgerState <$> LedgerDB.getVolatileTip cdbLedgerDB
+  pure (latestPerasCertRound immutableLedger volatileLedger)
+ where
+  latestPerasCertRound immutableLedger volatileLedger =
+    case ( getLatestPerasCertRound immutableLedger
+         , getLatestPerasCertRound volatileLedger
+         ) of
+      (Nothing, Nothing) ->
+        Nothing
+      (Just immutableCertRoundNo, Nothing) ->
+        Just immutableCertRoundNo
+      (Nothing, Just volatileCertRoundNo) ->
+        Just volatileCertRoundNo
+      (Just immutableCertRoundNo, Just volatileCertRoundNo) ->
+        Just (immutableCertRoundNo `max` volatileCertRoundNo)
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent
