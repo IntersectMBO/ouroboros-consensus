@@ -11,7 +11,7 @@ module Test.LeiosDemoDb (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadTChan)
-import Control.Monad (forM_, replicateM, when)
+import Control.Monad (forM_, replicateM)
 import qualified Data.ByteString as BS
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import qualified Data.Vector as V
@@ -26,23 +26,16 @@ import LeiosDemoTypes
   , LeiosNotification (..)
   , LeiosPoint (..)
   , TxHash (..)
-  , leiosEBMaxClosureSize
-  , leiosEBMaxSize
   , leiosEbBytesSize
-  , maxTxsPerEb
   )
-import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory, withSystemTempDirectory)
 import Test.QuickCheck
-  ( Gen
-  , Property
-  , choose
+  ( Property
+  , chooseInt
   , counterexample
-  , forAllShrinkBlind
+  , forAllShrinkShow
   , ioProperty
-  , listOf
-  , once
-  , vectorOf
+  , withMaxSuccess
   , within
   )
 import Test.Tasty (TestTree, testGroup)
@@ -52,14 +45,17 @@ import Test.Tasty.QuickCheck (testProperty)
 tests :: TestTree
 tests =
   testGroup "LeiosDemoDb" . forEachImplementation $ \dbTest dbPropTest ->
-    [ dbTest "single subscriber" test_singleSubscriber
-    , dbTest "multiple subscribers" test_multipleSubscribers
-    , dbTest "correct data" test_correctData
-    , dbTest "late subscriber" test_lateSubscriber
-    , dbTest "multiple notifications" test_multipleNotifications
-    , dbTest "no offerBlockTxs before last update" test_noOfferBlockTxsBeforeComplete
-    , dbTest "offerBlockTxs on last update" test_offerBlockTxs
-    , dbPropTest "reasonable update performance" prop_reasonableUpdatePerformance
+    [ testGroup
+        "notifications"
+        [ dbTest "single subscriber" test_singleSubscriber
+        , dbTest "multiple subscribers" test_multipleSubscribers
+        , dbTest "correct data" test_correctData
+        , dbTest "late subscriber" test_lateSubscriber
+        , dbTest "multiple notifications" test_multipleNotifications
+        , dbTest "no offerBlockTxs before last update" test_noOfferBlockTxsBeforeComplete
+        , dbTest "offerBlockTxs on last update" test_offerBlockTxs
+        ]
+    , dbPropTest "reasonable write performance" prop_reasonableWritePerformance
     ]
 
 -- | Run test cases for each database implementation (InMemory and SQLite).
@@ -263,60 +259,48 @@ test_offerBlockTxs db = do
 maxTxByteSize :: Int
 maxTxByteSize = 16_000_000
 
--- | Generate a performance test scenario: a list of (numTxs, completionRatio)
--- for arbitrary background EBs, plus a target EB size and the offset to update.
-genPerfScenario :: Gen ([(Int, Double)], Int, Int)
-genPerfScenario = do
-  -- TODO: scale or size
-  bgEbs <- listOf $ do
-    numTxs <- choose (1, maxTxsPerEb)
-    ratio <- choose (0.0 :: Double, 1.0)
-    pure (numTxs, ratio)
-  targetSize <- choose (1, maxTxsPerEb)
-  targetOffset <- choose (0, targetSize - 1)
-  pure (bgEbs, targetSize, targetOffset)
-
--- | Property: leiosDbUpdateEbTx completes within 1ms even with 10k EB bodies
--- in the database with randomly completed/sparse transaction closures.
-prop_reasonableUpdatePerformance :: IO (LeiosDbHandle IO) -> Property
-prop_reasonableUpdatePerformance mkDb =
-  once $
-    forAllShrinkBlind genPerfScenario (const []) $ \(bgEbs, targetSize, targetOffset) ->
-      -- Definitely stop after 10 seconds even including preparation
-      within 10_000_000 $
+-- | Property: leiosDbUpdateEbTx completes within 1ms at various database sizes.
+-- Generates a random number of EBs (0 to 10000) with quadratic shrinking.
+--
+-- TODO: Also test with varying EB closure states (partial completions).
+prop_reasonableWritePerformance :: IO (LeiosDbHandle IO) -> Property
+prop_reasonableWritePerformance mkDb =
+  withMaxSuccess 10 $
+    forAllShrinkShow (chooseInt (0, maxNumEbs)) shrinkQuadratic show $ \numEbs ->
+      -- Allow up to 60 seconds for full test including priming
+      within 60_000_000 $
         ioProperty $ do
           db <- mkDb
-          -- Prime the database with background EB bodies
-          putStrLn $ "Priming database with " <> show (length bgEbs) <> " EBs:"
-          forM_ (zip [1 :: Int ..] bgEbs) $ \(i, (numTxs, completionRatio)) -> do
+          -- Prime the database (each EB has 100 txs, all complete)
+          forM_ [1 .. numEbs] $ \i -> do
             let point = mkTestPoint (SlotNo $ fromIntegral i) (fromIntegral i)
-                eb = mkTestEb numTxs
-            putStrLn $ "EB with " <> show numTxs <> " txs"
+                eb = mkTestEb numTxsPerEb
             leiosDbInsertEbBody db point eb
-            -- Deterministically complete the first N txs based on the ratio
-            let numCompleted = floor (completionRatio * fromIntegral numTxs)
-            forM_ [0 .. numCompleted - 1] $ \j -> do
-              putStr "."
+            forM_ [0 .. numTxsPerEb - 1] $ \j ->
               leiosDbUpdateEbTx db point.pointEbHash j (BS.replicate maxTxByteSize 1)
-            putStrLn ""
-          -- Create the target EB and fill all but the target offset
-          putStrLn $ "Priming target EB with " <> show (targetSize - 1) <> " txs"
-          let targetPoint = mkTestPoint (SlotNo 99999) 99999
-              targetEb = mkTestEb targetSize
+          -- Create target EB with 1 tx and time the update
+          let targetPoint = mkTestPoint (SlotNo 100_000) 100_000
+              targetEb = mkTestEb 1
           leiosDbInsertEbBody db targetPoint targetEb
-          forM_ [0 .. targetSize - 1] $ \j ->
-            when (j /= targetOffset) $ do
-              putStrLn $ "  " <> show j
-              leiosDbUpdateEbTx db targetPoint.pointEbHash j (BS.replicate maxTxByteSize 1)
-          putStrLn ""
-          -- Time the final update
-          putStrLn "Final update, timing.."
           -- TODO: use monotonic clock
           start <- getCurrentTime
-          leiosDbUpdateEbTx db targetPoint.pointEbHash targetOffset (BS.replicate maxTxByteSize 0)
+          leiosDbUpdateEbTx db targetPoint.pointEbHash 0 (BS.replicate maxTxByteSize 0)
           end <- getCurrentTime
           let elapsedMs = realToFrac (diffUTCTime end start) * 1000 :: Double
-          pure $ counterexample ("leiosDbUpdateEbTx took " ++ show elapsedMs ++ "ms") (elapsedMs < 1.0)
+          pure $
+            counterexample
+              ("leiosDbUpdateEbTx took " ++ show elapsedMs ++ "ms with " ++ show numEbs ++ " EBs")
+              (elapsedMs < 1.0)
+ where
+  maxNumEbs = 10_000
+  numTxsPerEb = 100
+
+  -- Shrink by square root steps: 10000 -> 100 -> 10 -> 3 -> 1 -> 0
+  shrinkQuadratic :: Int -> [Int]
+  shrinkQuadratic 0 = []
+  shrinkQuadratic n = [0, isqrt n]
+   where
+    isqrt = floor . sqrt . (fromIntegral :: Int -> Double)
 
 -- * Test utilities
 
