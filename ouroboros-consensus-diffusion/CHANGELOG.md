@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.26.0.0'></a>
+## 0.26.0.0 -- 2026-02-06
+
+### Breaking
+
+- Updated to ouroboro-network-0.22.6
+
 <a id='changelog-0.25.0.0'></a>
 ## 0.25.0.0 -- 2026-01-23
 
