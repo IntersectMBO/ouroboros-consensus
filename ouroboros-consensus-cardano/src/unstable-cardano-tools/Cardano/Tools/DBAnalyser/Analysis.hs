@@ -469,34 +469,12 @@ dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, limit
               , query_is_ebb = GetIsEBB
               , query_block = GetBlock
               }
-      processAll_ db registry component startFrom limit (process outBlockHandle outTxHandle)
-        >> pure Nothing
+      processAllSt_ db registry component startFrom cfg limit (process outBlockHandle outTxHandle)
+      pure Nothing
  where
-  FromLedgerState ledgerDB intLedgerDB = startFrom
-
-  process :: IO.Handle -> IO.Handle -> DumpQuery blk Identity -> IO ()
-  process bh th cmp = do
-
-    -- Start: ledger state retrieval and update
-    frk <-
-      LedgerDB.getForkerAtTarget ledgerDB registry VolatileTip >>= \case
-        Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
-        Right f -> pure f
-    oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-    oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets (runIdentity $ query_block cmp))
-    let oldLedger = oldLedgerSt `withLedgerTables` oldLedgerTbs
-    LedgerDB.forkerClose frk
-
-    let
-      nextLedgerSt = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) (runIdentity $ query_block cmp) oldLedger
-      nextLedger = applyDiffs oldLedger nextLedgerSt
-
-
-    LedgerDB.push intLedgerDB nextLedgerSt
-    LedgerDB.tryFlush ledgerDB
-    -- End: ledger state retrieval and update
-
-    let utxo_summary = HasAnalysis.utxoSummary @blk (HasAnalysis.WithLedgerState {HasAnalysis.wlsStateBefore=(ledgerState oldLedger), HasAnalysis.wlsStateAfter=(ledgerState nextLedger), HasAnalysis.wlsBlk=(runIdentity $ query_block cmp)})
+  process :: IO.Handle -> IO.Handle -> HasAnalysis.WithLedgerState blk -> DumpQuery blk Identity -> IO ()
+  process bh th wls cmp = do
+    let utxo_summary = HasAnalysis.utxoSummary @blk wls
 
     let
       blockFeatures :: BlockFeatures blk Identity
@@ -1031,50 +1009,27 @@ getBlockApplicationMetrics ::
 getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
   withFile mOutFile $ \outFileHandle -> do
     writeHeaderLine outFileHandle separator (HasAnalysis.blockApplicationMetrics @blk)
-    void $
-      processAll db registry GetBlock startFrom limit () (process initLedger internal outFileHandle)
+    processAllSt_ db registry GetBlock startFrom cfg limit (process outFileHandle)
     pure Nothing
  where
   separator = ", "
 
   AnalysisEnv{db, registry, startFrom, cfg, limit} = env
-  FromLedgerState initLedger internal = startFrom
 
   process ::
-    LedgerDB.LedgerDB' IO blk ->
-    LedgerDB.TestInternals' IO blk ->
     IO.Handle ->
-    () ->
+    HasAnalysis.WithLedgerState blk ->
     blk ->
     IO ()
-  process ledgerDB intLedgerDB outFileHandle _ blk = do
-    frk <-
-      LedgerDB.getForkerAtTarget ledgerDB registry VolatileTip >>= \case
-        Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
-        Right f -> pure f
-    oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-    oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-    let oldLedger = oldLedgerSt `withLedgerTables` oldLedgerTbs
-    LedgerDB.forkerClose frk
-
-    let nextLedgerSt = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk oldLedger
+  process outFileHandle wls blk = do
     when (unBlockNo (blockNo blk) `mod` nrBlocks == 0) $ do
-      let blockApplication =
-            HasAnalysis.WithLedgerState
-              blk
-              (ledgerState oldLedger)
-              (ledgerState $ applyDiffs oldLedger nextLedgerSt)
-
       computeAndWriteLine
         outFileHandle
         separator
         (HasAnalysis.blockApplicationMetrics @blk)
-        blockApplication
+        wls
 
       IO.hFlush outFileHandle
-
-    LedgerDB.push intLedgerDB nextLedgerSt
-    LedgerDB.tryFlush ledgerDB
 
     pure ()
 
@@ -1306,3 +1261,39 @@ processAll_ ::
   IO ()
 processAll_ db registry blockComponent startFrom limit callback =
   processAll db registry blockComponent startFrom limit () (const callback)
+
+-- | Like 'processAll_' but makes a ledger state available to the analysis
+processAllSt_ :: forall blk b.
+  (LedgerSupportsProtocol blk) =>
+  ImmutableDB IO blk ->
+  ResourceRegistry IO ->
+  BlockComponent blk b ->
+  AnalysisStartFrom IO blk StartFromLedgerState ->
+  TopLevelConfig blk ->
+  Limit ->
+  (HasAnalysis.WithLedgerState blk -> b -> IO ()) ->
+  IO ()
+processAllSt_ db registry blockComponent startFrom cfg limit callback =
+  processAll_ db registry ((,) <$> GetBlock <*> blockComponent) startFrom limit callback'
+  where
+    FromLedgerState ledgerDB intLedgerDB = startFrom
+
+    callback' (blk,b) = do
+      frk <-
+        LedgerDB.getForkerAtTarget ledgerDB registry VolatileTip >>= \case
+          Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
+          Right f -> pure f
+      oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
+      oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
+      let oldLedger = oldLedgerSt `withLedgerTables` oldLedgerTbs
+      LedgerDB.forkerClose frk
+
+      let
+        nextLedgerSt = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk oldLedger
+        nextLedger = applyDiffs oldLedger nextLedgerSt
+  
+      LedgerDB.push intLedgerDB nextLedgerSt
+      LedgerDB.tryFlush ledgerDB
+
+      callback (HasAnalysis.WithLedgerState {HasAnalysis.wlsStateBefore=(ledgerState oldLedger), HasAnalysis.wlsStateAfter=(ledgerState nextLedger), HasAnalysis.wlsBlk=blk}) b
+
