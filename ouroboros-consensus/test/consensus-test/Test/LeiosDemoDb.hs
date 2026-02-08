@@ -5,11 +5,13 @@
 -- | Tests for the LeiosDemoDb interface.
 --
 -- These tests verify the semantics of the LeiosDbHandle operations for both
--- InMemory and SQLite implementations.
+-- InMemory and SQLite implementations. Each test case uses a fresh database
+-- to ensure isolation and allow non-priming tests to serve as performance baselines.
 module Test.LeiosDemoDb (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadTChan)
+import Control.Exception (bracket)
 import Control.Monad (forM, forM_, replicateM)
 import qualified Data.ByteString as BS
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
@@ -43,7 +45,7 @@ import Test.QuickCheck
   , vector
   , (===)
   )
-import Test.Tasty (TestTree, testGroup, withResource)
+import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 
@@ -52,46 +54,57 @@ tests =
   testGroup "LeiosDemoDb" $
     forEachImplementation mkTestGroups
 
--- | Run tests for each database implementation (InMemory and SQLite).
--- The database is created once per implementation and shared across all tests.
-forEachImplementation :: (IO (LeiosDbHandle IO) -> [TestTree]) -> [TestTree]
-forEachImplementation mkTests =
-  [ withResource newInMemoryLeiosDb (const $ pure ()) $ \getDb ->
-      testGroup "InMemory" (mkTests getDb)
-  , withResource mkTestSqliteDb cleanupSqliteDb $ \getDbAndPath ->
-      testGroup "SQLite" (mkTests (fst <$> getDbAndPath))
-  ]
- where
-  cleanupSqliteDb (_, tmpDir) = removeDirectoryRecursive tmpDir
+-- | Database creation strategy for different implementations.
+data DbImpl
+  = InMemory
+  | SQLite
 
--- | Create the test groups for a given database handle.
-mkTestGroups :: IO (LeiosDbHandle IO) -> [TestTree]
-mkTestGroups getDb =
+-- | Create a fresh database and run an action with it.
+-- Ensures proper cleanup for SQLite databases.
+withFreshDb :: DbImpl -> (LeiosDbHandle IO -> IO a) -> IO a
+withFreshDb InMemory action = newInMemoryLeiosDb >>= action
+withFreshDb SQLite action = do
+  sysTmp <- getCanonicalTemporaryDirectory
+  bracket
+    (createTempDirectory sysTmp "leios-test")
+    removeDirectoryRecursive
+    (\tmpDir -> newLeiosDbConnectionIO (tmpDir <> "/test.db") >>= action)
+
+-- | Run tests for each database implementation (InMemory and SQLite).
+forEachImplementation :: (DbImpl -> [TestTree]) -> [TestTree]
+forEachImplementation mkTests =
+  [ testGroup "InMemory" (mkTests InMemory)
+  , testGroup "SQLite" (mkTests SQLite)
+  ]
+
+-- | Create the test groups for a given database implementation.
+mkTestGroups :: DbImpl -> [TestTree]
+mkTestGroups impl =
   [ testGroup
       "points"
-      [ testProperty "insert then scan" $ prop_pointsInsertThenScan getDb
-      , testProperty "multiple inserts accumulate" $ prop_pointsAccumulate getDb
+      [ testProperty "insert then scan" $ prop_pointsInsertThenScan impl
+      , testProperty "multiple inserts accumulate" $ prop_pointsAccumulate impl
       ]
   , testGroup
       "ebs"
-      [ testProperty "insert then lookup" $ prop_ebsInsertThenLookup getDb
-      , testProperty "lookup missing returns empty" $ prop_ebsLookupMissing getDb
+      [ testProperty "insert then lookup" $ prop_ebsInsertThenLookup impl
+      , testProperty "lookup missing returns empty" $ prop_ebsLookupMissing impl
       ]
   , testGroup
       "transactions"
-      [ testProperty "update then retrieve" $ prop_txsUpdateThenRetrieve getDb
-      , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing getDb
-      , testProperty "updateEbTx performance" $ prop_updateEbTxPerformance getDb
+      [ testProperty "update then retrieve" $ prop_txsUpdateThenRetrieve impl
+      , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
+      , testProperty "updateEbTx performance" $ prop_updateEbTxPerformance impl
       ]
   , testGroup
       "notifications"
-      [ testCase "single subscriber" $ getDb >>= test_singleSubscriber
-      , testCase "multiple subscribers" $ getDb >>= test_multipleSubscribers
-      , testCase "correct data" $ getDb >>= test_correctData
-      , testCase "late subscriber" $ getDb >>= test_lateSubscriber
-      , testCase "multiple notifications" $ getDb >>= test_multipleNotifications
-      , testCase "no offerBlockTxs before last update" $ getDb >>= test_noOfferBlockTxsBeforeComplete
-      , testCase "offerBlockTxs on last update" $ getDb >>= test_offerBlockTxs
+      [ testCase "single subscriber" $ withFreshDb impl test_singleSubscriber
+      , testCase "multiple subscribers" $ withFreshDb impl test_multipleSubscribers
+      , testCase "correct data" $ withFreshDb impl test_correctData
+      , testCase "late subscriber" $ withFreshDb impl test_lateSubscriber
+      , testCase "multiple notifications" $ withFreshDb impl test_multipleNotifications
+      , testCase "no offerBlockTxs before last update" $ withFreshDb impl test_noOfferBlockTxsBeforeComplete
+      , testCase "offerBlockTxs on last update" $ withFreshDb impl test_offerBlockTxs
       ]
   ]
 
@@ -157,22 +170,20 @@ mkTestEb numTxs =
 -- * Property tests for points
 
 -- | Property: inserting a point and then scanning should return it.
-prop_pointsInsertThenScan :: IO (LeiosDbHandle IO) -> Property
-prop_pointsInsertThenScan getDb =
+prop_pointsInsertThenScan :: DbImpl -> Property
+prop_pointsInsertThenScan impl =
   forAll genPoint $ \point ->
-    ioProperty $ do
-      db <- getDb
+    ioProperty $ withFreshDb impl $ \db -> do
       leiosDbInsertEbPoint db point
       points <- leiosDbScanEbPoints db
       pure $ (point.pointSlotNo, point.pointEbHash) `elem` points
 
 -- | Property: multiple inserted points all appear in scan results.
-prop_pointsAccumulate :: IO (LeiosDbHandle IO) -> Property
-prop_pointsAccumulate getDb =
+prop_pointsAccumulate :: DbImpl -> Property
+prop_pointsAccumulate impl =
   forAllShrinkShow (chooseInt (1, 10)) shrink show $ \count ->
     forAll (replicateM count genPoint) $ \points ->
-      ioProperty $ do
-        db <- getDb
+      ioProperty $ withFreshDb impl $ \db -> do
         forM_ points $ leiosDbInsertEbPoint db
         scanned <- leiosDbScanEbPoints db
         let expected = [(p.pointSlotNo, p.pointEbHash) | p <- points]
@@ -181,12 +192,11 @@ prop_pointsAccumulate getDb =
 -- * Property tests for EBs
 
 -- | Property: inserting an EB body and looking it up returns the correct txs.
-prop_ebsInsertThenLookup :: IO (LeiosDbHandle IO) -> Property
-prop_ebsInsertThenLookup getDb =
+prop_ebsInsertThenLookup :: DbImpl -> Property
+prop_ebsInsertThenLookup impl =
   forAllShrinkShow (chooseInt (1, 50)) shrink show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
-      ioProperty $ do
-        db <- getDb
+      ioProperty $ withFreshDb impl $ \db -> do
         let expectedTxs = V.toList (leiosEbTxs eb)
         leiosDbInsertEbBody db point eb
         result <- leiosDbLookupEbBody db point.pointEbHash
@@ -195,29 +205,27 @@ prop_ebsInsertThenLookup getDb =
             result == expectedTxs
 
 -- | Property: looking up a non-existent EB returns empty list.
-prop_ebsLookupMissing :: IO (LeiosDbHandle IO) -> Property
-prop_ebsLookupMissing getDb =
+prop_ebsLookupMissing :: DbImpl -> Property
+prop_ebsLookupMissing impl =
   forAll genEbHash $ \missingHash ->
-    ioProperty $ do
-      db <- getDb
+    ioProperty $ withFreshDb impl $ \db -> do
       result <- leiosDbLookupEbBody db missingHash
       pure $ result === []
 
 -- * Property tests for transactions
 
 -- | Property: updating tx bytes and retrieving them returns the correct data.
-prop_txsUpdateThenRetrieve :: IO (LeiosDbHandle IO) -> Property
-prop_txsUpdateThenRetrieve getDb =
+prop_txsUpdateThenRetrieve :: DbImpl -> Property
+prop_txsUpdateThenRetrieve impl =
   forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
-      ioProperty $ do
-        db <- getDb
+      ioProperty $ withFreshDb impl $ \db -> do
         -- Insert the EB body first
         leiosDbInsertEbBody db point eb
         -- Update some transactions with bytes
         let offsetsToUpdate = filter (< numTxs) [0, numTxs `div` 2, numTxs - 1]
         txBytesMap <- forM offsetsToUpdate $ \off -> do
-          bytes <- BS.pack <$> replicateM 100 (pure $ fromIntegral off)
+          let bytes = BS.pack $ replicate 100 (fromIntegral off)
           pure (off, bytes)
         forM_ txBytesMap $ \(off, bytes) ->
           leiosDbUpdateEbTx db point.pointEbHash off bytes
@@ -234,23 +242,21 @@ prop_txsUpdateThenRetrieve getDb =
             all checkResult results && length results == numTxs
 
 -- | Property: retrieving from non-existent EB returns empty list.
-prop_txsRetrieveMissing :: IO (LeiosDbHandle IO) -> Property
-prop_txsRetrieveMissing getDb =
+prop_txsRetrieveMissing :: DbImpl -> Property
+prop_txsRetrieveMissing impl =
   forAll genEbHash $ \missingHash ->
-    ioProperty $ do
-      db <- getDb
+    ioProperty $ withFreshDb impl $ \db -> do
       result <- leiosDbBatchRetrieveTxs db missingHash [0, 1, 2]
       pure $ result === []
 
 -- | Property: measure leiosDbUpdateEbTx performance and report timing distribution.
 -- Tracks performance across different database sizes and EB configurations.
 -- Use --quickcheck-max-size to scale the test parameters.
-prop_updateEbTxPerformance :: IO (LeiosDbHandle IO) -> Property
-prop_updateEbTxPerformance getDb =
+prop_updateEbTxPerformance :: DbImpl -> Property
+prop_updateEbTxPerformance impl =
   forAllShrinkShow genPerfParams shrinkPerfParams show $ \(dbSize, numTxs) ->
     forAll (genPerfData dbSize numTxs) $ \(primeData, point, eb, txBytes) ->
-      ioProperty $ do
-        db <- getDb
+      ioProperty $ withFreshDb impl $ \db -> do
         -- Prime the database with additional EBs to simulate load
         forM_ primeData $ \(primePoint, primeEb) ->
           leiosDbInsertEbBody db primePoint primeEb
@@ -309,7 +315,7 @@ prop_updateEbTxPerformance getDb =
 test_singleSubscriber :: LeiosDbHandle IO -> IO ()
 test_singleSubscriber db = do
   chan <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1001) 1
+  let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3
   leiosDbInsertEbBody db point eb
   notification <- atomically $ readTChan chan
@@ -325,7 +331,7 @@ test_multipleSubscribers db = do
   chan1 <- subscribeEbNotifications db
   chan2 <- subscribeEbNotifications db
   chan3 <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1002) 2
+  let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 5
   leiosDbInsertEbBody db point eb
   -- All subscribers should receive the notification
@@ -340,7 +346,7 @@ test_multipleSubscribers db = do
 test_correctData :: LeiosDbHandle IO -> IO ()
 test_correctData db = do
   chan <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1003) 3
+  let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 10
       expectedSize = leiosEbBytesSize eb
   leiosDbInsertEbBody db point eb
@@ -358,7 +364,7 @@ test_correctData db = do
 test_lateSubscriber :: LeiosDbHandle IO -> IO ()
 test_lateSubscriber db = do
   -- Insert before subscribing
-  let point1 = mkTestPoint (SlotNo 1004) 4
+  let point1 = mkTestPoint (SlotNo 1) 1
       eb1 = mkTestEb 2
   leiosDbInsertEbBody db point1 eb1
   -- Now subscribe
@@ -369,7 +375,7 @@ test_lateSubscriber db = do
     Nothing -> pure () -- Expected: no notification
     Just _ -> assertFailure "late subscriber should not receive past notifications"
   -- But new insertions should be received
-  let point2 = mkTestPoint (SlotNo 1005) 5
+  let point2 = mkTestPoint (SlotNo 2) 2
       eb2 = mkTestEb 3
   leiosDbInsertEbBody db point2 eb2
   notification <- atomically $ readTChan chan
@@ -380,8 +386,8 @@ test_multipleNotifications :: LeiosDbHandle IO -> IO ()
 test_multipleNotifications db = do
   chan <- subscribeEbNotifications db
   let points =
-        [ mkTestPoint (SlotNo (1010 + i)) (fromIntegral i + 10)
-        | i <- [0 .. 4]
+        [ mkTestPoint (SlotNo i) (fromIntegral i)
+        | i <- [1 .. 5]
         ]
       ebs = [mkTestEb i | i <- [1 .. 5]]
   -- Insert all
@@ -397,7 +403,7 @@ test_multipleNotifications db = do
 test_noOfferBlockTxsBeforeComplete :: LeiosDbHandle IO -> IO ()
 test_noOfferBlockTxsBeforeComplete db = do
   chan <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1020) 20
+  let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3 -- 3 transactions
   leiosDbInsertEbBody db point eb
   -- Consume the LeiosOfferBlock notification
@@ -416,7 +422,7 @@ test_noOfferBlockTxsBeforeComplete db = do
 test_offerBlockTxs :: LeiosDbHandle IO -> IO ()
 test_offerBlockTxs db = do
   chan <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1030) 30
+  let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3 -- 3 transactions
       -- Insert the EB body (creates entries with NULL txBytes)
   leiosDbInsertEbBody db point eb
@@ -430,15 +436,6 @@ test_offerBlockTxs db = do
   assertOfferBlockTxs point notification
 
 -- * Test utilities
-
--- | Create a temporary SQLite database.
--- Returns the handle and temp directory path for cleanup.
-mkTestSqliteDb :: IO (LeiosDbHandle IO, FilePath)
-mkTestSqliteDb = do
-  sysTmp <- getCanonicalTemporaryDirectory
-  tmpDir <- createTempDirectory sysTmp "leios-test"
-  db <- newLeiosDbConnectionIO (tmpDir <> "/test.db")
-  pure (db, tmpDir)
 
 -- | Assert that a notification is LeiosOfferBlock with the expected point.
 assertOfferBlock :: LeiosPoint -> LeiosNotification -> IO ()
