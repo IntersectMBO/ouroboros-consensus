@@ -27,6 +27,7 @@ import LeiosDemoTypes
   , TxHash (..)
   , leiosEbBytesSize
   )
+import System.Directory (removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 import Test.QuickCheck
   ( Property
@@ -43,13 +44,20 @@ import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests =
-  testGroup
-    "LeiosDemoDb"
-    [ withResource newInMemoryLeiosDb (const $ pure ()) $ \getDb ->
-        testGroup "InMemory" (mkTestGroups getDb)
-    , withResource mkTestSqliteDb (const $ pure ()) $ \getDb ->
-        testGroup "SQLite" (mkTestGroups getDb)
-    ]
+  testGroup "LeiosDemoDb" $
+    forEachImplementation mkTestGroups
+
+-- | Run tests for each database implementation (InMemory and SQLite).
+-- The database is created once per implementation and shared across all tests.
+forEachImplementation :: (IO (LeiosDbHandle IO) -> [TestTree]) -> [TestTree]
+forEachImplementation mkTests =
+  [ withResource newInMemoryLeiosDb (const $ pure ()) $ \getDb ->
+      testGroup "InMemory" (mkTests getDb)
+  , withResource mkTestSqliteDb cleanupSqliteDb $ \getDbAndPath ->
+      testGroup "SQLite" (mkTests (fst <$> getDbAndPath))
+  ]
+ where
+  cleanupSqliteDb (_, tmpDir) = removeDirectoryRecursive tmpDir
 
 -- | Create the test groups for a given database handle.
 -- Each group uses a different counter offset to avoid slot collisions.
@@ -92,9 +100,6 @@ data DbState = DbState
   { dbHandle :: LeiosDbHandle IO
   , dbCounter :: IORef Int
   }
-
-newDbState :: LeiosDbHandle IO -> IO DbState
-newDbState = newDbStateAt 0
 
 -- | Create a DbState with counter starting at a specific offset.
 -- Used to avoid slot collisions between different test groups.
@@ -381,15 +386,14 @@ test_offerBlockTxs db = do
 
 -- * Test utilities
 
--- | Create a temporary SQLite database (no automatic cleanup).
--- Suitable for property tests where the DB must outlive the creation action.
-mkTestSqliteDb :: IO (LeiosDbHandle IO)
+-- | Create a temporary SQLite database.
+-- Returns the handle and temp directory path for cleanup.
+mkTestSqliteDb :: IO (LeiosDbHandle IO, FilePath)
 mkTestSqliteDb = do
   sysTmp <- getCanonicalTemporaryDirectory
   tmpDir <- createTempDirectory sysTmp "leios-test"
-  -- NOTE: this leaks temp files, but withResource cleanup is not reliable for
-  -- SQLite connections that may still be in use.
-  newLeiosDbConnectionIO (tmpDir <> "/test.db")
+  db <- newLeiosDbConnectionIO (tmpDir <> "/test.db")
+  pure (db, tmpDir)
 
 -- | Assert that a notification is LeiosOfferBlock with the expected point.
 assertOfferBlock :: LeiosPoint -> LeiosNotification -> IO ()
