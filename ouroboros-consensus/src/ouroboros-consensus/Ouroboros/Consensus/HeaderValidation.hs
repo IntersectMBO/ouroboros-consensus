@@ -73,6 +73,7 @@ import Cardano.Binary (enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (decode, encode)
+import Control.DeepSeq (NFData)
 import Control.Monad (unless, when)
 import Control.Monad.Except
   ( Except
@@ -608,6 +609,7 @@ instance
   , Ord (HeaderHash blk)
   , Typeable (HeaderHash blk)
   , NoThunks (HeaderHash blk)
+  , NFData (HeaderHash blk)
   ) =>
   StandardHash (HeaderWithTime blk)
 

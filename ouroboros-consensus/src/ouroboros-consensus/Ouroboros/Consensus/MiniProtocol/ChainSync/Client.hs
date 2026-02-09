@@ -79,6 +79,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
+import Control.DeepSeq (NFData (..))
 import Control.Monad (join, void)
 import Control.Monad.Class.MonadTimer (MonadTimer)
 import Control.Monad.Except (runExcept, throwError)
@@ -244,12 +245,12 @@ defaultChainDbView chainDB =
 -- | A newtype wrapper to avoid confusing our tip with their tip.
 newtype Their a = Their {unTheir :: a}
   deriving stock Eq
-  deriving newtype (Show, NoThunks)
+  deriving newtype (Show, NoThunks, NFData)
 
 -- | A newtype wrapper to avoid confusing our tip with their tip.
 newtype Our a = Our {unOur :: a}
   deriving stock Eq
-  deriving newtype (Show, NoThunks)
+  deriving newtype (Show, NoThunks, NFData)
 
 -- | Convenience function for reading a nested set of TVars and extracting some
 -- data from 'ChainSyncState'.
@@ -2244,6 +2245,16 @@ instance Eq ChainSyncClientResult where
   NoMoreIntersection{} == _ = False
   RolledBackPastIntersection{} == _ = False
   AskedToTerminate == _ = False
+
+instance NFData ChainSyncClientResult where
+  rnf (ForkTooDeep p (Our t) (Their t')) =
+    rnf p `seq`
+      rnf t `seq`
+        rnf t' `seq`
+          ()
+  rnf (NoMoreIntersection (Our t) (Their t')) = t `seq` t' `seq` ()
+  rnf (RolledBackPastIntersection p (Our t) (Their t')) = rnf p `seq` t `seq` t' `seq` ()
+  rnf AskedToTerminate = ()
 
 {-------------------------------------------------------------------------------
   Exception

@@ -4,6 +4,8 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 
+{-# OPTIONS -Wno-orphans #-}
+
 module Ouroboros.Consensus.ByronSpec.Ledger.Block
   ( BlockConfig (..)
   , ByronSpecBlock (..)
@@ -18,6 +20,7 @@ module Ouroboros.Consensus.ByronSpec.Ledger.Block
 import qualified Byron.Spec.Chain.STS.Block as Spec
 import qualified Byron.Spec.Ledger.Core as Spec
 import Codec.Serialise
+import Control.DeepSeq (NFData (..))
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
@@ -40,6 +43,12 @@ data ByronSpecBlock = ByronSpecBlock
   , byronSpecBlockHash :: Spec.Hash
   }
   deriving (Show, Eq, Generic, Serialise)
+
+instance NFData ByronSpecBlock where
+  rnf ByronSpecBlock{..} =
+    byronSpecBlock `seq`
+      byronSpecBlockHash `seq`
+        rnf byronSpecBlockNo
 
 {-------------------------------------------------------------------------------
   GetHeader
@@ -74,6 +83,8 @@ type ByronSpecHeader = Header ByronSpecBlock
 -------------------------------------------------------------------------------}
 
 type instance HeaderHash ByronSpecBlock = Spec.Hash
+instance NFData Spec.Hash where
+  rnf hash = hash `seq` ()
 instance StandardHash ByronSpecBlock
 
 instance HasHeader ByronSpecBlock where
