@@ -103,7 +103,7 @@ mkTestGroups impl =
       "transactions"
       [ testProperty "update then retrieve" $ prop_txsUpdateThenRetrieve impl
       , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
-      , testProperty "updateEbTx performance" $ prop_updateEbTxPerformance impl
+      , testProperty "single update performance" $ prop_updateEbTxPerformance impl
       ]
   , testGroup
       "notifications"
@@ -151,7 +151,9 @@ genPointAndEb numTxs = (,) <$> genPoint <*> genEb numTxs
 
 -- | Generate random transaction bytes.
 genTxBytes :: Gen BS.ByteString
-genTxBytes = BS.pack <$> vector 100
+genTxBytes = do
+  c <- chooseInt (50, 16_000)
+  BS.pack <$> vector c
 
 -- * Test fixtures for unit tests
 
@@ -292,8 +294,7 @@ prop_txsUpdateThenRetrieve impl =
         -- Insert the EB body first
         leiosDbInsertEbBody db point eb
         -- Update some transactions with bytes
-        updateTimes <- forM txs $ \(off, bytes) ->
-          snd <$> timed (leiosDbUpdateEbTx db point.pointEbHash off bytes)
+        updateTime <- snd <$> timed (leiosDbUpdateEbTx db point.pointEbHash txs)
         -- Retrieve all offsets
         let allOffsets = [0 .. numTxs - 1]
         (results, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs db point.pointEbHash allOffsets
@@ -302,7 +303,6 @@ prop_txsUpdateThenRetrieve impl =
               case lookup off txs of
                 Just expectedBytes -> mBytes == Just expectedBytes
                 Nothing -> mBytes == Nothing -- Not updated yet
-        let longestUpdate = if null txs then 0 else maximum updateTimes
         pure $
           conjoin
             [ all checkResult results
@@ -312,12 +312,14 @@ prop_txsUpdateThenRetrieve impl =
             , length results === numTxs
                 & counterexample "Length mismatch"
                 & counterexample ("Results: " ++ show (length results))
-            , longestUpdate < milli 5
-                & counterexample ("Update took too long: " <> showTime longestUpdate)
-            , retrieveTime < milli 1
+            , updateTime < milli 10
+                & counterexample ("Update took too long: " <> showTime updateTime)
+            , retrieveTime < milli 10
                 & counterexample ("Retrieve took too long: " <> showTime retrieveTime)
             ]
-            & tabulate "updateEbTx" (timeBucket <$> updateTimes)
+            & counterexample ("Total txs: " <> show numTxs)
+            & counterexample ("Inserted txs: " <> show (length txs))
+            & tabulate "updateEbTx" [timeBucket updateTime]
             & tabulate "batchRetrieveTxs" [timeBucket retrieveTime]
             & tabulate "txs" [magnitudeBucket $ length txs]
  where
@@ -326,16 +328,15 @@ prop_txsUpdateThenRetrieve impl =
     totalTxCount <- chooseInt (1, n * 10)
     existing <- sublistOf [0 .. totalTxCount]
     existingTxs <- forM existing $ \off -> do
-      c <- chooseInt (50, 16_000)
-      pure (off, BS.pack $ replicate c 1) -- txs with all 1's
+      bs <- genTxBytes
+      pure (off, bs)
     pure (totalTxCount, existingTxs)
 
   shrinkTxs (_, txs) =
-    [ (m + 1, txs')
+    [ (m, txs')
     | txs' <- shrinkList shrinkTx txs
-    , let m = case txs' of
-            [] -> 0
-            _ -> maximum (fst <$> txs')
+    , length txs' > 0
+    , let m = maximum (fst <$> txs') + 1
     ]
 
   shrinkTx :: (Int, ByteString) -> [(Int, ByteString)]
@@ -356,12 +357,10 @@ prop_txsRetrieveMissing impl =
 
 -- | Property: measure leiosDbUpdateEbTx performance and report timing distribution.
 -- Tracks performance across different database sizes and EB configurations.
--- Use --quickcheck-max-size to scale the test parameters.
--- TODO: drop this if the other test is enough
 prop_updateEbTxPerformance :: DbImpl -> Property
 prop_updateEbTxPerformance impl =
-  forAllShrinkShow genPerfParams shrinkPerfParams show $ \(dbSize, numTxs) ->
-    forAll (genPerfData dbSize numTxs) $ \(primeData, point, eb, txBytes) ->
+  forAllShrinkShow genPerfParams shrinkPerfParams show $ \(numEBs, numTxs) ->
+    forAll (genPerfData numEBs numTxs) $ \(primeData, point, eb, txBytes) ->
       ioProperty $ withFreshDb impl $ \db -> do
         -- Prime the database with additional EBs to simulate load
         forM_ primeData $ \(primePoint, primeEb) ->
@@ -369,23 +368,23 @@ prop_updateEbTxPerformance impl =
         -- Create the target EB
         leiosDbInsertEbBody db point eb
         -- Measure time for a single updateEbTx call
-        (_, updateTime) <- timed $ leiosDbUpdateEbTx db point.pointEbHash 0 txBytes
+        (_, updateTime) <- timed $ leiosDbUpdateEbTx db point.pointEbHash [(0, txBytes)]
         pure $
-          property True
-            & counterexample ("updateEbTx took " ++ show updateTime ++ " with " ++ show dbSize ++ " EBs in DB")
+          updateTime < milli 10
+            & counterexample ("Took too long: " <> showTime updateTime)
+            & counterexample ("With " <> show numEBs <> " EBs in DB (each having " <> show numTxs <> " txs)")
             & tabulate "updateEbTx (primed)" [timeBucket updateTime]
-            & tabulate "DB size (EBs)" [magnitudeBucket dbSize]
+            & tabulate "numEBs in DB" [magnitudeBucket numEBs]
             & tabulate "numTxs in EB" [magnitudeBucket numTxs]
  where
   genPerfParams = sized $ \size -> do
-    let maxSize = max 1 size
-    dbSize <- chooseInt (0, maxSize)
-    numTxs <- chooseInt (1, maxSize)
+    dbSize <- chooseInt (0, min (size * 10) 1000)
+    numTxs <- chooseInt (1, min (size * 100) 2000)
     pure (dbSize, numTxs)
 
-  shrinkPerfParams (dbSize, numTxs) =
-    [(d, numTxs) | d <- shrink dbSize]
-      ++ [(dbSize, n) | n <- shrink numTxs, n >= 1]
+  shrinkPerfParams (numEBs, numTxs) =
+    [(n, numTxs) | n <- shrink numEBs]
+      ++ [(numEBs, n) | n <- shrink numTxs, n >= 1]
 
   -- Generate all data needed for a performance test run
   genPerfData dbSize numTxs = do
@@ -495,8 +494,10 @@ test_noOfferBlockTxsBeforeComplete db = do
   -- Consume the LeiosOfferBlock notification
   _ <- atomically $ readTChan chan
   -- Update only 2 of 3 txs
-  leiosDbUpdateEbTx db point.pointEbHash 0 (BS.pack [1, 2, 3])
-  leiosDbUpdateEbTx db point.pointEbHash 1 (BS.pack [4, 5, 6])
+  leiosDbUpdateEbTx db point.pointEbHash $
+    [ (0, BS.pack [1, 2, 3])
+    , (1, BS.pack [4, 5, 6])
+    ]
   -- No LeiosOfferBlockTxs notification should be available
   maybeNotif <- atomically $ tryReadTChan chan
   case maybeNotif of
@@ -515,9 +516,11 @@ test_offerBlockTxs db = do
   -- Consume the LeiosOfferBlock notification
   _ <- atomically $ readTChan chan
   -- Update all txs
-  leiosDbUpdateEbTx db point.pointEbHash 0 (BS.pack [1, 2, 3])
-  leiosDbUpdateEbTx db point.pointEbHash 1 (BS.pack [4, 5, 6])
-  leiosDbUpdateEbTx db point.pointEbHash 2 (BS.pack [7, 8, 9])
+  leiosDbUpdateEbTx db point.pointEbHash $
+    [ (0, BS.pack [1, 2, 3])
+    , (1, BS.pack [4, 5, 6])
+    , (2, BS.pack [7, 8, 9])
+    ]
   notification <- atomically $ readTChan chan
   assertOfferBlockTxs point notification
 

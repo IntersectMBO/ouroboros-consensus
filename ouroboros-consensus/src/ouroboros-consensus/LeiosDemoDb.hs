@@ -6,7 +6,7 @@
 
 module LeiosDemoDb (module LeiosDemoDb) where
 
-import Cardano.Prelude (when)
+import Cardano.Prelude (forM_, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
@@ -72,7 +72,7 @@ data LeiosDbHandle m = LeiosDbHandle
   , -- NOTE: yields a LeiosOfferBlock notification
     leiosDbInsertEbBody :: LeiosPoint -> LeiosEb -> m ()
   , -- NOTE: yields a LeiosOfferBlockTxs notification once complete
-    leiosDbUpdateEbTx :: EbHash -> Int -> ByteString -> m ()
+    leiosDbUpdateEbTx :: EbHash -> [(Int, ByteString)] -> m ()
   , leiosDbInsertTxCache :: TxHash -> ByteString -> BytesSize -> Int64 -> m ()
   , leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   , -- TODO: Avoid needing this function
@@ -166,15 +166,16 @@ newInMemoryLeiosDb = do
               , imEbSlots = Map.insert point.pointEbHash point.pointSlotNo (imEbSlots s)
               }
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
-      , leiosDbUpdateEbTx = \ebHash txOffset txBytes -> atomically $ do
-          modifyTVar stateVar $ \s ->
-            s
-              { imEbBodies =
-                  Map.adjust
-                    (IntMap.adjust (\e -> e{eteTxBytes = Just txBytes}) txOffset)
-                    ebHash
-                    (imEbBodies s)
-              }
+      , leiosDbUpdateEbTx = \ebHash items -> atomically $ do
+          forM_ items $ \(txOffset, txBytes) ->
+            modifyTVar stateVar $ \s ->
+              s
+                { imEbBodies =
+                    Map.adjust
+                      (IntMap.adjust (\e -> e{eteTxBytes = Just txBytes}) txOffset)
+                      ebHash
+                      (imEbBodies s)
+                }
           state <- readTVar stateVar
           case Map.lookup ebHash (imEbBodies state) of
             Just entries
@@ -279,16 +280,15 @@ newLeiosDbFromSqlite db = do
               (leiosEbBodyItems eb)
           atomically $ modifyTVar slotsVar $ Map.insert point.pointEbHash point.pointSlotNo
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
-      , leiosDbUpdateEbTx = \ebHash txOffset txBytes -> do
-          -- TODO: Not have a transaction per tx, but group them up again (even
-          -- across fetch clients) using a write thread
+      , leiosDbUpdateEbTx = \ebHash items -> do
           nullCount <- dbWithBEGIN db $ do
-            -- TODO: update the schema to not do UPDATE, but INSERT INTO a dedicated txs table
             dbWithPrepare db (fromString sql_update_ebTx) $ \stmt -> do
-              dbBindBlob stmt 1 txBytes
-              dbBindBlob stmt 2 (let MkEbHash bytes = ebHash in bytes)
-              dbBindInt64 stmt 3 (fromIntegral txOffset)
-              dbStep1 stmt
+              forM_ items $ \(txOffset, txBytes) -> do
+                dbReset stmt
+                dbBindBlob stmt 1 txBytes
+                dbBindBlob stmt 2 (let MkEbHash bytes = ebHash in bytes)
+                dbBindInt64 stmt 3 (fromIntegral txOffset)
+                dbStep1 stmt
             -- TODO: do not SELECT on each UPDATE, use an index or other means to keep track?
             dbWithPrepare db (fromString sql_count_null_ebTxs) $ \stmt -> do
               dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
