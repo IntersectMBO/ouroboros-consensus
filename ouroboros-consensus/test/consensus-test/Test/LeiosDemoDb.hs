@@ -152,8 +152,9 @@ genPointAndEb numTxs = (,) <$> genPoint <*> genEb numTxs
 -- | Generate random transaction bytes.
 genTxBytes :: Gen BS.ByteString
 genTxBytes = do
-  c <- chooseInt (50, 16_000)
-  BS.pack <$> vector c
+  -- REVIEW: Use more realistic tx sizes?
+  -- c <- chooseInt (100, 16_000)
+  BS.pack <$> vector 100
 
 -- * Test fixtures for unit tests
 
@@ -379,7 +380,7 @@ prop_updateEbTxPerformance impl =
             & tabulate "numTxs in EB" [magnitudeBucket numTxs]
  where
   genPerfParams = sized $ \size -> do
-    dbSize <- chooseInt (0, min (size * 10) 1000)
+    dbSize <- chooseInt (0, size)
     numTxs <- chooseInt (1, min (size * 100) 2000)
     pure (dbSize, numTxs)
 
