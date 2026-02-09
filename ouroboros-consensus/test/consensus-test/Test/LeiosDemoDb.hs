@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | Tests for the LeiosDemoDb interface.
 --
@@ -14,10 +14,11 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadTChan)
 import Control.Exception (bracket)
 import Control.Monad (forM, forM_, replicateM)
+import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
-import Data.Time.Clock (diffUTCTime, getCurrentTime)
+import Data.Time.Clock (DiffTime)
 import qualified Data.Vector as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
@@ -41,9 +42,10 @@ import Test.QuickCheck
   , conjoin
   , counterexample
   , forAll
+  , forAllBlind
+  , forAllShrinkBlind
   , forAllShrinkShow
   , ioProperty
-  , property
   , shrink
   , shrinkList
   , sized
@@ -176,27 +178,42 @@ mkTestEb numTxs =
 
 -- * Timing helpers
 
--- | Measure the time of an IO action and return the result with elapsed microseconds.
-timed :: IO a -> IO (a, Double)
+-- | Measure the time of an IO action and return the result with 'DiffTime'.
+timed :: IO a -> IO (a, DiffTime)
 timed action = do
-  start <- getCurrentTime
+  start <- getMonotonicTime
   result <- action
-  end <- getCurrentTime
-  let elapsedUs = realToFrac (diffUTCTime end start) * 1_000_000
-  pure (result, elapsedUs)
+  end <- getMonotonicTime
+  pure (result, diffTime end start)
 
--- | Convert elapsed microseconds to a bucket label.
-timeBucket :: Double -> String
-timeBucket elapsedUs
-  | elapsedUs < 1 = "<1μs"
-  | elapsedUs < 10 = "1μs-10μs"
-  | elapsedUs < 100 = "10μs-100μs"
-  | elapsedUs < 1_000 = "100μs-1ms"
-  | elapsedUs < 2_000 = "1-2ms"
-  | elapsedUs < 5_000 = "2-5ms"
-  | elapsedUs < 10_000 = "5-10ms"
-  | elapsedUs < 50_000 = "10-50ms"
+-- | Convert 'DiffTime' to a bucket label.
+timeBucket :: DiffTime -> String
+timeBucket d
+  | d < micro 1 = "<1μs"
+  | d < micro 10 = "1μs-10μs"
+  | d < micro 100 = "10μs-100μs"
+  | d < milli 1 = "100μs-1ms"
+  | d < milli 2 = "1-2ms"
+  | d < milli 5 = "2-5ms"
+  | d < milli 10 = "5-10ms"
+  | d < milli 50 = "10-50ms"
   | otherwise = ">50ms"
+ where
+
+milli :: Integer -> DiffTime
+milli x = fromIntegral x / 1000
+
+micro :: Integer -> DiffTime
+micro x = fromIntegral x / 1_000_000
+
+showTime :: DiffTime -> String
+showTime t
+  | t < micro 1 = show (s * 1_000_000_000) <> "ns"
+  | t < milli 1 = show (s * 1_000_000) <> "μs"
+  | t < 1 = show (s * 1_000) <> "ms"
+  | otherwise = show t
+ where
+  s = realToFrac t :: Double
 
 magnitudeBucket :: (Num a, Ord a) => a -> String
 magnitudeBucket size
@@ -269,8 +286,8 @@ prop_ebsLookupMissing impl =
 -- | Property: updating tx bytes and retrieving them returns the correct data.
 prop_txsUpdateThenRetrieve :: DbImpl -> Property
 prop_txsUpdateThenRetrieve impl =
-  forAllShrinkShow genTxs shrinkTxs showTxs $ \(numTxs, txs) ->
-    forAll (genPointAndEb numTxs) $ \(point, eb) ->
+  forAllShrinkBlind genTxs shrinkTxs $ \(numTxs, txs) ->
+    forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> do
         -- Insert the EB body first
         leiosDbInsertEbBody db point eb
@@ -285,12 +302,21 @@ prop_txsUpdateThenRetrieve impl =
               case lookup off txs of
                 Just expectedBytes -> mBytes == Just expectedBytes
                 Nothing -> mBytes == Nothing -- Not updated yet
+        let longestUpdate = if null txs then 0 else maximum updateTimes
         pure $
           conjoin
-            [ property $ all checkResult results
+            [ all checkResult results
+                & counterexample "Unexpected bytes"
+                & counterexample ("To insert: " ++ show txs)
+                & counterexample ("Results: " ++ show results)
             , length results === numTxs
+                & counterexample "Length mismatch"
+                & counterexample ("Results: " ++ show (length results))
+            , longestUpdate < milli 5
+                & counterexample ("Update took too long: " <> showTime longestUpdate)
+            , retrieveTime < milli 1
+                & counterexample ("Retrieve took too long: " <> showTime retrieveTime)
             ]
-            & counterexample ("Results: " ++ show results)
             & tabulate "updateEbTx" (timeBucket <$> updateTimes)
             & tabulate "batchRetrieveTxs" [timeBucket retrieveTime]
             & tabulate "txs" [magnitudeBucket $ length txs]
@@ -306,11 +332,17 @@ prop_txsUpdateThenRetrieve impl =
 
   shrinkTxs (_, txs) =
     [ (m + 1, txs')
-    | txs' <- shrinkList pure txs
-    , let m = maximum (fst <$> txs')
+    | txs' <- shrinkList shrinkTx txs
+    , let m = case txs' of
+            [] -> 0
+            _ -> maximum (fst <$> txs')
     ]
 
-  showTxs (total, txs) = "Total: " <> show total <> ", Existing: " <> show (length txs)
+  shrinkTx :: (Int, ByteString) -> [(Int, ByteString)]
+  shrinkTx (off, bytes)
+    | BS.length bytes <= 1 = []
+    | otherwise =
+        [(off, BS.take (BS.length bytes `div` 2) bytes)]
 
 -- | Property: retrieving from non-existent EB returns empty list.
 prop_txsRetrieveMissing :: DbImpl -> Property
@@ -325,6 +357,7 @@ prop_txsRetrieveMissing impl =
 -- | Property: measure leiosDbUpdateEbTx performance and report timing distribution.
 -- Tracks performance across different database sizes and EB configurations.
 -- Use --quickcheck-max-size to scale the test parameters.
+-- TODO: drop this if the other test is enough
 prop_updateEbTxPerformance :: DbImpl -> Property
 prop_updateEbTxPerformance impl =
   forAllShrinkShow genPerfParams shrinkPerfParams show $ \(dbSize, numTxs) ->
@@ -339,7 +372,7 @@ prop_updateEbTxPerformance impl =
         (_, updateTime) <- timed $ leiosDbUpdateEbTx db point.pointEbHash 0 txBytes
         pure $
           property True
-            & counterexample ("updateEbTx took " ++ show updateTime ++ "μs with " ++ show dbSize ++ " EBs in DB")
+            & counterexample ("updateEbTx took " ++ show updateTime ++ " with " ++ show dbSize ++ " EBs in DB")
             & tabulate "updateEbTx (primed)" [timeBucket updateTime]
             & tabulate "DB size (EBs)" [magnitudeBucket dbSize]
             & tabulate "numTxs in EB" [magnitudeBucket numTxs]
