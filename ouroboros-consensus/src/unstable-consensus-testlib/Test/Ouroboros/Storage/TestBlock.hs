@@ -69,6 +69,7 @@ import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (Serialise (decode, encode), serialise)
+import Control.DeepSeq (NFData)
 import Control.Monad (forM, when)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Except (throwError)
@@ -140,17 +141,17 @@ data TestBlock = TestBlock
   , testBody :: !TestBody
   }
   deriving stock (Show, Eq, Generic)
-  deriving anyclass (NoThunks, Serialise)
+  deriving anyclass (NFData, NoThunks, Serialise)
 
 -- | Hash of a 'TestHeader'
 newtype TestHeaderHash = TestHeaderHash Int
   deriving stock (Eq, Ord, Show, Generic)
-  deriving newtype (Condense, NoThunks, Hashable, Serialise, Binary)
+  deriving newtype (Condense, NFData, NoThunks, Hashable, Serialise, Binary)
 
 -- | Hash of a 'TestBody'
 newtype TestBodyHash = TestBodyHash Int
   deriving stock (Eq, Ord, Show, Generic)
-  deriving newtype (Condense, NoThunks, Hashable, Serialise)
+  deriving newtype (Condense, NFData, NoThunks, Hashable, Serialise)
 
 data TestHeader = TestHeader
   { thHash :: HeaderHash TestHeader
@@ -169,14 +170,14 @@ data TestHeader = TestHeader
   , thIsEBB :: !EBB
   }
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (NoThunks, Serialise)
+  deriving anyclass (NFData, NoThunks, Serialise)
 
 -- | Strict variant of @Maybe EpochNo@
 data EBB
   = EBB !EpochNo
   | RegularBlock
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (NoThunks, Serialise)
+  deriving anyclass (NFData, NoThunks, Serialise)
 
 instance Hashable EBB where
   hashWithSalt s (EBB epoch) = hashWithSalt s (unEpochNo epoch)
@@ -197,7 +198,7 @@ data TestBody = TestBody
   , tbIsValid :: !Bool
   }
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (NoThunks, Serialise, Hashable)
+  deriving anyclass (NFData, NoThunks, Serialise, Hashable)
 
 newtype instance Header TestBlock = TestHeader' {unTestHeader :: TestHeader}
   deriving newtype (Eq, Show, NoThunks, Serialise)
@@ -352,7 +353,7 @@ testBlockFromLazyByteString bs = case CBOR.deserialiseFromBytes decode bs of
 -- because it corresponds to the /length/.
 newtype ChainLength = ChainLength Int
   deriving stock (Show, Generic)
-  deriving newtype (Eq, Ord, Enum, NoThunks, Serialise, Hashable)
+  deriving newtype (Eq, Ord, Enum, NFData, NoThunks, Serialise, Hashable)
 
 {-------------------------------------------------------------------------------
   Creating blocks

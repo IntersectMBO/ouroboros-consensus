@@ -54,6 +54,7 @@ As before, we require a few language extensions:
 
 And imports, of course:
 
+> import Control.DeepSeq (NFData)
 > import Control.Monad ()
 > import Control.Monad.Except (MonadError (throwError))
 > import Data.Void (Void, absurd)
@@ -134,7 +135,7 @@ Our infastructure is quite simple - a `newtype` for hashes:
 
 > newtype Hash = Hash Int
 >   deriving stock (Eq, Ord, Show, Generic)
->   deriving newtype (NoThunks, Hashable, Serialise)
+>   deriving newtype (NFData, NoThunks, Hashable, Serialise)
 
 And a function to turn `Hashable` things into values of type `Hash`.
 
@@ -190,7 +191,7 @@ block's provenance but since this is a simple example, we will simply use a
 >     , hbd_nodeId :: NodeId
 >     }
 >   deriving stock (Show, Eq, Generic)
->   deriving anyclass (Serialise)
+>   deriving anyclass (NFData, Serialise)
 >   deriving NoThunks via OnlyCheckWhnfNamed "HdrBlockD" (Header BlockD)
 
 

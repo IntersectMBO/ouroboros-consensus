@@ -207,6 +207,7 @@ library unstable-byronspec
     cardano-ledger-byron:testlib,
     cborg >=0.2.2 && <0.3,
     containers >=0.5 && <0.8,
+    deepseq,
     mtl,
     nothunks,
     ouroboros-consensus ^>=0.28,

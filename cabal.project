@@ -86,9 +86,24 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: 228bb2045784a9c180651dedeea9af9396140f47
-  --sha256: sha256-q/93M6+TtnqWiguOiwuUSJljA7nrICOsu+5SLl6jiCc=
+  tag: 3b9649e3b27e5ba06850b6a7ad8e6311efe6e7be
+  --sha256: sha256-/LPGEW6N8PziWTjlqasITr+WDhrjEjlmoKlJQJWOt7c=
   subdir:
     ouroboros-network
     cardano-diffusion
     network-mux
+
+source-repository-package
+  type: git
+  location: https://github.com/coot/kes-agent
+  tag: b7dfc660f95eb5e627a8383a3738775f1cb5cca5
+  --sha256: sha256-wuIv3rle6TsoEJJhhx8VP5LPMyzSfSS3panLkQECmAg=
+  subdir: kes-agent
+          kes-agent-crypto
+
+-- source-repository-package
+--   type: git
+--   location: https://github.com/IntersectMBO/cardano-base
+--   tag: 58d594b38c3ceef9103a81bf318cdc4b807767cf
+--   --sha256: sha256-/imboEV+LkfMCInaHCFhCn6563SIryYIU0oHo/Sp73E=
+--   subdir: cardano-crypto-class
