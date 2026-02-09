@@ -157,7 +157,7 @@ dumpFeaturesParser =
     (flag' DumpBlockFeatures $
         mconcat
           [ long "dump-features"
-          , help "Prints block and transaction metadata as CSVs"])
+          , help "Exports blocks' and transactions' features in CSV files"])
     <*>
      (strOption (long "block-file" <> metavar "FILENAME"))
     <*>

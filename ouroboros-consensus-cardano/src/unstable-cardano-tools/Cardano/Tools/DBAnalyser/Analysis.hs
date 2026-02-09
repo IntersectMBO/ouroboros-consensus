@@ -351,14 +351,21 @@ newtype WrappedHeaderHash blk = MkWHH (HeaderHash blk)
 deriving newtype instance Show (HeaderHash blk) => Show (WrappedHeaderHash blk)
 deriving newtype instance Condense (HeaderHash blk) => Condense (WrappedHeaderHash blk)
 
+-- | This is a record representation of the block component that we will pass to
+-- the analysis. It's a higher-kinded datatype because it's easier to use the
+-- record notation in applicative expression this way. This turned out not to be
+-- very necessary.
 data DumpQuery blk f = MkDumpQuery
   { query_header :: f (Header blk)
   , query_size :: f SizeInBytes
-  , query_is_ebb :: f IsEBB
   , query_block :: f blk
   }
   deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
 
+-- | A line of the csv file of block features. This is a higher-kinded datatype
+-- because it makes it possible to define both an actual line of data and the
+-- names of each columns (see 'blockFeaturesNames'). Moreover, the printing
+-- routine into csv can be done generically as well.
 data BlockFeatures blk f = MkBlockFeatures
   { block_num :: f BlockNo
   -- ^ The block's number
@@ -368,8 +375,6 @@ data BlockFeatures blk f = MkBlockFeatures
   -- ^ The block's hash
   , block_size :: f Word32
   -- ^ The blocks' size (in bytes)
-  , is_ebb :: f IsEBB
-  -- ^ Is the block an epoch-boundary block
   , predecessor :: f (ChainHash blk)
   -- ^ The hash of this block's predecessor
   , num_transactions :: f Int
@@ -383,22 +388,36 @@ data BlockFeatures blk f = MkBlockFeatures
   }
   deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
 
+-- | Like 'BlockFeatures' but for transaction features.
 data TxFeatures blk f = MkTxFeatures
   { src_block :: f BlockNo
+    -- ^ Identifier of the block which this transaction is from
   , num_script_wits :: f Int
+    -- ^ Number of script witnesses
   , num_addr_wits:: f Int
     -- ^ Number of regular address witnesses
   , size_script_wits :: f Int
+    -- ^ Size of inline script witnesses
   , size_datum :: f Int
+    -- ^ Size of the datum
   , num_inputs :: f Int
+    -- ^ Number of inputs
   , size_inputs :: f Int
+    -- ^ Size of (resolved) inputs
   , num_outputs :: f Int
+    -- ^ Number of outputs
   , num_ref_inputs :: f Int
+    -- ^ Number of reference inputs
   , size_ref_inputs :: f Int
+    -- ^ Size of (resolved) reference inputs
   , num_certs :: f Int
+    -- ^ Total number of certs
   , num_pool_certs :: f Int
+    -- ^ Number of certs which are pool certs
   , num_gov_certs :: f Int
+    -- ^ Number of certs which are governance certs
   , num_deleg_certs :: f Int
+    -- ^ Number of certs which are deleg certs
   }
   deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
 
@@ -409,7 +428,6 @@ blockFeaturesNames =
     , slot_num = Const "slot#"
     , block_hash = Const "block_hash"
     , block_size = Const "block_size"
-    , is_ebb = Const "is_ebb?"
     , predecessor = Const "predecessor"
     , num_transactions = Const "#transactions" -- TODO: compute in duckdb?
     , era = "era_name"
@@ -466,7 +484,6 @@ dumpBlockFeatures blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, lim
             MkDumpQuery
               { query_header = GetHeader
               , query_size = GetBlockSize
-              , query_is_ebb = GetIsEBB
               , query_block = GetBlock
               }
       processAllSt_ db registry component startFrom cfg limit (process outBlockHandle outTxHandle)
@@ -484,7 +501,6 @@ dumpBlockFeatures blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, lim
           , slot_num = blockSlot <$> query_header cmp
           , block_hash = MkWHH . headerHash <$> query_header cmp
           , block_size = getSizeInBytes <$> query_size cmp
-          , is_ebb = query_is_ebb cmp
           , predecessor = headerPrevHash <$> query_header cmp
           , num_transactions = length . toListOf HasAnalysis.txs <$> query_block cmp
           , era = HasAnalysis.eraName <$> query_block cmp
