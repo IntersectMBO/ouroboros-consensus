@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Tests for the LeiosDemoDb interface.
 --
@@ -13,7 +14,9 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadTChan)
 import Control.Exception (bracket)
 import Control.Monad (forM, forM_, replicateM)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Function ((&))
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import qualified Data.Vector as V
 import LeiosDemoDb
@@ -35,12 +38,16 @@ import Test.QuickCheck
   ( Gen
   , Property
   , chooseInt
+  , conjoin
   , counterexample
   , forAll
   , forAllShrinkShow
   , ioProperty
+  , property
   , shrink
+  , shrinkList
   , sized
+  , sublistOf
   , tabulate
   , vector
   , (===)
@@ -181,13 +188,25 @@ timed action = do
 -- | Convert elapsed microseconds to a bucket label.
 timeBucket :: Double -> String
 timeBucket elapsedUs
-  | elapsedUs < 100 = "<100μs"
-  | elapsedUs < 1000 = "100μs-1ms"
-  | elapsedUs < 2000 = "1-2ms"
-  | elapsedUs < 5000 = "2-5ms"
-  | elapsedUs < 10000 = "5-10ms"
-  | elapsedUs < 50000 = "10-50ms"
+  | elapsedUs < 1 = "<1μs"
+  | elapsedUs < 10 = "1μs-10μs"
+  | elapsedUs < 100 = "10μs-100μs"
+  | elapsedUs < 1_000 = "100μs-1ms"
+  | elapsedUs < 2_000 = "1-2ms"
+  | elapsedUs < 5_000 = "2-5ms"
+  | elapsedUs < 10_000 = "5-10ms"
+  | elapsedUs < 50_000 = "10-50ms"
   | otherwise = ">50ms"
+
+magnitudeBucket :: (Num a, Ord a) => a -> String
+magnitudeBucket size
+  | size < 1 = "0-1"
+  | size < 10 = "1-10"
+  | size < 100 = "10-100"
+  | size < 1_000 = "100-1_000"
+  | size < 10_000 = "1_000-10_000"
+  | size < 100_000 = "10_000-100_000"
+  | otherwise = ">100_000"
 
 -- * Property tests for points
 
@@ -249,31 +268,48 @@ prop_ebsLookupMissing impl =
 -- | Property: updating tx bytes and retrieving them returns the correct data.
 prop_txsUpdateThenRetrieve :: DbImpl -> Property
 prop_txsUpdateThenRetrieve impl =
-  forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
+  forAllShrinkShow genTxs shrinkTxs showTxs $ \(numTxs, txs) ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> do
         -- Insert the EB body first
         leiosDbInsertEbBody db point eb
         -- Update some transactions with bytes
-        let offsetsToUpdate = filter (< numTxs) [0, numTxs `div` 2, numTxs - 1]
-        txBytesMap <- forM offsetsToUpdate $ \off -> do
-          let bytes = BS.pack $ replicate 100 (fromIntegral off)
-          pure (off, bytes)
-        (_, updateTime) <- timed $ forM_ txBytesMap $ \(off, bytes) ->
-          leiosDbUpdateEbTx db point.pointEbHash off bytes
+        updateTimes <- forM txs $ \(off, bytes) ->
+          snd <$> timed (leiosDbUpdateEbTx db point.pointEbHash off bytes)
         -- Retrieve all offsets
         let allOffsets = [0 .. numTxs - 1]
         (results, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs db point.pointEbHash allOffsets
         -- Check that updated offsets have the correct bytes
         let checkResult (off, _txHash, mBytes) =
-              case lookup off txBytesMap of
+              case lookup off txs of
                 Just expectedBytes -> mBytes == Just expectedBytes
                 Nothing -> mBytes == Nothing -- Not updated yet
         pure $
-          tabulate "updateEbTx (batch)" [timeBucket updateTime] $
-            tabulate "batchRetrieveTxs" [timeBucket retrieveTime] $
-              counterexample ("Results: " ++ show results) $
-                all checkResult results && length results == numTxs
+          conjoin
+            [ property $ all checkResult results
+            , length results === numTxs
+            ]
+            & counterexample ("Results: " ++ show results)
+            & tabulate "updateEbTx" (timeBucket <$> updateTimes)
+            & tabulate "batchRetrieveTxs" [timeBucket retrieveTime]
+            & tabulate "txs" [magnitudeBucket $ length txs]
+ where
+  genTxs :: Gen (Int, [(Int, ByteString)])
+  genTxs = sized $ \n -> do
+    totalTxCount <- chooseInt (1, n * 10)
+    existing <- sublistOf [0 .. totalTxCount]
+    existingTxs <- forM existing $ \off -> do
+      c <- chooseInt (50, 16_000)
+      pure (off, BS.pack $ replicate c 1) -- txs with all 1's
+    pure (totalTxCount, existingTxs)
+
+  shrinkTxs (_, txs) =
+    [ (m + 1, txs')
+    | txs' <- shrinkList pure txs
+    , let m = maximum (fst <$> txs')
+    ]
+
+  showTxs (total, txs) = "Total: " <> show total <> ", Existing: " <> show (length txs)
 
 -- | Property: retrieving from non-existent EB returns empty list.
 prop_txsRetrieveMissing :: DbImpl -> Property
@@ -300,18 +336,10 @@ prop_updateEbTxPerformance impl =
         leiosDbInsertEbBody db point eb
         -- Measure time for a single updateEbTx call
         (_, updateTime) <- timed $ leiosDbUpdateEbTx db point.pointEbHash 0 txBytes
-        let sizeBucket n
-              | n == 0 = "0"
-              | n <= 10 = "1-10"
-              | n <= 100 = "11-100"
-              | n <= 1000 = "101-1000"
-              | otherwise = ">1000"
-            dbBucket = sizeBucket dbSize
-            txsBucket = sizeBucket numTxs
         pure $
           tabulate "updateEbTx (primed)" [timeBucket updateTime] $
-            tabulate "DB size (EBs)" [dbBucket] $
-              tabulate "numTxs in EB" [txsBucket] $
+            tabulate "DB size (EBs)" [magnitudeBucket dbSize] $
+              tabulate "numTxs in EB" [magnitudeBucket numTxs] $
                 counterexample
                   ("updateEbTx took " ++ show updateTime ++ "μs with " ++ show dbSize ++ " EBs in DB")
                   True
