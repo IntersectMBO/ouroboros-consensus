@@ -104,6 +104,7 @@ import qualified System.IO as IO
 import Data.Monoid
 import Numeric.Natural
 import Cardano.Ledger.BaseTypes (ProtVer(..), getVersion64)
+import Control.Exception
 
 {-------------------------------------------------------------------------------
   Run the requested analysis
@@ -493,60 +494,65 @@ dumpBlockFeatures blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, lim
   process bh th wls cmp = do
     let utxo_summary = HasAnalysis.utxoSummary @blk wls
 
-    let
-      blockFeatures :: BlockFeatures blk Identity
-      blockFeatures =
-        MkBlockFeatures
-          { block_num = blockNo <$> query_header cmp
-          , slot_num = blockSlot <$> query_header cmp
-          , block_hash = MkWHH . headerHash <$> query_header cmp
-          , block_size = getSizeInBytes <$> query_size cmp
-          , predecessor = headerPrevHash <$> query_header cmp
-          , num_transactions = length . toListOf HasAnalysis.txs <$> query_block cmp
-          , era = HasAnalysis.eraName <$> query_block cmp
-          , prot_major = getVersion64 . pvMajor . HasAnalysis.protVer <$> query_block cmp
-          , prot_minor = pvMinor . HasAnalysis.protVer <$> query_block cmp
-          }
-    let line = csv $ Container $ bmapC @Condense (Const . condense . runIdentity) blockFeatures
-    IO.hPutStrLn bh line
+    traceExceptionWith tracer "Exception while extracting whole-block features" $ do
+      let
+        blockFeatures :: BlockFeatures blk Identity
+        blockFeatures =
+          MkBlockFeatures
+            { block_num = blockNo <$> query_header cmp
+            , slot_num = blockSlot <$> query_header cmp
+            , block_hash = MkWHH . headerHash <$> query_header cmp
+            , block_size = getSizeInBytes <$> query_size cmp
+            , predecessor = headerPrevHash <$> query_header cmp
+            , num_transactions = length . toListOf HasAnalysis.txs <$> query_block cmp
+            , era = HasAnalysis.eraName <$> query_block cmp
+            , prot_major = getVersion64 . pvMajor . HasAnalysis.protVer <$> query_block cmp
+            , prot_minor = pvMinor . HasAnalysis.protVer <$> query_block cmp
+            }
+      let line = csv $ Container $ bmapC @Condense (Const . condense . runIdentity) blockFeatures
+      IO.hPutStrLn bh line
 
-    let
-      script_wits :: SimpleFold (HasAnalysis.TxOf blk) (HasAnalysis.ScriptType blk)
-      script_wits = HasAnalysis.wits @blk . HasAnalysis.scriptWits @blk . traverse
-
-      txFeatures :: HasAnalysis.TxOf blk -> TxFeatures blk Identity
-      txFeatures tx =
-        MkTxFeatures
-          { src_block = blockNo <$> query_header cmp
-          , num_script_wits = Identity $ length $ toListOf script_wits tx
-          , num_addr_wits = Identity $ length $ toListOf (HasAnalysis.wits @blk . HasAnalysis.addrWits @blk . folded) tx
-          , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize @blk)) Sum tx
-          , size_datum = Identity $ tx ^. (HasAnalysis.wits @blk . to (HasAnalysis.datumSize @blk))
-          , num_inputs = Identity $ length $ toListOf (HasAnalysis.inputs @blk . folded) tx
-          -- I find it a little dangerous to default to 0 when the TxIn isn't
-          -- there. We have to have a default because the Byron blocks have
-          -- their UTxO summary implemeted yet in their HasAnalysis instance.
-          -- But this may hide some bugs.
-          , size_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.inputs @blk . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
-          , num_outputs = Identity $ HasAnalysis.numOutputs @blk tx
-          , num_ref_inputs = Identity $ length $ toListOf (HasAnalysis.referenceInputs @blk) tx
-          -- I find it a little dangerous to default to 0 when the TxIn isn't
-          -- there. We have to have a default because the Byron blocks have
-          -- their UTxO summary implemeted yet in their HasAnalysis instance.
-          -- But this may hide some bugs.
-          , size_ref_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs @blk . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
-          , num_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk) tx
-          , num_pool_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterPoolCert @blk) tx
-          , num_gov_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterGovCert @blk) tx
-          , num_deleg_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterDelegCert @blk) tx
-          }
-    let txFeaturess = toListOf (HasAnalysis.txs @blk . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
-    let txlines = map (csv . Container . bmapC @Condense (Const . condense . runIdentity)) txFeaturess
-    forM_ txlines $ \txl ->
-      IO.hPutStrLn th txl
+    traceExceptionWith tracer "Exception while extracting transaction features" $ do
+      let
+        script_wits :: SimpleFold (HasAnalysis.TxOf blk) (HasAnalysis.ScriptType blk)
+        script_wits = HasAnalysis.wits @blk . HasAnalysis.scriptWits @blk . traverse
+  
+        txFeatures :: HasAnalysis.TxOf blk -> TxFeatures blk Identity
+        txFeatures tx =
+          MkTxFeatures
+            { src_block = blockNo <$> query_header cmp
+            , num_script_wits = Identity $ length $ toListOf script_wits tx
+            , num_addr_wits = Identity $ length $ toListOf (HasAnalysis.wits @blk . HasAnalysis.addrWits @blk . folded) tx
+            , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize @blk)) Sum tx
+            , size_datum = Identity $ tx ^. (HasAnalysis.wits @blk . to (HasAnalysis.datumSize @blk))
+            , num_inputs = Identity $ length $ toListOf (HasAnalysis.inputs @blk . folded) tx
+            -- I find it a little dangerous to default to 0 when the TxIn isn't
+            -- there. We have to have a default because the Byron blocks have
+            -- their UTxO summary implemeted yet in their HasAnalysis instance.
+            -- But this may hide some bugs.
+            , size_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.inputs @blk . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
+            , num_outputs = Identity $ HasAnalysis.numOutputs @blk tx
+            , num_ref_inputs = Identity $ length $ toListOf (HasAnalysis.referenceInputs @blk) tx
+            -- I find it a little dangerous to default to 0 when the TxIn isn't
+            -- there. We have to have a default because the Byron blocks have
+            -- their UTxO summary implemeted yet in their HasAnalysis instance.
+            -- But this may hide some bugs.
+            , size_ref_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs @blk . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
+            , num_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk) tx
+            , num_pool_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterPoolCert @blk) tx
+            , num_gov_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterGovCert @blk) tx
+            , num_deleg_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterDelegCert @blk) tx
+            }
+      let txFeaturess = toListOf (HasAnalysis.txs @blk . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
+      let txlines = map (csv . Container . bmapC @Condense (Const . condense . runIdentity)) txFeaturess
+      forM_ txlines $ \txl ->
+        IO.hPutStrLn th txl
 
   csv :: Foldable t => t String -> String
   csv = intercalate ", " . toList
+
+  traceExceptionWith :: Tracer IO (TraceEvent blk1) -> String -> IO a -> IO a
+  traceExceptionWith tracer' msg act = onException act (traceWith tracer' (Message msg))
 
 {-------------------------------------------------------------------------------
   Analysis: show total number of tx outputs per block
