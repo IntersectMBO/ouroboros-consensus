@@ -167,6 +167,28 @@ mkTestEb numTxs =
       | i <- [0 .. numTxs - 1]
       ]
 
+-- * Timing helpers
+
+-- | Measure the time of an IO action and return the result with elapsed microseconds.
+timed :: IO a -> IO (a, Double)
+timed action = do
+  start <- getCurrentTime
+  result <- action
+  end <- getCurrentTime
+  let elapsedUs = realToFrac (diffUTCTime end start) * 1_000_000
+  pure (result, elapsedUs)
+
+-- | Convert elapsed microseconds to a bucket label.
+timeBucket :: Double -> String
+timeBucket elapsedUs
+  | elapsedUs < 100 = "<100μs"
+  | elapsedUs < 1000 = "100μs-1ms"
+  | elapsedUs < 2000 = "1-2ms"
+  | elapsedUs < 5000 = "2-5ms"
+  | elapsedUs < 10000 = "5-10ms"
+  | elapsedUs < 50000 = "10-50ms"
+  | otherwise = ">50ms"
+
 -- * Property tests for points
 
 -- | Property: inserting a point and then scanning should return it.
@@ -174,9 +196,12 @@ prop_pointsInsertThenScan :: DbImpl -> Property
 prop_pointsInsertThenScan impl =
   forAll genPoint $ \point ->
     ioProperty $ withFreshDb impl $ \db -> do
-      leiosDbInsertEbPoint db point
-      points <- leiosDbScanEbPoints db
-      pure $ (point.pointSlotNo, point.pointEbHash) `elem` points
+      (_, insertTime) <- timed $ leiosDbInsertEbPoint db point
+      (points, scanTime) <- timed $ leiosDbScanEbPoints db
+      pure $
+        tabulate "insertEbPoint" [timeBucket insertTime] $
+          tabulate "scanEbPoints" [timeBucket scanTime] $
+            (point.pointSlotNo, point.pointEbHash) `elem` points
 
 -- | Property: multiple inserted points all appear in scan results.
 prop_pointsAccumulate :: DbImpl -> Property
@@ -184,10 +209,13 @@ prop_pointsAccumulate impl =
   forAllShrinkShow (chooseInt (1, 10)) shrink show $ \count ->
     forAll (replicateM count genPoint) $ \points ->
       ioProperty $ withFreshDb impl $ \db -> do
-        forM_ points $ leiosDbInsertEbPoint db
-        scanned <- leiosDbScanEbPoints db
+        (_, insertTime) <- timed $ forM_ points $ leiosDbInsertEbPoint db
+        (scanned, scanTime) <- timed $ leiosDbScanEbPoints db
         let expected = [(p.pointSlotNo, p.pointEbHash) | p <- points]
-        pure $ all (`elem` scanned) expected
+        pure $
+          tabulate "insertEbPoint (batch)" [timeBucket insertTime] $
+            tabulate "scanEbPoints" [timeBucket scanTime] $
+              all (`elem` scanned) expected
 
 -- * Property tests for EBs
 
@@ -198,19 +226,23 @@ prop_ebsInsertThenLookup impl =
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> do
         let expectedTxs = V.toList (leiosEbTxs eb)
-        leiosDbInsertEbBody db point eb
-        result <- leiosDbLookupEbBody db point.pointEbHash
+        (_, insertTime) <- timed $ leiosDbInsertEbBody db point eb
+        (result, lookupTime) <- timed $ leiosDbLookupEbBody db point.pointEbHash
         pure $
-          counterexample ("Expected: " ++ show expectedTxs ++ "\nGot: " ++ show result) $
-            result == expectedTxs
+          tabulate "insertEbBody" [timeBucket insertTime] $
+            tabulate "lookupEbBody" [timeBucket lookupTime] $
+              counterexample ("Expected: " ++ show expectedTxs ++ "\nGot: " ++ show result) $
+                result == expectedTxs
 
 -- | Property: looking up a non-existent EB returns empty list.
 prop_ebsLookupMissing :: DbImpl -> Property
 prop_ebsLookupMissing impl =
   forAll genEbHash $ \missingHash ->
     ioProperty $ withFreshDb impl $ \db -> do
-      result <- leiosDbLookupEbBody db missingHash
-      pure $ result === []
+      (result, lookupTime) <- timed $ leiosDbLookupEbBody db missingHash
+      pure $
+        tabulate "lookupEbBody (missing)" [timeBucket lookupTime] $
+          result === []
 
 -- * Property tests for transactions
 
@@ -227,27 +259,31 @@ prop_txsUpdateThenRetrieve impl =
         txBytesMap <- forM offsetsToUpdate $ \off -> do
           let bytes = BS.pack $ replicate 100 (fromIntegral off)
           pure (off, bytes)
-        forM_ txBytesMap $ \(off, bytes) ->
+        (_, updateTime) <- timed $ forM_ txBytesMap $ \(off, bytes) ->
           leiosDbUpdateEbTx db point.pointEbHash off bytes
         -- Retrieve all offsets
         let allOffsets = [0 .. numTxs - 1]
-        results <- leiosDbBatchRetrieveTxs db point.pointEbHash allOffsets
+        (results, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs db point.pointEbHash allOffsets
         -- Check that updated offsets have the correct bytes
         let checkResult (off, _txHash, mBytes) =
               case lookup off txBytesMap of
                 Just expectedBytes -> mBytes == Just expectedBytes
                 Nothing -> mBytes == Nothing -- Not updated yet
         pure $
-          counterexample ("Results: " ++ show results) $
-            all checkResult results && length results == numTxs
+          tabulate "updateEbTx (batch)" [timeBucket updateTime] $
+            tabulate "batchRetrieveTxs" [timeBucket retrieveTime] $
+              counterexample ("Results: " ++ show results) $
+                all checkResult results && length results == numTxs
 
 -- | Property: retrieving from non-existent EB returns empty list.
 prop_txsRetrieveMissing :: DbImpl -> Property
 prop_txsRetrieveMissing impl =
   forAll genEbHash $ \missingHash ->
     ioProperty $ withFreshDb impl $ \db -> do
-      result <- leiosDbBatchRetrieveTxs db missingHash [0, 1, 2]
-      pure $ result === []
+      (result, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs db missingHash [0, 1, 2]
+      pure $
+        tabulate "batchRetrieveTxs (missing)" [timeBucket retrieveTime] $
+          result === []
 
 -- | Property: measure leiosDbUpdateEbTx performance and report timing distribution.
 -- Tracks performance across different database sizes and EB configurations.
@@ -263,19 +299,8 @@ prop_updateEbTxPerformance impl =
         -- Create the target EB
         leiosDbInsertEbBody db point eb
         -- Measure time for a single updateEbTx call
-        start <- getCurrentTime
-        leiosDbUpdateEbTx db point.pointEbHash 0 txBytes
-        end <- getCurrentTime
-        let elapsedUs = realToFrac (diffUTCTime end start) * 1_000_000 :: Double
-            timeBucket
-              | elapsedUs < 100 = "<100μs"
-              | elapsedUs < 1000 = "100μs-1ms"
-              | elapsedUs < 2000 = "1-2ms"
-              | elapsedUs < 5000 = "2-5ms"
-              | elapsedUs < 10000 = "5-10ms"
-              | elapsedUs < 50000 = "10-50ms"
-              | otherwise = ">50ms"
-            sizeBucket n
+        (_, updateTime) <- timed $ leiosDbUpdateEbTx db point.pointEbHash 0 txBytes
+        let sizeBucket n
               | n == 0 = "0"
               | n <= 10 = "1-10"
               | n <= 100 = "11-100"
@@ -284,11 +309,11 @@ prop_updateEbTxPerformance impl =
             dbBucket = sizeBucket dbSize
             txsBucket = sizeBucket numTxs
         pure $
-          tabulate "updateEbTx time" [timeBucket] $
+          tabulate "updateEbTx (primed)" [timeBucket updateTime] $
             tabulate "DB size (EBs)" [dbBucket] $
               tabulate "numTxs in EB" [txsBucket] $
                 counterexample
-                  ("updateEbTx took " ++ show elapsedUs ++ "μs with " ++ show dbSize ++ " EBs in DB")
+                  ("updateEbTx took " ++ show updateTime ++ "μs with " ++ show dbSize ++ " EBs in DB")
                   True
  where
   genPerfParams = sized $ \size -> do
