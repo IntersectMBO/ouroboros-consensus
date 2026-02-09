@@ -146,17 +146,17 @@ parseAnalysis =
                   <> "blocks to put in the mempool at once."
             , metavar "INT"
             ]
-    , dumpHeaderParser
+    , dumpFeaturesParser
     , benchmarkLedgerOpsParser
     , getBlockApplicationMetrics
     , pure OnlyValidation
     ]
 
-dumpHeaderParser :: Parser AnalysisName
-dumpHeaderParser =
-    (flag' DumpBlockHeader $
+dumpFeaturesParser :: Parser AnalysisName
+dumpFeaturesParser =
+    (flag' DumpBlockFeatures $
         mconcat
-          [ long "dump"
+          [ long "dump-features"
           , help "Prints block and transaction metadata as CSVs"])
     <*>
      (strOption (long "block-file" <> metavar "FILENAME"))

@@ -303,18 +303,6 @@ instance Aeson.FromJSON CardanoConfig where
         , cfgHardForkTriggers = CardanoHardForkTriggers triggers
         }
 
-data SomeTx where
-  ATx :: HasAnalysis blk => TxOf blk -> SomeTx
-
-data SomeWit where
-  AWit :: HasAnalysis blk => WitsOf blk -> SomeWit
-
-data SomeScriptType where
-  AScriptType :: HasAnalysis blk => ScriptType blk -> SomeScriptType
-
-data SomeCert where
-  ACert :: HasAnalysis blk => CertsOf blk -> SomeCert
-
 instance HasAnalysis (CardanoBlock StandardCrypto) where
   countTxOutputs = analyseBlock countTxOutputs
   blockTxSizes = analyseBlock blockTxSizes
@@ -467,6 +455,7 @@ castChainHash ::
 castChainHash GenesisHash = GenesisHash
 castChainHash (BlockHash h) = BlockHash $ castHeaderHash h
 
+-- | From here on is the implementation of the "dump feature" analysis.
 instance HasFeatures (CardanoBlock StandardCrypto) where
   protVer = analyseBlock protVer
   
@@ -507,3 +496,20 @@ instance HasFeatures (CardanoBlock StandardCrypto) where
   eraName = analyseBlock eraName
 
   utxoSummary = analyseWithLedgerState utxoSummary
+
+-- | 'SomeTx' and other @SomeX@ types existentially quantify over the @blk@
+-- type. There's one per type family in the 'HasFeatures' type class (since we
+-- can't abstract over type families). They're a restricted version of the
+-- 'CardanoBlock' type for the methods which don't take a block, but only a
+-- component of a block, as an argument.
+data SomeTx where
+  ATx :: HasAnalysis blk => TxOf blk -> SomeTx
+
+data SomeWit where
+  AWit :: HasAnalysis blk => WitsOf blk -> SomeWit
+
+data SomeScriptType where
+  AScriptType :: HasAnalysis blk => ScriptType blk -> SomeScriptType
+
+data SomeCert where
+  ACert :: HasAnalysis blk => CertsOf blk -> SomeCert

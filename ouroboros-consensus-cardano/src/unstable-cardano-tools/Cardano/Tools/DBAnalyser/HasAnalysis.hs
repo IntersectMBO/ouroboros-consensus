@@ -74,47 +74,74 @@ class HasProtocolInfo blk where
   data Args blk
   mkProtocolInfo :: Args blk -> IO (ProtocolInfo blk)
 
--- | These are the methods that go into the dumpBlockFeatures analysis
+-- | These are the methods that go into the dumpBlockFeatures analysis. They are
+-- split in a separate type class to group them logically.
 class HasFeatures blk where
   protVer :: blk -> ProtVer
 
+  -- | The type of transaction that blocks of type @blk@ contains.
   type TxOf blk
 
+  -- | Iterates over all the transactions of a block.
   txs :: SimpleFold blk (TxOf blk)
 
+  -- | The set of all inputs in a transaction.
   inputs :: SimpleGetter (TxOf blk) (Set Ledger.TxIn)
-  numOutputs :: TxOf blk -> Int -- TODO: compare with countTxOutputs as a safety
-                -- check
+  -- | Number of outputs in the transaction. We don't expose a set of, or an
+  -- iterator over, outputs to avoid introducing an extra type family.
+  numOutputs :: TxOf blk -> Int
+  -- | The set of only reference inputs in a transaction.
   referenceInputs :: SimpleGetter (TxOf blk) (Set Ledger.TxIn)
 
+  -- | The type of sets of witnesses that transactions in blocks of type @blk@
+  -- can have.
   type WitsOf blk
 
+  -- | The set of all the witnesses of a given transaction
   wits :: SimpleGetter (TxOf blk) (WitsOf blk)
 
+  -- | The set of only address witnesses contain in a witness set.
   addrWits :: Lens' (WitsOf blk) (Set (WitVKey Witness))
 
+  -- | The size of the datum in a witness set.
   datumSize :: WitsOf blk -> Int
 
+  -- | The type of script witnesses that a transaction in @blk@ can have.
   type ScriptType blk
 
+  -- | The set of only the script witnesses in the witness set, indexed by their
+  -- hash.
   scriptWits :: SimpleGetter (WitsOf blk) (Map ScriptHash (ScriptType blk))
 
+  -- | The size of a given script.
   scriptSize :: ScriptType blk -> Int
 
+  -- | The type of certificates that transactions in blocks of types @blk@ can
+  -- use. The main use of this type is to give us the means to classify
+  -- certificate in several categories.
   type CertsOf blk
 
+  -- | Iterates over all the certificates of a transaction.
   certs :: SimpleFold (TxOf blk) (CertsOf blk)
 
-  -- | These filters are meant to be an affine fold really. A one-way prism. It
-  -- should be fine not to encode this constraint.
+  -- | 'filterPoolCert', 'filterGovCert', 'filterDelegCert' tests if a
+  -- certificate is in the given category. They are implemented as affine folds:
+  -- a fold which traverses 0 or 1 value (and, in this case, is the identity
+  -- when it traverses 1 value). This affinity constraint isn't enforced in
+  -- types.
   filterPoolCert :: SimpleFold (CertsOf blk) (CertsOf blk)
   filterGovCert :: SimpleFold (CertsOf blk) (CertsOf blk)
   filterDelegCert :: SimpleFold (CertsOf blk) (CertsOf blk)
   
-
+  -- | The name of the era in which the block was emitted. This is plain text,
+  -- simply meant to help filtering out undesired era for later analysis.
   eraName :: blk -> Text
 
-  -- | Representing outputs as their sizes. Avoids introducing a new type
-  -- family, and should be enough for our purpose, there isn't much more that we
-  -- can analyse about an UtxO.
+  -- | The UTxO map from the current ledger state. It is important that this
+  -- stays a map and not an iterator because we are going to lookup inputs in
+  -- the map (but never otherwise traverse it). This is used for to extract the
+  -- size of inputs.
+  --
+  -- We're representing outputs merely as their sizes. This avoids introducing a
+  -- new type family, and is enough for our purpose.
   utxoSummary :: WithLedgerState blk -> Map Ledger.TxIn Int

@@ -22,7 +22,7 @@ data DBAnalyserConfig = DBAnalyserConfig
 
 data AnalysisName
   = ShowSlotBlockNo
-  | DumpBlockHeader { blockFile :: FilePath, transactionFile :: FilePath }
+  | DumpBlockFeatures { blockFile :: FilePath, transactionFile :: FilePath }
   | CountTxOutputs
   | ShowBlockHeaderSize
   | ShowBlockTxsSize

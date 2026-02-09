@@ -128,7 +128,7 @@ runAnalysis analysisName = case go analysisName of
  where
   go :: AnalysisName -> SomeAnalysis blk
   go ShowSlotBlockNo = mkAnalysis $ showSlotBlockNo
-  go (DumpBlockHeader{blockFile, transactionFile}) = mkAnalysis $ dumpBlockHeader blockFile transactionFile
+  go (DumpBlockFeatures{blockFile, transactionFile}) = mkAnalysis $ dumpBlockFeatures blockFile transactionFile
   go CountTxOutputs = mkAnalysis $ countTxOutputs
   go ShowBlockHeaderSize = mkAnalysis $ showHeaderSize
   go ShowBlockTxsSize = mkAnalysis $ showBlockTxsSize
@@ -192,7 +192,7 @@ startFromPoint = \case
 data TraceEvent blk
   = -- | triggered when given analysis has started
     StartedEvent AnalysisName
-  | -- | Free form message that an analysis can use when it needs too
+  | -- | Free form message for logging purposes.
     Message String
   | -- | triggered when analysis has ended
     DoneEvent
@@ -436,7 +436,7 @@ txFeaturesNames =
     , num_deleg_certs = "#deleg_certs"
     }
 
-dumpBlockHeader ::
+dumpBlockFeatures ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk)
@@ -446,7 +446,7 @@ dumpBlockHeader ::
   -- | Csv file where the transaction data is to be stored
   FilePath ->
   Analysis blk StartFromLedgerState
-dumpBlockHeader blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, limit, tracer} = do
+dumpBlockFeatures blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, limit, tracer} = do
   traceWith tracer $
     Message $
       "Saving block metadata to: " ++ blockFile

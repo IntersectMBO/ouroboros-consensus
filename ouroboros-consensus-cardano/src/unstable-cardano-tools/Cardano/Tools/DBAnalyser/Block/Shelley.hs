@@ -82,8 +82,8 @@ import qualified Cardano.Ledger.State as LState
 instance
   ( ShelleyCompatible proto era
   , PerEraAnalysis era
-  , HasProtoVer proto 
-  , Scriptitude (Ledger.Script era)
+  , HasProtoVer proto
+  , EraScripts (Ledger.Script era)
   , EraHasName era
   , EraDatum era
   , EraTx era
@@ -133,171 +133,6 @@ instance
   -- For the time being we do not support any block application
   -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
-
-instance
-  ( ShelleyCompatible proto era
-  , HasProtoVer proto 
-  , Scriptitude (Ledger.Script era)
-  , EraHasName era
-  , EraDatum era
-  , EraTx era
-  , Core.EraTxBody era
-  , EraClassifyCert (Core.TxCert era)
-  ) =>
-  HasFeatures (ShelleyBlock proto era) where
-  protVer blk = Shelley.shelleyBlockRaw blk & SL.blockHeader & eraProtoVer
-
-  type TxOf (ShelleyBlock proto era) = Ledger.Tx era
-
-  txs = to (Shelley.shelleyBlockRaw @proto @era)  . to SL.blockBody  . Ledger.txSeqBlockBodyL @era . folded
-
-  inputs = Core.bodyTxL . Core.inputsTxBodyL
-  numOutputs tx = length $ toListOf (Core.bodyTxL . Core.outputsTxBodyL . folded) tx
-
-  referenceInputs = eraReferenceInputs
-
-  datumSize = eraDatumSize
-
-  type WitsOf (ShelleyBlock proto era) = Ledger.TxWits era
-  type ScriptType (ShelleyBlock proto era) = Ledger.Script era
-  wits = Ledger.witsTxL
-  addrWits = Ledger.addrTxWitsL
-  scriptWits = Ledger.scriptTxWitsL
-  scriptSize = scripty_size
-
-  type CertsOf (ShelleyBlock proto era) = Core.TxCert era
-  certs = Core.bodyTxL . Core.certsTxBodyL . folded
-
-  filterPoolCert = eraFilterPoolCert @(Core.TxCert era)
-  filterGovCert = eraFilterGovCert @(Core.TxCert era)
-  filterDelegCert = eraFilterDelegCert @(Core.TxCert era)
-
-  eraName _ = eraEraName @era
-
-  utxoSummary (WithLedgerState _blk lsb _lsa) =
-    view (to shelleyLedgerState . LState.utxoL . to LState.unUTxO . to (Map.map packedByteCount)) lsb
-
-
-
-class EraClassifyCert cert where
-  eraFilterPoolCert :: SimpleFold cert cert
-  eraFilterGovCert :: SimpleFold cert cert
-  eraFilterDelegCert :: SimpleFold cert cert
-
-instance EraClassifyCert (Conway.ConwayTxCert era) where
-  eraFilterPoolCert inner cert@(Conway.ConwayTxCertPool _) = inner cert
-  eraFilterPoolCert _ _ = mempty
-
-  eraFilterGovCert inner cert@(Conway.ConwayTxCertGov _) = inner cert
-  eraFilterGovCert _ _ = mempty
-
-  eraFilterDelegCert inner cert@(Conway.ConwayTxCertDeleg _) = inner cert
-  eraFilterDelegCert _ _ = mempty
-
-instance EraClassifyCert (Shelley.ShelleyTxCert era) where
-  eraFilterPoolCert inner cert@(Shelley.ShelleyTxCertPool _) = inner cert
-  eraFilterPoolCert _ _ = mempty
-
-  eraFilterGovCert _ _ = mempty
-
-  eraFilterDelegCert inner cert@(Shelley.ShelleyTxCertDelegCert _) = inner cert
-  eraFilterDelegCert inner cert@(Shelley.ShelleyTxCertGenesisDeleg _) = inner cert
-  eraFilterDelegCert _ _ = mempty
-
-instance EraClassifyCert (Dijkstra.DijkstraTxCert era) where
-  eraFilterPoolCert inner cert@(Dijkstra.DijkstraTxCertPool _) = inner cert
-  eraFilterPoolCert _ _ = mempty
-  eraFilterGovCert inner cert@(Dijkstra.DijkstraTxCertGov _) = inner cert
-  eraFilterGovCert _ _ = mempty
-  eraFilterDelegCert inner cert@(Dijkstra.DijkstraTxCertDeleg _) = inner cert
-  eraFilterDelegCert _ _ = mempty
-
-class EraTx era where
-  eraReferenceInputs :: SimpleGetter (Ledger.Tx era) (Set Ledger.TxIn)
-
-instance {-# OVERLAPPABLE #-} (Ledger.EraTx era, BabbageEraTxBody era) => EraTx era where
-  eraReferenceInputs =  Core.bodyTxL . referenceInputsTxBodyL
-
-instance EraTx ShelleyEra where
-  eraReferenceInputs = to (const mempty)
-
-instance EraTx AllegraEra where
-  eraReferenceInputs = to (const mempty)
-
-instance EraTx MaryEra where
-  eraReferenceInputs = to (const mempty)
-
-instance EraTx AlonzoEra where
-  eraReferenceInputs = to (const mempty)
-
-class HasProtoVer proto where
-  eraProtoVer :: ShelleyProtocolHeader proto -> SL.ProtVer
-
-instance HasProtoVer (Ouroboros.Consensus.Protocol.TPraos.TPraos c) where
-  eraProtoVer blk = blk & (\ (BHeaderConstr h ) -> h) & (\ (Memo h _) -> h) & bhrBody & bprotver
-    
-instance Crypto c => HasProtoVer (Ouroboros.Consensus.Protocol.Praos.Praos c) where
-  eraProtoVer blk = blk & headerBody & hbProtVer
-    
-class Scriptitude s where
-  scripty_size :: s -> Int
-
-instance Scriptitude (Timelock AllegraEra) where
-  scripty_size _ = 0 -- dummy
-  
-instance Scriptitude (Timelock MaryEra) where
-  scripty_size _ = 0 -- dummy
-  
-instance Scriptitude (SL.MultiSig ShelleyEra) where
-  scripty_size _ = 0 -- dummy
-  
-instance {-# OVERLAPPABLE #-} Scriptitude (Alonzo.AlonzoScript era) where
-  scripty_size _ = 0 -- dummy
-  
-instance Scriptitude (Alonzo.AlonzoScript ConwayEra) where
-  scripty_size scr = packedByteCount scr
-
-class EraHasName era where
-  eraEraName :: Text
-
-instance EraHasName ShelleyEra where
-  eraEraName = "Shelley"
-
-instance EraHasName AllegraEra where
-  eraEraName = "Allegra"
-
-instance EraHasName MaryEra where
-  eraEraName = "Mary"
-
-instance EraHasName AlonzoEra where
-  eraEraName = "Alonzo"
-
-instance EraHasName BabbageEra where
-  eraEraName = "Babbage"
-
-instance EraHasName ConwayEra where
-  eraEraName = "Conway"
-
-instance EraHasName DijkstraEra where
-  eraEraName = "Dijkstra"
-
-class EraDatum era where
-  eraDatumSize :: Ledger.TxWits era -> Int
-
-instance AlonzoEraTxWits era => EraDatum era where
-  eraDatumSize = ByteString.Short.length . getMemoRawBytes . view datsTxWitsL
-
-instance {-# OVERLAPPING #-} EraDatum ShelleyEra where
-  eraDatumSize _ = 0 -- Shelley era has no datums
-
-instance {-# OVERLAPPING #-} EraDatum AllegraEra where
-  eraDatumSize _ = 0 -- Allegra era has no datums
-
-instance {-# OVERLAPPING #-} EraDatum MaryEra where
-  eraDatumSize _ = 0 -- Mary era has no datums
-
-class PerEraAnalysis era where
-  txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
 
 instance PerEraAnalysis ShelleyEra where txExUnitsSteps = Nothing
 instance PerEraAnalysis AllegraEra where txExUnitsSteps = Nothing
@@ -352,3 +187,173 @@ mkShelleyProtocolInfo genesis initialNonce =
         , shelleyBasedLeaderCredentials = []
         }
       (SL.ProtVer (CL.natVersion @2) 0)
+
+-- | From here on is the implementation of 'HasFeatures' for the "dump features"
+-- analysis. This uses multiple type classes to dispatch on the era in different
+-- ways.
+instance
+  ( ShelleyCompatible proto era
+  , HasProtoVer proto
+  , EraScripts (Ledger.Script era)
+  , EraHasName era
+  , EraDatum era
+  , EraTx era
+  , Core.EraTxBody era
+  , EraClassifyCert (Core.TxCert era)
+  ) =>
+  HasFeatures (ShelleyBlock proto era) where
+  protVer blk = Shelley.shelleyBlockRaw blk & SL.blockHeader & eraProtoVer
+
+  type TxOf (ShelleyBlock proto era) = Ledger.Tx era
+
+  txs = to (Shelley.shelleyBlockRaw @proto @era)  . to SL.blockBody  . Ledger.txSeqBlockBodyL @era . folded
+
+  inputs = Core.bodyTxL . Core.inputsTxBodyL
+  numOutputs tx = length $ toListOf (Core.bodyTxL . Core.outputsTxBodyL . folded) tx
+
+  referenceInputs = eraReferenceInputs
+
+  datumSize = eraDatumSize
+
+  type WitsOf (ShelleyBlock proto era) = Ledger.TxWits era
+  type ScriptType (ShelleyBlock proto era) = Ledger.Script era
+  wits = Ledger.witsTxL
+  addrWits = Ledger.addrTxWitsL
+  scriptWits = Ledger.scriptTxWitsL
+  scriptSize = scripty_size
+
+  type CertsOf (ShelleyBlock proto era) = Core.TxCert era
+  certs = Core.bodyTxL . Core.certsTxBodyL . folded
+
+  filterPoolCert = eraFilterPoolCert @(Core.TxCert era)
+  filterGovCert = eraFilterGovCert @(Core.TxCert era)
+  filterDelegCert = eraFilterDelegCert @(Core.TxCert era)
+
+  eraName _ = eraEraName @era
+
+  utxoSummary (WithLedgerState _blk lsb _lsa) =
+    view (to shelleyLedgerState . LState.utxoL . to LState.unUTxO . to (Map.map packedByteCount)) lsb
+
+class EraClassifyCert cert where
+  eraFilterPoolCert :: SimpleFold cert cert
+  eraFilterGovCert :: SimpleFold cert cert
+  eraFilterDelegCert :: SimpleFold cert cert
+
+instance EraClassifyCert (Conway.ConwayTxCert era) where
+  eraFilterPoolCert inner cert@(Conway.ConwayTxCertPool _) = inner cert
+  eraFilterPoolCert _ _ = mempty
+
+  eraFilterGovCert inner cert@(Conway.ConwayTxCertGov _) = inner cert
+  eraFilterGovCert _ _ = mempty
+
+  eraFilterDelegCert inner cert@(Conway.ConwayTxCertDeleg _) = inner cert
+  eraFilterDelegCert _ _ = mempty
+
+instance EraClassifyCert (Shelley.ShelleyTxCert era) where
+  eraFilterPoolCert inner cert@(Shelley.ShelleyTxCertPool _) = inner cert
+  eraFilterPoolCert _ _ = mempty
+
+  eraFilterGovCert _ _ = mempty
+
+  eraFilterDelegCert inner cert@(Shelley.ShelleyTxCertDelegCert _) = inner cert
+  eraFilterDelegCert inner cert@(Shelley.ShelleyTxCertGenesisDeleg _) = inner cert
+  eraFilterDelegCert _ _ = mempty
+
+instance EraClassifyCert (Dijkstra.DijkstraTxCert era) where
+  eraFilterPoolCert inner cert@(Dijkstra.DijkstraTxCertPool _) = inner cert
+  eraFilterPoolCert _ _ = mempty
+  eraFilterGovCert inner cert@(Dijkstra.DijkstraTxCertGov _) = inner cert
+  eraFilterGovCert _ _ = mempty
+  eraFilterDelegCert inner cert@(Dijkstra.DijkstraTxCertDeleg _) = inner cert
+  eraFilterDelegCert _ _ = mempty
+
+-- | This is a rather prototypical of these class we're using to extract
+-- features. Frequently there are type classes to access this feature, but it's
+-- only implemented from the era where the feature is available on. So type
+-- classes like 'EraTx' play the role of a wrapper over the appropriate classes
+-- which manifests in a catch-all implementation (it's marked as overlappable).
+-- Then the eras where the feature isn't available get a zero-ing
+-- implementation.
+class EraTx era where
+  eraReferenceInputs :: SimpleGetter (Ledger.Tx era) (Set Ledger.TxIn)
+
+instance {-# OVERLAPPABLE #-} (Ledger.EraTx era, BabbageEraTxBody era) => EraTx era where
+  eraReferenceInputs =  Core.bodyTxL . referenceInputsTxBodyL
+
+instance EraTx ShelleyEra where
+  eraReferenceInputs = to (const mempty)
+
+instance EraTx AllegraEra where
+  eraReferenceInputs = to (const mempty)
+
+instance EraTx MaryEra where
+  eraReferenceInputs = to (const mempty)
+
+instance EraTx AlonzoEra where
+  eraReferenceInputs = to (const mempty)
+
+class HasProtoVer proto where
+  eraProtoVer :: ShelleyProtocolHeader proto -> SL.ProtVer
+
+instance HasProtoVer (Ouroboros.Consensus.Protocol.TPraos.TPraos c) where
+  eraProtoVer blk = blk & (\ (BHeaderConstr h ) -> h) & (\ (Memo h _) -> h) & bhrBody & bprotver
+
+instance Crypto c => HasProtoVer (Ouroboros.Consensus.Protocol.Praos.Praos c) where
+  eraProtoVer blk = blk & headerBody & hbProtVer
+
+class EraScripts s where
+  scripty_size :: s -> Int
+
+instance EraScripts (Timelock AllegraEra) where
+  scripty_size _ = 0 -- dummy
+
+instance EraScripts (Timelock MaryEra) where
+  scripty_size _ = 0 -- dummy
+
+instance EraScripts (SL.MultiSig ShelleyEra) where
+  scripty_size _ = 0 -- dummy
+
+instance {-# OVERLAPPABLE #-} MemPack (Alonzo.AlonzoScript era) => EraScripts (Alonzo.AlonzoScript era) where
+  scripty_size scr = packedByteCount scr
+
+class EraHasName era where
+  eraEraName :: Text
+
+instance EraHasName ShelleyEra where
+  eraEraName = "Shelley"
+
+instance EraHasName AllegraEra where
+  eraEraName = "Allegra"
+
+instance EraHasName MaryEra where
+  eraEraName = "Mary"
+
+instance EraHasName AlonzoEra where
+  eraEraName = "Alonzo"
+
+instance EraHasName BabbageEra where
+  eraEraName = "Babbage"
+
+instance EraHasName ConwayEra where
+  eraEraName = "Conway"
+
+instance EraHasName DijkstraEra where
+  eraEraName = "Dijkstra"
+
+class EraDatum era where
+  eraDatumSize :: Ledger.TxWits era -> Int
+
+instance {-# OVERLAPPABLE #-} AlonzoEraTxWits era => EraDatum era where
+  eraDatumSize = ByteString.Short.length . getMemoRawBytes . view datsTxWitsL
+
+instance EraDatum ShelleyEra where
+  eraDatumSize _ = 0 -- Shelley era has no datums
+
+instance EraDatum AllegraEra where
+  eraDatumSize _ = 0 -- Allegra era has no datums
+
+instance EraDatum MaryEra where
+  eraDatumSize _ = 0 -- Mary era has no datums
+
+class PerEraAnalysis era where
+  txExUnitsSteps :: Maybe (Core.Tx era -> Word64)

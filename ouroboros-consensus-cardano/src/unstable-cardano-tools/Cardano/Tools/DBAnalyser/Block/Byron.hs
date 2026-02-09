@@ -135,9 +135,12 @@ mkByronProtocolInfo genesisConfig signatureThreshold =
       , byronLeaderCredentials = Nothing
       }
 
+-- | Many types are slightly different in the Byron era, so that the types don't
+-- quite work. To avoid busywork, the "dump feature" analysis gives out dummy
+-- result for Byron-era blocks, and it's better to simply ignore those blocks in
+-- your data analysis.
 instance HasFeatures ByronBlock where
-  -- Byron uses a different representation of protocols, I don't want to deal at
-  -- the moment. So I'm just putting a dummy protocol version.
+  -- For instance Byron uses a different representation of protocols.
   protVer _ = ProtVer { pvMajor = (natVersion @0), pvMinor = 0 }
   type TxOf ByronBlock = Void -- dummy
   txs _ _ = mempty -- dummy
@@ -158,5 +161,4 @@ instance HasFeatures ByronBlock where
   filterDelegCert _ = absurd
   eraName _ = "Byron"
 
-  utxoSummary _ = mempty -- dummy (Byron has a different type of TxIn, that I
-                  -- don't want to investigate at the moment)
+  utxoSummary _ = mempty
