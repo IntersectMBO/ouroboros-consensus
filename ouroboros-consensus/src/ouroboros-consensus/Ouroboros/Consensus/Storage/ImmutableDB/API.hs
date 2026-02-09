@@ -61,6 +61,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   ) where
 
 import Cardano.Binary (DecoderError)
+import Control.DeepSeq (NFData (..))
 import Control.Monad.Except (ExceptT (..), runExceptT, throwError)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (ResourceRegistry)
@@ -285,6 +286,7 @@ data Tip blk = Tip
 deriving instance StandardHash blk => Eq (Tip blk)
 deriving instance StandardHash blk => Show (Tip blk)
 deriving instance StandardHash blk => NoThunks (Tip blk)
+deriving instance StandardHash blk => NFData (Tip blk)
 
 tipToRealPoint :: Tip blk -> RealPoint blk
 tipToRealPoint Tip{tipSlotNo, tipHash} = RealPoint tipSlotNo tipHash

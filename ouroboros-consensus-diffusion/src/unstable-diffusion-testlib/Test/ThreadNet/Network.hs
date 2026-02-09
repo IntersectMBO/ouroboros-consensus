@@ -2,6 +2,8 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -53,6 +55,7 @@ import Cardano.Network.PeerSelection
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
+import Control.DeepSeq (NFData)
 import qualified Control.Exception as Exn
 import Control.Monad
 import Control.Monad.Class.MonadTime.SI (MonadTime)
@@ -71,6 +74,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
+import GHC.Generics
 import GHC.Stack
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
@@ -1249,7 +1253,8 @@ data CodecError
       -- | Extra error message, e.g., the name of the codec
       String
       DeserialiseFailure
-  deriving (Show, Exception)
+  deriving stock (Show, Generic)
+  deriving anyclass (Exception, NFData)
 
 {-------------------------------------------------------------------------------
   Running an edge

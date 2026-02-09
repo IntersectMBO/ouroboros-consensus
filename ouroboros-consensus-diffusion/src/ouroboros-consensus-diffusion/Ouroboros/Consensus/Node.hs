@@ -1041,6 +1041,7 @@ stdVersionDataNTC networkMagic =
     }
 
 stdRunDataDiffusion ::
+  NFData a =>
   Cardano.Diffusion.CardanoNodeArguments IO ->
   Cardano.Diffusion.CardanoConsensusArguments RemoteAddress IO ->
   Cardano.Diffusion.CardanoTracers IO ->

@@ -35,6 +35,7 @@ module Ouroboros.Consensus.Ledger.Extended
 
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
+import Control.DeepSeq (NFData)
 import Control.Monad.Except
 import Data.Functor ((<&>))
 import Data.MemPack
@@ -93,7 +94,8 @@ instance
 
 type instance HeaderHash (ExtLedgerState blk) = HeaderHash (LedgerState blk)
 instance
-  ( NoThunks (HeaderHash blk)
+  ( NFData (HeaderHash blk)
+  , NoThunks (HeaderHash blk)
   , Typeable (HeaderHash blk)
   , Show (HeaderHash blk)
   , Ord (HeaderHash blk)

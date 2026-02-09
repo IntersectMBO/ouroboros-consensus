@@ -95,7 +95,7 @@ import Cardano.Binary (DecoderError)
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
 import Codec.Serialise (Serialise (..), serialise)
-import Control.DeepSeq (force)
+import Control.DeepSeq (NFData, force)
 import Control.Monad (guard, replicateM, replicateM_)
 import Control.Monad.Except (throwError)
 import qualified Data.Binary.Get as Get
@@ -204,7 +204,7 @@ newtype TestHash = UnsafeTestHash
   { unTestHash :: NonEmpty Word64
   }
   deriving stock Generic
-  deriving newtype (Eq, Ord, Serialise, ToExpr)
+  deriving newtype (Eq, Ord, Serialise, ToExpr, NFData)
   deriving anyclass NoThunks
 
 pattern TestHash :: NonEmpty Word64 -> TestHash
