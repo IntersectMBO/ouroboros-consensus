@@ -567,8 +567,9 @@ initialize
              At p -> dsNumber s > unSlotNo p
          )
         then do
-          traceWith snapTracer $ DeletedSnapshot s
-          deleteSnapshot snapManager s
+          Monad.when (diskSnapshotIsTemporary s) $ do
+            traceWith snapTracer $ DeletedSnapshot s
+            deleteSnapshot snapManager s
           traceWith snapTracer . InvalidSnapshot s $ InitFailureTooRecent s replayGoal
           tryNewestFirst (acc . InitFailure s (InitFailureTooRecent s replayGoal)) ss
         else do
