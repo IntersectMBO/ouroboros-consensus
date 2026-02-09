@@ -103,7 +103,7 @@ import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import Data.Coerce
 import Data.Functor.Identity
-import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.MemPack
 import qualified Data.Text as T
 import qualified Data.Text as Text
@@ -125,6 +125,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -381,11 +382,11 @@ instance
           internsFromMap $
             shelleyLedgerState st
               ^. SL.nesEsL
-              . SL.esLStateL
-              . SL.lsCertStateL
-              . SL.certDStateL
-              . SL.accountsL
-              . SL.accountsMapL
+                . SL.esLStateL
+                . SL.lsCertStateL
+                . SL.certDStateL
+                . SL.accountsL
+                . SL.accountsMapL
      in LedgerTables . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
 
 instance
@@ -512,10 +513,10 @@ slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState
 slUtxoL st vals =
   st
     & SL.nesEsL
-    . SL.esLStateL
-    . SL.lsUTxOStateL
-    . SL.utxoL
-    <<.~ vals
+      . SL.esLStateL
+      . SL.lsUTxOStateL
+      . SL.utxoL
+      <<.~ vals
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -913,3 +914,12 @@ decodeShelleyLedgerState =
 
 instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
   upgradeTables _ _ = id
+
+{-------------------------------------------------------------------------------
+  LedgerSupportsPeras
+-------------------------------------------------------------------------------}
+
+instance LedgerSupportsPeras (ShelleyBlock proto era) where
+  getLatestPerasCertRound =
+    strictMaybeToMaybe
+      . shelleyLedgerLatestPerasCertRound

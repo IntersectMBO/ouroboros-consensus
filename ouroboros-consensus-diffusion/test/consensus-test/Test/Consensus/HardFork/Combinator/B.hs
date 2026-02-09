@@ -62,6 +62,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.InitStorage
@@ -260,6 +261,8 @@ instance BlockSupportsProtocol BlockB where
 instance LedgerSupportsProtocol BlockB where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
+
+instance LedgerSupportsPeras BlockB
 
 instance HasPartialConsensusConfig ProtocolB
 
