@@ -218,9 +218,9 @@ prop_pointsInsertThenScan impl =
       (_, insertTime) <- timed $ leiosDbInsertEbPoint db point
       (points, scanTime) <- timed $ leiosDbScanEbPoints db
       pure $
-        tabulate "insertEbPoint" [timeBucket insertTime] $
-          tabulate "scanEbPoints" [timeBucket scanTime] $
-            (point.pointSlotNo, point.pointEbHash) `elem` points
+        (point.pointSlotNo, point.pointEbHash) `elem` points
+          & tabulate "insertEbPoint" [timeBucket insertTime]
+          & tabulate "scanEbPoints" [timeBucket scanTime]
 
 -- | Property: multiple inserted points all appear in scan results.
 prop_pointsAccumulate :: DbImpl -> Property
@@ -228,13 +228,14 @@ prop_pointsAccumulate impl =
   forAllShrinkShow (chooseInt (1, 10)) shrink show $ \count ->
     forAll (replicateM count genPoint) $ \points ->
       ioProperty $ withFreshDb impl $ \db -> do
-        (_, insertTime) <- timed $ forM_ points $ leiosDbInsertEbPoint db
+        insertTimes <- forM points $ \p ->
+          snd <$> timed (leiosDbInsertEbPoint db p)
         (scanned, scanTime) <- timed $ leiosDbScanEbPoints db
         let expected = [(p.pointSlotNo, p.pointEbHash) | p <- points]
         pure $
-          tabulate "insertEbPoint (batch)" [timeBucket insertTime] $
-            tabulate "scanEbPoints" [timeBucket scanTime] $
-              all (`elem` scanned) expected
+          all (`elem` scanned) expected
+            & tabulate "insertEbPoint" [timeBucket $ maximum insertTimes]
+            & tabulate "scanEbPoints" [timeBucket scanTime]
 
 -- * Property tests for EBs
 
@@ -248,10 +249,10 @@ prop_ebsInsertThenLookup impl =
         (_, insertTime) <- timed $ leiosDbInsertEbBody db point eb
         (result, lookupTime) <- timed $ leiosDbLookupEbBody db point.pointEbHash
         pure $
-          tabulate "insertEbBody" [timeBucket insertTime] $
-            tabulate "lookupEbBody" [timeBucket lookupTime] $
-              counterexample ("Expected: " ++ show expectedTxs ++ "\nGot: " ++ show result) $
-                result == expectedTxs
+          result == expectedTxs
+            & counterexample ("Expected: " ++ show expectedTxs ++ "\nGot: " ++ show result)
+            & tabulate "insertEbBody" [timeBucket insertTime]
+            & tabulate "lookupEbBody" [timeBucket lookupTime]
 
 -- | Property: looking up a non-existent EB returns empty list.
 prop_ebsLookupMissing :: DbImpl -> Property
@@ -260,8 +261,8 @@ prop_ebsLookupMissing impl =
     ioProperty $ withFreshDb impl $ \db -> do
       (result, lookupTime) <- timed $ leiosDbLookupEbBody db missingHash
       pure $
-        tabulate "lookupEbBody (missing)" [timeBucket lookupTime] $
-          result === []
+        result === []
+          & tabulate "lookupEbBody (missing)" [timeBucket lookupTime]
 
 -- * Property tests for transactions
 
@@ -318,8 +319,8 @@ prop_txsRetrieveMissing impl =
     ioProperty $ withFreshDb impl $ \db -> do
       (result, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs db missingHash [0, 1, 2]
       pure $
-        tabulate "batchRetrieveTxs (missing)" [timeBucket retrieveTime] $
-          result === []
+        result === []
+          & tabulate "batchRetrieveTxs (missing)" [timeBucket retrieveTime]
 
 -- | Property: measure leiosDbUpdateEbTx performance and report timing distribution.
 -- Tracks performance across different database sizes and EB configurations.
@@ -337,12 +338,11 @@ prop_updateEbTxPerformance impl =
         -- Measure time for a single updateEbTx call
         (_, updateTime) <- timed $ leiosDbUpdateEbTx db point.pointEbHash 0 txBytes
         pure $
-          tabulate "updateEbTx (primed)" [timeBucket updateTime] $
-            tabulate "DB size (EBs)" [magnitudeBucket dbSize] $
-              tabulate "numTxs in EB" [magnitudeBucket numTxs] $
-                counterexample
-                  ("updateEbTx took " ++ show updateTime ++ "μs with " ++ show dbSize ++ " EBs in DB")
-                  True
+          property True
+            & counterexample ("updateEbTx took " ++ show updateTime ++ "μs with " ++ show dbSize ++ " EBs in DB")
+            & tabulate "updateEbTx (primed)" [timeBucket updateTime]
+            & tabulate "DB size (EBs)" [magnitudeBucket dbSize]
+            & tabulate "numTxs in EB" [magnitudeBucket numTxs]
  where
   genPerfParams = sized $ \size -> do
     let maxSize = max 1 size
