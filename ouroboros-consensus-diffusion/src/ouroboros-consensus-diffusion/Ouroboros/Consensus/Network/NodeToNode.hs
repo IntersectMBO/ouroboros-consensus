@@ -47,6 +47,7 @@ import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
+import Control.DeepSeq (NFData)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
@@ -646,6 +647,7 @@ mkApps ::
   , MonadTimer m
   , Ord addrNTN
   , Exception e
+  , NFData e
   , LedgerSupportsProtocol blk
   , ShowProxy blk
   , ShowProxy (Header blk)

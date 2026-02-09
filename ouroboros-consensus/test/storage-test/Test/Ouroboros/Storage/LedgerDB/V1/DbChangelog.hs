@@ -33,6 +33,7 @@ module Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog (tests) where
 
 import Cardano.Ledger.BaseTypes (NonZero (..))
 import Cardano.Slotting.Slot (WithOrigin (..))
+import Control.DeepSeq (NFData)
 import Control.Monad hiding (ap)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict hiding (state)
@@ -357,6 +358,7 @@ instance GetTip TestLedger where
 
 data H = H deriving (Eq, Ord, Show, Generic)
 deriving anyclass instance NoThunks H
+deriving anyclass instance NFData H
 type instance HeaderHash TestLedger = H
 
 instance StandardHash TestLedger

@@ -43,6 +43,7 @@ import Cardano.Protocol.TPraos.BHeader (PrevHash)
 import Cardano.Slotting.Block (BlockNo)
 import Cardano.Slotting.Slot (SlotNo)
 import Codec.Serialise (Serialise (..))
+import Control.DeepSeq (NFData)
 import Control.Monad.Except (Except)
 import Data.Aeson.Types (FromJSON, ToJSON)
 import Data.Kind (Type)
@@ -79,7 +80,7 @@ newtype ShelleyHash = ShelleyHash
   { unShelleyHash :: Hash.Hash HASH EraIndependentBlockHeader
   }
   deriving stock (Eq, Ord, Show, Generic)
-  deriving newtype (ToJSON, FromJSON)
+  deriving newtype (ToJSON, FromJSON, NFData)
   deriving anyclass NoThunks
 
 deriving newtype instance ToCBOR ShelleyHash

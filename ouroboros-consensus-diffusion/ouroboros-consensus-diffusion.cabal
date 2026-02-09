@@ -102,7 +102,7 @@ library
     text,
     time,
     transformers,
-    typed-protocols:{stateful, typed-protocols},
+    typed-protocols:{stateful, typed-protocols} ^>=1.2,
 
 library unstable-diffusion-testlib
   import: common-lib
@@ -132,6 +132,7 @@ library unstable-diffusion-testlib
     cborg,
     containers,
     contra-tracer,
+    deepseq,
     fgl,
     fs-sim ^>=0.4,
     graphviz >=2999.20.1.0,
