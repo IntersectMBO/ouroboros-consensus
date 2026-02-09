@@ -103,7 +103,7 @@ mkTestGroups impl =
       "transactions"
       [ testProperty "update then retrieve" $ prop_txsUpdateThenRetrieve impl
       , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
-      , testProperty "single update performance" $ prop_updateEbTxPerformance impl
+      , testProperty "update one tx performance" $ prop_updateEbTxPerformance impl
       ]
   , testGroup
       "notifications"
@@ -359,8 +359,8 @@ prop_txsRetrieveMissing impl =
 -- Tracks performance across different database sizes and EB configurations.
 prop_updateEbTxPerformance :: DbImpl -> Property
 prop_updateEbTxPerformance impl =
-  forAllShrinkShow genPerfParams shrinkPerfParams show $ \(numEBs, numTxs) ->
-    forAll (genPerfData numEBs numTxs) $ \(primeData, point, eb, txBytes) ->
+  forAllShrinkBlind genPerfParams shrinkPerfParams $ \(numEBs, numTxs) ->
+    forAllBlind (genPerfData numEBs numTxs) $ \(primeData, point, eb, txBytes) ->
       ioProperty $ withFreshDb impl $ \db -> do
         -- Prime the database with additional EBs to simulate load
         forM_ primeData $ \(primePoint, primeEb) ->
@@ -372,7 +372,8 @@ prop_updateEbTxPerformance impl =
         pure $
           updateTime < milli 10
             & counterexample ("Took too long: " <> showTime updateTime)
-            & counterexample ("With " <> show numEBs <> " EBs in DB (each having " <> show numTxs <> " txs)")
+            & counterexample
+              ("With " <> show (numEBs + 1) <> " EBs in DB (each having " <> show numTxs <> " txs)")
             & tabulate "updateEbTx (primed)" [timeBucket updateTime]
             & tabulate "numEBs in DB" [magnitudeBucket numEBs]
             & tabulate "numTxs in EB" [magnitudeBucket numTxs]

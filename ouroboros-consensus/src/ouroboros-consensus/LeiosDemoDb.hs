@@ -1,12 +1,13 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module LeiosDemoDb (module LeiosDemoDb) where
 
-import Cardano.Prelude (forM_, when)
+import Cardano.Prelude (forM_, unless, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
@@ -31,7 +32,8 @@ import qualified Data.IntSet as IntSet
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
-import Data.String (fromString)
+import Data.String (IsString, fromString)
+import Database.SQLite3 (execPrint)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
@@ -281,7 +283,7 @@ newLeiosDbFromSqlite db = do
           atomically $ modifyTVar slotsVar $ Map.insert point.pointEbHash point.pointSlotNo
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
       , leiosDbUpdateEbTx = \ebHash items -> do
-          nullCount <- dbWithBEGIN db $ do
+          anyMissing <- dbWithBEGIN db $ do
             dbWithPrepare db (fromString sql_update_ebTx) $ \stmt -> do
               forM_ items $ \(txOffset, txBytes) -> do
                 dbReset stmt
@@ -289,15 +291,15 @@ newLeiosDbFromSqlite db = do
                 dbBindBlob stmt 2 (let MkEbHash bytes = ebHash in bytes)
                 dbBindInt64 stmt 3 (fromIntegral txOffset)
                 dbStep1 stmt
-            -- TODO: do not SELECT on each UPDATE, use an index or other means to keep track?
-            dbWithPrepare db (fromString sql_count_null_ebTxs) $ \stmt -> do
-              dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+            -- Check whether any txs missing via index missingEbTxs
+            dbWithPrepare db sql_select_ebTxs_missing $ \stmt -> do
+              dbBindBlob stmt 1 ebHash.ebHashBytes
               dbStep stmt >>= \case
-                DB.Done -> pure 1
-                DB.Row -> DB.columnInt64 stmt 0
+                DB.Done -> pure False
+                DB.Row -> pure True
           -- XXX: avoid needing this slotsVar, can we pass in the point? otherwise
           -- use the db to look-up
-          when (nullCount == 0) $ do
+          unless anyMissing $ do
             mSlotNo <- atomically $ Map.lookup ebHash <$> readTVar slotsVar
             case mSlotNo of
               Just slotNo ->
@@ -408,7 +410,8 @@ sql_schema =
   \    WHERE txBytes IS NULL;\n\
   \CREATE INDEX acquiredEbTxs\n\
   \    ON ebTxs (ebHashBytes DESC, txOffset ASC)\n\
-  \    WHERE txBytes IS NOT NULL;"
+  \    WHERE txBytes IS NOT NULL;\n\
+  \"
 
 sql_scan_ebPoints :: String
 sql_scan_ebPoints =
@@ -440,9 +443,12 @@ sql_update_ebTx =
   \WHERE ebHashBytes = ? AND txOffset = ?\n\
   \"
 
-sql_count_null_ebTxs :: String
-sql_count_null_ebTxs =
-  "SELECT COUNT(*) FROM ebTxs WHERE ebHashBytes = ? AND txBytes IS NULL\n\
+-- NOTE: only searches the missingEbTxs index
+sql_select_ebTxs_missing :: IsString s => s
+sql_select_ebTxs_missing =
+  "SELECT 1 FROM ebTxs\n\
+  \WHERE ebHashBytes = ? AND txBytes IS NULL\n\
+  \LIMIT 1\n\
   \"
 
 sql_insert_txCache :: String
