@@ -77,6 +77,7 @@ import Ouroboros.Consensus.Shelley.Ledger
   , shelleyLedgerState
   , shelleyLedgerTables
   )
+import Ouroboros.Consensus.Shelley.Ledger.SupportsPeras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
