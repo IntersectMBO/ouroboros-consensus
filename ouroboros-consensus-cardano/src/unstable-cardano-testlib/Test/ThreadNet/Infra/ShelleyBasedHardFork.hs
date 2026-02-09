@@ -83,6 +83,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -183,6 +184,8 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , ShelleyCompatible proto2 era2
   , LedgerSupportsProtocol (ShelleyBlock proto1 era1)
   , LedgerSupportsProtocol (ShelleyBlock proto2 era2)
+  , LedgerSupportsPeras (ShelleyBlock proto1 era1)
+  , LedgerSupportsPeras (ShelleyBlock proto2 era2)
   , TxLimits (ShelleyBlock proto1 era1)
   , TxLimits (ShelleyBlock proto2 era2)
   , TranslateTxMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))

@@ -35,6 +35,7 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
+import Ouroboros.Consensus.Shelley.Ledger.SupportsPeras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.ShelleyHFC ()

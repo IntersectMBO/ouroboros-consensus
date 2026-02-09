@@ -131,6 +131,7 @@ library
     Ouroboros.Consensus.HardFork.Combinator.Node.Metrics
     Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck
     Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+    Ouroboros.Consensus.HardFork.Combinator.Peras
     Ouroboros.Consensus.HardFork.Combinator.Protocol
     Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
     Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
@@ -165,6 +166,7 @@ library
     Ouroboros.Consensus.Ledger.Query.Version
     Ouroboros.Consensus.Ledger.SupportsMempool
     Ouroboros.Consensus.Ledger.SupportsPeerSelection
+    Ouroboros.Consensus.Ledger.SupportsPeras
     Ouroboros.Consensus.Ledger.SupportsProtocol
     Ouroboros.Consensus.Ledger.Tables
     Ouroboros.Consensus.Ledger.Tables.Basics

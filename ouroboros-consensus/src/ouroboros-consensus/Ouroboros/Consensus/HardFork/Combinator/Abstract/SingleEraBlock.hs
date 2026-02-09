@@ -43,6 +43,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
@@ -58,6 +59,7 @@ import Ouroboros.Consensus.Util.Condense
 -- | Blocks from which we can assemble a hard fork
 class
   ( LedgerSupportsProtocol blk
+  , LedgerSupportsPeras blk
   , InspectLedger blk
   , LedgerSupportsMempool blk
   , ConvertRawTxId (GenTx blk)

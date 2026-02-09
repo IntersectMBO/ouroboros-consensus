@@ -43,6 +43,7 @@ import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
   )
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Shelley.Ledger.SupportsPeras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
   ( ShelleyGenesis (..)

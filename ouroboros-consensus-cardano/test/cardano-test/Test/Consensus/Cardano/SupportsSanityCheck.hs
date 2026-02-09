@@ -8,6 +8,7 @@ import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Shelley.Ledger.SupportsPeras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Test.Consensus.Cardano.ProtocolInfo
 import qualified Test.QuickCheck as QC

@@ -61,6 +61,7 @@ import Ouroboros.Consensus.Protocol.Praos.AgentClient
   , KESAgentContext
   )
 import Ouroboros.Consensus.Shelley.HFEras ()
+import Ouroboros.Consensus.Shelley.Ledger.SupportsPeras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
 import Test.Consensus.Cardano.ProtocolInfo
