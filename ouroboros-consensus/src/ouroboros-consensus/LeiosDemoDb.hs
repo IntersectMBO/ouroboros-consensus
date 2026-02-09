@@ -308,7 +308,7 @@ newLeiosDbFromSqlite db = do
                 dbBindInt64 stmt 3 (fromIntegral txOffset)
                 dbStep1 stmt
               printSinceStart "After loop"
-            -- Check whether any txs missing via index missingEbTxs
+            -- Check whether any txs missing
             printSinceStart "Before completness check"
             execPrint db ("EXPLAIN QUERY PLAN " <> sql_select_ebTxs_missing)
             res <- dbWithPrepare db sql_select_ebTxs_missing $ \stmt -> do
@@ -423,16 +423,6 @@ sql_schema =
   \  ,\n\
   \    PRIMARY KEY (ebHashBytes, txOffset)\n\
   \  ) WITHOUT ROWID;\n\
-  \CREATE INDEX ebPointsExpiry\n\
-  \    ON ebPoints (ebSlot ASC, ebHashBytes ASC);\n\
-  \CREATE INDEX txCacheExpiry\n\
-  \    ON txCache (expiryUnixEpoch ASC, txHashBytes);\n\
-  \CREATE INDEX missingEbTxs\n\
-  \    ON ebTxs (ebHashBytes DESC, txOffset ASC)\n\
-  \    WHERE txBytes IS NULL;\n\
-  \CREATE INDEX acquiredEbTxs\n\
-  \    ON ebTxs (ebHashBytes DESC, txOffset ASC)\n\
-  \    WHERE txBytes IS NOT NULL;\n\
   \"
 
 sql_scan_ebPoints :: String
@@ -465,7 +455,6 @@ sql_update_ebTx =
   \WHERE ebHashBytes = ? AND txOffset = ?\n\
   \"
 
--- NOTE: only searches the missingEbTxs index
 sql_select_ebTxs_missing :: IsString s => s
 sql_select_ebTxs_missing =
   "SELECT 1 FROM ebTxs\n\
