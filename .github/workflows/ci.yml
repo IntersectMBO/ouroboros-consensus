@@ -179,7 +179,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.10.3'
+        && matrix.ghc=='9.12.2'
       run: |
         # need for latex, dvisvgm and standalone
         sudo apt install texlive-latex-extra texlive-latex-base
@@ -194,7 +194,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.10.3'
+        && matrix.ghc=='9.12.2'
       uses: actions/upload-artifact@v6
       with:
         name: haddocks
