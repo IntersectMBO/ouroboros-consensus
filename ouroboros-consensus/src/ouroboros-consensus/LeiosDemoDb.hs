@@ -232,10 +232,11 @@ demoNewLeiosDbConnectionIO = do
 -- Opens the SQLite database and attaches the in-memory temp table.
 newLeiosDbConnectionIO :: FilePath -> IO (LeiosDbHandle IO)
 newLeiosDbConnectionIO dbPath = do
-  shouldInitSchema <- not <$> doesFileExist dbPath
+  shouldInitDb <- not <$> doesFileExist dbPath
   db <- withDieMsg $ DB.open (fromString dbPath)
-  when shouldInitSchema $
+  when shouldInitDb $ do
     dbExec db (fromString sql_schema)
+  dbExec db sql_pragmas
   dbExec db (fromString sql_attach_memTxPoints)
   newLeiosDbFromSqlite db
 
@@ -391,6 +392,12 @@ newLeiosDbFromSqlite db = do
 
             go1 Map.empty 0 toCopy
       }
+
+sql_pragmas :: IsString s => s
+sql_pragmas =
+  "PRAGMA journal_mode = WAL;\n\
+  \PRAGMA synchronous = normal;\n\
+  \PRAGMA journal_size_limit = 6144000;"
 
 sql_schema :: String
 sql_schema =
