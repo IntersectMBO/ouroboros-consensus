@@ -73,7 +73,7 @@ data LeiosDbHandle m = LeiosDbHandle
   , -- NOTE: yields a LeiosOfferBlock notification
     leiosDbInsertEbBody :: LeiosPoint -> LeiosEb -> m ()
   , -- NOTE: yields a LeiosOfferBlockTxs notification once complete
-    leiosDbUpdateEbTx :: EbHash -> [(Int, ByteString)] -> m ()
+    leiosDbUpdateEbTx :: LeiosPoint -> [(Int, ByteString)] -> m ()
   , leiosDbInsertTxCache :: TxHash -> ByteString -> BytesSize -> Int64 -> m ()
   , leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   , -- TODO: Avoid needing this function
@@ -167,25 +167,22 @@ newInMemoryLeiosDb = do
               , imEbSlots = Map.insert point.pointEbHash point.pointSlotNo (imEbSlots s)
               }
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
-      , leiosDbUpdateEbTx = \ebHash items -> atomically $ do
+      , leiosDbUpdateEbTx = \point items -> atomically $ do
           forM_ items $ \(txOffset, txBytes) ->
             modifyTVar stateVar $ \s ->
               s
                 { imEbBodies =
                     Map.adjust
                       (IntMap.adjust (\e -> e{eteTxBytes = Just txBytes}) txOffset)
-                      ebHash
+                      point.pointEbHash
                       (imEbBodies s)
                 }
           state <- readTVar stateVar
-          case Map.lookup ebHash (imEbBodies state) of
+          case Map.lookup point.pointEbHash (imEbBodies state) of
             Just entries
               | not (IntMap.null entries)
               , all (isJust . eteTxBytes) entries ->
-                  case Map.lookup ebHash (imEbSlots state) of
-                    Just slotNo ->
-                      notify $ LeiosOfferBlockTxs (MkLeiosPoint slotNo ebHash)
-                    Nothing -> pure ()
+                  notify $ LeiosOfferBlockTxs point
             _ -> pure ()
       , leiosDbInsertTxCache = \txHash txBytes txBytesSize expiry -> atomically $ do
           let entry = TxCacheEntry txBytes txBytesSize expiry
@@ -236,7 +233,6 @@ newLeiosDbFromSqlite :: DB.Database -> IO (LeiosDbHandle IO)
 newLeiosDbFromSqlite db = do
   notificationChan <- atomically newBroadcastTChan
   let notify = atomically . writeTChan notificationChan
-  slotsVar <- newTVarIO Map.empty
   pure
     LeiosDbHandle
       { subscribeEbNotifications =
@@ -279,31 +275,24 @@ newLeiosDbFromSqlite db = do
                   dbReset stmt
               )
               (leiosEbBodyItems eb)
-          atomically $ modifyTVar slotsVar $ Map.insert point.pointEbHash point.pointSlotNo
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
-      , leiosDbUpdateEbTx = \ebHash items -> do
+      , leiosDbUpdateEbTx = \point items -> do
           anyMissing <- dbWithBEGIN db $ do
             dbWithPrepare db (fromString sql_update_ebTx) $ \stmt -> do
               forM_ items $ \(txOffset, txBytes) -> do
                 dbReset stmt
                 dbBindBlob stmt 1 txBytes
-                dbBindBlob stmt 2 (let MkEbHash bytes = ebHash in bytes)
+                dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
                 dbBindInt64 stmt 3 (fromIntegral txOffset)
                 dbStep1 stmt
             -- Check whether any txs missing
             dbWithPrepare db sql_select_ebTxs_missing $ \stmt -> do
-              dbBindBlob stmt 1 ebHash.ebHashBytes
+              dbBindBlob stmt 1 point.pointEbHash.ebHashBytes
               dbStep stmt >>= \case
                 DB.Done -> pure False
                 DB.Row -> pure True
-          -- XXX: avoid needing this slotsVar, can we pass in the point? otherwise
-          -- use the db to look-up
-          unless anyMissing $ do
-            mSlotNo <- atomically $ Map.lookup ebHash <$> readTVar slotsVar
-            case mSlotNo of
-              Just slotNo ->
-                notify $ LeiosOfferBlockTxs (MkLeiosPoint slotNo ebHash)
-              Nothing -> pure ()
+          unless anyMissing $
+            notify (LeiosOfferBlockTxs point)
       , leiosDbInsertTxCache = \txHash txBytes txBytesSize expiry ->
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_txCache) $ \stmt -> do
             dbBindBlob stmt 1 (let MkTxHash bytes = txHash in bytes)

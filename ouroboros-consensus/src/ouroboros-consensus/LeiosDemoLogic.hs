@@ -688,7 +688,7 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
     -- This may need to be fixed by adding a batch update operation to the db or
     -- ensuring transactional semantics. Use new db for both txCache and ebTxs
     -- updates
-    leiosDbUpdateEbTx db ebHash (zip offsets (V.toList txBytess))
+    leiosDbUpdateEbTx db point (zip offsets (V.toList txBytess))
     -- FIXME: Why is tx cache separate? it results in the same bytes stored twice in the DB
     -- Insert into txCache (expiry set to 0 for now - TODO: use proper expiry)
     forM_ (txHashes `V.zip` txBytess) $ \(txHash, txBytes) -> do

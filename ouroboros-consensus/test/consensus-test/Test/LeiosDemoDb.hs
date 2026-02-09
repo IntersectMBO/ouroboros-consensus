@@ -297,7 +297,7 @@ prop_txsUpdateThenRetrieve impl =
         -- Insert the EB body first
         leiosDbInsertEbBody db point eb
         -- Update some transactions with bytes
-        updateTime <- snd <$> timed (leiosDbUpdateEbTx db point.pointEbHash txs)
+        updateTime <- snd <$> timed (leiosDbUpdateEbTx db point txs)
         -- Retrieve all offsets
         let allOffsets = [0 .. numTxs - 1]
         (results, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs db point.pointEbHash allOffsets
@@ -371,7 +371,7 @@ prop_updateEbTxPerformance impl =
         -- Create the target EB
         leiosDbInsertEbBody db point eb
         -- Measure time for a single updateEbTx call
-        (_, updateTime) <- timed $ leiosDbUpdateEbTx db point.pointEbHash [(0, txBytes)]
+        (_, updateTime) <- timed $ leiosDbUpdateEbTx db point [(0, txBytes)]
         pure $
           updateTime < milli 10
             & counterexample ("Took too long: " <> showTime updateTime)
@@ -498,7 +498,7 @@ test_noOfferBlockTxsBeforeComplete db = do
   -- Consume the LeiosOfferBlock notification
   _ <- atomically $ readTChan chan
   -- Update only 2 of 3 txs
-  leiosDbUpdateEbTx db point.pointEbHash $
+  leiosDbUpdateEbTx db point $
     [ (0, BS.pack [1, 2, 3])
     , (1, BS.pack [4, 5, 6])
     ]
@@ -520,7 +520,7 @@ test_offerBlockTxs db = do
   -- Consume the LeiosOfferBlock notification
   _ <- atomically $ readTChan chan
   -- Update all txs
-  leiosDbUpdateEbTx db point.pointEbHash $
+  leiosDbUpdateEbTx db point $
     [ (0, BS.pack [1, 2, 3])
     , (1, BS.pack [4, 5, 6])
     , (2, BS.pack [7, 8, 9])
