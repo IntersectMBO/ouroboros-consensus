@@ -1,6 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -34,7 +33,6 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Data.String (IsString, fromString)
-import Database.SQLite3 (execPrint)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
@@ -48,14 +46,7 @@ import LeiosDemoTypes
   , leiosEbBodyItems
   , leiosEbBytesSize
   )
-import Ouroboros.Consensus.Util.IOLike
-  ( DiffTime
-  , IOLike
-  , MonadMonotonicTime (getMonotonicTime)
-  , atomically
-  , diffTime
-  , getMonotonicTime
-  )
+import Ouroboros.Consensus.Util.IOLike (IOLike, atomically)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -291,34 +282,20 @@ newLeiosDbFromSqlite db = do
           atomically $ modifyTVar slotsVar $ Map.insert point.pointEbHash point.pointSlotNo
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
       , leiosDbUpdateEbTx = \ebHash items -> do
-          start <- getMonotonicTime
-          let printSinceStart str = do
-                t <- getMonotonicTime
-                putStrLn $ str <> ": " <> showTime (diffTime t start)
-          putStrLn ""
           anyMissing <- dbWithBEGIN db $ do
-            printSinceStart "In transaction"
             dbWithPrepare db (fromString sql_update_ebTx) $ \stmt -> do
-              printSinceStart "Before loop"
-              printSinceStart $ "Loop of" <> show (length items)
               forM_ items $ \(txOffset, txBytes) -> do
                 dbReset stmt
                 dbBindBlob stmt 1 txBytes
                 dbBindBlob stmt 2 (let MkEbHash bytes = ebHash in bytes)
                 dbBindInt64 stmt 3 (fromIntegral txOffset)
                 dbStep1 stmt
-              printSinceStart "After loop"
             -- Check whether any txs missing
-            printSinceStart "Before completness check"
-            execPrint db ("EXPLAIN QUERY PLAN " <> sql_select_ebTxs_missing)
-            res <- dbWithPrepare db sql_select_ebTxs_missing $ \stmt -> do
+            dbWithPrepare db sql_select_ebTxs_missing $ \stmt -> do
               dbBindBlob stmt 1 ebHash.ebHashBytes
               dbStep stmt >>= \case
-                DB.Done -> putStrLn "done" >> pure False
-                DB.Row -> putStrLn "not done" >> pure True
-            printSinceStart "After completness check"
-            pure res
-          printSinceStart "End"
+                DB.Done -> pure False
+                DB.Row -> pure True
           -- XXX: avoid needing this slotsVar, can we pass in the point? otherwise
           -- use the db to look-up
           unless anyMissing $ do
@@ -572,18 +549,3 @@ withDieDone io =
 
 dieStack :: HasCallStack => String -> IO a
 dieStack s = die $ s ++ "\n\n" ++ GHC.Stack.prettyCallStack GHC.Stack.callStack
-
-showTime :: DiffTime -> String
-showTime t
-  | t < micro 1 = show (s * 1_000_000_000) <> "ns"
-  | t < milli 1 = show (s * 1_000_000) <> "μs"
-  | t < 1 = show (s * 1_000) <> "ms"
-  | otherwise = show t
- where
-  s = realToFrac t :: Double
-
-milli :: Integer -> DiffTime
-milli x = fromIntegral x / 1000
-
-micro :: Integer -> DiffTime
-micro x = fromIntegral x / 1_000_000
