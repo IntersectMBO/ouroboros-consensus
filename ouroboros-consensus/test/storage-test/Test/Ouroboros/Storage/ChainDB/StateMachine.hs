@@ -1690,16 +1690,27 @@ genBlk chunkInfo Model{..} =
   canContainEBB = const modelSupportsEBBs -- TODO: we could be more precise
   genBody :: Gen TestBody
   genBody = do
+    forkNo <-
+      choose (1, 3)
     isValid <-
       frequency
         [ (4, return True)
         , (1, return False)
         ]
-    forkNo <- choose (1, 3)
+    perasCertRound <- do
+      let maxRoundNo =
+            case Model.maxPerasRoundNo dbModel of
+              Nothing -> 0
+              Just (PerasRoundNo r) -> r + 1
+      frequency
+        [ (9, return Nothing)
+        , (1, Just . PerasRoundNo <$> choose (0, maxRoundNo))
+        ]
     return
       TestBody
         { tbForkNo = forkNo
         , tbIsValid = isValid
+        , tbPerasCertRound = perasCertRound
         }
 
   -- A block that already exists in the ChainDB
