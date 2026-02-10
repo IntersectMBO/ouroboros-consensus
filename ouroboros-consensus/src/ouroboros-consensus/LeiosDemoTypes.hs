@@ -205,8 +205,6 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   , requestedTxPeers :: !(Map TxHash (Set (PeerId pid)))
   , requestedBytesSizePerPeer :: !(Map (PeerId pid) BytesSize)
   , requestedBytesSize :: !BytesSize
-  , -- TODO this might be far too big for the heap
-    cachedTxs :: !(Map TxHash BytesSize)
   , missingEbTxs :: !(Map LeiosPoint (IntMap (TxHash, BytesSize)))
   -- ^ The txs that still need to be sourced
   --
@@ -216,19 +214,15 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- * Every @MsgLeiosBlockTxs@ deletes from 'missingEbTxs', but that delete
   --   will be a no-op for all except the first to arrive carrying this EbTx.
   --
-  -- * EbTxs are deleted from 'missingEbTxs' when a 'toCopy' is scheduled
-  --   (b/c we can immediately stop requesting it from any peer). This delete
-  --   will never be a no-op (except maybe in a race?).
-  --
   -- TODO this is far too big for the heap
   , -- TODO this is far too big for the heap
     --
     -- inverse of missingEbTxs
     txOffsetss :: !(Map TxHash (Map EbHash Int))
   , blockingPerEb :: !(Map LeiosPoint Int)
-  -- ^ How many txs of each EB are not yet in the @ebTxs@ table
+  -- ^ How many txs of each EB are not yet in the @txs@ table
   --
-  -- These NULLs are blocking the node from sending @MsgLeiosBlockTxsOffer@
+  -- These missing txs are blocking the node from sending @MsgLeiosBlockTxsOffer@
   -- to its downstream peers.
   --
   -- It's different from 'missingEbTxs' in two ways.
@@ -236,19 +230,8 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- * The heap footprint of 'blockingPerEb' doesn't scale with the number of
   --   EbTxs.
   --
-  -- * 'blockingPerEb' is only updated when a 'toCopy' /finishes/ instead of as
-  --   soon as it's /scheduled/.
-  --
-  -- We need to be careful not to double-count arrivals. 'blockingPerEb'
-  --  should only be decremented by the arrival of a @MsgLeiosBlockTx@ if
-  --
-  -- * The EbTx is in 'missingEbTxs'.
-  --
-  -- * The EbTx is in 'toCopy' (and therefore not in 'missingEbTxs'). The
-  --   handler shoulder also remove it from 'toCopy'.
-  , toCopy :: !(Map LeiosPoint (IntMap BytesSize))
-  , toCopyBytesSize :: !BytesSize
-  , toCopyCount :: !Int
+  -- * 'blockingPerEb' is only decremented when txs are actually inserted
+  --   into the DB (via @MsgLeiosBlockTxs@ handling).
   }
 
 emptyLeiosOutstanding :: LeiosOutstanding pid
@@ -261,10 +244,6 @@ emptyLeiosOutstanding =
     Map.empty
     Map.empty
     Map.empty
-    Map.empty
-    Map.empty
-    0
-    0
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
@@ -278,10 +257,6 @@ prettyLeiosOutstanding x =
           ++ unwords [(prettyLeiosPoint k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList missingEbTxs]
       , "blockingPerEb = "
           ++ unwords [(prettyLeiosPoint k ++ "__" ++ show c) | (k, c) <- Map.toList blockingPerEb]
-      , "toCopy = "
-          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList toCopy]
-      , "toCopyBytesSize = " ++ show toCopyBytesSize
-      , "toCopyCount = " ++ show toCopyCount
       , ""
       ]
  where
@@ -292,9 +267,6 @@ prettyLeiosOutstanding x =
     , requestedBytesSize
     , missingEbTxs
     , blockingPerEb
-    , toCopy
-    , toCopyBytesSize
-    , toCopyCount
     } = x
 
 -----
@@ -412,10 +384,6 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   -- ^ At most this many outstanding requests for each EB body
   , maxRequestsPerTx :: Int
   -- ^ At most this many outstanding requests for each individual tx
-  , maxToCopyBytesSize :: BytesSize
-  -- ^ At most this many bytes are scheduled to be copied from the TxCache to the EbStore
-  , maxToCopyCount :: Int
-  -- ^ At most this many txs are scheduled to be copied from the TxCache to the EbStore
   , maxLeiosNotifyIngressQueue :: BytesSize
   -- ^ @maximumIngressQueue@ for LeiosNotify
   , maxLeiosFetchIngressQueue :: BytesSize
@@ -430,8 +398,6 @@ demoLeiosFetchStaticEnv =
     , maxRequestBytesSize = 500 * thousand
     , maxRequestsPerEb = 2
     , maxRequestsPerTx = 2
-    , maxToCopyBytesSize = 100 * millionBase2
-    , maxToCopyCount = 100 * thousand
     , maxLeiosNotifyIngressQueue = 1 * millionBase2
     , maxLeiosFetchIngressQueue = 50 * millionBase2
     }
