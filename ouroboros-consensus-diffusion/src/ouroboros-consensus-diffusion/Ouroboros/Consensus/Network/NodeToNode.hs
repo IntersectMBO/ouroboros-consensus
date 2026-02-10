@@ -158,12 +158,11 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
 import Ouroboros.Network.TxSubmission.Outbound
 
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
-import LeiosDemoTypes (LeiosEb, LeiosPoint, LeiosTx, TraceLeiosPeer (..))
+import LeiosDemoTypes (LeiosEb, LeiosPoint (..), LeiosTx, TraceLeiosPeer (..))
 import qualified LeiosDemoTypes as Leios
 import qualified Ouroboros.Network.Mux as ON
 
@@ -338,42 +337,37 @@ mkHandlers
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
-                  MsgLeiosBlockOffer p ebBytesSize -> do
-                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint p
-                    ebId <- MVar.modifyMVar getLeiosEbBodies $ \ebBodies1 -> do
-                      let (ebId, mbEbBodies2) = Leios.ebIdFromPoint p ebBodies1
-                          ebBodies2 = fromMaybe ebBodies1 mbEbBodies2
-                      let !ebBodies3 =
-                            if Set.member ebId (Leios.acquiredEbBodies ebBodies2)
-                              then ebBodies2
-                              else
-                                ebBodies2
-                                  { Leios.missingEbBodies =
-                                      Map.insert ebId ebBytesSize (Leios.missingEbBodies ebBodies2)
-                                  }
-                      pure (ebBodies3, ebId)
-                    traceWith tracer $
-                      MkTraceLeiosPeer $
-                        "leiosId: " ++ Leios.prettyLeiosPoint p ++ " ---> " ++ show (let Leios.MkEbId i = ebId in i)
+                  MsgLeiosBlockOffer point ebBytesSize -> do
+                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
+                    let MkLeiosPoint{pointEbHash = ebHash} = point
+                    MVar.modifyMVar_ getLeiosEbBodies $ \ebBodies ->
+                      pure $
+                        if Set.member ebHash (Leios.acquiredEbBodies ebBodies)
+                          then ebBodies
+                          else
+                            ebBodies
+                              { Leios.missingEbBodies =
+                                  Map.insert point ebBytesSize (Leios.missingEbBodies ebBodies)
+                              }
                     peerVars <- do
                       peersVars <- MVar.readMVar getLeiosPeersVars
                       case Map.lookup (Leios.MkPeerId peer) peersVars of
                         Nothing -> error "impossible!"
                         Just x -> pure x
                     MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
-                      let !offers1' = Set.insert ebId offers1
+                      let !offers1' = Set.insert ebHash offers1
                       pure (offers1', offers2)
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosBlockTxsOffer p -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
-                    ebId <- Leios.ebIdFromPointM getLeiosEbBodies p
+                    let MkLeiosPoint{pointEbHash = ebHash} = p
                     peerVars <- do
                       peersVars <- MVar.readMVar getLeiosPeersVars
                       case Map.lookup (Leios.MkPeerId peer) peersVars of
                         Nothing -> error "impossible!"
                         Just x -> pure x
                     MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
-                      let !offers2' = Set.insert ebId offers2
+                      let !offers2' = Set.insert ebHash offers2
                       pure (offers1, offers2')
                     void $ MVar.tryPutMVar getLeiosReady ()
               )
@@ -384,7 +378,7 @@ mkHandlers
             pure x'
           pure $
             leiosNotifyServerPeer
-              (Leios.nextLeiosNotification (leiosPeerTracer peer) (getLeiosEbBodies, var))
+              (Leios.nextLeiosNotification (leiosPeerTracer peer) var)
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           db <- getLeiosNewDbConnection -- TODO share DB connection for same peer?
           reqVar <-

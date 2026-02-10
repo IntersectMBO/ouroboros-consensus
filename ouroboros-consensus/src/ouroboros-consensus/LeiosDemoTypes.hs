@@ -57,23 +57,13 @@ import Text.Pretty.Simple (pShow)
 
 type BytesSize = Word32
 
--- REVIEW: What's the difference between this and EbHash? Just smaller and easier to recognize?
-newtype EbId = MkEbId Int
-  deriving (Eq, Ord)
-
-prettyEbId :: EbId -> String
-prettyEbId (MkEbId i) = show i
-
-fromIntegralEbId :: Integral a => EbId -> a
-fromIntegralEbId (MkEbId x) = fromIntegral x
-
 newtype PeerId a = MkPeerId a
   deriving (Eq, Ord)
 
 -- Hash algorithm used in leios for EBs and txs
 type HASH = Hash.Blake2b_256
 
-newtype EbHash = MkEbHash ByteString
+newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
   deriving (Eq, Ord, Show)
 
 prettyEbHash :: EbHash -> String
@@ -85,8 +75,10 @@ newtype TxHash = MkTxHash ByteString
 prettyTxHash :: TxHash -> String
 prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
 
-data LeiosPoint = MkLeiosPoint SlotNo EbHash
-  deriving Show
+-- | Uniquely identifies an endorser block in Leios. Could use 'Block SlotNo
+-- EbHash' eventually, but a dedicated type is better to explore.
+data LeiosPoint = MkLeiosPoint {pointSlotNo :: SlotNo, pointEbHash :: EbHash}
+  deriving (Show, Eq, Ord)
 
 instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
 
@@ -155,7 +147,7 @@ prettyBitmap (idx, bitmap) =
 
 data LeiosPeerVars m = MkLeiosPeerVars
   { -- written to only by the LeiosNotify client (TODO and eviction)
-    offerings :: !(MVar m (Set EbId, Set EbId))
+    offerings :: !(MVar m (Set EbHash, Set EbHash))
   , requestsToSend :: !(StrictTVar m (Seq LeiosFetchRequest))
   -- ^ written to by the fetch logic and the LeiosFetch client
   --
@@ -179,11 +171,11 @@ newLeiosPeerVars = do
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
   pure MkLeiosPeerVars{offerings, requestsToSend}
 
+-- REVIEW: Is the acquired/missing here redundant to the maps in LeiosOutstanding?
 data LeiosEbBodies = MkLeiosEbBodies
-  { acquiredEbBodies :: !(Set EbId)
-  , missingEbBodies :: !(Map EbId BytesSize)
-  , ebPoints :: !(IntMap {- SlotNo -} (Map EbHash EbId))
-  , ebPointsInverse :: !(IntMap {- EbId -} EbHash)
+  { acquiredEbBodies :: !(Set EbHash)
+  , missingEbBodies :: !(Map LeiosPoint BytesSize)
+  , ebPoints :: !(IntMap {- SlotNo -} EbHash)
   }
 
 emptyLeiosEbBodies :: LeiosEbBodies
@@ -191,7 +183,6 @@ emptyLeiosEbBodies =
   MkLeiosEbBodies
     Set.empty
     Map.empty
-    IntMap.empty
     IntMap.empty
 
 prettyLeiosEbBodies :: LeiosEbBodies -> String
@@ -207,14 +198,15 @@ prettyLeiosEbBodies x =
     , missingEbBodies
     } = x
 
+-- | Main data structure used in the Leios fetching logic.
 data LeiosOutstanding pid = MkLeiosOutstanding
-  { requestedEbPeers :: !(Map EbId (Set (PeerId pid)))
+  { requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
   , requestedTxPeers :: !(Map TxHash (Set (PeerId pid)))
   , requestedBytesSizePerPeer :: !(Map (PeerId pid) BytesSize)
   , requestedBytesSize :: !BytesSize
   , -- TODO this might be far too big for the heap
     cachedTxs :: !(Map TxHash BytesSize)
-  , missingEbTxs :: !(Map EbId (IntMap (TxHash, BytesSize)))
+  , missingEbTxs :: !(Map LeiosPoint (IntMap (TxHash, BytesSize)))
   -- ^ The txs that still need to be sourced
   --
   -- * A @MsgLeiosBlock@ inserts into 'missingEbTxs' if that EB has never
@@ -231,8 +223,8 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   , -- TODO this is far too big for the heap
     --
     -- inverse of missingEbTxs
-    txOffsetss :: !(Map TxHash (Map EbId Int))
-  , blockingPerEb :: !(Map EbId Int)
+    txOffsetss :: !(Map TxHash (Map EbHash Int))
+  , blockingPerEb :: !(Map LeiosPoint Int)
   -- ^ How many txs of each EB are not yet in the @ebTxs@ table
   --
   -- These NULLs are blocking the node from sending @MsgLeiosBlockTxsOffer@
@@ -253,7 +245,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   --
   -- * The EbTx is in 'toCopy' (and therefore not in 'missingEbTxs'). The
   --   handler shoulder also remove it from 'toCopy'.
-  , toCopy :: !(Map EbId (IntMap BytesSize))
+  , toCopy :: !(Map LeiosPoint (IntMap BytesSize))
   , toCopyBytesSize :: !BytesSize
   , toCopyCount :: !Int
   }
@@ -277,16 +269,16 @@ prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
   unlines $
     map ("    [leios] " ++) $
-      [ "requestedEbPeers = " ++ unwords (map prettyEbId (Map.keys requestedEbPeers))
+      [ "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
       , "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
       , "requestedBytesSize = " ++ show requestedBytesSize
       , "missingEbTxs = "
-          ++ unwords [(prettyEbId k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList missingEbTxs]
+          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList missingEbTxs]
       , "blockingPerEb = "
-          ++ unwords [(prettyEbId k ++ "__" ++ show c) | (k, c) <- Map.toList blockingPerEb]
+          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show c) | (k, c) <- Map.toList blockingPerEb]
       , "toCopy = "
-          ++ unwords [(prettyEbId k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList toCopy]
+          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList toCopy]
       , "toCopyBytesSize = " ++ show toCopyBytesSize
       , "toCopyCount = " ++ show toCopyCount
       , ""
@@ -450,8 +442,8 @@ demoLeiosFetchStaticEnv =
 -----
 
 data LeiosNotification
-  = LeiosOfferBlock EbId BytesSize
-  | LeiosOfferBlockTxs EbId
+  = LeiosOfferBlock LeiosPoint BytesSize
+  | LeiosOfferBlockTxs LeiosPoint
 
 -----
 

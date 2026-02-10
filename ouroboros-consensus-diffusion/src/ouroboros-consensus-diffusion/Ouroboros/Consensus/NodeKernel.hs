@@ -160,8 +160,7 @@ import Data.Sequence (Seq)
 import LeiosDemoDb (LeiosDbHandle, leiosDbInsertEbBody, leiosDbInsertEbPoint)
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
-  ( EbId (MkEbId)
-  , LeiosEbBodies
+  ( LeiosEbBodies
   , LeiosOutstanding
   , LeiosPeerVars
   , TraceLeiosKernel (..)
@@ -442,7 +441,7 @@ initNodeKernel
                 outstanding
         let newCopy = Leios.toCopyCount outstanding' /= Leios.toCopyCount outstanding
         pure (outstanding', (newDecisions, newCopy))
-      let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv ebBodies newDecisions
+      let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
       traceWith tracer $
         MkTraceLeiosKernel $
           "leiosFetchLogic: "
@@ -904,11 +903,10 @@ forkBlockForging IS{..} blockForging =
 
       -- Store generated EB so it can be diffused
       for_ mayNewEndorserBlock $ \eb -> do
-        -- HACK: Who created the EbId so far?
-        let ebId = MkEbId (fromEnum currentSlot * 1000)
-        lift $ leiosDbInsertEbPoint leiosDB currentSlot (hashLeiosEb eb) ebId
+        let ebHash = hashLeiosEb eb
+        lift $ leiosDbInsertEbPoint leiosDB currentSlot ebHash
         -- TODO: pass LeiosEb directly
-        lift $ leiosDbInsertEbBody leiosDB ebId (leiosEbBodyItems eb)
+        lift $ leiosDbInsertEbBody leiosDB ebHash (leiosEbBodyItems eb)
         traceLeios TraceLeiosBlockStored{slot = currentSlot, eb}
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()

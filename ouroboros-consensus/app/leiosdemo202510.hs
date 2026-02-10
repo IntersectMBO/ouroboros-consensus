@@ -44,6 +44,7 @@ import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64, Word8)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Generics (Generic)
+import qualified LeiosDemoDb
 import qualified Numeric
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
@@ -262,12 +263,14 @@ newtype LeiosScheduleItem = MkLeiosScheduleItem (Double, (Word64, T.Text, Maybe 
 -- | Deriving via "GHC.Generics"
 instance JSON.ToJSON LeiosScheduleItem
 
+-- TODO: we should pull this out so it stays maintainable against the LeiosDemoDb
 generateDb :: R.RandomGen g => g -> DB.Database -> [EbRecipe] -> IO [LeiosScheduleItem]
 generateDb prng0 db ebRecipes = do
   gref <- R.newIOGenM prng0
   -- init db
-  withDieMsg $ DB.exec db (fromString sql_schema)
-  stmt_write_ebId <- withDieJust $ DB.prepare db (fromString sql_insert_ebId)
+  -- NOTE: The SQLSchema evolved and the "generate" tool was only patched to stay compatible.
+  withDieMsg $ DB.exec db (fromString LeiosDemoDb.sql_schema)
+  stmt_write_ebPoint <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_ebPoint)
   stmt_write_ebClosure <- withDieJust $ DB.prepare db (fromString sql_insert_ebClosure)
   -- loop over EBs (one SQL transaction each, to be gentle)
   (_dynEnv', sigma, revSchedule) <- (\f -> foldM f (emptyLeiosFetchDynEnv, Map.empty, []) ebRecipes) $ \(dynEnv, sigma, revSchedule) ebRecipe -> do
@@ -335,13 +338,13 @@ generateDb prng0 db ebRecipes = do
         ebHash = Hash.castHash $ Hash.hashWith id ebBytes
     let (ebId, mbDynEnv') = ebIdFromPoint ebSlot (Hash.hashToBytes ebHash) dynEnv
     withDieMsg $ DB.exec db (fromString "BEGIN")
-    withDie $ DB.bindInt64 stmt_write_ebId 3 (fromIntegralEbId ebId)
-    withDie $ DB.bindInt64 stmt_write_ebClosure 1 (fromIntegralEbId ebId)
     -- INSERT INTO ebPoints
-    withDie $ DB.bindInt64 stmt_write_ebId 1 (fromIntegral ebSlot)
-    withDie $ DB.bindBlob stmt_write_ebId 2 (Hash.hashToBytes ebHash)
-    withDieDone $ DB.stepNoCB stmt_write_ebId
-    withDie $ DB.reset stmt_write_ebId
+    withDie $ DB.bindInt64 stmt_write_ebPoint 1 (fromIntegral ebSlot)
+    withDie $ DB.bindBlob stmt_write_ebPoint 2 (Hash.hashToBytes ebHash)
+    withDieDone $ DB.stepNoCB stmt_write_ebPoint
+    withDie $ DB.reset stmt_write_ebPoint
+
+    withDie $ DB.bindBlob stmt_write_ebClosure 1 (Hash.hashToBytes ebHash)
     -- loop over txs
     V.iforM_ txs $ \txOffset (txBytes, txHash) -> do
       -- INSERT INTO ebTxs
@@ -364,81 +367,21 @@ generateDb prng0 db ebRecipes = do
               : revSchedule
       )
   -- finalize db
-  withDieMsg $ DB.exec db (fromString sql_index_schema)
   forM_ (Map.toList sigma) $ \(nickname, (ebId, _count)) -> do
     putStrLn $ unwords [nickname, prettyEbId ebId]
   pure $ reverse revSchedule
 
 -----
 
-sql_schema :: String
-sql_schema =
-  "CREATE TABLE txCache (\n\
-  \    txHashBytes BLOB NOT NULL PRIMARY KEY   -- raw bytes\n\
-  \  ,\n\
-  \    txBytes BLOB NOT NULL   -- valid CBOR\n\
-  \  ,\n\
-  \    txBytesSize INTEGER NOT NULL\n\
-  \  ,\n\
-  \    expiryUnixEpoch INTEGER NOT NULL\n\
-  \  ) WITHOUT ROWID;\n\
-  \\n\
-  \CREATE TABLE ebPoints (\n\
-  \    ebSlot INTEGER NOT NULL\n\
-  \  ,\n\
-  \    ebHashBytes BLOB NOT NULL\n\
-  \  ,\n\
-  \    ebId INTEGER NOT NULL\n\
-  \  ,\n\
-  \    PRIMARY KEY (ebSlot, ebHashBytes)\n\
-  \  ) WITHOUT ROWID;\n\
-  \\n\
-  \CREATE TABLE ebTxs (\n\
-  \    ebId INTEGER NOT NULL   -- foreign key ebPoints.ebId\n\
-  \  ,\n\
-  \    txOffset INTEGER NOT NULL\n\
-  \  ,\n\
-  \    txHashBytes BLOB NOT NULL   -- raw bytes\n\
-  \  ,\n\
-  \    txBytesSize INTEGER NOT NULL\n\
-  \  ,\n\
-  \    txBytes BLOB   -- valid CBOR\n\
-  \  ,\n\
-  \    PRIMARY KEY (ebId, txOffset)\n\
-  \  ) WITHOUT ROWID;\n\
-  \"
-
-sql_index_schema :: String
-sql_index_schema =
-  "CREATE INDEX ebPointsExpiry\n\
-  \    ON ebPoints (ebSlot ASC, ebId ASC);   -- Helps with the eviction policy of the EbStore.\n\
-  \\n\
-  \CREATE INDEX txCacheExpiry\n\
-  \    ON txCache (expiryUnixEpoch ASC, txHashBytes);   -- Helps with the eviction policy of the TxCache.\n\
-  \\n\
-  \CREATE INDEX missingEbTxs\n\
-  \    ON ebTxs (ebId DESC, txOffset ASC)\n\
-  \    WHERE txBytes IS NULL;   -- Helps with fetch logic decisions.\n\
-  \\n\
-  \CREATE INDEX acquiredEbTxs\n\
-  \    ON ebTxs (ebId DESC, txOffset ASC)\n\
-  \    WHERE txBytes IS NOT NULL;   -- Helps with fetch logic decisions.\n\
-  \"
-
-sql_insert_ebId :: String
-sql_insert_ebId =
-  "INSERT INTO ebPoints (ebSlot, ebHashBytes, ebId) VALUES (?, ?, ?)\n\
-  \"
-
 sql_insert_ebClosure :: String
 sql_insert_ebClosure =
-  "INSERT INTO ebTxs (ebId, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, ?)\n\
+  "INSERT INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, ?)\n\
   \"
 
 sql_share_ebClosures_ASC :: String
 sql_share_ebClosures_ASC =
   "SELECT txOffset, txHashBytes, txBytes FROM ebTxs\n\
-  \WHERE ebId = ? AND txOffset >= ?\n\
+  \WHERE ebHashBytes = ? AND txOffset >= ?\n\
   \ORDER BY txOffset ASC\n\
   \LIMIT ?\n\
   \"
@@ -1067,7 +1010,8 @@ ebIdToPoint (MkEbId y) x =
  where
   f (MkHashBytes z) = (ebIdSlot (MkEbId y), z)
 
-ebIdFromPoint :: Word64 -> ByteString -> LeiosFetchDynamicEnv -> (EbId, Maybe LeiosFetchDynamicEnv)
+ebIdFromPoint ::
+  Word64 -> ByteString -> LeiosFetchDynamicEnv -> (EbId, Maybe LeiosFetchDynamicEnv)
 ebIdFromPoint ebSlot ebHash x =
   case IntMap.lookup (fromIntegral ebSlot) (ebPoints x) of
     Just m -> case Map.lookup hashBytes m of
@@ -1096,11 +1040,11 @@ ebIdFromPoint' db ebSlot ebHash = do
     Nothing -> pure ()
     Just{} -> do
       -- INSERT INTO ebPoints
-      stmt_write_ebIds <- withDieJust $ DB.prepare db (fromString sql_insert_ebId)
-      withDie $ DB.bindInt64 stmt_write_ebIds 1 (fromIntegral ebSlot)
-      withDie $ DB.bindBlob stmt_write_ebIds 2 ebHash
-      withDie $ DB.bindInt64 stmt_write_ebIds 3 (fromIntegralEbId ebId)
-      withDieDone $ DB.stepNoCB stmt_write_ebIds
+      stmt_write_ebPoints <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_ebPoint)
+      withDie $ DB.bindInt64 stmt_write_ebPoints 1 (fromIntegral ebSlot)
+      withDie $ DB.bindBlob stmt_write_ebPoints 2 ebHash
+      withDie $ DB.bindInt64 stmt_write_ebPoints 3 (fromIntegralEbId ebId)
+      withDieDone $ DB.stepNoCB stmt_write_ebPoints
   pure ebId
 
 -----
@@ -1608,8 +1552,7 @@ openEvenIfMissing dbPath lfstPath = do
     b <- doesFileExist dbPath
     db <- withDieMsg $ DB.open (fromString dbPath)
     when (not b) $ do
-      withDieMsg $ DB.exec db (fromString sql_schema)
-      withDieMsg $ DB.exec db (fromString sql_index_schema)
+      withDieMsg $ DB.exec db (fromString LeiosDemoDb.sql_schema)
     pure db
   lfst <-
     doesFileExist lfstPath >>= \case
