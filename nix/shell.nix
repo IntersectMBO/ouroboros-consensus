@@ -21,7 +21,12 @@ hsPkgs.shellFor {
     pkgs.pretty-simple
 
     # release management
-    pkgs.scriv
+    # WARNING: scriv tests are disabled in this Nix build.
+    # Scriv's test suite is incompatible with Click 8.2+ due to removed `mix_stderr` parameter:
+    # https://github.com/psf/black/pull/4577
+    # https://github.com/pallets/click/pull/2844
+    # This is a temporary workaround. TODO: Re-enable tests when scriv is updated.
+    (pkgs.scriv.overridePythonAttrs (old: { doCheck = false; }))
     (pkgs.python3.withPackages (p: [ p.beautifulsoup4 p.html5lib p.matplotlib p.pandas ]))
   ];
 
