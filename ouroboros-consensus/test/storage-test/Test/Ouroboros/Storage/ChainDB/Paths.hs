@@ -64,7 +64,7 @@ deriving instance (HasHeader blk, Show (Header blk)) => Show (ReachableSetup blk
 -- | All blocks on the current chain use this value as for their body. This
 -- allows us to statically convert a header from the current chain to a block.
 currentChainBody :: TestBody
-currentChainBody = TestBody 0 True
+currentChainBody = TestBody 0 True Nothing
 
 genFirstBlock ::
   Gen TestBody ->
@@ -189,7 +189,9 @@ generateFork (chain, mbAnchorHdr) = sized $ \size -> do
   return (diff, AF.toOldestFirst suffix)
  where
   genBody :: Gen TestBody
-  genBody = (`TestBody` True) <$> choose (1, 3)
+  genBody = do
+    n <- choose (1, 3)
+    pure (TestBody n True Nothing)
 
   headerToPrevInfo ::
     Header TestBlock ->

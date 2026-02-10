@@ -115,11 +115,11 @@ tests =
 
 -- All blocks on the same chain
 a, b, c, d, e :: TestBlock
-a = firstBlock 0 TestBody{tbForkNo = 0, tbIsValid = True}
-b = mkNextBlock a 1 TestBody{tbForkNo = 0, tbIsValid = True}
-c = mkNextBlock b 2 TestBody{tbForkNo = 0, tbIsValid = True}
-d = mkNextBlock c 3 TestBody{tbForkNo = 0, tbIsValid = True}
-e = mkNextBlock d 4 TestBody{tbForkNo = 0, tbIsValid = True}
+a = firstBlock 0 TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+b = mkNextBlock a 1 TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+c = mkNextBlock b 2 TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+d = mkNextBlock c 3 TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+e = mkNextBlock d 4 TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
 
 -- | Requested stream = A -> C
 --
@@ -176,9 +176,9 @@ prop_1435_case1 =
     (Left (ForkTooOld (StreamFromInclusive (blockRealPoint b'))))
  where
   canContainEBB = const True
-  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
-  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True}
-  b' = mkNextBlock ebb 0 TestBody{tbForkNo = 1, tbIsValid = True}
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+  b' = mkNextBlock ebb 0 TestBody{tbForkNo = 1, tbIsValid = True, tbPerasCertRound = Nothing}
 
 -- | Requested stream = EBB' -> EBB' where EBB, B, and EBB' are all blocks in
 -- the same slot, and EBB' is not part of the current chain nor ChainDB.
@@ -197,9 +197,9 @@ prop_1435_case2 =
     (Left (ForkTooOld (StreamFromInclusive (blockRealPoint ebb'))))
  where
   canContainEBB = const True
-  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
-  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True}
-  ebb' = firstEBB canContainEBB TestBody{tbForkNo = 1, tbIsValid = True}
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+  ebb' = firstEBB canContainEBB TestBody{tbForkNo = 1, tbIsValid = True, tbPerasCertRound = Nothing}
 
 -- | Requested stream = EBB -> EBB where EBB and B are all blocks in the same
 -- slot.
@@ -218,8 +218,8 @@ prop_1435_case3 =
     (Right (map Right [ebb]))
  where
   canContainEBB = const True
-  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
-  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True}
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
 
 -- | Requested stream = EBB -> EBB where EBB and B are all blocks in the same
 -- slot.
@@ -238,8 +238,8 @@ prop_1435_case4 =
     (Right (map Right [ebb]))
  where
   canContainEBB = const True
-  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
-  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True}
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
 
 -- | Requested stream = EBB -> EBB where EBB and B' are all blocks in the same
 -- slot, and B' is not part of the current chain nor ChainDB.
@@ -258,8 +258,8 @@ prop_1435_case5 =
     (Left (ForkTooOld (StreamFromInclusive (blockRealPoint b'))))
  where
   canContainEBB = const True
-  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
-  b' = mkNextBlock ebb 0 TestBody{tbForkNo = 1, tbIsValid = True}
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+  b' = mkNextBlock ebb 0 TestBody{tbForkNo = 1, tbIsValid = True, tbPerasCertRound = Nothing}
 
 -- | Requested stream = EBB' -> EBB' where EBB and EBB' are all blocks in the
 -- same slot, and EBB' is not part of the current chain nor ChainDB.
@@ -278,8 +278,8 @@ prop_1435_case6 =
     (Left (ForkTooOld (StreamFromInclusive (blockRealPoint ebb'))))
  where
   canContainEBB = const True
-  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
-  ebb' = firstEBB canContainEBB TestBody{tbForkNo = 1, tbIsValid = True}
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
+  ebb' = firstEBB canContainEBB TestBody{tbForkNo = 1, tbIsValid = True, tbPerasCertRound = Nothing}
 
 -- | The general property test
 prop_general_test ::

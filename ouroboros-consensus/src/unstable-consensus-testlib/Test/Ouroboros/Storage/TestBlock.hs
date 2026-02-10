@@ -197,6 +197,13 @@ data TestBody = TestBody
   -- Note that this is a /local/ number, it is specific to this block,
   -- other blocks need not be aware of it.
   , tbIsValid :: !Bool
+  , tbPerasCertRound :: !(Maybe PerasRoundNo)
+  -- ^ Some real blocks will ocasionally carry a Peras certificate inside their
+  -- body to coordinate the end of a cooldown period. For the purposes of the
+  -- ChainDB, we don't really care about the details of the certificate other
+  -- than its round number, which needs to be stored (and carefully updated
+  -- whenever a newer one pops up) so it can be used to evaluate the Peras
+  -- voting rules and decide if a node should resume voting.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData, NoThunks, Serialise, Hashable)
@@ -908,6 +915,7 @@ corruptionFiles = map snd . NE.toList
 
 deriving newtype instance Hashable SlotNo
 deriving newtype instance Hashable BlockNo
+deriving newtype instance Hashable PerasRoundNo
 instance Hashable IsEBB
 
 -- use generic instance
