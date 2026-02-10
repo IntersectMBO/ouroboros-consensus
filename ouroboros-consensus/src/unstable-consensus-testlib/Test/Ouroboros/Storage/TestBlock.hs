@@ -106,7 +106,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -587,7 +587,7 @@ type instance TxIn (LedgerState TestBlock) = Void
 type instance TxOut (LedgerState TestBlock) = Void
 
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
-  convertMapKind (TestLedger x y) = TestLedger x y
+  convertMapKind (TestLedger x y z) = TestLedger x y z
 instance LedgerTablesAreTrivial (Ticked (LedgerState TestBlock)) where
   convertMapKind (TickedTestLedger x) = TickedTestLedger (convertMapKind x)
 deriving via
@@ -622,7 +622,27 @@ instance ApplyBlock (LedgerState TestBlock) TestBlock where
     | not $ tbIsValid testBody =
         throwError $ InvalidBlock
     | otherwise =
-        return $ pureLedgerResult $ TestLedger (Chain.blockPoint tb) (BlockHash (blockHash tb))
+        return $
+          pureLedgerResult $
+            TestLedger
+              (Chain.blockPoint tb)
+              (BlockHash (blockHash tb))
+              ( let
+                  -- NOTE: this bypasses the degenerate global implementation of
+                  -- 'BlockSupportsPeras.getPerasCertInBlock' for 'TestBlock',
+                  -- which currently always returns 'Nothing'.
+                  --
+                  -- TODO: refactor this to use 'getPerasCertInBlock' after the
+                  -- HFC plumbing for 'BlockSupportsPeras' is in place.
+                  certRoundInBlock = tbPerasCertRound testBody
+                 in
+                  -- the highest Peras certificate round number  we've seen so far
+                  case (certRoundInBlock, latestPerasCertRound) of
+                    (Nothing, Nothing) -> Nothing
+                    (Just rb, Nothing) -> Just rb
+                    (Nothing, Just rl) -> Just rl
+                    (Just rb, Just rl) -> Just (rb `max` rl)
+              )
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
@@ -635,6 +655,9 @@ data instance LedgerState TestBlock mk
   { -- The ledger state simply consists of the last applied block
     lastAppliedPoint :: !(Point TestBlock)
   , lastAppliedHash :: !(ChainHash TestBlock)
+  , -- In addition, we also carry around the round number of the latest Peras
+    -- certificate that appeared in a block.
+    latestPerasCertRound :: !(Maybe PerasRoundNo)
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass (Serialise, NoThunks)
@@ -703,7 +726,8 @@ instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerSupportsPeras TestBlock
+instance LedgerSupportsPeras TestBlock where
+  getLatestPerasCertRound = latestPerasCertRound
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
@@ -714,7 +738,7 @@ instance InspectLedger TestBlock
 -- Use defaults
 
 testInitLedger :: LedgerState TestBlock EmptyMK
-testInitLedger = TestLedger GenesisPoint GenesisHash
+testInitLedger = TestLedger GenesisPoint GenesisHash Nothing
 
 testInitExtLedger :: ExtLedgerState TestBlock EmptyMK
 testInitExtLedger =
