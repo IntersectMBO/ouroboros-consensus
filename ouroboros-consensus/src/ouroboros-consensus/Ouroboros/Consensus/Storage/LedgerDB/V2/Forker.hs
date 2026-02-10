@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -37,6 +38,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Enclose
+import Ouroboros.Consensus.Util.EscapableResources
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.NormalForm.StrictTVar ()
 import qualified Ouroboros.Network.AnchoredSeq as AS
@@ -127,26 +129,20 @@ implForkerPush ::
   (IOLike m, GetTip l, HasLedgerTables l, HasCallStack) =>
   ForkerEnv m l blk ->
   l DiffMK ->
-  m ()
+  ContT r m ()
 implForkerPush env newState =
-  encloseTimedWith (ForkerPush >$< foeTracer env) $ do
-    lseq <- readTVarIO (foeLedgerSeq env)
+  encloseTimedWith' (ForkerPush >$< foeTracer env) $ do
+    lseq <- lift $ readTVarIO (foeLedgerSeq env)
 
     let st0 = current lseq
         st = forgetLedgerTables newState
 
-    bracketOnError
-      (duplicate (tables $ currentHandle lseq) (foeResourceRegistry env))
-      (release . fst)
-      ( \(_, newtbs) -> do
-          pushDiffs newtbs st0 newState
+    tbs <- duplicate (tables $ currentHandle lseq)
+    lift $ pushDiffs tbs st0 newState
 
-          let lseq' = extend (StateRef st newtbs) lseq
+    let lseq' = extend (StateRef st tbs) lseq
 
-          atomically $ do
-            writeTVar (foeLedgerSeq env) lseq'
-            modifyTVar (foeCleanup env) (>> close newtbs)
-      )
+    lift $ atomically $ writeTVar (foeLedgerSeq env) lseq'
 
 implForkerCommit ::
   (IOLike m, GetTip l, StandardHash l) =>

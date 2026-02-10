@@ -8,8 +8,10 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -38,7 +40,6 @@ import Control.Monad.Class.MonadThrow
 import Control.Monad.Except
 import Control.Monad.State.Strict (execStateT)
 import Control.Monad.Trans.Except
-import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -66,7 +67,9 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util.CBOR (readIncremental)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
+import Ouroboros.Consensus.Util.EscapableResources
 import Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Network.AnchoredSeq as AS
 import Streaming
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
@@ -94,7 +97,7 @@ guardClosed LedgerTablesHandleClosed _ = error $ show InMemoryClosedExn
 guardClosed (LedgerTablesHandleOpen !st) f = f st
 
 newInMemoryLedgerTablesHandle ::
-  forall m l.
+  forall r m l.
   ( IOLike m
   , HasLedgerTables l
   , CanUpgradeLedgerTables l
@@ -102,25 +105,28 @@ newInMemoryLedgerTablesHandle ::
   ) =>
   Tracer m LedgerDBV2Trace ->
   SomeHasFS m ->
-  (ResourceKey m, StrictTVar m (LedgerTablesHandleState l)) ->
-  m (LedgerTablesHandle m l)
-newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) (origResKey, tablesTVar) =
-  encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $ do
-    resourceKeyTVar <- newTVarIO origResKey
-    pure
-      LedgerTablesHandle
-        { close = implClose resourceKeyTVar
-        , duplicate = implDuplicate tracer tablesTVar someFS
-        , read = implRead tablesTVar
-        , readRange = implReadRange tablesTVar
-        , readAll = implReadAll tablesTVar
-        , pushDiffs = implPushDiffs tablesTVar
-        , takeHandleSnapshot = implTakeHandleSnapshot tablesTVar hasFS
-        , tablesSize = implTablesSize tablesTVar
-        , transfer = atomically . writeTVar resourceKeyTVar
-        }
+  StrictTVar m (LedgerTablesHandleState l) ->
+  m () ->
+  (LedgerTablesHandle m l -> STM m ()) ->
+  ContT r m (LedgerTablesHandle m l)
+newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) tablesTVar closeTables storeSomewhereElse =
+  lift $
+    encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $
+      do
+        let h =
+              LedgerTablesHandle
+                { close = closeTables
+                , duplicate = implDuplicate tracer tablesTVar someFS undefined
+                , read = implRead tablesTVar
+                , readRange = implReadRange tablesTVar
+                , readAll = implReadAll tablesTVar
+                , pushDiffs = implPushDiffs tablesTVar
+                , takeHandleSnapshot = implTakeHandleSnapshot tablesTVar hasFS
+                , tablesSize = implTablesSize tablesTVar
+                , transfer = \_ -> atomically $ storeSomewhereElse h
+                }
+        pure h
 
-{-# INLINE implClose #-}
 {-# INLINE implDuplicate #-}
 {-# INLINE implRead #-}
 {-# INLINE implReadRange #-}
@@ -129,31 +135,31 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) (origResKey, ta
 {-# INLINE implTakeHandleSnapshot #-}
 {-# INLINE implTablesSize #-}
 
-implClose ::
-  IOLike m =>
-  StrictTVar m (ResourceKey m) ->
-  m ()
-implClose tv = do
-  Monad.void $ release =<< readTVarIO tv
-
 allocateLedgerTablesHandle ::
+  forall r m l.
   ( IOLike m
   , HasLedgerTables l
   ) =>
   Tracer m LedgerDBV2Trace ->
-  ResourceRegistry m ->
+  (LedgerTablesHandle m l -> STM m ()) ->
+  ( StrictTVar m (LedgerTablesHandleState l) ->
+    m () ->
+    (LedgerTablesHandle m l -> STM m ()) ->
+    ContT r m (LedgerTablesHandle m l)
+  ) ->
   LedgerTables l ValuesMK ->
-  m (ResourceKey m, StrictTVar m (LedgerTablesHandleState l))
-allocateLedgerTablesHandle tracer rr v =
-  allocate
-    rr
-    (\_ -> newTVarIO $ LedgerTablesHandleOpen v)
+  ContT r m (LedgerTablesHandle m l)
+allocateLedgerTablesHandle tracer steal toHandle v =
+  acquireEscapableHandleWithResource
+    (newTVarIO $ LedgerTablesHandleOpen v)
     ( \tv' -> do
         p <- atomically $ swapTVar tv' LedgerTablesHandleClosed
         case p of
           LedgerTablesHandleOpen{} -> encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) $ pure ()
           _ -> pure ()
     )
+    steal
+    toHandle
 
 implDuplicate ::
   ( IOLike m
@@ -164,12 +170,12 @@ implDuplicate ::
   Tracer m LedgerDBV2Trace ->
   StrictTVar m (LedgerTablesHandleState l) ->
   SomeHasFS m ->
-  ResourceRegistry m ->
-  m (ResourceKey m, LedgerTablesHandle m l)
-implDuplicate !tracer tv !someFS rr = do
-  hs <- readTVarIO tv
-  (rk, tv') <- guardClosed hs $ allocateLedgerTablesHandle tracer rr
-  (rk,) <$> newInMemoryLedgerTablesHandle tracer someFS (rk, tv')
+  (LedgerTablesHandle m l -> STM m ()) ->
+  ContT r m (LedgerTablesHandle m l)
+implDuplicate !tracer tv !someFS store = do
+  hs <- lift $ readTVarIO tv
+  guardClosed hs $
+    allocateLedgerTablesHandle tracer store (newInMemoryLedgerTablesHandle tracer someFS)
 
 implRead ::
   ( IOLike m
@@ -317,54 +323,71 @@ implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
         , snapshotTablesCodecVersion = TablesCodecVersion1
         }
 
+liftContT ::
+  -- | Inner: Returns (m (Either e r))
+  ContT (Either e r) m a ->
+  -- | Outer: Returns (ExceptT e m r)
+  ContT r (ExceptT e m) a
+liftContT (ContT inner) = ContT $ \continuation ->
+  ExceptT $ inner (runExceptT . continuation)
+
 -- | Read snapshot from disk.
 --
 --   Fail on data corruption, i.e. when the checksum of the read data differs
 --   from the one tracked by @'DiskSnapshot'@.
 loadSnapshot ::
-  forall blk m.
+  forall blk r m.
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , IOLike m
   , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
   ) =>
   Tracer m LedgerDBV2Trace ->
-  ResourceRegistry m ->
   CodecConfig blk ->
   SomeHasFS m ->
   DiskSnapshot ->
-  ExceptT (SnapshotFailure blk) m (LedgerSeq' m blk, RealPoint blk)
-loadSnapshot tracer rr ccfg fs@(SomeHasFS hfs) ds = do
-  fileEx <- lift $ doesFileExist hfs (snapshotToDirPath ds)
-  Monad.when fileEx $ throwE $ InitFailureRead ReadSnapshotIsLegacy
+  ContT r (ExceptT (SnapshotFailure blk) m) (LedgerSeq' m blk, RealPoint blk)
+loadSnapshot tracer ccfg fs@(SomeHasFS hfs) ds = do
+  fileEx <- lift $ lift $ doesFileExist hfs (snapshotToDirPath ds)
+  lift $ Monad.when fileEx $ throwE $ InitFailureRead ReadSnapshotIsLegacy
 
   snapshotMeta <-
-    withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath ds)) $
-      loadSnapshotMetadata fs ds
-  Monad.when (snapshotBackend snapshotMeta /= UTxOHDMemSnapshot) $ do
+    lift $
+      withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath ds)) $
+        loadSnapshotMetadata fs ds
+  lift $ Monad.when (snapshotBackend snapshotMeta /= UTxOHDMemSnapshot) $ do
     throwE $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath ds) MetadataBackendMismatch
   (extLedgerSt, checksumAsRead) <-
-    withExceptT
-      (InitFailureRead . ReadSnapshotFailed)
+    lift
+      $ withExceptT
+        (InitFailureRead . ReadSnapshotFailed)
       $ readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath ds)
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
-    Origin -> throwE InitFailureGenesis
+    Origin -> lift $ throwE InitFailureGenesis
     NotOrigin pt -> do
       (values, Identity crcTables) <-
-        withExceptT (InitFailureRead . ReadSnapshotFailed) $
-          ExceptT $
-            readIncremental
-              fs
-              Identity
-              (valuesMKDecoder extLedgerSt)
-              (snapshotToDirPath ds </> mkFsPath ["tables"])
-      (rk, values') <- lift $ allocateLedgerTablesHandle tracer rr values
+        lift $
+          withExceptT (InitFailureRead . ReadSnapshotFailed) $
+            ExceptT $
+              readIncremental
+                fs
+                Identity
+                (valuesMKDecoder extLedgerSt)
+                (snapshotToDirPath ds </> mkFsPath ["tables"])
+      tbs <-
+        liftContT $
+          allocateLedgerTablesHandle
+            tracer
+            undefined
+            (newInMemoryLedgerTablesHandle tracer fs)
+            values
       let computedCRC = crcOfConcat checksumAsRead crcTables
-      Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
-        throwE $
-          InitFailureRead $
-            ReadSnapshotDataCorruption
-      (,pt) <$> lift (empty extLedgerSt (rk, values') (newInMemoryLedgerTablesHandle tracer fs))
+      lift $
+        Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
+          throwE $
+            InitFailureRead $
+              ReadSnapshotDataCorruption
+      pure (LedgerSeq . AS.Empty . StateRef extLedgerSt $ tbs, pt)
 
 type data Mem
 
@@ -384,11 +407,14 @@ instance
 
   mkResources _ _ _ _ = pure . Resources
   releaseResources _ _ = pure ()
-  newHandleFromValues tracer rr (Resources shfs) values = do
-    (rk, values') <- allocateLedgerTablesHandle tracer rr (ltprj values)
-    newInMemoryLedgerTablesHandle tracer shfs (rk, values')
-  newHandleFromSnapshot trcr reg ccfg shfs _ ds =
-    loadSnapshot trcr reg ccfg shfs ds
+  newHandleFromValues tracer (Resources shfs) values =
+    allocateLedgerTablesHandle
+      tracer
+      undefined
+      (newInMemoryLedgerTablesHandle tracer shfs)
+      (ltprj values)
+  newHandleFromSnapshot trcr ccfg shfs _ ds =
+    loadSnapshot trcr ccfg shfs ds
   snapshotManager _ _ =
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory.snapshotManager
 
