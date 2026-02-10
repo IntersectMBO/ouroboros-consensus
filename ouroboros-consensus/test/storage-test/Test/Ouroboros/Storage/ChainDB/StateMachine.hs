@@ -201,6 +201,7 @@ data Cmd blk it flr
   | GetTipHeader
   | GetTipPoint
   | GetBlockComponent (RealPoint blk)
+  | GetLatestPerasCertOnChainRound
   | -- | Only for blocks that may have been garbage collected.
     GetGCedBlockComponent (RealPoint blk)
   | GetMaxSlotNo
@@ -303,6 +304,7 @@ data Success blk it flr
   | MbChainUpdate (Maybe (ChainUpdate blk (AllComponents blk)))
   | MbPoint (Maybe (Point blk))
   | MaxSlot MaxSlotNo
+  | MbPerasRoundNo (Maybe PerasRoundNo)
   deriving (Functor, Foldable, Traversable)
 
 -- | Product of all 'BlockComponent's. As this is a GADT, generating random
@@ -439,6 +441,7 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
     GetTipHeader -> MbHeader <$> getTipHeader
     GetTipPoint -> Point <$> atomically getTipPoint
     GetBlockComponent pt -> MbAllComponents <$> getBlockComponent allComponents pt
+    GetLatestPerasCertOnChainRound -> MbPerasRoundNo <$> atomically getLatestPerasCertOnChainRound
     GetGCedBlockComponent pt -> mbGCedAllComponents <$> getBlockComponent allComponents pt
     GetIsValid pt -> isValidResult <$> ($ pt) <$> atomically getIsValid
     GetMaxSlotNo -> MaxSlot <$> atomically getMaxSlotNo
@@ -694,6 +697,7 @@ runPure cfg = \case
   GetTipHeader -> ok MbHeader $ query (fmap getHeader . Model.tipBlock)
   GetTipPoint -> ok Point $ query Model.tipPoint
   GetBlockComponent pt -> err MbAllComponents $ query (Model.getBlockComponentByPoint allComponents pt)
+  GetLatestPerasCertOnChainRound -> ok MbPerasRoundNo $ query Model.getLatestPerasCertOnChainRound
   GetGCedBlockComponent pt -> err mbGCedAllComponents $ query (Model.getBlockComponentByPoint allComponents pt)
   GetMaxSlotNo -> ok MaxSlot $ query Model.getMaxSlotNo
   GetIsValid pt -> ok isValidResult $ query (Model.isValid pt)
@@ -1076,6 +1080,11 @@ generator loe genBlock m@Model{..} =
       , -- To check that we're on the right chain
         (if empty then 1 else 10, return GetTipPoint)
       , (10, genGetBlockComponent)
+      , let freq = case loe of
+              LoEDisabled -> 10
+              -- The LoE does not yet support Peras.
+              LoEEnabled () -> 0
+         in (freq, genGetLatestPerasCertOnChainRound)
       , (if empty then 1 else 10, return GetMaxSlotNo)
       , (if empty then 1 else 10, genGetIsValid)
       , let freq = case loe of
@@ -1196,6 +1205,10 @@ generator loe genBlock m@Model{..} =
       if Model.garbageCollectablePoint secParam dbModel pt
         then GetGCedBlockComponent pt
         else GetBlockComponent pt
+
+  genGetLatestPerasCertOnChainRound :: Gen (Cmd blk it flr)
+  genGetLatestPerasCertOnChainRound =
+    return GetLatestPerasCertOnChainRound
 
   genAddBlock :: Gen (Cmd blk it flr)
   genAddBlock = do
@@ -1659,8 +1672,12 @@ type Blk = TestBlock
 -- ChainDB, blocks are added /out of order/, while in the ImmutableDB, they
 -- must be added /in order/. This generator can thus not be reused for the
 -- ImmutableDB.
-genBlk :: ImmutableDB.ChunkInfo -> Model Blk m r -> Gen (TestBlock, Persistent [TestBlock])
-genBlk chunkInfo Model{..} =
+genBlk ::
+  ImmutableDB.ChunkInfo ->
+  LoE () ->
+  Model Blk m r ->
+  Gen (TestBlock, Persistent [TestBlock])
+genBlk chunkInfo loe Model{..} =
   frequency
     [ (if noBlocksInChainDB then 0 else 1, withoutGapBlocks genAlreadyInChain)
     , (if noSavedGapBlocks then 0 else 20, withoutGapBlocks genGapBlock)
@@ -1704,7 +1721,11 @@ genBlk chunkInfo Model{..} =
               Just (PerasRoundNo r) -> r + 1
       frequency
         [ (9, return Nothing)
-        , (1, Just . PerasRoundNo <$> choose (0, maxRoundNo))
+        , let freq = case loe of
+                LoEDisabled -> 1
+                -- The LoE does not yet support Peras.
+                LoEEnabled () -> 0
+           in (freq, Just . PerasRoundNo <$> choose (0, maxRoundNo))
         ]
     return
       TestBody
@@ -1886,7 +1907,7 @@ smUnused loe k chunkInfo =
   sm
     loe
     envUnused
-    (genBlk chunkInfo)
+    (genBlk chunkInfo loe)
     (mkTestCfg k chunkInfo)
     testInitExtLedger
 
@@ -1959,7 +1980,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
                 , varLoEFragment
                 , args
                 }
-            sm' = sm loe env (genBlk chunkInfo) testCfg testInitExtLedger
+            sm' = sm loe env (genBlk chunkInfo loe) testCfg testInitExtLedger
         (hist, model, res) <- QSM.runCommands' sm' cmds'
         trace <- getTrace
         return (hist, model, res, trace)
