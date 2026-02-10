@@ -165,7 +165,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
 import Codec.CBOR.Decoding
 import Codec.CBOR.Read
 import Codec.Serialise
-import qualified Control.Monad as Monad
 import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
 import Control.ResourceRegistry
@@ -567,9 +566,7 @@ initialize
              At p -> dsNumber s > unSlotNo p
          )
         then do
-          Monad.when (diskSnapshotIsTemporary s) $ do
-            traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot snapManager s
+          deleteSnapshotIfTemporary snapManager s
           traceWith snapTracer . InvalidSnapshot s $ InitFailureTooRecent s replayGoal
           tryNewestFirst (acc . InitFailure s (InitFailureTooRecent s replayGoal)) ss
         else do
@@ -596,9 +593,7 @@ initialize
             -- If we fail to use this snapshot for any other reason, delete it and
             -- try an older one
             Left err -> do
-              Monad.when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $ do
-                traceWith snapTracer $ DeletedSnapshot s
-                deleteSnapshot snapManager s
+              deleteSnapshotIfTemporary snapManager s
               traceWith snapTracer . InvalidSnapshot s $ err
               tryNewestFirst (acc . InitFailure s err) ss
             Right (initDb, pt) -> do
