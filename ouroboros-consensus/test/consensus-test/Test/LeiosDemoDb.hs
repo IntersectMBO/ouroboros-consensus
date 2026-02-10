@@ -1,7 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE TupleSections #-}
 
 -- | Tests for the LeiosDemoDb interface.
 --
@@ -15,7 +14,6 @@ import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadT
 import Control.Exception (bracket)
 import Control.Monad (forM, forM_, replicateM)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
 import Data.Time.Clock (DiffTime)
@@ -47,7 +45,6 @@ import Test.QuickCheck
   , forAllShrinkShow
   , ioProperty
   , shrink
-  , shrinkList
   , sized
   , sublistOf
   , tabulate

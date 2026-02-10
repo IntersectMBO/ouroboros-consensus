@@ -6,7 +6,7 @@
 
 module LeiosDemoDb (module LeiosDemoDb) where
 
-import Cardano.Prelude (forM_, maybeToList, when)
+import Cardano.Prelude (foldM, forM_, maybeToList, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
@@ -75,6 +75,11 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ Insert transactions into the global txs table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
   -- and emits LeiosOfferBlockTxs notifications for each.
+  --
+  -- NOTE: Duplicate notifications may be emitted if the same EB becomes
+  -- complete via multiple insert batches (e.g., if txs are inserted twice).
+  -- Consumers should handle notifications idempotently.
+  --
   -- REVIEW: return type only used for tracing, necessary?
   , leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   }
@@ -140,23 +145,27 @@ newLeiosDBInMemory = do
                 [ (eteTxHash e, eteTxBytesSize e)
                 | e <- IntMap.elems offsetMap
                 ]
-      , leiosDbInsertEbBody = \point eb -> atomically $ do
-          let entries =
-                IntMap.fromList
-                  [ ( offset
-                    , EbTxEntry
-                        { eteTxHash = txHash
-                        , eteTxBytesSize = size
-                        }
-                    )
-                  | (offset, txHash, size) <- leiosEbBodyItems eb
-                  ]
-          modifyTVar stateVar $ \s ->
-            s
-              { imEbBodies = Map.insert point.pointEbHash entries (imEbBodies s)
-              , imEbSlots = Map.insert point.pointEbHash point.pointSlotNo (imEbSlots s)
-              }
-          notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
+      , leiosDbInsertEbBody = \point eb -> do
+          let items = leiosEbBodyItems eb
+          when (null items) $
+            error "leiosDbInsertEbBody: empty EB body (programmer error)"
+          atomically $ do
+            let entries =
+                  IntMap.fromList
+                    [ ( offset
+                      , EbTxEntry
+                          { eteTxHash = txHash
+                          , eteTxBytesSize = size
+                          }
+                      )
+                    | (offset, txHash, size) <- items
+                    ]
+            modifyTVar stateVar $ \s ->
+              s
+                { imEbBodies = Map.insert point.pointEbHash entries (imEbBodies s)
+                , imEbSlots = Map.insert point.pointEbHash point.pointSlotNo (imEbSlots s)
+                }
+            notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
       , leiosDbInsertTxs = \txs -> atomically $ do
           -- Insert all txs into global txs table
           let insertedTxHashes = [txHash | (txHash, _) <- txs]
@@ -252,6 +261,9 @@ newLeiosDBSQLite dbPath = do
                       loop ((txHash, size) : acc)
             loop []
       , leiosDbInsertEbBody = \point eb -> do
+          let items = leiosEbBodyItems eb
+          when (null items) $
+            error "leiosDbInsertEbBody: empty EB body (programmer error)"
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebBody) $ \stmt ->
             mapM_
               ( \(txOffset, txHash, txBytesSize) -> do
@@ -262,31 +274,38 @@ newLeiosDBSQLite dbPath = do
                   dbStep1 stmt
                   dbReset stmt
               )
-              (leiosEbBodyItems eb)
+              items
           notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
       , leiosDbInsertTxs = \txs -> do
           -- Insert all txs into global txs table, then check for newly-complete EBs
           completed <- dbWithBEGIN db $ do
             -- INSERT OR IGNORE all txs
-            dbWithPrepare db (fromString sql_insert_tx) $ \stmt ->
+            dbWithPrepare db (fromString sql_insert_tx) $ \stmtTx ->
               forM_ txs $ \(txHash, txBytes) -> do
                 let txBytesSize = fromIntegral $ BS.length txBytes
-                dbBindBlob stmt 1 (let MkTxHash bytes = txHash in bytes)
-                dbBindBlob stmt 2 txBytes
-                dbBindInt64 stmt 3 txBytesSize
-                dbStep1 stmt
-                dbReset stmt
-            -- Find EBs that are now complete
-            -- For each inserted txHash, find EBs referencing it where all txs are now present
+                    txHashBytes = let MkTxHash bytes = txHash in bytes
+                dbBindBlob stmtTx 1 txHashBytes
+                dbBindBlob stmtTx 2 txBytes
+                dbBindInt64 stmtTx 3 txBytesSize
+                dbStep1 stmtTx
+                dbReset stmtTx
+            -- For each inserted txHash, find EBs that are now complete
+            -- Collect results in a Map to deduplicate (same EB may be found via multiple txHashes)
             dbWithPrepare db (fromString sql_find_complete_ebs) $ \stmt -> do
-              let loop acc =
-                    dbStep stmt >>= \case
-                      DB.Done -> pure acc
-                      DB.Row -> do
-                        ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-                        slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
-                        loop (MkLeiosPoint slot ebHash : acc)
-              loop []
+              let checkTxHash acc (txHash, _) = do
+                    dbBindBlob stmt 1 (let MkTxHash bytes = txHash in bytes)
+                    let loop acc' =
+                          dbStep stmt >>= \case
+                            DB.Done -> pure acc'
+                            DB.Row -> do
+                              ebHash <- MkEbHash <$> DB.columnBlob stmt 0
+                              slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
+                              loop (Map.insert ebHash slot acc')
+                    result <- loop acc
+                    dbReset stmt
+                    pure result
+              ebMap <- foldM checkTxHash Map.empty txs
+              pure [MkLeiosPoint slot ebHash | (ebHash, slot) <- Map.toList ebMap]
           -- Emit notifications for each completed EB
           forM_ completed $ notify . LeiosOfferBlockTxs
           pure completed
@@ -331,6 +350,7 @@ sql_schema =
   \  ,\n\
   \    PRIMARY KEY (ebSlot, ebHashBytes)\n\
   \  ) WITHOUT ROWID;\n\
+  \CREATE INDEX idx_ebPoints_ebHashBytes ON ebPoints(ebHashBytes);\n\
   \CREATE TABLE ebTxs (\n\
   \    ebHashBytes BLOB NOT NULL   -- foreign key ebPoints.ebHashBytes\n\
   \  ,\n\
@@ -381,18 +401,25 @@ sql_insert_tx =
   \"
 
 -- | Find EBs that are now complete (all txs present in txs table).
--- This query finds all distinct EBs where no tx is missing from the txs table.
+-- This query finds EBs referencing the given txHash where all txs are present.
+-- Uses idx_ebTxs_txHashBytes to find candidate EBs efficiently.
+-- Parameter 1: txHashBytes to check
+--
+-- TODO: If JSON1 extension is available, we could pass all txHashes in a single
+-- query using json_each() with unhex() for more efficient batch checking:
+--   WHERE e.txHashBytes IN (SELECT unhex(j.value) FROM json_each(?) AS j)
 sql_find_complete_ebs :: String
 sql_find_complete_ebs =
   "SELECT DISTINCT e.ebHashBytes, ep.ebSlot\n\
   \FROM ebTxs e\n\
   \JOIN ebPoints ep ON e.ebHashBytes = ep.ebHashBytes\n\
-  \WHERE NOT EXISTS (\n\
-  \  SELECT 1 FROM ebTxs e2\n\
-  \  LEFT JOIN txs t ON e2.txHashBytes = t.txHashBytes\n\
-  \  WHERE e2.ebHashBytes = e.ebHashBytes\n\
-  \    AND t.txHashBytes IS NULL\n\
-  \)\n\
+  \WHERE e.txHashBytes = ?\n\
+  \  AND NOT EXISTS (\n\
+  \    SELECT 1 FROM ebTxs e2\n\
+  \    LEFT JOIN txs t ON e2.txHashBytes = t.txHashBytes\n\
+  \    WHERE e2.ebHashBytes = e.ebHashBytes\n\
+  \      AND t.txHashBytes IS NULL\n\
+  \  )\n\
   \"
 
 sql_insert_memTxPoints :: String
