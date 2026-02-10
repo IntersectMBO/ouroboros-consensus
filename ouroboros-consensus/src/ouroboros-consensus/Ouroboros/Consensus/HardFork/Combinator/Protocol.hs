@@ -77,26 +77,29 @@ newtype HardForkTiebreakerView xs = HardForkTiebreakerView
 
 instance CanHardFork xs => Ord (HardForkTiebreakerView xs) where
   compare (HardForkTiebreakerView l) (HardForkTiebreakerView r) =
-    acrossEraSelection
-      AcrossEraCompare
-      (hpure Proxy)
-      hardForkChainSel
-      (getOneEraTiebreakerView l)
-      (getOneEraTiebreakerView r)
+    getConstOutput $
+      acrossEraSelection
+        AcrossEraCompare
+        (hpure Proxy)
+        hardForkChainSel
+        (getOneEraTiebreakerView l)
+        (getOneEraTiebreakerView r)
 
 instance CanHardFork xs => ChainOrder (HardForkTiebreakerView xs) where
   type ChainOrderConfig (HardForkTiebreakerView xs) = PerEraChainOrderConfig xs
+  type ReasonForSwitch (HardForkTiebreakerView xs) = OneEraReasonForSwitch xs
 
   preferCandidate
     (PerEraChainOrderConfig cfg)
     (HardForkTiebreakerView ours)
     (HardForkTiebreakerView cand) =
-      acrossEraSelection
-        AcrossEraPreferCandidate
-        cfg
-        hardForkChainSel
-        (getOneEraTiebreakerView ours)
-        (getOneEraTiebreakerView cand)
+      getSwitchOutput $
+        acrossEraSelection
+          AcrossEraPreferCandidate
+          cfg
+          hardForkChainSel
+          (getOneEraTiebreakerView ours)
+          (getOneEraTiebreakerView cand)
 
 {-------------------------------------------------------------------------------
   ConsensusProtocol

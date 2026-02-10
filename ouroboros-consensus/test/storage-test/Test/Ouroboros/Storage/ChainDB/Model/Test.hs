@@ -27,6 +27,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Peras.Weight
+import Ouroboros.Consensus.Protocol.Abstract (shouldSwitch)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( LoE (..)
   , StreamFrom (..)
@@ -101,7 +102,7 @@ prop_alwaysPickPreferredChain bt p =
   bcfg = configBlock singleNodeTestConfig
 
   preferCandidate' candidate =
-    AF.preferAnchoredCandidate bcfg weights curFragment candFragment
+    shouldSwitch (AF.preferAnchoredCandidate bcfg weights curFragment candFragment)
       && AF.forksAtMostKWeight weights (maxRollbackWeight k) curFragment candFragment
    where
     candFragment = Chain.toAnchoredFragment (getHeader <$> candidate)

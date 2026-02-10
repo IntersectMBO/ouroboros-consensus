@@ -55,7 +55,7 @@ selectChain _ cfg view ours =
     Maybe (WithEmptyFragment (WeightedSelectView p), (Chain hdr, l))
   selectPreferredCandidate x@(cand, _)
     | let candView = view cand
-    , preferCandidate cfg (view ours) candView =
+    , shouldSwitch $ preferCandidate cfg (view ours) candView =
         Just (candView, x)
     | otherwise = Nothing
 

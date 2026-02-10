@@ -35,9 +35,9 @@ else
     for p in "${tracked_libs[@]}"; do
         printf "\t- %s\n" "$p"
         if ! git diff --quiet --name-only "origin/${BASE_REF}" -- "$p/***.hs"; then
-            if ! git diff --quiet --name-only --diff-filter=A "origin/${BASE_REF}" -- "$(echo $p | cut -d/ -f1)/changelog.d" ; then
+            if ! git diff --quiet --name-only --diff-filter=AMR "origin/${BASE_REF}" -- "$(echo $p | cut -d/ -f1)/changelog.d" ; then
                 printf "\t\tNew fragments found. OK.\n"
-                git diff --name-only --diff-filter=A "origin/${BASE_REF}" -- "$p/changelog.d" | sed 's/^/\t\t- /g'
+                git diff --name-only --diff-filter=AMR "origin/${BASE_REF}" -- "$p/changelog.d" | sed 's/^/\t\t- /g'
             else
                 printf "\t\tNo new fragments found, but code changed. Please push a fragment or add the \"no changelog\" label to the PR. The diff follows:\n"
                 git --no-pager -c color.diff=always diff "origin/${BASE_REF}" -- "$p/***.hs" | sed 's/^/diff> /g'
@@ -50,9 +50,9 @@ else
     for p in "${packages[@]}"; do
         printf "\t- %s\n" "$p"
         if ! git diff --quiet --name-only "origin/${BASE_REF}" -- "$p/***.cabal"; then
-            if ! git diff --quiet --name-only --diff-filter=A "origin/${BASE_REF}" -- "$(echo $p | cut -d/ -f1)/changelog.d" ; then
+            if ! git diff --quiet --name-only --diff-filter=AMR "origin/${BASE_REF}" -- "$(echo $p | cut -d/ -f1)/changelog.d" ; then
                 printf "\t\tNew fragments found. OK.\n"
-                git diff --name-only --diff-filter=A "origin/${BASE_REF}" -- "$p/changelog.d" | sed 's/^/\t\t- /g'
+                git diff --name-only --diff-filter=AMR "origin/${BASE_REF}" -- "$p/changelog.d" | sed 's/^/\t\t- /g'
             else
                 printf "\t\tNo new fragments found, but code changed. Please push a fragment or add the \"no changelog\" label to the PR. The diff follows:\n"
                 git --no-pager -c color.diff=always diff "origin/${BASE_REF}" -- "$p/***.cabal" | sed 's/^/diff> /g'

@@ -137,6 +137,7 @@ import Ouroboros.Consensus.Storage.VolatileDB
   )
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (Fuse)
+import Ouroboros.Consensus.Util.AnchoredFragment (ReasonForSwitch')
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import Ouroboros.Consensus.Util.IOLike
@@ -760,6 +761,7 @@ deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Show (TraceAddBlockEvent blk)
   ) =>
   Show (TraceEvent blk)
 
@@ -887,6 +889,7 @@ data TraceAddBlockEvent blk
       (SelectionChangedInfo blk)
       (AnchoredFragment (Header blk))
       (AnchoredFragment (Header blk))
+      (ReasonForSwitch' blk)
   | -- | The new block fits onto some fork and we have switched to that fork
     -- (second fragment), as it is preferable to our (previous) current chain
     -- (first fragment).
@@ -895,6 +898,7 @@ data TraceAddBlockEvent blk
       (SelectionChangedInfo blk)
       (AnchoredFragment (Header blk))
       (AnchoredFragment (Header blk))
+      (ReasonForSwitch' blk)
   | -- | An event traced during validating performed while adding a block.
     AddBlockValidation (TraceValidationEvent blk)
   | -- | The tentative header (in the context of diffusion pipelining) has been
@@ -909,12 +913,14 @@ deriving instance
   ( Eq (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Eq (ReasonForSwitch' blk)
   ) =>
   Eq (TraceAddBlockEvent blk)
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Show (ReasonForSwitch' blk)
   ) =>
   Show (TraceAddBlockEvent blk)
 

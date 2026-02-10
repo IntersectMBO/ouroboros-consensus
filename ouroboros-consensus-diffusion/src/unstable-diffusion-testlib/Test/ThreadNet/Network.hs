@@ -799,13 +799,13 @@ runThreadNetwork
             (ChainDB.AddedBlockToVolatileDB p bno IsNotEBB FallingEdge) ->
               traceWith addTracer (p, bno)
           ChainDB.TraceAddBlockEvent
-            (ChainDB.AddedToCurrentChain events p _old new) ->
+            (ChainDB.AddedToCurrentChain events p _old new _) ->
               let (warnings, updates) = partitionLedgerEvents events
                in assertWithMsg (noWarnings warnings) $ do
                     mapM_ (traceWith updatesTracer) updates
                     traceWith selTracer (ChainDB.newTipPoint p, prj new)
           ChainDB.TraceAddBlockEvent
-            (ChainDB.SwitchedToAFork events p _old new) ->
+            (ChainDB.SwitchedToAFork events p _old new _) ->
               let (warnings, updates) = partitionLedgerEvents events
                in assertWithMsg (noWarnings warnings) $ do
                     mapM_ (traceWith updatesTracer) updates
@@ -1771,6 +1771,7 @@ type TracingConstraints blk =
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
   , Show (TxMeasure blk)
+  , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
   , HasNestedContent Header blk
   )
 

@@ -1834,12 +1834,13 @@ checkTime cfgEnv dynEnv intEnv =
   checkPreferTheirsOverOurs kis
     | -- Precondition is fulfilled as ourFrag and theirFrag intersect by
       -- construction.
-      preferAnchoredCandidate
-        (configBlock cfg)
-        -- TODO: remove this entire check, see https://github.com/tweag/cardano-peras/issues/64
-        emptyPerasWeightSnapshot
-        ourFrag
-        theirFrag =
+      shouldSwitch $
+        preferAnchoredCandidate
+          (configBlock cfg)
+          -- TODO: remove this entire check, see https://github.com/tweag/cardano-peras/issues/64
+          emptyPerasWeightSnapshot
+          ourFrag
+          theirFrag =
         pure ()
     | otherwise =
         throwSTM $
