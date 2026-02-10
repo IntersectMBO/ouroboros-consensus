@@ -1,4 +1,4 @@
--- | Immutable DB utility tests.
+-- | Immutable DB chunks tests.
 module Test.Ouroboros.Storage.ImmutableDB.Chunks (tests) where
 
 import Data.List (sort)
