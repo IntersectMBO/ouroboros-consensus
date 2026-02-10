@@ -102,9 +102,9 @@ mkTestGroups impl =
       ]
   , testGroup
       "transactions"
-      [ testProperty "update then retrieve" $ prop_txsUpdateThenRetrieve impl
+      [ testProperty "insert then retrieve" $ prop_txsInsertThenRetrieve impl
       , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
-      , testProperty "update one tx performance" $ prop_updateEbTxPerformance impl
+      , testProperty "insert tx performance" $ prop_insertTxPerformance impl
       ]
   , testGroup
       "notifications"
@@ -269,6 +269,7 @@ prop_ebsInsertThenLookup impl =
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> do
         let expectedTxs = V.toList (leiosEbTxs eb)
+        leiosDbInsertEbPoint db point
         (_, insertTime) <- timed $ leiosDbInsertEbBody db point eb
         (result, lookupTime) <- timed $ leiosDbLookupEbBody db point.pointEbHash
         pure $
@@ -289,65 +290,55 @@ prop_ebsLookupMissing impl =
 
 -- * Property tests for transactions
 
--- | Property: updating tx bytes and retrieving them returns the correct data.
-prop_txsUpdateThenRetrieve :: DbImpl -> Property
-prop_txsUpdateThenRetrieve impl =
-  forAllShrinkBlind genTxs shrinkTxs $ \(numTxs, txs) ->
+-- | Property: inserting tx bytes and retrieving them returns the correct data.
+-- With the normalized schema, txs are inserted into a global `txs` table by TxHash,
+-- and retrieval JOINs with that table.
+prop_txsInsertThenRetrieve :: DbImpl -> Property
+prop_txsInsertThenRetrieve impl =
+  forAllShrinkShow (chooseInt (1, 50)) shrink show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
-      ioProperty $ withFreshDb impl $ \db -> do
-        -- Insert the EB body first
-        leiosDbInsertEbBody db point eb
-        -- Update some transactions with bytes
-        updateTime <- snd <$> timed (leiosDbUpdateEbTx db point txs)
-        -- Retrieve all offsets
-        let allOffsets = [0 .. numTxs - 1]
-        (results, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs db point.pointEbHash allOffsets
-        -- Check that updated offsets have the correct bytes
-        let checkResult (off, _txHash, mBytes) =
-              case lookup off txs of
-                Just expectedBytes -> mBytes == Just expectedBytes
-                Nothing -> mBytes == Nothing -- Not updated yet
-        pure $
-          conjoin
-            [ all checkResult results
-                & counterexample "Unexpected bytes"
-                & counterexample ("To insert: " ++ show txs)
-                & counterexample ("Results: " ++ show results)
-            , length results === numTxs
-                & counterexample "Length mismatch"
-                & counterexample ("Results: " ++ show (length results))
-            , updateTime < milli 10
-                & counterexample ("Update took too long: " <> showTime updateTime)
-            , retrieveTime < milli 10
-                & counterexample ("Retrieve took too long: " <> showTime retrieveTime)
-            ]
-            & counterexample ("Total txs: " <> show numTxs)
-            & counterexample ("Inserted txs: " <> show (length txs))
-            & tabulate "updateEbTx" [timeBucket updateTime]
-            & tabulate "batchRetrieveTxs" [timeBucket retrieveTime]
-            & tabulate "txs" [magnitudeBucket $ length txs]
- where
-  genTxs :: Gen (Int, [(Int, ByteString)])
-  genTxs = sized $ \n -> do
-    totalTxCount <- chooseInt (1, n * 10)
-    existing <- sublistOf [0 .. totalTxCount]
-    existingTxs <- forM existing $ \off -> do
-      bs <- genTxBytes
-      pure (off, bs)
-    pure (totalTxCount, existingTxs)
-
-  shrinkTxs (_, txs) =
-    [ (m, txs')
-    | txs' <- shrinkList shrinkTx txs
-    , length txs' > 0
-    , let m = maximum (fst <$> txs') + 1
-    ]
-
-  shrinkTx :: (Int, ByteString) -> [(Int, ByteString)]
-  shrinkTx (off, bytes)
-    | BS.length bytes <= 1 = []
-    | otherwise =
-        [(off, BS.take (BS.length bytes `div` 2) bytes)]
+      forAllBlind (sublistOf [0 .. numTxs - 1]) $ \offsetsToInsert ->
+        ioProperty $ withFreshDb impl $ \db -> do
+          -- Insert the EB first (point then body)
+          leiosDbInsertEbPoint db point
+          leiosDbInsertEbBody db point eb
+          -- Get the txHashes from the EB for the offsets we want to insert
+          let ebTxList = V.toList (leiosEbTxs eb)
+              txsToInsert =
+                [ (txHash, txBytes)
+                | off <- offsetsToInsert
+                , let (txHash, _size) = ebTxList !! off
+                , let txBytes = BS.pack [fromIntegral off, 1, 2, 3] -- deterministic test bytes
+                ]
+          -- Insert txs into global txs table
+          insertTime <- snd <$> timed (leiosDbInsertTxs db txsToInsert)
+          -- Retrieve all offsets
+          let allOffsets = [0 .. numTxs - 1]
+          (results, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs db point.pointEbHash allOffsets
+          -- Check that inserted txs have bytes, others don't
+          let checkResult (off, _txHash, mBytes) =
+                if off `elem` offsetsToInsert
+                  then mBytes == Just (BS.pack [fromIntegral off, 1, 2, 3])
+                  else mBytes == Nothing
+          pure $
+            conjoin
+              [ all checkResult results
+                  & counterexample "Unexpected bytes"
+                  & counterexample ("Inserted offsets: " ++ show offsetsToInsert)
+                  & counterexample ("Results: " ++ show results)
+              , length results === numTxs
+                  & counterexample "Length mismatch"
+                  & counterexample ("Results: " ++ show (length results))
+              , insertTime < milli 10
+                  & counterexample ("Insert took too long: " <> showTime insertTime)
+              , retrieveTime < milli 10
+                  & counterexample ("Retrieve took too long: " <> showTime retrieveTime)
+              ]
+              & counterexample ("Total txs: " <> show numTxs)
+              & counterexample ("Inserted txs: " <> show (length txsToInsert))
+              & tabulate "insertTxs" [timeBucket insertTime]
+              & tabulate "batchRetrieveTxs" [timeBucket retrieveTime]
+              & tabulate "txs inserted" [magnitudeBucket $ length txsToInsert]
 
 -- | Property: retrieving from non-existent EB returns empty list.
 prop_txsRetrieveMissing :: DbImpl -> Property
@@ -359,32 +350,34 @@ prop_txsRetrieveMissing impl =
         result === []
           & tabulate "batchRetrieveTxs (missing)" [timeBucket retrieveTime]
 
--- | Property: measure leiosDbUpdateEbTx performance and report timing distribution.
--- Tracks performance across different database sizes and EB configurations.
-prop_updateEbTxPerformance :: DbImpl -> Property
-prop_updateEbTxPerformance impl =
+-- | Property: measure leiosDbInsertTxs performance and report timing distribution.
+-- Tracks performance across different database sizes and batch configurations.
+prop_insertTxPerformance :: DbImpl -> Property
+prop_insertTxPerformance impl =
   forAllShrinkBlind genPerfParams shrinkPerfParams $ \(numEBs, numTxs) ->
-    forAllBlind (genPerfData numEBs numTxs) $ \(primeData, point, eb, txBytes) ->
+    forAllBlind (genPerfData numEBs numTxs) $ \(primeData, point, eb, txsToInsert) ->
       ioProperty $ withFreshDb impl $ \db -> do
         -- Prime the database with additional EBs to simulate load
-        forM_ primeData $ \(primePoint, primeEb) ->
+        forM_ primeData $ \(primePoint, primeEb) -> do
+          leiosDbInsertEbPoint db primePoint
           leiosDbInsertEbBody db primePoint primeEb
         -- Create the target EB
+        leiosDbInsertEbPoint db point
         leiosDbInsertEbBody db point eb
-        -- Measure time for a single updateEbTx call
-        (_, updateTime) <- timed $ leiosDbUpdateEbTx db point [(0, txBytes)]
+        -- Measure time for inserting a batch of txs
+        (_, insertTime) <- timed $ leiosDbInsertTxs db txsToInsert
         pure $
-          updateTime < milli 10
-            & counterexample ("Took too long: " <> showTime updateTime)
+          insertTime < milli 10
+            & counterexample ("Took too long: " <> showTime insertTime)
             & counterexample
               ("With " <> show (numEBs + 1) <> " EBs in DB (each having " <> show numTxs <> " txs)")
-            & tabulate "updateEbTx (primed)" [timeBucket updateTime]
+            & tabulate "insertTxs (primed)" [timeBucket insertTime]
             & tabulate "numEBs in DB" [magnitudeBucket numEBs]
             & tabulate "numTxs in EB" [magnitudeBucket numTxs]
  where
   genPerfParams = sized $ \size -> do
     dbSize <- chooseInt (0, size)
-    numTxs <- chooseInt (1, min (size * 100) 2000)
+    numTxs <- chooseInt (1, max 1 (min (size * 100) 2000))
     pure (dbSize, numTxs)
 
   shrinkPerfParams (numEBs, numTxs) =
@@ -396,17 +389,21 @@ prop_updateEbTxPerformance impl =
     primeData <- replicateM dbSize (genPointAndEb 10)
     point <- genPoint
     eb <- genEb numTxs
+    -- Generate a single tx to insert (first tx of the EB)
+    let (txHash, _) = V.head (leiosEbTxs eb)
     txBytes <- genTxBytes
-    pure (primeData, point, eb, txBytes)
+    let txsToInsert = [(txHash, txBytes)]
+    pure (primeData, point, eb, txsToInsert)
 
 -- * Notification tests
 
--- | Test that a single subscriber receives a notification when insertEbBody is called.
+-- | Test that a single subscriber receives a notification when leiosDbInsertEbBody is called.
 test_singleSubscriber :: LeiosDbHandle IO -> IO ()
 test_singleSubscriber db = do
   chan <- subscribeEbNotifications db
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3
+  leiosDbInsertEbPoint db point
   leiosDbInsertEbBody db point eb
   notification <- atomically $ readTChan chan
   case notification of
@@ -423,6 +420,7 @@ test_multipleSubscribers db = do
   chan3 <- subscribeEbNotifications db
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 5
+  leiosDbInsertEbPoint db point
   leiosDbInsertEbBody db point eb
   -- All subscribers should receive the notification
   notif1 <- atomically $ readTChan chan1
@@ -439,6 +437,7 @@ test_correctData db = do
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 10
       expectedSize = leiosEbBytesSize eb
+  leiosDbInsertEbPoint db point
   leiosDbInsertEbBody db point eb
   notification <- atomically $ readTChan chan
   case notification of
@@ -456,6 +455,7 @@ test_lateSubscriber db = do
   -- Insert before subscribing
   let point1 = mkTestPoint (SlotNo 1) 1
       eb1 = mkTestEb 2
+  leiosDbInsertEbPoint db point1
   leiosDbInsertEbBody db point1 eb1
   -- Now subscribe
   chan <- subscribeEbNotifications db
@@ -467,6 +467,7 @@ test_lateSubscriber db = do
   -- But new insertions should be received
   let point2 = mkTestPoint (SlotNo 2) 2
       eb2 = mkTestEb 3
+  leiosDbInsertEbPoint db point2
   leiosDbInsertEbBody db point2 eb2
   notification <- atomically $ readTChan chan
   assertOfferBlock point2 notification
@@ -480,8 +481,10 @@ test_multipleNotifications db = do
         | i <- [1 .. 5]
         ]
       ebs = [mkTestEb i | i <- [1 .. 5]]
-  -- Insert all
-  mapM_ (uncurry $ leiosDbInsertEbBody db) (zip points ebs)
+  -- Insert all (point then body for each)
+  forM_ (zip points ebs) $ \(point, eb) -> do
+    leiosDbInsertEbPoint db point
+    leiosDbInsertEbBody db point eb
   -- Read all notifications and verify order
   notifications <- replicateM 5 (atomically $ readTChan chan)
   mapM_
@@ -489,43 +492,49 @@ test_multipleNotifications db = do
     (zip points notifications)
 
 -- | Test that no LeiosOfferBlockTxs notification is produced when only some
--- transactions have been updated via leiosDbUpdateEbTx.
+-- transactions have been inserted via leiosDbInsertTxs.
 test_noOfferBlockTxsBeforeComplete :: LeiosDbHandle IO -> IO ()
 test_noOfferBlockTxsBeforeComplete db = do
   chan <- subscribeEbNotifications db
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3 -- 3 transactions
+      ebTxList = V.toList (leiosEbTxs eb)
+  leiosDbInsertEbPoint db point
   leiosDbInsertEbBody db point eb
   -- Consume the LeiosOfferBlock notification
   _ <- atomically $ readTChan chan
-  -- Update only 2 of 3 txs
-  leiosDbUpdateEbTx db point $
-    [ (0, BS.pack [1, 2, 3])
-    , (1, BS.pack [4, 5, 6])
-    ]
+  -- Insert only 2 of 3 txs (by txHash)
+  let txsToInsert =
+        [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
+        | (i, (txHash, _size)) <- zip [0 :: Int, 1] ebTxList
+        ]
+  leiosDbInsertTxs db txsToInsert
   -- No LeiosOfferBlockTxs notification should be available
   maybeNotif <- atomically $ tryReadTChan chan
   case maybeNotif of
     Nothing -> pure ()
-    Just _ -> assertFailure "should not notify before all txs are updated"
+    Just _ -> assertFailure "should not notify before all txs are inserted"
 
--- | Test that a LeiosOfferBlockTxs notification is produced when the last
--- transaction is inserted via leiosDbUpdateEbTx.
+-- | Test that a LeiosOfferBlockTxs notification is produced when all
+-- transactions are inserted via leiosDbInsertTxs.
 test_offerBlockTxs :: LeiosDbHandle IO -> IO ()
 test_offerBlockTxs db = do
   chan <- subscribeEbNotifications db
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3 -- 3 transactions
-      -- Insert the EB body (creates entries with NULL txBytes)
+      ebTxList = V.toList (leiosEbTxs eb)
+  -- Insert the EB (point then body)
+  leiosDbInsertEbPoint db point
   leiosDbInsertEbBody db point eb
   -- Consume the LeiosOfferBlock notification
   _ <- atomically $ readTChan chan
-  -- Update all txs
-  leiosDbUpdateEbTx db point $
-    [ (0, BS.pack [1, 2, 3])
-    , (1, BS.pack [4, 5, 6])
-    , (2, BS.pack [7, 8, 9])
-    ]
+  -- Insert all txs (by txHash)
+  let txsToInsert =
+        [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
+        | (i, (txHash, _size)) <- zip [0 :: Int ..] ebTxList
+        ]
+  leiosDbInsertTxs db txsToInsert
+  -- FIXME: blocks forever if impl not working
   notification <- atomically $ readTChan chan
   assertOfferBlockTxs point notification
 

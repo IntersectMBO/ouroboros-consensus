@@ -17,7 +17,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Control.Monad (when)
+import Control.Monad (forM_, when)
 import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, traceWith)
@@ -26,7 +26,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.DList (DList)
 import qualified Data.DList as DList
-import Data.Foldable (forM_)
 import Data.Functor (void)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
@@ -42,7 +41,7 @@ import Data.String (fromString)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import Data.Word (Word16, Word64)
-import LeiosDemoDb (CompleteEb (..), LeiosDbHandle (..))
+import LeiosDemoDb (LeiosDbHandle (..))
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
   ( BytesSize
@@ -694,13 +693,13 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
       -- This may need to be fixed by adding a batch update operation to the db or
       -- ensuring transactional semantics. Use new db for both txCache and ebTxs
       -- updates
-      leiosDbUpdateEbTx db point (zip offsets (V.toList txBytess)) >>= \case
-        NotComplete -> pure ()
-        Completed completedPoint -> traceWith ktracer $ TraceLeiosBlockTxsAcquired completedPoint
+      completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
+      forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
       -- FIXME: Why is tx cache separate? it results in the same bytes stored twice in the DB
       -- Insert into txCache (expiry set to 0 for now - TODO: use proper expiry)
-      forM_ (txHashes `V.zip` txBytess) $ \(txHash, txBytes) -> do
-        leiosDbInsertTxCache db txHash txBytes (fromIntegral $ BS.length txBytes) 0
+      -- forM_ (txHashes `V.zip` txBytess) $ \(txHash, txBytes) -> do
+      --   leiosDbInsertTxCache db txHash txBytes (fromIntegral $ BS.length txBytes) 0
+      pure ()
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let (requestedTxPeers', cachedTxs', txOffsetss', txsBytesSize) =
@@ -803,8 +802,9 @@ doCacheCopy tracer db (writeLock, outstandingVar) bytesSize = do
     outstanding <- MVar.readMVar outstandingVar
     MVar.withMVar writeLock $ \() -> do
       traceException tracer TraceLeiosDbException $ do
-        leiosDbCopyFromTxCacheBatch db (Leios.toCopy outstanding) bytesSize
-  (moreTodo, _newNotifications) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+        -- FIXME: leiosDbCopyFromTxCacheBatch db (Leios.toCopy outstanding) bytesSize
+        pure mempty
+  (moreTodo, newNotifications) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let usefulCopied =
           -- @copied@ might contain elements that were already accounted
           -- for by a @MsgLeiosBlockTxs@ that won the race. This
