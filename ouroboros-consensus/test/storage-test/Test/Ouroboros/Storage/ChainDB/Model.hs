@@ -34,6 +34,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , getBlock
   , getBlockByPoint
   , getBlockComponentByPoint
+  , getLatestPerasCertOnChainRound
   , getIsValid
   , getLoEFragment
   , getMaxSlotNo
@@ -109,6 +110,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
@@ -219,6 +221,13 @@ getBlockComponentByPoint ::
 getBlockComponentByPoint blockComponent pt m =
   Right $
     (`getBlockComponent` blockComponent) <$> getBlockByPoint pt m
+
+getLatestPerasCertOnChainRound ::
+  LedgerSupportsPeras blk =>
+  Model blk ->
+  Maybe PerasRoundNo
+getLatestPerasCertOnChainRound m = do
+  getLatestPerasCertRound (ledgerState (currentLedger m))
 
 hasBlockByPoint ::
   HasHeader blk =>
