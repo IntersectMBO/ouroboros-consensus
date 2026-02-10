@@ -67,6 +67,8 @@ data LeiosDbHandle m = LeiosDbHandle
   -- only inform about new additions, starting from when this function was
   -- called.
   , leiosDbScanEbPoints :: m [(SlotNo, EbHash)]
+  , leiosDbLookupEbPoint :: EbHash -> m (Maybe SlotNo)
+  -- ^ Check if an EB point exists in the database. Returns the slot if found.
   , leiosDbInsertEbPoint :: LeiosPoint -> m ()
   , leiosDbLookupEbBody :: EbHash -> m [(TxHash, BytesSize)]
   , -- NOTE: yields a LeiosOfferBlock notification
@@ -127,6 +129,12 @@ newLeiosDBInMemory = do
             [ (SlotNo (fromIntegral slot), hash)
             | (slot, hash) <- IntMap.toAscList (imEbPoints state)
             ]
+      , leiosDbLookupEbPoint = \ebHash -> atomically $ do
+          state <- readTVar stateVar
+          -- Find slot by looking for the hash in imEbPoints
+          pure $ foldr (\(slot, h) acc -> if h == ebHash then Just (SlotNo (fromIntegral slot)) else acc)
+                       Nothing
+                       (IntMap.toList (imEbPoints state))
       , leiosDbInsertEbPoint = \point -> atomically $ do
           modifyTVar stateVar $ \s ->
             s
@@ -244,6 +252,14 @@ newLeiosDBSQLite dbPath = do
                       hash <- MkEbHash <$> DB.columnBlob stmt 1
                       loop ((slot, hash) : acc)
             loop []
+      , leiosDbLookupEbPoint = \ebHash ->
+          dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebPoint) $ \stmt -> do
+            dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+            dbStep stmt >>= \case
+              DB.Done -> pure Nothing
+              DB.Row -> do
+                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+                pure (Just slot)
       , leiosDbInsertEbPoint = \point ->
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebPoint) $ \stmt -> do
             dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
@@ -379,9 +395,13 @@ sql_scan_ebPoints =
   \ORDER BY ebSlot ASC\n\
   \"
 
+sql_lookup_ebPoint :: String
+sql_lookup_ebPoint =
+  "SELECT ebSlot FROM ebPoints WHERE ebHashBytes = ?"
+
 sql_insert_ebPoint :: String
 sql_insert_ebPoint =
-  "INSERT INTO ebPoints (ebSlot, ebHashBytes) VALUES (?, ?)"
+  "INSERT OR IGNORE INTO ebPoints (ebSlot, ebHashBytes) VALUES (?, ?)"
 
 sql_lookup_ebBodies :: String
 sql_lookup_ebBodies =

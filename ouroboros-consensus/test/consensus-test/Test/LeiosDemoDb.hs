@@ -90,6 +90,8 @@ mkTestGroups impl =
   [ testGroup
       "points"
       [ testProperty "insert then scan" $ prop_pointsInsertThenScan impl
+      , testProperty "insert then lookup" $ prop_pointsInsertThenLookup impl
+      , testProperty "lookup missing returns Nothing" $ prop_pointsLookupMissing impl
       , testProperty "multiple inserts accumulate" $ prop_pointsAccumulate impl
       ]
   , testGroup
@@ -241,6 +243,28 @@ prop_pointsInsertThenScan impl =
         (point.pointSlotNo, point.pointEbHash) `elem` points
           & tabulate "insertEbPoint" [timeBucket insertTime]
           & tabulate "scanEbPoints" [timeBucket scanTime]
+
+-- | Property: inserting a point and then looking it up returns the slot.
+prop_pointsInsertThenLookup :: DbImpl -> Property
+prop_pointsInsertThenLookup impl =
+  forAll genPoint $ \point ->
+    ioProperty $ withFreshDb impl $ \db -> do
+      (_, insertTime) <- timed $ leiosDbInsertEbPoint db point
+      (result, lookupTime) <- timed $ leiosDbLookupEbPoint db point.pointEbHash
+      pure $
+        result === Just point.pointSlotNo
+          & tabulate "insertEbPoint" [timeBucket insertTime]
+          & tabulate "lookupEbPoint" [timeBucket lookupTime]
+
+-- | Property: looking up a non-existent point returns Nothing.
+prop_pointsLookupMissing :: DbImpl -> Property
+prop_pointsLookupMissing impl =
+  forAll genEbHash $ \missingHash ->
+    ioProperty $ withFreshDb impl $ \db -> do
+      (result, lookupTime) <- timed $ leiosDbLookupEbPoint db missingHash
+      pure $
+        result === Nothing
+          & tabulate "lookupEbPoint (missing)" [timeBucket lookupTime]
 
 -- | Property: multiple inserted points all appear in scan results.
 prop_pointsAccumulate :: DbImpl -> Property

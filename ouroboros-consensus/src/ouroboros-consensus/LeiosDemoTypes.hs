@@ -454,6 +454,9 @@ messageLeiosFetchToObject = \case
 data TraceLeiosKernel
   = MkTraceLeiosKernel String
   | TraceLeiosBlockAcquired LeiosPoint
+  | -- | The EB body was received but the point was not in the database. This is
+    -- unexpected as the point should have been inserted during announcement handling.
+    TraceLeiosBlockPointMissing LeiosPoint
   | TraceLeiosBlockTxsAcquired LeiosPoint
   | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
       { slot :: SlotNo
@@ -476,6 +479,12 @@ traceLeiosKernelToObject = \case
   TraceLeiosBlockAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockAcquired"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      ]
+  TraceLeiosBlockPointMissing (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockPointMissing"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]

@@ -533,6 +533,19 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar) 
     when novel $ MVar.withMVar writeLock $ \() -> do
       -- TODO don't hold the ebBodies mvar during this IO
       traceException tracer TraceLeiosPeerDbException $ do
+        -- NOTE: The point should already be in the table because of the
+        -- announcement handling. The fetching logic should have only decided to
+        -- download announced (or otherwise known) EBs. However, this is an
+        -- interesting situation where a node offers an EB we have not seen via an
+        -- announcement before. We check if the point exists and trace a warning
+        -- if not, then insert as safety net. We should remove this once we are
+        -- confident the fetching logic handles this correctly.
+        leiosDbLookupEbPoint db ebHash >>= \case
+          Just _ -> pure () -- Point already exists (expected from announcement)
+          Nothing -> do
+            -- Unexpected: we're receiving an EB body without having seen the announcement first
+            traceWith ktracer $ TraceLeiosBlockPointMissing point
+            leiosDbInsertEbPoint db point
         leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
     -- update NodeKernel state
