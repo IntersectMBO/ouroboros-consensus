@@ -143,7 +143,9 @@ implForkerPush env newState =
 
           let lseq' = extend (StateRef st newtbs) lseq
 
-          atomically $ writeTVar (foeLedgerSeq env) lseq'
+          atomically $ do
+            writeTVar (foeLedgerSeq env) lseq'
+            modifyTVar (foeCleanup env) (>> close newtbs)
       )
 
 implForkerCommit ::
