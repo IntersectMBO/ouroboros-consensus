@@ -156,7 +156,6 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Sequence (Seq)
 import LeiosDemoDb (LeiosDbHandle, leiosDbInsertEbBody, leiosDbInsertEbPoint)
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
@@ -237,16 +236,6 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   --
   -- INVARIANT: never acquire 'MVar' while holding this lock.
   -- TODO: can we move this "behind the curtain" of transactional interactions with the LeiosDb?
-  , getLeiosNotifications ::
-      MVar
-        m
-        ( Map
-            (Leios.PeerId (ConnectionId addrNTN))
-            ( StrictSTM.StrictTVar
-                m
-                (Map SlotNo (Seq Leios.LeiosNotification))
-            )
-        )
   }
 
 -- | Arguments required when initializing a node
@@ -420,7 +409,6 @@ initNodeKernel
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
     getLeiosWriteLock <- MVar.newMVar ()
-    getLeiosNotifications <- MVar.newMVar Map.empty
 
     getLeiosCopyReady <- MVar.newEmptyMVar
 
@@ -470,7 +458,7 @@ initNodeKernel
           Leios.doCacheCopy
             tracer
             leiosDB
-            (getLeiosWriteLock, getLeiosOutstanding, getLeiosNotifications)
+            (getLeiosWriteLock, getLeiosOutstanding)
             (500 * 10 ^ (3 :: Int)) -- TODO magic number
         t2 <- getMonotonicTimeNSec
         traceWith tracer $
@@ -509,7 +497,6 @@ initNodeKernel
         , getLeiosOutstanding
         , getLeiosReady
         , getLeiosWriteLock
-        , getLeiosNotifications
         }
    where
     blockForgingController ::

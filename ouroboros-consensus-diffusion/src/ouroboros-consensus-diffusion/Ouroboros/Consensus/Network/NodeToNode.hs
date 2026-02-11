@@ -402,7 +402,7 @@ mkHandlers
                 (Node.leiosKernelTracer tracers)
                 (leiosPeerTracer peer)
                 ((== Terminate) <$> controlMessageSTM)
-                (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosNotifications)
+                (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady)
                 leiosDB
                 (Leios.MkPeerId peer)
                 reqVar
@@ -427,7 +427,6 @@ mkHandlers
       } = nodeKernel
     NodeKernel
       { leiosDB
-      , getLeiosNotifications
       , getLeiosPeersVars
       , getLeiosEbBodies
       , getLeiosOutstanding
