@@ -238,6 +238,7 @@ test-suite consensus-test
     Test.Consensus.Genesis.Tests.CSJ
     Test.Consensus.Genesis.Tests.DensityDisconnect
     Test.Consensus.Genesis.Tests.LoE
+    Test.Consensus.Genesis.Tests.LoE.CaughtUp
     Test.Consensus.Genesis.Tests.LoP
     Test.Consensus.Genesis.Tests.LongRangeAttack
     Test.Consensus.Genesis.Tests.Uniform

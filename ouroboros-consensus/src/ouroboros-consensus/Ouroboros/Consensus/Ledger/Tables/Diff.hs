@@ -4,51 +4,60 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Ouroboros.Consensus.Ledger.Tables.Diff (
-    -- * Types
+module Ouroboros.Consensus.Ledger.Tables.Diff
+  ( -- * Types
     Delta (..)
   , Diff (..)
+
     -- * Conversion
   , keysSet
+
     -- * Construction
   , diff
+
     -- ** Maps
   , fromMap
   , fromMapDeletes
   , fromMapInserts
+
     -- ** Set
   , fromSetDeletes
+
     -- ** Lists
   , fromList
   , fromListDeletes
   , fromListInserts
+
     -- * Query
+
     -- ** Size
   , null
   , numDeletes
   , numInserts
   , size
+
     -- * Applying diffs
   , applyDiff
   , applyDiffForKeys
+
     -- * Filter
   , filterWithKeyOnly
   , foldMapDelta
   , traverseDeltaWithKey_
   ) where
 
-import           Control.Monad (void)
-import           Data.Bifunctor
-import           Data.Foldable (foldMap')
+import Control.Monad (void)
+import Data.Bifunctor
+import Data.Foldable (foldMap')
 import qualified Data.Map.Merge.Strict as Merge
-import           Data.Map.Strict (Map)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Monoid
-import           Data.Set (Set)
+import Data.Monoid
+import Data.Set (Set)
 import qualified Data.Set as Set
-import           GHC.Generics
-import           NoThunks.Class
-import           Prelude hiding (null)
+import GHC.Generics
+import NoThunks.Class
+import Prelude hiding (null)
 
 {------------------------------------------------------------------------------
   Types
@@ -70,8 +79,8 @@ instance Ord k => Semigroup (Diff k v) where
 instance Ord k => Monoid (Diff k v) where
   mempty = Diff mempty
 
-data Delta v =
-    Insert !v
+data Delta v
+  = Insert !v
   | Delete
   deriving stock (Show, Eq, Functor)
   deriving Generic
@@ -93,13 +102,16 @@ keysSet (Diff m) = Map.keysSet m
 ------------------------------------------------------------------------------}
 
 diff :: (Ord k, Eq v) => Map k v -> Map k v -> Diff k v
-diff m1 m2 = Diff $
+diff m1 m2 =
+  Diff $
     Merge.merge
       (Merge.mapMissing $ \_k _v -> Delete)
       (Merge.mapMissing $ \_k v -> Insert v)
-      (Merge.zipWithMaybeMatched $ \ _k v1 v2 ->
-        if v1 == v2 then Nothing
-                    else Just (Insert v2))
+      ( Merge.zipWithMaybeMatched $ \_k v1 v2 ->
+          if v1 == v2
+            then Nothing
+            else Just (Insert v2)
+      )
       m1
       m2
 
@@ -136,47 +148,47 @@ size (Diff m) = Map.size m
 
 numInserts :: Diff k v -> Int
 numInserts (Diff m) = getSum $ foldMap' f m
-  where
-    f (Insert _) = 1
-    f Delete     = 0
+ where
+  f (Insert _) = 1
+  f Delete = 0
 
 numDeletes :: Diff k v -> Int
 numDeletes (Diff m) = getSum $ foldMap' f m
-  where
-    f (Insert _) = 0
-    f Delete     = 1
+ where
+  f (Insert _) = 0
+  f Delete = 1
 
 {------------------------------------------------------------------------------
   Applying diffs
 ------------------------------------------------------------------------------}
 
 applyDiff ::
-     Ord k
-  => Map k v
-  -> Diff k v
-  -> Map k v
+  Ord k =>
+  Map k v ->
+  Diff k v ->
+  Map k v
 applyDiff m (Diff diffs) =
-    Merge.merge
-      Merge.preserveMissing
-      (Merge.mapMaybeMissing newKeys)
-      (Merge.zipWithMaybeMatched oldKeys)
-      m
-      diffs
-  where
-    newKeys :: k -> Delta v -> Maybe v
-    newKeys _k (Insert x) = Just x
-    newKeys _k Delete     = Nothing
+  Merge.merge
+    Merge.preserveMissing
+    (Merge.mapMaybeMissing newKeys)
+    (Merge.zipWithMaybeMatched oldKeys)
+    m
+    diffs
+ where
+  newKeys :: k -> Delta v -> Maybe v
+  newKeys _k (Insert x) = Just x
+  newKeys _k Delete = Nothing
 
-    oldKeys :: k -> v -> Delta v -> Maybe v
-    oldKeys _k _v1 (Insert x) = Just x
-    oldKeys _k _v1 Delete     = Nothing
+  oldKeys :: k -> v -> Delta v -> Maybe v
+  oldKeys _k _v1 (Insert x) = Just x
+  oldKeys _k _v1 Delete = Nothing
 
 applyDiffForKeys ::
-     Ord k
-  => Map k v
-  -> Set k
-  -> Diff k v
-  -> Map k v
+  Ord k =>
+  Map k v ->
+  Set k ->
+  Diff k v ->
+  Map k v
 applyDiffForKeys m ks (Diff diffs) =
   applyDiff
     m
@@ -195,10 +207,10 @@ filterWithKeyOnly f (Diff m) = Diff $ Map.filterWithKey (const . f) m
 
 -- | Traversal with keys over the deltas.
 traverseDeltaWithKey_ ::
-     Applicative t
-  => (k -> Delta v -> t a)
-  -> Diff k v
-  -> t ()
+  Applicative t =>
+  (k -> Delta v -> t a) ->
+  Diff k v ->
+  t ()
 traverseDeltaWithKey_ f (Diff m) = void $ Map.traverseWithKey f m
 
 -- | @'foldMap'@ over the deltas.

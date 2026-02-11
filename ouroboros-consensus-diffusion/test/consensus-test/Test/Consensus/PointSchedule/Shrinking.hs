@@ -1,34 +1,52 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Test.Consensus.PointSchedule.Shrinking (
-    -- | Exported only for testing (that is, checking the properties of the function)
+module Test.Consensus.PointSchedule.Shrinking
+  ( -- | Exported only for testing (that is, checking the properties of the function)
     shrinkByRemovingAdversaries
   , shrinkHonestPeer
   , shrinkHonestPeers
   , shrinkPeerSchedules
   ) where
 
-import           Control.Monad.Class.MonadTime.SI (DiffTime, Time, addTime,
-                     diffTime)
-import           Data.Containers.ListUtils (nubOrd)
-import           Data.Foldable (toList)
-import           Data.Functor ((<&>))
+import Control.Monad.Class.MonadTime.SI
+  ( DiffTime
+  , Time
+  , addTime
+  , diffTime
+  )
+import Data.Containers.ListUtils (nubOrd)
+import Data.Foldable (toList)
+import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     AnchoredSeq (Empty), takeWhileOldest)
-import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
-                     addBranch', mkTrunk)
-import           Test.Consensus.PeerSimulator.StateView (StateView)
-import           Test.Consensus.PointSchedule (GenesisTest (..),
-                     GenesisTestFull, PeerSchedule, PointSchedule (..),
-                     peerSchedulesBlocks)
-import           Test.Consensus.PointSchedule.Peers (Peers (..))
-import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
-import           Test.QuickCheck (shrinkList)
-import           Test.Util.TestBlock (TestBlock, isAncestorOf,
-                     isStrictAncestorOf)
+import Data.Maybe (mapMaybe)
+import Ouroboros.Network.AnchoredFragment
+  ( AnchoredFragment
+  , AnchoredSeq (Empty)
+  , takeWhileOldest
+  )
+import Test.Consensus.BlockTree
+  ( BlockTree (..)
+  , BlockTreeBranch (..)
+  , addBranch'
+  , mkTrunk
+  )
+import Test.Consensus.PeerSimulator.StateView (StateView)
+import Test.Consensus.PointSchedule
+  ( GenesisTest (..)
+  , GenesisTestFull
+  , PeerSchedule
+  , PointSchedule (..)
+  , peerSchedulesBlocks
+  )
+import Test.Consensus.PointSchedule.Peers (Peers (..))
+import Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
+import Test.QuickCheck (shrinkList)
+import Test.Util.TestBlock
+  ( TestBlock
+  , isAncestorOf
+  , isStrictAncestorOf
+  )
 
 -- | Shrink a 'PointSchedule'. We use a different logic to shrink honest and
 -- adversarial peers. For adversarial peers, we just remove arbitrary points,
@@ -41,31 +59,34 @@ shrinkPeerSchedules ::
   StateView TestBlock ->
   [GenesisTestFull TestBlock]
 shrinkPeerSchedules genesisTest@GenesisTest{gtBlockTree, gtSchedule} _stateView =
-  let PointSchedule {psSchedule, psStartOrder} = gtSchedule
+  let PointSchedule{psSchedule, psStartOrder} = gtSchedule
       simulationDuration = duration gtSchedule
       trimmedBlockTree sch = trimBlockTree' sch gtBlockTree
       shrunkAdversarialPeers =
         shrinkAdversarialPeers shrinkAdversarialPeer psSchedule
           <&> \shrunkSchedule ->
             genesisTest
-              { gtSchedule = PointSchedule
-                  { psSchedule = shrunkSchedule
-                  , psStartOrder
-                  , psMinEndTime = simulationDuration
-                  }
+              { gtSchedule =
+                  PointSchedule
+                    { psSchedule = shrunkSchedule
+                    , psStartOrder
+                    , psMinEndTime = simulationDuration
+                    }
               , gtBlockTree = trimmedBlockTree shrunkSchedule
               }
       shrunkHonestPeers =
         shrinkHonestPeers
           psSchedule
-        -- No need to update the tree here, shrinking the honest peers never discards blocks
-        <&> \shrunkSchedule -> genesisTest
-          { gtSchedule = PointSchedule
-            { psSchedule = shrunkSchedule
-            , psStartOrder
-            , psMinEndTime = simulationDuration
-            }
-          }
+          -- No need to update the tree here, shrinking the honest peers never discards blocks
+          <&> \shrunkSchedule ->
+            genesisTest
+              { gtSchedule =
+                  PointSchedule
+                    { psSchedule = shrunkSchedule
+                    , psStartOrder
+                    , psMinEndTime = simulationDuration
+                    }
+              }
    in shrunkAdversarialPeers ++ shrunkHonestPeers
 
 -- | Shrink a 'PointSchedule' by removing adversaries. This does not affect
@@ -80,18 +101,20 @@ shrinkByRemovingAdversaries genesisTest@GenesisTest{gtSchedule, gtBlockTree} _st
     let
       trimmedBlockTree = trimBlockTree' shrunkSchedule gtBlockTree
       simulationDuration = duration gtSchedule
-     in genesisTest
-      { gtSchedule = PointSchedule
-        { psSchedule = shrunkSchedule
-        , psStartOrder = psStartOrder gtSchedule
-        , psMinEndTime = simulationDuration
+     in
+      genesisTest
+        { gtSchedule =
+            PointSchedule
+              { psSchedule = shrunkSchedule
+              , psStartOrder = psStartOrder gtSchedule
+              , psMinEndTime = simulationDuration
+              }
+        , gtBlockTree = trimmedBlockTree
         }
-      , gtBlockTree = trimmedBlockTree
-      }
 
 duration :: PointSchedule blk -> Time
-duration PointSchedule {psSchedule, psMinEndTime} =
-  maximum $ psMinEndTime : [ t | sch <- toList psSchedule, (t, _) <- take 1 (reverse sch) ]
+duration PointSchedule{psSchedule, psMinEndTime} =
+  maximum $ psMinEndTime : [t | sch <- toList psSchedule, (t, _) <- take 1 (reverse sch)]
 
 -- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
 -- unchanged.
@@ -101,7 +124,7 @@ shrinkAdversarialPeer = shrinkList (const [])
 -- | Shrink the 'others' field of a 'Peers' structure by attempting to remove
 -- peers or by shrinking their values using the given shrinking function.
 shrinkAdversarialPeers :: (a -> [a]) -> Peers a -> [Peers a]
-shrinkAdversarialPeers shrink Peers {honestPeers, adversarialPeers} =
+shrinkAdversarialPeers shrink Peers{honestPeers, adversarialPeers} =
   map (Peers honestPeers . Map.fromList) $
     shrinkList (traverse shrink) $
       Map.toList adversarialPeers
@@ -117,25 +140,27 @@ shrinkAdversarialPeers shrink Peers {honestPeers, adversarialPeers} =
 -- trigger disconnections when the timeout for MsgAwaitReply is reached. In those cases,
 -- it is probably more pertinent to disable this timeout in tests than to disable shrinking.
 shrinkHonestPeers :: Peers (PeerSchedule blk) -> [Peers (PeerSchedule blk)]
-shrinkHonestPeers Peers {honestPeers, adversarialPeers} = do
+shrinkHonestPeers Peers{honestPeers, adversarialPeers} = do
   (k, honestSch) <- Map.toList honestPeers
   shrunk <- shrinkHonestPeer honestSch
-  pure $ Peers
-    { honestPeers = Map.insert k shrunk honestPeers
-    , adversarialPeers
-    }
+  pure $
+    Peers
+      { honestPeers = Map.insert k shrunk honestPeers
+      , adversarialPeers
+      }
 
 shrinkHonestPeer :: PeerSchedule blk -> [PeerSchedule blk]
 shrinkHonestPeer sch =
   mapMaybe (speedUpTheSchedule sch) splits
-  where
-    -- | A list of non-zero time intervals between successive points of the honest schedule
-    splits :: [(Time, DiffTime)]
-    splits = mapMaybe
-      (\((t1, _), (t2, _)) ->
-        if t1 == t2
-          then Nothing
-          else Just (t1, diffTime t2 t1)
+ where
+  -- \| A list of non-zero time intervals between successive points of the honest schedule
+  splits :: [(Time, DiffTime)]
+  splits =
+    mapMaybe
+      ( \((t1, _), (t2, _)) ->
+          if t1 == t2
+            then Nothing
+            else Just (t1, diffTime t2 t1)
       )
       (zip sch (drop 1 sch))
 
@@ -148,19 +173,20 @@ shrinkHonestPeer sch =
 speedUpTheSchedule :: PeerSchedule blk -> (Time, DiffTime) -> Maybe (PeerSchedule blk)
 speedUpTheSchedule sch (at, speedUpBy) =
   if stillValid then Just $ beforeSplit ++ spedUpSchedule else Nothing
-  where
-    (beforeSplit, afterSplit) = span ((< at) . fst) sch
-    threshold = addTime speedUpBy at
-    spedUpSchedule = mapMaybe
+ where
+  (beforeSplit, afterSplit) = span ((< at) . fst) sch
+  threshold = addTime speedUpBy at
+  spedUpSchedule =
+    mapMaybe
       (\(t, p) -> if t < threshold then Nothing else Just (addTime (-speedUpBy) t, p))
       afterSplit
-    stillValid =
-         (hasTP spedUpSchedule == hasTP afterSplit)
+  stillValid =
+    (hasTP spedUpSchedule == hasTP afterSplit)
       && (hasHP spedUpSchedule == hasHP afterSplit)
       && (hasBP spedUpSchedule == hasBP afterSplit)
-    hasTP = any (\case (_, ScheduleTipPoint    _) -> True; _ -> False)
-    hasHP = any (\case (_, ScheduleHeaderPoint _) -> True; _ -> False)
-    hasBP = any (\case (_, ScheduleBlockPoint  _) -> True; _ -> False)
+  hasTP = any (\case (_, ScheduleTipPoint _) -> True; _ -> False)
+  hasHP = any (\case (_, ScheduleHeaderPoint _) -> True; _ -> False)
+  hasBP = any (\case (_, ScheduleBlockPoint _) -> True; _ -> False)
 
 -- | Remove blocks from the given block tree that are not necessary for the
 -- given peer schedules. If entire branches are unused, they are removed. If the
@@ -172,22 +198,22 @@ trimBlockTree' = keepOnlyAncestorsOf . peerSchedulesBlocks
 -- that contains ancestors of the given blocks.
 keepOnlyAncestorsOf :: [TestBlock] -> BlockTree TestBlock -> BlockTree TestBlock
 keepOnlyAncestorsOf blocks bt =
-    let leaves = blocksWithoutDescendents blocks
-        trunk = keepOnlyAncestorsOf' leaves (btTrunk bt)
-        branches = mapMaybe (fragmentToMaybe . keepOnlyAncestorsOf' leaves . btbSuffix) (btBranches bt)
-     in foldr addBranch' (mkTrunk trunk) branches
-  where
-    fragmentToMaybe (Empty _) = Nothing
-    fragmentToMaybe fragment  = Just fragment
+  let leaves = blocksWithoutDescendents blocks
+      trunk = keepOnlyAncestorsOf' leaves (btTrunk bt)
+      branches = mapMaybe (fragmentToMaybe . keepOnlyAncestorsOf' leaves . btbSuffix) (btBranches bt)
+   in foldr addBranch' (mkTrunk trunk) branches
+ where
+  fragmentToMaybe (Empty _) = Nothing
+  fragmentToMaybe fragment = Just fragment
 
-    -- | Given some blocks and a fragment, keep only the prefix of the fragment
-    -- that contains ancestors of the given blocks.
-    keepOnlyAncestorsOf' :: [TestBlock] -> AnchoredFragment TestBlock -> AnchoredFragment TestBlock
-    keepOnlyAncestorsOf' leaves = takeWhileOldest (\block -> (block `isAncestorOf`) `any` leaves)
+  -- \| Given some blocks and a fragment, keep only the prefix of the fragment
+  -- that contains ancestors of the given blocks.
+  keepOnlyAncestorsOf' :: [TestBlock] -> AnchoredFragment TestBlock -> AnchoredFragment TestBlock
+  keepOnlyAncestorsOf' leaves = takeWhileOldest (\block -> (block `isAncestorOf`) `any` leaves)
 
-    -- | Return a subset of the given blocks containing only the ones that do
-    -- not have any other descendents in the set.
-    blocksWithoutDescendents :: [TestBlock] -> [TestBlock]
-    blocksWithoutDescendents bs =
-      let bs' = nubOrd bs
-       in [ b | b <- bs', not ((b `isStrictAncestorOf`) `any` bs') ]
+  -- \| Return a subset of the given blocks containing only the ones that do
+  -- not have any other descendents in the set.
+  blocksWithoutDescendents :: [TestBlock] -> [TestBlock]
+  blocksWithoutDescendents bs =
+    let bs' = nubOrd bs
+     in [b | b <- bs', not ((b `isStrictAncestorOf`) `any` bs')]

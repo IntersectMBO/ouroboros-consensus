@@ -2,49 +2,55 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Protocol.Praos (PraosEnvelopeError (..)) where
 
 import qualified Cardano.Crypto.KES as KES
-import           Cardano.Crypto.VRF (certifiedOutput)
-import           Cardano.Ledger.BaseTypes (ProtVer (ProtVer), Version)
-import           Cardano.Ledger.BHeaderView
-import           Cardano.Ledger.Keys (hashKey)
-import           Cardano.Ledger.Slot (SlotNo (unSlotNo))
-import           Cardano.Protocol.TPraos.OCert
-                     (OCert (ocertKESPeriod, ocertVkHot))
+import Cardano.Crypto.VRF (certifiedOutput)
+import Cardano.Ledger.BHeaderView
+import Cardano.Ledger.BaseTypes (ProtVer (ProtVer), Version)
+import Cardano.Ledger.Keys (hashKey)
+import Cardano.Ledger.Slot (SlotNo (unSlotNo))
+import Cardano.Protocol.TPraos.OCert
+  ( OCert (ocertKESPeriod, ocertVkHot)
+  )
 import qualified Cardano.Protocol.TPraos.OCert as SL
-import           Control.Monad (unless)
-import           Control.Monad.Except (throwError)
-import           Data.Either (isRight)
-import           Data.Word (Word16, Word32)
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Protocol.Praos
-import           Ouroboros.Consensus.Protocol.Praos.Common
-                     (MaxMajorProtVer (MaxMajorProtVer))
-import           Ouroboros.Consensus.Protocol.Praos.Header (Header (..),
-                     HeaderBody (..), headerHash, headerSize)
-import           Ouroboros.Consensus.Protocol.Praos.Views
-import           Ouroboros.Consensus.Protocol.Signed
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
-                     ProtocolHeaderSupportsEnvelope (..),
-                     ProtocolHeaderSupportsKES (..),
-                     ProtocolHeaderSupportsLedger (..),
-                     ProtocolHeaderSupportsProtocol (..),
-                     ShelleyHash (ShelleyHash), ShelleyProtocol,
-                     ShelleyProtocolHeader)
-
+import Control.Monad (unless)
+import Control.Monad.Except (throwError)
+import Data.Either (isRight)
+import Data.Word (Word16, Word32)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Protocol.Praos
+import Ouroboros.Consensus.Protocol.Praos.Common
+  ( MaxMajorProtVer (MaxMajorProtVer)
+  )
+import Ouroboros.Consensus.Protocol.Praos.Header
+  ( Header (..)
+  , HeaderBody (..)
+  , headerHash
+  , headerSize
+  )
+import Ouroboros.Consensus.Protocol.Praos.Views
+import Ouroboros.Consensus.Protocol.Signed
+import Ouroboros.Consensus.Shelley.Protocol.Abstract
+  ( ProtoCrypto
+  , ProtocolHeaderSupportsEnvelope (..)
+  , ProtocolHeaderSupportsKES (..)
+  , ProtocolHeaderSupportsLedger (..)
+  , ProtocolHeaderSupportsProtocol (..)
+  , ShelleyHash (ShelleyHash)
+  , ShelleyProtocol
+  , ShelleyProtocolHeader
+  )
 
 type instance ProtoCrypto (Praos c) = c
 
 type instance ShelleyProtocolHeader (Praos c) = Header c
 
 data PraosEnvelopeError
-  = ObsoleteNode Version Version
-    -- ^ This is a subtle case.
+  = -- | This is a subtle case.
     --
     -- This node is explicitly rejecting the header, but the header isn't
     -- necessarily _directly_ at fault.
@@ -84,6 +90,7 @@ data PraosEnvelopeError
     -- block's non-header content either) where the header could be validated
     -- but its underlying block could not. See
     -- <https://github.com/IntersectMBO/ouroboros-consensus/issues/325>.
+    ObsoleteNode Version Version
   | HeaderSizeTooLarge Int Word16
   | BlockSizeTooLarge Word32 Word32
   deriving (Eq, Generic, Show)
@@ -109,70 +116,70 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
     unless (bhviewBSize bhv <= maxBodySize) $
       throwError $
         BlockSizeTooLarge (bhviewBSize bhv) maxBodySize
-    where
-      pp = praosParams cfg
-      (MaxMajorProtVer maxpv) = praosMaxMajorPV pp
-      (ProtVer m _) = lvProtocolVersion lv
-      maxHeaderSize = lvMaxHeaderSize lv
-      maxBodySize = lvMaxBodySize lv
-      bhv = mkHeaderView hdr
+   where
+    pp = praosParams cfg
+    (MaxMajorProtVer maxpv) = praosMaxMajorPV pp
+    (ProtVer m _) = lvProtocolVersion lv
+    maxHeaderSize = lvMaxHeaderSize lv
+    maxBodySize = lvMaxBodySize lv
+    bhv = mkHeaderView hdr
 
 instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
   configSlotsPerKESPeriod cfg = praosSlotsPerKESPeriod $ praosParams cfg
   verifyHeaderIntegrity slotsPerKESPeriod header =
     isRight $ KES.verifySignedKES () ocertVkHot t headerBody headerSig
-    where
-      Header {headerBody, headerSig} = header
-      SL.OCert
-        { ocertVkHot,
-          ocertKESPeriod = SL.KESPeriod startOfKesPeriod
-        } = hbOCert headerBody
+   where
+    Header{headerBody, headerSig} = header
+    SL.OCert
+      { ocertVkHot
+      , ocertKESPeriod = SL.KESPeriod startOfKesPeriod
+      } = hbOCert headerBody
 
-      currentKesPeriod =
-        fromIntegral $
-          unSlotNo (hbSlotNo headerBody) `div` slotsPerKESPeriod
+    currentKesPeriod =
+      fromIntegral $
+        unSlotNo (hbSlotNo headerBody) `div` slotsPerKESPeriod
 
-      t
-        | currentKesPeriod >= startOfKesPeriod =
-            currentKesPeriod - startOfKesPeriod
-        | otherwise =
-            0
+    t
+      | currentKesPeriod >= startOfKesPeriod =
+          currentKesPeriod - startOfKesPeriod
+      | otherwise =
+          0
   mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer = do
-    PraosFields {praosSignature, praosToSign} <- forgePraosFields hk cbl il mkBhBodyBytes
+    PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il mkBhBodyBytes
     pure $ Header praosToSign praosSignature
-    where
-      mkBhBodyBytes
-        PraosToSign
-          { praosToSignIssuerVK,
-            praosToSignVrfVK,
-            praosToSignVrfRes,
-            praosToSignOCert
-          } =
-          HeaderBody
-            { hbBlockNo = blockNo,
-              hbSlotNo = slotNo,
-              hbPrev = prevHash,
-              hbVk = praosToSignIssuerVK,
-              hbVrfVk = praosToSignVrfVK,
-              hbVrfRes = praosToSignVrfRes,
-              hbBodySize = fromIntegral sz,
-              hbBodyHash = bbHash,
-              hbOCert = praosToSignOCert,
-              hbProtVer = protVer
-            }
+   where
+    mkBhBodyBytes
+      PraosToSign
+        { praosToSignIssuerVK
+        , praosToSignVrfVK
+        , praosToSignVrfRes
+        , praosToSignOCert
+        } =
+        HeaderBody
+          { hbBlockNo = blockNo
+          , hbSlotNo = slotNo
+          , hbPrev = prevHash
+          , hbVk = praosToSignIssuerVK
+          , hbVrfVk = praosToSignVrfVK
+          , hbVrfRes = praosToSignVrfRes
+          , hbBodySize = fromIntegral sz
+          , hbBodyHash = bbHash
+          , hbOCert = praosToSignOCert
+          , hbProtVer = protVer
+          }
 
 instance PraosCrypto c => ProtocolHeaderSupportsProtocol (Praos c) where
   type CannotForgeError (Praos c) = PraosCannotForge c
-  protocolHeaderView Header {headerBody, headerSig} =
+  protocolHeaderView Header{headerBody, headerSig} =
     HeaderView
-      { hvPrevHash = hbPrev headerBody,
-        hvVK = hbVk headerBody,
-        hvVrfVK = hbVrfVk headerBody,
-        hvVrfRes = hbVrfRes headerBody,
-        hvOCert = hbOCert headerBody,
-        hvSlotNo = hbSlotNo headerBody,
-        hvSigned = headerBody,
-        hvSignature = headerSig
+      { hvPrevHash = hbPrev headerBody
+      , hvVK = hbVk headerBody
+      , hvVrfVK = hbVrfVk headerBody
+      , hvVrfRes = hbVrfRes headerBody
+      , hvOCert = hbOCert headerBody
+      , hvSlotNo = hbSlotNo headerBody
+      , hvSigned = headerBody
+      , hvSignature = headerSig
       }
   pHeaderIssuer = hbVk . headerBody
   pHeaderIssueNo = SL.ocertN . hbOCert . headerBody
@@ -185,13 +192,13 @@ instance PraosCrypto c => ProtocolHeaderSupportsProtocol (Praos c) where
   pTieBreakVRFValue = certifiedOutput . hbVrfRes . headerBody
 
 instance PraosCrypto c => ProtocolHeaderSupportsLedger (Praos c) where
-  mkHeaderView hdr@Header {headerBody} =
+  mkHeaderView hdr@Header{headerBody} =
     BHeaderView
-      { bhviewID = hashKey $ hbVk headerBody,
-        bhviewBSize = hbBodySize headerBody,
-        bhviewHSize = headerSize hdr,
-        bhviewBHash = hbBodyHash headerBody,
-        bhviewSlot = hbSlotNo headerBody
+      { bhviewID = hashKey $ hbVk headerBody
+      , bhviewBSize = hbBodySize headerBody
+      , bhviewHSize = headerSize hdr
+      , bhviewBHash = hbBodyHash headerBody
+      , bhviewSlot = hbSlotNo headerBody
       }
 
 type instance Signed (Header c) = HeaderBody c
