@@ -31,6 +31,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
+import Ouroboros.Consensus.Util.EscapableResources
 import System.FS.API
 
 -- | Operations needed to open and operate a LedgerDB V2
@@ -62,20 +63,18 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   -- starting Consensus from Genesis.
   newHandleFromValues ::
     Tracer m LedgerDBV2Trace ->
-    ResourceRegistry m ->
     Resources m backend ->
     ExtLedgerState blk ValuesMK ->
-    m (LedgerTablesHandle m (ExtLedgerState blk))
+    ContT r m (StateRef m (ExtLedgerState blk))
 
   -- | Create a new handle from a snapshot.
   newHandleFromSnapshot ::
     Tracer m LedgerDBV2Trace ->
-    ResourceRegistry m ->
     CodecConfig blk ->
     SomeHasFS m ->
     Resources m backend ->
     DiskSnapshot ->
-    ExceptT (SnapshotFailure blk) m (LedgerSeq' m blk, RealPoint blk)
+    ContT r (ExceptT (SnapshotFailure blk) m) (StateRef m (ExtLedgerState blk), RealPoint blk)
 
   -- | Instantiate the 'SnapshotManager' for this backend.
   snapshotManager ::

@@ -12,6 +12,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -54,7 +55,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   ) where
 
 import Cardano.Ledger.BaseTypes
-import Control.ResourceRegistry
 import Data.Function (on)
 import Data.Word
 import GHC.Generics
@@ -65,6 +65,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Util.EscapableResources
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
   ( anchor
@@ -83,10 +84,10 @@ import Prelude hiding (read)
 -- | The interface fulfilled by handles on both the InMemory and LSM handles.
 data LedgerTablesHandle m l = LedgerTablesHandle
   { close :: !(m ())
-  , transfer :: !(ResourceKey m -> m ())
+  , untrack :: !(STM m ())
   -- ^ Update the closing action in this handle with a new resource key, as the
   -- handle has moved to a different registry.
-  , duplicate :: !(ResourceRegistry m -> m (ResourceKey m, LedgerTablesHandle m l))
+  , duplicate :: !(forall r. ContT r m (LedgerTablesHandle m l))
   -- ^ Create a copy of the handle.
   --
   -- A duplicated handle must provide access to all the data that was there in
@@ -233,33 +234,32 @@ closeLedgerSeq (LedgerSeq l) =
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
   (IOLike m, ApplyBlock l blk) =>
-  ResourceRegistry m ->
   LedgerDbCfg l ->
   blk ->
   LedgerSeq m l ->
-  m (m (), LedgerSeq m l)
-reapplyThenPush rr cfg ap db =
-  (\current' -> pruneToImmTipOnly $ extend current' db)
-    <$> reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap rr db
+  ContT r m (STM m (), m (), LedgerSeq m l)
+reapplyThenPush cfg ap db = do
+  sref <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
+  let (doClose, db') = pruneToImmTipOnly (extend sref db)
+  pure (untrack (tables sref), doClose, db')
 
 reapplyBlock ::
-  forall m l blk.
+  forall r m l blk.
   (ApplyBlock l blk, IOLike m) =>
   ComputeLedgerEvents ->
   LedgerCfg l ->
   blk ->
-  ResourceRegistry m ->
   LedgerSeq m l ->
-  m (StateRef m l)
-reapplyBlock evs cfg b rr db = do
+  ContT r m (StateRef m l)
+reapplyBlock evs cfg b db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db
-  (_, newtbs) <- duplicate tbs rr
-  vals <- read newtbs st ks
+  newtbs <- duplicate tbs
+  vals <- lift $ read newtbs st ks
   let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
       newst = forgetLedgerTables st'
 
-  pushDiffs newtbs st st'
+  lift $ pushDiffs newtbs st st'
   pure (StateRef newst newtbs)
 
 -- | Prune older ledger states according to the given 'LedgerDbPrune' strategy.

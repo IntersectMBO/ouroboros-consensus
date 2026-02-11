@@ -6,6 +6,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -145,7 +146,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , getReadOnlyForker
   , getTipStatistics
   , withPrivateTipForker
-  , withTipForker
 
     -- * Snapshots
   , SnapCounters (..)
@@ -197,6 +197,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.EscapableResources
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
@@ -241,22 +242,23 @@ data LedgerDB m l blk = LedgerDB
       STM m (HeaderStateHistory blk)
   -- ^ Get the header state history for all ledger states in the LedgerDB.
   , getForkerAtTarget ::
-      ResourceRegistry m ->
+      forall r.
       Target (Point blk) ->
-      m (Either GetForkerError (Forker m l))
+      ContT r m (Either GetForkerError (Forker m l))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
   -- 'GetForkerError'.
   --
   -- We pass in the producer/consumer registry.
   , validateFork ::
+      forall r.
       l ~ ExtLedgerState blk =>
       ResourceRegistry m ->
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
       Word64 ->
       [Header blk] ->
-      m (ValidateResult m l blk)
+      ContT r m (ValidateResult m l blk)
   -- ^ Try to apply a sequence of blocks on top of the LedgerDB, first rolling
   -- back as many blocks as the passed @Word64@.
   , getPrevApplied :: STM m (Set (RealPoint blk))
@@ -382,54 +384,28 @@ data LedgerDbError blk
   Forker
 -------------------------------------------------------------------------------}
 
--- | 'bracket'-style usage of a forker at the LedgerDB tip.
-withTipForker ::
-  IOLike m =>
-  LedgerDB m l blk ->
-  ResourceRegistry m ->
-  (Forker m l -> m a) ->
-  m a
-withTipForker ldb rr =
-  bracket
-    ( do
-        eFrk <- getForkerAtTarget ldb rr VolatileTip
-        case eFrk of
-          Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
-          Right frk -> pure frk
-    )
-    forkerClose
-
 -- | Like 'withTipForker', but it uses a private registry to allocate and
 -- de-allocate the forker.
 withPrivateTipForker ::
-  IOLike m =>
   LedgerDB m l blk ->
-  (Forker m l -> m a) ->
+  (ReadOnlyForker m l -> m a) ->
   m a
-withPrivateTipForker ldb =
-  bracketWithPrivateRegistry
-    ( \rr -> do
-        eFrk <- getForkerAtTarget ldb rr VolatileTip
-        case eFrk of
-          Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
-          Right frk -> pure frk
-    )
-    forkerClose
+withPrivateTipForker ldb f =
+  getReadOnlyForker ldb VolatileTip `runContT` \case
+    Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
+    Right frk -> f frk
 
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
-  IOLike m =>
   LedgerDB m l blk ->
   m Statistics
-getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
+getTipStatistics ldb = withPrivateTipForker ldb roforkerReadStatistics
 
 getReadOnlyForker ::
-  MonadSTM m =>
   LedgerDB m l blk ->
-  ResourceRegistry m ->
   Target (Point blk) ->
-  m (Either GetForkerError (ReadOnlyForker m l))
-getReadOnlyForker ldb rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb rr pt
+  ContT r m (Either GetForkerError (ReadOnlyForker m l))
+getReadOnlyForker ldb pt = fmap readOnlyForker <$> getForkerAtTarget ldb pt
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -472,11 +448,12 @@ data InitLog blk
 -- | Functions required to initialize a LedgerDB
 type InitDB :: Type -> (Type -> Type) -> Type -> Type
 data InitDB db m blk = InitDB
-  { initFromGenesis :: !(m db)
+  { initFromGenesis :: !(forall r. ContT r m (m db))
   -- ^ Create a DB from the genesis state
-  , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
+  , initFromSnapshot ::
+      !(forall r. DiskSnapshot -> ContT r m (m (Either (SnapshotFailure blk) (db, RealPoint blk))))
   -- ^ Create a DB from a Snapshot
-  , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
+  , initReapplyBlock :: !(forall r. LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> ContT r m (m db))
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
   , currentTip :: !(db -> LedgerState blk EmptyMK)
@@ -550,7 +527,7 @@ initialize
       -- We're out of snapshots. Start at genesis
       traceWith (TraceReplayStartEvent >$< replayTracer) ReplayFromGenesis
       let replayTracer'' = decorateReplayTracerWithStart (Point Origin) replayTracer'
-      initDb <- initFromGenesis
+      initDb <- initFromGenesis `runContT` id
       traceMarkerIO "Genesis loaded"
       (db, replayed) <-
         replayStartingWith
@@ -572,7 +549,7 @@ initialize
           traceWith snapTracer . InvalidSnapshot s $ InitFailureTooRecent s replayGoal
           tryNewestFirst (acc . InitFailure s (InitFailureTooRecent s replayGoal)) ss
         else do
-          eInitDb <- initFromSnapshot s
+          eInitDb <- initFromSnapshot s `runContT` id
           case eInitDb of
             -- If the snapshot is missing a metadata file, issue a warning and try
             -- the next oldest snapshot
@@ -660,7 +637,7 @@ replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, curren
     (db, Word64) ->
     m (db, Word64)
   push blk (!db, !replayed) = do
-    !db' <- initReapplyBlock cfg blk db
+    !db' <- initReapplyBlock cfg blk db `runContT` id
 
     let !replayed' = replayed + 1
 

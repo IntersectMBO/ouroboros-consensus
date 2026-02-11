@@ -165,10 +165,7 @@ initialChainSelection
             )
 
     -- This is safe: the LedgerDB tip doesn't change in between the previous
-    -- atomically block and this call to 'withTipForker'.
-    --
-    -- We don't use 'LedgerDB.withTipForker' here, because 'curForker' might be
-    -- returned as part of the selected chain.
+    -- atomically block and this call to 'getForkerAtTarget'.
     curForker <-
       LedgerDB.getForkerAtTarget lgrDB rr VolatileTip >>= \case
         Left{} -> error "Unreachable, VolatileTip MUST be in the LedgerDB"

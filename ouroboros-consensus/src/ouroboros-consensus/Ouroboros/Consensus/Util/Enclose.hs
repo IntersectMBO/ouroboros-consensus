@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Util.Enclose
     -- * Timing
   , EnclosingTimed
   , encloseTimedWith
+  , encloseTimedWithContT
   ) where
 
 import Control.Monad.Class.MonadTime.SI
@@ -20,6 +21,7 @@ import Control.Monad.Class.MonadTime.SI
   , diffTime
   )
 import Control.Tracer (Tracer, traceWith)
+import Ouroboros.Consensus.Util.EscapableResources
 
 -- $setup
 -- >>> import Control.Tracer
@@ -124,4 +126,20 @@ encloseTimedWith tracer action = do
   res <- action
   after <- getMonotonicTime
   traceWith tracer (FallingEdgeWith (after `diffTime` before))
+  pure res
+
+encloseTimedWithContT ::
+  MonadMonotonicTime m =>
+  Tracer m EnclosingTimed ->
+  ContT r m a ->
+  ContT r m a
+encloseTimedWithContT tracer action = do
+  before <- lift $ do
+    before <- getMonotonicTime
+    traceWith tracer RisingEdge
+    pure before
+  res <- action
+  lift $ do
+    after <- getMonotonicTime
+    traceWith tracer (FallingEdgeWith (after `diffTime` before))
   pure res
