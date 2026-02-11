@@ -36,7 +36,6 @@ import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
 import Control.Monad
-import Control.Monad.Class.MonadTime (getMonotonicTimeNSec)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.Except
 import Control.ResourceRegistry
@@ -410,8 +409,6 @@ initNodeKernel
     getLeiosReady <- MVar.newEmptyMVar
     getLeiosWriteLock <- MVar.newMVar ()
 
-    getLeiosCopyReady <- MVar.newEmptyMVar
-
     void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
       let tracer = leiosKernelTracer tracers
       traceWith tracer $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
@@ -420,59 +417,27 @@ initNodeKernel
       leiosPeersVars <- MVar.readMVar getLeiosPeersVars
       offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
       ebBodies <- MVar.readMVar getLeiosEbBodies
-      (newDecisions, newCopy) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+      newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
         let (!outstanding', newDecisions) =
               Leios.leiosFetchLogicIteration
                 Leios.demoLeiosFetchStaticEnv
                 (ebBodies, offerings)
                 outstanding
-        let newCopy = Leios.toCopyCount outstanding' /= Leios.toCopyCount outstanding
-        pure (outstanding', (newDecisions, newCopy))
+        pure (outstanding', newDecisions)
       let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
       traceWith tracer $
         MkTraceLeiosKernel $
           "leiosFetchLogic: "
             ++ show (sum (fmap length newRequests))
-            ++ " new reqs, "
-            ++ show newCopy
-            ++ " new copy"
+            ++ " new reqs"
       (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
         atomically $ do
           StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
-      when newCopy $ void $ MVar.tryPutMVar getLeiosCopyReady ()
       iterationEnd <- getMonotonicTime
       let loopInterval = 0.5 :: DiffTime -- TODO magic number
           duration = iterationEnd `diffTime` iterationStart
       traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
       threadDelay $ loopInterval - duration
-
-    void $ forkLinkedThread registry "NodeKernel.leiosCopyLogic" $ do
-      let tracer = leiosKernelTracer tracers
-      (\m -> let loop !i = do m i; loop (i + 1 :: Int) in loop 0) $ \i -> do
-        traceWith tracer $ MkTraceLeiosKernel "leiosCopy: wait for leios copy ready"
-        () <- MVar.takeMVar getLeiosCopyReady
-        iterationStart <- getMonotonicTime
-        traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: running " ++ show i
-        t1 <- getMonotonicTimeNSec
-        moreTodo <-
-          Leios.doCacheCopy
-            tracer
-            leiosDB
-            (getLeiosWriteLock, getLeiosOutstanding)
-            (500 * 10 ^ (3 :: Int)) -- TODO magic number
-        t2 <- getMonotonicTimeNSec
-        traceWith tracer $
-          MkTraceLeiosKernel $
-            "leiosCopy: done " ++ show (i, (t2 - t1) `div` (10 ^ (6 :: Int)))
-        void $ MVar.tryPutMVar getLeiosReady ()
-        when moreTodo $ do
-          traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: more " ++ show i
-          void $ MVar.tryPutMVar getLeiosCopyReady ()
-        iterationEnd <- getMonotonicTime
-        let loopInterval = 0.050 :: DiffTime -- TODO magic number
-            duration = iterationEnd `diffTime` iterationStart
-        traceWith tracer $ MkTraceLeiosKernel $ "leiosCopy: duration " ++ show duration
-        threadDelay $ loopInterval - duration
 
     return
       NodeKernel
