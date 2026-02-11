@@ -73,7 +73,8 @@ data LeiosDbHandle m = LeiosDbHandle
   , leiosDbLookupEbBody :: EbHash -> m [(TxHash, BytesSize)]
   , -- NOTE: yields a LeiosOfferBlock notification
     leiosDbInsertEbBody :: LeiosPoint -> LeiosEb -> m ()
-  , leiosDbInsertTxs :: [(TxHash, ByteString)] -> m CompletedEbs
+  , -- TODO: Take [LeiosTx] and hash on insert?
+    leiosDbInsertTxs :: [(TxHash, ByteString)] -> m CompletedEbs
   -- ^ Insert transactions into the global txs table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
   -- and emits LeiosOfferBlockTxs notifications for each.
@@ -83,7 +84,8 @@ data LeiosDbHandle m = LeiosDbHandle
   -- Consumers should handle notifications idempotently.
   --
   -- REVIEW: return type only used for tracing, necessary?
-  , leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  , -- TODO: Return LeiosTx?
+    leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   }
 
 type CompletedEbs = [LeiosPoint]

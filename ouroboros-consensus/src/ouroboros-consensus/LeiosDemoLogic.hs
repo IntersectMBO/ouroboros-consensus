@@ -5,12 +5,9 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 
 module LeiosDemoLogic (module LeiosDemoLogic) where
 
-import Cardano.Binary (decodeFullDecoder', serialize')
-import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Prelude (first)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadMVar (MVar)
@@ -22,7 +19,6 @@ import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.Bits as Bits
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.DList (DList)
 import qualified Data.DList as DList
@@ -37,7 +33,6 @@ import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.String (fromString)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import Data.Word (Word16, Word64)
@@ -59,6 +54,9 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   , TxHash (..)
+  , hashLeiosEb
+  , hashLeiosTx
+  , leiosEbBytesSize
   , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
@@ -172,20 +170,15 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
     -- Use new db to batch retrieve transactions
     results <- leiosDbBatchRetrieveTxs db point.pointEbHash txOffsets
     -- Process results and write to buffer
+    -- REVIEW: why a mutable vector?
     let loop !i [] = pure i
         loop !i ((offset, _txHash, mbTxBytes) : rest) = do
           case mbTxBytes of
             Nothing -> error $ "Missing txBytes for offset " ++ show offset
             Just txBytes -> do
-              tx <- case decodeFullDecoder' (fromString "txBytes column") Leios.decodeLeiosTx txBytes of
-                Left err ->
-                  error $
-                    "Failed to deserialize txBytes column: "
-                      ++ Leios.prettyLeiosPoint point
-                      ++ " "
-                      ++ show (offset, err)
-                Right tx -> pure tx
-              MV.write buf i tx
+              -- NOTE: We do not need to decode the stored bytes into a proper
+              -- 'Tx era' in order to serve them through the mini-protocols.
+              MV.write buf i (MkLeiosTx txBytes)
               loop (i + 1) rest
     loop 0 results
   V.freeze $ MV.slice 0 n buf
@@ -516,15 +509,10 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar) 
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   let MkLeiosPoint _ebSlot ebHash = point
   do
-    let ebBytes :: ByteString
-        ebBytes = serialize' $ Leios.encodeLeiosEb eb
-    -- REVIEW: use 'leiosEbBytesSize'?
-    let ebBytesSize' = BS.length ebBytes
-    when (ebBytesSize' /= fromIntegral ebBytesSize) $ do
+    let ebBytesSize' = leiosEbBytesSize eb
+    when (ebBytesSize' /= ebBytesSize) $ do
       error $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
-    -- REVIEW: use 'hashLeiosEb'?
-    let ebHash' :: EbHash
-        ebHash' = MkEbHash $ Hash.hashToBytes $ Hash.hashWith @Leios.HASH id ebBytes
+    let ebHash' = hashLeiosEb eb
     when (ebHash' /= ebHash) $ do
       error $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
   -- ingest it
@@ -635,16 +623,11 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
   -- validate it
   let MkLeiosBlockTxsRequest point bitmaps txHashes = req
   let ebHash = point.pointEbHash
-  --    forM_ txHashes $ \txHash -> do
-  --        traceWith tracer $ MkTraceLeiosPeer $ "leiosRspTxHash: " ++ Leios.prettyTxHash txHash
-  let txBytess :: V.Vector ByteString
-      txBytess = V.map (serialize' . Leios.encodeLeiosTx) txs
+      txBytess = V.map cbor txs
   do
     when (V.length txs /= V.length txHashes) $ do
       error $ "MsgLeiosBlockTxs length mismatch: " ++ show (V.length txs, V.length txHashes)
-    let rehash :: ByteString -> Hash.Hash Leios.HASH ByteString
-        rehash = Hash.hashWith id
-    let txHashes' = V.map (MkTxHash . Hash.hashToBytes . rehash) txBytess
+    let txHashes' = V.map hashLeiosTx txs
     when (txHashes' /= txHashes) $ do
       let mismatches =
             V.toList $
@@ -669,11 +652,6 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
       -- updates
       completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
       forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
-      -- FIXME: Why is tx cache separate? it results in the same bytes stored twice in the DB
-      -- Insert into txCache (expiry set to 0 for now - TODO: use proper expiry)
-      -- forM_ (txHashes `V.zip` txBytess) $ \(txHash, txBytes) -> do
-      --   leiosDbInsertTxCache db txHash txBytes (fromIntegral $ BS.length txBytes) 0
-      pure ()
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let (requestedTxPeers', txOffsetss', txsBytesSize) =
