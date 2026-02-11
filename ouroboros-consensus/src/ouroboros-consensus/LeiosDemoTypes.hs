@@ -271,25 +271,26 @@ prettyLeiosOutstanding x =
 
 -----
 
-newtype LeiosTx = MkLeiosTx ByteString
+-- | A wrapper around transaction bytes for the simple purpose of serving them.
+-- This typically contains a CBOR-encoded 'Tx era'.
+newtype LeiosTx = MkLeiosTx {cbor :: ByteString}
   deriving Show
-
-leiosTxBytesSize :: LeiosTx -> BytesSize
-leiosTxBytesSize (MkLeiosTx bytes) =
-  majorByte + argument + fromIntegral n
- where
-  majorByte = 1
-  -- ASSUMPTION: greater than 55 and at most 2^14
-  argument = 1 + (if n >= 2 ^ (8 :: Int) then 1 else 0)
-  n = BS.length bytes
 
 instance ShowProxy LeiosTx where showProxy _ = "LeiosTx"
 
+-- | Uses cbor-in-cbor to allow for not needing to decode into a 'Tx era'.
 encodeLeiosTx :: LeiosTx -> Encoding
-encodeLeiosTx (MkLeiosTx bytes) = CBOR.encodeBytes bytes
+encodeLeiosTx MkLeiosTx{cbor} =
+  CBOR.encodeBytes cbor
 
+-- | Relies on cbor-in-cbor to allow for not needing to decode into a 'Tx era'.
 decodeLeiosTx :: Decoder s LeiosTx
-decodeLeiosTx = MkLeiosTx <$> CBOR.decodeBytes
+decodeLeiosTx =
+  MkLeiosTx <$> CBOR.decodeBytes
+
+hashLeiosTx :: LeiosTx -> TxHash
+hashLeiosTx =
+  MkTxHash . Hash.hashToBytes . Hash.hashWith @HASH cbor
 
 -- | An Endorser Block as it is submitted through the network.
 -- TODO: Keep track of the slot of an EB?
@@ -343,17 +344,20 @@ leiosEbBodyItems eb =
 
 leiosEbBytesSize :: LeiosEb -> BytesSize
 leiosEbBytesSize (MkLeiosEb items) =
-  cborUintSize (V.length items) + V.sum (V.map (each . snd) items)
+  cborIntBytesSize (V.length items) + V.sum (V.map (each . snd) items)
  where
-  each sz = cborBytesSize 32 + cborUintSize sz
+  each sz = cborBytesSize 32 + cborIntBytesSize sz
 
-  cborBytesSize len = cborUintSize len + len
+  cborBytesSize len = cborIntBytesSize len + len
 
-  cborUintSize n
-    | n < 24 = 1
-    | n < 0x100 = 2
-    | n < 0x10000 = 3
-    | otherwise = 5
+-- | Length of a unsigned integer if it were encoded in a "flattened format".
+-- See 'encodeInteger'.
+cborIntBytesSize :: Integral i => i -> BytesSize
+cborIntBytesSize n
+  | n < 24 = 1
+  | n < 0x100 = 2
+  | n < 0x10000 = 3
+  | otherwise = 5
 
 hashLeiosEb :: LeiosEb -> EbHash
 hashLeiosEb =
@@ -474,7 +478,7 @@ messageLeiosFetchToObject = \case
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockTxs"
       , "numTxs" .= Aeson.Number (fromIntegral (V.length txs))
-      , "txsBytesSize" .= Aeson.Number (fromIntegral $ V.sum $ V.map leiosTxBytesSize txs)
+      , "txsBytesSize" .= Aeson.Number (fromIntegral $ sum $ fmap (BS.length . cbor) txs)
       , "txs" .= Aeson.String "<elided>"
       ]
   MsgDone ->

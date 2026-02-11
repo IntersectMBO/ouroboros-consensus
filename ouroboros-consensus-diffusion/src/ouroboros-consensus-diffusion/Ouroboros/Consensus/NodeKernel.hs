@@ -163,11 +163,7 @@ import LeiosDemoTypes
   , LeiosEbBodies
   , LeiosOutstanding
   , LeiosPeerVars
-  , LeiosPoint (..)
   , TraceLeiosKernel (..)
-  , hashLeiosEb
-  , leiosEbBodyItems
-  , leiosEbTxs
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
@@ -855,9 +851,10 @@ forkBlockForging IS{..} blockForging =
 
       -- Store generated EB so it can be diffused
       for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
-        lift $ leiosDbInsertEbPoint leiosDB eb.point
-        lift $ leiosDbInsertEbBody leiosDB eb.point eb.body
-        lift $ leiosDbInsertTxs leiosDB eb.txClosure
+        lift $ do
+          leiosDbInsertEbPoint leiosDB eb.point
+          leiosDbInsertEbBody leiosDB eb.point eb.body
+          void $ leiosDbInsertTxs leiosDB eb.txClosure
         traceLeios TraceLeiosBlockStored{slot = currentSlot, eb = eb.body}
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()
