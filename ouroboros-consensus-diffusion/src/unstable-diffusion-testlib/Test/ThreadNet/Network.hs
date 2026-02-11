@@ -64,7 +64,7 @@ import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Stack
-import LeiosDemoDb (newInMemoryLeiosDb)
+import LeiosDemoDb (newLeiosDBInMemory)
 import LeiosDemoTypes (LeiosEb)
 import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
@@ -1036,6 +1036,7 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, psRng) = split rng
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+      leiosDB <- newLeiosDBInMemory
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
@@ -1090,7 +1091,7 @@ runThreadNetwork
                     { gnkaLoEAndGDDArgs = LoEAndGDDDisabled
                     }
               , getDiffusionPipeliningSupport = DiffusionPipeliningOn
-              , nkaGetLeiosNewDbConnection = newInMemoryLeiosDb
+              , leiosDB
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs

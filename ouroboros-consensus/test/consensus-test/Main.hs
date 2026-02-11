@@ -18,6 +18,8 @@ import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
+import qualified Test.LeiosDemoTypes (tests)
+import qualified Test.LeiosDemoDb (tests)
 import Test.Tasty
 import Test.Util.TestEnv
   ( defaultMainWithTestEnv
@@ -59,4 +61,6 @@ tests =
         ]
     , Test.Consensus.Ledger.Tables.Diff.tests
     , Test.Consensus.Ledger.Tables.DiffSeq.tests
+    , Test.LeiosDemoTypes.tests
+    , Test.LeiosDemoDb.tests
     ]

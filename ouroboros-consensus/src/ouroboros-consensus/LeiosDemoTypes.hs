@@ -341,14 +341,17 @@ leiosEbBodyItems eb =
 
 leiosEbBytesSize :: LeiosEb -> BytesSize
 leiosEbBytesSize (MkLeiosEb items) =
-  majorByte + argument + (V.sum $ V.map (each . snd) items)
+  cborUintSize (V.length items) + V.sum (V.map (each . snd) items)
  where
-  majorByte = 1
-  -- ASSUMPTION: less than 14000
-  argument = 1 + (if V.length items >= 2 ^ (8 :: Int) then 1 else 0)
+  each sz = cborBytesSize 32 + cborUintSize sz
 
-  -- ASSUMPTION: greater than 55 and at most 2^14
-  each sz = 1 + 32 + 1 + 1 + (if sz >= 2 ^ (8 :: Int) then 1 else 0)
+  cborBytesSize len = cborUintSize len + len
+
+  cborUintSize n
+    | n < 24 = 1
+    | n < 0x100 = 2
+    | n < 0x10000 = 3
+    | otherwise = 5
 
 hashLeiosEb :: LeiosEb -> EbHash
 hashLeiosEb =
@@ -384,8 +387,8 @@ minEbItemBytesSize = (32 - hashOverhead) + minSizeOverhead
   hashOverhead = 1 + 1 -- bytestring major byte + a length = 32
   minSizeOverhead = 1 + 1 -- int major byte + a value at low as 55
 
-maxEbItems :: Int
-maxEbItems =
+maxTxsPerEb :: Int
+maxTxsPerEb =
   fromIntegral $
     (maxMsgLeiosBlockBytesSize - msgOverhead - sequenceOverhead)
       `div` minEbItemBytesSize
@@ -540,6 +543,7 @@ traceLeiosPeerToObject (MkTraceLeiosPeer s) = fromString "msg" .= Aeson.String (
 leiosMempoolSize :: ByteSize32
 leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))
 
+-- TODO: dry with maxMsgLeiosBlockBytesSize
 leiosEBMaxSize :: ByteSize32
 leiosEBMaxSize = ByteSize32 512_000
 

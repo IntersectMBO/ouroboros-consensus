@@ -88,8 +88,8 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isNothing)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
-import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoDb (LeiosDbHandle)
+import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes (leiosMempoolSize)
 import Network.DNS.Resolver (Resolver)
 import qualified Network.Mux as Mux
@@ -258,7 +258,7 @@ data RunNodeArgs m addrNTN addrNTC blk p2p = RunNodeArgs
   -- ^ Network PeerSharing miniprotocol willingness flag
   , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
   , rnGenesisConfig :: GenesisConfig
-  , rnNewLeiosDbConnection :: m (LeiosDbHandle m)
+  , rnLeiosDB :: LeiosDbHandle m
   }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -684,7 +684,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   llrnPublicPeerSelectionStateVar
                   genesisArgs
                   DiffusionPipeliningOn
-                  rnNewLeiosDbConnection
+                  rnLeiosDB
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
 
@@ -961,7 +961,7 @@ mkNodeKernelArgs ::
   StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN) ->
   GenesisNodeKernelArgs m blk ->
   DiffusionPipeliningSupport ->
-  m (LeiosDbHandle m) ->
+  LeiosDbHandle m ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -981,7 +981,7 @@ mkNodeKernelArgs
   publicPeerSelectionStateVar
   genesisArgs
   getDiffusionPipeliningSupport
-  nkaGetLeiosNewDbConnection = do
+  leiosDB = do
     let (kaRng, psRng) = split rng
     return
       NodeKernelArgs
@@ -1011,7 +1011,7 @@ mkNodeKernelArgs
         , publicPeerSelectionStateVar
         , genesisArgs
         , getDiffusionPipeliningSupport
-        , nkaGetLeiosNewDbConnection
+        , leiosDB
         }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'

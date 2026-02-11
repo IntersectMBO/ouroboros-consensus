@@ -52,7 +52,7 @@ import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
-import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -61,8 +61,22 @@ import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor (void, (<&>))
 import Data.Hashable (Hashable)
+import qualified Data.Map as Map
 import Data.Map.Strict (Map)
+import qualified Data.Set as Set
 import Data.Void (Void)
+import LeiosDemoDb (LeiosDbHandle (subscribeEbNotifications))
+import qualified LeiosDemoLogic as Leios
+import LeiosDemoOnlyTestFetch
+import LeiosDemoOnlyTestNotify
+import LeiosDemoTypes
+  ( LeiosEb
+  , LeiosNotification (..)
+  , LeiosPoint (..)
+  , LeiosTx
+  , TraceLeiosPeer (..)
+  )
+import qualified LeiosDemoTypes as Leios
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
@@ -107,6 +121,7 @@ import Ouroboros.Network.Driver
 import Ouroboros.Network.Driver.Limits
 import Ouroboros.Network.KeepAlive
 import Ouroboros.Network.Mux
+import qualified Ouroboros.Network.Mux as ON
 import Ouroboros.Network.NodeToNode
 import Ouroboros.Network.PeerSelection.PeerMetric.Type
   ( FetchedMetricsTracer
@@ -156,15 +171,6 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( mapTxSubmissionMempoolReader
   )
 import Ouroboros.Network.TxSubmission.Outbound
-
-import qualified Data.Map as Map
-import qualified Data.Set as Set
-import qualified LeiosDemoLogic as Leios
-import LeiosDemoOnlyTestFetch
-import LeiosDemoOnlyTestNotify
-import LeiosDemoTypes (LeiosEb, LeiosPoint (..), LeiosTx, TraceLeiosPeer (..))
-import qualified LeiosDemoTypes as Leios
-import qualified Ouroboros.Network.Mux as ON
 
 {-------------------------------------------------------------------------------
   Handlers
@@ -371,16 +377,15 @@ mkHandlers
                       pure (offers1, offers2')
                     void $ MVar.tryPutMVar getLeiosReady ()
               )
-      , hLeiosNotifyServer = \_version peer -> Effect $ do
-          var <- StrictSTM.newTVarIO Map.empty
-          MVar.modifyMVar_ getLeiosNotifications $ \x -> do
-            let !x' = Map.insert (Leios.MkPeerId peer) var x
-            pure x'
-          pure $
-            leiosNotifyServerPeer
-              (Leios.nextLeiosNotification (leiosPeerTracer peer) var)
+      , hLeiosNotifyServer = \_version _peer -> Effect $ do
+          chan <- subscribeEbNotifications leiosDB
+          pure . leiosNotifyServerPeer $ do
+            atomically (readTChan chan) >>= \case
+              LeiosOfferBlock point ebSize ->
+                pure $ MsgLeiosBlockOffer point ebSize
+              LeiosOfferBlockTxs point ->
+                pure $ MsgLeiosBlockTxsOffer point
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
-          db <- getLeiosNewDbConnection -- TODO share DB connection for same peer?
           reqVar <-
             let loop = do
                   leiosPeersVars <- MVar.readMVar getLeiosPeersVars
@@ -397,16 +402,15 @@ mkHandlers
                 (Node.leiosKernelTracer tracers)
                 (leiosPeerTracer peer)
                 ((== Terminate) <$> controlMessageSTM)
-                (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosNotifications)
-                db
+                (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady)
+                leiosDB
                 (Leios.MkPeerId peer)
                 reqVar
       , hLeiosFetchServer = \_version peer -> Effect $ do
-          db <- getLeiosNewDbConnection
           leiosFetchContext <-
             Leios.newLeiosFetchContext
               getLeiosWriteLock
-              db
+              leiosDB
               (MVar.readMVar getLeiosEbBodies)
           pure $
             leiosFetchServerPeer
@@ -422,8 +426,7 @@ mkHandlers
       , getGsmState
       } = nodeKernel
     NodeKernel
-      { getLeiosNewDbConnection
-      , getLeiosNotifications
+      { leiosDB
       , getLeiosPeersVars
       , getLeiosEbBodies
       , getLeiosOutstanding

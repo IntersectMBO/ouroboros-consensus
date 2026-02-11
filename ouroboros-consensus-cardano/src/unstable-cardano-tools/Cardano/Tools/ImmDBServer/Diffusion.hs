@@ -157,7 +157,7 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
         Dir.doesFileExist leiosDbFile >>= \case
           False -> die $ "The Leios database must already exist: " <> show leiosDbFile
           True -> pure ()
-        leiosDb <- LeiosDemoDb.newLeiosDbConnectionIO leiosDbFile
+        leiosDb <- LeiosDemoDb.newLeiosDBSQLite leiosDbFile
         leiosEbBodies <- LeiosLogic.loadEbBodies leiosDb
         leiosWriteLock <- MVar.newMVar ()
         fmap LeiosLogic.MkSomeLeiosFetchContext $
