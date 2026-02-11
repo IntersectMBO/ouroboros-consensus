@@ -44,7 +44,7 @@ import Data.String (fromString)
 import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
-import LeiosDemoException (LeiosDbException (..))
+import LeiosDemoException (LeiosDbException (..), jsonLeiosDbException)
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -535,12 +535,8 @@ traceLeiosKernelToObject = \case
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
       ]
-  TraceLeiosDbException (LeiosDbException msg cs) ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbException"
-      , "error" .= msg
-      , "callStack" .= cs
-      ]
+  TraceLeiosDbException e ->
+    jsonLeiosDbException e
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String
@@ -550,12 +546,7 @@ data TraceLeiosPeer
 traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
 traceLeiosPeerToObject = \case
   MkTraceLeiosPeer s -> fromString "msg" .= Aeson.String (fromString s)
-  TraceLeiosPeerDbException (LeiosDbException msg cs) ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbException"
-      , "error" .= msg
-      , "callStack" .= cs
-      ]
+  TraceLeiosPeerDbException e -> jsonLeiosDbException e
 
 leiosMempoolSize :: ByteSize32
 leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))
