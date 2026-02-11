@@ -18,6 +18,7 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad (when)
+import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.Bits as Bits
@@ -63,6 +64,12 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Util.IOLike (IOLike)
+
+-- | Wrap an action with exception tracing. Catches the exception,
+-- traces it using the provided handler, and re-throws.
+traceException :: (IOLike m, Exception e) => Tracer m a -> (e -> a) -> m b -> m b
+traceException tracer toTrace action =
+  action `catch` \e -> traceWith tracer (toTrace e) >> throwIO e
 
 loadEbBodies :: IOLike m => LeiosDbHandle m -> m LeiosEbBodies
 loadEbBodies db = do
@@ -111,7 +118,7 @@ leiosFetchHandler tracer leiosContext = LF.MkLeiosFetchRequestHandler $ \case
     x <- msgLeiosBlockRequest tracer leiosContext p
     traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
     pure $ LF.MsgLeiosBlock x
-  LF.MsgLeiosBlockTxsRequest p bitmaps -> do
+  LF.MsgLeiosBlockTxsRequest p bitmaps -> traceException tracer TraceLeiosPeerDbException $ do
     traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
     x <- msgLeiosBlockTxsRequest tracer leiosContext p bitmaps
     traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
@@ -123,16 +130,17 @@ msgLeiosBlockRequest ::
   LeiosFetchContext m ->
   LeiosPoint ->
   m LeiosEb
-msgLeiosBlockRequest _tracer leiosContext MkLeiosPoint{pointEbHash} = do
+msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
   let MkLeiosFetchContext{leiosDb = db, leiosEbBuffer = buf, leiosWriteLock} = leiosContext
   n <- MVar.withMVar leiosWriteLock $ \() -> do
-    -- get the EB items using new db
-    items <- leiosDbLookupEbBody db pointEbHash
-    let loop !i [] = pure i
-        loop !i ((txHash, txBytesSize) : rest) = do
-          MV.write buf i (txHash, txBytesSize)
-          loop (i + 1) rest
-    loop 0 items
+    traceException tracer TraceLeiosPeerDbException $ do
+      -- get the EB items using new db
+      items <- leiosDbLookupEbBody db pointEbHash
+      let loop !i [] = pure i
+          loop !i ((txHash, txBytesSize) : rest) = do
+            MV.write buf i (txHash, txBytesSize)
+            loop (i + 1) rest
+      loop 0 items
   v <- V.freeze $ MV.slice 0 n buf
   pure $ MkLeiosEb v
 
@@ -564,8 +572,9 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar) 
     let novel = not $ Set.member ebHash (Leios.acquiredEbBodies ebBodies)
     when novel $ MVar.withMVar writeLock $ \() -> do
       -- TODO don't hold the ebBodies mvar during this IO
-      leiosDbInsertEbBody db point eb
-      traceWith ktracer $ TraceLeiosBlockAcquired point
+      traceException tracer TraceLeiosPeerDbException $ do
+        leiosDbInsertEbBody db point eb
+        traceWith ktracer $ TraceLeiosBlockAcquired point
     -- update NodeKernel state
     let !ebBodies' =
           if not novel
@@ -677,20 +686,21 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
             Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
       offsets = unfoldr nextOffset bitmaps
   -- ingest
-  MVar.withMVar writeLock $ \() -> do
-    -- REVIEW: These operations were previously wrapped in a single dbWithBEGIN
-    -- transaction but are now separate db calls. For SQLite, each operation is
-    -- transactional, but they're not in a single atomic transaction anymore.
-    -- This may need to be fixed by adding a batch update operation to the db or
-    -- ensuring transactional semantics. Use new db for both txCache and ebTxs
-    -- updates
-    leiosDbUpdateEbTx db point (zip offsets (V.toList txBytess)) >>= \case
-      NotComplete -> pure ()
-      Completed completedPoint -> traceWith ktracer $ TraceLeiosBlockTxsAcquired completedPoint
-    -- FIXME: Why is tx cache separate? it results in the same bytes stored twice in the DB
-    -- Insert into txCache (expiry set to 0 for now - TODO: use proper expiry)
-    forM_ (txHashes `V.zip` txBytess) $ \(txHash, txBytes) -> do
-      leiosDbInsertTxCache db txHash txBytes (fromIntegral $ BS.length txBytes) 0
+  traceException tracer TraceLeiosPeerDbException $ do
+    MVar.withMVar writeLock $ \() -> do
+      -- REVIEW: These operations were previously wrapped in a single dbWithBEGIN
+      -- transaction but are now separate db calls. For SQLite, each operation is
+      -- transactional, but they're not in a single atomic transaction anymore.
+      -- This may need to be fixed by adding a batch update operation to the db or
+      -- ensuring transactional semantics. Use new db for both txCache and ebTxs
+      -- updates
+      leiosDbUpdateEbTx db point (zip offsets (V.toList txBytess)) >>= \case
+        NotComplete -> pure ()
+        Completed completedPoint -> traceWith ktracer $ TraceLeiosBlockTxsAcquired completedPoint
+      -- FIXME: Why is tx cache separate? it results in the same bytes stored twice in the DB
+      -- Insert into txCache (expiry set to 0 for now - TODO: use proper expiry)
+      forM_ (txHashes `V.zip` txBytess) $ \(txHash, txBytes) -> do
+        leiosDbInsertTxCache db txHash txBytes (fromIntegral $ BS.length txBytes) 0
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let (requestedTxPeers', cachedTxs', txOffsetss', txsBytesSize) =
@@ -788,11 +798,12 @@ doCacheCopy ::
   ) ->
   BytesSize ->
   m Bool
-doCacheCopy _tracer db (writeLock, outstandingVar) bytesSize = do
+doCacheCopy tracer db (writeLock, outstandingVar) bytesSize = do
   copied <- do
     outstanding <- MVar.readMVar outstandingVar
     MVar.withMVar writeLock $ \() -> do
-      leiosDbCopyFromTxCacheBatch db (Leios.toCopy outstanding) bytesSize
+      traceException tracer TraceLeiosDbException $ do
+        leiosDbCopyFromTxCacheBatch db (Leios.toCopy outstanding) bytesSize
   (moreTodo, _newNotifications) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let usefulCopied =
           -- @copied@ might contain elements that were already accounted

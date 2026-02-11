@@ -18,6 +18,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVar
   , writeTChan
   )
+import Control.Exception (throwIO)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , generalBracket
@@ -36,6 +37,7 @@ import Data.String (IsString, fromString)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
+import LeiosDemoException (LeiosDbException (..))
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
@@ -545,4 +547,4 @@ withDieDone io =
     DB.Done -> pure ()
 
 dieStack :: HasCallStack => String -> IO a
-dieStack s = die $ s ++ "\n\n" ++ GHC.Stack.prettyCallStack GHC.Stack.callStack
+dieStack s = throwIO $ LeiosDbException s (GHC.Stack.prettyCallStack GHC.Stack.callStack)
