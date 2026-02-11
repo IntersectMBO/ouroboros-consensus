@@ -236,13 +236,13 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
     [] -> []
     (point, Left ebBytesSize) : vs -> Left (point, ebBytesSize) : expand vs
     (point, Right v) : vs ->
-      [Right (point, txOffset, txHash) | (txOffset, (txHash, _txBytesSize)) <- IntMap.toAscList v]
+      [Right (point, txHash) | (_txOffset, (txHash, _txBytesSize)) <- IntMap.toAscList v]
         <> expand vs
 
   go1 ::
     LeiosOutstanding pid ->
     LeiosFetchDecisions pid ->
-    [Either (LeiosPoint, BytesSize) (LeiosPoint, IntSet.Key, TxHash)] ->
+    [Either (LeiosPoint, BytesSize) (LeiosPoint, TxHash)] ->
     (LeiosOutstanding pid, LeiosFetchDecisions pid)
   go1 !acc !accNew = \case
     [] ->
@@ -251,7 +251,7 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
       | let peerIds :: Set (PeerId pid)
             peerIds = Map.findWithDefault Set.empty point.pointEbHash (Leios.requestedEbPeers acc) ->
           goEb2 acc accNew targets point ebBytesSize peerIds
-    Right (point, txOffset, txHash) : targets ->
+    Right (point, txHash) : targets ->
       let !txOffsets = case Map.lookup txHash (Leios.txOffsetss acc) of
             Nothing -> error "impossible!"
             Just x -> x
