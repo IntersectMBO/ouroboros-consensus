@@ -41,7 +41,7 @@ import Data.String (fromString)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import Data.Word (Word16, Word64)
-import LeiosDemoDb (LeiosDbHandle (..))
+import LeiosDemoDb (CompleteEb (..), LeiosDbHandle (..))
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
   ( BytesSize
@@ -521,7 +521,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar 
       LF.MkSomeLeiosFetchJob
         (LF.MsgLeiosBlockTxsRequest p bitmaps)
         ( pure $ \(LF.MsgLeiosBlockTxs txs) -> do
-            msgLeiosBlockTxs tracer kernelVars db peerId req txs
+            msgLeiosBlockTxs ktracer tracer kernelVars db peerId req txs
         )
 
 -----
@@ -563,9 +563,9 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar) 
   novel <- MVar.modifyMVar ebBodiesVar $ \ebBodies -> do
     let novel = not $ Set.member ebHash (Leios.acquiredEbBodies ebBodies)
     when novel $ MVar.withMVar writeLock $ \() -> do
-      traceWith ktracer $ TraceLeiosBlockAcquired point
       -- TODO don't hold the ebBodies mvar during this IO
       leiosDbInsertEbBody db point eb
+      traceWith ktracer $ TraceLeiosBlockAcquired point
     -- update NodeKernel state
     let !ebBodies' =
           if not novel
@@ -636,6 +636,7 @@ msgLeiosBlockTxs ::
   ( Ord pid
   , IOLike m
   ) =>
+  Tracer m TraceLeiosKernel ->
   Tracer m TraceLeiosPeer ->
   ( MVar m ()
   , MVar m LeiosEbBodies
@@ -647,7 +648,7 @@ msgLeiosBlockTxs ::
   LeiosBlockTxsRequest ->
   V.Vector LeiosTx ->
   m ()
-msgLeiosBlockTxs tracer (writeLock, _ebBodiesVar, outstandingVar, readyVar) db peerId req txs = do
+msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyVar) db peerId req txs = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
   -- validate it
   let MkLeiosBlockTxsRequest point bitmaps txHashes = req
@@ -683,7 +684,9 @@ msgLeiosBlockTxs tracer (writeLock, _ebBodiesVar, outstandingVar, readyVar) db p
     -- This may need to be fixed by adding a batch update operation to the db or
     -- ensuring transactional semantics. Use new db for both txCache and ebTxs
     -- updates
-    leiosDbUpdateEbTx db point (zip offsets (V.toList txBytess))
+    leiosDbUpdateEbTx db point (zip offsets (V.toList txBytess)) >>= \case
+      NotComplete -> pure ()
+      Completed completedPoint -> traceWith ktracer $ TraceLeiosBlockTxsAcquired completedPoint
     -- FIXME: Why is tx cache separate? it results in the same bytes stored twice in the DB
     -- Insert into txCache (expiry set to 0 for now - TODO: use proper expiry)
     forM_ (txHashes `V.zip` txBytess) $ \(txHash, txBytes) -> do

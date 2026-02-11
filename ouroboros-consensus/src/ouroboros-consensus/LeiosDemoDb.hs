@@ -73,7 +73,8 @@ data LeiosDbHandle m = LeiosDbHandle
   , -- NOTE: yields a LeiosOfferBlock notification
     leiosDbInsertEbBody :: LeiosPoint -> LeiosEb -> m ()
   , -- NOTE: yields a LeiosOfferBlockTxs notification once complete
-    leiosDbUpdateEbTx :: LeiosPoint -> [(Int, ByteString)] -> m ()
+    -- REVIEW: return type only used for tracing, necessary?
+    leiosDbUpdateEbTx :: LeiosPoint -> [(Int, ByteString)] -> m CompleteEb
   , leiosDbInsertTxCache :: TxHash -> ByteString -> BytesSize -> Int64 -> m ()
   , leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   , -- TODO: Avoid needing this function
@@ -82,6 +83,8 @@ data LeiosDbHandle m = LeiosDbHandle
       BytesSize ->
       m (Map LeiosPoint IntSet)
   }
+
+data CompleteEb = NotComplete | Completed LeiosPoint
 
 -- * In-memory implementation of LeiosDbHandle
 
@@ -181,9 +184,10 @@ newLeiosDBInMemory = do
           case Map.lookup point.pointEbHash (imEbBodies state) of
             Just entries
               | not (IntMap.null entries)
-              , all (isJust . eteTxBytes) entries ->
+              , all (isJust . eteTxBytes) entries -> do
                   notify $ LeiosOfferBlockTxs point
-            _ -> pure ()
+                  pure $ Completed point
+            _ -> pure NotComplete
       , leiosDbInsertTxCache = \txHash txBytes txBytesSize expiry -> atomically $ do
           let entry = TxCacheEntry txBytes txBytesSize expiry
           modifyTVar stateVar $ \s ->
@@ -292,8 +296,11 @@ newLeiosDBSQLite dbPath = do
               dbStep stmt >>= \case
                 DB.Done -> pure False
                 DB.Row -> pure True
-          unless anyMissing $
-            notify (LeiosOfferBlockTxs point)
+          if anyMissing
+            then pure NotComplete
+            else do
+              notify $ LeiosOfferBlockTxs point
+              pure $ Completed point
       , leiosDbInsertTxCache = \txHash txBytes txBytesSize expiry ->
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_txCache) $ \stmt -> do
             dbBindBlob stmt 1 (let MkTxHash bytes = txHash in bytes)
