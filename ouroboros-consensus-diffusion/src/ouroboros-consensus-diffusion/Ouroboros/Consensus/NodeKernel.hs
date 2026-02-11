@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -155,15 +156,18 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Data.Map (Map)
 import qualified Data.Map as Map
-import LeiosDemoDb (LeiosDbHandle, leiosDbInsertEbBody, leiosDbInsertEbPoint)
+import LeiosDemoDb (LeiosDbHandle, leiosDbInsertEbBody, leiosDbInsertEbPoint, leiosDbInsertTxs)
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
-  ( LeiosEbBodies
+  ( ForgedLeiosEb
+  , LeiosEbBodies
   , LeiosOutstanding
   , LeiosPeerVars
   , LeiosPoint (..)
   , TraceLeiosKernel (..)
   , hashLeiosEb
+  , leiosEbBodyItems
+  , leiosEbTxs
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
@@ -767,7 +771,7 @@ forkBlockForging IS{..} blockForging =
     -- TODO: Needs access to Leios certificate of (blockNo - 1), if it exists
     -- and decide whether we want to put txs or the leios certificate into the
     -- body.
-    (newBlock, mayNewEndorserBlock) <-
+    (newBlock, mayForgedEb) <-
       lift $
         Block.forgeBlock
           blockForging
@@ -789,11 +793,11 @@ forkBlockForging IS{..} blockForging =
           , fbMempoolRestSize = TxSeq.txSeqMeasure restTxs'
           }
 
-    for_ mayNewEndorserBlock $ \eb ->
+    for_ mayForgedEb $ \forgedEb ->
       traceLeios
         TraceLeiosBlockForged
           { slot = currentSlot
-          , eb
+          , eb = forgedEb.body
           , ebMeasure = mSize $ TxSeq.txSeqMeasure ebTxs
           , mempoolRestMeasure = mSize $ TxSeq.txSeqMeasure restTxs'
           }
@@ -850,11 +854,11 @@ forkBlockForging IS{..} blockForging =
       trace $ TraceAdoptedBlock currentSlot newBlock rbTxsList
 
       -- Store generated EB so it can be diffused
-      for_ mayNewEndorserBlock $ \eb -> do
-        let point = MkLeiosPoint currentSlot (hashLeiosEb eb)
-        lift $ leiosDbInsertEbPoint leiosDB point
-        lift $ leiosDbInsertEbBody leiosDB point eb
-        traceLeios TraceLeiosBlockStored{slot = currentSlot, eb}
+      for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
+        lift $ leiosDbInsertEbPoint leiosDB eb.point
+        lift $ leiosDbInsertEbBody leiosDB eb.point eb.body
+        lift $ leiosDbInsertTxs leiosDB eb.txClosure
+        traceLeios TraceLeiosBlockStored{slot = currentSlot, eb = eb.body}
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()
   trace =

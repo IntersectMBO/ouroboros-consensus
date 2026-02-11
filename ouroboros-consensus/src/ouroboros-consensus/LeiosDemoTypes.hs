@@ -291,20 +291,49 @@ encodeLeiosTx (MkLeiosTx bytes) = CBOR.encodeBytes bytes
 decodeLeiosTx :: Decoder s LeiosTx
 decodeLeiosTx = MkLeiosTx <$> CBOR.decodeBytes
 
+-- | An Endorser Block as it is submitted through the network.
 -- TODO: Keep track of the slot of an EB?
-data LeiosEb = MkLeiosEb {leiosEbTxs :: !(V.Vector (TxHash, BytesSize))}
+data LeiosEb = MkLeiosEb
+  { leiosEbTxs :: !(V.Vector (TxHash, BytesSize))
+  }
   deriving (Show, Eq)
+
+-- | A newly forged 'LeiosEb' that includes the whole closure of endorsed
+-- transactions.
+data ForgedLeiosEb = ForgedLeiosEb
+  { point :: !LeiosPoint
+  , body :: !LeiosEb
+  , txClosure :: ![(TxHash, ByteString)]
+  }
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
-mkLeiosEb :: EraTx era => NonEmpty (Tx era) -> LeiosEb
-mkLeiosEb txs =
-  MkLeiosEb . V.fromList . map go $ toList txs
+forgeLeiosEb :: EraTx era => SlotNo -> NonEmpty (Tx era) -> ForgedLeiosEb
+forgeLeiosEb slot txs =
+  ForgedLeiosEb{point, body, txClosure}
  where
-  go tx =
-    let hash = Hash.hashWithSerialiser @HASH toCBOR tx
-        byteSize = fromIntegral $ BS.length $ serialize' tx
-     in (MkTxHash $ Hash.hashToBytes hash, byteSize)
+  point = MkLeiosPoint slot (hashLeiosEb body)
+
+  body =
+    serializedTxs
+      & map (\(hash, size, _) -> (hash, size))
+      & V.fromList
+      & MkLeiosEb
+
+  txClosure =
+    serializedTxs
+      & map (\(hash, _, bytes) -> (hash, bytes))
+      & toList
+
+  hashTx =
+    MkTxHash . Hash.hashToBytes . Hash.hashWithSerialiser @HASH toCBOR
+
+  serializedTxs =
+    [ (hashTx tx, byteSize, bytes)
+    | tx <- toList txs
+    , let bytes = serialize' tx
+    , let byteSize = fromIntegral $ BS.length bytes
+    ]
 
 leiosEbBodyItems :: LeiosEb -> [(Int, TxHash, BytesSize)]
 leiosEbBodyItems eb =

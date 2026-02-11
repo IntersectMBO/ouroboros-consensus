@@ -65,7 +65,7 @@ import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Stack
 import LeiosDemoDb (newLeiosDBInMemory)
-import LeiosDemoTypes (LeiosEb)
+import LeiosDemoTypes (ForgedLeiosEb)
 import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
@@ -869,7 +869,7 @@ runThreadNetwork
             [Validated (GenTx blk)] ->
             [Validated (GenTx blk)] ->
             IsLeader (BlockProtocol blk) ->
-            m (blk, Maybe LeiosEb)
+            m (blk, Maybe ForgedLeiosEb)
           customForgeBlock origBlockForging cfg' currentBno currentSlot tickedLdgSt txs ebTxs prf = do
             let currentEpoch = HFF.futureSlotToEpoch future currentSlot
 

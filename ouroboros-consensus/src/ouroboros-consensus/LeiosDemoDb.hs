@@ -132,9 +132,11 @@ newLeiosDBInMemory = do
       , leiosDbLookupEbPoint = \ebHash -> atomically $ do
           state <- readTVar stateVar
           -- Find slot by looking for the hash in imEbPoints
-          pure $ foldr (\(slot, h) acc -> if h == ebHash then Just (SlotNo (fromIntegral slot)) else acc)
-                       Nothing
-                       (IntMap.toList (imEbPoints state))
+          pure $
+            foldr
+              (\(slot, h) acc -> if h == ebHash then Just (SlotNo (fromIntegral slot)) else acc)
+              Nothing
+              (IntMap.toList (imEbPoints state))
       , leiosDbInsertEbPoint = \point -> atomically $ do
           modifyTVar stateVar $ \s ->
             s
