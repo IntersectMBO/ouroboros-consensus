@@ -109,8 +109,8 @@ data EbTxEntry = EbTxEntry
 
 -- | Create a new in-memory Leios database handle.
 -- This is suitable for testing in IOSim.
-newInMemoryLeiosDb :: IOLike m => m (LeiosDbHandle m)
-newInMemoryLeiosDb = do
+newLeiosDBInMemory :: IOLike m => m (LeiosDbHandle m)
+newLeiosDBInMemory = do
   notificationChan <- atomically newBroadcastTChan
   let notify = writeTChan notificationChan
   stateVar <-
@@ -208,31 +208,32 @@ newInMemoryLeiosDb = do
 
 -- | Create a new Leios database connection from environment variable.
 -- This looks up the LEIOS_DB_PATH environment variable and opens the database.
-demoNewLeiosDbConnectionIO :: IO (LeiosDbHandle IO)
-demoNewLeiosDbConnectionIO = do
+newLeiosDBSQLiteFromEnv :: IO (LeiosDbHandle IO)
+newLeiosDBSQLiteFromEnv = do
   dbPath <-
     lookupEnv "LEIOS_DB_PATH" >>= \case
       Nothing -> die "You must define the LEIOS_DB_PATH variable for this demo."
       Just x -> pure x
-  newLeiosDbConnectionIO dbPath
+  newLeiosDBSQLite dbPath
 
--- | Create a new Leios database connection from a file path.
--- Opens the SQLite database and attaches the in-memory temp table.
-newLeiosDbConnectionIO :: FilePath -> IO (LeiosDbHandle IO)
-newLeiosDbConnectionIO dbPath = do
+-- | Create a new Leios database using the SQLite implementation at given file
+-- path.
+--
+-- NOTE: All call sites of the handle will share a single database connection.
+-- This might be undesired if we switch to WAL mode where readers would not be
+-- blocked by writers.
+newLeiosDBSQLite :: FilePath -> IO (LeiosDbHandle IO)
+newLeiosDBSQLite dbPath = do
+  -- TODO: not leak resources (the db connection)
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- withDieMsg $ DB.open (fromString dbPath)
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
   dbExec db (fromString sql_attach_memTxPoints)
-  newLeiosDbFromSqlite db
 
--- | Create a LeiosDbHandle from a low-level SQLite LeiosDb.
--- This allows production code to continue using SQLite while tests use in-memory.
-newLeiosDbFromSqlite :: DB.Database -> IO (LeiosDbHandle IO)
-newLeiosDbFromSqlite db = do
   notificationChan <- atomically newBroadcastTChan
   let notify = atomically . writeTChan notificationChan
+
   pure
     LeiosDbHandle
       { subscribeEbNotifications =

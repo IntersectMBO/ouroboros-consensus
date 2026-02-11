@@ -216,7 +216,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
     -- noticeably awkward fit for this logic.
 
     -- See 'LeiosPeerVars' for the write patterns
-    getLeiosNewDbConnection :: m (LeiosDbHandle m)
+    leiosDB :: LeiosDbHandle m
   , getLeiosPeersVars :: MVar m (Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
     -- eviction)
@@ -274,7 +274,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   , genesisArgs :: GenesisNodeKernelArgs m blk
   , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
-  , nkaGetLeiosNewDbConnection :: m (LeiosDbHandle m)
+  , leiosDB :: LeiosDbHandle m
   }
 
 initNodeKernel ::
@@ -302,7 +302,7 @@ initNodeKernel
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
-    , nkaGetLeiosNewDbConnection
+    , leiosDB
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -415,7 +415,6 @@ initNodeKernel
           fetchClientRegistry
           blockFetchConfiguration
 
-    let getLeiosNewDbConnection = nkaGetLeiosNewDbConnection
     getLeiosPeersVars <- MVar.newMVar Map.empty
     getLeiosEbBodies <- MVar.newMVar Leios.emptyLeiosEbBodies -- TODO init from DB
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding -- TODO init from DB
@@ -461,7 +460,6 @@ initNodeKernel
 
     void $ forkLinkedThread registry "NodeKernel.leiosCopyLogic" $ do
       let tracer = leiosKernelTracer tracers
-      db <- getLeiosNewDbConnection
       (\m -> let loop !i = do m i; loop (i + 1 :: Int) in loop 0) $ \i -> do
         traceWith tracer $ MkTraceLeiosKernel "leiosCopy: wait for leios copy ready"
         () <- MVar.takeMVar getLeiosCopyReady
@@ -471,7 +469,7 @@ initNodeKernel
         moreTodo <-
           Leios.doCacheCopy
             tracer
-            db
+            leiosDB
             (getLeiosWriteLock, getLeiosOutstanding, getLeiosNotifications)
             (500 * 10 ^ (3 :: Int)) -- TODO magic number
         t2 <- getMonotonicTimeNSec
@@ -505,7 +503,7 @@ initNodeKernel
             varOutboundConnectionsState
         , getDiffusionPipeliningSupport
         , getBlockchainTime = btime
-        , getLeiosNewDbConnection
+        , leiosDB
         , getLeiosPeersVars
         , getLeiosEbBodies
         , getLeiosOutstanding
@@ -582,7 +580,7 @@ initInternalState
     , getUseBootstrapPeers
     , getDiffusionPipeliningSupport
     , genesisArgs
-    , nkaGetLeiosNewDbConnection
+    , leiosDB
     } = do
     varGsmState <- do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -624,8 +622,6 @@ initInternalState
             getDiffusionPipeliningSupport
 
     peerSharingRegistry <- newPeerSharingRegistry
-
-    leiosDB <- nkaGetLeiosNewDbConnection
 
     return IS{..}
    where

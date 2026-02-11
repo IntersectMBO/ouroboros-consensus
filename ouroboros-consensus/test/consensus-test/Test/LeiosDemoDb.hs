@@ -22,8 +22,8 @@ import Data.Time.Clock (DiffTime)
 import qualified Data.Vector as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
-  , newInMemoryLeiosDb
-  , newLeiosDbConnectionIO
+  , newLeiosDBInMemory
+  , newLeiosDBSQLite
   )
 import LeiosDemoTypes
   ( EbHash (..)
@@ -71,13 +71,14 @@ data DbImpl
 -- | Create a fresh database and run an action with it.
 -- Ensures proper cleanup for SQLite databases.
 withFreshDb :: DbImpl -> (LeiosDbHandle IO -> IO a) -> IO a
-withFreshDb InMemory action = newInMemoryLeiosDb >>= action
+withFreshDb InMemory action =
+  newLeiosDBInMemory >>= action
 withFreshDb SQLite action = do
   sysTmp <- getCanonicalTemporaryDirectory
   bracket
     (createTempDirectory sysTmp "leios-test")
     removeDirectoryRecursive
-    (\tmpDir -> newLeiosDbConnectionIO (tmpDir <> "/test.db") >>= action)
+    (\tmpDir -> newLeiosDBSQLite (tmpDir <> "/test.db") >>= action)
 
 -- | Run tests for each database implementation (InMemory and SQLite).
 forEachImplementation :: (DbImpl -> [TestTree]) -> [TestTree]

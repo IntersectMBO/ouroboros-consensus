@@ -378,8 +378,7 @@ mkHandlers
                     void $ MVar.tryPutMVar getLeiosReady ()
               )
       , hLeiosNotifyServer = \_version _peer -> Effect $ do
-          db <- getLeiosNewDbConnection
-          chan <- subscribeEbNotifications db
+          chan <- subscribeEbNotifications leiosDB
           pure . leiosNotifyServerPeer $ do
             atomically (readTChan chan) >>= \case
               LeiosOfferBlock point ebSize ->
@@ -387,7 +386,6 @@ mkHandlers
               LeiosOfferBlockTxs point ->
                 pure $ MsgLeiosBlockTxsOffer point
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
-          db <- getLeiosNewDbConnection -- TODO share DB connection for same peer?
           reqVar <-
             let loop = do
                   leiosPeersVars <- MVar.readMVar getLeiosPeersVars
@@ -405,15 +403,14 @@ mkHandlers
                 (leiosPeerTracer peer)
                 ((== Terminate) <$> controlMessageSTM)
                 (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady, getLeiosNotifications)
-                db
+                leiosDB
                 (Leios.MkPeerId peer)
                 reqVar
       , hLeiosFetchServer = \_version peer -> Effect $ do
-          db <- getLeiosNewDbConnection
           leiosFetchContext <-
             Leios.newLeiosFetchContext
               getLeiosWriteLock
-              db
+              leiosDB
               (MVar.readMVar getLeiosEbBodies)
           pure $
             leiosFetchServerPeer
@@ -429,7 +426,7 @@ mkHandlers
       , getGsmState
       } = nodeKernel
     NodeKernel
-      { getLeiosNewDbConnection
+      { leiosDB
       , getLeiosNotifications
       , getLeiosPeersVars
       , getLeiosEbBodies
