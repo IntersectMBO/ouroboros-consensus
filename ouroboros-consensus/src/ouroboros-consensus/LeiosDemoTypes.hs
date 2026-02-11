@@ -341,14 +341,17 @@ leiosEbBodyItems eb =
 
 leiosEbBytesSize :: LeiosEb -> BytesSize
 leiosEbBytesSize (MkLeiosEb items) =
-  majorByte + argument + (V.sum $ V.map (each . snd) items)
+  cborUintSize (V.length items) + V.sum (V.map (each . snd) items)
  where
-  majorByte = 1
-  -- ASSUMPTION: less than 14000
-  argument = 1 + (if V.length items >= 2 ^ (8 :: Int) then 1 else 0)
+  each sz = cborBytesSize 32 + cborUintSize sz
 
-  -- ASSUMPTION: greater than 55 and at most 2^14
-  each sz = 1 + 32 + 1 + 1 + (if sz >= 2 ^ (8 :: Int) then 1 else 0)
+  cborBytesSize len = cborUintSize len + len
+
+  cborUintSize n
+    | n < 24 = 1
+    | n < 0x100 = 2
+    | n < 0x10000 = 3
+    | otherwise = 5
 
 hashLeiosEb :: LeiosEb -> EbHash
 hashLeiosEb =

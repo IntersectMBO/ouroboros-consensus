@@ -602,6 +602,7 @@ test-suite consensus-test
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Versioned
     Test.LeiosDemoDb
+    Test.LeiosDemoTypes
 
   build-depends:
     QuickCheck,
