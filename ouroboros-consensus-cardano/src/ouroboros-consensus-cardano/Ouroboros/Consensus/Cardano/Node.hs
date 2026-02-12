@@ -202,7 +202,7 @@ instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
         6 -> fmap (fmap BlockBabbage) <$> decodeDisk ccfgBabbage
         7 -> fmap (fmap BlockConway) <$> decodeDisk ccfgConway
         8 -> fmap (fmap BlockDijkstra) <$> decodeDisk ccfgDijkstra
-        t -> cborError $ DecoderErrorUnknownTag "CardanoBlock" (fromIntegral t)
+        t -> cborError $ DecoderErrorUnknownTag "CardanoBlock" t
      where
       epochSlots = Byron.getByronEpochSlots ccfgByron
 

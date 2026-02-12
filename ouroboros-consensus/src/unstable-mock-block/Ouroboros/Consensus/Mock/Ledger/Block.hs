@@ -289,7 +289,7 @@ instance
 instance SimpleCrypto c => ConvertRawHash (SimpleBlock' c ext ext') where
   toShortRawHash _ = Hash.hashToBytesShort
   fromShortRawHash _ = hashFromBytesShortE
-  hashSize _ = fromIntegral $ Hash.sizeHash (Proxy @(SimpleHash c))
+  hashSize _ = fromIntegral $ Hash.hashSize (Proxy @(SimpleHash c))
 
 {-------------------------------------------------------------------------------
   HasMockTxs instance
