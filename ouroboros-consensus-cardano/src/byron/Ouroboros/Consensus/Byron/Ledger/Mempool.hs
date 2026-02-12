@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -361,7 +362,10 @@ decodeByronGenTxId = do
     1 -> ByronDlgId <$> fromByronCBOR
     2 -> ByronUpdateProposalId <$> fromByronCBOR
     3 -> ByronUpdateVoteId <$> fromByronCBOR
-    tag -> cborError $ DecoderErrorUnknownTag "GenTxId (ByronBlock cfg)" tag
+    tag ->
+      cborError $
+        DecoderErrorUnknownTag "GenTxId (ByronBlock cfg)" $
+          fromIntegral @Word8 @Word tag
 
 encodeByronApplyTxError :: ApplyTxErr ByronBlock -> Encoding
 encodeByronApplyTxError = toByronCBOR
