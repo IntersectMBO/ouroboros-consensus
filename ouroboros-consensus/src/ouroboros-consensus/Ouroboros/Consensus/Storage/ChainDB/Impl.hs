@@ -56,7 +56,6 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
@@ -194,15 +193,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         varInvalid
         (void initialLoE)
         (forgetFingerprint initialWeights)
-        `runContT` \chainAndLedger -> do
-          traceWith initChainSelTracer InitialChainSelected
-
-          let chain = VF.validatedFragment chainAndLedger
-              ledger = VF.validatedLedger chainAndLedger
-
-          atomically $ LedgerDB.forkerCommit ledger
-          LedgerDB.forkerClose ledger
-          pure chain
+    traceWith initChainSelTracer InitialChainSelected
     LedgerDB.tryFlush lgrDB
 
     curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
@@ -284,7 +275,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getImmutableLedger = getEnvSTM h Query.getImmutableLedger
             , getPastLedger = getEnvSTM1 h Query.getPastLedger
             , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
-            , getReadOnlyForkerAtPoint = getEnvCont1 h Query.getReadOnlyForkerAtPoint
+            , getForkerForReadingAtPoint = getEnvCont1 h Query.getForkerForReadingAtPoint
+            , getForkerForMempoolAtPoint = getEnvCont1 h Query.getForkerForMempoolAtPoint
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot

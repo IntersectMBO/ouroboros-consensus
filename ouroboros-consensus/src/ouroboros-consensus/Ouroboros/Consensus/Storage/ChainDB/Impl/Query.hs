@@ -23,7 +23,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getPastLedger
   , getPerasWeightSnapshot
   , getPerasCertSnapshot
-  , getReadOnlyForkerAtPoint
+  , getForkerForReadingAtPoint
+  , getForkerForMempoolAtPoint
   , getStatistics
   , getTipBlock
   , getTipHeader
@@ -281,11 +282,17 @@ getPastLedger ::
   STM m (Maybe (ExtLedgerState blk EmptyMK))
 getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
-getReadOnlyForkerAtPoint ::
+getForkerForReadingAtPoint ::
   ChainDbEnv m blk ->
   Target (Point blk) ->
-  ContT r m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
-getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
+  ContT r m (Either LedgerDB.GetForkerError (LedgerDB.ForkerForReading m (ExtLedgerState blk)))
+getForkerForReadingAtPoint CDB{..} = LedgerDB.getForkerForReadingAtTarget cdbLedgerDB
+
+getForkerForMempoolAtPoint ::
+  ChainDbEnv m blk ->
+  Target (Point blk) ->
+  ContT r m (Either LedgerDB.GetForkerError (LedgerDB.ForkerForMempool m (ExtLedgerState blk)))
+getForkerForMempoolAtPoint CDB{..} = LedgerDB.getForkerForMempoolAtTarget cdbLedgerDB
 
 getStatistics :: ChainDbEnv m blk -> m LedgerDB.Statistics
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB

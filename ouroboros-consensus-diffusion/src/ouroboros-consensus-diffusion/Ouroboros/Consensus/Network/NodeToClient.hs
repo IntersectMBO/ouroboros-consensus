@@ -115,7 +115,6 @@ data Handlers m peer blk = Handlers
   , hTxSubmissionServer ::
       LocalTxSubmissionServer (GenTx blk) (ApplyTxErr blk) m ()
   , hStateQueryServer ::
-      ResourceRegistry m ->
       LocalStateQueryServer blk (Point blk) (Query blk) m ()
   , hTxMonitorServer ::
       LocalTxMonitorServer (GenTxId blk) (GenTx blk) SlotNo m ()
@@ -144,7 +143,7 @@ mkHandlers NodeKernelArgs{cfg, tracers} NodeKernel{getChainDB, getMempool} =
           getMempool
     , hStateQueryServer =
         localStateQueryServer (ExtLedgerCfg cfg)
-          . ChainDB.getReadOnlyForkerAtPoint getChainDB
+          . ChainDB.getForkerForReadingAtPoint getChainDB
     , hTxMonitorServer =
         localTxMonitorServer
           getMempool

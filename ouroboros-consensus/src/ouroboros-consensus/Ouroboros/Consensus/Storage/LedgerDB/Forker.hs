@@ -54,6 +54,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , PushStart (..)
   , Pushing (..)
   , TraceValidateEvent (..)
+  , ForkerForChainSelection (..)
+  , ForkerForReading (..)
+  , ForkerForMempool (..)
   ) where
 
 import Control.Monad.Except
@@ -74,13 +77,46 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
-import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.ContT
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   Forker
 -------------------------------------------------------------------------------}
+
+type ForkerForChainSelection :: (Type -> Type) -> LedgerStateKind -> Type
+data ForkerForChainSelection m l = ForkerForChainSelection
+  { ffcsReadForker :: !(ForkerForReading m l)
+  , forkerPush' :: !(forall r. l DiffMK -> ContT r m ())
+  , forkerCommit' :: !(STM m ())
+  }
+
+type instance HeaderHash (ForkerForChainSelection m l) = HeaderHash l
+
+instance
+  (GetTip l, MonadSTM m) =>
+  GetTipSTM m (ForkerForChainSelection m l)
+  where
+  getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState' (ffcsReadForker forker)
+
+type ForkerForMempool :: (Type -> Type) -> LedgerStateKind -> Type
+data ForkerForMempool m l = ForkerForMempool
+  { getForkerForMempool :: ForkerForReading m l
+  , forkerRelease :: m () -- close
+  }
+
+instance NoThunks (ForkerForMempool m l) where
+  wNoThunks _ (ForkerForMempool _ _) = pure Nothing
+  showTypeOf _ = "ForkerForMempool"
+
+type ForkerForReading :: (Type -> Type) -> LedgerStateKind -> Type
+data ForkerForReading m l = ForkerForReading
+  { forkerReadTables' :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  , forkerRangeReadTables' :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  , forkerGetLedgerState' :: !(STM m (l EmptyMK))
+  , forkerReadStatistics' :: !(m Statistics)
+  }
 
 -- | An independent handle to a point in the LedgerDB, which can be advanced to
 -- evaluate forks in the chain.
@@ -290,7 +326,10 @@ data ValidateArgs m blk = ValidateArgs
   -- ^ How to add a previously applied block to the set of known blocks
   , prevApplied :: !(STM m (Set (RealPoint blk)))
   -- ^ Get the current set of previously applied blocks
-  , forkerAtFromTip :: !(forall r. Word64 -> ContT r m (Either GetForkerError (Forker' m blk)))
+  , forkerAtFromTip ::
+      !( forall r.
+         Word64 -> ContT r m (Either GetForkerError (ForkerForChainSelection m (ExtLedgerState blk)))
+       )
   -- ^ Create a forker from the tip
   , trace :: !(TraceValidateEvent blk -> m ())
   -- ^ A tracer for validate events
@@ -340,7 +379,9 @@ validate evs args = do
     } = args
 
   rewrap ::
-    Either (Either GetForkerError (AnnLedgerError' blk)) (Forker' m blk) ->
+    Either
+      (Either GetForkerError (AnnLedgerError' blk))
+      (ForkerForChainSelection m (ExtLedgerState blk)) ->
     ValidateResult' m blk
   rewrap (Left (Right e)) = ValidateLedgerError e
   rewrap (Left (Left (PointTooOld (Just e)))) = ValidateExceededRollBack e
@@ -377,7 +418,7 @@ validate evs args = do
 -- new blocks.
 switch ::
   (ApplyBlock (ExtLedgerState blk) blk, MonadSTM m) =>
-  (Word64 -> ContT r m (Either GetForkerError (Forker m (ExtLedgerState blk)))) ->
+  (Word64 -> ContT r m (Either GetForkerError (ForkerForChainSelection m (ExtLedgerState blk)))) ->
   ComputeLedgerEvents ->
   LedgerCfg (ExtLedgerState blk) ->
   -- | How many blocks to roll back
@@ -386,7 +427,13 @@ switch ::
   -- | New blocks to apply
   [Ap m (ExtLedgerState blk) blk] ->
   ResolveBlock m blk ->
-  ContT r m (Either (Either GetForkerError (AnnLedgerError' blk)) (Forker m (ExtLedgerState blk)))
+  ContT
+    r
+    m
+    ( Either
+        (Either GetForkerError (AnnLedgerError' blk))
+        (ForkerForChainSelection m (ExtLedgerState blk))
+    )
 switch forkerAtFromTip _ _ numRollbacks _ [] _ = do
   foEith <- forkerAtFromTip numRollbacks
   case foEith of
@@ -457,7 +504,7 @@ applyBlock ::
   ComputeLedgerEvents ->
   LedgerCfg (ExtLedgerState blk) ->
   Ap m (ExtLedgerState blk) blk ->
-  Forker m (ExtLedgerState blk) ->
+  ForkerForReading m (ExtLedgerState blk) ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError' blk) (ValidLedgerState (ExtLedgerState blk DiffMK)))
 applyBlock evs cfg ap fo doResolveBlock = case ap of
@@ -484,10 +531,10 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
     (ExtLedgerState blk ValuesMK -> m (Either (AnnLedgerError' blk) (ExtLedgerState blk DiffMK))) ->
     m (Either (AnnLedgerError' blk) (ExtLedgerState blk DiffMK))
   withValues blk f = do
-    l <- atomically $ forkerGetLedgerState fo
+    l <- atomically $ forkerGetLedgerState' fo
     vs <-
       withLedgerTables l
-        <$> forkerReadTables fo (getBlockKeySets blk)
+        <$> forkerReadTables' fo (getBlockKeySets blk)
     f vs
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
@@ -500,14 +547,14 @@ applyThenPush ::
   ComputeLedgerEvents ->
   LedgerCfg (ExtLedgerState blk) ->
   Ap m (ExtLedgerState blk) blk ->
-  Forker m (ExtLedgerState blk) ->
+  ForkerForChainSelection m (ExtLedgerState blk) ->
   ResolveBlock m blk ->
   ContT r m (Either (AnnLedgerError' blk) ())
 applyThenPush evs cfg ap fo doResolveBlock = do
-  eLerr <- lift $ applyBlock evs cfg ap fo doResolveBlock
+  eLerr <- lift $ applyBlock evs cfg ap (ffcsReadForker fo) doResolveBlock
   case eLerr of
     Left err -> pure (Left err)
-    Right (ValidLedgerState st) -> Right <$> forkerPush fo st
+    Right (ValidLedgerState st) -> Right <$> forkerPush' fo st
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
@@ -516,7 +563,7 @@ applyThenPushMany ::
   ComputeLedgerEvents ->
   LedgerCfg (ExtLedgerState blk) ->
   [Ap m (ExtLedgerState blk) blk] ->
-  Forker m (ExtLedgerState blk) ->
+  ForkerForChainSelection m (ExtLedgerState blk) ->
   ResolveBlock m blk ->
   ContT r m (Either (AnnLedgerError' blk) ())
 applyThenPushMany trace evs cfg aps fo doResolveBlock = pushAndTrace aps
@@ -551,7 +598,7 @@ type ResolveBlock m blk = RealPoint blk -> m blk
 
 -- | When validating a sequence of blocks, these are the possible outcomes.
 data ValidateResult m l blk
-  = ValidateSuccessful (Forker m l)
+  = ValidateSuccessful (ForkerForChainSelection m l)
   | ValidateLedgerError (AnnLedgerError l blk)
   | ValidateExceededRollBack ExceededRollback
 

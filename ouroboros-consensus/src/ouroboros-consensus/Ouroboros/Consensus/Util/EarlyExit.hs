@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Util.EarlyExit
 
     -- * opaque
   , WithEarlyExit
+  , earlyExit
   ) where
 
 import Control.Applicative

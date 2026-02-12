@@ -8,6 +8,7 @@ module Ouroboros.Consensus.Util.ContT
   , lift
   , liftContT
   , withReadAccessCont
+  , runContTWithEarlyExit
   ) where
 
 import Control.Monad
@@ -15,6 +16,7 @@ import Control.Monad.Trans
 import Control.Monad.Trans.Cont
 import Control.Monad.Trans.Except
 import Control.RAWLock
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
 
 withReadAccessCont ::
@@ -74,6 +76,16 @@ liftContT ::
   ContT r (ExceptT e m) a
 liftContT (ContT inner) = ContT $ \continuation ->
   ExceptT $ inner (runExceptT . continuation)
+
+runContTWithEarlyExit ::
+  -- | The Allocator
+  ContT (Maybe a) m resource ->
+  -- | The Continuation
+  (resource -> WithEarlyExit m a) ->
+  WithEarlyExit m a
+runContTWithEarlyExit allocator action = earlyExit $
+  runContT allocator $ \res ->
+    withEarlyExit (action res)
 
 tryContT ::
   Monad m =>

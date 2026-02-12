@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
@@ -37,8 +38,8 @@ import Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Storage.LedgerDB.Forker hiding (trace)
 import Ouroboros.Consensus.Util (whenJust)
-import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.ContT
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike hiding (withMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import Ouroboros.Consensus.Util.STM
@@ -216,7 +217,7 @@ doAddTx mpEnv caller wti tx = do
         frkr <- readMVar forker
         tbs <-
           castLedgerTables
-            <$> roforkerReadTables frkr (castLedgerTables $ getTransactionKeySets tx)
+            <$> forkerReadTables' (getForkerForMempool frkr) (castLedgerTables $ getTransactionKeySets tx)
         before <- getMonotonicTime
         mbX <- do
           let f m = case mbToCfg of
@@ -453,7 +454,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
               (TxSeq.toList $ isTxs is)
           toKeep' = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . TxSeq.txTicketTx) toKeep
       frkr <- readMVar forker
-      tbs <- castLedgerTables <$> roforkerReadTables frkr (castLedgerTables toKeep')
+      tbs <- castLedgerTables <$> forkerReadTables' (getForkerForMempool frkr) (castLedgerTables toKeep')
       let (is', t) =
             pureRemoveTxs
               capacityOverride
@@ -568,15 +569,15 @@ implSyncWithLedger mpEnv =
                 Left{} -> do
                   traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
                   pure (Nothing, is)
-                Right frk -> do
+                Right frkr -> do
                   modifyMVar_
                     forkerMVar
                     ( \oldFrk -> do
-                        roforkerClose oldFrk
-                        atomically $ roforkerUntrack frk
-                        pure frk
+                        forkerRelease oldFrk
+                        pure frkr
                     )
-                  tbs <- castLedgerTables <$> roforkerReadTables frk (castLedgerTables $ isTxKeys is)
+                  tbs <-
+                    castLedgerTables <$> forkerReadTables' (getForkerForMempool frkr) (castLedgerTables $ isTxKeys is)
                   let (is', mTrace) =
                         pureSyncWithLedger
                           capacityOverride

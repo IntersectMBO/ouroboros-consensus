@@ -49,6 +49,7 @@ import Control.Monad.Trans.Except (runExcept)
 import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
+import Data.Bifunctor (first)
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
 import Data.Set (Set)
@@ -60,7 +61,7 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool.API
@@ -70,8 +71,8 @@ import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
-import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import Ouroboros.Consensus.Util.ContT
+import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -208,7 +209,8 @@ newtype LedgerInterface m blk = LedgerInterface
 data MempoolLedgerDBView m blk = MempoolLedgerDBView
   { mldViewState :: LedgerState blk EmptyMK
   -- ^ The ledger state currently at the tip of the LedgerDB
-  , mldViewGetForker :: forall r. ContT r m (Either GetForkerError (ReadOnlyForker m (LedgerState blk)))
+  , mldViewGetForker ::
+      forall r. ContT r m (Either GetForkerError (ForkerForMempool m (LedgerState blk)))
   -- ^ An action to get a forker at 'mldViewState' or an error in the unlikely
   -- case that such state is now gone from the LedgerDB.
   }
@@ -232,9 +234,31 @@ chainDBLedgerInterface chainDB =
         pure
           $ MempoolLedgerDBView
             (ledgerState st)
-          $ fmap (fmap ledgerStateReadOnlyForker)
-          $ ChainDB.getReadOnlyForkerAtPoint chainDB (SpecificPoint (castPoint $ getTip st))
+          $ fmap (fmap castMempoolForker)
+          $ ChainDB.getForkerForMempoolAtPoint chainDB (SpecificPoint (castPoint $ getTip st))
     }
+
+castMempoolForker ::
+  MonadSTM m => ForkerForMempool m (ExtLedgerState blk) -> ForkerForMempool m (LedgerState blk)
+castMempoolForker (ForkerForMempool rf forkerRelease) =
+  ForkerForMempool
+    { getForkerForMempool =
+        ForkerForReading
+          { forkerReadTables' = fmap castLedgerTables . forkerReadTables' . castLedgerTables
+          , forkerRangeReadTables' =
+              fmap (first castLedgerTables) . forkerRangeReadTables' . castRangeQueryPrevious
+          , forkerGetLedgerState' = ledgerState <$> forkerGetLedgerState'
+          , forkerReadStatistics' = forkerReadStatistics'
+          }
+    , forkerRelease = forkerRelease
+    }
+ where
+  ForkerForReading
+    { forkerReadTables'
+    , forkerRangeReadTables'
+    , forkerGetLedgerState'
+    , forkerReadStatistics'
+    } = rf
 
 {-------------------------------------------------------------------------------
   Mempool environment
@@ -245,7 +269,7 @@ chainDBLedgerInterface chainDB =
 -- different operations.
 data MempoolEnv m blk = MempoolEnv
   { mpEnvLedger :: LedgerInterface m blk
-  , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk))
+  , mpEnvForker :: StrictMVar m (ForkerForMempool m (LedgerState blk))
   , mpEnvLedgerCfg :: LedgerConfig blk
   , mpEnvStateVar :: StrictTMVar m (InternalState blk)
   , mpEnvAddTxsRemoteFifo :: StrictMVar m ()
@@ -274,7 +298,6 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
       -- the forker, the ledgerdb has changed. We just retry here.
       Left{} -> return Nothing
       Right frk -> do
-        atomically $ roforkerUntrack frk
         frkMVar <- newMVar frk
         let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
         isVar <-

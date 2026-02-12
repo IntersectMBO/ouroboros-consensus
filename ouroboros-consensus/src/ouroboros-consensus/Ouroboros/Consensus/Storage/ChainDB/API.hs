@@ -94,11 +94,7 @@ import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.ImmutableDB.API (SeekBlockError (..))
-import Ouroboros.Consensus.Storage.LedgerDB
-  ( GetForkerError
-  , ReadOnlyForker'
-  , Statistics
-  )
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
@@ -223,10 +219,10 @@ data ChainDB m blk = ChainDB
   , getHeaderStateHistory :: STM m (HeaderStateHistory blk)
   -- ^ Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
   -- last @k@ blocks of the current chain.
-  , getReadOnlyForkerAtPoint ::
+  , getForkerForReadingAtPoint ::
       forall r.
       Target (Point blk) ->
-      ContT r m (Either GetForkerError (ReadOnlyForker' m blk))
+      ContT r m (Either GetForkerError (ForkerForReading m (ExtLedgerState blk)))
   -- ^ Acquire a read-only forker at a specific point if that point exists
   -- on the db.
   --
@@ -234,6 +230,10 @@ data ChainDB m blk = ChainDB
   --
   -- The forker is read-only becase a read-write forker could be used to
   -- change the internal state of the LedgerDB.
+  , getForkerForMempoolAtPoint ::
+      forall r.
+      Target (Point blk) ->
+      ContT r m (Either GetForkerError (ForkerForMempool m (ExtLedgerState blk)))
   , getTipBlock :: m (Maybe blk)
   -- ^ Get block at the tip of the chain, if one exists
   --

@@ -21,6 +21,7 @@ import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.Query
 import Ouroboros.Consensus.Mempool.Update
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
+import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
 
@@ -122,9 +123,7 @@ mkMempool registry mpEnv =
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     , closeMempool = do
         mFrk <- tryTakeMVar (mpEnvForker mpEnv)
-        case mFrk of
-          Nothing -> pure ()
-          Just frk -> roforkerClose frk
+        whenJust mFrk forkerRelease
     }
  where
   MempoolEnv

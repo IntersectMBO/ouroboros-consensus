@@ -177,7 +177,8 @@ implMkLedgerDb h snapManager =
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = \s -> getEnvSTM h (flip implGetPastLedgerState s)
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
-      , getForkerAtTarget = newForkerAtTarget h
+      , getForkerForReadingAtTarget = newForkerForReadingAtTarget h
+      , getForkerForMempoolAtTarget = newForkerForMempoolAtTarget h
       , validateFork = getEnvCont4 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
@@ -212,28 +213,26 @@ mkInternals h snapManager =
     , wipeLedgerDB = destroySnapshots snapManager
     , truncateSnapshots = getEnv h $ implIntTruncateSnapshots snapManager . ldbHasFS
     , push = \st -> do
-        newForkerAtTarget h VolatileTip `runContT` \case
+        newChainSelectionForkerByRollback h 0 `runContT` \case
           Left{} -> error "Unreachable, Volatile tip MUST be in LedgerDB"
           Right frk -> do
-            forkerPush frk st `runContT` \() -> do
-              atomically (forkerCommit frk)
-              forkerClose frk
+            forkerPush' frk st `runContT` \() -> do
+              atomically (forkerCommit' frk)
               getEnv h pruneLedgerSeq
     , reapplyThenPushNOW = \blk -> getEnv h $ \env ->
-        newForkerAtTarget h VolatileTip `runContT` \case
+        newChainSelectionForkerByRollback h 0 `runContT` \case
           Left{} -> error "Unreachable, Volatile tip MUST be in LedgerDB"
           Right frk -> do
-            st <- atomically $ forkerGetLedgerState frk
-            tables <- forkerReadTables frk (getBlockKeySets blk)
+            st <- atomically $ forkerGetLedgerState' (ffcsReadForker frk)
+            tables <- forkerReadTables' (ffcsReadForker frk) (getBlockKeySets blk)
             let st' =
                   tickThenReapply
                     (ledgerDbCfgComputeLedgerEvents (ldbCfg env))
                     (ledgerDbCfg $ ldbCfg env)
                     blk
                     (st `withLedgerTables` tables)
-            forkerPush frk st' `runContT` \() -> do
-              atomically (forkerCommit frk)
-              forkerClose frk
+            forkerPush' frk st' `runContT` \() -> do
+              atomically (forkerCommit' frk)
               pruneLedgerSeq env
     , closeLedgerDB = do
         let LDBHandle tvar = h
@@ -332,7 +331,7 @@ implValidate h ldbEnv tr cache rollbacks hdrs =
           writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
       )
       (readTVar (ldbPrevApplied ldbEnv))
-      (newForkerByRollback h)
+      (newChainSelectionForkerByRollback h)
       tr
       cache
       rollbacks
@@ -348,7 +347,7 @@ implGarbageCollect env slotNo = do
   atomically $
     modifyTVar (ldbPrevApplied env) $
       Set.dropWhileAntitone ((< slotNo) . realPointSlot)
-  mapM_ closeLedgerSeq =<< readTVarIO (ldbToClose env)
+  -- mapM_ closeLedgerSeq =<< readTVarIO (ldbToClose env)
   -- It is safe to close the handles outside of the locked region, which reduces
   -- contention. See the docs of 'ldbOpenHandlesLock'.
   Monad.join $ RAWLock.withWriteAccess (ldbOpenHandlesLock env) $ \() -> do
@@ -651,21 +650,35 @@ acquireAtTarget ldbEnv target =
                 }
       Just l' -> pure $ currentHandle l'
 
-newForkerAtTarget ::
+newForkerForReadingAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
   , IOLike m
   , IsLedger l
-  , HasLedgerTables l
   , LedgerSupportsProtocol blk
+  , HasLedgerTables l
   , StandardHash l
   ) =>
   LedgerDBHandle m l blk ->
   Target (Point blk) ->
-  ContT r m (Either GetForkerError (Forker m l))
-newForkerAtTarget h pt = getEnvCont h $ \ldbEnv ->
-  acquireAtTarget ldbEnv (Right pt) >>= traverse (lift . newForker h ldbEnv)
+  ContT r m (Either GetForkerError (ForkerForReading m l))
+newForkerForReadingAtTarget h pt = getEnvCont h $ \ldbEnv ->
+  acquireAtTarget ldbEnv (Right pt) >>= traverse (newForkerForReading h ldbEnv)
 
-newForkerByRollback ::
+newForkerForMempoolAtTarget ::
+  ( HeaderHash l ~ HeaderHash blk
+  , IOLike m
+  , IsLedger l
+  , LedgerSupportsProtocol blk
+  , HasLedgerTables l
+  , StandardHash l
+  ) =>
+  LedgerDBHandle m l blk ->
+  Target (Point blk) ->
+  ContT r m (Either GetForkerError (ForkerForMempool m l))
+newForkerForMempoolAtTarget h pt = getEnvCont h $ \ldbEnv ->
+  acquireAtTarget ldbEnv (Right pt) >>= traverse (newForkerForMempool h ldbEnv)
+
+newChainSelectionForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
   , IOLike m
   , IsLedger l
@@ -675,9 +688,9 @@ newForkerByRollback ::
   ) =>
   LedgerDBHandle m l blk ->
   Word64 ->
-  ContT r m (Either GetForkerError (Forker m l))
-newForkerByRollback h n = getEnvCont h $ \ldbEnv ->
-  acquireAtTarget ldbEnv (Left n) >>= traverse (lift . newForker h ldbEnv)
+  ContT r m (Either GetForkerError (ForkerForChainSelection m l))
+newChainSelectionForkerByRollback h n = getEnvCont h $ \ldbEnv ->
+  acquireAtTarget ldbEnv (Left n) >>= traverse (newForkerForChainSelection h ldbEnv)
 
 closeForkerEnv ::
   IOLike m => ForkerEnv m l blk -> m ()
@@ -793,7 +806,7 @@ implForkerClose (LDBHandle varState) forkerKey forkerEnv = do
 
   closeForkerEnv forkerEnv
 
-newForker ::
+_newForker ::
   ( IOLike m
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
@@ -805,7 +818,7 @@ newForker ::
   LedgerDBEnv m l blk ->
   StateRef m l ->
   m (Forker m l)
-newForker h ldbEnv st = do
+_newForker h ldbEnv st = do
   forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
   let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
   traceWith tr ForkerOpen
@@ -836,3 +849,151 @@ newForker h ldbEnv st = do
           LedgerSeq ls <- readTVar lseqVar
           mapM_ (untrack . tables) (AS.toOldestFirst ls)
       }
+
+newForkerForMempool ::
+  ( IOLike m
+  , HasLedgerTables l
+  , LedgerSupportsProtocol blk
+  , NoThunks (l EmptyMK)
+  , GetTip l
+  ) =>
+  LedgerDBHandle m l blk ->
+  LedgerDBEnv m l blk ->
+  StateRef m l ->
+  ContT r m (ForkerForMempool m l)
+newForkerForMempool h ldbEnv st = ContT $ \k -> do
+  bracket
+    ( do
+        forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
+        let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
+        traceWith tr ForkerOpen
+        lseqVar <- newTVarIO . LedgerSeq . AS.Empty $ st
+        foeCleanup <- newTVarIO $ pure ()
+        forkerCommitted <- newTVarIO False
+        let forkerEnv =
+              ForkerEnv
+                { foeLedgerSeq = lseqVar
+                , foeSwitchVar = ldbSeq ldbEnv
+                , foeTracer = tr
+                , foeCleanup
+                , foeLedgerDbLock = ldbOpenHandlesLock ldbEnv
+                , foeWasCommitted = forkerCommitted
+                }
+        atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
+        pure
+          ( lseqVar
+          , ForkerForMempool
+              { getForkerForMempool =
+                  ForkerForReading
+                    { forkerReadTables' = getForkerEnv1 h forkerKey implForkerReadTables
+                    , forkerRangeReadTables' =
+                        getForkerEnv1 h forkerKey (implForkerRangeReadTables (ldbQueryBatchSize ldbEnv))
+                    , forkerGetLedgerState' = getForkerEnvSTM h forkerKey implForkerGetLedgerState
+                    , forkerReadStatistics' = getForkerEnv h forkerKey implForkerReadStatistics
+                    }
+              , forkerRelease = implForkerClose h forkerKey forkerEnv
+              }
+          )
+    )
+    ( \(lseqVar, _) -> do
+        atomically $ do
+          LedgerSeq ls <- readTVar lseqVar
+          mapM_ (untrack . tables) (AS.toOldestFirst ls)
+    )
+    (\(_, forker) -> k forker)
+
+newForkerForReading ::
+  ( IOLike m
+  , HasLedgerTables l
+  , LedgerSupportsProtocol blk
+  , NoThunks (l EmptyMK)
+  , GetTip l
+  ) =>
+  LedgerDBHandle m l blk ->
+  LedgerDBEnv m l blk ->
+  StateRef m l ->
+  ContT r m (ForkerForReading m l)
+newForkerForReading h ldbEnv st = ContT $ \k -> do
+  bracket
+    ( do
+        forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
+        let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
+        traceWith tr ForkerOpen
+        lseqVar <- newTVarIO . LedgerSeq . AS.Empty $ st
+        foeCleanup <- newTVarIO $ pure ()
+        forkerCommitted <- newTVarIO False
+        let forkerEnv =
+              ForkerEnv
+                { foeLedgerSeq = lseqVar
+                , foeSwitchVar = ldbSeq ldbEnv
+                , foeTracer = tr
+                , foeCleanup
+                , foeLedgerDbLock = ldbOpenHandlesLock ldbEnv
+                , foeWasCommitted = forkerCommitted
+                }
+        atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
+        pure
+          ( forkerKey
+          , forkerEnv
+          , ForkerForReading
+              { forkerReadTables' = getForkerEnv1 h forkerKey implForkerReadTables
+              , forkerRangeReadTables' =
+                  getForkerEnv1 h forkerKey (implForkerRangeReadTables (ldbQueryBatchSize ldbEnv))
+              , forkerGetLedgerState' = getForkerEnvSTM h forkerKey implForkerGetLedgerState
+              , forkerReadStatistics' = getForkerEnv h forkerKey implForkerReadStatistics
+              }
+          )
+    )
+    (\(forkerKey, forkerEnv, _) -> implForkerClose h forkerKey forkerEnv)
+    (\(_, _, forker) -> k forker)
+
+newForkerForChainSelection ::
+  ( IOLike m
+  , HasLedgerTables l
+  , LedgerSupportsProtocol blk
+  , NoThunks (l EmptyMK)
+  , GetTip l
+  , StandardHash l
+  ) =>
+  LedgerDBHandle m l blk ->
+  LedgerDBEnv m l blk ->
+  StateRef m l ->
+  ContT r m (ForkerForChainSelection m l)
+newForkerForChainSelection h ldbEnv st = ContT $ \k -> do
+  bracket
+    ( do
+        forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
+        let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
+        traceWith tr ForkerOpen
+        lseqVar <- newTVarIO . LedgerSeq . AS.Empty $ st
+        foeCleanup <- newTVarIO $ pure ()
+        forkerCommitted <- newTVarIO False
+        let forkerEnv =
+              ForkerEnv
+                { foeLedgerSeq = lseqVar
+                , foeSwitchVar = ldbSeq ldbEnv
+                , foeTracer = tr
+                , foeCleanup
+                , foeLedgerDbLock = ldbOpenHandlesLock ldbEnv
+                , foeWasCommitted = forkerCommitted
+                }
+        atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
+        pure
+          ( forkerKey
+          , forkerEnv
+          , ForkerForChainSelection
+              { ffcsReadForker =
+                  ForkerForReading
+                    { forkerReadTables' = getForkerEnv1 h forkerKey implForkerReadTables
+                    , forkerRangeReadTables' =
+                        getForkerEnv1 h forkerKey (implForkerRangeReadTables (ldbQueryBatchSize ldbEnv))
+                    , forkerGetLedgerState' = getForkerEnvSTM h forkerKey implForkerGetLedgerState
+                    , forkerReadStatistics' = getForkerEnv h forkerKey implForkerReadStatistics
+                    }
+              , forkerPush' = getForkerEnvCont1 h forkerKey implForkerPush
+              , forkerCommit' = getForkerEnvSTM h forkerKey implForkerCommit
+              }
+          )
+    )
+    (\(forkerKey, forkerEnv, _) -> implForkerClose h forkerKey forkerEnv)
+    (\(_, _, forker) -> k forker)

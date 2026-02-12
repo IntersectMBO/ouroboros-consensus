@@ -143,7 +143,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbError (..)
 
     -- * Forker
-  , getReadOnlyForker
   , getTipStatistics
   , withPrivateTipForker
 
@@ -240,15 +239,19 @@ data LedgerDB m l blk = LedgerDB
       l ~ ExtLedgerState blk =>
       STM m (HeaderStateHistory blk)
   -- ^ Get the header state history for all ledger states in the LedgerDB.
-  , getForkerAtTarget ::
+  , getForkerForReadingAtTarget ::
       forall r.
       Target (Point blk) ->
-      ContT r m (Either GetForkerError (Forker m l))
+      ContT r m (Either GetForkerError (ForkerForReading m l))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
   -- 'GetForkerError'.
   --
   -- We pass in the producer/consumer registry.
+  , getForkerForMempoolAtTarget ::
+      forall r.
+      Target (Point blk) ->
+      ContT r m (Either GetForkerError (ForkerForMempool m l))
   , validateFork ::
       forall r.
       l ~ ExtLedgerState blk =>
@@ -386,10 +389,10 @@ data LedgerDbError blk
 -- de-allocate the forker.
 withPrivateTipForker ::
   LedgerDB m l blk ->
-  (ReadOnlyForker m l -> m a) ->
+  (ForkerForReading m l -> m a) ->
   m a
 withPrivateTipForker ldb f =
-  getReadOnlyForker ldb VolatileTip `runContT` \case
+  getForkerForReadingAtTarget ldb VolatileTip `runContT` \case
     Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
     Right frk -> f frk
 
@@ -397,13 +400,7 @@ withPrivateTipForker ldb f =
 getTipStatistics ::
   LedgerDB m l blk ->
   m Statistics
-getTipStatistics ldb = withPrivateTipForker ldb roforkerReadStatistics
-
-getReadOnlyForker ::
-  LedgerDB m l blk ->
-  Target (Point blk) ->
-  ContT r m (Either GetForkerError (ReadOnlyForker m l))
-getReadOnlyForker ldb pt = fmap readOnlyForker <$> getForkerAtTarget ldb pt
+getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics'
 
 {-------------------------------------------------------------------------------
   Snapshots
