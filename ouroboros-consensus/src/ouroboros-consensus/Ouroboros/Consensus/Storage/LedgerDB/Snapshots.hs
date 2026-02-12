@@ -161,9 +161,6 @@ data DiskSnapshot = DiskSnapshot
   }
   deriving (Show, Eq, Generic)
 
-instance Ord DiskSnapshot where
-  compare = comparing dsNumber
-
 data SnapshotFailure blk
   = -- | We failed to deserialise the snapshot
     --
