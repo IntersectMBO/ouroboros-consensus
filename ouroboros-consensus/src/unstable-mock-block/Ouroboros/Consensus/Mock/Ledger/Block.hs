@@ -184,7 +184,7 @@ instance
 
   headerIsEBB = const Nothing
 
-type KnownHashSize c = KnownNat (Hash.SizeHash (SimpleHash c))
+type KnownHashSize c = KnownNat (Hash.HashSize (SimpleHash c))
 
 data SimpleStdHeader c ext = SimpleStdHeader
   { simplePrev :: ChainHash (SimpleBlock c ext)
@@ -197,7 +197,7 @@ data SimpleStdHeader c ext = SimpleStdHeader
   deriving anyclass NoThunks
 
 deriving anyclass instance
-  KnownHashSize c =>
+  (KnownHashSize c, Serialise (Hash.PackedBytes (Hash.HashSize (SimpleHash c)))) =>
   Serialise (SimpleStdHeader c ext)
 
 data SimpleBody = SimpleBody
@@ -735,7 +735,14 @@ instance InspectLedger (SimpleBlock c ext)
   Crypto needed for simple blocks
 -------------------------------------------------------------------------------}
 
-class (KnownHashSize c, HashAlgorithm (SimpleHash c), Typeable c) => SimpleCrypto c where
+class
+  ( KnownHashSize c
+  , HashAlgorithm (SimpleHash c)
+  , Typeable c
+  , Serialise (Hash.PackedBytes (Hash.HashSize (SimpleHash c)))
+  ) =>
+  SimpleCrypto c
+  where
   type SimpleHash c :: Type
 
 data SimpleStandardCrypto
@@ -795,7 +802,7 @@ instance ToCBOR SimpleBody where
   toCBOR = encode
 
 encodeSimpleHeader ::
-  KnownHashSize c =>
+  (KnownHashSize c, Serialise (Hash.PackedBytes (Hash.HashSize (SimpleHash c)))) =>
   (ext' -> CBOR.Encoding) ->
   Header (SimpleBlock' c ext ext') ->
   CBOR.Encoding

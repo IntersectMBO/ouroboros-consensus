@@ -13,7 +13,7 @@ module Ouroboros.Consensus.Util.Orphans () where
 
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Mock (MockDSIGN)
-import Cardano.Crypto.Hash (Hash, SizeHash)
+import Cardano.Crypto.Hash (Hash, HashSize, PackedBytes (..))
 import Cardano.Ledger.Genesis (NoGenesis (..))
 import Codec.CBOR.Decoding (Decoder)
 import Codec.Serialise (Serialise (..))
@@ -40,7 +40,15 @@ import System.FS.CRC (CRC (CRC))
   Serialise
 -------------------------------------------------------------------------------}
 
-instance KnownNat (SizeHash h) => Serialise (Hash h a)
+instance (KnownNat (HashSize h), Serialise (PackedBytes (HashSize h))) => Serialise (Hash h a)
+
+instance Serialise (PackedBytes 8) where
+  encode = undefined -- TODO(10.7)
+  decode = undefined -- TODO(10.7)
+
+instance Serialise (PackedBytes 32) where
+  encode = undefined -- TODO(10.7)
+  decode = undefined -- TODO(10.7)
 
 instance Serialise (VerKeyDSIGN MockDSIGN) where
   encode = encodeVerKeyDSIGN
