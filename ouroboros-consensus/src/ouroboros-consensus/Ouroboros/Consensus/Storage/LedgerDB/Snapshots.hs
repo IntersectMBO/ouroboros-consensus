@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -549,9 +550,7 @@ data SnapshotDelayRange = SnapshotDelayRange
   -- ^ maximum acceptable delay between requesting a snapshot and taking the
   -- snapshot
   }
-  deriving (Show, Eq, Generic)
-
-instance NoThunks SnapshotDelayRange
+  deriving (Show, Eq, Generic, NoThunks)
 
 data SnapshotSelectorContext = SnapshotSelectorContext
   { sscTimeSinceLast :: Maybe DiffTime
