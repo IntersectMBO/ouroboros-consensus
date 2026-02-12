@@ -534,6 +534,11 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar) 
             -- Unexpected: we're receiving an EB body without having seen the announcement first
             traceWith ktracer $ TraceLeiosBlockPointMissing point
             leiosDbInsertEbPoint db point
+        -- FIXME: getting a LeiosDb: ErrorConstraint exception here When forging
+        -- a leios EB, another peer offers us the block we already produced and
+        -- the fetching logic does download it. This results in a duplicate
+        -- insert here. We can of course make the database ignore the
+        -- duplicates, but we should have not even fetched it.
         leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
     -- update NodeKernel state
