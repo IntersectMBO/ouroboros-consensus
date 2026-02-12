@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Mock.Ledger.Block.PBFT
 
 import Cardano.Binary (ToCBOR (..))
 import Cardano.Crypto.DSIGN
+import Cardano.Crypto.Hash (HashAlgorithm)
 import Cardano.Crypto.Util
 import Codec.Serialise (Serialise (..), serialise)
 import qualified Data.ByteString.Lazy as BSL
@@ -182,8 +183,11 @@ instance PBftCrypto c' => Serialise (SimplePBftExt c c') where
     pbftSignature <- decodeSignedDSIGN
     return $ SimplePBftExt PBftFields{..}
 
-instance SimpleCrypto c => Serialise (SignedSimplePBft c c')
-instance SimpleCrypto c => SignableRepresentation (SignedSimplePBft c c') where
+instance (HashAlgorithm (SimpleHash c), Typeable c, Typeable c') => Serialise (SignedSimplePBft c c')
+instance
+  (HashAlgorithm (SimpleHash c), Typeable c, Typeable c') =>
+  SignableRepresentation (SignedSimplePBft c c')
+  where
   getSignableRepresentation = BSL.toStrict . serialise
 
 instance (Typeable c', SimpleCrypto c) => ToCBOR (SignedSimplePBft c c') where

@@ -135,7 +135,7 @@ class
 instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) where
   toShortRawHash _ = Crypto.hashToBytesShort . unShelleyHash
   fromShortRawHash _ = ShelleyHash . hashFromBytesShortE
-  hashSize _ = fromIntegral $ Crypto.sizeHash (Proxy @HASH)
+  hashSize _ = fromIntegral $ Crypto.hashSize (Proxy @HASH)
 
 {-------------------------------------------------------------------------------
   Shelley blocks and headers
