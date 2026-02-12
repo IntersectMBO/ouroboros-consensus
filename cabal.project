@@ -18,6 +18,9 @@ index-state:
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2026-02-11T11:49:13Z
 
+-- TODO: remove before merging or when https://github.com/stevana/quickcheck-state-machine/pull/56 is merged
+allow-newer:
+  quickcheck-state-machine:random
 
 packages:
   ouroboros-consensus
