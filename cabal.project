@@ -46,13 +46,17 @@ if os (windows)
   constraints:
     bitvec -simd
 
--- We need this s-r-p until ledger makes CHaP release that is compatible with
--- mempack-0.2.0.0, which LSM-trees need.
+if impl (ghc >= 9.10)
+  allow-newer:
+    -- https://github.com/phadej/regression-simple/pull/14
+    , regression-simple:base
+
+-- Ledger main past the releases for node-cardano-10.6
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: 324efe565237061615ec10e7f47e08699cace660
-  --sha256: sha256-Tu5TlPwJgVpEfTui+zbaUJIOMoexCwFTQ5M/n2DP2/I=
+  tag: bd2c3fc558c8b053b03f25a84fc02e26dd17d927
+  --sha256: sha256-JCzOtN0/eQob9IneXjihwxDgWZlSZ2ZdIkz2qBPhtU8=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
