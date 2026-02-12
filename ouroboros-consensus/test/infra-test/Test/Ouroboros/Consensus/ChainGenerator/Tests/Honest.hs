@@ -149,14 +149,14 @@ instance QC.Arbitrary TestHonestMutation where
 
 -- | There exists a seed such that each 'TestHonestMutation' causes
 -- 'H.checkHonestChain' to reject the result of 'H.uniformTheHonestChain'
-prop_honestChainMutation :: TestHonestMutation -> QCGen -> QC.Property
+prop_honestChainMutation :: TestHonestMutation -> Int -> QC.Property
 prop_honestChainMutation testHonestMut testSeedsSeed0 = QC.ioProperty $ do
   H.SomeCheckedHonestRecipe Proxy Proxy recipe' <- pure someRecipe'
 
   -- we're willing to wait up to 500ms to find a failure for each 'TestHonestMutation'
   IO.timeout
     (5 * 10 ^ (5 :: Int))
-    (IO.evaluate $ go recipe' testSeedsSeed0)
+    (IO.evaluate $ go recipe' (R.mkStdGen testSeedsSeed0))
     <&> \case
       Nothing -> False -- did not find a failure caused by the mutation
       Just bool -> bool
@@ -167,10 +167,10 @@ prop_honestChainMutation testHonestMut testSeedsSeed0 = QC.ioProperty $ do
 
   go recipe' testSeedsSeed =
     let
-      -- TODO is this a low quality random stream? Why is there no @'R.Random' 'QCGen'@ instance?
-      (testSeed, testSeedsSeed') = R.split testSeedsSeed
+      -- TODO is this a low quality random stream?
+      (testSeed, testSeedsSeed') = R.splitGen testSeedsSeed
 
-      sched = H.uniformTheHonestChain Nothing recipe' (testSeed :: QCGen)
+      sched = H.uniformTheHonestChain Nothing recipe' (testSeed :: R.StdGen)
       m = H.checkHonestChain mutatedRecipe sched
      in
       case Exn.runExcept m of

@@ -152,7 +152,7 @@ import Ouroboros.Network.TxSubmission.Inbound.V2.Policy
   )
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
-import System.Random (mkStdGen, split)
+import System.Random (mkStdGen, splitGen)
 import Test.ThreadNet.TxGen
 import Test.ThreadNet.Util.NodeJoinPlan
 import Test.ThreadNet.Util.NodeRestarts
@@ -1050,10 +1050,10 @@ runThreadNetwork
 
       let rng = case seed of
             Seed s -> mkStdGen s
-          (kaRng, rng') = split rng
-          (gsmRng, rng'') = split rng'
-          (psRng, rng3) = split rng''
-          (txRng, chainSyncRng) = split rng3
+          (kaRng, rng') = splitGen rng
+          (gsmRng, rng'') = splitGen rng'
+          (psRng, rng3) = splitGen rng''
+          (txRng, chainSyncRng) = splitGen rng3
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs

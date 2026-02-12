@@ -188,7 +188,7 @@ import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (..))
 import System.FS.IO (ioHasFS)
 import System.FilePath ((</>))
-import System.Random (StdGen, newStdGen, randomIO, split)
+import System.Random (StdGen, newStdGen, randomIO, splitGen)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -675,9 +675,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
             llrnRunDataDiffusion nodeKernel consensusDiffusionArgs apps
  where
-  (gsmAntiThunderingHerd, rng') = split llrnRng
-  (peerSelectionRng, rng'') = split rng'
-  (keepAliveRng, ntnAppsRng) = split rng''
+  (gsmAntiThunderingHerd, rng') = splitGen llrnRng
+  (peerSelectionRng, rng'') = splitGen rng'
+  (keepAliveRng, ntnAppsRng) = splitGen rng''
 
   ProtocolInfo
     { pInfoConfig = cfg
@@ -939,8 +939,8 @@ mkNodeKernelArgs
   mempoolTimeoutConfig
   txSubmissionInitDelay =
     do
-      let (kaRng, rng') = split rng
-          (psRng, txRng) = split rng'
+      let (kaRng, rng') = splitGen rng
+          (psRng, txRng) = splitGen rng'
       return
         NodeKernelArgs
           { tracers

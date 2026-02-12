@@ -158,7 +158,7 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( mapTxSubmissionMempoolReader
   )
 import Ouroboros.Network.TxSubmission.Outbound
-import System.Random (StdGen, split)
+import System.Random (StdGen, splitGen)
 
 {-------------------------------------------------------------------------------
   Handlers
@@ -674,7 +674,7 @@ mkApps ::
 mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
   Apps{..}
  where
-  (chainSyncRng, chainSyncRng') = split rng
+  (chainSyncRng, chainSyncRng') = splitGen rng
   NodeKernel{getDiffusionPipeliningSupport} = kernel
 
   aChainSyncClient ::
