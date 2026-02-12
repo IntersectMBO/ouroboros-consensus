@@ -102,7 +102,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
-import Ouroboros.Consensus.Util.EscapableResources
+import Ouroboros.Consensus.Util.ContT
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint)
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)

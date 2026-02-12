@@ -75,7 +75,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Enclose
-import Ouroboros.Consensus.Util.EscapableResources
+import Ouroboros.Consensus.Util.ContT
 import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------

@@ -95,7 +95,7 @@ import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.AnchoredFragment
 import Ouroboros.Consensus.Util.EarlyExit (exitEarly, withEarlyExit_)
 import Ouroboros.Consensus.Util.Enclose (encloseWith)
-import Ouroboros.Consensus.Util.EscapableResources
+import Ouroboros.Consensus.Util.ContT
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.AnchoredFragment

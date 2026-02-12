@@ -71,7 +71,7 @@ import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
-import Ouroboros.Consensus.Util.EscapableResources
+import Ouroboros.Consensus.Util.ContT
 import Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import Ouroboros.Network.Protocol.LocalStateQuery.Type

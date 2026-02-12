@@ -292,7 +292,7 @@ library
     Ouroboros.Consensus.Util.FileLock
     Ouroboros.Consensus.Util.HList
     Ouroboros.Consensus.Util.IOLike
-    Ouroboros.Consensus.Util.EscapableResources
+    Ouroboros.Consensus.Util.ContT
     Ouroboros.Consensus.Util.IndexedMemPack
     Ouroboros.Consensus.Util.LeakyBucket
     Ouroboros.Consensus.Util.MonadSTM.NormalForm

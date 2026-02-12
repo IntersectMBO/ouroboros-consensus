@@ -21,7 +21,7 @@ import Control.Monad.Class.MonadTime.SI
   , diffTime
   )
 import Control.Tracer (Tracer, traceWith)
-import Ouroboros.Consensus.Util.EscapableResources
+import Ouroboros.Consensus.Util.ContT
 
 -- $setup
 -- >>> import Control.Tracer

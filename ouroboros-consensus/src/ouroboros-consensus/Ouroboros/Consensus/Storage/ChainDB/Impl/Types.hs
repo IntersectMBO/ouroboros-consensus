@@ -140,7 +140,7 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (Fuse)
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
-import Ouroboros.Consensus.Util.EscapableResources
+import Ouroboros.Consensus.Util.ContT
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM (WithFingerprint)
