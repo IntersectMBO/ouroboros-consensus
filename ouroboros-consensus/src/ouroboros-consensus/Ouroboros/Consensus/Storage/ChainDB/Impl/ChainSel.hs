@@ -27,9 +27,7 @@ import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
 import Control.Monad (forM_, when)
 import Control.Monad.Except ()
-import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
-import Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Function (on)
 import Data.Functor.Contravariant ((>$<))
@@ -97,6 +95,7 @@ import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.AnchoredFragment
 import Ouroboros.Consensus.Util.EarlyExit (exitEarly, withEarlyExit_)
 import Ouroboros.Consensus.Util.Enclose (encloseWith)
+import Ouroboros.Consensus.Util.EscapableResources
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.AnchoredFragment
@@ -112,7 +111,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
 --
 -- Returns the chosen validated chain and corresponding ledger.
 initialChainSelection ::
-  forall m blk.
+  forall m r blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
@@ -120,18 +119,16 @@ initialChainSelection ::
   ImmutableDB m blk ->
   VolatileDB m blk ->
   LedgerDB.LedgerDB' m blk ->
-  ResourceRegistry m ->
   Tracer m (TraceInitChainSelEvent blk) ->
   TopLevelConfig blk ->
   StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
   LoE () ->
   PerasWeightSnapshot blk ->
-  m (ChainAndLedger m blk)
+  ContT r m (ChainAndLedger m blk)
 initialChainSelection
   immutableDB
   volatileDB
   lgrDB
-  rr
   tracer
   cfg
   varInvalid
@@ -156,7 +153,7 @@ initialChainSelection
     -- and a node operator can correct the problem by either wiping
     -- out the VolatileDB or waiting enough time until the blocks are
     -- not from the **far** future anymore.
-    (i :: Anchor blk, succsOf) <- atomically $ do
+    (i :: Anchor blk, succsOf) <- lift $ atomically $ do
       invalid <- forgetFingerprint <$> readTVar varInvalid
       (,)
         <$> ImmutableDB.getTipAnchor immutableDB
@@ -166,26 +163,24 @@ initialChainSelection
 
     -- This is safe: the LedgerDB tip doesn't change in between the previous
     -- atomically block and this call to 'getForkerAtTarget'.
-    curForker <-
-      LedgerDB.getForkerAtTarget lgrDB rr VolatileTip >>= \case
-        Left{} -> error "Unreachable, VolatileTip MUST be in the LedgerDB"
-        Right frk -> pure frk
+    LedgerDB.getForkerAtTarget lgrDB VolatileTip >>= \case
+      Left{} -> error "Unreachable, VolatileTip MUST be in the LedgerDB"
+      Right curForker -> do
+        chains <- lift $ constructChains i succsOf
 
-    chains <- constructChains i succsOf
+        -- We use the empty fragment anchored at @i@ as the current chain (and
+        -- ledger) and the default in case there is no better candidate.
+        let curChain = Empty (AF.castAnchor i)
+        curChainAndLedger <- lift $ VF.newM curChain curForker
 
-    -- We use the empty fragment anchored at @i@ as the current chain (and
-    -- ledger) and the default in case there is no better candidate.
-    let curChain = Empty (AF.castAnchor i)
-    curChainAndLedger <- VF.newM curChain curForker
-
-    case NE.nonEmpty (filter (preferAnchoredCandidate bcfg weights curChain) chains) of
-      -- If there are no candidates, no chain selection is needed
-      Nothing -> return curChainAndLedger
-      Just chains' ->
-        chainSelection' curChainAndLedger chains' >>= \case
-          -- The returned forker will be closed in 'openDBInternal'.
-          Nothing -> pure curChainAndLedger
-          Just newChain -> forkerClose curForker >> toChainAndLedger newChain
+        case NE.nonEmpty (filter (preferAnchoredCandidate bcfg weights curChain) chains) of
+          -- If there are no candidates, no chain selection is needed
+          Nothing -> return curChainAndLedger
+          Just chains' ->
+            chainSelection' curChainAndLedger chains' >>= \case
+              -- The returned forker will be closed in 'openDBInternal'.
+              Nothing -> pure curChainAndLedger
+              Just newChain -> lift $ forkerClose curForker >> toChainAndLedger newChain
    where
     bcfg :: BlockConfig blk
     bcfg = configBlock cfg
@@ -256,13 +251,13 @@ initialChainSelection
       -- @i@.
       NonEmpty (AnchoredFragment (Header blk)) ->
       -- \^ Candidates anchored at @i@
-      m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
+      ContT r m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
     chainSelection' curChainAndLedger candidates =
-      atomically (forkerCurrentPoint (Proxy @blk) ledger) >>= \curpt ->
+      lift (atomically (forkerCurrentPoint (Proxy @blk) ledger)) >>= \curpt ->
         assert (all ((curpt ==) . castPoint . AF.anchorPoint) candidates) $
           assert (all (preferAnchoredCandidate bcfg weights curChain) candidates) $ do
-            cse <- chainSelEnv
-            chainSelection cse rr (Diff.extend <$> candidates)
+            cse <- lift $ chainSelEnv
+            chainSelection cse (Diff.extend <$> candidates)
      where
       curChain = VF.validatedFragment curChainAndLedger
       ledger = VF.validatedLedger curChainAndLedger
@@ -404,9 +399,9 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
 
   -- Consider all candidates at once, to avoid transient chain switches.
   case NE.nonEmpty $ concat chainDiffs of
-    Just chainDiffs' -> withRegistry $ \rr -> do
+    Just chainDiffs' ->
       -- Find the best valid candidate.
-      chainSelection chainSelEnv rr chainDiffs' >>= \case
+      chainSelection chainSelEnv chainDiffs' `runContT` \case
         Just validatedChainDiff ->
           -- Switch to the new better chain.
           switchTo cdb weights Nothing validatedChainDiff
@@ -614,7 +609,7 @@ chainSelectionForBlock ::
   Header blk ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
+chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
   (invalid, curChain, weights) <-
     atomically $
       (,,)
@@ -665,7 +660,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         case NE.nonEmpty chainDiffs of
           Just chainDiffs' -> do
             -- Find the best valid candidate.
-            chainSelection chainSelEnv rr chainDiffs' >>= \case
+            chainSelection chainSelEnv chainDiffs' `runContT` \case
               Just validatedChainDiff ->
                 -- Switch to the new better chain.
                 switchTo cdb weights (Just p) validatedChainDiff
@@ -1089,20 +1084,19 @@ mkChainSelEnv CDB{..} blockCache weights curChain punish =
 -- PRECONDITION: the candidate chain diffs must fit on the (given) current
 -- chain.
 chainSelection ::
-  forall m blk.
+  forall m r blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   , HasCallStack
   ) =>
   ChainSelEnv m blk ->
-  ResourceRegistry m ->
   NonEmpty (ChainDiff (Header blk)) ->
   -- | The (valid) chain diff and corresponding LedgerDB that was selected,
   -- or 'Nothing' if there is no valid chain diff preferred over the current
   -- chain.
-  m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
-chainSelection chainSelEnv rr chainDiffs =
+  ContT r m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
+chainSelection chainSelEnv chainDiffs =
   assert
     ( all
         (preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix)
@@ -1128,18 +1122,18 @@ chainSelection chainSelEnv rr chainDiffs =
   --        [Ouroboros] below.
   go ::
     [ChainDiff (Header blk)] ->
-    m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
+    ContT r m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
   go [] = return Nothing
   go (candidate : candidates0) = do
-    mTentativeHeader <- setTentativeHeader
-    validateCandidate chainSelEnv rr candidate >>= \case
+    mTentativeHeader <- lift $ setTentativeHeader
+    validateCandidate chainSelEnv candidate >>= \case
       FullyValid validatedCandidate@(ValidatedChainDiff candidate' _) ->
         -- The entire candidate is valid
         assert (Diff.getTip candidate == Diff.getTip candidate') $
           return $
             Just validatedCandidate
       ValidPrefix candidate' -> do
-        whenJust mTentativeHeader clearTentativeHeader
+        lift $ whenJust mTentativeHeader clearTentativeHeader
         -- Prefix of the candidate because it contained rejected blocks
         -- (invalid blocks). Note that the
         -- spec says go back to candidate selection,
@@ -1148,7 +1142,7 @@ chainSelection chainSelEnv rr chainDiffs =
         -- differently: instead of recomputing the candidates taking
         -- rejected blocks into account, we just truncate the remaining
         -- candidates that contain rejected blocks.
-        candidates1 <- truncateRejectedBlocks candidates0
+        candidates1 <- lift $ truncateRejectedBlocks candidates0
         -- Only include the prefix if it is still preferred over the current
         -- chain. When the candidate is now empty because of the truncation,
         -- it will be dropped here, as it will not be preferred over the
@@ -1259,46 +1253,46 @@ data ValidationResult m blk
 -- Note that this function returns a 'Forker', and that this forker should be
 -- closed when it is no longer used!
 ledgerValidateCandidate ::
-  forall m blk.
+  forall m r blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , HasCallStack
   ) =>
   ChainSelEnv m blk ->
-  ResourceRegistry m ->
   ChainDiff (Header blk) ->
-  m (ValidatedChainDiff (Header blk) (Forker' m blk))
-ledgerValidateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
-  LedgerDB.validateFork lgrDB rr traceUpdate blockCache rollback newBlocks >>= \case
+  ContT r m (Either (ChainDiff (Header blk)) (ValidatedChainDiff (Header blk) (Forker' m blk)))
+ledgerValidateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) =
+  LedgerDB.validateFork lgrDB traceUpdate blockCache rollback newBlocks >>= \case
     ValidateExceededRollBack{} ->
       -- Impossible: we asked the LedgerDB to roll back past the immutable
       -- tip, which is impossible, since the candidates we construct must
       -- connect to the immutable tip.
       error "found candidate requiring rolling back past the immutable tip"
-    ValidateLedgerError (AnnLedgerError ledger' pt e) -> do
-      lastValid <- atomically $ forkerCurrentPoint (Proxy @blk) ledger'
+    ValidateLedgerError (AnnLedgerError pt e) -> do
+      let lastValid = realPointToPoint pt
       let chainDiff' = Diff.truncate (castPoint lastValid) chainDiff
-      traceWith validationTracer (InvalidBlock e pt)
-      addInvalidBlock e pt
-      traceWith validationTracer (ValidCandidate (Diff.getSuffix chainDiff'))
+      lift $ do
+        traceWith validationTracer (InvalidBlock e pt)
+        addInvalidBlock e pt
+        traceWith validationTracer (ValidCandidate (Diff.getSuffix chainDiff'))
 
-      -- punish the peer who sent a block if it is invalid or a block from its
-      -- prefix is invalid
-      --
-      -- Note that it is a chain selection invariant that all candidates
-      -- involve the block being processed: see Lemma 11.1 (Properties of the
-      -- set of candidates) in the Chain Selection chapter of the The Cardano
-      -- Consensus and Storage Layer technical report.
-      whenJust punish $ \(addedPt, punishment) -> do
-        let m =
-              InvalidBlockPunishment.enact punishment $
-                if addedPt == pt
-                  then InvalidBlockPunishment.BlockItself
-                  else InvalidBlockPunishment.BlockPrefix
-        case realPointSlot pt `compare` realPointSlot addedPt of
-          LT -> m
-          GT -> pure ()
-          EQ -> when (lastValid /= realPointToPoint addedPt) m
+        -- punish the peer who sent a block if it is invalid or a block from its
+        -- prefix is invalid
+        --
+        -- Note that it is a chain selection invariant that all candidates
+        -- involve the block being processed: see Lemma 11.1 (Properties of the
+        -- set of candidates) in the Chain Selection chapter of the The Cardano
+        -- Consensus and Storage Layer technical report.
+        whenJust punish $ \(addedPt, punishment) -> do
+          let m =
+                InvalidBlockPunishment.enact punishment $
+                  if addedPt == pt
+                    then InvalidBlockPunishment.BlockItself
+                    else InvalidBlockPunishment.BlockPrefix
+          case realPointSlot pt `compare` realPointSlot addedPt of
+            LT -> m
+            GT -> pure ()
+            EQ -> when (lastValid /= realPointToPoint addedPt) m
       -- If pt and addedPt have the same slot, and addedPt is the tip of
       -- the ledger that pt was validated against, then addedPt is an
       -- EBB and is valid.
@@ -1307,10 +1301,10 @@ ledgerValidateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
       -- we should punish. (Tacit assumption made here: it's impossible
       -- three blocks in a row have the same slot.)
 
-      ValidatedDiff.newM chainDiff' ledger'
+      pure (Left chainDiff) -- ValidatedDiff.newM chainDiff' ledger'
     ValidateSuccessful ledger' -> do
-      traceWith validationTracer (ValidCandidate suffix)
-      ValidatedDiff.newM chainDiff ledger'
+      lift $ traceWith validationTracer (ValidCandidate suffix)
+      Right <$> lift (ValidatedDiff.newM chainDiff ledger')
  where
   ChainSelEnv
     { lgrDB
@@ -1340,29 +1334,22 @@ validateCandidate ::
   , HasCallStack
   ) =>
   ChainSelEnv m blk ->
-  ResourceRegistry m ->
   ChainDiff (Header blk) ->
-  m (ValidationResult m blk)
-validateCandidate chainSelEnv rr chainDiff =
-  ledgerValidateCandidate chainSelEnv rr chainDiff >>= \case
-    validatedChainDiff
-      | AF.length (Diff.getSuffix chainDiff) == AF.length (Diff.getSuffix chainDiff') ->
-          -- No truncation
-          return $ FullyValid validatedChainDiff
-      | otherwise -> do
-          cleanup validatedChainDiff
-          -- In case of invalid blocks, we throw away the ledger
-          -- corresponding to the truncated fragment and will have to
-          -- validate it again, even when it's the sole candidate.
-          return $ ValidPrefix chainDiff'
-     where
-      chainDiff' = ValidatedDiff.getChainDiff validatedChainDiff
- where
-  -- If this function does not return a validated chain diff, then we can
-  -- already close the underlying forker, even before it would be closed due to
-  -- closing the 'ResourceRegistry' @rr@.
-  cleanup :: ValidatedChainDiff b (Forker' m blk) -> m ()
-  cleanup = forkerClose . getLedger
+  ContT r m (ValidationResult m blk)
+validateCandidate chainSelEnv chainDiff =
+  ledgerValidateCandidate chainSelEnv chainDiff >>= \case
+    Right validatedChainDiff ->
+      -- AF.length (Diff.getSuffix chainDiff) == AF.length (Diff.getSuffix chainDiff') ->
+      -- No truncation
+      return $ FullyValid validatedChainDiff
+    Left validPrefix -> do
+      -- In case of invalid blocks, we throw away the ledger
+      -- corresponding to the truncated fragment and will have to
+      -- validate it again, even when it's the sole candidate.
+      return $ ValidPrefix validPrefix
+
+-- where
+--  chainDiff' = ValidatedDiff.getChainDiff validatedChainDiff
 
 {-------------------------------------------------------------------------------
   'ChainAndLedger'

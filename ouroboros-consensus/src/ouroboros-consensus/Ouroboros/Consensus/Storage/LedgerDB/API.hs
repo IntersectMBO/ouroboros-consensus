@@ -168,7 +168,6 @@ import Codec.Serialise
 import qualified Control.Monad as Monad
 import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
-import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
@@ -253,7 +252,6 @@ data LedgerDB m l blk = LedgerDB
   , validateFork ::
       forall r.
       l ~ ExtLedgerState blk =>
-      ResourceRegistry m ->
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
       Word64 ->

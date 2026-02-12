@@ -40,14 +40,12 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   ) where
 
 import Control.Monad (void, when)
-import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
 import Control.ResourceRegistry
   ( WithTempRegistry
   , allocate
   , runInnerWithTempRegistry
   , runWithTempRegistry
-  , withRegistry
   )
 import Control.Tracer
 import Data.Functor ((<&>))
@@ -85,6 +83,7 @@ import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (newFuse, whenJust)
 import Ouroboros.Consensus.Util.Args
+import Ouroboros.Consensus.Util.EscapableResources
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
   ( Fingerprint (..)
@@ -185,26 +184,25 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    chain <- withRegistry $ \rr -> do
-      chainAndLedger <-
-        ChainSel.initialChainSelection
-          immutableDB
-          volatileDB
-          lgrDB
-          rr
-          initChainSelTracer
-          (Args.cdbsTopLevelConfig cdbSpecificArgs)
-          varInvalid
-          (void initialLoE)
-          (forgetFingerprint initialWeights)
-      traceWith initChainSelTracer InitialChainSelected
+    chain <-
+      ChainSel.initialChainSelection
+        immutableDB
+        volatileDB
+        lgrDB
+        initChainSelTracer
+        (Args.cdbsTopLevelConfig cdbSpecificArgs)
+        varInvalid
+        (void initialLoE)
+        (forgetFingerprint initialWeights)
+        `runContT` \chainAndLedger -> do
+          traceWith initChainSelTracer InitialChainSelected
 
-      let chain = VF.validatedFragment chainAndLedger
-          ledger = VF.validatedLedger chainAndLedger
+          let chain = VF.validatedFragment chainAndLedger
+              ledger = VF.validatedLedger chainAndLedger
 
-      atomically $ LedgerDB.forkerCommit ledger
-      LedgerDB.forkerClose ledger
-      pure chain
+          atomically $ LedgerDB.forkerCommit ledger
+          LedgerDB.forkerClose ledger
+          pure chain
     LedgerDB.tryFlush lgrDB
 
     curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
@@ -286,7 +284,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getImmutableLedger = getEnvSTM h Query.getImmutableLedger
             , getPastLedger = getEnvSTM1 h Query.getPastLedger
             , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
-            , getReadOnlyForkerAtPoint = getEnv2 h Query.getReadOnlyForkerAtPoint
+            , getReadOnlyForkerAtPoint = getEnvCont1 h Query.getReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot

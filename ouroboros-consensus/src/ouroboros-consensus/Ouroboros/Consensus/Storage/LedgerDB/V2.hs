@@ -44,7 +44,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -179,7 +178,7 @@ implMkLedgerDb h snapManager =
       , getPastLedgerState = \s -> getEnvSTM h (flip implGetPastLedgerState s)
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
       , getForkerAtTarget = newForkerAtTarget h
-      , validateFork = getEnvCont5 h (implValidate h)
+      , validateFork = getEnvCont4 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
       , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
@@ -318,13 +317,12 @@ implValidate ::
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
-  ResourceRegistry m ->
   (TraceValidateEvent blk -> m ()) ->
   BlockCache blk ->
   Word64 ->
   [Header blk] ->
   ContT r m (ValidateResult m (ExtLedgerState blk) blk)
-implValidate h ldbEnv rr tr cache rollbacks hdrs =
+implValidate h ldbEnv tr cache rollbacks hdrs =
   validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
     ValidateArgs
       (ldbResolveBlock ldbEnv)
@@ -552,30 +550,16 @@ getEnv3 ::
 getEnv3 h f a b c = getEnv h (\env -> f env a b c)
 
 -- | Variant 'of 'getEnv' for functions taking five arguments.
-getEnv5 ::
+getEnvCont4 ::
   (IOLike m, HasCallStack, HasHeader blk) =>
   LedgerDBHandle m l blk ->
-  (LedgerDBEnv m l blk -> a -> b -> c -> d -> e -> m r) ->
+  (LedgerDBEnv m l blk -> a -> b -> c -> d -> ContT r m f) ->
   a ->
   b ->
   c ->
   d ->
-  e ->
-  m r
-getEnv5 h f a b c d e = getEnv h (\env -> f env a b c d e)
-
--- | Variant 'of 'getEnv' for functions taking five arguments.
-getEnvCont5 ::
-  (IOLike m, HasCallStack, HasHeader blk) =>
-  LedgerDBHandle m l blk ->
-  (LedgerDBEnv m l blk -> a -> b -> c -> d -> e -> ContT r m f) ->
-  a ->
-  b ->
-  c ->
-  d ->
-  e ->
   ContT r m f
-getEnvCont5 h f a b c d e = getEnvCont h (\env -> f env a b c d e)
+getEnvCont4 h f a b c d = getEnvCont h (\env -> f env a b c d)
 
 -- | Variant of 'getEnv' that works in 'STM'.
 getEnvSTM ::
@@ -618,11 +602,11 @@ getStateRef ::
   (LedgerSeq m l -> t (StateRef m l)) ->
   ContT r m (t (StateRef m l))
 getStateRef ldbEnv project =
-  undefined -- RAWLock.withReadAccess (undefined $ ldbOpenHandlesLock ldbEnv) $ \() -> do
-  -- tst <- project <$> lift (atomically (getVolatileLedgerSeq ldbEnv))
-  -- for tst $ \st -> do
-  --   tables' <- duplicate (tables st)
-  --   pure st{tables = tables'}
+  withReadAccessCont (ldbOpenHandlesLock ldbEnv) $ \() -> do
+    tst <- project <$> lift (atomically (getVolatileLedgerSeq ldbEnv))
+    for tst $ \st -> do
+      tables' <- duplicate (tables st)
+      pure st{tables = tables'}
 
 -- | Like 'StateRef', but takes care of closing the handle when the given action
 -- returns or errors.
@@ -848,4 +832,7 @@ newForker h ldbEnv st = do
       , forkerPush = getForkerEnvCont1 h forkerKey implForkerPush
       , forkerCommit = getForkerEnvSTM h forkerKey implForkerCommit
       , forkerClose = implForkerClose h forkerKey forkerEnv
+      , forkerUntrack = do
+          LedgerSeq ls <- readTVar lseqVar
+          mapM_ (untrack . tables) (AS.toOldestFirst ls)
       }

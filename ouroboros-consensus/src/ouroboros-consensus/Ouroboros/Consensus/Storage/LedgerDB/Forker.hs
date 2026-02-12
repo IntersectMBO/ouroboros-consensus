@@ -132,6 +132,7 @@ data Forker m l = Forker
   , forkerCommit :: !(STM m ())
   -- ^ Commit the fork, which was constructed using 'forkerPush', as the
   -- current version of the LedgerDB.
+  , forkerUntrack :: !(STM m ())
   }
   deriving NoThunks via OnlyCheckWhnf (Forker m l)
 
@@ -215,6 +216,7 @@ ledgerStateReadOnlyForker frk =
         fmap (first castLedgerTables) . roforkerRangeReadTables . castRangeQueryPrevious
     , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
     , roforkerReadStatistics = roforkerReadStatistics
+    , roforkerUntrack = roforkerUntrack
     }
  where
   ReadOnlyForker
@@ -223,6 +225,7 @@ ledgerStateReadOnlyForker frk =
     , roforkerRangeReadTables
     , roforkerGetLedgerState
     , roforkerReadStatistics
+    , roforkerUntrack
     } = frk
 
 {-------------------------------------------------------------------------------
@@ -251,6 +254,7 @@ data ReadOnlyForker m l = ReadOnlyForker
   -- ^ See 'forkerGetLedgerState'
   , roforkerReadStatistics :: !(m Statistics)
   -- ^ See 'forkerReadStatistics'
+  , roforkerUntrack :: !(STM m ())
   }
   deriving Generic
 
@@ -270,6 +274,7 @@ readOnlyForker forker =
     , roforkerRangeReadTables = forkerRangeReadTables forker
     , roforkerGetLedgerState = forkerGetLedgerState forker
     , roforkerReadStatistics = forkerReadStatistics forker
+    , roforkerUntrack = forkerUntrack forker
     }
 
 {-------------------------------------------------------------------------------

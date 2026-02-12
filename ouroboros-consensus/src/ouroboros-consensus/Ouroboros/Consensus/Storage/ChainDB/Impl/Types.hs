@@ -27,6 +27,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , SerialiseDiskConstraints
   , getEnv
   , getEnv1
+  , getEnvCont1
   , getEnv2
   , getEnvSTM
   , getEnvSTM1
@@ -139,6 +140,7 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (Fuse)
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
+import Ouroboros.Consensus.Util.EscapableResources
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM (WithFingerprint)
@@ -175,6 +177,17 @@ getEnv (CDBHandle varState) f =
     ChainDbOpen env -> f env
     ChainDbClosed -> throwIO $ ClosedDBError @blk prettyCallStack
 
+getEnvCont ::
+  forall m blk r a.
+  (IOLike m, HasCallStack, HasHeader blk) =>
+  ChainDbHandle m blk ->
+  (ChainDbEnv m blk -> ContT r m a) ->
+  ContT r m a
+getEnvCont (CDBHandle varState) f =
+  lift (atomically (readTVar varState)) >>= \case
+    ChainDbOpen env -> f env
+    ChainDbClosed -> lift $ throwIO $ ClosedDBError @blk prettyCallStack
+
 -- | Variant 'of 'getEnv' for functions taking one argument.
 getEnv1 ::
   (IOLike m, HasCallStack, HasHeader blk) =>
@@ -183,6 +196,14 @@ getEnv1 ::
   a ->
   m r
 getEnv1 h f a = getEnv h (\env -> f env a)
+
+getEnvCont1 ::
+  (IOLike m, HasCallStack, HasHeader blk) =>
+  ChainDbHandle m blk ->
+  (ChainDbEnv m blk -> a -> ContT r m b) ->
+  a ->
+  ContT r m b
+getEnvCont1 h f a = getEnvCont h (\env -> f env a)
 
 -- | Variant 'of 'getEnv' for functions taking two arguments.
 getEnv2 ::

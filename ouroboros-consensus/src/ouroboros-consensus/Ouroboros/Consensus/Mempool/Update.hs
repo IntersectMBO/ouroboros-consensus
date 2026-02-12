@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
@@ -37,6 +38,7 @@ import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Storage.LedgerDB.Forker hiding (trace)
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Enclose
+import Ouroboros.Consensus.Util.EscapableResources
 import Ouroboros.Consensus.Util.IOLike hiding (withMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import Ouroboros.Consensus.Util.STM
@@ -549,7 +551,7 @@ implSyncWithLedger mpEnv =
       --
       -- Just for performance reasons, we will avoid re-validating the mempool
       -- if the state didn't change.
-      withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface registry) $
+      withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
         \is (MempoolLedgerDBView ls meFrk) -> do
           let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
           if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
@@ -559,8 +561,7 @@ implSyncWithLedger mpEnv =
               pure (Just (snapshotFromIS is), is)
             else do
               -- The tip changed, we have to revalidate
-              eFrk <- meFrk
-              case eFrk of
+              meFrk `runContT` \case
                 -- This case should happen only if the tip has moved again, this time
                 -- to a separate fork, since the background thread saw a change in the
                 -- tip, which should happen very rarely
@@ -572,6 +573,7 @@ implSyncWithLedger mpEnv =
                     forkerMVar
                     ( \oldFrk -> do
                         roforkerClose oldFrk
+                        atomically $ roforkerUntrack frk
                         pure frk
                     )
                   tbs <- castLedgerTables <$> roforkerReadTables frk (castLedgerTables $ isTxKeys is)
@@ -594,7 +596,6 @@ implSyncWithLedger mpEnv =
     { mpEnvStateVar = istate
     , mpEnvForker = forkerMVar
     , mpEnvLedger = ldgrInterface
-    , mpEnvRegistry = registry
     , mpEnvTracer = trcr
     , mpEnvLedgerCfg = cfg
     , mpEnvCapacityOverride = capacityOverride

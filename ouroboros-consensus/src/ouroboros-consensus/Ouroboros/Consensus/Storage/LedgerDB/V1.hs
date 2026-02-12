@@ -10,6 +10,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-unused-imports -Wno-redundant-constraints -Wno-unused-top-binds -Wno-unused-local-binds -Wno-unused-matches #-}
 
 -- | Many functions here are very similar to the ones in
 -- "Ouroboros.Consensus.Storage.LedgerDB.V2". When we delete V1, this
@@ -85,69 +86,70 @@ mkInitDb ::
   SnapshotManagerV1 m blk ->
   GetVolatileSuffix m blk ->
   InitDB (DbChangelog' blk, ResourceKey m, BackingStore' m blk) m blk
-mkInitDb args bss getBlock snapManager getVolatileSuffix =
-  InitDB
-    { initFromGenesis = do
-        st <- lgrGenesis
-        let genesis = forgetLedgerTables st
-            chlog = DbCh.empty genesis
-        (bsKey, backingStore) <-
-          allocate
-            lgrRegistry
-            (\_ -> newBackingStore bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st))
-            bsClose
-        pure (chlog, bsKey, backingStore)
-    , initFromSnapshot =
-        runExceptT
-          . loadSnapshot
-            bsTracer
-            baArgs
-            (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
-            lgrHasFS'
-            lgrRegistry
-    , initReapplyBlock = \cfg blk (chlog, r, bstore) -> do
-        !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
-        -- It's OK to flush without a lock here, since the `LedgerDB` has not
-        -- finished initializing, only this thread has access to the backing
-        -- store.
-        chlog'' <-
-          unsafeIgnoreWriteLock $
-            if shouldFlush flushFreq (flushableLength chlog')
-              then do
-                let (toFlush, toKeep) = splitForFlushing chlog'
-                mapM_ (flushIntoBackingStore bstore) toFlush
-                pure toKeep
-              else pure chlog'
-        pure (chlog'', r, bstore)
-    , currentTip = \(ch, _, _) -> ledgerState . current $ ch
-    , mkLedgerDb = \(db, ldbBackingStoreKey, ldbBackingStore) -> do
-        (varDB, prevApplied) <-
-          (,) <$> newTVarIO db <*> newTVarIO Set.empty
-        flushLock <- mkLedgerDBLock
-        forkers <- newTVarIO Map.empty
-        nextForkerKey <- newTVarIO (ForkerKey 0)
-        let env =
-              LedgerDBEnv
-                { ldbChangelog = varDB
-                , ldbBackingStore = ldbBackingStore
-                , ldbBackingStoreKey = ldbBackingStoreKey
-                , ldbLock = flushLock
-                , ldbPrevApplied = prevApplied
-                , ldbForkers = forkers
-                , ldbNextForkerKey = nextForkerKey
-                , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
-                , ldbTracer = lgrTracer
-                , ldbCfg = lgrConfig
-                , ldbHasFS = lgrHasFS'
-                , ldbShouldFlush = shouldFlush flushFreq
-                , ldbQueryBatchSize = lgrQueryBatchSize
-                , ldbResolveBlock = getBlock
-                , ldbGetVolatileSuffix = getVolatileSuffix
-                }
-        h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb h snapManager
-    }
+mkInitDb args bss getBlock snapManager getVolatileSuffix = undefined
  where
+  -- InitDB
+  --   { initFromGenesis = do
+  --       st <- lgrGenesis
+  --       let genesis = forgetLedgerTables st
+  --           chlog = DbCh.empty genesis
+  --       (bsKey, backingStore) <-
+  --         allocate
+  --           lgrRegistry
+  --           (\_ -> newBackingStore bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st))
+  --           bsClose
+  --       pure (chlog, bsKey, backingStore)
+  --   , initFromSnapshot =
+  --       runExceptT
+  --         . loadSnapshot
+  --           bsTracer
+  --           baArgs
+  --           (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
+  --           lgrHasFS'
+  --           lgrRegistry
+  --   , initReapplyBlock = \cfg blk (chlog, r, bstore) -> do
+  --       !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
+  --       -- It's OK to flush without a lock here, since the `LedgerDB` has not
+  --       -- finished initializing, only this thread has access to the backing
+  --       -- store.
+  --       chlog'' <-
+  --         unsafeIgnoreWriteLock $
+  --           if shouldFlush flushFreq (flushableLength chlog')
+  --             then do
+  --               let (toFlush, toKeep) = splitForFlushing chlog'
+  --               mapM_ (flushIntoBackingStore bstore) toFlush
+  --               pure toKeep
+  --             else pure chlog'
+  --       pure (chlog'', r, bstore)
+  --   , currentTip = \(ch, _, _) -> ledgerState . current $ ch
+  --   , mkLedgerDb = \(db, ldbBackingStoreKey, ldbBackingStore) -> do
+  --       (varDB, prevApplied) <-
+  --         (,) <$> newTVarIO db <*> newTVarIO Set.empty
+  --       flushLock <- mkLedgerDBLock
+  --       forkers <- newTVarIO Map.empty
+  --       nextForkerKey <- newTVarIO (ForkerKey 0)
+  --       let env =
+  --             LedgerDBEnv
+  --               { ldbChangelog = varDB
+  --               , ldbBackingStore = ldbBackingStore
+  --               , ldbBackingStoreKey = ldbBackingStoreKey
+  --               , ldbLock = flushLock
+  --               , ldbPrevApplied = prevApplied
+  --               , ldbForkers = forkers
+  --               , ldbNextForkerKey = nextForkerKey
+  --               , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
+  --               , ldbTracer = lgrTracer
+  --               , ldbCfg = lgrConfig
+  --               , ldbHasFS = lgrHasFS'
+  --               , ldbShouldFlush = shouldFlush flushFreq
+  --               , ldbQueryBatchSize = lgrQueryBatchSize
+  --               , ldbResolveBlock = getBlock
+  --               , ldbGetVolatileSuffix = getVolatileSuffix
+  --               }
+  --       h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
+  --       pure $ implMkLedgerDb h snapManager
+  --   }
+
   !bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< tr
   !tr = lgrTracer
 
@@ -179,22 +181,23 @@ implMkLedgerDb ::
   LedgerDBHandle m l blk ->
   SnapshotManagerV1 m blk ->
   (LedgerDB' m blk, TestInternals' m blk)
-implMkLedgerDb h snapManager =
-  ( LedgerDB
-      { getVolatileTip = getEnvSTM h implGetVolatileTip
-      , getImmutableTip = getEnvSTM h implGetImmutableTip
-      , getPastLedgerState = getEnvSTM1 h implGetPastLedgerState
-      , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
-      , getForkerAtTarget = newForkerAtTarget h
-      , validateFork = getEnv5 h (implValidate h)
-      , getPrevApplied = getEnvSTM h implGetPrevApplied
-      , garbageCollect = getEnv1 h implGarbageCollect
-      , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
-      , tryFlush = getEnv h implTryFlush
-      , closeDB = implCloseDB h
-      }
-  , mkInternals h snapManager
-  )
+implMkLedgerDb h snapManager = undefined
+
+-- ( LedgerDB
+--     { getVolatileTip = getEnvSTM h implGetVolatileTip
+--     , getImmutableTip = getEnvSTM h implGetImmutableTip
+--     , getPastLedgerState = getEnvSTM1 h implGetPastLedgerState
+--     , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
+--     , getForkerAtTarget = newForkerAtTarget h
+--     , validateFork = getEnv5 h (implValidate h)
+--     , getPrevApplied = getEnvSTM h implGetPrevApplied
+--     , garbageCollect = getEnv1 h implGarbageCollect
+--     , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
+--     , tryFlush = getEnv h implTryFlush
+--     , closeDB = implCloseDB h
+--     }
+-- , mkInternals h snapManager
+-- )
 
 implGetVolatileTip ::
   (MonadSTM m, GetTip l) =>
@@ -278,22 +281,23 @@ implValidate ::
   Word64 ->
   [Header blk] ->
   m (ValidateResult m (ExtLedgerState blk) blk)
-implValidate h ldbEnv rr tr cache rollbacks hdrs =
-  validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
-    ValidateArgs
-      (ldbResolveBlock ldbEnv)
-      (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
-      ( \l -> do
-          prev <- readTVar (ldbPrevApplied ldbEnv)
-          writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
-      )
-      (readTVar (ldbPrevApplied ldbEnv))
-      (newForkerByRollback h)
-      rr
-      tr
-      cache
-      rollbacks
-      hdrs
+implValidate h ldbEnv rr tr cache rollbacks hdrs = undefined
+
+-- validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+--   ValidateArgs
+--     (ldbResolveBlock ldbEnv)
+--     (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
+--     ( \l -> do
+--         prev <- readTVar (ldbPrevApplied ldbEnv)
+--         writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
+--     )
+--     (readTVar (ldbPrevApplied ldbEnv))
+--     (newForkerByRollback h)
+--     rr
+--     tr
+--     cache
+--     rollbacks
+--     hdrs
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
@@ -917,8 +921,9 @@ mkForker h qbs forkerKey forkerEnv =
     , forkerRangeReadTables = getForkerEnv1 h forkerKey (implForkerRangeReadTables qbs)
     , forkerGetLedgerState = getForkerEnvSTM h forkerKey implForkerGetLedgerState
     , forkerReadStatistics = getForkerEnv h forkerKey implForkerReadStatistics
-    , forkerPush = getForkerEnv1 h forkerKey implForkerPush
+    , forkerPush = undefined -- getForkerEnv1 h forkerKey implForkerPush
     , forkerCommit = getForkerEnvSTM h forkerKey implForkerCommit
+    , forkerUntrack = undefined
     }
 
 -- | This function receives an environment instead of reading it from

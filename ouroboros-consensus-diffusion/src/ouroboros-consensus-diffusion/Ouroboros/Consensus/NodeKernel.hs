@@ -498,13 +498,18 @@ initInternalState
 
     varChainSyncHandles <- atomically newChainSyncClientHandleCollection
     mempool <-
-      openMempool
+      allocate
         registry
-        (chainDBLedgerInterface chainDB)
-        (configLedger cfg)
-        mempoolCapacityOverride
-        mempoolTimeoutConfig
-        (mempoolTracer tracers)
+        ( \_ ->
+            openMempool
+              registry
+              (chainDBLedgerInterface chainDB)
+              (configLedger cfg)
+              mempoolCapacityOverride
+              mempoolTimeoutConfig
+              (mempoolTracer tracers)
+        )
+        closeMempool
 
     fetchClientRegistry <- newFetchClientRegistry
 

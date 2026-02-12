@@ -38,7 +38,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   ) where
 
 import Cardano.Ledger.BaseTypes (WithOrigin (..))
-import Control.ResourceRegistry (ResourceRegistry)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
@@ -67,6 +66,7 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (eitherToMaybe)
+import Ouroboros.Consensus.Util.EscapableResources
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -282,14 +282,12 @@ getPastLedger ::
 getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
 getReadOnlyForkerAtPoint ::
-  IOLike m =>
   ChainDbEnv m blk ->
-  ResourceRegistry m ->
   Target (Point blk) ->
-  m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
+  ContT r m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
 getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
 
-getStatistics :: IOLike m => ChainDbEnv m blk -> m LedgerDB.Statistics
+getStatistics :: ChainDbEnv m blk -> m LedgerDB.Statistics
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
 
 getPerasWeightSnapshot ::
