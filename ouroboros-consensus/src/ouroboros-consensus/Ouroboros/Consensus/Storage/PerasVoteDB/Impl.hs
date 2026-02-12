@@ -56,12 +56,7 @@ import Ouroboros.Consensus.Util.STM
   Database state
 -------------------------------------------------------------------------------}
 
-data PerasVoteDbEnv m blk = PerasVoteDbEnv
-  { pvdeTracer :: !(Tracer m (TraceEvent blk))
-  , pvdeState :: !(StrictTVar m (WithFingerprint (PerasVoteDbState blk)))
-  -- ^ The 'RoundNo's of all votes currently in the db.
-  }
-  deriving NoThunks via OnlyCheckWhnfNamed "PerasVoteDbEnv" (PerasVoteDbEnv m blk)
+type PerasVoteDbHandle m blk = StrictTVar m (WithFingerprint (PerasVoteDbState blk))
 
 -- INVARIANT: See 'invariantForPerasVoteDbState'.
 data PerasVoteDbState blk = PerasVoteDbState
@@ -166,29 +161,24 @@ openDB ::
   ) =>
   Complete PerasVoteDbArgs m blk ->
   m (PerasVoteDB m blk)
-openDB args@PerasVoteDbArgs{pvdbaPerasCfg} = do
-  pvdeState <-
+openDB PerasVoteDbArgs{pvdbaPerasCfg, pvdbaTracer} = do
+  perasVoteDbHandle <-
     newTVarWithInvariantIO
       (either Just (const Nothing) . invariantForPerasVoteDbState)
       initialPerasVoteDbState
-  let env =
-        PerasVoteDbEnv
-          { pvdeTracer
-          , pvdeState
-          }
-  traceWith pvdeTracer OpenedPerasVoteDB
+  traceWith pvdbaTracer OpenedPerasVoteDB
   pure
     PerasVoteDB
-      { addVote = implAddVote pvdbaPerasCfg env
-      , getVoteIds = implGetVoteIds env
-      , getVotesAfter = implGetVotesAfter env
-      , getForgedCertForRound = implGetForgedCertForRound env
-      , garbageCollect = implGarbageCollect env
+      { atomicallyWithTracing = \(STMWithTracing action) -> do
+          (events, res) <- atomically action
+          mapM_ (traceWith pvdbaTracer) events
+          pure res
+      , addVote = implAddVote pvdbaPerasCfg perasVoteDbHandle
+      , getVoteIds = implGetVoteIds perasVoteDbHandle
+      , getVotesAfter = implGetVotesAfter perasVoteDbHandle
+      , getForgedCertForRound = implGetForgedCertForRound perasVoteDbHandle
+      , garbageCollect = implGarbageCollect perasVoteDbHandle
       }
- where
-  PerasVoteDbArgs
-    { pvdbaTracer = pvdeTracer
-    } = args
 
 {-------------------------------------------------------------------------------
   API implementation
@@ -202,10 +192,10 @@ implAddVote ::
   , Typeable blk
   ) =>
   PerasCfg blk ->
-  PerasVoteDbEnv m blk ->
+  PerasVoteDbHandle m blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   STMWithTracing (TraceEvent blk) m (AddPerasVoteResult blk)
-implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = withTracing pvdeTracer $ do
+implAddVote perasCfg perasVoteDbHandle vote = STMWithTracing $ do
   let voteId = getPerasVoteId vote
       voteTarget = getPerasVoteTarget vote
       voteStake = vpvVoteStake (forgetArrivalTime vote)
@@ -213,9 +203,9 @@ implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = withTracing pv
   let traceEvents = [AddingPerasVote voteTarget voteId voteStake]
 
   addPerasVoteRes <- do
-    WithFingerprint pvds fp <- readTVar pvdeState
+    WithFingerprint pvds fp <- readTVar perasVoteDbHandle
     (res, pvds') <- addOrIgnoreVote pvds voteId
-    writeTVar pvdeState (WithFingerprint pvds' (succ fp))
+    writeTVar perasVoteDbHandle (WithFingerprint pvds' (succ fp))
     pure res
 
   let traceEvents' =
@@ -224,7 +214,7 @@ implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = withTracing pv
           AddedPerasVoteButDidntGenerateNewCert -> [AddedPerasVote voteId]
           AddedPerasVoteAndGeneratedNewCert newCert -> [AddedPerasVote voteId, GeneratedPerasCert newCert]
 
-  pure (addPerasVoteRes, traceEvents')
+  pure (traceEvents', addPerasVoteRes)
  where
   addOrIgnoreVote pvds voteId
     -- Vote is already in the DB => ignore it
@@ -280,44 +270,44 @@ implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = withTracing pv
 
 implGetVoteIds ::
   IOLike m =>
-  PerasVoteDbEnv m blk ->
+  PerasVoteDbHandle m blk ->
   STMWithTracing (TraceEvent blk) m (Set (PerasVoteId blk))
-implGetVoteIds PerasVoteDbEnv{pvdeState} = withoutTracing $ do
+implGetVoteIds perasVoteDbHandle = STMWithTracing $ do
   PerasVoteDbState{pvdsVoteIds} <-
-    forgetFingerprint <$> readTVar pvdeState
-  pure pvdsVoteIds
+    forgetFingerprint <$> readTVar perasVoteDbHandle
+  pure ([], pvdsVoteIds)
 
 implGetVotesAfter ::
   IOLike m =>
-  PerasVoteDbEnv m blk ->
+  PerasVoteDbHandle m blk ->
   PerasVoteTicketNo ->
   STMWithTracing (TraceEvent blk) m (Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
-implGetVotesAfter PerasVoteDbEnv{pvdeState} ticketNo = withoutTracing $ do
+implGetVotesAfter perasVoteDbHandle ticketNo = STMWithTracing $ do
   PerasVoteDbState{pvdsVotesByTicket} <-
-    forgetFingerprint <$> readTVar pvdeState
-  pure $ snd $ Map.split ticketNo pvdsVotesByTicket
+    forgetFingerprint <$> readTVar perasVoteDbHandle
+  pure ([], snd $ Map.split ticketNo pvdsVotesByTicket)
 
 implGetForgedCertForRound ::
   IOLike m =>
-  PerasVoteDbEnv m blk ->
+  PerasVoteDbHandle m blk ->
   PerasRoundNo ->
   STMWithTracing (TraceEvent blk) m (Maybe (ValidatedPerasCert blk))
-implGetForgedCertForRound PerasVoteDbEnv{pvdeState} roundNo = withoutTracing $ do
+implGetForgedCertForRound perasVoteDbHandle roundNo = STMWithTracing $ do
   PerasVoteDbState{pvdsRoundVoteStates} <-
-    forgetFingerprint <$> readTVar pvdeState
+    forgetFingerprint <$> readTVar perasVoteDbHandle
   case Map.lookup roundNo pvdsRoundVoteStates of
-    Nothing -> pure Nothing
-    Just aggr -> pure (getPerasRoundVoteStateCertMaybe aggr)
+    Nothing -> pure ([], Nothing)
+    Just aggr -> pure ([], getPerasRoundVoteStateCertMaybe aggr)
 
 implGarbageCollect ::
   forall m blk.
   IOLike m =>
-  PerasVoteDbEnv m blk -> PerasRoundNo -> STMWithTracing (TraceEvent blk) m ()
-implGarbageCollect PerasVoteDbEnv{pvdeTracer, pvdeState} roundNo = withTracing pvdeTracer $ do
+  PerasVoteDbHandle m blk -> PerasRoundNo -> STMWithTracing (TraceEvent blk) m ()
+implGarbageCollect perasVoteDbHandle roundNo = STMWithTracing $ do
   -- No need to update the 'Fingerprint' as we only remove votes that do
   -- not matter for comparing interesting chains.
-  newState <- modifyTVar pvdeState (fmap gc)
-  pure (newState, [GarbageCollected roundNo])
+  newState <- modifyTVar perasVoteDbHandle (fmap gc)
+  pure ([GarbageCollected roundNo], newState)
  where
   gc :: PerasVoteDbState blk -> PerasVoteDbState blk
   gc

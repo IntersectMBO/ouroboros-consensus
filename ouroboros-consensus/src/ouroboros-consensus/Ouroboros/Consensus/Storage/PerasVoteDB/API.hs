@@ -3,8 +3,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Ouroboros.Consensus.Storage.PerasVoteDB.API
@@ -15,15 +15,10 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.API
     -- * 'PerasVoteSnapshot'
   , PerasVoteTicketNo
   , zeroPerasVoteTicketNo
-  , STMWithTracing
-  , withoutTracing
-  , withTracing
-  , keepTraceEvents
-  , forgetTraceEvents
-  , atomicallyWithTracing
+  , STMWithTracing (..)
+  , getSTMWithoutTraceEvents
   ) where
 
-import Control.Tracer (Tracer, traceWith)
 import Data.Map (Map)
 import Data.Set (Set)
 import Data.Word (Word64)
@@ -37,38 +32,28 @@ import Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM (..))
   Tracing utilities to work around STM
 -------------------------------------------------------------------------------}
 
--- NOTE: the representation using two variants is rather arbitrary, we could
--- use a single variant record, with a 'Maybe (Tracer m tevent)' field
--- (or default to `nullTracer`) instead.
-data STMWithTracing tevent m a
-  = WithoutTracing !(STM m a)
-  | -- | We do not expose the constructors, the the tracer cannot leak
-    WithTracing !(Tracer m tevent) !(STM m (a, [tevent]))
-
-keepTraceEvents :: MonadSTM m => STMWithTracing tevent m a -> STM m (a, [tevent])
-keepTraceEvents (WithoutTracing stm) = (,[]) <$> stm
-keepTraceEvents (WithTracing _ stm) = stm
-
-forgetTraceEvents :: MonadSTM m => STMWithTracing tevent m a -> STM m a
-forgetTraceEvents (WithoutTracing stm) = stm
-forgetTraceEvents (WithTracing _ stm) = fst <$> stm
-
-withTracing :: MonadSTM m => Tracer m tevent -> STM m (a, [tevent]) -> STMWithTracing tevent m a
-withTracing = WithTracing
-
-withoutTracing :: MonadSTM m => STM m a -> STMWithTracing tevent m a
-withoutTracing = WithoutTracing
+newtype STMWithTracing tevent m a = STMWithTracing {getSTMWithTraceEvents :: STM m ([tevent], a)}
 
 instance MonadSTM m => Functor (STMWithTracing tevent m) where
-  fmap f (WithoutTracing stm) = WithoutTracing (fmap f stm)
-  fmap f (WithTracing tracer stm) = WithTracing tracer (fmap (\(a, tevents) -> (f a, tevents)) stm)
+  fmap f (STMWithTracing x) = STMWithTracing $ fmap (\(events, a) -> (events, f a)) x
 
-atomicallyWithTracing :: MonadSTM m => STMWithTracing tevent m a -> m a
-atomicallyWithTracing (WithoutTracing stm) = atomically stm
-atomicallyWithTracing (WithTracing tracer stm) = do
-  (res, traceEvents) <- atomically stm
-  mapM_ (traceWith tracer) traceEvents
-  pure res
+instance MonadSTM m => Applicative (STMWithTracing tevent m) where
+  pure a = STMWithTracing $ pure ([], a)
+  STMWithTracing fs <*> STMWithTracing xs = STMWithTracing $ do
+    (events1, f) <- fs
+    (events2, x) <- xs
+    pure (events1 ++ events2, f x)
+
+instance MonadSTM m => Monad (STMWithTracing tevent m) where
+  return = pure
+  STMWithTracing xs >>= k = STMWithTracing $ do
+    (events1, x) <- xs
+    let STMWithTracing ys = k x
+    (events2, y) <- ys
+    pure (events1 ++ events2, y)
+
+getSTMWithoutTraceEvents :: MonadSTM m => STMWithTracing tevent m a -> STM m a
+getSTMWithoutTraceEvents (STMWithTracing xs) = snd <$> xs
 
 {------------------------------------------------------------------------------}
 
@@ -77,7 +62,11 @@ atomicallyWithTracing (WithTracing tracer stm) = do
 -- If that is the case, we can get rid of the two variants for
 -- `STMWithTracing` and just keep the `WithTracing` one
 data PerasVoteDB m blk = PerasVoteDB
-  { addVote ::
+  { atomicallyWithTracing ::
+      forall a.
+      STMWithTracing (TraceEvent blk) m a ->
+      m a
+  , addVote ::
       WithArrivalTime (ValidatedPerasVote blk) ->
       STMWithTracing (TraceEvent blk) m (AddPerasVoteResult blk)
   -- ^ Add a Peras vote to the database. The result indicates whether

@@ -26,7 +26,7 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteDB (..)
   , PerasVoteTicketNo
   , atomicallyWithTracing
-  , forgetTraceEvents
+  , getSTMWithoutTraceEvents
   , zeroPerasVoteTicketNo
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -43,7 +43,7 @@ makePerasVotePoolReaderFromVoteDB PerasVoteDB{..} =
     { oprObjectId = getPerasVoteId
     , oprZeroTicketNo = zeroPerasVoteTicketNo
     , oprObjectsAfter = \lastKnown limit -> do
-        votesAfterLastKnown <- forgetTraceEvents $ getVotesAfter lastKnown
+        votesAfterLastKnown <- getSTMWithoutTraceEvents $ getVotesAfter lastKnown
         let loadVotesAfterLastKnown =
               pure $
                 fmap
@@ -69,8 +69,11 @@ makePerasVotePoolWriterFromVoteDB distrVar systemTime PerasVoteDB{..} =
     { opwObjectId = getPerasVoteId
     , opwAddObjects = \votes -> do
         distr <- readTVarIO distrVar
+        -- alternatively, we could do concat all STMWithTracing actions in one,
+        -- so that we only have one atomic block, at the expense of
+        -- having delayed tracing
         addPerasVotes distr systemTime (atomicallyWithTracing . addVote) votes
-    , opwHasObject = (flip Set.member) <$> (forgetTraceEvents getVoteIds)
+    , opwHasObject = (flip Set.member) <$> (getSTMWithoutTraceEvents getVoteIds)
     }
 
 data PerasVoteInboundException
