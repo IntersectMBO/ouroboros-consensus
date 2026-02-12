@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
@@ -12,6 +13,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
 
 import Data.Map (Map)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import GHC.Exception (throw)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -21,29 +23,27 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
-  ( PerasVoteDB
-  , PerasVoteSnapshot
+  ( PerasVoteDB (..)
   , PerasVoteTicketNo
+  , atomicallyWithTracing
+  , forgetTraceEvents
+  , zeroPerasVoteTicketNo
   )
-import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import Ouroboros.Consensus.Util.IOLike
 
 -- | TODO: replace by `Data.Map.take` as soon as we move to GHC 9.8
 takeAscMap :: Int -> Map k v -> Map k v
 takeAscMap n = Map.fromDistinctAscList . take n . Map.toAscList
 
-makePerasVotePoolReaderFromSnapshot ::
+makePerasVotePoolReaderFromVoteDB ::
   IOLike m =>
-  STM m (PerasVoteSnapshot blk) ->
-  ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
-makePerasVotePoolReaderFromSnapshot getVoteSnapshot =
+  PerasVoteDB m blk -> ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
+makePerasVotePoolReaderFromVoteDB PerasVoteDB{..} =
   ObjectPoolReader
     { oprObjectId = getPerasVoteId
-    , oprZeroTicketNo = PerasVoteDB.zeroPerasVoteTicketNo
+    , oprZeroTicketNo = zeroPerasVoteTicketNo
     , oprObjectsAfter = \lastKnown limit -> do
-        voteSnapshot <- getVoteSnapshot
-        let votesAfterLastKnown =
-              PerasVoteDB.getVotesAfter voteSnapshot lastKnown
+        votesAfterLastKnown <- forgetTraceEvents $ getVotesAfter lastKnown
         let loadVotesAfterLastKnown =
               pure $
                 fmap
@@ -55,12 +55,6 @@ makePerasVotePoolReaderFromSnapshot getVoteSnapshot =
             else Just loadVotesAfterLastKnown
     }
 
-makePerasVotePoolReaderFromVoteDB ::
-  IOLike m =>
-  PerasVoteDB m blk -> ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
-makePerasVotePoolReaderFromVoteDB perasVoteDB =
-  makePerasVotePoolReaderFromSnapshot (PerasVoteDB.getVoteSnapshot perasVoteDB)
-
 makePerasVotePoolWriterFromVoteDB ::
   (StandardHash blk, IOLike m) =>
   -- TODO: We probably want to be able to fetch updated stake distribution throughout
@@ -70,15 +64,13 @@ makePerasVotePoolWriterFromVoteDB ::
   SystemTime m ->
   PerasVoteDB m blk ->
   ObjectPoolWriter (PerasVoteId blk) (PerasVote blk) m
-makePerasVotePoolWriterFromVoteDB distrVar systemTime perasVoteDB =
+makePerasVotePoolWriterFromVoteDB distrVar systemTime PerasVoteDB{..} =
   ObjectPoolWriter
     { opwObjectId = getPerasVoteId
     , opwAddObjects = \votes -> do
         distr <- readTVarIO distrVar
-        addPerasVotes distr systemTime (PerasVoteDB.addVote perasVoteDB) votes
-    , opwHasObject = do
-        voteSnapshot <- PerasVoteDB.getVoteSnapshot perasVoteDB
-        pure $ PerasVoteDB.containsVote voteSnapshot
+        addPerasVotes distr systemTime (atomicallyWithTracing . addVote) votes
+    , opwHasObject = (flip Set.member) <$> (forgetTraceEvents getVoteIds)
     }
 
 data PerasVoteInboundException
@@ -114,7 +106,7 @@ validatePerasVotes distr votes = do
 -- rather arbitrary, and the abstract Peras protocol just assumes it can happen
 -- "within" a slot.
 addPerasVotes ::
-  (StandardHash blk, MonadThrow m) =>
+  (StandardHash blk, MonadSTM m, MonadThrow m) =>
   PerasVoteStakeDistr ->
   SystemTime m ->
   (WithArrivalTime (ValidatedPerasVote blk) -> m a) ->
