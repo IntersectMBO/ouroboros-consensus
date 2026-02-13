@@ -70,10 +70,8 @@ import Data.Word
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
@@ -279,16 +277,16 @@ readOnlyForker forker =
   Validation
 -------------------------------------------------------------------------------}
 
-data ValidateArgs m blk = ValidateArgs
+data ValidateArgs m l blk = ValidateArgs
   { resolve :: !(ResolveBlock m blk)
   -- ^ How to retrieve blocks from headers
-  , validateConfig :: !(TopLevelConfig blk)
+  , validateConfig :: !(LedgerCfg l)
   -- ^ The config
   , addPrevApplied :: !([RealPoint blk] -> STM m ())
   -- ^ How to add a previously applied block to the set of known blocks
   , prevApplied :: !(STM m (Set (RealPoint blk)))
   -- ^ Get the current set of previously applied blocks
-  , forkerAtFromTip :: !(ResourceRegistry m -> Word64 -> m (Either GetForkerError (Forker' m blk)))
+  , forkerAtFromTip :: !(ResourceRegistry m -> Word64 -> m (Either GetForkerError (Forker m l)))
   -- ^ Create a forker from the tip
   , resourceReg :: !(ResourceRegistry m)
   -- ^ The resource registry
@@ -303,14 +301,14 @@ data ValidateArgs m blk = ValidateArgs
   }
 
 validate ::
-  forall m blk.
+  forall m l blk.
   ( IOLike m
-  , LedgerSupportsProtocol blk
   , HasCallStack
+  , ApplyBlock l blk
   ) =>
   ComputeLedgerEvents ->
-  ValidateArgs m blk ->
-  m (ValidateResult' m blk)
+  ValidateArgs m l blk ->
+  m (ValidateResult m l blk)
 validate evs args = do
   aps <- mkAps <$> atomically prevApplied
   res <-
@@ -319,7 +317,7 @@ validate evs args = do
         forkerAtFromTip
         resourceReg
         evs
-        (ExtLedgerCfg validateConfig)
+        validateConfig
         numRollbacks
         trace
         aps
@@ -341,17 +339,16 @@ validate evs args = do
     } = args
 
   rewrap ::
-    Either (AnnLedgerError' blk) (Either GetForkerError (Forker' n blk)) ->
-    ValidateResult' n blk
+    Either (AnnLedgerError l blk) (Either GetForkerError (Forker n l)) ->
+    ValidateResult n l blk
   rewrap (Left e) = ValidateLedgerError e
   rewrap (Right (Left (PointTooOld (Just e)))) = ValidateExceededRollBack e
   rewrap (Right (Left _)) = error "Unreachable, validating will always rollback from the tip"
   rewrap (Right (Right l)) = ValidateSuccessful l
 
   mkAps ::
-    forall n l.
     Set (RealPoint blk) ->
-    NonEmpty (Ap n l blk)
+    NonEmpty (Ap m l blk)
   mkAps prev =
     NE.map
       ( \hdr -> case ( Set.member (headerRealPoint hdr) prev
@@ -366,7 +363,7 @@ validate evs args = do
 
   -- \| Based on the 'ValidateResult', return the hashes corresponding to
   -- valid blocks.
-  validBlockPoints :: forall n. ValidateResult' n blk -> [RealPoint blk] -> [RealPoint blk]
+  validBlockPoints :: ValidateResult m l blk -> [RealPoint blk] -> [RealPoint blk]
   validBlockPoints = \case
     ValidateExceededRollBack _ -> const []
     ValidateSuccessful _ -> id
@@ -495,7 +492,8 @@ applyThenPushMany ::
   m (Either (AnnLedgerError l blk) ())
 applyThenPushMany trace evs cfg aps fo doResolveBlock = pushAndTrace aps
  where
-  pushAndTrace ap = do
+  pushAndTrace [] = pure $ Right ()
+  pushAndTrace (ap : aps') = do
     trace $ Pushing . toRealPoint $ ap
     res <- applyThenPush evs cfg ap fo doResolveBlock
     case res of
@@ -528,15 +526,15 @@ data ValidateResult m l blk
   | ValidateLedgerError (AnnLedgerError l blk)
   | ValidateExceededRollBack ExceededRollback
 
-type ValidateResult' m blk = ValidateResult m (ExtLedgerState blk) blk
-
 {-------------------------------------------------------------------------------
   An annotated ledger error
 -------------------------------------------------------------------------------}
 
 -- | Annotated ledger errors
 data AnnLedgerError l blk = AnnLedgerError
-  { annLedgerErrRef :: RealPoint blk
+  { annLedgerBaseRef :: Point blk
+  -- ^ The last block that was valid
+  , annLedgerErrRef :: RealPoint blk
   -- ^ Reference to the block that had the error
   , annLedgerErr :: LedgerErr l
   -- ^ The ledger error itself
