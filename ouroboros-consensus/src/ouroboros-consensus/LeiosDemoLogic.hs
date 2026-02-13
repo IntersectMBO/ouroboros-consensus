@@ -8,7 +8,6 @@
 
 module LeiosDemoLogic (module LeiosDemoLogic) where
 
-import Cardano.Prelude (first)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
@@ -44,7 +43,6 @@ import LeiosDemoTypes
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
   , LeiosEb (..)
-  , LeiosEbBodies
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv
   , LeiosOutstanding
@@ -68,14 +66,6 @@ traceException :: (IOLike m, Exception e) => Tracer m a -> (e -> a) -> m b -> m 
 traceException tracer toTrace action =
   action `catch` \e -> traceWith tracer (toTrace e) >> throwIO e
 
-loadEbBodies :: IOLike m => LeiosDbHandle m -> m LeiosEbBodies
-loadEbBodies db = do
-  points <- leiosDbScanEbPoints db
-  pure
-    Leios.emptyLeiosEbBodies
-      { Leios.ebPoints = IntMap.fromList $ map (first fromEnum) points
-      }
-
 -----
 
 data SomeLeiosFetchContext m
@@ -86,21 +76,19 @@ data LeiosFetchContext m = MkLeiosFetchContext
   , leiosEbBuffer :: !(MV.MVector (PrimState m) (TxHash, BytesSize))
   , leiosEbTxsBuffer :: !(MV.MVector (PrimState m) LeiosTx)
   , leiosWriteLock :: !(MVar m ())
-  , readLeiosEbBodies :: !(m LeiosEbBodies)
   }
 
 newLeiosFetchContext ::
   PrimMonad m =>
   MVar m () ->
   LeiosDbHandle m ->
-  m LeiosEbBodies ->
   m (LeiosFetchContext m)
-newLeiosFetchContext leiosWriteLock leiosDb readLeiosEbBodies = do
+newLeiosFetchContext leiosWriteLock leiosDb = do
   -- each LeiosFetch server calls this when it initializes
   leiosEbBuffer <- MV.new maxTxsPerEb
   leiosEbTxsBuffer <- MV.new maxTxsPerEb
   pure
-    MkLeiosFetchContext{leiosDb, leiosEbBuffer, leiosEbTxsBuffer, leiosWriteLock, readLeiosEbBodies}
+    MkLeiosFetchContext{leiosDb, leiosEbBuffer, leiosEbTxsBuffer, leiosWriteLock}
 
 -----
 
@@ -215,15 +203,15 @@ leiosFetchLogicIteration ::
   forall pid.
   Ord pid =>
   LeiosFetchStaticEnv ->
-  (LeiosEbBodies, Map (PeerId pid) (Set EbHash, Set EbHash)) ->
+  Map (PeerId pid) (Set EbHash, Set EbHash) ->
   LeiosOutstanding pid ->
   (LeiosOutstanding pid, LeiosFetchDecisions pid)
-leiosFetchLogicIteration env (ebBodies, offerings) =
+leiosFetchLogicIteration env offerings =
   \acc ->
     go1 acc emptyLeiosFetchDecisions $
       expand $
         Map.toDescList $
-          Map.map Left (Leios.missingEbBodies ebBodies) `Map.union` Map.map Right (Leios.missingEbTxs acc)
+          Map.map Left (Leios.missingEbBodies acc) `Map.union` Map.map Right (Leios.missingEbTxs acc)
  where
   expand = \case
     [] -> []
@@ -440,7 +428,6 @@ nextLeiosFetchClientCommand ::
   Tracer m TraceLeiosPeer ->
   StrictSTM.STM m Bool ->
   ( MVar m ()
-  , MVar m LeiosEbBodies
   , MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -494,7 +481,6 @@ msgLeiosBlock ::
   Tracer m TraceLeiosKernel ->
   Tracer m TraceLeiosPeer ->
   ( MVar m ()
-  , MVar m LeiosEbBodies
   , MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -503,7 +489,7 @@ msgLeiosBlock ::
   LeiosBlockRequest ->
   LeiosEb ->
   m ()
-msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar) db peerId req eb = do
+msgLeiosBlock ktracer tracer (writeLock, outstandingVar, readyVar) db peerId req eb = do
   -- validate it
   let MkLeiosBlockRequest point ebBytesSize = req
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
@@ -516,10 +502,10 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar) 
     when (ebHash' /= ebHash) $ do
       error $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
   -- ingest it
-  novel <- MVar.modifyMVar ebBodiesVar $ \ebBodies -> do
-    let novel = not $ Set.member ebHash (Leios.acquiredEbBodies ebBodies)
+  MVar.modifyMVar_ outstandingVar $ \outstanding -> do
+    let novel = not $ Set.member ebHash (Leios.acquiredEbBodies outstanding)
     when novel $ MVar.withMVar writeLock $ \() -> do
-      -- TODO don't hold the ebBodies mvar during this IO
+      -- TODO don't hold the outstanding mvar during this IO
       traceException tracer TraceLeiosPeerDbException $ do
         -- NOTE: The point should already be in the table because of the
         -- announcement handling. The fetching logic should have only decided to
@@ -542,30 +528,32 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar) 
         leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
     -- update NodeKernel state
-    let !ebBodies' =
-          if not novel
-            then ebBodies
-            else
-              ebBodies
-                { Leios.acquiredEbBodies = Set.insert ebHash (Leios.acquiredEbBodies ebBodies)
-                , Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies ebBodies)
-                }
-    pure (ebBodies', novel)
-  MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let !outstanding' =
-          outstanding
-            { Leios.blockingPerEb =
-                if not novel
-                  then Leios.blockingPerEb outstanding
-                  else
+          if not novel
+            then
+              outstanding
+                { Leios.requestedBytesSize = Leios.requestedBytesSize outstanding - ebBytesSize
+                , Leios.requestedBytesSizePerPeer =
+                    Map.alter
+                      ( \case
+                          Nothing -> error "impossible!"
+                          Just x -> delIf (== 0) $ x - ebBytesSize
+                      )
+                      peerId
+                      (Leios.requestedBytesSizePerPeer outstanding)
+                , Leios.requestedEbPeers =
+                    Map.update (delIf Set.null . Set.delete peerId) ebHash (Leios.requestedEbPeers outstanding)
+                }
+            else
+              outstanding
+                { Leios.acquiredEbBodies = Set.insert ebHash (Leios.acquiredEbBodies outstanding)
+                , Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies outstanding)
+                , Leios.blockingPerEb =
                     Map.insert
                       point
                       (let MkLeiosEb v = eb in V.length v)
                       (Leios.blockingPerEb outstanding)
-            , Leios.missingEbTxs =
-                if not novel
-                  then Leios.missingEbTxs outstanding
-                  else
+                , Leios.missingEbTxs =
                     Map.insert
                       point
                       ( V.ifoldl
@@ -574,28 +562,25 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar) 
                           (let MkLeiosEb v = eb in v)
                       )
                       (Leios.missingEbTxs outstanding)
-            , Leios.txOffsetss =
-                if not novel
-                  then Leios.txOffsetss outstanding
-                  else
+                , Leios.txOffsetss =
                     V.ifoldl
                       ( \acc i (txHash, _txBytesSize) ->
                           Map.insertWith Map.union txHash (Map.singleton ebHash i) acc
                       )
                       (Leios.txOffsetss outstanding)
                       (let MkLeiosEb v = eb in v)
-            , Leios.requestedBytesSize = Leios.requestedBytesSize outstanding - ebBytesSize
-            , Leios.requestedBytesSizePerPeer =
-                Map.alter
-                  ( \case
-                      Nothing -> error "impossible!"
-                      Just x -> delIf (== 0) $ x - ebBytesSize
-                  )
-                  peerId
-                  (Leios.requestedBytesSizePerPeer outstanding)
-            , Leios.requestedEbPeers =
-                Map.update (delIf Set.null . Set.delete peerId) ebHash (Leios.requestedEbPeers outstanding)
-            }
+                , Leios.requestedBytesSize = Leios.requestedBytesSize outstanding - ebBytesSize
+                , Leios.requestedBytesSizePerPeer =
+                    Map.alter
+                      ( \case
+                          Nothing -> error "impossible!"
+                          Just x -> delIf (== 0) $ x - ebBytesSize
+                      )
+                      peerId
+                      (Leios.requestedBytesSizePerPeer outstanding)
+                , Leios.requestedEbPeers =
+                    Map.update (delIf Set.null . Set.delete peerId) ebHash (Leios.requestedEbPeers outstanding)
+                }
     pure outstanding'
   void $ MVar.tryPutMVar readyVar ()
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
@@ -614,7 +599,6 @@ msgLeiosBlockTxs ::
   Tracer m TraceLeiosKernel ->
   Tracer m TraceLeiosPeer ->
   ( MVar m ()
-  , MVar m LeiosEbBodies
   , MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -623,7 +607,7 @@ msgLeiosBlockTxs ::
   LeiosBlockTxsRequest ->
   V.Vector LeiosTx ->
   m ()
-msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyVar) db peerId req txs = do
+msgLeiosBlockTxs ktracer tracer (writeLock, outstandingVar, readyVar) db peerId req txs = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
   -- validate it
   let MkLeiosBlockTxsRequest point bitmaps txHashes = req
