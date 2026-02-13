@@ -637,9 +637,6 @@ instance (MonadAsync m, MonadMask m, MonadThrow (STM m)) => MonadAsync (Override
 instance MonadSay m => MonadSay (OverrideDelay m) where
   say = OverrideDelay . lift . say
 
-instance Monad m => MonadBase (OverrideDelay m) (OverrideDelay m) where
-  liftBase = id
-
 instance (IOLike m, MonadDelay (OverrideDelay m)) => IOLike (OverrideDelay m) where
   forgetSignKeyKES = OverrideDelay . lift . forgetSignKeyKES
 
