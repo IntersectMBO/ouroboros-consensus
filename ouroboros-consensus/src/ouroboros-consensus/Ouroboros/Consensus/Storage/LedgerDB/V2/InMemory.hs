@@ -275,7 +275,7 @@ snapshotManager ::
 snapshotManager ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
-    , deleteSnapshot = defaultDeleteSnapshot fs tracer
+    , deleteSnapshotIfTemporary = defaultDeleteSnapshotIfTemporary fs tracer
     , takeSnapshot = implTakeSnapshot ccfg tracer fs
     }
 

@@ -393,12 +393,12 @@ snapshotManager ::
 snapshotManager session ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
-    , deleteSnapshot = implDeleteSnapshot session fs tracer
+    , deleteSnapshotIfTemporary = implDeleteSnapshotIfTemporary session fs tracer
     , takeSnapshot = implTakeSnapshot ccfg tracer fs
     }
 
 {-# INLINE implTakeSnapshot #-}
-{-# INLINE implDeleteSnapshot #-}
+{-# INLINE implDeleteSnapshotIfTemporary #-}
 
 implTakeSnapshot ::
   ( IOLike m
@@ -467,20 +467,21 @@ readUTxOSizeFile hfs p = do
           <$> hGetAll hfs h
 
 -- | Delete snapshot from disk and also from the LSM tree database.
-implDeleteSnapshot ::
+implDeleteSnapshotIfTemporary ::
   IOLike m =>
   Session m ->
   SomeHasFS m ->
   Tracer m (TraceSnapshotEvent blk) ->
   DiskSnapshot ->
   m ()
-implDeleteSnapshot
+implDeleteSnapshotIfTemporary
   session
   (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive})
   tracer
-  ss = do
-    deleteState `finally` deleteLsmTable
-    traceWith tracer (DeletedSnapshot ss)
+  ss =
+    Monad.when (diskSnapshotIsTemporary ss) $ do
+      deleteState `finally` deleteLsmTable
+      traceWith tracer (DeletedSnapshot ss)
    where
     deleteState = do
       let p = snapshotToDirPath ss

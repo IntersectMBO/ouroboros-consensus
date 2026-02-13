@@ -68,7 +68,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 
     -- * Management
   , SnapshotManager (..)
-  , defaultDeleteSnapshot
+  , defaultDeleteSnapshotIfTemporary
   , defaultListSnapshots
   , trimSnapshots
   , loadSnapshotMetadata
@@ -256,7 +256,7 @@ data MetadataErr
 -- @m@ and @n@ monad types.
 data SnapshotManager m n blk st = SnapshotManager
   { listSnapshots :: m [DiskSnapshot]
-  , deleteSnapshot :: DiskSnapshot -> m ()
+  , deleteSnapshotIfTemporary :: DiskSnapshot -> m ()
   , takeSnapshot ::
       Maybe String ->
       -- \^ The (possibly empty) suffix for the snapshot name
@@ -300,13 +300,14 @@ defaultListSnapshots (SomeHasFS HasFS{listDirectory}) =
   aux = List.sortOn (Down . dsNumber) . mapMaybe snapshotFromPath . Set.toList
 
 -- | Delete snapshot from disk
-defaultDeleteSnapshot ::
+defaultDeleteSnapshotIfTemporary ::
   (Monad m, HasCallStack) => SomeHasFS m -> Tracer m (TraceSnapshotEvent blk) -> DiskSnapshot -> m ()
-defaultDeleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) tracer ss = do
-  let p = snapshotToDirPath ss
-  exists <- doesDirectoryExist p
-  when exists (removeDirectoryRecursive p)
-  traceWith tracer (DeletedSnapshot ss)
+defaultDeleteSnapshotIfTemporary (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) tracer ss =
+  when (diskSnapshotIsTemporary ss) $ do
+    let p = snapshotToDirPath ss
+    exists <- doesDirectoryExist p
+    when exists (removeDirectoryRecursive p)
+    traceWith tracer (DeletedSnapshot ss)
 
 -- | Write a snapshot metadata JSON file.
 writeSnapshotMetadata ::
@@ -351,7 +352,7 @@ destroySnapshots :: Monad m => SnapshotManager m n blk st -> m ()
 destroySnapshots snapManager =
   snapshotsMapM_
     snapManager
-    (deleteSnapshot snapManager)
+    (deleteSnapshotIfTemporary snapManager)
 
 -- | Read an extended ledger state from disk
 readExtLedgerState ::
@@ -404,7 +405,7 @@ trimSnapshots snapManager SnapshotPolicy{onDiskNumSnapshots} = do
   let ssTooOld = drop (fromIntegral onDiskNumSnapshots) ss
   mapM
     ( \s -> do
-        deleteSnapshot snapManager s
+        deleteSnapshotIfTemporary snapManager s
         pure s
     )
     ssTooOld

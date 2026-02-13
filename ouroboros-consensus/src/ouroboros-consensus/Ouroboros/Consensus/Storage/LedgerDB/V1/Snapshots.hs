@@ -194,7 +194,7 @@ snapshotManager' ::
 snapshotManager' ccfg tracer sfs@(SnapshotsFS fs) =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
-    , deleteSnapshot = defaultDeleteSnapshot fs tracer
+    , deleteSnapshotIfTemporary = defaultDeleteSnapshotIfTemporary fs tracer
     , takeSnapshot = \suff (ldbVar, bs) -> implTakeSnapshot ldbVar ccfg tracer sfs bs suff
     }
 
