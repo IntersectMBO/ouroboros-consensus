@@ -24,6 +24,7 @@ import Control.Concurrent.Class.MonadSTM.Strict.TMVar
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
 import Control.Tracer
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Network.TypedProtocol.Stateful.Proofs (connect)
@@ -248,22 +249,25 @@ initLedgerDB s c = do
         (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
         (LedgerDB.praosGetVolatileSuffix s)
 
-  result <-
-    LedgerDB.validateFork
-      ldb
-      reg
-      (const $ pure ())
-      BlockCache.empty
-      0
-      (map getHeader $ Chain.toOldestFirst c)
-  case result of
-    LedgerDB.ValidateSuccessful forker -> do
-      atomically $ LedgerDB.forkerCommit forker
-      LedgerDB.forkerClose forker
-    LedgerDB.ValidateExceededRollBack _ ->
-      error "impossible: rollback was 0"
-    LedgerDB.ValidateLedgerError _ ->
-      error "impossible: there were no invalid blocks"
+  case NE.nonEmpty $ Chain.toOldestFirst c of
+    Nothing -> pure ()
+    Just chain -> do
+      result <-
+        LedgerDB.validateFork
+          ldb
+          reg
+          (const $ pure ())
+          BlockCache.empty
+          0
+          (NE.map getHeader chain)
+      case result of
+        LedgerDB.ValidateSuccessful forker -> do
+          atomically $ LedgerDB.forkerCommit forker
+          LedgerDB.forkerClose forker
+        LedgerDB.ValidateExceededRollBack _ ->
+          error "impossible: rollback was 0"
+        LedgerDB.ValidateLedgerError _ ->
+          error "impossible: there were no invalid blocks"
 
   pure ldb
 
