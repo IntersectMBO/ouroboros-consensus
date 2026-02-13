@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Peras.Params
   , PerasRoundLength (..)
   , PerasWeight (..)
   , PerasQuorumStakeThreshold (..)
+  , PerasQuorumStakeThresholdSafetyMargin (..)
 
     -- * Protocol parameters bundle
   , PerasParams (..)
@@ -88,6 +89,17 @@ newtype PerasQuorumStakeThreshold
   deriving stock Generic
   deriving newtype (Eq, Ord, NoThunks, Condense)
 
+-- | Safety margin needed on top of the quorum stake threshold.
+--
+-- NOTE: this is needed to account for an extremely unlikely local sortition
+-- where not enough honest non-persistent parties decide to vote in a round.
+-- This mostly depend on the expected size of the voting committee.
+newtype PerasQuorumStakeThresholdSafetyMargin
+  = PerasQuorumStakeThresholdSafetyMargin {unPerasQuorumStakeThresholdSafetyMargin :: Rational}
+  deriving Show via Quiet PerasQuorumStakeThresholdSafetyMargin
+  deriving stock Generic
+  deriving newtype (Eq, Ord, NoThunks, Condense)
+
 {-------------------------------------------------------------------------------
   Protocol parameters bundle
 -------------------------------------------------------------------------------}
@@ -106,6 +118,7 @@ data PerasParams = PerasParams
   , perasRoundLength :: !PerasRoundLength
   , perasWeight :: !PerasWeight
   , perasQuorumStakeThreshold :: !PerasQuorumStakeThreshold
+  , perasQuorumStakeThresholdSafetyMargin :: !PerasQuorumStakeThresholdSafetyMargin
   }
   deriving (Show, Eq, Generic, NoThunks)
 
@@ -129,4 +142,6 @@ mkPerasParams =
         PerasWeight 15
     , perasQuorumStakeThreshold =
         PerasQuorumStakeThreshold (3 / 4)
+    , perasQuorumStakeThresholdSafetyMargin =
+        PerasQuorumStakeThresholdSafetyMargin (2 / 100)
     }
