@@ -59,7 +59,7 @@ instance Arbitrary (HeaderHash blk) => Arbitrary (Point blk) where
 -- | This blindly creates random values, so the block will not be valid, but
 -- this does not matter for serialisation tests.
 instance
-  (SimpleCrypto c, Arbitrary ext, Serialise ext) =>
+  (SimpleCrypto c, Arbitrary ext, Serialise ext, Typeable ext) =>
   Arbitrary (SimpleBlock c ext)
   where
   arbitrary = do
@@ -73,7 +73,7 @@ instance
 -- this does not matter for serialisation tests. Except we do touch-up the
 -- 'simpleBodySize'; hence 'Coherent'.
 instance
-  (SimpleCrypto c, Arbitrary ext, Serialise ext) =>
+  (SimpleCrypto c, Arbitrary ext, Serialise ext, Typeable ext) =>
   Arbitrary (Coherent (SimpleBlock c ext))
   where
   arbitrary = do
