@@ -6,8 +6,11 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Serialisation for sending things across the network.
@@ -33,8 +36,9 @@ module Ouroboros.Consensus.Node.Serialisation
   , Some (..)
   ) where
 
-import Codec.CBOR.Decoding (Decoder)
-import Codec.CBOR.Encoding (Encoding)
+import qualified Cardano.Binary as KeyHash
+import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
+import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (Serialise (decode, encode))
 import Data.Kind
 import Data.SOP.BasicFunctors
@@ -47,7 +51,15 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (Some (..))
-import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
+import Ouroboros.Network.Block
+  ( Tip
+  , decodePoint
+  , decodeTip
+  , encodePoint
+  , encodeTip
+  , unwrapCBORinCBOR
+  , wrapCBORinCBOR
+  )
 
 {-------------------------------------------------------------------------------
   NodeToNode
@@ -172,6 +184,48 @@ deriving newtype instance
 deriving newtype instance
   SerialiseNodeToNode blk (GenTxId blk) =>
   SerialiseNodeToNode blk (WrapGenTxId blk)
+
+instance ConvertRawHash blk => SerialiseNodeToNode blk (Point blk) where
+  encodeNodeToNode _ccfg _version = encodePoint $ encodeRawHash (Proxy @blk)
+  decodeNodeToNode _ccfg _version = decodePoint $ decodeRawHash (Proxy @blk)
+
+instance ConvertRawHash blk => SerialiseNodeToNode blk (Tip blk) where
+  encodeNodeToNode _ccfg _version = encodeTip $ encodeRawHash (Proxy @blk)
+  decodeNodeToNode _ccfg _version = decodeTip $ decodeRawHash (Proxy @blk)
+
+instance SerialiseNodeToNode blk PerasRoundNo where
+  encodeNodeToNode _ccfg _version = encode
+  decodeNodeToNode _ccfg _version = decode
+
+instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
+  -- Consistent with the 'Serialise' instance for 'PerasCert' defined in Ouroboros.Consensus.Block.SupportsPeras
+  encodeNodeToNode ccfg version PerasCert{..} =
+    encodeListLen 2
+      <> encodeNodeToNode ccfg version pcCertRound
+      <> encodeNodeToNode ccfg version pcCertBoostedBlock
+  decodeNodeToNode ccfg version = do
+    decodeListLenOf 2
+    pcCertRound <- decodeNodeToNode ccfg version
+    pcCertBoostedBlock <- decodeNodeToNode ccfg version
+    pure $ PerasCert pcCertRound pcCertBoostedBlock
+
+instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote blk) where
+  -- Consistent with the 'Serialise' instance for 'PerasVote' defined in Ouroboros.Consensus.Block.SupportsPeras
+  encodeNodeToNode ccfg version PerasVote{..} =
+    encodeListLen 3
+      <> encodeNodeToNode ccfg version pvVoteRound
+      <> encodeNodeToNode ccfg version pvVoteBlock
+      <> encodeNodeToNode ccfg version pvVoteVoterId
+  decodeNodeToNode ccfg version = do
+    decodeListLenOf 3
+    pvVoteRound <- decodeNodeToNode ccfg version
+    pvVoteBlock <- decodeNodeToNode ccfg version
+    pvVoteVoterId <- decodeNodeToNode ccfg version
+    pure $ PerasVote pvVoteRound pvVoteBlock pvVoteVoterId
+
+instance SerialiseNodeToNode blk PerasVoterId where
+  encodeNodeToNode _ccfg _version = KeyHash.toCBOR . unPerasVoterId
+  decodeNodeToNode _ccfg _version = PerasVoterId <$> KeyHash.fromCBOR
 
 deriving newtype instance
   SerialiseNodeToClient blk (GenTxId blk) =>
