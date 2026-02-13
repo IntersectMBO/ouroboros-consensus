@@ -1119,33 +1119,36 @@ chainSelection chainSelEnv rr chainDiffs =
     m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk), ReasonForSwitch' blk))
   go [] = return Nothing
   go ((candidate, reason) : candidates0) = do
-    mTentativeHeader <- setTentativeHeader
-    validateCandidate chainSelEnv rr candidate >>= \case
-      FullyValid validatedCandidate@(ValidatedChainDiff candidate' _) ->
-        -- The entire candidate is valid
-        assert (Diff.getTip candidate == Diff.getTip candidate') $
-          return $
-            Just (validatedCandidate, reason)
-      ValidPrefix candidate' -> do
-        whenJust mTentativeHeader clearTentativeHeader
-        -- Prefix of the candidate because it contained rejected blocks
-        -- (invalid blocks). Note that the
-        -- spec says go back to candidate selection,
-        -- because there might still be some candidates that contain the
-        -- same rejected block. To simplify the control flow, we do it
-        -- differently: instead of recomputing the candidates taking
-        -- rejected blocks into account, we just truncate the remaining
-        -- candidates that contain rejected blocks.
-        candidates1 <- truncateRejectedBlocks candidates0
-        -- Only include the prefix if it is still preferred over the current
-        -- chain. When the candidate is now empty because of the truncation,
-        -- it will be dropped here, as it will not be preferred over the
-        -- current chain.
-        let newReason = preferAnchoredCandidate bcfg weights curChain (Diff.getSuffix candidate')
-        let candidates2 = case newReason of
-              ShouldSwitch reason' -> (candidate', reason') : candidates1
-              ShouldNotSwitch{} -> candidates1
-        go (sortCandidates candidates2)
+    case NE.nonEmpty (AF.toOldestFirst $ getSuffix candidate) of
+      Nothing -> pure Nothing
+      Just neBlocks -> do
+        mTentativeHeader <- setTentativeHeader
+        validateCandidate chainSelEnv rr candidate neBlocks >>= \case
+          FullyValid validatedCandidate@(ValidatedChainDiff candidate' _) ->
+            -- The entire candidate is valid
+            assert (Diff.getTip candidate == Diff.getTip candidate') $
+              return $
+                Just (validatedCandidate, reason)
+          ValidPrefix candidate' -> do
+            whenJust mTentativeHeader clearTentativeHeader
+            -- Prefix of the candidate because it contained rejected blocks
+            -- (invalid blocks). Note that the
+            -- spec says go back to candidate selection,
+            -- because there might still be some candidates that contain the
+            -- same rejected block. To simplify the control flow, we do it
+            -- differently: instead of recomputing the candidates taking
+            -- rejected blocks into account, we just truncate the remaining
+            -- candidates that contain rejected blocks.
+            candidates1 <- truncateRejectedBlocks candidates0
+            -- Only include the prefix if it is still preferred over the current
+            -- chain. When the candidate is now empty because of the truncation,
+            -- it will be dropped here, as it will not be preferred over the
+            -- current chain.
+            let newReason = preferAnchoredCandidate bcfg weights curChain (Diff.getSuffix candidate')
+            let candidates2 = case newReason of
+                  ShouldSwitch reason' -> (candidate', reason') : candidates1
+                  ShouldNotSwitch{} -> candidates1
+            go (sortCandidates candidates2)
    where
     -- \| Set and return the tentative header, if applicable. Also return the
     -- new 'TentativeHeaderState' in case the corresponding block body turns
@@ -1258,9 +1261,11 @@ validateCandidate ::
   ChainSelEnv m blk ->
   ResourceRegistry m ->
   ChainDiff (Header blk) ->
+  -- | Invariant: This non-empty list of headers is the list of headers in the ChainDiff above
+  NonEmpty (Header blk) ->
   m (ValidationResult m blk)
-validateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
-  LedgerDB.validateFork lgrDB rr traceUpdate blockCache rollback newBlocks >>= \case
+validateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) neBlocks =
+  LedgerDB.validateFork lgrDB rr traceUpdate blockCache rollback neBlocks >>= \case
     ValidateExceededRollBack{} ->
       -- Impossible: we asked the LedgerDB to roll back past the immutable
       -- tip, which is impossible, since the candidates we construct must
@@ -1311,9 +1316,6 @@ validateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
     } = chainSelEnv
 
   traceUpdate = traceWith $ UpdateLedgerDbTraceEvent >$< validationTracer
-
-  newBlocks :: [Header blk]
-  newBlocks = AF.toOldestFirst suffix
 
   -- \| Record the invalid block in 'cdbInvalid' and change its fingerprint.
   addInvalidBlock :: ExtValidationError blk -> RealPoint blk -> m ()
