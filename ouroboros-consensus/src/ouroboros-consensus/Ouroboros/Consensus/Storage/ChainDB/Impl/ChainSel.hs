@@ -1126,9 +1126,9 @@ chainSelection chainSelEnv rr chainDiffs =
   go ((candidate, reason) : candidates0) = do
     case NE.nonEmpty (AF.toOldestFirst $ getSuffix candidate) of
       Nothing -> pure Nothing
-      Just neBlocks -> do
+      Just neHeaders -> do
         mTentativeHeader <- setTentativeHeader
-        validateCandidate chainSelEnv rr candidate neBlocks >>= \case
+        validateCandidate chainSelEnv rr candidate neHeaders >>= \case
           FullyValid validatedCandidate@(ValidatedChainDiff candidate' _) ->
             -- The entire candidate is valid
             assert (Diff.getTip candidate == Diff.getTip candidate') $
@@ -1269,8 +1269,8 @@ validateCandidate ::
   -- | Invariant: This non-empty list of headers is the list of headers in the ChainDiff above
   NonEmpty (Header blk) ->
   m (ValidationResult m blk)
-validateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) neBlocks =
-  LedgerDB.validateFork lgrDB rr traceUpdate blockCache rollback neBlocks >>= \case
+validateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) neHeaders =
+  LedgerDB.validateFork lgrDB rr traceUpdate blockCache rollback neHeaders >>= \case
     ValidateExceededRollBack{} ->
       -- Impossible: we asked the LedgerDB to roll back past the immutable
       -- tip, which is impossible, since the candidates we construct must

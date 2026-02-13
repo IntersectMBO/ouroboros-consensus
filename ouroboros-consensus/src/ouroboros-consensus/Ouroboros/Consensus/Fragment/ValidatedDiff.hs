@@ -12,7 +12,6 @@ module Ouroboros.Consensus.Fragment.ValidatedDiff
   ( ValidatedChainDiff (ValidatedChainDiff)
   , getChainDiff
   , getLedger
-  , new
 
     -- * Monadic
   , newM
@@ -48,21 +47,6 @@ pattern ValidatedChainDiff d l <- UnsafeValidatedChainDiff d l
 
 {-# COMPLETE ValidatedChainDiff #-}
 
--- | Create a 'ValidatedChainDiff'.
---
--- PRECONDITION:
---
--- > getTip chainDiff == ledgerTipPoint ledger
-new ::
-  forall b l mk.
-  (GetTip l, HasHeader b, HeaderHash l ~ HeaderHash b, HasCallStack) =>
-  ChainDiff b ->
-  l mk ->
-  ValidatedChainDiff b (l mk)
-new chainDiff ledger =
-  assertWithMsg (pointInvariant (getTip ledger) chainDiff) $
-    UnsafeValidatedChainDiff chainDiff ledger
-
 pointInvariant ::
   forall l b.
   (HeaderHash b ~ HeaderHash l, HasHeader b) =>
@@ -88,6 +72,11 @@ pointInvariant ledgerTip0 chainDiff = precondition
   Monadic
 -------------------------------------------------------------------------------}
 
+-- | Create a 'ValidatedChainDiff'.
+--
+-- PRECONDITION:
+--
+-- > getTip chainDiff == ledgerTipPoint ledger
 newM ::
   forall m b l.
   ( MonadSTM m

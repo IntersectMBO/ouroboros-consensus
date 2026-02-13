@@ -41,7 +41,6 @@ import Control.Applicative (Alternative (..))
 import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
 import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
 import Control.Monad (MonadPlus, when)
-import Control.Monad.Base
 import qualified Control.Monad.Class.MonadSTM.Internal as LazySTM
 import Control.Monad.Class.MonadSay
 import Control.Monad.Class.MonadTime

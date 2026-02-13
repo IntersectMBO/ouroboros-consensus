@@ -370,7 +370,6 @@ library
     these ^>=1.2,
     time,
     transformers,
-    transformers-base,
     typed-protocols ^>=1.2,
     vector ^>=0.13,
 
@@ -566,7 +565,6 @@ library unstable-consensus-testlib
     temporary,
     text,
     time,
-    transformers-base,
     tree-diff,
     utf8-string,
     vector,
@@ -725,7 +723,6 @@ test-suite consensus-test
     tasty-quickcheck,
     time,
     transformers,
-    transformers-base,
     tree-diff,
     typed-protocols:{examples, stateful, typed-protocols} ^>=1.2,
     unstable-consensus-testlib,

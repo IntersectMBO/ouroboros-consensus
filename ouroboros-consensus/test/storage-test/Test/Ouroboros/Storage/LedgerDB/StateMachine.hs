@@ -46,6 +46,7 @@ import Control.ResourceRegistry
 import Control.Tracer (Tracer (..))
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as L
+import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
@@ -615,13 +616,15 @@ openLedgerDB flavArgs env cfg fs rr = do
               (lgrHasFS args)
       let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
       openDBInternal args initDb snapManager stream replayGoal
-  withRegistry $ \reg -> do
-    vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
-    case vr of
-      ValidateSuccessful forker -> do
-        atomically (forkerCommit forker)
-        forkerClose forker
-      _ -> error "Couldn't restart the chain, failed to apply volatile blocks!"
+  case NE.nonEmpty volBlocks of
+    Nothing -> pure ()
+    Just volBlocks' -> withRegistry $ \reg -> do
+      vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (NE.map getHeader volBlocks')
+      case vr of
+        ValidateSuccessful forker -> do
+          atomically (forkerCommit forker)
+          forkerClose forker
+        _ -> error "Couldn't restart the chain, failed to apply volatile blocks!"
   pure (ldb, od, getNumOpenHandles)
 
 {-------------------------------------------------------------------------------
@@ -666,28 +669,31 @@ instance RunModel Model (StateT Environment IO) where
     Environment _ testInternals _ _ _ _ _ _ <- get
     lift $ takeSnapshotNOW testInternals TakeAtImmutableTip Nothing
     pure $ pure ()
-  perform _ (ValidateAndCommit n blks) _ = do
-    Environment ldb _ chainDb _ _ _ _ _ <- get
-    lift $ do
-      atomically $
-        modifyTVar (dbBlocks chainDb) $
-          repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) blks)
-      withRegistry $ \rr -> do
-        vr <- validateFork ldb rr (const $ pure ()) BlockCache.empty n (map getHeader blks)
-        case vr of
-          ValidateSuccessful forker -> do
-            atomically $
-              modifyTVar (dbChain chainDb) $
-                (reverse (map blockRealPoint blks) ++) . drop (fromIntegral n)
-            atomically (forkerCommit forker)
-            forkerClose forker
-            immTipPoint <- getTip <$> atomically (getImmutableTip ldb)
+  perform _ (ValidateAndCommit n blks0) _ =
+    case NE.nonEmpty blks0 of
+      Nothing -> pure $ pure ()
+      Just blks -> do
+        Environment ldb _ chainDb _ _ _ _ _ <- get
+        lift $ do
+          atomically $
+            modifyTVar (dbBlocks chainDb) $
+              repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) $ NE.toList blks)
+          withRegistry $ \rr -> do
+            vr <- validateFork ldb rr (const $ pure ()) BlockCache.empty n (NE.map getHeader blks)
+            case vr of
+              ValidateSuccessful forker -> do
+                atomically $
+                  modifyTVar (dbChain chainDb) $
+                    (reverse (map blockRealPoint $ NE.toList blks) ++) . drop (fromIntegral n)
+                atomically (forkerCommit forker)
+                forkerClose forker
+                immTipPoint <- getTip <$> atomically (getImmutableTip ldb)
 
-            garbageCollect ldb . fromWithOrigin 0 $ pointSlot immTipPoint
-            atomically $ writeTVar (dbImmTip chainDb) $ castPoint immTipPoint
-            pure $ pure ()
-          ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
-          ValidateLedgerError (AnnLedgerError forker _ err) -> forkerClose forker >> error ("Unexpected ledger error" <> show err)
+                garbageCollect ldb . fromWithOrigin 0 $ pointSlot immTipPoint
+                atomically $ writeTVar (dbImmTip chainDb) $ castPoint immTipPoint
+                pure $ pure ()
+              ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
+              ValidateLedgerError (AnnLedgerError p _ err) -> error ("Unexpected ledger error" <> show err <> " on point " <> show p)
   perform state@(Model _ _ secParam) (DropAndRestore n salt) lk = do
     Environment _ testInternals chainDb _ _ _ _ _ <- get
     lift $ do
