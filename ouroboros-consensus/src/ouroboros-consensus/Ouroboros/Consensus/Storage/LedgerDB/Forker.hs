@@ -391,14 +391,17 @@ switch forkerAtFromTip rr evs cfg numRollbacks trace newBlocks doResolve = do
     Right fo -> do
       let start = PushStart . toRealPoint . NE.head $ newBlocks
           goal = PushGoal . toRealPoint . NE.last $ newBlocks
-      applyThenPushMany
-        (trace . StartedPushingBlockToTheLedgerDb start goal)
-        evs
-        cfg
-        (NE.toList newBlocks)
-        fo
-        doResolve
-      pure $ Right $ Right fo
+      ePush <-
+        applyThenPushMany
+          (trace . StartedPushingBlockToTheLedgerDb start goal)
+          evs
+          cfg
+          (NE.toList newBlocks)
+          fo
+          doResolve
+      case ePush of
+        Left err -> pure $ Left err
+        Right () -> pure $ Right $ Right fo
 
 {-------------------------------------------------------------------------------
   Apply blocks
@@ -497,12 +500,16 @@ applyThenPushMany ::
   [Ap m l blk] ->
   Forker m l ->
   ResolveBlock m blk ->
-  m ()
-applyThenPushMany trace evs cfg aps fo doResolve = mapM_ pushAndTrace aps
+  m (Either (AnnLedgerError l blk) ())
+applyThenPushMany trace evs cfg aps fo doResolveBlock = pushAndTrace aps
  where
-  pushAndTrace ap = do
+  pushAndTrace [] = pure $ Right ()
+  pushAndTrace (ap : aps') = do
     trace $ Pushing . toRealPoint $ ap
-    applyThenPush evs cfg ap fo doResolve
+    res <- applyThenPush evs cfg ap fo doResolveBlock
+    case res of
+      Left err -> pure (Left err)
+      Right () -> pushAndTrace aps'
 
 {-------------------------------------------------------------------------------
   Finding blocks
