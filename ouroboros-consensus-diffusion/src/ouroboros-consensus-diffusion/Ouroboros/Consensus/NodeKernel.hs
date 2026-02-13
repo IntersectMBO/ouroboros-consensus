@@ -156,11 +156,15 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Data.Map (Map)
 import qualified Data.Map as Map
-import LeiosDemoDb (LeiosDbHandle, leiosDbInsertEbBody, leiosDbInsertEbPoint, leiosDbInsertTxs)
+import LeiosDemoDb
+  ( LeiosDbHandle (leiosDbScanEbPoints)
+  , leiosDbInsertEbBody
+  , leiosDbInsertEbPoint
+  , leiosDbInsertTxs
+  )
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
   ( ForgedLeiosEb
-  , LeiosEbBodies
   , LeiosOutstanding
   , LeiosPeerVars
   , TraceLeiosKernel (..)
@@ -216,11 +220,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
     -- See 'LeiosPeerVars' for the write patterns
     leiosDB :: LeiosDbHandle m
   , getLeiosPeersVars :: MVar m (Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
-  , -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
-    -- eviction)
-    getLeiosEbBodies :: MVar m LeiosEbBodies
-  , -- written to by the fetch logic, by the LeiosNotify&LeiosFetch, and by LeiosCopier
-    -- clients (TODO and by eviction)
+  , -- Written to by the fetch logic, by the LeiosNotify&LeiosFetch, and by LeiosCopier
+    -- clients (TODO and by eviction).
+    -- Contains both EB-level state (acquired/missing bodies) and TX-level state.
     getLeiosOutstanding :: MVar m (LeiosOutstanding (ConnectionId addrNTN))
   , getLeiosReady :: MVar m ()
   -- ^ Leios fetch logic 'MVar.takeMVar's before it runs
@@ -404,7 +406,6 @@ initNodeKernel
           blockFetchConfiguration
 
     getLeiosPeersVars <- MVar.newMVar Map.empty
-    getLeiosEbBodies <- MVar.newMVar Leios.emptyLeiosEbBodies -- TODO init from DB
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
     getLeiosWriteLock <- MVar.newMVar ()
@@ -416,12 +417,11 @@ initNodeKernel
       iterationStart <- getMonotonicTime
       leiosPeersVars <- MVar.readMVar getLeiosPeersVars
       offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
-      ebBodies <- MVar.readMVar getLeiosEbBodies
       newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
         let (!outstanding', newDecisions) =
               Leios.leiosFetchLogicIteration
                 Leios.demoLeiosFetchStaticEnv
-                (ebBodies, offerings)
+                offerings
                 outstanding
         pure (outstanding', newDecisions)
       let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
@@ -458,7 +458,6 @@ initNodeKernel
         , getBlockchainTime = btime
         , leiosDB
         , getLeiosPeersVars
-        , getLeiosEbBodies
         , getLeiosOutstanding
         , getLeiosReady
         , getLeiosWriteLock

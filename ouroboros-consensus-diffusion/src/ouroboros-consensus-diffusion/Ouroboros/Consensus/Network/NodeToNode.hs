@@ -346,14 +346,14 @@ mkHandlers
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     let MkLeiosPoint{pointEbHash = ebHash} = point
-                    MVar.modifyMVar_ getLeiosEbBodies $ \ebBodies ->
+                    MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
                       pure $
-                        if Set.member ebHash (Leios.acquiredEbBodies ebBodies)
-                          then ebBodies
+                        if Set.member ebHash (Leios.acquiredEbBodies outstanding)
+                          then outstanding
                           else
-                            ebBodies
+                            outstanding
                               { Leios.missingEbBodies =
-                                  Map.insert point ebBytesSize (Leios.missingEbBodies ebBodies)
+                                  Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
                               }
                     peerVars <- do
                       peersVars <- MVar.readMVar getLeiosPeersVars
@@ -402,7 +402,7 @@ mkHandlers
                 (Node.leiosKernelTracer tracers)
                 (leiosPeerTracer peer)
                 ((== Terminate) <$> controlMessageSTM)
-                (getLeiosWriteLock, getLeiosEbBodies, getLeiosOutstanding, getLeiosReady)
+                (getLeiosWriteLock, getLeiosOutstanding, getLeiosReady)
                 leiosDB
                 (Leios.MkPeerId peer)
                 reqVar
@@ -411,7 +411,6 @@ mkHandlers
             Leios.newLeiosFetchContext
               getLeiosWriteLock
               leiosDB
-              (MVar.readMVar getLeiosEbBodies)
           pure $
             leiosFetchServerPeer
               (pure $ Leios.leiosFetchHandler (leiosPeerTracer peer) leiosFetchContext)
@@ -428,7 +427,6 @@ mkHandlers
     NodeKernel
       { leiosDB
       , getLeiosPeersVars
-      , getLeiosEbBodies
       , getLeiosOutstanding
       , getLeiosReady
       , getLeiosWriteLock

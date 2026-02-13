@@ -172,84 +172,81 @@ newLeiosPeerVars = do
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
   pure MkLeiosPeerVars{offerings, requestsToSend}
 
--- REVIEW: Is the acquired/missing here redundant to the maps in LeiosOutstanding?
-data LeiosEbBodies = MkLeiosEbBodies
-  { acquiredEbBodies :: !(Set EbHash)
-  , missingEbBodies :: !(Map LeiosPoint BytesSize)
-  , ebPoints :: !(IntMap {- SlotNo -} EbHash)
-  }
-
-emptyLeiosEbBodies :: LeiosEbBodies
-emptyLeiosEbBodies =
-  MkLeiosEbBodies
-    Set.empty
-    Map.empty
-    IntMap.empty
-
-prettyLeiosEbBodies :: LeiosEbBodies -> String
-prettyLeiosEbBodies x =
-  unwords
-    [ "LeiosEbBodies:"
-    , "acquiredEbBodies = " ++ show (Set.size acquiredEbBodies)
-    , "missingEbBodies = " ++ show (Map.size missingEbBodies)
-    ]
- where
-  MkLeiosEbBodies
-    { acquiredEbBodies
-    , missingEbBodies
-    } = x
-
 -- | Main data structure used in the Leios fetching logic.
+--
+-- Tracks both EB-level state (what EBs we have/need) and TX-level state
+-- (what TXs we need for each EB), along with request tracking for bandwidth
+-- management.
 data LeiosOutstanding pid = MkLeiosOutstanding
-  { requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
+  { -- EB-level tracking
+    acquiredEbBodies :: !(Set EbHash)
+    -- ^ EB bodies we've successfully received/stored
+  , missingEbBodies :: !(Map LeiosPoint BytesSize)
+    -- ^ EB bodies still needed to be fetched (indexed by point and size)
+  , ebPoints :: !(IntMap {- SlotNo -} EbHash)
+    -- ^ Mapping of slot numbers to EB hashes (for scanning)
+    -- Request tracking
+  , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
+    -- ^ Which peers we've requested each EB from
   , requestedTxPeers :: !(Map TxHash (Set (PeerId pid)))
+    -- ^ Which peers we've requested each TX from
   , requestedBytesSizePerPeer :: !(Map (PeerId pid) BytesSize)
+    -- ^ Running total of bytes requested from each peer
   , requestedBytesSize :: !BytesSize
+    -- ^ Total bytes requested across all peers
+    -- TX-level tracking
   , missingEbTxs :: !(Map LeiosPoint (IntMap (TxHash, BytesSize)))
-  -- ^ The txs that still need to be sourced
-  --
-  -- * A @MsgLeiosBlock@ inserts into 'missingEbTxs' if that EB has never
-  --   been received before.
-  --
-  -- * Every @MsgLeiosBlockTxs@ deletes from 'missingEbTxs', but that delete
-  --   will be a no-op for all except the first to arrive carrying this EbTx.
-  --
-  -- TODO this is far too big for the heap
-  , -- TODO this is far too big for the heap
+    -- ^ The txs that still need to be sourced
     --
-    -- inverse of missingEbTxs
-    txOffsetss :: !(Map TxHash (Map EbHash Int))
+    -- * A @MsgLeiosBlock@ inserts into 'missingEbTxs' if that EB has never
+    --   been received before.
+    --
+    -- * Every @MsgLeiosBlockTxs@ deletes from 'missingEbTxs', but that delete
+    --   will be a no-op for all except the first to arrive carrying this EbTx.
+    --
+    -- TODO this is far too big for the heap
+  , txOffsetss :: !(Map TxHash (Map EbHash Int))
+    -- ^ Inverse of missingEbTxs - for each TX, which EBs (and offsets) need it
+    --
+    -- TODO this is far too big for the heap
   , blockingPerEb :: !(Map LeiosPoint Int)
-  -- ^ How many txs of each EB are not yet in the @txs@ table
-  --
-  -- These missing txs are blocking the node from sending @MsgLeiosBlockTxsOffer@
-  -- to its downstream peers.
-  --
-  -- It's different from 'missingEbTxs' in two ways.
-  --
-  -- * The heap footprint of 'blockingPerEb' doesn't scale with the number of
-  --   EbTxs.
-  --
-  -- * 'blockingPerEb' is only decremented when txs are actually inserted
-  --   into the DB (via @MsgLeiosBlockTxs@ handling).
+    -- ^ How many txs of each EB are not yet in the @txs@ table
+    --
+    -- These missing txs are blocking the node from sending @MsgLeiosBlockTxsOffer@
+    -- to its downstream peers.
+    --
+    -- It's different from 'missingEbTxs' in two ways.
+    --
+    -- * The heap footprint of 'blockingPerEb' doesn't scale with the number of
+    --   EbTxs.
+    --
+    -- * 'blockingPerEb' is only decremented when txs are actually inserted
+    --   into the DB (via @MsgLeiosBlockTxs@ handling).
   }
 
 emptyLeiosOutstanding :: LeiosOutstanding pid
 emptyLeiosOutstanding =
   MkLeiosOutstanding
-    Map.empty
-    Map.empty
-    Map.empty
-    0
-    Map.empty
-    Map.empty
-    Map.empty
+    { acquiredEbBodies = Set.empty
+    , missingEbBodies = Map.empty
+    , ebPoints = IntMap.empty
+    , requestedEbPeers = Map.empty
+    , requestedTxPeers = Map.empty
+    , requestedBytesSizePerPeer = Map.empty
+    , requestedBytesSize = 0
+    , missingEbTxs = Map.empty
+    , txOffsetss = Map.empty
+    , blockingPerEb = Map.empty
+    }
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
   unlines $
     map ("    [leios] " ++) $
-      [ "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
+      [ "acquiredEbBodies = " ++ show (Set.size acquiredEbBodies)
+      , "missingEbBodies = " ++ show (Map.size missingEbBodies)
+      , "ebPoints = " ++ show (IntMap.size ebPoints)
+      , "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
       , "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
       , "requestedBytesSize = " ++ show requestedBytesSize
@@ -261,7 +258,10 @@ prettyLeiosOutstanding x =
       ]
  where
   MkLeiosOutstanding
-    { requestedEbPeers
+    { acquiredEbBodies
+    , missingEbBodies
+    , ebPoints
+    , requestedEbPeers
     , requestedTxPeers
     , requestedBytesSizePerPeer
     , requestedBytesSize
