@@ -147,15 +147,13 @@ implMkLedgerDb ::
   forall m l blk.
   ( IOLike m
   , HasCallStack
-  , IsLedger l
-  , l ~ ExtLedgerState blk
   , StandardHash l
-  , HasLedgerTables l
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
+  , ApplyBlock l blk
   ) =>
   LedgerDBHandle m l blk ->
-  SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
+  SnapshotManager m m blk (StateRef m l) ->
   (LedgerDB m l blk, TestInternals m l blk)
 implMkLedgerDb h snapManager =
   ( LedgerDB
@@ -175,14 +173,16 @@ implMkLedgerDb h snapManager =
   )
 
 mkInternals ::
-  forall m blk.
+  forall m l blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , ApplyBlock (ExtLedgerState blk) blk
+  , StandardHash l
+  , ApplyBlock l blk
   ) =>
-  LedgerDBHandle m (ExtLedgerState blk) blk ->
-  SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
-  TestInternals' m blk
+  LedgerDBHandle m l blk ->
+  SnapshotManager m m blk (StateRef m l) ->
+  TestInternals m l blk
 mkInternals h snapManager =
   TestInternals
     { takeSnapshotNOW = \whereTo suff -> getEnv h $ \env -> do
@@ -231,7 +231,7 @@ mkInternals h snapManager =
         pure $ 1 + maxRollback l
     }
  where
-  pruneLedgerSeq :: LedgerDBEnv m (ExtLedgerState blk) blk -> m ()
+  pruneLedgerSeq :: LedgerDBEnv m l blk -> m ()
   pruneLedgerSeq env =
     Monad.join $ atomically $ stateTVar (ldbSeq env) $ pruneToImmTipOnly
 
@@ -295,9 +295,10 @@ implGetHeaderStateHistory env = do
 implValidate ::
   forall m l blk.
   ( IOLike m
-  , LedgerSupportsProtocol blk
   , HasCallStack
-  , l ~ ExtLedgerState blk
+  , ApplyBlock l blk
+  , StandardHash l
+  , LedgerSupportsProtocol blk
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
@@ -306,12 +307,12 @@ implValidate ::
   BlockCache blk ->
   Word64 ->
   NonEmpty (Header blk) ->
-  m (ValidateResult m (ExtLedgerState blk) blk)
+  m (ValidateResult m l blk)
 implValidate h ldbEnv rr tr cache rollbacks hdrs =
   validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
     ValidateArgs
       (ldbResolveBlock ldbEnv)
-      (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
+      (ledgerDbCfg $ ldbCfg ldbEnv)
       ( \l -> do
           prev <- readTVar (ldbPrevApplied ldbEnv)
           writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
@@ -343,11 +344,10 @@ implGarbageCollect env slotNo = do
 
 implTryTakeSnapshot ::
   forall m l blk.
-  ( l ~ ExtLedgerState blk
-  , IOLike m
+  ( IOLike m
   , GetTip l
   ) =>
-  SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
+  SnapshotManager m m blk (StateRef m l) ->
   LedgerDBEnv m l blk ->
   m () ->
   Maybe (Time, Time) ->

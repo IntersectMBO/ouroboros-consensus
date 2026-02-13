@@ -11,6 +11,11 @@
 
 -- | Operations involving chain selection: the initial chain selection and
 -- adding a block.
+--
+-- NOTE: Chain selection runs using ExtLedgerState always. The only reason I
+-- could find for it after digging a lot is that we want to trace @newTipEpoch@
+-- and @newTipSlotInEpoch@ and for that we need a @Summary@ which needs the
+-- header state that only the ExtLedgerState contains.
 module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   ( addBlockAsync
   , addPerasCertAsync

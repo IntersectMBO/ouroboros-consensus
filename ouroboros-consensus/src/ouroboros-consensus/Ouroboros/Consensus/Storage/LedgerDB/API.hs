@@ -250,7 +250,6 @@ data LedgerDB m l blk = LedgerDB
   --
   -- We pass in the producer/consumer registry.
   , validateFork ::
-      l ~ ExtLedgerState blk =>
       ResourceRegistry m ->
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
@@ -271,7 +270,6 @@ data LedgerDB m l blk = LedgerDB
   --
   --  * The set of previously applied points.
   , tryTakeSnapshot ::
-      l ~ ExtLedgerState blk =>
       m () ->
       Maybe (Time, Time) ->
       Word64 ->
