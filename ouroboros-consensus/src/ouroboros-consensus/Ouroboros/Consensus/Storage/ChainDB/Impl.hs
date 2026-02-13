@@ -58,7 +58,6 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
@@ -185,26 +184,18 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    chain <- withRegistry $ \rr -> do
-      chainAndLedger <-
-        ChainSel.initialChainSelection
-          immutableDB
-          volatileDB
-          lgrDB
-          rr
-          initChainSelTracer
-          (Args.cdbsTopLevelConfig cdbSpecificArgs)
-          varInvalid
-          (void initialLoE)
-          (forgetFingerprint initialWeights)
-      traceWith initChainSelTracer InitialChainSelected
-
-      let chain = VF.validatedFragment chainAndLedger
-          ledger = VF.validatedLedger chainAndLedger
-
-      atomically $ LedgerDB.forkerCommit ledger
-      LedgerDB.forkerClose ledger
-      pure chain
+    chain <- withRegistry $ \rr ->
+      ChainSel.initialChainSelection
+        immutableDB
+        volatileDB
+        lgrDB
+        rr
+        initChainSelTracer
+        (Args.cdbsTopLevelConfig cdbSpecificArgs)
+        varInvalid
+        (void initialLoE)
+        (forgetFingerprint initialWeights)
+    traceWith initChainSelTracer InitialChainSelected
     LedgerDB.tryFlush lgrDB
 
     curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
