@@ -147,7 +147,7 @@ countChunks (ChunkNo a) (ChunkNo b) = if a >= b then a - b else b - a
 chunksBetween :: ChunkNo -> ChunkNo -> [ChunkNo]
 chunksBetween (ChunkNo a) (ChunkNo b) =
   map ChunkNo $
-    if a >= b then [a .. b] else [b .. a]
+    if a >= b then [b .. a] else [a .. b]
 
 -- | Translate 'EpochNo' to 'ChunkNo'
 --
