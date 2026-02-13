@@ -55,11 +55,12 @@ if impl (ghc >= 9.10)
     , regression-simple:base
 
 -- Points to https://github.com/IntersectMBO/cardano-ledger/pull/5573
+
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: 0544a0dc52c5cc0c522e07fab6ca61aada1349bc
-  --sha256: sha256-qP1osxr+f5/ypnGMTSrEtUDSg5S4y7IBwg8BLWWMGT8=
+  tag: ad13597ca90a42333f3b2f47609de85d272486c3
+  --sha256: sha256-wJJKIGIoMgTJwd3yEHs90SG1PoSXzQmk/Aa/N2iCzr8=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
@@ -88,8 +89,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: 92bcc0f6e4db68bd5a6026d5c81d18e418ae44b4
-  --sha256: sha256-yzqbtc3yvWXjAi8MVe+Gu7rHP3SrZ19d4ZqGJvf0SkY=
+  tag: f460b6659efc54b4f7a95722b33cd1d933f67568
+  --sha256: sha256-YqkDvnHp42Sp/15kr6tZ9s4/ipX+nT78Ry2RLnvbnEw=
   subdir:
     ouroboros-network
     cardano-diffusion
@@ -114,3 +115,12 @@ source-repository-package
   subdir:
     plutus-core
     plutus-ledger-api
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-base.git
+  --sha256: sha256-13DXeYP6hmmC3NQa9hevhalScal+eO9Pw/dnYqo7nC0=
+  tag: c3169a9fc24f702fa4b3ab1b75d47ffff6a42067
+  subdir:
+    cardano-binary
+    cardano-slotting
