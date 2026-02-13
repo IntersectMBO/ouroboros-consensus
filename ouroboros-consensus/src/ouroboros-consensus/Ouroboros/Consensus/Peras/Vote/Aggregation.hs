@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Peras.Vote.Aggregation
   ) where
 
 import Cardano.Prelude (fromMaybe)
+import Control.Exception (assert)
 import Data.Functor.Compose (Compose (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -100,81 +101,79 @@ updatePerasRoundVoteState ::
   PerasCfg blk ->
   PerasRoundVoteState blk ->
   Either (UpdateRoundVoteStateError blk) (PerasRoundVoteState blk)
-updatePerasRoundVoteState vote _ roundState
-  | getPerasVoteRound vote /= getPerasVoteRound roundState =
-      error "updatePerasRoundVoteState: vote round does not match aggregate round"
-updatePerasRoundVoteState vote cfg roundState = do
-  case roundState of
-    -- Quorum not yet reached
-    PerasRoundVoteStateQuorumNotReached{prvsCandidateStates} -> do
-      let oldCandidateState =
-            Map.findWithDefault
-              (freshCandidateVoteState (getPerasVoteTarget vote))
-              (getPerasVoteBlock vote)
-              prvsCandidateStates
-      candidateOrWinnerState <-
-        updateCandidateVoteState cfg vote oldCandidateState
-          `onErr` \err ->
-            RoundVoteStateForgingCertError err
-      case candidateOrWinnerState of
-        RemainedCandidate newCandidateState -> do
-          -- Quorum still not reached for this round
-          let prvsCandidateStates' =
-                Map.insert
-                  (getPerasVoteBlock vote)
-                  newCandidateState
-                  prvsCandidateStates
-          pure $
-            PerasRoundVoteStateQuorumNotReached
-              { prvsRoundNo = prvsRoundNo roundState
-              , prvsCandidateStates = prvsCandidateStates'
-              }
-        BecameWinner winnerState -> do
-          -- Quorum has been reached for the first time here for this round
-          let winnerPoint =
-                getPerasVoteBlock winnerState
-              loserStates =
-                candidateToLoser <$> Map.delete winnerPoint prvsCandidateStates
-          pure $
-            PerasRoundVoteStateQuorumReachedAlready
-              { prvsRoundNo = prvsRoundNo roundState
-              , prvsExcessVotes = 0
-              , prvsLoserStates = loserStates
-              , prvsWinnerState = winnerState
-              }
+updatePerasRoundVoteState vote cfg roundState =
+  assert (getPerasVoteRound vote /= getPerasVoteRound roundState) $ do
+    case roundState of
+      -- Quorum not yet reached
+      PerasRoundVoteStateQuorumNotReached{prvsCandidateStates} -> do
+        let oldCandidateState =
+              Map.findWithDefault
+                (freshCandidateVoteState (getPerasVoteTarget vote))
+                (getPerasVoteBlock vote)
+                prvsCandidateStates
+        candidateOrWinnerState <-
+          updateCandidateVoteState cfg vote oldCandidateState
+            `onErr` \err ->
+              RoundVoteStateForgingCertError err
+        case candidateOrWinnerState of
+          RemainedCandidate newCandidateState -> do
+            -- Quorum still not reached for this round
+            let prvsCandidateStates' =
+                  Map.insert
+                    (getPerasVoteBlock vote)
+                    newCandidateState
+                    prvsCandidateStates
+            pure $
+              PerasRoundVoteStateQuorumNotReached
+                { prvsRoundNo = prvsRoundNo roundState
+                , prvsCandidateStates = prvsCandidateStates'
+                }
+          BecameWinner winnerState -> do
+            -- Quorum has been reached for the first time here for this round
+            let winnerPoint =
+                  getPerasVoteBlock winnerState
+                loserStates =
+                  candidateToLoser <$> Map.delete winnerPoint prvsCandidateStates
+            pure $
+              PerasRoundVoteStateQuorumReachedAlready
+                { prvsRoundNo = prvsRoundNo roundState
+                , prvsExcessVotes = 0
+                , prvsLoserStates = loserStates
+                , prvsWinnerState = winnerState
+                }
 
-    -- Quorum already reached
-    state@PerasRoundVoteStateQuorumReachedAlready{prvsLoserStates, prvsWinnerState} -> do
-      let votePoint =
-            getPerasVoteBlock vote
-          winnerPoint =
-            getPerasVoteBlock prvsWinnerState
+      -- Quorum already reached
+      state@PerasRoundVoteStateQuorumReachedAlready{prvsLoserStates, prvsWinnerState} -> do
+        let votePoint =
+              getPerasVoteBlock vote
+            winnerPoint =
+              getPerasVoteBlock prvsWinnerState
 
-      if votePoint == winnerPoint
-        -- The vote ratifies the winner => update winner state
-        then do
-          let winnerState' = updateWinnerVoteState vote prvsWinnerState
-          pure $
-            state
-              { prvsExcessVotes = prvsExcessVotes state + 1
-              , prvsWinnerState = winnerState'
-              }
+        if votePoint == winnerPoint
+          -- The vote ratifies the winner => update winner state
+          then do
+            let winnerState' = updateWinnerVoteState vote prvsWinnerState
+            pure $
+              state
+                { prvsExcessVotes = prvsExcessVotes state + 1
+                , prvsWinnerState = winnerState'
+                }
 
-        -- The vote is for a loser => update loser state
-        else do
-          let existingOrFreshLoserVoteState =
-                fromMaybe (freshLoserVoteState (getPerasVoteTarget vote))
-              updateMaybeLoserVoteState mState =
-                fmap Just $
-                  updateLoserVoteState cfg vote (existingOrFreshLoserVoteState mState)
-                    `onErr` \err ->
-                      RoundVoteStateLoserAboveQuorum prvsWinnerState err
-          prvsLoserStates' <- Map.alterF updateMaybeLoserVoteState votePoint prvsLoserStates
-          pure $
-            state
-              { prvsExcessVotes = prvsExcessVotes state + 1
-              , prvsLoserStates = prvsLoserStates'
-              }
+          -- The vote is for a loser => update loser state
+          else do
+            let existingOrFreshLoserVoteState =
+                  fromMaybe (freshLoserVoteState (getPerasVoteTarget vote))
+                updateMaybeLoserVoteState mState =
+                  fmap Just $
+                    updateLoserVoteState cfg vote (existingOrFreshLoserVoteState mState)
+                      `onErr` \err ->
+                        RoundVoteStateLoserAboveQuorum prvsWinnerState err
+            prvsLoserStates' <- Map.alterF updateMaybeLoserVoteState votePoint prvsLoserStates
+            pure $
+              state
+                { prvsExcessVotes = prvsExcessVotes state + 1
+                , prvsLoserStates = prvsLoserStates'
+                }
 
 -- | Updates the round vote states map with the given vote.
 --
@@ -304,19 +303,18 @@ updateTargetVoteTally ::
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteTally blk ->
   PerasTargetVoteTally blk
-updateTargetVoteTally vote tally
-  | getPerasVoteTarget vote /= ptvtTarget tally =
-      error "updateTargetVoteTally: vote target does not match tally target"
 updateTargetVoteTally
   vote
   ptvt@PerasTargetVoteTally
     { ptvtVotes
+    , ptvtTarget
     , ptvtTotalStake
     } =
-    ptvt
-      { ptvtVotes = pvaVotes'
-      , ptvtTotalStake = pvaTotalStake'
-      }
+    assert (getPerasVoteTarget vote /= ptvtTarget) $ do
+      ptvt
+        { ptvtVotes = pvaVotes'
+        , ptvtTotalStake = pvaTotalStake'
+        }
    where
     swapVote =
       Map.insertLookupWithKey
