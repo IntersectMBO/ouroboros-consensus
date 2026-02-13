@@ -360,7 +360,7 @@ library
     time,
     transformers,
     transformers-base,
-    typed-protocols ^>=1.1,
+    typed-protocols ^>=1.2,
     vector ^>=0.13,
 
   x-docspec-extra-packages:
@@ -634,6 +634,7 @@ library unstable-tutorials
     base,
     cardano-ledger-core,
     containers,
+    deepseq,
     hashable,
     mtl,
     nothunks,
@@ -714,7 +715,7 @@ test-suite consensus-test
     transformers,
     transformers-base,
     tree-diff,
-    typed-protocols:{examples, stateful, typed-protocols} ^>=1.1,
+    typed-protocols:{examples, stateful, typed-protocols} ^>=1.2,
     unstable-consensus-testlib,
     unstable-mock-block,
 
@@ -807,6 +808,7 @@ test-suite storage-test
     constraints,
     containers,
     contra-tracer,
+    deepseq,
     diff-containers,
     directory,
     filepath,

@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 module Ouroboros.Consensus.Node.ExitPolicy
   ( NodeToNodeInitiatorResult (..)
   , returnPolicy
@@ -6,6 +9,8 @@ module Ouroboros.Consensus.Node.ExitPolicy
   , ReturnPolicy
   ) where
 
+import Control.DeepSeq (NFData)
+import GHC.Generics
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import Ouroboros.Network.ExitPolicy
 
@@ -14,6 +19,7 @@ import Ouroboros.Network.ExitPolicy
 data NodeToNodeInitiatorResult
   = ChainSyncInitiatorResult !CSClient.ChainSyncClientResult
   | NoInitiatorResult
+  deriving (Generic, NFData)
 
 returnPolicy :: ReturnPolicy NodeToNodeInitiatorResult
 returnPolicy NoInitiatorResult = RepromoteDelay 10
