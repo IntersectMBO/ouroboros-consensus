@@ -98,7 +98,6 @@ library
     Ouroboros.Consensus.Config.SupportsNode
     Ouroboros.Consensus.Forecast
     Ouroboros.Consensus.Fragment.Diff
-    Ouroboros.Consensus.Fragment.Validated
     Ouroboros.Consensus.Fragment.ValidatedDiff
     Ouroboros.Consensus.Genesis.Governor
     Ouroboros.Consensus.HardFork.Abstract

@@ -13,6 +13,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -346,7 +347,7 @@ validate evs args = do
     } = args
 
   rewrap ::
-    Either (AnnLedgerError' n blk) (Either GetForkerError (Forker' n blk)) ->
+    Either (AnnLedgerError' blk) (Either GetForkerError (Forker' n blk)) ->
     ValidateResult' n blk
   rewrap (Left e) = ValidateLedgerError e
   rewrap (Right (Left (PointTooOld (Just e)))) = ValidateExceededRollBack e
@@ -363,7 +364,7 @@ validate evs args = do
         l
         blk
         ( ResolvesBlocks n blk
-        , ThrowsLedgerError bn n l blk
+        , ThrowsLedgerError n l blk
         )
     ]
   mkAps prev =
@@ -443,7 +444,7 @@ newtype ValidLedgerState l = ValidLedgerState {getValidLedgerState :: l}
 type Ap :: (Type -> Type) -> (Type -> Type) -> LedgerStateKind -> Type -> Constraint -> Type
 data Ap bm m l blk c where
   ReapplyVal :: blk -> Ap bm m l blk ()
-  ApplyVal :: blk -> Ap bm m l blk (ThrowsLedgerError bm m l blk)
+  ApplyVal :: blk -> Ap bm m l blk (ThrowsLedgerError m l blk)
   ReapplyRef :: RealPoint blk -> Ap bm m l blk (ResolvesBlocks m blk)
   ApplyRef ::
     RealPoint blk ->
@@ -453,7 +454,7 @@ data Ap bm m l blk c where
       l
       blk
       ( ResolvesBlocks m blk
-      , ThrowsLedgerError bm m l blk
+      , ThrowsLedgerError m l blk
       )
   -- | 'Weaken' increases the constraint on the monad @m@.
   --
@@ -485,7 +486,7 @@ applyBlock evs cfg ap fo = case ap of
     ValidLedgerState
       <$> withValues
         b
-        ( either (throwLedgerError fo (blockRealPoint b)) return
+        ( either (throwLedgerError (Proxy @l) (blockRealPoint b)) return
             . runExcept
             . tickThenApply evs cfg b
         )
@@ -541,24 +542,24 @@ applyThenPushMany trace evs cfg aps fo = mapM_ pushAndTrace aps
   Annotated ledger errors
 -------------------------------------------------------------------------------}
 
-class Monad m => ThrowsLedgerError bm m l blk where
-  throwLedgerError :: Forker bm l -> RealPoint blk -> LedgerErr l -> m a
+class Monad m => ThrowsLedgerError m l blk where
+  throwLedgerError :: Proxy l -> RealPoint blk -> LedgerErr l -> m a
 
-instance Monad m => ThrowsLedgerError bm (ExceptT (AnnLedgerError bm l blk) m) l blk where
-  throwLedgerError f l r = throwError $ AnnLedgerError f l r
+instance Monad m => ThrowsLedgerError (ExceptT (AnnLedgerError l blk) m) l blk where
+  throwLedgerError _ l r = throwError $ AnnLedgerError l r
 
 defaultThrowLedgerErrors ::
-  ExceptT (AnnLedgerError bm l blk) m a ->
-  m (Either (AnnLedgerError bm l blk) a)
+  ExceptT (AnnLedgerError l blk) m a ->
+  m (Either (AnnLedgerError l blk) a)
 defaultThrowLedgerErrors = runExceptT
 
 defaultResolveWithErrors ::
   ResolveBlock m blk ->
   ExceptT
-    (AnnLedgerError bm l blk)
+    (AnnLedgerError l blk)
     (ReaderT (ResolveBlock m blk) m)
     a ->
-  m (Either (AnnLedgerError bm l blk) a)
+  m (Either (AnnLedgerError l blk) a)
 defaultResolveWithErrors resolve =
   defaultResolveBlocks resolve
     . defaultThrowLedgerErrors
@@ -609,7 +610,7 @@ instance
 -- | When validating a sequence of blocks, these are the possible outcomes.
 data ValidateResult m l blk
   = ValidateSuccessful (Forker m l)
-  | ValidateLedgerError (AnnLedgerError m l blk)
+  | ValidateLedgerError (AnnLedgerError l blk)
   | ValidateExceededRollBack ExceededRollback
 
 type ValidateResult' m blk = ValidateResult m (ExtLedgerState blk) blk
@@ -619,16 +620,14 @@ type ValidateResult' m blk = ValidateResult m (ExtLedgerState blk) blk
 -------------------------------------------------------------------------------}
 
 -- | Annotated ledger errors
-data AnnLedgerError m l blk = AnnLedgerError
-  { annLedgerState :: Forker m l
-  -- ^ The ledger DB just /before/ this block was applied
-  , annLedgerErrRef :: RealPoint blk
+data AnnLedgerError l blk = AnnLedgerError
+  { annLedgerErrRef :: RealPoint blk
   -- ^ Reference to the block that had the error
   , annLedgerErr :: LedgerErr l
   -- ^ The ledger error itself
   }
 
-type AnnLedgerError' m blk = AnnLedgerError m (ExtLedgerState blk) blk
+type AnnLedgerError' blk = AnnLedgerError (ExtLedgerState blk) blk
 
 {-------------------------------------------------------------------------------
   Trace validation events
