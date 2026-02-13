@@ -68,9 +68,9 @@ data ByronDSIGN
 
 instance DSIGNAlgorithm ByronDSIGN where
   type SeedSizeDSIGN ByronDSIGN = 32
-  type SizeVerKeyDSIGN ByronDSIGN = 64
-  type SizeSignKeyDSIGN ByronDSIGN = 128
-  type SizeSigDSIGN ByronDSIGN = 64
+  type VerKeySizeDSIGN ByronDSIGN = 64
+  type SignKeySizeDSIGN ByronDSIGN = 128
+  type SigSizeDSIGN ByronDSIGN = 64
 
   algorithmNameDSIGN _ = "ByronDSIGN"
 

@@ -9,6 +9,7 @@ module Ouroboros.Consensus.Block.EBB
   ) where
 
 import Codec.Serialise (Serialise (..))
+import Control.DeepSeq (NFData)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Util.Condense
@@ -31,7 +32,7 @@ import Ouroboros.Consensus.Util.Condense
 data IsEBB
   = IsEBB
   | IsNotEBB
-  deriving (Eq, Show, Generic, NoThunks)
+  deriving (Eq, Show, Generic, NoThunks, NFData)
 
 instance Serialise IsEBB where
   encode = encode . fromIsEBB
