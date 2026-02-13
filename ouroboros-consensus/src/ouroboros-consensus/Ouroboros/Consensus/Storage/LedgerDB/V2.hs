@@ -24,6 +24,7 @@ import Control.Tracer
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -304,7 +305,7 @@ implValidate ::
   (TraceValidateEvent blk -> m ()) ->
   BlockCache blk ->
   Word64 ->
-  [Header blk] ->
+  NonEmpty (Header blk) ->
   m (ValidateResult m (ExtLedgerState blk) blk)
 implValidate h ldbEnv rr tr cache rollbacks hdrs =
   validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $

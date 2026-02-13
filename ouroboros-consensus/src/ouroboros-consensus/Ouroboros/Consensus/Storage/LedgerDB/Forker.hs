@@ -4,16 +4,15 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -57,19 +56,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , TraceValidateEvent (..)
   ) where
 
-import Control.Monad (void)
-import Control.Monad.Base
 import Control.Monad.Except
-  ( ExceptT (..)
-  , MonadError (..)
-  , runExcept
-  , runExceptT
+  ( runExcept
   )
-import Control.Monad.Reader (ReaderT (..))
-import Control.Monad.Trans (MonadTrans (..))
 import Control.ResourceRegistry
 import Data.Bifunctor (first)
 import Data.Kind
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
@@ -304,7 +298,7 @@ data ValidateArgs m blk = ValidateArgs
   -- ^ The block cache
   , numRollbacks :: Word64
   -- ^ How many blocks to roll back before applying the blocks
-  , hdrs :: [Header blk]
+  , hdrs :: NonEmpty (Header blk)
   -- ^ The headers we want to apply
   }
 
@@ -321,16 +315,16 @@ validate evs args = do
   aps <- mkAps <$> atomically prevApplied
   res <-
     fmap rewrap $
-      defaultResolveWithErrors resolve $
-        switch
-          forkerAtFromTip
-          resourceReg
-          evs
-          (ExtLedgerCfg validateConfig)
-          numRollbacks
-          (lift . lift . trace)
-          aps
-  liftBase $ atomically $ addPrevApplied (validBlockPoints res (map headerRealPoint hdrs))
+      switch
+        forkerAtFromTip
+        resourceReg
+        evs
+        (ExtLedgerCfg validateConfig)
+        numRollbacks
+        trace
+        aps
+        resolve
+  atomically $ addPrevApplied (validBlockPoints res (map headerRealPoint $ NE.toList hdrs))
   return res
  where
   ValidateArgs
@@ -355,28 +349,20 @@ validate evs args = do
   rewrap (Right (Right l)) = ValidateSuccessful l
 
   mkAps ::
-    forall bn n l.
-    l ~ ExtLedgerState blk =>
+    forall n l.
     Set (RealPoint blk) ->
-    [ Ap
-        bn
-        n
-        l
-        blk
-        ( ResolvesBlocks n blk
-        , ThrowsLedgerError n l blk
-        )
-    ]
+    NonEmpty (Ap n l blk)
   mkAps prev =
-    [ case ( Set.member (headerRealPoint hdr) prev
-           , BlockCache.lookup (headerHash hdr) blockCache
-           ) of
-        (False, Nothing) -> ApplyRef (headerRealPoint hdr)
-        (True, Nothing) -> Weaken $ ReapplyRef (headerRealPoint hdr)
-        (False, Just blk) -> Weaken $ ApplyVal blk
-        (True, Just blk) -> Weaken $ ReapplyVal blk
-    | hdr <- hdrs
-    ]
+    NE.map
+      ( \hdr -> case ( Set.member (headerRealPoint hdr) prev
+                     , BlockCache.lookup (headerHash hdr) blockCache
+                     ) of
+          (False, Nothing) -> ApplyRef (headerRealPoint hdr)
+          (True, Nothing) -> ReapplyRef (headerRealPoint hdr)
+          (False, Just blk) -> ApplyVal blk
+          (True, Just blk) -> ReapplyVal blk
+      )
+      hdrs
 
   -- \| Based on the 'ValidateResult', return the hashes corresponding to
   -- valid blocks.
@@ -389,180 +375,132 @@ validate evs args = do
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
-  (ResourceRegistry bm -> Word64 -> bm (Either GetForkerError (Forker bm l))) ->
-  ResourceRegistry bm ->
+  (ApplyBlock l blk, MonadSTM m) =>
+  (ResourceRegistry m -> Word64 -> m (Either GetForkerError (Forker m l))) ->
+  ResourceRegistry m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   -- | How many blocks to roll back
   Word64 ->
   (TraceValidateEvent blk -> m ()) ->
   -- | New blocks to apply
-  [Ap bm m l blk c] ->
-  m (Either GetForkerError (Forker bm l))
-switch forkerAtFromTip rr evs cfg numRollbacks trace newBlocks = do
-  foEith <- liftBase $ forkerAtFromTip rr numRollbacks
+  NonEmpty (Ap m l blk) ->
+  ResolveBlock m blk ->
+  m (Either (AnnLedgerError l blk) (Either GetForkerError (Forker m l)))
+switch forkerAtFromTip rr evs cfg numRollbacks trace newBlocks doResolve = do
+  foEith <- forkerAtFromTip rr numRollbacks
   case foEith of
-    Left rbExceeded -> pure $ Left rbExceeded
+    Left rbExceeded -> pure $ Right $ Left rbExceeded
     Right fo -> do
-      case newBlocks of
-        [] -> pure ()
-        -- no blocks to apply to ledger state, return the forker
-        (firstBlock : _) -> do
-          let start = PushStart . toRealPoint $ firstBlock
-              goal = PushGoal . toRealPoint . last $ newBlocks
-          void $
-            applyThenPushMany
-              (trace . StartedPushingBlockToTheLedgerDb start goal)
-              evs
-              cfg
-              newBlocks
-              fo
-      pure $ Right fo
+      let start = PushStart . toRealPoint . NE.head $ newBlocks
+          goal = PushGoal . toRealPoint . NE.last $ newBlocks
+      ePush <-
+        applyThenPushMany
+          (trace . StartedPushingBlockToTheLedgerDb start goal)
+          evs
+          cfg
+          (NE.toList newBlocks)
+          fo
+          doResolve
+      case ePush of
+        Left err -> forkerClose fo >> pure (Left err)
+        Right () -> pure $ Right $ Right fo
 
 {-------------------------------------------------------------------------------
   Apply blocks
 -------------------------------------------------------------------------------}
 
-newtype ValidLedgerState l = ValidLedgerState {getValidLedgerState :: l}
-
 -- | 'Ap' is used to pass information about blocks to ledger DB updates
 --
--- The constructors serve two purposes:
---
--- * Specify the various parameters
+-- The constructors provide answers to two questions:
 --
 --     1. Are we passing the block by value or by reference?
 --
 --     2. Are we applying or reapplying the block?
---
--- * Compute the constraint @c@ on the monad @m@ in order to run the query:
---
---     1. If we are passing a block by reference, we must be able to resolve it.
---
---     2. If we are applying rather than reapplying, we might have ledger errors.
-type Ap :: (Type -> Type) -> (Type -> Type) -> LedgerStateKind -> Type -> Constraint -> Type
-data Ap bm m l blk c where
-  ReapplyVal :: blk -> Ap bm m l blk ()
-  ApplyVal :: blk -> Ap bm m l blk (ThrowsLedgerError m l blk)
-  ReapplyRef :: RealPoint blk -> Ap bm m l blk (ResolvesBlocks m blk)
-  ApplyRef ::
-    RealPoint blk ->
-    Ap
-      bm
-      m
-      l
-      blk
-      ( ResolvesBlocks m blk
-      , ThrowsLedgerError m l blk
-      )
-  -- | 'Weaken' increases the constraint on the monad @m@.
-  --
-  -- This is primarily useful when combining multiple 'Ap's in a single
-  -- homogeneous structure.
-  Weaken :: (c' => c) => Ap bm m l blk c -> Ap bm m l blk c'
+type Ap :: (Type -> Type) -> LedgerStateKind -> Type -> Type
+data Ap m l blk where
+  ReapplyVal :: blk -> Ap m l blk
+  ApplyVal :: blk -> Ap m l blk
+  ReapplyRef :: RealPoint blk -> Ap m l blk
+  ApplyRef :: RealPoint blk -> Ap m l blk
 
-toRealPoint :: HasHeader blk => Ap bm m l blk c -> RealPoint blk
+toRealPoint :: HasHeader blk => Ap m l blk -> RealPoint blk
 toRealPoint (ReapplyVal blk) = blockRealPoint blk
 toRealPoint (ApplyVal blk) = blockRealPoint blk
 toRealPoint (ReapplyRef rp) = rp
 toRealPoint (ApplyRef rp) = rp
-toRealPoint (Weaken ap) = toRealPoint ap
 
 -- | Apply blocks to the given forker
 applyBlock ::
-  forall m bm c l blk.
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
+  forall m l blk.
+  (ApplyBlock l blk, MonadSTM m) =>
   ComputeLedgerEvents ->
   LedgerCfg l ->
-  Ap bm m l blk c ->
-  Forker bm l ->
-  m (ValidLedgerState (l DiffMK))
-applyBlock evs cfg ap fo = case ap of
+  Ap m l blk ->
+  Forker m l ->
+  ResolveBlock m blk ->
+  m (Either (AnnLedgerError l blk) (l DiffMK))
+applyBlock evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b ->
-    ValidLedgerState
-      <$> withValues b (return . tickThenReapply evs cfg b)
+    withValues b (return . Right . tickThenReapply evs cfg b)
   ApplyVal b ->
-    ValidLedgerState
-      <$> withValues
-        b
-        ( either (throwLedgerError (Proxy @l) (blockRealPoint b)) return
-            . runExcept
-            . tickThenApply evs cfg b
-        )
+    withValues
+      b
+      ( \v ->
+          case runExcept $ tickThenApply evs cfg b v of
+            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
+            Right st -> pure (Right st)
+      )
   ReapplyRef r -> do
     b <- doResolveBlock r
-    applyBlock evs cfg (ReapplyVal b) fo
+    applyBlock evs cfg (ReapplyVal b) fo doResolveBlock
   ApplyRef r -> do
     b <- doResolveBlock r
-    applyBlock evs cfg (ApplyVal b) fo
-  Weaken ap' ->
-    applyBlock evs cfg ap' fo
+    applyBlock evs cfg (ApplyVal b) fo doResolveBlock
  where
-  withValues :: blk -> (l ValuesMK -> m (l DiffMK)) -> m (l DiffMK)
+  withValues ::
+    blk ->
+    (l ValuesMK -> m (Either (AnnLedgerError l blk) (l DiffMK))) ->
+    m (Either (AnnLedgerError l blk) (l DiffMK))
   withValues blk f = do
-    l <- liftBase $ atomically $ forkerGetLedgerState fo
-    vs <-
-      withLedgerTables l
-        <$> liftBase (forkerReadTables fo (getBlockKeySets blk))
+    l <- atomically $ forkerGetLedgerState fo
+    vs <- withLedgerTables l <$> forkerReadTables fo (getBlockKeySets blk)
     f vs
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.
---
--- Note that we require @c@ (from the particular choice of @Ap m l blk c@) so
--- this sometimes can throw ledger errors.
 applyThenPush ::
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
+  (ApplyBlock l blk, MonadSTM m) =>
   ComputeLedgerEvents ->
   LedgerCfg l ->
-  Ap bm m l blk c ->
-  Forker bm l ->
-  m ()
-applyThenPush evs cfg ap fo =
-  liftBase . forkerPush fo . getValidLedgerState
-    =<< applyBlock evs cfg ap fo
+  Ap m l blk ->
+  Forker m l ->
+  ResolveBlock m blk ->
+  m (Either (AnnLedgerError l blk) ())
+applyThenPush evs cfg ap fo doResolve = do
+  eLerr <- applyBlock evs cfg ap fo doResolve
+  case eLerr of
+    Left err -> pure (Left err)
+    Right st -> Right <$> forkerPush fo st
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
+  (ApplyBlock l blk, MonadSTM m) =>
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
-  [Ap bm m l blk c] ->
-  Forker bm l ->
-  m ()
-applyThenPushMany trace evs cfg aps fo = mapM_ pushAndTrace aps
+  [Ap m l blk] ->
+  Forker m l ->
+  ResolveBlock m blk ->
+  m (Either (AnnLedgerError l blk) ())
+applyThenPushMany trace evs cfg aps fo doResolveBlock = pushAndTrace aps
  where
   pushAndTrace ap = do
     trace $ Pushing . toRealPoint $ ap
-    applyThenPush evs cfg ap fo
-
-{-------------------------------------------------------------------------------
-  Annotated ledger errors
--------------------------------------------------------------------------------}
-
-class Monad m => ThrowsLedgerError m l blk where
-  throwLedgerError :: Proxy l -> RealPoint blk -> LedgerErr l -> m a
-
-instance Monad m => ThrowsLedgerError (ExceptT (AnnLedgerError l blk) m) l blk where
-  throwLedgerError _ l r = throwError $ AnnLedgerError l r
-
-defaultThrowLedgerErrors ::
-  ExceptT (AnnLedgerError l blk) m a ->
-  m (Either (AnnLedgerError l blk) a)
-defaultThrowLedgerErrors = runExceptT
-
-defaultResolveWithErrors ::
-  ResolveBlock m blk ->
-  ExceptT
-    (AnnLedgerError l blk)
-    (ReaderT (ResolveBlock m blk) m)
-    a ->
-  m (Either (AnnLedgerError l blk) a)
-defaultResolveWithErrors resolve =
-  defaultResolveBlocks resolve
-    . defaultThrowLedgerErrors
+    res <- applyThenPush evs cfg ap fo doResolveBlock
+    case res of
+      Left err -> pure (Left err)
+      Right () -> pushAndTrace aps'
 
 {-------------------------------------------------------------------------------
   Finding blocks
@@ -579,29 +517,6 @@ defaultResolveWithErrors resolve =
 -- corruption must have happened and the 'ChainDB' should trigger
 -- validation mode.
 type ResolveBlock m blk = RealPoint blk -> m blk
-
--- | Monads in which we can resolve blocks
---
--- To guide type inference, we insist that we must be able to infer the type
--- of the block we are resolving from the type of the monad.
-class Monad m => ResolvesBlocks m blk | m -> blk where
-  doResolveBlock :: ResolveBlock m blk
-
-instance Monad m => ResolvesBlocks (ReaderT (ResolveBlock m blk) m) blk where
-  doResolveBlock r = ReaderT $ \f -> f r
-
-defaultResolveBlocks ::
-  ResolveBlock m blk ->
-  ReaderT (ResolveBlock m blk) m a ->
-  m a
-defaultResolveBlocks = flip runReaderT
-
--- Quite a specific instance so we can satisfy the fundep
-instance
-  Monad m =>
-  ResolvesBlocks (ExceptT e (ReaderT (ResolveBlock m blk) m)) blk
-  where
-  doResolveBlock = lift . doResolveBlock
 
 {-------------------------------------------------------------------------------
   Validation
