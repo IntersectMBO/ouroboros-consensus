@@ -184,20 +184,18 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    chain <- withRegistry $ \rr -> do
-      chain <-
-        ChainSel.initialChainSelection
-          immutableDB
-          volatileDB
-          lgrDB
-          rr
-          initChainSelTracer
-          (Args.cdbsTopLevelConfig cdbSpecificArgs)
-          varInvalid
-          (void initialLoE)
-          (forgetFingerprint initialWeights)
-      traceWith initChainSelTracer InitialChainSelected
-      pure chain
+    chain <- withRegistry $ \rr ->
+      ChainSel.initialChainSelection
+        immutableDB
+        volatileDB
+        lgrDB
+        rr
+        initChainSelTracer
+        (Args.cdbsTopLevelConfig cdbSpecificArgs)
+        varInvalid
+        (void initialLoE)
+        (forgetFingerprint initialWeights)
+    traceWith initChainSelTracer InitialChainSelected
     LedgerDB.tryFlush lgrDB
 
     curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
