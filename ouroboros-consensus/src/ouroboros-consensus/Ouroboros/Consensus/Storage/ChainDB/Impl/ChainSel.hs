@@ -1329,37 +1329,6 @@ validateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) neBlocks 
         (Map.insert hash (InvalidBlockInfo e slot) invalid)
         (succ fp)
 
--- -- | Validate a candidate chain using 'ledgerValidateCandidate'.
--- validateCandidate ::
---   ( IOLike m
---   , LedgerSupportsProtocol blk
---   , HasCallStack
---   ) =>
---   ChainSelEnv m blk ->
---   ResourceRegistry m ->
---   ChainDiff (Header blk) ->
---   m (ValidationResult m blk)
--- validateCandidate chainSelEnv rr chainDiff =
---   ledgerValidateCandidate chainSelEnv rr chainDiff >>= \case
---     validatedChainDiff
---       | AF.length (Diff.getSuffix chainDiff) == AF.length (Diff.getSuffix chainDiff') ->
---           -- No truncation
---           return $ FullyValid validatedChainDiff
---       | otherwise -> do
---           cleanup validatedChainDiff
---           -- In case of invalid blocks, we throw away the ledger
---           -- corresponding to the truncated fragment and will have to
---           -- validate it again, even when it's the sole candidate.
---           return $ ValidPrefix chainDiff'
---      where
---       chainDiff' = ValidatedDiff.getChainDiff validatedChainDiff
---  where
---   -- If this function does not return a validated chain diff, then we can
---   -- already close the underlying forker, even before it would be closed due to
---   -- closing the 'ResourceRegistry' @rr@.
---   cleanup :: ValidatedChainDiff b (Forker' m blk) -> m ()
---   cleanup = forkerClose . getLedger
-
 {-------------------------------------------------------------------------------
   Diffusion pipelining
 -------------------------------------------------------------------------------}
