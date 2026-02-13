@@ -762,7 +762,7 @@ runThreadNetwork
                   , mcdbRegistry = registry
                   , mcdbNodeDBs = nodeDBs
                   }
-            tr = instrumentationTracer <> nullDebugTracer
+            tr = instrumentationTracer <> showTracing debugTracer
          in args
               { cdbImmDbArgs =
                   (cdbImmDbArgs args)
@@ -871,6 +871,7 @@ runThreadNetwork
               pipeliningTracer
               nodeInfoDBs
               coreNodeId
+
       chainDB <-
         snd
           <$> allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB

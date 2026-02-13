@@ -89,9 +89,9 @@ deriving instance NoThunks (LedgerTables l ValuesMK) => NoThunks (LedgerTablesHa
 data InMemoryClosedExn = InMemoryClosedExn
   deriving (Show, Exception)
 
-guardClosed :: LedgerTablesHandleState l -> (LedgerTables l ValuesMK -> a) -> a
-guardClosed LedgerTablesHandleClosed _ = error $ show InMemoryClosedExn
-guardClosed (LedgerTablesHandleOpen !st) f = f st
+guardClosed :: String -> LedgerTablesHandleState l -> (LedgerTables l ValuesMK -> a) -> a
+guardClosed s LedgerTablesHandleClosed _ = error $ show InMemoryClosedExn <> " " <> s
+guardClosed _ (LedgerTablesHandleOpen !st) f = f st
 
 newInMemoryLedgerTablesHandle ::
   forall m l.
@@ -168,7 +168,7 @@ implDuplicate ::
   m (ResourceKey m, LedgerTablesHandle m l)
 implDuplicate !tracer tv !someFS rr = do
   hs <- readTVarIO tv
-  (rk, tv') <- guardClosed hs $ allocateLedgerTablesHandle tracer rr
+  (rk, tv') <- guardClosed "duplicating" hs $ allocateLedgerTablesHandle tracer rr
   (rk,) <$> newInMemoryLedgerTablesHandle tracer someFS (rk, tv')
 
 implRead ::
@@ -182,6 +182,7 @@ implRead ::
 implRead tv _ keys = do
   hs <- readTVarIO tv
   guardClosed
+    "reading"
     hs
     (pure . flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys)
 
@@ -194,6 +195,7 @@ implReadRange ::
 implReadRange tv _ (f, t) = do
   hs <- readTVarIO tv
   guardClosed
+    "rangereading"
     hs
     ( \(LedgerTables (ValuesMK m)) ->
         let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
@@ -207,7 +209,7 @@ implReadAll ::
   m (LedgerTables l ValuesMK)
 implReadAll tv _ = do
   hs <- readTVarIO tv
-  guardClosed hs pure
+  guardClosed "readAll" hs pure
 
 implPushDiffs ::
   ( IOLike m
@@ -224,6 +226,7 @@ implPushDiffs tv st0 !diffs =
       tv
       ( \r ->
           guardClosed
+            "pushdiffs"
             r
             ( LedgerTablesHandleOpen
                 . flip
@@ -243,7 +246,7 @@ implTakeHandleSnapshot ::
 implTakeHandleSnapshot tv hasFS hint snapshotName = do
   createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName]
   h <- readTVarIO tv
-  guardClosed h $
+  guardClosed "takeSnap" h $
     \values ->
       withFile hasFS (mkFsPath [snapshotName, "tables"]) (WriteMode MustBeNew) $ \hf ->
         fmap (Just . snd) $
@@ -257,7 +260,7 @@ implTablesSize ::
   m Int
 implTablesSize tv = do
   hs <- readTVarIO tv
-  guardClosed hs (pure . Map.size . getValuesMK . getLedgerTables)
+  guardClosed "tablesize" hs (pure . Map.size . getValuesMK . getLedgerTables)
 
 {-------------------------------------------------------------------------------
   Snapshots
