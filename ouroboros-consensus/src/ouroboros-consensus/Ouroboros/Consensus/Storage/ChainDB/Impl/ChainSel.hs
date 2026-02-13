@@ -1274,8 +1274,7 @@ validateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) neBlocks 
       -- tip, which is impossible, since the candidates we construct must
       -- connect to the immutable tip.
       error "found candidate requiring rolling back past the immutable tip"
-    ValidateLedgerError (AnnLedgerError pt e) -> do
-      let lastValid = realPointToPoint pt
+    ValidateLedgerError (AnnLedgerError lastValid pt e) -> do
       let chainDiff' = Diff.truncate (castPoint lastValid) chainDiff
       traceWith validationTracer (InvalidBlock e pt)
       addInvalidBlock e pt

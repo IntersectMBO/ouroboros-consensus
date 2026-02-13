@@ -559,6 +559,7 @@ initialize
           initDb
           (Point Origin)
           dbIface
+      traceWith (TraceReplayStartEvent >$< replayTracer) ReplayFromGenesis
       return (acc InitFromGenesis, db, replayed)
     tryNewestFirst acc (s : ss) = do
       if ( case pointSlot replayGoal of

@@ -32,6 +32,7 @@ import qualified Data.Set as Set
 import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
+import qualified Debug.Trace as Debug
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -56,6 +57,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.NormalForm.StrictTVar ()
 import qualified Ouroboros.Network.AnchoredSeq as AS
@@ -727,6 +729,7 @@ implForkerClose ::
   ForkerEnv m l blk ->
   m ()
 implForkerClose (LDBHandle varState) forkerKey forkerEnv = do
+  Debug.traceM $ "Closing forker: " <> show forkerKey
   frk <-
     atomically $
       readTVar varState >>= \case
@@ -743,6 +746,7 @@ implForkerClose (LDBHandle varState) forkerKey forkerEnv = do
       traceWith (foeTracer e) (ForkerClose $ if wc then ForkerWasCommitted else ForkerWasUncommitted)
 
   closeForkerEnv forkerEnv
+  Debug.traceM $ "Closed forker: " <> show forkerKey
 
 newForker ::
   ( IOLike m

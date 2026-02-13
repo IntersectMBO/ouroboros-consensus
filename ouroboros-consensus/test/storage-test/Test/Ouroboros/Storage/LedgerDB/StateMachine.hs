@@ -22,7 +22,6 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 #if __GLASGOW_HASKELL__ >= 908
 {-# OPTIONS_GHC -Wno-x-partial #-}
-{-# LANGUAGE ViewPatterns #-}
 #endif
 
 -- | On-disk ledger DB tests.
@@ -694,7 +693,7 @@ instance RunModel Model (StateT Environment IO) where
                 atomically $ writeTVar (dbImmTip chainDb) $ castPoint immTipPoint
                 pure $ pure ()
               ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
-              ValidateLedgerError (AnnLedgerError _ err) -> error ("Unexpected ledger error" <> show err)
+              ValidateLedgerError (AnnLedgerError p _ err) -> error ("Unexpected ledger error" <> show err <> " on poinrt " <> show p)
   perform state@(Model _ _ secParam) (DropAndRestore n salt) lk = do
     Environment _ testInternals chainDb _ _ _ _ _ <- get
     lift $ do

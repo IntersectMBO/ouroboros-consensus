@@ -400,7 +400,7 @@ switch forkerAtFromTip rr evs cfg numRollbacks trace newBlocks doResolve = do
           fo
           doResolve
       case ePush of
-        Left err -> pure $ Left err
+        Left err -> forkerClose fo >> pure (Left err)
         Right () -> pure $ Right $ Right fo
 
 {-------------------------------------------------------------------------------
@@ -453,7 +453,7 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
       b
       ( \v ->
           case runExcept $ tickThenApply evs cfg b v of
-            Left lerr -> pure (Left (AnnLedgerError (blockRealPoint b) lerr))
+            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
             Right st -> pure (Right st)
       )
   ReapplyRef r -> do
@@ -543,7 +543,9 @@ data ValidateResult m l blk
 
 -- | Annotated ledger errors
 data AnnLedgerError l blk = AnnLedgerError
-  { annLedgerErrRef :: RealPoint blk
+  { annLedgerBaseRef :: Point blk
+  -- ^ The last block that was valid
+  , annLedgerErrRef :: RealPoint blk
   -- ^ Reference to the block that had the error
   , annLedgerErr :: LedgerErr l
   -- ^ The ledger error itself
@@ -591,6 +593,7 @@ data TraceForkerEvent
   | ForkerRangeReadTables EnclosingTimed
   | ForkerReadStatistics
   | ForkerPush EnclosingTimed
+  | ForkerClosing EnclosingTimed
   | ForkerClose ForkerWasCommitted
   deriving (Show, Eq)
 

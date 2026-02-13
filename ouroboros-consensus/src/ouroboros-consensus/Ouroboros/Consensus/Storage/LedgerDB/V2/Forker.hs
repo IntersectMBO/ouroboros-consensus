@@ -24,6 +24,7 @@ import Control.ResourceRegistry
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
 import Data.Maybe (fromMaybe)
+import qualified Debug.Trace as Debug
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -137,7 +138,10 @@ implForkerPush env newState =
 
     bracketOnError
       (duplicate (tables $ currentHandle lseq) (foeResourceRegistry env))
-      (release . fst)
+      ( \(t, _) -> do
+          Debug.traceM "HOOOO"
+          release t
+      )
       ( \(_, newtbs) -> do
           pushDiffs newtbs st0 newState
 
