@@ -183,8 +183,6 @@ data LeiosOutstanding pid = MkLeiosOutstanding
     -- ^ EB bodies we've successfully received/stored
   , missingEbBodies :: !(Map LeiosPoint BytesSize)
     -- ^ EB bodies still needed to be fetched (indexed by point and size)
-  , ebPoints :: !(IntMap {- SlotNo -} EbHash)
-    -- ^ Mapping of slot numbers to EB hashes (for scanning)
     -- Request tracking
   , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
     -- ^ Which peers we've requested each EB from
@@ -229,7 +227,6 @@ emptyLeiosOutstanding =
   MkLeiosOutstanding
     { acquiredEbBodies = Set.empty
     , missingEbBodies = Map.empty
-    , ebPoints = IntMap.empty
     , requestedEbPeers = Map.empty
     , requestedTxPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
@@ -245,7 +242,6 @@ prettyLeiosOutstanding x =
     map ("    [leios] " ++) $
       [ "acquiredEbBodies = " ++ show (Set.size acquiredEbBodies)
       , "missingEbBodies = " ++ show (Map.size missingEbBodies)
-      , "ebPoints = " ++ show (IntMap.size ebPoints)
       , "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
       , "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
@@ -260,7 +256,6 @@ prettyLeiosOutstanding x =
   MkLeiosOutstanding
     { acquiredEbBodies
     , missingEbBodies
-    , ebPoints
     , requestedEbPeers
     , requestedTxPeers
     , requestedBytesSizePerPeer
