@@ -63,6 +63,7 @@ import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
@@ -104,6 +105,7 @@ withDB ::
   forall m blk a.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
@@ -120,6 +122,7 @@ openDB ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
@@ -135,6 +138,7 @@ openDBInternal ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
@@ -292,6 +296,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
             , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
+            , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
             }
     addBlockTestFuse <- newFuse "test chain selection"
     let testing =

@@ -141,7 +141,7 @@ followerInstructionOnEmptyChain = do
 followerSwitchesToNewChain ::
   (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
 followerSwitchesToNewChain =
-  let fork i = TestBody i True
+  let fork i = TestBody i True Nothing
    in do
         b1 <- addBlock $ firstBlock 0 $ fork 0 -- b1 on top of G
         b2 <- addBlock $ mkNextBlock b1 1 $ fork 0 -- b2 on top of b1
@@ -178,7 +178,7 @@ ouroboros_network_4183 ::
   ) =>
   m ()
 ouroboros_network_4183 =
-  let fork i = TestBody i True
+  let fork i = TestBody i True Nothing
    in do
         b1 <- addBlock $ firstEBB (const True) $ fork 0
         b2 <- addBlock $ mkNextBlock b1 0 $ fork 0
@@ -235,7 +235,7 @@ ouroboros_network_3999 = do
   actual <- replicateM 2 (iteratorNextBlock i)
   assertOneOf options actual "Streaming over dead fork"
  where
-  fork i = TestBody i True
+  fork i = TestBody i True Nothing
 
   iteratorNextBlock it = fmap extractBlock <$> iteratorNext it
 
@@ -258,7 +258,7 @@ waitForImmutableBlock_existingBlock = do
     Left e -> failWith (show e)
     Right result -> assertEqual result (blockRealPoint b1) ""
  where
-  fork0 = TestBody 0 True
+  fork0 = TestBody 0 True Nothing
 
 -- | Tests that given an existing block, we get that same block back,
 --   but we wait first and then add the blocks to test the waiting behaviour
@@ -281,7 +281,7 @@ waitForImmutableBlock_existingBlockConcurrent = do
     persistBlks DoNotGarbageCollect
 
   targetBlock = firstBlock 0 fork0
-  fork0 = TestBody 0 True
+  fork0 = TestBody 0 True Nothing
 
 -- | Tests that given a block at a filled slot but with a wrong hash,
 --   we get the actual block at that slot
@@ -304,7 +304,7 @@ waitForImmutableBlock_wrongHash = do
     Left e -> failWith (show e)
     Right result -> assertEqual result expectedPoint ""
  where
-  fork0 = TestBody 0 True
+  fork0 = TestBody 0 True Nothing
 
 -- | Tests that given an empty slot, we get a block
 --   at the next filled slot
@@ -327,7 +327,7 @@ waitForImmutableBlock_emptySlot = do
     Left e -> failWith (show e)
     Right result -> assertEqual result expectedPoint ""
  where
-  fork0 = TestBody 0 True
+  fork0 = TestBody 0 True Nothing
 
 streamAssertSuccess ::
   (MonadError TestFailure m, SupportsUnitTest m, Mock.HasHeader (Block m)) =>

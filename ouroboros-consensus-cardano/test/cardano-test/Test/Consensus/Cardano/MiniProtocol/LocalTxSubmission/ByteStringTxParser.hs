@@ -33,6 +33,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Shelley.Ledger
   ( CodecConfig (ShelleyCodecConfig)
   )
+import Ouroboros.Consensus.Shelley.Ledger.SupportsPeras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Text.Pretty.Simple (pPrint)
 

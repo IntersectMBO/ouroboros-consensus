@@ -105,6 +105,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -195,6 +196,13 @@ data TestBody = TestBody
   -- Note that this is a /local/ number, it is specific to this block,
   -- other blocks need not be aware of it.
   , tbIsValid :: !Bool
+  , tbPerasCertRound :: !(Maybe PerasRoundNo)
+  -- ^ Some real blocks will ocasionally carry a Peras certificate inside their
+  -- body to coordinate the end of a cooldown period. For the purposes of the
+  -- ChainDB, we don't really care about the details of the certificate other
+  -- than its round number, which needs to be stored (and carefully updated
+  -- whenever a newer one pops up) so it can be used to evaluate the Peras
+  -- voting rules and decide if a node should resume voting.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NoThunks, Serialise, Hashable)
@@ -578,7 +586,7 @@ type instance TxIn (LedgerState TestBlock) = Void
 type instance TxOut (LedgerState TestBlock) = Void
 
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
-  convertMapKind (TestLedger x y) = TestLedger x y
+  convertMapKind (TestLedger x y z) = TestLedger x y z
 instance LedgerTablesAreTrivial (Ticked (LedgerState TestBlock)) where
   convertMapKind (TickedTestLedger x) = TickedTestLedger (convertMapKind x)
 deriving via
@@ -613,7 +621,27 @@ instance ApplyBlock (LedgerState TestBlock) TestBlock where
     | not $ tbIsValid testBody =
         throwError $ InvalidBlock
     | otherwise =
-        return $ pureLedgerResult $ TestLedger (Chain.blockPoint tb) (BlockHash (blockHash tb))
+        return $
+          pureLedgerResult $
+            TestLedger
+              (Chain.blockPoint tb)
+              (BlockHash (blockHash tb))
+              ( let
+                  -- NOTE: this bypasses the degenerate global implementation of
+                  -- 'BlockSupportsPeras.getPerasCertInBlock' for 'TestBlock',
+                  -- which currently always returns 'Nothing'.
+                  --
+                  -- TODO: refactor this to use 'getPerasCertInBlock' after the
+                  -- HFC plumbing for 'BlockSupportsPeras' is in place.
+                  certRoundInBlock = tbPerasCertRound testBody
+                 in
+                  -- the highest Peras certificate round number  we've seen so far
+                  case (certRoundInBlock, latestPerasCertRound) of
+                    (Nothing, Nothing) -> Nothing
+                    (Just rb, Nothing) -> Just rb
+                    (Nothing, Just rl) -> Just rl
+                    (Just rb, Just rl) -> Just (rb `max` rl)
+              )
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
@@ -626,6 +654,9 @@ data instance LedgerState TestBlock mk
   { -- The ledger state simply consists of the last applied block
     lastAppliedPoint :: !(Point TestBlock)
   , lastAppliedHash :: !(ChainHash TestBlock)
+  , -- In addition, we also carry around the round number of the latest Peras
+    -- certificate that appeared in a block.
+    latestPerasCertRound :: !(Maybe PerasRoundNo)
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass (Serialise, NoThunks)
@@ -694,6 +725,9 @@ instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
+instance LedgerSupportsPeras TestBlock where
+  getLatestPerasCertRound = latestPerasCertRound
+
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
   hardForkSummary = neverForksHardForkSummary id
@@ -703,7 +737,7 @@ instance InspectLedger TestBlock
 -- Use defaults
 
 testInitLedger :: LedgerState TestBlock EmptyMK
-testInitLedger = TestLedger GenesisPoint GenesisHash
+testInitLedger = TestLedger GenesisPoint GenesisHash Nothing
 
 testInitExtLedger :: ExtLedgerState TestBlock EmptyMK
 testInitExtLedger =
@@ -904,6 +938,7 @@ corruptionFiles = map snd . NE.toList
 
 deriving newtype instance Hashable SlotNo
 deriving newtype instance Hashable BlockNo
+deriving newtype instance Hashable PerasRoundNo
 instance Hashable IsEBB
 
 -- use generic instance
