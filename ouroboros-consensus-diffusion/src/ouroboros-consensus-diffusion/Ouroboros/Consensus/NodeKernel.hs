@@ -157,7 +157,7 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Data.Map (Map)
 import qualified Data.Map as Map
 import LeiosDemoDb
-  ( LeiosDbHandle (leiosDbScanEbPoints)
+  ( LeiosDbHandle (..)
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
@@ -418,11 +418,14 @@ initNodeKernel
       leiosPeersVars <- MVar.readMVar getLeiosPeersVars
       offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
       newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+        -- Filter outstanding work against DB before running fetch iteration.
+        -- This removes EBs and TXs we already have (e.g., from forging or other peers).
+        filteredOutstanding <- Leios.filterMissingWork leiosDB outstanding
         let (!outstanding', newDecisions) =
               Leios.leiosFetchLogicIteration
                 Leios.demoLeiosFetchStaticEnv
                 offerings
-                outstanding
+                filteredOutstanding
         pure (outstanding', newDecisions)
       let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
       traceWith tracer $
@@ -851,7 +854,7 @@ forkBlockForging IS{..} blockForging =
       -- Store generated EB so it can be diffused
       for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
         lift $ do
-          leiosDbInsertEbPoint leiosDB eb.point
+          leiosDbInsertEbPoint leiosDB eb.point (Leios.leiosEbBytesSize eb.body)
           leiosDbInsertEbBody leiosDB eb.point eb.body
           void $ leiosDbInsertTxs leiosDB eb.txClosure
         traceLeios TraceLeiosBlockStored{slot = currentSlot, eb = eb.body}

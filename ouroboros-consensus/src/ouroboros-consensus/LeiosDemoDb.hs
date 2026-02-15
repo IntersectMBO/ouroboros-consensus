@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -69,8 +70,14 @@ data LeiosDbHandle m = LeiosDbHandle
   , leiosDbScanEbPoints :: m [(SlotNo, EbHash)]
   , leiosDbLookupEbPoint :: EbHash -> m (Maybe SlotNo)
   -- ^ Check if an EB point exists in the database. Returns the slot if found.
-  , leiosDbInsertEbPoint :: LeiosPoint -> m ()
+  , leiosDbInsertEbPoint :: LeiosPoint -> BytesSize -> m ()
+  -- ^ Insert an announced EB point with its expected size.
   , leiosDbLookupEbBody :: EbHash -> m [(TxHash, BytesSize)]
+  , leiosDbQueryFetchWork :: m LeiosFetchWork
+  -- ^ Query all work needed for the fetch logic (used at startup):
+  -- - Missing EB bodies: EBs in ebPoints without entries in ebTxs
+  -- - Missing TXs: TXs in ebTxs without entries in txs
+  -- NOTE: This is O(n) and should only be used at startup for initialization.
   , -- NOTE: yields a LeiosOfferBlock notification
     leiosDbInsertEbBody :: LeiosPoint -> LeiosEb -> m ()
   , -- TODO: Take [LeiosTx] and hash on insert?
@@ -86,9 +93,25 @@ data LeiosDbHandle m = LeiosDbHandle
   -- REVIEW: return type only used for tracing, necessary?
   , -- TODO: Return LeiosTx?
     leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  , leiosDbFilterHaveEbBodies :: [EbHash] -> m [EbHash]
+  -- ^ Batch filter: returns the subset of input EbHashes that we have bodies for in the DB.
+  -- More efficient than individual lookups when checking multiple hashes.
+  , leiosDbFilterHaveTxs :: [TxHash] -> m [TxHash]
+  -- ^ Batch filter: returns the subset of input TxHashes that we have in the DB.
+  -- More efficient than individual lookups when checking multiple hashes.
   }
 
 type CompletedEbs = [LeiosPoint]
+
+-- | Result of querying the database for fetch work.
+-- Contains all the information needed by the fetch logic to make decisions.
+data LeiosFetchWork = LeiosFetchWork
+  { missingEbBodies :: !(Map LeiosPoint BytesSize)
+  -- ^ EBs that have been announced but whose bodies haven't been downloaded yet
+  , missingEbTxs :: !(Map LeiosPoint [(Int, TxHash, BytesSize)])
+  -- ^ EBs whose bodies we have, but with missing TXs (offset, hash, size)
+  }
+  deriving (Eq, Show)
 
 -- * In-memory implementation of LeiosDbHandle
 
@@ -96,7 +119,8 @@ type CompletedEbs = [LeiosPoint]
 data InMemoryLeiosDb = InMemoryLeiosDb
   { imTxs :: !(Map TxHash (ByteString, BytesSize))
   -- ^ Global transaction storage (normalized)
-  , imEbPoints :: !(IntMap {- SlotNo -} EbHash)
+  , imEbPoints :: !(IntMap {- SlotNo -} (EbHash, BytesSize))
+  -- ^ Announced EB points with their expected sizes
   , imEbBodies :: !(Map EbHash (IntMap {- txOffset -} EbTxEntry))
   , imEbSlots :: !(Map EbHash SlotNo)
   }
@@ -129,23 +153,23 @@ newLeiosDBInMemory = do
           state <- readTVar stateVar
           pure
             [ (SlotNo (fromIntegral slot), hash)
-            | (slot, hash) <- IntMap.toAscList (imEbPoints state)
+            | (slot, (hash, _size)) <- IntMap.toAscList (imEbPoints state)
             ]
       , leiosDbLookupEbPoint = \ebHash -> atomically $ do
           state <- readTVar stateVar
           -- Find slot by looking for the hash in imEbPoints
           pure $
             foldr
-              (\(slot, h) acc -> if h == ebHash then Just (SlotNo (fromIntegral slot)) else acc)
+              (\(slot, (h, _)) acc -> if h == ebHash then Just (SlotNo (fromIntegral slot)) else acc)
               Nothing
               (IntMap.toList (imEbPoints state))
-      , leiosDbInsertEbPoint = \point -> atomically $ do
+      , leiosDbInsertEbPoint = \point ebBytesSize -> atomically $ do
           modifyTVar stateVar $ \s ->
             s
               { imEbPoints =
                   IntMap.insert
                     (fromIntegral $ unSlotNo point.pointSlotNo)
-                    point.pointEbHash
+                    (point.pointEbHash, ebBytesSize)
                     (imEbPoints s)
               }
       , leiosDbLookupEbBody = \ebHash -> atomically $ do
@@ -210,6 +234,35 @@ newLeiosDBInMemory = do
                 | offset <- offsets
                 , Just entry <- [IntMap.lookup offset offsetMap]
                 ]
+      , leiosDbFilterHaveEbBodies = \ebHashes -> atomically $ do
+          state <- readTVar stateVar
+          pure [ebHash | ebHash <- ebHashes, Map.member ebHash (imEbBodies state)]
+      , leiosDbFilterHaveTxs = \txHashes -> atomically $ do
+          state <- readTVar stateVar
+          pure [txHash | txHash <- txHashes, Map.member txHash (imTxs state)]
+      , leiosDbQueryFetchWork = atomically $ do
+          state <- readTVar stateVar
+          -- Missing EB bodies: points without entries in imEbBodies
+          let missingEbBodies =
+                Map.fromList
+                  [ (MkLeiosPoint (SlotNo (fromIntegral slot)) ebHash, ebBytesSize)
+                  | (slot, (ebHash, ebBytesSize)) <- IntMap.toAscList (imEbPoints state)
+                  , not $ Map.member ebHash (imEbBodies state)
+                  ]
+          -- Missing TXs: EBs with bodies but incomplete TX sets
+          let missingEbTxs =
+                Map.fromList
+                  [ (MkLeiosPoint slot ebHash, missingEntries)
+                  | (ebHash, entries) <- Map.toList (imEbBodies state)
+                  , slot <- maybeToList $ Map.lookup ebHash (imEbSlots state)
+                  , let missingEntries =
+                          [ (offset, eteTxHash e, eteTxBytesSize e)
+                          | (offset, e) <- IntMap.toList entries
+                          , not $ Map.member (eteTxHash e) (imTxs state)
+                          ]
+                  , not $ null missingEntries
+                  ]
+          pure LeiosFetchWork{missingEbBodies, missingEbTxs}
       }
 
 -- * SQLite implementation of LeiosDbHandle
@@ -264,10 +317,11 @@ newLeiosDBSQLite dbPath = do
               DB.Row -> do
                 slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
                 pure (Just slot)
-      , leiosDbInsertEbPoint = \point ->
+      , leiosDbInsertEbPoint = \point ebBytesSize ->
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebPoint) $ \stmt -> do
             dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
             dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
+            dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
             dbStep1 stmt
       , leiosDbLookupEbBody = \ebHash ->
           dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebBodies) $ \stmt -> do
@@ -359,6 +413,80 @@ newLeiosDBSQLite dbPath = do
           dbWithPrepare db (fromString sql_flush_memTxPoints) $ \stmtFlush -> do
             dbStep1 stmtFlush
           pure results
+      , leiosDbFilterHaveEbBodies = \ebHashes ->
+          -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
+          --   WHERE e.ebHashBytes IN (SELECT unhex(value) FROM json_each(?))
+          -- This would eliminate the need for mem.ebHashes table and insert/flush overhead.
+          dbWithBEGIN db $ do
+            -- Insert ebHashes into temp table, then select those that have bodies
+            dbWithPrepare db (fromString sql_insert_memEbHashes) $ \stmtInsert ->
+              forM_ ebHashes $ \(MkEbHash bytes) -> do
+                dbBindBlob stmtInsert 1 bytes
+                dbStep1 stmtInsert
+                dbReset stmtInsert
+            -- Select which ones have bodies
+            result <- dbWithPrepare db (fromString sql_filter_have_eb_bodies) $ \stmt -> do
+              let loop acc =
+                    dbStep stmt >>= \case
+                      DB.Done -> pure (reverse acc)
+                      DB.Row -> do
+                        ebHash <- MkEbHash <$> DB.columnBlob stmt 0
+                        loop (ebHash : acc)
+              loop []
+            -- Flush temp table
+            dbWithPrepare db (fromString sql_flush_memEbHashes) $ \stmtFlush ->
+              dbStep1 stmtFlush
+            pure result
+      , leiosDbFilterHaveTxs = \txHashes ->
+          -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
+          --   WHERE t.txHashBytes IN (SELECT unhex(value) FROM json_each(?))
+          -- This would eliminate the need for mem.txHashes table and insert/flush overhead.
+          dbWithBEGIN db $ do
+            -- Insert txHashes into temp table, then select those that exist in txs
+            dbWithPrepare db (fromString sql_insert_memTxHashes) $ \stmtInsert ->
+              forM_ txHashes $ \(MkTxHash bytes) -> do
+                dbBindBlob stmtInsert 1 bytes
+                dbStep1 stmtInsert
+                dbReset stmtInsert
+            -- Select which ones we have
+            result <- dbWithPrepare db (fromString sql_filter_have_txs) $ \stmt -> do
+              let loop acc =
+                    dbStep stmt >>= \case
+                      DB.Done -> pure (reverse acc)
+                      DB.Row -> do
+                        txHash <- MkTxHash <$> DB.columnBlob stmt 0
+                        loop (txHash : acc)
+              loop []
+            -- Flush temp table
+            dbWithPrepare db (fromString sql_flush_memTxHashes) $ \stmtFlush ->
+              dbStep1 stmtFlush
+            pure result
+      , leiosDbQueryFetchWork = dbWithBEGIN db $ do
+          -- Query missing EB bodies
+          missingEbBodies <- dbWithPrepare db (fromString sql_query_missing_eb_bodies) $ \stmt -> do
+            let loop acc =
+                  dbStep stmt >>= \case
+                    DB.Done -> pure (Map.fromList (reverse acc))
+                    DB.Row -> do
+                      slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+                      ebHash <- MkEbHash <$> DB.columnBlob stmt 1
+                      ebBytesSize <- fromIntegral <$> DB.columnInt64 stmt 2
+                      loop ((MkLeiosPoint slot ebHash, ebBytesSize) : acc)
+            loop []
+          -- Query missing TXs, grouped by EB
+          missingEbTxs <- dbWithPrepare db (fromString sql_query_missing_eb_txs) $ \stmt -> do
+            let loop acc =
+                  dbStep stmt >>= \case
+                    DB.Done -> pure (Map.fromListWith (++) (reverse acc))
+                    DB.Row -> do
+                      slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+                      ebHash <- MkEbHash <$> DB.columnBlob stmt 1
+                      txOffset <- fromIntegral <$> DB.columnInt64 stmt 2
+                      txHash <- MkTxHash <$> DB.columnBlob stmt 3
+                      txBytesSize <- fromIntegral <$> DB.columnInt64 stmt 4
+                      loop ((MkLeiosPoint slot ebHash, [(txOffset, txHash, txBytesSize)]) : acc)
+            loop []
+          pure LeiosFetchWork{missingEbBodies, missingEbTxs}
       }
 
 sql_schema :: String
@@ -367,6 +495,8 @@ sql_schema =
   \    ebSlot INTEGER NOT NULL\n\
   \  ,\n\
   \    ebHashBytes BLOB NOT NULL\n\
+  \  ,\n\
+  \    ebBytesSize INTEGER NOT NULL\n\
   \  ,\n\
   \    PRIMARY KEY (ebSlot, ebHashBytes)\n\
   \  ) WITHOUT ROWID;\n\
@@ -405,7 +535,7 @@ sql_lookup_ebPoint =
 
 sql_insert_ebPoint :: String
 sql_insert_ebPoint =
-  "INSERT OR IGNORE INTO ebPoints (ebSlot, ebHashBytes) VALUES (?, ?)"
+  "INSERT OR IGNORE INTO ebPoints (ebSlot, ebHashBytes, ebBytesSize) VALUES (?, ?, ?)"
 
 sql_lookup_ebBodies :: String
 sql_lookup_ebBodies =
@@ -423,6 +553,64 @@ sql_insert_tx :: String
 sql_insert_tx =
   "INSERT OR IGNORE INTO txs (txHashBytes, txBytes, txBytesSize) VALUES (?, ?, ?)\n\
   \"
+
+-- | Query for missing EB bodies: EBs announced but not yet downloaded.
+-- Returns (ebSlot, ebHashBytes, ebBytesSize) for each missing body.
+sql_query_missing_eb_bodies :: String
+sql_query_missing_eb_bodies =
+  "SELECT ep.ebSlot, ep.ebHashBytes, ep.ebBytesSize\n\
+  \FROM ebPoints ep\n\
+  \WHERE NOT EXISTS (\n\
+  \    SELECT 1 FROM ebTxs e WHERE e.ebHashBytes = ep.ebHashBytes\n\
+  \)\n\
+  \ORDER BY ep.ebSlot DESC\n\
+  \"
+
+-- | Query for missing TXs: TXs in ebTxs that don't have corresponding entries in txs.
+-- Returns (ebSlot, ebHashBytes, txOffset, txHashBytes, txBytesSize) for each missing TX.
+sql_query_missing_eb_txs :: String
+sql_query_missing_eb_txs =
+  "SELECT ep.ebSlot, e.ebHashBytes, e.txOffset, e.txHashBytes, e.txBytesSize\n\
+  \FROM ebTxs e\n\
+  \JOIN ebPoints ep ON e.ebHashBytes = ep.ebHashBytes\n\
+  \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
+  \WHERE t.txHashBytes IS NULL\n\
+  \ORDER BY ep.ebSlot DESC, e.txOffset ASC\n\
+  \"
+
+-- | Insert ebHashes into temp table for batch filtering
+sql_insert_memEbHashes :: String
+sql_insert_memEbHashes =
+  "INSERT INTO mem.ebHashes (ebHashBytes) VALUES (?)"
+
+-- | Filter: return ebHashes from temp table that have bodies in ebTxs
+sql_filter_have_eb_bodies :: String
+sql_filter_have_eb_bodies =
+  "SELECT m.ebHashBytes FROM mem.ebHashes m\n\
+  \WHERE EXISTS (SELECT 1 FROM ebTxs e WHERE e.ebHashBytes = m.ebHashBytes)\n\
+  \"
+
+-- | Flush the temp ebHashes table
+sql_flush_memEbHashes :: String
+sql_flush_memEbHashes =
+  "DELETE FROM mem.ebHashes"
+
+-- | Insert txHashes into temp table for batch filtering
+sql_insert_memTxHashes :: String
+sql_insert_memTxHashes =
+  "INSERT INTO mem.txHashes (txHashBytes) VALUES (?)"
+
+-- | Filter: return txHashes from temp table that exist in txs
+sql_filter_have_txs :: String
+sql_filter_have_txs =
+  "SELECT m.txHashBytes FROM mem.txHashes m\n\
+  \WHERE EXISTS (SELECT 1 FROM txs t WHERE t.txHashBytes = m.txHashBytes)\n\
+  \"
+
+-- | Flush the temp txHashes table
+sql_flush_memTxHashes :: String
+sql_flush_memTxHashes =
+  "DELETE FROM mem.txHashes"
 
 -- | Find EBs that are now complete (all txs present in txs table).
 -- This query finds EBs referencing the given txHash where all txs are present.
@@ -475,6 +663,14 @@ sql_attach_memTxPoints =
   \    txOffset INTEGER NOT NULL\n\
   \  ,\n\
   \    PRIMARY KEY (ebHashBytes ASC, txOffset ASC)\n\
+  \  ) WITHOUT ROWID;\n\
+  \\n\
+  \CREATE TABLE mem.txHashes (\n\
+  \    txHashBytes BLOB NOT NULL PRIMARY KEY\n\
+  \  ) WITHOUT ROWID;\n\
+  \\n\
+  \CREATE TABLE mem.ebHashes (\n\
+  \    ebHashBytes BLOB NOT NULL PRIMARY KEY\n\
   \  ) WITHOUT ROWID;\n\
   \"
 

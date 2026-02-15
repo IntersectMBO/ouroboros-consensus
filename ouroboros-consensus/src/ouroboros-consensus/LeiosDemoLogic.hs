@@ -199,6 +199,58 @@ newtype LeiosFetchDecisions pid
 emptyLeiosFetchDecisions :: LeiosFetchDecisions pid
 emptyLeiosFetchDecisions = MkLeiosFetchDecisions Map.empty
 
+-- | Filter outstanding work against the database.
+-- Removes EB bodies and TXs that we already have in the DB.
+-- This should be called before leiosFetchLogicIteration to avoid re-fetching.
+--
+-- NOTE: This is the minimal integration of DB filtering into the fetch logic.
+-- The outstanding state tracks what we think is missing, but the DB is the
+-- source of truth. This function reconciles the two by filtering out items
+-- that have been acquired (possibly from other sources like forging).
+filterMissingWork ::
+  IOLike m =>
+  LeiosDbHandle m ->
+  LeiosOutstanding pid ->
+  m (LeiosOutstanding pid)
+filterMissingWork db outstanding = do
+  -- Filter missingEbBodies: remove EBs that we now have bodies for
+  let ebHashes = [p.pointEbHash | p <- Map.keys (Leios.missingEbBodies outstanding)]
+  haveEbs <- leiosDbFilterHaveEbBodies db ebHashes
+  let haveEbSet = Set.fromList haveEbs
+      filteredMissingEbBodies =
+        Map.filterWithKey
+          (\p _ -> not (Set.member p.pointEbHash haveEbSet))
+          (Leios.missingEbBodies outstanding)
+  -- Filter missingEbTxs: for each EB, remove TXs we already have
+  -- Collect all unique TXs across all EBs
+  let allTxHashes =
+        Set.toList $
+          Set.fromList
+            [ txHash
+            | txs <- Map.elems (Leios.missingEbTxs outstanding)
+            , (txHash, _) <- IntMap.elems txs
+            ]
+  haveTxs <- leiosDbFilterHaveTxs db allTxHashes
+  let haveTxSet = Set.fromList haveTxs
+      filteredMissingEbTxs =
+        Map.map
+          (IntMap.filter (\(txHash, _) -> not (Set.member txHash haveTxSet)))
+          (Leios.missingEbTxs outstanding)
+      -- Also filter out empty entries
+      nonEmptyMissingEbTxs = Map.filter (not . IntMap.null) filteredMissingEbTxs
+      -- Update txOffsetss to reflect removed TXs
+      filteredTxOffsetss =
+        Map.filterWithKey
+          (\txHash _ -> not (Set.member txHash haveTxSet))
+          (Leios.txOffsetss outstanding)
+  pure $
+    outstanding
+      { Leios.missingEbBodies = filteredMissingEbBodies
+      , Leios.missingEbTxs = nonEmptyMissingEbTxs
+      , Leios.txOffsetss = filteredTxOffsetss
+      , Leios.acquiredEbBodies = Leios.acquiredEbBodies outstanding `Set.union` haveEbSet
+      }
+
 leiosFetchLogicIteration ::
   forall pid.
   Ord pid =>
@@ -519,7 +571,7 @@ msgLeiosBlock ktracer tracer (writeLock, outstandingVar, readyVar) db peerId req
           Nothing -> do
             -- Unexpected: we're receiving an EB body without having seen the announcement first
             traceWith ktracer $ TraceLeiosBlockPointMissing point
-            leiosDbInsertEbPoint db point
+            leiosDbInsertEbPoint db point ebBytesSize
         -- FIXME: getting a LeiosDb: ErrorConstraint exception here When forging
         -- a leios EB, another peer offers us the block we already produced and
         -- the fetching logic does download it. This results in a duplicate
