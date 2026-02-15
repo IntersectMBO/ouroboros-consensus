@@ -177,6 +177,22 @@ newLeiosPeerVars = do
 -- Tracks both EB-level state (what EBs we have/need) and TX-level state
 -- (what TXs we need for each EB), along with request tracking for bandwidth
 -- management.
+--
+-- TODO: Potential simplifications once we have better test coverage:
+--
+-- 1. With filterMissingWork now querying the DB before each fetch iteration,
+--    we could simplify this structure to only track "offers" from peers rather
+--    than "missing" items. The DB would be the source of truth for what we have,
+--    and we'd filter offers against DB to find what to fetch.
+--
+-- 2. The acquiredEbBodies set is now redundant with DB - we update it in
+--    filterMissingWork but could remove it entirely once we trust DB filtering.
+--
+-- 3. The txOffsetss inverse index could be computed on-demand from missingEbTxs
+--    rather than maintained incrementally, simplifying state updates.
+--
+-- 4. Consider separating "offer tracking" from "request tracking" into distinct
+--    data structures for clarity.
 data LeiosOutstanding pid = MkLeiosOutstanding
   { -- EB-level tracking
     acquiredEbBodies :: !(Set EbHash)
