@@ -1,4 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
@@ -6,7 +9,7 @@
 
 module LeiosDemoDb (module LeiosDemoDb) where
 
-import Cardano.Prelude (when)
+import Cardano.Prelude (Generic, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( modifyTVar
@@ -36,7 +39,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , TxHash (..)
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike, atomically)
+import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks, atomically)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -80,6 +83,11 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   , imEbPoints :: !(IntMap {- SlotNo -} EbHash)
   , imEbBodies :: !(Map EbHash (IntMap {- txOffset -} EbTxEntry))
   }
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+emptyInMemoryLeiosDb :: InMemoryLeiosDb
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty
 
 -- | Transaction cache entry
 data TxCacheEntry = TxCacheEntry
@@ -87,6 +95,8 @@ data TxCacheEntry = TxCacheEntry
   , tceBytesSize :: !BytesSize
   , tceExpiry :: !Int64
   }
+  deriving stock Generic
+  deriving anyclass NoThunks
 
 -- | EB transaction entry
 data EbTxEntry = EbTxEntry
@@ -94,18 +104,14 @@ data EbTxEntry = EbTxEntry
   , eteTxBytesSize :: !BytesSize
   , eteTxBytes :: !(Maybe ByteString) -- NULL initially, filled later
   }
+  deriving stock Generic
+  deriving anyclass NoThunks
 
 -- | Create a new in-memory Leios database handle.
 -- This is suitable for testing in IOSim.
 newInMemoryLeiosDb :: IOLike m => m (LeiosDbHandle m)
 newInMemoryLeiosDb = do
-  stateVar <-
-    newTVarIO
-      InMemoryLeiosDb
-        { imTxCache = Map.empty
-        , imEbPoints = IntMap.empty
-        , imEbBodies = Map.empty
-        }
+  stateVar <- newTVarIO emptyInMemoryLeiosDb
 
   pure $
     LeiosDbHandle

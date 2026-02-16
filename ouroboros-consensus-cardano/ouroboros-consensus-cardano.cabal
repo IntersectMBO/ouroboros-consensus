@@ -524,6 +524,7 @@ library unstable-cardano-tools
     Cardano.Tools.ImmDBServer.Json.Say
     Cardano.Tools.ImmDBServer.Json.SendRecv
     Cardano.Tools.ImmDBServer.MiniProtocols
+    Cardano.Tools.ThreadNet.Run
 
   other-modules:
     Cardano.Api.Key
@@ -577,9 +578,15 @@ library unstable-cardano-tools
     network,
     network-mux,
     nothunks,
+    QuickCheck >= 2.15,
     ouroboros-consensus ^>=0.27,
+    ouroboros-consensus:unstable-consensus-testlib,
     ouroboros-consensus-cardano,
+    ouroboros-consensus-cardano:unstable-shelley-testlib,
+    cardano-ledger-shelley:testlib,
+    cardano-ledger-shelley-test,
     ouroboros-consensus-diffusion ^>=0.23,
+    ouroboros-consensus-diffusion:unstable-diffusion-testlib,
     ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib} ^>=0.12,
     ouroboros-network,
     ouroboros-network-api,
@@ -753,3 +760,14 @@ executable gen-header
 
   autogen-modules:
     Paths_ouroboros_consensus_cardano
+
+executable run-threadnet
+  import: common-lib
+  hs-source-dirs: app
+  main-is: run-threadnet.hs
+  build-depends:
+    base,
+    cardano-crypto-class,
+    optparse-applicative,
+    ouroboros-consensus-cardano:unstable-cardano-tools,
+    with-utf8,

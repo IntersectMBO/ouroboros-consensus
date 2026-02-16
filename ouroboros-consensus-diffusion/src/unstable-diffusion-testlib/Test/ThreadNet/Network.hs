@@ -2,6 +2,8 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -63,9 +65,10 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
+import GHC.Generics (Generic)
 import GHC.Stack
-import LeiosDemoDb (newInMemoryLeiosDb)
-import LeiosDemoTypes (LeiosEb)
+import LeiosDemoDb (InMemoryLeiosDb, emptyInMemoryLeiosDb, newInMemoryLeiosDb)
+import LeiosDemoTypes (LeiosEb, TraceLeiosKernel)
 import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
@@ -469,7 +472,7 @@ runThreadNetwork
       CoreNodeId ->
       VertexStatusVar m blk ->
       [EdgeStatusVar m] ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (StrictTVar m) ->
       StrictTVar m SlotNo ->
       m ()
     forkVertex
@@ -593,7 +596,7 @@ runThreadNetwork
       OracularClock m ->
       ResourceRegistry m ->
       VertexStatusVar m blk ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (StrictTVar m) ->
       StrictTVar m SlotNo ->
       m ()
     forkInstrumentation
@@ -819,7 +822,7 @@ runThreadNetwork
       ResourceRegistry m ->
       ProtocolInfo blk ->
       m [BlockForging m blk] ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (StrictTVar m) ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
       m
@@ -1561,10 +1564,37 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
   Node information not bound to lifetime of a specific node instance
 -------------------------------------------------------------------------------}
 
-data NodeInfo blk db ev = NodeInfo
+data NodeInfo blk db ev l = NodeInfo
   { nodeInfoEvents :: NodeEvents blk ev
   , nodeInfoDBs :: NodeDBs db
+  , nodeInfoLeios :: LeiosState l
   }
+
+-- `LeiosState` represents the part of the nodes' state that relates to Leios
+data LeiosState f = LeiosState
+  { leiosDb :: f InMemoryLeiosDb
+  , leiosKernelEvents :: f [TraceLeiosKernel]
+  }
+  deriving stock Generic
+
+deriving instance
+  (NoThunks (f InMemoryLeiosDb), NoThunks (f [TraceLeiosKernel])) =>
+  NoThunks (LeiosState f)
+
+emptyLeiosState :: LeiosState Identity
+emptyLeiosState = LeiosState{leiosDb = pure emptyInMemoryLeiosDb, leiosKernelEvents = pure []}
+
+emptyLeiosStateTVar :: IOLike m => m (LeiosState (StrictTVar m))
+emptyLeiosStateTVar = atomically $ do
+  leiosDb <- newTVar emptyInMemoryLeiosDb
+  leiosKernelEvents <- newTVar []
+  return LeiosState{leiosDb, leiosKernelEvents}
+
+snapshotLeiosState :: IOLike m => LeiosState (StrictTVar m) -> m (LeiosState Identity)
+snapshotLeiosState ls = atomically $ do
+  leiosDb <- pure <$> readTVar (leiosDb ls)
+  leiosKernelEvents <- pure <$> readTVar (leiosKernelEvents ls)
+  return LeiosState{leiosDb, leiosKernelEvents}
 
 -- | A vector with an @ev@-shaped element for a particular set of
 -- instrumentation events
@@ -1594,8 +1624,8 @@ newNodeInfo ::
   forall blk m.
   IOLike m =>
   m
-    ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m)
-    , m (NodeInfo blk MockFS [])
+    ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (StrictTVar m)
+    , m (NodeInfo blk MockFS [] Identity)
     )
 newNodeInfo = do
   (nodeInfoEvents, readEvents) <- do
@@ -1620,15 +1650,17 @@ newNodeInfo = do
     (v1, m1) <- mk
     (v2, m2) <- mk
     (v3, m3) <- mk
-    (v4, m4) <- mk
+    (v4 :: StrictTMVar m MockFS, m4 :: STM m MockFS) <- mk
     pure
       ( NodeDBs v1 v2 v3 v4
       , NodeDBs <$> m1 <*> m2 <*> m3 <*> m4
       )
 
+  nodeInfoLeios <- emptyLeiosStateTVar
+
   pure
-    ( NodeInfo{nodeInfoEvents, nodeInfoDBs}
-    , NodeInfo <$> readEvents <*> atomically readDBs
+    ( NodeInfo{nodeInfoEvents, nodeInfoDBs, nodeInfoLeios}
+    , NodeInfo <$> readEvents <*> atomically readDBs <*> snapshotLeiosState nodeInfoLeios
     )
 
 {-------------------------------------------------------------------------------
@@ -1647,6 +1679,7 @@ data NodeOutput blk = NodeOutput
   , nodeOutputSelects :: Map SlotNo [(RealPoint blk, BlockNo)]
   , nodeOutputUpdates :: [LedgerUpdate blk]
   , nodePipeliningEvents :: [ChainDB.TracePipeliningEvent blk]
+  , nodeLeiosState :: LeiosState Identity
   }
 
 data TestOutput blk = TestOutput
@@ -1659,7 +1692,7 @@ mkTestOutput ::
   forall m blk.
   (IOLike m, HasHeader blk) =>
   [ ( CoreNodeId
-    , m (NodeInfo blk MockFS [])
+    , m (NodeInfo blk MockFS [] Identity)
     , Chain blk
     , LedgerState blk EmptyMK
     )
@@ -1674,6 +1707,7 @@ mkTestOutput vertexInfos = do
         let NodeInfo
               { nodeInfoEvents
               , nodeInfoDBs
+              , nodeInfoLeios
               } = nodeInfo
         let NodeEvents
               { nodeEventsAdds
@@ -1712,6 +1746,7 @@ mkTestOutput vertexInfos = do
                 , nodeOutputNodeDBs = nodeInfoDBs
                 , nodeOutputUpdates = nodeEventsUpdates
                 , nodePipeliningEvents = nodeEventsPipelining
+                , nodeLeiosState = nodeInfoLeios
                 }
 
         pure
