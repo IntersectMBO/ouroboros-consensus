@@ -1,0 +1,101 @@
+{
+    "systemStart": "2026-01-14T13:02:30Z",
+    "networkId": "Testnet",
+    "networkMagic": 164,
+    "slotLength": 0.1,
+    "activeSlotsCoeff": 5.0e-2,
+    "securityParam": 5,
+    "epochLength": 500,
+    "slotsPerKESPeriod": 129600,
+    "maxKESEvolutions": 60,
+    "maxLovelaceSupply": 100000000000000,
+    "initialFunds": {
+        "005a63421616a6392347260b5e1ebc5db9b878cd1a4fb5f0b1006854c495936e06ca168da5788019e78625166a2ea47bea1f2537ffd88ab426": 30000000000000,
+        "00640528b0c169d2398258ec14c9f1b05b89546995e20a73bd1ec6bdefb9fa485ab33acd079d3553f42dac2ce5e12f1e1120fd1158d506e50b": 30000000000000,
+        "00769b51b4fce367b6e3dcc95f5734e4954cf1e5c8a70ec47a1edb25abf8980f8134623b0799aad76616474a9574ef4616a2c945d4ea8ebf23": 30000000000000,
+        "601597b348d779b3639848c23b94cd1a2eb8b277276af66c14450d85c5": 10000000000000
+    },
+    "genDelegs": {},
+    "protocolParams": {
+        "a0": 0.3,
+        "decentralisationParam": 0,
+        "eMax": 18,
+        "extraEntropy": {
+            "tag": "NeutralNonce"
+        },
+        "keyDeposit": 2000000,
+        "maxBlockBodySize": 90112,
+        "maxBlockHeaderSize": 1100,
+        "maxTxSize": 16384,
+        "minFeeA": 44,
+        "minFeeB": 155381,
+        "minPoolCost": 170000000,
+        "minUTxOValue": 4310,
+        "nOpt": 500,
+        "poolDeposit": 500000000,
+        "protocolVersion": {
+            "major": 10,
+            "minor": 0
+        },
+        "rho": 3.0e-3,
+        "tau": 0.2
+    },
+    "staking": {
+        "pools": {
+            "169ff24fd5db8ccf3b2a97dfeb583fd1c5fcefba2389ce3a1a48ae82": {
+                "cost": 0,
+                "margin": 0,
+                "metadata": null,
+                "owners": [],
+                "pledge": 0,
+                "publicKey": "169ff24fd5db8ccf3b2a97dfeb583fd1c5fcefba2389ce3a1a48ae82",
+                "relays": [],
+                "rewardAccount": {
+                    "credential": {
+                        "keyHash": "eacb1c2d8b7ee194c67ffb6ff23177b4dbcf2f5fde174dd5b783f718"
+                    },
+                    "network": "Testnet"
+                },
+                "vrf": "757124837642b979540d94d3e43f81ec35d4bb8754e608d0467306ecf4168688"
+            },
+            "901059533982d22aab41d27686024dc0f0d156cfa32b409578b54087": {
+                "cost": 0,
+                "margin": 0,
+                "metadata": null,
+                "owners": [],
+                "pledge": 0,
+                "publicKey": "901059533982d22aab41d27686024dc0f0d156cfa32b409578b54087",
+                "relays": [],
+                "rewardAccount": {
+                    "credential": {
+                        "keyHash": "c044c912736379b939beae6728bacccaddd443b7bb4b73cec840d23a"
+                    },
+                    "network": "Testnet"
+                },
+                "vrf": "5d5b26f71119e1c7ae6b134d72829418f99a6f61fb71ccc5b1b75448d966ea9a"
+            },
+            "eb8865c72876f93e07d3db55c14c03a542afa1ab8ad83065723a3204": {
+                "cost": 0,
+                "margin": 0,
+                "metadata": null,
+                "owners": [],
+                "pledge": 0,
+                "publicKey": "eb8865c72876f93e07d3db55c14c03a542afa1ab8ad83065723a3204",
+                "relays": [],
+                "rewardAccount": {
+                    "credential": {
+                        "keyHash": "b61a5b4d65f90e29aeb02489ec65d18ba8d443e39237f070f9c6eb07"
+                    },
+                    "network": "Testnet"
+                },
+                "vrf": "aa68ef148b1f702c6d6be3c8ab3d39f7543396a32f122c2f0657eb0cadc531b3"
+            }
+        },
+        "stake": {
+            "95936e06ca168da5788019e78625166a2ea47bea1f2537ffd88ab426": "901059533982d22aab41d27686024dc0f0d156cfa32b409578b54087",
+            "b9fa485ab33acd079d3553f42dac2ce5e12f1e1120fd1158d506e50b": "169ff24fd5db8ccf3b2a97dfeb583fd1c5fcefba2389ce3a1a48ae82",
+            "f8980f8134623b0799aad76616474a9574ef4616a2c945d4ea8ebf23": "eb8865c72876f93e07d3db55c14c03a542afa1ab8ad83065723a3204"
+        }
+    },
+    "updateQuorum": 2
+}

@@ -1,0 +1,127 @@
+{
+  "Protocol": "Cardano",
+  "ByronGenesisFile": "byron-genesis.json",
+  "ShelleyGenesisFile": "shelley-genesis.json",
+  "AlonzoGenesisFile": "alonzo-genesis.json",
+  "ConwayGenesisFile": "conway-genesis.json",
+  "DijkstraGenesisFile": "dijkstra-genesis.json",
+
+  "LastKnownBlockVersion-Alt": 0,
+  "LastKnownBlockVersion-Major": 3,
+  "LastKnownBlockVersion-Minor": 1,
+
+  "ConsensusMode": "GenesisMode",
+  "RequiresNetworkMagic": "RequiresMagic",
+  "LedgerDB": {
+    "Backend": "V2InMemory",
+    "NumOfDiskSnapshots": 2,
+    "QueryBatchSize": 100000,
+    "SnapshotInterval": 4230
+  },
+
+  "EnableP2P": true,
+  "PeerSharing": false,
+  "SyncTargetNumberOfActivePeers": 15,
+  "SyncTargetNumberOfEstablishedPeers": 40,
+  "TargetNumberOfActivePeers": 15,
+  "TargetNumberOfEstablishedPeers": 40,
+
+  "ExperimentalProtocolsEnabled": true,
+  "ExperimentalHardForksEnabled": true,
+  "TestShelleyHardForkAtEpoch": 0,
+  "TestAllegraHardForkAtEpoch": 0,
+  "TestMaryHardForkAtEpoch": 0,
+  "TestAlonzoHardForkAtEpoch": 0,
+  "TestBabbageHardForkAtEpoch": 0,
+  "TestConwayHardForkAtEpoch": 0,
+
+  "TurnOnLogMetrics": true,
+  "TurnOnLogging": true,
+  "UseTraceDispatcher": true,
+  "TraceOptionNodeName": "node0",
+  "TraceOptionMetricsPrefix": "cardano.node.metrics.",
+  "TraceOptionForwarder": {
+    "connQueueSize": 64,
+    "disconnQueueSize": 128,
+    "maxReconnectDelay": 30
+  },
+  "TraceOptionPeerFrequency": 2000,
+  "TraceOptionResourceFrequency": 1000,
+  "TraceOptions": {
+    "": {
+      "backends": [
+        "Stdout MachineFormat",
+        "PrometheusSimple 0.0.0.0 12900"
+      ],
+      "detail": "DNormal",
+      "severity": "Notice"
+    },
+    "BlockFetch": {
+      "severity": "Info"
+    },
+    "BlockchainTime": {
+      "severity": "Notice"
+    },
+    "ChainDB": {
+      "severity": "Info"
+    },
+    "ChainSync": {
+      "severity": "Info"
+    },
+    "Consensus.GSM": {
+      "severity": "Info"
+    },
+    "Forge.Loop": {
+      "severity": "Debug"
+    },
+    "Forge.StateInfo": {
+      "severity": "Debug"
+    },
+    "LedgerMetrics": {
+      "severity": "Info"
+    },
+    "Mempool": {
+      "severity": "Debug"
+    },
+    "Net": {
+      "severity": "Silence"
+    },
+    "NodeState": {
+      "severity": "Notice"
+    },
+    "Resources": {
+      "severity": "Silence"
+    },
+    "Shutdown": {
+      "severity": "Notice"
+    },
+    "Startup": {
+      "severity": "Notice"
+    },
+    "StateQueryServer": {
+      "severity": "Notice"
+    },
+    "TxSubmission": {
+      "severity": "Info"
+    },
+    "Version.NodeVersion": {
+      "severity": "Info"
+    },
+    "LeiosNotify": {
+      "severity": "Info",
+      "maxFrequency": 0
+    },
+    "LeiosFetch": {
+      "severity": "Info",
+      "maxFrequency": 0
+    },
+    "Consensus.LeiosKernel": {
+      "severity": "Debug",
+      "maxFrequency": 0
+    },
+    "Consensus.LeiosPeer": {
+      "severity": "Info",
+      "maxFrequency": 0
+    }
+  }
+}
