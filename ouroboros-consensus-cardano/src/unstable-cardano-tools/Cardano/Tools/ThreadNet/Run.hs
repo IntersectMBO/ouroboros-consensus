@@ -6,6 +6,7 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -18,13 +19,16 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
 import qualified Data.Map as Map
+import LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Condense ()
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
+import Ouroboros.Consensus.Mempool (TraceEventMempool)
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Node.Tracers (TraceForgeEvent, TraceLabelCreds)
 import Ouroboros.Consensus.NodeId (CoreNodeId)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
@@ -65,12 +69,16 @@ run Opts{configFile} = do
         , nodeTopology = meshNodeTopology numCoreNodes
         , initSeed = Seed 0
         }
-  testOutput <-
+  testOutput@TestOutput{testOutputTracesOfType} <-
     runThreadNet $
       RunThreadNetArgs
         { testConfig
         , protocolInfo
         }
+
+  print $ testOutputTracesOfType @(TraceLabelCreds (TraceForgeEvent Blk))
+  print $ testOutputTracesOfType @TraceLeiosKernel
+  print $ testOutputTracesOfType @TraceLeiosPeer
 
   print $ Map.lookupMax . testOutputTipBlockNos $ testOutput
   print $
@@ -81,6 +89,8 @@ run Opts{configFile} = do
     ]
 
   return ()
+
+type Blk = CardanoBlock StandardCrypto
 
 data RunThreadNetArgs = RunThreadNetArgs
   { testConfig :: TestConfig

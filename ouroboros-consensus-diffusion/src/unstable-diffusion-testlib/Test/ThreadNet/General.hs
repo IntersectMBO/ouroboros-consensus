@@ -35,10 +35,16 @@ module Test.ThreadNet.General
   , plainTestNodeInitialization
   ) where
 
-import Control.Exception (assert)
+import Control.Exception (assert, throw)
 import Control.Monad (guard)
-import Control.Monad.IOSim (runSimOrThrow, setCurrentTime)
-import Control.Tracer (nullTracer)
+import Control.Monad.IOSim
+  ( runSimTrace
+  , selectTraceEventsDynamic
+  , setCurrentTime
+  , traceM
+  , traceResult
+  )
+import Control.Tracer (Tracer (..), nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -233,7 +239,13 @@ runTestNetwork
     , version = (networkVersion, blockVersion)
     }
   mkTestConfigMB =
-    runSimOrThrow $ do
+    case traceResult False simTrace of
+      Left e ->
+        throw e -- XXX: Avoid throwing in pure code
+      Right x ->
+        x{testOutputTracesOfType = selectTraceEventsDynamic simTrace}
+   where
+    simTrace = runSimTrace $ do
       setCurrentTime dawnOfTime
       let TestConfigMB
             { nodeInfo
@@ -244,6 +256,7 @@ runTestNetwork
               (BTime.SystemStart dawnOfTime)
               nullTracer
       runThreadNetwork
+        (Tracer traceM)
         systemTime
         ThreadNetworkArgs
           { tnaForgeEbbEnv = forgeEbbEnv

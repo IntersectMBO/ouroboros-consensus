@@ -63,6 +63,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Typeable (Typeable)
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Generics (Generic)
@@ -313,8 +314,12 @@ runThreadNetwork ::
   , TracingConstraints blk
   , HasCallStack
   ) =>
-  SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
+  (forall a. (Show a, Typeable a) => Tracer m a) ->
+  SystemTime m ->
+  ThreadNetworkArgs m blk ->
+  m (TestOutput blk)
 runThreadNetwork
+  baseTracer
   systemTime
   ThreadNetworkArgs
     { tnaForgeEbbEnv = mbForgeEbbEnv
@@ -387,7 +392,7 @@ runThreadNetwork
           sharedRegistry
           clock
           -- traces when/why the mini protocol instances start and stop
-          nullDebugTracer
+          baseTracer
           (version, blockVersion)
           (codecConfig, calcMessageDelay)
           vertexStatusVars
@@ -750,7 +755,7 @@ runThreadNetwork
                   , mcdbRegistry = registry
                   , mcdbNodeDBs = nodeDBs
                   }
-            tr = instrumentationTracer <> nullDebugTracer
+            tr = instrumentationTracer <> baseTracer
          in args
               { cdbImmDbArgs =
                   (cdbImmDbArgs args)
@@ -770,7 +775,7 @@ runThreadNetwork
                   (cdbsArgs args)
                     { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
                       cdbsGcDelay = 0
-                    , cdbsTracer = instrumentationTracer <> nullDebugTracer
+                    , cdbsTracer = instrumentationTracer <> baseTracer
                     }
               }
        where
@@ -996,7 +1001,33 @@ runThreadNetwork
             }
 
         -- traces the node's local events other than those from the -- ChainDB
-        tracers = instrumentationTracers <> nullDebugTracers
+        tracers = instrumentationTracers <> baseTracers
+
+        baseTracers =
+          Tracers
+            { chainSyncClientTracer = baseTracer
+            , chainSyncServerHeaderTracer = baseTracer
+            , chainSyncServerBlockTracer = baseTracer
+            , blockFetchDecisionTracer = baseTracer
+            , blockFetchClientTracer = baseTracer
+            , blockFetchServerTracer = baseTracer
+            , txInboundTracer = baseTracer
+            , txOutboundTracer = baseTracer
+            , localTxSubmissionServerTracer = baseTracer
+            , mempoolTracer = baseTracer
+            , forgeTracer = baseTracer
+            , blockchainTimeTracer = baseTracer
+            , forgeStateInfoTracer = baseTracer
+            , keepAliveClientTracer = baseTracer
+            , consensusSanityCheckTracer = baseTracer
+            , consensusErrorTracer = baseTracer
+            , gsmTracer = baseTracer
+            , gddTracer = baseTracer
+            , csjTracer = baseTracer
+            , dbfTracer = baseTracer
+            , leiosKernelTracer = baseTracer
+            , leiosPeerTracer = baseTracer
+            }
 
       let
         -- use a backoff delay of exactly one slot length (which the
@@ -1685,6 +1716,11 @@ data NodeOutput blk = NodeOutput
 data TestOutput blk = TestOutput
   { testOutputNodes :: Map NodeId (NodeOutput blk)
   , testOutputTipBlockNos :: Map SlotNo (Map NodeId (WithOrigin BlockNo))
+  , testOutputTracesOfType :: forall a. Typeable a => [a]
+  -- ^ Get the trace output of a given type 'a'. Use 'TypeApplications' to
+  -- access the right traces, e.g:
+  --
+  -- print $ testOutputTraceOfType output @(TraceEventMempool (CardanoBlock StandardCrypto))
   }
 
 -- | Gather the test output from the nodes
@@ -1758,25 +1794,12 @@ mkTestOutput vertexInfos = do
     TestOutput
       { testOutputNodes = Map.unions nodeOutputs'
       , testOutputTipBlockNos = Map.unionsWith Map.union tipBlockNos'
+      , testOutputTracesOfType = error "should be overridden"
       }
 
 {-------------------------------------------------------------------------------
   Constraints needed for verbose tracing
 -------------------------------------------------------------------------------}
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracer :: (Applicative m, Show a) => Tracer m a
-nullDebugTracer = nullTracer `asTypeOf` showTracing debugTracer
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracers ::
-  ( Monad m
-  , Show peer
-  , LedgerSupportsProtocol blk
-  , TracingConstraints blk
-  ) =>
-  Tracers m peer Void blk
-nullDebugTracers = nullTracers `asTypeOf` showTracers debugTracer
 
 -- | Occurs throughout in positions that might be useful for debugging.
 nullDebugProtocolTracers ::
@@ -1802,6 +1825,12 @@ type TracingConstraints blk =
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
   , Show (TxMeasure blk)
+  , Typeable blk
+  , Typeable (ApplyTxErr blk)
+  , Typeable (ForgeStateInfo blk)
+  , Typeable (ForgeStateUpdateError blk)
+  , Typeable (CannotForge blk)
+  , Typeable (TxMeasure blk)
   , HasNestedContent Header blk
   )
 
