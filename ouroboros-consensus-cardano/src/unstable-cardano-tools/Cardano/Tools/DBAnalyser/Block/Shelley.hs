@@ -134,6 +134,9 @@ instance
   -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
 
+class PerEraAnalysis era where
+  txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
+
 instance PerEraAnalysis ShelleyEra where txExUnitsSteps = Nothing
 instance PerEraAnalysis AllegraEra where txExUnitsSteps = Nothing
 instance PerEraAnalysis MaryEra where txExUnitsSteps = Nothing
@@ -355,5 +358,3 @@ instance EraDatum AllegraEra where
 instance EraDatum MaryEra where
   eraDatumSize _ = 0 -- Mary era has no datums
 
-class PerEraAnalysis era where
-  txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
