@@ -133,7 +133,7 @@ library
 
   build-depends:
     aeson,
-    base >=4.14 && <4.22,
+    base >=4.14 && <4.23,
     base-deriving-via,
     bytestring >=0.10 && <0.13,
     cardano-binary,
@@ -156,7 +156,7 @@ library
     cardano-slotting,
     cardano-strict-containers,
     cborg ^>=0.2.2,
-    containers >=0.5 && <0.8,
+    containers >=0.5 && <0.9,
     contra-tracer,
     crypton,
     deepseq,
@@ -198,7 +198,7 @@ library unstable-byronspec
     Ouroboros.Consensus.ByronSpec.Ledger.Rules
 
   build-depends:
-    base >=4.14 && <4.22,
+    base >=4.14 && <4.23,
     bimap >=0.4 && <0.6,
     byron-spec-chain,
     byron-spec-ledger,
@@ -206,7 +206,7 @@ library unstable-byronspec
     cardano-ledger-binary,
     cardano-ledger-byron:testlib,
     cborg >=0.2.2 && <0.3,
-    containers >=0.5 && <0.8,
+    containers >=0.5 && <0.9,
     mtl,
     nothunks,
     ouroboros-consensus ^>=0.28,
@@ -550,7 +550,7 @@ library unstable-cardano-tools
 
   build-depends:
     aeson,
-    base >=4.14 && <4.22,
+    base >=4.14 && <4.23,
     base16-bytestring >=1.0,
     bytestring >=0.10 && <0.13,
     cardano-crypto,
@@ -575,7 +575,7 @@ library unstable-cardano-tools
     cardano-strict-containers,
     cborg ^>=0.2.2,
     compact,
-    containers >=0.5 && <0.8,
+    containers >=0.5 && <0.9,
     contra-tracer,
     directory,
     dot,

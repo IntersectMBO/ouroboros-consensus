@@ -308,7 +308,7 @@ library
   build-depends:
     FailT ^>=0.1.2,
     aeson,
-    base >=4.14 && <4.22,
+    base >=4.14 && <4.23,
     base-deriving-via,
     base16-bytestring,
     bimap >=0.4 && <0.6,
@@ -323,7 +323,7 @@ library
     cardano-slotting,
     cardano-strict-containers,
     cborg ^>=0.2.2,
-    containers >=0.5 && <0.8,
+    containers >=0.5 && <0.9,
     contra-tracer,
     deepseq,
     diff-containers >=1.2,
@@ -380,10 +380,10 @@ library ouroboros-consensus-lsm
     Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
   build-depends:
-    base >=4.14 && <4.22,
+    base >=4.14 && <4.23,
     blockio,
     bytestring,
-    containers >=0.5 && <0.8,
+    containers >=0.5 && <0.9,
     contra-tracer,
     filepath,
     fs-api ^>=0.4,
@@ -413,12 +413,12 @@ library ouroboros-consensus-lmdb
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
 
   build-depends:
-    base >=4.14 && <4.22,
+    base >=4.14 && <4.23,
     bytestring >=0.10 && <0.13,
     cardano-lmdb >=0.4,
     cardano-lmdb-simple ^>=0.8,
     cardano-slotting,
-    containers >=0.5 && <0.8,
+    containers >=0.5 && <0.9,
     contra-tracer,
     directory,
     filepath,

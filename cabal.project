@@ -46,11 +46,6 @@ if os (windows)
   constraints:
     bitvec -simd
 
-if impl (ghc >= 9.10)
-  allow-newer:
-    -- https://github.com/phadej/regression-simple/pull/14
-    , regression-simple:base
-
 -- We need this s-r-p until ledger makes CHaP release that is compatible with
 -- mempack-0.2.0.0, which LSM-trees need.
 source-repository-package
