@@ -33,7 +33,7 @@ module Cardano.Tools.DBAnalyser.Analysis
   ) where
 
 import Data.Text (Text)
-import Barbies
+import qualified Barbies
 import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
@@ -362,7 +362,7 @@ data DumpQuery blk f = MkDumpQuery
   , query_size :: f SizeInBytes
   , query_block :: f blk
   }
-  deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
+  deriving (Generic, Barbies.FunctorB, Barbies.TraversableB, Barbies.ApplicativeB, Barbies.ConstraintsB)
 
 -- | A line of the csv file of block features. This is a higher-kinded datatype
 -- because it makes it possible to define both an actual line of data and the
@@ -388,7 +388,7 @@ data BlockFeatures blk f = MkBlockFeatures
   , prot_minor :: f Natural
   -- ^ Minor protocol version
   }
-  deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
+  deriving (Generic, Barbies.FunctorB, Barbies.TraversableB, Barbies.ApplicativeB, Barbies.ConstraintsB)
 
 -- | Like 'BlockFeatures' but for transaction features.
 data TxFeatures blk f = MkTxFeatures
@@ -421,7 +421,7 @@ data TxFeatures blk f = MkTxFeatures
   , num_deleg_certs :: f Int
     -- ^ Number of certs which are deleg certs
   }
-  deriving (Generic, FunctorB, TraversableB, ApplicativeB, ConstraintsB)
+  deriving (Generic, Barbies.FunctorB, Barbies.TraversableB, Barbies.ApplicativeB, Barbies.ConstraintsB)
 
 blockFeaturesNames :: BlockFeatures blk (Const String)
 blockFeaturesNames =
@@ -475,14 +475,14 @@ dumpBlockFeatures blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, lim
       "Saving transaction metadata to: " ++ txFile
   withFile (Just blockFile) $ \outBlockHandle ->
     withFile (Just txFile) $ \outTxHandle -> do
-      let blockHeader = csv $ Container blockFeaturesNames
-      let txHeader = csv $ Container txFeaturesNames
+      let blockHeader = csv $ Barbies.Container blockFeaturesNames
+      let txHeader = csv $ Barbies.Container txFeaturesNames
       IO.hPutStrLn outBlockHandle blockHeader
       IO.hPutStrLn outTxHandle txHeader
       let
         component :: BlockComponent blk (DumpQuery blk Identity)
         component =
-          bsequence' $
+          Barbies.bsequence' $
             MkDumpQuery
               { query_header = GetHeader
               , query_size = GetBlockSize
@@ -510,7 +510,7 @@ dumpBlockFeatures blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, lim
             , prot_major = getVersion64 . pvMajor . HasAnalysis.protVer <$> query_block cmp
             , prot_minor = pvMinor . HasAnalysis.protVer <$> query_block cmp
             }
-      let line = csv $ Container $ bmapC @Condense (Const . condense . runIdentity) blockFeatures
+      let line = csv $ Barbies.Container $ Barbies.bmapC @Condense (Const . condense . runIdentity) blockFeatures
       IO.hPutStrLn bh line
 
     traceExceptionWith tracer "Exception while extracting transaction features" $ do
@@ -545,7 +545,7 @@ dumpBlockFeatures blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, lim
             , num_deleg_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterDelegCert @blk) tx
             }
       let txFeaturess = toListOf (HasAnalysis.txs @blk . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
-      let txlines = map (csv . Container . bmapC @Condense (Const . condense . runIdentity)) txFeaturess
+      let txlines = map (csv . Barbies.Container . Barbies.bmapC @Condense (Const . condense . runIdentity)) txFeaturess
       forM_ txlines $ \txl ->
         IO.hPutStrLn th txl
 
