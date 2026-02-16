@@ -576,7 +576,7 @@ countTxOutputs AnalysisEnv{db, registry, startFrom, limit, tracer} = do
     traceWith tracer event
     return cumulative'
    where
-    count = getSum $ foldMapOf HasAnalysis.txs (Sum . HasAnalysis.numOutputs @blk) blk
+    count = HasAnalysis.countTxOutputs blk
 
 {-------------------------------------------------------------------------------
   Analysis: show the header size in bytes for all blocks
