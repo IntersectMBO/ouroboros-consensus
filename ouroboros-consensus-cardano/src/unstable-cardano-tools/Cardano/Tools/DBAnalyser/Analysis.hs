@@ -436,11 +436,11 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
   FromLedgerState initLedgerDB internal = startFrom
 
   process :: () -> blk -> IO (NextStep, ())
-  process _ blk = do
+  process _ blk = withRegistry $ \reg -> do
     let ledgerCfg = ExtLedgerCfg cfg
     oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip initLedgerDB
     frk <-
-      LedgerDB.getForkerAtTarget initLedgerDB registry VolatileTip >>= \case
+      LedgerDB.getForkerAtTarget initLedgerDB reg VolatileTip >>= \case
         Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
         Right f -> pure f
     tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
