@@ -800,7 +800,7 @@ runDB standalone@DB{..} cmd =
   go hasFS (Corrupt c ss) =
     catch
       ( case c of
-          Delete -> Unit <$> deleteSnapshot hasFS ss
+          Delete -> Unit <$> deleteSnapshotIfTemporary hasFS ss
           Truncate -> Unit <$> truncateSnapshot hasFS ss
       )
       (\(_ :: FsError) -> return $ Unit ()) -- ignore any errors during corruption
