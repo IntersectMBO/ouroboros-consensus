@@ -60,6 +60,7 @@ import qualified Debug.Trace as Debug
 import GHC.Generics hiding (to)
 import qualified GHC.Stats as GC
 import Lens.Micro
+    ( SimpleFold, toListOf, folded, foldMapOf, to, (^.) )
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
