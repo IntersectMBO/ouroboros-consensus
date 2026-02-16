@@ -129,7 +129,7 @@ runAnalysis analysisName = case go analysisName of
  where
   go :: AnalysisName -> SomeAnalysis blk
   go ShowSlotBlockNo = mkAnalysis $ showSlotBlockNo
-  go (DumpBlockFeatures{blockFile, transactionFile}) = mkAnalysis $ dumpBlockFeatures blockFile transactionFile
+  go (DumpBlockFeatures(DumpBlockFeaturesArg {blockFile, transactionFile})) = mkAnalysis $ dumpBlockFeatures blockFile transactionFile
   go CountTxOutputs = mkAnalysis $ countTxOutputs
   go ShowBlockHeaderSize = mkAnalysis $ showHeaderSize
   go ShowBlockTxsSize = mkAnalysis $ showBlockTxsSize

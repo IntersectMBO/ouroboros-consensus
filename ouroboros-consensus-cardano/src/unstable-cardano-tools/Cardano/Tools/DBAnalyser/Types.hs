@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# OPTIONS_GHC -Wno-partial-fields #-}
 
 module Cardano.Tools.DBAnalyser.Types (module Cardano.Tools.DBAnalyser.Types) where
 
@@ -22,7 +21,7 @@ data DBAnalyserConfig = DBAnalyserConfig
 
 data AnalysisName
   = ShowSlotBlockNo
-  | DumpBlockFeatures { blockFile :: FilePath, transactionFile :: FilePath }
+  | DumpBlockFeatures DumpBlockFeaturesArg
   | CountTxOutputs
   | ShowBlockHeaderSize
   | ShowBlockTxsSize
@@ -39,6 +38,10 @@ data AnalysisName
     -- The metrics will be written to the provided file path, or to
     -- the standard output if no file path is specified.
     GetBlockApplicationMetrics NumberOfBlocks (Maybe FilePath)
+  deriving Show
+
+data DumpBlockFeaturesArg
+  = DumpBlockFeaturesArg { blockFile :: FilePath, transactionFile :: FilePath }
   deriving Show
 
 data AnalysisResult

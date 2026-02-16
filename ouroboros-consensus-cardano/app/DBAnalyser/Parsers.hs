@@ -1,5 +1,6 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module DBAnalyser.Parsers
   ( parseCmdLine
@@ -154,7 +155,7 @@ parseAnalysis =
 
 dumpFeaturesParser :: Parser AnalysisName
 dumpFeaturesParser =
-    (flag' DumpBlockFeatures $
+    (flag' (\blockFile transactionFile -> DumpBlockFeatures (DumpBlockFeaturesArg{blockFile, transactionFile})) $
         mconcat
           [ long "dump-features"
           , help "Exports blocks' and transactions' features in CSV files"])
