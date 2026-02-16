@@ -1,5 +1,7 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
@@ -53,7 +55,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , txMeasureMetricTxSizeBytes
   )
 import Ouroboros.Consensus.Util (ShowProxy (..))
-import Ouroboros.Consensus.Util.IOLike (IOLike)
+import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks (showTypeOf, wNoThunks))
 import Text.Pretty.Simple (pShow)
 
 type BytesSize = Word32
@@ -65,13 +67,13 @@ newtype PeerId a = MkPeerId a
 type HASH = Hash.Blake2b_256
 
 newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
-  deriving (Eq, Ord, Show)
+  deriving newtype (Eq, Ord, Show, NoThunks)
 
 prettyEbHash :: EbHash -> String
 prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
 
 newtype TxHash = MkTxHash ByteString
-  deriving (Eq, Ord, Show)
+  deriving newtype (Eq, Ord, Show, NoThunks)
 
 prettyTxHash :: TxHash -> String
 prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
@@ -514,6 +516,10 @@ data TraceLeiosKernel
   | TraceLeiosDbException LeiosDbException
 
 deriving instance Show TraceLeiosKernel
+
+instance NoThunks TraceLeiosKernel where
+  showTypeOf _ = "TraceLeiosKernel"
+  wNoThunks _ _ = return Nothing
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case

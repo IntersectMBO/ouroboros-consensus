@@ -36,14 +36,11 @@ module Test.ThreadNet.General
   ) where
 
 import Control.Concurrent.Class.MonadSTM (atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception (assert, throw)
+import Control.Exception (assert)
 import Control.Monad (guard)
 import Control.Monad.IOSim
   ( runSimOrThrow
-  , runSimTrace
-  , selectTraceEventsDynamic
   , setCurrentTime
-  , traceResult
   )
 import Control.Tracer (Tracer (..), nullTracer)
 import qualified Data.Map.Strict as Map
