@@ -130,7 +130,7 @@ runAnalysis analysisName = case go analysisName of
  where
   go :: AnalysisName -> SomeAnalysis blk
   go ShowSlotBlockNo = mkAnalysis $ showSlotBlockNo
-  go (DumpBlockFeatures(DumpBlockFeaturesArg {blockFile, transactionFile})) = mkAnalysis $ dumpBlockFeatures blockFile transactionFile
+  go (DumpBlockFeatures args) = mkAnalysis $ dumpBlockFeatures args
   go CountTxOutputs = mkAnalysis $ countTxOutputs
   go ShowBlockHeaderSize = mkAnalysis $ showHeaderSize
   go ShowBlockTxsSize = mkAnalysis $ showBlockTxsSize
@@ -461,20 +461,17 @@ dumpBlockFeatures ::
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk)
   =>
-  -- | Csv file where the block data is to be stored
-  FilePath ->
-  -- | Csv file where the transaction data is to be stored
-  FilePath ->
+  DumpBlockFeaturesArg ->
   Analysis blk StartFromLedgerState
-dumpBlockFeatures blockFile txFile AnalysisEnv{db, registry, startFrom, cfg, limit, tracer} = do
+dumpBlockFeatures DumpBlockFeaturesArg{blockFile, transactionFile} AnalysisEnv{db, registry, startFrom, cfg, limit, tracer} = do
   traceWith tracer $
     Message $
       "Saving block metadata to: " ++ blockFile
   traceWith tracer $
     Message $
-      "Saving transaction metadata to: " ++ txFile
+      "Saving transaction metadata to: " ++ transactionFile
   withFile (Just blockFile) $ \outBlockHandle ->
-    withFile (Just txFile) $ \outTxHandle -> do
+    withFile (Just transactionFile) $ \outTxHandle -> do
       let blockHeader = csv $ Barbies.Container blockFeaturesNames
       let txHeader = csv $ Barbies.Container txFeaturesNames
       IO.hPutStrLn outBlockHandle blockHeader
