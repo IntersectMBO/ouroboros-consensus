@@ -7,7 +7,8 @@ module Test.Ouroboros.Storage.PerasVoteDB.Model
   , openDB
   , closeDB
   , addVote
-  , getVoteSnapshot
+  , getVoteIds
+  , getVotesAfter
   , getForgedCertForRound
   , garbageCollect
   ) where
@@ -42,7 +43,6 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( AddPerasVoteResult (..)
-  , PerasVoteSnapshot (..)
   , PerasVoteTicketNo
   , zeroPerasVoteTicketNo
   )
@@ -252,23 +252,33 @@ addVote vote model
       , vpcCertBoost = perasWeight (params model)
       }
 
-getVoteSnapshot ::
+getVoteIds ::
   Model blk ->
-  PerasVoteSnapshot blk
-getVoteSnapshot model =
-  PerasVoteSnapshot
-    { containsVote = \voteId ->
-        hasVote
-          voteId
-          model
-    , getVotesAfter = \ticketNo ->
-        Map.fromList
-          [ (tn, vote)
-          | (_, vs) <- Map.toList (votes model)
-          , VoteEntry{veTicketNo = tn, veVote = vote} <- Set.toList vs
-          , tn > ticketNo
-          ]
-    }
+  Set (PerasVoteId blk)
+getVoteIds model =
+  Set.unions $
+    [ Set.map
+        ( \ve ->
+            PerasVoteId
+              { pviRoundNo = pvtRoundNo voteTarget
+              , pviVoterId = veVoter ve
+              }
+        )
+        votesForTarget
+    | (voteTarget, votesForTarget) <- Map.toList (votes model)
+    ]
+
+getVotesAfter ::
+  PerasVoteTicketNo ->
+  Model blk ->
+  Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk))
+getVotesAfter ticketNo model =
+  Map.fromList
+    [ (veTicketNo ve, veVote ve)
+    | votesForTarget <- Map.elems (votes model)
+    , ve <- Set.toList votesForTarget
+    , veTicketNo ve > ticketNo
+    ]
 
 getForgedCertForRound ::
   PerasRoundNo ->

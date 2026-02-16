@@ -13,7 +13,6 @@ module Test.Ouroboros.Storage.PerasVoteDB.StateMachine (tests) where
 import qualified Cardano.Crypto.DSIGN.Class as SL
 import qualified Cardano.Crypto.Seed as SL
 import qualified Cardano.Ledger.Keys as SL
-import Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import Control.Monad.Class.MonadThrow (MonadCatch (..))
 import Control.Monad.State
   ( MonadState (..)
@@ -26,7 +25,9 @@ import Data.Char (chr)
 import Data.Functor (($>))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
+import Data.Map.Strict (Map)
 import Data.Ratio ((%))
+import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.String (IsString (..))
 import Data.Word (Word64)
@@ -38,6 +39,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , HasPerasVoteRound (..)
   , PerasRoundNo (..)
   , PerasVote (..)
+  , PerasVoteId
   , PerasVoteStake (..)
   , PerasVoteTarget (..)
   , PerasVoterId (..)
@@ -53,9 +55,8 @@ import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB
   , PerasVoteDbError
-  , PerasVoteSnapshot
-  , getVotesAfter
-  , zeroPerasVoteTicketNo
+  , PerasVoteTicketNo
+  , atomicallyWithTracing
   )
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import Ouroboros.Consensus.Storage.PerasVoteDB.Impl (PerasVoteDbError (..))
@@ -129,8 +130,6 @@ instance StateModel Model where
   data Action Model a where
     OpenDB ::
       Action Model ()
-    CloseDB ::
-      Action Model ()
     AddVote ::
       WithArrivalTime (ValidatedPerasVote TestBlock) ->
       Action
@@ -139,11 +138,19 @@ instance StateModel Model where
             (PerasVoteDbError TestBlock)
             (AddPerasVoteResult TestBlock)
         )
+    GetVoteIds ::
+      Action Model (Set (PerasVoteId TestBlock))
+    GetVotesAfter ::
+      PerasVoteTicketNo ->
+      Action
+        Model
+        ( Map
+            PerasVoteTicketNo
+            (WithArrivalTime (ValidatedPerasVote TestBlock))
+        )
     GetForgedCertForRound ::
       PerasRoundNo ->
       Action Model (Maybe (ValidatedPerasCert TestBlock))
-    GetVoteSnapshot ::
-      Action Model (PerasVoteSnapshot TestBlock)
     GarbageCollect ::
       PerasRoundNo ->
       Action Model ()
@@ -153,18 +160,15 @@ instance StateModel Model where
         Some <$> genOpenDB
     | otherwise =
         frequency
-          [ (1, Some <$> genCloseDB)
-          , (1000, Some <$> genAddVote)
+          [ (1000, Some <$> genAddVote)
+          , (10, Some <$> genGetVoteIds)
+          , (10, Some <$> genGetVotesAfter)
           , (5, Some <$> genGetForgedCertForRound)
-          , (5, Some <$> genGetVoteSnapshot)
           , (2, Some <$> genGarbageCollect)
           ]
    where
     genOpenDB = do
       pure OpenDB
-
-    genCloseDB = do
-      pure CloseDB
 
     genAddVote = do
       roundNo <- genRoundNo
@@ -185,12 +189,16 @@ instance StateModel Model where
                 }
       return (AddVote voteWithTime)
 
+    genGetVoteIds = do
+      pure GetVoteIds
+
+    genGetVotesAfter = do
+      ticketNo <- toEnum <$> choose (0, fromEnum (Model.lastTicketNo m) + 1)
+      pure (GetVotesAfter ticketNo)
+
     genGetForgedCertForRound = do
       roundNo <- genRoundNo
       pure (GetForgedCertForRound roundNo)
-
-    genGetVoteSnapshot = do
-      pure GetVoteSnapshot
 
     genGarbageCollect = do
       roundNo <- genRoundNo
@@ -243,19 +251,19 @@ instance StateModel Model where
   nextState (Model m) action _ =
     case action of
       OpenDB -> Model $ Model.openDB m
-      CloseDB -> Model $ Model.closeDB m
       AddVote vote -> Model $ snd $ Model.addVote vote m
+      GetVoteIds -> Model $ m
+      GetVotesAfter _ -> Model $ m
       GetForgedCertForRound _ -> Model $ m
-      GetVoteSnapshot -> Model $ m
       GarbageCollect roundNo -> Model $ Model.garbageCollect roundNo m
 
   precondition (Model m) action =
     case action of
       OpenDB -> not (Model.open m)
-      CloseDB -> Model.open m
       AddVote _ -> Model.open m
+      GetVoteIds -> Model.open m
+      GetVotesAfter _ -> Model.open m
       GetForgedCertForRound _ -> Model.open m
-      GetVoteSnapshot -> Model.open m
       GarbageCollect _ -> Model.open m
 
 deriving stock instance Show (Action Model a)
@@ -271,21 +279,21 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
         let args = PerasVoteDB.PerasVoteDbArgs nullTracer perasTestCfg
         voteDB <- lift $ PerasVoteDB.openDB args
         put voteDB
-      CloseDB -> do
-        voteDB <- get
-        lift $ PerasVoteDB.closeDB voteDB
       AddVote vote -> do
         voteDB <- get
-        lift $ try $ PerasVoteDB.addVote voteDB vote
+        lift $ try $ atomicallyWithTracing $ PerasVoteDB.addVote voteDB vote
+      GetVoteIds -> do
+        voteDB <- get
+        lift $ atomicallyWithTracing $ PerasVoteDB.getVoteIds voteDB
+      GetVotesAfter ticketNo -> do
+        voteDB <- get
+        lift $ atomicallyWithTracing $ PerasVoteDB.getVotesAfter voteDB ticketNo
       GetForgedCertForRound roundNo -> do
         voteDB <- get
-        lift $ atomically $ PerasVoteDB.getForgedCertForRound voteDB roundNo
-      GetVoteSnapshot -> do
-        voteDB <- get
-        lift $ atomically $ PerasVoteDB.getVoteSnapshot voteDB
+        lift $ atomicallyWithTracing $ PerasVoteDB.getForgedCertForRound voteDB roundNo
       GarbageCollect roundNo -> do
         voteDB <- get
-        lift $ PerasVoteDB.garbageCollect voteDB roundNo
+        lift $ atomicallyWithTracing $ PerasVoteDB.garbageCollect voteDB roundNo
 
   postcondition (Model model, _) (AddVote vote) _ actual = do
     let (expected, _) = Model.addVote vote model
@@ -316,20 +324,24 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
         counterexamplePost $ "Model: " <> show expectedErr
         counterexamplePost $ "SUT: " <> show actualRes
         pure False
+  postcondition (Model model, _) (GetVoteIds) _ actual = do
+    let expected = Model.getVoteIds model
+    counterexamplePost $ "Mismatched result:"
+    counterexamplePost $ "Model: " <> show expected
+    counterexamplePost $ "SUT: " <> show actual
+    pure $ expected == actual
+  postcondition (Model model, _) (GetVotesAfter ticketNo) _ actual = do
+    let expected = Model.getVotesAfter ticketNo model
+    counterexamplePost $ "Mismatched result:"
+    counterexamplePost $ "Model: " <> show expected
+    counterexamplePost $ "SUT: " <> show actual
+    pure $ expected == actual
   postcondition (Model model, _) (GetForgedCertForRound roundNo) _ actual = do
     let expected = Map.lookup roundNo (Model.certs model)
     counterexamplePost $ "Mismatched result:"
     counterexamplePost $ "Model: " <> show expected
     counterexamplePost $ "SUT: " <> show actual
     pure $ expected == actual
-  postcondition (Model model, _) GetVoteSnapshot _ actual = do
-    let expected = Model.getVoteSnapshot model
-    let allVotesExpected = getVotesAfter expected zeroPerasVoteTicketNo
-    let allVotesActual = getVotesAfter actual zeroPerasVoteTicketNo
-    counterexamplePost $ "Mismatched result:"
-    counterexamplePost $ "Model: " <> show allVotesExpected
-    counterexamplePost $ "SUT: " <> show allVotesActual
-    pure $ allVotesExpected == allVotesActual
   postcondition _ _ _ _ = pure True
 
   monitoring (_, Model model') (AddVote vote) _ (Right res) = do
@@ -337,6 +349,12 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
       -- In addition to the result of the command, we also tabulate how many
       -- votes were needed to reach quorum (if quorum was reached).
       . tabulate "Votes until quorum" (votesToReachQuorum model' vote res)
+  monitoring _ (GetVoteIds) _ (Right res) = do
+    let tag = if Set.null res then "NoVoteIds" else "HasVoteIds"
+    tabulate "GetVoteIds" [tag]
+  monitoring _ (GetVotesAfter _) _ (Right res) = do
+    let tag = if Map.null res then "NoVotesAfter" else "HasVotesAfter"
+    tabulate "GetVotesAfter" [tag]
   monitoring _ (GetForgedCertForRound{}) _ (Right res) = do
     let tag = maybe "NoCert" (const "FoundCert") res
     tabulate "GetForgedCertForRound" [tag]
@@ -348,8 +366,6 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
 perasVoteDBErrorTag :: PerasVoteDbError TestBlock -> String
 perasVoteDBErrorTag err =
   case err of
-    ClosedDBError{} ->
-      "ClosedDBError"
     MultipleWinnersInRound{} ->
       "MultipleWinnersInRound"
     ForgingCertError{} ->
