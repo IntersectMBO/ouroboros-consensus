@@ -426,8 +426,8 @@ data TxFeatures blk f = MkTxFeatures
 blockFeaturesNames :: BlockFeatures blk (Const String)
 blockFeaturesNames =
   MkBlockFeatures
-    { block_num = Const "block_id"
-    , slot_num = Const "slot#"
+    { block_num = Const "block_no"
+    , slot_num = Const "slot_no"
     , block_hash = Const "block_hash"
     , block_size = Const "block_size"
     , predecessor = Const "predecessor"
@@ -440,7 +440,7 @@ blockFeaturesNames =
 txFeaturesNames :: TxFeatures blk (Const String)
 txFeaturesNames =
   MkTxFeatures
-    { src_block = "block_id"
+    { src_block = "block_no"
     , num_script_wits = "#script_wits"
     , num_addr_wits = "#addr_wits"
     , size_script_wits = "script_wits_size"
