@@ -2002,30 +2002,37 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
     fses <- atomically $ traverse readTMVar nodeDBs
     let
       modelChain = Model.currentChain $ dbModel model
-      secParam = unNonZero (maxRollbacks (configSecurityParam testCfg))
+      secParam = configSecurityParam testCfg
+      hasImmutableBlocks = not (Chain.null (Model.immutableChain secParam (dbModel model)))
+      hasVolatileBlocks = not (AF.null (Model.volatileChain secParam id (dbModel model)))
       prop =
-        counterexample (show (configSecurityParam testCfg)) $
-          counterexample ("Model chain: " <> condense modelChain) $
-            counterexample ("TraceEvents: " <> unlines (map show trace)) $
-              tabulate "Chain length" [show (Chain.length modelChain)] $
-                tabulate "Security Parameter (k)" [show secParam] $
-                  tabulate "Chain length >= k" [show (Chain.length modelChain >= fromIntegral secParam)] $
-                    tabulate "TraceEvents" (map traceEventName trace) $
-                      res
-                        === Ok
-                        .&&. prop_trace testCfg (dbModel model) trace
-                        .&&. counterexample
-                          "ImmutableDB is leaking file handles"
-                          (Mock.numOpenHandles (nodeDBsImm fses) === 0)
-                        .&&. counterexample
-                          "VolatileDB is leaking file handles"
-                          (Mock.numOpenHandles (nodeDBsVol fses) === 0)
-                        .&&. counterexample
-                          "LedgerDB is leaking file handles"
-                          (Mock.numOpenHandles (nodeDBsLgr fses) === 0)
-                        .&&. counterexample
-                          "There were registered clean-up actions"
-                          (remainingCleanups === 0)
+        counterexample (show (configSecurityParam testCfg))
+          $ counterexample ("Model chain: " <> condense modelChain)
+          $ counterexample ("TraceEvents: " <> unlines (map show trace))
+          $ tabulate "Chain length" [show (Chain.length modelChain)]
+          $ tabulate
+            "Chain composition (has immutable blocks, has volatile blocks)"
+            [show (hasImmutableBlocks, hasVolatileBlocks)]
+          $ tabulate "Security Parameter (k)" [show secParam]
+          $ tabulate
+            "Chain length >= k"
+            [show (Chain.length modelChain >= fromIntegral (unNonZero (maxRollbacks secParam)))]
+          $ tabulate "TraceEvents" (map traceEventName trace)
+          $ res
+            === Ok
+            .&&. prop_trace testCfg (dbModel model) trace
+            .&&. counterexample
+              "ImmutableDB is leaking file handles"
+              (Mock.numOpenHandles (nodeDBsImm fses) === 0)
+            .&&. counterexample
+              "VolatileDB is leaking file handles"
+              (Mock.numOpenHandles (nodeDBsVol fses) === 0)
+            .&&. counterexample
+              "LedgerDB is leaking file handles"
+              (Mock.numOpenHandles (nodeDBsLgr fses) === 0)
+            .&&. counterexample
+              "There were registered clean-up actions"
+              (remainingCleanups === 0)
     return (hist, prop)
 
 prop_trace :: TopLevelConfig Blk -> DBModel Blk -> [TraceEvent Blk] -> Property
