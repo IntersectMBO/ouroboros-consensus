@@ -341,22 +341,8 @@ getLatestPerasCertOnChainRound ::
   ChainDbEnv m blk ->
   STM m (Maybe PerasRoundNo)
 getLatestPerasCertOnChainRound CDB{..} = do
-  immutableLedger <- ledgerState <$> LedgerDB.getImmutableTip cdbLedgerDB
   volatileLedger <- ledgerState <$> LedgerDB.getVolatileTip cdbLedgerDB
-  pure (latestPerasCertRound immutableLedger volatileLedger)
- where
-  latestPerasCertRound immutableLedger volatileLedger =
-    case ( getLatestPerasCertRound immutableLedger
-         , getLatestPerasCertRound volatileLedger
-         ) of
-      (Nothing, Nothing) ->
-        Nothing
-      (Just immutableCertRoundNo, Nothing) ->
-        Just immutableCertRoundNo
-      (Nothing, Just volatileCertRoundNo) ->
-        Just volatileCertRoundNo
-      (Just immutableCertRoundNo, Just volatileCertRoundNo) ->
-        Just (immutableCertRoundNo `max` volatileCertRoundNo)
+  pure (getLatestPerasCertRound volatileLedger)
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent

@@ -864,13 +864,6 @@ decodeShelleyTransition = do
   shelleyAfterVoting <- CBOR.decodeWord32
   return ShelleyTransitionInfo{shelleyAfterVoting}
 
-encodeShelleyLatestPerasCertRound :: PerasRoundNo -> Encoding
-encodeShelleyLatestPerasCertRound roundNo =
-  CBOR.encodeWord64 (unPerasRoundNo roundNo)
-
-decodeShelleyLatestPerasCertRound :: Decoder s PerasRoundNo
-decodeShelleyLatestPerasCertRound = PerasRoundNo <$> CBOR.decodeWord64
-
 encodeShelleyLedgerState ::
   ShelleyCompatible proto era =>
   LedgerState (ShelleyBlock proto era) EmptyMK ->
@@ -889,7 +882,7 @@ encodeShelleyLedgerState
         , toCBOR shelleyLedgerState
         , encodeShelleyTransition shelleyLedgerTransition
         ]
-          <> [ encodeShelleyLatestPerasCertRound roundNo
+          <> [ toCBOR roundNo
              | SJust roundNo <- [shelleyLedgerLatestPerasCertRound]
              ]
    where
@@ -917,7 +910,7 @@ decodeShelleyLedgerState =
         then do
           return SNothing
         else do
-          SJust <$> decodeShelleyLatestPerasCertRound
+          SJust <$> fromCBOR
     return
       ShelleyLedgerState
         { shelleyLedgerTip
