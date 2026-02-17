@@ -91,3 +91,12 @@ source-repository-package
     ouroboros-network
     cardano-diffusion
     network-mux
+-- Plutus main past the 1.58 release
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/plutus
+  tag: 9b47adbd2e0cf9b4749e53f5138b3817eaa5f0b4
+  --sha256: sha256-wqriBVjkC1mW/Mp+FButFNBRClync9cDwZtgG+a6lb0=
+  subdir:
+    plutus-core
+    plutus-ledger-api
