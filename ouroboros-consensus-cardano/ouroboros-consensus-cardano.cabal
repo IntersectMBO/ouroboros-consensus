@@ -200,7 +200,6 @@ library snapshot-conversion
     fs-api,
     microlens,
     mtl,
-    optparse-applicative,
     ouroboros-consensus:{ouroboros-consensus, ouroboros-consensus-lmdb, ouroboros-consensus-lsm},
     ouroboros-consensus-cardano,
     random,
@@ -735,10 +734,8 @@ executable snapshot-converter
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:{unstable-cardano-tools, ouroboros-consensus-cardano, snapshot-conversion},
-    text,
     with-utf8,
-    filepath,
-    aeson
+    filepath
 
   other-modules:
     DBAnalyser.Parsers
