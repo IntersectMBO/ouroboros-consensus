@@ -186,7 +186,10 @@ data ReadSnapshotErr
     ReadSnapshotIsLegacy
   deriving (Eq, Show)
 
-data TablesCodecVersion = TablesCodecVersion1
+data TablesCodecVersion
+  = -- | Used in cardano-node 10.7. Previous versions have no codec version.
+    -- [ {_ (txid, big-endian txix) => txout} ]
+    TablesCodecVersion1
   deriving (Eq, Show)
 
 instance ToJSON TablesCodecVersion where
