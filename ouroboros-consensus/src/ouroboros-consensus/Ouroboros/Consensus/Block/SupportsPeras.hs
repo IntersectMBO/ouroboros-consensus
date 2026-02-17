@@ -40,6 +40,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , module Ouroboros.Consensus.Peras.Params
   ) where
 
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Cardano.Binary as KeyHash
 import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise (Serialise (..))
@@ -70,6 +71,12 @@ newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving Show via Quiet PerasRoundNo
   deriving stock Generic
   deriving newtype (Enum, Eq, Ord, Num, Bounded, NoThunks, Serialise)
+
+instance ToCBOR PerasRoundNo where
+  toCBOR = encode
+
+instance FromCBOR PerasRoundNo where
+  fromCBOR = decode
 
 instance Condense PerasRoundNo where
   condense = show . unPerasRoundNo
