@@ -92,7 +92,7 @@ import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.State as SL
 import Cardano.Slotting.EpochInfo
-import Codec.CBOR.Decoding (Decoder, decodeListLen)
+import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
@@ -138,7 +138,9 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR
-  ( decodeWithOrigin
+  ( decodeStrictMaybe
+  , decodeWithOrigin
+  , encodeStrictMaybe
   , encodeWithOrigin
   )
 import Ouroboros.Consensus.Util.IndexedMemPack
@@ -379,11 +381,11 @@ instance
           internsFromMap $
             shelleyLedgerState st
               ^. SL.nesEsL
-                . SL.esLStateL
-                . SL.lsCertStateL
-                . SL.certDStateL
-                . SL.accountsL
-                . SL.accountsMapL
+              . SL.esLStateL
+              . SL.lsCertStateL
+              . SL.certDStateL
+              . SL.accountsL
+              . SL.accountsMapL
      in LedgerTables . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
 
 instance
@@ -510,10 +512,10 @@ slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState
 slUtxoL st vals =
   st
     & SL.nesEsL
-      . SL.esLStateL
-      . SL.lsUTxOStateL
-      . SL.utxoL
-      <<.~ vals
+    . SL.esLStateL
+    . SL.lsUTxOStateL
+    . SL.utxoL
+    <<.~ vals
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -877,18 +879,12 @@ encodeShelleyLedgerState
     } =
     encodeVersion serialisationFormatVersion2 $
       mconcat $
-        [ CBOR.encodeListLen len
+        [ CBOR.encodeListLen 4
         , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
         , toCBOR shelleyLedgerState
         , encodeShelleyTransition shelleyLedgerTransition
+        , encodeStrictMaybe toCBOR shelleyLedgerLatestPerasCertRound
         ]
-          <> [ toCBOR roundNo
-             | SJust roundNo <- [shelleyLedgerLatestPerasCertRound]
-             ]
-   where
-    len
-      | SNothing <- shelleyLedgerLatestPerasCertRound = 3
-      | otherwise = 4
 
 decodeShelleyLedgerState ::
   forall era proto s.
@@ -901,16 +897,11 @@ decodeShelleyLedgerState =
  where
   decodeShelleyLedgerState2 :: Decoder s' (LedgerState (ShelleyBlock proto era) EmptyMK)
   decodeShelleyLedgerState2 = do
-    len <- decodeListLen
+    enforceSize "ShelleyLedgerState" 4
     shelleyLedgerTip <- decodeWithOrigin decodeShelleyTip
     shelleyLedgerState <- fromCBOR
     shelleyLedgerTransition <- decodeShelleyTransition
-    shelleyLedgerLatestPerasCertRound <-
-      if len < 4
-        then do
-          return SNothing
-        else do
-          SJust <$> fromCBOR
+    shelleyLedgerLatestPerasCertRound <- decodeStrictMaybe fromCBOR
     return
       ShelleyLedgerState
         { shelleyLedgerTip
