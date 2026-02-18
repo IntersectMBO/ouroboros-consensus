@@ -213,16 +213,16 @@ filterMissingWork ::
   LeiosOutstanding pid ->
   m (LeiosOutstanding pid)
 filterMissingWork db outstanding = do
-  -- Filter missingEbBodies: remove EBs that we now have bodies for
+  -- Ask DB which of our "missing" EBs are actually still missing
   let ebHashes = [p.pointEbHash | p <- Map.keys (Leios.missingEbBodies outstanding)]
-  haveEbs <- leiosDbFilterHaveEbBodies db ebHashes
-  let haveEbSet = Set.fromList haveEbs
+  stillMissingEbs <- leiosDbFilterMissingEbBodies db ebHashes
+  let stillMissingEbSet = Set.fromList stillMissingEbs
+      acquiredEbs = filter (`Set.notMember` stillMissingEbSet) ebHashes
       filteredMissingEbBodies =
         Map.filterWithKey
-          (\p _ -> not (Set.member p.pointEbHash haveEbSet))
+          (\p _ -> Set.member p.pointEbHash stillMissingEbSet)
           (Leios.missingEbBodies outstanding)
-  -- Filter missingEbTxs: for each EB, remove TXs we already have
-  -- Collect all unique TXs across all EBs
+  -- Ask DB which of our "missing" TXs are actually still missing
   let allTxHashes =
         Set.toList $
           Set.fromList
@@ -230,25 +230,23 @@ filterMissingWork db outstanding = do
             | txs <- Map.elems (Leios.missingEbTxs outstanding)
             , (txHash, _) <- IntMap.elems txs
             ]
-  haveTxs <- leiosDbFilterHaveTxs db allTxHashes
-  let haveTxSet = Set.fromList haveTxs
+  stillMissingTxs <- leiosDbFilterMissingTxs db allTxHashes
+  let stillMissingTxSet = Set.fromList stillMissingTxs
       filteredMissingEbTxs =
-        Map.map
-          (IntMap.filter (\(txHash, _) -> not (Set.member txHash haveTxSet)))
-          (Leios.missingEbTxs outstanding)
-      -- Also filter out empty entries
-      nonEmptyMissingEbTxs = Map.filter (not . IntMap.null) filteredMissingEbTxs
-      -- Update txOffsetss to reflect removed TXs
+        Map.filter (not . IntMap.null) $
+          Map.map
+            (IntMap.filter (\(txHash, _) -> Set.member txHash stillMissingTxSet))
+            (Leios.missingEbTxs outstanding)
       filteredTxOffsetss =
         Map.filterWithKey
-          (\txHash _ -> not (Set.member txHash haveTxSet))
+          (\txHash _ -> Set.member txHash stillMissingTxSet)
           (Leios.txOffsetss outstanding)
   pure $
     outstanding
       { Leios.missingEbBodies = filteredMissingEbBodies
-      , Leios.missingEbTxs = nonEmptyMissingEbTxs
+      , Leios.missingEbTxs = filteredMissingEbTxs
       , Leios.txOffsetss = filteredTxOffsetss
-      , Leios.acquiredEbBodies = Leios.acquiredEbBodies outstanding `Set.union` haveEbSet
+      , Leios.acquiredEbBodies = Leios.acquiredEbBodies outstanding `Set.union` Set.fromList acquiredEbs
       }
 
 leiosFetchLogicIteration ::
