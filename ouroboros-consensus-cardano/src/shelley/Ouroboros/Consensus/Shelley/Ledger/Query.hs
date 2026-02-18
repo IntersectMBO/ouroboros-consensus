@@ -20,8 +20,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
--- TODO: remove -Wno-deprecations when SL.sumStakePerPool is re-implemented in Ledger
-{-# OPTIONS_GHC -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
@@ -30,8 +28,6 @@
 module Ouroboros.Consensus.Shelley.Ledger.Query
   ( BlockQuery (.., GetLedgerPeerSnapshot)
   , NonMyopicMemberRewards (..)
-  , StakeSnapshot (..)
-  , StakeSnapshots (..)
 
     -- * Serialisation
   , decodeShelleyQuery
@@ -45,16 +41,10 @@ module Ouroboros.Consensus.Shelley.Ledger.Query
   , shelleyQFTraverseTablesPredicate
   ) where
 
-import Cardano.Binary
-  ( FromCBOR (..)
-  , ToCBOR (..)
-  , encodeListLen
-  , enforceSize
-  )
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import Cardano.Ledger.Address
 import qualified Cardano.Ledger.Api.State.Query as SL
 import Cardano.Ledger.Coin (Coin)
-import Cardano.Ledger.Compactible (Compactible (fromCompact))
 import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.State as CG
 import qualified Cardano.Ledger.Core as SL
@@ -71,7 +61,6 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
-import Control.DeepSeq (NFData)
 import Data.Bifunctor (second)
 import Data.Coerce
 import Data.Map.Strict (Map)
@@ -81,8 +70,6 @@ import Data.Sequence (Seq (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
-import qualified Data.VMap as VMap
-import GHC.Generics (Generic)
 import Lens.Micro
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Block
@@ -263,11 +250,12 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
       QFNoTables
       SL.QueryPoolStateResult
   GetStakeSnapshots ::
+    SL.EraGov era =>
     Maybe (Set (SL.KeyHash SL.StakePool)) ->
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      StakeSnapshots
+      SL.StakeSnapshots
   GetPoolDistr ::
     Maybe (Set (SL.KeyHash SL.StakePool)) ->
     BlockQuery
@@ -462,55 +450,7 @@ instance
       GetPoolState mPoolIds ->
         SL.queryPoolState st mPoolIds (SL.networkId globals)
       GetStakeSnapshots mPoolIds ->
-        let SL.SnapShots
-              { SL.ssStakeMark
-              , SL.ssStakeSet
-              , SL.ssStakeGo
-              } = SL.esSnapshots . SL.nesEs $ st
-
-            totalMarkByPoolId :: Map (KeyHash SL.StakePool) Coin
-            totalMarkByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeMark) (SL.ssStake ssStakeMark)
-
-            totalSetByPoolId :: Map (KeyHash SL.StakePool) Coin
-            totalSetByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeSet) (SL.ssStake ssStakeSet)
-
-            totalGoByPoolId :: Map (KeyHash SL.StakePool) Coin
-            totalGoByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeGo) (SL.ssStake ssStakeGo)
-
-            getPoolStakes :: Set (KeyHash SL.StakePool) -> Map (KeyHash SL.StakePool) StakeSnapshot
-            getPoolStakes poolIds = Map.fromSet mkStakeSnapshot poolIds
-             where
-              mkStakeSnapshot poolId =
-                StakeSnapshot
-                  { ssMarkPool = Map.findWithDefault mempty poolId totalMarkByPoolId
-                  , ssSetPool = Map.findWithDefault mempty poolId totalSetByPoolId
-                  , ssGoPool = Map.findWithDefault mempty poolId totalGoByPoolId
-                  }
-
-            getAllStake :: SL.SnapShot -> SL.Coin
-            getAllStake (SL.SnapShot stake _ _ _ _) = VMap.foldMap fromCompact (SL.unStake stake)
-         in case mPoolIds of
-              Nothing ->
-                let poolIds =
-                      Set.fromList $
-                        mconcat
-                          [ VMap.elems (SL.ssDelegations ssStakeMark)
-                          , VMap.elems (SL.ssDelegations ssStakeSet)
-                          , VMap.elems (SL.ssDelegations ssStakeGo)
-                          ]
-                 in StakeSnapshots
-                      { ssStakeSnapshots = getPoolStakes poolIds
-                      , ssMarkTotal = getAllStake ssStakeMark
-                      , ssSetTotal = getAllStake ssStakeSet
-                      , ssGoTotal = getAllStake ssStakeGo
-                      }
-              Just poolIds ->
-                StakeSnapshots
-                  { ssStakeSnapshots = getPoolStakes poolIds
-                  , ssMarkTotal = getAllStake ssStakeMark
-                  , ssSetTotal = getAllStake ssStakeSet
-                  , ssGoTotal = getAllStake ssStakeGo
-                  }
+        SL.queryStakeSnapshots st mPoolIds
       GetPoolDistr mPoolIds ->
         fromLedgerPoolDistr $ answerPureBlockQuery cfg (GetPoolDistr2 mPoolIds) ext
       GetStakeDelegDeposits stakeCreds ->
@@ -1106,7 +1046,7 @@ encodeShelleyResult v query = case query of
   GetStakePoolParams{} -> LC.toEraCBOR @era
   GetRewardInfoPools -> LC.toEraCBOR @era
   GetPoolState{} -> LC.toEraCBOR @era
-  GetStakeSnapshots{} -> toCBOR
+  GetStakeSnapshots{} -> LC.toEraCBOR @era
   GetPoolDistr{} -> LC.toEraCBOR @era
   GetStakeDelegDeposits{} -> LC.toEraCBOR @era
   GetConstitution -> toCBOR
@@ -1155,7 +1095,7 @@ decodeShelleyResult v query = case query of
   GetStakePoolParams{} -> LC.fromEraCBOR @era
   GetRewardInfoPools -> LC.fromEraCBOR @era
   GetPoolState{} -> LC.fromEraCBOR @era
-  GetStakeSnapshots{} -> fromCBOR
+  GetStakeSnapshots{} -> LC.fromEraCBOR @era
   GetPoolDistr{} -> LC.fromEraCBOR @era
   GetStakeDelegDeposits{} -> LC.fromEraCBOR @era
   GetConstitution -> fromCBOR
@@ -1200,74 +1140,6 @@ genesisConfigEnDecoding v
       (toCBOR, fromCBOR)
   | otherwise =
       (encodeLegacyShelleyGenesis . getCompactGenesis, compactGenesis <$> decodeLegacyShelleyGenesis)
-
--- | The stake snapshot returns information about the mark, set, go ledger snapshots for a pool,
--- plus the total active stake for each snapshot that can be used in a 'sigma' calculation.
---
--- Each snapshot is taken at the end of a different era. The go snapshot is the current one and
--- was taken two epochs earlier, set was taken one epoch ago, and mark was taken immediately
--- before the start of the current epoch.
-data StakeSnapshot = StakeSnapshot
-  { ssMarkPool :: !SL.Coin
-  , ssSetPool :: !SL.Coin
-  , ssGoPool :: !SL.Coin
-  }
-  deriving (Eq, Show, Generic)
-
-instance NFData StakeSnapshot
-
-instance ToCBOR StakeSnapshot where
-  toCBOR
-    StakeSnapshot
-      { ssMarkPool
-      , ssSetPool
-      , ssGoPool
-      } =
-      encodeListLen 3
-        <> toCBOR ssMarkPool
-        <> toCBOR ssSetPool
-        <> toCBOR ssGoPool
-
-instance FromCBOR StakeSnapshot where
-  fromCBOR = do
-    enforceSize "StakeSnapshot" 3
-    StakeSnapshot
-      <$> fromCBOR
-      <*> fromCBOR
-      <*> fromCBOR
-
-data StakeSnapshots = StakeSnapshots
-  { ssStakeSnapshots :: !(Map (SL.KeyHash SL.StakePool) StakeSnapshot)
-  , ssMarkTotal :: !SL.Coin
-  , ssSetTotal :: !SL.Coin
-  , ssGoTotal :: !SL.Coin
-  }
-  deriving (Eq, Show, Generic)
-
-instance NFData StakeSnapshots
-
-instance ToCBOR StakeSnapshots where
-  toCBOR
-    StakeSnapshots
-      { ssStakeSnapshots
-      , ssMarkTotal
-      , ssSetTotal
-      , ssGoTotal
-      } =
-      encodeListLen 4
-        <> toCBOR ssStakeSnapshots
-        <> toCBOR ssMarkTotal
-        <> toCBOR ssSetTotal
-        <> toCBOR ssGoTotal
-
-instance FromCBOR StakeSnapshots where
-  fromCBOR = do
-    enforceSize "StakeSnapshots" 4
-    StakeSnapshots
-      <$> fromCBOR
-      <*> fromCBOR
-      <*> fromCBOR
-      <*> fromCBOR
 
 {-------------------------------------------------------------------------------
  Instances to implement BlockSupportsHFLedgerQuery
