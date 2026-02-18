@@ -214,14 +214,11 @@ filterMissingWork ::
   m (LeiosOutstanding pid)
 filterMissingWork db outstanding = do
   -- Ask DB which of our "missing" EBs are actually still missing
-  let ebHashes = [p.pointEbHash | p <- Map.keys (Leios.missingEbBodies outstanding)]
-  stillMissingEbs <- leiosDbFilterMissingEbBodies db ebHashes
-  let stillMissingEbSet = Set.fromList stillMissingEbs
-      acquiredEbs = filter (`Set.notMember` stillMissingEbSet) ebHashes
-      filteredMissingEbBodies =
-        Map.filterWithKey
-          (\p _ -> Set.member p.pointEbHash stillMissingEbSet)
-          (Leios.missingEbBodies outstanding)
+  let ebPoints = Map.keys (Leios.missingEbBodies outstanding)
+  stillMissingPoints <- leiosDbFilterMissingEbBodies db ebPoints
+  let stillMissingPointSet = Set.fromList stillMissingPoints
+      filteredMissingEbBodies = Map.restrictKeys (Leios.missingEbBodies outstanding) stillMissingPointSet
+      acquiredEbHashes = [p.pointEbHash | p <- ebPoints, Set.notMember p stillMissingPointSet]
   -- Ask DB which of our "missing" TXs are actually still missing
   let allTxHashes =
         Set.toList $
@@ -246,7 +243,7 @@ filterMissingWork db outstanding = do
       { Leios.missingEbBodies = filteredMissingEbBodies
       , Leios.missingEbTxs = filteredMissingEbTxs
       , Leios.txOffsetss = filteredTxOffsetss
-      , Leios.acquiredEbBodies = Leios.acquiredEbBodies outstanding `Set.union` Set.fromList acquiredEbs
+      , Leios.acquiredEbBodies = Leios.acquiredEbBodies outstanding `Set.union` Set.fromList acquiredEbHashes
       }
 
 leiosFetchLogicIteration ::

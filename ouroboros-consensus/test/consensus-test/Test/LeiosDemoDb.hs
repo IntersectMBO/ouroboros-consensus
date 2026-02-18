@@ -785,9 +785,9 @@ prop_filterEbBodiesCorrect impl =
             forM_ withoutBodies $ \(point, eb) ->
               leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
             -- Filter should return the ones WITHOUT bodies
-            let allHashes = [p.pointEbHash | (p, _) <- pointsAndEbs]
-                expectedMissing = [p.pointEbHash | (p, _) <- withoutBodies]
-            (result, filterTime) <- timed $ leiosDbFilterMissingEbBodies db allHashes
+            let allPoints = [p | (p, _) <- pointsAndEbs]
+                expectedMissing = [p | (p, _) <- withoutBodies]
+            (result, filterTime) <- timed $ leiosDbFilterMissingEbBodies db allPoints
             pure $
               conjoin
                 [ length result === length expectedMissing
@@ -811,12 +811,12 @@ prop_filterEbBodiesPerformance impl =
               eb = MkLeiosEb $ V.fromList [(txHash, 100)]
           leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
           leiosDbInsertEbBody db point eb
-        -- Generate hashes that are NOT in DB (these should be returned)
-        let missingHashes = [MkEbHash $ BS.pack [fromIntegral ((numWithBodies + i) `mod` 256), fromIntegral (((numWithBodies + i) `div` 256) `mod` 256), fromIntegral (((numWithBodies + i) `div` 65536) `mod` 256)] <> BS.replicate 29 2 | i <- [1 .. numMissing]]
+        -- Generate points that are NOT in DB (these should be returned)
+        let missingPoints = [MkLeiosPoint (SlotNo $ fromIntegral (numWithBodies + i)) (MkEbHash $ BS.pack [fromIntegral ((numWithBodies + i) `mod` 256), fromIntegral (((numWithBodies + i) `div` 256) `mod` 256), fromIntegral (((numWithBodies + i) `div` 65536) `mod` 256)] <> BS.replicate 29 2) | i <- [1 .. numMissing]]
             -- Query with a mix: the DB ones should be filtered out, missing ones returned
-            existingHashes = [MkEbHash $ BS.pack [fromIntegral (i `mod` 256), fromIntegral ((i `div` 256) `mod` 256), fromIntegral ((i `div` 65536) `mod` 256)] <> BS.replicate 29 0 | i <- [1 .. numWithBodies]]
-            queryHashes = existingHashes ++ missingHashes
-        (result, filterTime) <- timed $ leiosDbFilterMissingEbBodies db queryHashes
+            existingPoints = [MkLeiosPoint (SlotNo $ fromIntegral i) (MkEbHash $ BS.pack [fromIntegral (i `mod` 256), fromIntegral ((i `div` 256) `mod` 256), fromIntegral ((i `div` 65536) `mod` 256)] <> BS.replicate 29 0) | i <- [1 .. numWithBodies]]
+            queryPoints = existingPoints ++ missingPoints
+        (result, filterTime) <- timed $ leiosDbFilterMissingEbBodies db queryPoints
         pure $
           conjoin
             [ length result === numMissing
