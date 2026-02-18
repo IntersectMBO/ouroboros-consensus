@@ -16,8 +16,10 @@ import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.CSJ (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
+import qualified Test.Consensus.Peras.Voting.Rules (tests)
 import qualified Test.Consensus.Peras.WeightSnapshot (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
+import qualified Test.Consensus.Util.Pred (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
 import Test.Tasty
 import Test.Util.TestEnv
@@ -44,9 +46,14 @@ tests =
         , Test.Consensus.Mempool.Fairness.tests
         , Test.Consensus.Mempool.StateMachine.tests
         ]
-    , Test.Consensus.Peras.WeightSnapshot.tests
+    , testGroup
+        "Peras"
+        [ Test.Consensus.Peras.Voting.Rules.tests
+        , Test.Consensus.Peras.WeightSnapshot.tests
+        ]
     , Test.Consensus.Util.MonadSTM.NormalForm.tests
     , Test.Consensus.Util.Versioned.tests
+    , Test.Consensus.Util.Pred.tests
     , testGroup
         "HardFork"
         [ testGroup
