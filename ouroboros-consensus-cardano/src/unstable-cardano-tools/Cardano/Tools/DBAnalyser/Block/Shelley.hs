@@ -223,7 +223,7 @@ instance
   wits = Ledger.witsTxL
   addrWits = Ledger.addrTxWitsL
   scriptWits = Ledger.scriptTxWitsL
-  scriptSize = scripty_size
+  scriptSize = eraScriptSize
 
   type CertsOf (ShelleyBlock proto era) = Core.TxCert era
   certs = Core.bodyTxL . Core.certsTxBodyL . folded
@@ -274,14 +274,23 @@ instance EraClassifyCert (Dijkstra.DijkstraTxCert era) where
 -- features. Frequently there are type classes to access this feature, but it's
 -- only implemented from the era where the feature is available on. So type
 -- classes like 'EraTx' play the role of a wrapper over the appropriate classes
--- which manifests in a catch-all implementation (it's marked as overlappable).
--- Then the eras where the feature isn't available get a zero-ing
+-- which manifests in a default implementation for when the appropriate class is
+-- defined. Then the eras where the feature isn't available get a zero-ing
 -- implementation.
 class EraTx era where
   eraReferenceInputs :: SimpleGetter (Ledger.Tx era) (Set Ledger.TxIn)
 
-instance {-# OVERLAPPABLE #-} (Ledger.EraTx era, BabbageEraTxBody era) => EraTx era where
-  eraReferenceInputs =  Core.bodyTxL . referenceInputsTxBodyL
+eraReferenceInputsDefault :: (Ledger.EraTx era, BabbageEraTxBody era) => SimpleGetter (Ledger.Tx era) (Set Ledger.TxIn)
+eraReferenceInputsDefault = Core.bodyTxL . referenceInputsTxBodyL
+
+instance EraTx BabbageEra where
+  eraReferenceInputs = eraReferenceInputsDefault
+
+instance EraTx ConwayEra where
+  eraReferenceInputs = eraReferenceInputsDefault
+
+instance EraTx DijkstraEra where
+  eraReferenceInputs = eraReferenceInputsDefault
 
 instance EraTx ShelleyEra where
   eraReferenceInputs = to (const mempty)
@@ -305,19 +314,19 @@ instance Crypto c => HasProtoVer (Ouroboros.Consensus.Protocol.Praos.Praos c) wh
   eraProtoVer blk = blk & headerBody & hbProtVer
 
 class EraScripts s where
-  scripty_size :: s -> Int
+  eraScriptSize :: s -> Int
 
 instance EraScripts (Timelock AllegraEra) where
-  scripty_size _ = 0 -- dummy
+  eraScriptSize _ = 0 -- dummy
 
 instance EraScripts (Timelock MaryEra) where
-  scripty_size _ = 0 -- dummy
+  eraScriptSize _ = 0 -- dummy
 
 instance EraScripts (SL.MultiSig ShelleyEra) where
-  scripty_size _ = 0 -- dummy
+  eraScriptSize _ = 0 -- dummy
 
-instance {-# OVERLAPPABLE #-} MemPack (Alonzo.AlonzoScript era) => EraScripts (Alonzo.AlonzoScript era) where
-  scripty_size scr = packedByteCount scr
+instance MemPack (Alonzo.AlonzoScript era) => EraScripts (Alonzo.AlonzoScript era) where
+  eraScriptSize scr = packedByteCount scr
 
 class EraHasName era where
   eraEraName :: Text
@@ -346,8 +355,20 @@ instance EraHasName DijkstraEra where
 class EraDatum era where
   eraDatumSize :: Ledger.TxWits era -> Int
 
-instance {-# OVERLAPPABLE #-} AlonzoEraTxWits era => EraDatum era where
-  eraDatumSize = ByteString.Short.length . getMemoRawBytes . view datsTxWitsL
+eraDatumSizeDefault :: AlonzoEraTxWits era => Ledger.TxWits era -> Int
+eraDatumSizeDefault = ByteString.Short.length . getMemoRawBytes . view datsTxWitsL
+
+instance EraDatum AlonzoEra where
+  eraDatumSize = eraDatumSizeDefault
+
+instance EraDatum BabbageEra where
+  eraDatumSize = eraDatumSizeDefault
+
+instance EraDatum ConwayEra where
+  eraDatumSize = eraDatumSizeDefault
+
+instance EraDatum DijkstraEra where
+  eraDatumSize = eraDatumSizeDefault
 
 instance EraDatum ShelleyEra where
   eraDatumSize _ = 0 -- Shelley era has no datums
