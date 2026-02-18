@@ -70,13 +70,7 @@ import Quiet (Quiet (..))
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving Show via Quiet PerasRoundNo
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, Num, Bounded, NoThunks, Serialise)
-
-instance ToCBOR PerasRoundNo where
-  toCBOR = encode
-
-instance FromCBOR PerasRoundNo where
-  fromCBOR = decode
+  deriving newtype (Enum, Eq, Ord, Num, Bounded, NoThunks, Serialise, ToCBOR, FromCBOR)
 
 instance Condense PerasRoundNo where
   condense = show . unPerasRoundNo
