@@ -408,12 +408,16 @@ data TxFeatures blk f = MkTxFeatures
     -- ^ Number of inputs
   , size_inputs :: f Int
     -- ^ Size of (resolved) inputs
+  , num_abs_inputs :: f Int
+    -- ^ The number of inputs which aren't in the UtxO (should always be 0)
   , num_outputs :: f Int
     -- ^ Number of outputs
   , num_ref_inputs :: f Int
     -- ^ Number of reference inputs
   , size_ref_inputs :: f Int
     -- ^ Size of (resolved) reference inputs
+  , num_abs_ref_inputs :: f Int
+    -- ^ The number of reference inputs which aren't in the UtxO (should always be 0)
   , num_certs :: f Int
     -- ^ Total number of certs
   , num_pool_certs :: f Int
@@ -450,9 +454,11 @@ txFeaturesNames =
     , size_datum = "datum_size"
     , num_inputs = "#inputs"
     , size_inputs = "size_inputs"
+    , num_abs_inputs = "#absent_inputs"
     , num_outputs = "#outputs"
     , num_ref_inputs = "#reference_inputs"
     , size_ref_inputs = "size_reference_inputs"
+    , num_abs_ref_inputs = "#absent_reference_inputs"
     , num_certs = "#certs"
     , num_pool_certs = "#pool_certs"
     , num_gov_certs = "#gov_certs"
@@ -532,18 +538,20 @@ dumpBlockFeatures DumpBlockFeaturesArg{blockFile, transactionFile} AnalysisEnv{d
             , size_ref_scripts = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs (Proxy @blk) . folded . to (\txin -> Map.findWithDefault 0 txin utxo_scripts_summary)) Sum tx
             , size_datum = Identity $ tx ^. (HasAnalysis.wits (Proxy @blk) . to (HasAnalysis.datumSize (Proxy @blk)))
             , num_inputs = Identity $ length $ toListOf (HasAnalysis.inputs (Proxy @blk) . folded) tx
-            -- I find it a little dangerous to default to 0 when the TxIn isn't
-            -- there. We have to have a default because the Byron blocks have
-            -- their UTxO summary implemeted yet in their HasAnalysis instance.
-            -- But this may hide some bugs.
+            -- We shouldn't need the 0 default here. But it's perilous to use
+            -- partial functions in analysis as an exception will stop the
+            -- analysis altogether. Instead we record missing inputs in
+            -- num_abs_inputs.
             , size_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.inputs (Proxy @blk) . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
+            , num_abs_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.inputs (Proxy @blk) . folded . to (\txin -> maybe 1 (const 0) $ Map.lookup txin utxo_summary)) Sum tx
             , num_outputs = Identity $ HasAnalysis.numOutputs (Proxy @blk) tx
             , num_ref_inputs = Identity $ length $ toListOf (HasAnalysis.referenceInputs (Proxy @blk)) tx
-            -- I find it a little dangerous to default to 0 when the TxIn isn't
-            -- there. We have to have a default because the Byron blocks have
-            -- their UTxO summary implemeted yet in their HasAnalysis instance.
-            -- But this may hide some bugs.
+            -- We shouldn't need the 0 default here. But it's perilous to use
+            -- partial functions in analysis as an exception will stop the
+            -- analysis altogether. Instead we record missing inputs in
+            -- num_abs_ref_inputs.
             , size_ref_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs (Proxy @blk) . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
+            , num_abs_ref_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs (Proxy @blk) . folded . to (\txin -> maybe 1 (const 0) $ Map.lookup txin utxo_summary)) Sum tx
             , num_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk)) tx
             , num_pool_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk) . HasAnalysis.filterPoolCert (Proxy @blk)) tx
             , num_gov_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk) . HasAnalysis.filterGovCert (Proxy @blk)) tx
