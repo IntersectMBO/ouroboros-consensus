@@ -681,8 +681,14 @@ defaultSnapshotPolicy (SecurityParam k) args =
               | otherwise = id
 
   onDiskSnapshotDelayRange = case spaFrequency of
-    DisableSnapshots -> SnapshotDelayRange 0 0
-    SnapshotFrequency sfa -> provideDefault (SnapshotDelayRange 0 0) $ sfaDelaySnapshotRange sfa
+    DisableSnapshots -> SnapshotDelayRange fiveMinutes tenMinutes
+    SnapshotFrequency sfa -> provideDefault (SnapshotDelayRange fiveMinutes tenMinutes) $ sfaDelaySnapshotRange sfa
+
+  fiveMinutes :: DiffTime
+  fiveMinutes = 5 * 60
+
+  tenMinutes :: DiffTime
+  tenMinutes = 10 * 60
 
   passesRateLimitCheck t = case spaFrequency of
     SnapshotFrequency SnapshotFrequencyArgs{sfaRateLimit} ->
