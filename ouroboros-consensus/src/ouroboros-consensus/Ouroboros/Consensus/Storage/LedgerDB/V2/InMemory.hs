@@ -60,13 +60,16 @@ import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util.CBOR (readIncremental)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Network.AnchoredSeq as AS
 import Streaming
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
@@ -80,7 +83,7 @@ import Prelude hiding (read)
 -------------------------------------------------------------------------------}
 
 data LedgerTablesHandleState l
-  = LedgerTablesHandleOpen !(LedgerTables l ValuesMK)
+  = LedgerTablesHandleOpen !(Point l) !(LedgerTables l ValuesMK)
   | LedgerTablesHandleClosed
   deriving Generic
 
@@ -91,7 +94,11 @@ data InMemoryClosedExn = InMemoryClosedExn
 
 guardClosed :: LedgerTablesHandleState l -> (LedgerTables l ValuesMK -> a) -> a
 guardClosed LedgerTablesHandleClosed _ = error $ show InMemoryClosedExn
-guardClosed (LedgerTablesHandleOpen !st) f = f st
+guardClosed (LedgerTablesHandleOpen _ st) f = f st
+
+guardClosed' :: LedgerTablesHandleState l -> (Point l -> LedgerTables l ValuesMK -> a) -> a
+guardClosed' LedgerTablesHandleClosed _ = error $ show InMemoryClosedExn
+guardClosed' (LedgerTablesHandleOpen p st) f = f p st
 
 newInMemoryLedgerTablesHandle ::
   forall m l.
@@ -102,25 +109,23 @@ newInMemoryLedgerTablesHandle ::
   ) =>
   Tracer m LedgerDBV2Trace ->
   SomeHasFS m ->
-  (ResourceKey m, StrictTVar m (LedgerTablesHandleState l)) ->
+  (StrictTVar m (LedgerTablesHandleState l), m Bool) ->
   m (LedgerTablesHandle m l)
-newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) (origResKey, tablesTVar) =
-  encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $ do
-    resourceKeyTVar <- newTVarIO origResKey
+newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) (tablesTVar, free) =
+  encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $
     pure
       LedgerTablesHandle
-        { close = implClose resourceKeyTVar
+        { close = Monad.void free
         , duplicate = implDuplicate tracer tablesTVar someFS
+        , duplicateFor = implDuplicateFor tracer tablesTVar someFS
         , read = implRead tablesTVar
         , readRange = implReadRange tablesTVar
         , readAll = implReadAll tablesTVar
         , pushDiffs = implPushDiffs tablesTVar
         , takeHandleSnapshot = implTakeHandleSnapshot tablesTVar hasFS
         , tablesSize = implTablesSize tablesTVar
-        , transfer = atomically . writeTVar resourceKeyTVar
         }
 
-{-# INLINE implClose #-}
 {-# INLINE implDuplicate #-}
 {-# INLINE implRead #-}
 {-# INLINE implReadRange #-}
@@ -129,30 +134,31 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) (origResKey, ta
 {-# INLINE implTakeHandleSnapshot #-}
 {-# INLINE implTablesSize #-}
 
-implClose ::
-  IOLike m =>
-  StrictTVar m (ResourceKey m) ->
-  m ()
-implClose tv = do
-  Monad.void $ release =<< readTVarIO tv
-
 allocateLedgerTablesHandle ::
   ( IOLike m
   , HasLedgerTables l
   ) =>
   Tracer m LedgerDBV2Trace ->
-  ResourceRegistry m ->
+  Point l ->
   LedgerTables l ValuesMK ->
-  m (ResourceKey m, StrictTVar m (LedgerTablesHandleState l))
-allocateLedgerTablesHandle tracer rr v =
-  allocate
-    rr
-    (\_ -> newTVarIO $ LedgerTablesHandleOpen v)
-    ( \tv' -> do
-        p <- atomically $ swapTVar tv' LedgerTablesHandleClosed
-        case p of
-          LedgerTablesHandleOpen{} -> encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) $ pure ()
-          _ -> pure ()
+  WithTempRegistry (ForkerState m l) m (StrictTVar m (LedgerTablesHandleState l), m Bool)
+allocateLedgerTablesHandle tracer p v =
+  allocateTemp
+    ( do
+        tv <- newTVarIO $ LedgerTablesHandleOpen p v
+        pure
+          ( tv
+          , do
+              p <- atomically $ swapTVar tv LedgerTablesHandleClosed
+              case p of
+                LedgerTablesHandleOpen{} -> encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) $ pure True
+                _ -> pure False
+          )
+    )
+    (snd)
+    ( \frk _ ->
+        AS.contains (pointSlot p) ((== p) . getTip . state) (getLedgerSeq (foeLedgerSeq frk))
+          || (p == getTip (state (AS.anchor (getLedgerSeq (foeLedgerSeq frk)))))
     )
 
 implDuplicate ::
@@ -164,12 +170,27 @@ implDuplicate ::
   Tracer m LedgerDBV2Trace ->
   StrictTVar m (LedgerTablesHandleState l) ->
   SomeHasFS m ->
-  ResourceRegistry m ->
-  m (ResourceKey m, LedgerTablesHandle m l)
-implDuplicate !tracer tv !someFS rr = do
-  hs <- readTVarIO tv
-  (rk, tv') <- guardClosed hs $ allocateLedgerTablesHandle tracer rr
-  (rk,) <$> newInMemoryLedgerTablesHandle tracer someFS (rk, tv')
+  WithTempRegistry (ForkerState m l) m (LedgerTablesHandle m l)
+implDuplicate !tracer tv !someFS = do
+  hs <- lift $ readTVarIO tv
+  tv' <- guardClosed' hs $ allocateLedgerTablesHandle tracer
+  lift $ newInMemoryLedgerTablesHandle tracer someFS tv'
+
+implDuplicateFor ::
+  ( IOLike m
+  , HasLedgerTables l
+  , CanUpgradeLedgerTables l
+  , SerializeTablesWithHint l
+  ) =>
+  Tracer m LedgerDBV2Trace ->
+  StrictTVar m (LedgerTablesHandleState l) ->
+  SomeHasFS m ->
+  Point l ->
+  WithTempRegistry (ForkerState m l) m (LedgerTablesHandle m l)
+implDuplicateFor !tracer tv !someFS p = do
+  hs <- lift $ readTVarIO tv
+  tv' <- guardClosed hs $ allocateLedgerTablesHandle tracer p
+  lift $ newInMemoryLedgerTablesHandle tracer someFS tv'
 
 implRead ::
   ( IOLike m
@@ -223,13 +244,15 @@ implPushDiffs tv st0 !diffs =
     modifyTVar
       tv
       ( \r ->
-          guardClosed
+          guardClosed'
             r
-            ( LedgerTablesHandleOpen
-                . flip
-                  (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d)))
-                  (projectLedgerTables diffs)
-                . upgradeTables st0 diffs
+            ( \p v ->
+                LedgerTablesHandleOpen p
+                  . flip
+                    (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d)))
+                    (projectLedgerTables diffs)
+                  . upgradeTables st0 diffs
+                  $ v
             )
       )
 
@@ -358,7 +381,7 @@ loadSnapshot tracer rr ccfg fs@(SomeHasFS hfs) ds = do
               Identity
               (valuesMKDecoder extLedgerSt)
               (snapshotToDirPath ds </> mkFsPath ["tables"])
-      (rk, values') <- lift $ allocateLedgerTablesHandle tracer rr values
+      (rk, values') <- lift $ allocateLedgerTablesHandle tracer (getTip extLedgerSt) values
       let computedCRC = crcOfConcat checksumAsRead crcTables
       Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
         throwE $

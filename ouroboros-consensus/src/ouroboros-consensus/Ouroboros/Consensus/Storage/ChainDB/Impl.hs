@@ -161,18 +161,21 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   lift $ traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
   volatileDB <- VolatileDB.openDB argsVolatileDb $ innerOpenCont VolatileDB.closeDB
   maxSlot <- lift $ atomically $ VolatileDB.getMaxSlotNo volatileDB
-  (chainDB, testing, env) <- lift $ do
+  (chainDB, testing, env) <- do
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
     (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <-
       mkLedgerDbGetVolatileSuffix
     (lgrDB, replayed) <-
-      LedgerDB.openDB
-        argsLgrDb
-        (ImmutableDB.streamAPI immutableDB)
-        immutableDbTipPoint
-        (Query.getAnyKnownBlock immutableDB volatileDB)
-        ledgerDbGetVolatileSuffix
+      allocateTemp
+        ( LedgerDB.openDB
+            argsLgrDb
+            (ImmutableDB.streamAPI immutableDB)
+            immutableDbTipPoint
+            (Query.getAnyKnownBlock immutableDB volatileDB)
+            ledgerDbGetVolatileSuffix
+        )
+
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
     perasCertDB <- PerasCertDB.openDB argsPerasCertDB

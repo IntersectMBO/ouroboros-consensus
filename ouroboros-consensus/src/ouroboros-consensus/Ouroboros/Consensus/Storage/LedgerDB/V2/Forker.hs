@@ -4,6 +4,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
@@ -19,6 +20,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
   , module Ouroboros.Consensus.Storage.LedgerDB.Forker
   ) where
 
+import Control.Exception
+import Control.Monad.Trans.Class
 import Control.RAWLock (RAWLock)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -46,63 +49,27 @@ import Prelude hiding (read)
   Forker operations
 -------------------------------------------------------------------------------}
 
-data ForkerEnv m l blk = ForkerEnv
-  { foeLedgerSeq :: !(StrictTVar m (LedgerSeq m l))
-  -- ^ Local version of the LedgerSeq
-  , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l))
-  -- ^ This TVar is the same as the LedgerDB one
-  , foeLedgerDbRegistry :: !(ResourceRegistry m)
-  -- ^ The registry in the LedgerDB to move handles to in case we commit the
-  -- forker.
-  , foeLedgerDbToClose :: !(StrictTVar m [LedgerSeq m l])
-  , foeTracer :: !(Tracer m TraceForkerEvent)
-  -- ^ Config
-  , foeResourceRegistry :: !(ResourceRegistry m)
-  -- ^ The registry local to the forker
-  , foeInitialHandleKey :: !(ResourceKey m)
-  -- ^ Resource key for the initial handle to ensure it is released. See
-  -- comments in 'implForkerCommit'.
-  , foeCleanup :: !(StrictTVar m (m ()))
-  -- ^ An action to run on cleanup. If the forker was not committed this will be
-  -- the trivial action. Otherwise it will move the required handles to the
-  -- LedgerDB and release the discarded ones.
-  , foeLedgerDbLock :: !(RAWLock m ())
-  -- ^ 'ldbOpenHandlesLock'.
-  , foeWasCommitted :: !(StrictTVar m Bool)
-  }
-  deriving Generic
-
-deriving instance
-  ( IOLike m
-  , LedgerSupportsProtocol blk
-  , NoThunks (l EmptyMK)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
-  ) =>
-  NoThunks (ForkerEnv m l blk)
-
 implForkerReadTables ::
   (IOLike m, GetTip l) =>
-  ForkerEnv m l blk ->
+  ForkerEnv m l ->
   LedgerTables l KeysMK ->
   m (LedgerTables l ValuesMK)
 implForkerReadTables env ks =
-  encloseTimedWith (ForkerReadTables >$< foeTracer env) $ do
-    lseq <- readTVarIO (foeLedgerSeq env)
-    let stateRef = currentHandle lseq
-    read (tables stateRef) (state stateRef) ks
+  withForkerEnv env $ \fState ->
+    encloseTimedWith (ForkerReadTables >$< foeTracer fState) $ do
+      let stateRef = currentHandle (foeLedgerSeq fState)
+      read (tables stateRef) (state stateRef) ks
 
 implForkerRangeReadTables ::
   (IOLike m, GetTip l, HasLedgerTables l) =>
   QueryBatchSize ->
-  ForkerEnv m l blk ->
+  ForkerEnv m l ->
   RangeQueryPrevious l ->
   m (LedgerTables l ValuesMK, Maybe (TxIn l))
-implForkerRangeReadTables qbs env rq0 =
-  encloseTimedWith (ForkerRangeReadTables >$< foeTracer env) $ do
-    ldb <- readTVarIO $ foeLedgerSeq env
+implForkerRangeReadTables qbs env rq0 = withForkerEnv env $ \fState ->
+  encloseTimedWith (ForkerRangeReadTables >$< foeTracer fState) $ do
     let n = fromIntegral $ defaultQueryBatchSize qbs
-        stateRef = currentHandle ldb
+        stateRef = currentHandle $ foeLedgerSeq fState
     case rq0 of
       NoPreviousQuery -> readRange (tables stateRef) (state stateRef) (Nothing, n)
       PreviousQueryWasFinal -> pure (LedgerTables emptyMK, Nothing)
@@ -111,58 +78,64 @@ implForkerRangeReadTables qbs env rq0 =
 
 implForkerGetLedgerState ::
   (MonadSTM m, GetTip l) =>
-  ForkerEnv m l blk ->
+  ForkerEnv m l ->
   STM m (l EmptyMK)
-implForkerGetLedgerState env = current <$> readTVar (foeLedgerSeq env)
+implForkerGetLedgerState env =
+  withForkerEnvSTM env $ pure . current . foeLedgerSeq
 
 implForkerReadStatistics ::
   (MonadSTM m, GetTip l) =>
-  ForkerEnv m l blk ->
+  ForkerEnv m l ->
   m Statistics
-implForkerReadStatistics env = do
-  traceWith (foeTracer env) ForkerReadStatistics
-  fmap Statistics . tablesSize . tables . currentHandle =<< readTVarIO (foeLedgerSeq env)
+implForkerReadStatistics env = withForkerEnv env $ \fState -> do
+  traceWith (foeTracer fState) ForkerReadStatistics
+  fmap Statistics . tablesSize . tables . currentHandle . foeLedgerSeq $ fState
 
 implForkerPush ::
   (IOLike m, GetTip l, HasLedgerTables l, HasCallStack) =>
-  ForkerEnv m l blk ->
+  ForkerEnv m l ->
   l DiffMK ->
   m ()
-implForkerPush env newState =
-  encloseTimedWith (ForkerPush >$< foeTracer env) $ do
-    lseq <- readTVarIO (foeLedgerSeq env)
-
-    let st0 = current lseq
+implForkerPush env newState = modifyForkerEnv env $ \fState -> do
+  encloseTimedWith (ForkerPush >$< foeTracer fState) $ do
+    let lseq = foeLedgerSeq fState
+        st0 = current lseq
         st = forgetLedgerTables newState
 
-    bracketOnError
-      (duplicate (tables $ currentHandle lseq) (foeResourceRegistry env))
-      (release . fst)
-      ( \(_, newtbs) -> do
-          pushDiffs newtbs st0 newState
-
-          let lseq' = extend (StateRef st newtbs) lseq
-
-          atomically $ do
-            writeTVar (foeLedgerSeq env) lseq'
-            modifyTVar (foeCleanup env) (>> close newtbs)
-      )
+    -- bracketOnError
+    --   (duplicate)
+    --   (close)
+    --   (do something
+    --       transfer
+    --   )
+    runWithTempRegistry $
+      (\x -> (x, x)) <$> do
+        tbs <- duplicateFor (tables $ currentHandle lseq) (getTip newState)
+        lift $ pushDiffs tbs st0 newState
+        pure fState{foeLedgerSeq = extend (StateRef st tbs) lseq}
 
 implForkerCommit ::
   (IOLike m, GetTip l, StandardHash l) =>
-  ForkerEnv m l blk ->
-  STM m ()
-implForkerCommit env = do
-  LedgerSeq lseq <- readTVar foeLedgerSeq
+  ForkerEnv m l ->
+  -- TODO return this list so that ChainSel can close it (toCloseLdb)
+  -- TODO return the anchor of the forker too
+  STM m (LedgerSeq m l, LedgerHandle)
+implForkerCommit env = modifyForkerEnvSTM env $ \fState -> assert (foeWasCommitted fState == False) $ do
+  let ForkerState
+        { foeLedgerSeq = LedgerSeq lseq
+        , foeSwitchVar
+        , foeLdbToClose
+        } = fState
   let intersectionSlot = getTipSlot $ state $ AS.anchor lseq
   let predicate = (== getTipHash (state (AS.anchor lseq))) . getTipHash . state
-  (transfer, ldbToClose) <-
+  (toCloseForker, toCloseLdb) <-
     stateTVar
       foeSwitchVar
       ( \(LedgerSeq olddb) -> fromMaybe theImpossible $ do
           -- Split the selection at the intersection point. The snd component will
           -- have to be closed.
           (toKeepBase, toCloseLdb) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
+          -- TODO revisit why we have toCloseForker
           (toCloseForker, toKeepTip) <-
             AS.splitAfterMeasure intersectionSlot (either predicate predicate) lseq
           -- Join the prefix of the selection with the sequence in the forker
@@ -172,32 +145,21 @@ implForkerCommit env = do
           let ldbToClose = case toCloseLdb of
                 AS.Empty _ -> Nothing
                 _ AS.:< closeOld' -> Just (LedgerSeq closeOld')
-              transferCommitted = do
-                closeLedgerSeq (LedgerSeq toCloseForker)
-
-                -- All the other remaining handles are transferred to the LedgerDB registry
-                keys <- transferRegistry foeResourceRegistry foeLedgerDbRegistry
-                mapM_ (\(k, v) -> transfer (tables v) k) $ zip keys (AS.toOldestFirst toKeepTip)
-
-          pure ((transferCommitted, ldbToClose), LedgerSeq newdb)
+          pure ((LedgerSeq toCloseForker, ldbToClose), LedgerSeq newdb)
       )
-  whenJust ldbToClose (modifyTVar foeLedgerDbToClose . (:))
-  writeTVar foeCleanup transfer
-  writeTVar foeWasCommitted True
+  whenJust toCloseLdb (modifyTVar foeLdbToClose . (:))
+  pure fState{foeLedgerSeq = toCloseForker, foeWasCommitted = True}
  where
-  ForkerEnv
-    { foeLedgerSeq
-    , foeSwitchVar
-    , foeResourceRegistry
-    , foeLedgerDbRegistry
-    , foeCleanup
-    , foeLedgerDbToClose
-    , foeWasCommitted
-    } = env
-
   theImpossible =
     error $
       unwords
         [ "Critical invariant violation:"
         , "Forker chain does no longer intersect with selected chain."
         ]
+
+{-
+
+----- X ---- Y ---- Z
+      X ---  U ---- V ---- W
+
+-}

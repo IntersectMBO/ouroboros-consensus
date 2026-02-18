@@ -60,6 +60,8 @@ class NoThunks (Resources m backend) => Backend m backend blk where
 
   -- | Create a new handle from the given values. This will only be called when
   -- starting Consensus from Genesis.
+
+  -- TODO (@js) rename to something that implies Creation and inserts
   newHandleFromValues ::
     Tracer m LedgerDBV2Trace ->
     ResourceRegistry m ->
@@ -68,6 +70,8 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     m (LedgerTablesHandle m (ExtLedgerState blk))
 
   -- | Create a new handle from a snapshot.
+
+  -- TODO (@js) propagate this change I did
   newHandleFromSnapshot ::
     Tracer m LedgerDBV2Trace ->
     ResourceRegistry m ->
@@ -75,7 +79,10 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     SomeHasFS m ->
     Resources m backend ->
     DiskSnapshot ->
-    ExceptT (SnapshotFailure blk) m (LedgerSeq' m blk, RealPoint blk)
+    ExceptT
+      (SnapshotFailure blk)
+      m
+      (ExtLedgerState blk, LedgerTablesHandle m (ExtLedgerState blk), RealPoint blk)
 
   -- | Instantiate the 'SnapshotManager' for this backend.
   snapshotManager ::

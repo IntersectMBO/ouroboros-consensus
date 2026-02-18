@@ -19,6 +19,12 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   ( -- * LedgerHandles
     LedgerTablesHandle (..)
+  , ForkerEnv (..)
+  , ForkerState (..)
+  , withForkerEnv
+  , withForkerEnvSTM
+  , modifyForkerEnv
+  , modifyForkerEnvSTM
 
     -- * The ledger seq
   , LedgerSeq (..)
@@ -54,7 +60,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   ) where
 
 import Cardano.Ledger.BaseTypes
+import Control.RAWLock (RAWLock)
 import Control.ResourceRegistry
+import Control.Tracer
 import Data.Function (on)
 import Data.Word
 import GHC.Generics
@@ -65,6 +73,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
   ( anchor
@@ -76,6 +85,59 @@ import qualified Ouroboros.Network.AnchoredSeq as AS hiding (map)
 import System.FS.CRC (CRC)
 import Prelude hiding (read)
 
+data ForkerState m l = ForkerState
+  { foeLedgerSeq :: !(LedgerSeq m l)
+  -- ^ Local version of the LedgerSeq
+  , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l))
+  , foeLdbToClose :: !(StrictTVar m [LedgerSeq m l])
+  -- ^ This TVar is the same as the LedgerDB one
+  , foeLedgerDbRegistry :: !(ResourceRegistry m)
+  -- ^ The registry in the LedgerDB to move handles to in case we commit the
+  -- forker.
+  , foeTracer :: !(Tracer m TraceForkerEvent)
+  -- ^ Config
+  , foeCleanup :: !(m ())
+  -- ^ An action to run on cleanup. If the forker was not committed this will be
+  -- the trivial action. Otherwise it will move the required handles to the
+  -- LedgerDB and release the discarded ones.
+  , foeLedgerDbLock :: !(RAWLock m ())
+  -- ^ 'ldbOpenHandlesLock'.
+  , foeWasCommitted :: !Bool
+  }
+  deriving Generic
+
+deriving instance
+  ( IOLike m
+  , NoThunks (l EmptyMK)
+  , NoThunks (TxIn l)
+  , NoThunks (TxOut l)
+  ) =>
+  NoThunks (ForkerState m l)
+
+newtype ForkerEnv m l = ForkerEnv (StrictTVar m (ForkerState m l)) deriving Generic
+
+deriving newtype instance
+  ( IOLike m
+  , NoThunks (l EmptyMK)
+  , NoThunks (TxIn l)
+  , NoThunks (TxOut l)
+  ) =>
+  NoThunks (ForkerEnv m l)
+
+withForkerEnv :: MonadSTM m => ForkerEnv m l -> (ForkerState m l -> m r) -> m r
+withForkerEnv (ForkerEnv f) k = readTVarIO f >>= k
+
+withForkerEnvSTM :: MonadSTM m => ForkerEnv m l -> (ForkerState m l -> STM m r) -> STM m r
+withForkerEnvSTM (ForkerEnv f) k = readTVar f >>= k
+
+modifyForkerEnv ::
+  MonadSTM m => ForkerEnv m l -> (ForkerState m l -> m (ForkerState m l)) -> m ()
+modifyForkerEnv (ForkerEnv f) k = readTVarIO f >>= k >>= atomically . writeTVar f
+
+modifyForkerEnvSTM ::
+  MonadSTM m => ForkerEnv m l -> (ForkerState m l -> STM m (ForkerState m l)) -> STM m ()
+modifyForkerEnvSTM (ForkerEnv f) k = readTVar f >>= k >>= writeTVar f
+
 {-------------------------------------------------------------------------------
   LedgerTablesHandles
 -------------------------------------------------------------------------------}
@@ -83,10 +145,9 @@ import Prelude hiding (read)
 -- | The interface fulfilled by handles on both the InMemory and LSM handles.
 data LedgerTablesHandle m l = LedgerTablesHandle
   { close :: !(m ())
-  , transfer :: !(ResourceKey m -> m ())
-  -- ^ Update the closing action in this handle with a new resource key, as the
-  -- handle has moved to a different registry.
-  , duplicate :: !(ResourceRegistry m -> m (ResourceKey m, LedgerTablesHandle m l))
+  , duplicate :: !(WithTempRegistry (ForkerState m l) m (LedgerTablesHandle m l))
+  , duplicateFor ::
+      !(Point l -> WithTempRegistry (ForkerState m l) m (LedgerTablesHandle m l))
   -- ^ Create a copy of the handle.
   --
   -- A duplicated handle must provide access to all the data that was there in
@@ -254,7 +315,7 @@ reapplyBlock ::
 reapplyBlock evs cfg b rr db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db
-  (_, newtbs) <- duplicate tbs rr
+  (_, newtbs) <- undefined $ duplicate tbs
   vals <- read newtbs st ks
   let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
       newst = forgetLedgerTables st'

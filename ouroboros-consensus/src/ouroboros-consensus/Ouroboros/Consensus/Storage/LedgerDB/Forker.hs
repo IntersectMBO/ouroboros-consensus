@@ -132,6 +132,7 @@ data Forker m l = Forker
   , forkerCommit :: !(STM m ())
   -- ^ Commit the fork, which was constructed using 'forkerPush', as the
   -- current version of the LedgerDB.
+  , forkerGetPoints :: !(m [Point l])
   }
   deriving Generic
   deriving NoThunks via OnlyCheckWhnf (Forker m l)

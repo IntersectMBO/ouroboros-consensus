@@ -470,9 +470,10 @@ data InitLog blk
 -- | Functions required to initialize a LedgerDB
 type InitDB :: Type -> (Type -> Type) -> Type -> Type
 data InitDB db m blk = InitDB
-  { initFromGenesis :: !(m db)
+  { initFromGenesis :: !(WithTempRegistry db m db)
   -- ^ Create a DB from the genesis state
-  , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
+  , initFromSnapshot ::
+      !(DiskSnapshot -> WithTempRegistry db m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
   , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
@@ -520,7 +521,7 @@ initialize ::
   InitDB db m blk ->
   SnapshotManager m n blk st ->
   Maybe DiskSnapshot ->
-  m (InitLog blk, db, Word64)
+  WithTempRegistry m (InitLog blk, db, Word64)
 initialize
   replayTracer
   snapTracer

@@ -428,6 +428,8 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- forker from it if the map still exists).
   --
   -- As the LedgerDB should outlive any clients, this is fine.
+  --
+  -- TODO: (@js) this could be removed because closing the session will close all remaining handles
   , ldbNextForkerKey :: !(StrictTVar m ForkerKey)
   , ldbSnapshotPolicy :: !SnapshotPolicy
   , ldbTracer :: !(Tracer m (TraceEvent blk))
@@ -575,14 +577,13 @@ getVolatileLedgerSeq env = do
 getStateRef ::
   (IOLike m, Traversable t, GetTip l) =>
   LedgerDBEnv m l blk ->
-  ResourceRegistry m ->
   (LedgerSeq m l -> t (StateRef m l)) ->
   m (t (ResourceKey m, StateRef m l))
-getStateRef ldbEnv reg project =
+getStateRef ldbEnv project =
   RAWLock.withReadAccess (ldbOpenHandlesLock ldbEnv) $ \() -> do
     tst <- project <$> atomically (getVolatileLedgerSeq ldbEnv)
     for tst $ \st -> do
-      (key, tables') <- duplicate (tables st) reg
+      (key, tables') <- duplicate (tables st)
       pure (key, st{tables = tables'})
 
 -- | Like 'StateRef', but takes care of closing the handle when the given action
@@ -594,7 +595,7 @@ withStateRef ::
   (t (ResourceKey m, StateRef m l) -> m a) ->
   m a
 withStateRef ldbEnv project f =
-  withRegistry $ \reg -> getStateRef ldbEnv reg project >>= f
+  getStateRef ldbEnv project >>= f
 
 acquireAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
@@ -605,10 +606,9 @@ acquireAtTarget ::
   ) =>
   LedgerDBEnv m l blk ->
   Either Word64 (Target (Point blk)) ->
-  ResourceRegistry m ->
   m (Either GetForkerError (ResourceKey m, StateRef m l))
-acquireAtTarget ldbEnv target reg =
-  getStateRef ldbEnv reg $ \l -> case target of
+acquireAtTarget ldbEnv target =
+  getStateRef ldbEnv $ \l -> case target of
     Right VolatileTip -> pure $ currentHandle l
     Right ImmutableTip -> pure $ anchorHandle l
     Right (SpecificPoint pt) -> do
@@ -629,7 +629,7 @@ acquireAtTarget ldbEnv target reg =
                 }
       Just l' -> pure $ currentHandle l'
 
-newForkerAtTarget ::
+withForkerAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
   , IOLike m
   , IsLedger l
@@ -638,13 +638,22 @@ newForkerAtTarget ::
   , StandardHash l
   ) =>
   LedgerDBHandle m l blk ->
-  ResourceRegistry m ->
   Target (Point blk) ->
-  m (Either GetForkerError (Forker m l))
-newForkerAtTarget h rr pt = getEnv h $ \ldbEnv ->
-  acquireAtTarget ldbEnv (Right pt) rr >>= traverse (newForker h ldbEnv rr)
+  (Forker m l -> m r) ->
+  m (Either GetForkerError r)
+withForkerAtTarget h pt k = getEnv h $ \ldbEnv ->
+  bracket
+    (acquireAtTarget ldbEnv (Right pt) >>= traverse (newForker h ldbEnv))
+    ( \case
+        Right forker -> forkerClose forker
+        Left{} -> pure ()
+    )
+    ( \case
+        Left err -> pure $ Left err
+        Right forker -> Right <$> k forker
+    )
 
-newForkerByRollback ::
+withForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
   , IOLike m
   , IsLedger l
@@ -653,11 +662,20 @@ newForkerByRollback ::
   , LedgerSupportsProtocol blk
   ) =>
   LedgerDBHandle m l blk ->
-  ResourceRegistry m ->
   Word64 ->
-  m (Either GetForkerError (Forker m l))
-newForkerByRollback h rr n = getEnv h $ \ldbEnv ->
-  acquireAtTarget ldbEnv (Left n) rr >>= traverse (newForker h ldbEnv rr)
+  (Forker m l -> m r) ->
+  m (Either GetForkerError r)
+withForkerByRollback h n k = getEnv h $ \ldbEnv ->
+  bracket
+    (acquireAtTarget ldbEnv (Left n) >>= traverse (newForker h ldbEnv))
+    ( \case
+        Right forker -> forkerClose forker
+        Left{} -> pure ()
+    )
+    ( \case
+        Left err -> pure $ Left err
+        Right forker -> Right <$> k forker
+    )
 
 closeForkerEnv ::
   IOLike m => ForkerEnv m l blk -> m ()
