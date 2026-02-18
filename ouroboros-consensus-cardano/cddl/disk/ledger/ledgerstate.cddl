@@ -12,11 +12,16 @@ versionedShelleyLedgerState<eraSt1> = [ shelleyVersion2, shelleyLedgerState<eraS
 
 shelleyVersion2 = 2
 
-shelleyLedgerState<eraSt2> = [ withOrigin<shelleyTip>, eraSt2, shelleyTransition ]
+shelleyLedgerState<eraSt2> = [withOrigin<shelleyTip>,
+                              eraSt2,
+                              shelleyTransition,
+                              latestPerasCertRound]
 
 shelleyTip = [slotno, blockno, hash]
 
 shelleyTransition = word32
+
+latestPerasCertRound = [] / [roundno]
 
 ; TODO these should be imports from the ledger however they do not
 ; provide these definitions yet.
@@ -29,4 +34,4 @@ babbage.ledgerstate = any
 conway.ledgerstate = any
 dijkstra.ledgerstate = any
 
-;# import telescope8, withOrigin, slotno, blockno, hash, word32 from base
+;# import telescope8, withOrigin, slotno, roundno, blockno, hash, word32 from base
