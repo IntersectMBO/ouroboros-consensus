@@ -10,7 +10,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -458,40 +457,40 @@ castChainHash (BlockHash h) = BlockHash $ castHeaderHash h
 -- | From here on is the implementation of the "dump feature" analysis.
 instance HasFeatures (CardanoBlock StandardCrypto) where
   protVer = analyseBlock protVer
-  
+
   type TxOf (CardanoBlock StandardCrypto) = SomeTx
 
   txs inner =
     -- A little bit of argument shuffling to satisfy `analyseBlock`'s
     -- requirements.
     -- The Const bit is quite unfortunate.
-    analyseBlock $ \ @blk -> Const . getConst . (txs @blk . to (ATx @blk)) inner
+    analyseBlock $ \(blk :: blk) -> Const . getConst . (txs . to (ATx (Proxy @blk))) inner $ blk
 
-  inputs inner (ATx @blk tx)= Const . getConst $ inputs @blk (Const . getConst . inner) tx
-  numOutputs (ATx @blk tx) = numOutputs @blk tx
+  inputs _ inner (ATx p tx) = Const . getConst $ inputs p (Const . getConst . inner) tx
+  numOutputs _ (ATx p tx) = numOutputs p tx
 
-  referenceInputs inner (ATx @blk tx) = Const . getConst $ referenceInputs @blk (Const . getConst . inner) tx
+  referenceInputs _ inner (ATx p tx) = Const . getConst $ referenceInputs p (Const . getConst . inner) tx
 
   type WitsOf (CardanoBlock StandardCrypto) = SomeWit
 
-  wits inner (ATx @blk tx) = Const . getConst $ wits @blk (Const . getConst . inner . AWit @blk) tx
-  addrWits inner (AWit @blk wit) = AWit @blk <$> addrWits @blk inner wit
+  wits _ inner (ATx p tx) = Const . getConst $ wits p (Const . getConst . inner . AWit p) tx
+  addrWits _ inner (AWit p wit) = AWit p <$> addrWits p inner wit
 
   type ScriptType (CardanoBlock StandardCrypto) = SomeScriptType
 
-  scriptWits inner (AWit @blk wit) = foldMapOf (scriptWits @blk) (Const . getConst . inner . Map.map (AScriptType @blk)) wit
+  scriptWits _ inner (AWit p wit) = foldMapOf (scriptWits p) (Const . getConst . inner . Map.map (AScriptType p)) wit
 
-  scriptSize (AScriptType @blk scr) = scriptSize @blk scr
+  scriptSize _ (AScriptType p scr) = scriptSize p scr
 
-  datumSize (AWit @blk wit) = datumSize @blk wit
+  datumSize _ (AWit p wit) = datumSize p wit
 
   type CertsOf (CardanoBlock StandardCrypto) = SomeCert
 
-  certs inner (ATx @blk cert) = Const . getConst $ certs @blk (Const . getConst . inner . ACert @blk) cert
+  certs _ inner (ATx p cert) = Const . getConst $ certs p (Const . getConst . inner . ACert p) cert
 
-  filterPoolCert inner (ACert @blk cert) = Const . getConst $ filterPoolCert @blk (Const . getConst . inner . ACert @blk) cert
-  filterGovCert inner (ACert @blk cert) = Const . getConst $ filterGovCert @blk (Const . getConst . inner . ACert @blk) cert
-  filterDelegCert inner (ACert @blk cert) = Const . getConst $ filterDelegCert @blk (Const . getConst . inner . ACert @blk) cert  
+  filterPoolCert _ inner (ACert p cert) = Const . getConst $ filterPoolCert p (Const . getConst . inner . ACert p) cert
+  filterGovCert _ inner (ACert p cert) = Const . getConst $ filterGovCert p (Const . getConst . inner . ACert p) cert
+  filterDelegCert _ inner (ACert p cert) = Const . getConst $ filterDelegCert p (Const . getConst . inner . ACert p) cert
 
   eraName = analyseBlock eraName
 
@@ -503,13 +502,13 @@ instance HasFeatures (CardanoBlock StandardCrypto) where
 -- 'CardanoBlock' type for the methods which don't take a block, but only a
 -- component of a block, as an argument.
 data SomeTx where
-  ATx :: HasAnalysis blk => TxOf blk -> SomeTx
+  ATx :: HasAnalysis blk => Proxy blk -> TxOf blk -> SomeTx
 
 data SomeWit where
-  AWit :: HasAnalysis blk => WitsOf blk -> SomeWit
+  AWit :: HasAnalysis blk => Proxy blk -> WitsOf blk -> SomeWit
 
 data SomeScriptType where
-  AScriptType :: HasAnalysis blk => ScriptType blk -> SomeScriptType
+  AScriptType :: HasAnalysis blk => Proxy blk -> ScriptType blk -> SomeScriptType
 
 data SomeCert where
-  ACert :: HasAnalysis blk => CertsOf blk -> SomeCert
+  ACert :: HasAnalysis blk => Proxy blk -> CertsOf blk -> SomeCert

@@ -513,35 +513,35 @@ dumpBlockFeatures DumpBlockFeaturesArg{blockFile, transactionFile} AnalysisEnv{d
     traceExceptionWith tracer "Exception while extracting transaction features" $ do
       let
         script_wits :: SimpleFold (HasAnalysis.TxOf blk) (HasAnalysis.ScriptType blk)
-        script_wits = HasAnalysis.wits @blk . HasAnalysis.scriptWits @blk . traverse
+        script_wits = HasAnalysis.wits (Proxy @blk) . HasAnalysis.scriptWits (Proxy @blk) . traverse
   
         txFeatures :: HasAnalysis.TxOf blk -> TxFeatures blk Identity
         txFeatures tx =
           MkTxFeatures
             { src_block = blockNo <$> query_header cmp
             , num_script_wits = Identity $ length $ toListOf script_wits tx
-            , num_addr_wits = Identity $ length $ toListOf (HasAnalysis.wits @blk . HasAnalysis.addrWits @blk . folded) tx
-            , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize @blk)) Sum tx
-            , size_datum = Identity $ tx ^. (HasAnalysis.wits @blk . to (HasAnalysis.datumSize @blk))
-            , num_inputs = Identity $ length $ toListOf (HasAnalysis.inputs @blk . folded) tx
+            , num_addr_wits = Identity $ length $ toListOf (HasAnalysis.wits (Proxy @blk) . HasAnalysis.addrWits (Proxy @blk) . folded) tx
+            , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize (Proxy @blk))) Sum tx
+            , size_datum = Identity $ tx ^. (HasAnalysis.wits (Proxy @blk) . to (HasAnalysis.datumSize (Proxy @blk)))
+            , num_inputs = Identity $ length $ toListOf (HasAnalysis.inputs (Proxy @blk) . folded) tx
             -- I find it a little dangerous to default to 0 when the TxIn isn't
             -- there. We have to have a default because the Byron blocks have
             -- their UTxO summary implemeted yet in their HasAnalysis instance.
             -- But this may hide some bugs.
-            , size_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.inputs @blk . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
-            , num_outputs = Identity $ HasAnalysis.numOutputs @blk tx
-            , num_ref_inputs = Identity $ length $ toListOf (HasAnalysis.referenceInputs @blk) tx
+            , size_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.inputs (Proxy @blk) . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
+            , num_outputs = Identity $ HasAnalysis.numOutputs (Proxy @blk) tx
+            , num_ref_inputs = Identity $ length $ toListOf (HasAnalysis.referenceInputs (Proxy @blk)) tx
             -- I find it a little dangerous to default to 0 when the TxIn isn't
             -- there. We have to have a default because the Byron blocks have
             -- their UTxO summary implemeted yet in their HasAnalysis instance.
             -- But this may hide some bugs.
-            , size_ref_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs @blk . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
-            , num_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk) tx
-            , num_pool_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterPoolCert @blk) tx
-            , num_gov_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterGovCert @blk) tx
-            , num_deleg_certs = Identity $ length $ toListOf (HasAnalysis.certs @blk . HasAnalysis.filterDelegCert @blk) tx
+            , size_ref_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs (Proxy @blk) . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
+            , num_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk)) tx
+            , num_pool_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk) . HasAnalysis.filterPoolCert (Proxy @blk)) tx
+            , num_gov_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk) . HasAnalysis.filterGovCert (Proxy @blk)) tx
+            , num_deleg_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk) . HasAnalysis.filterDelegCert (Proxy @blk)) tx
             }
-      let txFeaturess = toListOf (HasAnalysis.txs @blk . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
+      let txFeaturess = toListOf (HasAnalysis.txs . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
       let txlines = map (csv . Barbies.Container . Barbies.bmapC @Condense (Const . condense . runIdentity)) txFeaturess
       forM_ txlines $ \txl ->
         IO.hPutStrLn th txl

@@ -144,21 +144,21 @@ instance HasFeatures ByronBlock where
   protVer _ = ProtVer { pvMajor = (natVersion @0), pvMinor = 0 }
   type TxOf ByronBlock = Void -- dummy
   txs _ _ = mempty -- dummy
-  inputs _ = absurd
-  numOutputs _ = 0 -- dummy
-  referenceInputs = to (const mempty)
+  inputs _ _ = absurd
+  numOutputs _ = absurd
+  referenceInputs _ = to (const mempty)
   type WitsOf ByronBlock = Void -- dummy
   type ScriptType ByronBlock = Void
-  wits _ = absurd
-  datumSize = absurd
-  addrWits _ = absurd
-  scriptWits _ = absurd
-  scriptSize = absurd
+  wits _ _ = absurd
+  datumSize _ = absurd
+  addrWits _ _ = absurd
+  scriptWits _ _ = absurd
+  scriptSize _ = absurd
   type CertsOf ByronBlock = Void -- dummy
-  certs _ = absurd
-  filterPoolCert _ = absurd
-  filterGovCert _ = absurd
-  filterDelegCert _ = absurd
+  certs _ _ = absurd
+  filterPoolCert _ _ = absurd
+  filterGovCert _ _ = absurd
+  filterDelegCert _ _ = absurd
   eraName _ = "Byron"
 
   utxoSummary _ = mempty

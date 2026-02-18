@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -86,35 +85,35 @@ class HasFeatures blk where
   txs :: SimpleFold blk (TxOf blk)
 
   -- | The set of all inputs in a transaction.
-  inputs :: SimpleGetter (TxOf blk) (Set Ledger.TxIn)
+  inputs :: proxy blk -> SimpleGetter (TxOf blk) (Set Ledger.TxIn)
   -- | Number of outputs in the transaction. We don't expose a set of, or an
   -- iterator over, outputs to avoid introducing an extra type family.
-  numOutputs :: TxOf blk -> Int
+  numOutputs :: proxy blk -> TxOf blk -> Int
   -- | The set of only reference inputs in a transaction.
-  referenceInputs :: SimpleGetter (TxOf blk) (Set Ledger.TxIn)
+  referenceInputs :: proxy blk -> SimpleGetter (TxOf blk) (Set Ledger.TxIn)
 
   -- | The type of sets of witnesses that transactions in blocks of type @blk@
   -- can have.
   type WitsOf blk
 
   -- | The set of all the witnesses of a given transaction
-  wits :: SimpleGetter (TxOf blk) (WitsOf blk)
+  wits :: proxy blk -> SimpleGetter (TxOf blk) (WitsOf blk)
 
   -- | The set of only address witnesses contain in a witness set.
-  addrWits :: Lens' (WitsOf blk) (Set (WitVKey Witness))
+  addrWits :: proxy blk -> Lens' (WitsOf blk) (Set (WitVKey Witness))
 
   -- | The size of the datum in a witness set.
-  datumSize :: WitsOf blk -> Int
+  datumSize :: proxy blk -> WitsOf blk -> Int
 
   -- | The type of script witnesses that a transaction in @blk@ can have.
   type ScriptType blk
 
   -- | The set of only the script witnesses in the witness set, indexed by their
   -- hash.
-  scriptWits :: SimpleGetter (WitsOf blk) (Map ScriptHash (ScriptType blk))
+  scriptWits :: proxy blk -> SimpleGetter (WitsOf blk) (Map ScriptHash (ScriptType blk))
 
   -- | The size of a given script.
-  scriptSize :: ScriptType blk -> Int
+  scriptSize :: proxy blk -> ScriptType blk -> Int
 
   -- | The type of certificates that transactions in blocks of types @blk@ can
   -- use. The main use of this type is to give us the means to classify
@@ -122,16 +121,16 @@ class HasFeatures blk where
   type CertsOf blk
 
   -- | Iterates over all the certificates of a transaction.
-  certs :: SimpleFold (TxOf blk) (CertsOf blk)
+  certs :: proxy blk -> SimpleFold (TxOf blk) (CertsOf blk)
 
   -- | 'filterPoolCert', 'filterGovCert', 'filterDelegCert' tests if a
   -- certificate is in the given category. They are implemented as affine folds:
   -- a fold which traverses 0 or 1 value (and, in this case, is the identity
   -- when it traverses 1 value). This affinity constraint isn't enforced in
   -- types.
-  filterPoolCert :: SimpleFold (CertsOf blk) (CertsOf blk)
-  filterGovCert :: SimpleFold (CertsOf blk) (CertsOf blk)
-  filterDelegCert :: SimpleFold (CertsOf blk) (CertsOf blk)
+  filterPoolCert :: proxy blk -> SimpleFold (CertsOf blk) (CertsOf blk)
+  filterGovCert :: proxy blk -> SimpleFold (CertsOf blk) (CertsOf blk)
+  filterDelegCert :: proxy blk -> SimpleFold (CertsOf blk) (CertsOf blk)
   
   -- | The name of the era in which the block was emitted. This is plain text,
   -- simply meant to help filtering out undesired era for later analysis.
