@@ -400,6 +400,8 @@ data TxFeatures blk f = MkTxFeatures
     -- ^ Number of regular address witnesses
   , size_script_wits :: f Int
     -- ^ Size of inline script witnesses
+  , size_ref_scripts :: f Int
+    -- ^ Size of (resolved) reference scripts
   , size_datum :: f Int
     -- ^ Size of the datum
   , num_inputs :: f Int
@@ -444,6 +446,7 @@ txFeaturesNames =
     , num_script_wits = "#script_wits"
     , num_addr_wits = "#addr_wits"
     , size_script_wits = "script_wits_size"
+    , size_ref_scripts = "size_reference_scripts"
     , size_datum = "datum_size"
     , num_inputs = "#inputs"
     , size_inputs = "size_inputs"
@@ -491,6 +494,7 @@ dumpBlockFeatures DumpBlockFeaturesArg{blockFile, transactionFile} AnalysisEnv{d
   process :: IO.Handle -> IO.Handle -> HasAnalysis.WithLedgerState blk -> DumpQuery blk Identity -> IO ()
   process bh th wls cmp = do
     let utxo_summary = HasAnalysis.utxoSummary @blk wls
+    let utxo_scripts_summary = HasAnalysis.utxoScriptsSummary @blk wls
 
     traceExceptionWith tracer "Exception while extracting whole-block features" $ do
       let
@@ -522,6 +526,10 @@ dumpBlockFeatures DumpBlockFeaturesArg{blockFile, transactionFile} AnalysisEnv{d
             , num_script_wits = Identity $ length $ toListOf script_wits tx
             , num_addr_wits = Identity $ length $ toListOf (HasAnalysis.wits (Proxy @blk) . HasAnalysis.addrWits (Proxy @blk) . folded) tx
             , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize (Proxy @blk))) Sum tx
+            -- Here defaulting to 0 is part of the logic, as if an input isn't
+            -- in utxo_scripts_summary, it means its not a reference to a
+            -- script, in which case it contributes 0 bytes to the total size.
+            , size_ref_scripts = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs (Proxy @blk) . folded . to (\txin -> Map.findWithDefault 0 txin utxo_scripts_summary)) Sum tx
             , size_datum = Identity $ tx ^. (HasAnalysis.wits (Proxy @blk) . to (HasAnalysis.datumSize (Proxy @blk)))
             , num_inputs = Identity $ length $ toListOf (HasAnalysis.inputs (Proxy @blk) . folded) tx
             -- I find it a little dangerous to default to 0 when the TxIn isn't

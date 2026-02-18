@@ -495,6 +495,7 @@ instance HasFeatures (CardanoBlock StandardCrypto) where
   eraName = analyseBlock eraName
 
   utxoSummary = analyseWithLedgerState utxoSummary
+  utxoScriptsSummary = analyseWithLedgerState utxoScriptsSummary
 
 -- | 'SomeTx' and other @SomeX@ types existentially quantify over the @blk@
 -- type. There's one per type family in the 'HasFeatures' type class (since we

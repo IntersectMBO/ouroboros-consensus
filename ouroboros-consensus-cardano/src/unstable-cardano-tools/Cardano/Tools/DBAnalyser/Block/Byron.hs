@@ -162,3 +162,4 @@ instance HasFeatures ByronBlock where
   eraName _ = "Byron"
 
   utxoSummary _ = mempty
+  utxoScriptsSummary _ = mempty

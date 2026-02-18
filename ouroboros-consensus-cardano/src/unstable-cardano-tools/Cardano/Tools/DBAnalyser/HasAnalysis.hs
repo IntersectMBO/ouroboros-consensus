@@ -144,3 +144,7 @@ class HasFeatures blk where
   -- We're representing outputs merely as their sizes. This avoids introducing a
   -- new type family, and is enough for our purpose.
   utxoSummary :: WithLedgerState blk -> Map Ledger.TxIn Int
+
+  -- | Like 'utxoSummary', but restricted to those outputs which contain
+  -- scripts.
+  utxoScriptsSummary :: WithLedgerState blk -> Map Ledger.TxIn Int
