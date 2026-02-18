@@ -32,6 +32,11 @@ import qualified Data.IntMap.Strict as IntMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.String (fromString)
+import Database.SQLite3
+  ( SQLOpenFlag (..)
+  , SQLVFS (..)
+  , open2
+  )
 import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
@@ -285,7 +290,8 @@ newLeiosDBSQLite :: FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLite dbPath = do
   -- TODO: not leak resources (the db connection)
   shouldInitSchema <- not <$> doesFileExist dbPath
-  db <- withDieMsg $ DB.open (fromString dbPath)
+  putStrLn "Opening sqlite in full mutex mode"
+  db <- open2 (fromString dbPath) [SQLOpenFullMutex] SQLVFSDefault
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
   dbExec db (fromString sql_attach_memTxPoints)
