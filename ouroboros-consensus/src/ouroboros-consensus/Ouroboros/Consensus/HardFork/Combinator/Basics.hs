@@ -39,6 +39,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
 
 import Cardano.Slotting.EpochInfo
 import Data.Kind (Type)
+import Data.SOP (K (..))
 import Data.SOP.Constraint
 import Data.SOP.Functors
 import Data.SOP.Strict
@@ -50,10 +51,12 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+import qualified Ouroboros.Consensus.HardFork.Combinator.State.Infra as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Instances ()
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -244,3 +247,14 @@ distribTopLevelConfig ei tlc =
     `hap` ( getPerEraStorageConfig $
               hardForkStorageConfigPerEra (configStorage tlc)
           )
+
+{-------------------------------------------------------------------------------
+  LedgerSupportsPeras
+-------------------------------------------------------------------------------}
+
+instance CanHardFork xs => LedgerSupportsPeras (HardForkBlock xs) where
+  getLatestPerasCertRound =
+    hcollapse
+      . hcmap proxySingle (K . getLatestPerasCertRound . unFlip)
+      . State.tip
+      . hardForkLedgerStatePerEra
