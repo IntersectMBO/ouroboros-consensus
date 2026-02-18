@@ -418,9 +418,15 @@ initNodeKernel
       leiosPeersVars <- MVar.readMVar getLeiosPeersVars
       offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
       newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
-        -- Filter outstanding work against DB before running fetch iteration.
-        -- This removes EBs and TXs we already have (e.g., from forging or other peers).
-        filteredOutstanding <- Leios.filterMissingWork leiosDB outstanding
+        -- FIXME: Avoid needing this global mutex.
+        --
+        -- It is currently needed as the 'leiosDB' handle is shared across
+        -- threads and 'BEGIN' queries would be interleaved over the same
+        -- connection.
+        filteredOutstanding <- MVar.withMVar getLeiosWriteLock $ \() -> do
+          -- Filter outstanding work against DB before running fetch iteration.
+          -- This removes EBs and TXs we already have (e.g., from forging or other peers).
+          Leios.filterMissingWork leiosDB outstanding
         let (!outstanding', newDecisions) =
               Leios.leiosFetchLogicIteration
                 Leios.demoLeiosFetchStaticEnv

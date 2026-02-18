@@ -381,7 +381,7 @@ newLeiosDBSQLite dbPath = do
           -- Emit notifications for each completed EB
           forM_ completed $ notify . LeiosOfferBlockTxs
           pure completed
-      , leiosDbBatchRetrieveTxs = \ebHash offsets -> do
+      , leiosDbBatchRetrieveTxs = \ebHash offsets -> dbWithBEGIN db $ do
           -- First, insert offsets into temp table
           dbWithPrepare db (fromString sql_insert_memTxPoints) $ \stmtInsert -> do
             mapM_
@@ -689,7 +689,7 @@ dbPrepare db q = withDieJust $ DB.prepare db q
 dbWithPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> (DB.Statement -> IO a) -> IO a
 dbWithPrepare db q k = bracket (dbPrepare db q) dbFinalize k
 
-dbWithBEGIN :: DB.Database -> IO a -> IO a
+dbWithBEGIN :: HasCallStack => DB.Database -> IO a -> IO a
 dbWithBEGIN db k =
   do
     fmap fst
