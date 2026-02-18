@@ -178,7 +178,6 @@ library
     text,
     these ^>=1.2,
     validation,
-    vector-map,
 
 library unstable-byronspec
   import: common-lib
