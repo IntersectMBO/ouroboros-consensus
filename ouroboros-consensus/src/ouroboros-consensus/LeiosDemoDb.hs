@@ -93,8 +93,8 @@ data LeiosDbHandle m = LeiosDbHandle
   -- REVIEW: return type only used for tracing, necessary?
   , -- TODO: Return LeiosTx?
     leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  , leiosDbFilterMissingEbBodies :: [EbHash] -> m [EbHash]
-  -- ^ Batch filter: returns the subset of input EbHashes that we do NOT have bodies for.
+  , leiosDbFilterMissingEbBodies :: [LeiosPoint] -> m [LeiosPoint]
+  -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
   , leiosDbFilterMissingTxs :: [TxHash] -> m [TxHash]
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
   }
@@ -232,9 +232,9 @@ newLeiosDBInMemory = do
                 | offset <- offsets
                 , Just entry <- [IntMap.lookup offset offsetMap]
                 ]
-      , leiosDbFilterMissingEbBodies = \ebHashes -> atomically $ do
+      , leiosDbFilterMissingEbBodies = \points -> atomically $ do
           state <- readTVar stateVar
-          pure [ebHash | ebHash <- ebHashes, not $ Map.member ebHash (imEbBodies state)]
+          pure [p | p <- points, not $ Map.member p.pointEbHash (imEbBodies state)]
       , leiosDbFilterMissingTxs = \txHashes -> atomically $ do
           state <- readTVar stateVar
           pure [txHash | txHash <- txHashes, not $ Map.member txHash (imTxs state)]
@@ -411,14 +411,13 @@ newLeiosDBSQLite dbPath = do
           dbWithPrepare db (fromString sql_flush_memTxPoints) $ \stmtFlush -> do
             dbStep1 stmtFlush
           pure results
-      , leiosDbFilterMissingEbBodies = \ebHashes ->
-          -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
-          --   WHERE e.ebHashBytes IN (SELECT unhex(value) FROM json_each(?))
-          -- This would eliminate the need for mem.ebHashes table and insert/flush overhead.
+      , leiosDbFilterMissingEbBodies = \points ->
+          -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries.
           dbWithBEGIN db $ do
+            let pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
             dbWithPrepare db (fromString sql_insert_memEbHashes) $ \stmtInsert ->
-              forM_ ebHashes $ \(MkEbHash bytes) -> do
-                dbBindBlob stmtInsert 1 bytes
+              forM_ points $ \p -> do
+                dbBindBlob stmtInsert 1 p.pointEbHash.ebHashBytes
                 dbStep1 stmtInsert
                 dbReset stmtInsert
             result <- dbWithPrepare db (fromString sql_filter_missing_eb_bodies) $ \stmt -> do
@@ -427,7 +426,9 @@ newLeiosDBSQLite dbPath = do
                       DB.Done -> pure (reverse acc)
                       DB.Row -> do
                         ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-                        loop (ebHash : acc)
+                        case Map.lookup ebHash pointsByHash of
+                          Just p -> loop (p : acc)
+                          Nothing -> loop acc
               loop []
             dbWithPrepare db (fromString sql_flush_memEbHashes) $ \stmtFlush ->
               dbStep1 stmtFlush
