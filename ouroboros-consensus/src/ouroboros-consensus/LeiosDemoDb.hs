@@ -93,12 +93,10 @@ data LeiosDbHandle m = LeiosDbHandle
   -- REVIEW: return type only used for tracing, necessary?
   , -- TODO: Return LeiosTx?
     leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  , leiosDbFilterHaveEbBodies :: [EbHash] -> m [EbHash]
-  -- ^ Batch filter: returns the subset of input EbHashes that we have bodies for in the DB.
-  -- More efficient than individual lookups when checking multiple hashes.
-  , leiosDbFilterHaveTxs :: [TxHash] -> m [TxHash]
-  -- ^ Batch filter: returns the subset of input TxHashes that we have in the DB.
-  -- More efficient than individual lookups when checking multiple hashes.
+  , leiosDbFilterMissingEbBodies :: [EbHash] -> m [EbHash]
+  -- ^ Batch filter: returns the subset of input EbHashes that we do NOT have bodies for.
+  , leiosDbFilterMissingTxs :: [TxHash] -> m [TxHash]
+  -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
   }
 
 type CompletedEbs = [LeiosPoint]
@@ -234,12 +232,12 @@ newLeiosDBInMemory = do
                 | offset <- offsets
                 , Just entry <- [IntMap.lookup offset offsetMap]
                 ]
-      , leiosDbFilterHaveEbBodies = \ebHashes -> atomically $ do
+      , leiosDbFilterMissingEbBodies = \ebHashes -> atomically $ do
           state <- readTVar stateVar
-          pure [ebHash | ebHash <- ebHashes, Map.member ebHash (imEbBodies state)]
-      , leiosDbFilterHaveTxs = \txHashes -> atomically $ do
+          pure [ebHash | ebHash <- ebHashes, not $ Map.member ebHash (imEbBodies state)]
+      , leiosDbFilterMissingTxs = \txHashes -> atomically $ do
           state <- readTVar stateVar
-          pure [txHash | txHash <- txHashes, Map.member txHash (imTxs state)]
+          pure [txHash | txHash <- txHashes, not $ Map.member txHash (imTxs state)]
       , leiosDbQueryFetchWork = atomically $ do
           state <- readTVar stateVar
           -- Missing EB bodies: points without entries in imEbBodies
@@ -413,19 +411,17 @@ newLeiosDBSQLite dbPath = do
           dbWithPrepare db (fromString sql_flush_memTxPoints) $ \stmtFlush -> do
             dbStep1 stmtFlush
           pure results
-      , leiosDbFilterHaveEbBodies = \ebHashes ->
+      , leiosDbFilterMissingEbBodies = \ebHashes ->
           -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
           --   WHERE e.ebHashBytes IN (SELECT unhex(value) FROM json_each(?))
           -- This would eliminate the need for mem.ebHashes table and insert/flush overhead.
           dbWithBEGIN db $ do
-            -- Insert ebHashes into temp table, then select those that have bodies
             dbWithPrepare db (fromString sql_insert_memEbHashes) $ \stmtInsert ->
               forM_ ebHashes $ \(MkEbHash bytes) -> do
                 dbBindBlob stmtInsert 1 bytes
                 dbStep1 stmtInsert
                 dbReset stmtInsert
-            -- Select which ones have bodies
-            result <- dbWithPrepare db (fromString sql_filter_have_eb_bodies) $ \stmt -> do
+            result <- dbWithPrepare db (fromString sql_filter_missing_eb_bodies) $ \stmt -> do
               let loop acc =
                     dbStep stmt >>= \case
                       DB.Done -> pure (reverse acc)
@@ -433,23 +429,20 @@ newLeiosDBSQLite dbPath = do
                         ebHash <- MkEbHash <$> DB.columnBlob stmt 0
                         loop (ebHash : acc)
               loop []
-            -- Flush temp table
             dbWithPrepare db (fromString sql_flush_memEbHashes) $ \stmtFlush ->
               dbStep1 stmtFlush
             pure result
-      , leiosDbFilterHaveTxs = \txHashes ->
+      , leiosDbFilterMissingTxs = \txHashes ->
           -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
           --   WHERE t.txHashBytes IN (SELECT unhex(value) FROM json_each(?))
           -- This would eliminate the need for mem.txHashes table and insert/flush overhead.
           dbWithBEGIN db $ do
-            -- Insert txHashes into temp table, then select those that exist in txs
             dbWithPrepare db (fromString sql_insert_memTxHashes) $ \stmtInsert ->
               forM_ txHashes $ \(MkTxHash bytes) -> do
                 dbBindBlob stmtInsert 1 bytes
                 dbStep1 stmtInsert
                 dbReset stmtInsert
-            -- Select which ones we have
-            result <- dbWithPrepare db (fromString sql_filter_have_txs) $ \stmt -> do
+            result <- dbWithPrepare db (fromString sql_filter_missing_txs) $ \stmt -> do
               let loop acc =
                     dbStep stmt >>= \case
                       DB.Done -> pure (reverse acc)
@@ -457,7 +450,6 @@ newLeiosDBSQLite dbPath = do
                         txHash <- MkTxHash <$> DB.columnBlob stmt 0
                         loop (txHash : acc)
               loop []
-            -- Flush temp table
             dbWithPrepare db (fromString sql_flush_memTxHashes) $ \stmtFlush ->
               dbStep1 stmtFlush
             pure result
@@ -584,10 +576,11 @@ sql_insert_memEbHashes =
   "INSERT INTO mem.ebHashes (ebHashBytes) VALUES (?)"
 
 -- | Filter: return ebHashes from temp table that have bodies in ebTxs
-sql_filter_have_eb_bodies :: String
-sql_filter_have_eb_bodies =
+-- | Filter: return ebHashes from temp table that do NOT have bodies in ebTxs
+sql_filter_missing_eb_bodies :: String
+sql_filter_missing_eb_bodies =
   "SELECT m.ebHashBytes FROM mem.ebHashes m\n\
-  \WHERE EXISTS (SELECT 1 FROM ebTxs e WHERE e.ebHashBytes = m.ebHashBytes)\n\
+  \WHERE NOT EXISTS (SELECT 1 FROM ebTxs e WHERE e.ebHashBytes = m.ebHashBytes)\n\
   \"
 
 -- | Flush the temp ebHashes table
@@ -601,10 +594,11 @@ sql_insert_memTxHashes =
   "INSERT INTO mem.txHashes (txHashBytes) VALUES (?)"
 
 -- | Filter: return txHashes from temp table that exist in txs
-sql_filter_have_txs :: String
-sql_filter_have_txs =
+-- | Filter: return txHashes from temp table that do NOT exist in txs
+sql_filter_missing_txs :: String
+sql_filter_missing_txs =
   "SELECT m.txHashBytes FROM mem.txHashes m\n\
-  \WHERE EXISTS (SELECT 1 FROM txs t WHERE t.txHashBytes = m.txHashBytes)\n\
+  \WHERE NOT EXISTS (SELECT 1 FROM txs t WHERE t.txHashBytes = m.txHashBytes)\n\
   \"
 
 -- | Flush the temp txHashes table
