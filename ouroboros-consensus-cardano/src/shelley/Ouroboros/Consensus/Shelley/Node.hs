@@ -33,7 +33,6 @@ import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -118,7 +117,6 @@ instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto
 instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , LedgerSupportsPeras (ShelleyBlock proto era)
   , BlockSupportsSanityCheck (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , SerialiseNodeToClientConstraints (ShelleyBlock proto era)

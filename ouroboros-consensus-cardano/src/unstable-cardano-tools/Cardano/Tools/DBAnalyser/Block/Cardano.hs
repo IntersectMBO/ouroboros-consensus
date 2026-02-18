@@ -82,7 +82,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
   , ShelleyBlock
   , ShelleyBlockLedgerEra
   )
-import Ouroboros.Consensus.Shelley.Ledger.SupportsPeras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import System.Directory (makeAbsolute)
 import System.FilePath (takeDirectory, (</>))
