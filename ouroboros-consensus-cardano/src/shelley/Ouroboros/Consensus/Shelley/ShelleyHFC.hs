@@ -120,7 +120,6 @@ instance
 instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , LedgerSupportsPeras (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
   ) =>
@@ -176,7 +175,6 @@ instance
 instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , LedgerSupportsPeras (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
   ) =>
@@ -230,7 +228,6 @@ shelleyTransition
 instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , LedgerSupportsPeras (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
   ) =>

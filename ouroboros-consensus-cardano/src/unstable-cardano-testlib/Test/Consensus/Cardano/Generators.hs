@@ -49,7 +49,6 @@ import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Block ()
-import Ouroboros.Consensus.Shelley.Ledger.SupportsPeras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Test.Cardano.Ledger.Alonzo.Arbitrary ()

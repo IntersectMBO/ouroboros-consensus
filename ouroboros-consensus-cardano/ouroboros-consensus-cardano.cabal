@@ -119,7 +119,6 @@ library
     Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
     Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis
     Ouroboros.Consensus.Shelley.Ledger.Query.Types
-    Ouroboros.Consensus.Shelley.Ledger.SupportsPeras
     Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol
     Ouroboros.Consensus.Shelley.Node
     Ouroboros.Consensus.Shelley.Node.Common

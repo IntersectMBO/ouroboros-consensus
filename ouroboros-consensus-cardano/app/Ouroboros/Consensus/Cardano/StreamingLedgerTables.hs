@@ -27,7 +27,6 @@ import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Shelley.Ledger
-import Ouroboros.Consensus.Shelley.Ledger.SupportsPeras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2
