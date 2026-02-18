@@ -684,7 +684,10 @@ dbBindInt64 :: HasCallStack => DB.Statement -> DB.ParamIndex -> Int64 -> IO ()
 dbBindInt64 q p v = withDie $ DB.bindInt64 q p v
 
 dbExec :: HasCallStack => DB.Database -> DB.Utf8 -> IO ()
-dbExec db q = withDieMsg $ DB.exec db q
+dbExec db q =
+  DB.exec db q >>= \case
+    Left (err, reason) -> throwDbException err (Just $ show reason)
+    Right () -> pure ()
 
 dbFinalize :: HasCallStack => DB.Statement -> IO ()
 dbFinalize q = withDie $ DB.finalize q
@@ -717,29 +720,39 @@ dbStep stmt = withDie $ DB.stepNoCB stmt
 dbStep1 :: HasCallStack => DB.Statement -> IO ()
 dbStep1 stmt = withDieDone $ DB.stepNoCB stmt
 
-withDiePoly :: (HasCallStack, Show b) => (e -> b) -> IO (Either e a) -> IO a
-withDiePoly f io =
-  io >>= \case
-    Left e -> dieStack $ "LeiosDb: " ++ show (f e)
-    Right x -> pure x
-
-withDieMsg :: HasCallStack => IO (Either (DB.Error, DB.Utf8) a) -> IO a
-withDieMsg = withDiePoly snd
-
 withDie :: HasCallStack => IO (Either DB.Error a) -> IO a
-withDie = withDiePoly id
+withDie io =
+  io >>= \case
+    Left e -> throwDbException e Nothing
+    Right x -> pure x
 
 withDieJust :: HasCallStack => IO (Either DB.Error (Maybe a)) -> IO a
 withDieJust io =
   withDie io >>= \case
-    Nothing -> dieStack $ "LeiosDb: [Just] " ++ "impossible!"
+    Nothing ->
+      throwIO $
+        LeiosDbException
+          { errorMessage = "unexpected Nothing"
+          , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
+          }
     Just x -> pure x
 
 withDieDone :: HasCallStack => IO (Either DB.Error DB.StepResult) -> IO ()
 withDieDone io =
   withDie io >>= \case
-    DB.Row -> dieStack $ "LeiosDb: [Done] " ++ "impossible!"
+    DB.Row ->
+      throwIO $
+        LeiosDbException
+          { errorMessage = "unexpected Row"
+          , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
+          }
     DB.Done -> pure ()
 
-dieStack :: HasCallStack => String -> IO a
-dieStack s = throwIO $ LeiosDbException s (GHC.Stack.prettyCallStack GHC.Stack.callStack)
+throwDbException :: HasCallStack => DB.Error -> Maybe String -> IO a
+throwDbException e mmsg =
+  throwIO $ LeiosDbException{errorMessage, callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack}
+ where
+  errorMessage =
+    show e <> case mmsg of
+      Just msg -> ": " <> msg
+      Nothing -> ""
