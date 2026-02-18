@@ -306,6 +306,7 @@ initNodeKernel
           , peerSharingRegistry
           , varChainSyncHandles
           , varGsmState
+          , leiosWriteLock
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
@@ -408,7 +409,6 @@ initNodeKernel
     getLeiosPeersVars <- MVar.newMVar Map.empty
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
-    getLeiosWriteLock <- MVar.newMVar ()
 
     void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
       let tracer = leiosKernelTracer tracers
@@ -423,7 +423,7 @@ initNodeKernel
         -- It is currently needed as the 'leiosDB' handle is shared across
         -- threads and 'BEGIN' queries would be interleaved over the same
         -- connection.
-        filteredOutstanding <- MVar.withMVar getLeiosWriteLock $ \() -> do
+        filteredOutstanding <- MVar.withMVar leiosWriteLock $ \() -> do
           -- Filter outstanding work against DB before running fetch iteration.
           -- This removes EBs and TXs we already have (e.g., from forging or other peers).
           Leios.filterMissingWork leiosDB outstanding
@@ -469,7 +469,7 @@ initNodeKernel
         , getLeiosPeersVars
         , getLeiosOutstanding
         , getLeiosReady
-        , getLeiosWriteLock
+        , getLeiosWriteLock = leiosWriteLock
         }
    where
     blockForgingController ::
@@ -516,6 +516,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , mempool :: Mempool m blk
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
   , leiosDB :: LeiosDbHandle m
+  , leiosWriteLock :: MVar m ()
   }
 
 initInternalState ::
@@ -582,6 +583,7 @@ initInternalState
             getDiffusionPipeliningSupport
 
     peerSharingRegistry <- newPeerSharingRegistry
+    leiosWriteLock <- MVar.newMVar ()
 
     return IS{..}
    where
@@ -859,7 +861,7 @@ forkBlockForging IS{..} blockForging =
 
       -- Store generated EB so it can be diffused
       for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
-        lift $ do
+        lift $ MVar.withMVar leiosWriteLock $ \() -> do
           leiosDbInsertEbPoint leiosDB eb.point (Leios.leiosEbBytesSize eb.body)
           leiosDbInsertEbBody leiosDB eb.point eb.body
           void $ leiosDbInsertTxs leiosDB eb.txClosure

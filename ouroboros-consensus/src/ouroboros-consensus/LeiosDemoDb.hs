@@ -68,25 +68,25 @@ import System.Exit (die)
 --
 -- TODO: use LeiosPoint and LeiosEb types in the interface instead of raw tuples.
 data LeiosDbHandle m = LeiosDbHandle
-  { subscribeEbNotifications :: m (StrictTChan m LeiosNotification)
+  { subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosNotification)
   -- ^ Subscribe to new EBs and EBTxs being stored by the LeiosDB. This will
   -- only inform about new additions, starting from when this function was
   -- called.
-  , leiosDbScanEbPoints :: m [(SlotNo, EbHash)]
-  , leiosDbLookupEbPoint :: EbHash -> m (Maybe SlotNo)
+  , leiosDbScanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
+  , leiosDbLookupEbPoint :: HasCallStack => EbHash -> m (Maybe SlotNo)
   -- ^ Check if an EB point exists in the database. Returns the slot if found.
-  , leiosDbInsertEbPoint :: LeiosPoint -> BytesSize -> m ()
+  , leiosDbInsertEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m ()
   -- ^ Insert an announced EB point with its expected size.
-  , leiosDbLookupEbBody :: EbHash -> m [(TxHash, BytesSize)]
-  , leiosDbQueryFetchWork :: m LeiosFetchWork
+  , leiosDbLookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
+  , leiosDbQueryFetchWork :: HasCallStack => m LeiosFetchWork
   -- ^ Query all work needed for the fetch logic (used at startup):
   -- - Missing EB bodies: EBs in ebPoints without entries in ebTxs
   -- - Missing TXs: TXs in ebTxs without entries in txs
   -- NOTE: This is O(n) and should only be used at startup for initialization.
   , -- NOTE: yields a LeiosOfferBlock notification
-    leiosDbInsertEbBody :: LeiosPoint -> LeiosEb -> m ()
+    leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m ()
   , -- TODO: Take [LeiosTx] and hash on insert?
-    leiosDbInsertTxs :: [(TxHash, ByteString)] -> m CompletedEbs
+    leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
   -- ^ Insert transactions into the global txs table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
   -- and emits LeiosOfferBlockTxs notifications for each.
@@ -97,10 +97,10 @@ data LeiosDbHandle m = LeiosDbHandle
   --
   -- REVIEW: return type only used for tracing, necessary?
   , -- TODO: Return LeiosTx?
-    leiosDbBatchRetrieveTxs :: EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  , leiosDbFilterMissingEbBodies :: [LeiosPoint] -> m [LeiosPoint]
+    leiosDbBatchRetrieveTxs :: HasCallStack => EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  , leiosDbFilterMissingEbBodies :: HasCallStack => [LeiosPoint] -> m [LeiosPoint]
   -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
-  , leiosDbFilterMissingTxs :: [TxHash] -> m [TxHash]
+  , leiosDbFilterMissingTxs :: HasCallStack => [TxHash] -> m [TxHash]
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
   }
 
@@ -291,7 +291,7 @@ newLeiosDBSQLite dbPath = do
   -- TODO: not leak resources (the db connection)
   shouldInitSchema <- not <$> doesFileExist dbPath
   putStrLn "Opening sqlite in full mutex mode"
-  db <- open2 (fromString dbPath) [SQLOpenFullMutex] SQLVFSDefault
+  db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate, SQLOpenFullMutex] SQLVFSDefault
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
   dbExec db (fromString sql_attach_memTxPoints)
