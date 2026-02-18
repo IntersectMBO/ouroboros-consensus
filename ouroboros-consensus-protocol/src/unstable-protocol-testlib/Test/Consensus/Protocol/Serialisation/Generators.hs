@@ -26,7 +26,6 @@ import Ouroboros.Consensus.Protocol.Praos.Header
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Crypto.KES ()
-import Test.Crypto.VRF ()
 import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
 
 instance Arbitrary InputVRF where

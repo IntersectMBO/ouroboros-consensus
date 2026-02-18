@@ -50,8 +50,8 @@ import Cardano.Crypto.Hash.Class
   ( HashAlgorithm (..)
   , hashToBytes
   , hashWithSerialiser
-  , sizeHash
   )
+import qualified Cardano.Crypto.Hash.Class as Hash
 import Cardano.Crypto.Hash.SHA256 (SHA256)
 import Cardano.Crypto.KES.Class
 import Cardano.Crypto.KES.Mock
@@ -597,7 +597,7 @@ leaderThreshold config _blockInfos s n =
    in
     -- 2^(l_VRF * 8) * ϕ_f(αᵢ)
     -- the 8 factor converts from bytes to bits.
-    2 ^ (sizeHash (Proxy :: Proxy (PraosHash c)) * 8) * phi config alpha
+    2 ^ (Hash.hashSize (Proxy :: Proxy (PraosHash c)) * 8) * phi config alpha
 
 -- | Compute the rho, y and Tᵢ parameters for a given slot.
 rhoYT ::

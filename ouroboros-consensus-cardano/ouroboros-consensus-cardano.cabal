@@ -138,7 +138,7 @@ library
     bytestring >=0.10 && <0.13,
     cardano-binary,
     cardano-crypto,
-    cardano-crypto-class ^>=2.2,
+    cardano-crypto-class:cardano-crypto-class ^>=2.3,
     cardano-crypto-wrapper,
     cardano-ledger-allegra ^>=1.9,
     cardano-ledger-alonzo ^>=1.15,
@@ -178,7 +178,6 @@ library
     text,
     these ^>=1.2,
     validation,
-    vector-map,
 
 library unstable-byronspec
   import: common-lib
@@ -207,6 +206,7 @@ library unstable-byronspec
     cardano-ledger-byron:testlib,
     cborg >=0.2.2 && <0.3,
     containers >=0.5 && <0.9,
+    deepseq,
     mtl,
     nothunks,
     ouroboros-consensus ^>=0.28,
@@ -499,7 +499,7 @@ test-suite cardano-test
     tasty-hunit,
     tasty-quickcheck,
     temporary,
-    typed-protocols ^>=1.1,
+    typed-protocols ^>=1.2,
     unstable-byron-testlib,
     unstable-cardano-testlib,
     unstable-shelley-testlib,

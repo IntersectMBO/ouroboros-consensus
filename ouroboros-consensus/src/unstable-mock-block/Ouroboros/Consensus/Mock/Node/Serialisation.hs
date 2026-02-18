@@ -49,22 +49,28 @@ instance
   (Serialise ext, RunMockBlock SimpleMockCrypto ext) =>
   SerialiseDiskConstraints (MockBlock ext)
 
-instance Serialise ext => EncodeDisk (MockBlock ext) (MockBlock ext)
-instance Serialise ext => DecodeDisk (MockBlock ext) (Lazy.ByteString -> Either DecoderError (MockBlock ext)) where
+instance (Serialise ext, Typeable ext) => EncodeDisk (MockBlock ext) (MockBlock ext)
+instance
+  (Serialise ext, Typeable ext) =>
+  DecodeDisk (MockBlock ext) (Lazy.ByteString -> Either DecoderError (MockBlock ext))
+  where
   decodeDisk _ = const . Right <$> decode
 
-instance Serialise ext => EncodeDisk (MockBlock ext) (Header (MockBlock ext))
-instance Serialise ext => DecodeDisk (MockBlock ext) (Lazy.ByteString -> Header (MockBlock ext)) where
+instance (Serialise ext, Typeable ext) => EncodeDisk (MockBlock ext) (Header (MockBlock ext))
+instance
+  (Serialise ext, Typeable ext) =>
+  DecodeDisk (MockBlock ext) (Lazy.ByteString -> Header (MockBlock ext))
+  where
   decodeDisk _ = const <$> decode
 
-instance EncodeDisk (MockBlock ext) (LedgerState (MockBlock ext) EmptyMK) where
+instance Typeable ext => EncodeDisk (MockBlock ext) (LedgerState (MockBlock ext) EmptyMK) where
   encodeDisk _ = encode . simpleLedgerState
-instance DecodeDisk (MockBlock ext) (LedgerState (MockBlock ext) EmptyMK) where
+instance Typeable ext => DecodeDisk (MockBlock ext) (LedgerState (MockBlock ext) EmptyMK) where
   decodeDisk _ = flip SimpleLedgerState (LedgerTables EmptyMK) <$> decode
 
-instance EncodeDisk (MockBlock ext) (AnnTip (MockBlock ext)) where
+instance Typeable ext => EncodeDisk (MockBlock ext) (AnnTip (MockBlock ext)) where
   encodeDisk _ = defaultEncodeAnnTip encode
-instance DecodeDisk (MockBlock ext) (AnnTip (MockBlock ext)) where
+instance Typeable ext => DecodeDisk (MockBlock ext) (AnnTip (MockBlock ext)) where
   decodeDisk _ = defaultDecodeAnnTip decode
 
 {-------------------------------------------------------------------------------
@@ -78,23 +84,29 @@ instance HasNetworkProtocolVersion (MockBlock ext)
 
 -- Use defaults
 
-instance Serialise ext => SerialiseNodeToNodeConstraints (MockBlock ext) where
+instance (Serialise ext, Typeable ext) => SerialiseNodeToNodeConstraints (MockBlock ext) where
   estimateBlockSize hdr =
     7 {- CBOR-in-CBOR -} + 1 {- encodeListLen 2 -} + hdrSize + bodySize
    where
     hdrSize = fromIntegral (Lazy.length (serialise hdr))
     bodySize = simpleBodySize (simpleHeaderStd hdr)
 
-instance Serialise ext => SerialiseNodeToNode (MockBlock ext) (MockBlock ext) where
+instance (Serialise ext, Typeable ext) => SerialiseNodeToNode (MockBlock ext) (MockBlock ext) where
   encodeNodeToNode _ _ = defaultEncodeCBORinCBOR
   decodeNodeToNode _ _ = defaultDecodeCBORinCBOR
 
-instance Serialise ext => SerialiseNodeToNode (MockBlock ext) (Header (MockBlock ext)) where
+instance
+  (Serialise ext, Typeable ext) =>
+  SerialiseNodeToNode (MockBlock ext) (Header (MockBlock ext))
+  where
   encodeNodeToNode ccfg _ = encodeDisk ccfg . unnest
   decodeNodeToNode ccfg _ = nest <$> decodeDisk ccfg
 
 instance SerialiseNodeToNode (MockBlock ext) (Serialised (MockBlock ext))
-instance Serialise ext => SerialiseNodeToNode (MockBlock ext) (SerialisedHeader (MockBlock ext)) where
+instance
+  (Serialise ext, Typeable ext) =>
+  SerialiseNodeToNode (MockBlock ext) (SerialisedHeader (MockBlock ext))
+  where
   encodeNodeToNode ccfg _ = encodeDisk ccfg
   decodeNodeToNode ccfg _ = decodeDisk ccfg
 instance SerialiseNodeToNode (MockBlock ext) (GenTx (MockBlock ext))
@@ -115,21 +127,21 @@ instance
   ) =>
   SerialiseNodeToClientConstraints (MockBlock ext)
 
-instance Serialise ext => SerialiseNodeToClient (MockBlock ext) (MockBlock ext) where
+instance (Serialise ext, Typeable ext) => SerialiseNodeToClient (MockBlock ext) (MockBlock ext) where
   encodeNodeToClient _ _ = defaultEncodeCBORinCBOR
   decodeNodeToClient _ _ = defaultDecodeCBORinCBOR
 
 instance SerialiseNodeToClient (MockBlock ext) (Serialised (MockBlock ext))
 instance SerialiseNodeToClient (MockBlock ext) (GenTx (MockBlock ext))
 instance SerialiseNodeToClient (MockBlock ext) (GenTxId (MockBlock ext))
-instance SerialiseNodeToClient (MockBlock ext) (MockError (MockBlock ext))
+instance Typeable ext => SerialiseNodeToClient (MockBlock ext) (MockError (MockBlock ext))
 instance SerialiseNodeToClient (MockBlock ext) SlotNo
 
 instance SerialiseNodeToClient (MockBlock ext) (SomeBlockQuery (BlockQuery (MockBlock ext))) where
   encodeNodeToClient _ _ (SomeBlockQuery QueryLedgerTip) = encode ()
   decodeNodeToClient _ _ = (\() -> SomeBlockQuery QueryLedgerTip) <$> decode
 
-instance SerialiseBlockQueryResult (MockBlock ext) BlockQuery where
+instance Typeable ext => SerialiseBlockQueryResult (MockBlock ext) BlockQuery where
   encodeBlockQueryResult _ _ QueryLedgerTip = encode
   decodeBlockQueryResult _ _ QueryLedgerTip = decode
 
@@ -148,11 +160,11 @@ instance TrivialDependency (NestedCtxt_ (SimpleBlock c ext) f) where
   hasSingleIndex CtxtMock CtxtMock = Refl
   indexIsTrivial = CtxtMock
 
-instance SameDepIndex (NestedCtxt_ (SimpleBlock c ext) f)
-instance HasNestedContent f (SimpleBlock c ext)
+instance Typeable ext => SameDepIndex (NestedCtxt_ (SimpleBlock c ext) f)
+instance Typeable ext => HasNestedContent f (SimpleBlock c ext)
 
-instance Serialise ext => ReconstructNestedCtxt Header (MockBlock ext)
-instance Serialise ext => EncodeDiskDepIx (NestedCtxt Header) (MockBlock ext)
-instance Serialise ext => EncodeDiskDep (NestedCtxt Header) (MockBlock ext)
-instance Serialise ext => DecodeDiskDepIx (NestedCtxt Header) (MockBlock ext)
-instance Serialise ext => DecodeDiskDep (NestedCtxt Header) (MockBlock ext)
+instance (Serialise ext, Typeable ext) => ReconstructNestedCtxt Header (MockBlock ext)
+instance (Serialise ext, Typeable ext) => EncodeDiskDepIx (NestedCtxt Header) (MockBlock ext)
+instance (Serialise ext, Typeable ext) => EncodeDiskDep (NestedCtxt Header) (MockBlock ext)
+instance (Serialise ext, Typeable ext) => DecodeDiskDepIx (NestedCtxt Header) (MockBlock ext)
+instance (Serialise ext, Typeable ext) => DecodeDiskDep (NestedCtxt Header) (MockBlock ext)

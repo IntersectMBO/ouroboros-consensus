@@ -199,6 +199,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsLedger (Praos c) where
       , bhviewHSize = headerSize hdr
       , bhviewBHash = hbBodyHash headerBody
       , bhviewSlot = hbSlotNo headerBody
+      , bhviewProtVer = hbProtVer headerBody
       , -- TODO(Peras): instantiate this for Peras when needed
         bhviewPrevEpochNonce = Nothing
       }

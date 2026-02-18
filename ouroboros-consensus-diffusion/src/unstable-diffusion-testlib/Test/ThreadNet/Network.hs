@@ -2,6 +2,8 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -53,6 +55,7 @@ import Cardano.Network.PeerSelection
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
+import Control.DeepSeq (NFData)
 import qualified Control.Exception as Exn
 import Control.Monad
 import Control.Monad.Class.MonadTime.SI (MonadTime)
@@ -71,6 +74,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
+import GHC.Generics
 import GHC.Stack
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
@@ -148,7 +152,7 @@ import Ouroboros.Network.TxSubmission.Inbound.V2.Policy
   )
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
-import System.Random (mkStdGen, split)
+import System.Random (mkStdGen, splitGen)
 import Test.ThreadNet.TxGen
 import Test.ThreadNet.Util.NodeJoinPlan
 import Test.ThreadNet.Util.NodeRestarts
@@ -1046,10 +1050,10 @@ runThreadNetwork
 
       let rng = case seed of
             Seed s -> mkStdGen s
-          (kaRng, rng') = split rng
-          (gsmRng, rng'') = split rng'
-          (psRng, rng3) = split rng''
-          (txRng, chainSyncRng) = split rng3
+          (kaRng, rng') = splitGen rng
+          (gsmRng, rng'') = splitGen rng'
+          (psRng, rng3) = splitGen rng''
+          (txRng, chainSyncRng) = splitGen rng3
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1249,7 +1253,8 @@ data CodecError
       -- | Extra error message, e.g., the name of the codec
       String
       DeserialiseFailure
-  deriving (Show, Exception)
+  deriving stock (Show, Generic)
+  deriving anyclass (Exception, NFData)
 
 {-------------------------------------------------------------------------------
   Running an edge
