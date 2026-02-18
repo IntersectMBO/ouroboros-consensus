@@ -20,7 +20,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
-import Test.Cardano.Ledger.Binary.Arbitrary ()
+import Test.Cardano.Ledger.Core.Arbitrary ()
 import Test.Ouroboros.Consensus.Protocol
 import Test.QuickCheck.Gen (Gen (..))
 import Test.QuickCheck.Random (mkQCGen)
