@@ -122,6 +122,8 @@ class
   , -- ChainDepState needs to be serialisable
     DecodeDisk (ShelleyBlock proto era) (ChainDepState proto)
   , EncodeDisk (ShelleyBlock proto era) (ChainDepState proto)
+  , -- We need to be able to extract Peras certificates when embedded in blocks
+    BlockSupportsPeras (ShelleyBlock proto era)
   , -- Hard-fork related constraints
     HasPartialConsensusConfig proto
   , DecCBOR (SL.PState era)
