@@ -156,11 +156,15 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Data.Map (Map)
 import qualified Data.Map as Map
-import LeiosDemoDb (LeiosDbHandle, leiosDbInsertEbBody, leiosDbInsertEbPoint, leiosDbInsertTxs)
+import LeiosDemoDb
+  ( LeiosDbHandle (..)
+  , leiosDbInsertEbBody
+  , leiosDbInsertEbPoint
+  , leiosDbInsertTxs
+  )
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
   ( ForgedLeiosEb
-  , LeiosEbBodies
   , LeiosOutstanding
   , LeiosPeerVars
   , TraceLeiosKernel (..)
@@ -216,11 +220,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
     -- See 'LeiosPeerVars' for the write patterns
     leiosDB :: LeiosDbHandle m
   , getLeiosPeersVars :: MVar m (Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
-  , -- written to by the LeiosNotify&LeiosFetch clients (TODO and by
-    -- eviction)
-    getLeiosEbBodies :: MVar m LeiosEbBodies
-  , -- written to by the fetch logic, by the LeiosNotify&LeiosFetch, and by LeiosCopier
-    -- clients (TODO and by eviction)
+  , -- Written to by the fetch logic, by the LeiosNotify&LeiosFetch, and by LeiosCopier
+    -- clients (TODO and by eviction).
+    -- Contains both EB-level state (acquired/missing bodies) and TX-level state.
     getLeiosOutstanding :: MVar m (LeiosOutstanding (ConnectionId addrNTN))
   , getLeiosReady :: MVar m ()
   -- ^ Leios fetch logic 'MVar.takeMVar's before it runs
@@ -304,6 +306,7 @@ initNodeKernel
           , peerSharingRegistry
           , varChainSyncHandles
           , varGsmState
+          , leiosWriteLock
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
@@ -404,10 +407,8 @@ initNodeKernel
           blockFetchConfiguration
 
     getLeiosPeersVars <- MVar.newMVar Map.empty
-    getLeiosEbBodies <- MVar.newMVar Leios.emptyLeiosEbBodies -- TODO init from DB
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
-    getLeiosWriteLock <- MVar.newMVar ()
 
     void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
       let tracer = leiosKernelTracer tracers
@@ -416,13 +417,21 @@ initNodeKernel
       iterationStart <- getMonotonicTime
       leiosPeersVars <- MVar.readMVar getLeiosPeersVars
       offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
-      ebBodies <- MVar.readMVar getLeiosEbBodies
       newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+        -- FIXME: Avoid needing this global mutex.
+        --
+        -- It is currently needed as the 'leiosDB' handle is shared across
+        -- threads and 'BEGIN' queries would be interleaved over the same
+        -- connection.
+        filteredOutstanding <- MVar.withMVar leiosWriteLock $ \() -> do
+          -- Filter outstanding work against DB before running fetch iteration.
+          -- This removes EBs and TXs we already have (e.g., from forging or other peers).
+          Leios.filterMissingWork leiosDB outstanding
         let (!outstanding', newDecisions) =
               Leios.leiosFetchLogicIteration
                 Leios.demoLeiosFetchStaticEnv
-                (ebBodies, offerings)
-                outstanding
+                offerings
+                filteredOutstanding
         pure (outstanding', newDecisions)
       let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
       traceWith tracer $
@@ -458,10 +467,9 @@ initNodeKernel
         , getBlockchainTime = btime
         , leiosDB
         , getLeiosPeersVars
-        , getLeiosEbBodies
         , getLeiosOutstanding
         , getLeiosReady
-        , getLeiosWriteLock
+        , getLeiosWriteLock = leiosWriteLock
         }
    where
     blockForgingController ::
@@ -508,6 +516,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , mempool :: Mempool m blk
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
   , leiosDB :: LeiosDbHandle m
+  , leiosWriteLock :: MVar m ()
   }
 
 initInternalState ::
@@ -574,6 +583,7 @@ initInternalState
             getDiffusionPipeliningSupport
 
     peerSharingRegistry <- newPeerSharingRegistry
+    leiosWriteLock <- MVar.newMVar ()
 
     return IS{..}
    where
@@ -851,8 +861,8 @@ forkBlockForging IS{..} blockForging =
 
       -- Store generated EB so it can be diffused
       for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
-        lift $ do
-          leiosDbInsertEbPoint leiosDB eb.point
+        lift $ MVar.withMVar leiosWriteLock $ \() -> do
+          leiosDbInsertEbPoint leiosDB eb.point (Leios.leiosEbBytesSize eb.body)
           leiosDbInsertEbBody leiosDB eb.point eb.body
           void $ leiosDbInsertTxs leiosDB eb.txClosure
         traceLeios TraceLeiosBlockStored{slot = currentSlot, eb = eb.body}
