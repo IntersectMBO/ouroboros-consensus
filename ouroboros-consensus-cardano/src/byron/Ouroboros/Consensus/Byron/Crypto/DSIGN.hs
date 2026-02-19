@@ -33,7 +33,7 @@ import Cardano.Crypto
   , verifySignatureRaw
   )
 import Cardano.Crypto.DSIGN.Class
-import Cardano.Crypto.Seed (SeedBytesExhausted (..), getBytesFromSeed)
+import Cardano.Crypto.Seed (getBytesFromSeedEither)
 import qualified Cardano.Crypto.Signing as Crypto
 import qualified Cardano.Crypto.Wallet as CC
 import Cardano.Ledger.Binary
@@ -68,9 +68,9 @@ data ByronDSIGN
 
 instance DSIGNAlgorithm ByronDSIGN where
   type SeedSizeDSIGN ByronDSIGN = 32
-  type SizeVerKeyDSIGN ByronDSIGN = 64
-  type SizeSignKeyDSIGN ByronDSIGN = 128
-  type SizeSigDSIGN ByronDSIGN = 64
+  type VerKeySizeDSIGN ByronDSIGN = 64
+  type SignKeySizeDSIGN ByronDSIGN = 128
+  type SigSizeDSIGN ByronDSIGN = 64
 
   algorithmNameDSIGN _ = "ByronDSIGN"
 
@@ -98,9 +98,9 @@ instance DSIGNAlgorithm ByronDSIGN where
   genKeyDSIGN seed =
     SignKeyByronDSIGN . snd $ deterministicKeyGen seedBytes
    where
-    seedBytes = case getBytesFromSeed 32 seed of
-      Just (x, _) -> x
-      Nothing -> throw $ SeedBytesExhausted (-1) (-1) -- TODO We can't get the seed size!
+    seedBytes = case getBytesFromSeedEither 32 seed of
+      Right (x, _) -> x
+      Left err -> throw err
 
   deriveVerKeyDSIGN (SignKeyByronDSIGN sk) = VerKeyByronDSIGN $ toVerification sk
 

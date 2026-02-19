@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Byron.Node.Serialisation () where
@@ -20,6 +21,7 @@ import Codec.Serialise (decode, encode)
 import Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
+import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Ledger.Conversions
@@ -245,7 +247,10 @@ instance DecodeDiskDepIx (NestedCtxt Header) ByronBlock where
     CBOR.decodeWord8 >>= \case
       0 -> SomeSecond . NestedCtxt . CtxtByronBoundary . SizeInBytes <$> CBOR.decodeWord32
       1 -> SomeSecond . NestedCtxt . CtxtByronRegular . SizeInBytes <$> CBOR.decodeWord32
-      t -> cborError $ DecoderErrorUnknownTag "decodeDiskDepIx ByronBlock" t
+      t ->
+        cborError $
+          DecoderErrorUnknownTag "decodeDiskDepIx ByronBlock" $
+            fromIntegral @Word8 @Word t
 
 instance DecodeDiskDep (NestedCtxt Header) ByronBlock where
   decodeDiskDep ByronCodecConfig{..} (NestedCtxt ctxt) =

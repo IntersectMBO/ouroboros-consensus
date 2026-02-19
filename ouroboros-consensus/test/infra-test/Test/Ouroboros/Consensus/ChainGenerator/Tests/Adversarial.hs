@@ -458,19 +458,19 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
 -- 'A.checkAdversarialChain' to reject the result of 'A.uniformAdversarialChain'
 --
 -- TODO this did fail after >500,000 tests. Is that amount of flakiness acceptable?
-prop_adversarialChainMutation :: SomeTestAdversarialMutation -> QCGen -> QC.Property
+prop_adversarialChainMutation :: SomeTestAdversarialMutation -> Int -> QC.Property
 prop_adversarialChainMutation (SomeTestAdversarialMutation Proxy Proxy testAdversarialMut) testSeedAsSeed0 =
   TT.counterexample flakyTestCopy $
     QC.ioProperty $ do
       A.SomeCheckedAdversarialRecipe Proxy recipeA' <- pure someRecipeA'
 
       counter <- newIORef @Int 0
-      catch <- newIORef @(QCGen, [String]) (undefined, [])
+      catch <- newIORef @(R.StdGen, [String]) (undefined, [])
 
       -- we're willing to wait up to 20s to find a failure for each 'TestHonestMutation'
       IO.timeout
         (20 * 10 ^ (6 :: Int))
-        (go catch counter recipeA' testSeedAsSeed0)
+        (go catch counter recipeA' (R.mkStdGen testSeedAsSeed0))
         >>= \case
           Just prop -> pure prop
           Nothing ->
@@ -492,9 +492,9 @@ prop_adversarialChainMutation (SomeTestAdversarialMutation Proxy Proxy testAdver
     modifyIORef' counter (+ 1)
     let
       -- TODO is this a low quality random stream? Why is there no @'R.Random' 'QCGen'@ instance?
-      (testSeedA, testSeedAsSeed') = R.split testSeedAsSeed
+      (testSeedA, testSeedAsSeed') = R.splitGen testSeedAsSeed
 
-      schedA = A.uniformAdversarialChain Nothing recipeA' (testSeedA :: QCGen)
+      schedA = A.uniformAdversarialChain Nothing recipeA' (testSeedA :: R.StdGen)
       m = A.checkAdversarialChain mutatedRecipe schedA
     -- We discard tests where the first race ends past the acceleration bound
     -- as these race windows are unconstrained
@@ -523,7 +523,7 @@ advMutCounterexample ::
   TestAdversarialMutation base hon ->
   A.AdversarialRecipe base hon ->
   [String] ->
-  QCGen ->
+  R.StdGen ->
   String
 advMutCounterexample testAdversarialMut mutatedRecipe schedA' seedA =
   H.unlines' $
