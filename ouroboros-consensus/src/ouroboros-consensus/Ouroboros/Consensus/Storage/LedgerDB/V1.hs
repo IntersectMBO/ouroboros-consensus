@@ -26,6 +26,7 @@ import qualified Data.Foldable as Foldable
 import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
@@ -268,7 +269,8 @@ implValidate ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , HasCallStack
-  , l ~ ExtLedgerState blk
+  , StandardHash l
+  , ApplyBlock l blk
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
@@ -276,13 +278,13 @@ implValidate ::
   (TraceValidateEvent blk -> m ()) ->
   BlockCache blk ->
   Word64 ->
-  [Header blk] ->
-  m (ValidateResult m (ExtLedgerState blk) blk)
+  NonEmpty (Header blk) ->
+  m (ValidateResult m l blk)
 implValidate h ldbEnv rr tr cache rollbacks hdrs =
   validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
     ValidateArgs
       (ldbResolveBlock ldbEnv)
-      (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
+      (ledgerDbCfg $ ldbCfg ldbEnv)
       ( \l -> do
           prev <- readTVar (ldbPrevApplied ldbEnv)
           writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
