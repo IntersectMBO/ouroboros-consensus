@@ -17,7 +17,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Control.Monad (when)
+import Control.Monad (forM_, when)
 import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, traceWith)
@@ -26,7 +26,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.DList (DList)
 import qualified Data.DList as DList
-import Data.Foldable (forM_)
 import Data.Functor (void)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
@@ -42,7 +41,7 @@ import Data.String (fromString)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import Data.Word (Word16, Word64)
-import LeiosDemoDb (CompleteEb (..), LeiosDbHandle (..))
+import LeiosDemoDb (LeiosDbHandle (..))
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
   ( BytesSize
@@ -237,13 +236,13 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
     [] -> []
     (point, Left ebBytesSize) : vs -> Left (point, ebBytesSize) : expand vs
     (point, Right v) : vs ->
-      [Right (point, txOffset, txHash) | (txOffset, (txHash, _txBytesSize)) <- IntMap.toAscList v]
+      [Right (point, txHash) | (_txOffset, (txHash, _txBytesSize)) <- IntMap.toAscList v]
         <> expand vs
 
   go1 ::
     LeiosOutstanding pid ->
     LeiosFetchDecisions pid ->
-    [Either (LeiosPoint, BytesSize) (LeiosPoint, IntSet.Key, TxHash)] ->
+    [Either (LeiosPoint, BytesSize) (LeiosPoint, TxHash)] ->
     (LeiosOutstanding pid, LeiosFetchDecisions pid)
   go1 !acc !accNew = \case
     [] ->
@@ -252,52 +251,13 @@ leiosFetchLogicIteration env (ebBodies, offerings) =
       | let peerIds :: Set (PeerId pid)
             peerIds = Map.findWithDefault Set.empty point.pointEbHash (Leios.requestedEbPeers acc) ->
           goEb2 acc accNew targets point ebBytesSize peerIds
-    Right (point, txOffset, txHash) : targets
-      | Just _ <- Map.lookup point (Leios.toCopy acc) >>= IntMap.lookup txOffset ->
-          -- it's already scheduled to be copied from TxCache
-          go1 acc accNew targets
-      | Just txBytesSize <- Map.lookup txHash (Leios.cachedTxs acc) -> -- it's in the TxCache
-          let full =
-                Leios.toCopyBytesSize acc >= Leios.maxToCopyBytesSize env
-                  || Leios.toCopyCount acc >= Leios.maxToCopyCount env
-              acc' =
-                if full
-                  then acc
-                  else
-                    acc
-                      { Leios.missingEbTxs =
-                          Map.alter
-                            ( \case
-                                Nothing -> error "impossible!"
-                                Just x -> delIf IntMap.null $ IntMap.delete txOffset x
-                            )
-                            point
-                            (Leios.missingEbTxs acc)
-                      , Leios.txOffsetss =
-                          Map.alter
-                            ( \case
-                                Nothing -> error "impossible!"
-                                Just x -> delIf Map.null $ Map.delete point.pointEbHash x
-                            )
-                            txHash
-                            (Leios.txOffsetss acc)
-                      , Leios.toCopy =
-                          Map.insertWith
-                            IntMap.union
-                            point
-                            (IntMap.singleton txOffset txBytesSize)
-                            (Leios.toCopy acc)
-                      , Leios.toCopyBytesSize = Leios.toCopyBytesSize acc + txBytesSize
-                      , Leios.toCopyCount = Leios.toCopyCount acc + 1
-                      }
-           in go1 acc' accNew targets
-      | otherwise ->
-          let !txOffsets = case Map.lookup txHash (Leios.txOffsetss acc) of
-                Nothing -> error "impossible!"
-                Just x -> x
-              peerIds :: Set (PeerId pid)
-              peerIds = Map.findWithDefault Set.empty txHash (Leios.requestedTxPeers acc)
-           in goTx2 acc accNew targets point txHash txOffsets peerIds
+    Right (point, txHash) : targets ->
+      let !txOffsets = case Map.lookup txHash (Leios.txOffsetss acc) of
+            Nothing -> error "impossible!"
+            Just x -> x
+          peerIds :: Set (PeerId pid)
+          peerIds = Map.findWithDefault Set.empty txHash (Leios.requestedTxPeers acc)
+       in goTx2 acc accNew targets point txHash txOffsets peerIds
 
   goEb2 !acc !accNew targets point ebBytesSize peerIds
     | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
@@ -573,6 +533,19 @@ msgLeiosBlock ktracer tracer (writeLock, ebBodiesVar, outstandingVar, readyVar) 
     when novel $ MVar.withMVar writeLock $ \() -> do
       -- TODO don't hold the ebBodies mvar during this IO
       traceException tracer TraceLeiosPeerDbException $ do
+        -- NOTE: The point should already be in the table because of the
+        -- announcement handling. The fetching logic should have only decided to
+        -- download announced (or otherwise known) EBs. However, this is an
+        -- interesting situation where a node offers an EB we have not seen via an
+        -- announcement before. We check if the point exists and trace a warning
+        -- if not, then insert as safety net. We should remove this once we are
+        -- confident the fetching logic handles this correctly.
+        leiosDbLookupEbPoint db ebHash >>= \case
+          Just _ -> pure () -- Point already exists (expected from announcement)
+          Nothing -> do
+            -- Unexpected: we're receiving an EB body without having seen the announcement first
+            traceWith ktracer $ TraceLeiosBlockPointMissing point
+            leiosDbInsertEbPoint db point
         leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
     -- update NodeKernel state
@@ -694,63 +667,51 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
       -- This may need to be fixed by adding a batch update operation to the db or
       -- ensuring transactional semantics. Use new db for both txCache and ebTxs
       -- updates
-      leiosDbUpdateEbTx db point (zip offsets (V.toList txBytess)) >>= \case
-        NotComplete -> pure ()
-        Completed completedPoint -> traceWith ktracer $ TraceLeiosBlockTxsAcquired completedPoint
+      completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
+      forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
       -- FIXME: Why is tx cache separate? it results in the same bytes stored twice in the DB
       -- Insert into txCache (expiry set to 0 for now - TODO: use proper expiry)
-      forM_ (txHashes `V.zip` txBytess) $ \(txHash, txBytes) -> do
-        leiosDbInsertTxCache db txHash txBytes (fromIntegral $ BS.length txBytes) 0
+      -- forM_ (txHashes `V.zip` txBytess) $ \(txHash, txBytes) -> do
+      --   leiosDbInsertTxCache db txHash txBytes (fromIntegral $ BS.length txBytes) 0
+      pure ()
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
-    let (requestedTxPeers', cachedTxs', txOffsetss', txsBytesSize) =
+    let (requestedTxPeers', txOffsetss', txsBytesSize) =
           ( \f ->
               V.foldl
                 f
                 ( Leios.requestedTxPeers outstanding
-                , Leios.cachedTxs outstanding
                 , Leios.txOffsetss outstanding
                 , 0
                 )
                 (txHashes `V.zip` txBytess)
           )
-            $ \(!accReqs, !accCache, !accOffsetss, !accSz) (txHash, txBytes) ->
-              id $
-                ( Map.update (delIf Set.null . Set.delete peerId) txHash accReqs
-                , Map.insert txHash (fromIntegral (BS.length txBytes)) accCache
-                , Map.update (delIf Map.null . Map.delete ebHash) txHash accOffsetss
-                , accSz + BS.length txBytes
-                )
+            $ \(!accReqs, !accOffsetss, !accSz) (txHash, txBytes) ->
+              ( Map.update (delIf Set.null . Set.delete peerId) txHash accReqs
+              , Map.update (delIf Map.null . Map.delete ebHash) txHash accOffsetss
+              , accSz + BS.length txBytes
+              )
     let offsetsSet = IntSet.fromList offsets
-        checkBeat :: forall a. Map LeiosPoint (IntMap a) -> IntMap a
-        checkBeat x =
-          (`IntMap.restrictKeys` offsetsSet) $
-            Map.findWithDefault
-              IntMap.empty
-              point
-              x
         -- the requests that this MsgLeiosBlockTxs was the first to resolve
-        beatOtherPeers = checkBeat $ Leios.missingEbTxs outstanding
-        -- the currently scheduled 'toCopy' operations that this
-        -- MsgLeiosBlockTxs just won the race against
-        beatToCopy = checkBeat $ Leios.toCopy outstanding
+        beatOtherPeers =
+          (`IntMap.restrictKeys` offsetsSet) $
+            Map.findWithDefault IntMap.empty point (Leios.missingEbTxs outstanding)
     let !outstanding' =
           outstanding
-            { Leios.cachedTxs = cachedTxs'
-            , Leios.missingEbTxs =
+            { Leios.missingEbTxs =
                 Map.update
                   (delIf IntMap.null . (`IntMap.withoutKeys` offsetsSet))
                   point
                   (Leios.missingEbTxs outstanding)
             , Leios.txOffsetss = txOffsetss'
             , Leios.blockingPerEb =
-                if IntMap.null beatOtherPeers && IntMap.null beatToCopy
+                if IntMap.null beatOtherPeers
                   then Leios.blockingPerEb outstanding
                   else
                     Map.alter
                       ( \case
                           Nothing -> Nothing
-                          Just x -> delIf (== 0) $ x - IntMap.size beatOtherPeers - IntMap.size beatToCopy
+                          Just x -> delIf (== 0) $ x - IntMap.size beatOtherPeers
                       )
                       point
                       (Leios.blockingPerEb outstanding)
@@ -765,96 +726,7 @@ msgLeiosBlockTxs ktracer tracer (writeLock, _ebBodiesVar, outstandingVar, readyV
                   peerId
                   (Leios.requestedBytesSizePerPeer outstanding)
             , Leios.requestedTxPeers = requestedTxPeers'
-            , Leios.toCopy =
-                if IntMap.null beatToCopy
-                  then Leios.toCopy outstanding
-                  else
-                    Map.alter
-                      ( \case
-                          Nothing -> Nothing
-                          Just x ->
-                            delIf IntMap.null $
-                              x `IntMap.difference` beatToCopy
-                      )
-                      point
-                      (Leios.toCopy outstanding)
-            , Leios.toCopyBytesSize =
-                Leios.toCopyBytesSize outstanding - sum beatToCopy
-            , Leios.toCopyCount =
-                Leios.toCopyCount outstanding - IntMap.size beatToCopy
             }
     pure outstanding'
   void $ MVar.tryPutMVar readyVar ()
   traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
-
------
-
-doCacheCopy ::
-  IOLike m =>
-  Tracer m TraceLeiosKernel ->
-  LeiosDbHandle m ->
-  ( MVar m ()
-  , MVar m (LeiosOutstanding pid)
-  ) ->
-  BytesSize ->
-  m Bool
-doCacheCopy tracer db (writeLock, outstandingVar) bytesSize = do
-  copied <- do
-    outstanding <- MVar.readMVar outstandingVar
-    MVar.withMVar writeLock $ \() -> do
-      traceException tracer TraceLeiosDbException $ do
-        leiosDbCopyFromTxCacheBatch db (Leios.toCopy outstanding) bytesSize
-  (moreTodo, _newNotifications) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
-    let usefulCopied =
-          -- @copied@ might contain elements that were already accounted
-          -- for by a @MsgLeiosBlockTxs@ that won the race. This
-          -- intersection discards those.
-          Map.intersectionWith
-            IntMap.restrictKeys
-            (Leios.toCopy outstanding)
-            copied
-    let !outstanding' =
-          outstanding
-            { Leios.blockingPerEb =
-                Map.differenceWithKey
-                  ( \_point count copiedEbHash ->
-                      delIf (== 0) $ count - IntMap.size copiedEbHash
-                  )
-                  (Leios.blockingPerEb outstanding)
-                  usefulCopied
-            , Leios.toCopy =
-                Map.differenceWithKey
-                  ( \_ebId toCopy copiedEbId ->
-                      delIf IntMap.null $ toCopy `IntMap.difference` copiedEbId
-                  )
-                  (Leios.toCopy outstanding)
-                  usefulCopied
-            , Leios.toCopyBytesSize =
-                Leios.toCopyBytesSize outstanding - sum (Map.map sum usefulCopied)
-            , Leios.toCopyCount =
-                Leios.toCopyCount outstanding - sum (Map.map IntMap.size usefulCopied)
-            }
-    let newNotifications =
-          Map.keys $
-            Leios.blockingPerEb outstanding `Map.difference` Leios.blockingPerEb outstanding'
-    pure (outstanding', (0 /= Leios.toCopyCount outstanding', newNotifications))
-  -- FIXME: this must happen in the LeiosDbHandle now, it is not currently!
-  -- when (not $ null newNotifications) $ do
-  --   let notifications =
-  --         Map.fromList $
-  --           [ (p.pointSlotNo, Seq.singleton (LeiosOfferBlockTxs p))
-  --           | p <- newNotifications
-  --           ]
-  --   traceWith tracer $
-  --     MkTraceLeiosKernel $
-  --       "leiosNotificationsCopy: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
-  --   vars <- MVar.readMVar notificationVars
-  --   forM_ vars $ \var -> do
-  --     traceWith tracer $
-  --       MkTraceLeiosKernel $
-  --         "leiosNotificationsCopy!: " ++ unwords (map Leios.prettyLeiosPoint newNotifications)
-  --     StrictSTM.atomically $ do
-  --       x <- StrictSTM.readTVar var
-  --       let !x' = Map.unionWith (<>) x notifications
-  --       StrictSTM.writeTVar var x'
-  pure moreTodo

@@ -271,41 +271,16 @@ generateDb prng0 db ebRecipes = do
   -- NOTE: The SQLSchema evolved and the "generate" tool was only patched to stay compatible.
   withDieMsg $ DB.exec db (fromString LeiosDemoDb.sql_schema)
   stmt_write_ebPoint <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_ebPoint)
-  stmt_write_ebClosure <- withDieJust $ DB.prepare db (fromString sql_insert_ebClosure)
+  stmt_write_ebBody <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_ebBody)
+  stmt_write_tx <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_tx)
   -- loop over EBs (one SQL transaction each, to be gentle)
   (_dynEnv', sigma, revSchedule) <- (\f -> foldM f (emptyLeiosFetchDynEnv, Map.empty, []) ebRecipes) $ \(dynEnv, sigma, revSchedule) ebRecipe -> do
     -- generate txs, so we have their hashes
     let finishX (n, x) = V.fromListN n $ Foldable.toList $ revX x -- TODO in ST with mut vector
     txs <- fmap finishX $ (\f -> V.foldM f (0, emptyX) (ebRecipeElems ebRecipe)) $ \(accN, accX) -> \case
-      EbRecipeShare occ startIncl mbStopExcl -> do
-        (srcEbId, ebTxsCount) <- case Map.lookup occ sigma of
-          Nothing -> die $ "Could not find EB binder: " ++ occ
-          Just x -> pure x
-        let stopExcl = fromMaybe ebTxsCount mbStopExcl
-            len = stopExcl - startIncl
-        when (len < 0) $
-          die $
-            "Non-positive share length: " ++ show (occ, startIncl, mbStopExcl, stopExcl, len)
-        -- SELECT the referenced txs
-        stmt <- withDieJust $ DB.prepare db (fromString sql_share_ebClosures_ASC)
-        withDie $ DB.bindInt64 stmt 1 (fromIntegralEbId srcEbId)
-        withDie $ DB.bindInt64 stmt 2 (fromIntegral startIncl)
-        withDie $ DB.bindInt64 stmt 3 (fromIntegral len)
-        let loop i !accX' =
-              withDie (DB.stepNoCB stmt) >>= \case
-                DB.Done -> do
-                  when (i /= fromIntegral stopExcl) $ do
-                    die $ "Ran out of txs for share" ++ show (occ, startIncl, mbStopExcl, i)
-                  pure accX'
-                DB.Row -> do
-                  txOffset <- DB.columnInt64 stmt 0
-                  txHashBytes <- DB.columnBlob stmt 1
-                  txBytes <- DB.columnBlob stmt 2
-                  when (txOffset /= i) $ do
-                    die $ "Unexpected share txOffset" ++ show (occ, startIncl, mbStopExcl, txOffset, i)
-                  loop (i + 1) $ pushX accX' (txBytes, MkHashBytes txHashBytes)
-        accX' <- loop (fromIntegral startIncl) accX
-        pure (accN + len, accX')
+      EbRecipeShare _occ _startIncl _mbStopExcl -> do
+        -- FIXME: EbRecipeShare is not yet implemented for the new schema
+        error "EbRecipeShare: not implemented"
       EbRecipeTxBytesSize txBytesSize -> do
         -- generate a random bytestring whose CBOR encoding has the expected length
         --
@@ -344,16 +319,22 @@ generateDb prng0 db ebRecipes = do
     withDieDone $ DB.stepNoCB stmt_write_ebPoint
     withDie $ DB.reset stmt_write_ebPoint
 
-    withDie $ DB.bindBlob stmt_write_ebClosure 1 (Hash.hashToBytes ebHash)
+    withDie $ DB.bindBlob stmt_write_ebBody 1 (Hash.hashToBytes ebHash)
     -- loop over txs
     V.iforM_ txs $ \txOffset (txBytes, txHash) -> do
+      let txHashBytes = let MkHashBytes x = txHash in x
       -- INSERT INTO ebTxs
-      withDie $ DB.bindInt64 stmt_write_ebClosure 2 (fromIntegral txOffset)
-      withDie $ DB.bindBlob stmt_write_ebClosure 3 (let MkHashBytes x = txHash in x)
-      withDie $ DB.bindInt64 stmt_write_ebClosure 4 (fromIntegral (BS.length txBytes))
-      withDie $ DB.bindBlob stmt_write_ebClosure 5 txBytes
-      withDieDone $ DB.stepNoCB stmt_write_ebClosure
-      withDie $ DB.reset stmt_write_ebClosure
+      withDie $ DB.bindInt64 stmt_write_ebBody 2 (fromIntegral txOffset)
+      withDie $ DB.bindBlob stmt_write_ebBody 3 txHashBytes
+      withDie $ DB.bindInt64 stmt_write_ebBody 4 (fromIntegral (BS.length txBytes))
+      withDieDone $ DB.stepNoCB stmt_write_ebBody
+      withDie $ DB.reset stmt_write_ebBody
+      -- INSERT INTO txs
+      withDie $ DB.bindBlob stmt_write_tx 1 txHashBytes
+      withDie $ DB.bindBlob stmt_write_tx 2 txBytes
+      withDie $ DB.bindInt64 stmt_write_tx 3 (fromIntegral (BS.length txBytes))
+      withDieDone $ DB.stepNoCB stmt_write_tx
+      withDie $ DB.reset stmt_write_tx
     -- finalize each EB
     withDieMsg $ DB.exec db (fromString "COMMIT")
     pure
@@ -372,19 +353,6 @@ generateDb prng0 db ebRecipes = do
   pure $ reverse revSchedule
 
 -----
-
-sql_insert_ebClosure :: String
-sql_insert_ebClosure =
-  "INSERT INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize, txBytes) VALUES (?, ?, ?, ?, ?)\n\
-  \"
-
-sql_share_ebClosures_ASC :: String
-sql_share_ebClosures_ASC =
-  "SELECT txOffset, txHashBytes, txBytes FROM ebTxs\n\
-  \WHERE ebHashBytes = ? AND txOffset >= ?\n\
-  \ORDER BY txOffset ASC\n\
-  \LIMIT ?\n\
-  \"
 
 -----
 
