@@ -527,6 +527,10 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
           forM_ (sanityCheckConfig cfg) $ \issue ->
             traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
+          let snapshotPolicyArgs =
+                lgrSnapshotPolicyArgs $ ChainDB.cdbLgrDbArgs llrnChainDbArgsDefaults
+          forM_ (sanityCheckSnapshotPolicyArgs snapshotPolicyArgs) $ \issue ->
+            traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
           (chainDB, finalArgs) <-
             openChainDB
