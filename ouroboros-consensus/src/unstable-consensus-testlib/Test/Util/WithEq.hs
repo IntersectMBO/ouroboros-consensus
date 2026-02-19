@@ -2,16 +2,16 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Test.Util.WithEq (
-    Id (..)
+module Test.Util.WithEq
+  ( Id (..)
   , WithEq (..)
   ) where
 
-import           Data.Function (on)
-import           GHC.Generics (Generic)
+import Data.Function (on)
+import GHC.Generics (Generic)
 
 newtype Id = Id Word
-  deriving stock   (Show, Generic)
+  deriving stock (Show, Generic)
   deriving newtype (Eq, Ord, Enum, Bounded, Num)
 
 -- | Use this type to add an `Eq` instance for types that don't have one or
@@ -20,9 +20,9 @@ newtype Id = Id Word
 --
 -- E.g., `ImmutableDB.Iterator` needs an `Eq` instance in the q-s-m tests
 data WithEq a = WithEq
-    { getId    :: Id
-    , unWithEq :: a
-    }
+  { getId :: Id
+  , unWithEq :: a
+  }
   deriving (Show, Generic)
 
 instance Eq (WithEq a) where
