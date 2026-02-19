@@ -107,7 +107,7 @@ leiosFetchHandler tracer leiosContext = LF.MkLeiosFetchRequestHandler $ \case
     traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
     x <- msgLeiosBlockTxsRequest tracer leiosContext p bitmaps
     traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
-    pure $ LF.MsgLeiosBlockTxs x
+    pure $ LF.MsgLeiosBlockTxs p bitmaps x
 
 msgLeiosBlockRequest ::
   IOLike m =>
@@ -243,7 +243,8 @@ filterMissingWork db outstanding = do
       { Leios.missingEbBodies = filteredMissingEbBodies
       , Leios.missingEbTxs = filteredMissingEbTxs
       , Leios.txOffsetss = filteredTxOffsetss
-      , Leios.acquiredEbBodies = Leios.acquiredEbBodies outstanding `Set.union` Set.fromList acquiredEbHashes
+      , Leios.acquiredEbBodies =
+          Leios.acquiredEbBodies outstanding `Set.union` Set.fromList acquiredEbHashes
       }
 
 leiosFetchLogicIteration ::
@@ -515,7 +516,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar 
     LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p bitmaps _txHashes) ->
       LF.MkSomeLeiosFetchJob
         (LF.MsgLeiosBlockTxsRequest p bitmaps)
-        ( pure $ \(LF.MsgLeiosBlockTxs txs) -> do
+        ( pure $ \(LF.MsgLeiosBlockTxs _ _ txs) -> do
             msgLeiosBlockTxs ktracer tracer kernelVars db peerId req txs
         )
 
@@ -657,6 +658,7 @@ msgLeiosBlockTxs ::
 msgLeiosBlockTxs ktracer tracer (writeLock, outstandingVar, readyVar) db peerId req txs = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
   -- validate it
+  -- TODO: could validate the returned point + bitmaps too (added to response recently)
   let MkLeiosBlockTxsRequest point bitmaps txHashes = req
   let ebHash = point.pointEbHash
       txBytess = V.map cbor txs

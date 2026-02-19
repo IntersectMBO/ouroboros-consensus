@@ -196,46 +196,46 @@ newLeiosPeerVars = do
 data LeiosOutstanding pid = MkLeiosOutstanding
   { -- EB-level tracking
     acquiredEbBodies :: !(Set EbHash)
-    -- ^ EB bodies we've successfully received/stored
+  -- ^ EB bodies we've successfully received/stored
   , missingEbBodies :: !(Map LeiosPoint BytesSize)
-    -- ^ EB bodies still needed to be fetched (indexed by point and size)
-    -- Request tracking
+  -- ^ EB bodies still needed to be fetched (indexed by point and size)
+  -- Request tracking
   , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
-    -- ^ Which peers we've requested each EB from
+  -- ^ Which peers we've requested each EB from
   , requestedTxPeers :: !(Map TxHash (Set (PeerId pid)))
-    -- ^ Which peers we've requested each TX from
+  -- ^ Which peers we've requested each TX from
   , requestedBytesSizePerPeer :: !(Map (PeerId pid) BytesSize)
-    -- ^ Running total of bytes requested from each peer
+  -- ^ Running total of bytes requested from each peer
   , requestedBytesSize :: !BytesSize
-    -- ^ Total bytes requested across all peers
-    -- TX-level tracking
+  -- ^ Total bytes requested across all peers
+  -- TX-level tracking
   , missingEbTxs :: !(Map LeiosPoint (IntMap (TxHash, BytesSize)))
-    -- ^ The txs that still need to be sourced
-    --
-    -- * A @MsgLeiosBlock@ inserts into 'missingEbTxs' if that EB has never
-    --   been received before.
-    --
-    -- * Every @MsgLeiosBlockTxs@ deletes from 'missingEbTxs', but that delete
-    --   will be a no-op for all except the first to arrive carrying this EbTx.
-    --
-    -- TODO this is far too big for the heap
+  -- ^ The txs that still need to be sourced
+  --
+  -- * A @MsgLeiosBlock@ inserts into 'missingEbTxs' if that EB has never
+  --   been received before.
+  --
+  -- * Every @MsgLeiosBlockTxs@ deletes from 'missingEbTxs', but that delete
+  --   will be a no-op for all except the first to arrive carrying this EbTx.
+  --
+  -- TODO this is far too big for the heap
   , txOffsetss :: !(Map TxHash (Map EbHash Int))
-    -- ^ Inverse of missingEbTxs - for each TX, which EBs (and offsets) need it
-    --
-    -- TODO this is far too big for the heap
+  -- ^ Inverse of missingEbTxs - for each TX, which EBs (and offsets) need it
+  --
+  -- TODO this is far too big for the heap
   , blockingPerEb :: !(Map LeiosPoint Int)
-    -- ^ How many txs of each EB are not yet in the @txs@ table
-    --
-    -- These missing txs are blocking the node from sending @MsgLeiosBlockTxsOffer@
-    -- to its downstream peers.
-    --
-    -- It's different from 'missingEbTxs' in two ways.
-    --
-    -- * The heap footprint of 'blockingPerEb' doesn't scale with the number of
-    --   EbTxs.
-    --
-    -- * 'blockingPerEb' is only decremented when txs are actually inserted
-    --   into the DB (via @MsgLeiosBlockTxs@ handling).
+  -- ^ How many txs of each EB are not yet in the @txs@ table
+  --
+  -- These missing txs are blocking the node from sending @MsgLeiosBlockTxsOffer@
+  -- to its downstream peers.
+  --
+  -- It's different from 'missingEbTxs' in two ways.
+  --
+  -- * The heap footprint of 'blockingPerEb' doesn't scale with the number of
+  --   EbTxs.
+  --
+  -- * 'blockingPerEb' is only decremented when txs are actually inserted
+  --   into the DB (via @MsgLeiosBlockTxs@ handling).
   }
 
 emptyLeiosOutstanding :: LeiosOutstanding pid
@@ -485,12 +485,14 @@ messageLeiosFetchToObject = \case
       , "numTxs" .= Aeson.Number (fromIntegral $ sum $ map (Bits.popCount . snd) bitmaps)
       , "bitmaps" .= map prettyBitmap bitmaps
       ]
-  MsgLeiosBlockTxs txs ->
+  MsgLeiosBlockTxs (MkLeiosPoint ebSlot ebHash) bitmaps txs ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockTxs"
       , "numTxs" .= Aeson.Number (fromIntegral (V.length txs))
       , "txsBytesSize" .= Aeson.Number (fromIntegral $ sum $ fmap (BS.length . cbor) txs)
-      , "txs" .= Aeson.String "<elided>"
+      , "ebSlot" .= ebSlot
+      , "ebHash" .= prettyEbHash ebHash
+      , "bitmaps" .= map prettyBitmap bitmaps
       ]
   MsgDone ->
     "kind" .= Aeson.String "MsgDone"

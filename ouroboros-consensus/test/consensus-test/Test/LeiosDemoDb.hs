@@ -20,8 +20,8 @@ import qualified Data.Map.Strict as Map
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector as V
 import LeiosDemoDb
-  ( LeiosFetchWork (..)
-  , LeiosDbHandle (..)
+  ( LeiosDbHandle (..)
+  , LeiosFetchWork (..)
   , newLeiosDBInMemory
   , newLeiosDBSQLite
   )
@@ -702,9 +702,19 @@ prop_fetchWorkPerformance impl =
         pure $
           conjoin
             [ Map.size (missingEbBodies work) === expectedMissingBodies
-                & counterexample ("Missing bodies count wrong: " ++ show (Map.size $ missingEbBodies work) ++ " vs " ++ show expectedMissingBodies)
+                & counterexample
+                  ( "Missing bodies count wrong: "
+                      ++ show (Map.size $ missingEbBodies work)
+                      ++ " vs "
+                      ++ show expectedMissingBodies
+                  )
             , Map.size (missingEbTxs work) === expectedMissingTxEbs
-                & counterexample ("Missing TX EBs count wrong: " ++ show (Map.size $ missingEbTxs work) ++ " vs " ++ show expectedMissingTxEbs)
+                & counterexample
+                  ( "Missing TX EBs count wrong: "
+                      ++ show (Map.size $ missingEbTxs work)
+                      ++ " vs "
+                      ++ show expectedMissingTxEbs
+                  )
             , queryTime < milli 50
                 & counterexample ("Query took too long: " <> showTime queryTime)
             ]
@@ -805,16 +815,49 @@ prop_filterEbBodiesPerformance impl =
       withFreshDb impl $ \db -> do
         -- Insert EBs with bodies
         forM_ [1 .. numWithBodies] $ \i -> do
-          let hash = MkEbHash $ BS.pack [fromIntegral (i `mod` 256), fromIntegral ((i `div` 256) `mod` 256), fromIntegral ((i `div` 65536) `mod` 256)] <> BS.replicate 29 0
+          let hash =
+                MkEbHash $
+                  BS.pack
+                    [ fromIntegral (i `mod` 256)
+                    , fromIntegral ((i `div` 256) `mod` 256)
+                    , fromIntegral ((i `div` 65536) `mod` 256)
+                    ]
+                    <> BS.replicate 29 0
               point = MkLeiosPoint (SlotNo $ fromIntegral i) hash
-              txHash = MkTxHash $ BS.pack [fromIntegral (i `mod` 256), fromIntegral ((i `div` 256) `mod` 256)] <> BS.replicate 30 1
+              txHash =
+                MkTxHash $
+                  BS.pack [fromIntegral (i `mod` 256), fromIntegral ((i `div` 256) `mod` 256)] <> BS.replicate 30 1
               eb = MkLeiosEb $ V.fromList [(txHash, 100)]
           leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
           leiosDbInsertEbBody db point eb
         -- Generate points that are NOT in DB (these should be returned)
-        let missingPoints = [MkLeiosPoint (SlotNo $ fromIntegral (numWithBodies + i)) (MkEbHash $ BS.pack [fromIntegral ((numWithBodies + i) `mod` 256), fromIntegral (((numWithBodies + i) `div` 256) `mod` 256), fromIntegral (((numWithBodies + i) `div` 65536) `mod` 256)] <> BS.replicate 29 2) | i <- [1 .. numMissing]]
+        let missingPoints =
+              [ MkLeiosPoint
+                  (SlotNo $ fromIntegral (numWithBodies + i))
+                  ( MkEbHash $
+                      BS.pack
+                        [ fromIntegral ((numWithBodies + i) `mod` 256)
+                        , fromIntegral (((numWithBodies + i) `div` 256) `mod` 256)
+                        , fromIntegral (((numWithBodies + i) `div` 65536) `mod` 256)
+                        ]
+                        <> BS.replicate 29 2
+                  )
+              | i <- [1 .. numMissing]
+              ]
             -- Query with a mix: the DB ones should be filtered out, missing ones returned
-            existingPoints = [MkLeiosPoint (SlotNo $ fromIntegral i) (MkEbHash $ BS.pack [fromIntegral (i `mod` 256), fromIntegral ((i `div` 256) `mod` 256), fromIntegral ((i `div` 65536) `mod` 256)] <> BS.replicate 29 0) | i <- [1 .. numWithBodies]]
+            existingPoints =
+              [ MkLeiosPoint
+                  (SlotNo $ fromIntegral i)
+                  ( MkEbHash $
+                      BS.pack
+                        [ fromIntegral (i `mod` 256)
+                        , fromIntegral ((i `div` 256) `mod` 256)
+                        , fromIntegral ((i `div` 65536) `mod` 256)
+                        ]
+                        <> BS.replicate 29 0
+                  )
+              | i <- [1 .. numWithBodies]
+              ]
             queryPoints = existingPoints ++ missingPoints
         (result, filterTime) <- timed $ leiosDbFilterMissingEbBodies db queryPoints
         pure $
@@ -873,9 +916,17 @@ prop_filterTxsPerformance impl =
     ioProperty $
       withFreshDb impl $ \db -> do
         -- Create and insert TXs
-        let insertedHashes = [MkTxHash $ BS.pack [fromIntegral (i `mod` 256), fromIntegral ((i `div` 256) `mod` 256)] <> BS.replicate 30 0 | i <- [1 .. numInserted]]
-        forM_ (zip [1 ..] (chunksOf 100 insertedHashes)) $ \(ebIdx, txChunk) -> do
-          let ebHash = MkEbHash $ BS.pack [fromIntegral (ebIdx `mod` 256), fromIntegral ((ebIdx `div` 256) `mod` 256)] <> BS.replicate 30 0
+        let insertedHashes =
+              [ MkTxHash $
+                  BS.pack [fromIntegral (i `mod` 256), fromIntegral ((i `div` 256) `mod` 256)] <> BS.replicate 30 0
+              | i <- [1 .. numInserted]
+              ]
+        -- XXX: Simplify test case generation and use genEBHash?
+        forM_ (zip [1 :: Integer ..] (chunksOf 100 insertedHashes)) $ \(ebIdx, txChunk) -> do
+          let ebHash =
+                MkEbHash $
+                  BS.pack [fromIntegral (ebIdx `mod` 256), fromIntegral ((ebIdx `div` 256) `mod` 256)]
+                    <> BS.replicate 30 0
               point = MkLeiosPoint (SlotNo $ fromIntegral ebIdx) ebHash
               eb = MkLeiosEb $ V.fromList [(h, 100) | h <- txChunk]
           leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
@@ -884,7 +935,13 @@ prop_filterTxsPerformance impl =
           forM_ txChunk $ \txHash ->
             leiosDbInsertTxs db [(txHash, txBytes)]
         -- Generate hashes NOT in DB
-        let missingHashes = [MkTxHash $ BS.pack [fromIntegral ((numInserted + i) `mod` 256), fromIntegral (((numInserted + i) `div` 256) `mod` 256)] <> BS.replicate 30 1 | i <- [1 .. numMissing]]
+        let missingHashes =
+              [ MkTxHash $
+                  BS.pack
+                    [fromIntegral ((numInserted + i) `mod` 256), fromIntegral (((numInserted + i) `div` 256) `mod` 256)]
+                    <> BS.replicate 30 1
+              | i <- [1 .. numMissing]
+              ]
             queryHashes = insertedHashes ++ missingHashes
         (result, filterTime) <- timed $ leiosDbFilterMissingTxs db queryHashes
         pure $
