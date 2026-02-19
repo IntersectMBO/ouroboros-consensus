@@ -21,16 +21,52 @@ import Control.Exception
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes)
+import Data.Time.Clock (DiffTime)
+import Data.Word (Word64)
 import Ouroboros.Consensus.Config (TopLevelConfig)
 import Ouroboros.Consensus.Config.SecurityParam
 
--- | An issue found in the 'TopLevelConfig' for a block. See 'displayException'
+-- | An issue found in the consensus configuration. See 'displayException'
 --   for human-readable descriptions of each of these cases, especially when
 --   presenting these to users.
 data SanityCheckIssue
   = -- | Configuration contains multiple security parameters. This may cause
     --   strange behaviour around era boundaries.
     InconsistentSecurityParam (NonEmpty SecurityParam)
+  | -- | The configured 'minimumDelay' in 'SnapshotDelayRange' is greater than
+    --   'maximumDelay'. The random snapshot delay will be sampled from an
+    --   inverted range, which is almost certainly a misconfiguration.
+    SnapshotDelayRangeInverted
+      -- | The configured minimumDelay (the larger value)
+      !DiffTime
+      -- | The configured maximumDelay (the smaller value)
+      !DiffTime
+  | -- | The configured 'minimumDelay' in 'SnapshotDelayRange' is negative.
+    --   A negative delay has no meaningful interpretation.
+    SnapshotDelayRangeNegativeMinimum
+      -- | The negative minimumDelay
+      !DiffTime
+  | -- | The configured 'sfaRateLimit' is non-positive, which disables snapshot
+    --   rate limiting entirely. Without a rate limit, snapshots may be taken
+    --   very frequently during bulk sync, causing excessive disk I/O.
+    SnapshotRateLimitDisabled
+  | -- | The configured 'sfaRateLimit' exceeds 24 hours. At steady state, the
+    --   node may go more than a day between snapshots, significantly increasing
+    --   replay time after an unclean restart.
+    SnapshotRateLimitSuspiciouslyLarge
+      -- | The configured rate limit
+      !DiffTime
+  | -- | The configured number of on-disk snapshots to keep is zero. Snapshots
+    --   will be written to disk and then immediately deleted, leaving nothing
+    --   for crash recovery. The node will have to replay from genesis on every
+    --   unclean restart.
+    SnapshotNumZero
+  | -- | The configured snapshot interval does not divide 432000 (the Cardano
+    --   mainnet epoch length in slots). Snapshots will not land on epoch
+    --   boundaries, breaking Mithril compatibility.
+    SnapshotIntervalNotDivisorOfEpoch
+      -- | The configured interval in slots
+      !Word64
   deriving (Show, Eq)
 
 instance Exception SanityCheckIssue where
@@ -41,6 +77,61 @@ instance Exception SanityCheckIssue where
         , "SecurityParams (K) were found to be inconsistent between constituent "
         , "eras of a HardForkBlock: "
         , show (NonEmpty.toList ks)
+        ]
+    SnapshotDelayRangeInverted mn mx ->
+      mconcat
+        [ "SnapshotDelayRangeInverted: "
+        , "The configured snapshot delay range has minimumDelay ("
+        , show mn
+        , ") greater than maximumDelay ("
+        , show mx
+        , "). The random snapshot delay will be sampled from an inverted range. "
+        , "Please ensure minimumDelay <= maximumDelay in sfaDelaySnapshotRange."
+        ]
+    SnapshotDelayRangeNegativeMinimum mn ->
+      mconcat
+        [ "SnapshotDelayRangeNegativeMinimum: "
+        , "The configured snapshot delay range has a negative minimumDelay: "
+        , show mn
+        , ". A negative delay has no meaningful interpretation. "
+        , "Please set minimumDelay to a non-negative value in sfaDelaySnapshotRange."
+        ]
+    SnapshotRateLimitDisabled ->
+      mconcat
+        [ "SnapshotRateLimitDisabled: "
+        , "The configured sfaRateLimit is non-positive, which disables snapshot "
+        , "rate limiting entirely. Without a rate limit, snapshots may be taken "
+        , "very frequently during bulk sync, causing excessive disk I/O. "
+        , "The default rate limit is 10 minutes."
+        ]
+    SnapshotRateLimitSuspiciouslyLarge rl ->
+      mconcat
+        [ "SnapshotRateLimitSuspiciouslyLarge: "
+        , "The configured sfaRateLimit ("
+        , show rl
+        , ") exceeds 24 hours. At steady state, the node may go more than a day "
+        , "between snapshots, significantly increasing replay time after an "
+        , "unclean restart. The default rate limit is 10 minutes."
+        ]
+    SnapshotNumZero ->
+      mconcat
+        [ "SnapshotNumZero: "
+        , "The configured number of on-disk snapshots to keep (spaNum) is 0. "
+        , "Snapshots will be written to disk and immediately deleted, leaving "
+        , "nothing for crash recovery. The node will have to replay the chain "
+        , "from genesis on every unclean restart. "
+        , "Consider setting spaNum to at least 2 (the default)."
+        ]
+    SnapshotIntervalNotDivisorOfEpoch interval ->
+      mconcat
+        [ "SnapshotIntervalNotDivisorOfEpoch: "
+        , "The configured sfaInterval ("
+        , show interval
+        , " slots) does not evenly divide the Cardano mainnet epoch length "
+        , "(432000 slots). Snapshots will not consistently land on epoch "
+        , "boundaries, which breaks Mithril compatibility. "
+        , "Consider using an interval that divides 432000 evenly, "
+        , "such as 4320 (the default, = 2k for k=2160)."
         ]
 
 -- | 'BlockSupportsSanityCheck' provides evidence that a block can be sanity

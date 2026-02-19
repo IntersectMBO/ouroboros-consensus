@@ -81,6 +81,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , SnapshotFrequency (..)
   , SnapshotFrequencyArgs (..)
   , defaultSnapshotPolicy
+  , mithrilEpochSize
+  , sanityCheckSnapshotPolicyArgs
   , pattern DoDiskSnapshotChecksum
   , pattern NoDoDiskSnapshotChecksum
 
@@ -700,6 +702,59 @@ defaultSnapshotPolicy (SecurityParam k) args =
 
   -- Most relevant during syncing.
   defRateLimit = secondsToDiffTime $ 10 * 60
+
+-- | The Cardano mainnet epoch length in slots, used as the reference for the
+-- Mithril snapshot compatibility check in 'sanityCheckSnapshotPolicyArgs'.
+-- Mithril requires a ledger snapshot at each epoch boundary; for snapshots to
+-- land on every epoch boundary, 'sfaInterval' must divide this value evenly.
+mithrilEpochSize :: Word64
+mithrilEpochSize = 432000
+
+-- | Check a 'SnapshotPolicyArgs' for suspicious configurations and return a
+-- (possibly empty) list of 'SanityCheckIssue's describing any problems found.
+--
+-- Only 'Override' values are checked — 'UseDefault' values are known-good and
+-- are never flagged. Checks that are specific to 'SnapshotFrequency' are
+-- skipped entirely when 'spaFrequency' is 'DisableSnapshots'.
+sanityCheckSnapshotPolicyArgs :: SnapshotPolicyArgs -> [SanityCheckIssue]
+sanityCheckSnapshotPolicyArgs SnapshotPolicyArgs{spaFrequency, spaNum} =
+  catMaybes $
+    checkNumZero spaNum
+      : case spaFrequency of
+        DisableSnapshots -> []
+        SnapshotFrequency sfa -> checkFrequencyArgs sfa
+ where
+  checkNumZero (Override 0) = Just SnapshotNumZero
+  checkNumZero _ = Nothing
+
+  checkFrequencyArgs SnapshotFrequencyArgs{sfaDelaySnapshotRange, sfaRateLimit, sfaInterval} =
+    [ checkDelayRange sfaDelaySnapshotRange
+    , checkRateLimitDisabled sfaRateLimit
+    , checkRateLimitLarge sfaRateLimit
+    , checkMithrilDivisibility sfaInterval
+    ]
+
+  checkDelayRange UseDefault = Nothing
+  checkDelayRange (Override (SnapshotDelayRange mn mx))
+    | mn < 0 = Just (SnapshotDelayRangeNegativeMinimum mn)
+    | mn > mx = Just (SnapshotDelayRangeInverted mn mx)
+    | otherwise = Nothing
+
+  checkRateLimitDisabled UseDefault = Nothing
+  checkRateLimitDisabled (Override rl)
+    | rl <= 0 = Just SnapshotRateLimitDisabled
+    | otherwise = Nothing
+
+  checkRateLimitLarge UseDefault = Nothing
+  checkRateLimitLarge (Override rl)
+    | rl > 86400 = Just (SnapshotRateLimitSuspiciouslyLarge rl)
+    | otherwise = Nothing
+
+  checkMithrilDivisibility UseDefault = Nothing
+  checkMithrilDivisibility (Override interval)
+    | mithrilEpochSize `mod` unNonZero interval /= 0 =
+        Just (SnapshotIntervalNotDivisorOfEpoch (unNonZero interval))
+    | otherwise = Nothing
 
 {-------------------------------------------------------------------------------
   Tracing snapshot events
