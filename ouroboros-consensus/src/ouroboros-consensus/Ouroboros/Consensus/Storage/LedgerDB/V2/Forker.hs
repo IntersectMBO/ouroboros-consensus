@@ -104,8 +104,7 @@ implForkerPush env newState = modifyForkerEnv env $ \fState -> do
 
     runWithTempRegistry $
       (\x -> (x, foeLedgerSeq x)) <$> do
-        tbs <- duplicateFor (tables $ currentHandle lseq) (getTip newState)
-        lift $ pushDiffs tbs st0 newState
+        tbs <- duplicateWithDiffs (tables $ currentHandle lseq) st0 newState
         pure fState{foeLedgerSeq = extend (StateRef st tbs) lseq}
 
 implForkerCommit ::
@@ -126,11 +125,8 @@ implForkerCommit env = modifyForkerEnvSTM env $ \fState -> assert (foeWasCommitt
           -- Split the selection at the intersection point. The snd component will
           -- have to be closed.
           (toKeepBase, toCloseLdb) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
-          -- TODO revisit why we have toCloseForker
-          (_, toKeepTip) <-
-            AS.splitAfterMeasure intersectionSlot (either predicate predicate) lseq
           -- Join the prefix of the selection with the sequence in the forker
-          newdb <- AS.join (const $ const True) toKeepBase toKeepTip
+          newdb <- AS.join (const $ const True) toKeepBase lseq
           -- Do /not/ close the anchor of @toClose@, as that is also the
           -- tip of @olddb'@ which will be used in @newdb@.
           let ldbToClose = case toCloseLdb of

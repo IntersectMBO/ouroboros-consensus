@@ -145,7 +145,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbError (..)
 
     -- * Forker
-  , getReadOnlyForker
+  , unsafeGetReadOnlyForker
   , getTipStatistics
   , withTipForker
 
@@ -245,7 +245,7 @@ data LedgerDB m l blk = LedgerDB
       l ~ ExtLedgerState blk =>
       STM m (HeaderStateHistory blk)
   -- ^ Get the header state history for all ledger states in the LedgerDB.
-  , getForkerAtTarget ::
+  , unsafeGetForkerAtTarget ::
       Target (Point blk) ->
       m (Either GetForkerError (Forker m l))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
@@ -393,7 +393,7 @@ withTipForker ::
 withTipForker ldb =
   bracket
     ( do
-        eFrk <- getForkerAtTarget ldb VolatileTip
+        eFrk <- unsafeGetForkerAtTarget ldb VolatileTip
         case eFrk of
           Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
           Right frk -> pure frk
@@ -407,12 +407,12 @@ getTipStatistics ::
   m Statistics
 getTipStatistics ldb = withTipForker ldb forkerReadStatistics
 
-getReadOnlyForker ::
+unsafeGetReadOnlyForker ::
   MonadSTM m =>
   LedgerDB m l blk ->
   Target (Point blk) ->
   m (Either GetForkerError (ReadOnlyForker m l))
-getReadOnlyForker ldb pt = fmap readOnlyForker <$> getForkerAtTarget ldb pt
+unsafeGetReadOnlyForker ldb pt = fmap readOnlyForker <$> unsafeGetForkerAtTarget ldb pt
 
 {-------------------------------------------------------------------------------
   Snapshots

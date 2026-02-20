@@ -168,7 +168,7 @@ implMkLedgerDb h snapManager =
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = \s -> getEnvSTM h (flip implGetPastLedgerState s)
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
-      , getForkerAtTarget = newForkerAtTarget h
+      , unsafeGetForkerAtTarget = unsafeNewForkerAtTarget h
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
@@ -207,7 +207,7 @@ mkInternals h snapManager =
     , push = \st -> do
         bracket
           ( either (error "Unreachable, Volatile tip MUST be in LedgerDB") id
-              <$> newForkerAtTarget h VolatileTip
+              <$> unsafeNewForkerAtTarget h VolatileTip
           )
           forkerClose
           ( \frk -> do
@@ -217,7 +217,7 @@ mkInternals h snapManager =
     , reapplyThenPushNOW = \blk -> getEnv h $ \env -> do
         bracket
           ( either (error "Unreachable, Volatile tip MUST be in LedgerDB") id
-              <$> newForkerAtTarget h VolatileTip
+              <$> unsafeNewForkerAtTarget h VolatileTip
           )
           forkerClose
           ( \frk -> do
@@ -558,16 +558,16 @@ getVolatileLedgerSeq env = do
 -- For more flexibility, an arbitrary 'Traversable' of the 'StateRef' can be
 -- returned; for the simple use case of getting a single 'StateRef', use @t ~
 -- 'Solo'@.
-getStateRef ::
+unsafeGetStateRef ::
   (IOLike m, Traversable t, GetTip l) =>
   LedgerDBEnv m l blk ->
   (LedgerSeq m l -> t (StateRef m l)) ->
   m (t (StateRef m l))
-getStateRef ldbEnv project =
+unsafeGetStateRef ldbEnv project =
   RAWLock.withReadAccess (ldbOpenHandlesLock ldbEnv) $ \() -> do
     tst <- project <$> atomically (getVolatileLedgerSeq ldbEnv)
     for tst $ \st -> do
-      tables' <- duplicate' (tables st)
+      tables' <- unsafeDuplicate (tables st)
       pure st{tables = tables'}
 
 -- | Like 'StateRef', but takes care of closing the handle when the given action
@@ -580,11 +580,11 @@ withStateRef ::
   m a
 withStateRef ldbEnv project f =
   bracket
-    (getStateRef ldbEnv project)
+    (unsafeGetStateRef ldbEnv project)
     (traverse (close . tables))
     f
 
-acquireAtTarget ::
+unsafeAcquireAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
   , IOLike m
   , GetTip l
@@ -594,8 +594,8 @@ acquireAtTarget ::
   LedgerDBEnv m l blk ->
   Either Word64 (Target (Point blk)) ->
   m (Either GetForkerError (StateRef m l))
-acquireAtTarget ldbEnv target =
-  getStateRef ldbEnv $ \l -> case target of
+unsafeAcquireAtTarget ldbEnv target =
+  unsafeGetStateRef ldbEnv $ \l -> case target of
     Right VolatileTip -> pure $ currentHandle l
     Right ImmutableTip -> pure $ anchorHandle l
     Right (SpecificPoint pt) -> do
@@ -616,7 +616,7 @@ acquireAtTarget ldbEnv target =
                 }
       Just l' -> pure $ currentHandle l'
 
-newForkerAtTarget ::
+unsafeNewForkerAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
   , IOLike m
   , IsLedger l
@@ -627,8 +627,8 @@ newForkerAtTarget ::
   LedgerDBHandle m l blk ->
   Target (Point blk) ->
   m (Either GetForkerError (Forker m l))
-newForkerAtTarget h pt = getEnv h $ \ldbEnv ->
-  acquireAtTarget ldbEnv (Right pt) >>= traverse (newForker ldbEnv)
+unsafeNewForkerAtTarget h pt = getEnv h $ \ldbEnv ->
+  unsafeAcquireAtTarget ldbEnv (Right pt) >>= traverse (newForker ldbEnv)
 
 withForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
@@ -644,7 +644,7 @@ withForkerByRollback ::
   m (Either GetForkerError r)
 withForkerByRollback h n k = getEnv h $ \ldbEnv ->
   bracket
-    (acquireAtTarget ldbEnv (Left n) >>= traverse (newForker ldbEnv))
+    (unsafeAcquireAtTarget ldbEnv (Left n) >>= traverse (newForker ldbEnv))
     (either (const $ pure ()) forkerClose)
     (either (pure . Left) (fmap Right . k))
 

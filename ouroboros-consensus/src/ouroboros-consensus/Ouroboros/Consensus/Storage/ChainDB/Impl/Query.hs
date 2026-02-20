@@ -23,7 +23,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getPastLedger
   , getPerasWeightSnapshot
   , getPerasCertSnapshot
-  , getReadOnlyForkerAtPoint
+  , unsafeGetReadOnlyForkerAtPoint
   , allocInRegistryReadOnlyForkerAtPoint
   , withReadOnlyForkerAtPoint
   , getStatistics
@@ -293,15 +293,15 @@ allocInRegistryReadOnlyForkerAtPoint ::
 allocInRegistryReadOnlyForkerAtPoint cdb tgt rr =
   allocate
     rr
-    (\_ -> getReadOnlyForkerAtPoint cdb tgt)
+    (\_ -> unsafeGetReadOnlyForkerAtPoint cdb tgt)
     (either (const $ pure ()) LedgerDB.roforkerClose)
 
-getReadOnlyForkerAtPoint ::
+unsafeGetReadOnlyForkerAtPoint ::
   IOLike m =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
   m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
-getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
+unsafeGetReadOnlyForkerAtPoint CDB{..} = LedgerDB.unsafeGetReadOnlyForker cdbLedgerDB
 
 withReadOnlyForkerAtPoint ::
   (MonadTrans t, MonadThrow (t m), IOLike m) =>
@@ -313,7 +313,7 @@ withReadOnlyForkerAtPoint ::
   t m r
 withReadOnlyForkerAtPoint cdb tgt =
   bracket
-    (lift $ getReadOnlyForkerAtPoint cdb tgt)
+    (lift $ unsafeGetReadOnlyForkerAtPoint cdb tgt)
     (either (const $ pure ()) (lift . LedgerDB.roforkerClose))
 
 getStatistics :: IOLike m => ChainDbEnv m blk -> m LedgerDB.Statistics

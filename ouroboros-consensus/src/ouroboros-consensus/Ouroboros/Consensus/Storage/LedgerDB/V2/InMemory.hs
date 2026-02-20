@@ -118,12 +118,11 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) (tablesTVar, fr
       LedgerTablesHandle
         { close = Monad.void free
         , duplicate = implDuplicate tracer tablesTVar someFS
-        , duplicate' = implDuplicate' tracer tablesTVar someFS
-        , duplicateFor = implDuplicateFor tracer tablesTVar someFS
+        , unsafeDuplicate = implUnsafeDuplicate tracer tablesTVar someFS
         , read = implRead tablesTVar
         , readRange = implReadRange tablesTVar
         , readAll = implReadAll tablesTVar
-        , pushDiffs = implPushDiffs tablesTVar
+        , duplicateWithDiffs = implPushDiffs tracer tablesTVar someFS
         , takeHandleSnapshot = implTakeHandleSnapshot tablesTVar hasFS
         , tablesSize = implTablesSize tablesTVar
         }
@@ -185,7 +184,7 @@ allocateLedgerTablesHandle' tracer p v = do
           _ -> pure False
     )
 
-implDuplicate' ::
+implUnsafeDuplicate ::
   ( IOLike m
   , HasLedgerTables l
   , CanUpgradeLedgerTables l
@@ -197,7 +196,7 @@ implDuplicate' ::
   StrictTVar m (LedgerTablesHandleState l) ->
   SomeHasFS m ->
   m (LedgerTablesHandle m l)
-implDuplicate' !tracer tv !someFS = do
+implUnsafeDuplicate !tracer tv !someFS = do
   hs <- readTVarIO tv
   tv' <- guardClosed' hs $ allocateLedgerTablesHandle' tracer
   newInMemoryLedgerTablesHandle tracer someFS tv'
@@ -217,24 +216,6 @@ implDuplicate ::
 implDuplicate !tracer tv !someFS = do
   hs <- lift $ readTVarIO tv
   tv' <- guardClosed' hs $ allocateLedgerTablesHandle tracer
-  lift $ newInMemoryLedgerTablesHandle tracer someFS tv'
-
-implDuplicateFor ::
-  ( IOLike m
-  , HasLedgerTables l
-  , CanUpgradeLedgerTables l
-  , SerializeTablesWithHint l
-  , StandardHash l
-  , GetTip l
-  ) =>
-  Tracer m LedgerDBV2Trace ->
-  StrictTVar m (LedgerTablesHandleState l) ->
-  SomeHasFS m ->
-  Point l ->
-  WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l)
-implDuplicateFor !tracer tv !someFS p = do
-  hs <- lift $ readTVarIO tv
-  tv' <- guardClosed hs $ allocateLedgerTablesHandle tracer p
   lift $ newInMemoryLedgerTablesHandle tracer someFS tv'
 
 implRead ::
@@ -279,27 +260,36 @@ implPushDiffs ::
   ( IOLike m
   , HasLedgerTables l
   , CanUpgradeLedgerTables l
+  , StandardHash l
+  , GetTip l
+  , SerializeTablesWithHint l
   ) =>
+  Tracer m LedgerDBV2Trace ->
   StrictTVar m (LedgerTablesHandleState l) ->
+  SomeHasFS m ->
   l mk1 ->
   l DiffMK ->
-  m ()
-implPushDiffs tv st0 !diffs =
-  atomically $
-    modifyTVar
-      tv
-      ( \r ->
-          guardClosed'
-            r
-            ( \p v ->
-                LedgerTablesHandleOpen p
-                  . flip
-                    (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d)))
-                    (projectLedgerTables diffs)
-                  . upgradeTables st0 diffs
-                  $ v
-            )
-      )
+  WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l)
+implPushDiffs !tracer tv !someFS st0 !diffs = do
+  hs <- lift $ readTVarIO tv
+  tv' <- guardClosed hs $ allocateLedgerTablesHandle tracer (getTip diffs)
+  lift $
+    atomically $
+      modifyTVar
+        (fst tv')
+        ( \r ->
+            guardClosed'
+              r
+              ( \p v ->
+                  LedgerTablesHandleOpen p
+                    . flip
+                      (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d)))
+                      (projectLedgerTables diffs)
+                    . upgradeTables st0 diffs
+                    $ v
+              )
+        )
+  lift $ newInMemoryLedgerTablesHandle tracer someFS tv'
 
 implTakeHandleSnapshot ::
   (IOLike m, SerializeTablesWithHint l) =>

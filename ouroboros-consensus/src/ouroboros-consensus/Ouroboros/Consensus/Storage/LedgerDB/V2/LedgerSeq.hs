@@ -139,9 +139,7 @@ modifyForkerEnvSTM (ForkerEnv f) k = readTVar f >>= k >>= \(s, r) -> writeTVar f
 data LedgerTablesHandle m l = LedgerTablesHandle
   { close :: !(m ())
   , duplicate :: !(WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l))
-  , duplicate' :: !(m (LedgerTablesHandle m l))
-  , duplicateFor ::
-      !(Point l -> WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l))
+  , unsafeDuplicate :: !(m (LedgerTablesHandle m l))
   -- ^ Create a copy of the handle.
   --
   -- A duplicated handle must provide access to all the data that was there in
@@ -173,7 +171,8 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- ^ Costly read all operation, not to be used in Consensus but only in
   -- snapshot-converter executable. The values will be read as if they were from
   -- the same era as the given ledger state.
-  , pushDiffs :: !(forall mk. l mk -> l DiffMK -> m ())
+  , duplicateWithDiffs ::
+      !(forall mk. l mk -> l DiffMK -> WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l))
   -- ^ Push some diffs into the ledger tables handle.
   --
   -- The first argument has to be the ledger state before applying
@@ -310,12 +309,11 @@ reapplyBlock ::
 reapplyBlock evs cfg b db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db
-  newtbs <- duplicate tbs
-  vals <- lift $ read newtbs st ks
+  vals <- lift $ read tbs st ks
   let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
       newst = forgetLedgerTables st'
 
-  lift $ pushDiffs newtbs st st'
+  newtbs <- duplicateWithDiffs tbs st st'
   pure (StateRef newst newtbs)
 
 -- | Prune older ledger states according to the given 'LedgerDbPrune' strategy.

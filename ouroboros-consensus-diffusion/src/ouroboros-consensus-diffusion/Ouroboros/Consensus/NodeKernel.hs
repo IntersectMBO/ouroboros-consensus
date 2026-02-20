@@ -503,7 +503,7 @@ initInternalState
     mempool <-
       openMempool
         registry
-        (chainDBLedgerInterface chainDB)
+        (chainDBLedgerInterface chainDB registry)
         (configLedger cfg)
         mempoolCapacityOverride
         mempoolTimeoutConfig

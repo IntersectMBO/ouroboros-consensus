@@ -863,7 +863,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason forker = do
     ChangingSelection $
       castPoint $
         Diff.getTip chainDiff
-  (curChain, newChain, events, prevTentativeHeader, newLedger, orphanedStates) <- atomically $ do
+  (curChain, newChain, events, prevTentativeHeader, newLedger, closeOrphanedStates) <- atomically $ do
     InternalChain curChain curChainWithTime <- readTVar cdbChain -- Not Query.getCurrentChain!
     curLedger <- getVolatileTip cdbLedgerDB
     newLedger <- forkerGetLedgerState forker
@@ -888,7 +888,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason forker = do
                 Just x -> x
 
         writeTVar cdbChain $ InternalChain newChain newChainWithTime
-        orphanedStates <- forkerCommit forker
+        closeOrphanedStates <- forkerCommit forker
 
         -- Inspect the new ledger for potential problems
         let events :: [LedgerEvent blk]
@@ -914,7 +914,10 @@ switchTo CDB{..} weights triggerPt chainDiff reason forker = do
           let oldSuffix = AF.anchorNewest (getRollback chainDiff) curChain
           forM_ followerHandles $ \hdl -> fhSwitchFork hdl oldSuffix
 
-        return (curChain, newChain, events, prevTentativeHeader, newLedger, orphanedStates)
+        return (curChain, newChain, events, prevTentativeHeader, newLedger, closeOrphanedStates)
+
+  closeOrphanedStates
+
   let mkTraceEvent
         | getRollback chainDiff == 0 = AddedToCurrentChain
         | otherwise = SwitchedToAFork
@@ -925,7 +928,6 @@ switchTo CDB{..} weights triggerPt chainDiff reason forker = do
           newLedger
   traceWith addBlockTracer $
     mkTraceEvent events selChangedInfo curChain newChain reason
-  orphanedStates
   whenJust (strictMaybeToMaybe prevTentativeHeader) $
     traceWith $
       PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
