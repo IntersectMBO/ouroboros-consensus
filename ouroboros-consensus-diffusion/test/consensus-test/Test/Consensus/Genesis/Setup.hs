@@ -1,15 +1,20 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.Genesis.Setup
   ( module Test.Consensus.Genesis.Setup.GenChains
+  , castHeaderHash
   , forAllGenesisTest
+  , honestImmutableTip
   , runGenesisTest
   , runGenesisTest'
+  , selectedHonestChain
   ) where
 
 import Control.Exception (throw)
@@ -19,14 +24,37 @@ import Control.Monad.Class.MonadAsync
 import Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import Control.Tracer (debugTracer, traceWith)
 import Data.Maybe (mapMaybe)
+import Ouroboros.Consensus.Block.Abstract
+  ( ChainHash (..)
+  , ConvertRawHash
+  , GetHeader
+  , Header
+  )
+import Ouroboros.Consensus.Block.SupportsDiffusionPipelining
+  ( BlockSupportsDiffusionPipelining
+  )
+import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
+import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.Ledger.Basics (LedgerState)
+import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException (..)
   )
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB.API
+  ( CanUpgradeLedgerTables
+  )
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IOLike (Exception, fromException)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededTimeLimit)
   )
+import Ouroboros.Network.Util.ShowProxy
+import Test.Consensus.BlockTree (onTrunk)
 import Test.Consensus.Genesis.Setup.Classifiers
   ( Classifiers (..)
   , ResultClassifiers (..)
@@ -36,6 +64,7 @@ import Test.Consensus.Genesis.Setup.Classifiers
   , scheduleClassifiers
   )
 import Test.Consensus.Genesis.Setup.GenChains
+import Test.Consensus.PeerSimulator.Config ()
 import Test.Consensus.PeerSimulator.Run
 import Test.Consensus.PeerSimulator.StateView
 import Test.Consensus.PeerSimulator.Trace
@@ -43,9 +72,11 @@ import Test.Consensus.PeerSimulator.Trace
   , tracerTestBlock
   )
 import Test.Consensus.PointSchedule
+import Test.Consensus.PointSchedule.NodeState (NodeState)
 import Test.QuickCheck
 import Test.Util.Orphans.IOLike ()
 import Test.Util.QuickCheck (forAllGenRunShrinkCheck)
+import Test.Util.TersePrinting (Terse)
 import Test.Util.TestBlock (TestBlock)
 import Test.Util.Tracer (recordingTracerM)
 import Text.Printf (printf)
@@ -62,17 +93,37 @@ runSimStrictShutdownOrThrow action =
 -- | Runs the given 'GenesisTest' and 'PointSchedule' and evaluates the given
 -- property on the final 'StateView'.
 runGenesisTest ::
+  ( Condense (StateView blk)
+  , CondenseList (NodeState blk)
+  , ShowProxy blk
+  , ShowProxy (Header blk)
+  , ConfigSupportsNode blk
+  , LedgerSupportsProtocol blk
+  , ChainDB.SerialiseDiskConstraints blk
+  , BlockSupportsDiffusionPipelining blk
+  , InspectLedger blk
+  , HasHardForkHistory blk
+  , ConvertRawHash blk
+  , CanUpgradeLedgerTables (LedgerState blk)
+  , HasPointScheduleTestParams blk
+  , Eq (Header blk)
+  , Eq blk
+  , Terse blk
+  , Condense (NodeState blk)
+  ) =>
+  ProtocolInfoArgs blk ->
   SchedulerConfig ->
-  GenesisTestFull TestBlock ->
-  RunGenesisTestResult
-runGenesisTest schedulerConfig genesisTest =
+  GenesisTestFull blk ->
+  RunGenesisTestResult blk
+runGenesisTest protocolInfoArgs schedulerConfig genesisTest =
   runSimStrictShutdownOrThrow $ do
     (recordingTracer, getTrace) <- recordingTracerM
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
     traceLinesWith tracer $ prettyGenesisTest prettyPointSchedule genesisTest
 
-    rgtrStateView <- runPointSchedule schedulerConfig genesisTest =<< tracerTestBlock tracer
+    rgtrStateView <-
+      runPointSchedule protocolInfoArgs schedulerConfig genesisTest =<< tracerTestBlock tracer
     traceWith tracer (condense rgtrStateView)
     rgtrTrace <- unlines <$> getTrace
 
@@ -87,24 +138,44 @@ runGenesisTest' ::
   GenesisTestFull TestBlock ->
   (StateView TestBlock -> prop) ->
   Property
-runGenesisTest' schedulerConfig genesisTest makeProperty =
-  counterexample rgtrTrace $ makeProperty rgtrStateView
- where
-  RunGenesisTestResult{rgtrTrace, rgtrStateView} =
-    runGenesisTest schedulerConfig genesisTest
+runGenesisTest' schedulerConfig genesisTest makeProperty = idempotentIOProperty $ do
+  protocolInfoArgs <- getProtocolInfoArgs
+  let RunGenesisTestResult{rgtrTrace, rgtrStateView} =
+        runGenesisTest protocolInfoArgs schedulerConfig genesisTest
+  pure $ counterexample rgtrTrace $ makeProperty rgtrStateView
 
 -- | All-in-one helper that generates a 'GenesisTest' and a 'Peers
 -- PeerSchedule', runs them with 'runGenesisTest', check whether the given
 -- property holds on the resulting 'StateView'.
 forAllGenesisTest ::
-  Testable prop =>
-  Gen (GenesisTestFull TestBlock) ->
+  forall blk prop.
+  ( Testable prop
+  , Condense (StateView blk)
+  , CondenseList (NodeState blk)
+  , ShowProxy blk
+  , ShowProxy (Header blk)
+  , ConfigSupportsNode blk
+  , LedgerSupportsProtocol blk
+  , ChainDB.SerialiseDiskConstraints blk
+  , BlockSupportsDiffusionPipelining blk
+  , InspectLedger blk
+  , HasHardForkHistory blk
+  , ConvertRawHash blk
+  , CanUpgradeLedgerTables (LedgerState blk)
+  , HasPointScheduleTestParams blk
+  , Eq (Header blk)
+  , Eq blk
+  , Terse blk
+  , Condense (NodeState blk)
+  ) =>
+  Gen (GenesisTestFull blk) ->
   SchedulerConfig ->
-  (GenesisTestFull TestBlock -> StateView TestBlock -> [GenesisTestFull TestBlock]) ->
-  (GenesisTestFull TestBlock -> StateView TestBlock -> prop) ->
+  (GenesisTestFull blk -> StateView blk -> [GenesisTestFull blk]) ->
+  (GenesisTestFull blk -> StateView blk -> prop) ->
   Property
-forAllGenesisTest generator schedulerConfig shrinker mkProperty =
-  forAllGenRunShrinkCheck generator runner shrinker' $ \genesisTest result ->
+forAllGenesisTest generator schedulerConfig shrinker mkProperty = idempotentIOProperty $ do
+  protocolInfoArgs <- getProtocolInfoArgs
+  pure $ forAllGenRunShrinkCheck generator (runGenesisTest protocolInfoArgs schedulerConfig) shrinker' $ \genesisTest result ->
     let cls = classifiers genesisTest
         resCls = resultClassifiers genesisTest result
         schCls = scheduleClassifiers genesisTest
@@ -128,7 +199,6 @@ forAllGenesisTest generator schedulerConfig shrinker mkProperty =
           $ counterexample (rgtrTrace result)
           $ mkProperty genesisTest stateView .&&. hasOnlyExpectedExceptions stateView
  where
-  runner = runGenesisTest schedulerConfig
   shrinker' gt = shrinker gt . rgtrStateView
   hasOnlyExpectedExceptions StateView{svPeerSimulatorResults} =
     conjoin $
@@ -150,3 +220,25 @@ forAllGenesisTest generator schedulerConfig shrinker mkProperty =
     e :: Exception e => Maybe e
     e = fromException exn
     true = property True
+
+-- | The 'StateView.svSelectedChain' produces an 'AnchoredFragment (Header blk)';
+-- this function casts this type's hash to its instance, so that it can be used
+-- for lookups on a 'BlockTree'.
+castHeaderHash :: ChainHash (Header blk) -> ChainHash blk
+castHeaderHash = \case
+  BlockHash hash -> BlockHash hash
+  GenesisHash -> GenesisHash
+
+-- | Check if the immutable tip of the selected chain of a 'GenesisTest' is honest.
+-- In this setting, the immutable tip corresponds to the selected chain anchor
+-- (see 'Ouroboros.Consensus.Storage.ChainDB.API.getCurrentChain') and
+-- the honest chain is represented by the test 'BlockTree' trunk.
+honestImmutableTip :: GetHeader blk => GenesisTestFull blk -> StateView blk -> Bool
+honestImmutableTip GenesisTest{gtBlockTree} StateView{svSelectedChain} =
+  onTrunk gtBlockTree $ AF.anchorPoint svSelectedChain
+
+-- | Check if the tip of the selected chain of a 'GenesisTest' is honest.
+-- In this setting, the honest chain corresponds to the test 'BlockTree' trunk.
+selectedHonestChain :: GetHeader blk => GenesisTestFull blk -> StateView blk -> Bool
+selectedHonestChain GenesisTest{gtBlockTree} StateView{svSelectedChain} =
+  onTrunk gtBlockTree $ AF.headPoint $ svSelectedChain
