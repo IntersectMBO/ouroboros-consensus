@@ -51,9 +51,8 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     Proxy blk ->
     Tracer m LedgerDBV2Trace ->
     Args m backend ->
-    ResourceRegistry m ->
     SomeHasFS m ->
-    m (Resources m backend)
+    WithTempRegistry fState m (Resources m backend)
 
   -- | Release the acquired resources.
   releaseResources :: Proxy blk -> Resources m backend -> m ()

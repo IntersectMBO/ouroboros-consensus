@@ -84,13 +84,11 @@ openDB
          in doOpenDB args initDb snapManager stream replayGoal
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
         res <-
-          lift $
-            mkResources
-              (Proxy @blk)
-              (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
-              bArgs
-              (lgrRegistry args)
-              (lgrHasFS args)
+          mkResources
+            (Proxy @blk)
+            (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
+            bArgs
+            (lgrHasFS args)
         let snapManager =
               snapshotManager
                 (Proxy @blk)

@@ -21,17 +21,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
   ) where
 
 import Control.Exception
-import Control.Monad.Trans.Class
-import Control.RAWLock (RAWLock)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
 import Data.Maybe (fromMaybe)
-import GHC.Generics
-import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args

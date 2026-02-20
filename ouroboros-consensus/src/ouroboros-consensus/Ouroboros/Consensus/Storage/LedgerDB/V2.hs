@@ -306,7 +306,7 @@ implGetHeaderStateHistory env = do
     $ ldb
 
 implValidate ::
-  forall m r l blk.
+  forall m l blk.
   ( IOLike m
   , HasCallStack
   , ApplyBlock l blk

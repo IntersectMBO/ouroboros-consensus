@@ -20,8 +20,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
   , implForkerReadTables
   ) where
 
-import qualified Control.Monad as Monad
-import Control.ResourceRegistry
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
@@ -57,8 +55,8 @@ data ForkerEnv m l blk = ForkerEnv
       !( StrictMVar
            m
            ( Either
-               (LedgerDBLock m, LedgerBackingStore m l, ResourceRegistry m)
-               (ResourceKey m, LedgerBackingStoreValueHandle m l)
+               (LedgerDBLock m, LedgerBackingStore m l)
+               (LedgerBackingStoreValueHandle m l)
            )
        )
   -- ^ Either the ingredients to create a value handle or a value handle, i.e. a
@@ -92,15 +90,17 @@ deriving instance
 -------------------------------------------------------------------------------}
 
 closeForkerEnv :: IOLike m => ForkerEnv m l blk -> m ()
-closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = do
+closeForkerEnv ForkerEnv{foeBackingStoreValueHandle, foeTracer, foeWasCommitted} = do
+  wc <- readTVarIO foeWasCommitted
+  traceWith foeTracer (ForkerClose $ if wc then ForkerWasCommitted else ForkerWasUncommitted)
   -- If this MVar is empty, we already closed the forker in the past so do nothing.
   tryTakeMVar foeBackingStoreValueHandle >>= \case
     -- We already closed the forker in the past, so do nothing.
     Nothing -> pure ()
     -- Release the read lock.
-    Just (Left (lock, _, _)) -> atomically $ unsafeReleaseReadAccess lock
+    Just (Left (lock, _)) -> atomically $ unsafeReleaseReadAccess lock
     -- Release the value handle
-    Just (Right (bsvh, _)) -> Monad.void $ release bsvh
+    Just (Right bsvh) -> bsvhClose bsvh
 
 {-------------------------------------------------------------------------------
   Acquiring consistent views
@@ -110,25 +110,39 @@ closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = do
 -- first time we access the tables.
 getValueHandle :: (GetTip l, IOLike m) => ForkerEnv m l blk -> m (LedgerBackingStoreValueHandle m l)
 getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} =
-  modifyMVar foeBackingStoreValueHandle $ \case
-    r@(Right (_, bsvh)) -> pure (r, bsvh)
-    Left (l, bs, rr) -> do
-      (k, bsvh) <- allocate rr (\_ -> bsValueHandle bs) bsvhClose
-      dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
-      if bsvhAtSlot bsvh == dblogSlot
-        then do
-          -- Release the read lock acquired when opening the forker.
-          atomically $ unsafeReleaseReadAccess l
-          pure (Right (k, bsvh), bsvh)
-        else
-          release k
-            >> error
-              ( "Critical error: Value handles are created at "
-                  <> show (bsvhAtSlot bsvh)
-                  <> " while the db changelog is at "
-                  <> show dblogSlot
-                  <> ". There is either a race condition or a logic bug"
+  bracketOnError
+    ((,) <$> takeMVar foeBackingStoreValueHandle <*> newTVarIO Nothing)
+    ( \(origValue, tv) -> do
+        putMVar foeBackingStoreValueHandle origValue
+        readTVarIO tv >>= maybe (pure ()) bsvhClose
+    )
+    ( \(value, tv) -> case value of
+        Right bsvh -> pure bsvh
+        Left (l, bs) -> do
+          bsvh <-
+            bracketOnError
+              (bsValueHandle bs)
+              bsvhClose
+              ( \bsvh -> do
+                  atomically $ writeTVar tv (Just bsvh)
+                  pure bsvh
               )
+          dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
+          if bsvhAtSlot bsvh == dblogSlot
+            then do
+              -- Release the read lock acquired when opening the forker.
+              atomically $ unsafeReleaseReadAccess l
+              putMVar foeBackingStoreValueHandle $ Right bsvh
+              pure bsvh
+            else
+              error
+                ( "Critical error: Value handles are created at "
+                    <> show (bsvhAtSlot bsvh)
+                    <> " while the db changelog is at "
+                    <> show dblogSlot
+                    <> ". There is either a race condition or a logic bug"
+                )
+    )
 
 implForkerReadTables ::
   (IOLike m, HasLedgerTables l, GetTip l) =>

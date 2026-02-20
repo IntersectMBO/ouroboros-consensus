@@ -379,6 +379,7 @@ library ouroboros-consensus-lsm
 
   build-depends:
     base >=4.14 && <4.23,
+    ouroboros-network:{api},
     blockio,
     bytestring,
     containers >=0.5 && <0.9,

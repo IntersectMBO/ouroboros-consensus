@@ -1,11 +1,8 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Storage.ChainDB.Impl
@@ -50,15 +47,12 @@ import Control.ResourceRegistry
   , allocate
   , runInnerWithTempRegistry
   , runWithTempRegistry
-  , withRegistry
   )
 import Control.Tracer
 import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
-import Data.Kind
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
-import GHC.Generics
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block

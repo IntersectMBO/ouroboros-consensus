@@ -110,7 +110,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   ( -- * Main API
     CanUpgradeLedgerTables (..)
   , LedgerDB (..)
-  , LedgerDBSkeleton (..)
   , LedgerDB'
   , LedgerDbPrune (..)
   , LedgerDbSerialiseConstraints
@@ -227,9 +226,6 @@ type LedgerDbSerialiseConstraints blk =
   , -- For OnDisk LedgerDBs
     IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
   )
-
-type LedgerDBSkeleton :: (Type -> Type) -> Type -> Type
-data LedgerDBSkeleton m blk = LDBS deriving (Generic, NoThunks)
 
 -- | The core API of the LedgerDB component
 type LedgerDB :: (Type -> Type) -> LedgerStateKind -> Type -> Type
@@ -457,8 +453,7 @@ type InitDB :: Type -> (Type -> Type) -> Type -> Type
 data InitDB db m blk = InitDB
   { initFromGenesis :: !(m db)
   -- ^ Create a DB from the genesis state
-  , initFromSnapshot ::
-      !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
+  , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
   , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the

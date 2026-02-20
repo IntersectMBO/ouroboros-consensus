@@ -142,7 +142,7 @@ import Codec.CBOR.Encoding
 import Codec.Serialise
 import qualified Control.Monad as Monad
 import Control.Monad.Except
-import qualified Control.Monad.Trans as Trans (lift)
+import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
@@ -292,21 +292,25 @@ loadSnapshot ::
   SomeBackendArgs m (ExtLedgerState blk) ->
   CodecConfig blk ->
   SnapshotsFS m ->
-  ResourceRegistry m ->
   DiskSnapshot ->
   ExceptT
     (SnapshotFailure blk)
-    m
-    ((DbChangelog' blk, ResourceKey m, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
-loadSnapshot tracer bArgs@(SomeBackendArgs bss) ccfg fs@(SnapshotsFS fs'@(SomeHasFS hfs)) reg s = do
-  fileEx <- Trans.lift $ FS.doesFileExist hfs (snapshotToDirPath s)
+    ( WithTempRegistry
+        ()
+        m
+    )
+    ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
+loadSnapshot tracer bArgs@(SomeBackendArgs bss) ccfg fs@(SnapshotsFS fs'@(SomeHasFS hfs)) s = do
+  fileEx <- lift $ lift $ FS.doesFileExist hfs (snapshotToDirPath s)
   Monad.when fileEx $ throwError $ InitFailureRead ReadSnapshotIsLegacy
   (extLedgerSt, checksumAsRead) <-
     withExceptT (InitFailureRead . ReadSnapshotFailed) $
-      readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
+      ExceptT . lift . runExceptT $
+        readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
   snapshotMeta <-
     withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath s)) $
-      loadSnapshotMetadata fs' s
+      ExceptT . lift . runExceptT $
+        loadSnapshotMetadata fs' s
   Monad.unless
     (isRightBackendForSnapshot (Proxy @(ExtLedgerState blk)) bss (snapshotBackend snapshotMeta))
     $ throwError
@@ -319,12 +323,11 @@ loadSnapshot tracer bArgs@(SomeBackendArgs bss) ccfg fs@(SnapshotsFS fs'@(SomeHa
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwError InitFailureGenesis
     NotOrigin pt -> do
-      (bsKey, backingStore) <-
-        Trans.lift
-          ( allocate
-              reg
-              (\_ -> restoreBackingStore tracer bArgs fs extLedgerSt (snapshotToTablesPath s))
-              bsClose
-          )
+      backingStore <-
+        lift $
+          allocateTemp
+            (restoreBackingStore tracer bArgs fs extLedgerSt (snapshotToTablesPath s))
+            (\b -> bsClose b >> pure True)
+            (\_ _ -> True)
       let chlog = empty extLedgerSt
-      pure ((chlog, bsKey, backingStore), pt)
+      pure ((chlog, backingStore), pt)

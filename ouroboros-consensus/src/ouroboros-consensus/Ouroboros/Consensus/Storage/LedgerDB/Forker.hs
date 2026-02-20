@@ -56,7 +56,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , TraceValidateEvent (..)
   ) where
 
-import qualified Control.Monad as Monad
 import Control.Monad.Except
   ( runExcept
   )
@@ -70,7 +69,6 @@ import Data.Word
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Fragment.Diff (ChainDiff)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache

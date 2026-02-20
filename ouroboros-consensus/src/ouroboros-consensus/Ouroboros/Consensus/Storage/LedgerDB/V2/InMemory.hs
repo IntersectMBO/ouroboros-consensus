@@ -454,7 +454,7 @@ instance
   newtype Trace Mem = NoTrace Void
     deriving newtype Show
 
-  mkResources _ _ _ _ = pure . Resources
+  mkResources _ _ _ = pure . Resources
   releaseResources _ _ = pure ()
   createAndPopulateHandleFromGenesis tracer (Resources shfs) values = do
     tv <- allocateLedgerTablesHandle tracer (getTip values) (ltprj values)
