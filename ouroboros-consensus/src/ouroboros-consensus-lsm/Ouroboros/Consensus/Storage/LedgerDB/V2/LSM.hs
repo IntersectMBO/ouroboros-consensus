@@ -208,6 +208,20 @@ newLSMLedgerTablesHandle tracer origSize p (t, free) =
 {-# INLINE implPushDiffs #-}
 {-# INLINE implTakeHandleSnapshot #-}
 
+unsafeAllocHandle ::
+  IOLike m =>
+  Tracer m LedgerDBV2Trace ->
+  UTxOTable m ->
+  m (UTxOTable m, m Bool)
+unsafeAllocHandle tracer t = do
+  t' <- encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate t
+  pure
+    ( t'
+    , do
+        encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (LSM.closeTable t')
+        pure True
+    )
+
 allocateLedgerTablesHandle ::
   ( IOLike m
   , StandardHash l
@@ -219,33 +233,11 @@ allocateLedgerTablesHandle ::
   WithTempRegistry (LedgerSeq m l) m (UTxOTable m, m Bool)
 allocateLedgerTablesHandle tracer p t =
   allocateTemp
-    ( do
-        t' <- encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate t
-        pure
-          ( t'
-          , do
-              encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (LSM.closeTable t')
-              pure True
-          )
-    )
+    (unsafeAllocHandle tracer t)
     snd
     ( \(LedgerSeq ls) _ ->
         AS.contains (pointSlot p) ((== p) . getTip . state) ls
           || (p == getTip (state (AS.anchor ls)))
-    )
-
-allocateLedgerTablesHandle' ::
-  IOLike m =>
-  Tracer m LedgerDBV2Trace ->
-  UTxOTable m ->
-  m (UTxOTable m, m Bool)
-allocateLedgerTablesHandle' tracer t = do
-  t' <- encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate t
-  pure
-    ( t'
-    , do
-        encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (LSM.closeTable t')
-        pure True
     )
 
 implDuplicate ::
@@ -276,9 +268,12 @@ implUnsafeDuplicate ::
   UTxOTable m ->
   Tracer m LedgerDBV2Trace ->
   m (LedgerTablesHandle m l)
-implUnsafeDuplicate size p t tracer = do
-  t' <- allocateLedgerTablesHandle' tracer t
-  newLSMLedgerTablesHandle tracer size p t'
+implUnsafeDuplicate size p t tracer =
+  unsafeAllocHandle tracer t
+    >>= newLSMLedgerTablesHandle
+      tracer
+      size
+      p
 
 implRead ::
   forall m l.

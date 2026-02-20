@@ -135,6 +135,26 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) (tablesTVar, fr
 {-# INLINE implTakeHandleSnapshot #-}
 {-# INLINE implTablesSize #-}
 
+unsafeAllocHandle ::
+  ( IOLike m
+  , HasLedgerTables l
+  , StandardHash l
+  ) =>
+  Tracer m LedgerDBV2Trace ->
+  Point l ->
+  LedgerTables l ValuesMK ->
+  m (StrictTVar m (LedgerTablesHandleState l), m Bool)
+unsafeAllocHandle tracer p v = do
+  tv <- newTVarIO $ LedgerTablesHandleOpen p v
+  pure
+    ( tv
+    , do
+        prev <- atomically $ swapTVar tv LedgerTablesHandleClosed
+        case prev of
+          LedgerTablesHandleOpen{} -> encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) $ pure True
+          _ -> pure False
+    )
+
 allocateLedgerTablesHandle ::
   ( IOLike m
   , HasLedgerTables l
@@ -147,41 +167,11 @@ allocateLedgerTablesHandle ::
   WithTempRegistry (LedgerSeq m l) m (StrictTVar m (LedgerTablesHandleState l), m Bool)
 allocateLedgerTablesHandle tracer p v =
   allocateTemp
-    ( do
-        tv <- newTVarIO $ LedgerTablesHandleOpen p v
-        pure
-          ( tv
-          , do
-              prev <- atomically $ swapTVar tv LedgerTablesHandleClosed
-              case prev of
-                LedgerTablesHandleOpen{} -> encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) $ pure True
-                _ -> pure False
-          )
-    )
+    (unsafeAllocHandle tracer p v)
     snd
     ( \(LedgerSeq ls) _ ->
         AS.contains (pointSlot p) ((== p) . getTip . state) ls
           || (p == getTip (state (AS.anchor ls)))
-    )
-
-allocateLedgerTablesHandle' ::
-  ( IOLike m
-  , HasLedgerTables l
-  , StandardHash l
-  ) =>
-  Tracer m LedgerDBV2Trace ->
-  Point l ->
-  LedgerTables l ValuesMK ->
-  m (StrictTVar m (LedgerTablesHandleState l), m Bool)
-allocateLedgerTablesHandle' tracer p v = do
-  tv <- newTVarIO $ LedgerTablesHandleOpen p v
-  pure
-    ( tv
-    , do
-        prev <- atomically $ swapTVar tv LedgerTablesHandleClosed
-        case prev of
-          LedgerTablesHandleOpen{} -> encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) $ pure True
-          _ -> pure False
     )
 
 implUnsafeDuplicate ::
@@ -198,8 +188,11 @@ implUnsafeDuplicate ::
   m (LedgerTablesHandle m l)
 implUnsafeDuplicate !tracer tv !someFS = do
   hs <- readTVarIO tv
-  tv' <- guardClosed' hs $ allocateLedgerTablesHandle' tracer
-  newInMemoryLedgerTablesHandle tracer someFS tv'
+  guardClosed' hs $ \p v ->
+    unsafeAllocHandle tracer p v
+      >>= newInMemoryLedgerTablesHandle
+        tracer
+        someFS
 
 implDuplicate ::
   ( IOLike m
