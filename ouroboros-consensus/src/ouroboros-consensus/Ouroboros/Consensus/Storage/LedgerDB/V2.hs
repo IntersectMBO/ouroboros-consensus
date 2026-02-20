@@ -43,7 +43,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -70,7 +69,6 @@ newtype SnapshotExc blk = SnapshotExc {getSnapshotFailure :: SnapshotFailure blk
 mkInitDb ::
   forall m blk backend.
   ( LedgerSupportsProtocol blk
-  , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , Backend m backend blk
   , IOLike m
@@ -86,8 +84,8 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
     { initFromGenesis = do
         genesis <- lgrGenesis
         runWithTempRegistry $ do
-          h <- createAndPopulateHandleFromGenesis v2Tracer res genesis
-          let lseq = LedgerSeq . AS.Empty $ StateRef (forgetLedgerTables genesis) h
+          sr <- createAndPopulateStateRefFromGenesis v2Tracer res genesis
+          let lseq = LedgerSeq . AS.Empty $ sr
           pure (lseq, lseq)
     , initCloseDB = closeLedgerSeq
     , initFromSnapshot = \ds ->

@@ -131,6 +131,9 @@ data Forker m l = Forker
   , forkerCommit :: !(STM m (m ()))
   -- ^ Commit the fork, which was constructed using 'forkerPush', as the
   -- current version of the LedgerDB.
+  --
+  -- Returns an IO action that has to be run on cleanup. It closes the orphaned
+  -- resources from the LedgerDB.
   }
   deriving Generic
   deriving NoThunks via OnlyCheckWhnf (Forker m l)
@@ -286,8 +289,9 @@ data ValidateArgs m l blk = ValidateArgs
   , prevApplied :: !(STM m (Set (RealPoint blk)))
   -- ^ Get the current set of previously applied blocks
   , forkerAtFromTip :: !(forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r))
-  , onSuccess :: !(Forker m l -> m ())
   -- ^ Create a forker from the tip
+  , onSuccess :: !(Forker m l -> m ())
+  -- ^ Continuation to run when the selection was successful
   , trace :: !(TraceValidateEvent blk -> m ())
   -- ^ A tracer for validate events
   , blockCache :: BlockCache blk

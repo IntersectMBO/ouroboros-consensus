@@ -61,7 +61,7 @@ data ForkerEnv m l blk = ForkerEnv
        )
   -- ^ Either the ingredients to create a value handle or a value handle, i.e. a
   -- local, consistent view of backing store. Use 'getValueHandle' to promote
-  -- this if needed.
+  -- this from a Left to a Right if needed.
   , foeChangelog :: !(StrictTVar m (DbChangelog l))
   -- ^ In memory db changelog, 'foeBackingStoreValueHandle' must refer to
   -- the anchor of this changelog.
@@ -110,6 +110,8 @@ closeForkerEnv ForkerEnv{foeBackingStoreValueHandle, foeTracer, foeWasCommitted}
 -- first time we access the tables.
 getValueHandle :: (GetTip l, IOLike m) => ForkerEnv m l blk -> m (LedgerBackingStoreValueHandle m l)
 getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} =
+  -- A slightly more powerful `modifyMVar`, as we carry also a TVar next to it
+  -- that holds the value handle if it was opened and not yet put in the MVar.
   bracketOnError
     ((,) <$> takeMVar foeBackingStoreValueHandle <*> newTVarIO Nothing)
     ( \(origValue, tv) -> do

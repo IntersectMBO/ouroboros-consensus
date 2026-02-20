@@ -228,19 +228,19 @@ data ChainDB m blk = ChainDB
       Target (Point blk) ->
       ResourceRegistry m ->
       m (ResourceKey m, Either GetForkerError (ReadOnlyForker' m blk))
+  -- ^ Allocate a read only forker at the given point in the given resource
+  -- registry.
+  --
+  -- This function is to be used by LocalStateQuery server and the Mempool.
   , withReadOnlyForkerAtPoint ::
       forall t r.
       (MonadTrans t, MonadThrow (t m)) =>
       Target (Point blk) ->
       (Either GetForkerError (ReadOnlyForker' m blk) -> t m r) ->
       t m r
-  -- ^ Acquire a read-only forker at a specific point if that point exists
-  -- on the db.
+  -- ^ Run a continuation with a forker at the given target.
   --
-  -- Note that the forker should be closed by the caller of this function.
-  --
-  -- The forker is read-only becase a read-write forker could be used to
-  -- change the internal state of the LedgerDB.
+  -- This function is to be used by the forging loop.
   , getTipBlock :: m (Maybe blk)
   -- ^ Get block at the tip of the chain, if one exists
   --

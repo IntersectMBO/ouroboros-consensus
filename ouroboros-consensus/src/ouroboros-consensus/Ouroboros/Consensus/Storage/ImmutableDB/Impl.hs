@@ -238,7 +238,7 @@ getHashForSlot = getHashForSlot_
 ------------------------------------------------------------------------------}
 
 openDB ::
-  forall m blk st.
+  forall m blk ans.
   ( IOLike m
   , GetPrevHash blk
   , ConvertRawHash blk
@@ -246,11 +246,8 @@ openDB ::
   , HasCallStack
   ) =>
   Complete ImmutableDbArgs m blk ->
-  ( forall h.
-    WithTempRegistry (OpenState m blk h) m (ImmutableDB m blk, (OpenState m blk h)) ->
-    WithTempRegistry st m (ImmutableDB m blk)
-  ) ->
-  WithTempRegistry st m (ImmutableDB m blk)
+  (forall st. WithTempRegistry st m (ImmutableDB m blk, st) -> ans) ->
+  ans
 openDB args cont =
   openDBInternal args (cont . fmap swizzle)
  where
@@ -258,7 +255,7 @@ openDB args cont =
 
 -- | For testing purposes: exposes internals via 'Internal'
 openDBInternal ::
-  forall m blk st.
+  forall m blk ans.
   ( IOLike m
   , GetPrevHash blk
   , ConvertRawHash blk
@@ -271,9 +268,9 @@ openDBInternal ::
       (OpenState m blk h)
       m
       ((ImmutableDB m blk, Internal m blk), OpenState m blk h) ->
-    WithTempRegistry st m (ImmutableDB m blk)
+    ans
   ) ->
-  WithTempRegistry st m (ImmutableDB m blk)
+  ans
 openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} cont = cont $ do
   lift $ createDirectoryIfMissing hasFS True (mkFsPath [])
   let validateEnv =

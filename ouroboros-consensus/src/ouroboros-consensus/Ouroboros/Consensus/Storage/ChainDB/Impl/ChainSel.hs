@@ -1057,9 +1057,9 @@ mkChainSelEnv CDB{..} blockCache weights curChain punish =
     , punish
     }
 
--- | Perform chain selection with the given candidates. If a validated
--- candidate was chosen to replace the current chain, return it along with the
--- corresponding ledger.
+-- | Perform chain selection with the given candidates. If a validated candidate
+-- was chosen to replace the current chain, perform the passed continuation and
+-- return the candidate.
 --
 -- PRECONDITION: all candidates must be preferred over the current chain.
 --
@@ -1073,8 +1073,13 @@ chainSelection ::
   , HasCallStack
   ) =>
   ChainSelEnv m blk ->
+  -- | The candidates
   NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
+  -- | The continuation to run on succesfully validating a candidate.
   (ChainDiff (Header blk) -> ReasonForSwitch' blk -> Forker' m blk -> m ()) ->
+  -- | The (valid) chain diff and corresponding LedgerDB that was selected,
+  -- or 'Nothing' if there is no valid chain diff preferred over the current
+  -- chain.
   m (Maybe (ChainDiff (Header blk), ReasonForSwitch' blk))
 chainSelection chainSelEnv chainDiffs onSuccess =
   assert

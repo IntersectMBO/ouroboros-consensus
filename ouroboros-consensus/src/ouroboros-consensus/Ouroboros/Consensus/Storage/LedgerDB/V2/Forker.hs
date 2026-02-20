@@ -84,7 +84,7 @@ implForkerReadStatistics ::
   m Statistics
 implForkerReadStatistics env = withForkerEnv env $ \fState -> do
   traceWith (foeTracer fState) ForkerReadStatistics
-  fmap Statistics . tablesSize . tables . currentHandle . foeLedgerSeq $ fState
+  pure . Statistics . tablesSize . tables . currentHandle . foeLedgerSeq $ fState
 
 implForkerPush ::
   (IOLike m, GetTip l, HasLedgerTables l, HasCallStack) =>

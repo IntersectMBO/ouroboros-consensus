@@ -86,6 +86,9 @@ import qualified Ouroboros.Network.AnchoredSeq as AS hiding (map)
 import System.FS.CRC (CRC)
 import Prelude hiding (read)
 
+-- | The state inside a forker. It is mandatory this is a pure data structure so
+-- that we can check the resulting `foeLedgerSeq` to see if a handle was
+-- properly transferred when duplicating handles
 data ForkerState m l = ForkerState
   { foeLedgerSeq :: !(LedgerSeq m l)
   -- ^ Local version of the LedgerSeq
@@ -95,7 +98,9 @@ data ForkerState m l = ForkerState
   -- ^ Config
   , foeLedgerDbLock :: !(RAWLock m ())
   -- ^ 'ldbOpenHandlesLock'.
-  , foeWasCommitted :: !Bool
+  , -- TODO: @js did I accidentally remove the locking?
+
+    foeWasCommitted :: !Bool
   }
   deriving Generic
 
@@ -107,7 +112,9 @@ deriving instance
   ) =>
   NoThunks (ForkerState m l)
 
-newtype ForkerEnv m l = ForkerEnv (StrictTVar m (ForkerState m l)) deriving Generic
+newtype ForkerEnv m l
+  = ForkerEnv (StrictTVar m (ForkerState m l))
+  deriving Generic
 
 deriving newtype instance
   ( IOLike m
@@ -136,19 +143,34 @@ modifyForkerEnvSTM (ForkerEnv f) k = readTVar f >>= k >>= \(s, r) -> writeTVar f
 -------------------------------------------------------------------------------}
 
 -- | The interface fulfilled by handles on both the InMemory and LSM handles.
+--
+-- The most relevant concept is handle duplication:
+--
+-- A duplicated handle must provide access to all the data that was there in
+-- the original handle while being able to mutate in ways different than the
+-- original handle.
+--
+-- When applying diffs to a table, we will first duplicate the handle, then
+-- apply the diffs in the copy. It is expected that duplicating the handle
+-- takes constant time.
 data LedgerTablesHandle m l = LedgerTablesHandle
   { close :: !(m ())
-  , duplicate :: !(WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l))
+  -- ^ Close the handle
+  , duplicateWithDiffs ::
+      !(forall mk. l mk -> l DiffMK -> WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l))
+  -- ^ Create a new handle by duplicating this one and push some diffs to it.
+  --
+  -- The first argument has to be the ledger state before applying
+  -- the block, the second argument should be the ledger state after
+  -- applying a block. See 'CanUpgradeLedgerTables'.
+  --
+  -- Note 'CanUpgradeLedgerTables' is only used in the InMemory backend.
+  --
+  -- This is expected to be used when applying new blocks onto a forker, which
+  -- happens only in chain selection and initial chain replay.
   , unsafeDuplicate :: !(m (LedgerTablesHandle m l))
-  -- ^ Create a copy of the handle.
-  --
-  -- A duplicated handle must provide access to all the data that was there in
-  -- the original handle while being able to mutate in ways different than the
-  -- original handle.
-  --
-  -- When applying diffs to a table, we will first duplicate the handle, then
-  -- apply the diffs in the copy. It is expected that duplicating the handle
-  -- takes constant time.
+  -- ^ Create an unsafe duplicate of a handle which is not tracked
+  -- anywhere. This will have to be bracketed downstream.
   , read :: !(l EmptyMK -> LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
@@ -171,21 +193,12 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   -- ^ Costly read all operation, not to be used in Consensus but only in
   -- snapshot-converter executable. The values will be read as if they were from
   -- the same era as the given ledger state.
-  , duplicateWithDiffs ::
-      !(forall mk. l mk -> l DiffMK -> WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l))
-  -- ^ Push some diffs into the ledger tables handle.
-  --
-  -- The first argument has to be the ledger state before applying
-  -- the block, the second argument should be the ledger state after
-  -- applying a block. See 'CanUpgradeLedgerTables'.
-  --
-  -- Note 'CanUpgradeLedgerTables' is only used in the InMemory backend.
   , takeHandleSnapshot :: !(l EmptyMK -> String -> m (Maybe CRC))
   -- ^ Take a snapshot of a handle. The given ledger state is used to decide the
   -- encoding of the values based on the current era.
   --
   -- It returns a CRC only on backends that support it, as the InMemory backend.
-  , tablesSize :: !(m Int)
+  , tablesSize :: !Int
   -- ^ Consult the size of the ledger tables in the database.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l)
@@ -290,13 +303,12 @@ reapplyThenPush ::
   LedgerDbCfg l ->
   blk ->
   LedgerSeq m l ->
-  m (LedgerSeq m l)
-reapplyThenPush cfg ap db =
-  runWithTempRegistry $ do
-    newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
-    let (m, db') = pruneToImmTipOnly $ extend newSt db
-    lift $ m
-    pure (db', db')
+  WithTempRegistry (LedgerSeq m l) m (LedgerSeq m l)
+reapplyThenPush cfg ap db = do
+  newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
+  let (m, db') = pruneToImmTipOnly $ extend newSt db
+  lift $ m
+  pure db'
 
 reapplyBlock ::
   forall m l blk.

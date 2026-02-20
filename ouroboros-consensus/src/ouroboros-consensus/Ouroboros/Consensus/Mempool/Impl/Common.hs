@@ -210,6 +210,9 @@ data MempoolLedgerDBView m blk = MempoolLedgerDBView
   , mldViewGetForker :: m (ResourceKey m, Either GetForkerError (ReadOnlyForker m (LedgerState blk)))
   -- ^ An action to get a forker at 'mldViewState' or an error in the unlikely
   -- case that such state is now gone from the LedgerDB.
+  --
+  -- The returned ResourceKey has to be used to close this forker when replacing
+  -- it with a new one.
   }
 
 -- | Create a 'LedgerInterface' from a 'ChainDB'.

@@ -58,11 +58,11 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   releaseResources :: Proxy blk -> Resources m backend -> m ()
 
   -- | Create a new handle from the given Genesis state.
-  createAndPopulateHandleFromGenesis ::
+  createAndPopulateStateRefFromGenesis ::
     Tracer m LedgerDBV2Trace ->
     Resources m backend ->
     ExtLedgerState blk ValuesMK ->
-    WithTempRegistry (LedgerSeq m (ExtLedgerState blk)) m (LedgerTablesHandle m (ExtLedgerState blk))
+    WithTempRegistry (LedgerSeq m (ExtLedgerState blk)) m (StateRef m (ExtLedgerState blk))
 
   -- | Create a new handle from a snapshot.
   openStateRefFromSnapshot ::

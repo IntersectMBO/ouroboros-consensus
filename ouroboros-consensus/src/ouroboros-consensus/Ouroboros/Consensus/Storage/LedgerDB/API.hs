@@ -246,9 +246,8 @@ data LedgerDB m l blk = LedgerDB
       m (Either GetForkerError (Forker m l))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
-  -- 'GetForkerError'.
-  --
-  -- We pass in the producer/consumer registry.
+  -- 'GetForkerError'. Note this will allocate resources so it has to be
+  -- bracketed downstream.
   , validateFork ::
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
@@ -258,6 +257,9 @@ data LedgerDB m l blk = LedgerDB
       m (ValidateResult l blk)
   -- ^ Try to apply a sequence of blocks on top of the LedgerDB, first rolling
   -- back as many blocks as the passed @Word64@.
+  --
+  -- The passed continuation will be executed if the result of validation is
+  -- fully successful.
   , getPrevApplied :: STM m (Set (RealPoint blk))
   -- ^ Get the references to blocks that have previously been applied.
   , garbageCollect :: SlotNo -> m ()
@@ -455,10 +457,11 @@ data InitDB db m blk = InitDB
   -- ^ Create a DB from the genesis state
   , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
-  , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
+  , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> WithTempRegistry db m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
   , initCloseDB :: !(db -> m ())
+  -- ^ Close the database if an error comes.
   , currentTip :: !(db -> LedgerState blk EmptyMK)
   -- ^ Getting the current tip for tracing the Ledger Events.
   , mkLedgerDb ::
@@ -636,42 +639,43 @@ replayStartingWith ::
   InitDB db m blk ->
   m Word64
 replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, currentTip} = do
+  db <- readTVarIO initDb
   res <-
     runExceptT $
       streamAll
         stream
         from
         id
-        0
-        (push initDb)
+        (db, 0)
+        push
   case res of
     Left _ ->
       error $
         "Critical invariant violation: block "
           <> show from
           <> " that was in immutable db is gone before we could open ledgerdb"
-    Right v -> pure v
+    Right (_, v) -> pure v
  where
   push ::
-    StrictTVar m db ->
     blk ->
-    Word64 ->
-    m Word64
-  push db blk !replayed = do
-    db' <- readTVarIO db
-    !db'' <- initReapplyBlock cfg blk db'
+    (db, Word64) ->
+    m (db, Word64)
+  push blk !(!db, !replayed) = do
+    db' <- runWithTempRegistry $ do
+      !db' <- initReapplyBlock cfg blk db
+      lift $ atomically $ writeTVar initDb db'
+      pure (db', db')
 
     let !replayed' = replayed + 1
 
         events =
           inspectLedger
             (getExtLedgerCfg (ledgerDbCfg cfg))
+            (currentTip db)
             (currentTip db')
-            (currentTip db'')
 
     traceWith tracer (ReplayedBlock (blockRealPoint blk) events)
-    atomically $ writeTVar db db''
-    return replayed'
+    return (db', replayed')
 
 {-------------------------------------------------------------------------------
   Trace replay events

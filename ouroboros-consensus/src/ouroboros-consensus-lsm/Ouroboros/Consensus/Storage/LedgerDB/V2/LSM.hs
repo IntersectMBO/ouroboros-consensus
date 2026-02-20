@@ -233,7 +233,7 @@ newLSMLedgerTablesHandle tracer utxosSize p t =
         , readRange = implReadRange t
         , readAll = implReadAll t
         , takeHandleSnapshot = implTakeHandleSnapshot tracer t
-        , tablesSize = pure $ fromIntegral utxosSize
+        , tablesSize = fromIntegral utxosSize
         }
 
 {-# INLINE implDuplicate #-}
@@ -734,10 +734,11 @@ instance
   openStateRefFromSnapshot trcr ccfg shfs res ds = do
     loadSnapshot trcr ccfg shfs (sessionResource res) ds
 
-  createAndPopulateHandleFromGenesis trcr res st = do
+  createAndPopulateStateRefFromGenesis trcr res st = do
+    let st' = forgetLedgerTables st
     (table, sz) <-
-      tableFromValuesMK trcr (sessionResource res) (forgetLedgerTables st) (ltprj st)
-    lift $ newLSMLedgerTablesHandle trcr sz (getTip st) table
+      tableFromValuesMK trcr (sessionResource res) st' (ltprj st)
+    StateRef st' <$> lift (newLSMLedgerTablesHandle trcr sz (getTip st) table)
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 
