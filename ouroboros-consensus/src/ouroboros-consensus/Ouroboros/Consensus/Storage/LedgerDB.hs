@@ -16,6 +16,8 @@ module Ouroboros.Consensus.Storage.LedgerDB
   , openDBInternal
   ) where
 
+import Control.Monad.Trans.Class
+import Control.ResourceRegistry
 import Data.Functor.Contravariant ((>$<))
 import Data.Word
 import Ouroboros.Consensus.Block
@@ -40,7 +42,7 @@ import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 
 openDB ::
-  forall m blk.
+  forall m blk st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -62,7 +64,7 @@ openDB ::
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
   GetVolatileSuffix m blk ->
-  m (LedgerDB' m blk, Word64)
+  WithTempRegistry st m (LedgerDB' m blk, Word64)
 openDB
   args
   stream
@@ -86,7 +88,6 @@ openDB
             (Proxy @blk)
             (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
             bArgs
-            (lgrRegistry args)
             (lgrHasFS args)
         let snapManager =
               snapshotManager
@@ -106,18 +107,19 @@ openDB
 -------------------------------------------------------------------------------}
 
 doOpenDB ::
-  forall m n blk db st.
+  forall m n blk db fState st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
   , HasCallStack
+  , NoThunks db
   ) =>
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
   SnapshotManager m n blk st ->
   StreamAPI m blk blk ->
   Point blk ->
-  m (LedgerDB' m blk, Word64)
+  WithTempRegistry fState m (LedgerDB' m blk, Word64)
 doOpenDB args initDb snapManager stream replayGoal =
   f <$> openDBInternal args initDb snapManager stream replayGoal
  where
@@ -129,26 +131,32 @@ openDBInternal ::
   , LedgerSupportsProtocol blk
   , InspectLedger blk
   , HasCallStack
+  , NoThunks db
   ) =>
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
   SnapshotManager m n blk st ->
   StreamAPI m blk blk ->
   Point blk ->
-  m (LedgerDB' m blk, Word64, TestInternals' m blk)
+  WithTempRegistry fState m (LedgerDB' m blk, Word64, TestInternals' m blk)
 openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal = do
-  createDirectoryIfMissing fs True (mkFsPath [])
-  (_initLog, db, replayCounter) <-
-    initialize
-      replayTracer
-      snapTracer
-      lgrConfig
-      stream
-      replayGoal
-      initDb
-      snapManager
-      lgrStartSnapshot
-  (ledgerDb, internal) <- mkLedgerDb initDb db
+  lift $ createDirectoryIfMissing fs True (mkFsPath [])
+  (db, replayCounter) <-
+    runInnerWithTempRegistry
+      ( (\(_initLog, db, replayCounter) -> ((db, replayCounter), db, db))
+          <$> initialize
+            replayTracer
+            snapTracer
+            lgrConfig
+            stream
+            replayGoal
+            initDb
+            snapManager
+            lgrStartSnapshot
+      )
+      ((True <$) . initCloseDB initDb)
+      (\_env _innerDB -> True)
+  (ledgerDb, internal) <- lift $ mkLedgerDb initDb db
   return (ledgerDb, replayCounter, internal)
  where
   LedgerDbArgs

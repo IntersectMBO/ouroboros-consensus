@@ -47,7 +47,6 @@ import Control.ResourceRegistry
   , allocate
   , runInnerWithTempRegistry
   , runWithTempRegistry
-  , withRegistry
   )
 import Control.Tracer
 import Data.Functor ((<&>))
@@ -161,156 +160,155 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   lift $ traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
   volatileDB <- VolatileDB.openDB argsVolatileDb $ innerOpenCont VolatileDB.closeDB
   maxSlot <- lift $ atomically $ VolatileDB.getMaxSlotNo volatileDB
-  (chainDB, testing, env) <- lift $ do
-    traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
-    traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
-    (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <-
-      mkLedgerDbGetVolatileSuffix
-    (lgrDB, replayed) <-
-      LedgerDB.openDB
-        argsLgrDb
-        (ImmutableDB.streamAPI immutableDB)
-        immutableDbTipPoint
-        (Query.getAnyKnownBlock immutableDB volatileDB)
-        ledgerDbGetVolatileSuffix
-    traceWith tracer $ TraceOpenEvent OpenedLgrDB
+  lift $ traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
+  lift $ traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
+  (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <- lift $ mkLedgerDbGetVolatileSuffix
+  (lgrDB, replayed) <-
+    LedgerDB.openDB
+      argsLgrDb
+      (ImmutableDB.streamAPI immutableDB)
+      immutableDbTipPoint
+      (Query.getAnyKnownBlock immutableDB volatileDB)
+      ledgerDbGetVolatileSuffix
 
-    perasCertDB <- PerasCertDB.openDB argsPerasCertDB
+  lift $ traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
-    varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
+  perasCertDB <- lift $ PerasCertDB.openDB argsPerasCertDB
 
-    let initChainSelTracer = TraceInitChainSelEvent >$< tracer
+  varInvalid <- lift $ newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
-    traceWith initChainSelTracer StartedInitChainSelection
-    initialLoE <- Args.cdbsLoE cdbSpecificArgs
-    initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    chain <- withRegistry $ \rr ->
+  let initChainSelTracer = TraceInitChainSelEvent >$< tracer
+
+  lift $ traceWith initChainSelTracer StartedInitChainSelection
+  initialLoE <- lift $ Args.cdbsLoE cdbSpecificArgs
+  initialWeights <- lift $ atomically $ PerasCertDB.getWeightSnapshot perasCertDB
+  chain <-
+    lift $
       ChainSel.initialChainSelection
         immutableDB
         volatileDB
         lgrDB
-        rr
         initChainSelTracer
         (Args.cdbsTopLevelConfig cdbSpecificArgs)
         varInvalid
         (void initialLoE)
         (forgetFingerprint initialWeights)
-    traceWith initChainSelTracer InitialChainSelected
-    LedgerDB.tryFlush lgrDB
+  lift $ traceWith initChainSelTracer InitialChainSelected
+  lift $ LedgerDB.tryFlush lgrDB
 
-    curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
-    let lcfg = configLedger (Args.cdbsTopLevelConfig cdbSpecificArgs)
+  curLedger <- lift $ atomically $ LedgerDB.getVolatileTip lgrDB
+  let lcfg = configLedger (Args.cdbsTopLevelConfig cdbSpecificArgs)
 
-        -- the volatile tip ledger state can translate the slots of the volatile
-        -- headers
-        chainWithTime =
-          AF.mapAnchoredFragment
-            ( mkHeaderWithTime
-                lcfg
-                (ledgerState curLedger)
-            )
-            chain
+      -- the volatile tip ledger state can translate the slots of the volatile
+      -- headers
+      chainWithTime =
+        AF.mapAnchoredFragment
+          ( mkHeaderWithTime
+              lcfg
+              (ledgerState curLedger)
+          )
+          chain
 
-    varChain <- newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
-    varTentativeState <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)
-    varTentativeHeader <- newTVarIO SNothing
-    varIterators <- newTVarIO Map.empty
-    varFollowers <- newTVarIO Map.empty
-    varNextIteratorKey <- newTVarIO (IteratorKey 0)
-    varNextFollowerKey <- newTVarIO (FollowerKey 0)
-    varKillBgThreads <- newTVarIO $ return ()
-    immdbLock <- RAW.new ()
-    chainSelFuse <- newFuse "chain selection"
-    chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
-    varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
+  varChain <- lift $ newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
+  varTentativeState <- lift $ newTVarIO $ initialTentativeHeaderState (Proxy @blk)
+  varTentativeHeader <- lift $ newTVarIO SNothing
+  varIterators <- lift $ newTVarIO Map.empty
+  varFollowers <- lift $ newTVarIO Map.empty
+  varNextIteratorKey <- lift $ newTVarIO (IteratorKey 0)
+  varNextFollowerKey <- lift $ newTVarIO (FollowerKey 0)
+  varKillBgThreads <- lift $ newTVarIO $ return ()
+  immdbLock <- lift $ RAW.new ()
+  chainSelFuse <- lift $ newFuse "chain selection"
+  chainSelQueue <- lift $ newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
+  varChainSelStarvation <- lift $ newTVarIO ChainSelStarvationOngoing
 
-    let env =
-          CDB
-            { cdbImmutableDB = immutableDB
-            , cdbVolatileDB = volatileDB
-            , cdbLedgerDB = lgrDB
-            , cdbChain = varChain
-            , cdbTentativeState = varTentativeState
-            , cdbTentativeHeader = varTentativeHeader
-            , cdbIterators = varIterators
-            , cdbFollowers = varFollowers
-            , cdbTopLevelConfig = Args.cdbsTopLevelConfig cdbSpecificArgs
-            , cdbInvalid = varInvalid
-            , cdbNextIteratorKey = varNextIteratorKey
-            , cdbNextFollowerKey = varNextFollowerKey
-            , cdbImmutableDBLock = immdbLock
-            , cdbChainSelFuse = chainSelFuse
-            , cdbTracer = tracer
-            , cdbRegistry = Args.cdbsRegistry cdbSpecificArgs
-            , cdbGcDelay = Args.cdbsGcDelay cdbSpecificArgs
-            , cdbGcInterval = Args.cdbsGcInterval cdbSpecificArgs
-            , cdbKillBgThreads = varKillBgThreads
-            , cdbChainSelQueue = chainSelQueue
-            , cdbLoE = Args.cdbsLoE cdbSpecificArgs
-            , cdbChainSelStarvation = varChainSelStarvation
-            , cdbPerasCertDB = perasCertDB
-            }
+  let env =
+        CDB
+          { cdbImmutableDB = immutableDB
+          , cdbVolatileDB = volatileDB
+          , cdbLedgerDB = lgrDB
+          , cdbChain = varChain
+          , cdbTentativeState = varTentativeState
+          , cdbTentativeHeader = varTentativeHeader
+          , cdbIterators = varIterators
+          , cdbFollowers = varFollowers
+          , cdbTopLevelConfig = Args.cdbsTopLevelConfig cdbSpecificArgs
+          , cdbInvalid = varInvalid
+          , cdbNextIteratorKey = varNextIteratorKey
+          , cdbNextFollowerKey = varNextFollowerKey
+          , cdbImmutableDBLock = immdbLock
+          , cdbChainSelFuse = chainSelFuse
+          , cdbTracer = tracer
+          , cdbRegistry = Args.cdbsRegistry cdbSpecificArgs
+          , cdbGcDelay = Args.cdbsGcDelay cdbSpecificArgs
+          , cdbGcInterval = Args.cdbsGcInterval cdbSpecificArgs
+          , cdbKillBgThreads = varKillBgThreads
+          , cdbChainSelQueue = chainSelQueue
+          , cdbLoE = Args.cdbsLoE cdbSpecificArgs
+          , cdbChainSelStarvation = varChainSelStarvation
+          , cdbPerasCertDB = perasCertDB
+          }
 
-    setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
+  lift $ setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
 
-    h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
-    let chainDB =
-          API.ChainDB
-            { addBlockAsync = getEnv2 h ChainSel.addBlockAsync
-            , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
-            , getCurrentChain = getEnvSTM h Query.getCurrentChain
-            , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime
-            , getTipBlock = getEnv h Query.getTipBlock
-            , getTipHeader = getEnv h Query.getTipHeader
-            , getTipPoint = getEnvSTM h Query.getTipPoint
-            , getBlockComponent = getEnv2 h Query.getBlockComponent
-            , getIsFetched = getEnvSTM h Query.getIsFetched
-            , getIsValid = getEnvSTM h Query.getIsValid
-            , getMaxSlotNo = getEnvSTM h Query.getMaxSlotNo
-            , stream = Iterator.stream h
-            , newFollower = Follower.newFollower h
-            , getIsInvalidBlock = getEnvSTM h Query.getIsInvalidBlock
-            , getChainSelStarvation = getEnvSTM h Query.getChainSelStarvation
-            , closeDB = closeDB h
-            , isOpen = isOpen h
-            , getCurrentLedger = getEnvSTM h Query.getCurrentLedger
-            , getImmutableLedger = getEnvSTM h Query.getImmutableLedger
-            , getPastLedger = getEnvSTM1 h Query.getPastLedger
-            , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
-            , getReadOnlyForkerAtPoint = getEnv2 h Query.getReadOnlyForkerAtPoint
-            , getStatistics = getEnv h Query.getStatistics
-            , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
-            , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
-            , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
-            , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
-            }
-    addBlockTestFuse <- newFuse "test chain selection"
-    let testing =
-          Internal
-            { intCopyToImmutableDB = getEnv h Background.copyToImmutableDB
-            , intGarbageCollect = \slot -> getEnv h $ \e -> do
-                Background.garbageCollectBlocks e slot
-                LedgerDB.garbageCollect (cdbLedgerDB e) slot
-            , intTryTakeSnapshot = getEnv h $ \env' ->
-                void $
-                  LedgerDB.tryTakeSnapshot
-                    (cdbLedgerDB env')
-                    (void $ Background.copyToImmutableDB env')
-                    Nothing
-                    maxBound
-            , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
-            , intKillBgThreads = varKillBgThreads
-            }
+  h <- lift $ fmap CDBHandle $ newTVarIO $ ChainDbOpen env
+  let chainDB =
+        API.ChainDB
+          { addBlockAsync = getEnv2 h ChainSel.addBlockAsync
+          , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
+          , getCurrentChain = getEnvSTM h Query.getCurrentChain
+          , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime
+          , getTipBlock = getEnv h Query.getTipBlock
+          , getTipHeader = getEnv h Query.getTipHeader
+          , getTipPoint = getEnvSTM h Query.getTipPoint
+          , getBlockComponent = getEnv2 h Query.getBlockComponent
+          , getIsFetched = getEnvSTM h Query.getIsFetched
+          , getIsValid = getEnvSTM h Query.getIsValid
+          , getMaxSlotNo = getEnvSTM h Query.getMaxSlotNo
+          , stream = Iterator.stream h
+          , newFollower = Follower.newFollower h
+          , getIsInvalidBlock = getEnvSTM h Query.getIsInvalidBlock
+          , getChainSelStarvation = getEnvSTM h Query.getChainSelStarvation
+          , closeDB = closeDB h
+          , isOpen = isOpen h
+          , getCurrentLedger = getEnvSTM h Query.getCurrentLedger
+          , getImmutableLedger = getEnvSTM h Query.getImmutableLedger
+          , getPastLedger = getEnvSTM1 h Query.getPastLedger
+          , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
+          , allocInRegistryReadOnlyForkerAtPoint = getEnv2 h Query.allocInRegistryReadOnlyForkerAtPoint
+          , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
+          , getStatistics = getEnv h Query.getStatistics
+          , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
+          , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
+          , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
+          , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
+          }
+  addBlockTestFuse <- lift $ newFuse "test chain selection"
+  let testing =
+        Internal
+          { intCopyToImmutableDB = getEnv h Background.copyToImmutableDB
+          , intGarbageCollect = \slot -> getEnv h $ \e -> do
+              Background.garbageCollectBlocks e slot
+              LedgerDB.garbageCollect (cdbLedgerDB e) slot
+          , intTryTakeSnapshot = getEnv h $ \env' ->
+              void $
+                LedgerDB.tryTakeSnapshot
+                  (cdbLedgerDB env')
+                  (void $ Background.copyToImmutableDB env')
+                  Nothing
+                  maxBound
+          , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
+          , intKillBgThreads = varKillBgThreads
+          }
 
+  lift $
     traceWith tracer $
       TraceOpenEvent $
         OpenedDB
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env replayed
-
-    return (chainDB, testing, env)
+  lift $ when launchBgTasks $ Background.launchBgTasks env replayed
 
   _ <- lift $ allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return chainDB) API.closeDB
 

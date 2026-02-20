@@ -98,7 +98,6 @@ library
     Ouroboros.Consensus.Config.SupportsNode
     Ouroboros.Consensus.Forecast
     Ouroboros.Consensus.Fragment.Diff
-    Ouroboros.Consensus.Fragment.ValidatedDiff
     Ouroboros.Consensus.Genesis.Governor
     Ouroboros.Consensus.HardFork.Abstract
     Ouroboros.Consensus.HardFork.Combinator
@@ -380,6 +379,7 @@ library ouroboros-consensus-lsm
 
   build-depends:
     base >=4.14 && <4.23,
+    ouroboros-network:{api},
     blockio,
     bytestring,
     containers >=0.5 && <0.9,

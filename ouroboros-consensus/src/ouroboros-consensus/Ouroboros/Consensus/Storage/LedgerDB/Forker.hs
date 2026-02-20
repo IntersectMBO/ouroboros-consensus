@@ -59,7 +59,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Control.Monad.Except
   ( runExcept
   )
-import Control.ResourceRegistry
 import Data.Bifunctor (first)
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
@@ -129,9 +128,12 @@ data Forker m l = Forker
     forkerPush :: !(l DiffMK -> m ())
   -- ^ Advance the fork handle by pushing a new ledger state to the tip of the
   -- current fork.
-  , forkerCommit :: !(STM m ())
+  , forkerCommit :: !(STM m (m ()))
   -- ^ Commit the fork, which was constructed using 'forkerPush', as the
   -- current version of the LedgerDB.
+  --
+  -- Returns an IO action that has to be run on cleanup. It closes the orphaned
+  -- resources from the LedgerDB.
   }
   deriving Generic
   deriving NoThunks via OnlyCheckWhnf (Forker m l)
@@ -286,10 +288,10 @@ data ValidateArgs m l blk = ValidateArgs
   -- ^ How to add a previously applied block to the set of known blocks
   , prevApplied :: !(STM m (Set (RealPoint blk)))
   -- ^ Get the current set of previously applied blocks
-  , forkerAtFromTip :: !(ResourceRegistry m -> Word64 -> m (Either GetForkerError (Forker m l)))
+  , forkerAtFromTip :: !(forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r))
   -- ^ Create a forker from the tip
-  , resourceReg :: !(ResourceRegistry m)
-  -- ^ The resource registry
+  , onSuccess :: !(Forker m l -> m ())
+  -- ^ Continuation to run when the selection was successful
   , trace :: !(TraceValidateEvent blk -> m ())
   -- ^ A tracer for validate events
   , blockCache :: BlockCache blk
@@ -308,22 +310,22 @@ validate ::
   ) =>
   ComputeLedgerEvents ->
   ValidateArgs m l blk ->
-  m (ValidateResult m l blk)
+  m (ValidateResult l blk)
 validate evs args = do
   aps <- mkAps <$> atomically prevApplied
   res <-
-    fmap rewrap $
-      switch
+    rewrap
+      <$> switch
         forkerAtFromTip
-        resourceReg
         evs
         validateConfig
         numRollbacks
         trace
         aps
         resolve
+        onSuccess
   atomically $ addPrevApplied (validBlockPoints res (map headerRealPoint $ NE.toList hdrs))
-  return res
+  pure res
  where
   ValidateArgs
     { resolve
@@ -331,20 +333,20 @@ validate evs args = do
     , addPrevApplied
     , prevApplied
     , forkerAtFromTip
-    , resourceReg
     , trace
     , blockCache
     , numRollbacks
     , hdrs
+    , onSuccess
     } = args
 
   rewrap ::
-    Either (AnnLedgerError l blk) (Either GetForkerError (Forker n l)) ->
-    ValidateResult n l blk
-  rewrap (Left e) = ValidateLedgerError e
-  rewrap (Right (Left (PointTooOld (Just e)))) = ValidateExceededRollBack e
-  rewrap (Right (Left _)) = error "Unreachable, validating will always rollback from the tip"
-  rewrap (Right (Right l)) = ValidateSuccessful l
+    Either GetForkerError (Either (AnnLedgerError l blk) ()) ->
+    ValidateResult l blk
+  rewrap (Right (Left e)) = ValidateLedgerError e
+  rewrap (Left (PointTooOld (Just e))) = ValidateExceededRollBack e
+  rewrap (Left _) = error "Unreachable, validating will always rollback from the tip"
+  rewrap (Right (Right ())) = ValidateSuccessful
 
   mkAps ::
     Set (RealPoint blk) ->
@@ -363,18 +365,17 @@ validate evs args = do
 
   -- \| Based on the 'ValidateResult', return the hashes corresponding to
   -- valid blocks.
-  validBlockPoints :: ValidateResult m l blk -> [RealPoint blk] -> [RealPoint blk]
+  validBlockPoints :: ValidateResult l blk -> [RealPoint blk] -> [RealPoint blk]
   validBlockPoints = \case
     ValidateExceededRollBack _ -> const []
-    ValidateSuccessful _ -> id
+    ValidateSuccessful -> id
     ValidateLedgerError e -> takeWhile (/= annLedgerErrRef e)
 
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
   (ApplyBlock l blk, MonadSTM m) =>
-  (ResourceRegistry m -> Word64 -> m (Either GetForkerError (Forker m l))) ->
-  ResourceRegistry m ->
+  (forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   -- | How many blocks to roll back
@@ -383,25 +384,23 @@ switch ::
   -- | New blocks to apply
   NonEmpty (Ap m l blk) ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) (Either GetForkerError (Forker m l)))
-switch forkerAtFromTip rr evs cfg numRollbacks trace newBlocks doResolve = do
-  foEith <- forkerAtFromTip rr numRollbacks
-  case foEith of
-    Left rbExceeded -> pure $ Right $ Left rbExceeded
-    Right fo -> do
-      let start = PushStart . toRealPoint . NE.head $ newBlocks
-          goal = PushGoal . toRealPoint . NE.last $ newBlocks
-      ePush <-
-        applyThenPushMany
-          (trace . StartedPushingBlockToTheLedgerDb start goal)
-          evs
-          cfg
-          (NE.toList newBlocks)
-          fo
-          doResolve
-      case ePush of
-        Left err -> forkerClose fo >> pure (Left err)
-        Right () -> pure $ Right $ Right fo
+  (Forker m l -> m ()) ->
+  m (Either GetForkerError (Either (AnnLedgerError l blk) ()))
+switch forkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
+  forkerAtFromTip numRollbacks $ \fo -> do
+    let start = PushStart . toRealPoint . NE.head $ newBlocks
+        goal = PushGoal . toRealPoint . NE.last $ newBlocks
+    ePush <-
+      applyThenPushMany
+        (trace . StartedPushingBlockToTheLedgerDb start goal)
+        evs
+        cfg
+        (NE.toList newBlocks)
+        fo
+        doResolve
+    case ePush of
+      Left err -> pure (Left err)
+      Right () -> fmap Right $ onSuccess fo
 
 {-------------------------------------------------------------------------------
   Apply blocks
@@ -521,8 +520,8 @@ type ResolveBlock m blk = RealPoint blk -> m blk
 -------------------------------------------------------------------------------}
 
 -- | When validating a sequence of blocks, these are the possible outcomes.
-data ValidateResult m l blk
-  = ValidateSuccessful (Forker m l)
+data ValidateResult l blk
+  = ValidateSuccessful
   | ValidateLedgerError (AnnLedgerError l blk)
   | ValidateExceededRollBack ExceededRollback
 
