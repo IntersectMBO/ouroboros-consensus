@@ -191,6 +191,8 @@ library
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
     Ouroboros.Consensus.Node.GsmState
     Ouroboros.Consensus.Node.InitStorage
     Ouroboros.Consensus.Node.NetworkProtocolVersion
