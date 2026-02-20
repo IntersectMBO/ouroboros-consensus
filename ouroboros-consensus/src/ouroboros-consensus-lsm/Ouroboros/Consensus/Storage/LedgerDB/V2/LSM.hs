@@ -28,7 +28,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   , Args (LSMArgs)
   , Trace (..)
   , LSM.LSMTreeTrace (..)
-  , mkLSMArgs
+  , mkLSMArgsIO
   , stdMkBlockIOFS
 
     -- * Streaming
@@ -168,6 +168,40 @@ instance LSM.SerialiseKey TxInBytes where
   deserialiseKey = TxInBytes
 
 {-------------------------------------------------------------------------------
+  LSM Handle management
+-------------------------------------------------------------------------------}
+
+closeLSMTable :: IOLike m => Tracer m LedgerDBV2Trace -> UTxOTable m -> m ()
+closeLSMTable tracer t =
+  encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (LSM.closeTable t)
+
+unsafeDuplicateLSMTable ::
+  IOLike m =>
+  Tracer m LedgerDBV2Trace ->
+  UTxOTable m ->
+  m (UTxOTable m)
+unsafeDuplicateLSMTable tracer t = do
+  encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate t
+
+duplicateLSMTable ::
+  ( IOLike m
+  , StandardHash l
+  , GetTip l
+  ) =>
+  Tracer m LedgerDBV2Trace ->
+  Point l ->
+  UTxOTable m ->
+  WithTempRegistry (LedgerSeq m l) m (UTxOTable m)
+duplicateLSMTable tracer p t =
+  allocateTemp
+    (unsafeDuplicateLSMTable tracer t)
+    (\t' -> closeLSMTable tracer t' >> pure True)
+    ( \(LedgerSeq ls) _ ->
+        AS.contains (pointSlot p) ((== p) . getTip . state) ls
+          || (p == getTip (state (AS.anchor ls)))
+    )
+
+{-------------------------------------------------------------------------------
   LedgerTablesHandle
 -------------------------------------------------------------------------------}
 
@@ -182,63 +216,33 @@ newLSMLedgerTablesHandle ::
   Tracer m LedgerDBV2Trace ->
   -- | The size of the tables
   Word64 ->
+  -- | At which point these tables are being opened
   Point l ->
-  (UTxOTable m, m Bool) ->
+  -- | The LSM Table handle
+  UTxOTable m ->
   m (LedgerTablesHandle m l)
-newLSMLedgerTablesHandle tracer origSize p (t, free) =
+newLSMLedgerTablesHandle tracer utxosSize p t =
   encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $ do
-    tsize <- newTVarIO origSize
     pure
       LedgerTablesHandle
-        { close = Monad.void free
-        , duplicate = lift (readTVarIO tsize) >>= \sz -> implDuplicate sz p t tracer
-        , unsafeDuplicate = readTVarIO tsize >>= \sz -> implUnsafeDuplicate sz p t tracer
+        { close = closeLSMTable tracer t
+        , duplicate = implDuplicate utxosSize p t tracer
+        , duplicateWithDiffs = implPushDiffs tracer t utxosSize
+        , unsafeDuplicate = implUnsafeDuplicate utxosSize p t tracer
         , read = implRead tracer t
         , readRange = implReadRange t
         , readAll = implReadAll t
-        , duplicateWithDiffs = implPushDiffs tracer t tsize
         , takeHandleSnapshot = implTakeHandleSnapshot tracer t
-        , tablesSize = fromIntegral <$> readTVarIO tsize
+        , tablesSize = pure $ fromIntegral utxosSize
         }
 
 {-# INLINE implDuplicate #-}
+{-# INLINE implUnsafeDuplicate #-}
 {-# INLINE implRead #-}
 {-# INLINE implReadRange #-}
 {-# INLINE implReadAll #-}
 {-# INLINE implPushDiffs #-}
 {-# INLINE implTakeHandleSnapshot #-}
-
-unsafeAllocHandle ::
-  IOLike m =>
-  Tracer m LedgerDBV2Trace ->
-  UTxOTable m ->
-  m (UTxOTable m, m Bool)
-unsafeAllocHandle tracer t = do
-  t' <- encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate t
-  pure
-    ( t'
-    , do
-        encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (LSM.closeTable t')
-        pure True
-    )
-
-allocateLedgerTablesHandle ::
-  ( IOLike m
-  , StandardHash l
-  , GetTip l
-  ) =>
-  Tracer m LedgerDBV2Trace ->
-  Point l ->
-  UTxOTable m ->
-  WithTempRegistry (LedgerSeq m l) m (UTxOTable m, m Bool)
-allocateLedgerTablesHandle tracer p t =
-  allocateTemp
-    (unsafeAllocHandle tracer t)
-    snd
-    ( \(LedgerSeq ls) _ ->
-        AS.contains (pointSlot p) ((== p) . getTip . state) ls
-          || (p == getTip (state (AS.anchor ls)))
-    )
 
 implDuplicate ::
   ( IOLike m
@@ -253,7 +257,7 @@ implDuplicate ::
   Tracer m LedgerDBV2Trace ->
   WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l)
 implDuplicate size p t tracer = do
-  t' <- allocateLedgerTablesHandle tracer p t
+  t' <- duplicateLSMTable tracer p t
   lift $ newLSMLedgerTablesHandle tracer size p t'
 
 implUnsafeDuplicate ::
@@ -269,11 +273,55 @@ implUnsafeDuplicate ::
   Tracer m LedgerDBV2Trace ->
   m (LedgerTablesHandle m l)
 implUnsafeDuplicate size p t tracer =
-  unsafeAllocHandle tracer t
+  unsafeDuplicateLSMTable tracer t
     >>= newLSMLedgerTablesHandle
       tracer
       size
       p
+
+implPushDiffs ::
+  forall m l mk.
+  ( IOLike m
+  , HasLedgerTables l
+  , IndexedMemPack (l EmptyMK) (TxOut l)
+  , StandardHash l
+  , GetTip l
+  ) =>
+  Tracer m LedgerDBV2Trace ->
+  UTxOTable m ->
+  Word64 ->
+  l mk ->
+  l DiffMK ->
+  WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l)
+implPushDiffs tracer t0 size _ !st1@(getTip -> p) = do
+  t <- duplicateLSMTable tracer p t0
+  lift $ encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
+    let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
+    let vec = V.create $ do
+          vec' <- VM.new (Map.size diffs)
+          Monad.foldM_
+            (\idx (k, item) -> VM.write vec' idx (toTxInBytes (Proxy @l) k, (f item)) >> pure (idx + 1))
+            0
+            $ Map.toList diffs
+          pure vec'
+    let (ins, dels) =
+          Map.foldl'
+            ( \(i, d) delta -> case delta of
+                Diff.Insert{} -> (i + 1, d)
+                Diff.Delete -> (i, d + 1)
+            )
+            (0, 0)
+            diffs
+    let size' =
+          assert (size + ins >= size) $
+            assert (size + ins - dels <= size + ins) $
+              size + ins - dels
+
+    encloseTimedWith (BackendTrace . SomeBackendTrace . LSMUpdate >$< tracer) $ LSM.updates t vec
+    newLSMLedgerTablesHandle tracer size' p t
+ where
+  f (Diff.Insert v) = LSM.Insert (toTxOutBytes (forgetLedgerTables st1) v) Nothing
+  f Diff.Delete = LSM.Delete
 
 implRead ::
   forall m l.
@@ -354,51 +402,6 @@ implReadAll t st =
         (v, n) <- implReadRange t st (m, 100000)
         maybe (pure v) (fmap (ltliftA2 unionValues v) . readAll' . Just) n
    in readAll' Nothing
-
-implPushDiffs ::
-  forall m l mk.
-  ( IOLike m
-  , HasLedgerTables l
-  , IndexedMemPack (l EmptyMK) (TxOut l)
-  , StandardHash l
-  , GetTip l
-  ) =>
-  Tracer m LedgerDBV2Trace ->
-  UTxOTable m ->
-  StrictTVar m Word64 ->
-  l mk ->
-  l DiffMK ->
-  WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l)
-implPushDiffs tracer t0 sizeTVar _ !st1@(getTip -> p) = do
-  t <- allocateLedgerTablesHandle tracer p t0
-  lift $ encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
-    let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
-    let vec = V.create $ do
-          vec' <- VM.new (Map.size diffs)
-          Monad.foldM_
-            (\idx (k, item) -> VM.write vec' idx (toTxInBytes (Proxy @l) k, (f item)) >> pure (idx + 1))
-            0
-            $ Map.toList diffs
-          pure vec'
-    let (ins, dels) =
-          Map.foldl'
-            ( \(i, d) delta -> case delta of
-                Diff.Insert{} -> (i + 1, d)
-                Diff.Delete -> (i, d + 1)
-            )
-            (0, 0)
-            diffs
-    size <- readTVarIO sizeTVar
-    let size' =
-          assert (size + ins >= size) $
-            assert (size + ins - dels <= size + ins) $
-              size + ins - dels
-
-    encloseTimedWith (BackendTrace . SomeBackendTrace . LSMUpdate >$< tracer) $ LSM.updates (fst t) vec
-    newLSMLedgerTablesHandle tracer size' p t
- where
-  f (Diff.Insert v) = LSM.Insert (toTxOutBytes (forgetLedgerTables st1) v) Nothing
-  f Diff.Delete = LSM.Delete
 
 implTakeHandleSnapshot ::
   IOLike m => Tracer m LedgerDBV2Trace -> UTxOTable m -> t -> String -> m (Maybe a)
@@ -591,16 +594,13 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
       values <-
         lift $
           allocateTemp
-            ( do
-                t <-
-                  encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
-                    LSM.openTableFromSnapshot
-                      session
-                      (fromString $ snapshotToDirName ds)
-                      (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
-                pure (t, encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (LSM.closeTable t) >> pure True)
+            ( encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
+                LSM.openTableFromSnapshot
+                  session
+                  (fromString $ snapshotToDirName ds)
+                  (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
             )
-            snd
+            (\t -> closeLSMTable tracer t >> pure True)
             ( \(LedgerSeq ls) _ ->
                 let p = getTip extLedgerSt
                  in AS.contains (pointSlot p) ((== p) . getTip . state) ls
@@ -628,23 +628,19 @@ tableFromValuesMK ::
   Session m ->
   l EmptyMK ->
   LedgerTables l ValuesMK ->
-  WithTempRegistry (LedgerSeq m l) m (UTxOTable m, m Bool, Word64)
+  WithTempRegistry (LedgerSeq m l) m (UTxOTable m, Word64)
 tableFromValuesMK tracer session st (LedgerTables (ValuesMK values)) = do
-  (table, free) <-
+  table <-
     allocateTemp
-      ( do
-          t <- encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $ LSM.newTable session
-          pure
-            (t, encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (LSM.closeTable t) >> pure True)
-      )
-      snd
+      (encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $ LSM.newTable session)
+      (\t -> closeLSMTable tracer t >> pure True)
       ( \(LedgerSeq ls) _ ->
           let p = getTip st
            in AS.contains (pointSlot p) ((== p) . getTip . state) ls
                 || (p == getTip (state (AS.anchor ls)))
       )
   lift $ mapM_ (go table) $ chunks 1000 $ Map.toList values
-  pure (table, free, fromIntegral $ Map.size values)
+  pure (table, fromIntegral $ Map.size values)
  where
   go table items =
     LSM.inserts table $
@@ -671,12 +667,12 @@ stdMkBlockIOFS fastStoragePath = do
 type data LSM
 
 -- | Create arguments for initializing the LedgerDB using the LSM-trees backend.
-mkLSMArgs ::
+mkLSMArgsIO ::
   ( LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
   ) =>
   Proxy blk -> FilePath -> FilePath -> StdGen -> (LedgerDbBackendArgs IO blk, StdGen)
-mkLSMArgs _ fp fastStorage gen =
+mkLSMArgsIO _ fp fastStorage gen =
   let (lsmSalt, gen') = genWord64 gen
    in ( LedgerDbBackendArgsV2 $
           SomeBackendArgs $
@@ -739,9 +735,9 @@ instance
     loadSnapshot trcr ccfg shfs (sessionResource res) ds
 
   createAndPopulateHandleFromGenesis trcr res st = do
-    (table, free, sz) <-
+    (table, sz) <-
       tableFromValuesMK trcr (sessionResource res) (forgetLedgerTables st) (ltprj st)
-    lift $ newLSMLedgerTablesHandle trcr sz (getTip st) (table, free)
+    lift $ newLSMLedgerTablesHandle trcr sz (getTip st) table
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 
@@ -857,28 +853,21 @@ mkLSMYieldArgs ::
   -- | The complete name of the snapshot to open, so @<slotno>[_<suffix>]@.
   String ->
   -- | Usually 'stdMkBlockIOFS'
-  (FilePath -> ResourceRegistry m -> m (a, SomeHasFSAndBlockIO m)) ->
+  (FilePath -> m (SomeHasFSAndBlockIO m)) ->
   -- | Usually 'newStdGen'
   (m StdGen) ->
   l EmptyMK ->
-  ResourceRegistry m ->
   m (YieldArgs m LSM l)
-mkLSMYieldArgs fp snapName mkFS mkGen st reg = do
-  (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkFS fp reg
+mkLSMYieldArgs fp snapName mkFS mkGen st = do
+  SomeHasFSAndBlockIO hasFS blockIO <- mkFS fp
   salt <- fst . genWord64 <$> mkGen
-  (_, session) <-
-    allocate reg (\_ -> LSM.openSession nullTracer hasFS blockIO salt (mkFsPath [])) LSM.closeSession
-  (rk, tb) <-
-    allocate
-      reg
-      ( \_ ->
-          LSM.openTableFromSnapshot
-            session
-            (LSM.toSnapshotName snapName)
-            (LSM.SnapshotLabel $ T.pack "UTxO table")
-      )
-      LSM.closeTable
-  YieldLSM 1000 <$> newLSMLedgerTablesHandle nullTracer 0 (getTip st) (tb, isJust <$> release rk)
+  session <- LSM.openSession nullTracer hasFS blockIO salt (mkFsPath [])
+  tb <-
+    LSM.openTableFromSnapshot
+      session
+      (LSM.toSnapshotName snapName)
+      (LSM.SnapshotLabel $ T.pack "UTxO table")
+  YieldLSM 1000 <$> newLSMLedgerTablesHandle nullTracer 0 (getTip st) tb
 
 -- | Create Sink arguments for LSM
 mkLSMSinkArgs ::
@@ -890,28 +879,18 @@ mkLSMSinkArgs ::
   -- | Usually 'ioHasFS'
   (MountPoint -> SomeHasFS m) ->
   -- | Usually 'stdMkBlockIOFS'
-  (FilePath -> ResourceRegistry m -> m (a, SomeHasFSAndBlockIO m)) ->
+  (FilePath -> m (SomeHasFSAndBlockIO m)) ->
   -- | Usually 'newStdGen'
   (m StdGen) ->
   l EmptyMK ->
-  ResourceRegistry m ->
   m (SinkArgs m LSM l)
-mkLSMSinkArgs
-  (splitFileName -> (fp, lsmDir))
-  snapFP
-  mkFs
-  mkBlockIOFS
-  mkGen
-  _
-  reg =
-    do
-      (_, SomeHasFSAndBlockIO hasFS blockIO) <- mkBlockIOFS fp reg
-      removeDirectoryRecursive hasFS lsmFsPath
-      createDirectory hasFS lsmFsPath
-      salt <- fst . genWord64 <$> mkGen
-      (_, session) <-
-        allocate reg (\_ -> LSM.newSession nullTracer hasFS blockIO salt lsmFsPath) LSM.closeSession
-      let snapFS = mkFs (MountPoint snapFP)
-      pure (SinkLSM 1000 snapFS (fromJust $ snapshotFromPath $ last $ splitDirectories snapFP) session)
-   where
-    lsmFsPath = mkFsPath [lsmDir]
+mkLSMSinkArgs (splitFileName -> (fp, lsmDir)) snapFP mkFs mkBlockIOFS mkGen _ = do
+  SomeHasFSAndBlockIO hasFS blockIO <- mkBlockIOFS fp
+  removeDirectoryRecursive hasFS lsmFsPath
+  createDirectory hasFS lsmFsPath
+  salt <- fst . genWord64 <$> mkGen
+  session <- LSM.newSession nullTracer hasFS blockIO salt lsmFsPath
+  let snapFS = mkFs (MountPoint snapFP)
+  pure (SinkLSM 1000 snapFS (fromJust $ snapshotFromPath $ last $ splitDirectories snapFP) session)
+ where
+  lsmFsPath = mkFsPath [lsmDir]
