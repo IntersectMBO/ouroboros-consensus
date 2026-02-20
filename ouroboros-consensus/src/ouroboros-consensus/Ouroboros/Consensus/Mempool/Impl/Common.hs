@@ -51,6 +51,7 @@ import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
+import Data.Bifunctor (second)
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
 import Data.Set (Set)
@@ -207,7 +208,7 @@ newtype LedgerInterface m blk = LedgerInterface
 data MempoolLedgerDBView m blk = MempoolLedgerDBView
   { mldViewState :: LedgerState blk EmptyMK
   -- ^ The ledger state currently at the tip of the LedgerDB
-  , mldViewGetForker :: m (Either GetForkerError (ReadOnlyForker m (LedgerState blk)))
+  , mldViewGetForker :: m (ResourceKey m, Either GetForkerError (ReadOnlyForker m (LedgerState blk)))
   -- ^ An action to get a forker at 'mldViewState' or an error in the unlikely
   -- case that such state is now gone from the LedgerDB.
   }
@@ -216,16 +217,20 @@ data MempoolLedgerDBView m blk = MempoolLedgerDBView
 chainDBLedgerInterface ::
   (IOLike m, IsLedger (LedgerState blk)) =>
   ChainDB m blk ->
+  ResourceRegistry m ->
   LedgerInterface m blk
-chainDBLedgerInterface chainDB =
+chainDBLedgerInterface chainDB topLevelRegistry =
   LedgerInterface
     { getCurrentLedgerState = do
         st <- ChainDB.getCurrentLedger chainDB
         pure
           $ MempoolLedgerDBView
             (ledgerState st)
-          $ fmap (fmap ledgerStateReadOnlyForker)
-          $ ChainDB.getReadOnlyForkerAtPoint chainDB (SpecificPoint (castPoint $ getTip st))
+          $ fmap (second (fmap ledgerStateReadOnlyForker))
+          $ ChainDB.allocInRegistryReadOnlyForkerAtPoint
+            chainDB
+            (SpecificPoint (castPoint $ getTip st))
+            topLevelRegistry
     }
 
 {-------------------------------------------------------------------------------
@@ -262,14 +267,7 @@ initMempoolEnv ::
   m (MempoolEnv m blk)
 initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer topLevelRegistry = do
   MempoolLedgerDBView st meFrk <- atomically $ getCurrentLedgerState ledgerInterface
-  (rk, eFrk) <-
-    allocate
-      topLevelRegistry
-      (\_ -> meFrk)
-      ( \case
-          Left{} -> pure ()
-          Right frk -> roforkerClose frk
-      )
+  (rk, eFrk) <- meFrk
   case eFrk of
     -- This should happen very rarely, if between getting the state and getting
     -- the forker, the ledgerdb has changed. We just retry here.

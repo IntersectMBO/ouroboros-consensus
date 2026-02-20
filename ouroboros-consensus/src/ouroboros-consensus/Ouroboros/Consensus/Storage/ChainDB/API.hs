@@ -80,6 +80,7 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   ) where
 
 import Control.Monad (void)
+import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -223,9 +224,16 @@ data ChainDB m blk = ChainDB
   , getHeaderStateHistory :: STM m (HeaderStateHistory blk)
   -- ^ Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
   -- last @k@ blocks of the current chain.
-  , getReadOnlyForkerAtPoint ::
+  , allocInRegistryReadOnlyForkerAtPoint ::
       Target (Point blk) ->
-      m (Either GetForkerError (ReadOnlyForker' m blk))
+      ResourceRegistry m ->
+      m (ResourceKey m, Either GetForkerError (ReadOnlyForker' m blk))
+  , withReadOnlyForkerAtPoint ::
+      forall t r.
+      (MonadTrans t, MonadThrow (t m)) =>
+      Target (Point blk) ->
+      (Either GetForkerError (ReadOnlyForker' m blk) -> t m r) ->
+      t m r
   -- ^ Acquire a read-only forker at a specific point if that point exists
   -- on the db.
   --

@@ -561,14 +561,7 @@ implSyncWithLedger mpEnv =
               pure (Just (snapshotFromIS is), is)
             else do
               -- The tip changed, we have to revalidate
-              (rkNew, eFrk) <-
-                allocate
-                  (mpEnvRegistry mpEnv)
-                  (\_ -> meFrk)
-                  ( \case
-                      Left{} -> pure ()
-                      Right frk -> roforkerClose frk
-                  )
+              (rkNew, eFrk) <- meFrk
               case eFrk of
                 -- This case should happen only if the tip has moved again, this time
                 -- to a separate fork, since the background thread saw a change in the
