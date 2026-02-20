@@ -38,7 +38,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   ) where
 
 import Cardano.Ledger.BaseTypes (WithOrigin (..))
-import Control.ResourceRegistry (ResourceRegistry)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
@@ -284,7 +283,6 @@ getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 getReadOnlyForkerAtPoint ::
   IOLike m =>
   ChainDbEnv m blk ->
-  ResourceRegistry m ->
   Target (Point blk) ->
   m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
 getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB

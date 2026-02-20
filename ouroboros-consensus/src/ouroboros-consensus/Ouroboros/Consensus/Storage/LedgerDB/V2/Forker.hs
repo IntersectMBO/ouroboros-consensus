@@ -102,14 +102,8 @@ implForkerPush env newState = modifyForkerEnv env $ \fState -> do
         st0 = current lseq
         st = forgetLedgerTables newState
 
-    -- bracketOnError
-    --   (duplicate)
-    --   (close)
-    --   (do something
-    --       transfer
-    --   )
     runWithTempRegistry $
-      (\x -> (x, x)) <$> do
+      (\x -> (x, foeLedgerSeq x)) <$> do
         tbs <- duplicateFor (tables $ currentHandle lseq) (getTip newState)
         lift $ pushDiffs tbs st0 newState
         pure fState{foeLedgerSeq = extend (StateRef st tbs) lseq}
@@ -117,14 +111,11 @@ implForkerPush env newState = modifyForkerEnv env $ \fState -> do
 implForkerCommit ::
   (IOLike m, GetTip l, StandardHash l) =>
   ForkerEnv m l ->
-  -- TODO return this list so that ChainSel can close it (toCloseLdb)
-  -- TODO return the anchor of the forker too
-  STM m (LedgerSeq m l, LedgerHandle)
+  STM m (m ())
 implForkerCommit env = modifyForkerEnvSTM env $ \fState -> assert (foeWasCommitted fState == False) $ do
   let ForkerState
         { foeLedgerSeq = LedgerSeq lseq
         , foeSwitchVar
-        , foeLdbToClose
         } = fState
   let intersectionSlot = getTipSlot $ state $ AS.anchor lseq
   let predicate = (== getTipHash (state (AS.anchor lseq))) . getTipHash . state
@@ -136,7 +127,7 @@ implForkerCommit env = modifyForkerEnvSTM env $ \fState -> assert (foeWasCommitt
           -- have to be closed.
           (toKeepBase, toCloseLdb) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
           -- TODO revisit why we have toCloseForker
-          (toCloseForker, toKeepTip) <-
+          (_, toKeepTip) <-
             AS.splitAfterMeasure intersectionSlot (either predicate predicate) lseq
           -- Join the prefix of the selection with the sequence in the forker
           newdb <- AS.join (const $ const True) toKeepBase toKeepTip
@@ -145,10 +136,14 @@ implForkerCommit env = modifyForkerEnvSTM env $ \fState -> assert (foeWasCommitt
           let ldbToClose = case toCloseLdb of
                 AS.Empty _ -> Nothing
                 _ AS.:< closeOld' -> Just (LedgerSeq closeOld')
-          pure ((LedgerSeq toCloseForker, ldbToClose), LedgerSeq newdb)
+          pure ((AS.anchor lseq, ldbToClose), LedgerSeq newdb)
       )
-  whenJust toCloseLdb (modifyTVar foeLdbToClose . (:))
-  pure fState{foeLedgerSeq = toCloseForker, foeWasCommitted = True}
+  pure
+    ( fState{foeLedgerSeq = LedgerSeq (AS.Empty toCloseForker), foeWasCommitted = True}
+    , do
+        whenJust toCloseLdb closeLedgerSeq
+        close $ tables toCloseForker
+    )
  where
   theImpossible =
     error $
@@ -156,10 +151,3 @@ implForkerCommit env = modifyForkerEnvSTM env $ \fState -> assert (foeWasCommitt
         [ "Critical invariant violation:"
         , "Forker chain does no longer intersect with selected chain."
         ]
-
-{-
-
------ X ---- Y ---- Z
-      X ---  U ---- V ---- W
-
--}

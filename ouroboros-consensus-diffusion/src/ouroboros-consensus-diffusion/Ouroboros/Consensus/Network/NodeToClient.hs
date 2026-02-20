@@ -2,6 +2,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
@@ -77,6 +78,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -142,9 +144,15 @@ mkHandlers NodeKernelArgs{cfg, tracers} NodeKernel{getChainDB, getMempool} =
         localTxSubmissionServer
           (Node.localTxSubmissionServerTracer tracers)
           getMempool
-    , hStateQueryServer =
-        localStateQueryServer (ExtLedgerCfg cfg)
-          . ChainDB.getReadOnlyForkerAtPoint getChainDB
+    , hStateQueryServer = \reg ->
+        localStateQueryServer (ExtLedgerCfg cfg) $ \target ->
+          allocate
+            reg
+            (\_ -> ChainDB.getReadOnlyForkerAtPoint getChainDB target)
+            ( \case
+                Left{} -> pure ()
+                Right v -> roforkerClose v
+            )
     , hTxMonitorServer =
         localTxMonitorServer
           getMempool

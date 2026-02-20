@@ -60,6 +60,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   ) where
 
 import Cardano.Ledger.BaseTypes
+import Control.Monad.Trans.Class
 import Control.RAWLock (RAWLock)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -89,17 +90,9 @@ data ForkerState m l = ForkerState
   { foeLedgerSeq :: !(LedgerSeq m l)
   -- ^ Local version of the LedgerSeq
   , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l))
-  , foeLdbToClose :: !(StrictTVar m [LedgerSeq m l])
   -- ^ This TVar is the same as the LedgerDB one
-  , foeLedgerDbRegistry :: !(ResourceRegistry m)
-  -- ^ The registry in the LedgerDB to move handles to in case we commit the
-  -- forker.
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
-  , foeCleanup :: !(m ())
-  -- ^ An action to run on cleanup. If the forker was not committed this will be
-  -- the trivial action. Otherwise it will move the required handles to the
-  -- LedgerDB and release the discarded ones.
   , foeLedgerDbLock :: !(RAWLock m ())
   -- ^ 'ldbOpenHandlesLock'.
   , foeWasCommitted :: !Bool
@@ -135,8 +128,8 @@ modifyForkerEnv ::
 modifyForkerEnv (ForkerEnv f) k = readTVarIO f >>= k >>= atomically . writeTVar f
 
 modifyForkerEnvSTM ::
-  MonadSTM m => ForkerEnv m l -> (ForkerState m l -> STM m (ForkerState m l)) -> STM m ()
-modifyForkerEnvSTM (ForkerEnv f) k = readTVar f >>= k >>= writeTVar f
+  MonadSTM m => ForkerEnv m l -> (ForkerState m l -> STM m (ForkerState m l, r)) -> STM m r
+modifyForkerEnvSTM (ForkerEnv f) k = readTVar f >>= k >>= \(s, r) -> writeTVar f s >> pure r
 
 {-------------------------------------------------------------------------------
   LedgerTablesHandles
@@ -145,9 +138,10 @@ modifyForkerEnvSTM (ForkerEnv f) k = readTVar f >>= k >>= writeTVar f
 -- | The interface fulfilled by handles on both the InMemory and LSM handles.
 data LedgerTablesHandle m l = LedgerTablesHandle
   { close :: !(m ())
-  , duplicate :: !(WithTempRegistry (ForkerState m l) m (LedgerTablesHandle m l))
+  , duplicate :: !(WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l))
+  , duplicate' :: !(m (LedgerTablesHandle m l))
   , duplicateFor ::
-      !(Point l -> WithTempRegistry (ForkerState m l) m (LedgerTablesHandle m l))
+      !(Point l -> WithTempRegistry (LedgerSeq m l) m (LedgerTablesHandle m l))
   -- ^ Create a copy of the handle.
   --
   -- A duplicated handle must provide access to all the data that was there in
@@ -294,14 +288,16 @@ closeLedgerSeq (LedgerSeq l) =
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
   (IOLike m, ApplyBlock l blk) =>
-  ResourceRegistry m ->
   LedgerDbCfg l ->
   blk ->
   LedgerSeq m l ->
-  m (m (), LedgerSeq m l)
-reapplyThenPush rr cfg ap db =
-  (\current' -> pruneToImmTipOnly $ extend current' db)
-    <$> reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap rr db
+  m (LedgerSeq m l)
+reapplyThenPush cfg ap db =
+  runWithTempRegistry $ do
+    newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
+    let (m, db') = pruneToImmTipOnly $ extend newSt db
+    lift $ m
+    pure (db', db')
 
 reapplyBlock ::
   forall m l blk.
@@ -309,18 +305,17 @@ reapplyBlock ::
   ComputeLedgerEvents ->
   LedgerCfg l ->
   blk ->
-  ResourceRegistry m ->
   LedgerSeq m l ->
-  m (StateRef m l)
-reapplyBlock evs cfg b rr db = do
+  WithTempRegistry (LedgerSeq m l) m (StateRef m l)
+reapplyBlock evs cfg b db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db
-  (_, newtbs) <- undefined $ duplicate tbs
-  vals <- read newtbs st ks
+  newtbs <- duplicate tbs
+  vals <- lift $ read newtbs st ks
   let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
       newst = forgetLedgerTables st'
 
-  pushDiffs newtbs st st'
+  lift $ pushDiffs newtbs st st'
   pure (StateRef newst newtbs)
 
 -- | Prune older ledger states according to the given 'LedgerDbPrune' strategy.

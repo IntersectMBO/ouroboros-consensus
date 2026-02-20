@@ -58,31 +58,24 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   -- | Release the acquired resources.
   releaseResources :: Proxy blk -> Resources m backend -> m ()
 
-  -- | Create a new handle from the given values. This will only be called when
-  -- starting Consensus from Genesis.
-
-  -- TODO (@js) rename to something that implies Creation and inserts
-  newHandleFromValues ::
+  -- | Create a new handle from the given Genesis state.
+  createAndPopulateHandleFromGenesis ::
     Tracer m LedgerDBV2Trace ->
-    ResourceRegistry m ->
     Resources m backend ->
     ExtLedgerState blk ValuesMK ->
-    m (LedgerTablesHandle m (ExtLedgerState blk))
+    WithTempRegistry (LedgerSeq m (ExtLedgerState blk)) m (LedgerTablesHandle m (ExtLedgerState blk))
 
   -- | Create a new handle from a snapshot.
-
-  -- TODO (@js) propagate this change I did
-  newHandleFromSnapshot ::
+  openStateRefFromSnapshot ::
     Tracer m LedgerDBV2Trace ->
-    ResourceRegistry m ->
     CodecConfig blk ->
     SomeHasFS m ->
     Resources m backend ->
     DiskSnapshot ->
     ExceptT
       (SnapshotFailure blk)
-      m
-      (ExtLedgerState blk, LedgerTablesHandle m (ExtLedgerState blk), RealPoint blk)
+      (WithTempRegistry (LedgerSeq m (ExtLedgerState blk)) m)
+      (StateRef m (ExtLedgerState blk), RealPoint blk)
 
   -- | Instantiate the 'SnapshotManager' for this backend.
   snapshotManager ::

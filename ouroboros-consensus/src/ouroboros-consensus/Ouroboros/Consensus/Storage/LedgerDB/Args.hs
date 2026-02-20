@@ -59,7 +59,8 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   , lgrConfig :: LedgerDbCfgF f (ExtLedgerState blk)
   , lgrTracer :: !(Tracer m (TraceEvent blk))
   , lgrBackendArgs :: LedgerDbBackendArgs m blk
-  , lgrRegistry :: HKD f (ResourceRegistry m)
+  , -- TODO: @js remove
+    lgrRegistry :: HKD f (ResourceRegistry m)
   , lgrQueryBatchSize :: QueryBatchSize
   , lgrStartSnapshot :: Maybe DiskSnapshot
   -- ^ If provided, the ledgerdb will start using said snapshot and fallback

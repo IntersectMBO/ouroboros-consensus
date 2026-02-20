@@ -224,7 +224,6 @@ data ChainDB m blk = ChainDB
   -- ^ Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
   -- last @k@ blocks of the current chain.
   , getReadOnlyForkerAtPoint ::
-      ResourceRegistry m ->
       Target (Point blk) ->
       m (Either GetForkerError (ReadOnlyForker' m blk))
   -- ^ Acquire a read-only forker at a specific point if that point exists

@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -200,9 +201,7 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
 
 -- | Abstract interface needed to run a Mempool.
 newtype LedgerInterface m blk = LedgerInterface
-  { getCurrentLedgerState :: ResourceRegistry m -> STM m (MempoolLedgerDBView m blk)
-  -- ^ The resource registry should be the one of the Mempool
-  -- ('mpEnvRegistry'). It will be used to allocate the forker.
+  { getCurrentLedgerState :: STM m (MempoolLedgerDBView m blk)
   }
 
 data MempoolLedgerDBView m blk = MempoolLedgerDBView
@@ -213,13 +212,6 @@ data MempoolLedgerDBView m blk = MempoolLedgerDBView
   -- case that such state is now gone from the LedgerDB.
   }
 
-instance
-  (StandardHash blk, UpdateLedger blk) =>
-  Eq (MempoolLedgerDBView m blk)
-  where
-  MempoolLedgerDBView a _ == MempoolLedgerDBView b _ =
-    ledgerTipPoint a == ledgerTipPoint b
-
 -- | Create a 'LedgerInterface' from a 'ChainDB'.
 chainDBLedgerInterface ::
   (IOLike m, IsLedger (LedgerState blk)) =>
@@ -227,13 +219,13 @@ chainDBLedgerInterface ::
   LedgerInterface m blk
 chainDBLedgerInterface chainDB =
   LedgerInterface
-    { getCurrentLedgerState = \reg -> do
+    { getCurrentLedgerState = do
         st <- ChainDB.getCurrentLedger chainDB
         pure
           $ MempoolLedgerDBView
             (ledgerState st)
           $ fmap (fmap ledgerStateReadOnlyForker)
-          $ ChainDB.getReadOnlyForkerAtPoint chainDB reg (SpecificPoint (castPoint $ getTip st))
+          $ ChainDB.getReadOnlyForkerAtPoint chainDB (SpecificPoint (castPoint $ getTip st))
     }
 
 {-------------------------------------------------------------------------------
@@ -245,7 +237,7 @@ chainDBLedgerInterface chainDB =
 -- different operations.
 data MempoolEnv m blk = MempoolEnv
   { mpEnvLedger :: LedgerInterface m blk
-  , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk))
+  , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk), ResourceKey m)
   , mpEnvLedgerCfg :: LedgerConfig blk
   , mpEnvRegistry :: ResourceRegistry m
   , mpEnvStateVar :: StrictTMVar m (InternalState blk)
@@ -269,37 +261,42 @@ initMempoolEnv ::
   ResourceRegistry m ->
   m (MempoolEnv m blk)
 initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer topLevelRegistry = do
-  (_, mpEnvRegistry) <- allocate topLevelRegistry (\_ -> unsafeNewRegistry) closeRegistry
-  initMempoolEnv' mpEnvRegistry
- where
-  initMempoolEnv' reg = do
-    MempoolLedgerDBView st meFrk <- atomically $ getCurrentLedgerState ledgerInterface reg
-    eFrk <- meFrk
-    case eFrk of
-      -- This should happen very rarely, if between getting the state and getting
-      -- the forker, the ledgerdb has changed. We just retry here.
-      Left{} -> initMempoolEnv' reg
-      Right frk -> do
-        frkMVar <- newMVar frk
-        let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
-        isVar <-
-          newTMVarIO $
-            initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
-        addTxRemoteFifo <- newMVar ()
-        addTxAllFifo <- newMVar ()
-        return
-          MempoolEnv
-            { mpEnvLedger = ledgerInterface
-            , mpEnvLedgerCfg = cfg
-            , mpEnvForker = frkMVar
-            , mpEnvRegistry = reg
-            , mpEnvStateVar = isVar
-            , mpEnvAddTxsRemoteFifo = addTxRemoteFifo
-            , mpEnvAddTxsAllFifo = addTxAllFifo
-            , mpEnvTracer = tracer
-            , mpEnvCapacityOverride = capacityOverride
-            , mpEnvTimeoutConfig = mbTimeoutConfig
-            }
+  MempoolLedgerDBView st meFrk <- atomically $ getCurrentLedgerState ledgerInterface
+  (rk, eFrk) <-
+    allocate
+      topLevelRegistry
+      (\_ -> meFrk)
+      ( \case
+          Left{} -> pure ()
+          Right frk -> roforkerClose frk
+      )
+  case eFrk of
+    -- This should happen very rarely, if between getting the state and getting
+    -- the forker, the ledgerdb has changed. We just retry here.
+    Left{} -> do
+      _ <- release rk
+      initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer topLevelRegistry
+    Right frk -> do
+      frkMVar <- newMVar (frk, rk)
+      let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
+      isVar <-
+        newTMVarIO $
+          initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+      addTxRemoteFifo <- newMVar ()
+      addTxAllFifo <- newMVar ()
+      return
+        MempoolEnv
+          { mpEnvLedger = ledgerInterface
+          , mpEnvLedgerCfg = cfg
+          , mpEnvForker = frkMVar
+          , mpEnvRegistry = topLevelRegistry
+          , mpEnvStateVar = isVar
+          , mpEnvAddTxsRemoteFifo = addTxRemoteFifo
+          , mpEnvAddTxsAllFifo = addTxAllFifo
+          , mpEnvTracer = tracer
+          , mpEnvCapacityOverride = capacityOverride
+          , mpEnvTimeoutConfig = mbTimeoutConfig
+          }
 
 {-------------------------------------------------------------------------------
   Ticking the ledger state

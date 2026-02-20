@@ -22,6 +22,7 @@ import Ouroboros.Consensus.Mempool.Query
 import Ouroboros.Consensus.Mempool.Update
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
+import Ouroboros.Network.Block
 
 {-------------------------------------------------------------------------------
   Opening the mempool
@@ -71,14 +72,14 @@ forkSyncStateOnTipPointChange menv =
         , wReader = getCurrentTip
         }
  where
-  action :: MempoolLedgerDBView m blk -> m ()
+  action :: Point blk -> m ()
   action _a =
     void $ implSyncWithLedger menv
 
   -- Using the tip ('Point') allows for quicker equality checks
-  getCurrentTip :: STM m (MempoolLedgerDBView m blk)
+  getCurrentTip :: STM m (Point blk)
   getCurrentTip =
-    getCurrentLedgerState (mpEnvLedger menv) (mpEnvRegistry menv)
+    ledgerTipPoint . mldViewState <$> getCurrentLedgerState (mpEnvLedger menv)
 
 -- | Unlike 'openMempool', this function does not fork a background thread
 -- that synchronises with the ledger state whenever the later changes.

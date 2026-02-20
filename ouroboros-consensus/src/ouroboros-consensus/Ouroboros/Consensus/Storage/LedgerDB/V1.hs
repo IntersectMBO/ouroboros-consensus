@@ -88,7 +88,8 @@ mkInitDb ::
   InitDB (DbChangelog' blk, ResourceKey m, BackingStore' m blk) m blk
 mkInitDb args bss getBlock snapManager getVolatileSuffix =
   InitDB
-    { initFromGenesis = do
+    { initCloseDB = undefined
+    , initFromGenesis = do
         st <- lgrGenesis
         let genesis = forgetLedgerTables st
             chlog = DbCh.empty genesis
@@ -121,7 +122,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
               else pure chlog'
         pure (chlog'', r, bstore)
     , currentTip = \(ch, _, _) -> ledgerState . current $ ch
-    , mkLedgerDb = \(db, ldbBackingStoreKey, ldbBackingStore) -> do
+    , mkLedgerDb = undefined $ \(db, ldbBackingStoreKey, ldbBackingStore) -> do
         (varDB, prevApplied) <-
           (,) <$> newTVarIO db <*> newTVarIO Set.empty
         flushLock <- mkLedgerDBLock
@@ -186,8 +187,8 @@ implMkLedgerDb h snapManager =
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = getEnvSTM1 h implGetPastLedgerState
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
-      , getForkerAtTarget = newForkerAtTarget h
-      , validateFork = getEnv5 h (implValidate h)
+      , getForkerAtTarget = undefined $ newForkerAtTarget h
+      , validateFork = undefined $ getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
       , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
@@ -279,23 +280,24 @@ implValidate ::
   BlockCache blk ->
   Word64 ->
   NonEmpty (Header blk) ->
-  m (ValidateResult m l blk)
-implValidate h ldbEnv rr tr cache rollbacks hdrs =
-  validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
-    ValidateArgs
-      (ldbResolveBlock ldbEnv)
-      (ledgerDbCfg $ ldbCfg ldbEnv)
-      ( \l -> do
-          prev <- readTVar (ldbPrevApplied ldbEnv)
-          writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
-      )
-      (readTVar (ldbPrevApplied ldbEnv))
-      (newForkerByRollback h)
-      rr
-      tr
-      cache
-      rollbacks
-      hdrs
+  m (ValidateResult l blk)
+implValidate h ldbEnv rr tr cache rollbacks hdrs = undefined
+
+-- validateAndCommit (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+--   ValidateArgs
+--     (ldbResolveBlock ldbEnv)
+--     (ledgerDbCfg $ ldbCfg ldbEnv)
+--     ( \l -> do
+--         prev <- readTVar (ldbPrevApplied ldbEnv)
+--         writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
+--     )
+--     (readTVar (ldbPrevApplied ldbEnv))
+--     (newForkerByRollback h)
+--     rr
+--     tr
+--     cache
+--     rollbacks
+--     hdrs
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
@@ -920,7 +922,7 @@ mkForker h qbs forkerKey forkerEnv =
     , forkerGetLedgerState = getForkerEnvSTM h forkerKey implForkerGetLedgerState
     , forkerReadStatistics = getForkerEnv h forkerKey implForkerReadStatistics
     , forkerPush = getForkerEnv1 h forkerKey implForkerPush
-    , forkerCommit = getForkerEnvSTM h forkerKey implForkerCommit
+    , forkerCommit = undefined -- getForkerEnvSTM h forkerKey implForkerCommit
     }
 
 -- | This function receives an environment instead of reading it from
