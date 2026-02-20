@@ -1,0 +1,100 @@
+{
+    "TraceOptionForwarder": {
+        "connQueueSize": 64,
+        "disconnQueueSize": 128,
+        "maxReconnectDelay": 30
+    },
+    "TraceOptionMetricsPrefix": "cardano.node.metrics.",
+    "TraceOptionPeerFrequency": 2000,
+    "TraceOptionResourceFrequency": 1000,
+    "TraceOptions": {
+        "": {
+            "backends": [
+                "EKGBackend",
+                "Forwarder",
+                "PrometheusSimple suffix 127.0.0.1 12798",
+                "Stdout HumanFormatColoured"
+            ],
+            "detail": "DNormal",
+            "severity": "Notice"
+        },
+        "BlockFetch.Client.CompletedBlockFetch": {
+            "maxFrequency": 2.0
+        },
+        "BlockFetch.Decision": {
+            "severity": "Silence"
+        },
+        "ChainDB": {
+            "severity": "Info"
+        },
+        "ChainDB.AddBlockEvent.AddBlockValidation": {
+            "severity": "Silence"
+        },
+        "ChainDB.AddBlockEvent.AddBlockValidation.ValidCandidate": {
+            "maxFrequency": 2.0
+        },
+        "ChainDB.AddBlockEvent.AddedBlockToQueue": {
+            "maxFrequency": 2.0
+        },
+        "ChainDB.AddBlockEvent.AddedBlockToVolatileDB": {
+            "maxFrequency": 2.0
+        },
+        "ChainDB.CopyToImmutableDBEvent.CopiedBlockToImmutableDB": {
+            "maxFrequency": 2.0
+        },
+        "ChainDB.LedgerEvent.Forker": {
+            "severity": "Silence"
+        },
+        "ChainSync.Client": {
+            "severity": "Warning"
+        },
+        "Forge.Loop": {
+            "severity": "Info"
+        },
+        "Forge.StateInfo": {
+            "severity": "Info"
+        },
+        "Mempool": {
+            "severity": "Silence"
+        },
+        "Mempool.AttemptAdd": {
+            "severity": "Silence"
+        },
+        "Mempool.SyncNotNeeded": {
+            "severity": "Silence"
+        },
+        "Net.ConnectionManager.Remote": {
+            "severity": "Info"
+        },
+        "Net.ConnectionManager.Remote.ConnectionManagerCounters": {
+            "severity": "Silence"
+        },
+        "Net.InboundGovernor": {
+            "severity": "Warning"
+        },
+        "Net.InboundGovernor.Remote": {
+            "severity": "Info"
+        },
+        "Net.Mux.Remote": {
+            "severity": "Info"
+        },
+        "Net.PeerSelection": {
+            "severity": "Silence"
+        },
+        "Resources": {
+            "severity": "Silence"
+        },
+        "Startup.DiffusionInit": {
+            "severity": "Info"
+        }
+    },
+    "TurnOnLogMetrics": true,
+    "TurnOnLogging": true,
+    "UseTraceDispatcher": true,
+    "defaultBackends": [],
+    "defaultScribes": [],
+    "minSeverity": "Critical",
+    "options": {},
+    "setupBackends": [],
+    "setupScribes": []
+}
