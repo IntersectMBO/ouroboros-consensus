@@ -242,7 +242,7 @@ encodeLeiosFetch encodeP encodeEb encodeTx = encode
         <> encodeP p
         <> encodeBitmaps bitmaps
     MsgLeiosBlockTxs p bitmaps txs ->
-      CBOR.encodeListLen 2
+      CBOR.encodeListLen 4
         <> CBOR.encodeWord 3
         <> encodeP p
         <> encodeBitmaps bitmaps
@@ -293,10 +293,10 @@ decodeLeiosFetch decodeP decodeEb decodeTx = decode
         p <- decodeP
         bitmaps <- decodeBitmaps
         return $ SomeMessage $ MsgLeiosBlockTxsRequest p bitmaps
-      (SingBlockTxs, 2, 3) -> do
-        n <- CBOR.decodeListLen
+      (SingBlockTxs, 4, 3) -> do
         p <- decodeP
         bitmaps <- decodeBitmaps
+        n <- CBOR.decodeListLen
         -- TODO does V.generateM allocate exacly one buffer, via the hint?
         --
         -- If not, we could do so manually by relying on the fact that
