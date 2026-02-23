@@ -28,7 +28,7 @@ open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
 open import Ledger.Crypto
 open import Ledger.Types.Epoch
-open import Data.Rational.Ext
+open import stdlib.Data.Rational.Ext
 
 module Spec.ChainHead
   (crypto : _) (open Crypto crypto)
