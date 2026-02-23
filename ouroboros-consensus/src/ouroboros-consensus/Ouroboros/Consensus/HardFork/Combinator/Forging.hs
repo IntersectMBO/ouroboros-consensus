@@ -27,7 +27,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP, ViewOptNP (..))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Text (Text)
-import LeiosDemoTypes (LeiosEb)
+import LeiosDemoTypes (ForgedLeiosEb)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -306,7 +306,7 @@ hardForkForgeBlock ::
   [Validated (GenTx (HardForkBlock xs))] ->
   [Validated (GenTx (HardForkBlock xs))] ->
   HardForkIsLeader xs ->
-  m (HardForkBlock xs, Maybe LeiosEb)
+  m (HardForkBlock xs, Maybe ForgedLeiosEb)
 hardForkForgeBlock
   blockForging
   cfg
@@ -318,7 +318,7 @@ hardForkForgeBlock
   isLeader =
     fmap undistrib $ hsequence' isLeaderAndLedgerStateAndBlocks
    where
-    isLeaderAndLedgerStateAndBlocks :: NS (m :.: Product I (Const (Maybe LeiosEb))) xs
+    isLeaderAndLedgerStateAndBlocks :: NS (m :.: Product I (Const (Maybe ForgedLeiosEb))) xs
     isLeaderAndLedgerStateAndBlocks =
       hizipWith3
         forgeBlockOne
@@ -383,14 +383,14 @@ hardForkForgeBlock
       noMismatches (_errs, _) = error "unexpected unmatchable transactions"
 
     undistrib ::
-      NS (Product I (Const (Maybe LeiosEb))) xs ->
-      (HardForkBlock xs, Maybe LeiosEb)
+      NS (Product I (Const (Maybe ForgedLeiosEb))) xs ->
+      (HardForkBlock xs, Maybe ForgedLeiosEb)
     undistrib = hcollapse . himap inj
      where
       inj ::
         Index xs blk ->
-        Product I (Const (Maybe LeiosEb)) blk ->
-        K (HardForkBlock xs, Maybe LeiosEb) blk
+        Product I (Const (Maybe ForgedLeiosEb)) blk ->
+        K (HardForkBlock xs, Maybe ForgedLeiosEb) blk
       inj index (Pair (I blk) (Const mEb)) =
         K (HardForkBlock (OneEraBlock (injectNS index (I blk))), mEb)
 
@@ -406,7 +406,7 @@ hardForkForgeBlock
         )
         (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
         blk ->
-      (m :.: Product I (Const (Maybe LeiosEb))) blk
+      (m :.: Product I (Const (Maybe ForgedLeiosEb))) blk
     forgeBlockOne
       index
       cfg'

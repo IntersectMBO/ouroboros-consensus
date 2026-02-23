@@ -14,7 +14,7 @@ import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import qualified Data.Sequence.Strict as Seq
-import LeiosDemoTypes (LeiosEb, mkLeiosEb)
+import LeiosDemoTypes (ForgedLeiosEb, forgeLeiosEb)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -54,7 +54,7 @@ forgeShelleyBlock ::
   -- | EB Txs to include
   [Validated (GenTx (ShelleyBlock proto era))] ->
   IsLeader proto ->
-  m (ShelleyBlock proto era, Maybe LeiosEb)
+  m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
 forgeShelleyBlock
   hotKey
   cbl
@@ -78,7 +78,7 @@ forgeShelleyBlock
         protocolVersion
     let blk = mkShelleyBlock $ SL.Block hdr body
     -- Only build an EB if ebTxs is not empty
-    let eb = mkLeiosEb <$> nonEmpty (extractTx <$> ebTxs)
+    let eb = forgeLeiosEb curSlot <$> nonEmpty (extractTx <$> ebTxs)
     return $
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
         (blk, eb)
