@@ -28,6 +28,7 @@ import NoThunks.Class
   ( InspectHeap (..)
   , InspectHeapNamed (..)
   , NoThunks (..)
+  , OnlyCheckWhnf (..)
   , OnlyCheckWhnfNamed (..)
   , allNoThunks
   )
@@ -35,6 +36,8 @@ import Ouroboros.Network.Util.ShowProxy
 import System.FS.API (SomeHasFS)
 import System.FS.API.Types (FsPath, Handle)
 import System.FS.CRC (CRC (CRC))
+import System.Random (StdGen)
+import qualified System.Random.Internal as Random
 
 {-------------------------------------------------------------------------------
   Serialise
@@ -84,6 +87,10 @@ instance NoThunks a => NoThunks (K a b) where
 instance NoThunks a => NoThunks (MultiSet a) where
   showTypeOf _ = "MultiSet"
   wNoThunks ctxt = wNoThunks ctxt . MultiSet.toMap
+
+instance NoThunks StdGen where
+  showTypeOf _ = "StdGen"
+  wNoThunks ctx = wNoThunks ctx . OnlyCheckWhnf . Random.unStdGen
 
 {-------------------------------------------------------------------------------
   fs-api

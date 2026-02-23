@@ -231,6 +231,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     chainSelFuse <- newFuse "chain selection"
     chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
+    varSnapshotDelayRNG <- newTVarIO (Args.cdbsSnapshotDelayRNG cdbSpecificArgs)
 
     let env =
           CDB
@@ -257,6 +258,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
+            , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -299,7 +301,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , intGarbageCollect = \slot -> getEnv h $ \e -> do
                 Background.garbageCollectBlocks e slot
                 LedgerDB.garbageCollect (cdbLedgerDB e) slot
-            , intTryTakeSnapshot = getEnv h $ LedgerDB.tryTakeSnapshot . cdbLedgerDB
+            , intTryTakeSnapshot = getEnv2 h $ LedgerDB.tryTakeSnapshot . cdbLedgerDB
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
             }
