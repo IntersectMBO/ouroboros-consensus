@@ -144,7 +144,7 @@ library
     cardano-ledger-alonzo ^>=1.14,
     cardano-ledger-api ^>=1.12,
     cardano-ledger-babbage ^>=1.12,
-    cardano-ledger-binary ^>=1.7,
+    cardano-ledger-binary ^>=1.7.1,
     cardano-ledger-byron ^>=1.2,
     cardano-ledger-conway ^>=1.20,
     cardano-ledger-core ^>=1.18,
