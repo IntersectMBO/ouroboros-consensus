@@ -20,8 +20,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
   , implForkerReadTables
   ) where
 
-import qualified Control.Monad as Monad
-import Control.ResourceRegistry
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
@@ -57,13 +55,13 @@ data ForkerEnv m l blk = ForkerEnv
       !( StrictMVar
            m
            ( Either
-               (LedgerDBLock m, LedgerBackingStore m l, ResourceRegistry m)
-               (ResourceKey m, LedgerBackingStoreValueHandle m l)
+               (LedgerDBLock m, LedgerBackingStore m l)
+               (LedgerBackingStoreValueHandle m l)
            )
        )
   -- ^ Either the ingredients to create a value handle or a value handle, i.e. a
   -- local, consistent view of backing store. Use 'getValueHandle' to promote
-  -- this if needed.
+  -- this from a Left to a Right if needed.
   , foeChangelog :: !(StrictTVar m (DbChangelog l))
   -- ^ In memory db changelog, 'foeBackingStoreValueHandle' must refer to
   -- the anchor of this changelog.
@@ -92,15 +90,17 @@ deriving instance
 -------------------------------------------------------------------------------}
 
 closeForkerEnv :: IOLike m => ForkerEnv m l blk -> m ()
-closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = do
+closeForkerEnv ForkerEnv{foeBackingStoreValueHandle, foeTracer, foeWasCommitted} = do
+  wc <- readTVarIO foeWasCommitted
+  traceWith foeTracer (ForkerClose $ if wc then ForkerWasCommitted else ForkerWasUncommitted)
   -- If this MVar is empty, we already closed the forker in the past so do nothing.
   tryTakeMVar foeBackingStoreValueHandle >>= \case
     -- We already closed the forker in the past, so do nothing.
     Nothing -> pure ()
     -- Release the read lock.
-    Just (Left (lock, _, _)) -> atomically $ unsafeReleaseReadAccess lock
+    Just (Left (lock, _)) -> atomically $ unsafeReleaseReadAccess lock
     -- Release the value handle
-    Just (Right (bsvh, _)) -> Monad.void $ release bsvh
+    Just (Right bsvh) -> bsvhClose bsvh
 
 {-------------------------------------------------------------------------------
   Acquiring consistent views
@@ -109,26 +109,38 @@ closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = do
 -- | Get the value handle in a forker, creating it on demand if this is the
 -- first time we access the tables.
 getValueHandle :: (GetTip l, IOLike m) => ForkerEnv m l blk -> m (LedgerBackingStoreValueHandle m l)
-getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} =
-  modifyMVar foeBackingStoreValueHandle $ \case
-    r@(Right (_, bsvh)) -> pure (r, bsvh)
-    Left (l, bs, rr) -> do
-      (k, bsvh) <- allocate rr (\_ -> bsValueHandle bs) bsvhClose
-      dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
-      if bsvhAtSlot bsvh == dblogSlot
-        then do
-          -- Release the read lock acquired when opening the forker.
-          atomically $ unsafeReleaseReadAccess l
-          pure (Right (k, bsvh), bsvh)
-        else
-          release k
-            >> error
-              ( "Critical error: Value handles are created at "
-                  <> show (bsvhAtSlot bsvh)
-                  <> " while the db changelog is at "
-                  <> show dblogSlot
-                  <> ". There is either a race condition or a logic bug"
-              )
+getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} = mask $ \restore -> do
+  -- A slight variation of `modifyMVar`+`bracketOnError`. We want to keep the
+  -- bracketOnError scope open until we have written to the MVar but
+  -- `modifyMVar` doesn't allow for that. This code below does, note it is masked.
+  val <- takeMVar foeBackingStoreValueHandle
+  case val of
+    Right bsvh -> do
+      putMVar foeBackingStoreValueHandle (Right bsvh)
+      pure bsvh
+    Left (l, bs) -> do
+      bsvh <- bsValueHandle bs
+      restore
+        ( do
+            dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
+            if bsvhAtSlot bsvh == dblogSlot
+              then do
+                -- Release the read lock acquired when opening the forker.
+                atomically $ unsafeReleaseReadAccess l
+                putMVar foeBackingStoreValueHandle $ Right bsvh
+              else
+                error
+                  ( "Critical error: Value handles are created at "
+                      <> show (bsvhAtSlot bsvh)
+                      <> " while the db changelog is at "
+                      <> show dblogSlot
+                      <> ". There is either a race condition or a logic bug"
+                  )
+        )
+        `onException` do
+          bsvhClose bsvh
+          putMVar foeBackingStoreValueHandle $ Left (l, bs)
+      pure bsvh
 
 implForkerReadTables ::
   (IOLike m, HasLedgerTables l, GetTip l) =>

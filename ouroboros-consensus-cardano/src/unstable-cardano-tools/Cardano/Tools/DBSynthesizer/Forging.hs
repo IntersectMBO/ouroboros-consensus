@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -16,11 +17,11 @@ import Cardano.Tools.DBSynthesizer.Types
 import Control.Monad (when)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
-import Control.ResourceRegistry
+import qualified Control.Monad.Trans.Class as Trans
+import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import Control.Tracer as Trace (nullTracer)
 import Data.Either (isRight)
-import Data.Maybe (isJust)
+import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block.Abstract as Block
@@ -56,12 +57,13 @@ import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
   , blockProcessed
   , getCurrentChain
   , getPastLedger
-  , getReadOnlyForkerAtPoint
+  , withReadOnlyForkerAtPoint
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
   ( noPunishment
   )
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Util.EarlyExit hiding (lift)
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.AnchoredFragment as AF
   ( Anchor (..)
@@ -83,9 +85,9 @@ initialForgeState :: ForgeState
 initialForgeState = ForgeState 0 0 0 0
 
 -- | An action to generate transactions for a given block
-type GenTxs blk mk =
+type GenTxs blk =
   SlotNo ->
-  IO (ReadOnlyForker IO (ExtLedgerState blk)) ->
+  ReadOnlyForker IO (ExtLedgerState blk) ->
   TickedLedgerState blk DiffMK ->
   IO [Validated (GenTx blk)]
 
@@ -93,7 +95,7 @@ type GenTxs blk mk =
 -- For an extensive commentary of the forging loop, see there.
 
 runForge ::
-  forall blk mk.
+  forall blk.
   LedgerSupportsProtocol blk =>
   EpochSize ->
   SlotNo ->
@@ -101,7 +103,7 @@ runForge ::
   ChainDB IO blk ->
   [BlockForging IO blk] ->
   TopLevelConfig blk ->
-  GenTxs blk mk ->
+  GenTxs blk ->
   IO ForgeResult
 runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
@@ -205,15 +207,18 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
             (ledgerState unticked)
 
     -- Let the caller generate transactions
-    txs <- lift $ withRegistry $ \reg ->
-      genTxs
-        currentSlot
-        ( either
-            (error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!")
-            id
-            <$> getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
-        )
-        tickedLedgerState
+    txs <- ExceptT
+      . fmap (Right . fromJust)
+      . withEarlyExit
+      . withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint)
+      $ \case
+        Left{} -> error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!"
+        Right frk ->
+          Trans.lift $
+            genTxs
+              currentSlot
+              frk
+              tickedLedgerState
 
     -- Actually produce the block
     newBlock <-

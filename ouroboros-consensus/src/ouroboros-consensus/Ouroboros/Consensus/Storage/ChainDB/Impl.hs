@@ -43,11 +43,8 @@ import Control.Monad (void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
 import Control.ResourceRegistry
-  ( WithTempRegistry
-  , allocate
-  , runInnerWithTempRegistry
+  ( allocate
   , runWithTempRegistry
-  , withRegistry
   )
 import Control.Tracer
 import Data.Functor ((<&>))
@@ -147,32 +144,45 @@ openDBInternal ::
   Bool ->
   m (ChainDB m blk, Internal m blk)
 openDBInternal args launchBgTasks = runWithTempRegistry $ do
-  lift $ traceWith tracer $ TraceOpenEvent StartedOpeningDB
-  lift $ traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
-  immutableDB <- ImmutableDB.openDB argsImmutableDb $ innerOpenCont ImmutableDB.closeDB
-  immutableDbTipPoint <- lift $ atomically $ ImmutableDB.getTipPoint immutableDB
-  let immutableDbTipChunk =
-        chunkIndexOfPoint (ImmutableDB.immChunkInfo argsImmutableDb) immutableDbTipPoint
-  lift $
+  ( immutableDB
+    , immutableDbTipPoint
+    , volatileDB
+    , ledgerDbGetVolatileSuffix
+    , setGetCurrentChainForLedgerDB
+    ) <- lift $ do
+    traceWith tracer $ TraceOpenEvent StartedOpeningDB
+    traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
+    immutableDB <- ImmutableDB.openDB argsImmutableDb
+    immutableDbTipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
+    let immutableDbTipChunk =
+          chunkIndexOfPoint (ImmutableDB.immChunkInfo argsImmutableDb) immutableDbTipPoint
     traceWith tracer $
       TraceOpenEvent $
         OpenedImmutableDB immutableDbTipPoint immutableDbTipChunk
 
-  lift $ traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
-  volatileDB <- VolatileDB.openDB argsVolatileDb $ innerOpenCont VolatileDB.closeDB
-  maxSlot <- lift $ atomically $ VolatileDB.getMaxSlotNo volatileDB
-  (chainDB, testing, env) <- lift $ do
+    traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
+    volatileDB <- VolatileDB.openDB argsVolatileDb
+    maxSlot <- atomically $ VolatileDB.getMaxSlotNo volatileDB
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
-    (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <-
-      mkLedgerDbGetVolatileSuffix
-    (lgrDB, replayed) <-
-      LedgerDB.openDB
-        argsLgrDb
-        (ImmutableDB.streamAPI immutableDB)
-        immutableDbTipPoint
-        (Query.getAnyKnownBlock immutableDB volatileDB)
-        ledgerDbGetVolatileSuffix
+    (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <- mkLedgerDbGetVolatileSuffix
+    pure
+      ( immutableDB
+      , immutableDbTipPoint
+      , volatileDB
+      , ledgerDbGetVolatileSuffix
+      , setGetCurrentChainForLedgerDB
+      )
+
+  (lgrDB, replayed) <-
+    LedgerDB.openDB
+      argsLgrDb
+      (ImmutableDB.streamAPI immutableDB)
+      immutableDbTipPoint
+      (Query.getAnyKnownBlock immutableDB volatileDB)
+      ledgerDbGetVolatileSuffix
+
+  lift $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
     perasCertDB <- PerasCertDB.openDB argsPerasCertDB
@@ -184,12 +194,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    chain <- withRegistry $ \rr ->
+    chain <-
       ChainSel.initialChainSelection
         immutableDB
         volatileDB
         lgrDB
-        rr
         initChainSelTracer
         (Args.cdbsTopLevelConfig cdbSpecificArgs)
         varInvalid
@@ -277,7 +286,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getImmutableLedger = getEnvSTM h Query.getImmutableLedger
             , getPastLedger = getEnvSTM1 h Query.getPastLedger
             , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
-            , getReadOnlyForkerAtPoint = getEnv2 h Query.getReadOnlyForkerAtPoint
+            , allocInRegistryReadOnlyForkerAtPoint = getEnv2 h Query.allocInRegistryReadOnlyForkerAtPoint
+            , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
@@ -310,11 +320,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
     when launchBgTasks $ Background.launchBgTasks env replayed
 
-    return (chainDB, testing, env)
+    _ <- allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return chainDB) API.closeDB
 
-  _ <- lift $ allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return chainDB) API.closeDB
-
-  return ((chainDB, testing), env)
+    return ((chainDB, testing), env)
  where
   tracer = Args.cdbsTracer cdbSpecificArgs
   Args.ChainDbArgs
@@ -355,23 +363,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                 pure $ AF.anchorNewest (fromIntegral curChainLen)
         setVarChain = atomically . writeTMVar varGetCurrentChain . OnlyCheckWhnf
     pure (getVolatileSuffix, setVarChain)
-
--- | We use 'runInnerWithTempRegistry' for the component databases.
-innerOpenCont ::
-  IOLike m =>
-  (innerDB -> m ()) ->
-  WithTempRegistry st m (innerDB, st) ->
-  WithTempRegistry (ChainDbEnv m blk) m innerDB
-innerOpenCont closer m =
-  runInnerWithTempRegistry
-    (fmap (\(innerDB, st) -> (innerDB, st, innerDB)) m)
-    ((True <$) . closer)
-    (\_env _innerDB -> True)
-
--- This check is degenerate because handles in @_env@ and the
--- @_innerDB@ handle do not support an equality check; all of the
--- identifying data is only in the handle's closure, not
--- accessible because of our intentional encapsulation choices.
 
 isOpen :: IOLike m => ChainDbHandle m blk -> STM m Bool
 isOpen (CDBHandle varState) =

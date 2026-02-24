@@ -13,7 +13,7 @@ import Cardano.Tools.DBTruncater.Types
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..))
-import Control.ResourceRegistry (runWithTempRegistry, withRegistry)
+import Control.ResourceRegistry (withRegistry)
 import Control.Tracer
 import Data.Foldable (asum)
 import Data.Functor ((<&>))
@@ -132,4 +132,4 @@ withDB ::
   ((ImmutableDB m block, Internal m block) -> m a) ->
   m a
 withDB immutableDBArgs =
-  bracket (ImmutableDB.openDBInternal immutableDBArgs runWithTempRegistry) (ImmutableDB.closeDB . fst)
+  bracket (ImmutableDB.openDBInternal immutableDBArgs) (ImmutableDB.closeDB . fst)
