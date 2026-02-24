@@ -21,6 +21,7 @@ module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 import Cardano.Crypto.DSIGN.Mock
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar
+import Control.Monad (join)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -205,7 +206,19 @@ mkServer rr k chain = do
   return $
     localStateQueryServer
       cfg
-      (LedgerDB.getReadOnlyForker lgrDB rr)
+      ( \t -> do
+          (rk, res) <-
+            allocate
+              rr
+              (\_ -> LedgerDB.openReadOnlyForker lgrDB t)
+              ( \case
+                  Left{} -> pure ()
+                  Right v -> roforkerClose v
+              )
+          case res of
+            Left err -> release rk >> pure (Left err)
+            Right v -> pure (Right (rk, v))
+      )
  where
   cfg = ExtLedgerCfg $ testCfg k
 
@@ -226,7 +239,6 @@ initLedgerDB ::
   Chain TestBlock ->
   m (LedgerDB' m TestBlock)
 initLedgerDB s c = do
-  reg <- unsafeNewRegistry
   fs <- newTMVarIO MockFS.empty
   let args =
         LedgerDbArgs
@@ -237,17 +249,21 @@ initLedgerDB s c = do
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents
           , lgrQueryBatchSize = DefaultQueryBatchSize
-          , lgrRegistry = reg
           , lgrStartSnapshot = Nothing
           }
   ldb <-
     fst
-      <$> LedgerDB.openDB
-        args
-        streamAPI
-        (Chain.headPoint c)
-        (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
-        (LedgerDB.praosGetVolatileSuffix s)
+      <$> runWithTempRegistry
+        ( do
+            db <-
+              LedgerDB.openDB
+                args
+                streamAPI
+                (Chain.headPoint c)
+                (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+                (LedgerDB.praosGetVolatileSuffix s)
+            pure (db, ())
+        )
 
   case NE.nonEmpty $ Chain.toOldestFirst c of
     Nothing -> pure ()
@@ -255,15 +271,14 @@ initLedgerDB s c = do
       result <-
         LedgerDB.validateFork
           ldb
-          reg
           (const $ pure ())
           BlockCache.empty
           0
           (NE.map getHeader chain)
+          (MkSuccessForkerAction $ join . atomically . LedgerDB.forkerCommit)
       case result of
-        LedgerDB.ValidateSuccessful forker -> do
-          atomically $ LedgerDB.forkerCommit forker
-          LedgerDB.forkerClose forker
+        LedgerDB.ValidateSuccessful -> do
+          pure ()
         LedgerDB.ValidateExceededRollBack _ ->
           error "impossible: rollback was 0"
         LedgerDB.ValidateLedgerError _ ->

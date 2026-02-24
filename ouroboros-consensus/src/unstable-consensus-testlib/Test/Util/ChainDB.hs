@@ -129,7 +129,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
             lgrGenesis = return mcdbInitLedger
           , lgrHasFS = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
           , lgrTracer = nullTracer
-          , lgrRegistry = mcdbRegistry
           , lgrConfig = configLedgerDb mcdbTopLevelConfig OmitLedgerEvents
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrQueryBatchSize = DefaultQueryBatchSize

@@ -47,7 +47,6 @@ module Ouroboros.Consensus.Mempool.API
   , zeroTicketNo
   ) where
 
-import Control.ResourceRegistry
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.List.NonEmpty as NE
 import Data.Measure (Measure)
@@ -217,15 +216,6 @@ data Mempool m blk = Mempool
   -- removed because they have become invalid.
   --
   -- This capacity excludes the `mempoolTimeoutCapacity`.
-  , testForkMempoolThread :: forall a. String -> m a -> m (Thread m a)
-  -- ^ FOR TESTS ONLY
-  --
-  -- If we want to run a thread that can perform syncs in the mempool, it needs
-  -- to be registered in the mempool's internal registry. This function exposes
-  -- such functionality.
-  --
-  -- The 'String' passed will be used as the thread label, and the @m a@ will be
-  -- the action forked in the thread.
   , testTryAddTx ::
       DiffTime ->
       AddTxOnBehalfOf ->

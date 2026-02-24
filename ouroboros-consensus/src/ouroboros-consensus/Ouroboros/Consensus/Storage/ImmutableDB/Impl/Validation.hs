@@ -91,25 +91,26 @@ validateAndReopen ::
   ValidateEnv m blk h ->
   ResourceRegistry m ->
   ValidationPolicy ->
-  WithTempRegistry (OpenState m blk h) m (OpenState m blk h)
+  m (OpenState m blk h)
 validateAndReopen validateEnv registry valPol = wrapFsError (Proxy @blk) $ do
-  (chunk, tip) <- lift $ validate validateEnv valPol
+  (chunk, tip) <- validate validateEnv valPol
   index <-
-    lift $
-      cachedIndex
-        hasFS
-        registry
-        cacheTracer
-        cacheConfig
-        chunkInfo
-        chunk
+    cachedIndex
+      hasFS
+      registry
+      cacheTracer
+      cacheConfig
+      chunkInfo
+      chunk
   case tip of
     Origin -> assert (chunk == firstChunkNo) $ do
-      lift $ traceWith tracer NoValidLastLocation
-      mkOpenState hasFS index chunk Origin MustBeNew
+      traceWith tracer NoValidLastLocation
+      -- TODO: mkOpenState does not need to run in WithTempRegistry.
+      runWithTempRegistry $ (\x -> (x, x)) <$> mkOpenState hasFS index chunk Origin MustBeNew
     NotOrigin tip' -> do
-      lift $ traceWith tracer $ ValidatedLastLocation chunk tip'
-      mkOpenState hasFS index chunk tip AllowExisting
+      traceWith tracer $ ValidatedLastLocation chunk tip'
+      -- TODO: mkOpenState does not need to run in WithTempRegistry.
+      runWithTempRegistry $ (\x -> (x, x)) <$> mkOpenState hasFS index chunk tip AllowExisting
  where
   ValidateEnv{hasFS, tracer, cacheConfig, chunkInfo} = validateEnv
   cacheTracer = contramap TraceCacheEvent tracer
