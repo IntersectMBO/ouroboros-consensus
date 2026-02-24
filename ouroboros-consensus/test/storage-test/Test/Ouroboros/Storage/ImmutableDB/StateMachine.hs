@@ -221,7 +221,7 @@ closeOpenIterators varIters = do
 
 open :: ImmutableDbArgs Identity IO TestBlock -> IO ImmutableDBState
 open args = do
-  (db, internal) <- openDBInternal args runWithTempRegistry
+  (db, internal) <- openDBInternal args
   return ImmutableDBState{db, internal}
 
 -- | Opens a new ImmutableDB and stores it in 'varDB'.

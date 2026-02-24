@@ -101,3 +101,11 @@ source-repository-package
   subdir:
     plutus-core
     plutus-ledger-api
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/io-classes-extra
+  tag: 8aa95d18e6388964031ab741e5d3b7d96f89bdc6
+  --sha256: sha256-h8Qr27XTl4Zzf/Rc1FqIr9OrQr750TTjKRbyMMQFI2k=
+  subdir:
+    resource-registry

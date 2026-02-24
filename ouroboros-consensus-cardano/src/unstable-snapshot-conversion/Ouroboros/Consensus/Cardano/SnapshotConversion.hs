@@ -1,8 +1,10 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
@@ -139,8 +141,7 @@ data InEnv backend = InEnv
   { inState :: LedgerState (CardanoBlock StandardCrypto) EmptyMK
   -- ^ Ledger state (without tables) that will be used to index the snapshot.
   , inStream ::
-      ResourceRegistry IO ->
-      IO (SomeBackend YieldArgs)
+      WithTempRegistry () IO (SomeBackend YieldArgs)
   -- ^ Yield arguments for producing a stream of TxOuts
   , inProgressMsg :: String
   -- ^ A progress message (just for displaying)
@@ -152,8 +153,7 @@ data InEnv backend = InEnv
 
 data OutEnv backend = OutEnv
   { outStream ::
-      ResourceRegistry IO ->
-      IO (SomeBackend SinkArgs)
+      WithTempRegistry () IO (SomeBackend SinkArgs)
   -- ^ Sink arguments for consuming a stream of TxOuts
   , outDeleteExtra :: Maybe FilePath
   -- ^ In case some other directory needs to be wiped out
@@ -167,6 +167,10 @@ data SomeBackend c where
   SomeBackend ::
     StreamingBackend IO backend (LedgerState (CardanoBlock StandardCrypto)) =>
     c IO backend (LedgerState (CardanoBlock StandardCrypto)) -> SomeBackend c
+
+instance NoThunks (SomeBackend c) where
+  wNoThunks _ (SomeBackend _) = pure Nothing
+  showTypeOf _ = "SomeBackend"
 
 convertSnapshot ::
   Bool ->
@@ -310,7 +314,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       pure $
         InEnv
           st
-          (pure . SomeBackend . mkInMemYieldArgs inSomeHasFS inSnap st)
+          (pure $ SomeBackend $ mkInMemYieldArgs inSomeHasFS inSnap st)
           ("InMemory@[" <> snapshotToDirName inSnap <> "]")
           c
           metadataCrc
@@ -321,7 +325,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       pure $
         InEnv
           st
-          (\reg -> SomeBackend <$> V1.mkLMDBYieldArgs inSomeHasFS inSnap defaultLMDBLimits st reg)
+          (SomeBackend <$> V1.mkLMDBYieldArgs inSomeHasFS inSnap defaultLMDBLimits st)
           ("LMDB@[" <> snapshotToDirName inSnap <> "]")
           c
           metadataCrc
@@ -332,10 +336,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       pure $
         InEnv
           st
-          ( \reg ->
-              SomeBackend
-                <$> mkLSMYieldArgs lsmDbPath inSnap stdMkBlockIOFS newStdGen st reg
-          )
+          (SomeBackend <$> mkLSMYieldArgs lsmDbPath inSnap stdMkBlockIOFS newStdGen st)
           ("LSM@[" <> lsmDbPath <> "]")
           c
           metadataCrc
@@ -349,7 +350,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       checkSnapSlot st outSnap
       pure $
         OutEnv
-          (pure . SomeBackend . mkInMemSinkArgs outSomeHasFS outSnap st)
+          (pure $ SomeBackend $ mkInMemSinkArgs outSomeHasFS outSnap st)
           Nothing
           ("InMemory@[" <> snapshotToDirName outSnap <> "]")
           UTxOHDMemSnapshot
@@ -357,7 +358,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       checkSnapSlot st outSnap
       pure $
         OutEnv
-          (\reg -> SomeBackend <$> V1.mkLMDBSinkArgs outSomeHasFS outSnap defaultLMDBLimits st reg)
+          (SomeBackend <$> V1.mkLMDBSinkArgs outSomeHasFS outSnap defaultLMDBLimits st)
           Nothing
           ("LMDB@[" <> snapshotToDirName outSnap <> "]")
           UTxOHDLMDBSnapshot
@@ -365,17 +366,14 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       checkSnapSlot st outSnap
       pure $
         OutEnv
-          ( \reg ->
-              SomeBackend
-                <$> mkLSMSinkArgs
-                  lsmDbParentPath
-                  (mkFsPath [lsmDbPath])
-                  outSnap
-                  outSomeHasFS
-                  stdMkBlockIOFS
-                  newStdGen
-                  st
-                  reg
+          ( SomeBackend
+              <$> mkLSMSinkArgs
+                lsmDbParentPath
+                (mkFsPath [lsmDbPath])
+                outSnap
+                outSomeHasFS
+                stdMkBlockIOFS
+                newStdGen
           )
           (Just lsmDbPath)
           ("LSM@[" <> lsmDbPath <> "]")
@@ -383,19 +381,33 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
 
   stream ::
     LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-    ( ResourceRegistry IO ->
-      IO (SomeBackend YieldArgs)
-    ) ->
-    ( ResourceRegistry IO ->
-      IO (SomeBackend SinkArgs)
-    ) ->
+    WithTempRegistry () IO (SomeBackend YieldArgs) ->
+    WithTempRegistry () IO (SomeBackend SinkArgs) ->
     ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)
   stream st mYieldArgs mSinkArgs =
     ExceptT $
-      withRegistry $ \reg -> do
-        (SomeBackend (yArgs :: YieldArgs IO backend1 l)) <- mYieldArgs reg
-        (SomeBackend (sArgs :: SinkArgs IO backend2 l)) <- mSinkArgs reg
-        runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
+      bracket
+        ((,) <$> newTVarIO Nothing <*> newTVarIO Nothing)
+        ( \(tv1, tv2) -> do
+            readTVarIO tv1 >>= \case
+              Nothing -> pure ()
+              Just (SomeBackend yArgs) -> releaseYieldArgs yArgs
+            readTVarIO tv2 >>= \case
+              Nothing -> pure ()
+              Just (SomeBackend sArgs) -> releaseSinkArgs sArgs
+        )
+        ( \(tv1, tv2) -> do
+            (SomeBackend (yArgs :: YieldArgs IO backend1 l), (SomeBackend (sArgs :: SinkArgs IO backend2 l))) <-
+              runWithTempRegistry $
+                (,()) <$> do
+                  s1 <- mYieldArgs
+                  s2 <- mSinkArgs
+                  lift $ atomically $ do
+                    writeTVar tv1 (Just s1)
+                    writeTVar tv2 (Just s2)
+                  pure (s1, s2)
+            runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
+        )
 
 {-------------------------------------------------------------------------------
   User interaction
