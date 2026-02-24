@@ -9,15 +9,19 @@ license-files:
   NOTICE
 
 copyright:
-  2019-2023 Input Output Global Inc (IOG), INTERSECT 2023-2024.
+  2019-2023 Input Output Global Inc (IOG), INTERSECT 2023-2026.
 
 author: IOG Engineering Team
 maintainer: operations@iohk.io
 category: Network
 build-type: Simple
 extra-doc-files:
-  CHANGELOG.md
-  docs/haddocks/*.svg
+  ouroboros-consensus/CHANGELOG.md
+  ouroboros-consensus/docs/haddocks/*.svg
+  ouroboros-consensus-diffusion/CHANGELOG.md
+  ouroboros-consensus-protocol/CHANGELOG.md
+  ouroboros-consensus-cardano/CHANGELOG.md
+  ouroboros-consensus-cardano/README.md
 
 source-repository head
   type: git
