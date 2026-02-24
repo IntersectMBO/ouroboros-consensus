@@ -18,7 +18,6 @@ module Cardano.Node.Protocol.Cardano
 
 import Cardano.Api.Any (Error (..))
 import qualified Cardano.Chain.Update as Byron
-import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
 import Cardano.Ledger.BaseTypes
 import Cardano.Ledger.Dijkstra.PParams
@@ -89,7 +88,7 @@ mkConsensusProtocolCardano
     }
   npcDijkstraProtocolConfig
   NodeHardForkProtocolConfiguration
-    { npcTestEnableDevelopmentHardForkEras = _
+    { npcTestEnableDevelopmentHardForkEras
     , -- During testing of the latest unreleased era, we conditionally
     -- declared that we knew about it. We do so only when a config option
     -- for testing development/unstable eras is used. This lets us include
@@ -254,7 +253,13 @@ mkConsensusProtocolCardano
           }
         transitionLedgerConfig
         emptyCheckpointsMap
-        (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
+        -- IMPORTANT: this Protver below has to be kept in sync with the values
+        -- used in the node in cardano-node/src/Cardano/Node/Protocol/Cardano.hs
+        -- in function mkSomeConsensusProtocolCardano.
+        ( if npcTestEnableDevelopmentHardForkEras
+            then ProtVer (natVersion @11) 0
+            else ProtVer (natVersion @10) 7
+        )
 
 -- | An empty Dijkstra genesis to be provided when none is specified in the config.
 emptyDijkstraGenesis :: SL.DijkstraGenesis
