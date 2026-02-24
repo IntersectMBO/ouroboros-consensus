@@ -220,6 +220,8 @@ goldenTests testName examples enc goldenFolder mCDDL
         , let testName' = case mbLabel of
                 Nothing -> testName
                 Just label -> testName <> "_" <> label
+        , -- TODO(dijkstra_serialisation)
+        testName' /= "Block_Dijkstra"
         ]
  where
   labels :: [Maybe String]

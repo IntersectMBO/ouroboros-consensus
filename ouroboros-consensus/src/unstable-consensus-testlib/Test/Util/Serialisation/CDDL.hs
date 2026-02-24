@@ -61,7 +61,7 @@ cddlTest cborM cddl rule =
       ExitSuccess -> pure (Right ())
  where
   cuddleArgs :: FilePath -> String -> FilePath -> [String]
-  cuddleArgs cborFile ruleName cddlFile = ["validate-cbor", "-c", cborFile, "-r", ruleName, cddlFile]
+  cuddleArgs cborFile ruleName cddlFile = ["validate-cbor", ruleName, cborFile, cddlFile, "-f", "binary"]
 
   dumpErrorReproducer :: FilePath -> String -> FilePath -> IO FilePath
   dumpErrorReproducer cborFile ruleName cddlFile = do
