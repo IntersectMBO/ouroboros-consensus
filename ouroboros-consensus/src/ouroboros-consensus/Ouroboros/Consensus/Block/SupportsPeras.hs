@@ -18,6 +18,11 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasVoteId (..)
   , PerasVoteTarget (..)
   , PerasVoterId (..)
+  , PerasVoterStake (..)
+  , PerasVoterStakeDistr (..)
+  , perasVoterStakeDistrSize
+  , perasVoterStakeDistrTotalStake
+  , toDescPerasVoterStakeDistr
   , PerasVoteStake (..)
   , stakeAboveThreshold
   , PerasVoteStakeDistr (..)
@@ -99,6 +104,33 @@ newtype PerasVoterId = PerasVoterId
   deriving newtype NoThunks
   deriving stock (Eq, Ord, Generic)
   deriving Show via Quiet PerasVoterId
+
+newtype PerasVoterStake = PerasVoterStake
+  { unPerasVoterStake :: Rational
+  }
+  deriving newtype (Eq, Ord, Num, Fractional, NoThunks, Serialise)
+  deriving stock Generic
+  deriving Show via Quiet PerasVoteStake
+  deriving Semigroup via Sum Rational
+  deriving Monoid via Sum Rational
+
+newtype PerasVoterStakeDistr = PerasVoterStakeDistr
+  { unPerasVoterStakeDistr :: Map PerasVoterId PerasVoterStake
+  }
+  deriving newtype NoThunks
+  deriving stock (Show, Eq, Generic)
+
+perasVoterStakeDistrSize :: PerasVoterStakeDistr -> Int
+perasVoterStakeDistrSize = Map.size . unPerasVoterStakeDistr
+
+perasVoterStakeDistrTotalStake :: PerasVoterStakeDistr -> PerasVoterStake
+perasVoterStakeDistrTotalStake = mconcat . Map.elems . unPerasVoterStakeDistr
+
+toDescPerasVoterStakeDistr ::
+  PerasVoterStakeDistr ->
+  [(PerasVoterId, PerasVoterStake)]
+toDescPerasVoterStakeDistr (PerasVoterStakeDistr distr) =
+  Map.toDescList distr
 
 -- NOTE: At the moment there is no consensus from researchers/engineers on how
 -- we go from the absolute stake of a voter in the ledger to the relative stake
