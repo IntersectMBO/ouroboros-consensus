@@ -492,7 +492,8 @@ instance
                   & getPoint
                   <&> \blk ->
                     blk
-                      { blockPointHash = SomeHashableBlock (Proxy :: Proxy (ShelleyBlock proto era)) (blockPointHash blk)
+                      { blockPointHash =
+                          RawBlockHash $ toShortRawHash (Proxy @(ShelleyBlock proto era)) (blockPointHash blk)
                       }
          in case v15Encoding of
               True
@@ -1107,7 +1108,7 @@ decodeShelleyResult v query = case query of
   GetProposals{} -> LC.fromEraCBOR @era
   GetRatifyState{} -> LC.fromEraCBOR @era
   GetFuturePParams{} -> LC.fromEraCBOR @era
-  GetLedgerPeerSnapshot'{} -> decodeLedgerPeerSnapshot (Proxy :: Proxy (ShelleyBlock proto era))
+  GetLedgerPeerSnapshot'{} -> decodeLedgerPeerSnapshot
   QueryStakePoolDefaultVote{} -> fromCBOR
   GetPoolDistr2{} -> LC.fromEraCBOR @era
   GetStakeDistribution2 -> LC.fromEraCBOR @era
