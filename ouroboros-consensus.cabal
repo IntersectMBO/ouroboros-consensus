@@ -16,12 +16,12 @@ maintainer: operations@iohk.io
 category: Network
 build-type: Simple
 extra-doc-files:
-  ouroboros-consensus/CHANGELOG.md
-  ouroboros-consensus/docs/haddocks/*.svg
-  ouroboros-consensus-diffusion/CHANGELOG.md
-  ouroboros-consensus-protocol/CHANGELOG.md
   ouroboros-consensus-cardano/CHANGELOG.md
   ouroboros-consensus-cardano/README.md
+  ouroboros-consensus-diffusion/CHANGELOG.md
+  ouroboros-consensus-protocol/CHANGELOG.md
+  ouroboros-consensus/CHANGELOG.md
+  ouroboros-consensus/docs/haddocks/*.svg
 
 source-repository head
   type: git
@@ -109,7 +109,6 @@ library
     Ouroboros.Consensus.Config.SupportsNode
     Ouroboros.Consensus.Forecast
     Ouroboros.Consensus.Fragment.Diff
-    Ouroboros.Consensus.Fragment.Validated
     Ouroboros.Consensus.Fragment.ValidatedDiff
     Ouroboros.Consensus.Genesis.Governor
     Ouroboros.Consensus.HardFork.Abstract
@@ -381,7 +380,6 @@ library
     these ^>=1.2,
     time,
     transformers,
-    transformers-base,
     typed-protocols ^>=1.2,
     vector ^>=0.13,
 
@@ -577,7 +575,6 @@ library unstable-consensus-testlib
     temporary,
     text,
     time,
-    transformers-base,
     tree-diff,
     utf8-string,
     vector,
@@ -736,7 +733,6 @@ test-suite consensus-test
     tasty-quickcheck,
     time,
     transformers,
-    transformers-base,
     tree-diff,
     typed-protocols:{examples, stateful, typed-protocols} ^>=1.2,
     unstable-consensus-testlib,
@@ -843,7 +839,7 @@ test-suite storage-test
     mempack,
     mtl,
     nothunks,
-    ouroboros-consensus:{ouroboros-consensus, lmdb, lsm},
+    ouroboros-consensus:{lmdb, lsm, ouroboros-consensus},
     ouroboros-network:{api, api-tests-lib, protocols, protocols-tests-lib},
     pretty-show,
     quickcheck-dynamic,
@@ -1023,7 +1019,7 @@ test-suite protocol-test
     cardano-ledger-core:{cardano-ledger-core, testlib} >=1.17 && <1.20,
     cardano-protocol-tpraos ^>=1.5,
     containers,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, protocol},
+    ouroboros-consensus:{ouroboros-consensus, protocol, unstable-consensus-testlib},
     serialise,
     tasty,
     tasty-quickcheck,
@@ -1115,7 +1111,7 @@ library unstable-diffusion-testlib
     io-classes:{io-classes, si-timers, strict-stm},
     io-sim,
     mtl,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, diffusion, protocol},
+    ouroboros-consensus:{diffusion, ouroboros-consensus, protocol, unstable-consensus-testlib},
     ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols},
     quiet ^>=0.2,
     random,
@@ -1265,7 +1261,7 @@ test-suite consensus-diffusion-test
     mempack,
     mtl,
     nothunks,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, diffusion},
+    ouroboros-consensus:{diffusion, ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols},
     pretty,
     quickcheck-dynamic ^>=4.0.0,
@@ -1467,7 +1463,7 @@ library unstable-byron-testlib
     containers,
     hedgehog-quickcheck,
     mtl,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, cardano, unstable-diffusion-testlib},
+    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-consensus-testlib, unstable-diffusion-testlib},
     ouroboros-network:api,
     serialise,
     text,
@@ -1504,7 +1500,7 @@ test-suite byron-test
     filepath,
     hedgehog-quickcheck,
     mtl,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, cardano, unstable-diffusion-testlib},
+    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-consensus-testlib, unstable-diffusion-testlib},
     ouroboros-network:api-tests-lib,
     small-steps:{small-steps, testlib},
     tasty,
@@ -1548,7 +1544,7 @@ library unstable-shelley-testlib
     kes-agent-crypto ^>=1.0,
     microlens,
     mtl,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, cardano, unstable-diffusion-testlib, protocol, unstable-protocol-testlib},
+    ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-protocol-testlib},
     ouroboros-network:api,
     quiet ^>=0.2,
     small-steps,
@@ -1587,7 +1583,7 @@ test-suite shelley-test
     measures,
     mempack,
     microlens,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, cardano, unstable-diffusion-testlib, protocol},
+    ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib},
     sop-core,
     strict-sop-core,
     tasty,
@@ -1637,7 +1633,7 @@ library unstable-cardano-testlib
     microlens,
     mtl,
     nothunks,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, cardano, diffusion, protocol, unstable-diffusion-testlib, unstable-protocol-testlib},
+    ouroboros-consensus:{cardano, diffusion, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-protocol-testlib},
     ouroboros-network:api,
     sop-core,
     sop-extras,
@@ -1693,7 +1689,7 @@ test-suite cardano-test
     directory,
     filepath,
     microlens,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mempool-test-utils, cardano, unstable-cardano-testlib, unstable-diffusion-testlib, protocol},
+    ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-cardano-testlib, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-mempool-test-utils},
     ouroboros-network:{api, protocols, protocols-tests-lib},
     pretty-simple,
     process-extras,
@@ -1792,7 +1788,7 @@ library unstable-cardano-tools
     network,
     network-mux,
     nothunks,
-    ouroboros-consensus:{ouroboros-consensus, lmdb, lsm, cardano, diffusion, protocol, unstable-protocol-testlib},
+    ouroboros-consensus:{cardano, diffusion, lmdb, lsm, ouroboros-consensus, protocol, unstable-protocol-testlib},
     ouroboros-network:{api, framework, ouroboros-network, protocols} ^>=0.24,
     random,
     resource-registry,
@@ -1813,7 +1809,7 @@ executable db-analyser
     base,
     cardano-crypto-class,
     optparse-applicative,
-    ouroboros-consensus:{ouroboros-consensus, cardano, unstable-cardano-tools},
+    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools},
     text,
     with-utf8,
 
@@ -1869,7 +1865,7 @@ executable db-truncater
     base,
     cardano-crypto-class,
     optparse-applicative,
-    ouroboros-consensus:{ouroboros-consensus, cardano, unstable-cardano-tools},
+    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools},
     with-utf8,
 
   other-modules:
@@ -1949,7 +1945,7 @@ test-suite tools-test
     QuickCheck,
     aeson,
     base,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, cardano, unstable-cardano-tools, unstable-protocol-testlib},
+    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools, unstable-consensus-testlib, unstable-protocol-testlib},
     tasty,
     tasty-hunit,
     tasty-quickcheck,

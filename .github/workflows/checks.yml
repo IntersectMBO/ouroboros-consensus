@@ -58,24 +58,6 @@ jobs:
     - name: Cabal check
       run: ./scripts/ci/check-cabal-files.sh
 
-  check-release-badges:
-
-    name: Release badges are updated
-
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Check README badges
-      run: |
-        for f in $(find ouroboros-consensus* *sop* -type f -name "*.cabal"); do
-          pkg=$(grep "^name: " $f | rev | cut -d' ' -f1 | rev)
-          ver=$(grep "^version: " $f | rev | cut -d' ' -f1 | rev)
-          echo "Checking badge for $pkg-$ver"
-          grep "$(echo $pkg | sed 's/-/--/g')-$ver" README.md
-        done
-
   check-build-plans:
 
     name: Check build plans (dev vs release)
