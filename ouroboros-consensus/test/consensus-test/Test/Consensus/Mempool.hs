@@ -732,26 +732,31 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
   isOverride NoMempoolCapacityBytesOverride = False
 
   setUpAndRun :: forall m. (IOLike m, MonadTimer m) => m Property
-  setUpAndRun = do
+  setUpAndRun = withRegistry $ \reg -> do
     -- Set up the LedgerInterface
     varCurrentLedgerState <- uncheckedNewTVarM testLedgerState
     let ledgerInterface =
           LedgerInterface
-            { getCurrentLedgerState = \_reg -> do
+            { getCurrentLedgerState = do
                 st <- readTVar varCurrentLedgerState
                 pure $
                   MempoolLedgerDBView
                     (forgetLedgerTables st)
-                    ( pure $
-                        Right $
-                          ReadOnlyForker
-                            { roforkerClose = pure ()
-                            , roforkerReadTables =
-                                pure . (projectLedgerTables st `restrictValues'`)
-                            , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
-                            , roforkerGetLedgerState = pure $ forgetLedgerTables st
-                            , roforkerReadStatistics = pure $ Statistics 0
-                            }
+                    ( Right
+                        <$> allocate
+                          reg
+                          ( \_ ->
+                              pure $
+                                ReadOnlyForker
+                                  { roforkerClose = pure ()
+                                  , roforkerReadTables =
+                                      pure . (projectLedgerTables st `restrictValues'`)
+                                  , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
+                                  , roforkerGetLedgerState = pure $ forgetLedgerTables st
+                                  , roforkerReadStatistics = pure $ Statistics 0
+                                  }
+                          )
+                          roforkerClose
                     )
             }
 
@@ -760,45 +765,44 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
     -- TODO use IOSim's dynamicTracer
     let tracer = Tracer $ \ev -> atomically $ modifyTVar varEvents (ev :)
 
-    withRegistry $ \reg -> do
-      -- Open the mempool and add the initial transactions
-      mempool <-
-        openMempoolWithoutSyncThread
-          reg
-          ledgerInterface
-          testLedgerCfg
-          testMempoolCapOverride
-          timeoutConfig
-          tracer
-      result <- addTxs mempool testInitialTxs
+    -- Open the mempool and add the initial transactions
+    mempool <-
+      openMempoolWithoutSyncThread
+        reg
+        ledgerInterface
+        testLedgerCfg
+        testMempoolCapOverride
+        timeoutConfig
+        tracer
+    result <- addTxs mempool testInitialTxs
 
-      -- the invalid transactions are reported in the same order they were
-      -- added, so the first error is not the result of a cascade
-      sequence_
-        [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show err
-        | MempoolTxRejected invalidTx err <- result
-        ]
+    -- the invalid transactions are reported in the same order they were
+    -- added, so the first error is not the result of a cascade
+    sequence_
+      [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show err
+      | MempoolTxRejected invalidTx err <- result
+      ]
 
-      -- Clear the trace
-      atomically $ writeTVar varEvents []
+    -- Clear the trace
+    atomically $ writeTVar varEvents []
 
-      -- Apply the property to the 'TestMempool' record
-      res <-
-        property
-          <$> prop
-            TestMempool
-              { mempool
-              , getTraceEvents = atomically $ reverse <$> readTVar varEvents
-              , eraseTraceEvents = atomically $ writeTVar varEvents []
-              , addTxsToLedger = addTxsToLedger varCurrentLedgerState
-              , getCurrentLedger = readTVar varCurrentLedgerState
-              }
-      validContents <-
-        atomically $
-          checkMempoolValidity
-            <$> readTVar varCurrentLedgerState
-            <*> getSnapshot mempool
-      return $ res .&&. validContents
+    -- Apply the property to the 'TestMempool' record
+    res <-
+      property
+        <$> prop
+          TestMempool
+            { mempool
+            , getTraceEvents = atomically $ reverse <$> readTVar varEvents
+            , eraseTraceEvents = atomically $ writeTVar varEvents []
+            , addTxsToLedger = addTxsToLedger varCurrentLedgerState
+            , getCurrentLedger = readTVar varCurrentLedgerState
+            }
+    validContents <-
+      atomically $
+        checkMempoolValidity
+          <$> readTVar varCurrentLedgerState
+          <*> getSnapshot mempool
+    return $ res .&&. validContents
 
   addTxToLedger ::
     forall m.

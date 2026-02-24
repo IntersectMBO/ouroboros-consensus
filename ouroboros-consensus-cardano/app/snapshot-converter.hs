@@ -214,7 +214,6 @@ programDescription =
         snapshots produced by a `cardano-node` into Mem format as they are
         written by the node. This is only meaningful to run if your node
         produces LMDB or LSM snapshots:
-
         ```
         # lsm to mem
         $ snapshot-converter --monitor-lsm-snapshots-in <PATH> --lsm-database <PATH> --output-mem-snapshots-in <PATH> --config <PATH>
