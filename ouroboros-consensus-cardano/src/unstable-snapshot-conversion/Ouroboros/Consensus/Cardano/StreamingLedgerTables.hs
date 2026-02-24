@@ -13,7 +13,6 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.State as SL
 import qualified Codec.CBOR.Encoding
-import Control.ResourceRegistry
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
@@ -35,9 +34,8 @@ import System.FS.API
 
 type L = LedgerState (CardanoBlock StandardCrypto)
 
-mkInMemYieldArgs ::
-  SomeHasFS IO -> DiskSnapshot -> L EmptyMK -> ResourceRegistry IO -> YieldArgs IO V2.Mem L
-mkInMemYieldArgs fs ds (HardForkLedgerState (HardForkState idx)) _ =
+mkInMemYieldArgs :: SomeHasFS IO -> DiskSnapshot -> L EmptyMK -> YieldArgs IO V2.Mem L
+mkInMemYieldArgs fs ds (HardForkLedgerState (HardForkState idx)) =
   let
     np ::
       NP
@@ -83,9 +81,8 @@ mkInMemSinkArgs ::
   SomeHasFS IO ->
   DiskSnapshot ->
   L EmptyMK ->
-  ResourceRegistry IO ->
   SinkArgs IO V2.Mem L
-mkInMemSinkArgs fs ds (HardForkLedgerState (HardForkState idx)) _ =
+mkInMemSinkArgs fs ds (HardForkLedgerState (HardForkState idx)) = do
   let
     np =
       (Fn $ const $ K $ encOne (Proxy @ByronEra))

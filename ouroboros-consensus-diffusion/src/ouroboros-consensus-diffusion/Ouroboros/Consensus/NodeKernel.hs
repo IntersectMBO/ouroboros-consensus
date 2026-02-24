@@ -503,7 +503,7 @@ initInternalState
     mempool <-
       openMempool
         registry
-        (chainDBLedgerInterface chainDB)
+        (chainDBLedgerInterface chainDB registry)
         (configLedger cfg)
         mempoolCapacityOverride
         mempoolTimeoutConfig
@@ -552,7 +552,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     blockForgingMLabel
     finalize
     ( \bf -> knownSlotWatcher btime $
-        \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go bf rr currentSlot)
+        \currentSlot -> withEarlyExit_ $ go bf currentSlot
     )
  where
   label :: String
@@ -563,8 +563,8 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     labelThisThread $ Text.unpack $ forgeLabel bf
     pure bf
 
-  go :: BlockForging m blk -> ResourceRegistry m -> SlotNo -> WithEarlyExit m ()
-  go blockForging reg currentSlot = do
+  go :: BlockForging m blk -> SlotNo -> WithEarlyExit m ()
+  go blockForging currentSlot = do
     trace blockForging $ TraceStartLeadershipCheck currentSlot
 
     -- Figure out which block to connect to
@@ -588,134 +588,135 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     -- Get forker corresponding to bcPrevPoint
     --
     -- This might fail if, in between choosing 'bcPrevPoint' and this call to
-    -- 'ChainDB.getReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
+    -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
     -- is no longer on our chain. When that happens, we simply give up on the
     -- chance to produce a block.
-    forkerEith <- lift $ ChainDB.getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
-    -- Remember to close this forker before exiting!
-    forker <- case forkerEith of
-      Left _ -> do
-        trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
-        exitEarly
-      Right forker -> pure forker
-
-    unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
-
-    trace blockForging $ TraceLedgerState currentSlot bcPrevPoint
-
-    -- We require the ticked ledger view in order to construct the ticked
-    -- 'ChainDepState'.
-    ledgerView <-
-      case runExcept $
-        forecastFor
-          ( ledgerViewForecastAt
-              (configLedger cfg)
-              (ledgerState unticked)
-          )
-          currentSlot of
-        Left err -> do
-          -- There are so many empty slots between the tip of our chain and the
-          -- current slot that we cannot get an ledger view anymore In
-          -- principle, this is no problem; we can still produce a block (we use
-          -- the ticked ledger state). However, we probably don't /want/ to
-          -- produce a block in this case; we are most likely missing a blocks
-          -- on our chain.
-          trace blockForging $ TraceNoLedgerView currentSlot err
-          lift $ roforkerClose forker
+    (txs, txssz, proof, snapSize, tickedLedgerState, forgingOnTopOf) <-
+      ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
+        Left _ -> do
+          trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
           exitEarly
-        Right lv ->
-          return lv
+        Right forker -> do
+          unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
 
-    trace blockForging $ TraceLedgerView currentSlot
+          trace blockForging $ TraceLedgerState currentSlot bcPrevPoint
 
-    -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
-    -- only need the ticked 'ChainDepState' to check the whether we're a leader.
-    -- This is much cheaper than ticking the entire 'ExtLedgerState'.
-    let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
-        tickedChainDepState =
-          tickChainDepState
-            (configConsensus cfg)
-            ledgerView
-            currentSlot
-            (headerStateChainDep (headerState unticked))
+          -- We require the ticked ledger view in order to construct the ticked
+          -- 'ChainDepState'.
+          ledgerView <-
+            case runExcept $
+              forecastFor
+                ( ledgerViewForecastAt
+                    (configLedger cfg)
+                    (ledgerState unticked)
+                )
+                currentSlot of
+              Left err -> do
+                -- There are so many empty slots between the tip of our chain and the
+                -- current slot that we cannot get an ledger view anymore In
+                -- principle, this is no problem; we can still produce a block (we use
+                -- the ticked ledger state). However, we probably don't /want/ to
+                -- produce a block in this case; we are most likely missing a blocks
+                -- on our chain.
+                trace blockForging $ TraceNoLedgerView currentSlot err
+                exitEarly
+              Right lv ->
+                return lv
 
-    -- Check if we are the leader
-    proof <- do
-      shouldForge <-
-        lift $
-          checkShouldForge
-            blockForging
-            ( contramap
-                (TraceLabelCreds (forgeLabel blockForging))
-                (forgeStateInfoTracer tracers)
+          trace blockForging $ TraceLedgerView currentSlot
+
+          -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
+          -- only need the ticked 'ChainDepState' to check the whether we're a leader.
+          -- This is much cheaper than ticking the entire 'ExtLedgerState'.
+          let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
+              tickedChainDepState =
+                tickChainDepState
+                  (configConsensus cfg)
+                  ledgerView
+                  currentSlot
+                  (headerStateChainDep (headerState unticked))
+
+          -- Check if we are the leader
+          proof <- do
+            shouldForge <-
+              lift $
+                checkShouldForge
+                  blockForging
+                  ( contramap
+                      (TraceLabelCreds (forgeLabel blockForging))
+                      (forgeStateInfoTracer tracers)
+                  )
+                  cfg
+                  currentSlot
+                  tickedChainDepState
+            case shouldForge of
+              ForgeStateUpdateError err -> do
+                trace blockForging $ TraceForgeStateUpdateError currentSlot err
+                exitEarly
+              CannotForge cannotForge -> do
+                trace blockForging $ TraceNodeCannotForge currentSlot cannotForge
+                exitEarly
+              NotLeader -> do
+                trace blockForging $ TraceNodeNotLeader currentSlot
+                exitEarly
+              ShouldForge p -> return p
+
+          -- At this point we have established that we are indeed slot leader
+          trace blockForging $ TraceNodeIsLeader currentSlot
+
+          -- Tick the ledger state for the 'SlotNo' we're producing a block for
+          let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
+              tickedLedgerState =
+                applyChainTick
+                  OmitLedgerEvents
+                  (configLedger cfg)
+                  currentSlot
+                  (ledgerState unticked)
+
+          _ <- evaluate tickedLedgerState
+          trace blockForging $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
+
+          -- Get a snapshot of the mempool that is consistent with the ledger
+          --
+          -- NOTE: It is possible that due to adoption of new blocks the
+          -- /current/ ledger will have changed. This doesn't matter: we will
+          -- produce a block that fits onto the ledger we got above; if the
+          -- ledger in the meantime changes, the block we produce here may or
+          -- may not be adopted, but it won't be invalid.
+          (mempoolHash, mempoolSlotNo) <- lift $ atomically $ do
+            snap <- getSnapshot mempool -- only used for its tip-like information
+            pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
+
+          let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+
+          mempoolSnapshot <-
+            lift $
+              getSnapshotFor
+                mempool
+                currentSlot
+                tickedLedgerState
+                readTables
+
+          let (txs, txssz) =
+                snapshotTake mempoolSnapshot $
+                  blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+          -- NB respect the capacity of the ledger state we're extending,
+          -- which is /not/ 'snapshotLedgerState'
+
+          -- force the mempool's computation before the tracer event
+          _ <- evaluate (length txs)
+          _ <- evaluate mempoolHash
+
+          trace blockForging $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
+
+          pure
+            ( txs
+            , txssz
+            , proof
+            , snapshotMempoolSize mempoolSnapshot
+            , forgetLedgerTables tickedLedgerState
+            , ledgerTipPoint (ledgerState unticked)
             )
-            cfg
-            currentSlot
-            tickedChainDepState
-      case shouldForge of
-        ForgeStateUpdateError err -> do
-          trace blockForging $ TraceForgeStateUpdateError currentSlot err
-          lift $ roforkerClose forker
-          exitEarly
-        CannotForge cannotForge -> do
-          trace blockForging $ TraceNodeCannotForge currentSlot cannotForge
-          lift $ roforkerClose forker
-          exitEarly
-        NotLeader -> do
-          trace blockForging $ TraceNodeNotLeader currentSlot
-          lift $ roforkerClose forker
-          exitEarly
-        ShouldForge p -> return p
-
-    -- At this point we have established that we are indeed slot leader
-    trace blockForging $ TraceNodeIsLeader currentSlot
-
-    -- Tick the ledger state for the 'SlotNo' we're producing a block for
-    let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
-        tickedLedgerState =
-          applyChainTick
-            OmitLedgerEvents
-            (configLedger cfg)
-            currentSlot
-            (ledgerState unticked)
-
-    _ <- evaluate tickedLedgerState
-    trace blockForging $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
-
-    -- Get a snapshot of the mempool that is consistent with the ledger
-    --
-    -- NOTE: It is possible that due to adoption of new blocks the
-    -- /current/ ledger will have changed. This doesn't matter: we will
-    -- produce a block that fits onto the ledger we got above; if the
-    -- ledger in the meantime changes, the block we produce here may or
-    -- may not be adopted, but it won't be invalid.
-    (mempoolHash, mempoolSlotNo) <- lift $ atomically $ do
-      snap <- getSnapshot mempool -- only used for its tip-like information
-      pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
-
-    let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
-
-    mempoolSnapshot <-
-      lift $
-        getSnapshotFor
-          mempool
-          currentSlot
-          tickedLedgerState
-          readTables
-
-    lift $ roforkerClose forker
-
-    let (txs, txssz) =
-          snapshotTake mempoolSnapshot $
-            blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-    -- NB respect the capacity of the ledger state we're extending,
-    -- which is /not/ 'snapshotLedgerState'
-
-    -- force the mempool's computation before the tracer event
-    _ <- evaluate (length txs)
-    _ <- evaluate mempoolHash
-
-    trace blockForging $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
     -- Actually produce the block
     newBlock <-
@@ -725,16 +726,16 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           cfg
           bcBlockNo
           currentSlot
-          (forgetLedgerTables tickedLedgerState)
+          tickedLedgerState
           txs
           proof
 
     trace blockForging $
       TraceForgedBlock
         currentSlot
-        (ledgerTipPoint (ledgerState unticked))
+        forgingOnTopOf
         newBlock
-        (snapshotMempoolSize mempoolSnapshot)
+        snapSize
         txssz
 
     -- Add the block to the chain DB

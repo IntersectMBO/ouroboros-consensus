@@ -6,12 +6,14 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -142,9 +144,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbError (..)
 
     -- * Forker
-  , getReadOnlyForker
+  , unsafeGetReadOnlyForker
   , getTipStatistics
-  , withPrivateTipForker
   , withTipForker
 
     -- * Snapshots
@@ -240,24 +241,25 @@ data LedgerDB m l blk = LedgerDB
       l ~ ExtLedgerState blk =>
       STM m (HeaderStateHistory blk)
   -- ^ Get the header state history for all ledger states in the LedgerDB.
-  , getForkerAtTarget ::
-      ResourceRegistry m ->
+  , unsafeGetForkerAtTarget ::
       Target (Point blk) ->
       m (Either GetForkerError (Forker m l))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
-  -- 'GetForkerError'.
-  --
-  -- We pass in the producer/consumer registry.
+  -- 'GetForkerError'. Note this will allocate resources so it has to be
+  -- bracketed downstream.
   , validateFork ::
-      ResourceRegistry m ->
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
       Word64 ->
       NonEmpty (Header blk) ->
-      m (ValidateResult m l blk)
+      (Forker m l -> m ()) ->
+      m (ValidateResult l blk)
   -- ^ Try to apply a sequence of blocks on top of the LedgerDB, first rolling
   -- back as many blocks as the passed @Word64@.
+  --
+  -- The passed continuation will be executed if the result of validation is
+  -- fully successful.
   , getPrevApplied :: STM m (Set (RealPoint blk))
   -- ^ Get the references to blocks that have previously been applied.
   , garbageCollect :: SlotNo -> m ()
@@ -326,6 +328,10 @@ data TestInternals m l blk = TestInternals
   , getNumLedgerTablesHandles :: m Word64
   -- ^ Get the number of referenced 'LedgerTablesHandle's for V2. For V1, this
   -- always returns 0.
+  , withForkerAtTip ::
+      forall r.
+      (Forker m l -> m r) ->
+      m r
   }
   deriving NoThunks via OnlyCheckWhnfNamed "TestInternals" (TestInternals m l blk)
 
@@ -384,30 +390,12 @@ data LedgerDbError blk
 withTipForker ::
   IOLike m =>
   LedgerDB m l blk ->
-  ResourceRegistry m ->
   (Forker m l -> m a) ->
   m a
-withTipForker ldb rr =
+withTipForker ldb =
   bracket
     ( do
-        eFrk <- getForkerAtTarget ldb rr VolatileTip
-        case eFrk of
-          Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
-          Right frk -> pure frk
-    )
-    forkerClose
-
--- | Like 'withTipForker', but it uses a private registry to allocate and
--- de-allocate the forker.
-withPrivateTipForker ::
-  IOLike m =>
-  LedgerDB m l blk ->
-  (Forker m l -> m a) ->
-  m a
-withPrivateTipForker ldb =
-  bracketWithPrivateRegistry
-    ( \rr -> do
-        eFrk <- getForkerAtTarget ldb rr VolatileTip
+        eFrk <- unsafeGetForkerAtTarget ldb VolatileTip
         case eFrk of
           Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
           Right frk -> pure frk
@@ -419,15 +407,14 @@ getTipStatistics ::
   IOLike m =>
   LedgerDB m l blk ->
   m Statistics
-getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
+getTipStatistics ldb = withTipForker ldb forkerReadStatistics
 
-getReadOnlyForker ::
+unsafeGetReadOnlyForker ::
   MonadSTM m =>
   LedgerDB m l blk ->
-  ResourceRegistry m ->
   Target (Point blk) ->
   m (Either GetForkerError (ReadOnlyForker m l))
-getReadOnlyForker ldb rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb rr pt
+unsafeGetReadOnlyForker ldb pt = fmap readOnlyForker <$> unsafeGetForkerAtTarget ldb pt
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -474,9 +461,11 @@ data InitDB db m blk = InitDB
   -- ^ Create a DB from the genesis state
   , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
-  , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
+  , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> WithTempRegistry db m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
+  , initCloseDB :: !(db -> m ())
+  -- ^ Close the database if an error comes.
   , currentTip :: !(db -> LedgerState blk EmptyMK)
   -- ^ Getting the current tip for tracing the Ledger Events.
   , mkLedgerDb ::
@@ -506,11 +495,12 @@ data InitDB db m blk = InitDB
 -- obtained in this way will (hopefully) share much of their memory footprint
 -- with their predecessors.
 initialize ::
-  forall m n blk db st.
+  forall m n blk db stref.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
   , HasCallStack
+  , NoThunks db
   ) =>
   Tracer m (TraceReplayEvent blk) ->
   Tracer m (TraceSnapshotEvent blk) ->
@@ -518,9 +508,9 @@ initialize ::
   StreamAPI m blk blk ->
   Point blk ->
   InitDB db m blk ->
-  SnapshotManager m n blk st ->
+  SnapshotManager m n blk stref ->
   Maybe DiskSnapshot ->
-  m (InitLog blk, db, Word64)
+  WithTempRegistry db m (InitLog blk, db, Word64)
 initialize
   replayTracer
   snapTracer
@@ -531,33 +521,37 @@ initialize
   snapManager
   fromSnapshot =
     case fromSnapshot of
-      Nothing -> listSnapshots snapManager >>= tryNewestFirst id
+      Nothing -> lift (listSnapshots snapManager) >>= tryNewestFirst id
       Just snap -> tryNewestFirst id [snap]
    where
-    InitDB{initFromGenesis, initFromSnapshot} = dbIface
+    InitDB{initFromGenesis, initFromSnapshot, initCloseDB} = dbIface
 
     tryNewestFirst ::
       (InitLog blk -> InitLog blk) ->
       [DiskSnapshot] ->
-      m
-        ( InitLog blk
-        , db
-        , Word64
-        )
+      WithTempRegistry db m (InitLog blk, db, Word64)
     tryNewestFirst acc [] = do
       -- We're out of snapshots. Start at genesis
-      traceWith (TraceReplayStartEvent >$< replayTracer) ReplayFromGenesis
+      lift $ traceWith (TraceReplayStartEvent >$< replayTracer) ReplayFromGenesis
       let replayTracer'' = decorateReplayTracerWithStart (Point Origin) replayTracer'
-      initDb <- initFromGenesis
-      traceMarkerIO "Genesis loaded"
-      (db, replayed) <-
-        replayStartingWith
-          replayTracer''
-          cfg
-          stream
-          initDb
-          (Point Origin)
-          dbIface
+
+      tvldb <-
+        allocateTemp
+          (newTVarIO =<< initFromGenesis)
+          (\tv -> readTVarIO tv >>= initCloseDB >> pure True)
+          (\_ _ -> True)
+
+      lift $ traceMarkerIO "Genesis loaded"
+      replayed <-
+        lift $
+          replayStartingWith
+            replayTracer''
+            cfg
+            stream
+            tvldb
+            (Point Origin)
+            dbIface
+      db <- lift $ readTVarIO tvldb
       return (acc InitFromGenesis, db, replayed)
     tryNewestFirst acc (s : ss) = do
       if ( case pointSlot replayGoal of
@@ -565,49 +559,64 @@ initialize
              At p -> dsNumber s > unSlotNo p
          )
         then do
-          deleteSnapshotIfTemporary snapManager s
-          traceWith snapTracer . InvalidSnapshot s $ InitFailureTooRecent s replayGoal
+          lift $ deleteSnapshotIfTemporary snapManager s
+          lift $ traceWith snapTracer . InvalidSnapshot s $ InitFailureTooRecent s replayGoal
           tryNewestFirst (acc . InitFailure s (InitFailureTooRecent s replayGoal)) ss
         else do
-          eInitDb <- initFromSnapshot s
-          case eInitDb of
+          eInit <-
+            allocateTemp
+              ( do
+                  eInit <- initFromSnapshot s
+                  case eInit of
+                    Left err -> pure (Left err)
+                    Right (v, pt) -> Right . (,pt) <$> newTVarIO v
+              )
+              ( \case
+                  Left{} -> pure True
+                  Right (tv, _) -> readTVarIO tv >>= initCloseDB >> pure True
+              )
+              (\_ _ -> True)
+
+          case eInit of
             -- If the snapshot is missing a metadata file, issue a warning and try
             -- the next oldest snapshot
             Left err@(InitFailureRead (ReadMetadataError _ MetadataFileDoesNotExist)) -> do
-              traceWith snapTracer $ InvalidSnapshot s err
+              lift $ traceWith snapTracer $ InvalidSnapshot s err
               tryNewestFirst (acc . InitFailure s err) ss
 
             -- If the snapshot's backend is incorrect, issue a warning and try
             -- the next oldest snapshot
             Left err@(InitFailureRead (ReadMetadataError _ MetadataBackendMismatch)) -> do
-              traceWith snapTracer $ InvalidSnapshot s err
+              lift $ traceWith snapTracer $ InvalidSnapshot s err
               tryNewestFirst (acc . InitFailure s err) ss
 
             -- If it is a legacy snapshot, issue a warning and try
             -- the next oldest snapshot
             Left err@(InitFailureRead ReadSnapshotIsLegacy) -> do
-              traceWith snapTracer $ InvalidSnapshot s err
+              lift $ traceWith snapTracer $ InvalidSnapshot s err
               tryNewestFirst (acc . InitFailure s err) ss
 
             -- If we fail to use this snapshot for any other reason, delete it and
             -- try an older one
             Left err -> do
-              deleteSnapshotIfTemporary snapManager s
-              traceWith snapTracer . InvalidSnapshot s $ err
+              lift $ deleteSnapshotIfTemporary snapManager s
+              lift $ traceWith snapTracer . InvalidSnapshot s $ err
               tryNewestFirst (acc . InitFailure s err) ss
-            Right (initDb, pt) -> do
-              traceMarkerIO "Snapshot loaded"
+            Right (tv, pt) -> do
+              lift $ traceMarkerIO "Snapshot loaded"
               let pt' = realPointToPoint pt
-              traceWith (TraceReplayStartEvent >$< replayTracer) (ReplayFromSnapshot s (ReplayStart pt'))
+              lift $ traceWith (TraceReplayStartEvent >$< replayTracer) (ReplayFromSnapshot s (ReplayStart pt'))
               let replayTracer'' = decorateReplayTracerWithStart pt' replayTracer'
-              (db, replayed) <-
-                replayStartingWith
-                  replayTracer''
-                  cfg
-                  stream
-                  initDb
-                  pt'
-                  dbIface
+              replayed <-
+                lift $
+                  replayStartingWith
+                    replayTracer''
+                    cfg
+                    stream
+                    tv
+                    pt'
+                    dbIface
+              db <- lift $ readTVarIO tv
               return (acc (InitFromSnapshot s pt), db, replayed)
 
     replayTracer' =
@@ -629,18 +638,19 @@ replayStartingWith ::
   Tracer m (ReplayStart blk -> ReplayGoal blk -> TraceReplayProgressEvent blk) ->
   LedgerDbCfg (ExtLedgerState blk) ->
   StreamAPI m blk blk ->
-  db ->
+  StrictTVar m db ->
   Point blk ->
   InitDB db m blk ->
-  m (db, Word64)
+  m Word64
 replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, currentTip} = do
+  db <- readTVarIO initDb
   res <-
     runExceptT $
       streamAll
         stream
         from
         id
-        (initDb, 0)
+        (db, 0)
         push
   case res of
     Left _ ->
@@ -648,14 +658,17 @@ replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, curren
         "Critical invariant violation: block "
           <> show from
           <> " that was in immutable db is gone before we could open ledgerdb"
-    Right v -> pure v
+    Right (_, v) -> pure v
  where
   push ::
     blk ->
     (db, Word64) ->
     m (db, Word64)
-  push blk (!db, !replayed) = do
-    !db' <- initReapplyBlock cfg blk db
+  push blk !(!db, !replayed) = do
+    db' <- runWithTempRegistry $ do
+      !db' <- initReapplyBlock cfg blk db
+      lift $ atomically $ writeTVar initDb db'
+      pure (db', db')
 
     let !replayed' = replayed + 1
 
@@ -816,8 +829,10 @@ class StreamingBackend m backend l where
   data SinkArgs m backend l
 
   yield :: Proxy backend -> YieldArgs m backend l -> Yield m l
+  releaseYieldArgs :: YieldArgs m backend l -> m ()
 
   sink :: Proxy backend -> SinkArgs m backend l -> Sink m l
+  releaseSinkArgs :: SinkArgs m backend l -> m ()
 
 type Yield m l =
   l EmptyMK ->

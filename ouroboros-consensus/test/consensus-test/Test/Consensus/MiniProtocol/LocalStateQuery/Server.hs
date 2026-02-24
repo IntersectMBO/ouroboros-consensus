@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Tests for the local state query server.
@@ -21,6 +22,7 @@ module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 import Cardano.Crypto.DSIGN.Mock
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar
+import Control.Monad (join)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -205,7 +207,15 @@ mkServer rr k chain = do
   return $
     localStateQueryServer
       cfg
-      (LedgerDB.getReadOnlyForker lgrDB rr)
+      ( \t ->
+          allocate
+            rr
+            (\_ -> LedgerDB.unsafeGetReadOnlyForker lgrDB t)
+            ( \case
+                Left{} -> pure ()
+                Right v -> roforkerClose v
+            )
+      )
  where
   cfg = ExtLedgerCfg $ testCfg k
 
@@ -242,12 +252,15 @@ initLedgerDB s c = do
           }
   ldb <-
     fst
-      <$> LedgerDB.openDB
-        args
-        streamAPI
-        (Chain.headPoint c)
-        (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
-        (LedgerDB.praosGetVolatileSuffix s)
+      <$> runWithTempRegistry
+        ( (,())
+            <$> LedgerDB.openDB
+              args
+              streamAPI
+              (Chain.headPoint c)
+              (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+              (LedgerDB.praosGetVolatileSuffix s)
+        )
 
   case NE.nonEmpty $ Chain.toOldestFirst c of
     Nothing -> pure ()
@@ -255,15 +268,14 @@ initLedgerDB s c = do
       result <-
         LedgerDB.validateFork
           ldb
-          reg
           (const $ pure ())
           BlockCache.empty
           0
           (NE.map getHeader chain)
+          (join . atomically . LedgerDB.forkerCommit)
       case result of
-        LedgerDB.ValidateSuccessful forker -> do
-          atomically $ LedgerDB.forkerCommit forker
-          LedgerDB.forkerClose forker
+        LedgerDB.ValidateSuccessful -> do
+          pure ()
         LedgerDB.ValidateExceededRollBack _ ->
           error "impossible: rollback was 0"
         LedgerDB.ValidateLedgerError _ ->

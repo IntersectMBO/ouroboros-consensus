@@ -70,6 +70,7 @@ import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
@@ -117,6 +118,7 @@ import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -646,18 +648,18 @@ runThreadNetwork
       SlotNo ->
       (SlotNo -> STM m ()) ->
       STM m (Point blk) ->
-      (ResourceRegistry m -> m (ReadOnlyForker' m blk)) ->
+      ( (ReadOnlyForker' m blk -> WithEarlyExit m (ExtLedgerState blk EmptyMK)) ->
+        m (ExtLedgerState blk EmptyMK)
+      ) ->
       Mempool m blk ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
       m (Thread m Void)
     forkCrucialTxs clock s0 unblockForge getTipPoint mforker mempool txs0 = do
-      testForkMempoolThread mempool "crucialTxs" $ withRegistry $ \reg -> do
+      testForkMempoolThread mempool "crucialTxs" $ do
         let loop (slot, mempFp) = do
-              forker <- mforker reg
-              extLedger <- atomically $ roforkerGetLedgerState forker
+              extLedger <- mforker $ lift . atomically . roforkerGetLedgerState
               let ledger = ledgerState extLedger
-              roforkerClose forker
 
               _ <- addTxs mempool txs0
 
@@ -708,20 +710,20 @@ runThreadNetwork
       OracularClock m ->
       TopLevelConfig blk ->
       Seed ->
-      (ResourceRegistry m -> m (ReadOnlyForker' m blk)) ->
+      ( (ReadOnlyForker' m blk -> WithEarlyExit m (LedgerState blk ValuesMK)) ->
+        m (LedgerState blk ValuesMK)
+      ) ->
       -- \^ How to get the current ledger state
       Mempool m blk ->
       m ()
     forkTxProducer coreNodeId registry clock cfg nodeSeed mforker mempool =
-      void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> withRegistry $ \reg -> do
-        forker <- mforker reg
-        emptySt' <- atomically $ roforkerGetLedgerState forker
-        let emptySt = emptySt'
-            doRangeQuery = roforkerRangeReadTables forker
-        fullLedgerSt <- fmap ledgerState $ do
-          (fullUTxO, _) <- doRangeQuery NoPreviousQuery
-          pure $! withLedgerTables emptySt fullUTxO
-        roforkerClose forker
+      void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
+        fullLedgerSt <- mforker $ \forker -> lift $ do
+          emptySt <- atomically . roforkerGetLedgerState $ forker
+          let doRangeQuery = roforkerRangeReadTables forker
+          fmap ledgerState $ do
+            (fullUTxO, _) <- doRangeQuery NoPreviousQuery
+            pure $! withLedgerTables emptySt fullUTxO
         -- Combine the node's seed with the current slot number, to make sure
         -- we generate different transactions in each slot.
         let txs =
@@ -1149,10 +1151,11 @@ runThreadNetwork
       -- Create a 'ReadOnlyForker' to be used in 'forkTxProducer'. This function
       -- needs the read-only forker to elaborate a complete UTxO set to generate
       -- transactions.
-      let getForker rr = do
-            ChainDB.getReadOnlyForkerAtPoint chainDB rr VolatileTip >>= \case
+      let getForker :: forall r. ((ReadOnlyForker' m blk -> WithEarlyExit m r) -> m r)
+          getForker f = do
+            fmap fromJust $ withEarlyExit $ ChainDB.withReadOnlyForkerAtPoint chainDB VolatileTip $ \case
               Left e -> error $ show e
-              Right l -> pure l
+              Right l -> f l
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the

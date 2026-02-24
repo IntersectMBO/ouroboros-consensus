@@ -875,6 +875,7 @@ instance (Ord (TxIn l), GetTip l, Monad m) => StreamingBackend m LMDB l where
     = SinkLMDB
         -- \| Chunk size
         Int
+        (LedgerBackingStore m l)
         -- \| bsWrite
         ( SlotNo ->
           (l EmptyMK, l EmptyMK) ->
@@ -886,10 +887,13 @@ instance (Ord (TxIn l), GetTip l, Monad m) => StreamingBackend m LMDB l where
   data YieldArgs m LMDB l
     = YieldLMDB
         Int
+        (LedgerBackingStore m l)
         (LedgerBackingStoreValueHandle m l)
 
-  yield _ (YieldLMDB chunkSize valueHandle) = yieldLmdbS chunkSize valueHandle
-  sink _ (SinkLMDB chunkSize write copy) = sinkLmdbS chunkSize write copy
+  yield _ (YieldLMDB chunkSize _ valueHandle) = yieldLmdbS chunkSize valueHandle
+  sink _ (SinkLMDB chunkSize _ write copy) = sinkLmdbS chunkSize write copy
+  releaseSinkArgs (SinkLMDB _ bs _ _) = bsClose bs
+  releaseYieldArgs (YieldLMDB _ bs bsvh) = bsClose bs >> bsvhClose bsvh
 
 sinkLmdbS ::
   forall m l.
@@ -936,7 +940,7 @@ yieldLmdbS readChunkSize bsvh hint k = do
 
 -- | Create Yield args for LMDB
 mkLMDBYieldArgs ::
-  forall l.
+  forall l st.
   ( HasCallStack
   , HasLedgerTables l
   , MemPackIdx l EmptyMK ~ l EmptyMK
@@ -945,35 +949,33 @@ mkLMDBYieldArgs ::
   DiskSnapshot ->
   LMDBLimits ->
   l EmptyMK ->
-  ResourceRegistry IO ->
-  IO (YieldArgs IO LMDB l)
-mkLMDBYieldArgs fs ds limits hint reg = do
-  tempDir <- getCanonicalTemporaryDirectory
+  WithTempRegistry st IO (YieldArgs IO LMDB l)
+mkLMDBYieldArgs fs ds limits hint = do
+  tempDir <- lift $ getCanonicalTemporaryDirectory
   let lmdbTemp = tempDir FilePath.</> "lmdb_streaming_in"
-  removePathForcibly lmdbTemp
-  _ <-
-    allocate
-      reg
-      (\_ -> createDirectory lmdbTemp)
-      (\_ -> removePathForcibly lmdbTemp)
-  (_, bs) <-
-    allocate
-      reg
-      ( \_ -> do
-          newLMDBBackingStore
-            Trace.nullTracer
-            limits
-            (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint lmdbTemp)
-            (SnapshotsFS fs)
-            (InitFromCopy hint (snapshotToTablesPath ds))
+  lift $ removePathForcibly lmdbTemp
+  () <-
+    allocateTemp
+      (createDirectory lmdbTemp)
+      (\_ -> removePathForcibly lmdbTemp >> pure True)
+      (\_ _ -> True)
+  bs <-
+    allocateTemp
+      ( newLMDBBackingStore
+          Trace.nullTracer
+          limits
+          (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint lmdbTemp)
+          (SnapshotsFS fs)
+          (InitFromCopy hint (snapshotToTablesPath ds))
       )
-      bsClose
-  (_, bsvh) <- allocate reg (\_ -> bsValueHandle bs) bsvhClose
-  pure (YieldLMDB 1000 bsvh)
+      (\bs -> bsClose bs >> pure True)
+      (\_ _ -> True)
+  bsvh <- allocateTemp (bsValueHandle bs) (\bsvh -> bsvhClose bsvh >> pure True) (\_ _ -> True)
+  pure (YieldLMDB 1000 bs bsvh)
 
 -- | Create Sink args for LMDB
 mkLMDBSinkArgs ::
-  forall l.
+  forall l st.
   ( HasCallStack
   , HasLedgerTables l
   , MemPackIdx l EmptyMK ~ l EmptyMK
@@ -982,27 +984,28 @@ mkLMDBSinkArgs ::
   DiskSnapshot ->
   LMDBLimits ->
   l EmptyMK ->
-  ResourceRegistry IO ->
-  IO (SinkArgs IO LMDB l)
-mkLMDBSinkArgs fs ds limits hint reg = do
-  tempDir <- getCanonicalTemporaryDirectory
+  WithTempRegistry st IO (SinkArgs IO LMDB l)
+mkLMDBSinkArgs fs ds limits hint = do
+  tempDir <- lift $ getCanonicalTemporaryDirectory
   let lmdbTemp = tempDir FilePath.</> "lmdb_streaming_out"
-  removePathForcibly lmdbTemp
-  _ <- allocate reg (\_ -> createDirectory lmdbTemp) (\_ -> removePathForcibly lmdbTemp)
-  (_, bs) <-
-    allocate
-      reg
-      ( \_ ->
-          newLMDBBackingStore
-            Trace.nullTracer
-            limits
-            (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint lmdbTemp)
-            (SnapshotsFS fs)
-            (InitFromValues (At 0) hint emptyLedgerTables)
+  lift $ removePathForcibly lmdbTemp
+  () <-
+    allocateTemp
+      (createDirectory lmdbTemp)
+      (\_ -> removePathForcibly lmdbTemp >> pure True)
+      (\_ _ -> True)
+  bs <-
+    allocateTemp
+      ( newLMDBBackingStore
+          Trace.nullTracer
+          limits
+          (LiveLMDBFS $ FS.SomeHasFS $ ioHasFS $ FS.MountPoint lmdbTemp)
+          (SnapshotsFS fs)
+          (InitFromValues (At 0) hint emptyLedgerTables)
       )
-      bsClose
-  pure $
-    SinkLMDB 1000 (bsWrite bs) (\h -> bsCopy bs h (snapshotToTablesPath ds))
+      (\bs -> bsClose bs >> pure True)
+      (\_ _ -> True)
+  pure $ SinkLMDB 1000 bs (bsWrite bs) (\h -> bsCopy bs h (snapshotToTablesPath ds))
 
 snapshotToTablesPath :: DiskSnapshot -> FS.FsPath
 snapshotToTablesPath ds = snapshotToDirPath ds FS.</> FS.mkFsPath ["tables"]

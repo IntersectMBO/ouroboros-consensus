@@ -141,7 +141,7 @@ eitherParseJson v = case fromJSON v of
 
 synthesize ::
   ( TopLevelConfig (CardanoBlock StandardCrypto) ->
-    GenTxs (CardanoBlock StandardCrypto) mk
+    GenTxs (CardanoBlock StandardCrypto)
   ) ->
   DBSynthesizerConfig ->
   (CardanoProtocolParams StandardCrypto) ->
