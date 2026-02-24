@@ -17,7 +17,7 @@ import System.Environment (lookupEnv)
 -- | A TH function to get the path corresponding to the golden output
 -- directory relative to the package root directory.
 getGoldenDir :: Q Exp
-getGoldenDir = getRelPath "golden"
+getGoldenDir = getRelPath "ouroboros-consensus-cardano/golden"
 
 -- | A TH function to get the path corresponding to the given 'FilePath' which
 -- is relative to the package root directory.

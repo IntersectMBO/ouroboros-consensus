@@ -1667,7 +1667,7 @@ test-suite cardano-test
     Test.ThreadNet.MaryAlonzo
     Test.ThreadNet.ShelleyAllegra
 
-  other-modules: Paths_ouroboros_consensus_cardano
+  other-modules: Paths_ouroboros_consensus
   build-depends:
     QuickCheck,
     base,
@@ -1972,7 +1972,7 @@ executable gen-header
 
   other-modules:
     GenHeader.Parsers
-    Paths_ouroboros_consensus_cardano
+    Paths_ouroboros_consensus
 
   autogen-modules:
-    Paths_ouroboros_consensus_cardano
+    Paths_ouroboros_consensus
