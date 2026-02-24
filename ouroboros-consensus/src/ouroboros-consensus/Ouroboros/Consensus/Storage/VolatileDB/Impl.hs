@@ -201,26 +201,33 @@ type VolatileDbSerialiseConstraints blk =
   )
 
 openDB ::
-  forall m blk ans.
+  forall m blk.
   ( HasCallStack
   , IOLike m
   , GetPrevHash blk
   , VolatileDbSerialiseConstraints blk
   ) =>
   Complete VolatileDbArgs m blk ->
-  (forall st. WithTempRegistry st m (VolatileDB m blk, st) -> ans) ->
-  ans
-openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} cont = cont $ do
-  lift $ createDirectoryIfMissing hasFS True (mkFsPath [])
+  m (VolatileDB m blk)
+openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} = do
+  createDirectoryIfMissing hasFS True (mkFsPath [])
   ost <-
-    mkOpenState
-      volCodecConfig
-      hasFS
-      volCheckIntegrity
-      volValidationPolicy
-      volTracer
-      volMaxBlocksPerFile
-  stVar <- lift $ RAWLock.new (DbOpen ost)
+    -- It is OK to disable the temp registry at this point because this
+    -- function is only used on initialization and the file handles have not
+    -- modified the files. An exception during the initialization will just
+    -- shut down the whole process which will close the handles. An exception
+    -- after the initialization will close the ChainDB which will close the
+    -- VolatileDB, closing the handles.
+    runWithTempRegistry $
+      (\x -> (x, x))
+        <$> mkOpenState
+          volCodecConfig
+          hasFS
+          volCheckIntegrity
+          volValidationPolicy
+          volTracer
+          volMaxBlocksPerFile
+  stVar <- RAWLock.new (DbOpen ost)
   let env =
         VolatileDBEnv
           { hasFS = hasFS
@@ -240,7 +247,7 @@ openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} cont = cont $ do
           , getBlockInfo = getBlockInfoImpl env
           , getMaxSlotNo = getMaxSlotNoImpl env
           }
-  return (volatileDB, ost)
+  return volatileDB
 
 {------------------------------------------------------------------------------
   VolatileDB API

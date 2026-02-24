@@ -120,7 +120,6 @@ library
     Ouroboros.Consensus.Config.SupportsNode
     Ouroboros.Consensus.Forecast
     Ouroboros.Consensus.Fragment.Diff
-    Ouroboros.Consensus.Fragment.ValidatedDiff
     Ouroboros.Consensus.Genesis.Governor
     Ouroboros.Consensus.HardFork.Abstract
     Ouroboros.Consensus.HardFork.Combinator
@@ -413,6 +412,7 @@ library lsm
     contra-tracer,
     filepath,
     fs-api,
+    io-classes:mtl,
     lsm-tree,
     mempack,
     mtl,
@@ -846,7 +846,7 @@ test-suite storage-test
     mtl,
     nothunks,
     ouroboros-consensus:{lmdb, lsm, ouroboros-consensus},
-    ouroboros-network:{api, api-tests-lib, protocols, protocols-tests-lib},
+    ouroboros-network:{api, api-tests-lib, protocols-tests-lib},
     pretty-show,
     quickcheck-dynamic ^>=4,
     quickcheck-lockstep ^>=0.8,

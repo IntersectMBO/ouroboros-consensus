@@ -91,25 +91,30 @@ validateAndReopen ::
   ValidateEnv m blk h ->
   ResourceRegistry m ->
   ValidationPolicy ->
-  WithTempRegistry (OpenState m blk h) m (OpenState m blk h)
+  m (OpenState m blk h)
 validateAndReopen validateEnv registry valPol = wrapFsError (Proxy @blk) $ do
-  (chunk, tip) <- lift $ validate validateEnv valPol
+  (chunk, tip) <- validate validateEnv valPol
   index <-
-    lift $
-      cachedIndex
-        hasFS
-        registry
-        cacheTracer
-        cacheConfig
-        chunkInfo
-        chunk
+    cachedIndex
+      hasFS
+      registry
+      cacheTracer
+      cacheConfig
+      chunkInfo
+      chunk
   case tip of
     Origin -> assert (chunk == firstChunkNo) $ do
-      lift $ traceWith tracer NoValidLastLocation
-      mkOpenState hasFS index chunk Origin MustBeNew
+      traceWith tracer NoValidLastLocation
+      -- It is OK to disable the temp registry at this point because this
+      -- function is only used on initialization and the file handles have not
+      -- modified the files. An exception during the initialization will just
+      -- shut down the whole process which will close the handles. An exception
+      -- after the initialization will close the ChainDB which will close the
+      -- ImmutableDB, closing the handles.
+      runWithTempRegistry $ (\x -> (x, x)) <$> mkOpenState hasFS index chunk Origin MustBeNew
     NotOrigin tip' -> do
-      lift $ traceWith tracer $ ValidatedLastLocation chunk tip'
-      mkOpenState hasFS index chunk tip AllowExisting
+      traceWith tracer $ ValidatedLastLocation chunk tip'
+      runWithTempRegistry $ (\x -> (x, x)) <$> mkOpenState hasFS index chunk tip AllowExisting
  where
   ValidateEnv{hasFS, tracer, cacheConfig, chunkInfo} = validateEnv
   cacheTracer = contramap TraceCacheEvent tracer

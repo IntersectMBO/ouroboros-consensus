@@ -369,10 +369,7 @@ nonImmutableDbPath (MultipleDbPaths _ vol) = vol
 -- some usual assumptions for realistic use cases such as in @cardano-node@.
 --
 -- See 'stdLowLevelRunNodeArgsIO'.
-data
-  StdRunNodeArgs
-    m
-    blk
+data StdRunNodeArgs m blk
   = StdRunNodeArgs
   { srnBfcMaxConcurrencyBulkSync :: Maybe Word
   , srnBfcMaxConcurrencyDeadline :: Maybe Word
@@ -466,21 +463,6 @@ type NetworkAddr addr =
 --   in a registry are deallocated in reverse order of allocation, any
 --   resources created by such threads will be deallocated before the
 --   ChainDB is closed, ensuring proper cleanup.
---
--- Currently, we have two distinct approaches to resource management
--- and database closure:
---
--- - In the LedgerDB, closing the database does not close any resources
---   created by its clients. We rely on the resource registry to deallocate
---   these resources before the LedgerDB is closed. However, after closing
---   the LedgerDB, the only permitted action on these resources is to free them.
---   See 'ldbForkers'.
---
--- - In the ChainDB, closing the database also closes all followers and
---   iterators.
---
--- TODO: Ideally, the ChainDB and LedgerDB should follow a consistent
--- approach to resource deallocation.
 runWith ::
   forall m addrNTN addrNTC blk.
   ( RunNode blk

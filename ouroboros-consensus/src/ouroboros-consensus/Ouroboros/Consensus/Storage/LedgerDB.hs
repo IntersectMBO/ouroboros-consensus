@@ -16,6 +16,8 @@ module Ouroboros.Consensus.Storage.LedgerDB
   , openDBInternal
   ) where
 
+import Control.Monad.Trans.Class
+import Control.ResourceRegistry
 import Data.Functor.Contravariant ((>$<))
 import Data.Word
 import Ouroboros.Consensus.Block
@@ -40,7 +42,7 @@ import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 
 openDB ::
-  forall m blk.
+  forall m blk st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -62,7 +64,7 @@ openDB ::
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
   GetVolatileSuffix m blk ->
-  m (LedgerDB' m blk, Word64)
+  WithTempRegistry st m (LedgerDB' m blk, Word64)
 openDB
   args
   stream
@@ -79,14 +81,17 @@ openDB
                 getBlock
                 snapManager
                 getVolatileSuffix
-         in doOpenDB args initDb snapManager stream replayGoal
+         in lift $ doOpenDB args initDb snapManager stream replayGoal
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
+        -- Note this is the only step that cares about the temporary
+        -- registry. Note also that the final state is an uninstantiated 'st' so
+        -- it is clear that this function will allocate resources with
+        -- 'impossibleToNotTransfer'.
         res <-
           mkResources
             (Proxy @blk)
             (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
             bArgs
-            (lgrRegistry args)
             (lgrHasFS args)
         let snapManager =
               snapshotManager
@@ -96,7 +101,7 @@ openDB
                 snapTracer
                 (lgrHasFS args)
         let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
-        doOpenDB args initDb snapManager stream replayGoal
+        lift $ doOpenDB args initDb snapManager stream replayGoal
        where
         !tr = lgrTracer args
         !snapTracer = LedgerDBSnapshotEvent >$< tr
