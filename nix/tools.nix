@@ -2,7 +2,7 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2025-05-25T20:50:09Z";
+  tool-index-state = "2026-02-23T15:03:19Z";
   tool = name: version: other:
     final.haskell-nix.tool "ghc98" name ({
       version = version;
@@ -38,14 +38,7 @@ in
 
   fourmolu = tool "fourmolu" "0.18.0.0" { };
 
-  cuddle = tool "cuddle" "git" {
-    src = final.fetchFromGitHub {
-      owner = "input-output-hk";
-      repo = "cuddle";
-      rev = "cuddle-0.5.0.0";
-      hash = "sha256-06a9N1IAh0kKW/xPu1qiLK22HpXyARnipA1YJxY4jOQ=";
-    };
-  };
+  cuddle = tool "cuddle" "1.2.0.0" { };
 
   # remove once our nixpkgs contains https://github.com/NixOS/nixpkgs/pull/394873
   cddlc = final.callPackage ./cddlc/package.nix { };
