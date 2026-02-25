@@ -24,6 +24,7 @@ packages:
   ouroboros-consensus-cardano
   ouroboros-consensus-protocol
   ouroboros-consensus-diffusion
+  quickcheck-randomized
   sop-extras
   strict-sop-core
 
