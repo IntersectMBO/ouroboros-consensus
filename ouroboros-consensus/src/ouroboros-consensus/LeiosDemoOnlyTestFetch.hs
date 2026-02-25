@@ -107,6 +107,8 @@ instance StateTokenI StDone where stateToken = SingDone
 
 -----
 
+type TxBitmaps = [(Word16, Word64)]
+
 instance Protocol (LeiosFetch point eb tx) where
   data Message (LeiosFetch point eb tx) from to where
     MsgLeiosBlockRequest ::
@@ -117,9 +119,11 @@ instance Protocol (LeiosFetch point eb tx) where
       Message (LeiosFetch point eb tx) (StBusy StBlock) StIdle
     MsgLeiosBlockTxsRequest ::
       !point ->
-      [(Word16, Word64)] ->
+      TxBitmaps ->
       Message (LeiosFetch point eb tx) StIdle (StBusy StBlockTxs)
     MsgLeiosBlockTxs ::
+      !point ->
+      TxBitmaps ->
       !(V.Vector tx) ->
       Message (LeiosFetch point eb tx) (StBusy StBlockTxs) StIdle
     -- MsgLeiosVotesRequest
@@ -237,9 +241,11 @@ encodeLeiosFetch encodeP encodeEb encodeTx = encode
         <> CBOR.encodeWord 2
         <> encodeP p
         <> encodeBitmaps bitmaps
-    MsgLeiosBlockTxs txs ->
-      CBOR.encodeListLen 2
+    MsgLeiosBlockTxs p bitmaps txs ->
+      CBOR.encodeListLen 4
         <> CBOR.encodeWord 3
+        <> encodeP p
+        <> encodeBitmaps bitmaps
         <> CBOR.encodeListLen (fromIntegral $ V.length txs)
         <> foldMap encodeTx txs
     -- MsgLeiosVotesRequest
@@ -287,14 +293,16 @@ decodeLeiosFetch decodeP decodeEb decodeTx = decode
         p <- decodeP
         bitmaps <- decodeBitmaps
         return $ SomeMessage $ MsgLeiosBlockTxsRequest p bitmaps
-      (SingBlockTxs, 2, 3) -> do
+      (SingBlockTxs, 4, 3) -> do
+        p <- decodeP
+        bitmaps <- decodeBitmaps
         n <- CBOR.decodeListLen
         -- TODO does V.generateM allocate exacly one buffer, via the hint?
         --
         -- If not, we could do so manually by relying on the fact that
         -- Decoder is ultimate in ST.
         txs <- V.generateM n $ \_i -> decodeTx
-        return $ SomeMessage $ MsgLeiosBlockTxs txs
+        return $ SomeMessage $ MsgLeiosBlockTxs p bitmaps txs
       -- MsgLeiosVotesRequest
       -- MsgLeiosVoteDelivery
       -- MsgLeiosBlockRangeRequest
@@ -360,7 +368,7 @@ codecLeiosFetchId = Codec{encode, decode}
 
 -----
 
-encodeBitmaps :: [(Word16, Word64)] -> CBOR.Encoding
+encodeBitmaps :: TxBitmaps -> CBOR.Encoding
 encodeBitmaps bitmaps =
   CBOR.encodeMapLenIndef
     <> foldr
@@ -368,7 +376,7 @@ encodeBitmaps bitmaps =
       CBOR.encodeBreak
       bitmaps
 
-decodeBitmaps :: CBOR.Decoder s [(Word16, Word64)]
+decodeBitmaps :: CBOR.Decoder s TxBitmaps
 decodeBitmaps =
   CBOR.decodeMapLenIndef
     *> CBOR.decodeSequenceLenIndef

@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module LeiosDemoException where
+module LeiosDemoException (module LeiosDemoException) where
 
 import Control.Monad.Class.MonadThrow (Exception)
 import Data.Aeson (KeyValue, ToJSON (..), Value (..), pairs, (.=))
