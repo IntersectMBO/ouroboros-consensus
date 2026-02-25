@@ -1,19 +1,19 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Test.ThreadNet.Util.Expectations (
-    NumBlocks (..)
+module Test.ThreadNet.Util.Expectations
+  ( NumBlocks (..)
   , determineForkLength
   ) where
 
-import           Cardano.Ledger.BaseTypes (unNonZero)
-import           Data.Foldable as Foldable (foldl')
+import Cardano.Ledger.BaseTypes (unNonZero)
+import Data.Foldable as Foldable (foldl')
 import qualified Data.Map.Strict as Map
-import           Data.Word (Word64)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config.SecurityParam
-import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import           Ouroboros.Consensus.Protocol.LeaderSchedule
-import           Test.ThreadNet.Util.NodeJoinPlan
+import Data.Word (Word64)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Protocol.LeaderSchedule
+import Test.ThreadNet.Util.NodeJoinPlan
 
 newtype NumBlocks = NumBlocks Word64
   deriving (Eq, Show)
@@ -21,12 +21,12 @@ newtype NumBlocks = NumBlocks Word64
 -- | Internal accumulator of 'determineForkLength'
 data Acc = Acc
   { maxChainLength :: !Word64
-    -- ^ Upper bound on length of the longest chain in the network
-  , maxForkLength  :: !Word64
-    -- ^ Upper bound on length of the longest fork in the network, excluding
-    -- the common prefix
-    --
-    -- Note that @0@ corresponds to /consensus/.
+  -- ^ Upper bound on length of the longest chain in the network
+  , maxForkLength :: !Word64
+  -- ^ Upper bound on length of the longest fork in the network, excluding
+  -- the common prefix
+  --
+  -- Note that @0@ corresponds to /consensus/.
   }
 
 -- | Compute a bound for the length of the final forks
@@ -93,75 +93,71 @@ data Acc = Acc
 -- with an empty chain). Except for the edge cases when the longest chains in
 -- the network are of length 0 or 1, this means that leaders who are joining
 -- can be disregarded.
---
 determineForkLength ::
-     SecurityParam
-  -> NodeJoinPlan
-  -> LeaderSchedule
-  -> NumBlocks
+  SecurityParam ->
+  NodeJoinPlan ->
+  LeaderSchedule ->
+  NumBlocks
 determineForkLength k (NodeJoinPlan joinPlan) (LeaderSchedule sched) =
-    prj $ Foldable.foldl' step initial (Map.toAscList sched)
-  where
-    prj Acc{maxForkLength} = NumBlocks maxForkLength
+  prj $ Foldable.foldl' step initial (Map.toAscList sched)
+ where
+  prj Acc{maxForkLength} = NumBlocks maxForkLength
 
-    -- assume the network begins in consensus (eg all nodes start at Genesis)
-    initial = Acc
+  -- assume the network begins in consensus (eg all nodes start at Genesis)
+  initial =
+    Acc
       { maxChainLength = 0
       , maxForkLength = 0
       }
 
-    -- this logic focuses on the new chains made in this slot that are longer
-    -- than the longest chains from the previous slot
-    step Acc{maxChainLength, maxForkLength} (slot, leaders) =
-        Acc
-          { maxChainLength = grow    maxChainLength
-          , maxForkLength  = update  maxForkLength
-          }
-      where
-        grow = if 0 == pullingAhead then id else (+ 1)
+  -- this logic focuses on the new chains made in this slot that are longer
+  -- than the longest chains from the previous slot
+  step Acc{maxChainLength, maxForkLength} (slot, leaders) =
+    Acc
+      { maxChainLength = grow maxChainLength
+      , maxForkLength = update maxForkLength
+      }
+   where
+    grow = if 0 == pullingAhead then id else (+ 1)
 
-        update
-            -- too late to reach consensus, so further diverge
-          | maxForkLength > unNonZero (maxRollbacks k) = grow
+    update
+      -- too late to reach consensus, so further diverge
+      | maxForkLength > unNonZero (maxRollbacks k) = grow
+      -- assume (common) worst-case: each leader creates a unique longer
+      -- chain
+      | pullingAhead > 1 = (+ 1)
+      -- the sole leader creates the sole longer chain, bringing the
+      -- network into consensus
+      | pullingAhead == 1 = const 0
+      -- there will be multiple longest chains that disagree on at least
+      -- the latest block
+      --
+      -- Note that pullingAhead == 0 by the preceding guards
+      | pullingEven > 0 = max 1
+      -- no nodes are extending their chain, so the longest chains are
+      -- the same as in the previous slot
+      | otherwise = id
 
-            -- assume (common) worst-case: each leader creates a unique longer
-            -- chain
-          | pullingAhead >  1              = (+ 1)
+    -- how many leaders are forging a block onto a @maxForkLength@-chain
+    pullingAhead = nlOld + nlNew (maxChainLength == 0)
+    -- how many leaders are forging a block onto a @maxForkLength - 1@-chain
+    pullingEven = nlNew (maxChainLength == 1)
 
-            -- the sole leader creates the sole longer chain, bringing the
-            -- network into consensus
-          | pullingAhead == 1              = const 0
+    -- how many leaders joined before this slot
+    nlOld = length $ filter ((< slot) . joinSlot) leaders
+    nlNew b
+      | not b = 0
+      -- how many leaders are joining during this slot; these might not
+      -- be relevant
+      --
+      -- A node leading the same slot it joins always forges a 1-block
+      -- chain; there's actually a race-condition between block forging
+      -- and BlockFetch/ChainSync, but forging always wins in the current
+      -- test framework implementation.
+      | otherwise = length $ filter ((== slot) . joinSlot) leaders
 
-            -- there will be multiple longest chains that disagree on at least
-            -- the latest block
-            --
-            -- Note that pullingAhead == 0 by the preceding guards
-          | pullingEven  >  0              = max 1
-
-            -- no nodes are extending their chain, so the longest chains are
-            -- the same as in the previous slot
-          | otherwise                      = id
-
-        -- how many leaders are forging a block onto a @maxForkLength@-chain
-        pullingAhead = nlOld + nlNew (maxChainLength == 0)
-        -- how many leaders are forging a block onto a @maxForkLength - 1@-chain
-        pullingEven  = nlNew (maxChainLength == 1)
-
-        -- how many leaders joined before this slot
-        nlOld = length $ filter ((< slot) . joinSlot) leaders
-        nlNew b
-          | not b     = 0
-            -- how many leaders are joining during this slot; these might not
-            -- be relevant
-            --
-            -- A node leading the same slot it joins always forges a 1-block
-            -- chain; there's actually a race-condition between block forging
-            -- and BlockFetch/ChainSync, but forging always wins in the current
-            -- test framework implementation.
-          | otherwise = length $ filter ((== slot) . joinSlot) leaders
-
-        -- slot in which the node joins the network
-        joinSlot :: CoreNodeId -> SlotNo
-        joinSlot nid = case Map.lookup nid joinPlan of
-            Nothing    -> error "determineForkLength: incomplete node join plan"
-            Just slot' -> slot'
+    -- slot in which the node joins the network
+    joinSlot :: CoreNodeId -> SlotNo
+    joinSlot nid = case Map.lookup nid joinPlan of
+      Nothing -> error "determineForkLength: incomplete node join plan"
+      Just slot' -> slot'

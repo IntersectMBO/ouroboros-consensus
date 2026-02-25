@@ -13,77 +13,103 @@
 
 module Test.Ouroboros.Storage.ChainDB.Unit (tests) where
 
-
-import           Cardano.Slotting.Slot (WithOrigin (..))
-import           Control.Monad (replicateM, unless, void)
-import           Control.Monad.Except (Except, ExceptT, MonadError, runExcept,
-                     runExceptT, throwError)
-import           Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
-import           Control.Monad.State (MonadState, StateT, evalStateT, get, put)
-import           Control.Monad.Trans.Class (lift)
-import           Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
-import           Data.Maybe (isJust)
-import           Ouroboros.Consensus.Block.RealPoint
-                     (pointToWithOriginRealPoint)
-import           Ouroboros.Consensus.Config (TopLevelConfig,
-                     configSecurityParam)
-import           Ouroboros.Consensus.Ledger.Basics
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
-                     (LedgerSupportsProtocol)
+import Cardano.Slotting.Slot (WithOrigin (..))
+import Control.Monad (replicateM, unless, void)
+import Control.Monad.Except
+  ( Except
+  , ExceptT
+  , MonadError
+  , runExcept
+  , runExceptT
+  , throwError
+  )
+import Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
+import Control.Monad.State (MonadState, StateT, evalStateT, get, put)
+import Control.Monad.Trans.Class (lift)
+import Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
+import Data.Maybe (isJust)
+import Ouroboros.Consensus.Block.RealPoint
+  ( pointToWithOriginRealPoint
+  )
+import Ouroboros.Consensus.Config
+  ( TopLevelConfig
+  , configSecurityParam
+  )
+import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as API
-import           Ouroboros.Consensus.Storage.ChainDB.Impl (TraceEvent)
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
-import           Ouroboros.Consensus.Storage.Common (StreamFrom (..),
-                     StreamTo (..))
-import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
-import           Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Storage.ChainDB.Impl (TraceEvent)
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+import Ouroboros.Consensus.Storage.Common
+  ( StreamFrom (..)
+  , StreamTo (..)
+  )
+import Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
+import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint)
+import Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint)
 import qualified Ouroboros.Network.Mock.Chain as Mock
+import Test.Ouroboros.Storage.ChainDB.Model (Model)
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
-import           Test.Ouroboros.Storage.ChainDB.Model (Model)
+import Test.Ouroboros.Storage.ChainDB.StateMachine
+  ( AllComponents
+  , ChainDBEnv (..)
+  , ChainDBState (..)
+  , ShouldGarbageCollect (..)
+  , TestConstraints
+  , allComponents
+  , close
+  , mkTestCfg
+  , open
+  )
 import qualified Test.Ouroboros.Storage.ChainDB.StateMachine as SM
-import           Test.Ouroboros.Storage.ChainDB.StateMachine (AllComponents,
-                     ChainDBEnv (..), ChainDBState (..),
-                     ShouldGarbageCollect (..), TestConstraints, allComponents,
-                     close, mkTestCfg, open)
-import           Test.Ouroboros.Storage.TestBlock
-import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (Assertion, assertFailure, testCase)
-import           Test.Util.ChainDB (MinimalChainDbArgs (..), emptyNodeDBs,
-                     fromMinimalChainDbArgs, nodeDBsVol)
-import           Test.Util.Tracer (recordingTracerTVar)
+import Test.Ouroboros.Storage.TestBlock
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit (Assertion, assertFailure, testCase)
+import Test.Util.ChainDB
+  ( MinimalChainDbArgs (..)
+  , emptyNodeDBs
+  , fromMinimalChainDbArgs
+  , nodeDBsVol
+  )
+import Test.Util.Tracer (recordingTracerTVar)
 
 tests :: TestTree
-tests = testGroup "Unit tests"
-  [ testGroup "First follower instruction isJust on empty ChainDB"
-    [ testCase "model" $ runModelIO API.LoEDisabled followerInstructionOnEmptyChain
-    , testCase "system" $ runSystemIO followerInstructionOnEmptyChain
+tests =
+  testGroup
+    "Unit tests"
+    [ testGroup
+        "First follower instruction isJust on empty ChainDB"
+        [ testCase "model" $ runModelIO API.LoEDisabled followerInstructionOnEmptyChain
+        , testCase "system" $ runSystemIO followerInstructionOnEmptyChain
+        ]
+    , testGroup
+        "Follower switches to new chain"
+        [ testCase "model" $ runModelIO API.LoEDisabled followerSwitchesToNewChain
+        , testCase "system" $ runSystemIO followerSwitchesToNewChain
+        ]
+    , testGroup
+        (ouroborosNetworkIssue 4183)
+        [ testCase "model" $ runModelIO API.LoEDisabled ouroboros_network_4183
+        , testCase "system" $ runSystemIO ouroboros_network_4183
+        ]
+    , testGroup
+        (ouroborosNetworkIssue 3999)
+        [ testCase "model" $ runModelIO API.LoEDisabled ouroboros_network_3999
+        , testCase "system" $ runSystemIO ouroboros_network_3999
+        ]
     ]
-  , testGroup "Follower switches to new chain"
-    [ testCase "model" $ runModelIO API.LoEDisabled followerSwitchesToNewChain
-    , testCase "system" $ runSystemIO followerSwitchesToNewChain
-    ]
-  , testGroup (ouroborosNetworkIssue 4183)
-    [ testCase "model" $ runModelIO API.LoEDisabled ouroboros_network_4183
-    , testCase "system" $ runSystemIO ouroboros_network_4183
-    ]
-  , testGroup (ouroborosNetworkIssue 3999)
-    [ testCase "model" $ runModelIO API.LoEDisabled ouroboros_network_3999
-    , testCase "system" $ runSystemIO ouroboros_network_3999
-    ]
-  ]
-
 
 followerInstructionOnEmptyChain :: (SupportsUnitTest m, MonadError TestFailure m) => m ()
 followerInstructionOnEmptyChain = do
   f <- newFollower
   followerInstruction f >>= \case
     Right instr -> isJust instr `orFailWith` "Expecting a follower instruction"
-    Left _      -> failWith $ "ChainDbError"
-
+    Left _ -> failWith $ "ChainDbError"
 
 -- | Test that a follower starts following the newly selected fork.
 -- The chain constructed in this example looks like:
@@ -91,64 +117,61 @@ followerInstructionOnEmptyChain = do
 --     G --- b1 --- b2
 --            \
 --             \--- b3 -- b4
---
 followerSwitchesToNewChain ::
-     (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
+  (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
 followerSwitchesToNewChain =
   let fork i = TestBody i True
-  in do
-    b1 <- addBlock $ firstBlock 0     $ fork 0 -- b1 on top of G
-    b2 <- addBlock $ mkNextBlock b1 1 $ fork 0 -- b2 on top of b1
-    f <- newFollower
-    followerForward f [blockPoint b2] >>= \case
-      Right (Just pt) -> assertEqual (blockPoint b2) pt "Expected to be at b2"
-      _               -> failWith "Expecting a success"
-    b3 <- addBlock $ mkNextBlock b1 2 $ fork 1 -- b3 on top of b1
-    b4 <- addBlock $ mkNextBlock b3 3 $ fork 1 -- b4 on top of b3
-    followerInstruction f >>= \case
-      Right (Just (RollBack actual))
-        -- Expect to rollback to the intersection point between [b1, b2] and
-        -- [b1, b3, b4]
-        -> assertEqual (blockPoint b1) actual "Rollback to wrong point"
-      _ -> failWith "Expecting a rollback"
-    followerInstruction f >>= \case
-      Right (Just (AddBlock actual))
-        -> assertEqual b3 (extractBlock actual) "Instructed to add wrong block"
-      _ -> failWith "Expecting instruction to add a block"
-    followerInstruction f >>= \case
-      Right (Just (AddBlock actual))
-        -> assertEqual b4 (extractBlock actual) "Instructed to add wrong block"
-      _ -> failWith "Expecting instruction to add a block"
-
+   in do
+        b1 <- addBlock $ firstBlock 0 $ fork 0 -- b1 on top of G
+        b2 <- addBlock $ mkNextBlock b1 1 $ fork 0 -- b2 on top of b1
+        f <- newFollower
+        followerForward f [blockPoint b2] >>= \case
+          Right (Just pt) -> assertEqual (blockPoint b2) pt "Expected to be at b2"
+          _ -> failWith "Expecting a success"
+        b3 <- addBlock $ mkNextBlock b1 2 $ fork 1 -- b3 on top of b1
+        b4 <- addBlock $ mkNextBlock b3 3 $ fork 1 -- b4 on top of b3
+        followerInstruction f >>= \case
+          Right (Just (RollBack actual)) ->
+            -- Expect to rollback to the intersection point between [b1, b2] and
+            -- [b1, b3, b4]
+            assertEqual (blockPoint b1) actual "Rollback to wrong point"
+          _ -> failWith "Expecting a rollback"
+        followerInstruction f >>= \case
+          Right (Just (AddBlock actual)) ->
+            assertEqual b3 (extractBlock actual) "Instructed to add wrong block"
+          _ -> failWith "Expecting instruction to add a block"
+        followerInstruction f >>= \case
+          Right (Just (AddBlock actual)) ->
+            assertEqual b4 (extractBlock actual) "Instructed to add wrong block"
+          _ -> failWith "Expecting instruction to add a block"
 
 ouroborosNetworkIssue :: Int -> String
 ouroborosNetworkIssue n
   | n <= 0 = error "Issue number should be positive"
   | otherwise = "https://github.com/IntersectMBO/ouroboros-network/issues/" <> show n
 
-
-ouroboros_network_4183 :: (
-    Block m ~ TestBlock
+ouroboros_network_4183 ::
+  ( Block m ~ TestBlock
   , SupportsUnitTest m
   , MonadError TestFailure m
-  ) => m ()
+  ) =>
+  m ()
 ouroboros_network_4183 =
   let fork i = TestBody i True
-  in do
-    b1 <- addBlock $ firstEBB (const True) $ fork 0
-    b2 <- addBlock $ mkNextBlock b1 0 $ fork 0
-    b3 <- addBlock $ mkNextBlock b2 1 $ fork 1
-    b4 <- addBlock $ mkNextBlock b2 1 $ fork 0
-    f <- newFollower
-    void $ followerForward f [blockPoint b1]
-    void $ addBlock $ mkNextBlock b4 4 $ fork 0
-    persistBlks DoNotGarbageCollect
-    void $ addBlock $ mkNextBlock b3 3 $ fork 1
-    followerInstruction f >>= \case
-      Right (Just (RollBack actual))
-        -> assertEqual (blockPoint b1) actual "Rollback to wrong point"
-      _ -> failWith "Expecting a rollback"
-
+   in do
+        b1 <- addBlock $ firstEBB (const True) $ fork 0
+        b2 <- addBlock $ mkNextBlock b1 0 $ fork 0
+        b3 <- addBlock $ mkNextBlock b2 1 $ fork 1
+        b4 <- addBlock $ mkNextBlock b2 1 $ fork 0
+        f <- newFollower
+        void $ followerForward f [blockPoint b1]
+        void $ addBlock $ mkNextBlock b4 4 $ fork 0
+        persistBlks DoNotGarbageCollect
+        void $ addBlock $ mkNextBlock b3 3 $ fork 1
+        followerInstruction f >>= \case
+          Right (Just (RollBack actual)) ->
+            assertEqual (blockPoint b1) actual "Rollback to wrong point"
+          _ -> failWith "Expecting a rollback"
 
 -- | Test that iterators over dead forks that may have been garbage-collected
 -- either stream the blocks in the dead fork normally, report that the blocks
@@ -157,110 +180,117 @@ ouroboros_network_4183 =
 -- non-deterministic, since garbage collection happens in the background, and
 -- hence, may not yet have happened when the next item in the iterator is
 -- requested.
-ouroboros_network_3999 :: (
-    Mock.HasHeader (Block m)
+ouroboros_network_3999 ::
+  ( Mock.HasHeader (Block m)
   , Block m ~ TestBlock
   , SupportsUnitTest m
   , MonadError TestFailure m
-  ) => m ()
+  ) =>
+  m ()
 ouroboros_network_3999 = do
-    b1 <- addBlock $ firstBlock 0 $ fork 1
-    b2 <- addBlock $ mkNextBlock b1 1 $ fork 1
-    b3 <- addBlock $ mkNextBlock b2 2 $ fork 1
-    i <- streamAssertSuccess (inclusiveFrom b1) (inclusiveTo b3)
-    b4 <- addBlock $ mkNextBlock b1 3 $ fork 2
-    b5 <- addBlock $ mkNextBlock b4 4 $ fork 2
-    b6 <- addBlock $ mkNextBlock b5 5 $ fork 2
-    void $ addBlock $ mkNextBlock b6 6 $ fork 2
-    persistBlks GarbageCollect
+  b1 <- addBlock $ firstBlock 0 $ fork 1
+  b2 <- addBlock $ mkNextBlock b1 1 $ fork 1
+  b3 <- addBlock $ mkNextBlock b2 2 $ fork 1
+  i <- streamAssertSuccess (inclusiveFrom b1) (inclusiveTo b3)
+  b4 <- addBlock $ mkNextBlock b1 3 $ fork 2
+  b5 <- addBlock $ mkNextBlock b4 4 $ fork 2
+  b6 <- addBlock $ mkNextBlock b5 5 $ fork 2
+  void $ addBlock $ mkNextBlock b6 6 $ fork 2
+  persistBlks GarbageCollect
 
-    -- The block b1 is part of the current chain, so should always be returned.
-    result <- iteratorNextBlock i
-    assertEqual (API.IteratorResult b1) result "Streaming first block"
+  -- The block b1 is part of the current chain, so should always be returned.
+  result <- iteratorNextBlock i
+  assertEqual (API.IteratorResult b1) result "Streaming first block"
 
-    -- The remainder of the elements in the iterator are part of the dead fork,
-    -- and may have been garbage-collected.
-    let options = [
-            -- The dead fork has been garbage-collected.
-            [API.IteratorBlockGCed $ blockRealPoint b2, API.IteratorExhausted]
-            -- The dead fork has not been garbage-collected yet.
-          , [API.IteratorResult b2, API.IteratorResult b3]]
+  -- The remainder of the elements in the iterator are part of the dead fork,
+  -- and may have been garbage-collected.
+  let options =
+        [ -- The dead fork has been garbage-collected.
+          [API.IteratorBlockGCed $ blockRealPoint b2, API.IteratorExhausted]
+        , -- The dead fork has not been garbage-collected yet.
+          [API.IteratorResult b2, API.IteratorResult b3]
+        ]
 
-    actual <- replicateM 2 (iteratorNextBlock i)
-    assertOneOf options actual "Streaming over dead fork"
+  actual <- replicateM 2 (iteratorNextBlock i)
+  assertOneOf options actual "Streaming over dead fork"
+ where
+  fork i = TestBody i True
 
-  where
-    fork i = TestBody i True
+  iteratorNextBlock it = fmap extractBlock <$> iteratorNext it
 
-    iteratorNextBlock it = fmap extractBlock <$> iteratorNext it
+  inclusiveFrom = StreamFromInclusive . blockRealPoint
+  inclusiveTo = StreamToInclusive . blockRealPoint
+  -- Do not call this function with `Genesis`
+  blockRealPoint blk = case pointToWithOriginRealPoint $ blockPoint blk of
+    At realPoint -> realPoint
+    _ -> error "Should not happen"
 
-    inclusiveFrom      = StreamFromInclusive . blockRealPoint
-    inclusiveTo        = StreamToInclusive . blockRealPoint
-    -- Do not call this function with `Genesis`
-    blockRealPoint blk = case pointToWithOriginRealPoint $ blockPoint blk of
-      At realPoint -> realPoint
-      _            -> error "Should not happen"
-
-
-streamAssertSuccess :: (MonadError TestFailure m, SupportsUnitTest m, Mock.HasHeader (Block m))
-                    => StreamFrom (Block m) -> StreamTo (Block m) -> m (IteratorId m)
-streamAssertSuccess from to = stream from to >>= \case
+streamAssertSuccess ::
+  (MonadError TestFailure m, SupportsUnitTest m, Mock.HasHeader (Block m)) =>
+  StreamFrom (Block m) -> StreamTo (Block m) -> m (IteratorId m)
+streamAssertSuccess from to =
+  stream from to >>= \case
     Left err -> failWith $ "Should be able to create iterator: " <> show err
     Right (Left err) -> failWith $ "Range should be valid: " <> show err
     Right (Right iteratorId) -> pure iteratorId
 
-
 extractBlock :: AllComponents blk -> blk
 extractBlock (blk, _, _, _, _, _, _, _, _, _, _) = blk
-
 
 -- | Helper function to run the test against the model and translate to something
 -- that HUnit likes.
 runModelIO :: API.LoE () -> ModelM TestBlock a -> IO ()
 runModelIO loe expr = toAssertion (runModel newModel topLevelConfig expr)
-  where
-    chunkInfo      = ImmutableDB.simpleChunkInfo 100
-    newModel       = Model.empty loe testInitExtLedger
-    topLevelConfig = mkTestCfg chunkInfo
-
+ where
+  chunkInfo = ImmutableDB.simpleChunkInfo 100
+  newModel = Model.empty loe testInitExtLedger
+  topLevelConfig = mkTestCfg chunkInfo
 
 -- | Helper function to run the test against the actual chain database and
 -- translate to something that HUnit likes.
 runSystemIO :: SystemM TestBlock IO a -> IO ()
 runSystemIO expr = runSystem withChainDbEnv expr >>= toAssertion
-  where
-    chunkInfo      = ImmutableDB.simpleChunkInfo 100
-    topLevelConfig = mkTestCfg chunkInfo
-    withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertMapKind testInitExtLedger
+ where
+  chunkInfo = ImmutableDB.simpleChunkInfo 100
+  topLevelConfig = mkTestCfg chunkInfo
+  withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertMapKind testInitExtLedger
 
-
-newtype TestFailure = TestFailure String deriving (Show)
-
+newtype TestFailure = TestFailure String deriving Show
 
 toAssertion :: Either TestFailure a -> Assertion
 toAssertion (Left (TestFailure t)) = assertFailure t
-toAssertion (Right _)              = pure ()
+toAssertion (Right _) = pure ()
 
-orFailWith :: (MonadError TestFailure m) => Bool -> String -> m ()
+orFailWith :: MonadError TestFailure m => Bool -> String -> m ()
 orFailWith b msg = unless b $ failWith msg
 infixl 1 `orFailWith`
 
-failWith :: (MonadError TestFailure m) => String -> m a
+failWith :: MonadError TestFailure m => String -> m a
 failWith msg = throwError (TestFailure msg)
 
-assertEqual :: (MonadError TestFailure m, Eq a, Show a)
-            => a -> a -> String -> m ()
+assertEqual ::
+  (MonadError TestFailure m, Eq a, Show a) =>
+  a -> a -> String -> m ()
 assertEqual expected actual description = expected == actual `orFailWith` msg
-  where
-    msg = description <> "\n\t Expected: " <> show expected
-                      <> "\n\t Actual: " <> show actual
+ where
+  msg =
+    description
+      <> "\n\t Expected: "
+      <> show expected
+      <> "\n\t Actual: "
+      <> show actual
 
-assertOneOf :: (MonadError TestFailure m, Eq a, Show a)
-            => [a] -> a -> String -> m ()
+assertOneOf ::
+  (MonadError TestFailure m, Eq a, Show a) =>
+  [a] -> a -> String -> m ()
 assertOneOf options actual description = actual `elem` options `orFailWith` msg
-  where
-    msg = description <> "\n\t Options: " <> show options
-                      <> "\n\t Actual: " <> show actual
+ where
+  msg =
+    description
+      <> "\n\t Options: "
+      <> show options
+      <> "\n\t Actual: "
+      <> show actual
 
 -- | SupportsUnitTests for the test expression need to instantiate this class.
 class SupportsUnitTest m where
@@ -268,35 +298,43 @@ class SupportsUnitTest m where
   type IteratorId m
   type Block m
 
-  addBlock
-    :: Block m -> m (Block m)
+  addBlock ::
+    Block m -> m (Block m)
 
-  newFollower
-    :: m (FollowerId m)
+  newFollower ::
+    m (FollowerId m)
 
-  followerInstruction
-    :: FollowerId m
-    -> m (Either (API.ChainDbError (Block m))
-                 (Maybe (ChainUpdate (Block m) (AllComponents (Block m)))))
+  followerInstruction ::
+    FollowerId m ->
+    m
+      ( Either
+          (API.ChainDbError (Block m))
+          (Maybe (ChainUpdate (Block m) (AllComponents (Block m))))
+      )
 
-  followerForward
-    :: FollowerId m
-    -> [Point (Block m)]
-    -> m (Either (API.ChainDbError (Block m))
-                 (Maybe (Point (Block m))))
+  followerForward ::
+    FollowerId m ->
+    [Point (Block m)] ->
+    m
+      ( Either
+          (API.ChainDbError (Block m))
+          (Maybe (Point (Block m)))
+      )
 
   persistBlks :: ShouldGarbageCollect -> m ()
 
-  stream
-    :: StreamFrom (Block m)
-    -> StreamTo (Block m)
-    -> m (Either (API.ChainDbError (Block m))
-                 (Either (API.UnknownRange (Block m)) (IteratorId m)))
+  stream ::
+    StreamFrom (Block m) ->
+    StreamTo (Block m) ->
+    m
+      ( Either
+          (API.ChainDbError (Block m))
+          (Either (API.UnknownRange (Block m)) (IteratorId m))
+      )
 
-  iteratorNext
-    :: IteratorId m
-    -> m (API.IteratorResult (Block m) (AllComponents (Block m)))
-
+  iteratorNext ::
+    IteratorId m ->
+    m (API.IteratorResult (Block m) (AllComponents (Block m)))
 
 {-------------------------------------------------------------------------------
   Model
@@ -305,19 +343,23 @@ class SupportsUnitTest m where
 -- | Tests against the model run in this monad.
 newtype ModelM blk a = ModelM
   { runModelM :: StateT (Model blk) (ReaderT (TopLevelConfig blk) (Except TestFailure)) a
-  } deriving newtype (Functor, Applicative, Monad,
-                      MonadReader (TopLevelConfig blk),
-                      MonadState (Model blk), MonadError TestFailure)
-
+  }
+  deriving newtype
+    ( Functor
+    , Applicative
+    , Monad
+    , MonadReader (TopLevelConfig blk)
+    , MonadState (Model blk)
+    , MonadError TestFailure
+    )
 
 runModel ::
-     Model blk
-  -> TopLevelConfig blk
-  -> ModelM blk b
-  -> Either TestFailure b
-runModel model topLevelConfig expr
-  = runExcept (runReaderT (evalStateT (runModelM expr) model) topLevelConfig)
-
+  Model blk ->
+  TopLevelConfig blk ->
+  ModelM blk b ->
+  Either TestFailure b
+runModel model topLevelConfig expr =
+  runExcept (runReaderT (evalStateT (runModelM expr) model) topLevelConfig)
 
 withModelContext :: (Model blk -> TopLevelConfig blk -> (a, Model blk)) -> ModelM blk a
 withModelContext f = do
@@ -327,10 +369,10 @@ withModelContext f = do
   put model'
   pure a
 
-
-instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk))
-      => SupportsUnitTest (ModelM blk) where
-
+instance
+  (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk)) =>
+  SupportsUnitTest (ModelM blk)
+  where
   type FollowerId (ModelM blk) = Model.FollowerId
   type IteratorId (ModelM blk) = Model.IteratorId
   type Block (ModelM blk) = blk
@@ -340,7 +382,7 @@ instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, LedgerTables
 
   followerInstruction followerId = withModelContext $ \model _ ->
     case Model.followerInstruction followerId allComponents model of
-      Left err                     -> (Left err, model)
+      Left err -> (Left err, model)
       Right (mChainUpdate, model') -> (Right mChainUpdate, model')
 
   addBlock blk = do
@@ -351,7 +393,7 @@ instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, LedgerTables
 
   followerForward followerId points = withModelContext $ \model _ ->
     case Model.followerForward followerId points model of
-      Left err                     -> (Left err, model)
+      Left err -> (Left err, model)
       Right (mChainUpdate, model') -> (Right mChainUpdate, model')
 
   persistBlks shouldGarbageCollect = withModelContext $ \model cfg ->
@@ -363,7 +405,7 @@ instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, LedgerTables
     do
       let k = configSecurityParam cfg
       case Model.stream k from to model of
-        Left err               -> (Left err, model)
+        Left err -> (Left err, model)
         Right (result, model') -> (Right result, model')
 
   iteratorNext iteratorId = withModelContext $ \model _ ->
@@ -376,41 +418,46 @@ instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, LedgerTables
 -- | Tests against the actual chain database run in this monad.
 newtype SystemM blk m a = SystemM
   { runSystemM :: ReaderT (ChainDBEnv m blk) (ExceptT TestFailure m) a
-  } deriving newtype (Functor, Applicative, Monad,
-                      MonadReader (ChainDBEnv m blk), MonadError TestFailure)
-
+  }
+  deriving newtype
+    ( Functor
+    , Applicative
+    , Monad
+    , MonadReader (ChainDBEnv m blk)
+    , MonadError TestFailure
+    )
 
 runSystem ::
-     (forall a. (ChainDBEnv m blk -> m [TraceEvent blk] -> m a) -> m a)
-  -> SystemM blk m b
-  -> m (Either TestFailure b)
-runSystem withChainDbEnv expr
-  = withChainDbEnv $ \env _getTrace ->
-                       runExceptT $ runReaderT (runSystemM expr) env
-
+  (forall a. (ChainDBEnv m blk -> m [TraceEvent blk] -> m a) -> m a) ->
+  SystemM blk m b ->
+  m (Either TestFailure b)
+runSystem withChainDbEnv expr =
+  withChainDbEnv $ \env _getTrace ->
+    runExceptT $ runReaderT (runSystemM expr) env
 
 -- | Provide a standard ChainDbEnv for testing.
 withTestChainDbEnv ::
-     (IOLike m, TestConstraints blk)
-  => TopLevelConfig blk
-  -> ImmutableDB.ChunkInfo
-  -> ExtLedgerState blk ValuesMK
-  -> (ChainDBEnv m blk -> m [TraceEvent blk] -> m a)
-  -> m a
-withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
-  = bracket openChainDbEnv closeChainDbEnv (uncurry cont)
-  where
-    openChainDbEnv = do
-      threadRegistry <- unsafeNewRegistry
-      iteratorRegistry <- unsafeNewRegistry
-      varCurSlot <- uncheckedNewTVarM 0
-      varNextId <- uncheckedNewTVarM 0
-      varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
-      nodeDbs <- emptyNodeDBs
-      (tracer, getTrace) <- recordingTracerTVar
-      let args = chainDbArgs threadRegistry nodeDbs tracer
-      varDB <- open args >>= newTVarIO
-      let env = ChainDBEnv
+  (IOLike m, TestConstraints blk) =>
+  TopLevelConfig blk ->
+  ImmutableDB.ChunkInfo ->
+  ExtLedgerState blk ValuesMK ->
+  (ChainDBEnv m blk -> m [TraceEvent blk] -> m a) ->
+  m a
+withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
+  bracket openChainDbEnv closeChainDbEnv (uncurry cont)
+ where
+  openChainDbEnv = do
+    threadRegistry <- unsafeNewRegistry
+    iteratorRegistry <- unsafeNewRegistry
+    varCurSlot <- uncheckedNewTVarM 0
+    varNextId <- uncheckedNewTVarM 0
+    varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
+    nodeDbs <- emptyNodeDBs
+    (tracer, getTrace) <- recordingTracerTVar
+    let args = chainDbArgs threadRegistry nodeDbs tracer
+    varDB <- open args >>= newTVarIO
+    let env =
+          ChainDBEnv
             { varDB
             , registry = iteratorRegistry
             , varCurSlot
@@ -419,25 +466,26 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
             , args
             , varLoEFragment
             }
-      pure (env, getTrace)
+    pure (env, getTrace)
 
-    closeChainDbEnv (env, _) = do
-      readTVarIO (varDB env) >>= close
-      closeRegistry (registry env)
-      closeRegistry (cdbsRegistry . cdbsArgs $ args env)
+  closeChainDbEnv (env, _) = do
+    readTVarIO (varDB env) >>= close
+    closeRegistry (registry env)
+    closeRegistry (cdbsRegistry . cdbsArgs $ args env)
 
-    chainDbArgs registry nodeDbs tracer =
-      let args = fromMinimalChainDbArgs MinimalChainDbArgs
-            { mcdbTopLevelConfig = topLevelConfig
-            , mcdbChunkInfo = chunkInfo
-            , mcdbInitLedger = extLedgerState
-            , mcdbRegistry = registry
-            , mcdbNodeDBs = nodeDbs
-            }
-      in updateTracer tracer args
+  chainDbArgs registry nodeDbs tracer =
+    let args =
+          fromMinimalChainDbArgs
+            MinimalChainDbArgs
+              { mcdbTopLevelConfig = topLevelConfig
+              , mcdbChunkInfo = chunkInfo
+              , mcdbInitLedger = extLedgerState
+              , mcdbRegistry = registry
+              , mcdbNodeDBs = nodeDbs
+              }
+     in updateTracer tracer args
 
 instance IOLike m => SupportsUnitTest (SystemM blk m) where
-
   type IteratorId (SystemM blk m) = API.Iterator m blk (AllComponents blk)
   type FollowerId (SystemM blk m) = API.Follower m blk (AllComponents blk)
   type Block (SystemM blk m) = blk
@@ -461,11 +509,16 @@ instance IOLike m => SupportsUnitTest (SystemM blk m) where
       api <- chainDB <$> readTVarIO (varDB env)
       API.newFollower api (registry env) API.SelectedChain allComponents
 
-  followerInstruction = SystemM . lift . lift . fmap Right
-    <$> API.followerInstruction
+  followerInstruction =
+    SystemM . lift . lift . fmap Right
+      <$> API.followerInstruction
 
-  followerForward follower points = SystemM $ lift $ lift $ Right
-    <$> API.followerForward follower points
+  followerForward follower points =
+    SystemM $
+      lift $
+        lift $
+          Right
+            <$> API.followerForward follower points
 
   stream from to = do
     env <- ask

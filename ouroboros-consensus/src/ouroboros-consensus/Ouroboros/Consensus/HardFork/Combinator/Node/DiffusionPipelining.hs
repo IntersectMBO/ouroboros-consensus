@@ -3,24 +3,23 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining () where
 
-import           Data.Functor.Product
-import           Data.Proxy
-import           Data.SOP.BasicFunctors
+import Data.Functor.Product
+import Data.Proxy
+import Data.SOP.BasicFunctors
 import qualified Data.SOP.Match as Match
-import           Data.SOP.NonEmpty
-import           Data.SOP.Strict
-import           Ouroboros.Consensus.Block.SupportsDiffusionPipelining
-import           Ouroboros.Consensus.HardFork.Combinator.Abstract
-import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
-import           Ouroboros.Consensus.HardFork.Combinator.Basics
-import           Ouroboros.Consensus.HardFork.Combinator.Block
-import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Ouroboros.Consensus.Util
+import Data.SOP.NonEmpty
+import Data.SOP.Strict
+import Ouroboros.Consensus.Block.SupportsDiffusionPipelining
+import Ouroboros.Consensus.HardFork.Combinator.Abstract
+import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
+import Ouroboros.Consensus.HardFork.Combinator.Basics
+import Ouroboros.Consensus.HardFork.Combinator.Block
+import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util
 
 -- | The 'BlockSupportsDiffusionPipelining' instance for the HFC is
 -- compositional:
@@ -66,55 +65,60 @@ instance CanHardFork xs => BlockSupportsDiffusionPipelining (HardForkBlock xs) w
   type TentativeHeaderView (HardForkBlock xs) = OneEraTentativeHeaderView xs
 
   initialTentativeHeaderState _
-    | ProofNonEmpty proxyHead _ <- isNonEmpty (Proxy @xs)
-    = OneEraTentativeHeaderState $ Z $ WrapTentativeHeaderState
-    $ initialTentativeHeaderState proxyHead
+    | ProofNonEmpty proxyHead _ <- isNonEmpty (Proxy @xs) =
+        OneEraTentativeHeaderState $
+          Z $
+            WrapTentativeHeaderState $
+              initialTentativeHeaderState proxyHead
 
   tentativeHeaderView
     (HardForkBlockConfig (PerEraBlockConfig bcfg))
     (HardForkHeader (OneEraHeader hdr)) =
-        OneEraTentativeHeaderView
-      . hcliftA2 proxySingle (WrapTentativeHeaderView .: tentativeHeaderView) bcfg
-      $ hdr
+      OneEraTentativeHeaderView
+        . hcliftA2 proxySingle (WrapTentativeHeaderView .: tentativeHeaderView) bcfg
+        $ hdr
 
   applyTentativeHeaderView
     Proxy
     (OneEraTentativeHeaderView thv)
     (OneEraTentativeHeaderState st) =
-          fmap OneEraTentativeHeaderState
-      .   sequence_NS'
-      .   hcmap proxySingle updateSt
-      =<< case Match.matchNS thv st of
-            Right thvSt   -> Just thvSt
-            Left mismatch -> fromMismatch mismatch
-    where
+      fmap OneEraTentativeHeaderState
+        . sequence_NS'
+        . hcmap proxySingle updateSt
+        =<< case Match.matchNS thv st of
+          Right thvSt -> Just thvSt
+          Left mismatch -> fromMismatch mismatch
+     where
       updateSt ::
-           forall blk. BlockSupportsDiffusionPipelining blk
-        => Product WrapTentativeHeaderView WrapTentativeHeaderState blk
-        -> (Maybe :.: WrapTentativeHeaderState) blk
+        forall blk.
+        BlockSupportsDiffusionPipelining blk =>
+        Product WrapTentativeHeaderView WrapTentativeHeaderState blk ->
+        (Maybe :.: WrapTentativeHeaderState) blk
       updateSt (Pair (WrapTentativeHeaderView thv') (WrapTentativeHeaderState st')) =
-            Comp $ fmap WrapTentativeHeaderState
-          $ applyTentativeHeaderView (Proxy @blk) thv' st'
+        Comp $
+          fmap WrapTentativeHeaderState $
+            applyTentativeHeaderView (Proxy @blk) thv' st'
 
       -- If the mismatch indicates that the tentative header view is in a later
       -- era than the 'TentativeHeaderState', pair the view with the
       -- 'initialTentativeHeaderState' of its era.
       fromMismatch ::
-           Match.Mismatch WrapTentativeHeaderView WrapTentativeHeaderState xs
-        -> Maybe (NS (Product WrapTentativeHeaderView WrapTentativeHeaderState) xs)
+        Match.Mismatch WrapTentativeHeaderView WrapTentativeHeaderState xs ->
+        Maybe (NS (Product WrapTentativeHeaderView WrapTentativeHeaderState) xs)
       fromMismatch mismatch
-        | ProofNonEmpty _ _ <- isNonEmpty (Proxy @xs)
-        = case Match.mismatchNotFirst mismatch of
-            -- The @thv@ is in an earlier era compared to the @st@, so it does
-            -- not satisfy the HFC pipelining criterion.
-            Right _   -> Nothing
-            -- The @thv@ is in a later era compared to the @st@.
-            Left thv' -> Just $ hcmap proxySingle withInitialSt (S thv')
-        where
-          withInitialSt ::
-               forall blk. BlockSupportsDiffusionPipelining blk
-            => WrapTentativeHeaderView blk
-            -> Product WrapTentativeHeaderView WrapTentativeHeaderState blk
-          withInitialSt v = Pair v (WrapTentativeHeaderState initialSt)
-            where
-              initialSt = initialTentativeHeaderState (Proxy @blk)
+        | ProofNonEmpty _ _ <- isNonEmpty (Proxy @xs) =
+            case Match.mismatchNotFirst mismatch of
+              -- The @thv@ is in an earlier era compared to the @st@, so it does
+              -- not satisfy the HFC pipelining criterion.
+              Right _ -> Nothing
+              -- The @thv@ is in a later era compared to the @st@.
+              Left thv' -> Just $ hcmap proxySingle withInitialSt (S thv')
+       where
+        withInitialSt ::
+          forall blk.
+          BlockSupportsDiffusionPipelining blk =>
+          WrapTentativeHeaderView blk ->
+          Product WrapTentativeHeaderView WrapTentativeHeaderState blk
+        withInitialSt v = Pair v (WrapTentativeHeaderState initialSt)
+         where
+          initialSt = initialTentativeHeaderState (Proxy @blk)

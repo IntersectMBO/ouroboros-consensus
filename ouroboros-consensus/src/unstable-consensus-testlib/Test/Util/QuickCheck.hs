@@ -5,11 +5,12 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- | QuickCheck utilities
-module Test.Util.QuickCheck (
-    -- * Generic QuickCheck utilities
+module Test.Util.QuickCheck
+  ( -- * Generic QuickCheck utilities
     checkGenerator
   , checkInvariant
   , checkShrinker
+
     -- * Comparison functions
   , expectRight
   , ge
@@ -17,34 +18,40 @@ module Test.Util.QuickCheck (
   , le
   , lt
   , strictlyIncreasing
+
     -- * Gen variants that allow transformers
   , frequency'
   , oneof'
+
     -- * Comparing maps
   , isSubmapOfBy
+
     -- * Improved variants
   , (=:=)
+
     -- * SOP
   , cshrinkNP
   , shrinkNP
+
     -- * Convenience
   , collects
   , forAllGenRunShrinkCheck
   , implies
+
     -- * Typeclass laws
   , prop_lawfulEqAndTotalOrd
   ) where
 
-import           Control.Monad.Except (Except, runExcept)
-import           Control.Monad.Trans (MonadTrans (..))
-import           Data.Map.Strict (Map)
+import Control.Monad.Except (Except, runExcept)
+import Control.Monad.Trans (MonadTrans (..))
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Proxy
-import           Data.SOP.Constraint
-import           Data.SOP.Strict
-import           Ouroboros.Consensus.Util (repeatedly)
-import           Ouroboros.Consensus.Util.Condense (Condense, condense)
-import           Test.QuickCheck
+import Data.Proxy
+import Data.SOP.Constraint
+import Data.SOP.Strict
+import Ouroboros.Consensus.Util (repeatedly)
+import Ouroboros.Consensus.Util.Condense (Condense, condense)
+import Test.QuickCheck
 
 {-------------------------------------------------------------------------------
   Generic QuickCheck utilities
@@ -59,19 +66,20 @@ checkGenerator p = forAll arbitrary $ p
 -- | Test the shrinker
 checkShrinker :: forall a. (Arbitrary a, Show a) => (a -> Property) -> Property
 checkShrinker p =
-    -- Starting point, some arbitrary value
-    -- Explicit 'forAll': don't shrink when testing the shrinker
-    forAll arbitrary go
-  where
-    go :: a -> Property
-    go a =
-        if null (shrink a) then
-          property True
-        else
-          -- Nested 'forAll': testing that /all/ shrunk values satisfy the
-          -- property is too expensive. Since we're not shrinking, nesting
-          -- 'forAll' is ok.
-          forAll (elements (shrink a)) $ \a' -> p a' .&&. go a'
+  -- Starting point, some arbitrary value
+  -- Explicit 'forAll': don't shrink when testing the shrinker
+  forAll arbitrary go
+ where
+  go :: a -> Property
+  go a =
+    if null (shrink a)
+      then
+        property True
+      else
+        -- Nested 'forAll': testing that /all/ shrunk values satisfy the
+        -- property is too expensive. Since we're not shrinking, nesting
+        -- 'forAll' is ok.
+        forAll (elements (shrink a)) $ \a' -> p a' .&&. go a'
 
 -- | Check invariant
 checkInvariant :: (a -> Except String ()) -> (a -> Property)
@@ -99,8 +107,8 @@ forAllGenRunShrinkCheck gen run shrink_ check =
       (map run' . uncurry shrink_)
       (run' input)
       (uncurry check)
-  where
-    run' inp = (inp, run inp)
+ where
+  run' inp = (inp, run inp)
 
 {-------------------------------------------------------------------------------
   Comparison functions
@@ -129,12 +137,12 @@ x `ge` y = counterexample (show x ++ " < " ++ show y) $ x >= y
 
 strictlyIncreasing :: forall a. (Show a, Ord a) => [a] -> Property
 strictlyIncreasing xs =
-    counterexample (show xs) $ go xs
-  where
-    go :: [a] -> Property
-    go []       = property True
-    go [_]      = property True
-    go (x:y:zs) = x `lt` y .&&. go (y:zs)
+  counterexample (show xs) $ go xs
+ where
+  go :: [a] -> Property
+  go [] = property True
+  go [_] = property True
+  go (x : y : zs) = x `lt` y .&&. go (y : zs)
 
 -- | Check that we have the expected 'Right' value
 --
@@ -142,26 +150,40 @@ strictlyIncreasing xs =
 -- equality constraint on @a@.
 expectRight :: (Show a, Show b, Eq b) => b -> Either a b -> Property
 expectRight b (Right b') = b === b'
-expectRight _ (Left a)   = counterexample ("Unexpected left " ++ show a) $
-                             False
+expectRight _ (Left a) =
+  counterexample ("Unexpected left " ++ show a) $
+    False
 
 {-------------------------------------------------------------------------------
   Comparing maps
 -------------------------------------------------------------------------------}
 
-isSubmapOfBy :: (Ord k, Show k, Show a, Show b)
-             => (a -> b -> Property) -> Map k a -> Map k b -> Property
-isSubmapOfBy p l r = conjoin [
-      case Map.lookup k r of
-        Nothing -> counterexample ("key " ++ show k
-                                ++ " with value " ++ show a
-                                ++ " not present in other map") $
-                     property False
-        Just b  -> counterexample ("key " ++ show k
-                                ++ " with values " ++ show a
-                                ++ " and " ++ show b
-                                ++ " doesn't satisfy the property") $
-                     p a b
+isSubmapOfBy ::
+  (Ord k, Show k, Show a, Show b) =>
+  (a -> b -> Property) -> Map k a -> Map k b -> Property
+isSubmapOfBy p l r =
+  conjoin
+    [ case Map.lookup k r of
+        Nothing ->
+          counterexample
+            ( "key "
+                ++ show k
+                ++ " with value "
+                ++ show a
+                ++ " not present in other map"
+            )
+            $ property False
+        Just b ->
+          counterexample
+            ( "key "
+                ++ show k
+                ++ " with values "
+                ++ show a
+                ++ " and "
+                ++ show b
+                ++ " doesn't satisfy the property"
+            )
+            $ p a b
     | (k, a) <- Map.toList l
     ]
 
@@ -171,41 +193,44 @@ isSubmapOfBy p l r = conjoin [
 
 -- | Like '===', but uses 'Condense' instead of 'Show' when it fails.
 infix 4 =:=
+
 (=:=) :: (Eq a, Condense a) => a -> a -> Property
 x =:= y =
-    counterexample (condense x ++ interpret res ++ condense y) res
-  where
-    res = x == y
-    interpret True  = " == "
-    interpret False = " /= "
+  counterexample (condense x ++ interpret res ++ condense y) res
+ where
+  res = x == y
+  interpret True = " == "
+  interpret False = " /= "
 
 {-------------------------------------------------------------------------------
   SOP
 -------------------------------------------------------------------------------}
 
-cshrinkNP :: forall proxy c f g xs.
-             All c xs
-          => proxy c
-          -> (forall a. c a => f a -> g a)    -- For elements we don't shrink
-          -> (forall a. c a => f a -> [g a])
-          -> NP f xs
-          -> [NP g xs]
+cshrinkNP ::
+  forall proxy c f g xs.
+  All c xs =>
+  proxy c ->
+  (forall a. c a => f a -> g a) -> -- For elements we don't shrink
+  (forall a. c a => f a -> [g a]) ->
+  NP f xs ->
+  [NP g xs]
 cshrinkNP p g f = go
-  where
-    go :: All c xs' => NP f xs' -> [NP g xs']
-    go Nil       = [] -- Can't shrink the empty list
-    go (x :* xs) = concat [
-          -- Shrink the head of the list
-          [ x' :* hcmap p g xs | x' <- f x ]
+ where
+  go :: All c xs' => NP f xs' -> [NP g xs']
+  go Nil = [] -- Can't shrink the empty list
+  go (x :* xs) =
+    concat
+      [ -- Shrink the head of the list
+        [x' :* hcmap p g xs | x' <- f x]
+      , -- Or shrink the tail of the list
+        [g x :* xs' | xs' <- go xs]
+      ]
 
-          -- Or shrink the tail of the list
-        , [ g x :* xs' | xs' <- go xs ]
-        ]
-
-shrinkNP :: (forall a. f a -> g a)    -- For elements we don't shrink
-         -> (forall a. f a -> [g a])
-         -> NP f xs
-         -> [NP g xs]
+shrinkNP ::
+  (forall a. f a -> g a) -> -- For elements we don't shrink
+  (forall a. f a -> [g a]) ->
+  NP f xs ->
+  [NP g xs]
 shrinkNP g f np = npToSListI np $ cshrinkNP (Proxy @Top) g f np
 
 {-------------------------------------------------------------------------------
@@ -220,6 +245,7 @@ collects = repeatedly collect
 -- @p1@ being true.
 implies :: Testable prop => Bool -> prop -> Property
 implies p1 p2 = not p1 .||. p2
+
 infixr 0 `implies`
 
 {-------------------------------------------------------------------------------
@@ -227,21 +253,23 @@ infixr 0 `implies`
 -------------------------------------------------------------------------------}
 
 prop_lawfulEqAndTotalOrd ::
-     forall a. (Show a, Ord a)
-  => a -> a -> a -> Property
-prop_lawfulEqAndTotalOrd a b c = conjoin
+  forall a.
+  (Show a, Ord a) =>
+  a -> a -> a -> Property
+prop_lawfulEqAndTotalOrd a b c =
+  conjoin
     [ counterexample "Not total: a <= b || b <= a VIOLATED" $
         a <= b || b <= a
     , counterexample "Not transitive: a <= b && b <= c => a <= c VIOLATED" $
-        let antecedent = a <= b && b <= c in
-        classify antecedent "Antecedent for transitivity" $
-        antecedent `implies` a <= c
+        let antecedent = a <= b && b <= c
+         in classify antecedent "Antecedent for transitivity" $
+              antecedent `implies` a <= c
     , counterexample "Not reflexive: a <= a VIOLATED" $
         a `le` a
     , counterexample "Not antisymmetric: a <= b && b <= a => a == b VIOLATED" $
-        let antecedent = a <= b && b <= a in
-        classify antecedent "Antecedent for antisymmetry" $
-        antecedent `implies` a == b
+        let antecedent = a <= b && b <= a
+         in classify antecedent "Antecedent for antisymmetry" $
+              antecedent `implies` a == b
     , -- compatibility laws
       counterexample "(a <= b) == (b >= a) VIOLATED" $
         (a <= b) === (b >= a)
@@ -269,14 +297,14 @@ prop_lawfulEqAndTotalOrd a b c = conjoin
 frequency' :: (MonadTrans t, Monad (t Gen)) => [(Int, t Gen a)] -> t Gen a
 frequency' [] = error "frequency' used with empty list"
 frequency' xs0 = lift (choose (1, tot)) >>= (`pick` xs0)
-  where
-    tot = sum (map fst xs0)
+ where
+  tot = sum (map fst xs0)
 
-    pick n ((k,x):xs)
-      | n <= k    = x
-      | otherwise = pick (n-k) xs
-    pick _ _  = error "pick used with empty list"
+  pick n ((k, x) : xs)
+    | n <= k = x
+    | otherwise = pick (n - k) xs
+  pick _ _ = error "pick used with empty list"
 
 oneof' :: (MonadTrans t, Monad (t Gen)) => [t Gen a] -> t Gen a
 oneof' [] = error "QuickCheck.oneof used with empty list"
-oneof' gs = lift (chooseInt (0,length gs - 1)) >>= (gs !!)
+oneof' gs = lift (chooseInt (0, length gs - 1)) >>= (gs !!)

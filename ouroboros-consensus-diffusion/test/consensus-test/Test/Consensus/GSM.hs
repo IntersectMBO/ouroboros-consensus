@@ -3,57 +3,59 @@
 
 module Test.Consensus.GSM (tests) where
 
-import           Cardano.Network.Types (LedgerStateJudgement (..))
-import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
-import           Control.Monad (replicateM_)
-import           Control.Monad.Class.MonadAsync (poll, withAsync)
-import           Control.Monad.Class.MonadFork (MonadFork, yield)
-import           Control.Monad.Class.MonadSTM
+import Cardano.Network.Types (LedgerStateJudgement (..))
+import Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
+import Control.Monad (replicateM_)
+import Control.Monad.Class.MonadAsync (poll, withAsync)
+import Control.Monad.Class.MonadFork (MonadFork, yield)
+import Control.Monad.Class.MonadSTM
 import qualified Control.Monad.Class.MonadTime.SI as SI
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import qualified Control.Monad.IOSim as IOSim
-import           Control.Tracer (Tracer (Tracer))
-import           Data.Functor ((<&>))
+import Control.Tracer (Tracer (Tracer))
+import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Ouroboros.Consensus.Node.GSM as GSM
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
-import           Test.Consensus.GSM.Model
-import           Test.Consensus.IOSimQSM.Test.StateMachine.Sequential
-                     (runCommands')
+import Ouroboros.Consensus.Util.IOLike (IOLike)
+import Test.Consensus.GSM.Model
+import Test.Consensus.IOSimQSM.Test.StateMachine.Sequential
+  ( runCommands'
+  )
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Monadic as QC
+import Test.StateMachine (Concrete)
 import qualified Test.StateMachine as QSM
-import           Test.StateMachine (Concrete)
 import qualified Test.StateMachine.Types as QSM
-import           Test.Tasty (TestTree)
-import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TestEnv (adjustQuickCheckTests)
-import           Test.Util.ToExpr ()
+import Test.Tasty (TestTree)
+import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Orphans.IOLike ()
+import Test.Util.TestEnv (adjustQuickCheckTests)
+import Test.Util.ToExpr ()
 
 -----
 
 tests :: [TestTree]
 tests =
-    adhoc <> core
-  where
-    adhoc = [
-        testProperty "GSM yield regression" prop_yield_regression
-     ]
+  adhoc <> core
+ where
+  adhoc =
+    [ testProperty "GSM yield regression" prop_yield_regression
+    ]
 
-    core = [
-          adjustQuickCheckTests (* 10)
-        $ testProperty ("GSM (" <> coreTestName ub <> ")")
-        $ prop_sequential ub
-      | ub <- Nothing : map Just [minBound .. maxBound :: UpstreamPeer]
-      ]
+  core =
+    [ adjustQuickCheckTests (* 10) $
+        testProperty ("GSM (" <> coreTestName ub <> ")") $
+          prop_sequential ub
+    | ub <- Nothing : map Just [minBound .. maxBound :: UpstreamPeer]
+    ]
 
-    coreTestName = \case
-        Nothing -> "no peers"
-        Just ub -> "at most " <> case fromEnum ub of
-            0 -> "1 peer"
-            n -> show (n + 1) <> " peers"
+  coreTestName = \case
+    Nothing -> "no peers"
+    Just ub ->
+      "at most " <> case fromEnum ub of
+        0 -> "1 peer"
+        n -> show (n + 1) <> " peers"
 
 ----- the QSM code under test
 
@@ -62,252 +64,232 @@ tests =
 -- except the model definition is in "Test.Consensus.GSM.Model".
 
 semantics ::
-     IOLike m
-  => Vars m
-  -> Command Concrete
-  -> m (Response Concrete)
+  IOLike m =>
+  Vars m ->
+  Command Concrete ->
+  m (Response Concrete)
 semantics vars cmd = pre $ case cmd of
-    Disconnect peer -> do
-        atomically $ do
-            modifyTVar varStates $ Map.delete peer
-        pure Unit
-    ExtendSelection sdel -> do
-        atomically $ do
-            Selection b s <- readTVar varSelection
-            writeTVar varSelection $! Selection (b + 1) (s + sdel)
-        pure Unit
-    ModifyCandidate peer bdel -> do
-        atomically $ do
+  Disconnect peer -> do
+    atomically $ do
+      modifyTVar varStates $ Map.delete peer
+    pure Unit
+  ExtendSelection sdel -> do
+    atomically $ do
+      Selection b s <- readTVar varSelection
+      writeTVar varSelection $! Selection (b + 1) (s + sdel)
+    pure Unit
+  ModifyCandidate peer bdel -> do
+    atomically $ do
+      v <- (Map.! peer) <$> readTVar varStates
+      Candidate b <- psCandidate <$> readTVar v
+      writeTVar v $! PeerState (Candidate (b + bdel)) (Idling False)
 
-            v <- (Map.! peer) <$> readTVar varStates
-            Candidate b <- psCandidate <$> readTVar v
-            writeTVar v $! PeerState (Candidate (b + bdel)) (Idling False)
+    pure Unit
+  NewCandidate peer bdel -> do
+    atomically $ do
+      Selection b _s <- readTVar varSelection
+      v <- newTVar $! PeerState (Candidate (b + bdel)) (Idling False)
+      modifyTVar varStates $ Map.insert peer v
+    pure Unit
+  ReadGsmState -> do
+    fmap ReadThisGsmState $ atomically $ readTVar varGsmState
+  ReadMarker -> do
+    fmap ReadThisMarker $ atomically $ readTVar varMarker
+  StartIdling peer -> atomically $ do
+    v <- (Map.! peer) <$> readTVar varStates
+    modifyTVar v $ \(PeerState c _) -> PeerState c (Idling True)
+    pure Unit
+  TimePasses dur -> do
+    SI.threadDelay (0.1 * fromIntegral dur)
+    pure Unit
+ where
+  Vars
+    varSelection
+    varStates
+    varGsmState
+    varMarker
+    varEvents =
+      vars
 
-        pure Unit
-    NewCandidate peer bdel -> do
-        atomically $ do
-            Selection b _s <- readTVar varSelection
-            v <- newTVar $! PeerState (Candidate (b + bdel)) (Idling False)
-            modifyTVar varStates $ Map.insert peer v
-        pure Unit
-    ReadGsmState -> do
-        fmap ReadThisGsmState $ atomically $ readTVar varGsmState
-    ReadMarker -> do
-        fmap ReadThisMarker $ atomically $ readTVar varMarker
-    StartIdling peer -> atomically $ do
-        v <- (Map.! peer) <$> readTVar varStates
-        modifyTVar v $ \ (PeerState c _) -> PeerState c (Idling True)
-        pure Unit
-    TimePasses dur -> do
-        SI.threadDelay (0.1 * fromIntegral dur)
-        pure Unit
-  where
-    Vars
-        varSelection
-        varStates
-        varGsmState
-        varMarker
-        varEvents
-      = vars
-
-    pre m = do
-        push varEvents (EvBegin cmd)
-        x <- m
-        yieldSeveralTimes   -- see Note [Why yield after the command]
-        push varEvents EvEnd
-        pure x
+  pre m = do
+    push varEvents (EvBegin cmd)
+    x <- m
+    yieldSeveralTimes -- see Note [Why yield after the command]
+    push varEvents EvEnd
+    pure x
 
 sm ::
-     IOLike m
-  => Maybe UpstreamPeer
-  -> Vars m
-  -> Context
-  -> QSM.StateMachine Model Command m Response
-sm ub vars ctx = QSM.StateMachine {
-    QSM.cleanup = \_model -> pure ()
-  ,
-    QSM.generator = generator ub
-  ,
-    QSM.initModel = initModel ctx
-  ,
-    QSM.invariant = Nothing
-  ,
-    QSM.mock = \model cmd -> pure $ mock model cmd
-  ,
-    QSM.postcondition = postcondition
-  ,
-    QSM.precondition = precondition ctx
-  ,
-    QSM.semantics = semantics vars
-  ,
-    QSM.shrinker = shrinker
-  ,
-    QSM.transition = transition ctx
-  }
+  IOLike m =>
+  Maybe UpstreamPeer ->
+  Vars m ->
+  Context ->
+  QSM.StateMachine Model Command m Response
+sm ub vars ctx =
+  QSM.StateMachine
+    { QSM.cleanup = \_model -> pure ()
+    , QSM.generator = generator ub
+    , QSM.initModel = initModel ctx
+    , QSM.invariant = Nothing
+    , QSM.mock = \model cmd -> pure $ mock model cmd
+    , QSM.postcondition = postcondition
+    , QSM.precondition = precondition ctx
+    , QSM.semantics = semantics vars
+    , QSM.shrinker = shrinker
+    , QSM.transition = transition ctx
+    }
 
 prop_sequential ::
-     Maybe UpstreamPeer
-  -> LedgerStateJudgement
-  -> QC.Fun (Set.Set UpstreamPeer) Bool
-  -> QC.Property
+  Maybe UpstreamPeer ->
+  LedgerStateJudgement ->
+  QC.Fun (Set.Set UpstreamPeer) Bool ->
+  QC.Property
 prop_sequential ub initialJudgement (QC.Fn isHaaSatisfied) =
-    QSM.forAllCommands
-        commandArbitrarySM
-        mbMinimumCommandLen
-        (prop_sequential1 ctx)
-  where
-    ctx = Context {
-        cInitialJudgement = initialJudgement
-      ,
-        cIsHaaSatisfied = isHaaSatisfied
+  QSM.forAllCommands
+    commandArbitrarySM
+    mbMinimumCommandLen
+    (prop_sequential1 ctx)
+ where
+  ctx =
+    Context
+      { cInitialJudgement = initialJudgement
+      , cIsHaaSatisfied = isHaaSatisfied
       }
 
-    mbMinimumCommandLen = Just 20   -- just a guess
+  mbMinimumCommandLen = Just 20 -- just a guess
 
-    -- NB the monad is irrelevant here but is ambiguous, so we merely ascribe a
-    -- convenient concrete one
-    commandArbitrarySM = sm ub (undefined :: Vars IO) ctx
+  -- NB the monad is irrelevant here but is ambiguous, so we merely ascribe a
+  -- convenient concrete one
+  commandArbitrarySM = sm ub (undefined :: Vars IO) ctx
 
 prop_sequential1 ::
-     Context
-  -> QSM.Commands Command Response
-  -> QC.Property
+  Context ->
+  QSM.Commands Command Response ->
+  QC.Property
 prop_sequential1 ctx cmds = runSimQC $ do
-    let initialGsmState = case initialJudgement of
-          TooOld      -> GSM.PreSyncing
-          YoungEnough -> GSM.CaughtUp
+  let initialGsmState = case initialJudgement of
+        TooOld -> GSM.PreSyncing
+        YoungEnough -> GSM.CaughtUp
 
-    -- these variables are part of the 'GSM.GsmView'
-    varSelection  <- newTVarIO (mSelection $ initModel ctx)
-    varStates     <- newTVarIO Map.empty
-    varGsmState   <- newTVarIO initialGsmState
-    varMarker     <- newTVarIO (toMarker initialGsmState)
+  -- these variables are part of the 'GSM.GsmView'
+  varSelection <- newTVarIO (mSelection $ initModel ctx)
+  varStates <- newTVarIO Map.empty
+  varGsmState <- newTVarIO initialGsmState
+  varMarker <- newTVarIO (toMarker initialGsmState)
 
-    -- this variable is for better 'QC.counterexample' messages
-    varEvents <- newRecorder
-    let tracer = Tracer $ push varEvents . EvGsm
+  -- this variable is for better 'QC.counterexample' messages
+  varEvents <- newRecorder
+  let tracer = Tracer $ push varEvents . EvGsm
 
-    let vars =
-            Vars
-                varSelection
-                varStates
-                varGsmState
-                varMarker
-                varEvents
+  let vars =
+        Vars
+          varSelection
+          varStates
+          varGsmState
+          varMarker
+          varEvents
 
-    let executionSM = sm (Just maxBound) vars ctx
+  let executionSM = sm (Just maxBound) vars ctx
 
-        -- NB the specific IO type is unused here
-        prettySM = sm undefined undefined ctx
+      -- NB the specific IO type is unused here
+      prettySM = sm undefined undefined ctx
 
-    let gsm = GSM.realGsmEntryPoints (id, tracer) GSM.GsmView {
-            GSM.antiThunderingHerd = Nothing
-          ,
-            GSM.candidateOverSelection = \ s (PeerState c _) -> candidateOverSelection s c
-          ,
-            GSM.peerIsIdle = isIdling
-          ,
-            GSM.durationUntilTooOld = Just durationUntilTooOld
-          ,
-            GSM.equivalent = (==)   -- unsound, but harmless in this test
-          ,
-            GSM.getChainSyncStates = readTVar varStates
-          ,
-            GSM.getCurrentSelection = readTVar varSelection
-          ,
-            GSM.minCaughtUpDuration = thrashLimit
-          ,
-            GSM.setCaughtUpPersistentMark = \b ->
+  let gsm =
+        GSM.realGsmEntryPoints
+          (id, tracer)
+          GSM.GsmView
+            { GSM.antiThunderingHerd = Nothing
+            , GSM.candidateOverSelection = \s (PeerState c _) -> candidateOverSelection s c
+            , GSM.peerIsIdle = isIdling
+            , GSM.durationUntilTooOld = Just durationUntilTooOld
+            , GSM.equivalent = (==) -- unsound, but harmless in this test
+            , GSM.getChainSyncStates = readTVar varStates
+            , GSM.getCurrentSelection = readTVar varSelection
+            , GSM.minCaughtUpDuration = thrashLimit
+            , GSM.setCaughtUpPersistentMark = \b ->
                 atomically $ do
-                    writeTVar varMarker $ if b then Present else Absent
-          ,
-            GSM.writeGsmState = \x -> atomically $ do
+                  writeTVar varMarker $ if b then Present else Absent
+            , GSM.writeGsmState = \x -> atomically $ do
                 writeTVar varGsmState x
-          ,
-            GSM.isHaaSatisfied =
+            , GSM.isHaaSatisfied =
                 isHaaSatisfied . Map.keysSet <$> readTVar varStates
-          }
-        gsmEntryPoint = case initialJudgement of
-            TooOld      -> GSM.enterPreSyncing gsm
-            YoungEnough -> GSM.enterCaughtUp   gsm
+            }
+      gsmEntryPoint = case initialJudgement of
+        TooOld -> GSM.enterPreSyncing gsm
+        YoungEnough -> GSM.enterCaughtUp gsm
 
-    ((hist, model', res), mbExn) <- id
-      $ withAsync gsmEntryPoint
-      $ \hGSM -> do
+  ((hist, model', res), mbExn) <- id $
+    withAsync gsmEntryPoint $
+      \hGSM -> do
+        yieldSeveralTimes -- see Note [Why yield after the command]
+        x <- runCommands' (pure executionSM) cmds
 
-          yieldSeveralTimes   -- see Note [Why yield after the command]
+        -- notice if the GSM thread raised an exception while processing the
+        -- commands
+        poll hGSM <&> \case
+          Just Right{} ->
+            error "impossible! GSM terminated"
+          Just (Left exn) ->
+            -- we don't simply rethrow it, since we still want to pretty print
+            -- the command sequence
+            (x, Just exn)
+          Nothing ->
+            (x, Nothing)
 
-          x <- runCommands' (pure executionSM) cmds
+  let noExn = case mbExn of
+        Nothing -> QC.property ()
+        Just exn -> QC.counterexample (show exn) False
 
-          -- notice if the GSM thread raised an exception while processing the
-          -- commands
-          poll hGSM <&> \case
-              Just Right{}    ->
-                  error "impossible! GSM terminated"
-              Just (Left exn) ->
-                  -- we don't simply rethrow it, since we still want to pretty print
-                  -- the command sequence
-                  (x, Just exn)
-              Nothing         ->
-                  (x, Nothing)
+  -- effectively add a 'ReadGsmState' to the end of the command list
+  lastCheck <- do
+    actual <- semantics vars ReadGsmState
+    let expected = mock model' ReadGsmState
+    pure $ case (actual, expected) of
+      (ReadThisGsmState x, ReadThisGsmState y) ->
+        QC.counterexample "lastCheck" $ x QC.=== y
+      _ ->
+        error "impossible! lastCheck response"
 
-    let noExn = case mbExn of
-            Nothing  -> QC.property ()
-            Just exn -> QC.counterexample (show exn) False
+  watcherEvents <- dumpEvents varEvents
 
-    -- effectively add a 'ReadGsmState' to the end of the command list
-    lastCheck <- do
-        actual <- semantics vars ReadGsmState
-        let expected = mock model' ReadGsmState
-        pure $ case (actual, expected) of
-            (ReadThisGsmState x, ReadThisGsmState y) ->
-                QC.counterexample "lastCheck" $ x QC.=== y
-            _ ->
-                error "impossible! lastCheck response"
-
-    watcherEvents <- dumpEvents varEvents
-
-    pure
-      $ QC.monadicIO
-      $ QSM.prettyCommands prettySM hist
-      $ QC.counterexample
-            (unlines
-               $ (:) "WATCHER"
-               $ map (("    " <>) . show)
-               $ watcherEvents
-            )
-      $ QC.tabulate
-            "Notables"
-            (case Set.toList $ mNotables model' of
-               []       -> ["<none>"]
-               notables -> map show notables
-            )
-      $ QSM.checkCommandNames cmds
-      $ noExn QC..&&. lastCheck QC..&&. res QC.=== QSM.Ok
-  where
-    Context {
-        cInitialJudgement = initialJudgement
-      ,
-        cIsHaaSatisfied = isHaaSatisfied
-      } = ctx
+  pure
+    $ QC.monadicIO
+    $ QSM.prettyCommands prettySM hist
+    $ QC.counterexample
+      ( unlines $
+          (:) "WATCHER" $
+            map (("    " <>) . show) $
+              watcherEvents
+      )
+    $ QC.tabulate
+      "Notables"
+      ( case Set.toList $ mNotables model' of
+          [] -> ["<none>"]
+          notables -> map show notables
+      )
+    $ QSM.checkCommandNames cmds
+    $ noExn QC..&&. lastCheck QC..&&. res QC.=== QSM.Ok
+ where
+  Context
+    { cInitialJudgement = initialJudgement
+    , cIsHaaSatisfied = isHaaSatisfied
+    } = ctx
 
 -----
 
 durationUntilTooOld :: Selection -> IOSim.IOSim s GSM.DurationFromNow
 durationUntilTooOld sel = do
-    let expiryAge = ageLimit `SI.addTime` onset sel
-    now <- SI.getMonotonicTime
-    pure $ case compare expiryAge now of
-        LT -> GSM.Already
-        GT -> GSM.After $ realToFrac $ expiryAge `SI.diffTime` now
-
-        -- 'boringDur' cannot prevent this case. In particular, this case
-        -- necessarily arises in the GSM itself during a 'TimePasses' that
-        -- incurs a so-called /flicker/ event, in which the anti-thrashing
-        -- timer expires and yet the node state at that moment still
-        -- _immediately_ indicates that it's CaughtUp. For the specific case of
-        -- this test suite, the answer here must be 'GSM.Already'.
-        EQ -> GSM.Already
+  let expiryAge = ageLimit `SI.addTime` onset sel
+  now <- SI.getMonotonicTime
+  pure $ case compare expiryAge now of
+    LT -> GSM.Already
+    GT -> GSM.After $ realToFrac $ expiryAge `SI.diffTime` now
+    -- 'boringDur' cannot prevent this case. In particular, this case
+    -- necessarily arises in the GSM itself during a 'TimePasses' that
+    -- incurs a so-called /flicker/ event, in which the anti-thrashing
+    -- timer expires and yet the node state at that moment still
+    -- _immediately_ indicates that it's CaughtUp. For the specific case of
+    -- this test suite, the answer here must be 'GSM.Already'.
+    EQ -> GSM.Already
 
 -----
 
@@ -362,34 +344,32 @@ first command, for consistency.
 -- ()@.
 prop_yield_regression :: QC.Property
 prop_yield_regression =
-   QC.once
- $ prop_sequential1 ctx
- $ QSM.Commands
-     [ QSM.Command (NewCandidate Amara (B 1)) Unit []
-     , QSM.Command (StartIdling Amara) Unit []
-     , QSM.Command (TimePasses 61) Unit []
-     , QSM.Command (ExtendSelection (S (-4))) Unit []
-     , QSM.Command ReadMarker (ReadThisMarker Absent) []
-     ]
-  where
-    ctx = Context {
-        cInitialJudgement = YoungEnough
-      ,
-        cIsHaaSatisfied = \_peers -> True
+  QC.once $
+    prop_sequential1 ctx $
+      QSM.Commands
+        [ QSM.Command (NewCandidate Amara (B 1)) Unit []
+        , QSM.Command (StartIdling Amara) Unit []
+        , QSM.Command (TimePasses 61) Unit []
+        , QSM.Command (ExtendSelection (S (-4))) Unit []
+        , QSM.Command ReadMarker (ReadThisMarker Absent) []
+        ]
+ where
+  ctx =
+    Context
+      { cInitialJudgement = YoungEnough
+      , cIsHaaSatisfied = \_peers -> True
       }
 
 ----- trivial event accumulator, useful for debugging test failures
 
-data Ev =
+data Ev
+  = -- | 'semantics' started stimulating the GSM code being tested
     EvBegin (Command Concrete)
-    -- ^ 'semantics' started stimulating the GSM code being tested
-  |
+  | -- | 'semantics' stopped stimulating the GSM code being tested
     EvEnd
-    -- ^ 'semantics' stopped stimulating the GSM code being tested
-  |
+  | -- | the GSM code being tested emitted an event
     EvGsm (GSM.TraceGsmEvent Selection)
-    -- ^ the GSM code being tested emitted an event
-  deriving (Show)
+  deriving Show
 
 newtype EvRecorder m = EvRecorder (StrictTVar m [(SI.Time, Ev)])
 
@@ -401,26 +381,27 @@ dumpEvents (EvRecorder var) = reverse <$> readTVarIO var
 
 push :: IOLike m => EvRecorder m -> Ev -> m ()
 push (EvRecorder var) ev = do
-    now <- SI.getMonotonicTime
-    atomically $ modifyTVar var $ (:) (now, ev)
+  now <- SI.getMonotonicTime
+  atomically $ modifyTVar var $ (:) (now, ev)
 
 isIdling :: PeerState -> Bool
-isIdling (PeerState {psIdling = Idling i}) = i
+isIdling (PeerState{psIdling = Idling i}) = i
 
 -----
 
 -- | merely a tidy bundle of arguments
-data Vars m = Vars
-    (StrictTVar m Selection)
-    (StrictTVar m (Map.Map UpstreamPeer (StrictTVar m PeerState)))
-    (StrictTVar m GSM.GsmState)
-    (StrictTVar m MarkerState)
-    (EvRecorder m)
+data Vars m
+  = Vars
+      (StrictTVar m Selection)
+      (StrictTVar m (Map.Map UpstreamPeer (StrictTVar m PeerState)))
+      (StrictTVar m GSM.GsmState)
+      (StrictTVar m MarkerState)
+      (EvRecorder m)
 
 newtype Idling = Idling Bool
   deriving (Eq, Ord, Show)
 
-data PeerState = PeerState { psCandidate :: !Candidate, psIdling :: !Idling }
+data PeerState = PeerState {psCandidate :: !Candidate, psIdling :: !Idling}
   deriving (Eq, Ord, Show)
 
 -----
@@ -428,5 +409,5 @@ data PeerState = PeerState { psCandidate :: !Candidate, psIdling :: !Idling }
 -- | a straight-forwardtrivial alias
 runSimQC :: (forall s. IOSim.IOSim s QC.Property) -> QC.Property
 runSimQC m = case IOSim.runSim m of
-    Left  failure -> QC.counterexample (show failure) False
-    Right prop    -> prop
+  Left failure -> QC.counterexample (show failure) False
+  Right prop -> prop

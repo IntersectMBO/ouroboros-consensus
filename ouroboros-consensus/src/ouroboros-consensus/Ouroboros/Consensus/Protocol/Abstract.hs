@@ -8,28 +8,31 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Protocol.Abstract (
-    -- * Abstract definition of the Ouroboros protocol
+module Ouroboros.Consensus.Protocol.Abstract
+  ( -- * Abstract definition of the Ouroboros protocol
     ConsensusConfig
   , ConsensusProtocol (..)
+
     -- * Chain order
   , ChainOrder (..)
   , SimpleChainOrder (..)
+
     -- * Translation
   , TranslateProto (..)
+
     -- * Convenience re-exports
   , SecurityParam (..)
   ) where
 
-import           Control.Monad.Except
-import           Data.Kind (Type)
-import           Data.Proxy (Proxy)
-import           Data.Typeable (Typeable)
-import           GHC.Stack
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Config.SecurityParam
-import           Ouroboros.Consensus.Ticked
+import Control.Monad.Except
+import Data.Kind (Type)
+import Data.Proxy (Proxy)
+import Data.Typeable (Typeable)
+import GHC.Stack
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.Ticked
 
 -- | Static configuration required to run the consensus protocol
 --
@@ -46,30 +49,33 @@ data family ConsensusConfig p :: Type
 --
 -- This class encodes the part that is independent from any particular
 -- block representation.
-class ( Show (ChainDepState   p)
-      , Show (ValidationErr   p)
-      , Show (SelectView      p)
-      , Show (LedgerView      p)
-      , Eq   (ChainDepState   p)
-      , Eq   (ValidationErr   p)
-      , ChainOrder (SelectView p)
-      , NoThunks (ConsensusConfig p)
-      , NoThunks (ChainDepState   p)
-      , NoThunks (ValidationErr   p)
-      , NoThunks (SelectView      p)
-      , Typeable p -- so that p can appear in exceptions
-      ) => ConsensusProtocol p where
+class
+  ( Show (ChainDepState p)
+  , Show (ValidationErr p)
+  , Show (SelectView p)
+  , Show (LedgerView p)
+  , Eq (ChainDepState p)
+  , Eq (ValidationErr p)
+  , ChainOrder (SelectView p)
+  , NoThunks (ConsensusConfig p)
+  , NoThunks (ChainDepState p)
+  , NoThunks (ValidationErr p)
+  , NoThunks (SelectView p)
+  , Typeable p -- so that p can appear in exceptions
+  ) =>
+  ConsensusProtocol p
+  where
   -- | Protocol-specific state
   --
   -- NOTE: This chain is blockchain dependent, i.e., updated when new blocks
   -- come in (more precisely, new /headers/), and subject to rollback.
-  type family ChainDepState p :: Type
+  type ChainDepState p :: Type
 
   -- | Evidence that a node /is/ the leader
-  type family IsLeader p :: Type
+  type IsLeader p :: Type
 
   -- | Evidence that we /can/ be a leader
-  type family CanBeLeader p :: Type
+  type CanBeLeader p :: Type
 
   -- | View on a header required for chain selection
   --
@@ -81,7 +87,8 @@ class ( Show (ChainDepState   p)
   -- on the headers at the tips of those chains: chain A is strictly preferred
   -- over chain B whenever A's select view is preferred over B's select view
   -- according to the 'ChainOrder' instance.
-  type family SelectView p :: Type
+  type SelectView p :: Type
+
   type SelectView p = BlockNo
 
   -- | Projection of the ledger state the Ouroboros protocol needs access to
@@ -123,40 +130,43 @@ class ( Show (ChainDepState   p)
   -- in the consensus layer since that depends on the computation (and sampling)
   -- of entropy, which is done consensus side, not ledger side (the reward
   -- calculation does not depend on this).
-  type family LedgerView p :: Type
+  type LedgerView p :: Type
 
   -- | Validation errors
-  type family ValidationErr p :: Type
+  type ValidationErr p :: Type
 
   -- | View on a header required to validate it
-  type family ValidateView p :: Type
+  type ValidateView p :: Type
 
   -- | Check if a node is the leader
-  checkIsLeader :: HasCallStack
-                => ConsensusConfig       p
-                -> CanBeLeader           p
-                -> SlotNo
-                -> Ticked (ChainDepState p)
-                -> Maybe (IsLeader       p)
+  checkIsLeader ::
+    HasCallStack =>
+    ConsensusConfig p ->
+    CanBeLeader p ->
+    SlotNo ->
+    Ticked (ChainDepState p) ->
+    Maybe (IsLeader p)
 
   -- | Tick the 'ChainDepState'
   --
   -- We pass the 'LedgerView' to 'tickChainDepState'. Functions that /take/ a
   -- ticked 'ChainDepState' are not separately passed a ledger view; protocols
   -- that require it, can include it in their ticked 'ChainDepState' type.
-  tickChainDepState :: ConsensusConfig p
-                    -> LedgerView p
-                    -> SlotNo
-                    -> ChainDepState p
-                    -> Ticked (ChainDepState p)
+  tickChainDepState ::
+    ConsensusConfig p ->
+    LedgerView p ->
+    SlotNo ->
+    ChainDepState p ->
+    Ticked (ChainDepState p)
 
   -- | Apply a header
-  updateChainDepState :: HasCallStack
-                      => ConsensusConfig       p
-                      -> ValidateView          p
-                      -> SlotNo
-                      -> Ticked (ChainDepState p)
-                      -> Except (ValidationErr p) (ChainDepState p)
+  updateChainDepState ::
+    HasCallStack =>
+    ConsensusConfig p ->
+    ValidateView p ->
+    SlotNo ->
+    Ticked (ChainDepState p) ->
+    Except (ValidationErr p) (ChainDepState p)
 
   -- | Re-apply a header to the same 'ChainDepState' we have been able to
   -- successfully apply to before.
@@ -169,12 +179,13 @@ class ( Show (ChainDepState   p)
   -- It is worth noting that since we already know that the header is valid
   -- w.r.t. the provided 'ChainDepState', no validation checks should be
   -- performed.
-  reupdateChainDepState :: HasCallStack
-                        => ConsensusConfig       p
-                        -> ValidateView          p
-                        -> SlotNo
-                        -> Ticked (ChainDepState p)
-                        -> ChainDepState         p
+  reupdateChainDepState ::
+    HasCallStack =>
+    ConsensusConfig p ->
+    ValidateView p ->
+    SlotNo ->
+    Ticked (ChainDepState p) ->
+    ChainDepState p
 
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
@@ -183,13 +194,13 @@ class ( Show (ChainDepState   p)
 class TranslateProto protoFrom protoTo where
   -- | Translate the ledger view.
   translateLedgerView ::
-    Proxy (protoFrom, protoTo) -> LedgerView protoFrom    -> LedgerView protoTo
+    Proxy (protoFrom, protoTo) -> LedgerView protoFrom -> LedgerView protoTo
+
   translateChainDepState ::
     Proxy (protoFrom, protoTo) -> ChainDepState protoFrom -> ChainDepState protoTo
 
 -- | Degenerate instance - we may always translate from a protocol to itself.
-instance TranslateProto singleProto singleProto
-  where
+instance TranslateProto singleProto singleProto where
   translateLedgerView _ = id
   translateChainDepState _ = id
 
@@ -242,10 +253,12 @@ class Ord sv => ChainOrder sv where
   --      Intuitively, this means that only the logic for breaking ties between
   --      chains with equal block number is customizable via this class.
   preferCandidate ::
-       ChainOrderConfig sv
-    -> sv -- ^ Tip of our chain
-    -> sv -- ^ Tip of the candidate
-    -> Bool
+    ChainOrderConfig sv ->
+    -- | Tip of our chain
+    sv ->
+    -- | Tip of the candidate
+    sv ->
+    Bool
 
 -- | A @DerivingVia@ helper to implement 'preferCandidate' in terms of the 'Ord'
 -- instance.

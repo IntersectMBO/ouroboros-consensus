@@ -13,11 +13,10 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Ouroboros.Storage.TestBlock (
-    -- * Test block
+module Test.Ouroboros.Storage.TestBlock
+  ( -- * Test block
     BlockConfig (..)
   , ChainLength (..)
   , CodecConfig (..)
@@ -29,6 +28,7 @@ module Test.Ouroboros.Storage.TestBlock (
   , TestBodyHash (..)
   , TestHeader (..)
   , TestHeaderHash (..)
+
     -- ** Construction
   , firstBlock
   , firstEBB
@@ -37,19 +37,23 @@ module Test.Ouroboros.Storage.TestBlock (
   , mkNextBlock'
   , mkNextEBB
   , mkNextEBB'
+
     -- ** Query
   , testBlockChainLength
   , testBlockIsEBB
   , testBlockIsValid
+
     -- ** Serialisation
   , testBlockFromLazyByteString
   , testBlockToBuilder
   , testBlockToLazyByteString
+
     -- * Ledger
   , TestBlockError (..)
   , TestBlockOtherHeaderEnvelopeError (..)
   , mkTestConfig
   , testInitExtLedger
+
     -- * Corruptions
   , Corruptions
   , FileCorruption (..)
@@ -59,151 +63,153 @@ module Test.Ouroboros.Storage.TestBlock (
   , shrinkCorruptions
   ) where
 
-import           Cardano.Crypto.DSIGN
-import           Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Crypto.DSIGN
+import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
-import           Codec.Serialise (Serialise (decode, encode), serialise)
-import           Control.Monad (forM, when)
-import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Except (throwError)
-import           Data.Binary (Binary)
+import Codec.Serialise (Serialise (decode, encode), serialise)
+import Control.Monad (forM, when)
+import Control.Monad.Class.MonadThrow
+import Control.Monad.Except (throwError)
+import Data.Binary (Binary)
 import qualified Data.Binary as Binary
-import           Data.ByteString.Builder (Builder)
+import Data.ByteString.Builder (Builder)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Functor (($>))
-import           Data.Hashable
-import           Data.Int (Int64)
-import           Data.List.NonEmpty (NonEmpty)
+import Data.Functor (($>))
+import Data.Hashable
+import Data.Int (Int64)
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (maybeToList)
-import           Data.TreeDiff
-import           Data.Void (Void)
-import           Data.Word
-import           GHC.Generics (Generic)
-import           GHC.Stack (HasCallStack)
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.BlockchainTime
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Forecast
-import           Ouroboros.Consensus.HardFork.Abstract
-import           Ouroboros.Consensus.HardFork.Combinator.Abstract
-                     (ImmutableEraParams (immutableEraParams))
+import Data.Maybe (maybeToList)
+import Data.TreeDiff
+import Data.Void (Void)
+import Data.Word
+import GHC.Generics (Generic)
+import GHC.Stack (HasCallStack)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Forecast
+import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.HardFork.Combinator.Abstract
+  ( ImmutableEraParams (immutableEraParams)
+  )
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import           Ouroboros.Consensus.HardFork.History.EraParams
-                     (EraParams (eraGenesisWin))
-import           Ouroboros.Consensus.HeaderValidation
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.Inspect
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Ledger.Tables.Utils
-import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Node.Run
-import           Ouroboros.Consensus.NodeId
-import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Protocol.BFT
-import           Ouroboros.Consensus.Protocol.ModChainSel
-import           Ouroboros.Consensus.Protocol.Signed
-import           Ouroboros.Consensus.Storage.ImmutableDB (Tip)
-import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
-import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Storage.VolatileDB
-import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util.IndexedMemPack
-import           Ouroboros.Consensus.Util.Orphans ()
+import Ouroboros.Consensus.HardFork.History.EraParams
+  ( EraParams (eraGenesisWin)
+  )
+import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Protocol.BFT
+import Ouroboros.Consensus.Protocol.ModChainSel
+import Ouroboros.Consensus.Protocol.Signed
+import Ouroboros.Consensus.Storage.ImmutableDB (Tip)
+import Ouroboros.Consensus.Storage.ImmutableDB.Chunks
+import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Storage.VolatileDB
+import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Consensus.Util.IndexedMemPack
+import Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Chain
-import           System.FS.API.Lazy
-import           Test.Cardano.Slotting.Numeric ()
-import           Test.Cardano.Slotting.TreeDiff ()
-import           Test.Ouroboros.Storage.ChainDB.Model
-import           Test.QuickCheck
-import           Test.Util.Orphans.Arbitrary ()
-import           Test.Util.Orphans.SignableRepresentation ()
-import           Test.Util.Orphans.ToExpr ()
+import System.FS.API.Lazy
+import Test.Cardano.Slotting.Numeric ()
+import Test.Cardano.Slotting.TreeDiff ()
+import Test.Ouroboros.Storage.ChainDB.Model
+import Test.QuickCheck
+import Test.Util.Orphans.Arbitrary ()
+import Test.Util.Orphans.SignableRepresentation ()
+import Test.Util.Orphans.ToExpr ()
 
 {-------------------------------------------------------------------------------
   TestBlock
 -------------------------------------------------------------------------------}
 
-data TestBlock = TestBlock {
-      testHeader :: !TestHeader
-    , testBody   :: !TestBody
-    }
-  deriving stock    (Show, Eq, Generic)
+data TestBlock = TestBlock
+  { testHeader :: !TestHeader
+  , testBody :: !TestBody
+  }
+  deriving stock (Show, Eq, Generic)
   deriving anyclass (NoThunks, Serialise)
 
 -- | Hash of a 'TestHeader'
 newtype TestHeaderHash = TestHeaderHash Int
-  deriving stock    (Eq, Ord, Show, Generic)
-  deriving newtype  (Condense, NoThunks, Hashable, Serialise, Binary)
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving newtype (Condense, NoThunks, Hashable, Serialise, Binary)
 
 -- | Hash of a 'TestBody'
 newtype TestBodyHash = TestBodyHash Int
-  deriving stock    (Eq, Ord, Show, Generic)
-  deriving newtype  (Condense, NoThunks, Hashable, Serialise)
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving newtype (Condense, NoThunks, Hashable, Serialise)
 
-data TestHeader = TestHeader {
-      thHash        :: HeaderHash TestHeader
-      -- ^ Not included in the calculation of the hash of the 'TestHeader',
-      -- i.e., in its own value, which would be pretty hard to do.
-      --
-      -- Note the absence of a bang: this field caches the 'TestHeader's hash.
-      -- To calculate it, the 'TestHeader' is passed to the hashing function,
-      -- even though the field is not read, making the field strict would
-      -- create an infinite loop.
-    , thPrevHash    :: !(ChainHash TestHeader)
-    , thBodyHash    :: !TestBodyHash
-    , thSlotNo      :: !SlotNo
-    , thBlockNo     :: !BlockNo
-    , thChainLength :: !ChainLength
-    , thIsEBB       :: !EBB
-    }
-  deriving stock    (Eq, Show, Generic)
+data TestHeader = TestHeader
+  { thHash :: HeaderHash TestHeader
+  -- ^ Not included in the calculation of the hash of the 'TestHeader',
+  -- i.e., in its own value, which would be pretty hard to do.
+  --
+  -- Note the absence of a bang: this field caches the 'TestHeader's hash.
+  -- To calculate it, the 'TestHeader' is passed to the hashing function,
+  -- even though the field is not read, making the field strict would
+  -- create an infinite loop.
+  , thPrevHash :: !(ChainHash TestHeader)
+  , thBodyHash :: !TestBodyHash
+  , thSlotNo :: !SlotNo
+  , thBlockNo :: !BlockNo
+  , thChainLength :: !ChainLength
+  , thIsEBB :: !EBB
+  }
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (NoThunks, Serialise)
 
 -- | Strict variant of @Maybe EpochNo@
-data EBB =
-    EBB !EpochNo
+data EBB
+  = EBB !EpochNo
   | RegularBlock
-  deriving stock    (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (NoThunks, Serialise)
 
 instance Hashable EBB where
-  hashWithSalt s (EBB epoch)  = hashWithSalt s (unEpochNo epoch)
+  hashWithSalt s (EBB epoch) = hashWithSalt s (unEpochNo epoch)
   hashWithSalt s RegularBlock = hashWithSalt s (-1 :: Int)
 
-data TestBody = TestBody {
-      tbForkNo  :: !Word
-      -- ^ If we don't have something that can vary per block, we're not
-      -- generating forks, except when skipping slots. For example, when we
-      -- want to have multiple different valid successor blocks created in the
-      -- same slot, all fields in the header and body will be the same.
-      -- Consequently, the hashes will also be the same, so we don't have
-      -- different blocks after all. By using a different 'tbForkNo' for each
-      -- block, we have different bodies, and thus different hashes.
-      --
-      -- Note that this is a /local/ number, it is specific to this block,
-      -- other blocks need not be aware of it.
-    , tbIsValid :: !Bool
-    }
-  deriving stock    (Eq, Show, Generic)
+data TestBody = TestBody
+  { tbForkNo :: !Word
+  -- ^ If we don't have something that can vary per block, we're not
+  -- generating forks, except when skipping slots. For example, when we
+  -- want to have multiple different valid successor blocks created in the
+  -- same slot, all fields in the header and body will be the same.
+  -- Consequently, the hashes will also be the same, so we don't have
+  -- different blocks after all. By using a different 'tbForkNo' for each
+  -- block, we have different bodies, and thus different hashes.
+  --
+  -- Note that this is a /local/ number, it is specific to this block,
+  -- other blocks need not be aware of it.
+  , tbIsValid :: !Bool
+  }
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (NoThunks, Serialise, Hashable)
 
-newtype instance Header TestBlock = TestHeader' { unTestHeader :: TestHeader }
+newtype instance Header TestBlock = TestHeader' {unTestHeader :: TestHeader}
   deriving newtype (Eq, Show, NoThunks, Serialise)
 
 instance GetHeader TestBlock where
   getHeader = TestHeader' . testHeader
 
   blockMatchesHeader (TestHeader' hdr) blk =
-      thBodyHash hdr == hashBody (testBody blk)
+    thBodyHash hdr == hashBody (testBody blk)
 
   headerIsEBB (TestHeader' hdr) = case thIsEBB hdr of
-    EBB epochNo  -> Just epochNo
+    EBB epochNo -> Just epochNo
     RegularBlock -> Nothing
 
 instance StandardHash TestBlock
@@ -213,34 +219,34 @@ type instance HeaderHash TestBlock = TestHeaderHash
 type instance HeaderHash TestHeader = TestHeaderHash
 
 instance ConvertRawHash TestBlock where
-  toRawHash   _ = Lazy.toStrict . Binary.encode
+  toRawHash _ = Lazy.toStrict . Binary.encode
   fromRawHash _ = Binary.decode . Lazy.fromStrict
-  hashSize    _ = 8
+  hashSize _ = 8
 
 instance HasHeader TestBlock where
   getHeaderFields = getBlockHeaderFields
 
 instance HasHeader (Header TestBlock) where
-  getHeaderFields (TestHeader' TestHeader{..}) = HeaderFields {
-        headerFieldHash    = thHash
-      , headerFieldSlot    = thSlotNo
+  getHeaderFields (TestHeader' TestHeader{..}) =
+    HeaderFields
+      { headerFieldHash = thHash
+      , headerFieldSlot = thSlotNo
       , headerFieldBlockNo = thBlockNo
       }
 
 instance GetPrevHash TestBlock where
   headerPrevHash = castHash . thPrevHash . unTestHeader
 
-data instance BlockConfig TestBlock = TestBlockConfig {
-      -- | Whether the test block can be EBBs or not. This can vary per test
-      -- case. It will be used by 'validateEnvelope' to forbid EBBs 'False'.
-      testBlockEBBsAllowed  :: !Bool
-
-      -- | Number of core nodes
-      --
-      -- We need this in order to compute the 'ValidateView', which must
-      -- conjure up a validation key out of thin air
-    , testBlockNumCoreNodes :: !NumCoreNodes
-    }
+data instance BlockConfig TestBlock = TestBlockConfig
+  { testBlockEBBsAllowed :: !Bool
+  -- ^ Whether the test block can be EBBs or not. This can vary per test
+  -- case. It will be used by 'validateEnvelope' to forbid EBBs 'False'.
+  , testBlockNumCoreNodes :: !NumCoreNodes
+  -- ^ Number of core nodes
+  --
+  -- We need this in order to compute the 'ValidateView', which must
+  -- conjure up a validation key out of thin air
+  }
   deriving (Generic, NoThunks)
 
 data instance CodecConfig TestBlock = TestBlockCodecConfig
@@ -271,8 +277,8 @@ testBlockChainLength = thChainLength . unTestHeader . getHeader
 -- its hash.
 testBlockIsValid :: TestBlock -> Bool
 testBlockIsValid (TestBlock hdr body) =
-  thHash     hdr == hashHeader hdr &&
-  thBodyHash hdr == hashBody   body
+  thHash hdr == hashHeader hdr
+    && thBodyHash hdr == hashBody body
 
 testBlockToBuilder :: TestBlock -> Builder
 testBlockToBuilder = CBOR.toBuilder . encode
@@ -288,12 +294,12 @@ testBlockToLazyByteString = CBOR.toLazyByteString . encode
 
 testBlockFromLazyByteString :: HasCallStack => Lazy.ByteString -> TestBlock
 testBlockFromLazyByteString bs = case CBOR.deserialiseFromBytes decode bs of
-    Left e -> error $ show e
-    Right (bs', a)
-      | Lazy.null bs'
-      -> a
-      | otherwise
-      -> error $ "left-over bytes: " <> show bs'
+  Left e -> error $ show e
+  Right (bs', a)
+    | Lazy.null bs' ->
+        a
+    | otherwise ->
+        error $ "left-over bytes: " <> show bs'
 
 {-------------------------------------------------------------------------------
   Real chain length
@@ -345,7 +351,7 @@ testBlockFromLazyByteString bs = case CBOR.deserialiseFromBytes decode bs of
 -- NOTE: we start counting from 1 (unlike 'BlockNo', which starts from 0),
 -- because it corresponds to the /length/.
 newtype ChainLength = ChainLength Int
-  deriving stock   (Show, Generic)
+  deriving stock (Show, Generic)
   deriving newtype (Eq, Ord, Enum, NoThunks, Serialise, Hashable)
 
 {-------------------------------------------------------------------------------
@@ -353,29 +359,30 @@ newtype ChainLength = ChainLength Int
 -------------------------------------------------------------------------------}
 
 mkBlock ::
-     HasCallStack
-  => (SlotNo -> Bool)
-  -- ^ Is this slot allowed contain an EBB?
+  HasCallStack =>
+  -- | Is this slot allowed contain an EBB?
   --
   -- This argument is used primarily to detect the generation of invalid blocks
   -- with different kind of 'ChunkInfo'.
-  -> TestBody
-  -> ChainHash TestHeader
-  -- ^ Hash of previous header
-  -> SlotNo
-  -> BlockNo
-  -> ChainLength
-  -> Maybe EpochNo
-  -> TestBlock
+  (SlotNo -> Bool) ->
+  TestBody ->
+  -- | Hash of previous header
+  ChainHash TestHeader ->
+  SlotNo ->
+  BlockNo ->
+  ChainLength ->
+  Maybe EpochNo ->
+  TestBlock
 mkBlock canContainEBB testBody thPrevHash thSlotNo thBlockNo thChainLength ebb =
-    case (canContainEBB thSlotNo, ebb) of
-      (False, Just _) ->
-        error "mkBlock: EBB in invalid slot"
-      _otherwise ->
-        TestBlock { testHeader, testBody }
-  where
-    testHeader = TestHeader {
-        thHash     = hashHeader testHeader
+  case (canContainEBB thSlotNo, ebb) of
+    (False, Just _) ->
+      error "mkBlock: EBB in invalid slot"
+    _otherwise ->
+      TestBlock{testHeader, testBody}
+ where
+  testHeader =
+    TestHeader
+      { thHash = hashHeader testHeader
       , thPrevHash
       , thBodyHash = hashBody testBody
       , thSlotNo
@@ -383,129 +390,129 @@ mkBlock canContainEBB testBody thPrevHash thSlotNo thBlockNo thChainLength ebb =
       , thChainLength
       , thIsEBB = case ebb of
           Just epoch -> EBB epoch
-          Nothing    -> RegularBlock
+          Nothing -> RegularBlock
       }
 
 -- | Note the first block need not be an EBB, see 'firstEBB'.
 firstBlock :: SlotNo -> TestBody -> TestBlock
 firstBlock slotNo testBody =
-    mkBlock
-      (const False)
-      testBody
-      GenesisHash
-      slotNo
-      0
-      (ChainLength 1)
-      Nothing
+  mkBlock
+    (const False)
+    testBody
+    GenesisHash
+    slotNo
+    0
+    (ChainLength 1)
+    Nothing
 
 mkNextBlock' ::
-     (HeaderFields TestBlock, ChainLength)
-     -- ^ Information about the previous block
-  -> SlotNo
-  -> TestBody
-  -> TestBlock
+  -- | Information about the previous block
+  (HeaderFields TestBlock, ChainLength) ->
+  SlotNo ->
+  TestBody ->
+  TestBlock
 mkNextBlock' (prevHeaderFields, prevChainLength) slotNo testBody =
-    mkBlock
-      (const False)
-      testBody
-      (BlockHash (headerFieldHash prevHeaderFields))
-      slotNo
-      (succ (headerFieldBlockNo prevHeaderFields))
-      (succ prevChainLength)
-      Nothing
+  mkBlock
+    (const False)
+    testBody
+    (BlockHash (headerFieldHash prevHeaderFields))
+    slotNo
+    (succ (headerFieldBlockNo prevHeaderFields))
+    (succ prevChainLength)
+    Nothing
 
-firstEBB :: (SlotNo -> Bool)
-         -> TestBody
-         -> TestBlock
+firstEBB ::
+  (SlotNo -> Bool) ->
+  TestBody ->
+  TestBlock
 firstEBB canContainEBB testBody =
-    mkBlock canContainEBB testBody GenesisHash 0 0 (ChainLength 1) (Just 0)
+  mkBlock canContainEBB testBody GenesisHash 0 0 (ChainLength 1) (Just 0)
 
 -- | Note that in various places, e.g., the ImmutableDB, we rely on the fact
 -- that the @slotNo@ should correspond to the first slot number of the epoch,
 -- as is the case for real EBBs.
 mkNextEBB' ::
-     (SlotNo -> Bool)
-  -> (HeaderFields TestBlock, ChainLength)
-     -- ^ Information about the previous block
-  -> SlotNo
-  -> EpochNo
-  -> TestBody
-  -> TestBlock
+  (SlotNo -> Bool) ->
+  -- | Information about the previous block
+  (HeaderFields TestBlock, ChainLength) ->
+  SlotNo ->
+  EpochNo ->
+  TestBody ->
+  TestBlock
 mkNextEBB' canContainEBB (prevHeaderFields, prevChainLength) slotNo epochNo testBody =
-    mkBlock
-      canContainEBB
-      testBody
-      (BlockHash (headerFieldHash prevHeaderFields))
-      slotNo
-      (headerFieldBlockNo prevHeaderFields)
-      (succ prevChainLength)
-      (Just epochNo)
+  mkBlock
+    canContainEBB
+    testBody
+    (BlockHash (headerFieldHash prevHeaderFields))
+    slotNo
+    (headerFieldBlockNo prevHeaderFields)
+    (succ prevChainLength)
+    (Just epochNo)
 
 -- | Variant of 'mkNextBlock' that takes the entire previous block.
 mkNextBlock ::
-     TestBlock
-     -- ^ Previous block
-  -> SlotNo
-  -> TestBody
-  -> TestBlock
+  -- | Previous block
+  TestBlock ->
+  SlotNo ->
+  TestBody ->
+  TestBlock
 mkNextBlock tb =
-    mkNextBlock' (getBlockHeaderFields tb, testBlockChainLength tb)
+  mkNextBlock' (getBlockHeaderFields tb, testBlockChainLength tb)
 
 -- | Variant of 'mkNextEBB' that takes the entire previous block.
 mkNextEBB ::
-     (SlotNo -> Bool)
-  -> TestBlock
-     -- ^ Previous block
-  -> SlotNo
-  -> EpochNo
-  -> TestBody
-  -> TestBlock
+  (SlotNo -> Bool) ->
+  -- | Previous block
+  TestBlock ->
+  SlotNo ->
+  EpochNo ->
+  TestBody ->
+  TestBlock
 mkNextEBB canContainEBB tb =
-    mkNextEBB' canContainEBB (getBlockHeaderFields tb, testBlockChainLength tb)
+  mkNextEBB' canContainEBB (getBlockHeaderFields tb, testBlockChainLength tb)
 
 {-------------------------------------------------------------------------------
   Test infrastructure: protocol
 -------------------------------------------------------------------------------}
 
-data BftWithEBBsSelectView = BftWithEBBsSelectView {
-      bebbBlockNo     :: !BlockNo
-    , bebbIsEBB       :: !IsEBB
-    , bebbChainLength :: !ChainLength
-    , bebbHash        :: !TestHeaderHash
-    }
+data BftWithEBBsSelectView = BftWithEBBsSelectView
+  { bebbBlockNo :: !BlockNo
+  , bebbIsEBB :: !IsEBB
+  , bebbChainLength :: !ChainLength
+  , bebbHash :: !TestHeaderHash
+  }
   deriving stock (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
-  deriving (ChainOrder) via SimpleChainOrder BftWithEBBsSelectView
+  deriving anyclass NoThunks
+  deriving ChainOrder via SimpleChainOrder BftWithEBBsSelectView
 
 instance Ord BftWithEBBsSelectView where
-  compare (BftWithEBBsSelectView lBlockNo lIsEBB lChainLength lHash)
-          (BftWithEBBsSelectView rBlockNo rIsEBB rChainLength rHash) =
-      mconcat [
-          -- Prefer the highest block number, as it is a proxy for chain length
+  compare
+    (BftWithEBBsSelectView lBlockNo lIsEBB lChainLength lHash)
+    (BftWithEBBsSelectView rBlockNo rIsEBB rChainLength rHash) =
+      mconcat
+        [ -- Prefer the highest block number, as it is a proxy for chain length
           lBlockNo `compare` rBlockNo
-
-          -- If the block numbers are the same, check if one of them is an EBB.
+        , -- If the block numbers are the same, check if one of them is an EBB.
           -- An EBB has the same block number as the block before it, so the
           -- chain ending with an EBB is actually longer than the one ending
           -- with a regular block.
-        , score lIsEBB `compare` score rIsEBB
-
-          -- In case of a tie, look at the real chain length, so that we never
+          score lIsEBB `compare` score rIsEBB
+        , -- In case of a tie, look at the real chain length, so that we never
           -- prefer a shorter chain over a longer one, see 'ChainLength'.
-        , lChainLength `compare` rChainLength
-
-        -- In case of another tie, pick the largest hash, so that the model and
-        -- the implementation will make the same choice, regardless
-        -- implementation details (e.g., sort order).
-        , lHash        `compare` rHash
+          lChainLength `compare` rChainLength
+        , -- In case of another tie, pick the largest hash, so that the model and
+          -- the implementation will make the same choice, regardless
+          -- implementation details (e.g., sort order).
+          lHash `compare` rHash
         ]
-   where
-     score :: IsEBB -> Int
-     score IsEBB    = 1
-     score IsNotEBB = 0
+     where
+      score :: IsEBB -> Int
+      score IsEBB = 1
+      score IsNotEBB = 0
 
-type instance BlockProtocol TestBlock =
-  ModChainSel (Bft BftMockCrypto) BftWithEBBsSelectView
+type instance
+  BlockProtocol TestBlock =
+    ModChainSel (Bft BftMockCrypto) BftWithEBBsSelectView
 
 {-------------------------------------------------------------------------------
   Test infrastructure: ledger state
@@ -517,35 +524,38 @@ instance SignedHeader (Header TestBlock) where
 
 instance BlockSupportsProtocol TestBlock where
   validateView TestBlockConfig{..} =
-      bftValidateView bftFields
-    where
-      NumCoreNodes numCore = testBlockNumCoreNodes
+    bftValidateView bftFields
+   where
+    NumCoreNodes numCore = testBlockNumCoreNodes
 
-      bftFields :: Header TestBlock -> BftFields BftMockCrypto ()
-      bftFields hdr = BftFields {
-            bftSignature = SignedDSIGN $ mockSign () (signKey (blockSlot hdr))
-          }
+    bftFields :: Header TestBlock -> BftFields BftMockCrypto ()
+    bftFields hdr =
+      BftFields
+        { bftSignature = SignedDSIGN $ mockSign () (signKey (blockSlot hdr))
+        }
 
-      -- We don't want /our/ signing key, but rather the signing key of the
-      -- node that produced the block
-      signKey :: SlotNo -> SignKeyDSIGN MockDSIGN
-      signKey (SlotNo n) = SignKeyMockDSIGN $ n `mod` numCore
+    -- We don't want /our/ signing key, but rather the signing key of the
+    -- node that produced the block
+    signKey :: SlotNo -> SignKeyDSIGN MockDSIGN
+    signKey (SlotNo n) = SignKeyMockDSIGN $ n `mod` numCore
 
-  selectView _ hdr = BftWithEBBsSelectView {
-        bebbBlockNo     = blockNo hdr
-      , bebbIsEBB       = headerToIsEBB hdr
+  selectView _ hdr =
+    BftWithEBBsSelectView
+      { bebbBlockNo = blockNo hdr
+      , bebbIsEBB = headerToIsEBB hdr
       , bebbChainLength = thChainLength (unTestHeader hdr)
-      , bebbHash        = blockHash hdr
+      , bebbHash = blockHash hdr
       }
 
-data TestBlockError =
-    -- | The hashes don't line up
+data TestBlockError
+  = -- | The hashes don't line up
     InvalidHash
-      (ChainHash TestBlock)  -- ^ Expected hash
-      (ChainHash TestBlock)  -- ^ Invalid hash
-
-    -- | The block itself is invalid
-  | InvalidBlock
+      -- | Expected hash
+      (ChainHash TestBlock)
+      -- | Invalid hash
+      (ChainHash TestBlock)
+  | -- | The block itself is invalid
+    InvalidBlock
   deriving (Eq, Show, Generic, NoThunks)
 
 type instance LedgerCfg (LedgerState TestBlock) = HardFork.EraParams
@@ -559,42 +569,55 @@ instance GetTip (Ticked (LedgerState TestBlock)) where
 instance IsLedger (LedgerState TestBlock) where
   type LedgerErr (LedgerState TestBlock) = TestBlockError
 
-  type AuxLedgerEvent (LedgerState TestBlock) =
-    VoidLedgerEvent (LedgerState TestBlock)
+  type
+    AuxLedgerEvent (LedgerState TestBlock) =
+      VoidLedgerEvent (LedgerState TestBlock)
 
-  applyChainTickLedgerResult _ _ _ = pureLedgerResult
-                                   . TickedTestLedger
-                                   . noNewTickingDiffs
+  applyChainTickLedgerResult _ _ _ =
+    pureLedgerResult
+      . TickedTestLedger
+      . noNewTickingDiffs
 
-type instance TxIn  (LedgerState TestBlock) = Void
+type instance TxIn (LedgerState TestBlock) = Void
 type instance TxOut (LedgerState TestBlock) = Void
 
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x y) = TestLedger x y
 instance LedgerTablesAreTrivial (Ticked (LedgerState TestBlock)) where
   convertMapKind (TickedTestLedger x) = TickedTestLedger (convertMapKind x)
-deriving via TrivialLedgerTables (LedgerState TestBlock)
-    instance HasLedgerTables (LedgerState TestBlock)
-deriving via TrivialLedgerTables (Ticked (LedgerState TestBlock))
-    instance HasLedgerTables (Ticked (LedgerState TestBlock))
-deriving via TrivialLedgerTables (LedgerState TestBlock)
-    instance CanStowLedgerTables (LedgerState TestBlock)
-deriving via TrivialLedgerTables (LedgerState TestBlock)
-    instance CanUpgradeLedgerTables (LedgerState TestBlock)
-deriving via TrivialLedgerTables (LedgerState TestBlock)
-    instance SerializeTablesWithHint (LedgerState TestBlock)
-deriving via Void
-    instance IndexedMemPack (LedgerState TestBlock EmptyMK) Void
-
+deriving via
+  TrivialLedgerTables (LedgerState TestBlock)
+  instance
+    HasLedgerTables (LedgerState TestBlock)
+deriving via
+  TrivialLedgerTables (Ticked (LedgerState TestBlock))
+  instance
+    HasLedgerTables (Ticked (LedgerState TestBlock))
+deriving via
+  TrivialLedgerTables (LedgerState TestBlock)
+  instance
+    CanStowLedgerTables (LedgerState TestBlock)
+deriving via
+  TrivialLedgerTables (LedgerState TestBlock)
+  instance
+    CanUpgradeLedgerTables (LedgerState TestBlock)
+deriving via
+  TrivialLedgerTables (LedgerState TestBlock)
+  instance
+    SerializeTablesWithHint (LedgerState TestBlock)
+deriving via
+  Void
+  instance
+    IndexedMemPack (LedgerState TestBlock EmptyMK) Void
 
 instance ApplyBlock (LedgerState TestBlock) TestBlock where
   applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
-    | blockPrevHash tb /= lastAppliedHash
-    = throwError $ InvalidHash lastAppliedHash (blockPrevHash tb)
-    | not $ tbIsValid testBody
-    = throwError $ InvalidBlock
-    | otherwise
-    = return     $ pureLedgerResult $ TestLedger (Chain.blockPoint tb) (BlockHash (blockHash tb))
+    | blockPrevHash tb /= lastAppliedHash =
+        throwError $ InvalidHash lastAppliedHash (blockPrevHash tb)
+    | not $ tbIsValid testBody =
+        throwError $ InvalidBlock
+    | otherwise =
+        return $ pureLedgerResult $ TestLedger (Chain.blockPoint tb) (BlockHash (blockHash tb))
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
@@ -602,19 +625,19 @@ instance ApplyBlock (LedgerState TestBlock) TestBlock where
 
   getBlockKeySets _blk = trivialLedgerTables
 
-data instance LedgerState TestBlock mk =
-    TestLedger {
-        -- The ledger state simply consists of the last applied block
-        lastAppliedPoint :: !(Point TestBlock)
-      , lastAppliedHash  :: !(ChainHash TestBlock)
-      }
-  deriving stock    (Show, Eq, Generic)
+data instance LedgerState TestBlock mk
+  = TestLedger
+  { -- The ledger state simply consists of the last applied block
+    lastAppliedPoint :: !(Point TestBlock)
+  , lastAppliedHash :: !(ChainHash TestBlock)
+  }
+  deriving stock (Show, Eq, Generic)
   deriving anyclass (Serialise, NoThunks)
 
 -- Ticking has no effect on the test ledger state
-newtype instance Ticked (LedgerState TestBlock) mk = TickedTestLedger {
-      getTickedTestLedger :: LedgerState TestBlock mk
-    }
+newtype instance Ticked (LedgerState TestBlock) mk = TickedTestLedger
+  { getTickedTestLedger :: LedgerState TestBlock mk
+  }
 
 instance UpdateLedger TestBlock
 
@@ -623,8 +646,8 @@ instance HasAnnTip TestBlock where
   tipInfoHash _ (TipInfoIsEBB h _) = h
   getTipInfo b = TipInfoIsEBB (blockHash b) (headerToIsEBB b)
 
-data TestBlockOtherHeaderEnvelopeError =
-    UnexpectedEBBInSlot !SlotNo
+data TestBlockOtherHeaderEnvelopeError
+  = UnexpectedEBBInSlot !SlotNo
   deriving (Eq, Show, Generic, NoThunks)
 
 instance BasicEnvelopeValidation TestBlock where
@@ -632,101 +655,110 @@ instance BasicEnvelopeValidation TestBlock where
 
   -- EBB shares its slot number with its successor
   minimumNextSlotNo _ (TipInfoIsEBB _ prevIsEBB) (TipInfoIsEBB _ curIsEBB) s =
-      case (prevIsEBB, curIsEBB) of
-        (IsEBB, IsNotEBB) -> s
-        _otherwise        -> succ s
+    case (prevIsEBB, curIsEBB) of
+      (IsEBB, IsNotEBB) -> s
+      _otherwise -> succ s
 
   -- The chain always starts with block number 0.
   expectedFirstBlockNo _ = BlockNo 0
 
   -- EBB shares its block number with its predecessor.
   expectedNextBlockNo _ (TipInfoIsEBB _ prevIsEBB) (TipInfoIsEBB _ curIsEBB) b =
-      case (prevIsEBB, curIsEBB) of
-        (IsNotEBB, IsEBB) -> b
-        _otherwise        -> succ b
+    case (prevIsEBB, curIsEBB) of
+      (IsNotEBB, IsEBB) -> b
+      _otherwise -> succ b
 
 instance ValidateEnvelope TestBlock where
   type OtherHeaderEnvelopeError TestBlock = TestBlockOtherHeaderEnvelopeError
 
   additionalEnvelopeChecks cfg _ledgerView hdr =
-      when (fromIsEBB newIsEBB && not (canBeEBB actualSlotNo)) $
-        throwError $ UnexpectedEBBInSlot actualSlotNo
-    where
-      actualSlotNo :: SlotNo
-      actualSlotNo = blockSlot hdr
+    when (fromIsEBB newIsEBB && not (canBeEBB actualSlotNo)) $
+      throwError $
+        UnexpectedEBBInSlot actualSlotNo
+   where
+    actualSlotNo :: SlotNo
+    actualSlotNo = blockSlot hdr
 
-      newIsEBB :: IsEBB
-      newIsEBB = headerToIsEBB hdr
+    newIsEBB :: IsEBB
+    newIsEBB = headerToIsEBB hdr
 
-      canBeEBB :: SlotNo -> Bool
-      canBeEBB (SlotNo s) = testBlockEBBsAllowed (configBlock cfg)
-                         && s `mod` epochSlots == 0
+    canBeEBB :: SlotNo -> Bool
+    canBeEBB (SlotNo s) =
+      testBlockEBBsAllowed (configBlock cfg)
+        && s `mod` epochSlots == 0
 
-      epochSlots :: Word64
-      epochSlots =
-          unEpochSize
+    epochSlots :: Word64
+    epochSlots =
+      unEpochSize
         . HardFork.eraEpochSize
         . configLedger
         $ cfg
 
 instance LedgerSupportsProtocol TestBlock where
-  protocolLedgerView   _ _  = ()
-  ledgerViewForecastAt _    = trivialForecast
+  protocolLedgerView _ _ = ()
+  ledgerViewForecastAt _ = trivialForecast
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
   hardForkSummary = neverForksHardForkSummary id
 
-instance InspectLedger TestBlock where
-  -- Use defaults
+instance InspectLedger TestBlock
+
+-- Use defaults
 
 testInitLedger :: LedgerState TestBlock EmptyMK
 testInitLedger = TestLedger GenesisPoint GenesisHash
 
 testInitExtLedger :: ExtLedgerState TestBlock EmptyMK
-testInitExtLedger = ExtLedgerState {
-      ledgerState = testInitLedger
+testInitExtLedger =
+  ExtLedgerState
+    { ledgerState = testInitLedger
     , headerState = genesisHeaderState ()
     }
 
 -- Only for a single node
 mkTestConfig :: SecurityParam -> ChunkSize -> TopLevelConfig TestBlock
-mkTestConfig k ChunkSize { chunkCanContainEBB, numRegularBlocks } =
-    TopLevelConfig {
-        topLevelConfigProtocol = McsConsensusConfig $ BftConfig {
-            bftParams  = BftParams {
-                             bftSecurityParam = k
-                           , bftNumNodes      = numCoreNodes
-                           }
-          , bftSignKey = SignKeyMockDSIGN 0
-          , bftVerKeys = Map.singleton (CoreId (CoreNodeId 0)) (VerKeyMockDSIGN 0)
-          }
-      , topLevelConfigLedger  = eraParams
-      , topLevelConfigBlock   = TestBlockConfig {
-            testBlockEBBsAllowed  = chunkCanContainEBB
+mkTestConfig k ChunkSize{chunkCanContainEBB, numRegularBlocks} =
+  TopLevelConfig
+    { topLevelConfigProtocol =
+        McsConsensusConfig $
+          BftConfig
+            { bftParams =
+                BftParams
+                  { bftSecurityParam = k
+                  , bftNumNodes = numCoreNodes
+                  }
+            , bftSignKey = SignKeyMockDSIGN 0
+            , bftVerKeys = Map.singleton (CoreId (CoreNodeId 0)) (VerKeyMockDSIGN 0)
+            }
+    , topLevelConfigLedger = eraParams
+    , topLevelConfigBlock =
+        TestBlockConfig
+          { testBlockEBBsAllowed = chunkCanContainEBB
           , testBlockNumCoreNodes = numCoreNodes
           }
-      , topLevelConfigCodec       = TestBlockCodecConfig
-      , topLevelConfigStorage     = TestBlockStorageConfig
-      , topLevelConfigCheckpoints = emptyCheckpointsMap
-      }
-  where
-    slotLength :: SlotLength
-    slotLength = slotLengthFromSec 20
+    , topLevelConfigCodec = TestBlockCodecConfig
+    , topLevelConfigStorage = TestBlockStorageConfig
+    , topLevelConfigCheckpoints = emptyCheckpointsMap
+    }
+ where
+  slotLength :: SlotLength
+  slotLength = slotLengthFromSec 20
 
-    numCoreNodes :: NumCoreNodes
-    numCoreNodes = NumCoreNodes 1
+  numCoreNodes :: NumCoreNodes
+  numCoreNodes = NumCoreNodes 1
 
-    eraParams :: HardFork.EraParams
-    eraParams = HardFork.EraParams {
-        eraEpochSize  = EpochSize numRegularBlocks
+  eraParams :: HardFork.EraParams
+  eraParams =
+    HardFork.EraParams
+      { eraEpochSize = EpochSize numRegularBlocks
       , eraSlotLength = slotLength
-      , eraSafeZone   = HardFork.StandardSafeZone (unNonZero (maxRollbacks k) * 2)
+      , eraSafeZone = HardFork.StandardSafeZone (unNonZero (maxRollbacks k) * 2)
       , eraGenesisWin = GenesisWindow (unNonZero (maxRollbacks k) * 2)
       }
 
 instance ImmutableEraParams TestBlock where
-    immutableEraParams = topLevelConfigLedger
+  immutableEraParams = topLevelConfigLedger
 
 {-------------------------------------------------------------------------------
   NestedCtxt
@@ -750,9 +782,10 @@ instance HasNestedContent f TestBlock
 -------------------------------------------------------------------------------}
 
 instance HasBinaryBlockInfo TestBlock where
-  getBinaryBlockInfo tb = BinaryBlockInfo
+  getBinaryBlockInfo tb =
+    BinaryBlockInfo
       { headerOffset = testBlockHeaderOffset
-      , headerSize   = testBlockHeaderSize tb
+      , headerSize = testBlockHeaderSize tb
       }
 
 instance SerialiseDiskConstraints TestBlock
@@ -774,11 +807,11 @@ instance EncodeDisk TestBlock (AnnTip TestBlock) where
 instance DecodeDisk TestBlock (AnnTip TestBlock) where
   decodeDisk _ = decodeAnnTipIsEBB decode
 
-instance ReconstructNestedCtxt       Header  TestBlock
+instance ReconstructNestedCtxt Header TestBlock
 instance EncodeDiskDepIx (NestedCtxt Header) TestBlock
-instance EncodeDiskDep   (NestedCtxt Header) TestBlock
+instance EncodeDiskDep (NestedCtxt Header) TestBlock
 instance DecodeDiskDepIx (NestedCtxt Header) TestBlock
-instance DecodeDiskDep   (NestedCtxt Header) TestBlock
+instance DecodeDiskDep (NestedCtxt Header) TestBlock
 
 -- ChainDepState
 instance EncodeDisk TestBlock ()
@@ -788,8 +821,10 @@ instance DecodeDisk TestBlock ()
   Additional instances
 -------------------------------------------------------------------------------}
 
-deriving via SelectViewDiffusionPipelining TestBlock
-  instance BlockSupportsDiffusionPipelining TestBlock
+deriving via
+  SelectViewDiffusionPipelining TestBlock
+  instance
+    BlockSupportsDiffusionPipelining TestBlock
 
 {-------------------------------------------------------------------------------
   Corruption
@@ -797,26 +832,27 @@ deriving via SelectViewDiffusionPipelining TestBlock
 
 data FileCorruption
   = DeleteFile
-  | DropLastBytes Word64
-    -- ^ Drop the last @n@ bytes of a file.
-  | Corrupt Word64
-    -- ^ Corrupt the file by adding 1 to the byte at the given location
+  | -- | Drop the last @n@ bytes of a file.
+    DropLastBytes Word64
+  | -- | Corrupt the file by adding 1 to the byte at the given location
     -- (modulo the file size).
+    Corrupt Word64
   deriving (Show, Eq)
 
 -- | Returns 'True' when something was actually corrupted. For example, when
 -- drop the last bytes of an empty file, we don't actually corrupt it.
 corruptFile :: MonadThrow m => HasFS m h -> FileCorruption -> FsPath -> m Bool
 corruptFile hasFS@HasFS{..} fc file = case fc of
-    DeleteFile              -> removeFile file $> True
-    DropLastBytes n         -> withFile hasFS file (AppendMode AllowExisting) $ \hnd -> do
-      fileSize <- hGetSize hnd
-      let newFileSize = if n >= fileSize then 0 else fileSize - n
-      hTruncate hnd newFileSize
-      return $ fileSize /= newFileSize
-    Corrupt n               -> withFile hasFS file (ReadWriteMode AllowExisting) $ \hnd -> do
-      fileSize <- hGetSize hnd
-      if fileSize == 0 then
+  DeleteFile -> removeFile file $> True
+  DropLastBytes n -> withFile hasFS file (AppendMode AllowExisting) $ \hnd -> do
+    fileSize <- hGetSize hnd
+    let newFileSize = if n >= fileSize then 0 else fileSize - n
+    hTruncate hnd newFileSize
+    return $ fileSize /= newFileSize
+  Corrupt n -> withFile hasFS file (ReadWriteMode AllowExisting) $ \hnd -> do
+    fileSize <- hGetSize hnd
+    if fileSize == 0
+      then
         return False
       else do
         let offset :: Int64
@@ -827,15 +863,15 @@ corruptFile hasFS@HasFS{..} fc file = case fc of
         _ <- hPutAll hasFS hnd (Lazy.map (+ 1) bs)
         return True
 
-
 instance Arbitrary FileCorruption where
-  arbitrary = frequency
-    [ (1, return DeleteFile)
-    , (1, DropLastBytes . getSmall . getPositive <$> arbitrary)
-    , (1, Corrupt . getSmall . getPositive <$> arbitrary)
-    ]
-  shrink DeleteFile         = []
-  shrink (DropLastBytes n)  =
+  arbitrary =
+    frequency
+      [ (1, return DeleteFile)
+      , (1, DropLastBytes . getSmall . getPositive <$> arbitrary)
+      , (1, Corrupt . getSmall . getPositive <$> arbitrary)
+      ]
+  shrink DeleteFile = []
+  shrink (DropLastBytes n) =
     DropLastBytes . getSmall . getPositive <$> shrink (Positive (Small n))
   shrink (Corrupt n) =
     Corrupt . getSmall . getPositive <$> shrink (Positive (Small n))
@@ -846,20 +882,20 @@ type Corruptions = NonEmpty (FileCorruption, FsPath)
 -- | The same file will not occur twice.
 generateCorruptions :: NonEmpty FsPath -> Gen Corruptions
 generateCorruptions allFiles = sized $ \n -> do
-    subl  <- sublistOf (NE.toList allFiles) `suchThat` (not . null)
-    k     <- choose (1, 1 `max` n)
-    let files = NE.fromList $ take k subl
-    forM files $ \file -> (, file) <$> arbitrary
+  subl <- sublistOf (NE.toList allFiles) `suchThat` (not . null)
+  k <- choose (1, 1 `max` n)
+  let files = NE.fromList $ take k subl
+  forM files $ \file -> (,file) <$> arbitrary
 
 shrinkCorruptions :: Corruptions -> [Corruptions]
 shrinkCorruptions cs =
-    [ cs''
-    | cs'  <- shrinkList shrinkCor (NE.toList cs)
-    , cs'' <- maybeToList $ NE.nonEmpty cs'
-    ]
-  where
-    shrinkCor :: (FileCorruption, FsPath) -> [(FileCorruption, FsPath)]
-    shrinkCor (c, f) = [(c', f) | c' <- shrink c]
+  [ cs''
+  | cs' <- shrinkList shrinkCor (NE.toList cs)
+  , cs'' <- maybeToList $ NE.nonEmpty cs'
+  ]
+ where
+  shrinkCor :: (FileCorruption, FsPath) -> [(FileCorruption, FsPath)]
+  shrinkCor (c, f) = [(c', f) | c' <- shrink c]
 
 -- | Return a list of all files that will be corrupted
 corruptionFiles :: Corruptions -> [FsPath]
@@ -872,10 +908,12 @@ corruptionFiles = map snd . NE.toList
 deriving newtype instance Hashable SlotNo
 deriving newtype instance Hashable BlockNo
 instance Hashable IsEBB
-  -- use generic instance
+
+-- use generic instance
 
 instance (StandardHash b, Hashable (HeaderHash b)) => Hashable (ChainHash b)
-  -- use generic instance
+
+-- use generic instance
 
 instance ToExpr EBB
 instance ToExpr IsEBB
@@ -887,7 +925,6 @@ instance ToExpr TestBody
 instance ToExpr TestBlock
 instance ToExpr (CodecConfig TestBlock)
 instance ToExpr (Tip TestBlock)
-
 
 deriving instance ToExpr TestBlockError
 deriving instance ToExpr (TipInfoIsEBB TestBlock)

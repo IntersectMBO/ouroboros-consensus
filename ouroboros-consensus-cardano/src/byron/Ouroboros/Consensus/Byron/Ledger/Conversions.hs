@@ -1,14 +1,16 @@
-module Ouroboros.Consensus.Byron.Ledger.Conversions (
-    -- * From @cardano-ledger-byron@ to @ouroboros-consensus@
+module Ouroboros.Consensus.Byron.Ledger.Conversions
+  ( -- * From @cardano-ledger-byron@ to @ouroboros-consensus@
     fromByronBlockCount
   , fromByronBlockNo
   , fromByronEpochSlots
   , fromByronSlotLength
   , fromByronSlotNo
+
     -- * From @ouroboros-consensus@ to @cardano-ledger-byron@
   , toByronBlockCount
   , toByronSlotLength
   , toByronSlotNo
+
     -- * Extract info from the genesis config
   , genesisNumCoreNodes
   , genesisSecurityParam
@@ -19,15 +21,15 @@ import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Genesis as Genesis
 import qualified Cardano.Chain.Slotting as CC
 import qualified Cardano.Chain.Update as CC
-import           Cardano.Ledger.BaseTypes (nonZeroOr, unNonZero)
-import           Data.Coerce
+import Cardano.Ledger.BaseTypes (nonZeroOr, unNonZero)
+import Data.Coerce
 import qualified Data.Set as Set
-import           Numeric.Natural (Natural)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.BlockchainTime
-import           Ouroboros.Consensus.Byron.Ledger.Orphans ()
-import           Ouroboros.Consensus.Config.SecurityParam
-import           Ouroboros.Consensus.Node.ProtocolInfo
+import Numeric.Natural (Natural)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.Byron.Ledger.Orphans ()
+import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.Node.ProtocolInfo
 
 {-------------------------------------------------------------------------------
   From @cardano-ledger-byron@ to @ouroboros-consensus@
@@ -46,8 +48,9 @@ fromByronEpochSlots :: CC.EpochSlots -> EpochSize
 fromByronEpochSlots (CC.EpochSlots n) = EpochSize n
 
 fromByronSlotLength :: Natural -> SlotLength
-fromByronSlotLength = slotLengthFromMillisec
-                    . (fromIntegral :: Natural -> Integer)
+fromByronSlotLength =
+  slotLengthFromMillisec
+    . (fromIntegral :: Natural -> Integer)
 
 {-------------------------------------------------------------------------------
   From @ouroboros-consensus@ to @cardano-ledger-byron@
@@ -60,8 +63,9 @@ toByronBlockCount :: SecurityParam -> CC.BlockCount
 toByronBlockCount (SecurityParam k) = CC.BlockCount $ unNonZero k
 
 toByronSlotLength :: SlotLength -> Natural
-toByronSlotLength = (fromIntegral :: Integer -> Natural)
-                  . slotLengthToMillisec
+toByronSlotLength =
+  (fromIntegral :: Integer -> Natural)
+    . slotLengthToMillisec
 
 {-------------------------------------------------------------------------------
   Extract info from genesis
@@ -69,13 +73,13 @@ toByronSlotLength = (fromIntegral :: Integer -> Natural)
 
 genesisSecurityParam :: Genesis.Config -> SecurityParam
 genesisSecurityParam =
-      fromByronBlockCount
+  fromByronBlockCount
     . Genesis.gdK
     . Genesis.configGenesisData
 
 genesisNumCoreNodes :: Genesis.Config -> NumCoreNodes
 genesisNumCoreNodes =
-      NumCoreNodes
+  NumCoreNodes
     . fromIntegral
     . Set.size
     . Genesis.unGenesisKeyHashes
@@ -84,5 +88,5 @@ genesisNumCoreNodes =
 
 genesisSlotLength :: Genesis.Config -> Natural
 genesisSlotLength =
-      CC.ppSlotDuration
+  CC.ppSlotDuration
     . Genesis.configProtocolParameters

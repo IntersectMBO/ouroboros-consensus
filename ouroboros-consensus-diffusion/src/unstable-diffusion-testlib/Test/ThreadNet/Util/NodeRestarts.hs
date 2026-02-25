@@ -1,28 +1,28 @@
-module Test.ThreadNet.Util.NodeRestarts (
-    NodeRestart (..)
+module Test.ThreadNet.Util.NodeRestarts
+  ( NodeRestart (..)
   , NodeRestarts (..)
   , genNodeRestarts
   , noRestarts
   , shrinkNodeRestarts
   ) where
 
-import           Data.Map.Strict (Map)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import           Data.Traversable (forM)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.NodeId
-import           Ouroboros.Consensus.Util.Condense
-import           Test.QuickCheck
-import           Test.ThreadNet.Util.NodeJoinPlan
-import           Test.Util.Slots (NumSlots (..))
+import Data.Traversable (forM)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Util.Condense
+import Test.QuickCheck
+import Test.ThreadNet.Util.NodeJoinPlan
+import Test.Util.Slots (NumSlots (..))
 
 data NodeRestart
-  = NodeRekey
-    -- ^ restart the node with a fresh operational key and immediately emit a
+  = -- | restart the node with a fresh operational key and immediately emit a
     -- delegation certificate transaction
-  | NodeRestart
-    -- ^ restart the node without rekeying
+    NodeRekey
+  | -- | restart the node without rekeying
+    NodeRestart
   deriving (Eq, Ord, Show)
 
 instance Condense NodeRestart where
@@ -31,16 +31,16 @@ instance Condense NodeRestart where
 -- | Which nodes are scheduled to restart in each slot
 --
 -- INVARIANT no element 'Map' is empty
---
 newtype NodeRestarts = NodeRestarts (Map SlotNo (Map CoreNodeId NodeRestart))
   deriving (Eq, Show)
 
 instance Condense NodeRestarts where
-  condense (NodeRestarts m) = condense
+  condense (NodeRestarts m) =
+    condense
       [ (,) slot $
-        [ (fromCoreNodeId cid, r)
-        | (cid, r) <- Map.toAscList m'
-        ]
+          [ (fromCoreNodeId cid, r)
+          | (cid, r) <- Map.toAscList m'
+          ]
       | (slot, m') <- Map.toAscList m
       ]
 
@@ -56,39 +56,41 @@ noRestarts = NodeRestarts Map.empty
 --
 -- POSTCONDITION will not simultaneously restart all nodes that have previously
 -- joined
---
 genNodeRestarts :: NodeJoinPlan -> NumSlots -> Gen NodeRestarts
 genNodeRestarts (NodeJoinPlan m) (NumSlots t)
-  | t < 1     = pure noRestarts
+  | t < 1 = pure noRestarts
   | otherwise =
-  fmap (NodeRestarts . Map.filter (not . Map.null) . Map.fromList) $ do
-    ss <- sublistOf [0 .. SlotNo (t - 1)]
-    forM ss $ \s ->
-      fmap ((,) s) $
-      let alreadyJoined = Map.keysSet $ Map.filter (< s) m
-          keepSome
-            | Set.null alreadyJoined = id
-            | otherwise              =
-              (`suchThat` \x -> not $ alreadyJoined `Set.isSubsetOf` Map.keysSet x)
-          candidates = Map.filterWithKey (canRestartIn s) m
-      in
-      keepSome $
-      if Map.null candidates
-      then pure Map.empty
-      else fmap (Map.fromList . map (flip (,) NodeRestart)) $
-           sublistOf $ Map.keys $ candidates
-  where
-    isLeading (CoreNodeId i) s = i /= unSlotNo s `mod` n
-      where
-        n = fromIntegral $ Map.size m
+      fmap (NodeRestarts . Map.filter (not . Map.null) . Map.fromList) $ do
+        ss <- sublistOf [0 .. SlotNo (t - 1)]
+        forM ss $ \s ->
+          fmap ((,) s) $
+            let alreadyJoined = Map.keysSet $ Map.filter (< s) m
+                keepSome
+                  | Set.null alreadyJoined = id
+                  | otherwise =
+                      (`suchThat` \x -> not $ alreadyJoined `Set.isSubsetOf` Map.keysSet x)
+                candidates = Map.filterWithKey (canRestartIn s) m
+             in keepSome $
+                  if Map.null candidates
+                    then pure Map.empty
+                    else
+                      fmap (Map.fromList . map (flip (,) NodeRestart)) $
+                        sublistOf $
+                          Map.keys $
+                            candidates
+ where
+  isLeading (CoreNodeId i) s = i /= unSlotNo s `mod` n
+   where
+    n = fromIntegral $ Map.size m
 
-    canRestartIn s nid joinSlot =
-        -- must be present
-        joinSlot <= s &&
-        -- must not be leading (TODO relax this somehow?)
-        not (isLeading nid s)
+  canRestartIn s nid joinSlot =
+    -- must be present
+    joinSlot <= s
+      &&
+      -- must not be leading (TODO relax this somehow?)
+      not (isLeading nid s)
 
 shrinkNodeRestarts :: NodeRestarts -> [NodeRestarts]
 shrinkNodeRestarts (NodeRestarts m)
-  | Map.null m = []  -- TODO better shrink
-  | otherwise  = [noRestarts]
+  | Map.null m = [] -- TODO better shrink
+  | otherwise = [noRestarts]

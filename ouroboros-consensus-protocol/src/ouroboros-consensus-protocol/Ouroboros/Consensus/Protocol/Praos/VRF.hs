@@ -11,36 +11,48 @@
 
 -- | This module implements VRF range extension as described in
 -- https://iohk.io/en/research/library/papers/on-uc-secure-range-extension-and-batch-verification-for-ecvrf/
-module Ouroboros.Consensus.Protocol.Praos.VRF (
-    InputVRF
+module Ouroboros.Consensus.Protocol.Praos.VRF
+  ( InputVRF
   , VRFUsage (..)
   , mkInputVRF
   , vrfLeaderValue
   , vrfNonceValue
   ) where
 
-import           Cardano.Binary (ToCBOR)
-import           Cardano.Crypto.Hash (Blake2b_256, Hash, castHash, hashToBytes,
-                     hashWith, sizeHash)
+import Cardano.Binary (ToCBOR)
+import Cardano.Crypto.Hash
+  ( Blake2b_256
+  , Hash
+  , castHash
+  , hashToBytes
+  , hashWith
+  , sizeHash
+  )
 import qualified Cardano.Crypto.Hash as Hash
-import           Cardano.Crypto.Util
-                     (SignableRepresentation (getSignableRepresentation),
-                     bytesToNatural)
-import           Cardano.Crypto.VRF (CertifiedVRF (certifiedOutput),
-                     OutputVRF (..), getOutputVRFBytes)
-import           Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
-import           Cardano.Ledger.Binary (runByteBuilder)
-import           Cardano.Ledger.Hashes (HASH)
-import           Cardano.Ledger.Slot (SlotNo (SlotNo))
-import           Cardano.Protocol.Crypto (Crypto (VRF))
-import           Cardano.Protocol.TPraos.BHeader (BoundedNatural,
-                     assertBoundedNatural)
+import Cardano.Crypto.Util
+  ( SignableRepresentation (getSignableRepresentation)
+  , bytesToNatural
+  )
+import Cardano.Crypto.VRF
+  ( CertifiedVRF (certifiedOutput)
+  , OutputVRF (..)
+  , getOutputVRFBytes
+  )
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
+import Cardano.Ledger.Binary (runByteBuilder)
+import Cardano.Ledger.Hashes (HASH)
+import Cardano.Ledger.Slot (SlotNo (SlotNo))
+import Cardano.Protocol.Crypto (Crypto (VRF))
+import Cardano.Protocol.TPraos.BHeader
+  ( BoundedNatural
+  , assertBoundedNatural
+  )
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
-import           Data.Proxy (Proxy (Proxy))
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Numeric.Natural (Natural)
+import Data.Proxy (Proxy (Proxy))
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Numeric.Natural (Natural)
 
 -- | Input to the verifiable random function. Consists of the hash of the slot
 -- and the epoch nonce.
@@ -65,7 +77,7 @@ mkInputVRF (SlotNo slot) eNonce =
     $ BS.word64BE slot
       <> ( case eNonce of
              NeutralNonce -> mempty
-             Nonce h      -> BS.byteStringCopy (Hash.hashToBytes h)
+             Nonce h -> BS.byteStringCopy (Hash.hashToBytes h)
          )
 
 -- | Indicate the usage of the VRF result.
@@ -95,7 +107,7 @@ hashVRF _ use certVRF =
   let vrfOutputAsBytes = getOutputVRFBytes $ certifiedOutput certVRF
    in case use of
         SVRFLeader -> castHash $ hashWith id $ "L" <> vrfOutputAsBytes
-        SVRFNonce  -> castHash $ hashWith id $ "N" <> vrfOutputAsBytes
+        SVRFNonce -> castHash $ hashWith id $ "N" <> vrfOutputAsBytes
 
 -- | Range-extend a VRF output to be used for leader checks from the relevant
 -- hash. See section 4.1 of the linked paper for details.

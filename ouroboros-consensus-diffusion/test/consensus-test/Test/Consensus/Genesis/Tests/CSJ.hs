@@ -3,54 +3,67 @@
 
 module Test.Consensus.Genesis.Tests.CSJ (tests) where
 
-import           Data.List (nub)
+import Data.List (nub)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe)
-import           Ouroboros.Consensus.Block (Header, blockSlot, succWithOrigin,
-                     unSlotNo)
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (TraceChainSyncClientEvent (..))
-import           Ouroboros.Consensus.Util.Condense (PaddingDirection (..),
-                     condenseListWithPadding)
+import Data.Maybe (mapMaybe)
+import Ouroboros.Consensus.Block
+  ( Header
+  , blockSlot
+  , succWithOrigin
+  , unSlotNo
+  )
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+  ( TraceChainSyncClientEvent (..)
+  )
+import Ouroboros.Consensus.Util.Condense
+  ( PaddingDirection (..)
+  , condenseListWithPadding
+  )
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Protocol.ChainSync.Codec
-                     (ChainSyncTimeout (mustReplyTimeout), idleTimeout)
-import           Test.Consensus.BlockTree (BlockTree (..))
-import           Test.Consensus.Genesis.Setup
-import           Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)
-import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
-                     defaultSchedulerConfig)
-import           Test.Consensus.PeerSimulator.StateView (StateView (..))
-import           Test.Consensus.PeerSimulator.Trace (TraceEvent (..))
-import           Test.Consensus.PointSchedule
+import Ouroboros.Network.Protocol.ChainSync.Codec
+  ( ChainSyncTimeout (mustReplyTimeout)
+  , idleTimeout
+  )
+import Test.Consensus.BlockTree (BlockTree (..))
+import Test.Consensus.Genesis.Setup
+import Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)
+import Test.Consensus.PeerSimulator.Run
+  ( SchedulerConfig (..)
+  , defaultSchedulerConfig
+  )
+import Test.Consensus.PeerSimulator.StateView (StateView (..))
+import Test.Consensus.PeerSimulator.Trace (TraceEvent (..))
+import Test.Consensus.PointSchedule
+import Test.Consensus.PointSchedule.Peers (Peers (..), peers')
 import qualified Test.Consensus.PointSchedule.Peers as Peers
-import           Test.Consensus.PointSchedule.Peers (Peers (..), peers')
-import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
-import           Test.Tasty
-import           Test.Tasty.QuickCheck
-import           Test.Util.Orphans.IOLike ()
-import           Test.Util.PartialAccessors
-import           Test.Util.TestBlock (TestBlock)
-import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
-                     adjustQuickCheckTests)
+import Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
+import Test.Tasty
+import Test.Tasty.QuickCheck
+import Test.Util.Orphans.IOLike ()
+import Test.Util.PartialAccessors
+import Test.Util.TestBlock (TestBlock)
+import Test.Util.TestEnv
+  ( adjustQuickCheckMaxSize
+  , adjustQuickCheckTests
+  )
 
 tests :: TestTree
 tests =
   adjustQuickCheckTests (* 10) $
-  adjustQuickCheckMaxSize (`div` 5) $
-    testGroup
-      "CSJ"
-      [ testGroup
-          "Happy Path"
-          [ testProperty "honest peers are synchronised" $ prop_CSJ NoAdversaries OneScheduleForAllPeers,
-            testProperty "honest peers do their own thing" $ prop_CSJ NoAdversaries OneSchedulePerHonestPeer
-          ],
-        testGroup
-          "With some adversaries"
-          [ testProperty "honest peers are synchronised" $ prop_CSJ WithAdversaries OneScheduleForAllPeers,
-            testProperty "honest peers do their own thing" $ prop_CSJ WithAdversaries OneSchedulePerHonestPeer
-          ]
-      ]
+    adjustQuickCheckMaxSize (`div` 5) $
+      testGroup
+        "CSJ"
+        [ testGroup
+            "Happy Path"
+            [ testProperty "honest peers are synchronised" $ prop_CSJ NoAdversaries OneScheduleForAllPeers
+            , testProperty "honest peers do their own thing" $ prop_CSJ NoAdversaries OneSchedulePerHonestPeer
+            ]
+        , testGroup
+            "With some adversaries"
+            [ testProperty "honest peers are synchronised" $ prop_CSJ WithAdversaries OneScheduleForAllPeers
+            , testProperty "honest peers do their own thing" $ prop_CSJ WithAdversaries OneSchedulePerHonestPeer
+            ]
+        ]
 
 -- | A flag to indicate if properties are tested with adversarial peers
 data WithAdversariesFlag = NoAdversaries | WithAdversaries
@@ -80,34 +93,34 @@ data NumHonestSchedulesFlag = OneScheduleForAllPeers | OneSchedulePerHonestPeer
 -- jumpers takes its place and starts serving headers. This might lead to
 -- duplication of headers, but only in a window of @jumpSize@ slots near the tip
 -- of the chain.
---
 prop_CSJ :: WithAdversariesFlag -> NumHonestSchedulesFlag -> Property
 prop_CSJ adversariesFlag numHonestSchedules = do
   let genForks = case adversariesFlag of
-                   NoAdversaries   -> pure 0
-                   WithAdversaries -> choose (2, 4)
+        NoAdversaries -> pure 0
+        WithAdversaries -> choose (2, 4)
   forAllGenesisTest
     ( disableBoringTimeouts <$> case numHonestSchedules of
         OneScheduleForAllPeers ->
           genChains genForks
-          `enrichedWith` genDuplicatedHonestSchedule
+            `enrichedWith` genDuplicatedHonestSchedule
         OneSchedulePerHonestPeer ->
           genChainsWithExtraHonestPeers (choose (2, 4)) genForks
-          `enrichedWith` genUniformSchedulePoints
+            `enrichedWith` genUniformSchedulePoints
     )
     ( defaultSchedulerConfig
-      { scEnableCSJ = True
-      , scEnableLoE = True
-      , scEnableLoP = True
-      , scEnableChainSelStarvation = adversariesFlag == NoAdversaries
-      -- ^ NOTE: When there are adversaries and the ChainSel
-      -- starvation detection of BlockFetch is enabled, then our property does
-      -- not actually hold, because peer simulator-based tests have virtually
-      -- infinite CPU, and therefore ChainSel gets starved at every tick, which
-      -- makes us cycle the dynamos, which can lead to some extra headers being
-      -- downloaded.
-      }
+        { scEnableCSJ = True
+        , scEnableLoE = True
+        , scEnableLoP = True
+        , scEnableChainSelStarvation = adversariesFlag == NoAdversaries
+        }
     )
+    -- \^ NOTE: When there are adversaries and the ChainSel
+    -- starvation detection of BlockFetch is enabled, then our property does
+    -- not actually hold, because peer simulator-based tests have virtually
+    -- infinite CPU, and therefore ChainSel gets starved at every tick, which
+    -- makes us cycle the dynamos, which can lead to some extra headers being
+    -- downloaded.
+
     shrinkPeerSchedules
     ( \gt StateView{svTrace} ->
         let
@@ -116,12 +129,12 @@ prop_CSJ adversariesFlag numHonestSchedules = do
           -- expect to see only once per header if CSJ works properly.
           headerHonestDownloadEvents =
             mapMaybe
-              (\case
-                TraceChainSyncClientEvent pid (TraceDownloadedHeader hdr)
-                  | not (isNewerThanJumpSizeFromTip gt hdr)
-                  , Peers.HonestPeer _ <- pid
-                  -> Just (pid, hdr)
-                _ -> Nothing
+              ( \case
+                  TraceChainSyncClientEvent pid (TraceDownloadedHeader hdr)
+                    | not (isNewerThanJumpSizeFromTip gt hdr)
+                    , Peers.HonestPeer _ <- pid ->
+                        Just (pid, hdr)
+                  _ -> Nothing
               )
               svTrace
           -- We receive headers at most once from honest peer. The only
@@ -131,54 +144,57 @@ prop_CSJ adversariesFlag numHonestSchedules = do
           -- promote objectors to dynamo to reuse their state, then we could
           -- make this bound tighter.
           receivedHeadersAtMostOnceFromHonestPeers =
-            length headerHonestDownloadEvents <=
-              length (nub $ snd <$> headerHonestDownloadEvents) +
-                (fromIntegral $ unSlotNo $ csjpJumpSize $ gtCSJParams gt)
-        in
-          tabulate ""
+            length headerHonestDownloadEvents
+              <= length (nub $ snd <$> headerHonestDownloadEvents)
+                + (fromIntegral $ unSlotNo $ csjpJumpSize $ gtCSJParams gt)
+         in
+          tabulate
+            ""
             [ if headerHonestDownloadEvents == []
                 then "All headers are within the last jump window"
                 else "There exist headers that have to be downloaded exactly once"
-            ] $
-          counterexample
-          ("Downloaded headers (except jumpSize slots near the tip):\n" ++
-            ( unlines $ fmap ("  " ++) $ zipWith
-              (\peer header -> peer ++ " | " ++ header)
-              (condenseListWithPadding PadRight $ fst <$> headerHonestDownloadEvents)
-              (condenseListWithPadding PadRight $ snd <$> headerHonestDownloadEvents)
-            )
-          )
-          receivedHeadersAtMostOnceFromHonestPeers
+            ]
+            $ counterexample
+              ( "Downloaded headers (except jumpSize slots near the tip):\n"
+                  ++ ( unlines $
+                         fmap ("  " ++) $
+                           zipWith
+                             (\peer header -> peer ++ " | " ++ header)
+                             (condenseListWithPadding PadRight $ fst <$> headerHonestDownloadEvents)
+                             (condenseListWithPadding PadRight $ snd <$> headerHonestDownloadEvents)
+                     )
+              )
+              receivedHeadersAtMostOnceFromHonestPeers
     )
-  where
-    genDuplicatedHonestSchedule :: GenesisTest TestBlock () -> Gen (PointSchedule TestBlock)
-    genDuplicatedHonestSchedule gt@GenesisTest {gtExtraHonestPeers} = do
-      ps@PointSchedule {psSchedule = Peers {honestPeers, adversarialPeers}} <- genUniformSchedulePoints gt
-      pure $ ps {
-        psSchedule =
-          Peers.unionWithKey
-            (\_ _ _ -> error "should not happen")
-            ( peers'
-                (replicate (fromIntegral gtExtraHonestPeers + 1) (getHonestPeer honestPeers))
-                []
-            )
-            (Peers Map.empty adversarialPeers)
+ where
+  genDuplicatedHonestSchedule :: GenesisTest TestBlock () -> Gen (PointSchedule TestBlock)
+  genDuplicatedHonestSchedule gt@GenesisTest{gtExtraHonestPeers} = do
+    ps@PointSchedule{psSchedule = Peers{honestPeers, adversarialPeers}} <- genUniformSchedulePoints gt
+    pure $
+      ps
+        { psSchedule =
+            Peers.unionWithKey
+              (\_ _ _ -> error "should not happen")
+              ( peers'
+                  (replicate (fromIntegral gtExtraHonestPeers + 1) (getHonestPeer honestPeers))
+                  []
+              )
+              (Peers Map.empty adversarialPeers)
         }
 
-    isNewerThanJumpSizeFromTip :: GenesisTestFull TestBlock -> Header TestBlock -> Bool
-    isNewerThanJumpSizeFromTip gt hdr =
-      let jumpSize = csjpJumpSize $ gtCSJParams gt
-          tipSlot = AF.headSlot $ btTrunk $ gtBlockTree gt
-          hdrSlot = blockSlot hdr
-       in
-        -- Sanity check: add @1 +@ after @>@ and watch the World burn.
+  isNewerThanJumpSizeFromTip :: GenesisTestFull TestBlock -> Header TestBlock -> Bool
+  isNewerThanJumpSizeFromTip gt hdr =
+    let jumpSize = csjpJumpSize $ gtCSJParams gt
+        tipSlot = AF.headSlot $ btTrunk $ gtBlockTree gt
+        hdrSlot = blockSlot hdr
+     in -- Sanity check: add @1 +@ after @>@ and watch the World burn.
         hdrSlot + jumpSize >= succWithOrigin tipSlot
 
-    disableBoringTimeouts gt =
-      gt
-        { gtChainSyncTimeouts =
-            (gtChainSyncTimeouts gt)
-              { mustReplyTimeout = Nothing,
-                idleTimeout = Nothing
-              }
-        }
+  disableBoringTimeouts gt =
+    gt
+      { gtChainSyncTimeouts =
+          (gtChainSyncTimeouts gt)
+            { mustReplyTimeout = Nothing
+            , idleTimeout = Nothing
+            }
+      }

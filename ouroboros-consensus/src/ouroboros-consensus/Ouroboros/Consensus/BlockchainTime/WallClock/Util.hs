@@ -1,19 +1,21 @@
 {-# LANGUAGE DeriveFunctor #-}
 
 -- | Support for defining 'BlockchainTime' instances
-module Ouroboros.Consensus.BlockchainTime.WallClock.Util (
-    -- * Tracing
+module Ouroboros.Consensus.BlockchainTime.WallClock.Util
+  ( -- * Tracing
     TraceBlockchainTimeEvent (..)
+
     -- * Exceptions
   , SystemClockMovedBackException (..)
   ) where
 
-import           Control.Exception (Exception)
-import           Data.Time (NominalDiffTime)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
-                     (SystemStart)
-import           Ouroboros.Consensus.HardFork.History (PastHorizonException)
+import Control.Exception (Exception)
+import Data.Time (NominalDiffTime)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( SystemStart
+  )
+import Ouroboros.Consensus.HardFork.History (PastHorizonException)
 
 {-------------------------------------------------------------------------------
   Tracing
@@ -23,13 +25,12 @@ import           Ouroboros.Consensus.HardFork.History (PastHorizonException)
 --
 -- The @t@ parameter can be instantiated by the time, e.g., @UTCTime@ or
 -- @RelativeTime@.
-data TraceBlockchainTimeEvent t =
-    -- | The start time of the blockchain time is in the future
+data TraceBlockchainTimeEvent t
+  = -- | The start time of the blockchain time is in the future
     --
     -- We have to block (for 'NominalDiffTime') until that time comes.
     TraceStartTimeInTheFuture SystemStart NominalDiffTime
-
-    -- | Current slot is not yet known
+  | -- | Current slot is not yet known
     --
     -- This happens when the tip of our current chain is so far in the past that
     -- we cannot translate the current wallclock to a slot number, typically
@@ -42,9 +43,8 @@ data TraceBlockchainTimeEvent t =
     -- bounds between which we /can/ do conversions. The distance between the
     -- current time and the upper bound should rapidly decrease with consecutive
     -- 'TraceCurrentSlotUnknown' messages during syncing.
-  | TraceCurrentSlotUnknown t PastHorizonException
-
-    -- | The system clock moved back an acceptable time span, e.g., because of
+    TraceCurrentSlotUnknown t PastHorizonException
+  | -- | The system clock moved back an acceptable time span, e.g., because of
     -- an NTP sync.
     --
     -- The system clock moved back such that the new current slot would be
@@ -55,18 +55,18 @@ data TraceBlockchainTimeEvent t =
     --
     -- When the system clock moved back more than the configured limit, we shut
     -- down with a fatal exception.
-  | TraceSystemClockMovedBack t t
+    TraceSystemClockMovedBack t t
   deriving (Show, Functor)
 
 {-------------------------------------------------------------------------------
   Exceptions
 -------------------------------------------------------------------------------}
 
-data SystemClockMovedBackException =
-    -- | The system clock got moved back so far that the slot number decreased
+data SystemClockMovedBackException
+  = -- | The system clock got moved back so far that the slot number decreased
     --
     -- We record the the slot number before and after the change.
     SystemClockMovedBack SlotNo SlotNo
-  deriving (Show)
+  deriving Show
 
 instance Exception SystemClockMovedBackException

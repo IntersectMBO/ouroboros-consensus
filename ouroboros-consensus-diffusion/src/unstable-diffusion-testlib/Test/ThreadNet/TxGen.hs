@@ -6,36 +6,37 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Transaction generator for testing
-module Test.ThreadNet.TxGen (
-    TxGen (..)
+module Test.ThreadNet.TxGen
+  ( TxGen (..)
+
     -- * Implementation for HFC
   , WrapTxGenExtra (..)
   , testGenTxsHfc
   ) where
 
-import           Data.Kind (Type)
-import           Data.SOP.BasicFunctors
-import           Data.SOP.Constraint
-import           Data.SOP.Functors (Flip (..))
-import           Data.SOP.Index
-import           Data.SOP.Strict
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.HardFork.Combinator
+import Data.Kind (Type)
+import Data.SOP.BasicFunctors
+import Data.SOP.Constraint
+import Data.SOP.Functors (Flip (..))
+import Data.SOP.Index
+import Data.SOP.Strict
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Combinator
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
-import           Ouroboros.Consensus.NodeId (CoreNodeId)
-import           Test.QuickCheck (Gen)
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
+import Ouroboros.Consensus.NodeId (CoreNodeId)
+import Test.QuickCheck (Gen)
 
 {-------------------------------------------------------------------------------
   TxGen class
 -------------------------------------------------------------------------------}
 
 class TxGen blk where
-
   -- | Extra information required to generate transactions
   type TxGenExtra blk :: Type
+
   type TxGenExtra blk = ()
 
   -- | Generate a number of transactions, valid or invalid, that can be
@@ -45,13 +46,14 @@ class TxGen blk where
   --
   -- Note: this function returns a list so that an empty list can be returned
   -- in case we are unable to generate transactions for a @blk@.
-  testGenTxs :: CoreNodeId
-             -> NumCoreNodes
-             -> SlotNo
-             -> TopLevelConfig blk
-             -> TxGenExtra blk
-             -> LedgerState blk ValuesMK
-             -> Gen [GenTx blk]
+  testGenTxs ::
+    CoreNodeId ->
+    NumCoreNodes ->
+    SlotNo ->
+    TopLevelConfig blk ->
+    TxGenExtra blk ->
+    LedgerState blk ValuesMK ->
+    Gen [GenTx blk]
 
 {-------------------------------------------------------------------------------
   Implementation for HFC
@@ -59,9 +61,9 @@ class TxGen blk where
 
 -- | Newtypes wrapper around the 'TxGenExtra' type family so that it can be
 -- partially applied.
-newtype WrapTxGenExtra blk = WrapTxGenExtra {
-      unwrapTxGenExtra :: TxGenExtra blk
-    }
+newtype WrapTxGenExtra blk = WrapTxGenExtra
+  { unwrapTxGenExtra :: TxGenExtra blk
+  }
 
 -- | Function that can be used for 'TxGen' instances for 'HardForkBlock'.
 --
@@ -73,35 +75,39 @@ newtype WrapTxGenExtra blk = WrapTxGenExtra {
 -- Choose @NP WrapTxGenExtra xs@ for the instance of the 'TxGenExtra' type
 -- family, where @xs@ matches the concrete instantiation.
 testGenTxsHfc ::
-     forall xs. (All TxGen xs, CanHardFork xs)
-  => CoreNodeId
-  -> NumCoreNodes
-  -> SlotNo
-  -> TopLevelConfig (HardForkBlock xs)
-  -> NP WrapTxGenExtra xs
-  -> LedgerState (HardForkBlock xs) ValuesMK
-  -> Gen [GenTx (HardForkBlock xs)]
+  forall xs.
+  (All TxGen xs, CanHardFork xs) =>
+  CoreNodeId ->
+  NumCoreNodes ->
+  SlotNo ->
+  TopLevelConfig (HardForkBlock xs) ->
+  NP WrapTxGenExtra xs ->
+  LedgerState (HardForkBlock xs) ValuesMK ->
+  Gen [GenTx (HardForkBlock xs)]
 testGenTxsHfc coreNodeId numCoreNodes curSlotNo cfg extras state =
-    hcollapse $
+  hcollapse $
     hcizipWith3
       (Proxy @TxGen)
       aux
       cfgs
       extras
       (State.tip (hardForkLedgerStatePerEra state))
-  where
-    cfgs = distribTopLevelConfig ei cfg
-    ei   = State.epochInfoLedger
-             (configLedger cfg)
-             (hardForkLedgerStatePerEra state)
+ where
+  cfgs = distribTopLevelConfig ei cfg
+  ei =
+    State.epochInfoLedger
+      (configLedger cfg)
+      (hardForkLedgerStatePerEra state)
 
-    aux ::
-         forall blk. TxGen blk
-      => Index xs blk
-      -> TopLevelConfig blk
-      -> WrapTxGenExtra blk
-      -> Flip LedgerState ValuesMK blk
-      -> K (Gen [GenTx (HardForkBlock xs)]) blk
-    aux index cfg' (WrapTxGenExtra extra') (Flip state') = K $
-        fmap (injectNS' (Proxy @GenTx) index)
-          <$> testGenTxs coreNodeId numCoreNodes curSlotNo cfg' extra' state'
+  aux ::
+    forall blk.
+    TxGen blk =>
+    Index xs blk ->
+    TopLevelConfig blk ->
+    WrapTxGenExtra blk ->
+    Flip LedgerState ValuesMK blk ->
+    K (Gen [GenTx (HardForkBlock xs)]) blk
+  aux index cfg' (WrapTxGenExtra extra') (Flip state') =
+    K $
+      fmap (injectNS' (Proxy @GenTx) index)
+        <$> testGenTxs coreNodeId numCoreNodes curSlotNo cfg' extra' state'

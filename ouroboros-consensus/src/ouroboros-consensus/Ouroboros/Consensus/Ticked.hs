@@ -10,10 +10,10 @@
 
 module Ouroboros.Consensus.Ticked (Ticked (..)) where
 
-import           Data.Kind (Type)
-import           Data.SOP.BasicFunctors
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Block.Abstract
+import Data.Kind (Type)
+import Data.SOP.BasicFunctors
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block.Abstract
 
 {-------------------------------------------------------------------------------
   Ticked state
@@ -48,7 +48,7 @@ data family Ticked st
 -- Standard instance for use with trivial state
 
 data instance Ticked () = TickedTrivial
-  deriving (Show)
+  deriving Show
 
 type instance HeaderHash (Ticked l) = HeaderHash l
 
@@ -56,10 +56,11 @@ type instance HeaderHash (Ticked l) = HeaderHash l
   Forwarding type class instances
 -------------------------------------------------------------------------------}
 
-deriving newtype instance {-# OVERLAPPING #-}
-     Show (Ticked (f a))
-  => Show ((Ticked :.: f) (a :: Type))
+deriving newtype instance
+  {-# OVERLAPPING #-}
+  Show (Ticked (f a)) =>
+  Show ((Ticked :.: f) (a :: Type))
 
 deriving newtype instance
-     NoThunks (Ticked (f a))
-  => NoThunks ((Ticked :.: f) a)
+  NoThunks (Ticked (f a)) =>
+  NoThunks ((Ticked :.: f) a)

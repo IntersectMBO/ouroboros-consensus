@@ -4,33 +4,35 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.ByronDual.Node.Serialisation () where
 
-import           Cardano.Binary
-import           Cardano.Chain.Slotting (EpochSlots)
+import Cardano.Binary
+import Cardano.Chain.Slotting (EpochSlots)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Proxy
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Byron.Ledger
-import           Ouroboros.Consensus.Byron.Node.Serialisation ()
-import           Ouroboros.Consensus.Byron.Protocol
-import           Ouroboros.Consensus.ByronDual.Ledger
-import           Ouroboros.Consensus.ByronSpec.Ledger
-import           Ouroboros.Consensus.HeaderValidation
-import           Ouroboros.Consensus.Ledger.Dual
-import           Ouroboros.Consensus.Ledger.Query
-import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
-import           Ouroboros.Consensus.Ledger.Tables
-import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-import           Ouroboros.Consensus.Node.Run
-import           Ouroboros.Consensus.Node.Serialisation
-import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
-import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
-                     wrapCBORinCBOR)
+import Data.Proxy
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Byron.Ledger
+import Ouroboros.Consensus.Byron.Node.Serialisation ()
+import Ouroboros.Consensus.Byron.Protocol
+import Ouroboros.Consensus.ByronDual.Ledger
+import Ouroboros.Consensus.ByronSpec.Ledger
+import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Dual
+import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
+import Ouroboros.Consensus.Ledger.Tables
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
+import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Network.Block
+  ( Serialised
+  , unwrapCBORinCBOR
+  , wrapCBORinCBOR
+  )
 
 {-------------------------------------------------------------------------------
   HasNetworkProtocolVersion
@@ -40,12 +42,12 @@ pb :: Proxy ByronBlock
 pb = Proxy
 
 instance HasNetworkProtocolVersion DualByronBlock where
-  type BlockNodeToNodeVersion   DualByronBlock = BlockNodeToNodeVersion   ByronBlock
+  type BlockNodeToNodeVersion DualByronBlock = BlockNodeToNodeVersion ByronBlock
   type BlockNodeToClientVersion DualByronBlock = BlockNodeToClientVersion ByronBlock
 
 instance SupportedNetworkProtocolVersion DualByronBlock where
-  supportedNodeToNodeVersions     _ = supportedNodeToNodeVersions     pb
-  supportedNodeToClientVersions   _ = supportedNodeToClientVersions   pb
+  supportedNodeToNodeVersions _ = supportedNodeToNodeVersions pb
+  supportedNodeToClientVersions _ = supportedNodeToClientVersions pb
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
 
@@ -59,12 +61,13 @@ instance EncodeDisk DualByronBlock DualByronBlock where
   encodeDisk _ = encodeDualBlock encodeByronBlock
 instance DecodeDisk DualByronBlock (Lazy.ByteString -> DualByronBlock) where
   decodeDisk ccfg = decodeDualBlock (decodeByronBlock epochSlots)
-    where
-      epochSlots = extractEpochSlots ccfg
+   where
+    epochSlots = extractEpochSlots ccfg
 
 instance DecodeDiskDep (NestedCtxt Header) DualByronBlock where
-  decodeDiskDep (DualCodecConfig ccfg ByronSpecCodecConfig)
-                (NestedCtxt (CtxtDual ctxt)) =
+  decodeDiskDep
+    (DualCodecConfig ccfg ByronSpecCodecConfig)
+    (NestedCtxt (CtxtDual ctxt)) =
       decodeDiskDep ccfg (NestedCtxt ctxt)
 
 instance EncodeDisk DualByronBlock (LedgerState DualByronBlock EmptyMK) where
@@ -75,16 +78,19 @@ instance DecodeDisk DualByronBlock (LedgerState DualByronBlock EmptyMK) where
 -- | @'ChainDepState' ('BlockProtocol' 'DualByronBlock')@
 instance EncodeDisk DualByronBlock (PBftState PBftByronCrypto) where
   encodeDisk _ = encodeByronChainDepState
+
 -- | @'ChainDepState' ('BlockProtocol' 'DualByronBlock')@
 instance DecodeDisk DualByronBlock (PBftState PBftByronCrypto) where
   decodeDisk _ = decodeByronChainDepState
 
 instance EncodeDisk DualByronBlock (AnnTip DualByronBlock) where
-  encodeDisk ccfg = encodeDisk (dualCodecConfigMain ccfg)
-                  . (castAnnTip :: AnnTip DualByronBlock -> AnnTip ByronBlock)
+  encodeDisk ccfg =
+    encodeDisk (dualCodecConfigMain ccfg)
+      . (castAnnTip :: AnnTip DualByronBlock -> AnnTip ByronBlock)
 instance DecodeDisk DualByronBlock (AnnTip DualByronBlock) where
-  decodeDisk ccfg = (castAnnTip :: AnnTip ByronBlock -> AnnTip DualByronBlock)
-                <$> decodeDisk (dualCodecConfigMain ccfg)
+  decodeDisk ccfg =
+    (castAnnTip :: AnnTip ByronBlock -> AnnTip DualByronBlock)
+      <$> decodeDisk (dualCodecConfigMain ccfg)
 
 {-------------------------------------------------------------------------------
   SerialiseNodeToNode
@@ -98,32 +104,33 @@ instance SerialiseNodeToNodeConstraints DualByronBlock where
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
 -- wrapped ('Serialised') variant.
 instance SerialiseNodeToNode DualByronBlock DualByronBlock where
-  encodeNodeToNode _    _ = wrapCBORinCBOR   (encodeDualBlock  encodeByronBlock)
+  encodeNodeToNode _ _ = wrapCBORinCBOR (encodeDualBlock encodeByronBlock)
   decodeNodeToNode ccfg _ = unwrapCBORinCBOR (decodeDualBlock (decodeByronBlock epochSlots))
-    where
-      epochSlots = extractEpochSlots ccfg
+   where
+    epochSlots = extractEpochSlots ccfg
 
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
 -- wrapped ('Serialised') variant.
 instance SerialiseNodeToNode DualByronBlock (Serialised DualByronBlock)
-  -- Default instance
+
+-- Default instance
 
 -- | Forward to the Byron instance.
 instance SerialiseNodeToNode DualByronBlock (Header DualByronBlock) where
   encodeNodeToNode ccfg version =
-        encodeNodeToNode (dualCodecConfigMain ccfg) version
+    encodeNodeToNode (dualCodecConfigMain ccfg) version
       . dualHeaderMain
   decodeNodeToNode ccfg version =
-          DualHeader
+    DualHeader
       <$> decodeNodeToNode (dualCodecConfigMain ccfg) version
 
 -- | Forward to the Byron instance.
 instance SerialiseNodeToNode DualByronBlock (SerialisedHeader DualByronBlock) where
   encodeNodeToNode ccfg version =
-        encodeNodeToNode (dualCodecConfigMain ccfg) version
+    encodeNodeToNode (dualCodecConfigMain ccfg) version
       . dualWrappedMain
   decodeNodeToNode ccfg version =
-          rewrapMain
+    rewrapMain
       <$> decodeNodeToNode (dualCodecConfigMain ccfg) version
 
 instance SerialiseNodeToNode DualByronBlock (GenTx DualByronBlock) where
@@ -147,15 +154,16 @@ instance SerialiseNodeToClient DualByronBlock (DualLedgerConfig ByronBlock Byron
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
 -- wrapped ('Serialised') variant.
 instance SerialiseNodeToClient DualByronBlock DualByronBlock where
-  encodeNodeToClient _    _ = wrapCBORinCBOR   (encodeDualBlock  encodeByronBlock)
+  encodeNodeToClient _ _ = wrapCBORinCBOR (encodeDualBlock encodeByronBlock)
   decodeNodeToClient ccfg _ = unwrapCBORinCBOR (decodeDualBlock (decodeByronBlock epochSlots))
-    where
-      epochSlots = extractEpochSlots ccfg
+   where
+    epochSlots = extractEpochSlots ccfg
 
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
 -- wrapped ('Serialised') variant.
 instance SerialiseNodeToClient DualByronBlock (Serialised DualByronBlock)
-  -- Default instance
+
+-- Default instance
 
 instance SerialiseNodeToClient DualByronBlock (GenTx DualByronBlock) where
   encodeNodeToClient _ _ = encodeDualGenTx encodeByronGenTx
@@ -189,11 +197,13 @@ extractEpochSlots = getByronEpochSlots . dualCodecConfigMain
 
 -- | The headers for 'DualByronBlock' and 'ByronBlock' are identical, so we
 -- can safely cast the serialised forms.
-dualWrappedMain :: SerialisedHeader DualByronBlock
-                -> SerialisedHeader ByronBlock
+dualWrappedMain ::
+  SerialisedHeader DualByronBlock ->
+  SerialisedHeader ByronBlock
 dualWrappedMain = castSerialisedHeader ctxtDualMain
 
 -- | Inverse of 'dualWrappedMain'.
-rewrapMain :: SerialisedHeader ByronBlock
-           -> SerialisedHeader DualByronBlock
+rewrapMain ::
+  SerialisedHeader ByronBlock ->
+  SerialisedHeader DualByronBlock
 rewrapMain = castSerialisedHeader CtxtDual

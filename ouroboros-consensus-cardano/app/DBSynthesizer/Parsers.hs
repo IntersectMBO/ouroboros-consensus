@@ -1,17 +1,16 @@
 module DBSynthesizer.Parsers (parseCommandLine) where
 
-import           Cardano.Tools.DBSynthesizer.Types
-import           Data.Word (Word64)
-import           Options.Applicative as Opt
-import           Ouroboros.Consensus.Block.Abstract (SlotNo (..))
-
+import Cardano.Tools.DBSynthesizer.Types
+import Data.Word (Word64)
+import Options.Applicative as Opt
+import Ouroboros.Consensus.Block.Abstract (SlotNo (..))
 
 parseCommandLine :: IO (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
 parseCommandLine =
-    Opt.customExecParser p opts
-  where
-    p     = Opt.prefs Opt.showHelpOnEmpty
-    opts  = Opt.info parserCommandLine mempty
+  Opt.customExecParser p opts
+ where
+  p = Opt.prefs Opt.showHelpOnEmpty
+  opts = Opt.info parserCommandLine mempty
 
 parserCommandLine :: Parser (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
 parserCommandLine =
@@ -42,9 +41,12 @@ parseDBSynthesizerOptions =
 
 parseForgeOptions :: Parser ForgeLimit
 parseForgeOptions =
-      ForgeLimitSlot <$> parseSlotLimit
-  <|> ForgeLimitBlock <$> parseBlockLimit
-  <|> ForgeLimitEpoch <$> parseEpochLimit
+  ForgeLimitSlot
+    <$> parseSlotLimit
+      <|> ForgeLimitBlock
+    <$> parseBlockLimit
+      <|> ForgeLimitEpoch
+    <$> parseEpochLimit
 
 parseChainDBFilePath :: Parser FilePath
 parseChainDBFilePath =
@@ -102,47 +104,51 @@ parseBulkFilePath =
 
 parseSlotLimit :: Parser SlotNo
 parseSlotLimit =
-  SlotNo <$> option auto
-    (     short 's'
-       <> long "slots"
-       <> metavar "NUMBER"
-       <> help "Amount of slots to process"
-    )
+  SlotNo
+    <$> option
+      auto
+      ( short 's'
+          <> long "slots"
+          <> metavar "NUMBER"
+          <> help "Amount of slots to process"
+      )
 
 parseBlockLimit :: Parser Word64
 parseBlockLimit =
-  option auto
-    (     short 'b'
-       <> long "blocks"
-       <> metavar "NUMBER"
-       <> help "Amount of blocks to forge"
+  option
+    auto
+    ( short 'b'
+        <> long "blocks"
+        <> metavar "NUMBER"
+        <> help "Amount of blocks to forge"
     )
 
 parseEpochLimit :: Parser Word64
 parseEpochLimit =
-  option auto
-    (     short 'e'
-       <> long "epochs"
-       <> metavar "NUMBER"
-       <> help "Amount of epochs to process"
+  option
+    auto
+    ( short 'e'
+        <> long "epochs"
+        <> metavar "NUMBER"
+        <> help "Amount of epochs to process"
     )
 
 parseForce :: Parser Bool
 parseForce =
   switch
-    (     short 'f'
-      <>  help "Force overwrite an existing Chain DB"
+    ( short 'f'
+        <> help "Force overwrite an existing Chain DB"
     )
 
 parseAppend :: Parser Bool
 parseAppend =
   switch
-    (     short 'a'
-      <>  help "Append to an existing Chain DB"
+    ( short 'a'
+        <> help "Append to an existing Chain DB"
     )
 
 parseOpenMode :: Parser DBSynthesizerOpenMode
 parseOpenMode =
-      (parseForce *> pure OpenCreateForce)
-  <|> (parseAppend *> pure OpenAppend)
-  <|> pure OpenCreate
+  (parseForce *> pure OpenCreateForce)
+    <|> (parseAppend *> pure OpenAppend)
+    <|> pure OpenCreate

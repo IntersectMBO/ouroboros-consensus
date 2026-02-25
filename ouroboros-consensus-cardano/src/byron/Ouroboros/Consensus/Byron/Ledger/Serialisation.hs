@@ -6,14 +6,14 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Ouroboros.Consensus.Byron.Ledger.Serialisation (
-    -- * Data family instances
+module Ouroboros.Consensus.Byron.Ledger.Serialisation
+  ( -- * Data family instances
     NestedCtxt_ (..)
   , RawBoundaryHeader
   , RawHeader
+
     -- * Serialisation
   , byronBlockEncodingOverhead
   , decodeByronBlock
@@ -26,8 +26,10 @@ module Ouroboros.Consensus.Byron.Ledger.Serialisation (
   , encodeByronBoundaryHeader
   , encodeByronHeaderHash
   , encodeByronRegularHeader
+
     -- * Support for on-disk format
   , byronBinaryBlockInfo
+
     -- * Unsized header
   , addV1Envelope
   , decodeUnsizedHeader
@@ -38,21 +40,28 @@ module Ouroboros.Consensus.Byron.Ledger.Serialisation (
 
 import qualified Cardano.Chain.Block as CC
 import qualified Cardano.Chain.Slotting as CC
-import           Cardano.Ledger.Binary (ByteSpan, annotationBytes, byronProtVer,
-                     fromByronCBOR, slice, toByronCBOR, toPlainDecoder)
-import           Cardano.Ledger.Binary.Plain (Decoder, Encoding)
+import Cardano.Ledger.Binary
+  ( ByteSpan
+  , annotationBytes
+  , byronProtVer
+  , fromByronCBOR
+  , slice
+  , toByronCBOR
+  , toPlainDecoder
+  )
+import Cardano.Ledger.Binary.Plain (Decoder, Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import           Codec.Serialise (Serialise (..))
-import           Control.Monad (guard)
-import           Control.Monad.Except (Except, throwError)
+import Codec.Serialise (Serialise (..))
+import Control.Monad (guard)
+import Control.Monad.Except (Except, throwError)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Word (Word32)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Byron.Ledger.Block
-import           Ouroboros.Consensus.Byron.Ledger.Orphans ()
-import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
-import           Ouroboros.Network.SizeInBytes (SizeInBytes)
+import Data.Word (Word32)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Byron.Ledger.Block
+import Ouroboros.Consensus.Byron.Ledger.Orphans ()
+import Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
+import Ouroboros.Network.SizeInBytes (SizeInBytes)
 
 {-------------------------------------------------------------------------------
   Serialise instances
@@ -69,7 +78,7 @@ instance Serialise ByronHash where
 -------------------------------------------------------------------------------}
 
 type RawBoundaryHeader = CC.ABoundaryHeader Strict.ByteString
-type RawHeader         = CC.AHeader         Strict.ByteString
+type RawHeader = CC.AHeader Strict.ByteString
 
 {-------------------------------------------------------------------------------
   Nested contents
@@ -79,42 +88,41 @@ type RawHeader         = CC.AHeader         Strict.ByteString
 -- nested type instead.
 data instance NestedCtxt_ ByronBlock f a where
   CtxtByronRegular ::
-       !SizeInBytes
-    -> NestedCtxt_ ByronBlock Header RawHeader
-
+    !SizeInBytes ->
+    NestedCtxt_ ByronBlock Header RawHeader
   -- | In order to reconstruct 'Header ByronBlock' we need the 'SlotNo'
   --
   -- We could compute that using 'EpochSlots', but we don't have that available
   -- here.
   CtxtByronBoundary ::
-       !SizeInBytes
-    -> NestedCtxt_ ByronBlock Header (SlotNo, RawBoundaryHeader)
+    !SizeInBytes ->
+    NestedCtxt_ ByronBlock Header (SlotNo, RawBoundaryHeader)
 
 deriving instance Show (NestedCtxt_ ByronBlock f a)
 
 instance SameDepIndex (NestedCtxt_ ByronBlock f) where
   sameDepIndex (CtxtByronRegular size) (CtxtByronRegular size') = do
-      guard (size == size')
-      return Refl
+    guard (size == size')
+    return Refl
   sameDepIndex (CtxtByronBoundary size) (CtxtByronBoundary size') = do
-      guard (size == size')
-      return Refl
+    guard (size == size')
+    return Refl
   sameDepIndex _ _ =
-      Nothing
+    Nothing
 
 instance HasNestedContent Header ByronBlock where
   unnest hdr = case byronHeaderRaw hdr of
-      CC.ABOBBoundaryHdr h -> DepPair (NestedCtxt (CtxtByronBoundary blockSize)) (slotNo, h)
-      CC.ABOBBlockHdr    h -> DepPair (NestedCtxt (CtxtByronRegular  blockSize)) h
-    where
-      blockSize = byronHeaderBlockSizeHint hdr
-      slotNo    = byronHeaderSlotNo        hdr
+    CC.ABOBBoundaryHdr h -> DepPair (NestedCtxt (CtxtByronBoundary blockSize)) (slotNo, h)
+    CC.ABOBBlockHdr h -> DepPair (NestedCtxt (CtxtByronRegular blockSize)) h
+   where
+    blockSize = byronHeaderBlockSizeHint hdr
+    slotNo = byronHeaderSlotNo hdr
 
   nest = \case
-      DepPair (NestedCtxt (CtxtByronBoundary blockSize)) (slotNo, h) ->
-        mkBoundaryByronHeader slotNo h blockSize
-      DepPair (NestedCtxt (CtxtByronRegular blockSize)) h ->
-        mkRegularByronHeader h blockSize
+    DepPair (NestedCtxt (CtxtByronBoundary blockSize)) (slotNo, h) ->
+      mkBoundaryByronHeader slotNo h blockSize
+    DepPair (NestedCtxt (CtxtByronRegular blockSize)) h ->
+      mkRegularByronHeader h blockSize
 
 {-------------------------------------------------------------------------------
   Serialisation
@@ -128,24 +136,25 @@ instance HasNestedContent Header ByronBlock where
 -- proposals).
 byronBlockEncodingOverhead :: Word32
 byronBlockEncodingOverhead =
-    blockHeaderOverhead + blockBodyOverhead + safetyMargin
-  where
-    -- The maximum block header size.
-    blockHeaderOverhead = 650
+  blockHeaderOverhead + blockBodyOverhead + safetyMargin
+ where
+  -- The maximum block header size.
+  blockHeaderOverhead = 650
 
-    -- The block body overhead excluding the actual generalized transactions.
-    blockBodyOverhead = 1 {- ABody: encodeListLen 4 -}
-                      + 2 {- TxPayload: list -}
-                      + 1 {- SscPayload: encodeListLen 2 -}
-                      + 1 {- SscPayload: Word8 -}
-                      + 1 {- SscPayload: mempty :: Set () -}
-                      + 2 {- Delegation.Payload: list -}
-                      + 1 {- Update.Payload: encodeListLen 2 -}
-                      + 1 {- Update.Payload: Maybe AProposal -}
-                      + 2 {- Update.Payload: list of AVote -}
+  -- The block body overhead excluding the actual generalized transactions.
+  blockBodyOverhead =
+    1 {- ABody: encodeListLen 4 -}
+      + 2 {- TxPayload: list -}
+      + 1 {- SscPayload: encodeListLen 2 -}
+      + 1 {- SscPayload: Word8 -}
+      + 1 {- SscPayload: mempty :: Set () -}
+      + 2 {- Delegation.Payload: list -}
+      + 1 {- Update.Payload: encodeListLen 2 -}
+      + 1 {- Update.Payload: Maybe AProposal -}
+      + 2 {- Update.Payload: list of AVote -}
 
-    -- Just for safety.
-    safetyMargin = 1024
+  -- Just for safety.
+  safetyMargin = 1024
 
 encodeByronHeaderHash :: HeaderHash ByronBlock -> Encoding
 encodeByronHeaderHash = toByronCBOR
@@ -162,26 +171,32 @@ decodeByronHeaderHash = fromByronCBOR
 -- binary compatible with 'CC.encCBORABlockOrBoundary', but does not use it and
 -- instead takes advantage of the annotations (using 'encodePreEncoded').
 encodeByronBlock :: ByronBlock -> CBOR.Encoding
-encodeByronBlock blk = mconcat [
-      CBOR.encodeListLen 2
+encodeByronBlock blk =
+  mconcat
+    [ CBOR.encodeListLen 2
     , case byronBlockRaw blk of
-        CC.ABOBBoundary b -> mconcat [
-            CBOR.encodeWord 0
-          , CBOR.encodePreEncoded $ CC.boundaryAnnotation b
-          ]
-        CC.ABOBBlock b -> mconcat [
-            CBOR.encodeWord 1
-          , CBOR.encodePreEncoded $ CC.blockAnnotation b
-          ]
+        CC.ABOBBoundary b ->
+          mconcat
+            [ CBOR.encodeWord 0
+            , CBOR.encodePreEncoded $ CC.boundaryAnnotation b
+            ]
+        CC.ABOBBlock b ->
+          mconcat
+            [ CBOR.encodeWord 1
+            , CBOR.encodePreEncoded $ CC.blockAnnotation b
+            ]
     ]
 
 -- | Inverse of 'encodeByronBlock'
 decodeByronBlock :: CC.EpochSlots -> Decoder s (Lazy.ByteString -> ByronBlock)
 decodeByronBlock epochSlots =
-    toPlainDecoder Nothing byronProtVer $
-    flip (\bs -> mkByronBlock epochSlots
-               . annotationBytes bs)
-    <$> CC.decCBORABlockOrBoundary epochSlots
+  toPlainDecoder Nothing byronProtVer $
+    flip
+      ( \bs ->
+          mkByronBlock epochSlots
+            . annotationBytes bs
+      )
+      <$> CC.decCBORABlockOrBoundary epochSlots
 
 -- | Decoder for a regular (non-EBB) Byron block.
 --
@@ -192,14 +207,18 @@ decodeByronBlock epochSlots =
 --
 -- Use 'decodeByronBlock' when you can, this function is provided for use by
 -- the hard-fork combinator.
-decodeByronRegularBlock :: CC.EpochSlots
-                        -> Decoder s (Lazy.ByteString -> ByronBlock)
+decodeByronRegularBlock ::
+  CC.EpochSlots ->
+  Decoder s (Lazy.ByteString -> ByronBlock)
 decodeByronRegularBlock epochSlots =
-    toPlainDecoder Nothing byronProtVer $
-    flip (\bs -> mkByronBlock epochSlots
-               . annotationBytes bs
-               . CC.ABOBBlock)
-    <$> CC.decCBORABlock epochSlots
+  toPlainDecoder Nothing byronProtVer $
+    flip
+      ( \bs ->
+          mkByronBlock epochSlots
+            . annotationBytes bs
+            . CC.ABOBBlock
+      )
+      <$> CC.decCBORABlock epochSlots
 
 -- | Decoder for a boundary Byron block.
 --
@@ -210,14 +229,18 @@ decodeByronRegularBlock epochSlots =
 --
 -- Use 'decodeByronBlock' when you can, this function is provided for use by
 -- the hard-fork combinator.
-decodeByronBoundaryBlock :: CC.EpochSlots
-                         -> Decoder s (Lazy.ByteString -> ByronBlock)
+decodeByronBoundaryBlock ::
+  CC.EpochSlots ->
+  Decoder s (Lazy.ByteString -> ByronBlock)
 decodeByronBoundaryBlock epochSlots =
-    toPlainDecoder Nothing byronProtVer $
-    flip (\bs -> mkByronBlock epochSlots
-               . annotationBytes bs
-               . CC.ABOBBoundary)
-    <$> CC.decCBORABoundaryBlock
+  toPlainDecoder Nothing byronProtVer $
+    flip
+      ( \bs ->
+          mkByronBlock epochSlots
+            . annotationBytes bs
+            . CC.ABOBBoundary
+      )
+      <$> CC.decCBORABoundaryBlock
 
 -- | Encodes a raw Byron header /without/ a tag indicating whether it's a
 -- regular header or an EBB header.
@@ -228,10 +251,10 @@ encodeByronRegularHeader = toByronCBOR . CBOR.encodePreEncoded . CC.headerAnnota
 
 -- | Inverse of 'encodeByronRegularHeader'
 decodeByronRegularHeader ::
-     CC.EpochSlots
-  -> Decoder s (Lazy.ByteString -> RawHeader)
+  CC.EpochSlots ->
+  Decoder s (Lazy.ByteString -> RawHeader)
 decodeByronRegularHeader epochSlots =
-    toPlainDecoder Nothing byronProtVer $
+  toPlainDecoder Nothing byronProtVer $
     flip annotationBytes <$> CC.decCBORAHeader epochSlots
 
 -- | Encodes a raw Byron EBB header /without/ a tag indicating whether it's a
@@ -244,7 +267,7 @@ encodeByronBoundaryHeader = toByronCBOR . CBOR.encodePreEncoded . CC.boundaryHea
 -- | Inverse of 'encodeByronBoundaryHeader'
 decodeByronBoundaryHeader :: Decoder s (Lazy.ByteString -> RawBoundaryHeader)
 decodeByronBoundaryHeader =
-    toPlainDecoder Nothing byronProtVer $
+  toPlainDecoder Nothing byronProtVer $
     flip annotationBytes <$> CC.decCBORABoundaryHeader
 
 -- | The 'BinaryBlockInfo' of the given 'ByronBlock'.
@@ -256,14 +279,16 @@ decodeByronBoundaryHeader =
 -- added to the sliced bytestring before it can be deserialised using
 -- 'decodeByronHeader'.
 byronBinaryBlockInfo :: ByronBlock -> BinaryBlockInfo
-byronBinaryBlockInfo blk = BinaryBlockInfo
-    { headerOffset = 1 {- 'encodeListLen' of the outer 'Either' envelope -}
-                   + 1 {- the tag -}
-                   + 1 {- 'encodeListLen' of the block: header + body + ...  -}
-      -- Compute the length of the annotated header
-    , headerSize   = fromIntegral $ Strict.length $ case byronBlockRaw blk of
+byronBinaryBlockInfo blk =
+  BinaryBlockInfo
+    { headerOffset =
+        1 {- 'encodeListLen' of the outer 'Either' envelope -}
+          + 1 {- the tag -}
+          + 1 {- 'encodeListLen' of the block: header + body + ...  -}
+          -- Compute the length of the annotated header
+    , headerSize = fromIntegral $ Strict.length $ case byronBlockRaw blk of
         CC.ABOBBoundary b -> CC.boundaryHeaderAnnotation $ CC.boundaryHeader b
-        CC.ABOBBlock    b -> CC.headerAnnotation         $ CC.blockHeader    b
+        CC.ABOBBlock b -> CC.headerAnnotation $ CC.blockHeader b
     }
 
 {-------------------------------------------------------------------------------
@@ -278,35 +303,37 @@ byronBinaryBlockInfo blk = BinaryBlockInfo
 -- 2-tuple and the 'Word' indicating whether its an EBB or regular block.
 isEbbEnvelope :: IsEBB -> Lazy.ByteString
 isEbbEnvelope = \case
-  IsEBB    -> "\130\NUL"
+  IsEBB -> "\130\NUL"
   IsNotEBB -> "\130\SOH"
 
 addV1Envelope ::
-     (SomeSecond (NestedCtxt Header) ByronBlock, Lazy.ByteString)
-  -> Lazy.ByteString
+  (SomeSecond (NestedCtxt Header) ByronBlock, Lazy.ByteString) ->
+  Lazy.ByteString
 addV1Envelope (SomeSecond (NestedCtxt ctxt), bs) = isEbbTag <> bs
-  where
-    isEbbTag = case ctxt of
-      CtxtByronBoundary {} -> isEbbEnvelope IsEBB
-      CtxtByronRegular  {} -> isEbbEnvelope IsNotEBB
+ where
+  isEbbTag = case ctxt of
+    CtxtByronBoundary{} -> isEbbEnvelope IsEBB
+    CtxtByronRegular{} -> isEbbEnvelope IsNotEBB
 
 -- | Drop the V1 EBB-or-regular-header envelope and reconstruct the context.
 -- Since we don't know the block size, use 'fakeByronBlockSizeHint'.
 dropV1Envelope ::
-     Lazy.ByteString
-  -> Except String (SomeSecond (NestedCtxt Header) ByronBlock, Lazy.ByteString)
+  Lazy.ByteString ->
+  Except String (SomeSecond (NestedCtxt Header) ByronBlock, Lazy.ByteString)
 dropV1Envelope bs = case Lazy.splitAt 2 bs of
-    (prefix, suffix)
-      | prefix == isEbbEnvelope IsEBB
-      -> return ( SomeSecond . NestedCtxt $ CtxtByronBoundary fakeByronBlockSizeHint
-                , suffix
-                )
-      | prefix == isEbbEnvelope IsNotEBB
-      -> return ( SomeSecond . NestedCtxt $ CtxtByronRegular fakeByronBlockSizeHint
-                , suffix
-                )
-      | otherwise
-      -> throwError "decodeUnsized: invalid prefix"
+  (prefix, suffix)
+    | prefix == isEbbEnvelope IsEBB ->
+        return
+          ( SomeSecond . NestedCtxt $ CtxtByronBoundary fakeByronBlockSizeHint
+          , suffix
+          )
+    | prefix == isEbbEnvelope IsNotEBB ->
+        return
+          ( SomeSecond . NestedCtxt $ CtxtByronRegular fakeByronBlockSizeHint
+          , suffix
+          )
+    | otherwise ->
+        throwError "decodeUnsized: invalid prefix"
 
 -- | Fake size (used in compatibility mode)
 fakeByronBlockSizeHint :: SizeInBytes
@@ -322,14 +349,17 @@ encodeUnsizedHeader :: UnsizedHeader -> Encoding
 encodeUnsizedHeader (UnsizedHeader raw _ _) = toByronCBOR $ CC.encCBORABlockOrBoundaryHdr raw
 
 -- | Inverse of 'encodeSizedHeader'
-decodeUnsizedHeader :: CC.EpochSlots
-                    -> Decoder s (Lazy.ByteString -> UnsizedHeader)
+decodeUnsizedHeader ::
+  CC.EpochSlots ->
+  Decoder s (Lazy.ByteString -> UnsizedHeader)
 decodeUnsizedHeader epochSlots =
-    toPlainDecoder Nothing byronProtVer $
+  toPlainDecoder Nothing byronProtVer $
     fillInByteString <$> CC.decCBORABlockOrBoundaryHdr epochSlots
-  where
-    fillInByteString :: CC.ABlockOrBoundaryHdr ByteSpan
-                     -> Lazy.ByteString
-                     -> UnsizedHeader
-    fillInByteString it theBytes = mkUnsizedHeader epochSlots $
+ where
+  fillInByteString ::
+    CC.ABlockOrBoundaryHdr ByteSpan ->
+    Lazy.ByteString ->
+    UnsizedHeader
+  fillInByteString it theBytes =
+    mkUnsizedHeader epochSlots $
       Lazy.toStrict . slice theBytes <$> it

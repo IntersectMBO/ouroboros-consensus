@@ -9,13 +9,13 @@ hsPkgs.shellFor {
     pkgs.cabal-docspec
     pkgs.fd
     pkgs.nixpkgs-fmt
-    pkgs.stylish-haskell
     pkgs.dos2unix
     pkgs.cabal-gild
     pkgs.hlint
     pkgs.cabal-hoogle
     pkgs.ghcid
     pkgs.xrefcheck
+    pkgs.fourmolu
 
     # release management
     pkgs.scriv

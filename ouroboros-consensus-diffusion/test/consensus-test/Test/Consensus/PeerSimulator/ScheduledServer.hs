@@ -7,32 +7,35 @@
 -- there is nothing new to process, or what needs to process requires a
 -- different state of the point schedule, the scheduled server goes back to
 -- sleep, awaiting another tick.
-module Test.Consensus.PeerSimulator.ScheduledServer (
-    ScheduledServer (..)
+module Test.Consensus.PeerSimulator.ScheduledServer
+  ( ScheduledServer (..)
   , awaitOnlineState
   , ensureCurrentState
   , runHandler
   , runHandlerWithTrace
   ) where
 
-import           Control.Tracer (Tracer, traceWith)
-import           Data.Foldable (traverse_)
-import           Ouroboros.Consensus.Util.IOLike (IOLike,
-                     MonadSTM (STM, atomically))
-import           Test.Consensus.PeerSimulator.Trace
-                     (TraceScheduledServerHandlerEvent (..))
-import           Test.Consensus.PointSchedule.Peers (PeerId)
+import Control.Tracer (Tracer, traceWith)
+import Data.Foldable (traverse_)
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , MonadSTM (STM, atomically)
+  )
+import Test.Consensus.PeerSimulator.Trace
+  ( TraceScheduledServerHandlerEvent (..)
+  )
+import Test.Consensus.PointSchedule.Peers (PeerId)
 
-data ScheduledServer m state blk =
-  ScheduledServer {
-    ssPeerId       :: PeerId,
-    ssCurrentState :: STM m (Maybe state),
-    ssTickStarted  :: STM m (),
-    ssCommonTracer :: Tracer m (TraceScheduledServerHandlerEvent state blk)
+data ScheduledServer m state blk
+  = ScheduledServer
+  { ssPeerId :: PeerId
+  , ssCurrentState :: STM m (Maybe state)
+  , ssTickStarted :: STM m ()
+  , ssCommonTracer :: Tracer m (TraceScheduledServerHandlerEvent state blk)
   }
 
 nextTickState :: IOLike m => ScheduledServer m state blk -> m (Maybe state)
-nextTickState ScheduledServer {ssCurrentState, ssTickStarted} =
+nextTickState ScheduledServer{ssCurrentState, ssTickStarted} =
   atomically (ssTickStarted >> ssCurrentState)
 
 retryOffline :: IOLike m => ScheduledServer m state blk -> Maybe state -> m state
@@ -92,16 +95,16 @@ runHandler ::
   m h
 runHandler server@ScheduledServer{ssCommonTracer} handlerName handler handlerTracer dispatchMessage =
   run
-  where
-    run = do
-      currentState <- ensureCurrentState server
-      traceWith ssCommonTracer $ TraceHandling handlerName currentState
-      maybe restart done =<< runHandlerWithTrace handlerTracer (handler currentState)
+ where
+  run = do
+    currentState <- ensureCurrentState server
+    traceWith ssCommonTracer $ TraceHandling handlerName currentState
+    maybe restart done =<< runHandlerWithTrace handlerTracer (handler currentState)
 
-    restart = do
-      traceWith ssCommonTracer $ TraceRestarting handlerName
-      awaitOnlineState server *> run
+  restart = do
+    traceWith ssCommonTracer $ TraceRestarting handlerName
+    awaitOnlineState server *> run
 
-    done msg = do
-      traceWith ssCommonTracer $ TraceDoneHandling handlerName
-      dispatchMessage msg
+  done msg = do
+    traceWith ssCommonTracer $ TraceDoneHandling handlerName
+    dispatchMessage msg

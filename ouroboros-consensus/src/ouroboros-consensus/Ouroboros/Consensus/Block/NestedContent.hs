@@ -11,31 +11,34 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Block.NestedContent (
-    -- * Block contents
+module Ouroboros.Consensus.Block.NestedContent
+  ( -- * Block contents
     HasNestedContent (..)
   , NestedCtxt_
   , curriedNest
+
     -- * Flip type arguments
   , NestedCtxt (..)
   , castNestedCtxt
   , mapNestedCtxt
+
     -- * Existentials
   , castSomeNestedCtxt
   , mapSomeNestedCtxt
+
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Util.DepPair
   , SomeSecond (..)
   ) where
 
-import           Data.Kind (Type)
-import           Data.Maybe (isJust)
-import           Data.Proxy
-import           Data.Type.Equality
-import           Data.Typeable (Typeable)
-import           NoThunks.Class (InspectHeap (..), NoThunks)
-import           Ouroboros.Consensus.Util (SomeSecond (..))
-import           Ouroboros.Consensus.Util.DepPair
+import Data.Kind (Type)
+import Data.Maybe (isJust)
+import Data.Proxy
+import Data.Type.Equality
+import Data.Typeable (Typeable)
+import NoThunks.Class (InspectHeap (..), NoThunks)
+import Ouroboros.Consensus.Util (SomeSecond (..))
+import Ouroboros.Consensus.Util.DepPair
 
 {-------------------------------------------------------------------------------
   Block contents
@@ -72,24 +75,29 @@ import           Ouroboros.Consensus.Util.DepPair
 -- bytes from the block into the type indicated by that @NestedCtxt@.
 --
 -- TODO: We could perhaps define this independent of blocks in 'DepPair'.
-class ( forall a. Show (NestedCtxt_ blk f a)
-      , SameDepIndex (NestedCtxt_ blk f)
-      ) => HasNestedContent f blk where
+class
+  ( forall a. Show (NestedCtxt_ blk f a)
+  , SameDepIndex (NestedCtxt_ blk f)
+  ) =>
+  HasNestedContent f blk
+  where
   unnest :: f blk -> DepPair (NestedCtxt f blk)
-  nest   :: DepPair (NestedCtxt f blk) -> f blk
+  nest :: DepPair (NestedCtxt f blk) -> f blk
 
   -- Defaults when there is only a single type
 
-  default unnest :: ( TrivialDependency (NestedCtxt f blk)
-                    , TrivialIndex (NestedCtxt f blk) ~ f blk
-                    )
-                 => f blk -> DepPair (NestedCtxt f blk)
+  default unnest ::
+    ( TrivialDependency (NestedCtxt f blk)
+    , TrivialIndex (NestedCtxt f blk) ~ f blk
+    ) =>
+    f blk -> DepPair (NestedCtxt f blk)
   unnest = DepPair indexIsTrivial
 
-  default nest :: ( TrivialDependency (NestedCtxt f blk)
-                  , TrivialIndex (NestedCtxt f blk) ~ f blk
-                  )
-               => DepPair (NestedCtxt f blk) -> f blk
+  default nest ::
+    ( TrivialDependency (NestedCtxt f blk)
+    , TrivialIndex (NestedCtxt f blk) ~ f blk
+    ) =>
+    DepPair (NestedCtxt f blk) -> f blk
   nest (DepPair x y) = fromTrivialDependency x y
 
 curriedNest :: HasNestedContent f blk => NestedCtxt f blk a -> a -> f blk
@@ -109,38 +117,46 @@ data family NestedCtxt_ blk :: (Type -> Type) -> (Type -> Type)
 -- 'NestedCtxt' must be indexed on @blk@: it is the block that determines this
 -- type. However, we often want to partially apply the second argument (the
 -- functor), leaving the block type not yet defined.
-newtype NestedCtxt f blk a = NestedCtxt {
-      flipNestedCtxt :: NestedCtxt_ blk f a
-    }
+newtype NestedCtxt f blk a = NestedCtxt
+  { flipNestedCtxt :: NestedCtxt_ blk f a
+  }
 
-deriving instance Show (NestedCtxt_ blk f a)
-               => Show (NestedCtxt f blk a)
+deriving instance
+  Show (NestedCtxt_ blk f a) =>
+  Show (NestedCtxt f blk a)
 
-instance SameDepIndex (NestedCtxt_ blk f)
-      => SameDepIndex (NestedCtxt f blk) where
+instance
+  SameDepIndex (NestedCtxt_ blk f) =>
+  SameDepIndex (NestedCtxt f blk)
+  where
   sameDepIndex (NestedCtxt ctxt) (NestedCtxt ctxt') =
-      sameDepIndex ctxt ctxt'
+    sameDepIndex ctxt ctxt'
 
-instance TrivialDependency (NestedCtxt_ blk f)
-      => TrivialDependency (NestedCtxt f blk) where
+instance
+  TrivialDependency (NestedCtxt_ blk f) =>
+  TrivialDependency (NestedCtxt f blk)
+  where
   type TrivialIndex (NestedCtxt f blk) = TrivialIndex (NestedCtxt_ blk f)
   hasSingleIndex (NestedCtxt ctxt) (NestedCtxt ctxt') =
-      hasSingleIndex ctxt ctxt'
+    hasSingleIndex ctxt ctxt'
   indexIsTrivial =
-      NestedCtxt indexIsTrivial
+    NestedCtxt indexIsTrivial
 
-castNestedCtxt :: (NestedCtxt_ blk f a -> NestedCtxt_ blk' f a)
-               -> NestedCtxt f blk  a
-               -> NestedCtxt f blk' a
+castNestedCtxt ::
+  (NestedCtxt_ blk f a -> NestedCtxt_ blk' f a) ->
+  NestedCtxt f blk a ->
+  NestedCtxt f blk' a
 castNestedCtxt coerce (NestedCtxt ctxt) = NestedCtxt (coerce ctxt)
 
-mapNestedCtxt :: (NestedCtxt_ blk f a -> NestedCtxt_ blk' f' a')
-              -> NestedCtxt f  blk  a
-              -> NestedCtxt f' blk' a'
+mapNestedCtxt ::
+  (NestedCtxt_ blk f a -> NestedCtxt_ blk' f' a') ->
+  NestedCtxt f blk a ->
+  NestedCtxt f' blk' a'
 mapNestedCtxt f (NestedCtxt ctxt) = NestedCtxt (f ctxt)
 
-deriving instance (HasNestedContent f blk, forall a. Show (g a))
-               => Show (GenDepPair g (NestedCtxt f blk))
+deriving instance
+  (HasNestedContent f blk, forall a. Show (g a)) =>
+  Show (GenDepPair g (NestedCtxt f blk))
 
 {-------------------------------------------------------------------------------
   Existentials
@@ -155,19 +171,25 @@ deriving instance HasNestedContent f blk => Show (SomeSecond (NestedCtxt f) blk)
 -- However, this constraint would have to be propagated all the way up, which is
 -- rather verbose and annoying (standalone deriving has to be used), hence we
 -- use 'InspectHeap' for convenience.
-deriving via InspectHeap (SomeSecond (NestedCtxt f) blk)
-  instance (Typeable f, Typeable blk) => NoThunks (SomeSecond (NestedCtxt f) blk)
+deriving via
+  InspectHeap (SomeSecond (NestedCtxt f) blk)
+  instance
+    (Typeable f, Typeable blk) => NoThunks (SomeSecond (NestedCtxt f) blk)
 
-instance SameDepIndex (NestedCtxt_ blk f)
-      => Eq (SomeSecond (NestedCtxt f) blk) where
+instance
+  SameDepIndex (NestedCtxt_ blk f) =>
+  Eq (SomeSecond (NestedCtxt f) blk)
+  where
   SomeSecond ctxt == SomeSecond ctxt' = isJust (sameDepIndex ctxt ctxt')
 
-castSomeNestedCtxt :: (forall a. NestedCtxt_ blk f a -> NestedCtxt_ blk' f a)
-                   -> SomeSecond (NestedCtxt f) blk
-                   -> SomeSecond (NestedCtxt f) blk'
+castSomeNestedCtxt ::
+  (forall a. NestedCtxt_ blk f a -> NestedCtxt_ blk' f a) ->
+  SomeSecond (NestedCtxt f) blk ->
+  SomeSecond (NestedCtxt f) blk'
 castSomeNestedCtxt coerce (SomeSecond ctxt) = SomeSecond (castNestedCtxt coerce ctxt)
 
-mapSomeNestedCtxt :: (forall a. NestedCtxt_ blk f a -> NestedCtxt_ blk' f' a)
-                  -> SomeSecond (NestedCtxt f)  blk
-                  -> SomeSecond (NestedCtxt f') blk'
+mapSomeNestedCtxt ::
+  (forall a. NestedCtxt_ blk f a -> NestedCtxt_ blk' f' a) ->
+  SomeSecond (NestedCtxt f) blk ->
+  SomeSecond (NestedCtxt f') blk'
 mapSomeNestedCtxt f (SomeSecond ctxt) = SomeSecond (mapNestedCtxt f ctxt)

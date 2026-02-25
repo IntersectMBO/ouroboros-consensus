@@ -1,22 +1,22 @@
 -- | See 'BlockSupportsMetrics'.
-module Ouroboros.Consensus.Block.SupportsMetrics (
-    BlockSupportsMetrics (..)
+module Ouroboros.Consensus.Block.SupportsMetrics
+  ( BlockSupportsMetrics (..)
   , WhetherSelfIssued (..)
   , isSelfIssuedConstUnknown
   ) where
 
-import           Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Block.Abstract
 
 {-------------------------------------------------------------------------------
   Supported blocks
 -------------------------------------------------------------------------------}
 
 -- | Whether a block was issued by a stakeholder currently forging on this node
-data WhetherSelfIssued =
-    IsSelfIssued
+data WhetherSelfIssued
+  = IsSelfIssued
   | IsNotSelfIssued
-    -- | We are unable to determine
-  | UnknownSelfIssued
+  | -- | We are unable to determine
+    UnknownSelfIssued
   deriving (Show, Eq)
 
 -- | Evidence that a block supports the metrics needed for business requirements

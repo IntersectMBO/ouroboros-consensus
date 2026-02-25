@@ -6,13 +6,16 @@
 
 module Test.Consensus.Util.MonadSTM.NormalForm (tests) where
 
-import           Control.Monad.IOSim
-import           GHC.Generics
-import           NoThunks.Class
-import           Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM,
-                     newSVar, updateSVar)
-import           Test.Tasty
-import           Test.Tasty.QuickCheck
+import Control.Monad.IOSim
+import GHC.Generics
+import NoThunks.Class
+import Ouroboros.Consensus.Util.MonadSTM.NormalForm
+  ( MonadSTM
+  , newSVar
+  , updateSVar
+  )
+import Test.Tasty
+import Test.Tasty.QuickCheck
 
 -- Note that all of the tests here are only significant with compiler
 -- optimizations turned off! These tests ensure that the invariants are
@@ -23,20 +26,28 @@ import           Test.Tasty.QuickCheck
 -- optimizations, these tests will *always* pass at -O1 or higher (at least on
 -- GHC 8.10 and GHC 9.2).
 tests :: TestTree
-tests = testGroup "Ouroboros.Consensus.Util.MonadSTM.NormalForm"
-  [ testGroup "updateSVar"
-    [ testGroup "updateSVar strictness"
-      [ testProperty "IO @Integer @String"
-          (prop_update_svar_strictness_io @Integer @String)
-      , testProperty "IOSim @Integer @String"
-          (prop_update_svar_strictness_iosim @Integer @String)
-      , testProperty "IO @StrictnessTestType @String"
-          (prop_update_svar_strictness_io @StrictnessTestType @String)
-      , testProperty "IOSim @StrictnessTestType @String"
-          (prop_update_svar_strictness_iosim @StrictnessTestType @String)
-      ]
+tests =
+  testGroup
+    "Ouroboros.Consensus.Util.MonadSTM.NormalForm"
+    [ testGroup
+        "updateSVar"
+        [ testGroup
+            "updateSVar strictness"
+            [ testProperty
+                "IO @Integer @String"
+                (prop_update_svar_strictness_io @Integer @String)
+            , testProperty
+                "IOSim @Integer @String"
+                (prop_update_svar_strictness_iosim @Integer @String)
+            , testProperty
+                "IO @StrictnessTestType @String"
+                (prop_update_svar_strictness_io @StrictnessTestType @String)
+            , testProperty
+                "IOSim @StrictnessTestType @String"
+                (prop_update_svar_strictness_iosim @StrictnessTestType @String)
+            ]
+        ]
     ]
-  ]
 
 data StrictnessTestType = StrictnessTestType !Int !Bool
   deriving stock (Show, Generic)
@@ -47,15 +58,17 @@ instance Arbitrary StrictnessTestType where
   shrink (StrictnessTestType a b) = do
     StrictnessTestType <$> shrink a <*> shrink b
 
-prop_update_svar_strictness_io
-  :: forall a b. NoThunks a
-  => Fun a (a, b) -> a -> Property
+prop_update_svar_strictness_io ::
+  forall a b.
+  NoThunks a =>
+  Fun a (a, b) -> a -> Property
 prop_update_svar_strictness_io f a =
   ioProperty $ updateSVarTest f a
 
-prop_update_svar_strictness_iosim
-  :: forall a b. NoThunks a
-  => Fun a (a, b) -> a -> Property
+prop_update_svar_strictness_iosim ::
+  forall a b.
+  NoThunks a =>
+  Fun a (a, b) -> a -> Property
 prop_update_svar_strictness_iosim f a =
   property $ runSimOrThrow $ updateSVarTest f a
 

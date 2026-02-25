@@ -1,7 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 -- | Tests for the chain DB iterator.
@@ -9,50 +8,62 @@
 -- This is a set of unit tests that check for specific bugs discovered during
 -- other testing. The more important tests for the iterators is the main model
 -- based test of the chain DB (@Test.Ouroboros.Storage.ChainDB.Model.Test@).
---
 module Test.Ouroboros.Storage.ChainDB.Iterator (tests) where
 
-import           Control.Monad (forM_)
-import           Control.Monad.Except (ExceptT (..), runExceptT)
-import           Control.Monad.IOSim (runSimOrThrow)
-import           Control.Monad.Trans.Class (lift)
-import           Control.ResourceRegistry
-import           Control.Tracer
-import           Data.List (intercalate)
+import Control.Monad (forM_)
+import Control.Monad.Except (ExceptT (..), runExceptT)
+import Control.Monad.IOSim (runSimOrThrow)
+import Control.Monad.Trans.Class (lift)
+import Control.ResourceRegistry
+import Control.Tracer
+import Data.List (intercalate)
 import qualified Data.Map.Strict as Map
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
-                     Iterator (..), IteratorResult (..), StreamFrom (..),
-                     StreamTo (..), UnknownRange (..))
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator
-                     (IteratorEnv (..), newIterator)
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
-                     (IteratorKey (..), TraceIteratorEvent (..))
-import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Storage.ChainDB.API
+  ( BlockComponent (..)
+  , Iterator (..)
+  , IteratorResult (..)
+  , StreamFrom (..)
+  , StreamTo (..)
+  , UnknownRange (..)
+  )
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator
+  ( IteratorEnv (..)
+  , newIterator
+  )
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
+  ( IteratorKey (..)
+  , TraceIteratorEvent (..)
+  )
+import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
+import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import           Ouroboros.Consensus.Util.Condense (condense)
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Network.Mock.Chain (Chain)
+import Ouroboros.Consensus.Util.Condense (condense)
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import qualified Test.Ouroboros.Storage.ImmutableDB.Mock as ImmutableDB
-                     (openDBMock)
-import           Test.Ouroboros.Storage.TestBlock
+  ( openDBMock
+  )
+import Test.Ouroboros.Storage.TestBlock
 import qualified Test.Ouroboros.Storage.VolatileDB.Mock as VolatileDB
-                     (openDBMock)
-import           Test.Tasty
-import           Test.Tasty.QuickCheck
-import           Test.Util.Orphans.IOLike ()
-import           Test.Util.Tracer (recordingTracerTVar)
+  ( openDBMock
+  )
+import Test.Tasty
+import Test.Tasty.QuickCheck
+import Test.Util.Orphans.IOLike ()
+import Test.Util.Tracer (recordingTracerTVar)
 
 {-------------------------------------------------------------------------------
   Top-level tests
 -------------------------------------------------------------------------------}
 
 tests :: TestTree
-tests = testGroup "Iterator"
-    [ testProperty "#773 bug in example 1"  prop_773_bug
+tests =
+  testGroup
+    "Iterator"
+    [ testProperty "#773 bug in example 1" prop_773_bug
     , testProperty "#773 correct example 2" prop_773_working
     , testProperty "#1435 case 1" prop_1435_case1
     , testProperty "#1435 case 2" prop_1435_case2
@@ -66,11 +77,17 @@ tests = testGroup "Iterator"
 -- used to stream blocks from the ChainDB. A few things make this code
 -- complex:
 --
+
 -- * We need to be able to stream from both the ImmutableDB and the
+
 --   VolatileDB.
+
 -- * While streaming, blocks might be copied from the VolatileDB to the
+
 --   ImmutableDB.
+
 -- * While streaming, blocks might be garbage-collected from the VolatileDB.
+
 --   These blocks might have been copied to the ImmutableDB or not.
 --
 -- The copying and garbage collection will happen in the background,
@@ -98,11 +115,11 @@ tests = testGroup "Iterator"
 
 -- All blocks on the same chain
 a, b, c, d, e :: TestBlock
-a = firstBlock    0 TestBody { tbForkNo = 0, tbIsValid = True }
-b = mkNextBlock a 1 TestBody { tbForkNo = 0, tbIsValid = True }
-c = mkNextBlock b 2 TestBody { tbForkNo = 0, tbIsValid = True }
-d = mkNextBlock c 3 TestBody { tbForkNo = 0, tbIsValid = True }
-e = mkNextBlock d 4 TestBody { tbForkNo = 0, tbIsValid = True }
+a = firstBlock 0 TestBody{tbForkNo = 0, tbIsValid = True}
+b = mkNextBlock a 1 TestBody{tbForkNo = 0, tbIsValid = True}
+c = mkNextBlock b 2 TestBody{tbForkNo = 0, tbIsValid = True}
+d = mkNextBlock c 3 TestBody{tbForkNo = 0, tbIsValid = True}
+e = mkNextBlock d 4 TestBody{tbForkNo = 0, tbIsValid = True}
 
 -- | Requested stream = A -> C
 --
@@ -115,13 +132,14 @@ e = mkNextBlock d 4 TestBody { tbForkNo = 0, tbIsValid = True }
 -- For more details, see:
 -- https://github.com/IntersectMBO/ouroboros-network/pull/773#issuecomment-513128004
 prop_773_bug :: Property
-prop_773_bug = prop_general_test
+prop_773_bug =
+  prop_general_test
     TestSetup
       { immutable = Chain.fromOldestFirst [a, b, c, d]
-      , volatile  = [c, d]
+      , volatile = [c, d]
       }
     (StreamFromInclusive (blockRealPoint a))
-    (StreamToInclusive   (blockRealPoint c))
+    (StreamToInclusive (blockRealPoint c))
     (Right (map Right [a, b, c]))
 
 -- | Requested stream = A -> E
@@ -131,13 +149,14 @@ prop_773_bug = prop_general_test
 --
 -- This was/is handled correctly in @streamFromBoth@.
 prop_773_working :: Property
-prop_773_working = prop_general_test
+prop_773_working =
+  prop_general_test
     TestSetup
       { immutable = Chain.fromOldestFirst [a, b, c, d]
-      , volatile  = [c, d, e]
+      , volatile = [c, d, e]
       }
     (StreamFromInclusive (blockRealPoint a))
-    (StreamToInclusive   (blockRealPoint e))
+    (StreamToInclusive (blockRealPoint e))
     (Right (map Right [a, b, c, d, e]))
 
 -- | Requested stream = B' -> B' where EBB, B, and B' are all blocks in the
@@ -145,150 +164,155 @@ prop_773_working = prop_general_test
 --
 --      ImmutableDB      VolatileDB
 -- Hash  EBB -> B
---
 prop_1435_case1 :: Property
-prop_1435_case1 = prop_general_test
+prop_1435_case1 =
+  prop_general_test
     TestSetup
       { immutable = Chain.fromOldestFirst [ebb, b]
-      , volatile  = []
+      , volatile = []
       }
     (StreamFromInclusive (blockRealPoint b'))
-    (StreamToInclusive   (blockRealPoint b'))
+    (StreamToInclusive (blockRealPoint b'))
     (Left (ForkTooOld (StreamFromInclusive (blockRealPoint b'))))
-  where
-    canContainEBB = const True
-    ebb = firstEBB    canContainEBB       TestBody { tbForkNo = 0, tbIsValid = True }
-    b   = mkNextBlock               ebb 0 TestBody { tbForkNo = 0, tbIsValid = True }
-    b'  = mkNextBlock               ebb 0 TestBody { tbForkNo = 1, tbIsValid = True }
+ where
+  canContainEBB = const True
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
+  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True}
+  b' = mkNextBlock ebb 0 TestBody{tbForkNo = 1, tbIsValid = True}
 
 -- | Requested stream = EBB' -> EBB' where EBB, B, and EBB' are all blocks in
 -- the same slot, and EBB' is not part of the current chain nor ChainDB.
 --
 --      ImmutableDB      VolatileDB
 -- Hash  EBB -> B
---
 prop_1435_case2 :: Property
-prop_1435_case2 = prop_general_test
+prop_1435_case2 =
+  prop_general_test
     TestSetup
       { immutable = Chain.fromOldestFirst [ebb, b]
-      , volatile  = []
+      , volatile = []
       }
     (StreamFromInclusive (blockRealPoint ebb'))
-    (StreamToInclusive   (blockRealPoint ebb'))
+    (StreamToInclusive (blockRealPoint ebb'))
     (Left (ForkTooOld (StreamFromInclusive (blockRealPoint ebb'))))
-  where
-    canContainEBB = const True
-    ebb  = firstEBB    canContainEBB       TestBody { tbForkNo = 0, tbIsValid = True }
-    b    = mkNextBlock               ebb 0 TestBody { tbForkNo = 0, tbIsValid = True }
-    ebb' = firstEBB    canContainEBB       TestBody { tbForkNo = 1, tbIsValid = True }
+ where
+  canContainEBB = const True
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
+  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True}
+  ebb' = firstEBB canContainEBB TestBody{tbForkNo = 1, tbIsValid = True}
 
 -- | Requested stream = EBB -> EBB where EBB and B are all blocks in the same
 -- slot.
 --
 --      ImmutableDB      VolatileDB
 -- Hash  EBB -> B
---
 prop_1435_case3 :: Property
-prop_1435_case3 = prop_general_test
+prop_1435_case3 =
+  prop_general_test
     TestSetup
       { immutable = Chain.fromOldestFirst [ebb, b]
-      , volatile  = []
+      , volatile = []
       }
     (StreamFromInclusive (blockRealPoint ebb))
-    (StreamToInclusive   (blockRealPoint ebb))
+    (StreamToInclusive (blockRealPoint ebb))
     (Right (map Right [ebb]))
-  where
-    canContainEBB = const True
-    ebb  = firstEBB    canContainEBB       TestBody { tbForkNo = 0, tbIsValid = True }
-    b    = mkNextBlock               ebb 0 TestBody { tbForkNo = 0, tbIsValid = True }
+ where
+  canContainEBB = const True
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
+  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True}
 
 -- | Requested stream = EBB -> EBB where EBB and B are all blocks in the same
 -- slot.
 --
 --       ImmutableDB      VolatileDB
 -- Hash     EBB               B
---
 prop_1435_case4 :: Property
-prop_1435_case4 = prop_general_test
+prop_1435_case4 =
+  prop_general_test
     TestSetup
       { immutable = Chain.fromOldestFirst [ebb]
-      , volatile  = [b]
+      , volatile = [b]
       }
     (StreamFromInclusive (blockRealPoint ebb))
-    (StreamToInclusive   (blockRealPoint ebb))
+    (StreamToInclusive (blockRealPoint ebb))
     (Right (map Right [ebb]))
-  where
-    canContainEBB = const True
-    ebb  = firstEBB    canContainEBB       TestBody { tbForkNo = 0, tbIsValid = True }
-    b    = mkNextBlock               ebb 0 TestBody { tbForkNo = 0, tbIsValid = True }
+ where
+  canContainEBB = const True
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
+  b = mkNextBlock ebb 0 TestBody{tbForkNo = 0, tbIsValid = True}
 
 -- | Requested stream = EBB -> EBB where EBB and B' are all blocks in the same
 -- slot, and B' is not part of the current chain nor ChainDB.
 --
 --       ImmutableDB      VolatileDB
 -- Hash     EBB
---
 prop_1435_case5 :: Property
-prop_1435_case5 = prop_general_test
+prop_1435_case5 =
+  prop_general_test
     TestSetup
       { immutable = Chain.fromOldestFirst [ebb]
-      , volatile  = []
+      , volatile = []
       }
     (StreamFromInclusive (blockRealPoint b'))
-    (StreamToInclusive   (blockRealPoint b'))
+    (StreamToInclusive (blockRealPoint b'))
     (Left (ForkTooOld (StreamFromInclusive (blockRealPoint b'))))
-  where
-    canContainEBB = const True
-    ebb  = firstEBB    canContainEBB       TestBody { tbForkNo = 0, tbIsValid = True }
-    b'   = mkNextBlock               ebb 0 TestBody { tbForkNo = 1, tbIsValid = True }
+ where
+  canContainEBB = const True
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
+  b' = mkNextBlock ebb 0 TestBody{tbForkNo = 1, tbIsValid = True}
 
 -- | Requested stream = EBB' -> EBB' where EBB and EBB' are all blocks in the
 -- same slot, and EBB' is not part of the current chain nor ChainDB.
 --
 --       ImmutableDB      VolatileDB
 -- Hash     EBB
---
 prop_1435_case6 :: Property
-prop_1435_case6 = prop_general_test
+prop_1435_case6 =
+  prop_general_test
     TestSetup
       { immutable = Chain.fromOldestFirst [ebb]
-      , volatile  = []
+      , volatile = []
       }
     (StreamFromInclusive (blockRealPoint ebb'))
-    (StreamToInclusive   (blockRealPoint ebb'))
+    (StreamToInclusive (blockRealPoint ebb'))
     (Left (ForkTooOld (StreamFromInclusive (blockRealPoint ebb'))))
-  where
-    canContainEBB = const True
-    ebb  = firstEBB canContainEBB TestBody { tbForkNo = 0, tbIsValid = True }
-    ebb' = firstEBB canContainEBB TestBody { tbForkNo = 1, tbIsValid = True }
+ where
+  canContainEBB = const True
+  ebb = firstEBB canContainEBB TestBody{tbForkNo = 0, tbIsValid = True}
+  ebb' = firstEBB canContainEBB TestBody{tbForkNo = 1, tbIsValid = True}
 
 -- | The general property test
-prop_general_test
-  :: TestSetup
-  -> StreamFrom TestBlock
-  -> StreamTo   TestBlock
-  -> IterRes
-  -> Property
+prop_general_test ::
+  TestSetup ->
+  StreamFrom TestBlock ->
+  StreamTo TestBlock ->
+  IterRes ->
+  Property
 prop_general_test setup from to expected =
-    counterexample (testSetupInfo setup) $
+  counterexample (testSetupInfo setup) $
     case (actual, expected) of
-      (Left actualErr, Left expectedErr)         -> actualErr === expectedErr
-      (Left actualErr, Right expectedStream)     -> failure $
-        "Got " <> show actualErr <> "\nbut expected " <> ppStream expectedStream
-      (Right actualStream, Left expectedErr)     -> failure $
-        "Got " <> ppStream actualStream <> "\nbut expected " <> show expectedErr
+      (Left actualErr, Left expectedErr) -> actualErr === expectedErr
+      (Left actualErr, Right expectedStream) ->
+        failure $
+          "Got " <> show actualErr <> "\nbut expected " <> ppStream expectedStream
+      (Right actualStream, Left expectedErr) ->
+        failure $
+          "Got " <> ppStream actualStream <> "\nbut expected " <> show expectedErr
       (Right actualStream, Right expectedStream)
-        | actualStream == expectedStream
-        -> property True
-        | otherwise
-        -> failure $ "Got " <> ppStream actualStream <> "\nbut expected " <>
-            ppStream expectedStream
-  where
-    (_trace, actual) = runIterator setup from to
-    failure msg = counterexample msg False
+        | actualStream == expectedStream ->
+            property True
+        | otherwise ->
+            failure $
+              "Got "
+                <> ppStream actualStream
+                <> "\nbut expected "
+                <> ppStream expectedStream
+ where
+  (_trace, actual) = runIterator setup from to
+  failure msg = counterexample msg False
 
-    ppStream :: [Either (RealPoint TestBlock) TestBlock] -> String
-    ppStream = intercalate " :> " . map ppGCedOrBlock
+  ppStream :: [Either (RealPoint TestBlock) TestBlock] -> String
+  ppStream = intercalate " :> " . map ppGCedOrBlock
 
 {-------------------------------------------------------------------------------
   Test setup
@@ -300,13 +324,14 @@ prop_general_test setup from to expected =
 -- in-memory chain.
 data TestSetup = TestSetup
   { immutable :: Chain TestBlock
-  , volatile  :: [TestBlock]
+  , volatile :: [TestBlock]
   }
 
 -- | Human-friendly string description of the 'TestSetup' that can be used
 -- when printing a failing test.
 testSetupInfo :: TestSetup -> String
-testSetupInfo TestSetup { immutable, volatile } = mconcat
+testSetupInfo TestSetup{immutable, volatile} =
+  mconcat
     [ "Immutable: "
     , intercalate " :> " (map ppBlock (Chain.toOldestFirst immutable))
     , "\n"
@@ -315,8 +340,8 @@ testSetupInfo TestSetup { immutable, volatile } = mconcat
     ]
 
 ppGCedOrBlock :: Either (RealPoint TestBlock) TestBlock -> String
-ppGCedOrBlock (Left  gcedPt) = "GCed: " <> condense gcedPt
-ppGCedOrBlock (Right blk)    = ppBlock blk
+ppGCedOrBlock (Left gcedPt) = "GCed: " <> condense gcedPt
+ppGCedOrBlock (Right blk) = ppBlock blk
 
 ppBlock :: TestBlock -> String
 ppBlock = condense
@@ -325,32 +350,37 @@ ppBlock = condense
   Running an iterator test
 -------------------------------------------------------------------------------}
 
-type IterRes = Either (UnknownRange TestBlock)
-                      [Either (RealPoint TestBlock) TestBlock]
-                      -- Left:  point of garbage collected block
-                      -- Right: regular block
+type IterRes =
+  Either
+    (UnknownRange TestBlock)
+    [Either (RealPoint TestBlock) TestBlock]
+
+-- Left:  point of garbage collected block
+-- Right: regular block
 
 -- | Open an iterator with the given bounds on the given 'TestSetup'. Return a
 -- trace of the 'TraceIteratorEvent's produced and the result of the iterator
 -- itself.
 runIterator ::
-     TestSetup
-  -> StreamFrom TestBlock
-  -> StreamTo   TestBlock
-  -> ([TraceIteratorEvent TestBlock], IterRes)
+  TestSetup ->
+  StreamFrom TestBlock ->
+  StreamTo TestBlock ->
+  ([TraceIteratorEvent TestBlock], IterRes)
 runIterator setup from to = runSimOrThrow $ withRegistry $ \r -> do
-    (tracer, getTrace) <- recordingTracerTVar
-    itEnv <- initIteratorEnv setup tracer
-    res <- runExceptT $ do
-      it <- ExceptT $ newIterator itEnv ($ itEnv) r GetBlock from to
-      lift $ consume it
-    trace <- getTrace
-    return (trace, res)
-  where
-    consume :: Monad m
-            => Iterator m TestBlock TestBlock
-            -> m [Either (RealPoint TestBlock) TestBlock]
-    consume it = iteratorNext it >>= \case
+  (tracer, getTrace) <- recordingTracerTVar
+  itEnv <- initIteratorEnv setup tracer
+  res <- runExceptT $ do
+    it <- ExceptT $ newIterator itEnv ($ itEnv) r GetBlock from to
+    lift $ consume it
+  trace <- getTrace
+  return (trace, res)
+ where
+  consume ::
+    Monad m =>
+    Iterator m TestBlock TestBlock ->
+    m [Either (RealPoint TestBlock) TestBlock]
+  consume it =
+    iteratorNext it >>= \case
       IteratorResult blk -> (Right blk :) <$> consume it
       IteratorBlockGCed hash -> do
         iteratorClose it
@@ -364,44 +394,46 @@ runIterator setup from to = runSimOrThrow $ withRegistry $ \r -> do
 -------------------------------------------------------------------------------}
 
 initIteratorEnv ::
-     forall m. IOLike m
-  => TestSetup
-  -> Tracer m (TraceIteratorEvent TestBlock)
-  -> m (IteratorEnv m TestBlock)
-initIteratorEnv TestSetup { immutable, volatile } tracer = do
-    iters       <- uncheckedNewTVarM Map.empty
-    nextIterKey <- uncheckedNewTVarM $ IteratorKey 0
-    volatileDB  <- openVolatileDB volatile
-    immutableDB <- openImmutableDB immutable
-    return IteratorEnv
-      { itImmutableDB     = immutableDB
-      , itVolatileDB      = volatileDB
-      , itIterators       = iters
+  forall m.
+  IOLike m =>
+  TestSetup ->
+  Tracer m (TraceIteratorEvent TestBlock) ->
+  m (IteratorEnv m TestBlock)
+initIteratorEnv TestSetup{immutable, volatile} tracer = do
+  iters <- uncheckedNewTVarM Map.empty
+  nextIterKey <- uncheckedNewTVarM $ IteratorKey 0
+  volatileDB <- openVolatileDB volatile
+  immutableDB <- openImmutableDB immutable
+  return
+    IteratorEnv
+      { itImmutableDB = immutableDB
+      , itVolatileDB = volatileDB
+      , itIterators = iters
       , itNextIteratorKey = nextIterKey
-      , itTracer          = tracer
+      , itTracer = tracer
       }
-  where
-    -- | Open a mock VolatileDB and add the given blocks
-    openVolatileDB :: [TestBlock] -> m (VolatileDB m TestBlock)
-    openVolatileDB blocks = do
-        (_volatileDBModel, volatileDB) <-
-          VolatileDB.openDBMock
-            (VolatileDB.mkBlocksPerFile 1)
-            TestBlockCodecConfig
-        forM_ blocks $ VolatileDB.putBlock volatileDB
-        return volatileDB
+ where
+  -- \| Open a mock VolatileDB and add the given blocks
+  openVolatileDB :: [TestBlock] -> m (VolatileDB m TestBlock)
+  openVolatileDB blocks = do
+    (_volatileDBModel, volatileDB) <-
+      VolatileDB.openDBMock
+        (VolatileDB.mkBlocksPerFile 1)
+        TestBlockCodecConfig
+    forM_ blocks $ VolatileDB.putBlock volatileDB
+    return volatileDB
 
-    epochSize :: EpochSize
-    epochSize = 10
+  epochSize :: EpochSize
+  epochSize = 10
 
-    -- | Open a mock ImmutableDB and add the given chain of blocks
-    openImmutableDB :: Chain TestBlock -> m (ImmutableDB m TestBlock)
-    openImmutableDB chain = do
-        (_immutableDBModel, immutableDB) <-
-            ImmutableDB.openDBMock
-              chunkInfo
-              TestBlockCodecConfig
-        mapM_ (ImmutableDB.appendBlock immutableDB) (Chain.toOldestFirst chain)
-        return immutableDB
-      where
-        chunkInfo = ImmutableDB.simpleChunkInfo epochSize
+  -- \| Open a mock ImmutableDB and add the given chain of blocks
+  openImmutableDB :: Chain TestBlock -> m (ImmutableDB m TestBlock)
+  openImmutableDB chain = do
+    (_immutableDBModel, immutableDB) <-
+      ImmutableDB.openDBMock
+        chunkInfo
+        TestBlockCodecConfig
+    mapM_ (ImmutableDB.appendBlock immutableDB) (Chain.toOldestFirst chain)
+    return immutableDB
+   where
+    chunkInfo = ImmutableDB.simpleChunkInfo epochSize

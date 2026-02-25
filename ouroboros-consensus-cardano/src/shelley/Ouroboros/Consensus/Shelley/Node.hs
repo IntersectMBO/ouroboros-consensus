@@ -9,11 +9,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Ouroboros.Consensus.Shelley.Node (
-    MaxMajorProtVer (..)
+module Ouroboros.Consensus.Shelley.Node
+  ( MaxMajorProtVer (..)
   , ProtocolParamsShelleyBased (..)
   , SL.Nonce (..)
   , SL.ProtVer (..)
@@ -28,26 +27,29 @@ module Ouroboros.Consensus.Shelley.Node (
   ) where
 
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Cardano.Protocol.Crypto (Crypto)
-import           Data.Map.Strict (Map)
+import Cardano.Protocol.Crypto (Crypto)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
-                     (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Node.Run
-import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Protocol.TPraos
-import           Ouroboros.Consensus.Shelley.Ledger
-import           Ouroboros.Consensus.Shelley.Ledger.Inspect ()
-import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
-import           Ouroboros.Consensus.Shelley.Node.DiffusionPipelining ()
-import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
-import           Ouroboros.Consensus.Shelley.Node.TPraos
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
-                     pHeaderIssuer)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  )
+import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Protocol.TPraos
+import Ouroboros.Consensus.Shelley.Ledger
+import Ouroboros.Consensus.Shelley.Ledger.Inspect ()
+import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
+import Ouroboros.Consensus.Shelley.Node.DiffusionPipelining ()
+import Ouroboros.Consensus.Shelley.Node.Serialisation ()
+import Ouroboros.Consensus.Shelley.Node.TPraos
+import Ouroboros.Consensus.Shelley.Protocol.Abstract
+  ( ProtoCrypto
+  , pHeaderIssuer
+  )
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -55,8 +57,8 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
 
 protocolClientInfoShelley :: ProtocolClientInfo (ShelleyBlock proto era)
 protocolClientInfoShelley =
-    ProtocolClientInfo {
-      -- No particular codec configuration is needed for Shelley
+  ProtocolClientInfo
+    { -- No particular codec configuration is needed for Shelley
       pClientInfoCodecConfig = ShelleyCodecConfig
     }
 
@@ -65,13 +67,13 @@ protocolClientInfoShelley =
 -------------------------------------------------------------------------------}
 
 instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto era) where
-  -- | Premature optimisation: we assume everywhere that metrics are
+  -- \| Premature optimisation: we assume everywhere that metrics are
   -- cheap, so micro-optimise checking whether the issuer vkey is one of our
   -- own vkeys.
   --
-  -- * Equality of vkeys takes roughly 40ns
-  -- * Hashing a vkey takes roughly 850ns
-  -- * Equality of hashes takes roughly 10ns
+  -- \* Equality of vkeys takes roughly 40ns
+  -- \* Hashing a vkey takes roughly 850ns
+  -- \* Equality of hashes takes roughly 10ns
   --
   -- We want to avoid the hashing of a vkey as it is more expensive than
   -- simply doing a linear search, comparing vkeys for equality. Only when
@@ -84,36 +86,40 @@ instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto
   -- we keep it (relatively) simple and optimise for the common case: 0 or 1
   -- key.
   isSelfIssued cfg (ShelleyHeader shdr _) = case Map.size issuerVKeys of
-      -- The most common case: a non-block producing node
-      0 -> IsNotSelfIssued
-      -- A block producing node with a single set of credentials: just do an
-      -- equality check of the single VKey, skipping the more expensive
-      -- computation of the hash.
-      1 | pHeaderIssuer shdr `elem` issuerVKeys
-        -> IsSelfIssued
-        | otherwise
-        -> IsNotSelfIssued
-      -- When we are running with multiple sets of credentials, which should
-      -- only happen when benchmarking, do a hash lookup, as the number of
-      -- keys can grow to 100-250.
-      _ | SL.hashKey (pHeaderIssuer shdr) `Map.member` issuerVKeys
-        -> IsSelfIssued
-        | otherwise
-        -> IsNotSelfIssued
-    where
-
-      issuerVKeys :: Map (SL.KeyHash 'SL.BlockIssuer)
-                         (SL.VKey 'SL.BlockIssuer)
-      issuerVKeys = shelleyBlockIssuerVKeys cfg
+    -- The most common case: a non-block producing node
+    0 -> IsNotSelfIssued
+    -- A block producing node with a single set of credentials: just do an
+    -- equality check of the single VKey, skipping the more expensive
+    -- computation of the hash.
+    1
+      | pHeaderIssuer shdr `elem` issuerVKeys ->
+          IsSelfIssued
+      | otherwise ->
+          IsNotSelfIssued
+    -- When we are running with multiple sets of credentials, which should
+    -- only happen when benchmarking, do a hash lookup, as the number of
+    -- keys can grow to 100-250.
+    _
+      | SL.hashKey (pHeaderIssuer shdr) `Map.member` issuerVKeys ->
+          IsSelfIssued
+      | otherwise ->
+          IsNotSelfIssued
+   where
+    issuerVKeys ::
+      Map
+        (SL.KeyHash 'SL.BlockIssuer)
+        (SL.VKey 'SL.BlockIssuer)
+    issuerVKeys = shelleyBlockIssuerVKeys cfg
 
 instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto era) where
   configAllSecurityParams = pure . protocolSecurityParam . topLevelConfigProtocol
 
-instance ( ShelleyCompatible                              proto era
-         , LedgerSupportsProtocol           (ShelleyBlock proto era)
-         , BlockSupportsSanityCheck         (ShelleyBlock proto era)
-         , TxLimits                         (ShelleyBlock proto era)
-         , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
-         , Crypto (ProtoCrypto proto)
-         )
-      => RunNode (ShelleyBlock proto era)
+instance
+  ( ShelleyCompatible proto era
+  , LedgerSupportsProtocol (ShelleyBlock proto era)
+  , BlockSupportsSanityCheck (ShelleyBlock proto era)
+  , TxLimits (ShelleyBlock proto era)
+  , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  RunNode (ShelleyBlock proto era)

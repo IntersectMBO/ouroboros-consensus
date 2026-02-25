@@ -16,29 +16,29 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Arguments for LedgerDB initialization.
-module Ouroboros.Consensus.Storage.LedgerDB.Args (
-    LedgerDbArgs (..)
+module Ouroboros.Consensus.Storage.LedgerDB.Args
+  ( LedgerDbArgs (..)
   , LedgerDbFlavorArgs (..)
   , QueryBatchSize (..)
   , defaultArgs
   , defaultQueryBatchSize
   ) where
 
-import           Control.ResourceRegistry
-import           Control.Tracer
-import           Data.Kind
-import           Data.Word
-import           GHC.Generics (Generic)
-import           NoThunks.Class
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import           Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
+import Control.ResourceRegistry
+import Control.Tracer
+import Data.Kind
+import Data.Word
+import GHC.Generics (Generic)
+import NoThunks.Class
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
-import           Ouroboros.Consensus.Util.Args
-import           System.FS.API
+import Ouroboros.Consensus.Util.Args
+import System.FS.API
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -46,47 +46,47 @@ import           System.FS.API
 
 -- | Arguments required to initialize a LedgerDB.
 type LedgerDbArgs ::
-     (Type -> Type)
-  -> (Type -> Type)
-  -> Type
-  -> Type
-data LedgerDbArgs f m blk = LedgerDbArgs {
-      lgrSnapshotPolicyArgs :: SnapshotPolicyArgs
-    , lgrGenesis            :: HKD f (m (ExtLedgerState blk ValuesMK))
-    , lgrHasFS              :: HKD f (SomeHasFS m)
-    , lgrConfig             :: LedgerDbCfgF f (ExtLedgerState blk)
-    , lgrTracer             :: Tracer m (TraceEvent blk)
-    , lgrFlavorArgs         :: LedgerDbFlavorArgs f m
-    , lgrRegistry           :: HKD f (ResourceRegistry m)
-    , lgrQueryBatchSize     :: QueryBatchSize
-      -- | If provided, the ledgerdb will start using said snapshot and fallback
-      -- to genesis. It will ignore any other existing snapshots. Useful for
-      -- db-analyser.
-    , lgrStartSnapshot      :: Maybe DiskSnapshot
-    }
+  (Type -> Type) ->
+  (Type -> Type) ->
+  Type ->
+  Type
+data LedgerDbArgs f m blk = LedgerDbArgs
+  { lgrSnapshotPolicyArgs :: SnapshotPolicyArgs
+  , lgrGenesis :: HKD f (m (ExtLedgerState blk ValuesMK))
+  , lgrHasFS :: HKD f (SomeHasFS m)
+  , lgrConfig :: LedgerDbCfgF f (ExtLedgerState blk)
+  , lgrTracer :: Tracer m (TraceEvent blk)
+  , lgrFlavorArgs :: LedgerDbFlavorArgs f m
+  , lgrRegistry :: HKD f (ResourceRegistry m)
+  , lgrQueryBatchSize :: QueryBatchSize
+  , lgrStartSnapshot :: Maybe DiskSnapshot
+  -- ^ If provided, the ledgerdb will start using said snapshot and fallback
+  -- to genesis. It will ignore any other existing snapshots. Useful for
+  -- db-analyser.
+  }
 
 -- | Default arguments
 defaultArgs ::
-     Applicative m
-  => Incomplete LedgerDbArgs m blk
-defaultArgs = LedgerDbArgs {
-      lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
-    , lgrGenesis            = NoDefault
-    , lgrHasFS              = NoDefault
-    , lgrConfig             = LedgerDbCfg NoDefault NoDefault OmitLedgerEvents
-    , lgrQueryBatchSize     = DefaultQueryBatchSize
-    , lgrTracer             = nullTracer
-      -- This value is the closest thing to a pre-UTxO-HD node, and as such it
+  Applicative m =>
+  Incomplete LedgerDbArgs m blk
+defaultArgs =
+  LedgerDbArgs
+    { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
+    , lgrGenesis = NoDefault
+    , lgrHasFS = NoDefault
+    , lgrConfig = LedgerDbCfg NoDefault NoDefault OmitLedgerEvents
+    , lgrQueryBatchSize = DefaultQueryBatchSize
+    , lgrTracer = nullTracer
+    , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
       -- will be the default for end-users.
-    , lgrFlavorArgs         = LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
-    , lgrRegistry           = NoDefault
-    , lgrStartSnapshot      = Nothing
+      lgrFlavorArgs = LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
+    , lgrRegistry = NoDefault
+    , lgrStartSnapshot = Nothing
     }
 
-data LedgerDbFlavorArgs f m =
-    LedgerDbFlavorArgsV1 (V1.LedgerDbFlavorArgs f m)
+data LedgerDbFlavorArgs f m
+  = LedgerDbFlavorArgsV1 (V1.LedgerDbFlavorArgs f m)
   | LedgerDbFlavorArgsV2 (V2.LedgerDbFlavorArgs f m)
-
 
 {-------------------------------------------------------------------------------
   QueryBatchSize
@@ -104,19 +104,19 @@ data LedgerDbFlavorArgs f m =
 --
 -- It is fine if the result of a range read contains less than this number of
 -- keys, but it should never return more.
-data QueryBatchSize =
-    -- | A default value, which is determined by a specific
+data QueryBatchSize
+  = -- | A default value, which is determined by a specific
     -- 'QueryBatchSize'. See 'defaultQueryBatchSize' as an example.
     DefaultQueryBatchSize
-    -- | A requested value: the number of keys to read from disk in each batch.
-  | RequestedQueryBatchSize Word64
+  | -- | A requested value: the number of keys to read from disk in each batch.
+    RequestedQueryBatchSize Word64
   deriving (Show, Eq, Generic)
   deriving anyclass NoThunks
 
 defaultQueryBatchSize :: QueryBatchSize -> Word64
 defaultQueryBatchSize requestedQueryBatchSize = case requestedQueryBatchSize of
-    RequestedQueryBatchSize value -> value
-    -- Experiments showed that 100_000 is a reasonable value, which yields
-    -- acceptable performance. We might want to tweak this further, but for now
-    -- this default seems good enough.
-    DefaultQueryBatchSize         -> 100_000
+  RequestedQueryBatchSize value -> value
+  -- Experiments showed that 100_000 is a reasonable value, which yields
+  -- acceptable performance. We might want to tweak this further, but for now
+  -- this default seems good enough.
+  DefaultQueryBatchSize -> 100_000

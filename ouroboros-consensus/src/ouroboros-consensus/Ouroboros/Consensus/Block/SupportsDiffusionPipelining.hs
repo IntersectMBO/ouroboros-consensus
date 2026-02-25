@@ -9,29 +9,33 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | See 'BlockSupportsDiffusionPipelining'.
-module Ouroboros.Consensus.Block.SupportsDiffusionPipelining (
-    BlockSupportsDiffusionPipelining (..)
+module Ouroboros.Consensus.Block.SupportsDiffusionPipelining
+  ( BlockSupportsDiffusionPipelining (..)
   , updateTentativeHeaderState
+
     -- * @DerivingVia@ helpers
+
     -- ** 'DisableDiffusionPipelining'
   , DisableDiffusionPipelining (..)
+
     -- ** 'SelectViewDiffusionPipelining'
   , SelectViewDiffusionPipelining (..)
   , SelectViewTentativeState (..)
+
     -- * Data family instances
   , BlockConfig (..)
   , Header (..)
   ) where
 
-import           Control.Monad (guard)
-import           Data.Coerce
-import           Data.Kind
-import           Data.Proxy
-import           GHC.Generics (Generic)
-import           NoThunks.Class
-import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Block.SupportsProtocol
-import           Ouroboros.Consensus.Protocol.Abstract
+import Control.Monad (guard)
+import Data.Coerce
+import Data.Kind
+import Data.Proxy
+import GHC.Generics (Generic)
+import NoThunks.Class
+import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Block.SupportsProtocol
+import Ouroboros.Consensus.Protocol.Abstract
 
 -- | Block functionality required to support __Block Diffusion Pipelining via
 -- Delayed Validation__ (DPvDV).
@@ -139,10 +143,12 @@ import           Ouroboros.Consensus.Protocol.Abstract
 -- anymore. It /is/ acceptable if DPvDV is less effective in scenarios involving
 -- an adversary with a very large amount of resources (like stake).
 class
-  ( Show     (TentativeHeaderState blk)
+  ( Show (TentativeHeaderState blk)
   , NoThunks (TentativeHeaderState blk)
-  , Show     (TentativeHeaderView  blk)
-  ) => BlockSupportsDiffusionPipelining blk where
+  , Show (TentativeHeaderView blk)
+  ) =>
+  BlockSupportsDiffusionPipelining blk
+  where
   -- | State that is maintained to judge whether a header can be pipelined. It
   -- can be thought of as a summary of all past trap tentative headers.
   type TentativeHeaderState blk :: Type
@@ -156,9 +162,9 @@ class
 
   -- | See 'TentativeHeaderView'.
   tentativeHeaderView ::
-       BlockConfig blk
-    -> Header blk
-    -> TentativeHeaderView blk
+    BlockConfig blk ->
+    Header blk ->
+    TentativeHeaderView blk
 
   -- | Apply a 'TentativeHeaderView' to the 'TentativeHeaderState'. This returns
   -- @'Just' st@ to indicate that the underlying header can be pipelined, and
@@ -168,25 +174,26 @@ class
   --
   -- Also see 'updateTentativeHeaderState'.
   applyTentativeHeaderView ::
-       Proxy blk
-    -> TentativeHeaderView blk
-       -- ^ Extracted using 'tentativeHeaderView' from a (valid) header whose
-       -- block body is either not yet known to be valid, or definitely invalid.
-    -> TentativeHeaderState blk
-       -- ^ The most recent 'TentativeHeaderState' in this particular context.
-    -> Maybe (TentativeHeaderState blk)
-       -- ^ The new 'TentativeHeaderState' in case the header satisfies the
-       -- pipelining criterion and is a trap header.
+    Proxy blk ->
+    -- | Extracted using 'tentativeHeaderView' from a (valid) header whose
+    -- block body is either not yet known to be valid, or definitely invalid.
+    TentativeHeaderView blk ->
+    -- | The most recent 'TentativeHeaderState' in this particular context.
+    TentativeHeaderState blk ->
+    -- | The new 'TentativeHeaderState' in case the header satisfies the
+    -- pipelining criterion and is a trap header.
+    Maybe (TentativeHeaderState blk)
 
 -- | Composition of 'tentativeHeaderView' and 'applyTentativeHeaderView'.
 updateTentativeHeaderState ::
-     forall blk. BlockSupportsDiffusionPipelining blk
-  => BlockConfig blk
-  -> Header blk
-  -> TentativeHeaderState blk
-  -> Maybe (TentativeHeaderState blk)
+  forall blk.
+  BlockSupportsDiffusionPipelining blk =>
+  BlockConfig blk ->
+  Header blk ->
+  TentativeHeaderState blk ->
+  Maybe (TentativeHeaderState blk)
 updateTentativeHeaderState bcfg hdr =
-    applyTentativeHeaderView (Proxy @blk) (tentativeHeaderView bcfg hdr)
+  applyTentativeHeaderView (Proxy @blk) (tentativeHeaderView bcfg hdr)
 
 {-------------------------------------------------------------------------------
   DerivingVia helpers
@@ -199,11 +206,11 @@ updateTentativeHeaderState bcfg hdr =
 -- >   instance BlockSupportsDiffusionPipelining MyBlock
 newtype DisableDiffusionPipelining blk = DisableDiffusionPipelining blk
 
-newtype instance Header (DisableDiffusionPipelining blk) =
-  DisableDiffusionPipeliningHeader (Header blk)
+newtype instance Header (DisableDiffusionPipelining blk)
+  = DisableDiffusionPipeliningHeader (Header blk)
 
-newtype instance BlockConfig (DisableDiffusionPipelining blk) =
-  DisableDiffusionPipeliningBlockConfig (BlockConfig blk)
+newtype instance BlockConfig (DisableDiffusionPipelining blk)
+  = DisableDiffusionPipeliningBlockConfig (BlockConfig blk)
 
 instance BlockSupportsDiffusionPipelining (DisableDiffusionPipelining blk) where
   type TentativeHeaderState _ = ()
@@ -235,38 +242,42 @@ instance BlockSupportsDiffusionPipelining (DisableDiffusionPipelining blk) where
 -- header (and later also a valid block) every time they are elected.
 newtype SelectViewDiffusionPipelining blk = SelectViewDiffusionPipelining blk
 
-newtype instance Header (SelectViewDiffusionPipelining blk) =
-  SelectViewDiffusionPipeliningHeader (Header blk)
+newtype instance Header (SelectViewDiffusionPipelining blk)
+  = SelectViewDiffusionPipeliningHeader (Header blk)
 
-newtype instance BlockConfig (SelectViewDiffusionPipelining blk) =
-  SelectViewDiffusionPipeliningBlockConfig (BlockConfig blk)
+newtype instance BlockConfig (SelectViewDiffusionPipelining blk)
+  = SelectViewDiffusionPipeliningBlockConfig (BlockConfig blk)
 
 -- | @'TentativeHeaderState' ('SelectViewDiffusionPipelining' blk) ~ 'SelectViewTentativeState' ('BlockProtocol' blk)@
-data SelectViewTentativeState proto =
-    LastInvalidSelectView !(SelectView proto)
+data SelectViewTentativeState proto
+  = LastInvalidSelectView !(SelectView proto)
   | NoLastInvalidSelectView
-  deriving stock (Generic)
+  deriving stock Generic
 
-deriving stock    instance ConsensusProtocol proto => Show     (SelectViewTentativeState proto)
-deriving stock    instance ConsensusProtocol proto => Eq       (SelectViewTentativeState proto)
+deriving stock instance ConsensusProtocol proto => Show (SelectViewTentativeState proto)
+deriving stock instance ConsensusProtocol proto => Eq (SelectViewTentativeState proto)
 deriving anyclass instance ConsensusProtocol proto => NoThunks (SelectViewTentativeState proto)
 
 instance
   ( BlockSupportsProtocol blk
   , Show (SelectView (BlockProtocol blk))
-  ) => BlockSupportsDiffusionPipelining (SelectViewDiffusionPipelining blk) where
-  type TentativeHeaderState (SelectViewDiffusionPipelining blk) =
-    SelectViewTentativeState (BlockProtocol blk)
+  ) =>
+  BlockSupportsDiffusionPipelining (SelectViewDiffusionPipelining blk)
+  where
+  type
+    TentativeHeaderState (SelectViewDiffusionPipelining blk) =
+      SelectViewTentativeState (BlockProtocol blk)
 
-  type TentativeHeaderView (SelectViewDiffusionPipelining blk) =
-    SelectView (BlockProtocol blk)
+  type
+    TentativeHeaderView (SelectViewDiffusionPipelining blk) =
+      SelectView (BlockProtocol blk)
 
   initialTentativeHeaderState _ = NoLastInvalidSelectView
 
   tentativeHeaderView = coerce selectView
 
   applyTentativeHeaderView _ sv' st = do
-      case st of
-        NoLastInvalidSelectView  -> pure ()
-        LastInvalidSelectView sv -> guard $ sv < sv'
-      pure $ LastInvalidSelectView sv'
+    case st of
+      NoLastInvalidSelectView -> pure ()
+      LastInvalidSelectView sv -> guard $ sv < sv'
+    pure $ LastInvalidSelectView sv'

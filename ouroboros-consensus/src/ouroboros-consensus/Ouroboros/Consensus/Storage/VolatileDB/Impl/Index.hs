@@ -5,34 +5,35 @@
 --
 -- Intended for qualified import
 -- > import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl.Index as Index
-module Ouroboros.Consensus.Storage.VolatileDB.Impl.Index (
-    delete
+module Ouroboros.Consensus.Storage.VolatileDB.Impl.Index
+  ( delete
   , elems
   , empty
   , insert
   , lastFile
   , lookup
   , toAscList
+
     -- * opaque
   , Index
   ) where
 
-import           Data.IntMap.Strict (IntMap)
+import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks (..))
-import           Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo (FileInfo)
-import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Types (FileId)
-import           Prelude hiding (lookup)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks (..))
+import Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo (FileInfo)
+import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types (FileId)
+import Prelude hiding (lookup)
 
 -- | Mapping from 'FileId' to 'FileInfo'
-newtype Index blk = Index { unIndex :: IntMap (FileInfo blk) }
+newtype Index blk = Index {unIndex :: IntMap (FileInfo blk)}
   deriving (Generic, NoThunks)
 
 modifyIndex ::
-     (IntMap (FileInfo blk) -> IntMap (FileInfo blk))
-  -> Index blk
-  -> Index blk
+  (IntMap (FileInfo blk) -> IntMap (FileInfo blk)) ->
+  Index blk ->
+  Index blk
 modifyIndex f (Index index) = Index (f index)
 
 empty :: Index blk

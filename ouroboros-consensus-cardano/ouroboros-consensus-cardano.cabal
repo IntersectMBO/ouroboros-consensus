@@ -520,6 +520,9 @@ library unstable-cardano-tools
     Cardano.Tools.GitRev
     Cardano.Tools.Headers
     Cardano.Tools.ImmDBServer.Diffusion
+    Cardano.Tools.ImmDBServer.Json
+    Cardano.Tools.ImmDBServer.Json.Say
+    Cardano.Tools.ImmDBServer.Json.SendRecv
     Cardano.Tools.ImmDBServer.MiniProtocols
 
   other-modules:
@@ -568,6 +571,7 @@ library unstable-cardano-tools
     filepath,
     fs-api ^>=0.3,
     githash,
+    io-classes,
     microlens,
     mtl,
     network,
@@ -585,11 +589,14 @@ library unstable-cardano-tools
     singletons,
     sop-core,
     sop-extras,
+    si-timers,
     strict-sop-core,
     text,
     text-builder >=1,
+    time,
     transformers,
     transformers-except,
+    typed-protocols,
 
 executable db-analyser
   import: common-lib
@@ -671,12 +678,15 @@ executable immdb-server
   hs-source-dirs: app
   main-is: immdb-server.hs
   build-depends:
+    aeson,
     base,
     cardano-crypto-class,
+    cardano-slotting,
     network,
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:unstable-cardano-tools,
+    time,
     with-utf8,
 
 executable snapshot-converter

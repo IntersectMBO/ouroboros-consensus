@@ -15,42 +15,45 @@
 --
 -- We then test that the real implementation behaves exactly as the model
 -- predicts.
---
-module Test.Ouroboros.Storage.ChainDB.GcSchedule (
-    example
+module Test.Ouroboros.Storage.ChainDB.GcSchedule
+  ( example
   , tests
   ) where
 
-import           Control.Monad (forM)
-import           Control.Monad.IOSim (runSimOrThrow)
-import           Control.Tracer (nullTracer)
-import           Data.Fixed (div')
-import           Data.List as List (foldl', partition, sort)
-import           Data.Time.Clock
-import           Data.Void (Void)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Background
-                     (GcParams (..), ScheduledGc (..))
+import Control.Monad (forM)
+import Control.Monad.IOSim (runSimOrThrow)
+import Control.Tracer (nullTracer)
+import Data.Fixed (div')
+import Data.List as List (foldl', partition, sort)
+import Data.Time.Clock
+import Data.Void (Void)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Background
+  ( GcParams (..)
+  , ScheduledGc (..)
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Background as Impl
-import           Ouroboros.Consensus.Util (lastMaybe, safeMaximum)
-import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util.IOLike
-import           Test.QuickCheck
-import           Test.Tasty
-import           Test.Tasty.QuickCheck
-import           Test.Util.Orphans.IOLike ()
-import           Test.Util.QuickCheck
+import Ouroboros.Consensus.Util (lastMaybe, safeMaximum)
+import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Consensus.Util.IOLike
+import Test.QuickCheck
+import Test.Tasty
+import Test.Tasty.QuickCheck
+import Test.Util.Orphans.IOLike ()
+import Test.Util.QuickCheck
 
 {-------------------------------------------------------------------------------
   Top-level tests
 -------------------------------------------------------------------------------}
 
 tests :: TestTree
-tests = testGroup "GcSchedule"
-    [ testProperty "queueLength"        prop_queueLength
-    , testProperty "overlap"            prop_overlap
+tests =
+  testGroup
+    "GcSchedule"
+    [ testProperty "queueLength" prop_queueLength
+    , testProperty "overlap" prop_overlap
     , testProperty "unnecessaryOverlap" prop_unnecessaryOverlap
-    , testProperty "model vs impl"      prop_model_vs_impl
+    , testProperty "model vs impl" prop_model_vs_impl
     ]
 
 {-------------------------------------------------------------------------------
@@ -72,18 +75,18 @@ tests = testGroup "GcSchedule"
 --   round up.
 prop_queueLength :: TestSetup -> Property
 prop_queueLength TestSetup{..} =
-    testDelay >= testInterval ==>
-      conjoin
-        [ gcSummaryQueueLength `le` (gcDelay `div'` gcInterval) + slack
-        | GcStateSummary { gcSummaryQueueLength } <- testTrace
-        ]
-  where
-    GcParams{..} = testGcParams
-    slack
-      | testDelay `mod` testInterval == 0
-      = 1
-      | otherwise
-      = 2
+  testDelay >= testInterval ==>
+    conjoin
+      [ gcSummaryQueueLength `le` (gcDelay `div'` gcInterval) + slack
+      | GcStateSummary{gcSummaryQueueLength} <- testTrace
+      ]
+ where
+  GcParams{..} = testGcParams
+  slack
+    | testDelay `mod` testInterval == 0 =
+        1
+    | otherwise =
+        2
 
 -- | Property 2:
 --
@@ -91,12 +94,12 @@ prop_queueLength TestSetup{..} =
 -- 'gcInterval'.
 prop_overlap :: TestSetup -> Property
 prop_overlap TestSetup{..} =
-    conjoin
-      [ gcSummaryOverlap `lt` blocksInInterval (gcDelay + gcInterval)
-      | GcStateSummary { gcSummaryOverlap } <- testTrace
-      ]
-  where
-    GcParams{..} = testGcParams
+  conjoin
+    [ gcSummaryOverlap `lt` blocksInInterval (gcDelay + gcInterval)
+    | GcStateSummary{gcSummaryOverlap} <- testTrace
+    ]
+ where
+  GcParams{..} = testGcParams
 
 -- | Property 3:
 --
@@ -104,12 +107,12 @@ prop_overlap TestSetup{..} =
 -- 'gcInterval'.
 prop_unnecessaryOverlap :: TestSetup -> Property
 prop_unnecessaryOverlap TestSetup{..} =
-    conjoin
-      [ gcSummaryUnnecessary `lt` blocksInInterval gcInterval
-      | GcStateSummary { gcSummaryUnnecessary } <- testTrace
-      ]
-  where
-    GcParams{..} = testGcParams
+  conjoin
+    [ gcSummaryUnnecessary `lt` blocksInInterval gcInterval
+    | GcStateSummary{gcSummaryUnnecessary} <- testTrace
+    ]
+ where
+  GcParams{..} = testGcParams
 
 -- TODO the unnecessaryOverlap should at some point go back to 0 after it has
 -- increased: test this property
@@ -123,27 +126,28 @@ blocksInInterval interval = round (realToFrac interval :: Double)
 -- Moreover, verify that the real implementation will have performed all its
 -- garbage collections at the same times as the model implementation.
 prop_model_vs_impl :: TestSetup -> Property
-prop_model_vs_impl TestSetup {..} = conjoin
+prop_model_vs_impl TestSetup{..} =
+  conjoin
     [ counterexample "Expected queue evolution /= actual" $
         map (reverseQueue . gcSummaryQueue) testTrace === gcQueueTrace
     , counterexample "Expected final garbage collections /= actual" $
         testGcGarbageCollections === gcs
     ]
-  where
-    (gcQueueTrace, gcs) = runGcSchedule testGcParams (genBlocks testNumBlocks)
+ where
+  (gcQueueTrace, gcs) = runGcSchedule testGcParams (genBlocks testNumBlocks)
 
-    -- In the model we store the queue in reverse order, so we have to reverse
-    -- it to match the order of the implementation's queue.
-    reverseQueue :: GcQueue -> GcQueue
-    reverseQueue (GcQueue q) = GcQueue (reverse q)
+  -- In the model we store the queue in reverse order, so we have to reverse
+  -- it to match the order of the implementation's queue.
+  reverseQueue :: GcQueue -> GcQueue
+  reverseQueue (GcQueue q) = GcQueue (reverse q)
 
 {-------------------------------------------------------------------------------
   Block
 -------------------------------------------------------------------------------}
 
 newtype Block = Block Int
-  deriving stock   (Show)
-  deriving newtype (Condense)
+  deriving stock Show
+  deriving newtype Condense
 
 blockArrivalTime :: Block -> Time
 blockArrivalTime (Block n) = Time (secondsToDiffTime (fromIntegral n))
@@ -156,7 +160,7 @@ blockSlotNo (Block n) = SlotNo (fromIntegral n)
 -------------------------------------------------------------------------------}
 
 -- | Queue of scheduled GCs, in reverse order
-newtype GcQueue = GcQueue { unGcQueue :: [ScheduledGc] }
+newtype GcQueue = GcQueue {unGcQueue :: [ScheduledGc]}
   deriving newtype (Eq, Condense)
 
 instance Show GcQueue where
@@ -171,8 +175,8 @@ instance Show GcQueue where
 -- blocks with a slot number < @s@ (because of EBBs, which share the slot with
 -- the regular block after it). In this test, we ignore this and use <=, so a
 -- GC for the slot of the block will remove the block.
-newtype GcBlocks = GcBlocks { unGcBlocks :: [(Block, Time)] }
-  deriving newtype (Condense)
+newtype GcBlocks = GcBlocks {unGcBlocks :: [(Block, Time)]}
+  deriving newtype Condense
 
 instance Show GcBlocks where
   show = condense
@@ -189,19 +193,19 @@ newtype GcGarbageCollections = GcGarbageCollections [(SlotNo, Time)]
 instance Show GcGarbageCollections where
   show = condense
 
-data GcState = GcState {
-      gcQueue              :: GcQueue
-    , gcBlocks             :: GcBlocks
-    , gcGarbageCollections :: GcGarbageCollections
-    }
-  deriving (Show)
+data GcState = GcState
+  { gcQueue :: GcQueue
+  , gcBlocks :: GcBlocks
+  , gcGarbageCollections :: GcGarbageCollections
+  }
+  deriving Show
 
 emptyGcState :: GcState
 emptyGcState =
-    GcState
-      (GcQueue [])
-      (GcBlocks [])
-      (GcGarbageCollections [])
+  GcState
+    (GcQueue [])
+    (GcBlocks [])
+    (GcGarbageCollections [])
 
 -- | The length of the queue
 queueLength :: GcState -> Int
@@ -213,94 +217,101 @@ overlap = length . unGcBlocks . gcBlocks
 
 -- | Number of blocks that could be GC'ed but haven't been
 unnecessaryOverlap ::
-     Time  -- ^ The current time
-  -> GcState
-  -> Int
+  -- | The current time
+  Time ->
+  GcState ->
+  Int
 unnecessaryOverlap now =
-    length . filter ((<= now) . snd) . unGcBlocks . gcBlocks
+  length . filter ((<= now) . snd) . unGcBlocks . gcBlocks
 
 -- | Run all garbage collections schedule before or at the given time.
 runGc :: Time -> GcState -> GcState
-runGc now gcState = GcState {
-      gcQueue              = GcQueue gcQueueLater
-    , gcBlocks             = case mbHighestGCedSlot of
-        Nothing              -> gcBlocks gcState
-        Just highestGCedSlot -> GcBlocks $
-          filter
-            ((> highestGCedSlot) . blockSlotNo . fst)
-            (unGcBlocks (gcBlocks gcState))
-    , gcGarbageCollections = GcGarbageCollections $
-        map toGarbageCollection gcQueueNow <> pastGarbageCollections
+runGc now gcState =
+  GcState
+    { gcQueue = GcQueue gcQueueLater
+    , gcBlocks = case mbHighestGCedSlot of
+        Nothing -> gcBlocks gcState
+        Just highestGCedSlot ->
+          GcBlocks $
+            filter
+              ((> highestGCedSlot) . blockSlotNo . fst)
+              (unGcBlocks (gcBlocks gcState))
+    , gcGarbageCollections =
+        GcGarbageCollections $
+          map toGarbageCollection gcQueueNow <> pastGarbageCollections
     }
-  where
-    (gcQueueLater, gcQueueNow) =
-      partition ((> now) . scheduledGcTime) (unGcQueue (gcQueue gcState))
-    mbHighestGCedSlot = safeMaximum $ map scheduledGcSlot gcQueueNow
-    GcGarbageCollections pastGarbageCollections =
-      gcGarbageCollections gcState
+ where
+  (gcQueueLater, gcQueueNow) =
+    partition ((> now) . scheduledGcTime) (unGcQueue (gcQueue gcState))
+  mbHighestGCedSlot = safeMaximum $ map scheduledGcSlot gcQueueNow
+  GcGarbageCollections pastGarbageCollections =
+    gcGarbageCollections gcState
 
-    toGarbageCollection :: ScheduledGc -> (SlotNo, Time)
-    toGarbageCollection (ScheduledGc time slot) = (slot, time)
+  toGarbageCollection :: ScheduledGc -> (SlotNo, Time)
+  toGarbageCollection (ScheduledGc time slot) = (slot, time)
 
 step ::
-     GcParams
-  -> Block
-  -> GcState
-  -> GcState
+  GcParams ->
+  Block ->
+  GcState ->
+  GcState
 step gcParams block =
-    -- Note the two calls to 'runGc': we simulate the behaviour of two threads
-    -- (schedule GCs, execute schedule) from this (single-threaded) function.
-    --
-    -- The first (innermost) 'runGc' is needed to run any outstanding GCs at
-    -- @now@. In other words, we run the "execute schedule" thread. Otherwise,
-    -- we will see GCs scheduled in the past in the queue when we schedule a
-    -- new one.
-    --
-    -- The second (outermost) 'runGc' is needed to immediately run the
-    -- scheduled GCs in case we have a 'gcDelay' of 0.
-      runGc now
+  -- Note the two calls to 'runGc': we simulate the behaviour of two threads
+  -- (schedule GCs, execute schedule) from this (single-threaded) function.
+  --
+  -- The first (innermost) 'runGc' is needed to run any outstanding GCs at
+  -- @now@. In other words, we run the "execute schedule" thread. Otherwise,
+  -- we will see GCs scheduled in the past in the queue when we schedule a
+  -- new one.
+  --
+  -- The second (outermost) 'runGc' is needed to immediately run the
+  -- scheduled GCs in case we have a 'gcDelay' of 0.
+  runGc now
     . schedule
     . runGc now
-  where
-    slot = blockSlotNo block
-    now  = blockArrivalTime block
+ where
+  slot = blockSlotNo block
+  now = blockArrivalTime block
 
-    schedule :: GcState -> GcState
-    schedule gcState = GcState {
-          gcQueue              = GcQueue gcQueue'
-        , gcBlocks             = GcBlocks $
-              (block, gcDelay gcParams `addTime` now)
-            : unGcBlocks (gcBlocks gcState)
-        , gcGarbageCollections = gcGarbageCollections gcState
-        }
-      where
-        scheduledTime = Impl.computeTimeForGC gcParams now
-        gcQueue' = case unGcQueue (gcQueue gcState) of
-          ScheduledGc prevScheduledTime _prevSlot:queue'
-            | scheduledTime == prevScheduledTime
-            -> ScheduledGc scheduledTime slot:queue'
-          queue
-            -> ScheduledGc scheduledTime slot:queue
+  schedule :: GcState -> GcState
+  schedule gcState =
+    GcState
+      { gcQueue = GcQueue gcQueue'
+      , gcBlocks =
+          GcBlocks $
+            (block, gcDelay gcParams `addTime` now)
+              : unGcBlocks (gcBlocks gcState)
+      , gcGarbageCollections = gcGarbageCollections gcState
+      }
+   where
+    scheduledTime = Impl.computeTimeForGC gcParams now
+    gcQueue' = case unGcQueue (gcQueue gcState) of
+      ScheduledGc prevScheduledTime _prevSlot : queue'
+        | scheduledTime == prevScheduledTime ->
+            ScheduledGc scheduledTime slot : queue'
+      queue ->
+        ScheduledGc scheduledTime slot : queue
 
 {-------------------------------------------------------------------------------
   GcStateSummary
 -------------------------------------------------------------------------------}
 
-data GcStateSummary = GcStateSummary {
-      gcSummaryNow         :: Time
-    , gcSummaryQueue       :: GcQueue
-    , gcSummaryQueueLength :: Int
-    , gcSummaryOverlap     :: Int
-    , gcSummaryUnnecessary :: Int
-    }
-  deriving (Show)
+data GcStateSummary = GcStateSummary
+  { gcSummaryNow :: Time
+  , gcSummaryQueue :: GcQueue
+  , gcSummaryQueueLength :: Int
+  , gcSummaryOverlap :: Int
+  , gcSummaryUnnecessary :: Int
+  }
+  deriving Show
 
 computeGcStateSummary :: Time -> GcState -> GcStateSummary
-computeGcStateSummary now gcState = GcStateSummary {
-      gcSummaryNow         = now
-    , gcSummaryQueue       = gcQueue                gcState
-    , gcSummaryQueueLength = queueLength            gcState
-    , gcSummaryOverlap     = overlap                gcState
+computeGcStateSummary now gcState =
+  GcStateSummary
+    { gcSummaryNow = now
+    , gcSummaryQueue = gcQueue gcState
+    , gcSummaryQueueLength = queueLength gcState
+    , gcSummaryOverlap = overlap gcState
     , gcSummaryUnnecessary = unnecessaryOverlap now gcState
     }
 
@@ -312,16 +323,16 @@ type Trace a = [a]
 
 computeTrace :: GcParams -> [Block] -> Trace (Time, GcState)
 computeTrace gcParams blocks =
-    zip
-      (map blockArrivalTime blocks)
-      -- Remember:
-      -- scanl f z [x1, x2, ...] == [z, z `f` x1, (z `f` x1) `f` x2, ...]
-      (drop 1 (scanl (flip (step gcParams)) emptyGcState blocks))
+  zip
+    (map blockArrivalTime blocks)
+    -- Remember:
+    -- scanl f z [x1, x2, ...] == [z, z `f` x1, (z `f` x1) `f` x2, ...]
+    (drop 1 (scanl (flip (step gcParams)) emptyGcState blocks))
 
 summarise :: GcParams -> Int -> Trace GcStateSummary
 summarise gcParams numBlocks =
-   map (uncurry computeGcStateSummary) $
-     computeTrace gcParams (genBlocks numBlocks)
+  map (uncurry computeGcStateSummary) $
+    computeTrace gcParams (genBlocks numBlocks)
 
 example :: GcParams -> Trace GcStateSummary
 example gcParams = summarise gcParams 1000
@@ -330,10 +341,10 @@ example gcParams = summarise gcParams 1000
 -- already performed garbage collections ('gcGarbageCollections') are included
 -- in the final 'GcGarbageCollections'.
 processQueueToEnd :: GcState -> GcGarbageCollections
-processQueueToEnd gcState@GcState { gcQueue = GcQueue queue } =
-    gcGarbageCollections (List.foldl' (flip runGc) gcState timesToGcAt)
-  where
-    timesToGcAt = sort (map scheduledGcTime queue)
+processQueueToEnd gcState@GcState{gcQueue = GcQueue queue} =
+  gcGarbageCollections (List.foldl' (flip runGc) gcState timesToGcAt)
+ where
+  timesToGcAt = sort (map scheduledGcTime queue)
 
 {-------------------------------------------------------------------------------
   Run the real GcSchedule
@@ -341,133 +352,129 @@ processQueueToEnd gcState@GcState { gcQueue = GcQueue queue } =
 
 runGcSchedule :: GcParams -> [Block] -> (Trace GcQueue, GcGarbageCollections)
 runGcSchedule gcParams blocks = runSimOrThrow test
-  where
-    test :: IOLike m => m (Trace GcQueue, GcGarbageCollections)
-    test = do
-      varGCs <- uncheckedNewTVarM (GcGarbageCollections [])
-      gcSchedule <- Impl.newGcSchedule
-      withAsync (gcThread varGCs gcSchedule) $ \asyncGcThread -> do
-        link asyncGcThread
+ where
+  test :: IOLike m => m (Trace GcQueue, GcGarbageCollections)
+  test = do
+    varGCs <- uncheckedNewTVarM (GcGarbageCollections [])
+    gcSchedule <- Impl.newGcSchedule
+    withAsync (gcThread varGCs gcSchedule) $ \asyncGcThread -> do
+      link asyncGcThread
 
-        gcQueueTrace <- forM blocks $ \block -> do
-          waitUntil (blockArrivalTime block)
-          Impl.scheduleGC nullTracer (blockSlotNo block) gcParams gcSchedule
-          -- Just the minimal number of time so that the background thread
-          -- gets its chance to run. Since this is the IO simulator, it will
-          -- run instantly.
-          threadDelay (picosecondsToDiffTime 1)
-          GcQueue <$> atomically (Impl.dumpGcSchedule gcSchedule)
+      gcQueueTrace <- forM blocks $ \block -> do
+        waitUntil (blockArrivalTime block)
+        Impl.scheduleGC nullTracer (blockSlotNo block) gcParams gcSchedule
+        -- Just the minimal number of time so that the background thread
+        -- gets its chance to run. Since this is the IO simulator, it will
+        -- run instantly.
+        threadDelay (picosecondsToDiffTime 1)
+        GcQueue <$> atomically (Impl.dumpGcSchedule gcSchedule)
 
-        -- Wait until the implementation's queue is empty
-        atomically $ do
-          queue <- Impl.dumpGcSchedule gcSchedule
-          check (null queue)
+      -- Wait until the implementation's queue is empty
+      atomically $ do
+        queue <- Impl.dumpGcSchedule gcSchedule
+        check (null queue)
 
-        cancel asyncGcThread
-        gcs <- atomically $ readTVar varGCs
-        return (gcQueueTrace, gcs)
+      cancel asyncGcThread
+      gcs <- atomically $ readTVar varGCs
+      return (gcQueueTrace, gcs)
 
-    gcThread
-      :: IOLike m
-      => StrictTVar m GcGarbageCollections
-      -> Impl.GcSchedule m
-      -> m Void
-    gcThread varGCs gcSchedule =
-      Impl.gcScheduleRunner gcSchedule $ \slotNo -> do
-        -- Record the time at which a GC for @slotNo@ was triggered in a TVar
-        now <- getMonotonicTime
-        atomically $ modifyTVar varGCs $ \(GcGarbageCollections gcs) ->
-          GcGarbageCollections $ (slotNo, now) : gcs
-
-    waitUntil :: IOLike m => Time -> m ()
-    waitUntil t = do
+  gcThread ::
+    IOLike m =>
+    StrictTVar m GcGarbageCollections ->
+    Impl.GcSchedule m ->
+    m Void
+  gcThread varGCs gcSchedule =
+    Impl.gcScheduleRunner gcSchedule $ \slotNo -> do
+      -- Record the time at which a GC for @slotNo@ was triggered in a TVar
       now <- getMonotonicTime
-      let toWait = max 0 (t `diffTime` now)
-      threadDelay toWait
+      atomically $ modifyTVar varGCs $ \(GcGarbageCollections gcs) ->
+        GcGarbageCollections $ (slotNo, now) : gcs
+
+  waitUntil :: IOLike m => Time -> m ()
+  waitUntil t = do
+    now <- getMonotonicTime
+    let toWait = max 0 (t `diffTime` now)
+    threadDelay toWait
 
 {-------------------------------------------------------------------------------
   TestSetup
 -------------------------------------------------------------------------------}
 
-data TestSetup = TestSetup {
-    -- | Number of blocks
-    --
-    -- This determines the length of the trace. Shrinking this value means
-    -- we find the smallest trace that yields the error
-    testNumBlocks            :: Int
-
-    -- | GC delay in seconds
-    --
-    -- We keep this as a separate value /in seconds/ so that (1) it is easily
-    -- shrinkable and (2) we can meaningfully use 'blocksInInterval'
-  , testDelay                :: Integer
-
-    -- | GC interval in seconds
-    --
-    -- See 'testDelay'
-  , testInterval             :: Integer
-
-    -- Derived
-  , testGcParams             :: GcParams
-  , testTrace                :: Trace GcStateSummary
-    -- | The garbage collections that will have been performed after
-    -- processing the whole queue.
+data TestSetup = TestSetup
+  { testNumBlocks :: Int
+  -- ^ Number of blocks
+  --
+  -- This determines the length of the trace. Shrinking this value means
+  -- we find the smallest trace that yields the error
+  , testDelay :: Integer
+  -- ^ GC delay in seconds
+  --
+  -- We keep this as a separate value /in seconds/ so that (1) it is easily
+  -- shrinkable and (2) we can meaningfully use 'blocksInInterval'
+  , testInterval :: Integer
+  -- ^ GC interval in seconds
+  --
+  -- See 'testDelay'
+  , -- Derived
+    testGcParams :: GcParams
+  , testTrace :: Trace GcStateSummary
   , testGcGarbageCollections :: GcGarbageCollections
+  -- ^ The garbage collections that will have been performed after
+  -- processing the whole queue.
   }
-  deriving (Show)
+  deriving Show
 
 genBlocks :: Int -> [Block]
-genBlocks numBlocks = map Block [1..numBlocks]
+genBlocks numBlocks = map Block [1 .. numBlocks]
 
 mkTestSetup :: Int -> Integer -> Integer -> TestSetup
-mkTestSetup numBlocks delay interval = TestSetup {
-      testNumBlocks            = numBlocks
-    , testDelay                = delay
-    , testInterval             = interval
-      -- Derived values
-    , testGcParams             = gcParams
-    , testTrace                = map (uncurry computeGcStateSummary) trace
+mkTestSetup numBlocks delay interval =
+  TestSetup
+    { testNumBlocks = numBlocks
+    , testDelay = delay
+    , testInterval = interval
+    , -- Derived values
+      testGcParams = gcParams
+    , testTrace = map (uncurry computeGcStateSummary) trace
     , testGcGarbageCollections = processQueueToEnd finalState
     }
-  where
-    trace = computeTrace gcParams (genBlocks numBlocks)
+ where
+  trace = computeTrace gcParams (genBlocks numBlocks)
 
-    finalState = maybe emptyGcState snd (lastMaybe trace)
+  finalState = maybe emptyGcState snd (lastMaybe trace)
 
-    gcParams :: GcParams
-    gcParams = GcParams {
-          gcDelay    = secondsToDiffTime delay
-        , gcInterval = secondsToDiffTime interval
-        }
-
+  gcParams :: GcParams
+  gcParams =
+    GcParams
+      { gcDelay = secondsToDiffTime delay
+      , gcInterval = secondsToDiffTime interval
+      }
 
 instance Arbitrary TestSetup where
   arbitrary =
-      mkTestSetup
-        <$> ((* 10) <$> getSize) -- Number of blocks
-        <*> choose (0, 100)      -- Delay
-        <*> choose (1, 120)      -- Interval
+    mkTestSetup
+      <$> ((* 10) <$> getSize) -- Number of blocks
+      <*> choose (0, 100) -- Delay
+      <*> choose (1, 120) -- Interval
 
-  shrink TestSetup{..} = concat [
-        [ mkTestSetup testNumBlocks' testDelay testInterval
+  shrink TestSetup{..} =
+    concat
+      [ [ mkTestSetup testNumBlocks' testDelay testInterval
         | testNumBlocks' <- shrink testNumBlocks
         ]
-
       , [ mkTestSetup testNumBlocks testDelay' testInterval
         | testDelay' <- shrink testDelay
         ]
-
       , [ mkTestSetup testNumBlocks testDelay testInterval'
         | testInterval' <- shrink testInterval
         , testInterval' > 0
         ]
-
-        -- Shrink two values shrink /together/
+      , -- Shrink two values shrink /together/
         -- Note: we don't compute all possible combinations, we shrink both
-      , [ mkTestSetup testNumBlocks testDelay' testInterval'
-        | testDelay    > 0
+        [ mkTestSetup testNumBlocks testDelay' testInterval'
+        | testDelay > 0
         , testInterval > 1
-        , let testDelay'    = testDelay    - 1
+        , let testDelay' = testDelay - 1
         , let testInterval' = testInterval - 1
         ]
       ]

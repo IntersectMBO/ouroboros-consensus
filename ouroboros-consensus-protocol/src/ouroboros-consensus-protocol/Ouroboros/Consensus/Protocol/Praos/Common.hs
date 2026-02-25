@@ -7,32 +7,33 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Various things common to iterations of the Praos protocol.
-module Ouroboros.Consensus.Protocol.Praos.Common (
-    MaxMajorProtVer (..)
+module Ouroboros.Consensus.Protocol.Praos.Common
+  ( MaxMajorProtVer (..)
   , PraosCanBeLeader (..)
   , PraosChainSelectView (..)
   , VRFTiebreakerFlavor (..)
+
     -- * node support
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
   ) where
 
 import qualified Cardano.Crypto.VRF as VRF
-import           Cardano.Ledger.BaseTypes (Nonce)
+import Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
-import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
+import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Cardano.Protocol.Crypto (Crypto, VRF)
+import Cardano.Protocol.Crypto (Crypto, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
-import           Cardano.Slotting.Block (BlockNo)
-import           Cardano.Slotting.Slot (SlotNo)
-import           Data.Function (on)
-import           Data.Map.Strict (Map)
-import           Data.Ord (Down (Down))
-import           Data.Word (Word64)
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Protocol.Abstract
+import Cardano.Slotting.Block (BlockNo)
+import Cardano.Slotting.Slot (SlotNo)
+import Data.Function (on)
+import Data.Map.Strict (Map)
+import Data.Ord (Down (Down))
+import Data.Word (Word64)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Protocol.Abstract
 
 -- | The maximum major protocol version.
 --
@@ -62,17 +63,17 @@ newtype MaxMajorProtVer = MaxMajorProtVer
 
 -- | View of the tip of a header fragment for chain selection.
 data PraosChainSelectView c = PraosChainSelectView
-  { csvChainLength :: BlockNo,
-    csvSlotNo      :: SlotNo,
-    csvIssuer      :: SL.VKey 'SL.BlockIssuer,
-    csvIssueNo     :: Word64,
-    csvTieBreakVRF :: VRF.OutputVRF (VRF c)
+  { csvChainLength :: BlockNo
+  , csvSlotNo :: SlotNo
+  , csvIssuer :: SL.VKey 'SL.BlockIssuer
+  , csvIssueNo :: Word64
+  , csvTieBreakVRF :: VRF.OutputVRF (VRF c)
   }
   deriving (Show, Eq, Generic, NoThunks)
 
 -- | When to compare the VRF tiebreakers.
-data VRFTiebreakerFlavor =
-    -- | Always compare the VRF tiebreakers. This is the behavior of all eras
+data VRFTiebreakerFlavor
+  = -- | Always compare the VRF tiebreakers. This is the behavior of all eras
     -- before Conway. Once mainnet has transitioned to Conway, we can remove
     -- this option. (The honest /historical/ Ouroboros chain cannot rely on
     -- tiebreakers to win, so /retroactively/ disabling the tiebreaker won't
@@ -96,45 +97,45 @@ data VRFTiebreakerFlavor =
     -- pools.
     RestrictedVRFTiebreaker SlotNo
   deriving stock (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
+  deriving anyclass NoThunks
 
 -- Used to implement the 'Ord' and 'ChainOrder' instances for Praos.
 comparePraos ::
-     VRFTiebreakerFlavor
-  -> PraosChainSelectView c
-  -> PraosChainSelectView c
-  -> Ordering
+  VRFTiebreakerFlavor ->
+  PraosChainSelectView c ->
+  PraosChainSelectView c ->
+  Ordering
 comparePraos tiebreakerFlavor =
-       (compare `on` csvChainLength)
+  (compare `on` csvChainLength)
     <> when' issueNoArmed (compare `on` csvIssueNo)
     <> when' vrfArmed (compare `on` Down . csvTieBreakVRF)
-  where
-    -- When the predicate @p@ returns 'True', use the given comparison function,
-    -- otherwise, no preference.
-    when' ::
-         (a -> a -> Bool)
-      -> (a -> a -> Ordering)
-      -> (a -> a -> Ordering)
-    when' p comp a1 a2 =
-        if p a1 a2 then comp a1 a2 else EQ
+ where
+  -- When the predicate @p@ returns 'True', use the given comparison function,
+  -- otherwise, no preference.
+  when' ::
+    (a -> a -> Bool) ->
+    (a -> a -> Ordering) ->
+    (a -> a -> Ordering)
+  when' p comp a1 a2 =
+    if p a1 a2 then comp a1 a2 else EQ
 
-    -- Only compare the issue numbers when the issuers and slots are identical.
-    -- Note that this case implies the VRFs also coincide.
-    issueNoArmed v1 v2 =
-           csvSlotNo v1 == csvSlotNo v2
-        && csvIssuer v1 == csvIssuer v2
+  -- Only compare the issue numbers when the issuers and slots are identical.
+  -- Note that this case implies the VRFs also coincide.
+  issueNoArmed v1 v2 =
+    csvSlotNo v1 == csvSlotNo v2
+      && csvIssuer v1 == csvIssuer v2
 
-    -- Whether to do a VRF comparison.
-    vrfArmed v1 v2 = case tiebreakerFlavor of
-        UnrestrictedVRFTiebreaker       -> True
-        RestrictedVRFTiebreaker maxDist ->
-          slotDist (csvSlotNo v1) (csvSlotNo v2) <= maxDist
+  -- Whether to do a VRF comparison.
+  vrfArmed v1 v2 = case tiebreakerFlavor of
+    UnrestrictedVRFTiebreaker -> True
+    RestrictedVRFTiebreaker maxDist ->
+      slotDist (csvSlotNo v1) (csvSlotNo v2) <= maxDist
 
-    slotDist :: SlotNo -> SlotNo -> SlotNo
-    slotDist s t
-      -- slot numbers are unsigned, so have to take care with subtraction
-      | s >= t    = s - t
-      | otherwise = t - s
+  slotDist :: SlotNo -> SlotNo -> SlotNo
+  slotDist s t
+    -- slot numbers are unsigned, so have to take care with subtraction
+    | s >= t = s - t
+    | otherwise = t - s
 
 -- | We order between chains as follows:
 --
@@ -244,27 +245,27 @@ instance Crypto c => ChainOrder (PraosChainSelectView c) where
   preferCandidate cfg ours cand = comparePraos cfg ours cand == LT
 
 data PraosCanBeLeader c = PraosCanBeLeader
-  { -- | Certificate delegating rights from the stake pool cold key (or
-    -- genesis stakeholder delegate cold key) to the online KES key.
-    praosCanBeLeaderOpCert     :: !(OCert.OCert c),
-    -- | Stake pool cold key or genesis stakeholder delegate cold key.
-    praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer),
-    praosCanBeLeaderSignKeyVRF :: !(VRF.SignKeyVRF (VRF c))
+  { praosCanBeLeaderOpCert :: !(OCert.OCert c)
+  -- ^ Certificate delegating rights from the stake pool cold key (or
+  -- genesis stakeholder delegate cold key) to the online KES key.
+  , praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer)
+  -- ^ Stake pool cold key or genesis stakeholder delegate cold key.
+  , praosCanBeLeaderSignKeyVRF :: !(VRF.SignKeyVRF (VRF c))
   }
-  deriving (Generic)
+  deriving Generic
 
 instance Crypto c => NoThunks (PraosCanBeLeader c)
 
 -- | See 'PraosProtocolSupportsNode'
-data PraosNonces = PraosNonces {
-    candidateNonce   :: !Nonce
-  , epochNonce       :: !Nonce
-  , evolvingNonce    :: !Nonce
-    -- | Nonce constructed from the hash of the Last Applied Block
-  , labNonce         :: !Nonce
-    -- | Nonce corresponding to the LAB nonce of the last block of the previous
-    -- epoch
+data PraosNonces = PraosNonces
+  { candidateNonce :: !Nonce
+  , epochNonce :: !Nonce
+  , evolvingNonce :: !Nonce
+  , labNonce :: !Nonce
+  -- ^ Nonce constructed from the hash of the Last Applied Block
   , previousLabNonce :: !Nonce
+  -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
+  -- epoch
   }
 
 -- | The node has Praos-aware code that inspects nonces in order to support

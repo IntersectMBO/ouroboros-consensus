@@ -13,19 +13,20 @@
 -- The tests for the immutable DB consist of a handful of unit tests, a set of
 -- property tests of the primary index, and then the main event, model based
 -- checking.
---
 module Test.Ouroboros.Storage.ImmutableDB (tests) where
 
 import qualified Test.Ouroboros.Storage.ImmutableDB.Primary as Primary
 import qualified Test.Ouroboros.Storage.ImmutableDB.StateMachine as StateMachine
-import           Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestTree, testGroup)
 
 {------------------------------------------------------------------------------
   The list of all tests
 ------------------------------------------------------------------------------}
 
 tests :: TestTree
-tests = testGroup "ImmutableDB" [
-      Primary.tests
+tests =
+  testGroup
+    "ImmutableDB"
+    [ Primary.tests
     , StateMachine.tests
     ]

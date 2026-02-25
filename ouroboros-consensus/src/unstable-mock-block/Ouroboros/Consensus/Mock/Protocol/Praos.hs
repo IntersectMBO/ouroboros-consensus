@@ -17,8 +17,8 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | Proof of concept implementation of Praos
-module Ouroboros.Consensus.Mock.Protocol.Praos (
-    HotKey (..)
+module Ouroboros.Consensus.Mock.Protocol.Praos
+  ( HotKey (..)
   , HotKeyEvolutionError (..)
   , Praos
   , PraosChainDepState (..)
@@ -29,6 +29,7 @@ module Ouroboros.Consensus.Mock.Protocol.Praos (
   , emptyPraosEvolvingStake
   , evolveKey
   , forgePraosFields
+
     -- * Tags
   , PraosCrypto (..)
   , PraosMockCrypto
@@ -36,47 +37,52 @@ module Ouroboros.Consensus.Mock.Protocol.Praos (
   , PraosValidateView (..)
   , PraosValidationError (..)
   , praosValidateView
+
     -- * Type instances
   , BlockInfo (..)
   , ConsensusConfig (..)
   , Ticked (..)
   ) where
 
-import           Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize')
-import           Cardano.Crypto.DSIGN.Ed25519 (Ed25519DSIGN)
-import           Cardano.Crypto.Hash.Class (HashAlgorithm (..), hashToBytes,
-                     hashWithSerialiser, sizeHash)
-import           Cardano.Crypto.Hash.SHA256 (SHA256)
-import           Cardano.Crypto.KES.Class
-import           Cardano.Crypto.KES.Mock
-import           Cardano.Crypto.KES.Simple
-import           Cardano.Crypto.Util
-import           Cardano.Crypto.VRF.Class
-import           Cardano.Crypto.VRF.Mock (MockVRF)
-import           Cardano.Crypto.VRF.Simple (SimpleVRF)
-import           Cardano.Slotting.EpochInfo
-import           Codec.CBOR.Decoding (decodeListLenOf)
-import           Codec.CBOR.Encoding (encodeListLen)
-import           Codec.Serialise (Serialise (..))
-import           Control.Monad (unless)
-import           Control.Monad.Except (throwError)
-import           Data.Kind (Type)
-import           Data.Map.Strict (Map)
+import Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize')
+import Cardano.Crypto.DSIGN.Ed25519 (Ed25519DSIGN)
+import Cardano.Crypto.Hash.Class
+  ( HashAlgorithm (..)
+  , hashToBytes
+  , hashWithSerialiser
+  , sizeHash
+  )
+import Cardano.Crypto.Hash.SHA256 (SHA256)
+import Cardano.Crypto.KES.Class
+import Cardano.Crypto.KES.Mock
+import Cardano.Crypto.KES.Simple
+import Cardano.Crypto.Util
+import Cardano.Crypto.VRF.Class
+import Cardano.Crypto.VRF.Mock (MockVRF)
+import Cardano.Crypto.VRF.Simple (SimpleVRF)
+import Cardano.Slotting.EpochInfo
+import Codec.CBOR.Decoding (decodeListLenOf)
+import Codec.CBOR.Encoding (encodeListLen)
+import Codec.Serialise (Serialise (..))
+import Control.Monad (unless)
+import Control.Monad.Except (throwError)
+import Data.Kind (Type)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
-import           Data.Typeable
-import           Data.Word (Word64)
-import           GHC.Generics (Generic)
-import           GHC.Stack (HasCallStack)
-import           NoThunks.Class (NoThunks (..))
-import           Numeric.Natural
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Mock.Ledger.Stake
-import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Protocol.Signed
-import           Ouroboros.Consensus.Util.Condense
-import           Test.Cardano.Slotting.Numeric ()
+import Data.Maybe (fromMaybe)
+import Data.Typeable
+import Data.Word (Word64)
+import GHC.Generics (Generic)
+import GHC.Stack (HasCallStack)
+import NoThunks.Class (NoThunks (..))
+import Numeric.Natural
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Mock.Ledger.Stake
+import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Protocol.Signed
+import Ouroboros.Consensus.Util.Condense
+import Test.Cardano.Slotting.Numeric ()
 
 -- The Praos paper can be located at https://ia.cr/2017/573
 --
@@ -149,29 +155,29 @@ import           Test.Cardano.Slotting.Numeric ()
 -------------------------------------------------------------------------------}
 
 -- | The fields that Praos required in the header
-data PraosFields crypto typeBeingSigned = PraosFields {
-      praosSignature   :: SignedKES (PraosKES crypto) typeBeingSigned
-    , praosExtraFields :: PraosExtraFields crypto
-    }
-  deriving (Generic)
+data PraosFields crypto typeBeingSigned = PraosFields
+  { praosSignature :: SignedKES (PraosKES crypto) typeBeingSigned
+  , praosExtraFields :: PraosExtraFields crypto
+  }
+  deriving Generic
 
 instance (PraosCrypto c, Typeable toSign) => NoThunks (PraosFields c toSign)
 
 deriving instance PraosCrypto c => Show (PraosFields c toSign)
-deriving instance PraosCrypto c => Eq   (PraosFields c toSign)
+deriving instance PraosCrypto c => Eq (PraosFields c toSign)
 
 -- | Fields that should be included in the signature
-data PraosExtraFields c = PraosExtraFields {
-      praosCreator :: CoreNodeId
-    , praosRho     :: CertifiedVRF (PraosVRF c) (Natural, SlotNo, VRFType)
-    , praosY       :: CertifiedVRF (PraosVRF c) (Natural, SlotNo, VRFType)
-    }
-  deriving (Generic)
+data PraosExtraFields c = PraosExtraFields
+  { praosCreator :: CoreNodeId
+  , praosRho :: CertifiedVRF (PraosVRF c) (Natural, SlotNo, VRFType)
+  , praosY :: CertifiedVRF (PraosVRF c) (Natural, SlotNo, VRFType)
+  }
+  deriving Generic
 
 instance PraosCrypto c => NoThunks (PraosExtraFields c)
 
 deriving instance PraosCrypto c => Show (PraosExtraFields c)
-deriving instance PraosCrypto c => Eq   (PraosExtraFields c)
+deriving instance PraosCrypto c => Eq (PraosExtraFields c)
 
 -- | A validate view is an association from the (@signed@) value to the
 -- @PraosFields@ that contains the signature that sign it.
@@ -179,18 +185,20 @@ deriving instance PraosCrypto c => Eq   (PraosExtraFields c)
 -- In this mock implementation, this could have been simplified to use
 -- @SignedSimplePraos@ but from the consensus point of view, it is not relevant
 -- which actual value is being signed, that's why we use the existential.
-data PraosValidateView c =
-    forall signed. Cardano.Crypto.KES.Class.Signable (PraosKES c) signed
-                => PraosValidateView (PraosFields c signed) signed
+data PraosValidateView c
+  = forall signed.
+    Cardano.Crypto.KES.Class.Signable (PraosKES c) signed =>
+    PraosValidateView (PraosFields c signed) signed
 
 -- | Convenience constructor for 'PraosValidateView'
-praosValidateView :: ( SignedHeader hdr
-                     , Cardano.Crypto.KES.Class.Signable (PraosKES c) (Signed hdr)
-                     )
-                  => (hdr -> PraosFields c (Signed hdr))
-                  -> (hdr -> PraosValidateView c)
+praosValidateView ::
+  ( SignedHeader hdr
+  , Cardano.Crypto.KES.Class.Signable (PraosKES c) (Signed hdr)
+  ) =>
+  (hdr -> PraosFields c (Signed hdr)) ->
+  (hdr -> PraosValidateView c)
 praosValidateView getFields hdr =
-    PraosValidateView (getFields hdr) (headerSigned hdr)
+  PraosValidateView (getFields hdr) (headerSigned hdr)
 
 {-------------------------------------------------------------------------------
   Forging
@@ -200,21 +208,22 @@ praosValidateView getFields hdr =
 --
 -- A key will be poisoned if it failed to evolve by @updateKES@, and will remain
 -- poisoned forever after that.
-data HotKey c =
-    HotKey
-      !Period  -- ^ Absolute period of the KES key
+data HotKey c
+  = HotKey
+      -- | Absolute period of the KES key
+      !Period
       !(UnsoundPureSignKeyKES (PraosKES c))
   | HotKeyPoisoned
-  deriving (Generic)
+  deriving Generic
 
 instance PraosCrypto c => NoThunks (HotKey c)
 instance PraosCrypto c => Show (HotKey c) where
-  show (HotKey p _)   = "HotKey " ++ show p ++ " <SignKeyKES: hidden>"
+  show (HotKey p _) = "HotKey " ++ show p ++ " <SignKeyKES: hidden>"
   show HotKeyPoisoned = "HotKeyPoisoned"
 
 -- | The 'HotKey' could not be evolved to the given 'Period'.
 newtype HotKeyEvolutionError = HotKeyEvolutionError Period
-  deriving (Show)
+  deriving Show
 
 -- | To be used in conjunction with, e.g., 'modifyMVar'.
 --
@@ -222,50 +231,53 @@ newtype HotKeyEvolutionError = HotKeyEvolutionError Period
 -- it, but we currently do. In real TPraos we check this in
 -- 'tpraosCheckCanForge'.
 evolveKey ::
-     PraosCrypto c
-  => SlotNo
-  -> HotKey c
-  -> (HotKey c, UpdateInfo (HotKey c) HotKeyEvolutionError)
+  PraosCrypto c =>
+  SlotNo ->
+  HotKey c ->
+  (HotKey c, UpdateInfo (HotKey c) HotKeyEvolutionError)
 evolveKey slotNo hotKey = case hotKey of
-    HotKey keyPeriod oldKey
-      | keyPeriod >= targetPeriod
-      -> (hotKey, Updated hotKey)
-      | otherwise
-      -> case unsoundPureUpdateKES () oldKey keyPeriod of
-           Nothing     ->
-             (HotKeyPoisoned, UpdateFailed $ HotKeyEvolutionError targetPeriod)
-           Just newKey ->
-             evolveKey slotNo (HotKey (keyPeriod + 1) newKey)
-    HotKeyPoisoned ->
-      (HotKeyPoisoned, UpdateFailed $ HotKeyEvolutionError targetPeriod)
-  where
-   targetPeriod :: Period
-   targetPeriod = fromIntegral $ unSlotNo slotNo
+  HotKey keyPeriod oldKey
+    | keyPeriod >= targetPeriod ->
+        (hotKey, Updated hotKey)
+    | otherwise ->
+        case unsoundPureUpdateKES () oldKey keyPeriod of
+          Nothing ->
+            (HotKeyPoisoned, UpdateFailed $ HotKeyEvolutionError targetPeriod)
+          Just newKey ->
+            evolveKey slotNo (HotKey (keyPeriod + 1) newKey)
+  HotKeyPoisoned ->
+    (HotKeyPoisoned, UpdateFailed $ HotKeyEvolutionError targetPeriod)
+ where
+  targetPeriod :: Period
+  targetPeriod = fromIntegral $ unSlotNo slotNo
 
 -- | Create a PraosFields using a proof, a key and the data to be signed.
 --
 -- It is done by signing whatever is extracted from the extra fields by @mkToSign@
 -- and storing the signature and the extra fields on a @PraosFields@.
-forgePraosFields :: ( PraosCrypto c
-                    , Cardano.Crypto.KES.Class.Signable (PraosKES c) toSign
-                    , HasCallStack
-                    )
-                 => PraosProof c
-                 -> HotKey c
-                 -> (PraosExtraFields c -> toSign)
-                 -> PraosFields c toSign
+forgePraosFields ::
+  ( PraosCrypto c
+  , Cardano.Crypto.KES.Class.Signable (PraosKES c) toSign
+  , HasCallStack
+  ) =>
+  PraosProof c ->
+  HotKey c ->
+  (PraosExtraFields c -> toSign) ->
+  PraosFields c toSign
 forgePraosFields PraosProof{..} hotKey mkToSign =
-    case hotKey of
-      HotKey kesPeriod key -> PraosFields {
-          praosSignature   = unsoundPureSignedKES () kesPeriod (mkToSign fieldsToSign) key
+  case hotKey of
+    HotKey kesPeriod key ->
+      PraosFields
+        { praosSignature = unsoundPureSignedKES () kesPeriod (mkToSign fieldsToSign) key
         , praosExtraFields = fieldsToSign
         }
-      HotKeyPoisoned -> error "trying to sign with a poisoned key"
-  where
-    fieldsToSign = PraosExtraFields {
-        praosCreator = praosLeader
-      , praosRho     = praosProofRho
-      , praosY       = praosProofY
+    HotKeyPoisoned -> error "trying to sign with a poisoned key"
+ where
+  fieldsToSign =
+    PraosExtraFields
+      { praosCreator = praosLeader
+      , praosRho = praosProofRho
+      , praosY = praosProofY
       }
 
 {-------------------------------------------------------------------------------
@@ -303,10 +315,10 @@ latestEvolvedStakeDistAsOfEpoch (PraosEvolvingStake x) e =
   Praos specific types
 -------------------------------------------------------------------------------}
 
--- |The two VRF invocation modes, NONCE (rho) and TEST (y). See the comment at
--- the top of the module for an explanation of these.
+-- | The two VRF invocation modes, NONCE (rho) and TEST (y). See the comment at
+--  the top of the module for an explanation of these.
 data VRFType = NONCE | TEST
-    deriving (Show, Eq, Ord, Generic, NoThunks)
+  deriving (Show, Eq, Ord, Generic, NoThunks)
 
 instance Serialise VRFType
 
@@ -314,37 +326,37 @@ instance ToCBOR VRFType where
   -- This is a cheat, and at some point we probably want to decide on Serialise/ToCBOR
   toCBOR = encode
 
--- |Proofs certifying ρ and y for a given slot and eta.
-data PraosProof c = PraosProof {
-      praosProofRho :: CertifiedVRF (PraosVRF c) (Natural, SlotNo, VRFType)
-    , praosProofY   :: CertifiedVRF (PraosVRF c) (Natural, SlotNo, VRFType)
-    , praosLeader   :: CoreNodeId
-    }
+-- | Proofs certifying ρ and y for a given slot and eta.
+data PraosProof c = PraosProof
+  { praosProofRho :: CertifiedVRF (PraosVRF c) (Natural, SlotNo, VRFType)
+  , praosProofY :: CertifiedVRF (PraosVRF c) (Natural, SlotNo, VRFType)
+  , praosLeader :: CoreNodeId
+  }
 
 -- | An error that can arise during validation
-data PraosValidationError c =
-      PraosInvalidSlot SlotNo SlotNo
-    | PraosUnknownCoreId CoreNodeId
-    | PraosInvalidSig String (VerKeyKES (PraosKES c)) Natural (SigKES (PraosKES c))
-    | PraosInvalidCert (VerKeyVRF (PraosVRF c)) (Natural, SlotNo, VRFType) Natural (CertVRF (PraosVRF c))
-    | PraosInsufficientStake Double Natural
-    deriving (Generic)
+data PraosValidationError c
+  = PraosInvalidSlot SlotNo SlotNo
+  | PraosUnknownCoreId CoreNodeId
+  | PraosInvalidSig String (VerKeyKES (PraosKES c)) Natural (SigKES (PraosKES c))
+  | PraosInvalidCert (VerKeyVRF (PraosVRF c)) (Natural, SlotNo, VRFType) Natural (CertVRF (PraosVRF c))
+  | PraosInsufficientStake Double Natural
+  deriving Generic
 
 -- We override 'showTypeOf' to make sure to show @c@
 instance PraosCrypto c => NoThunks (PraosValidationError c) where
   showTypeOf _ = show $ typeRep (Proxy @(PraosValidationError c))
 
 deriving instance PraosCrypto c => Show (PraosValidationError c)
-deriving instance PraosCrypto c => Eq   (PraosValidationError c)
+deriving instance PraosCrypto c => Eq (PraosValidationError c)
 
 data BlockInfo c = BlockInfo
-    { biSlot :: !SlotNo
-    , biRho  :: !(CertifiedVRF (PraosVRF c) (Natural, SlotNo, VRFType))
-    }
-  deriving (Generic)
+  { biSlot :: !SlotNo
+  , biRho :: !(CertifiedVRF (PraosVRF c) (Natural, SlotNo, VRFType))
+  }
+  deriving Generic
 
-deriving instance PraosCrypto c => Show     (BlockInfo c)
-deriving instance PraosCrypto c => Eq       (BlockInfo c)
+deriving instance PraosCrypto c => Show (BlockInfo c)
+deriving instance PraosCrypto c => Eq (BlockInfo c)
 deriving instance PraosCrypto c => NoThunks (BlockInfo c)
 
 {-------------------------------------------------------------------------------
@@ -355,77 +367,80 @@ deriving instance PraosCrypto c => NoThunks (BlockInfo c)
 data Praos c
 
 -- | Praos parameters that are node independent
-data PraosParams = PraosParams {
-      praosLeaderF       :: !Double
-      -- ^ f, the active slots coefficient, defined in 3.3 in the Praos paper.
-    , praosSecurityParam :: !SecurityParam
-      -- ^ k, maximum number of blocks we can rollback
-    , praosSlotsPerEpoch :: !Word64
-      -- ^ R, slots in each epoch, defined in section 3 in the Praos paper.
-    }
+data PraosParams = PraosParams
+  { praosLeaderF :: !Double
+  -- ^ f, the active slots coefficient, defined in 3.3 in the Praos paper.
+  , praosSecurityParam :: !SecurityParam
+  -- ^ k, maximum number of blocks we can rollback
+  , praosSlotsPerEpoch :: !Word64
+  -- ^ R, slots in each epoch, defined in section 3 in the Praos paper.
+  }
   deriving (Generic, NoThunks)
 
 -- | The configuration that will be provided to every node when running the
 -- MockPraos protocol.
 data instance ConsensusConfig (Praos c) = PraosConfig
-  { praosParams        :: !PraosParams
-  , praosInitialEta    :: !Natural
-  , praosInitialStake  :: !StakeDist
+  { praosParams :: !PraosParams
+  , praosInitialEta :: !Natural
+  , praosInitialStake :: !StakeDist
   , praosEvolvingStake :: !PraosEvolvingStake
-  , praosSignKeyVRF    :: !(SignKeyVRF (PraosVRF c))
-  , praosVerKeys       :: !(Map CoreNodeId (VerKeyKES (PraosKES c), VerKeyVRF (PraosVRF c)))
+  , praosSignKeyVRF :: !(SignKeyVRF (PraosVRF c))
+  , praosVerKeys :: !(Map CoreNodeId (VerKeyKES (PraosKES c), VerKeyVRF (PraosVRF c)))
   }
-  deriving (Generic)
+  deriving Generic
 
 instance PraosCrypto c => NoThunks (ConsensusConfig (Praos c))
 
 slotEpoch :: ConsensusConfig (Praos c) -> SlotNo -> EpochNo
 slotEpoch PraosConfig{..} s =
-    fixedEpochInfoEpoch (EpochSize praosSlotsPerEpoch) s
-  where
-    PraosParams{..} = praosParams
+  fixedEpochInfoEpoch (EpochSize praosSlotsPerEpoch) s
+ where
+  PraosParams{..} = praosParams
 
 epochFirst :: ConsensusConfig (Praos c) -> EpochNo -> SlotNo
 epochFirst PraosConfig{..} e =
-    fixedEpochInfoFirst (EpochSize praosSlotsPerEpoch) e
-  where
-    PraosParams{..} = praosParams
+  fixedEpochInfoFirst (EpochSize praosSlotsPerEpoch) e
+ where
+  PraosParams{..} = praosParams
 
--- |The chain dependent state, in this case as it is a mock, we just will store
--- a list of BlockInfos that allow us to look into the past.
-newtype PraosChainDepState c = PraosChainDepState {
-      praosHistory :: [BlockInfo c]
-    }
-  deriving stock   (Eq, Show)
+-- | The chain dependent state, in this case as it is a mock, we just will store
+--  a list of BlockInfos that allow us to look into the past.
+newtype PraosChainDepState c = PraosChainDepState
+  { praosHistory :: [BlockInfo c]
+  }
+  deriving stock (Eq, Show)
   deriving newtype (NoThunks, Serialise)
 
 infosSlice :: SlotNo -> SlotNo -> [BlockInfo c] -> [BlockInfo c]
-infosSlice from to xs = takeWhile (\b -> biSlot b >= from)
-                      $ dropWhile (\b -> biSlot b > to) xs
+infosSlice from to xs =
+  takeWhile (\b -> biSlot b >= from) $
+    dropWhile (\b -> biSlot b > to) xs
 
-infosEta :: forall c. (PraosCrypto c)
-         => ConsensusConfig (Praos c)
-         -> [BlockInfo c]
-         -> EpochNo
-         -> Natural
-infosEta l _  0 =
-    praosInitialEta l
+infosEta ::
+  forall c.
+  PraosCrypto c =>
+  ConsensusConfig (Praos c) ->
+  [BlockInfo c] ->
+  EpochNo ->
+  Natural
+infosEta l _ 0 =
+  praosInitialEta l
 infosEta l@PraosConfig{praosParams = PraosParams{..}} xs e =
-    let e'   = e - 1
-        -- the η from the previous epoch
-        eta' = infosEta l xs e'
-        -- the first slot in previous epoch
-        from = epochFirst l e'
-        -- 2/3 of the slots per epoch
-        n    = div (2 * praosSlotsPerEpoch) 3
-        -- the last of the 2/3 of slots in this epoch
-        to   = SlotNo $ unSlotNo from + n
-        -- the list of rhos from the first block in this epoch until the one at
-        -- 2/3 of the slots. Note it is reversed, i.e. start at the oldest.
-        rhos = reverse [biRho b | b <- infosSlice from to xs]
-    in  bytesToNatural
-          . hashToBytes
-          $ hashWithSerialiser @(PraosHash c) toCBOR (eta', e, rhos)
+  let e' = e - 1
+      -- the η from the previous epoch
+      eta' = infosEta l xs e'
+      -- the first slot in previous epoch
+      from = epochFirst l e'
+      -- 2/3 of the slots per epoch
+      n = div (2 * praosSlotsPerEpoch) 3
+      -- the last of the 2/3 of slots in this epoch
+      to = SlotNo $ unSlotNo from + n
+      -- the list of rhos from the first block in this epoch until the one at
+      -- 2/3 of the slots. Note it is reversed, i.e. start at the oldest.
+      rhos = reverse [biRho b | b <- infosSlice from to xs]
+   in bytesToNatural
+        . hashToBytes
+        $ hashWithSerialiser @(PraosHash c) toCBOR (eta', e, rhos)
 
 -- | Ticking the Praos chain dep state has no effect
 --
@@ -435,189 +450,206 @@ infosEta l@PraosConfig{praosParams = PraosParams{..}} xs e =
 -- choose the right nonce from that; this means that ticking has no effect.
 --
 -- We do however need access to the ticked stake distribution.
-data instance Ticked (PraosChainDepState c) = TickedPraosChainDepState {
-      praosLedgerView            :: LedgerView (Praos c)
-    , untickedPraosChainDepState :: PraosChainDepState c
-      -- ^ The unticked chain dependent state, containing the full history.
-    }
+data instance Ticked (PraosChainDepState c) = TickedPraosChainDepState
+  { praosLedgerView :: LedgerView (Praos c)
+  , untickedPraosChainDepState :: PraosChainDepState c
+  -- ^ The unticked chain dependent state, containing the full history.
+  }
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
-
   protocolSecurityParam = praosSecurityParam . praosParams
 
-  type LedgerView    (Praos c) = ()
-  type IsLeader      (Praos c) = PraosProof           c
+  type LedgerView (Praos c) = ()
+  type IsLeader (Praos c) = PraosProof c
   type ValidationErr (Praos c) = PraosValidationError c
-  type ValidateView  (Praos c) = PraosValidateView    c
-  type ChainDepState (Praos c) = PraosChainDepState   c
-  type CanBeLeader   (Praos c) = CoreNodeId
+  type ValidateView (Praos c) = PraosValidateView c
+  type ChainDepState (Praos c) = PraosChainDepState c
+  type CanBeLeader (Praos c) = CoreNodeId
 
-  checkIsLeader cfg@PraosConfig{..} nid slot (TickedPraosChainDepState _u  cds) =
-      -- See Figure 4 of the Praos paper.
-      -- In order to be leader, y must be < Tᵢ
-      if fromIntegral (getOutputVRFNatural (certifiedOutput y)) < t
-      then Just PraosProof {
-               praosProofRho = rho
-             , praosProofY   = y
-             , praosLeader   = nid
-             }
+  checkIsLeader cfg@PraosConfig{..} nid slot (TickedPraosChainDepState _u cds) =
+    -- See Figure 4 of the Praos paper.
+    -- In order to be leader, y must be < Tᵢ
+    if fromIntegral (getOutputVRFNatural (certifiedOutput y)) < t
+      then
+        Just
+          PraosProof
+            { praosProofRho = rho
+            , praosProofY = y
+            , praosLeader = nid
+            }
       else Nothing
-    where
-      (rho', y', t) = rhoYT cfg (praosHistory cds) slot nid
-      rho = evalCertified () rho' praosSignKeyVRF
-      y   = evalCertified () y'   praosSignKeyVRF
+   where
+    (rho', y', t) = rhoYT cfg (praosHistory cds) slot nid
+    rho = evalCertified () rho' praosSignKeyVRF
+    y = evalCertified () y' praosSignKeyVRF
 
   tickChainDepState _ lv _ = TickedPraosChainDepState lv
 
-  updateChainDepState cfg@PraosConfig{..}
-                      (PraosValidateView PraosFields{..} toSign)
-                      slot
-                      (TickedPraosChainDepState () cds) = do
-    let PraosExtraFields {..} = praosExtraFields
-        nid = praosCreator
+  updateChainDepState
+    cfg@PraosConfig{..}
+    (PraosValidateView PraosFields{..} toSign)
+    slot
+    (TickedPraosChainDepState () cds) = do
+      let PraosExtraFields{..} = praosExtraFields
+          nid = praosCreator
 
-    -- check that the new block advances time
-    case praosHistory cds of
+      -- check that the new block advances time
+      case praosHistory cds of
         (c : _)
-            | biSlot c >= slot -> throwError $ PraosInvalidSlot slot (biSlot c)
-        _                      -> return ()
+          | biSlot c >= slot -> throwError $ PraosInvalidSlot slot (biSlot c)
+        _ -> return ()
 
-    -- check that block creator is a known core node
-    (vkKES, vkVRF) <- case Map.lookup nid praosVerKeys of
-        Nothing  -> throwError $ PraosUnknownCoreId nid
+      -- check that block creator is a known core node
+      (vkKES, vkVRF) <- case Map.lookup nid praosVerKeys of
+        Nothing -> throwError $ PraosUnknownCoreId nid
         Just vks -> return vks
 
-    -- verify block signature
-    case verifySignedKES
-           ()
-           vkKES
-           (fromIntegral $ unSlotNo slot)
-           toSign
-           praosSignature of
-       Right () -> return ()
-       Left err -> throwError $ PraosInvalidSig
-                                  err
-                                  vkKES
-                                  (fromIntegral $ unSlotNo slot)
-                                  (getSig praosSignature)
+      -- verify block signature
+      case verifySignedKES
+        ()
+        vkKES
+        (fromIntegral $ unSlotNo slot)
+        toSign
+        praosSignature of
+        Right () -> return ()
+        Left err ->
+          throwError $
+            PraosInvalidSig
+              err
+              vkKES
+              (fromIntegral $ unSlotNo slot)
+              (getSig praosSignature)
 
-    let (rho', y', t) = rhoYT cfg (praosHistory cds) slot nid
+      let (rho', y', t) = rhoYT cfg (praosHistory cds) slot nid
 
-    -- verify rho proof
-    unless (verifyCertified () vkVRF rho' praosRho) $
-        throwError $ PraosInvalidCert
+      -- verify rho proof
+      unless (verifyCertified () vkVRF rho' praosRho) $
+        throwError $
+          PraosInvalidCert
             vkVRF
             rho'
             (getOutputVRFNatural (certifiedOutput praosRho))
             (certifiedProof praosRho)
 
-    -- verify y proof
-    unless (verifyCertified () vkVRF y' praosY) $
-        throwError $ PraosInvalidCert
+      -- verify y proof
+      unless (verifyCertified () vkVRF y' praosY) $
+        throwError $
+          PraosInvalidCert
             vkVRF
             y'
             (getOutputVRFNatural (certifiedOutput praosY))
             (certifiedProof praosY)
 
-    -- verify stake
-    unless (fromIntegral (getOutputVRFNatural (certifiedOutput praosY)) < t) $
-        throwError $ PraosInsufficientStake t $
-                       getOutputVRFNatural (certifiedOutput praosY)
+      -- verify stake
+      unless (fromIntegral (getOutputVRFNatural (certifiedOutput praosY)) < t) $
+        throwError $
+          PraosInsufficientStake t $
+            getOutputVRFNatural (certifiedOutput praosY)
 
-    -- "store" a block by adding it to the chain dependent state
-    let !bi = BlockInfo
-            { biSlot  = slot
-            , biRho   = praosRho
-            }
+      -- "store" a block by adding it to the chain dependent state
+      let !bi =
+            BlockInfo
+              { biSlot = slot
+              , biRho = praosRho
+              }
 
-    return $ PraosChainDepState $ bi : praosHistory cds
+      return $ PraosChainDepState $ bi : praosHistory cds
 
-  reupdateChainDepState _
-                        (PraosValidateView PraosFields{..} _)
-                        slot
-                        (TickedPraosChainDepState () cds) =
-    let PraosExtraFields{..} = praosExtraFields
-        !bi = BlockInfo
-            { biSlot  = slot
-            , biRho   = praosRho
-            }
-    in PraosChainDepState $ bi : praosHistory cds
+  reupdateChainDepState
+    _
+    (PraosValidateView PraosFields{..} _)
+    slot
+    (TickedPraosChainDepState () cds) =
+      let PraosExtraFields{..} = praosExtraFields
+          !bi =
+            BlockInfo
+              { biSlot = slot
+              , biRho = praosRho
+              }
+       in PraosChainDepState $ bi : praosHistory cds
 
-  -- (Standard) Praos uses the standard chain selection rule, so no need to
-  -- override (though see note regarding clock skew).
+-- (Standard) Praos uses the standard chain selection rule, so no need to
+-- override (though see note regarding clock skew).
 
 -- | Probability for stakeholder Uᵢ to be elected in slot
 -- slⱼ considering its relative stake αᵢ.
 phi :: ConsensusConfig (Praos c) -> Rational -> Double
 phi PraosConfig{..} alpha = 1 - (1 - praosLeaderF) ** fromRational alpha
-  where
-    PraosParams{..} = praosParams
+ where
+  PraosParams{..} = praosParams
 
 -- | Compute Tᵢ for a given stakeholder @n@ at a @SlotNo@. Will be computed from
 -- 'praosEvolvingStake' (or taken from 'praosInitialStake' if checking epoch 0).
-leaderThreshold :: forall c. PraosCrypto c
-                => ConsensusConfig (Praos c)
-                -> [BlockInfo c]
-                -> SlotNo
-                -> CoreNodeId
-                -> Double
+leaderThreshold ::
+  forall c.
+  PraosCrypto c =>
+  ConsensusConfig (Praos c) ->
+  [BlockInfo c] ->
+  SlotNo ->
+  CoreNodeId ->
+  Double
 leaderThreshold config _blockInfos s n =
-    let
-      alpha = stakeWithDefault 0 n
-        $ fromMaybe (praosInitialStake config)
-        $ latestEvolvedStakeDistAsOfEpoch (praosEvolvingStake config) (slotEpoch config s)
-    in
-      -- 2^(l_VRF * 8) * ϕ_f(αᵢ)
-      -- the 8 factor converts from bytes to bits.
-      2 ^ (sizeHash (Proxy :: Proxy (PraosHash c)) * 8) * phi config alpha
+  let
+    alpha =
+      stakeWithDefault 0 n $
+        fromMaybe (praosInitialStake config) $
+          latestEvolvedStakeDistAsOfEpoch (praosEvolvingStake config) (slotEpoch config s)
+   in
+    -- 2^(l_VRF * 8) * ϕ_f(αᵢ)
+    -- the 8 factor converts from bytes to bits.
+    2 ^ (sizeHash (Proxy :: Proxy (PraosHash c)) * 8) * phi config alpha
 
--- |Compute the rho, y and Tᵢ parameters for a given slot.
-rhoYT :: PraosCrypto c
-      => ConsensusConfig (Praos c)
-      -> [BlockInfo c]
-      -> SlotNo
-      -> CoreNodeId
-      -> ( (Natural, SlotNo, VRFType)
-         , (Natural, SlotNo, VRFType)
-         , Double
-         )
+-- | Compute the rho, y and Tᵢ parameters for a given slot.
+rhoYT ::
+  PraosCrypto c =>
+  ConsensusConfig (Praos c) ->
+  [BlockInfo c] ->
+  SlotNo ->
+  CoreNodeId ->
+  ( (Natural, SlotNo, VRFType)
+  , (Natural, SlotNo, VRFType)
+  , Double
+  )
 rhoYT st xs s nid =
-    let e   = slotEpoch st s
-        eta = infosEta st xs e
-        rho = (eta, s, NONCE)
-        y   = (eta, s, TEST)
-        t   = leaderThreshold st xs s nid
-    in  (rho, y, t)
+  let e = slotEpoch st s
+      eta = infosEta st xs e
+      rho = (eta, s, NONCE)
+      y = (eta, s, TEST)
+      t = leaderThreshold st xs s nid
+   in (rho, y, t)
 
 {-------------------------------------------------------------------------------
   Crypto models
 -------------------------------------------------------------------------------}
 
-class ( UnsoundPureKESAlgorithm  (PraosKES  c)
-      , VRFAlgorithm  (PraosVRF  c)
-      , HashAlgorithm (PraosHash c)
-      , Typeable c
-      , Typeable (PraosVRF c)
-      , Condense (SigKES (PraosKES c))
-      , Cardano.Crypto.VRF.Class.Signable (PraosVRF c) (Natural, SlotNo, VRFType)
-      , ContextKES (PraosKES c) ~ ()
-      , ContextVRF (PraosVRF c) ~ ()
-      ) => PraosCrypto (c :: Type) where
-  type family PraosKES  c :: Type
-  type family PraosVRF  c :: Type
-  type family PraosHash c :: Type
+class
+  ( UnsoundPureKESAlgorithm (PraosKES c)
+  , VRFAlgorithm (PraosVRF c)
+  , HashAlgorithm (PraosHash c)
+  , Typeable c
+  , Typeable (PraosVRF c)
+  , Condense (SigKES (PraosKES c))
+  , Cardano.Crypto.VRF.Class.Signable (PraosVRF c) (Natural, SlotNo, VRFType)
+  , ContextKES (PraosKES c) ~ ()
+  , ContextVRF (PraosVRF c) ~ ()
+  ) =>
+  PraosCrypto (c :: Type)
+  where
+  type PraosKES c :: Type
+  type PraosVRF c :: Type
+  type PraosHash c :: Type
 
 data PraosStandardCrypto
 data PraosMockCrypto
 
 instance PraosCrypto PraosStandardCrypto where
-  type PraosKES  PraosStandardCrypto = SimpleKES Ed25519DSIGN 1000
-  type PraosVRF  PraosStandardCrypto = SimpleVRF
+  type PraosKES PraosStandardCrypto = SimpleKES Ed25519DSIGN 1000
+  type PraosVRF PraosStandardCrypto = SimpleVRF
   type PraosHash PraosStandardCrypto = SHA256
 
 instance PraosCrypto PraosMockCrypto where
-  type PraosKES  PraosMockCrypto = MockKES 10000
-  type PraosVRF  PraosMockCrypto = MockVRF
+  type PraosKES PraosMockCrypto = MockKES 10000
+  type PraosVRF PraosMockCrypto = MockVRF
   type PraosHash PraosMockCrypto = SHA256
 
 {-------------------------------------------------------------------------------
@@ -625,23 +657,24 @@ instance PraosCrypto PraosMockCrypto where
 -------------------------------------------------------------------------------}
 
 instance PraosCrypto c => Condense (PraosFields c toSign) where
-   condense PraosFields{..} = condense praosSignature
+  condense PraosFields{..} = condense praosSignature
 
 {-------------------------------------------------------------------------------
   Serialisation
 -------------------------------------------------------------------------------}
 
 instance PraosCrypto c => Serialise (BlockInfo c) where
-  encode BlockInfo {..} = mconcat
-    [ encodeListLen 2
-    , encode biSlot
-    , toCBOR biRho
-    ]
+  encode BlockInfo{..} =
+    mconcat
+      [ encodeListLen 2
+      , encode biSlot
+      , toCBOR biRho
+      ]
   decode = do
     decodeListLenOf 2
-    biSlot  <- decode
-    biRho   <- fromCBOR
-    return BlockInfo {..}
+    biSlot <- decode
+    biRho <- fromCBOR
+    return BlockInfo{..}
 
 instance SignableRepresentation (Natural, SlotNo, VRFType) where
   getSignableRepresentation = serialize' . toCBOR

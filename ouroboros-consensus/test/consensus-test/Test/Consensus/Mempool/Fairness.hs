@@ -7,49 +7,55 @@
 -- | Tests fairness aspects of the mempool.
 --
 -- See 'testTxSizeFairness' for more details on the tests we run in this module.
-module Test.Consensus.Mempool.Fairness (
-    testTxSizeFairness
+module Test.Consensus.Mempool.Fairness
+  ( testTxSizeFairness
   , tests
   ) where
 
-import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
+import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import qualified Cardano.Slotting.Time as Time
-import           Control.Arrow ((***))
-import           Control.Concurrent (threadDelay)
+import Control.Arrow ((***))
+import Control.Concurrent (threadDelay)
 import qualified Control.Concurrent.Async as Async
-import           Control.Exception (assert)
-import           Control.Monad (forever, void)
+import Control.Exception (assert)
+import Control.Monad (forever, void)
 import qualified Control.Tracer as Tracer
-import           Data.Foldable (asum)
+import Data.Foldable (asum)
 import qualified Data.List as List
-import           Data.List.NonEmpty hiding (length)
-import           Data.Void (Void, vacuous)
-import           Ouroboros.Consensus.Config.SecurityParam as Consensus
+import Data.List.NonEmpty hiding (length)
+import Data.Void (Void, vacuous)
+import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
-import           Ouroboros.Consensus.Ledger.Tables.Utils
-import           Ouroboros.Consensus.Mempool (Mempool)
+import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
-import           Ouroboros.Consensus.Util.IOLike (STM, atomically, retry)
-import           System.Random (randomIO)
-import           Test.Consensus.Mempool.Fairness.TestBlock
-import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (testCase, (@?), (@?=))
-import           Test.Util.TestBlock (testBlockLedgerConfigFrom,
-                     testInitLedgerWithState)
+import Ouroboros.Consensus.Util.IOLike (STM, atomically, retry)
+import System.Random (randomIO)
+import Test.Consensus.Mempool.Fairness.TestBlock
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit (testCase, (@?), (@?=))
+import Test.Util.TestBlock
+  ( testBlockLedgerConfigFrom
+  , testInitLedgerWithState
+  )
 
 tests :: TestTree
-tests = testGroup "Mempool fairness"
-                  [ testCase "There is no substantial bias in added transaction sizes" $
-                              testTxSizeFairness TestParams { mempoolMaxCapacity = ByteSize32 100
-                                                            , smallTxSize        = ByteSize32   1
-                                                            , largeTxSize        = ByteSize32  10
-                                                            , nrOftxsToCollect   = 1_000
-                                                            , toleranceThreshold = 0.2 -- Somewhat arbitrarily chosen.
-                                                            }
-                  ]
+tests =
+  testGroup
+    "Mempool fairness"
+    [ testCase "There is no substantial bias in added transaction sizes" $
+        testTxSizeFairness
+          TestParams
+            { mempoolMaxCapacity = ByteSize32 100
+            , smallTxSize = ByteSize32 1
+            , largeTxSize = ByteSize32 10
+            , nrOftxsToCollect = 1_000
+            , toleranceThreshold = 0.2 -- Somewhat arbitrarily chosen.
+            }
+    ]
 
 type TestMempool = Mempool IO TestBlock
 
@@ -81,59 +87,75 @@ type TestMempool = Mempool IO TestBlock
 -- See 'TestParams' for an explanation of the different parameters that
 -- influence this test.
 testTxSizeFairness :: TestParams -> IO ()
-testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nrOftxsToCollect, toleranceThreshold } = do
-    ----------------------------------------------------------------------------
-    --  Obtain a mempool.
-    ----------------------------------------------------------------------------
-    let
-      ledgerItf :: Mempool.LedgerInterface IO TestBlock
-      ledgerItf = Mempool.LedgerInterface {
-          Mempool.getCurrentLedgerState = pure $
-            testInitLedgerWithState NoPayLoadDependentState
-        , Mempool.getLedgerTablesAtFor = \_ _ -> pure $
-            Just emptyLedgerTables
+testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOftxsToCollect, toleranceThreshold} = do
+  ----------------------------------------------------------------------------
+  --  Obtain a mempool.
+  ----------------------------------------------------------------------------
+  let
+    ledgerItf :: Mempool.LedgerInterface IO TestBlock
+    ledgerItf =
+      Mempool.LedgerInterface
+        { Mempool.getCurrentLedgerState =
+            pure $
+              testInitLedgerWithState NoPayLoadDependentState
+        , Mempool.getLedgerTablesAtFor = \_ _ ->
+            pure $
+              Just emptyLedgerTables
         }
 
-      eraParams =
-          HardFork.defaultEraParams (Consensus.SecurityParam $ knownNonZeroBounded @10) (Time.slotLengthFromSec 2)
-    mempool <- Mempool.openMempoolWithoutSyncThread
-                   ledgerItf
-                   (testBlockLedgerConfigFrom eraParams)
-                   (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
-                   Tracer.nullTracer
-    ----------------------------------------------------------------------------
-    --  Add and collect transactions
-    ----------------------------------------------------------------------------
-    let waitForSmallAddersToFillMempool = threadDelay 1_000
-    txs <- runConcurrently [
-                                           adders  mempool smallTxSize
-      , waitForSmallAddersToFillMempool >> adders  mempool largeTxSize
-      , waitForSmallAddersToFillMempool >> remover mempool             nrOftxsToCollect
+    eraParams =
+      HardFork.defaultEraParams
+        (Consensus.SecurityParam $ knownNonZeroBounded @10)
+        (Time.slotLengthFromSec 2)
+  mempool <-
+    Mempool.openMempoolWithoutSyncThread
+      ledgerItf
+      (testBlockLedgerConfigFrom eraParams)
+      (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
+      Tracer.nullTracer
+  ----------------------------------------------------------------------------
+  --  Add and collect transactions
+  ----------------------------------------------------------------------------
+  let waitForSmallAddersToFillMempool = threadDelay 1_000
+  txs <-
+    runConcurrently
+      [ adders mempool smallTxSize
+      , waitForSmallAddersToFillMempool >> adders mempool largeTxSize
+      , waitForSmallAddersToFillMempool >> remover mempool nrOftxsToCollect
       ]
 
-    ----------------------------------------------------------------------------
-    --  Count the small and large transactions
-    ----------------------------------------------------------------------------
-    let
-      nrSmall :: Double
-      nrLarge :: Double
-      (nrSmall, nrLarge) = (fromIntegral . length *** fromIntegral . length)
-                         $ List.partition  (<= smallTxSize)
-                         $ fmap txSize txs
-    length txs @?= nrOftxsToCollect
-    theRatioOfTheDifferenceBetween nrSmall nrLarge `isBelow` toleranceThreshold
-  where
-    theRatioOfTheDifferenceBetween x y = (abs (x - y) / (x + y), x, y)
+  ----------------------------------------------------------------------------
+  --  Count the small and large transactions
+  ----------------------------------------------------------------------------
+  let
+    nrSmall :: Double
+    nrLarge :: Double
+    (nrSmall, nrLarge) =
+      (fromIntegral . length *** fromIntegral . length) $
+        List.partition (<= smallTxSize) $
+          fmap txSize txs
+  length txs @?= nrOftxsToCollect
+  theRatioOfTheDifferenceBetween nrSmall nrLarge `isBelow` toleranceThreshold
+ where
+  theRatioOfTheDifferenceBetween x y = (abs (x - y) / (x + y), x, y)
 
-    -- At the end of the tests the proportion of small and large
-    -- transactions that were added should be rouhgly the same. We tolerate
-    -- the given theshold.
-    isBelow (ratioDiff, nrSmall, nrLarge) threshold = ratioDiff <= threshold
-      @? (    "The difference between the number of large and small transactions added "
-           <> "exeeds the threshold (" <> show threshold <> ")\n"
-           <> "Total number of small transactions that were added: " <> show nrSmall <> "\n"
-           <> "Total number of large transactions that were added: " <> show nrLarge <> "\n"
-           <> "Difference / Total: " <> show ratioDiff
+  -- At the end of the tests the proportion of small and large
+  -- transactions that were added should be rouhgly the same. We tolerate
+  -- the given theshold.
+  isBelow (ratioDiff, nrSmall, nrLarge) threshold =
+    ratioDiff <= threshold
+      @? ( "The difference between the number of large and small transactions added "
+             <> "exeeds the threshold ("
+             <> show threshold
+             <> ")\n"
+             <> "Total number of small transactions that were added: "
+             <> show nrSmall
+             <> "\n"
+             <> "Total number of large transactions that were added: "
+             <> show nrLarge
+             <> "\n"
+             <> "Difference / Total: "
+             <> show ratioDiff
          )
 
 runConcurrently :: [IO a] -> IO a
@@ -149,21 +171,20 @@ runConcurrently = Async.runConcurrently . asum . fmap Async.Concurrently
 --
 -- - The larger the capacity, the higher the chance large transactions can be
 --   added before the mempool is saturated.
---
-data TestParams = TestParams {
-    mempoolMaxCapacity :: ByteSize32
-  , smallTxSize        :: ByteSize32
-    -- ^ Size of what we consider to be a small transaction.
-  , largeTxSize        :: ByteSize32
-    -- ^ Size of what we consider to be a large transaction.
-  , nrOftxsToCollect   :: Int
-    -- ^ How many added transactions we count.
+data TestParams = TestParams
+  { mempoolMaxCapacity :: ByteSize32
+  , smallTxSize :: ByteSize32
+  -- ^ Size of what we consider to be a small transaction.
+  , largeTxSize :: ByteSize32
+  -- ^ Size of what we consider to be a large transaction.
+  , nrOftxsToCollect :: Int
+  -- ^ How many added transactions we count.
   , toleranceThreshold :: Double
-    -- ^ We tolerate a certain ratio between the difference of small and large
-    -- transactions added, and the total transactions that were added. For
-    -- instance, given a threshold of 0.2, if we measure the sizes of 100 added
-    -- transactions, the difference between the number small and large
-    -- transactions we counted should not be larger than 20.
+  -- ^ We tolerate a certain ratio between the difference of small and large
+  -- transactions added, and the total transactions that were added. For
+  -- instance, given a threshold of 0.2, if we measure the sizes of 100 added
+  -- transactions, the difference between the number small and large
+  -- transactions we counted should not be larger than 20.
   }
 
 -- | Add transactions with the specified size to the mempool.
@@ -172,56 +193,57 @@ data TestParams = TestParams {
 --
 -- This process does not finish. Hence the 'a' type parameter.
 adders ::
-     TestMempool
-     -- ^ Mempool to which transactions will be added
-  -> ByteSize32
-     -- ^ Transaction size
-  -> IO a
-adders mempool fixedTxSize = vacuous $ runConcurrently $ fmap adder [0..2]
-  where
-    adder :: Int -> IO Void
-    adder _i = forever $ do
-        -- We pick a random number for the transaction id.
-        thisTxId <- randomIO
-        void $ Mempool.addTxs mempool [mkGenTx thisTxId fixedTxSize]
+  -- | Mempool to which transactions will be added
+  TestMempool ->
+  -- | Transaction size
+  ByteSize32 ->
+  IO a
+adders mempool fixedTxSize = vacuous $ runConcurrently $ fmap adder [0 .. 2]
+ where
+  adder :: Int -> IO Void
+  adder _i = forever $ do
+    -- We pick a random number for the transaction id.
+    thisTxId <- randomIO
+    void $ Mempool.addTxs mempool [mkGenTx thisTxId fixedTxSize]
 
 -- | Remove the given number of transactions and return them.
---
 remover ::
-     TestMempool
-     -- ^ Mempool to remove transactions from.
-  -> Int
-  -- ^ Number of transactions to remove.
-  -> IO [Tx]
+  -- | Mempool to remove transactions from.
+  TestMempool ->
+  -- | Number of transactions to remove.
+  Int ->
+  IO [Tx]
 remover mempool total = do
-    let result = loop [] total
-    removedTxs <- result
-    assert (length removedTxs == total) result
-  where
-    -- Remove transactions one by one till we reach 'n'.
-    loop txs 0 = pure txs -- Note that the transactions will come out in reverse
-                          -- order wrt the order in which they were added to the
-                          -- mempool. That is ok since we only care about the
-                          -- transaction sizes.
-    loop txs n = do
-        -- We wait 1ms to give the other threads the possibility to add
-        -- transactions.
-        threadDelay 1000
-        gtx <- atomically $ getATxFromTheMempool
-        Mempool.removeTxsEvenIfValid mempool (Mempool.txId gtx :| [])
-        loop (unGenTx gtx:txs) (n-1)
-      where
-        getATxFromTheMempool =
-          getTxsInSnapshot mempool >>= \case
-              []  -> retry
-              x:_ -> pure x
+  let result = loop [] total
+  removedTxs <- result
+  assert (length removedTxs == total) result
+ where
+  -- Remove transactions one by one till we reach 'n'.
+  loop txs 0 = pure txs -- Note that the transactions will come out in reverse
+  -- order wrt the order in which they were added to the
+  -- mempool. That is ok since we only care about the
+  -- transaction sizes.
+  loop txs n = do
+    -- We wait 1ms to give the other threads the possibility to add
+    -- transactions.
+    threadDelay 1000
+    gtx <- atomically $ getATxFromTheMempool
+    Mempool.removeTxsEvenIfValid mempool (Mempool.txId gtx :| [])
+    loop (unGenTx gtx : txs) (n - 1)
+   where
+    getATxFromTheMempool =
+      getTxsInSnapshot mempool >>= \case
+        [] -> retry
+        x : _ -> pure x
 
 -- TODO: consider moving this to O.C.Mempool.API
 getTxsInSnapshot :: Mempool IO TestBlock -> STM IO [Mempool.GenTx TestBlock]
-getTxsInSnapshot mempool = fmap txsInSnapshot
-                         $ Mempool.getSnapshot mempool
-  where
-    txsInSnapshot = fmap prjTx
-                  . Mempool.snapshotTxs
+getTxsInSnapshot mempool =
+  fmap txsInSnapshot $
+    Mempool.getSnapshot mempool
+ where
+  txsInSnapshot =
+    fmap prjTx
+      . Mempool.snapshotTxs
 
-    prjTx (a, _b, _c) = Mempool.txForgetValidated a :: Mempool.GenTx TestBlock
+  prjTx (a, _b, _c) = Mempool.txForgetValidated a :: Mempool.GenTx TestBlock

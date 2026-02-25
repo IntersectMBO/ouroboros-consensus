@@ -11,43 +11,42 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Ouroboros.Consensus.Byron.ByronHFC (
-    ByronBlockHFC
+module Ouroboros.Consensus.Byron.ByronHFC
+  ( ByronBlockHFC
   , ByronPartialLedgerConfig (..)
   ) where
 
-import           Cardano.Binary
+import Cardano.Binary
 import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
-import           Control.Monad
+import Control.Monad
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (listToMaybe, mapMaybe)
-import           Data.MemPack
-import           Data.SOP.Index (Index (..))
-import           Data.Void (Void, absurd)
-import           Data.Word
-import           GHC.Generics
-import           NoThunks.Class
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Byron.Ledger
+import Data.Maybe (listToMaybe, mapMaybe)
+import Data.MemPack
+import Data.SOP.Index (Index (..))
+import Data.Void (Void, absurd)
+import Data.Word
+import GHC.Generics
+import NoThunks.Class
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Byron.Ledger
 import qualified Ouroboros.Consensus.Byron.Ledger.Inspect as Byron.Inspect
-import           Ouroboros.Consensus.Byron.Node ()
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.HardFork.Combinator
-import           Ouroboros.Consensus.HardFork.Combinator.Degenerate
-import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
-import           Ouroboros.Consensus.HardFork.Simple
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Query
-import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-import           Ouroboros.Consensus.Node.Serialisation
-import           Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
-import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Util.IndexedMemPack
+import Ouroboros.Consensus.Byron.Node ()
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Combinator
+import Ouroboros.Consensus.HardFork.Combinator.Degenerate
+import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
+import Ouroboros.Consensus.HardFork.Simple
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
+import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Synonym for convenience
@@ -62,11 +61,12 @@ type ByronBlockHFC = HardForkBlock '[ByronBlock]
 
 instance ImmutableEraParams ByronBlock where
   immutableEraParams cfg =
-      byronEraParamsNeverHardForks (byronGenesisConfig (configBlock cfg))
+    byronEraParamsNeverHardForks (byronGenesisConfig (configBlock cfg))
 
 instance NoHardForks ByronBlock where
-  toPartialLedgerConfig _ cfg = ByronPartialLedgerConfig {
-        byronLedgerConfig    = cfg
+  toPartialLedgerConfig _ cfg =
+    ByronPartialLedgerConfig
+      { byronLedgerConfig = cfg
       , byronTriggerHardFork = TriggerHardForkNotDuringThisExecution
       }
 
@@ -79,11 +79,11 @@ instance NoHardForks ByronBlock where
 -- 'ByronBlock'.
 instance SupportedNetworkProtocolVersion ByronBlockHFC where
   supportedNodeToNodeVersions _ =
-      Map.map HardForkNodeToNodeDisabled $
+    Map.map HardForkNodeToNodeDisabled $
       supportedNodeToNodeVersions (Proxy @ByronBlock)
 
   supportedNodeToClientVersions _ =
-      Map.map HardForkNodeToClientDisabled $
+    Map.map HardForkNodeToClientDisabled $
       supportedNodeToClientVersions (Proxy @ByronBlock)
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
@@ -99,16 +99,16 @@ instance SerialiseConstraintsHFC ByronBlock
 -- existing Byron blocks.
 instance SerialiseHFC '[ByronBlock] where
   encodeDiskHfcBlock (DegenCodecConfig ccfg) (DegenBlock b) =
-      encodeDisk ccfg b
+    encodeDisk ccfg b
   decodeDiskHfcBlock (DegenCodecConfig ccfg) =
-      fmap DegenBlock <$> decodeDisk ccfg
+    fmap DegenBlock <$> decodeDisk ccfg
   reconstructHfcPrefixLen _ =
-      reconstructPrefixLen (Proxy @(Header ByronBlock))
+    reconstructPrefixLen (Proxy @(Header ByronBlock))
   reconstructHfcNestedCtxt _ prefix blockSize =
-      mapSomeNestedCtxt NCZ $
-        reconstructNestedCtxt (Proxy @(Header ByronBlock)) prefix blockSize
+    mapSomeNestedCtxt NCZ $
+      reconstructNestedCtxt (Proxy @(Header ByronBlock)) prefix blockSize
   getHfcBinaryBlockInfo (DegenBlock b) =
-      getBinaryBlockInfo b
+    getBinaryBlockInfo b
 
 {-------------------------------------------------------------------------------
   Figure out the transition point for Byron
@@ -156,77 +156,79 @@ instance SerialiseHFC '[ByronBlock] where
   a Shelley ledger at that point.
 -------------------------------------------------------------------------------}
 
-byronTransition :: PartialLedgerConfig ByronBlock
-                -> Word16   -- ^ Shelley major protocol version
-                -> LedgerState ByronBlock mk
-                -> Maybe EpochNo
+byronTransition ::
+  PartialLedgerConfig ByronBlock ->
+  -- | Shelley major protocol version
+  Word16 ->
+  LedgerState ByronBlock mk ->
+  Maybe EpochNo
 byronTransition partialConfig shelleyMajorVersion state =
-      takeAny
+  takeAny
     . mapMaybe isTransitionToShelley
     . Byron.Inspect.protocolUpdates lConfig
     $ state
-  where
-    ByronPartialLedgerConfig lConfig _ = partialConfig
-    ByronTransitionInfo transitionInfo = byronLedgerTransition state
+ where
+  ByronPartialLedgerConfig lConfig _ = partialConfig
+  ByronTransitionInfo transitionInfo = byronLedgerTransition state
 
-    k       = CC.Genesis.gdK $ CC.Genesis.configGenesisData lConfig
+  k = CC.Genesis.gdK $ CC.Genesis.configGenesisData lConfig
 
-    isTransitionToShelley :: Byron.Inspect.ProtocolUpdate -> Maybe EpochNo
-    isTransitionToShelley update = do
-        guard $ CC.Update.pvMajor version == shelleyMajorVersion
-        case Byron.Inspect.protocolUpdateState update of
-          Byron.Inspect.UpdateCandidate _becameCandidateSlotNo adoptedIn -> do
-            becameCandidateBlockNo <- Map.lookup version transitionInfo
-            guard $ isReallyStable becameCandidateBlockNo
-            return adoptedIn
-          Byron.Inspect.UpdateStableCandidate adoptedIn ->
-            -- If the Byron ledger thinks it's stable, it's _definitely_ stable
-            return adoptedIn
-          _otherwise ->
-            -- The proposal isn't yet a candidate, never mind a stable one
-            mzero
-      where
-        version :: CC.Update.ProtocolVersion
-        version = Byron.Inspect.protocolUpdateVersion update
+  isTransitionToShelley :: Byron.Inspect.ProtocolUpdate -> Maybe EpochNo
+  isTransitionToShelley update = do
+    guard $ CC.Update.pvMajor version == shelleyMajorVersion
+    case Byron.Inspect.protocolUpdateState update of
+      Byron.Inspect.UpdateCandidate _becameCandidateSlotNo adoptedIn -> do
+        becameCandidateBlockNo <- Map.lookup version transitionInfo
+        guard $ isReallyStable becameCandidateBlockNo
+        return adoptedIn
+      Byron.Inspect.UpdateStableCandidate adoptedIn ->
+        -- If the Byron ledger thinks it's stable, it's _definitely_ stable
+        return adoptedIn
+      _otherwise ->
+        -- The proposal isn't yet a candidate, never mind a stable one
+        mzero
+   where
+    version :: CC.Update.ProtocolVersion
+    version = Byron.Inspect.protocolUpdateVersion update
 
-    -- Normally, stability in the ledger is defined in terms of slots, not
-    -- blocks. Byron considers the proposal to be stable after the slot is more
-    -- than @2k@ old. That is not wrong: after @2k@, the block indeed is stable.
-    --
-    -- Unfortunately, this means that the /conclusion about stability itself/
-    -- is /not/ stable: if we were to switch to a denser fork, we might change
-    -- our mind (on the sparse chain we thought the block was already stable,
-    -- but on the dense chain we conclude it is it not yet stable).
-    --
-    -- It is unclear at the moment if this presents a problem; the HFC assumes
-    -- monotonicity of timing info, in the sense that that any slot/time
-    -- conversions are either unknown or else not subject to rollback.
-    -- The problem sketched above might mean that we can go from "conversion
-    -- known" to "conversion unknown", but then when we go back again to
-    -- "conversion known", we /are/ guaranteed that we'd get the same answer.
-    --
-    -- Rather than trying to analyse this subtle problem, we instead base
-    -- stability on block numbers; after the block is `k` deep, we know for sure
-    -- that it is stable, and moreover, no matter which chain we switch to, that
-    -- will remain to be the case.
-    --
-    -- The Byron 'UpdateState' records the 'SlotNo' of the block in which the
-    -- proposal became a candidate (i.e., when the last required endorsement
-    -- came in). That doesn't tell us very much, we need to know the block
-    -- number; that's precisely what the 'ByronTransition' part of the Byron
-    -- state tells us.
-    isReallyStable :: BlockNo -> Bool
-    isReallyStable (BlockNo bno) = distance >= CC.unBlockCount k
-      where
-        distance :: Word64
-        distance = case byronLedgerTipBlockNo state of
-                     Origin                  -> bno + 1
-                     NotOrigin (BlockNo tip) -> tip - bno
+  -- Normally, stability in the ledger is defined in terms of slots, not
+  -- blocks. Byron considers the proposal to be stable after the slot is more
+  -- than @2k@ old. That is not wrong: after @2k@, the block indeed is stable.
+  --
+  -- Unfortunately, this means that the /conclusion about stability itself/
+  -- is /not/ stable: if we were to switch to a denser fork, we might change
+  -- our mind (on the sparse chain we thought the block was already stable,
+  -- but on the dense chain we conclude it is it not yet stable).
+  --
+  -- It is unclear at the moment if this presents a problem; the HFC assumes
+  -- monotonicity of timing info, in the sense that that any slot/time
+  -- conversions are either unknown or else not subject to rollback.
+  -- The problem sketched above might mean that we can go from "conversion
+  -- known" to "conversion unknown", but then when we go back again to
+  -- "conversion known", we /are/ guaranteed that we'd get the same answer.
+  --
+  -- Rather than trying to analyse this subtle problem, we instead base
+  -- stability on block numbers; after the block is `k` deep, we know for sure
+  -- that it is stable, and moreover, no matter which chain we switch to, that
+  -- will remain to be the case.
+  --
+  -- The Byron 'UpdateState' records the 'SlotNo' of the block in which the
+  -- proposal became a candidate (i.e., when the last required endorsement
+  -- came in). That doesn't tell us very much, we need to know the block
+  -- number; that's precisely what the 'ByronTransition' part of the Byron
+  -- state tells us.
+  isReallyStable :: BlockNo -> Bool
+  isReallyStable (BlockNo bno) = distance >= CC.unBlockCount k
+   where
+    distance :: Word64
+    distance = case byronLedgerTipBlockNo state of
+      Origin -> bno + 1
+      NotOrigin (BlockNo tip) -> tip - bno
 
-    -- We only expect a single proposal that updates to Shelley, but in case
-    -- there are multiple, any one will do
-    takeAny :: [a] -> Maybe a
-    takeAny = listToMaybe
+  -- We only expect a single proposal that updates to Shelley, but in case
+  -- there are multiple, any one will do
+  takeAny :: [a] -> Maybe a
+  takeAny = listToMaybe
 
 {-------------------------------------------------------------------------------
   SingleEraBlock Byron
@@ -234,46 +236,47 @@ byronTransition partialConfig shelleyMajorVersion state =
 
 instance SingleEraBlock ByronBlock where
   singleEraTransition pcfg _eraParams _eraStart ledgerState =
-      case byronTriggerHardFork pcfg of
-        TriggerHardForkNotDuringThisExecution        -> Nothing
-        TriggerHardForkAtEpoch   epoch               -> Just epoch
-        TriggerHardForkAtVersion shelleyMajorVersion ->
-            byronTransition
-              pcfg
-              shelleyMajorVersion
-              ledgerState
+    case byronTriggerHardFork pcfg of
+      TriggerHardForkNotDuringThisExecution -> Nothing
+      TriggerHardForkAtEpoch epoch -> Just epoch
+      TriggerHardForkAtVersion shelleyMajorVersion ->
+        byronTransition
+          pcfg
+          shelleyMajorVersion
+          ledgerState
 
-  singleEraInfo _ = SingleEraInfo {
-      singleEraName = "Byron"
-    }
+  singleEraInfo _ =
+    SingleEraInfo
+      { singleEraName = "Byron"
+      }
 
 instance PBftCrypto bc => HasPartialConsensusConfig (PBft bc)
-  -- Use defaults
+
+-- Use defaults
 
 -- | When Byron is part of the hard-fork combinator, we use the partial ledger
 -- config. Standalone Byron uses the regular ledger config. This means that
 -- the partial ledger config is the perfect place to store the trigger
 -- condition for the hard fork to Shelley, as we don't have to modify the
 -- ledger config for standalone Byron.
-data ByronPartialLedgerConfig = ByronPartialLedgerConfig {
-      byronLedgerConfig    :: !(LedgerConfig ByronBlock)
-    , byronTriggerHardFork :: !TriggerHardFork
-    }
+data ByronPartialLedgerConfig = ByronPartialLedgerConfig
+  { byronLedgerConfig :: !(LedgerConfig ByronBlock)
+  , byronTriggerHardFork :: !TriggerHardFork
+  }
   deriving (Show, Generic, NoThunks)
 
 instance HasPartialLedgerConfig ByronBlock where
-
   type PartialLedgerConfig ByronBlock = ByronPartialLedgerConfig
 
   completeLedgerConfig _ _ = byronLedgerConfig
 
 instance SerialiseNodeToClient ByronBlock ByronPartialLedgerConfig where
-  encodeNodeToClient ccfg version (ByronPartialLedgerConfig lconfig triggerhf)
-    = mconcat [
-                encodeListLen 2
-              , toCBOR @(LedgerConfig ByronBlock) lconfig
-              , encodeNodeToClient ccfg version triggerhf
-              ]
+  encodeNodeToClient ccfg version (ByronPartialLedgerConfig lconfig triggerhf) =
+    mconcat
+      [ encodeListLen 2
+      , toCBOR @(LedgerConfig ByronBlock) lconfig
+      , encodeNodeToClient ccfg version triggerhf
+      ]
   decodeNodeToClient ccfg version = do
     enforceSize "ByronPartialLedgerConfig" 2
     ByronPartialLedgerConfig
@@ -285,36 +288,40 @@ instance SerialiseNodeToClient ByronBlock ByronPartialLedgerConfig where
 -------------------------------------------------------------------------------}
 
 instance HasCanonicalTxIn '[ByronBlock] where
-  newtype instance CanonicalTxIn '[ByronBlock] = ByronHFCTxIn {
-      getByronHFCTxIn :: Void
+  newtype CanonicalTxIn '[ByronBlock] = ByronHFCTxIn
+    { getByronHFCTxIn :: Void
     }
     deriving stock (Show, Eq, Ord)
     deriving newtype (NoThunks, MemPack)
 
-  injectCanonicalTxIn IZ key      = absurd key
+  injectCanonicalTxIn IZ key = absurd key
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
   ejectCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
 
 instance HasHardForkTxOut '[ByronBlock] where
-  type instance HardForkTxOut '[ByronBlock] = Void
-  injectHardForkTxOut  IZ       txout = absurd txout
-  injectHardForkTxOut (IS idx') _     = case idx' of {}
-  ejectHardForkTxOut   IZ       txout = absurd txout
-  ejectHardForkTxOut  (IS idx') _     = case idx' of {}
+  type HardForkTxOut '[ByronBlock] = Void
+  injectHardForkTxOut IZ txout = absurd txout
+  injectHardForkTxOut (IS idx') _ = case idx' of {}
+  ejectHardForkTxOut IZ txout = absurd txout
+  ejectHardForkTxOut (IS idx') _ = case idx' of {}
 
-deriving via Void
-    instance IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
+deriving via
+  Void
+  instance
+    IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
-  answerBlockQueryHFLookup IZ      _cfg  (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
+  answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
   answerBlockQueryHFLookup (IS is) _cfg _q _dlv = case is of {}
 
-  answerBlockQueryHFTraverse IZ      _cfg  (q :: BlockQuery ByronBlock QFTraverseTables result) _dlv = case q of {}
+  answerBlockQueryHFTraverse IZ _cfg (q :: BlockQuery ByronBlock QFTraverseTables result) _dlv = case q of {}
   answerBlockQueryHFTraverse (IS is) _cfg _q _dlv = case is of {}
 
   queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
   queryLedgerGetTraversingFilter (IS is) _q = case is of {}
 
-deriving via TrivialLedgerTables (LedgerState (HardForkBlock '[ByronBlock]))
-    instance SerializeTablesWithHint (LedgerState (HardForkBlock '[ByronBlock]))
+deriving via
+  TrivialLedgerTables (LedgerState (HardForkBlock '[ByronBlock]))
+  instance
+    SerializeTablesWithHint (LedgerState (HardForkBlock '[ByronBlock]))

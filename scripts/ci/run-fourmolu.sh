@@ -3,8 +3,8 @@
 set -e
 
 echo "The custom options for formatting this repo are:"
-stylish-haskell --version
-stylish-haskell --defaults | diff - ./.stylish-haskell.yaml | grep -E "^>.*[[:alnum:]]" | grep -v "#"
+fourmolu --version
+fourmolu --print-defaults | diff - ./fourmolu.yaml | grep -E "^>.*[[:alnum:]]" | grep -v "#"
 printf "\nFormatting haskell files...\n"
 
 export LC_ALL=C.UTF-8
@@ -27,7 +27,7 @@ esac
 
 $fdcmd --full-path "$path" \
        --extension hs \
-       --exec-batch stylish-haskell -c .stylish-haskell.yaml -i
+       --exec-batch fourmolu --config fourmolu.yaml -i
 
 case "$(uname -s)" in
     MINGW*) git ls-files --eol | grep "w/crlf" | awk '{print $4}' | xargs dos2unix;;

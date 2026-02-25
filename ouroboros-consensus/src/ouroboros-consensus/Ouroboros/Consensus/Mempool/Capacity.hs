@@ -12,23 +12,24 @@
 --
 -- > import           Ouroboros.Consensus.Mempool.Capacity (Capacity)
 -- > import qualified Ouroboros.Consensus.Mempool.Capacity as Capacity
-module Ouroboros.Consensus.Mempool.Capacity (
-    -- * Mempool capacity
+module Ouroboros.Consensus.Mempool.Capacity
+  ( -- * Mempool capacity
     MempoolCapacityBytesOverride (..)
   , computeMempoolCapacity
   , mkCapacityBytesOverride
+
     -- * Mempool Size
   , MempoolSize (..)
   ) where
 
-import           Data.DerivingVia (InstantiatedAt (..))
-import           Data.Measure (Measure)
-import           Data.Semigroup (stimes)
-import           Data.Word (Word32)
-import           GHC.Generics
-import           NoThunks.Class
-import           Ouroboros.Consensus.Ledger.Basics
-import           Ouroboros.Consensus.Ledger.SupportsMempool
+import Data.DerivingVia (InstantiatedAt (..))
+import Data.Measure (Measure)
+import Data.Semigroup (stimes)
+import Data.Word (Word32)
+import GHC.Generics
+import NoThunks.Class
+import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.SupportsMempool
 
 {-------------------------------------------------------------------------------
   Mempool capacity in bytes
@@ -37,12 +38,12 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 -- | An override for the default 'MempoolCapacityBytes' which is 2x the
 -- maximum transaction capacity
 data MempoolCapacityBytesOverride
-  = NoMempoolCapacityBytesOverride
-    -- ^ Use 2x the maximum transaction capacity of a block. This will change
+  = -- | Use 2x the maximum transaction capacity of a block. This will change
     -- dynamically with the protocol parameters adopted in the current ledger.
-  | MempoolCapacityBytesOverride !ByteSize32
-    -- ^ Use the least multiple of the block capacity that is no less than this
+    NoMempoolCapacityBytesOverride
+  | -- | Use the least multiple of the block capacity that is no less than this
     -- size.
+    MempoolCapacityBytesOverride !ByteSize32
   deriving (Eq, Show)
 
 -- | Create an override for the mempool capacity using the provided number of
@@ -56,28 +57,29 @@ mkCapacityBytesOverride = MempoolCapacityBytesOverride
 -- If an override is present, reinterpret it as a number of blocks (rounded
 -- up), and then simply multiply the ledger's capacity by that number.
 computeMempoolCapacity ::
-     LedgerSupportsMempool blk
-  => LedgerConfig blk
-  -> TickedLedgerState blk mk
-  -> MempoolCapacityBytesOverride
-  -> TxMeasure blk
+  LedgerSupportsMempool blk =>
+  LedgerConfig blk ->
+  TickedLedgerState blk mk ->
+  MempoolCapacityBytesOverride ->
+  TxMeasure blk
 computeMempoolCapacity cfg st override =
-    capacity
-  where
-    oneBlock                 = blockCapacityTxMeasure cfg st
-    ByteSize32 oneBlockBytes = txMeasureByteSize oneBlock
+  capacity
+ where
+  oneBlock = blockCapacityTxMeasure cfg st
+  ByteSize32 oneBlockBytes = txMeasureByteSize oneBlock
 
-    blockCount = case override of
-      NoMempoolCapacityBytesOverride              -> 2
-      MempoolCapacityBytesOverride (ByteSize32 x) ->
-        -- This calculation is happening at Word32. If it was to overflow, it
-        -- will round down instead.
-        max 1 $ if x + oneBlockBytes < x
-                then x `div` oneBlockBytes
-                else (x + oneBlockBytes - 1) `div` oneBlockBytes
+  blockCount = case override of
+    NoMempoolCapacityBytesOverride -> 2
+    MempoolCapacityBytesOverride (ByteSize32 x) ->
+      -- This calculation is happening at Word32. If it was to overflow, it
+      -- will round down instead.
+      max 1 $
+        if x + oneBlockBytes < x
+          then x `div` oneBlockBytes
+          else (x + oneBlockBytes - 1) `div` oneBlockBytes
 
-    SemigroupViaMeasure capacity =
-      stimes blockCount (SemigroupViaMeasure oneBlock)
+  SemigroupViaMeasure capacity =
+    stimes blockCount (SemigroupViaMeasure oneBlock)
 
 newtype SemigroupViaMeasure a = SemigroupViaMeasure a
   deriving newtype (Eq, Measure)
@@ -89,15 +91,16 @@ newtype SemigroupViaMeasure a = SemigroupViaMeasure a
 
 -- | The size of a mempool.
 data MempoolSize = MempoolSize
-  { msNumTxs   :: !Word32
-    -- ^ The number of transactions in the mempool.
+  { msNumTxs :: !Word32
+  -- ^ The number of transactions in the mempool.
   , msNumBytes :: !ByteSize32
-    -- ^ The summed byte size of all the transactions in the mempool.
-  } deriving (Eq, Show, Generic, NoThunks)
+  -- ^ The summed byte size of all the transactions in the mempool.
+  }
+  deriving (Eq, Show, Generic, NoThunks)
 
 instance Semigroup MempoolSize where
   MempoolSize xt xb <> MempoolSize yt yb = MempoolSize (xt + yt) (xb <> yb)
 
 instance Monoid MempoolSize where
-  mempty  = MempoolSize { msNumTxs = 0, msNumBytes = ByteSize32 0 }
+  mempty = MempoolSize{msNumTxs = 0, msNumBytes = ByteSize32 0}
   mappend = (<>)

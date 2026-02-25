@@ -5,29 +5,30 @@
 {-# LANGUAGE TupleSections #-}
 
 -- | LMDB resource status with read-append-write locking
-module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status (
-    -- * Status
+module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
+  ( -- * Status
     Status (..)
   , StatusLock
+
     -- * Locks
   , new
   , withReadAccess
   , withWriteAccess
   ) where
 
-import           Control.RAWLock (RAWLock)
+import Control.RAWLock (RAWLock)
 import qualified Control.RAWLock as RAW
-import           Data.Functor ((<&>))
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
+import Data.Functor ((<&>))
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Util.IOLike (IOLike)
 
 {-------------------------------------------------------------------------------
   Status
 -------------------------------------------------------------------------------}
 
 -- | A 'RAWLock' for 'Status'.
-newtype StatusLock m = StatusLock { getStatusLock :: RAWLock m Status }
+newtype StatusLock m = StatusLock {getStatusLock :: RAWLock m Status}
 
 -- | Whether a resource is open or closed.
 --
@@ -35,7 +36,7 @@ newtype StatusLock m = StatusLock { getStatusLock :: RAWLock m Status }
 -- (ii) each of the LMDB backing store value handles.
 data Status = Open | Closed
   deriving stock (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
+  deriving anyclass NoThunks
 
 {-------------------------------------------------------------------------------
   Locks
@@ -52,14 +53,16 @@ new st = StatusLock <$> RAW.new st
 -- acquired lock is not of type @'Status' -> ('Status', a)@. The 'Status' is
 -- known to be 'Open', or an exception would have been thrown.
 withWriteAccess ::
-     IOLike m
-  => StatusLock m
-  -> m a           -- ^ Action to perform if closed
-  -> m (a, Status) -- ^ Action to perform if open, possibly updating the 'Status'
-  -> m a
+  IOLike m =>
+  StatusLock m ->
+  -- | Action to perform if closed
+  m a ->
+  -- | Action to perform if open, possibly updating the 'Status'
+  m (a, Status) ->
+  m a
 withWriteAccess lock ifClosed ifOpen =
   RAW.withWriteAccess (getStatusLock lock) $ \case
-    Open   -> ifOpen
+    Open -> ifOpen
     Closed -> ifClosed <&> (,Closed)
 
 -- | A variant of 'RAW.withReadAccess' that throws an exception if @'Status' ==
@@ -69,12 +72,14 @@ withWriteAccess lock ifClosed ifOpen =
 -- acquired lock is not of type @'Status' -> a@. The 'Status' is known to be
 -- 'Open', or an exception would have been thrown.
 withReadAccess ::
-     IOLike m
-  => StatusLock m
-  -> m a              -- ^ Action to perform when closed
-  -> m a              -- ^ Action to perform when open
-  -> m a
+  IOLike m =>
+  StatusLock m ->
+  -- | Action to perform when closed
+  m a ->
+  -- | Action to perform when open
+  m a ->
+  m a
 withReadAccess lock ifClosed ifOpen =
   RAW.withReadAccess (getStatusLock lock) $ \case
-    Open   -> ifOpen
+    Open -> ifOpen
     Closed -> ifClosed
