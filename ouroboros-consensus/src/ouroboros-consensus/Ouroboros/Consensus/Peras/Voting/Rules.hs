@@ -71,12 +71,14 @@ import Ouroboros.Consensus.Util.Pred
 data PerasVotingRulesDecision
   = Vote (Evidence True PerasVotingRule)
   | NoVote (Evidence False PerasVotingRule)
-  deriving Show
 
 instance Explainable PerasVotingRulesDecision where
   explain mode = \case
     Vote (ETrue e) -> "Vote(" <> explain mode e <> ")"
     NoVote (EFalse e) -> "NoVote(" <> explain mode e <> ")"
+
+instance Show PerasVotingRulesDecision where
+  show = explain Shallow
 
 -- | Evaluate whether voting is allowed or not according to the voting rules
 isPerasVotingAllowed ::
