@@ -12,12 +12,9 @@ module Ouroboros.Consensus.Fragment.ValidatedDiff
   ( ValidatedChainDiff (ValidatedChainDiff)
   , getChainDiff
   , getLedger
-  , new
-  , toValidatedFragment
 
     -- * Monadic
   , newM
-  , toValidatedFragmentM
   ) where
 
 import Control.Monad.Except (throwError)
@@ -25,8 +22,6 @@ import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff)
 import qualified Ouroboros.Consensus.Fragment.Diff as Diff
-import Ouroboros.Consensus.Fragment.Validated (ValidatedFragment)
-import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
@@ -52,21 +47,6 @@ pattern ValidatedChainDiff d l <- UnsafeValidatedChainDiff d l
 
 {-# COMPLETE ValidatedChainDiff #-}
 
--- | Create a 'ValidatedChainDiff'.
---
--- PRECONDITION:
---
--- > getTip chainDiff == ledgerTipPoint ledger
-new ::
-  forall b l mk.
-  (GetTip l, HasHeader b, HeaderHash l ~ HeaderHash b, HasCallStack) =>
-  ChainDiff b ->
-  l mk ->
-  ValidatedChainDiff b (l mk)
-new chainDiff ledger =
-  assertWithMsg (pointInvariant (getTip ledger) chainDiff) $
-    UnsafeValidatedChainDiff chainDiff ledger
-
 pointInvariant ::
   forall l b.
   (HeaderHash b ~ HeaderHash l, HasHeader b) =>
@@ -88,17 +68,15 @@ pointInvariant ledgerTip0 chainDiff = precondition
             <> " /= "
             <> show ledgerTip
 
-toValidatedFragment ::
-  (GetTip l, HasHeader b, HeaderHash l ~ HeaderHash b, HasCallStack) =>
-  ValidatedChainDiff b (l mk) ->
-  ValidatedFragment b (l mk)
-toValidatedFragment (UnsafeValidatedChainDiff cs l) =
-  VF.ValidatedFragment (Diff.getSuffix cs) l
-
 {-------------------------------------------------------------------------------
   Monadic
 -------------------------------------------------------------------------------}
 
+-- | Create a 'ValidatedChainDiff'.
+--
+-- PRECONDITION:
+--
+-- > getTip chainDiff == ledgerTipPoint ledger
 newM ::
   forall m b l.
   ( MonadSTM m
@@ -115,15 +93,3 @@ newM chainDiff ledger = do
   pure $
     assertWithMsg (pointInvariant ledgerTip chainDiff) $
       UnsafeValidatedChainDiff chainDiff ledger
-
-toValidatedFragmentM ::
-  ( MonadSTM m
-  , GetTipSTM m l
-  , HasHeader b
-  , HeaderHash l ~ HeaderHash b
-  , HasCallStack
-  ) =>
-  ValidatedChainDiff b l ->
-  m (ValidatedFragment b l)
-toValidatedFragmentM (UnsafeValidatedChainDiff cs l) =
-  VF.newM (Diff.getSuffix cs) l

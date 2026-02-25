@@ -28,7 +28,6 @@ import Control.Concurrent.Class.MonadMVar (MVar, MonadMVar (..))
 import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad
-import Control.Monad.Base
 import Control.Monad.Class.MonadAsync
 import Control.Monad.Class.MonadEventlog
 import Control.Monad.Class.MonadFork
@@ -126,9 +125,6 @@ instance
   where
   showTypeOf _p = "WithEarlyExit " ++ showTypeOf (Proxy @(m a))
   wNoThunks ctxt = wNoThunks ctxt . withEarlyExit
-
-instance Monad m => MonadBase (WithEarlyExit m) (WithEarlyExit m) where
-  liftBase = id
 
 {-------------------------------------------------------------------------------
   Instances for io-classes

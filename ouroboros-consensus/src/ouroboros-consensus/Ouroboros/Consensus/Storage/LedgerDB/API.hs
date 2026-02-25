@@ -172,6 +172,7 @@ import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.Proxy
@@ -249,12 +250,11 @@ data LedgerDB m l blk = LedgerDB
   --
   -- We pass in the producer/consumer registry.
   , validateFork ::
-      l ~ ExtLedgerState blk =>
       ResourceRegistry m ->
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
       Word64 ->
-      [Header blk] ->
+      NonEmpty (Header blk) ->
       m (ValidateResult m l blk)
   -- ^ Try to apply a sequence of blocks on top of the LedgerDB, first rolling
   -- back as many blocks as the passed @Word64@.
@@ -270,7 +270,6 @@ data LedgerDB m l blk = LedgerDB
   --
   --  * The set of previously applied points.
   , tryTakeSnapshot ::
-      l ~ ExtLedgerState blk =>
       m () ->
       Maybe (Time, Time) ->
       Word64 ->

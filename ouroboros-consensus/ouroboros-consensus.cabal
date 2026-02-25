@@ -98,7 +98,6 @@ library
     Ouroboros.Consensus.Config.SupportsNode
     Ouroboros.Consensus.Forecast
     Ouroboros.Consensus.Fragment.Diff
-    Ouroboros.Consensus.Fragment.Validated
     Ouroboros.Consensus.Fragment.ValidatedDiff
     Ouroboros.Consensus.Genesis.Governor
     Ouroboros.Consensus.HardFork.Abstract
@@ -371,7 +370,6 @@ library
     these ^>=1.2,
     time,
     transformers,
-    transformers-base,
     typed-protocols ^>=1.2,
     vector ^>=0.13,
 
@@ -567,7 +565,6 @@ library unstable-consensus-testlib
     temporary,
     text,
     time,
-    transformers-base,
     tree-diff,
     utf8-string,
     vector,
@@ -726,7 +723,6 @@ test-suite consensus-test
     tasty-quickcheck,
     time,
     transformers,
-    transformers-base,
     tree-diff,
     typed-protocols:{examples, stateful, typed-protocols} ^>=1.2,
     unstable-consensus-testlib,
