@@ -63,7 +63,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
-import Ouroboros.Consensus.Util.IOLike (IOLike, SomeException, displayException, try)
+import Ouroboros.Consensus.Util.IOLike (IOLike, SomeException, try)
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain

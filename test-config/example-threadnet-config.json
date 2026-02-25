@@ -1,0 +1,46 @@
+{
+    "tncCoreNodes" : [
+        {
+            "cncCardanoConfig" : "test-config/config.json",
+            "cncKesSigningKey" : "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool1/kes.skey",
+            "cncOCert" : "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool1/opcert.cert",
+            "cncVrfSigningKey" : "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool1/vrf.skey"
+        },
+        {
+            "cncCardanoConfig" : "test-config/config.json",
+            "cncKesSigningKey" : "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool2/kes.skey",
+            "cncOCert" : "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool2/opcert.cert",
+            "cncVrfSigningKey" : "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool2/vrf.skey"
+        },
+        {
+            "cncCardanoConfig" : "test-config/config.json",
+            "cncKesSigningKey" : "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool3/kes.skey",
+            "cncOCert" : "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool3/opcert.cert",
+            "cncVrfSigningKey" : "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool3/vrf.skey"
+        }
+    ],
+    "tncTopology" : {
+        "0" : [
+            1,
+            2
+        ],
+        "1" : [
+            0,
+            2
+        ],
+        "2" : [
+            0,
+            1
+        ]
+    },
+    "tncTxGenerators" : [
+        {
+            "tgcSubmitToNodes" : [
+                0
+            ],
+            "tgcTxGeneratorKind" : {
+                "tacPaymentSigningKey" : "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/stake-delegators/delegator2/payment.skey"
+            }
+        }
+    ]
+}

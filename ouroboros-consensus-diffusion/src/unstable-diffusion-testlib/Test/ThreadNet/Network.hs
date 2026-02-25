@@ -5,6 +5,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -44,6 +45,7 @@ module Test.ThreadNet.Network
   , _FromMempool
   , _FromLeios
   , mkTestOutput
+  , LeiosState (..)
   ) where
 
 import Cardano.Network.PeerSelection.Bootstrap
@@ -1601,7 +1603,6 @@ data NodeInfo blk db ev l = NodeInfo
 -- `LeiosState` represents the part of the nodes' state that relates to Leios
 data LeiosState f = LeiosState
   { leiosDb :: f InMemoryLeiosDb
-  , leiosKernelEvents :: f [TraceLeiosKernel]
   }
   deriving stock Generic
 
@@ -1610,19 +1611,17 @@ deriving instance
   NoThunks (LeiosState f)
 
 _emptyLeiosState :: LeiosState Identity
-_emptyLeiosState = LeiosState{leiosDb = pure emptyInMemoryLeiosDb, leiosKernelEvents = pure []}
+_emptyLeiosState = LeiosState{leiosDb = pure emptyInMemoryLeiosDb}
 
 emptyLeiosStateTVar :: IOLike m => m (LeiosState (StrictTVar m))
 emptyLeiosStateTVar = atomically $ do
   leiosDb <- newTVar emptyInMemoryLeiosDb
-  leiosKernelEvents <- newTVar []
-  return LeiosState{leiosDb, leiosKernelEvents}
+  return LeiosState{leiosDb}
 
 snapshotLeiosState :: IOLike m => LeiosState (StrictTVar m) -> m (LeiosState Identity)
 snapshotLeiosState ls = atomically $ do
   leiosDb <- pure <$> readTVar (leiosDb ls)
-  leiosKernelEvents <- pure <$> readTVar (leiosKernelEvents ls)
-  return LeiosState{leiosDb, leiosKernelEvents}
+  return LeiosState{leiosDb}
 
 -- | A vector with an @ev@-shaped element for a particular set of
 -- instrumentation events
