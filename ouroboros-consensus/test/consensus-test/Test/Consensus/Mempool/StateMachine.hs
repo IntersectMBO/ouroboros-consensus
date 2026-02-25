@@ -501,11 +501,13 @@ data SUT m blk
       !(Mempool m blk)
       -- | Emulates a ledger db to the extent needed by the ledger interface.
       !(StrictTVar m (MockedLedgerDB blk))
+      !(ResourceRegistry m)
   deriving Generic
 
 deriving instance
   ( NoThunks (Mempool m blk)
   , NoThunks (StrictTVar m (MockedLedgerDB blk))
+  , IOLike m
   ) =>
   NoThunks (SUT m blk)
 
@@ -523,30 +525,39 @@ data MockedLedgerDB blk = MockedLedgerDB
 -- | Create a ledger interface and provide the tvar to modify it when switching
 -- ledgers.
 newLedgerInterface ::
-  ( MonadSTM m
-  , NoThunks (MockedLedgerDB blk)
+  ( NoThunks (MockedLedgerDB blk)
   , LedgerSupportsMempool blk
+  , IOLike m
   ) =>
   LedgerState blk ValuesMK ->
+  ResourceRegistry m ->
   m (LedgerInterface m blk, StrictTVar m (MockedLedgerDB blk))
-newLedgerInterface initialLedger = do
+newLedgerInterface initialLedger reg = do
   t <- newTVarIO $ MockedLedgerDB initialLedger Set.empty
   pure
     ( LedgerInterface
-        { getCurrentLedgerState = \_reg -> do
+        { getCurrentLedgerState = do
             st <- ldbTip <$> readTVar t
             pure $
               MempoolLedgerDBView
                 (forgetLedgerTables st)
-                ( pure $
-                    Right $
-                      ReadOnlyForker
-                        { roforkerClose = pure ()
-                        , roforkerReadStatistics = pure $ Statistics 0
-                        , roforkerReadTables = pure . (projectLedgerTables st `restrictValues'`)
-                        , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
-                        , roforkerGetLedgerState = pure $ forgetLedgerTables st
-                        }
+                ( allocate
+                    reg
+                    ( \_ ->
+                        pure $
+                          Right $
+                            ReadOnlyForker
+                              { roforkerClose = pure ()
+                              , roforkerReadStatistics = pure $ Statistics 0
+                              , roforkerReadTables = pure . (projectLedgerTables st `restrictValues'`)
+                              , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
+                              , roforkerGetLedgerState = pure $ forgetLedgerTables st
+                              }
+                    )
+                    ( \case
+                        Left{} -> error "impossible"
+                        Right v -> roforkerClose v
+                    )
                 )
         }
     , t
@@ -566,12 +577,12 @@ mkSUT ::
   LedgerState blk ValuesMK ->
   m (SUT m blk, CT.Tracer m String, ResourceRegistry m)
 mkSUT cfg initialLedger = do
-  (lif, t) <- newLedgerInterface initialLedger
+  reg <- unsafeNewRegistry
+  (lif, t) <- newLedgerInterface initialLedger reg
   trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool blk)))
   let trcr =
         CT.Tracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
           atomically . writeTChan trcrChan
-  reg <- unsafeNewRegistry
   mempool <-
     openMempoolWithoutSyncThread
       reg
@@ -580,19 +591,20 @@ mkSUT cfg initialLedger = do
       (MempoolCapacityBytesOverride $ unIgnoringOverflow txMaxBytes')
       (Nothing :: Maybe MempoolTimeoutConfig)
       (CT.Tracer $ CT.traceWith trcr . Right)
-  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left, reg)
+  pure (SUT mempool t reg, CT.Tracer $ atomically . writeTChan trcrChan . Left, reg)
 
 semantics ::
-  ( MonadSTM m
-  , LedgerSupportsMempool blk
+  ( LedgerSupportsMempool blk
   , ValidateEnvelope blk
+  , IOLike m
   ) =>
   CT.Tracer m String ->
   Command blk Concrete ->
   StrictTVar m (SUT m blk) ->
   m (Response blk Concrete)
 semantics trcr cmd r = do
-  SUT m t <- atomically $ readTVar r
+  SUT m t rr <- atomically $ readTVar r
+  unsafeRegisterMyThread rr
   case cmd of
     Action (TryAddTxs txs) -> do
       AddResult <$> mapM (addTx m AddTxForRemotePeer) txs

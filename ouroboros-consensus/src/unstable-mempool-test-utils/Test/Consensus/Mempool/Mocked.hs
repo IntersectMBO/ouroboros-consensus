@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -84,21 +85,29 @@ openMockedMempool capacityOverride tracer initialParams = do
   reg <- unsafeNewRegistry
   let ledgerItf =
         Mempool.LedgerInterface
-          { Mempool.getCurrentLedgerState = \_reg -> do
+          { Mempool.getCurrentLedgerState = do
               st <- readTVar currentLedgerStateTVar
               pure $
                 MempoolLedgerDBView
                   (forgetLedgerTables st)
-                  ( pure $
-                      Right $
-                        ReadOnlyForker
-                          { roforkerClose = pure ()
-                          , roforkerGetLedgerState = pure (forgetLedgerTables st)
-                          , roforkerReadTables = \keys ->
-                              pure $ projectLedgerTables st `restrictValues'` keys
-                          , roforkerReadStatistics = pure $ Statistics 0
-                          , roforkerRangeReadTables = \_ -> pure (emptyLedgerTables, Nothing)
-                          }
+                  ( allocate
+                      reg
+                      ( \_ ->
+                          pure $
+                            Right $
+                              ReadOnlyForker
+                                { roforkerClose = pure ()
+                                , roforkerGetLedgerState = pure (forgetLedgerTables st)
+                                , roforkerReadTables = \keys ->
+                                    pure $ projectLedgerTables st `restrictValues'` keys
+                                , roforkerReadStatistics = pure $ Statistics 0
+                                , roforkerRangeReadTables = \_ -> pure (emptyLedgerTables, Nothing)
+                                }
+                      )
+                      ( \case
+                          Left{} -> error "impossible"
+                          Right v -> roforkerClose v
+                      )
                   )
           }
   mempool <-

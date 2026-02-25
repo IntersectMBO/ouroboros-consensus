@@ -1,9 +1,9 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryServer) where
 
-import Data.Functor ((<&>))
+import Control.Monad (void)
+import Control.ResourceRegistry
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
@@ -31,7 +31,7 @@ localStateQueryServer ::
   ) =>
   ExtLedgerCfg blk ->
   ( Target (Point blk) ->
-    m (Either GetForkerError (ReadOnlyForker' m blk))
+    m (ResourceKey m, Either GetForkerError (ReadOnlyForker' m blk))
   ) ->
   LocalStateQueryServer blk (Point blk) (Query blk) m ()
 localStateQueryServer cfg getView =
@@ -48,30 +48,35 @@ localStateQueryServer cfg getView =
     Target (Point blk) ->
     m (ServerStAcquiring blk (Point blk) (Query blk) m ())
   handleAcquire mpt = do
-    getView mpt <&> \case
-      Right forker -> SendMsgAcquired $ acquired forker
-      Left e -> case e of
-        PointTooOld{} ->
-          SendMsgFailure AcquireFailurePointTooOld idle
-        PointNotOnChain ->
-          SendMsgFailure AcquireFailurePointNotOnChain idle
+    (rk, eForker) <- getView mpt
+    case eForker of
+      Right forker -> pure $ SendMsgAcquired $ acquired rk forker
+      Left e -> do
+        void $ release rk
+        pure $ case e of
+          PointTooOld{} ->
+            SendMsgFailure AcquireFailurePointTooOld idle
+          PointNotOnChain ->
+            SendMsgFailure AcquireFailurePointNotOnChain idle
 
   acquired ::
+    ResourceKey m ->
     ReadOnlyForker' m blk ->
     ServerStAcquired blk (Point blk) (Query blk) m ()
-  acquired forker =
+  acquired rk forker =
     ServerStAcquired
-      { recvMsgQuery = handleQuery forker
+      { recvMsgQuery = handleQuery rk forker
       , recvMsgReAcquire = \mp -> do close; handleAcquire mp
       , recvMsgRelease = do close; return idle
       }
    where
-    close = roforkerClose forker
+    close = void $ release rk
 
   handleQuery ::
+    ResourceKey m ->
     ReadOnlyForker' m blk ->
     Query blk result ->
     m (ServerStQuerying blk (Point blk) (Query blk) m () result)
-  handleQuery forker query = do
+  handleQuery rk forker query = do
     result <- Query.answerQuery cfg forker query
-    return $ SendMsgResult result (acquired forker)
+    return $ SendMsgResult result (acquired rk forker)

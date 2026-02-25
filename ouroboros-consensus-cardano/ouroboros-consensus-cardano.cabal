@@ -735,7 +735,6 @@ executable snapshot-converter
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools, unstable-snapshot-conversion},
-    text,
     with-utf8,
 
   if impl(ghc <9.12)

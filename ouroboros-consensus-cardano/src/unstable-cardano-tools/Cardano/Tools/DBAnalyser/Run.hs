@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Cardano.Tools.DBAnalyser.Run (analyse) where
@@ -73,42 +74,43 @@ openLedgerDB ::
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB args = do
-  (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
-    LedgerDB.LedgerDbBackendArgsV1 bss ->
-      let snapManager = LedgerDB.V1.snapshotManager args
-          initDb =
-            LedgerDB.V1.mkInitDb
-              args
-              bss
-              (\_ -> pure (error "no stream"))
-              snapManager
-              (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-       in LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
-    LedgerDB.LedgerDbBackendArgsV2 (LedgerDB.V2.SomeBackendArgs bArgs) -> do
-      res <-
-        LedgerDB.V2.mkResources
-          (Proxy @blk)
-          (LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 >$< LedgerDB.lgrTracer args)
-          bArgs
-          (LedgerDB.lgrRegistry args)
-          (LedgerDB.lgrHasFS args)
-      let snapManager =
-            LedgerDB.V2.snapshotManager
+openLedgerDB args =
+  runWithTempRegistry $
+    (,()) <$> do
+      (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
+        LedgerDB.LedgerDbBackendArgsV1 bss ->
+          let snapManager = LedgerDB.V1.snapshotManager args
+              initDb =
+                LedgerDB.V1.mkInitDb
+                  args
+                  bss
+                  (\_ -> pure (error "no stream"))
+                  snapManager
+                  (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
+           in LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+        LedgerDB.LedgerDbBackendArgsV2 (LedgerDB.V2.SomeBackendArgs bArgs) -> do
+          res <-
+            LedgerDB.V2.mkResources
               (Proxy @blk)
-              res
-              (configCodec . getExtLedgerCfg . LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig args)
-              (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
+              (LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 >$< LedgerDB.lgrTracer args)
+              bArgs
               (LedgerDB.lgrHasFS args)
-      let initDb =
-            LedgerDB.V2.mkInitDb
-              args
-              (\_ -> pure (error "no stream"))
-              snapManager
-              (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-              res
-      LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
-  pure (ldb, od)
+          let snapManager =
+                LedgerDB.V2.snapshotManager
+                  (Proxy @blk)
+                  res
+                  (configCodec . getExtLedgerCfg . LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig args)
+                  (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
+                  (LedgerDB.lgrHasFS args)
+          let initDb =
+                LedgerDB.V2.mkInitDb
+                  args
+                  (\_ -> pure (error "no stream"))
+                  snapManager
+                  (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
+                  res
+          LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+      pure (ldb, od)
 
 emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
 emptyStream = ImmutableDB.StreamAPI $ \_ k -> k $ Right $ pure ImmutableDB.NoMoreItems

@@ -23,7 +23,9 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getPastLedger
   , getPerasWeightSnapshot
   , getPerasCertSnapshot
-  , getReadOnlyForkerAtPoint
+  , unsafeGetReadOnlyForkerAtPoint
+  , allocInRegistryReadOnlyForkerAtPoint
+  , withReadOnlyForkerAtPoint
   , getStatistics
   , getTipBlock
   , getTipHeader
@@ -38,7 +40,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   ) where
 
 import Cardano.Ledger.BaseTypes (WithOrigin (..))
-import Control.ResourceRegistry (ResourceRegistry)
+import Control.Monad.Trans.Class
+import Control.ResourceRegistry
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
@@ -281,13 +284,37 @@ getPastLedger ::
   STM m (Maybe (ExtLedgerState blk EmptyMK))
 getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
-getReadOnlyForkerAtPoint ::
+allocInRegistryReadOnlyForkerAtPoint ::
   IOLike m =>
   ChainDbEnv m blk ->
+  Target (Point blk) ->
   ResourceRegistry m ->
+  m (ResourceKey m, Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
+allocInRegistryReadOnlyForkerAtPoint cdb tgt rr =
+  allocate
+    rr
+    (\_ -> unsafeGetReadOnlyForkerAtPoint cdb tgt)
+    (either (const $ pure ()) LedgerDB.roforkerClose)
+
+unsafeGetReadOnlyForkerAtPoint ::
+  IOLike m =>
+  ChainDbEnv m blk ->
   Target (Point blk) ->
   m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
-getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
+unsafeGetReadOnlyForkerAtPoint CDB{..} = LedgerDB.unsafeGetReadOnlyForker cdbLedgerDB
+
+withReadOnlyForkerAtPoint ::
+  (MonadTrans t, MonadThrow (t m), IOLike m) =>
+  ChainDbEnv m blk ->
+  Target (Point blk) ->
+  ( Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk) ->
+    t m r
+  ) ->
+  t m r
+withReadOnlyForkerAtPoint cdb tgt =
+  bracket
+    (lift $ unsafeGetReadOnlyForkerAtPoint cdb tgt)
+    (either (const $ pure ()) (lift . LedgerDB.roforkerClose))
 
 getStatistics :: IOLike m => ChainDbEnv m blk -> m LedgerDB.Statistics
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB

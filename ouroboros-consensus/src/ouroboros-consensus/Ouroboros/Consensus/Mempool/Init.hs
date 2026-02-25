@@ -22,6 +22,7 @@ import Ouroboros.Consensus.Mempool.Query
 import Ouroboros.Consensus.Mempool.Update
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
+import Ouroboros.Network.Block
 
 {-------------------------------------------------------------------------------
   Opening the mempool
@@ -44,9 +45,9 @@ openMempool ::
   Tracer m (TraceEventMempool blk) ->
   m (Mempool m blk)
 openMempool topLevelRegistry ledger cfg capacityOverride timeoutConfig tracer = do
-  env <- initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer topLevelRegistry
-  forkSyncStateOnTipPointChange env
-  return $ mkMempool env
+  env <- initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer
+  forkSyncStateOnTipPointChange env topLevelRegistry
+  return $ mkMempool env topLevelRegistry
 
 -- | Spawn a thread which syncs the 'Mempool' state whenever the 'LedgerState'
 -- changes.
@@ -58,11 +59,12 @@ forkSyncStateOnTipPointChange ::
   , ValidateEnvelope blk
   ) =>
   MempoolEnv m blk ->
+  ResourceRegistry m ->
   m ()
-forkSyncStateOnTipPointChange menv =
+forkSyncStateOnTipPointChange menv reg =
   void $
     forkLinkedWatcher
-      (mpEnvRegistry menv)
+      reg
       "Mempool.syncStateOnTipPointChange"
       Watcher
         { wFingerprint = id
@@ -71,14 +73,14 @@ forkSyncStateOnTipPointChange menv =
         , wReader = getCurrentTip
         }
  where
-  action :: MempoolLedgerDBView m blk -> m ()
+  action :: Point blk -> m ()
   action _a =
     void $ implSyncWithLedger menv
 
   -- Using the tip ('Point') allows for quicker equality checks
-  getCurrentTip :: STM m (MempoolLedgerDBView m blk)
+  getCurrentTip :: STM m (Point blk)
   getCurrentTip =
-    getCurrentLedgerState (mpEnvLedger menv) (mpEnvRegistry menv)
+    ledgerTipPoint . mldViewState <$> getCurrentLedgerState (mpEnvLedger menv)
 
 -- | Unlike 'openMempool', this function does not fork a background thread
 -- that synchronises with the ledger state whenever the later changes.
@@ -99,7 +101,7 @@ openMempoolWithoutSyncThread ::
   Tracer m (TraceEventMempool blk) ->
   m (Mempool m blk)
 openMempoolWithoutSyncThread registry ledger cfg capacityOverride timeoutConfig tracer =
-  mkMempool <$> initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer registry
+  flip mkMempool registry <$> initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer
 
 mkMempool ::
   ( IOLike m
@@ -108,8 +110,8 @@ mkMempool ::
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
   ) =>
-  MempoolEnv m blk -> Mempool m blk
-mkMempool mpEnv =
+  MempoolEnv m blk -> ResourceRegistry m -> Mempool m blk
+mkMempool mpEnv reg =
   Mempool
     { addTx = fmap runIdentity .: implAddTx mpEnv ProductionAddTx
     , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
@@ -117,7 +119,7 @@ mkMempool mpEnv =
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getCapacity = isCapacity <$> readTMVar istate
     , testSyncWithLedger = implSyncWithLedger mpEnv
-    , testForkMempoolThread = forkLinkedThread (mpEnvRegistry mpEnv)
+    , testForkMempoolThread = forkLinkedThread reg
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }
  where

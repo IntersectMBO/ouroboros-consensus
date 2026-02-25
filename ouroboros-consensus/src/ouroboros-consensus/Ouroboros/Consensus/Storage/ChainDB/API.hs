@@ -80,6 +80,7 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   ) where
 
 import Control.Monad (void)
+import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -223,17 +224,23 @@ data ChainDB m blk = ChainDB
   , getHeaderStateHistory :: STM m (HeaderStateHistory blk)
   -- ^ Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
   -- last @k@ blocks of the current chain.
-  , getReadOnlyForkerAtPoint ::
-      ResourceRegistry m ->
+  , allocInRegistryReadOnlyForkerAtPoint ::
       Target (Point blk) ->
-      m (Either GetForkerError (ReadOnlyForker' m blk))
-  -- ^ Acquire a read-only forker at a specific point if that point exists
-  -- on the db.
+      ResourceRegistry m ->
+      m (ResourceKey m, Either GetForkerError (ReadOnlyForker' m blk))
+  -- ^ Allocate a read only forker at the given point in the given resource
+  -- registry.
   --
-  -- Note that the forker should be closed by the caller of this function.
+  -- This function is to be used by LocalStateQuery server and the Mempool.
+  , withReadOnlyForkerAtPoint ::
+      forall t r.
+      (MonadTrans t, MonadThrow (t m)) =>
+      Target (Point blk) ->
+      (Either GetForkerError (ReadOnlyForker' m blk) -> t m r) ->
+      t m r
+  -- ^ Run a continuation with a forker at the given target.
   --
-  -- The forker is read-only becase a read-write forker could be used to
-  -- change the internal state of the LedgerDB.
+  -- This function is to be used by the forging loop.
   , getTipBlock :: m (Maybe blk)
   -- ^ Get block at the tip of the chain, if one exists
   --
