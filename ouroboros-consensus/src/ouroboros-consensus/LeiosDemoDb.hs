@@ -291,6 +291,9 @@ newLeiosDBSQLiteFromEnv = do
 -- NOTE: All call sites of the handle will share a single database connection.
 -- This might be undesired if we switch to WAL mode where readers would not be
 -- blocked by writers.
+--
+-- TODO: Get rid of SQLOpenFullMutex and use proper concurrency control.
+-- TODO: Switch to WAL mode for better read/write concurrency.
 newLeiosDBSQLite :: FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLite dbPath = do
   -- TODO: not leak resources (the db connection)
