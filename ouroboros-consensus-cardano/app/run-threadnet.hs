@@ -21,11 +21,35 @@ optsParser =
   desc = "Run ThreadNet, ie. run nodes in a simulated IO environment"
 
   parse = do
-    configFile <-
+    threadNetConfigFile <-
       strOption $
         mconcat
-          [ long "config"
-          , help "Path to config file, in the same format as for the node or db-analyser"
+          [ long "threadnet-config"
+          , help "Path to ThreadNet config file"
           , metavar "PATH"
           ]
-    pure Opts{configFile}
+    slots <-
+      option auto $
+        mconcat
+          [ long "slots"
+          , help "How many slots to run the simulation for"
+          , metavar "INT"
+          , value 30
+          , showDefault
+          ]
+    txsPerSlot <-
+      option auto $
+        mconcat
+          [ long "txs-per-slot"
+          , help "How many transactions to add in each slot"
+          , metavar "INT"
+          , value 100
+          , showDefault
+          ]
+
+    pure
+      Opts
+        { threadNetConfigFile
+        , txsPerSlot
+        , slots
+        }
