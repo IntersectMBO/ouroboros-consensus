@@ -154,7 +154,7 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
       error "A bitmap is zero"
     when (flip any idxs (> fromIntegral idxLimit)) $ do
       error $ "An offset exceeds the theoretical limit " <> show idxLimit
-    when (not $ and $ zipWith (<) idxs (tail idxs)) $ do
+    when (not $ and $ zipWith (<) idxs (drop 1 idxs)) $ do
       error "Offsets not strictly ascending"
   let nextOffset = \case
         [] -> Nothing
