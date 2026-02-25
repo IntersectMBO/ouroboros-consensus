@@ -24,6 +24,7 @@ import Control.Monad.Class.MonadThrow
   , generalBracket
   )
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
+import Control.Monad.Class.MonadTime (diffUTCTime, getCurrentTime)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Int (Int64)
@@ -35,6 +36,7 @@ import Data.String (fromString)
 import Database.SQLite3
   ( SQLOpenFlag (..)
   , SQLVFS (..)
+  , execPrint
   , open2
   )
 import qualified Database.SQLite3.Direct as DB
@@ -51,7 +53,10 @@ import LeiosDemoTypes
   , leiosEbBodyItems
   , leiosEbBytesSize
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike, atomically)
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , atomically
+  )
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -417,15 +422,23 @@ newLeiosDBSQLite dbPath = do
           dbWithPrepare db (fromString sql_flush_memTxPoints) $ \stmtFlush -> do
             dbStep1 stmtFlush
           pure results
-      , leiosDbFilterMissingEbBodies = \points ->
+      , leiosDbFilterMissingEbBodies = \points -> do
+          start <- getCurrentTime
+          putStrLn $ "leiosDbFilterMissingEbBodies: start " <> show start
+          let measure = \msg -> do
+                cur <- getCurrentTime
+                putStrLn $
+                  "leiosDbFilterMissingEbBodies: " <> show (cur `diffUTCTime` start) <> " seconds - " <> msg
           -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries.
-          dbWithBEGIN db $ do
+          res <- dbWithBEGIN db $ do
             let pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
+            measure $ "points: " <> show (length points)
             dbWithPrepare db (fromString sql_insert_memEbHashes) $ \stmtInsert ->
               forM_ points $ \p -> do
                 dbBindBlob stmtInsert 1 p.pointEbHash.ebHashBytes
                 dbStep1 stmtInsert
                 dbReset stmtInsert
+            measure "after inserting into temp table"
             result <- dbWithPrepare db (fromString sql_filter_missing_eb_bodies) $ \stmt -> do
               let loop acc =
                     dbStep stmt >>= \case
@@ -436,19 +449,31 @@ newLeiosDBSQLite dbPath = do
                           Just p -> loop (p : acc)
                           Nothing -> loop acc
               loop []
+            measure "after main query"
             dbWithPrepare db (fromString sql_flush_memEbHashes) $ \stmtFlush ->
               dbStep1 stmtFlush
+            measure "after flushing temp table"
             pure result
-      , leiosDbFilterMissingTxs = \txHashes ->
+          measure "after tx"
+          execPrint db "SELECT count(*) FROM ebTxs"
+          pure res
+      , leiosDbFilterMissingTxs = \txHashes -> do
+          start <- getCurrentTime
+          putStrLn $ "leiosDbFilterMissingTxs: start " <> show start
+          let measure = \msg -> do
+                cur <- getCurrentTime
+                putStrLn $ "leiosDbFilterMissingTxs: " <> show (cur `diffUTCTime` start) <> " seconds - " <> msg
           -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
           --   WHERE t.txHashBytes IN (SELECT unhex(value) FROM json_each(?))
           -- This would eliminate the need for mem.txHashes table and insert/flush overhead.
-          dbWithBEGIN db $ do
+          res <- dbWithBEGIN db $ do
+            measure $ "txHashes: " <> show (length txHashes)
             dbWithPrepare db (fromString sql_insert_memTxHashes) $ \stmtInsert ->
               forM_ txHashes $ \(MkTxHash bytes) -> do
                 dbBindBlob stmtInsert 1 bytes
                 dbStep1 stmtInsert
                 dbReset stmtInsert
+            measure "after inserting into temp table"
             result <- dbWithPrepare db (fromString sql_filter_missing_txs) $ \stmt -> do
               let loop acc =
                     dbStep stmt >>= \case
@@ -457,9 +482,14 @@ newLeiosDBSQLite dbPath = do
                         txHash <- MkTxHash <$> DB.columnBlob stmt 0
                         loop (txHash : acc)
               loop []
+            measure "after main query"
             dbWithPrepare db (fromString sql_flush_memTxHashes) $ \stmtFlush ->
               dbStep1 stmtFlush
+            measure "after flushing temp table"
             pure result
+          measure "after tx"
+          execPrint db "SELECT count(*) FROM txs"
+          pure res
       , leiosDbQueryFetchWork = dbWithBEGIN db $ do
           -- Query missing EB bodies
           missingEbBodies <- dbWithPrepare db (fromString sql_query_missing_eb_bodies) $ \stmt -> do
@@ -582,7 +612,6 @@ sql_insert_memEbHashes :: String
 sql_insert_memEbHashes =
   "INSERT INTO mem.ebHashes (ebHashBytes) VALUES (?)"
 
--- | Filter: return ebHashes from temp table that have bodies in ebTxs
 -- | Filter: return ebHashes from temp table that do NOT have bodies in ebTxs
 sql_filter_missing_eb_bodies :: String
 sql_filter_missing_eb_bodies =
@@ -600,7 +629,6 @@ sql_insert_memTxHashes :: String
 sql_insert_memTxHashes =
   "INSERT INTO mem.txHashes (txHashBytes) VALUES (?)"
 
--- | Filter: return txHashes from temp table that exist in txs
 -- | Filter: return txHashes from temp table that do NOT exist in txs
 sql_filter_missing_txs :: String
 sql_filter_missing_txs =

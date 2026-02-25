@@ -423,16 +423,21 @@ initNodeKernel
         -- It is currently needed as the 'leiosDB' handle is shared across
         -- threads and 'BEGIN' queries would be interleaved over the same
         -- connection.
+        traceWith tracer $ MkTraceLeiosKernel "wait for write lock"
         filteredOutstanding <- MVar.withMVar leiosWriteLock $ \() -> do
+          traceWith tracer $ MkTraceLeiosKernel "with write lock"
           -- Filter outstanding work against DB before running fetch iteration.
           -- This removes EBs and TXs we already have (e.g., from forging or other peers).
           Leios.filterMissingWork leiosDB outstanding
+
+        traceWith tracer $ MkTraceLeiosKernel "leiosFetchLogic: filtered"
         let (!outstanding', newDecisions) =
               Leios.leiosFetchLogicIteration
                 Leios.demoLeiosFetchStaticEnv
                 offerings
                 filteredOutstanding
         pure (outstanding', newDecisions)
+      traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: decided"
       let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
       traceWith tracer $
         MkTraceLeiosKernel $
