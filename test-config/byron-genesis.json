@@ -1,7 +1,7 @@
 {
     "startTime": 1657186415,
     "protocolConsts": {
-        "k": 5,
+        "k": 432,
         "protocolMagic": 164
     },
     "blockVersionData": {

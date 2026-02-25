@@ -87,7 +87,7 @@
       "severity": "Silence"
     },
     "NodeState": {
-      "severity": "Notice"
+      "severity": "Debug"
     },
     "Resources": {
       "severity": "Silence"

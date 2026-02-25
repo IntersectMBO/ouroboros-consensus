@@ -38,7 +38,7 @@ module Test.ThreadNet.General
 import Control.Exception (assert)
 import Control.Monad (guard)
 import Control.Monad.IOSim (runSimOrThrow, setCurrentTime)
-import Control.Tracer (nullTracer)
+import Control.Tracer (debugTracer, showTracing)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -242,7 +242,7 @@ runTestNetwork
       let systemTime =
             BTime.defaultSystemTime
               (BTime.SystemStart dawnOfTime)
-              nullTracer
+              (showTracing debugTracer)
       runThreadNetwork
         systemTime
         ThreadNetworkArgs

@@ -5,6 +5,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -38,6 +39,7 @@ module Test.ThreadNet.Network
   , NodeDBs (..)
   , NodeOutput (..)
   , TestOutput (..)
+  , LeiosState (..)
   ) where
 
 import Cardano.Network.PeerSelection.Bootstrap
@@ -387,7 +389,7 @@ runThreadNetwork
           sharedRegistry
           clock
           -- traces when/why the mini protocol instances start and stop
-          nullDebugTracer
+          (showTracing debugTracer)
           (version, blockVersion)
           (codecConfig, calcMessageDelay)
           vertexStatusVars
@@ -835,6 +837,7 @@ runThreadNetwork
       let NodeInfo
             { nodeInfoEvents
             , nodeInfoDBs
+            , nodeInfoLeios
             } = nodeInfo
 
       -- prop_general relies on these tracers
@@ -993,6 +996,9 @@ runThreadNetwork
                 case ev of
                   TraceNodeIsLeader s -> atomically $ blockOnCrucial s
                   _ -> pure ()
+            , leiosKernelTracer = Tracer $ \lkt -> do
+                let LeiosState{leiosKernelEvents} = nodeInfoLeios
+                atomically $ modifyTVar leiosKernelEvents (lkt :)
             }
 
         -- traces the node's local events other than those from the -- ChainDB
@@ -1039,6 +1045,9 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, psRng) = split rng
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+
+      leiosDb <- newInMemoryLeiosDb
+
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
@@ -1093,7 +1102,7 @@ runThreadNetwork
                     { gnkaLoEAndGDDArgs = LoEAndGDDDisabled
                     }
               , getDiffusionPipeliningSupport = DiffusionPipeliningOn
-              , nkaGetLeiosNewDbConnection = newInMemoryLeiosDb
+              , nkaGetLeiosNewDbConnection = return leiosDb
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs
@@ -1581,8 +1590,8 @@ deriving instance
   (NoThunks (f InMemoryLeiosDb), NoThunks (f [TraceLeiosKernel])) =>
   NoThunks (LeiosState f)
 
-emptyLeiosState :: LeiosState Identity
-emptyLeiosState = LeiosState{leiosDb = pure emptyInMemoryLeiosDb, leiosKernelEvents = pure []}
+_emptyLeiosState :: LeiosState Identity
+_emptyLeiosState = LeiosState{leiosDb = pure emptyInMemoryLeiosDb, leiosKernelEvents = pure []}
 
 emptyLeiosStateTVar :: IOLike m => m (LeiosState (StrictTVar m))
 emptyLeiosStateTVar = atomically $ do
@@ -1766,7 +1775,7 @@ mkTestOutput vertexInfos = do
 
 -- | Occurs throughout in positions that might be useful for debugging.
 nullDebugTracer :: (Applicative m, Show a) => Tracer m a
-nullDebugTracer = nullTracer `asTypeOf` showTracing debugTracer
+nullDebugTracer = showTracing debugTracer
 
 -- | Occurs throughout in positions that might be useful for debugging.
 nullDebugTracers ::
@@ -1776,7 +1785,7 @@ nullDebugTracers ::
   , TracingConstraints blk
   ) =>
   Tracers m peer Void blk
-nullDebugTracers = nullTracers `asTypeOf` showTracers debugTracer
+nullDebugTracers = showTracers debugTracer
 
 -- | Occurs throughout in positions that might be useful for debugging.
 nullDebugProtocolTracers ::
@@ -1786,8 +1795,7 @@ nullDebugProtocolTracers ::
   , Show peer
   ) =>
   NTN.Tracers m peer blk failure
-nullDebugProtocolTracers =
-  NTN.nullTracers `asTypeOf` NTN.showTracers debugTracer
+nullDebugProtocolTracers = NTN.showTracers debugTracer
 
 -- These constraints are when using @showTracer(s) debugTracer@ instead of
 -- @nullTracer(s)@.
