@@ -531,7 +531,7 @@ sql_schema =
   \    ebBytesSize INTEGER NOT NULL\n\
   \  ,\n\
   \    PRIMARY KEY (ebSlot, ebHashBytes)\n\
-  \  ) WITHOUT ROWID;\n\
+  \  );\n\
   \CREATE INDEX idx_ebPoints_ebHashBytes ON ebPoints(ebHashBytes);\n\
   \CREATE TABLE ebTxs (\n\
   \    ebHashBytes BLOB NOT NULL   -- foreign key ebPoints.ebHashBytes\n\
@@ -543,7 +543,7 @@ sql_schema =
   \    txBytesSize INTEGER NOT NULL\n\
   \  ,\n\
   \    PRIMARY KEY (ebHashBytes, txOffset)\n\
-  \  ) WITHOUT ROWID;\n\
+  \  );\n\
   \CREATE INDEX idx_ebTxs_txHashBytes ON ebTxs(txHashBytes);\n\
   \CREATE TABLE txs (\n\
   \    txHashBytes BLOB NOT NULL PRIMARY KEY\n\
@@ -551,7 +551,7 @@ sql_schema =
   \    txBytes BLOB NOT NULL\n\
   \  ,\n\
   \    txBytesSize INTEGER NOT NULL\n\
-  \  ) WITHOUT ROWID;\n\
+  \  );\n\
   \"
 
 sql_scan_ebPoints :: String
