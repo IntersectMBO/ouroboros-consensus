@@ -75,13 +75,20 @@ data DbImpl
 -- Ensures proper cleanup for SQLite databases.
 withFreshDb :: DbImpl -> (LeiosDbHandle IO -> IO a) -> IO a
 withFreshDb InMemory action =
-  newLeiosDBInMemory >>= action
+  bracket
+    newLeiosDBInMemory
+    snd
+    (action . fst)
 withFreshDb SQLite action = do
   sysTmp <- getCanonicalTemporaryDirectory
   bracket
-    (createTempDirectory sysTmp "leios-test")
-    removeDirectoryRecursive
-    (\tmpDir -> newLeiosDBSQLite (tmpDir <> "/test.db") >>= action)
+    ( do
+        tmpDir <- createTempDirectory sysTmp "leios-test"
+        (db, close) <- newLeiosDBSQLite (tmpDir <> "/test.db")
+        pure (db, close >> removeDirectoryRecursive tmpDir)
+    )
+    snd
+    (action . fst)
 
 -- | Run tests for each database implementation (InMemory and SQLite).
 forEachImplementation :: (DbImpl -> [TestTree]) -> [TestTree]
