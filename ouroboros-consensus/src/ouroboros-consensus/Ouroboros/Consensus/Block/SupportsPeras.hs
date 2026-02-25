@@ -36,8 +36,9 @@ import qualified Data.Map.Strict as Map
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
-import Ouroboros.Consensus.Block.Abstract (Point, StandardHash)
+import Ouroboros.Consensus.Block.Abstract (BlockProtocol, Point, StandardHash)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
+import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 import qualified Ouroboros.Consensus.Peras.Cert as Base (PerasCert (..), ValidatedPerasCert (..))
 import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
 import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
@@ -49,7 +50,7 @@ import Ouroboros.Consensus.Peras.Vote
   , PerasVoterId (..)
   )
 import qualified Ouroboros.Consensus.Peras.Vote as Base (PerasVote (..), ValidatedPerasVote (..))
-import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
+import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 
 {-------------------------------------------------------------------------------
 -- * BlockSupportsPeras class
@@ -58,8 +59,8 @@ import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 class
   ( StandardHash blk
   , Typeable blk
-  -- , Eq (PerasConfig blk): Actually, we don't need it, and it's hard to implement for PerasConfig for HFC block
-  , Eq (PerasErr blk)
+  , -- , Eq (PerasConfig blk): Actually, we don't need it, and it's hard to implement for PerasConfig for HFC block
+    Eq (PerasErr blk)
   , Eq (PerasCert blk)
   , Eq (ValidatedPerasCert blk)
   , Eq (PerasVote blk)
@@ -90,6 +91,9 @@ class
   ) =>
   BlockSupportsPeras blk
   where
+  type LedgerStateOrView blk
+  type LedgerStateOrView blk = LedgerView (BlockProtocol blk)
+
   type PerasConfig blk
   type PerasErr blk
 
@@ -98,7 +102,7 @@ class
 
   forgePerasVote ::
     PerasConfig blk ->
-    LedgerState blk mk ->
+    LedgerStateOrView blk ->
     PerasVoterId ->
     PerasRoundNo ->
     Point blk ->
@@ -106,7 +110,7 @@ class
 
   validatePerasVote ::
     PerasConfig blk ->
-    LedgerState blk mk ->
+    LedgerStateOrView blk ->
     PerasVote blk ->
     Either (PerasErr blk) (ValidatedPerasVote blk)
 

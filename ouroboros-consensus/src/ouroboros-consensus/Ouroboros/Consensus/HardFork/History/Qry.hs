@@ -57,8 +57,10 @@ import Data.Fixed (divMod')
 import Data.Foldable (toList)
 import Data.Functor.Identity
 import Data.Kind (Type)
+import Data.SOP (K (..))
 import Data.SOP.NonEmpty (NonEmpty (..))
 import Data.SOP.Sing (SListI)
+import Data.SOP.Strict (NS (..))
 import Data.Time hiding (UTCTime)
 import Data.Word
 import GHC.Generics (Generic)
@@ -74,8 +76,6 @@ import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Util (Some (..))
 import Ouroboros.Consensus.Util.IOLike
 import Quiet
-import Data.SOP (K (..))
-import Data.SOP.Strict (NS (..))
 
 {-------------------------------------------------------------------------------
   Internal: reified queries
@@ -457,7 +457,8 @@ runQuery qry summary = collapseNS <$> runQueryNS qry summary
 -- ('K' a) xs@, where the position in the sum indicates the era.
 -- This is useful when the caller needs to know /which/ era the query
 -- resolved in.
-runQueryNS :: forall a xs.
+runQueryNS ::
+  forall a xs.
   HasCallStack =>
   Qry a -> Summary xs -> Either PastHorizonException (NS (K a) xs)
 runQueryNS qry (Summary summary) = go summary
@@ -465,7 +466,7 @@ runQueryNS qry (Summary summary) = go summary
   go :: NonEmpty xs' EraSummary -> Either PastHorizonException (NS (K a) xs')
   go (NonEmptyOne era) = Z . K <$> tryEra era qry
   go (NonEmptyCons era eras) = case tryEra era qry of
-    Left _  -> S <$> go eras
+    Left _ -> S <$> go eras
     Right x -> Right (Z (K x))
 
   tryEra :: forall b. HasCallStack => EraSummary -> Qry b -> Either PastHorizonException b

@@ -46,6 +46,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Protocol.Abstract (ConsensusProtocol (LedgerView))
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Condense
@@ -79,6 +80,7 @@ class
   , HasLedgerTables (Ticked (LedgerState blk))
   , -- Peras
     BlockSupportsPeras blk
+  , LedgerStateOrView blk ~ LedgerView (BlockProtocol blk)
   , -- Instances required to support testing
     Eq (GenTx blk)
   , Eq (Validated (GenTx blk))

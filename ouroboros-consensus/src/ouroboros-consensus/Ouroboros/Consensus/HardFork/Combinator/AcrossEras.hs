@@ -47,6 +47,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , OneEraLedgerUpdate (..)
   , OneEraLedgerWarning (..)
   , OneEraTiebreakerView (..)
+  , OneEraLedgerView (..)
   , OneEraPerasCert (..)
   , OneEraValidatedPerasCert (..)
   , OneEraPerasVote (..)
@@ -142,6 +143,7 @@ newtype OneEraLedgerError xs = OneEraLedgerError {getOneEraLedgerError :: NS Wra
 newtype OneEraLedgerEvent xs = OneEraLedgerEvent {getOneEraLedgerEvent :: NS WrapLedgerEvent xs}
 newtype OneEraLedgerUpdate xs = OneEraLedgerUpdate {getOneEraLedgerUpdate :: NS WrapLedgerUpdate xs}
 newtype OneEraLedgerWarning xs = OneEraLedgerWarning {getOneEraLedgerWarning :: NS WrapLedgerWarning xs}
+newtype OneEraLedgerView xs = OneEraLedgerView {getOneEraLedgerView :: NS WrapLedgerView xs}
 newtype OneEraPerasErr xs = OneEraPerasErr {getOneEraPerasErr :: NS WrapPerasErr xs}
 
 newtype OneEraPerasCert xs = OneEraPerasCert {getOneEraPerasCert :: NS WrapPerasCert xs}
@@ -488,11 +490,6 @@ deriving via
   LiftNP WrapPartialLedgerConfig xs
   instance
     CanHardFork xs => Show (PerEraLedgerConfig xs)
-
-deriving via
-  LiftNP WrapPerasConfig xs
-  instance
-    CanHardFork xs => Eq (PerEraPerasConfig xs)
 
 deriving via
   LiftNP WrapPerasConfig xs

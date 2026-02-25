@@ -28,19 +28,21 @@ module Ouroboros.Consensus.HardFork.Combinator.Node.Peras
   ) where
 
 import Control.Exception (Exception)
+import Control.Monad.Except (runExcept)
 import Data.Bifunctor (bimap)
 import Data.Functor.Compose (Compose (..))
 import Data.Functor.Product (Product (Pair))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Proxy (Proxy (..))
-import Data.SOP (All, K (..), SListI)
+import Data.SOP (All, K (..), SListI, (:.:) (Comp))
+import Data.SOP.Functors (Flip (..))
 import Data.SOP.Index (Index, hcizipWith, indices, injectNS)
 import Data.SOP.Match (matchNS)
-import Data.SOP.Strict (HCollapse (..), NP (..), NS (..), hcmap, hmap)
+import Data.SOP.Strict (HCollapse (..), HSequence (..), NP (..), NS (..), hcmap, hczipWith, hmap)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (..), Point (..))
+import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (..), Point (..), SlotNo)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , IsPerasCert (..)
@@ -49,6 +51,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , IsValidatedPerasVote (..)
   , ValidatedPerasVotesReachingQuorum (..)
   )
+import Ouroboros.Consensus.Forecast (forecastFor)
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (CanHardFork)
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
   ( SingleEraBlock
@@ -56,31 +59,39 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
   )
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   ( OneEraHash (..)
+  , OneEraLedgerView (..)
   , OneEraPerasCert (..)
   , OneEraPerasErr (..)
   , OneEraPerasVote (..)
   , OneEraValidatedPerasCert (..)
   , OneEraValidatedPerasVote (..)
+  , PerEraLedgerConfig (..)
   , PerEraPerasConfig (..)
   )
-import Ouroboros.Consensus.HardFork.Combinator.Basics (HardForkBlock (..), LedgerState (..))
+import Ouroboros.Consensus.HardFork.Combinator.Basics
+  ( HardForkBlock (..)
+  , HardForkLedgerConfig (..)
+  , LedgerState (..)
+  , completeLedgerConfig''
+  )
 import Ouroboros.Consensus.HardFork.Combinator.Block ()
-import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
-import qualified Ouroboros.Consensus.HardFork.History as History
-import Data.SOP.Functors (Flip (..))
+import Ouroboros.Consensus.HardFork.Combinator.State qualified as State
+import Ouroboros.Consensus.HardFork.History qualified as History
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, LedgerConfig)
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
 import Ouroboros.Consensus.Peras.Cert qualified as Base ()
 import Ouroboros.Consensus.Peras.Vote (PerasVoteTarget (..))
 import Ouroboros.Consensus.Peras.Vote qualified as Base ()
 import Ouroboros.Consensus.TypeFamilyWrappers
-  ( WrapPerasCert (..)
+  ( WrapLedgerConfig (..)
+  , WrapLedgerView (..)
+  , WrapPerasCert (..)
   , WrapPerasConfig (..)
   , WrapPerasErr (..)
   , WrapPerasVote (..)
   , WrapValidatedPerasCert (..)
   , WrapValidatedPerasVote (..)
   )
-import Ouroboros.Consensus.Ledger.Abstract (LedgerConfig)
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 
 {-------------------------------------------------------------------------------
   'BlockSupportsPeras' instance for 'HardForkBlock'
@@ -136,6 +147,7 @@ instance CanHardFork xs => NoThunks (HardForkPerasConfig xs)
 --   'ensureSameEraPair' to verify they all belong to the same era and collect
 --   them, then dispatch via 'hcizipWith'.
 instance CanHardFork xs => BlockSupportsPeras (HardForkBlock xs) where
+  type LedgerStateOrView (HardForkBlock xs) = LedgerState (HardForkBlock xs) EmptyMK
   type PerasConfig (HardForkBlock xs) = HardForkPerasConfig xs
   type PerasErr (HardForkBlock xs) = HardForkPerasErr xs
   type PerasCert (HardForkBlock xs) = OneEraPerasCert xs
@@ -149,99 +161,86 @@ instance CanHardFork xs => BlockSupportsPeras (HardForkBlock xs) where
   -- 'SlotNo' via 'History.runQueryNS' applied to 'History.perasRoundNoToSlot',
   -- which returns an 'NS' positioned at the era the round falls in.
   --
-  -- We then use 'State.extendToSlot' to advance the ledger state's
-  -- telescope to the era containing that slot (translating the ledger
-  -- state across era boundaries if necessary), and take its 'State.tip'.
-  -- Finally, 'ensureSameEraPair' verifies that the query era and the
-  -- extended tip era agree before dispatching to the per-era
-  -- 'forgePerasVote'.
-  forgePerasVote HardForkPerasConfig{hfpcPerEraPerasConfig, hfpcLedgerConfig} (HardForkLedgerState st) voterId roundNo point = do
-    -- Strip ledger tables up front: extendToSlot requires EmptyMK, and
-    -- per-era forgePerasVote doesn't need them either.
-    let st' = hcmap proxySingle (\(Flip ls) -> Flip (forgetLedgerTables ls)) st
-    -- Use the hard fork history to determine which era this round falls in.
-    let summary = State.reconstructSummaryLedger hfpcLedgerConfig st'
-    nsSlotAndRoundLength <- bimap (const PerasRoundBeyondHorizon) id $
-      History.runQueryNS (History.perasRoundNoToSlot roundNo) summary
+  -- We then forecast a per-era 'LedgerView' to the slot corresponding to
+  -- the round via 'ledgerViewForecastAt' + 'forecastFor', and dispatch to
+  -- the per-era 'forgePerasVote' with that ledger view.
+  forgePerasVote HardForkPerasConfig{hfpcPerEraPerasConfig, hfpcLedgerConfig} ledgerState@(HardForkLedgerState unwrappedLedgerState) voterId roundNo point = do
+    -- Build a summary to be able to run queries
+    let summary = State.reconstructSummaryLedger hfpcLedgerConfig unwrappedLedgerState
+    -- Query the hard fork history to determine what is the start slot of this
+    -- PerasRound. Thanks to 'runQueryNS', the result is wrapped in an 'NS' which
+    -- \*also* gives us the era the round falls in by its position.
+    nsQueryRes <-
+      bimap (const PerasRoundBeyondHorizon) id $
+        History.runQueryNS (History.perasRoundNoToSlot roundNo) summary
     -- Extract the slot corresponding to the Peras round from the query result.
-    (slot, _roundLength) <- case hcollapse nsSlotAndRoundLength of
-      History.PerasEnabled slot' -> Right slot'
-      History.NoPerasEnabled -> Left PerasNotEnabled
-    -- Extend the telescope to the era containing that slot, then take
-    -- the tip to get the per-era ledger state (stripping the DiffMK
-    -- that extendToSlot introduces).
-    let extended = State.extendToSlot hfpcLedgerConfig slot st'
-        nsExtendedTip = hcmap proxySingle (\(Flip ls) -> Flip (forgetLedgerTables ls))
-                           (State.tip extended)
-    -- Ensure the query era and the extended tip era agree.
-    matched <- ensureSameEraPair (nsSlotAndRoundLength, nsExtendedTip)
+    (slot, _roundLength) <- ensurePerasEnabled (hcollapse nsQueryRes)
+    -- Ledger state is forecast into ledger view for the target slot.
+    nsLedgerView <- forcastToViewAtSlot hfpcLedgerConfig slot ledgerState
+    -- Ensure the query era and the forecasted view era agree.
+    nsQueryResAndLedgerView <- ensureSameEraPair (nsQueryRes, getOneEraLedgerView nsLedgerView)
     -- Dispatch to the per-era forgePerasVote.
     hcollapse $
       hcizipWith
         proxySingle
-        ( \idx wrappedCfg (Pair _queryResult (Flip perEraLedgerState)) ->
+        ( \idx wrappedCfg (Pair _queryResult (WrapLedgerView ledgerView)) ->
             K $
               bimap
                 (SomePerasErr . OneEraPerasErr . injectNS idx . WrapPerasErr)
                 (OneEraValidatedPerasVote . injectNS idx . WrapValidatedPerasVote)
                 ( forgePerasVote
                     (unwrapPerasConfig wrappedCfg)
-                    perEraLedgerState
+                    ledgerView
                     voterId
                     roundNo
                     (downcastHardForkPoint point)
                 )
         )
         (getPerEraPerasConfig hfpcPerEraPerasConfig)
-        matched
+        nsQueryResAndLedgerView
 
   -- Validate a vote by delegating to the correct era's 'validatePerasVote'.
   --
   -- The era is determined by the vote's 'PerasRoundNo': we extract it via
   -- 'getPerasVoteRound', translate it to a 'SlotNo' via
-  -- 'History.runQueryNS' applied to 'History.perasRoundNoToSlot', and use
-  -- 'State.extendToSlot' to advance the ledger state's telescope to the
-  -- era containing that slot (translating the ledger state across era
-  -- boundaries if necessary). Finally, 'ensureSameEraPair' verifies that
-  -- the vote's era and the extended tip era agree before dispatching to
-  -- the per-era 'validatePerasVote'.
-  validatePerasVote HardForkPerasConfig{hfpcPerEraPerasConfig, hfpcLedgerConfig} (HardForkLedgerState st) vote@(OneEraPerasVote nsVote) = do
+  -- 'History.runQueryNS' applied to 'History.perasRoundNoToSlot', and
+  -- forecast a per-era 'LedgerView' to the slot corresponding to the
+  -- round via 'ledgerViewForecastAt' + 'forecastFor'. Finally,
+  -- 'ensureSameEraPair' verifies that the vote's era and the forecasted
+  -- view era agree before dispatching to the per-era 'validatePerasVote'.
+  validatePerasVote HardForkPerasConfig{hfpcPerEraPerasConfig, hfpcLedgerConfig} ledgerState@(HardForkLedgerState unwrappedLedgerState) vote@(OneEraPerasVote nsVote) = do
     let roundNo = getPerasVoteRound vote
-    -- Strip ledger tables up front: extendToSlot requires EmptyMK.
-    let st' = hcmap proxySingle (\(Flip ls) -> Flip (forgetLedgerTables ls)) st
-    -- Use the hard fork history to determine which era this round falls in.
-    let summary = State.reconstructSummaryLedger hfpcLedgerConfig st'
-    nsSlotAndRoundLength <- bimap (const PerasRoundBeyondHorizon) id $
-      History.runQueryNS (History.perasRoundNoToSlot roundNo) summary
+    -- Build a summary to be able to run queries
+    let summary = State.reconstructSummaryLedger hfpcLedgerConfig unwrappedLedgerState
+    -- Query the hard fork history to determine what is the start slot of this
+    -- PerasRound. Thanks to 'runQueryNS', the result is wrapped in an 'NS' which
+    -- \*also* gives us the era the round falls in by its position.
+    nsQueryRes <-
+      bimap (const PerasRoundBeyondHorizon) id $
+        History.runQueryNS (History.perasRoundNoToSlot roundNo) summary
     -- Extract the slot corresponding to the Peras round from the query result.
-    (slot, _roundLength) <- case hcollapse nsSlotAndRoundLength of
-      History.PerasEnabled slot' -> Right slot'
-      History.NoPerasEnabled -> Left PerasNotEnabled
-    -- Extend the telescope to the era containing that slot, then take
-    -- the tip to get the per-era ledger state (stripping the DiffMK
-    -- that extendToSlot introduces).
-    let extended = State.extendToSlot hfpcLedgerConfig slot st'
-        nsExtendedTip = hcmap proxySingle (\(Flip ls) -> Flip (forgetLedgerTables ls))
-                             (State.tip extended)
-    -- Ensure the vote's era and the extended tip era agree.
-    matched <- ensureSameEraPair (nsVote, nsExtendedTip)
+    (slot, _roundLength) <- ensurePerasEnabled (hcollapse nsQueryRes)
+    -- Ledger state is forecast into ledger view for the target slot.
+    nsLedgerView <- forcastToViewAtSlot hfpcLedgerConfig slot ledgerState
+    -- Ensure the vote's era and the forecasted view era agree.
+    nsQueryResAndLedgerView <- ensureSameEraPair (nsVote, getOneEraLedgerView nsLedgerView)
     -- Dispatch to the per-era validatePerasVote.
     hcollapse $
       hcizipWith
         proxySingle
-        ( \idx wrappedCfg (Pair wrappedVote (Flip perEraLedgerState)) ->
+        ( \idx wrappedCfg (Pair wrappedVote (WrapLedgerView ledgerView)) ->
             K $
               bimap
                 (SomePerasErr . OneEraPerasErr . injectNS idx . WrapPerasErr)
                 (OneEraValidatedPerasVote . injectNS idx . WrapValidatedPerasVote)
                 ( validatePerasVote
                     (unwrapPerasConfig wrappedCfg)
-                    perEraLedgerState
+                    ledgerView
                     (unwrapPerasVote wrappedVote)
                 )
         )
         (getPerEraPerasConfig hfpcPerEraPerasConfig)
-        matched
+        nsQueryResAndLedgerView
 
   -- Forge a certificate from a quorum of validated votes.
   --
@@ -455,6 +454,42 @@ instance CanHardFork xs => IsValidatedPerasVote (HardForkBlock xs) (OneEraValida
   HFC/SOP-specific helpers
 -------------------------------------------------------------------------------}
 
+-- | Forecast the tip of LedgerState into a 'LedgerView' for the given slot.
+--
+-- Given a 'HardForkLedgerConfig' and the HFC ledger state telescope, this
+-- function completes the per-era partial ledger configs, extracts the tip
+-- era's ledger state, calls 'ledgerViewForecastAt' to build a 'Forecast',
+-- then 'forecastFor' to obtain the 'LedgerView' at the target slot.
+--
+-- Returns @Left err@ if the slot is outside the forecast range (e.g. beyond
+-- the safe zone), or @Right (OneEraLedgerView xs)@ positioned at the tip era.
+forcastToViewAtSlot ::
+  All SingleEraBlock xs =>
+  HardForkLedgerConfig xs ->
+  SlotNo ->
+  LedgerState (HardForkBlock xs) EmptyMK ->
+  Either (HardForkPerasErr xs) (OneEraLedgerView xs)
+forcastToViewAtSlot cfg slot (HardForkLedgerState st) =
+  OneEraLedgerView
+    <$> ( hsequence' $ -- Collapse the 'NS' of 'Either' into an 'Either' of 'NS'.
+            hczipWith
+              proxySingle
+              ( \(WrapLedgerConfig lcfg) (Flip ledgerSt) ->
+                  Comp $ case runExcept (forecastFor (ledgerViewForecastAt lcfg ledgerSt) slot) of
+                    Left _err -> Left PerasRoundBeyondHorizon
+                    Right view -> Right (WrapLedgerView view)
+              )
+              perEraFullLedgerConfig
+              (State.tip st)
+        )
+ where
+  epochInfo = State.epochInfoLedger cfg st
+  perEraFullLedgerConfig =
+    hcmap
+      proxySingle
+      (completeLedgerConfig'' epochInfo)
+      (getPerEraLedgerConfig (hardForkLedgerConfigPerEra cfg))
+
 -- | Ensure that all elements of a non-empty list of 'NS' values are in the
 -- same era, collecting them into a single 'NS' containing a 'NonEmpty'. Returns
 -- 'Left ParamsEraMismatch' if elements are from different eras, or
@@ -469,8 +504,8 @@ ensureSameEraNonEmpty (x :| rest) = foldl go (Right $ hmap (Compose . (:| [])) x
   go (Right acc) ns =
     case matchNS acc ns of
       Left _mismatch -> Left ParamsEraMismatch
-      Right matched ->
-        Right $ hmap (\(Pair (Compose fs) f) -> Compose (fs <> (f :| []))) matched
+      Right nsQueryResAndLedgerView ->
+        Right $ hmap (\(Pair (Compose fs) f) -> Compose (fs <> (f :| []))) nsQueryResAndLedgerView
 
 -- | Ensure that two 'NS' values are in the same era, pairing them together.
 -- Returns 'Left ParamsEraMismatch' if they are from different eras.
@@ -483,7 +518,16 @@ ensureSameEraPair ::
 ensureSameEraPair (l, r) =
   case matchNS l r of
     Left _mismatch -> Left ParamsEraMismatch
-    Right matched -> Right matched
+    Right nsQueryResAndLedgerView -> Right nsQueryResAndLedgerView
+
+-- | Transforms a 'History.PerasEnabled' result into an 'Either', returning
+-- 'Left PerasNotEnabled' if Peras is not enabled in the era.
+ensurePerasEnabled ::
+  History.PerasEnabled a ->
+  Either (HardForkPerasErr xs) a
+ensurePerasEnabled = \case
+  History.PerasEnabled a -> Right a
+  History.NoPerasEnabled -> Left PerasNotEnabled
 
 -- | Apply a continuation to the last element of an 'NP' together with its
 -- 'Index'. This is used to delegate operations to the last era in the hard
@@ -528,4 +572,3 @@ upcastToHardForkPoint = \case
     GenesisPoint
   BlockPoint s h ->
     BlockPoint s (OneEraHash (toShortRawHash (Proxy @blk) h))
-
