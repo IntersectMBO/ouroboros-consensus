@@ -72,7 +72,6 @@ import Ouroboros.Consensus.HardFork.Combinator
   )
 import Ouroboros.Consensus.HardFork.Combinator.State (currentState)
 import Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)
-import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Shelley.HFEras ()
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -81,7 +80,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
   , ShelleyBlockLedgerEra
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import Ouroboros.Consensus.Util.IOLike (IOLike)
 import System.Directory (makeAbsolute)
 import System.FilePath (takeDirectory, (</>))
 import TextBuilder (TextBuilder)
