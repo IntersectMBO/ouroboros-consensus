@@ -18,6 +18,7 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , PraosCanBeLeader (..)
   , PraosTiebreakerView (..)
   , VRFTiebreakerFlavor (..)
+  , PraosReasonForSwitch (..)
 
     -- * node support
   , PraosCredentialsSource (..)
