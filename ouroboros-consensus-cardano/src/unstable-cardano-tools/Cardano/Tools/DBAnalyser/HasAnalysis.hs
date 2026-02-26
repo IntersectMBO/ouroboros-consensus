@@ -3,6 +3,8 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module Cardano.Tools.DBAnalyser.HasAnalysis
   ( HasAnalysis (..)
@@ -10,9 +12,12 @@ module Cardano.Tools.DBAnalyser.HasAnalysis
   , HasFeatures (..)
   , SizeInBytes
   , WithLedgerState (..)
+  , TxFeatures(..)
   ) where
 
+import Data.Functor.Identity (Identity)
 import Data.Map.Strict (Map)
+import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (HasAnnTip (..))
 import Ouroboros.Consensus.Ledger.Abstract
@@ -20,12 +25,9 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Storage.Serialisation (SizeInBytes)
 import Ouroboros.Consensus.Util.Condense (Condense)
 import TextBuilder (TextBuilder)
-import Lens.Micro
-import Data.Set (Set)
-import Cardano.Ledger.Api
-import Data.Text (Text)
 import Cardano.Ledger.BaseTypes (ProtVer)
-import Cardano.Ledger.TxIn as Ledger
+import qualified Barbies
+import Data.Text (Text)
 
 {-------------------------------------------------------------------------------
   HasAnalysis
@@ -69,6 +71,49 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk), HasFeatures bl
   -- the IO monad.
   blockApplicationMetrics :: [(TextBuilder, WithLedgerState blk -> IO TextBuilder)]
 
+  txFeatures :: WithLedgerState blk -> [TxFeatures Identity]
+
+-- | Like 'BlockFeatures' but for transaction features.
+data TxFeatures f = MkTxFeatures
+  { src_block :: f BlockNo
+    -- ^ Identifier of the block which this transaction is from
+  , num_script_wits :: f Int
+    -- ^ Number of script witnesses
+  , num_addr_wits:: f Int
+    -- ^ Number of regular address witnesses
+  , size_script_wits :: f Int
+    -- ^ Size of inline script witnesses
+  , size_ref_scripts :: f Int
+    -- ^ Size of (resolved) reference scripts
+  , size_datum :: f Int
+    -- ^ Size of the datum
+  , num_inputs :: f Int
+    -- ^ Number of inputs
+  , size_inputs :: f Int
+    -- ^ Size of (resolved) inputs
+  , num_abs_inputs :: f Int
+    -- ^ The number of inputs which aren't in the UtxO (should always be 0)
+  , num_outputs :: f Int
+    -- ^ Number of outputs
+  , num_ref_inputs :: f Int
+    -- ^ Number of reference inputs
+  , size_ref_inputs :: f Int
+    -- ^ Size of (resolved) reference inputs
+  , num_abs_ref_inputs :: f Int
+    -- ^ The number of reference inputs which aren't in the UtxO (should always be 0)
+  , num_certs :: f Int
+    -- ^ Total number of certs
+  , num_pool_certs :: f Int
+    -- ^ Number of certs which are pool certs
+  , num_gov_certs :: f Int
+    -- ^ Number of certs which are governance certs
+  , num_deleg_certs :: f Int
+    -- ^ Number of certs which are deleg certs
+  , min_fee :: f Int
+    -- ^ TODO
+  }
+  deriving (Generic, Barbies.FunctorB, Barbies.TraversableB, Barbies.ApplicativeB, Barbies.ConstraintsB)
+
 class HasProtocolInfo blk where
   data Args blk
   mkProtocolInfo :: Args blk -> IO (ProtocolInfo blk)
@@ -78,73 +123,6 @@ class HasProtocolInfo blk where
 class HasFeatures blk where
   protVer :: blk -> ProtVer
 
-  -- | The type of transaction that blocks of type @blk@ contains.
-  type TxOf blk
-
-  -- | Iterates over all the transactions of a block.
-  txs :: SimpleFold blk (TxOf blk)
-
-  -- | The set of all inputs in a transaction.
-  inputs :: proxy blk -> SimpleGetter (TxOf blk) (Set Ledger.TxIn)
-  -- | Number of outputs in the transaction. We don't expose a set of, or an
-  -- iterator over, outputs to avoid introducing an extra type family.
-  numOutputs :: proxy blk -> TxOf blk -> Int
-  -- | The set of only reference inputs in a transaction.
-  referenceInputs :: proxy blk -> SimpleGetter (TxOf blk) (Set Ledger.TxIn)
-
-  -- | The type of sets of witnesses that transactions in blocks of type @blk@
-  -- can have.
-  type WitsOf blk
-
-  -- | The set of all the witnesses of a given transaction
-  wits :: proxy blk -> SimpleGetter (TxOf blk) (WitsOf blk)
-
-  -- | The set of only address witnesses contain in a witness set.
-  addrWits :: proxy blk -> Lens' (WitsOf blk) (Set (WitVKey Witness))
-
-  -- | The size of the datum in a witness set.
-  datumSize :: proxy blk -> WitsOf blk -> Int
-
-  -- | The type of script witnesses that a transaction in @blk@ can have.
-  type ScriptType blk
-
-  -- | The set of only the script witnesses in the witness set, indexed by their
-  -- hash.
-  scriptWits :: proxy blk -> SimpleGetter (WitsOf blk) (Map ScriptHash (ScriptType blk))
-
-  -- | The size of a given script.
-  scriptSize :: proxy blk -> ScriptType blk -> Int
-
-  -- | The type of certificates that transactions in blocks of types @blk@ can
-  -- use. The main use of this type is to give us the means to classify
-  -- certificate in several categories.
-  type CertsOf blk
-
-  -- | Iterates over all the certificates of a transaction.
-  certs :: proxy blk -> SimpleFold (TxOf blk) (CertsOf blk)
-
-  -- | 'filterPoolCert', 'filterGovCert', 'filterDelegCert' tests if a
-  -- certificate is in the given category. They are implemented as affine folds:
-  -- a fold which traverses 0 or 1 value (and, in this case, is the identity
-  -- when it traverses 1 value). This affinity constraint isn't enforced in
-  -- types.
-  filterPoolCert :: proxy blk -> SimpleFold (CertsOf blk) (CertsOf blk)
-  filterGovCert :: proxy blk -> SimpleFold (CertsOf blk) (CertsOf blk)
-  filterDelegCert :: proxy blk -> SimpleFold (CertsOf blk) (CertsOf blk)
-  
   -- | The name of the era in which the block was emitted. This is plain text,
   -- simply meant to help filtering out undesired era for later analysis.
   eraName :: blk -> Text
-
-  -- | The UTxO map from the current ledger state. It is important that this
-  -- stays a map and not an iterator because we are going to lookup inputs in
-  -- the map (but never otherwise traverse it). This is used for to extract the
-  -- size of inputs.
-  --
-  -- We're representing outputs merely as their sizes. This avoids introducing a
-  -- new type family, and is enough for our purpose.
-  utxoSummary :: WithLedgerState blk -> Map Ledger.TxIn Int
-
-  -- | Like 'utxoSummary', but restricted to those outputs which contain
-  -- scripts.
-  utxoScriptsSummary :: WithLedgerState blk -> Map Ledger.TxIn Int

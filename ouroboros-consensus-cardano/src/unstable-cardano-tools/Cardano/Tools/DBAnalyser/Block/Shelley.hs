@@ -11,6 +11,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module Cardano.Tools.DBAnalyser.Block.Shelley
   ( Args (..)
@@ -42,6 +43,7 @@ import Data.Sequence.Strict (StrictSeq)
 import Data.Word (Word64)
 import Lens.Micro ((^.), folded, to, toListOf, SimpleGetter, SimpleFold, foldMapOf, has, traversed)
 import Lens.Micro.Extras (view)
+import Ouroboros.Consensus.Block (blockNo)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra, StandardCrypto)
@@ -74,11 +76,14 @@ import Cardano.Protocol.Crypto (Crypto)
 import Ouroboros.Consensus.Protocol.Praos.Header (Header(..),HeaderBody(..))
 import Cardano.Ledger.Api.Tx.Wits
 import Data.Set (Set)
-import Cardano.Ledger.Api (BabbageEraTxBody(..), BabbageEraTxOut (..))
+import Cardano.Ledger.Api (BabbageEraTxBody(..), BabbageEraTxOut (..), EraTxBody)
 import qualified Cardano.Ledger.Conway.TxCert as Conway
 import qualified Cardano.Ledger.Shelley.TxCert as Shelley
 import qualified Cardano.Ledger.Dijkstra.TxCert as Dijkstra
 import qualified Cardano.Ledger.State as LState
+import Data.Functor.Identity (Identity (..))
+import Cardano.Ledger.Coin (Coin(..))
+import qualified Cardano.Ledger.Shelley.LedgerState as SL
 
 -- | Usable for each Shelley-based era
 instance
@@ -89,13 +94,18 @@ instance
   , EraHasName era
   , EraDatum era
   , EraTx era
-  , Core.EraTxBody era
+  , EraTxWits era
+  , EraTxBody era
   , EraClassifyCert (Core.TxCert era)
   , EraClassifyOutputs era
   )  =>
-  HasAnalysis (ShelleyBlock proto era)
-  where
-  countTxOutputs blk = getSum $ foldMapOf txs (Sum . numOutputs (Proxy @(ShelleyBlock proto era))) blk
+  HasAnalysis (ShelleyBlock proto era) where
+
+  countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
+    SL.Block _ body -> getSum $ foldMap (Sum . countOutputs) (body ^. Core.txSeqBlockBodyL)
+   where
+    countOutputs :: Core.Tx era -> Int
+    countOutputs tx = length $ tx ^. Core.bodyTxL . Core.outputsTxBodyL
 
   blockTxSizes blk = case Shelley.shelleyBlockRaw blk of
     SL.Block _ body ->
@@ -136,6 +146,100 @@ instance
   -- For the time being we do not support any block application
   -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
+
+  txFeatures :: WithLedgerState (ShelleyBlock proto era) -> [TxFeatures Identity]
+  txFeatures (WithLedgerState blk lsb _lsa) = toListOf (txs . to mkTxFeatures) blk
+
+    where
+      inputs :: SimpleFold (Ledger.Tx era) TxIn
+      inputs = Core.bodyTxL . Core.inputsTxBodyL . folded
+
+      outputs :: SimpleFold (Ledger.Tx era) (Ledger.TxOut era)
+      outputs = Core.bodyTxL . Core.outputsTxBodyL . folded
+
+      certs :: SimpleFold (Ledger.Tx era) (Shelley.TxCert era)
+      certs = Core.bodyTxL . Core.certsTxBodyL . folded
+
+      txs = to (Shelley.shelleyBlockRaw @proto @era)
+        . to SL.blockBody . Ledger.txSeqBlockBodyL @era . folded
+
+      mkTxFeatures tx =
+        MkTxFeatures
+            { src_block = Identity $ blockNo blk
+            , num_script_wits = Identity $ length $ toListOf (Ledger.witsTxL . Ledger.scriptTxWitsL) tx
+            , num_addr_wits = Identity $ length $ toListOf (Ledger.witsTxL . Ledger.addrTxWitsL . folded) tx
+
+            , size_script_wits = Identity $ getSum $
+                foldMapOf
+                  ( Ledger.witsTxL
+                  . Ledger.scriptTxWitsL
+                  . folded
+                  . to eraScriptSize
+                  ) Sum tx
+
+            -- Here defaulting to 0 is part of the logic, as if an input isn't
+            -- in utxo_scripts_summary, it means its not a reference to a
+            -- script, in which case it contributes 0 bytes to the total size.
+            , size_ref_scripts = Identity refScriptSize
+            , size_datum = Identity $ tx ^. (Ledger.witsTxL . to eraDatumSize)
+            , num_inputs = Identity $ length $ toListOf inputs tx
+            -- We shouldn't need the 0 default here. But it's perilous to use
+            -- partial functions in analysis as an exception will stop the
+            -- analysis altogether. Instead we record missing inputs in
+            -- num_abs_inputs.
+            , size_inputs = Identity $ getSum $
+                foldMapOf
+                  ( inputs
+                  . to (\txin -> Map.findWithDefault 0 txin utxo_summary)
+                  ) Sum tx
+
+            , num_abs_inputs = Identity $ getSum $
+                foldMapOf
+                  ( inputs
+                  . to (\txin -> maybe 1 (const 0) $ Map.lookup txin utxo_summary)
+                  ) Sum tx
+            , num_outputs = Identity $ length $ toListOf outputs tx
+            , num_ref_inputs = Identity $ length $ toListOf eraReferenceInputs tx
+            -- We shouldn't need the 0 default here. But it's perilous to use
+            -- partial functions in analysis as an exception will stop the
+            -- analysis altogether. Instead we record missing inputs in
+            -- num_abs_ref_inputs.
+            , size_ref_inputs = Identity $ getSum $
+                foldMapOf
+                  ( eraReferenceInputs
+                  . folded
+                  . to (\txin -> Map.findWithDefault 0 txin utxo_summary)
+                  ) Sum tx
+            , num_abs_ref_inputs = Identity $ getSum $
+                foldMapOf
+                  ( eraReferenceInputs
+                  . folded
+                  . to (\txin -> maybe 1 (const 0) $ Map.lookup txin utxo_summary)
+                  ) Sum tx
+            , num_certs = Identity $ length $ toListOf certs tx
+            , num_pool_certs = Identity $ length $ toListOf (certs . eraFilterPoolCert Proxy) tx
+            , num_gov_certs = Identity $ length $ toListOf (certs . eraFilterGovCert Proxy) tx
+            , num_deleg_certs = Identity $ length $ toListOf (certs . eraFilterDelegCert Proxy) tx
+            , min_fee = Identity $ fromIntegral $ unCoin $
+                Core.getMinFeeTx
+                  (view (to shelleyLedgerState . SL.newEpochStateGovStateL . LState.curPParamsGovStateL) lsb)
+                  tx
+                  refScriptSize
+
+            }
+            where
+              refScriptSize :: Int
+              refScriptSize = getSum
+                $ foldMapOf (eraReferenceInputs
+                . folded
+                . to (\txin -> Map.findWithDefault 0 txin utxo_scripts_summary)) Sum tx
+
+              utxo_summary =
+                view (to shelleyLedgerState . LState.utxoL . to LState.unUTxO . to (Map.map packedByteCount)) lsb
+
+              utxo_scripts_summary =
+                view (to shelleyLedgerState . LState.utxoL . to LState.unUTxO . to (Map.filter (has eraFilterScriptTxOut)) . to (Map.map packedByteCount)) lsb
+
 
 class PerEraAnalysis era where
   txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
@@ -200,49 +304,12 @@ mkShelleyProtocolInfo genesis initialNonce =
 instance
   ( ShelleyCompatible proto era
   , HasProtoVer proto
-  , EraScripts (Ledger.Script era)
   , EraHasName era
-  , EraDatum era
-  , EraTx era
-  , Core.EraTxBody era
-  , EraClassifyCert (Core.TxCert era)
-  , EraClassifyOutputs era
+  , EraTxBody era
   ) =>
   HasFeatures (ShelleyBlock proto era) where
   protVer blk = Shelley.shelleyBlockRaw blk & SL.blockHeader & eraProtoVer
-
-  type TxOf (ShelleyBlock proto era) = Ledger.Tx era
-
-  txs = to (Shelley.shelleyBlockRaw @proto @era)  . to SL.blockBody  . Ledger.txSeqBlockBodyL @era . folded
-
-  inputs _ = Core.bodyTxL . Core.inputsTxBodyL
-  numOutputs _ tx = length $ toListOf (Core.bodyTxL . Core.outputsTxBodyL . folded) tx
-
-  referenceInputs _ = eraReferenceInputs
-
-  datumSize _ = eraDatumSize
-
-  type WitsOf (ShelleyBlock proto era) = Ledger.TxWits era
-  type ScriptType (ShelleyBlock proto era) = Ledger.Script era
-  wits _ = Ledger.witsTxL
-  addrWits _ = Ledger.addrTxWitsL
-  scriptWits _ = Ledger.scriptTxWitsL
-  scriptSize _ = eraScriptSize
-
-  type CertsOf (ShelleyBlock proto era) = Core.TxCert era
-  certs _ = Core.bodyTxL . Core.certsTxBodyL . folded
-
-  filterPoolCert _ = eraFilterPoolCert (Proxy @(Core.TxCert era))
-  filterGovCert _ = eraFilterGovCert (Proxy @(Core.TxCert era))
-  filterDelegCert _ = eraFilterDelegCert (Proxy @(Core.TxCert era))
-
   eraName _ = eraEraName @era
-
-  utxoSummary (WithLedgerState _blk lsb _lsa) =
-    view (to shelleyLedgerState . LState.utxoL . to LState.unUTxO . to (Map.map packedByteCount)) lsb
-
-  utxoScriptsSummary (WithLedgerState _blk lsb _lsa) =
-    view (to shelleyLedgerState . LState.utxoL . to LState.unUTxO . to (Map.filter (has eraFilterScriptTxOut)) . to (Map.map packedByteCount)) lsb
 
 class EraClassifyOutputs era where
   eraFilterScriptTxOut :: SimpleFold (Ledger.TxOut era) (Ledger.Script era)
@@ -412,4 +479,3 @@ instance EraDatum AllegraEra where
 
 instance EraDatum MaryEra where
   eraDatumSize _ = 0 -- Mary era has no datums
-

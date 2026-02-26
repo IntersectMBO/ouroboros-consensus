@@ -16,6 +16,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module Cardano.Tools.DBAnalyser.Block.Cardano
   ( Args (configFile, threshold, CardanoBlockArgs)
@@ -48,7 +49,6 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.Compact as Compact
-import Data.Functor.Const
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe)
@@ -57,7 +57,6 @@ import Data.SOP.Functors
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
 import Data.String (IsString (..))
-import Lens.Micro ( foldMapOf, to )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger.Ledger as Byron.Ledger
@@ -350,6 +349,8 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
       )
     ]
 
+  txFeatures = analyseWithLedgerState txFeatures
+
 dispatch ::
   LedgerState (CardanoBlock StandardCrypto) ValuesMK ->
   (LedgerState ByronBlock ValuesMK -> IO TextBuilder) ->
@@ -457,59 +458,4 @@ castChainHash (BlockHash h) = BlockHash $ castHeaderHash h
 -- | From here on is the implementation of the "dump feature" analysis.
 instance HasFeatures (CardanoBlock StandardCrypto) where
   protVer = analyseBlock protVer
-
-  type TxOf (CardanoBlock StandardCrypto) = SomeTx
-
-  txs inner =
-    -- A little bit of argument shuffling to satisfy `analyseBlock`'s
-    -- requirements.
-    -- The Const bit is quite unfortunate.
-    analyseBlock $ \(blk :: blk) -> Const . getConst . (txs . to (ATx (Proxy @blk))) inner $ blk
-
-  inputs _ inner (ATx p tx) = Const . getConst $ inputs p (Const . getConst . inner) tx
-  numOutputs _ (ATx p tx) = numOutputs p tx
-
-  referenceInputs _ inner (ATx p tx) = Const . getConst $ referenceInputs p (Const . getConst . inner) tx
-
-  type WitsOf (CardanoBlock StandardCrypto) = SomeWit
-
-  wits _ inner (ATx p tx) = Const . getConst $ wits p (Const . getConst . inner . AWit p) tx
-  addrWits _ inner (AWit p wit) = AWit p <$> addrWits p inner wit
-
-  type ScriptType (CardanoBlock StandardCrypto) = SomeScriptType
-
-  scriptWits _ inner (AWit p wit) = foldMapOf (scriptWits p) (Const . getConst . inner . Map.map (AScriptType p)) wit
-
-  scriptSize _ (AScriptType p scr) = scriptSize p scr
-
-  datumSize _ (AWit p wit) = datumSize p wit
-
-  type CertsOf (CardanoBlock StandardCrypto) = SomeCert
-
-  certs _ inner (ATx p cert) = Const . getConst $ certs p (Const . getConst . inner . ACert p) cert
-
-  filterPoolCert _ inner (ACert p cert) = Const . getConst $ filterPoolCert p (Const . getConst . inner . ACert p) cert
-  filterGovCert _ inner (ACert p cert) = Const . getConst $ filterGovCert p (Const . getConst . inner . ACert p) cert
-  filterDelegCert _ inner (ACert p cert) = Const . getConst $ filterDelegCert p (Const . getConst . inner . ACert p) cert
-
   eraName = analyseBlock eraName
-
-  utxoSummary = analyseWithLedgerState utxoSummary
-  utxoScriptsSummary = analyseWithLedgerState utxoScriptsSummary
-
--- | 'SomeTx' and other @SomeX@ types existentially quantify over the @blk@
--- type. There's one per type family in the 'HasFeatures' type class (since we
--- can't abstract over type families). They're a restricted version of the
--- 'CardanoBlock' type for the methods which don't take a block, but only a
--- component of a block, as an argument.
-data SomeTx where
-  ATx :: HasAnalysis blk => Proxy blk -> TxOf blk -> SomeTx
-
-data SomeWit where
-  AWit :: HasAnalysis blk => Proxy blk -> WitsOf blk -> SomeWit
-
-data SomeScriptType where
-  AScriptType :: HasAnalysis blk => Proxy blk -> ScriptType blk -> SomeScriptType
-
-data SomeCert where
-  ACert :: HasAnalysis blk => Proxy blk -> CertsOf blk -> SomeCert

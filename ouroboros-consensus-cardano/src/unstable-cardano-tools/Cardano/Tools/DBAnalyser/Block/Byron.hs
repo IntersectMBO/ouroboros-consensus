@@ -33,9 +33,7 @@ import Ouroboros.Consensus.Byron.Node
   )
 import Ouroboros.Consensus.Node.ProtocolInfo
 import TextBuilder (decimal)
-import Data.Void
 import Cardano.Ledger.BaseTypes (ProtVer(..))
-import Lens.Micro
 
 instance HasAnalysis ByronBlock where
   countTxOutputs = aBlockOrBoundary (const 0) countTxOutputsByron
@@ -50,6 +48,7 @@ instance HasAnalysis ByronBlock where
   -- For the time being we do not support any block application
   -- metrics for the Byron era only.
   blockApplicationMetrics = []
+  txFeatures _ = []
 
 instance HasProtocolInfo ByronBlock where
   data Args ByronBlock
@@ -142,24 +141,4 @@ mkByronProtocolInfo genesisConfig signatureThreshold =
 instance HasFeatures ByronBlock where
   -- For instance Byron uses a different representation of protocols.
   protVer _ = ProtVer { pvMajor = (natVersion @0), pvMinor = 0 }
-  type TxOf ByronBlock = Void -- dummy
-  txs _ _ = mempty -- dummy
-  inputs _ _ = absurd
-  numOutputs _ = absurd
-  referenceInputs _ = to (const mempty)
-  type WitsOf ByronBlock = Void -- dummy
-  type ScriptType ByronBlock = Void
-  wits _ _ = absurd
-  datumSize _ = absurd
-  addrWits _ _ = absurd
-  scriptWits _ _ = absurd
-  scriptSize _ = absurd
-  type CertsOf ByronBlock = Void -- dummy
-  certs _ _ = absurd
-  filterPoolCert _ _ = absurd
-  filterGovCert _ _ = absurd
-  filterDelegCert _ _ = absurd
   eraName _ = "Byron"
-
-  utxoSummary _ = mempty
-  utxoScriptsSummary _ = mempty

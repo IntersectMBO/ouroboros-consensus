@@ -41,7 +41,6 @@ import Cardano.Tools.DBAnalyser.CSV
   ( computeAndWriteLine
   , writeHeaderLine
   )
-import Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis)
 import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
 import Control.Monad (unless, void, when)
@@ -59,8 +58,6 @@ import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import GHC.Generics hiding (to)
 import qualified GHC.Stats as GC
-import Lens.Micro
-    ( SimpleFold, toListOf, folded, foldMapOf, to, (^.) )
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -102,10 +99,10 @@ import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.SizeInBytes
 import qualified System.IO as IO
-import Data.Monoid
 import Numeric.Natural
 import Cardano.Ledger.BaseTypes (ProtVer(..), getVersion64)
 import Control.Exception
+import Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis, TxFeatures (..))
 
 {-------------------------------------------------------------------------------
   Run the requested analysis
@@ -390,45 +387,6 @@ data BlockFeatures blk f = MkBlockFeatures
   }
   deriving (Generic, Barbies.FunctorB, Barbies.TraversableB, Barbies.ApplicativeB, Barbies.ConstraintsB)
 
--- | Like 'BlockFeatures' but for transaction features.
-data TxFeatures blk f = MkTxFeatures
-  { src_block :: f BlockNo
-    -- ^ Identifier of the block which this transaction is from
-  , num_script_wits :: f Int
-    -- ^ Number of script witnesses
-  , num_addr_wits:: f Int
-    -- ^ Number of regular address witnesses
-  , size_script_wits :: f Int
-    -- ^ Size of inline script witnesses
-  , size_ref_scripts :: f Int
-    -- ^ Size of (resolved) reference scripts
-  , size_datum :: f Int
-    -- ^ Size of the datum
-  , num_inputs :: f Int
-    -- ^ Number of inputs
-  , size_inputs :: f Int
-    -- ^ Size of (resolved) inputs
-  , num_abs_inputs :: f Int
-    -- ^ The number of inputs which aren't in the UtxO (should always be 0)
-  , num_outputs :: f Int
-    -- ^ Number of outputs
-  , num_ref_inputs :: f Int
-    -- ^ Number of reference inputs
-  , size_ref_inputs :: f Int
-    -- ^ Size of (resolved) reference inputs
-  , num_abs_ref_inputs :: f Int
-    -- ^ The number of reference inputs which aren't in the UtxO (should always be 0)
-  , num_certs :: f Int
-    -- ^ Total number of certs
-  , num_pool_certs :: f Int
-    -- ^ Number of certs which are pool certs
-  , num_gov_certs :: f Int
-    -- ^ Number of certs which are governance certs
-  , num_deleg_certs :: f Int
-    -- ^ Number of certs which are deleg certs
-  }
-  deriving (Generic, Barbies.FunctorB, Barbies.TraversableB, Barbies.ApplicativeB, Barbies.ConstraintsB)
-
 blockFeaturesNames :: BlockFeatures blk (Const String)
 blockFeaturesNames =
   MkBlockFeatures
@@ -443,7 +401,7 @@ blockFeaturesNames =
     , prot_minor = "minor_protocol_version"
     }
 
-txFeaturesNames :: TxFeatures blk (Const String)
+txFeaturesNames :: TxFeatures (Const String)
 txFeaturesNames =
   MkTxFeatures
     { src_block = "block_no"
@@ -463,6 +421,7 @@ txFeaturesNames =
     , num_pool_certs = "#pool_certs"
     , num_gov_certs = "#gov_certs"
     , num_deleg_certs = "#deleg_certs"
+    , min_fee = "min_fee"
     }
 
 dumpBlockFeatures ::
@@ -472,7 +431,9 @@ dumpBlockFeatures ::
   =>
   DumpBlockFeaturesArg ->
   Analysis blk StartFromLedgerState
-dumpBlockFeatures DumpBlockFeaturesArg{blockFile, transactionFile} AnalysisEnv{db, registry, startFrom, cfg, limit, tracer} = do
+dumpBlockFeatures
+  DumpBlockFeaturesArg{blockFile, transactionFile}
+  AnalysisEnv{db, registry, startFrom, cfg, limit, tracer} = do
   traceWith tracer $
     Message $
       "Saving block metadata to: " ++ blockFile
@@ -499,9 +460,7 @@ dumpBlockFeatures DumpBlockFeaturesArg{blockFile, transactionFile} AnalysisEnv{d
  where
   process :: IO.Handle -> IO.Handle -> HasAnalysis.WithLedgerState blk -> DumpQuery blk Identity -> IO ()
   process bh th wls cmp = do
-    let utxo_summary = HasAnalysis.utxoSummary @blk wls
-    let utxo_scripts_summary = HasAnalysis.utxoScriptsSummary @blk wls
-
+    let txFeaturess = HasAnalysis.txFeatures wls
     traceExceptionWith tracer "Exception while extracting whole-block features" $ do
       let
         blockFeatures :: BlockFeatures blk Identity
@@ -512,7 +471,7 @@ dumpBlockFeatures DumpBlockFeaturesArg{blockFile, transactionFile} AnalysisEnv{d
             , block_hash = MkWHH . headerHash <$> query_header cmp
             , block_size = getSizeInBytes <$> query_size cmp
             , predecessor = headerPrevHash <$> query_header cmp
-            , num_transactions = length . toListOf HasAnalysis.txs <$> query_block cmp
+            , num_transactions = Identity $ length txFeaturess
             , era = HasAnalysis.eraName <$> query_block cmp
             , prot_major = getVersion64 . pvMajor . HasAnalysis.protVer <$> query_block cmp
             , prot_minor = pvMinor . HasAnalysis.protVer <$> query_block cmp
@@ -521,43 +480,7 @@ dumpBlockFeatures DumpBlockFeaturesArg{blockFile, transactionFile} AnalysisEnv{d
       IO.hPutStrLn bh line
 
     traceExceptionWith tracer "Exception while extracting transaction features" $ do
-      let
-        script_wits :: SimpleFold (HasAnalysis.TxOf blk) (HasAnalysis.ScriptType blk)
-        script_wits = HasAnalysis.wits (Proxy @blk) . HasAnalysis.scriptWits (Proxy @blk) . traverse
-  
-        txFeatures :: HasAnalysis.TxOf blk -> TxFeatures blk Identity
-        txFeatures tx =
-          MkTxFeatures
-            { src_block = blockNo <$> query_header cmp
-            , num_script_wits = Identity $ length $ toListOf script_wits tx
-            , num_addr_wits = Identity $ length $ toListOf (HasAnalysis.wits (Proxy @blk) . HasAnalysis.addrWits (Proxy @blk) . folded) tx
-            , size_script_wits = Identity $ getSum $ foldMapOf (script_wits . to (HasAnalysis.scriptSize (Proxy @blk))) Sum tx
-            -- Here defaulting to 0 is part of the logic, as if an input isn't
-            -- in utxo_scripts_summary, it means its not a reference to a
-            -- script, in which case it contributes 0 bytes to the total size.
-            , size_ref_scripts = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs (Proxy @blk) . folded . to (\txin -> Map.findWithDefault 0 txin utxo_scripts_summary)) Sum tx
-            , size_datum = Identity $ tx ^. (HasAnalysis.wits (Proxy @blk) . to (HasAnalysis.datumSize (Proxy @blk)))
-            , num_inputs = Identity $ length $ toListOf (HasAnalysis.inputs (Proxy @blk) . folded) tx
-            -- We shouldn't need the 0 default here. But it's perilous to use
-            -- partial functions in analysis as an exception will stop the
-            -- analysis altogether. Instead we record missing inputs in
-            -- num_abs_inputs.
-            , size_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.inputs (Proxy @blk) . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
-            , num_abs_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.inputs (Proxy @blk) . folded . to (\txin -> maybe 1 (const 0) $ Map.lookup txin utxo_summary)) Sum tx
-            , num_outputs = Identity $ HasAnalysis.numOutputs (Proxy @blk) tx
-            , num_ref_inputs = Identity $ length $ toListOf (HasAnalysis.referenceInputs (Proxy @blk)) tx
-            -- We shouldn't need the 0 default here. But it's perilous to use
-            -- partial functions in analysis as an exception will stop the
-            -- analysis altogether. Instead we record missing inputs in
-            -- num_abs_ref_inputs.
-            , size_ref_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs (Proxy @blk) . folded . to (\txin -> Map.findWithDefault 0 txin utxo_summary)) Sum tx
-            , num_abs_ref_inputs = Identity $ getSum $ foldMapOf (HasAnalysis.referenceInputs (Proxy @blk) . folded . to (\txin -> maybe 1 (const 0) $ Map.lookup txin utxo_summary)) Sum tx
-            , num_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk)) tx
-            , num_pool_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk) . HasAnalysis.filterPoolCert (Proxy @blk)) tx
-            , num_gov_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk) . HasAnalysis.filterGovCert (Proxy @blk)) tx
-            , num_deleg_certs = Identity $ length $ toListOf (HasAnalysis.certs (Proxy @blk) . HasAnalysis.filterDelegCert (Proxy @blk)) tx
-            }
-      let txFeaturess = toListOf (HasAnalysis.txs . Lens.Micro.to txFeatures) (runIdentity $ query_block cmp)
+
       let txlines = map (csv . Barbies.Container . Barbies.bmapC @Condense (Const . condense . runIdentity)) txFeaturess
       forM_ txlines $ \txl ->
         IO.hPutStrLn th txl
@@ -1310,7 +1233,8 @@ processAllSt_ :: forall blk b.
   (HasAnalysis.WithLedgerState blk -> b -> IO ()) ->
   IO ()
 processAllSt_ db registry blockComponent startFrom cfg limit callback =
-  processAll_ db registry ((,) <$> GetBlock <*> blockComponent) startFrom limit callback'
+  let x = (,) <$> GetBlock <*> blockComponent
+  in processAll_ db registry x startFrom limit callback'
   where
     FromLedgerState ledgerDB intLedgerDB = startFrom
 
@@ -1327,9 +1251,8 @@ processAllSt_ db registry blockComponent startFrom cfg limit callback =
       let
         nextLedgerSt = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk oldLedger
         nextLedger = applyDiffs oldLedger nextLedgerSt
-  
+
       LedgerDB.push intLedgerDB nextLedgerSt
       LedgerDB.tryFlush ledgerDB
 
       callback (HasAnalysis.WithLedgerState {HasAnalysis.wlsStateBefore=(ledgerState oldLedger), HasAnalysis.wlsStateAfter=(ledgerState nextLedger), HasAnalysis.wlsBlk=blk}) b
-
