@@ -30,8 +30,15 @@ import Network.TypedProtocol.Codec
   )
 import Ouroboros.Consensus.Block (HasHeader)
 import Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import Ouroboros.Consensus.Block.SupportsDiffusionPipelining
+  ( BlockSupportsDiffusionPipelining
+  )
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandleCollection
@@ -40,9 +47,7 @@ import Ouroboros.Consensus.Node.Genesis
   ( GenesisConfig (..)
   , enableGenesisConfigDefault
   )
-import Ouroboros.Consensus.Node.ProtocolInfo
-  ( NumCoreNodes (NumCoreNodes)
-  )
+import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import Ouroboros.Consensus.Storage.ChainDB.API
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
@@ -94,24 +99,29 @@ import Test.Consensus.PeerSimulator.Trace
 import Test.Consensus.PointSchedule (BlockFetchTimeout (..))
 import Test.Consensus.PointSchedule.Peers (PeerId)
 import Test.Util.Orphans.IOLike ()
-import Test.Util.TestBlock (BlockConfig (TestBlockConfig), TestBlock)
 
 startBlockFetchLogic ::
-  forall m.
-  (IOLike m, MonadTimer m) =>
+  forall m blk.
+  ( IOLike m
+  , MonadTimer m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsDiffusionPipelining blk
+  , ConfigSupportsNode blk
+  ) =>
   -- | Whether to enable chain selection starvation
   Bool ->
   ResourceRegistry m ->
-  Tracer m (TraceEvent TestBlock) ->
-  ChainDB m TestBlock ->
-  FetchClientRegistry PeerId (HeaderWithTime TestBlock) TestBlock m ->
-  ChainSyncClientHandleCollection PeerId m TestBlock ->
+  Tracer m (TraceEvent blk) ->
+  ProtocolInfo blk ->
+  ChainDB m blk ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
+  ChainSyncClientHandleCollection PeerId m blk ->
   m ()
-startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClientRegistry csHandlesCol = do
+startBlockFetchLogic enableChainSelStarvation registry tracer protocolInfo chainDb fetchClientRegistry csHandlesCol = do
   let blockFetchConsensusInterface =
         BlockFetchClientInterface.mkBlockFetchConsensusInterface
           nullTracer -- FIXME
-          (TestBlockConfig $ NumCoreNodes 0) -- Only needed when minting blocks
+          (topLevelConfigBlock $ pInfoConfig protocolInfo) -- Only needed when minting blocks
           (BlockFetchClientInterface.defaultChainDbView chainDb)
           csHandlesCol
           -- The size of headers in bytes is irrelevant because our tests

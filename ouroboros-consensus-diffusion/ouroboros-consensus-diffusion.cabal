@@ -222,6 +222,7 @@ test-suite consensus-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.BlockTree
+    Test.Consensus.BlockTree.Tests
     Test.Consensus.GSM
     Test.Consensus.Genesis.Setup
     Test.Consensus.Genesis.Setup.Classifiers

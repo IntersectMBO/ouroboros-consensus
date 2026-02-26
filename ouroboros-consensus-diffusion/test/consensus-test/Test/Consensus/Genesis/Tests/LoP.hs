@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Test.Consensus.Genesis.Tests.LoP (tests) where
@@ -45,6 +46,7 @@ import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.IOLike ()
 import Test.Util.PartialAccessors
+import Test.Util.TestBlock (TestBlock)
 import Test.Util.TestEnv
   ( adjustQuickCheckMaxSize
   , adjustQuickCheckTests
@@ -84,7 +86,7 @@ tests =
 -- no exception in the ChainSync client.
 prop_wait :: Bool -> Property
 prop_wait mustTimeout =
-  forAllGenesisTest
+  forAllGenesisTest @TestBlock
     ( do
         gt@GenesisTest{gtBlockTree} <- genChains (pure 0)
         let ps = dullSchedule 10 (btTrunk gtBlockTree)
@@ -122,7 +124,7 @@ prop_wait mustTimeout =
 -- no exception.
 prop_waitBehindForecastHorizon :: Property
 prop_waitBehindForecastHorizon =
-  forAllGenesisTest
+  forAllGenesisTest @TestBlock
     ( do
         gt@GenesisTest{gtBlockTree} <- genChains (pure 0)
         let ps = dullSchedule (btTrunk gtBlockTree)
@@ -170,7 +172,7 @@ prop_waitBehindForecastHorizon =
 -- serve the @n@th block, barely.
 prop_serve :: Bool -> Property
 prop_serve mustTimeout =
-  forAllGenesisTest
+  forAllGenesisTest @TestBlock
     ( do
         gt@GenesisTest{gtBlockTree} <- genChains (pure 0)
         let lbpRate = borderlineRate (AF.length (btTrunk gtBlockTree))
@@ -228,7 +230,7 @@ prop_delayAttack lopEnabled =
   -- at the end of the test for the adversaries to get disconnected, by adding an extra point.
   -- If this point gets removed by the shrinker, we lose that property and the test becomes useless.
   noShrinking $
-    forAllGenesisTest
+    forAllGenesisTest @TestBlock
       ( do
           gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
           let gt' = gt{gtLoPBucketParams = LoPBucketParams{lbpCapacity = 10, lbpRate = 1}}
