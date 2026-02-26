@@ -1036,7 +1036,7 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, psRng) = split rng
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
-      leiosDB <- newLeiosDBInMemory
+      (leiosDB, _closeLeiosDB) <- newLeiosDBInMemory
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
