@@ -21,6 +21,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Node.Peras
   ( HardForkPerasErr (..)
   , HardForkPerasConfig (..)
+  , forecastToViewAtRound
   , forcastToViewAtSlot
   , ensureSameEraNonEmpty
   , ensureSameEraPair
@@ -82,6 +83,7 @@ import Ouroboros.Consensus.HardFork.History qualified as History
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, LedgerConfig)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
 import Ouroboros.Consensus.Peras.Cert qualified as Base ()
+import Ouroboros.Consensus.Peras.Round (PerasRoundNo)
 import Ouroboros.Consensus.Peras.Vote (PerasVoteTarget (..))
 import Ouroboros.Consensus.Peras.Vote qualified as Base ()
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -132,22 +134,53 @@ instance CanHardFork xs => NoThunks (HardForkPerasConfig xs)
 -- | Delegates each method to the single-era implementation after unwrapping
 -- the HFC-level types and re-wraps the results.
 --
--- The hard fork combinator represents per-era values as n-ary sums ('NS') and
--- per-era configurations as n-ary products ('NP'). The delegation strategy
--- depends on which era to target:
+-- The hard fork combinator represents one-era values as n-ary sums ('NS') and
+-- per-era configurations as n-ary products ('NP').
 --
--- * When an 'NS'-typed argument (vote, cert) determines the era, we use
---   'hcizipWith' to pair the per-era config ('NP') with the value ('NS'),
---   which selects the matching era automatically.
+-- Here are some details on how the dispatching works:
 --
--- * When no 'NS'-typed argument is available (e.g. 'forgePerasVote'), we delegate
---   to the __last era__ via 'withLastEra', since vote forging always targets
---   the most recent era.
+-- * When we have a 'NS'-wrapped object, we use 'hcizipWith' to pair the per-era
+--   config ('NP') with the value ('NS'), which selects the matching era
+--   accordingly.
 --
--- * When multiple 'NS' values must agree on the same era ('forgePerasCert'
---   takes a 'NonEmpty' of votes), we first use 'ensureSameEraNonEmpty' or
---   'ensureSameEraPair' to verify they all belong to the same era and collect
---   them, then dispatch via 'hcizipWith'.
+-- * When multiple 'NS' values are supplied, we must first ensure they agree
+--   on a same era. For that we use 'ensureSameEraNonEmpty' or 'ensureSameEraPair'
+--   to verify they all belong to the same era (turning a container of 'NS'
+--   into a 'NS' of container)
+--
+-- * Each Peras object also has a 'PerasRoundNo', that we can resolve to a slot
+--   wrapped in a era-indexed 'NS' thanks to 'Summary'/'Query' machinery _if we
+--   also have access to a 'LedgerState'_ (cf. 'forecastToViewAtRound').
+--   That is the case in methods for votes:
+--   - in 'forgePerasVote', that is the sole way to determine the era, since we
+--     receive no 'NS'-wrapped parameter. So we rely on the roundNo era
+--     resolution logic to determine the era and dispatch to the correct
+--     implementation.
+--   - in 'validatePerasVote', we make sure that the round-indicated era agrees
+--     with the era of the supplied 'NS'-wrapped vote.
+--
+-- NOTE: If the interface of 'BlockSupportsPeras' ever changes, here's how to
+-- update this instance:
+--
+-- * If a monomorphic parameter is added to a class method, add it to the HFC
+--   method implem, and pass it through to the per-era method when delegating.
+--   Nothing else is needed
+--
+-- * If a parameter whose type varies by era must be added, then:
+--   - create an associated type 'MyType' for it in 'BlockSupportsPeras'
+--   - define @newtype WrapMyType blk = WrapMyType {unwrapMyType :: MyType blk}@
+--     in TypeFamilyWrappers.hs (this turns the type family into a type constructor)
+--   - define @newtype OneEraMyType xs = OneEraMyType {getOneEraMyType :: NS WrapMyType xs}@
+--     in 'AcrossEras.hs
+--   - set @type MyType (HardForkBlock xs) = OneEraMyType xs@ in this HFC
+--     'BlockSupportsPeras' instance
+--   - use 'ensureSameEraPair' to verify that the supplied parameter agrees on
+--     the era with other 'NS'-wrapped parameters
+--
+--   Note that a similar process can be done for a 'NP' instead of 'NS'. In
+--   which case, there is no need for 'ensureSameEraPair', instead one must
+--   fiddle with 'hcizipWith' and similar helpers.
+
 instance CanHardFork xs => BlockSupportsPeras (HardForkBlock xs) where
   type LedgerStateOrView (HardForkBlock xs) = LedgerState (HardForkBlock xs) EmptyMK
   type PerasConfig (HardForkBlock xs) = HardForkPerasConfig xs
@@ -159,33 +192,16 @@ instance CanHardFork xs => BlockSupportsPeras (HardForkBlock xs) where
 
   -- Forge a vote by delegating to the correct era's 'forgePerasVote'.
   --
-  -- The era is determined by the 'PerasRoundNo': we translate it to a
-  -- 'SlotNo' via 'History.runQueryNS' applied to 'History.perasRoundNoToSlot',
-  -- which returns an 'NS' positioned at the era the round falls in.
-  --
-  -- We then forecast a per-era 'LedgerView' to the slot corresponding to
-  -- the round via 'ledgerViewForecastAt' + 'forecastFor', and dispatch to
-  -- the per-era 'forgePerasVote' with that ledger view.
-  forgePerasVote HardForkPerasConfig{hfpcPerEraPerasConfig, hfpcLedgerConfig} ledgerState@(HardForkLedgerState unwrappedLedgerState) voterId roundNo point = do
-    -- Build a summary to be able to run queries
-    let summary = State.reconstructSummaryLedger hfpcLedgerConfig unwrappedLedgerState
-    -- Query the hard fork history to determine what is the start slot of this
-    -- PerasRound. Thanks to 'runQueryNS', the result is wrapped in an 'NS' which
-    -- \*also* gives us the era the round falls in by its position.
-    nsQueryRes <-
-      bimap (const PerasRoundBeyondHorizon) id $
-        History.runQueryNS (History.perasRoundNoToSlot roundNo) summary
-    -- Extract the slot corresponding to the Peras round from the query result.
-    (slot, _roundLength) <- ensurePerasEnabled (hcollapse nsQueryRes)
-    -- Ledger state is forecast into ledger view for the target slot.
-    nsLedgerView <- forcastToViewAtSlot hfpcLedgerConfig slot ledgerState
-    -- Ensure the query era and the forecasted view era agree.
-    nsQueryResAndLedgerView <- ensureSameEraPair (nsQueryRes, getOneEraLedgerView nsLedgerView)
+  -- The era is determined by 'forecastToViewAtRound' that gives a
+  -- era-NS-indexed 'LedgerView' corresponding to the specified 'PerasRoundNo'.
+  forgePerasVote HardForkPerasConfig{hfpcPerEraPerasConfig, hfpcLedgerConfig} ledgerState voterId roundNo point = do
+    -- Ledger state is forecast into ledger view for the target 'PerasRoundNo'.
+    (OneEraLedgerView nsLedgerView) <- forecastToViewAtRound hfpcLedgerConfig ledgerState roundNo
     -- Dispatch to the per-era forgePerasVote.
     hcollapse $
       hcizipWith
         proxySingle
-        ( \idx wrappedCfg (Pair _queryResult (WrapLedgerView ledgerView)) ->
+        ( \idx wrappedCfg (WrapLedgerView ledgerView) ->
             K $
               bimap
                 (SomePerasErr . OneEraPerasErr . injectNS idx . WrapPerasErr)
@@ -199,34 +215,19 @@ instance CanHardFork xs => BlockSupportsPeras (HardForkBlock xs) where
                 )
         )
         (getPerEraPerasConfig hfpcPerEraPerasConfig)
-        nsQueryResAndLedgerView
+        nsLedgerView
 
   -- Validate a vote by delegating to the correct era's 'validatePerasVote'.
   --
-  -- The era is determined by the vote's 'PerasRoundNo': we extract it via
-  -- 'getPerasVoteRound', translate it to a 'SlotNo' via
-  -- 'History.runQueryNS' applied to 'History.perasRoundNoToSlot', and
-  -- forecast a per-era 'LedgerView' to the slot corresponding to the
-  -- round via 'ledgerViewForecastAt' + 'forecastFor'. Finally,
-  -- 'ensureSameEraPair' verifies that the vote's era and the forecasted
-  -- view era agree before dispatching to the per-era 'validatePerasVote'.
-  validatePerasVote HardForkPerasConfig{hfpcPerEraPerasConfig, hfpcLedgerConfig} ledgerState@(HardForkLedgerState unwrappedLedgerState) vote@(OneEraPerasVote nsVote) = do
+  -- We use 'forecastToViewAtRound' to get a era-NS-indexed 'LedgerView'
+  -- corresponding to the specified 'PerasRoundNo'. We make sure that this
+  -- era indication matches the era of the supplied vote.
+  validatePerasVote HardForkPerasConfig{hfpcPerEraPerasConfig, hfpcLedgerConfig} ledgerState vote@(OneEraPerasVote nsVote) = do
     let roundNo = getPerasVoteRound vote
-    -- Build a summary to be able to run queries
-    let summary = State.reconstructSummaryLedger hfpcLedgerConfig unwrappedLedgerState
-    -- Query the hard fork history to determine what is the start slot of this
-    -- PerasRound. Thanks to 'runQueryNS', the result is wrapped in an 'NS' which
-    -- \*also* gives us the era the round falls in by its position.
-    nsQueryRes <-
-      bimap (const PerasRoundBeyondHorizon) id $
-        History.runQueryNS (History.perasRoundNoToSlot roundNo) summary
-    -- Extract the slot corresponding to the Peras round from the query result.
-    (slot, _roundLength) <- ensurePerasEnabled (hcollapse nsQueryRes)
-    -- Ledger state is forecast into ledger view for the target slot.
-    nsLedgerView <- forcastToViewAtSlot hfpcLedgerConfig slot ledgerState
-    -- Ensure the vote's era and the forecasted view era agree.
-    nsQueryResAndLedgerView <- ensureSameEraPair (nsVote, getOneEraLedgerView nsLedgerView)
-    -- Dispatch to the per-era validatePerasVote.
+    -- Ledger state is forecast into ledger view for the target 'PerasRoundNo'.
+    (OneEraLedgerView nsLedgerView) <- forecastToViewAtRound hfpcLedgerConfig ledgerState roundNo
+    nsVoteAndLedgerView <- ensureSameEraPair (nsVote, nsLedgerView)
+    -- Dispatch to the per-era forgePerasVote.
     hcollapse $
       hcizipWith
         proxySingle
@@ -242,17 +243,17 @@ instance CanHardFork xs => BlockSupportsPeras (HardForkBlock xs) where
                 )
         )
         (getPerEraPerasConfig hfpcPerEraPerasConfig)
-        nsQueryResAndLedgerView
+        nsVoteAndLedgerView
 
   -- Forge a certificate from a quorum of validated votes.
   --
   -- The votes are 'NS'-wrapped values from potentially different eras. We
-  -- first use 'ensureSameEraNonEmpty' to verify that all votes belong to the
+  -- use 'ensureSameEraNonEmpty' to verify that all votes belong to the
   -- same era (returning 'ParamsEraMismatch' otherwise) and collect them into a
-  -- single 'NS' containing a 'NonEmpty' list. Then 'hcizipWith' pairs the
-  -- per-era config with the collected votes to delegate to the matching era's
-  -- 'forgePerasCert', reconstructing a single-era
-  -- 'ValidatedPerasVotesReachingQuorum' with the downcasted point.
+  -- single 'NS' containing a 'NonEmpty' list.
+  -- The we reconstruct a single-era 'ValidatedPerasVotesReachingQuorum' with
+  -- the downcasted point, to be able to delegate to the matching
+  -- era's 'forgePerasCert'.
   forgePerasCert ::
     ValidatedPerasVotesReachingQuorum (HardForkBlock xs) ->
     Either
@@ -293,8 +294,8 @@ instance CanHardFork xs => BlockSupportsPeras (HardForkBlock xs) where
   -- Validate a certificate by delegating to the matching era's
   -- 'validatePerasCert'.
   --
-  -- Works like 'validatePerasVote': the cert ('NS') determines the era via
-  -- 'hcizipWith' against the per-era config ('NP').
+  -- The era to which we delegate is determined directly by the era of the
+  -- supplied certificate.
   validatePerasCert ::
     PerasConfig (HardForkBlock xs) ->
     PerasCert (HardForkBlock xs) ->
@@ -455,6 +456,41 @@ instance CanHardFork xs => IsValidatedPerasVote (HardForkBlock xs) (OneEraValida
 {-------------------------------------------------------------------------------
   HFC/SOP-specific helpers
 -------------------------------------------------------------------------------}
+
+-- | Forecast the tip of LedgerState into a 'LedgerView' for the given
+-- 'PerasRoundNo'.
+--
+-- Given a 'HardForkLedgerConfig' and the HFC ledger state telescope, this
+-- function resolves the 'PerasRoundNo' to a 'SlotNo' via 'History.runQueryNS'
+-- applied to 'History.perasRoundNoToSlot', then forecasts the ledger state to
+-- that slot using 'forecastToViewAtSlot'.
+--
+-- Returns @Left err@ if the slot is outside the forecast range (e.g. beyond
+-- the safe zone), or if Peras isn't enabled for the corresponding era.
+-- Otherwise, returns @Right (OneEraLedgerView xs)@ positioned at the
+-- corresponding era.
+forecastToViewAtRound ::
+  All SingleEraBlock xs =>
+  HardForkLedgerConfig xs ->
+  LedgerState (HardForkBlock xs) EmptyMK ->
+  PerasRoundNo ->
+  Either (HardForkPerasErr xs) (OneEraLedgerView xs)
+forecastToViewAtRound ledgerConfig ledgerState@(HardForkLedgerState unwrappedLedgerState) roundNo = do
+  -- Build a summary to be able to run queries
+  let summary = State.reconstructSummaryLedger ledgerConfig unwrappedLedgerState
+  -- Query the hard fork history to determine what is the start slot of this
+  -- PerasRound. Thanks to 'runQueryNS', the result is wrapped in an 'NS' which
+  -- \*also* gives us the era the round falls in by its position.
+  nsQueryRes <-
+    bimap (const PerasRoundBeyondHorizon) id $
+      History.runQueryNS (History.perasRoundNoToSlot roundNo) summary
+  -- Extract the slot corresponding to the Peras round from the query result.
+  (slot, _roundLength) <- ensurePerasEnabled (hcollapse nsQueryRes)
+  -- Ledger state is forecast into ledger view for the target slot.
+  nsLedgerView <- forcastToViewAtSlot ledgerConfig slot ledgerState
+  -- Ensure the query era and the forecasted view era agree.
+  nsQueryResAndLedgerView <- ensureSameEraPair (nsQueryRes, getOneEraLedgerView nsLedgerView)
+  pure $ OneEraLedgerView $ hmap (\(Pair _ y) -> y) nsQueryResAndLedgerView
 
 -- | Forecast the tip of LedgerState into a 'LedgerView' for the given slot.
 --
