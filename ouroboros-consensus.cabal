@@ -15,6 +15,10 @@ author: IOG Engineering Team
 maintainer: operations@iohk.io
 category: Network
 build-type: Simple
+data-files:
+  ouroboros-consensus-cardano/cddl/**/*.cddl
+  ouroboros-consensus-cardano/cddl/base.cddl
+
 extra-doc-files:
   ouroboros-consensus-cardano/CHANGELOG.md
   ouroboros-consensus-cardano/README.md

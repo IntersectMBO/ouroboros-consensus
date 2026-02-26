@@ -29,11 +29,11 @@ let
       }))
       {
         # Options related to tasty and tasty-golden:
-        packages.ouroboros-consensus-cardano.components.tests =
-          lib.listToAttrs (builtins.map
+        packages.ouroboros-consensus.components.tests =
+          lib.listToAttrs (map
             (n: lib.nameValuePair "${n}-test" {
               testFlags = lib.mkForce [ "--no-create --hide-successes" ];
-              extraSrcFiles = [ "golden/${n}/**/*" ];
+              extraSrcFiles = [ "ouroboros-consensus-cardano/golden/${n}/**/*" ];
             }) [ "byron" "shelley" "cardano" ]);
       }
       ({ pkgs, lib, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
@@ -41,16 +41,16 @@ let
         packages.basement.configureFlags = [ "--hsc2hs-option=--cflag=-Wno-int-conversion" ];
         # We can't cross-compile the ruby gem `cddlc` so we decided to skip this
         # test on Windows in Hydra.
-        packages.ouroboros-consensus-cardano.components.tests.cardano-test.preCheck = ''
+        packages.ouroboros-consensus.components.tests.cardano-test.preCheck = ''
           export DISABLE_CDDLC=1
         '';
       })
       ({ pkgs, ... }: lib.mkIf (!pkgs.stdenv.hostPlatform.isWindows) {
         # Tools for CBOR/CDDL tests:
-        packages.ouroboros-consensus-cardano.components.tests.cardano-test = {
+        packages.ouroboros-consensus.components.tests.cardano-test = {
           build-tools =
             [ pkgs.cddlc pkgs.cuddle ];
-          extraSrcFiles = [ "cddl/**/*" ];
+          extraSrcFiles = [ "ouroboros-consensus-cardano/cddl/**/*" ];
         };
       })
     ];
@@ -59,7 +59,7 @@ let
         src = lib.mkForce (final.applyPatches {
           name = "consensus-src-no-asserts";
           src = ./..;
-          postPatch = ''echo > asserts.cabal'';
+          postPatch = ''echo > scripts/asserts.cabal'';
         });
       };
       profiled = {
@@ -102,7 +102,7 @@ in
     buildPhase = ''
       export CABAL_DIR=$(mktemp -d)
       touch $CABAL_DIR/config $out
-      cabal-docspec --no-cabal-plan $(fd -e cabal --exact-depth 2)
+      cabal-docspec --no-cabal-plan ouroboros-consensus.cabal sop-extras/sop-extras.cabal strict-sop-core/strict-sop-core.cabal
     '';
   };
 }

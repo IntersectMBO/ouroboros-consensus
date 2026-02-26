@@ -15,7 +15,7 @@ let
 
       isCardanoExe = p:
         let i = p.identifier;
-        in i.name == "ouroboros-consensus-cardano" && i.component-type == "exe";
+        in i.name == "ouroboros-consensus" && i.component-type == "exe";
       setGitRevs =
         lib.mapAttrsRecursiveCond (as: !lib.isDerivation as)
           (_: p: if isCardanoExe p then pkgs.set-git-rev p else p);
