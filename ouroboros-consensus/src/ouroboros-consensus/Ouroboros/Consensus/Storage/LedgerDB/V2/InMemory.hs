@@ -72,7 +72,6 @@ import qualified Streaming as S
 import qualified Streaming.Prelude as S
 import System.FS.API
 import System.FS.CRC
-import qualified System.FilePath as F
 import Prelude hiding (read)
 
 {-------------------------------------------------------------------------------
@@ -357,7 +356,7 @@ loadSnapshot tracer rr ccfg fs@(SomeHasFS hfs) ds = do
               fs
               Identity
               (valuesMKDecoder extLedgerSt)
-              (snapshotToDirPath ds </> mkFsPath ["tables"])
+              (snapshotToTablesPath ds)
       (rk, values') <- lift $ allocateLedgerTablesHandle tracer rr values
       let computedCRC = crcOfConcat checksumAsRead crcTables
       Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
@@ -365,6 +364,9 @@ loadSnapshot tracer rr ccfg fs@(SomeHasFS hfs) ds = do
           InitFailureRead $
             ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt (rk, values') (newInMemoryLedgerTablesHandle tracer fs))
+
+snapshotToTablesPath :: DiskSnapshot -> FsPath
+snapshotToTablesPath ds = snapshotToDirPath ds </> mkFsPath ["tables"]
 
 type data Mem
 
@@ -406,10 +408,10 @@ instance IOLike m => StreamingBackend m Mem l where
   data YieldArgs m Mem l
     = -- \| Yield an in-memory snapshot
       YieldInMemory
-        -- \| How to make a SomeHasFS for @m@
-        (MountPoint -> SomeHasFS m)
-        -- \| The file path at which the HasFS has to be opened
-        FilePath
+        -- \| The file system anchored at the snapshots directory
+        (SomeHasFS m)
+        -- \| The snapshot
+        DiskSnapshot
         (Decoders l)
 
   data SinkArgs m Mem l
@@ -418,13 +420,13 @@ instance IOLike m => StreamingBackend m Mem l where
         (TxIn l -> Encoding)
         (TxOut l -> Encoding)
         (SomeHasFS m)
-        FilePath
+        DiskSnapshot
 
-  yield _ (YieldInMemory mkFs fp (Decoders decK decV)) =
-    yieldInMemoryS mkFs fp decK decV
+  yield _ (YieldInMemory fs ds (Decoders decK decV)) =
+    yieldInMemoryS fs ds decK decV
 
-  sink _ (SinkInMemory chunkSize encK encV shfs fp) =
-    sinkInMemoryS chunkSize encK encV shfs fp
+  sink _ (SinkInMemory chunkSize encK encV shfs ds) =
+    sinkInMemoryS chunkSize encK encV shfs ds
 
 {-------------------------------------------------------------------------------
   Streaming
@@ -490,13 +492,13 @@ yieldCborMapS decK decV = execStateT $ do
 
 yieldInMemoryS ::
   (MonadThrow m, MonadST m) =>
-  (MountPoint -> SomeHasFS m) ->
-  FilePath ->
+  SomeHasFS m ->
+  DiskSnapshot ->
   (forall s. Decoder s (TxIn l)) ->
   (forall s. Decoder s (TxOut l)) ->
   Yield m l
-yieldInMemoryS mkFs (F.splitFileName -> (fp, fn)) decK decV _ k =
-  streamingFile (mkFs $ MountPoint fp) (mkFsPath [fn]) $ \s -> do
+yieldInMemoryS fs ds decK decV _ k =
+  streamingFile fs (snapshotToTablesPath ds) $ \s -> do
     k $ yieldCborMapS decK decV s
 
 sinkInMemoryS ::
@@ -506,10 +508,10 @@ sinkInMemoryS ::
   (TxIn l -> Encoding) ->
   (TxOut l -> Encoding) ->
   SomeHasFS m ->
-  FilePath ->
+  DiskSnapshot ->
   Sink m l
-sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) fp _ s =
-  ExceptT $ withFile fs (mkFsPath [fp]) (WriteMode MustBeNew) $ \hdl -> do
+sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) ds _ s =
+  ExceptT $ withFile fs (snapshotToTablesPath ds) (WriteMode MustBeNew) $ \hdl -> do
     let bs = toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)
     let !crc0 = updateCRC bs initCRC
     void $ hPutSome fs hdl bs

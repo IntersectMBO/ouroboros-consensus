@@ -1,569 +1,281 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
+#if __GLASGOW_HASKELL__ >= 912
+{-# LANGUAGE MultilineStrings #-}
+#endif
 
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
-import Codec.Serialise
-import qualified Control.Monad as Monad
+import Control.Concurrent
+import Control.Monad (forever, void)
 import Control.Monad.Except
-import Control.Monad.Trans (lift)
-import Control.ResourceRegistry
 import DBAnalyser.Parsers
-import Data.Bifunctor
-import Data.Char (toLower)
-import qualified Data.Text.Lazy as T
+import qualified Data.List as L
+#if __GLASGOW_HASKELL__ < 912
+import qualified Data.Text as T
+#endif
 import Main.Utf8
 import Options.Applicative
-import Options.Applicative.Help (Doc, line)
-import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Cardano.Block
-import Ouroboros.Consensus.Cardano.StreamingLedgerTables
-import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Basics
-import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Node.ProtocolInfo
-import Ouroboros.Consensus.Storage.LedgerDB.API
+import Options.Applicative.Help (Doc)
+#if __GLASGOW_HASKELL__ < 912
+import Options.Applicative.Help.Pretty (Pretty (pretty))
+#endif
+import Ouroboros.Consensus.Cardano.SnapshotConversion
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as V1
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
-import Ouroboros.Consensus.Util.CRC
-import Ouroboros.Consensus.Util.IOLike hiding (yield)
-import System.Console.ANSI
-import qualified System.Directory as D
 import System.Exit
-import System.FS.API
-import System.FS.CRC
-import System.FS.IO
-import System.FilePath (splitDirectories)
-import qualified System.FilePath as F
-import System.IO
-import System.ProgressBar
-import System.Random
+import System.FSNotify
+import System.FilePath
 
-data Format
-  = Mem FilePath
-  | LMDB FilePath
-  | LSM FilePath FilePath
-  deriving (Show, Read)
+data Config
+  = -- | Run in daemon mode
+    DaemonConfig
+      -- | Where the input snapshot will be in
+      SnapshotsDirectoryWithFormat
+      -- | Where to put the converted snapshots
+      SnapshotsDirectory
+  | -- | Run in normal mode
+    NoDaemonConfig
+      -- | Where and in which format the input snapshot is in
+      Snapshot'
+      -- | Where and in which format the output snapshot must be in
+      Snapshot'
 
-data Config = Config
-  { from :: Format
-  -- ^ Which format the input snapshot is in
-  , to :: Format
-  -- ^ Which format the output snapshot must be in
-  }
+-- | Helper for parsing a directory that contains both the snapshots directory
+-- and the particular snapshot.
+data Snapshot'
+  = StandaloneSnapshot' FilePath StandaloneFormat
+  | LSMSnapshot' FilePath LSMDatabaseFilePath
+
+snapshot'ToSnapshot :: Snapshot' -> Snapshot
+snapshot'ToSnapshot (LSMSnapshot' s lsmfp) =
+  let (snapFp, snapName) = splitFileName s
+   in case snapshotFromPath snapName of
+        Just snap -> Snapshot (LSMSnapshot (SnapshotsDirectory snapFp) lsmfp) snap
+        Nothing -> error $ "Malformed input, last fragment of the input \"" <> s <> "\"is not a snapshot name"
+snapshot'ToSnapshot (StandaloneSnapshot' s fmt) =
+  let (snapFp, snapName) = splitFileName s
+   in case snapshotFromPath snapName of
+        Just snap -> Snapshot (StandaloneSnapshot (SnapshotsDirectory snapFp) fmt) snap
+        Nothing -> error $ "Malformed input, last fragment of the input \"" <> s <> "\"is not a snapshot name"
+
+main :: IO ()
+main = withStdTerminalHandles $ do
+  cryptoInit
+  (conf, args) <- getCommandLineConfig
+  pInfo <- mkProtocolInfo args
+  case conf of
+    NoDaemonConfig (snapshot'ToSnapshot -> f) (snapshot'ToSnapshot -> t) -> do
+      eRes <- runExceptT (convertSnapshot True pInfo f t)
+      case eRes of
+        Left err -> do
+          putStrLn $ show err
+          exitFailure
+        Right () -> exitSuccess
+    DaemonConfig from@(getSnapshotDir . snapshotDirectory -> ledgerDbPath) to -> do
+      withManager $ \manager -> do
+        putStrLn $ "Watching " <> show ledgerDbPath
+        void $
+          watchTree
+            manager
+            ledgerDbPath
+            ( \case
+                CloseWrite ep _ IsFile -> "meta" `L.isSuffixOf` ep
+                _ -> False
+            )
+            ( \case
+                CloseWrite ep _ IsFile -> do
+                  case reverse $ splitDirectories ep of
+                    (_ : snapName@(snapshotFromPath -> Just ds) : _) -> do
+                      putStrLn $ "Converting snapshot " <> ep <> " to " <> (getSnapshotDir to </> snapName)
+                      res <-
+                        runExceptT $
+                          convertSnapshot
+                            False
+                            pInfo
+                            (Snapshot from ds)
+                            (Snapshot (StandaloneSnapshot to Mem) ds)
+                      case res of
+                        Left err ->
+                          putStrLn $ show err
+                        Right () ->
+                          putStrLn "Done"
+                    _ -> pure ()
+                _ -> pure ()
+            )
+        forever $ threadDelay 1000000
+
+{-------------------------------------------------------------------------------
+  Optparse-applicative
+-------------------------------------------------------------------------------}
 
 getCommandLineConfig :: IO (Config, CardanoBlockArgs)
 getCommandLineConfig =
   execParser $
     info
-      ((,) <$> (Config <$> parseConfig In <*> parseConfig Out) <*> parseCardanoArgs <**> helper)
+      ( (,)
+          <$> parseConfig
+          <*> parseCardanoArgs <**> helper
+      )
       ( fullDesc
           <> header "Utility for converting snapshots among the different snapshot formats used by cardano-node."
           <> progDescDoc programDescription
       )
 
+parseConfig :: Parser Config
+parseConfig =
+  ( DaemonConfig
+      <$> ( ( LSMSnapshot
+                <$> (SnapshotsDirectory <$> strOption (long "monitor-lsm-snapshots-in"))
+                <*> (LSMDatabaseFilePath <$> strOption (long "lsm-database"))
+            )
+              <|> ( StandaloneSnapshot
+                      <$> (SnapshotsDirectory <$> strOption (long "monitor-lmdb-snapshots-in"))
+                      <*> pure LMDB
+                  )
+          )
+      <*> (SnapshotsDirectory <$> strOption (long "output-mem-snapshots-in"))
+  )
+    <|> ( NoDaemonConfig
+            <$> ( ( LSMSnapshot'
+                      <$> (strOption (long "input-lsm-snapshot"))
+                      <*> (LSMDatabaseFilePath <$> strOption (long "input-lsm-database"))
+                  )
+                    <|> ( StandaloneSnapshot'
+                            <$> strOption (long "input-mem")
+                            <*> pure Mem
+                        )
+                    <|> ( StandaloneSnapshot'
+                            <$> strOption (long "input-lmdb")
+                            <*> pure LMDB
+                        )
+                )
+            <*> ( ( LSMSnapshot'
+                      <$> (strOption (long "output-lsm-snapshot"))
+                      <*> (LSMDatabaseFilePath <$> strOption (long "output-lsm-database"))
+                  )
+                    <|> ( StandaloneSnapshot'
+                            <$> strOption (long "output-mem")
+                            <*> pure Mem
+                        )
+                    <|> ( StandaloneSnapshot'
+                            <$> strOption (long "output-lmdb")
+                            <*> pure LMDB
+                        )
+                )
+        )
+
+#if __GLASGOW_HASKELL__ >= 912
 programDescription :: Maybe Doc
 programDescription =
-  Just $
-    mconcat
-      [ "The input snapshot must correspond to a snapshot that was produced by "
-      , "a cardano-node, and thus follows the naming convention used in the node."
-      , line
-      , "This means in particular that the filepath to the snapshot must have as "
-      , "the last fragment a directory named after the slot number of the ledger "
-      , "state snapshotted, plus an optional suffix, joined by an underscore."
-      , line
-      , line
-      , "For the output, the same convention is enforced, so that the produced "
-      , "snapshot can be loaded right away by a cardano-node."
-      , line
-      , line
-      , "Note that snapshots that have a suffix will be preserved by the node. "
-      , "If you produce a snapshot with a suffix and you start a node with it, "
-      , "the node will take as many more snapshots as it is configured to take, "
-      , "but it will never delete your snapshot, because it has a suffix on the name."
-      , line
-      , "Therefore, for the most common use case it is advisable to create a "
-      , "snapshot without a suffix, as in:"
-      , line
-      , line
-      , "```"
-      , line
-      , "$ mkdir out"
-      , line
-      , "$ snapshot-converter --<fmt>-in <some-path>/<slot> --<fmt>-out out/<slot> --config <path-to-config.json>"
-      , line
-      , "```"
-      ]
+  Just
+    """
+    # Running in oneshot mode
 
-data InOut = In | Out
+        `snapshot-converter` can be invoked to convert a single snapshot to a different
+        format. The three formats supported at the moment are: Mem, LMDB and LSM.
 
-inoutForGroup :: InOut -> String
-inoutForGroup In = "Input arguments:"
-inoutForGroup Out = "Output arguments:"
+        As snapshots in Mem and LMDB are fully contained in one directory, providing
+        that one is enough. On the other hand, converting an LSM snapshot requires a
+        reference to the snapshot directory as well as the LSM database directory.
 
-inoutForHelp :: InOut -> String -> Bool -> String
-inoutForHelp In s b =
-  mconcat $
-    ("Input " <> s)
-      : if b
-        then
-          [ ". Must be a filepath where the last fragment is named after the "
-          , "slot of the snapshotted state plus an optional suffix. Example: `1645330287_suffix`."
-          ]
-        else []
-inoutForHelp Out s b =
-  mconcat $
-    ("Output " <> s)
-      : if b
-        then
-          [ ". Must be a filepath where the last fragment is named after the "
-          , "slot of the snapshotted state plus an optional suffix. Example: `1645330287_suffix`."
-          ]
-        else []
+        To run in oneshot mode, you have to provide input and output parameters as in:
+        ```
+        # mem to lsm
+        $ snapshot-converter --input-mem <PATH> --output-lsm-snapshot <PATH> --output-lsm-database <PATH> --config <PATH>
+        # mem to lmdb
+        $ snapshot-converter --input-mem <PATH> --output-lmdb <PATH> --config <PATH>
 
-inoutForCommand :: InOut -> String -> String
-inoutForCommand In = (++ "-in")
-inoutForCommand Out = (++ "-out")
+        # lmdb to lsm
+        $ snapshot-converter --input-lmdb <PATH> --output-lsm-snapshot <PATH> --output-lsm-database --config <PATH>
+        # lmdb to mem
+        $ snapshot-converter --input-lmdb <PATH> --output-mem <PATH> --config <PATH>
 
-parseConfig :: InOut -> Parser Format
-parseConfig io =
-  ( Mem
-      <$> parserOptionGroup
-        (inoutForGroup io)
-        (parsePath (inoutForCommand io "mem") (inoutForHelp io "snapshot dir" True))
-  )
-    <|> ( LMDB
-            <$> parserOptionGroup
-              (inoutForGroup io)
-              (parsePath (inoutForCommand io "lmdb") (inoutForHelp io "snapshot dir" True))
-        )
-    <|> ( LSM
-            <$> parserOptionGroup
-              (inoutForGroup io)
-              (parsePath (inoutForCommand io "lsm-snapshot") (inoutForHelp io "snapshot dir" True))
-            <*> parserOptionGroup
-              (inoutForGroup io)
-              (parsePath (inoutForCommand io "lsm-database") (inoutForHelp io "LSM database" False))
-        )
+        # lsm to mem
+        $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-mem <PATH> --config <PATH>
+        # lsm to mem
+        $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-lmdb <PATH> --config <PATH>
+        ```
 
-parsePath :: String -> String -> Parser FilePath
-parsePath optName strHelp =
-  strOption
-    ( mconcat
-        [ long optName
-        , help strHelp
-        , metavar "PATH"
-        ]
-    )
+        Note that the input and output paths need to be named after the slot number
+        of the contained ledger state, this means for example that a snapshot for
+        slot 100 has to be contained in a directory `100[_suffix]` and has to be
+        written to a directory `100[_some_other_suffix]`. Providing a wrong slot
+        number will throw an error.
 
-data Error blk
-  = SnapshotError (SnapshotFailure blk)
-  | BadDirectoryName FilePath
-  | WrongSlotDirectoryName FilePath SlotNo
-  | InvalidMetadata String
-  | BackendMismatch SnapshotBackend SnapshotBackend
-  | CRCMismatch CRC CRC
-  | ReadTablesError DeserialiseFailure
-  | Cancelled
-  deriving Exception
+        This naming convention is the same expected by `cardano-node`.
 
-instance StandardHash blk => Show (Error blk) where
-  show (SnapshotError err) =
-    "Couldn't deserialize the snapshot. Are you running the same node version that created the snapshot? "
-      <> show err
-  show (BadDirectoryName fp) =
-    mconcat
-      [ "Filepath "
-      , fp
-      , " is not an snapshot. The last fragment on the path should be"
-      , " named after the slot number of the state it contains and an"
-      , " optional suffix, such as `163470034` or `163470034_my-suffix`."
-      ]
-  show (InvalidMetadata s) = "Metadata is invalid: " <> s
-  show (BackendMismatch b1 b2) =
-    mconcat
-      [ "Mismatched backend in snapshot. Reading as "
-      , show b1
-      , " but snapshot is "
-      , show b2
-      ]
-  show (WrongSlotDirectoryName fp sl) =
-    mconcat
-      [ "The name of the snapshot (\""
-      , fp
-      , "\") does not correspond to the slot number of the state ("
-      , (show . unSlotNo $ sl)
-      , ")."
-      ]
-  show (CRCMismatch c1 c2) =
-    mconcat
-      [ "The input snapshot seems corrupted. Metadata has CRC "
-      , show c1
-      , " but reading it gives CRC "
-      , show c2
-      ]
-  show (ReadTablesError df) =
-    mconcat
-      ["Error when reading entries in the UTxO tables: ", show df]
-  show Cancelled = "Cancelled"
+    # Running in daemon mode
 
-data InEnv backend = InEnv
-  { inState :: LedgerState (CardanoBlock StandardCrypto) EmptyMK
-  , inFilePath :: FilePath
-  , inStream ::
-      LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-      ResourceRegistry IO ->
-      IO (SomeBackend YieldArgs)
-  , inProgressMsg :: String
-  , inCRC :: CRC
-  , inSnapReadCRC :: Maybe CRC
-  }
+        `snapshot-converter` can be invoked as a daemon to monitor and convert
+        snapshots produced by a `cardano-node` into Mem format as they are
+        written by the node. This is only meaningful to run if your node
+        produces LMDB or LSM snapshots:
 
-data SomeBackend c where
-  SomeBackend ::
-    StreamingBackend IO backend (LedgerState (CardanoBlock StandardCrypto)) =>
-    c IO backend (LedgerState (CardanoBlock StandardCrypto)) -> SomeBackend c
-
-data OutEnv backend = OutEnv
-  { outFilePath :: FilePath
-  , outStream ::
-      LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-      ResourceRegistry IO ->
-      IO (SomeBackend SinkArgs)
-  , outCreateExtra :: Maybe FilePath
-  , outDeleteExtra :: Maybe FilePath
-  , outProgressMsg :: String
-  , outBackend :: SnapshotBackend
-  }
-
-main :: IO ()
-main = withStdTerminalHandles $ do
-  eRes <- runExceptT main'
-  case eRes of
-    Left err -> do
-      putStrLn $ show err
-      exitFailure
-    Right () -> exitSuccess
- where
-  main' = do
-    lift $ cryptoInit
-    (conf, args) <- lift $ getCommandLineConfig
-    ccfg <- lift $ configCodec . pInfoConfig <$> mkProtocolInfo args
-
-    InEnv{..} <- getInEnv ccfg (from conf)
-
-    o@OutEnv{..} <- getOutEnv inState (to conf)
-
-    wipeOutputPaths o
-
-    lift $ putStr "Copying state file..." >> hFlush stdout
-    lift $ D.copyFile (inFilePath F.</> "state") (outFilePath F.</> "state")
-    lift $ putColored Green True "Done"
-
-    lift $ putStr "Streaming ledger tables..." >> hFlush stdout >> saveCursor
-
-    tid <- lift $ niceAnimatedProgressBar inProgressMsg outProgressMsg
-
-    eRes <- lift $ runExceptT (stream inState inStream outStream)
-
-    case eRes of
-      Left err -> throwError $ ReadTablesError err
-      Right (mCRCIn, mCRCOut) -> do
-        lift $ maybe (pure ()) cancel tid
-        lift $ clearLine >> restoreCursor >> cursorUp 1 >> putColored Green True "Done"
-        let crcIn = maybe inCRC (crcOfConcat inCRC) mCRCIn
-        maybe
-          ( lift $
-              putColored Yellow True "The metadata file is missing, the snapshot is not guaranteed to be correct!"
-          )
-          ( \cs ->
-              Monad.when (cs /= crcIn) $ throwError $ CRCMismatch cs crcIn
-          )
-          inSnapReadCRC
-
-        let crcOut = maybe inCRC (crcOfConcat inCRC) mCRCOut
-
-        lift $ putStr "Generating new metadata file..." >> hFlush stdout
-        putMetadata outFilePath (SnapshotMetadata outBackend crcOut TablesCodecVersion1)
-
-        lift $ putColored Green True "Done"
-
-  wipeOutputPaths OutEnv{..} = do
-    wipePath outFilePath
-    lift $ maybe (pure ()) (D.createDirectory . (outFilePath F.</>)) outCreateExtra
-    maybe
-      (pure ())
-      wipePath
-      outDeleteExtra
-
-  getState ccfg fp@(pathToHasFS -> fs) = do
-    eState <- lift $ do
-      putStr $ "Reading ledger state from " <> (fp F.</> "state") <> "..."
-      hFlush stdout
-      runExceptT (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (mkFsPath ["state"]))
-    case eState of
-      Left err ->
-        throwError . SnapshotError . InitFailureRead @(CardanoBlock StandardCrypto) . ReadSnapshotFailed $
-          err
-      Right st -> lift $ do
-        putColored Green True " Done"
-        pure . first ledgerState $ st
-
-  getMetadata fp bknd = do
-    (fs, ds) <- toDiskSnapshot fp
-    mtd <-
-      lift $ runExceptT $ loadSnapshotMetadata fs ds
-    (,ds)
-      <$> either
-        ( \case
-            MetadataFileDoesNotExist -> pure Nothing
-            MetadataInvalid s -> throwError $ InvalidMetadata s
-            MetadataBackendMismatch -> error "impossible"
-        )
-        ( \mtd' -> do
-            if bknd /= snapshotBackend mtd'
-              then throwError $ BackendMismatch bknd (snapshotBackend mtd')
-              else pure $ Just $ snapshotChecksum mtd'
-        )
-        mtd
-
-  putMetadata fp bknd = do
-    (fs, ds) <- toDiskSnapshot fp
-    lift $ writeSnapshotMetadata fs ds bknd
-
-  getInEnv ccfg = \case
-    Mem fp -> do
-      (mtd, ds) <- getMetadata fp UTxOHDMemSnapshot
-      (st, c) <- getState ccfg fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              ( withOrigin
-                  ( error
-                      "Impossible! the snapshot seems to be at Genesis but cardano-node would never create such an snapshot!"
-                  )
-                  id
-                  $ pointSlot (getTip st)
-              )
-        )
-
-      pure $
-        InEnv
-          st
-          fp
-          (\a b -> SomeBackend <$> mkInMemYieldArgs (fp F.</> "tables") a b)
-          ("InMemory@[" <> fp <> "]")
-          c
-          mtd
-    LMDB fp -> do
-      (mtd, ds) <- getMetadata fp UTxOHDLMDBSnapshot
-      (st, c) <- getState ccfg fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              (withOrigin undefined id $ pointSlot (getTip st))
-        )
-
-      pure $
-        InEnv
-          st
-          fp
-          (\a b -> SomeBackend <$> V1.mkLMDBYieldArgs (fp F.</> "tables") defaultLMDBLimits a b)
-          ("LMDB@[" <> fp <> "]")
-          c
-          mtd
-    LSM fp lsmDbPath -> do
-      (mtd, ds) <- getMetadata fp UTxOHDLSMSnapshot
-      (st, c) <- getState ccfg fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              (withOrigin undefined id $ pointSlot (getTip st))
-        )
-
-      pure $
-        InEnv
-          st
-          fp
-          ( \a b ->
-              SomeBackend <$> mkLSMYieldArgs lsmDbPath (last $ splitDirectories fp) stdMkBlockIOFS newStdGen a b
-          )
-          ("LSM@[" <> lsmDbPath <> "]")
-          c
-          mtd
-
-  getOutEnv st = \case
-    Mem fp -> do
-      (_, ds) <- toDiskSnapshot fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              (withOrigin undefined id $ pointSlot (getTip st))
-        )
-      pure $
-        OutEnv
-          fp
-          (\a b -> SomeBackend <$> mkInMemSinkArgs (fp F.</> "tables") a b)
-          (Just "tables")
-          (Nothing)
-          ("InMemory@[" <> fp <> "]")
-          UTxOHDMemSnapshot
-    LMDB fp -> do
-      (_, ds) <- toDiskSnapshot fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              (withOrigin undefined id $ pointSlot (getTip st))
-        )
-      pure $
-        OutEnv
-          fp
-          (\a b -> SomeBackend <$> V1.mkLMDBSinkArgs fp defaultLMDBLimits a b)
-          Nothing
-          Nothing
-          ("LMDB@[" <> fp <> "]")
-          UTxOHDLMDBSnapshot
-    LSM fp lsmDbPath -> do
-      (_, ds) <- toDiskSnapshot fp
-      Monad.when
-        ((unSlotNo <$> pointSlot (getTip st)) /= NotOrigin (dsNumber ds))
-        ( throwError $
-            WrongSlotDirectoryName
-              (snapshotToDirName ds)
-              (withOrigin undefined id $ pointSlot (getTip st))
-        )
-      pure $
-        OutEnv
-          fp
-          ( \a b ->
-              SomeBackend <$> mkLSMSinkArgs lsmDbPath fp (SomeHasFS . ioHasFS @IO) stdMkBlockIOFS newStdGen a b
-          )
-          Nothing
-          (Just lsmDbPath)
-          ("LSM@[" <> lsmDbPath <> "]")
-          UTxOHDLSMSnapshot
-
-stream ::
-  LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-  ( LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-    ResourceRegistry IO ->
-    IO (SomeBackend YieldArgs)
-  ) ->
-  ( LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-    ResourceRegistry IO ->
-    IO (SomeBackend SinkArgs)
-  ) ->
-  ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)
-stream st mYieldArgs mSinkArgs =
-  ExceptT $
-    withRegistry $ \reg -> do
-      (SomeBackend (yArgs :: YieldArgs IO backend1 l)) <- mYieldArgs st reg
-      (SomeBackend (sArgs :: SinkArgs IO backend2 l)) <- mSinkArgs st reg
-      runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
-
--- Helpers
-
--- UI
-niceAnimatedProgressBar :: String -> String -> IO (Maybe (Async IO ()))
-niceAnimatedProgressBar inMsg outMsg = do
-  stdoutSupportsANSI <- hNowSupportsANSI stdout
-  if stdoutSupportsANSI
-    then do
-      putStrLn ""
-      pb <-
-        newProgressBar
-          defStyle{stylePrefix = msg (T.pack inMsg), stylePostfix = msg (T.pack outMsg)}
-          10
-          (Progress 1 100 ())
-
-      fmap Just $
-        async $
-          let loop = do
-                threadDelay 0.2
-                updateProgress pb (\prg -> prg{progressDone = (progressDone prg + 4) `mod` 100})
-           in Monad.forever loop
-    else pure Nothing
-
-putColored :: Color -> Bool -> String -> IO ()
-putColored c b s = do
-  stdoutSupportsANSI <- hNowSupportsANSI stdout
-  Monad.when stdoutSupportsANSI $ setSGR [SetColor Foreground Vivid c]
-  if b
-    then
-      putStrLn s
-    else
-      putStr s
-  Monad.when stdoutSupportsANSI $ setSGR [Reset]
-  hFlush stdout
-
-askForConfirmation ::
-  ExceptT (Error (CardanoBlock StandardCrypto)) IO a ->
-  String ->
-  ExceptT (Error (CardanoBlock StandardCrypto)) IO a
-askForConfirmation act infoMsg = do
-  lift $ putColored Yellow False $ "I'm going to " <> infoMsg <> ". Continue? (Y/n) "
-  answer <- lift $ getLine
-  case map toLower answer of
-    "y" -> act
-    _ -> throwError Cancelled
-
--- | Ask before deleting
-wipePath :: FilePath -> ExceptT (Error (CardanoBlock StandardCrypto)) IO ()
-wipePath fp = do
-  exists <- lift $ D.doesDirectoryExist fp
-  ( if exists
-      then flip askForConfirmation ("wipe the path " <> fp)
-      else id
-    )
-    (lift $ D.removePathForcibly fp >> D.createDirectoryIfMissing True fp)
-
-toDiskSnapshot ::
-  FilePath -> ExceptT (Error (CardanoBlock StandardCrypto)) IO (SomeHasFS IO, DiskSnapshot)
-toDiskSnapshot fp@(F.splitFileName . maybeRemoveTrailingSlash -> (snapPath, snapName)) =
-  maybe
-    (throwError $ BadDirectoryName fp)
-    (pure . (pathToHasFS snapPath,))
-    $ snapshotFromPath snapName
-
--- | Given a filepath pointing to a snapshot (with or without a trailing slash), produce:
---
--- * A HasFS at the snapshot directory
-pathToHasFS :: FilePath -> SomeHasFS IO
-pathToHasFS (maybeRemoveTrailingSlash -> path) =
-  SomeHasFS $ ioHasFS $ MountPoint path
-
-maybeRemoveTrailingSlash :: String -> String
-maybeRemoveTrailingSlash s = case last s of
-  '/' -> init s
-  '\\' -> init s
-  _ -> s
-
-defaultLMDBLimits :: V1.LMDBLimits
-defaultLMDBLimits =
-  V1.LMDBLimits
-    { V1.lmdbMapSize = 16 * 1024 * 1024 * 1024
-    , V1.lmdbMaxDatabases = 10
-    , V1.lmdbMaxReaders = 16
-    }
+        ```
+        # lsm to mem
+        $ snapshot-converter --monitor-lsm-snapshots-in <PATH> --lsm-database <PATH> --output-mem-snapshots-in <PATH> --config <PATH>
+        # lmdb to mem
+        $ snapshot-converter --monitor-lmdb-snapshots-in <PATH> --output-mem-snapshots-in <PATH> --config <PATH>
+        ```
+    """
+#else
+programDescription :: Maybe Doc
+programDescription =
+  Just
+   . pretty
+   . T.pack
+   $ unlines
+     [ "# Running in oneshot mode"
+     , ""
+     , "    `snapshot-converter` can be invoked to convert a single snapshot to a different"
+     , "    format. The three formats supported at the moment are: Mem, LMDB and LSM."
+     , ""
+     , "    As snapshots in Mem and LMDB are fully contained in one directory, providing"
+     , "    that one is enough. On the other hand, converting an LSM snapshot requires a"
+     , "    reference to the snapshot directory as well as the LSM database directory."
+     , ""
+     , "    To run in oneshot mode, you have to provide input and output parameters as in:"
+     , "    ```"
+     , "    # mem to lsm"
+     , "    $ snapshot-converter --input-mem <PATH> --output-lsm-snapshot <PATH> --output-lsm-database <PATH> --config <PATH>"
+     , "    # mem to lmdb"
+     , "    $ snapshot-converter --input-mem <PATH> --output-lmdb <PATH> --config <PATH>"
+     , ""
+     , "    # lmdb to lsm"
+     , "    $ snapshot-converter --input-lmdb <PATH> --output-lsm-snapshot <PATH> --output-lsm-database --config <PATH>"
+     , "    # lmdb to mem"
+     , "    $ snapshot-converter --input-lmdb <PATH> --output-mem <PATH> --config <PATH>"
+     , ""
+     , "    # lsm to mem"
+     , "    $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-mem <PATH> --config <PATH>"
+     , "    # lsm to mem"
+     , "    $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-lmdb <PATH> --config <PATH>"
+     , "    ```"
+     , ""
+     , "    Note that the input and output paths need to be named after the slot number"
+     , "    of the contained ledger state, this means for example that a snapshot for"
+     , "    slot 100 has to be contained in a directory `100[_suffix]` and has to be"
+     , "    written to a directory `100[_some_other_suffix]`. Providing a wrong slot"
+     , "    number will throw an error."
+     , ""
+     , "    This naming convention is the same expected by `cardano-node`."
+     , ""
+     , "# Running in daemon mode"
+     , ""
+     , "    `snapshot-converter` can be invoked as a daemon to monitor and convert"
+     , "    snapshots produced by a `cardano-node` into Mem format as they are"
+     , "    written by the node. This is only meaningful to run if your node"
+     , "    produces LMDB or LSM snapshots:"
+     , ""
+     , "    ```"
+     , "    # lsm to mem"
+     , "    $ snapshot-converter --monitor-lsm-snapshots-in <PATH> --lsm-database <PATH> --output-mem-snapshots-in <PATH> --config <PATH>"
+     , "    # lmdb to mem"
+     , "    $ snapshot-converter --monitor-lmdb-snapshots-in <PATH> --output-mem-snapshots-in <PATH> --config <PATH>"
+     , "    ```"
+     ]
+#endif
