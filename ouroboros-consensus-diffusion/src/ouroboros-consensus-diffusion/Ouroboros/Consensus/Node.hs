@@ -65,7 +65,6 @@ module Ouroboros.Consensus.Node
   ) where
 
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
-import Cardano.Binary (FromCBOR, ToCBOR)
 import qualified Cardano.Network.Diffusion as Cardano.Diffusion
 import Cardano.Network.Diffusion.Configuration (ChainSyncIdleTimeout (..))
 import qualified Cardano.Network.Diffusion.Configuration as Diffusion
@@ -99,7 +98,6 @@ import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer, contramap, traceWith)
-import Data.Aeson (ToJSON)
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor (void)
 import Data.Functor.Contravariant (Predicate (..))
@@ -110,7 +108,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isNothing)
 import Data.Set (Set)
 import Data.Time (NominalDiffTime)
-import Data.Typeable (Typeable, cast)
+import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
@@ -167,7 +165,7 @@ import Ouroboros.Network.PeerSelection.Governor.Types
   )
 import Ouroboros.Network.PeerSelection.LedgerPeers
   ( LedgerPeersConsensusInterface (..)
-  , SomeHashableBlock (..)
+  , RawBlockHash (..)
   )
 import Ouroboros.Network.PeerSelection.PeerMetric
   ( PeerMetrics
@@ -412,11 +410,7 @@ pure []
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
 run ::
   forall blk.
-  ( RunNode blk
-  , ToCBOR (HeaderHash blk)
-  , FromCBOR (HeaderHash blk)
-  , ToJSON (HeaderHash blk)
-  ) =>
+  RunNode blk =>
   RunNodeArgs IO RemoteAddress LocalAddress blk ->
   StdRunNodeArgs IO blk ->
   IO ()
@@ -495,9 +489,6 @@ runWith ::
   , NetworkIO m
   , NetworkAddr addrNTN
   , Show addrNTN
-  , ToCBOR (HeaderHash blk)
-  , FromCBOR (HeaderHash blk)
-  , ToJSON (HeaderHash blk)
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -643,19 +634,12 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                 , Cardano.getBlockHash = \targetBlock k -> do
                                     case targetBlock of
                                       GenesisPoint -> k (pure Nothing)
-                                      (BlockPoint targetSlot (SomeHashableBlock _ targetHash)) -> do
-                                        case (cast targetHash :: Maybe (HeaderHash blk)) of
-                                          Nothing ->
-                                            -- this case should be impossible
-                                            -- TODO(geo2a): add an error type into Network and
-                                            -- return `Either Error` instead of `Maybe`
-                                            k (pure Nothing)
-                                          Just targetHashBlk -> do
-                                            let targetPoint = RealPoint targetSlot targetHashBlk
-                                            ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
-                                              Left{} -> k (pure Nothing)
-                                              Right (RealPoint actualSlot actualHash) ->
-                                                k (pure . Just $ BlockPoint actualSlot (SomeHashableBlock (Proxy @blk) actualHash))
+                                      (BlockPoint targetSlot (RawBlockHash targetHash)) -> do
+                                        let targetPoint = RealPoint targetSlot (fromShortRawHash (Proxy @blk) targetHash)
+                                        ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
+                                          Left{} -> k (pure Nothing)
+                                          Right (RealPoint actualSlot actualHash) ->
+                                            k (pure . Just $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
