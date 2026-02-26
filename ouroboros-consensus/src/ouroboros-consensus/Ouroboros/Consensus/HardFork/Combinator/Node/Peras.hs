@@ -20,11 +20,13 @@
 -- | 'BlockSupportsPeras' instance and supporting helpers for 'HardForkBlock'.
 module Ouroboros.Consensus.HardFork.Combinator.Node.Peras
   ( HardForkPerasErr (..)
+  , HardForkPerasConfig (..)
+  , forcastToViewAtSlot
   , ensureSameEraNonEmpty
   , ensureSameEraPair
+  , ensurePerasEnabled
   , upcastToHardForkPoint
   , downcastHardForkPoint
-  , withLastEra
   ) where
 
 import Control.Exception (Exception)
@@ -36,9 +38,9 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Proxy (Proxy (..))
 import Data.SOP (All, K (..), SListI, (:.:) (Comp))
 import Data.SOP.Functors (Flip (..))
-import Data.SOP.Index (Index, hcizipWith, indices, injectNS)
+import Data.SOP.Index (hcizipWith, injectNS)
 import Data.SOP.Match (matchNS)
-import Data.SOP.Strict (HCollapse (..), HSequence (..), NP (..), NS (..), hcmap, hczipWith, hmap)
+import Data.SOP.Strict (HCollapse (..), HSequence (..), NS (..), hcmap, hczipWith, hmap)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -509,9 +511,6 @@ ensureSameEraNonEmpty (x :| rest) = foldl go (Right $ hmap (Compose . (:| [])) x
 
 -- | Ensure that two 'NS' values are in the same era, pairing them together.
 -- Returns 'Left ParamsEraMismatch' if they are from different eras.
---
--- NOTE: This isn't currently used, but will become useful if/when the
--- 'BlockSupportsPeras' methods are updated to take extra arguments.
 ensureSameEraPair ::
   (NS f xs, NS g xs) ->
   Either (HardForkPerasErr xs) (NS (Product f g) xs)
@@ -528,22 +527,6 @@ ensurePerasEnabled ::
 ensurePerasEnabled = \case
   History.PerasEnabled a -> Right a
   History.NoPerasEnabled -> Left PerasNotEnabled
-
--- | Apply a continuation to the last element of an 'NP' together with its
--- 'Index'. This is used to delegate operations to the last era in the hard
--- fork combinator.
-withLastEra ::
-  forall xs f r.
-  All SingleEraBlock xs =>
-  NP f xs ->
-  (forall x. SingleEraBlock x => Index xs x -> f x -> r) ->
-  r
-withLastEra np k = go indices np
- where
-  go :: All SingleEraBlock ys => NP (Index xs) ys -> NP f ys -> r
-  go (idx :* Nil) (x :* Nil) = k idx x
-  go (_ :* idxs@(_ :* _)) (_ :* rest@(_ :* _)) = go idxs rest
-  go _ _ = error "withLastEra: impossible"
 
 -- | Downcast a 'Point' of the hard fork block to a 'Point' of a single era
 -- by decoding the raw hash via 'fromShortRawHash'. Used when delegating
