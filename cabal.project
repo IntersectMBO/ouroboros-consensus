@@ -108,3 +108,105 @@ source-repository-package
   subdir:
     plutus-core
     plutus-ledger-api
+
+constraints:
+  -- This version breaks the build.
+  , cuddle < 1.1.2
+
+if impl (ghc >= 9.14)
+  constraints:
+    , containers >= 0.8
+    , foldl >= 1.4.18
+
+-- cabal-allow-newer
+if impl (ghc >= 9.14)
+  allow-newer:
+    , aeson:QuickCheck
+    , aeson:base
+    , aeson:containers
+    , aeson:template-haskell
+    , aeson:time
+    , bin:QuickCheck
+    , bin:base
+    , binary-orphans:base
+    , blockio:base
+    , blockio-uring:base
+    , bloomfilter-blocked:base
+    , boring:base
+    , canonical-json:containers
+    , cborg:base
+    , cborg:containers
+    , cborg-json:base
+    , compact:base
+    , config-ini:containers
+    , config-ini:megaparsec
+    , constraints:boring
+    , constraints-extras:base
+    , constraints-extras:template-haskell
+    , data-elevator:base
+    , dec:base
+    , dependent-map:constraints-extras
+    , dependent-map:containers
+    , dictionary-sharing:containers
+    , diff-containers:base
+    , fin:QuickCheck
+    , fin:base
+    , fin:universe-base
+    , fingertree-rm:base
+    , fs-api:unix-bytestring
+    , hedgehog-quickcheck:QuickCheck
+    , http-api-data:base
+    , http-api-data:containers
+    , hspec-core:QuickCheck
+    , indexed-traversable:base
+    , indexed-traversable:containers
+    , indexed-traversable-instances:base
+    , kes-agent:base
+    , kes-agent-crypto:base
+    , latex-svg-image:base
+    , lsm-tree:base
+    , lsm-tree:containers
+    , microstache:aeson
+    , microstache:base
+    , microstache:containers
+    , nonempty-vector:base
+    , ordered-containers:containers
+    , plutus-core:dependent-map
+    , quickcheck-instances:QuickCheck
+    , quickcheck-instances:base
+    , quickcheck-instances:these
+    , quickcheck-instances:uuid-types
+    , quickcheck-lockstep:base
+    , quickcheck-monoid-subclasses:QuickCheck
+    , quickcheck-monoid-subclasses:base
+    , quickcheck-monoid-subclasses:containers
+    , ral:QuickCheck
+    , ral:base
+    , ral:fin
+    , rawlock:base
+    , rawlock:nothunks
+    , resource-registry:base
+    , resource-registry:containers
+    , resource-registry:nothunks
+    , safe-wild-cards:template-haskell
+    , semialign:base
+    , semialign:containers
+    , serdoc-core:containers
+    , serdoc-core:template-haskell
+    , serialise:base
+    , serialise:containers
+    , serialise:time
+    , these:base
+    , time-compat:time
+    , transformers:base
+    , tree-diff:QuickCheck
+    , tree-diff:aeson
+    , tree-diff:base
+    , tree-diff:containers
+    , tree-diff:semialign
+    , tree-diff:time
+    , universe-base:base
+    , universe-base:containers
+    , unix-bytestring:base
+    , uuid-types:template-haskell
+    , with-utf8:base
