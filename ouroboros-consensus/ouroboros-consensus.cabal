@@ -93,6 +93,10 @@ library
     Ouroboros.Consensus.BlockchainTime.WallClock.Simple
     Ouroboros.Consensus.BlockchainTime.WallClock.Types
     Ouroboros.Consensus.BlockchainTime.WallClock.Util
+    Ouroboros.Consensus.Committee
+    Ouroboros.Consensus.Committee.LS
+    Ouroboros.Consensus.Committee.Types
+    Ouroboros.Consensus.Committee.WFA
     Ouroboros.Consensus.Config
     Ouroboros.Consensus.Config.SecurityParam
     Ouroboros.Consensus.Config.SupportsNode

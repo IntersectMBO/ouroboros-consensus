@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Peras.Params
   , PerasWeight (..)
   , PerasQuorumStakeThreshold (..)
   , PerasQuorumStakeThresholdSafetyMargin (..)
+  , PerasCommitteeSize (..)
 
     -- * Protocol parameters bundle
   , PerasParams (..)
@@ -100,6 +101,13 @@ newtype PerasQuorumStakeThresholdSafetyMargin
   deriving stock Generic
   deriving newtype (Eq, Ord, NoThunks, Condense)
 
+-- | Expected size of the voting committee.
+newtype PerasCommitteeSize
+  = PerasCommitteeSize {unPerasCommitteeSize :: Word64}
+  deriving Show via Quiet PerasCommitteeSize
+  deriving stock Generic
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense)
+
 {-------------------------------------------------------------------------------
   Protocol parameters bundle
 -------------------------------------------------------------------------------}
@@ -119,6 +127,7 @@ data PerasParams = PerasParams
   , perasWeight :: !PerasWeight
   , perasQuorumStakeThreshold :: !PerasQuorumStakeThreshold
   , perasQuorumStakeThresholdSafetyMargin :: !PerasQuorumStakeThresholdSafetyMargin
+  , perasCommitteeSize :: !PerasCommitteeSize
   }
   deriving (Show, Eq, Generic, NoThunks)
 
@@ -144,4 +153,6 @@ mkPerasParams =
         PerasQuorumStakeThreshold (3 / 4)
     , perasQuorumStakeThresholdSafetyMargin =
         PerasQuorumStakeThresholdSafetyMargin (2 / 100)
+    , perasCommitteeSize =
+        PerasCommitteeSize 800
     }
