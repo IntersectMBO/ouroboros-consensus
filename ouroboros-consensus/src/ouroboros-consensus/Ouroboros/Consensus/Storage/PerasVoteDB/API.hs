@@ -66,7 +66,7 @@ data PerasVoteDB m blk = PerasVoteDB
 
 -- | A sequence number, incremented every time we receive a new vote.
 newtype PerasVoteTicketNo = PerasVoteTicketNo Word64
-  deriving stock Show
+  deriving stock (Generic, Show)
   deriving newtype (Eq, Ord, Enum, NoThunks)
 
 zeroPerasVoteTicketNo :: PerasVoteTicketNo

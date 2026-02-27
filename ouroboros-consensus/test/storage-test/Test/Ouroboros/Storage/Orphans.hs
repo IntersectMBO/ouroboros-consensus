@@ -1,8 +1,10 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Ouroboros.Storage.Orphans () where
 
+import Cardano.Crypto.Hash.Class (PackedBytes)
 import Data.Maybe (isJust)
 import Data.Time.Clock (NominalDiffTime)
 import Ouroboros.Consensus.Block
@@ -75,4 +77,18 @@ deriving instance StandardHash blk => Eq (ChainDbError blk)
 -------------------------------------------------------------------------------}
 
 instance HasVariables NominalDiffTime where
+  getAllVariables _ = mempty
+
+{-------------------------------------------------------------------------------
+  Rational
+-------------------------------------------------------------------------------}
+
+instance HasVariables Rational where
+  getAllVariables _ = mempty
+
+{-------------------------------------------------------------------------------
+  PackedBytes
+-------------------------------------------------------------------------------}
+
+instance HasVariables (PackedBytes a) where
   getAllVariables _ = mempty
