@@ -61,6 +61,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Typeable (Typeable)
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Stack
@@ -310,8 +311,12 @@ runThreadNetwork ::
   , TracingConstraints blk
   , HasCallStack
   ) =>
-  SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
+  (forall a. Typeable a => Tracer m a) ->
+  SystemTime m ->
+  ThreadNetworkArgs m blk ->
+  m (TestOutput blk)
 runThreadNetwork
+  baseTracer
   systemTime
   ThreadNetworkArgs
     { tnaForgeEbbEnv = mbForgeEbbEnv
@@ -990,10 +995,11 @@ runThreadNetwork
                 case ev of
                   TraceNodeIsLeader s -> atomically $ blockOnCrucial s
                   _ -> pure ()
+            , leiosKernelTracer = baseTracer
             }
 
         -- traces the node's local events other than those from the -- ChainDB
-        tracers = instrumentationTracers <> nullDebugTracers
+        tracers = instrumentationTracers <> showTracers debugTracer
 
       let
         -- use a backoff delay of exactly one slot length (which the
@@ -1653,6 +1659,7 @@ data NodeOutput blk = NodeOutput
 data TestOutput blk = TestOutput
   { testOutputNodes :: Map NodeId (NodeOutput blk)
   , testOutputTipBlockNos :: Map SlotNo (Map NodeId (WithOrigin BlockNo))
+  , traceOfType :: forall a. Typeable a => [a]
   }
 
 -- | Gather the test output from the nodes
@@ -1724,6 +1731,7 @@ mkTestOutput vertexInfos = do
     TestOutput
       { testOutputNodes = Map.unions nodeOutputs'
       , testOutputTipBlockNos = Map.unionsWith Map.union tipBlockNos'
+      , traceOfType = [] -- XXX: Only provided when run in io-sim from runTestNetwork
       }
 
 {-------------------------------------------------------------------------------
@@ -1733,16 +1741,6 @@ mkTestOutput vertexInfos = do
 -- | Occurs throughout in positions that might be useful for debugging.
 nullDebugTracer :: (Applicative m, Show a) => Tracer m a
 nullDebugTracer = nullTracer `asTypeOf` showTracing debugTracer
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracers ::
-  ( Monad m
-  , Show peer
-  , LedgerSupportsProtocol blk
-  , TracingConstraints blk
-  ) =>
-  Tracers m peer Void blk
-nullDebugTracers = nullTracers `asTypeOf` showTracers debugTracer
 
 -- | Occurs throughout in positions that might be useful for debugging.
 nullDebugProtocolTracers ::
