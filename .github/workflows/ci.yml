@@ -160,7 +160,7 @@ jobs:
 
     - name: Test (NoThunks-safe tests only)
       if: matrix.test-set == 'no-thunks-safe'
-      run: cabal test ouroboros-consensus:consensus-test ouroboros-consensus:doctest ouroboros-consensus:infra-test ouroboros-consensus:storage-test ouroboros-consensus-cardano:byron-test ouroboros-consensus-cardano:shelley-test ouroboros-consensus-diffusion:infra-test ouroboros-consensus-protocol:protocol-test -j --test-show-details=streaming
+      run: cabal test ouroboros-consensus:consensus-test ouroboros-consensus:doctest ouroboros-consensus:consensus-infra-test ouroboros-consensus:storage-test ouroboros-consensus:byron-test ouroboros-consensus:shelley-test ouroboros-consensus:diffusion-infra-test ouroboros-consensus:protocol-test -j --test-show-details=streaming
 
     - name: Identify benchmark executables
       run: |

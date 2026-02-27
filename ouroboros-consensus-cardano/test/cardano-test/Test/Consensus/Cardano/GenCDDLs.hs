@@ -9,7 +9,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.List as L
 import Data.Maybe (isNothing)
-import Paths_ouroboros_consensus_cardano
+import Paths_ouroboros_consensus
 import qualified System.Directory as D
 import qualified System.Environment as E
 import System.Exit
@@ -44,18 +44,18 @@ withCDDLs f =
             probeTools
             setupCDDLCEnv
 
-            ntnBlock <- cddlc "cddl/node-to-node/blockfetch/block.cddl"
+            ntnBlock <- cddlc "ouroboros-consensus-cardano/cddl/node-to-node/blockfetch/block.cddl"
             ntnBlock' <- fixupLedgerCDDL ntnBlock
             BS.writeFile "ntnblock.cddl" . cddlSpec $ ntnBlock'
 
-            ntnHeader <- cddlc "cddl/node-to-node/chainsync/header.cddl"
+            ntnHeader <- cddlc "ouroboros-consensus-cardano/cddl/node-to-node/chainsync/header.cddl"
             BS.writeFile "ntnheader.cddl" . cddlSpec $ ntnHeader
 
-            ntnTx <- cddlc "cddl/node-to-node/txsubmission2/tx.cddl"
+            ntnTx <- cddlc "ouroboros-consensus-cardano/cddl/node-to-node/txsubmission2/tx.cddl"
             ntnTx' <- fixupLedgerCDDL ntnTx
             BS.writeFile "ntntx.cddl" . cddlSpec $ ntnTx'
 
-            ntnTxId <- cddlc "cddl/node-to-node/txsubmission2/txId.cddl"
+            ntnTxId <- cddlc "ouroboros-consensus-cardano/cddl/node-to-node/txsubmission2/txId.cddl"
             BS.writeFile "ntntxid.cddl" . cddlSpec $ ntnTxId
         )
         ( \() -> do
@@ -111,7 +111,7 @@ setupCDDLCEnv = do
   let local_paths =
         map
           (localDataDir F.</>)
-          ["cddl"] -- Directories with other cddls that we import should go here
+          ["ouroboros-consensus-cardano/cddl"] -- Directories with other cddls that we import should go here
       include_path =
         mconcat $
           L.intersperse ":" $
