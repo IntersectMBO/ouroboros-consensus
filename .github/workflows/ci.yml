@@ -150,9 +150,16 @@ jobs:
         bundler-cache: true
 
     - name: Install cddl tools
+      if: matrix.ghc != '9.14.1'
       run: |
         gem install cddlc
         cabal install cuddle-1.2.0.0 --index-state="2026-02-23T15:03:19Z" --ignore-project
+
+    - name: Install cddl tools (9.14)
+      if: matrix.ghc == '9.14.1'
+      run: |
+        gem install cddlc
+        cabal install cuddle-1.2.0.0 --allow-newer --index-state="2026-02-23T15:03:19Z" --ignore-project
 
     - name: Test
       if: matrix.test-set == 'all'

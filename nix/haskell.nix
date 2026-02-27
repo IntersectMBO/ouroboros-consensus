@@ -59,7 +59,7 @@ let
         src = lib.mkForce (final.applyPatches {
           name = "consensus-src-no-asserts";
           src = ./..;
-          postPatch = ''echo > scripts/asserts.cabal'';
+          postPatch = ''echo > cabal/asserts.cabal'';
         });
       };
       profiled = {
