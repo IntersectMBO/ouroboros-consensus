@@ -389,7 +389,11 @@ generatorCmdImpl Model{..} =
 
   genRandomBlock :: Gen Block
   genRandomBlock = do
-    body <- TestBody <$> arbitrary <*> arbitrary
+    body <-
+      TestBody
+        <$> arbitrary
+        <*> arbitrary
+        <*> liftArbitrary (PerasRoundNo <$> arbitrary)
     prevHash <-
       frequency
         [ (1, return GenesisHash)

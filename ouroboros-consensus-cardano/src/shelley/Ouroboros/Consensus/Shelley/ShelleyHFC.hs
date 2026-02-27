@@ -78,6 +78,7 @@ import Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , ledgerViewForecastAt
@@ -165,6 +166,7 @@ instance
 instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
+  , LedgerSupportsPeras (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
   ) =>
@@ -365,7 +367,8 @@ instance
   ) =>
   SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto)
   where
-  translateEra ctxt (Comp (Flip (ShelleyLedgerState tip state _transition tables))) = do
+  translateEra ctxt (Comp (Flip st)) = do
+    let ShelleyLedgerState tip state _transition tables latestPerasCertRound = st
     tip' <- mapM (SL.translateEra ctxt) tip
     state' <- SL.translateEra ctxt state
     return $
@@ -376,6 +379,7 @@ instance
             , shelleyLedgerState = state'
             , shelleyLedgerTransition = ShelleyTransitionInfo 0
             , shelleyLedgerTables = translateShelleyTables tables
+            , shelleyLedgerLatestPerasCertRound = latestPerasCertRound
             }
 
 translateShelleyTables ::

@@ -35,6 +35,7 @@ import Data.Coerce (coerce)
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
 import Lens.Micro
 import Ouroboros.Consensus.Block
@@ -223,6 +224,7 @@ fromShelleyLedgerExamples
         , shelleyLedgerState = leNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = LedgerTables EmptyMK
+        , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
@@ -360,6 +362,7 @@ fromShelleyLedgerExamplesPraos
         , shelleyLedgerState = leNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = emptyLedgerTables
+        , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState =
       translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto)) $

@@ -659,11 +659,11 @@ generateCmd Model{..} =
     return $
       (withOrigin firstBlock mkNextBlock lastBlock)
         slotNo
-        (TestBody 0 True)
+        (TestBody 0 True Nothing)
 
   genAppendEBB :: Gen TestBlock
   genAppendEBB = case lastBlock of
-    Origin -> return $ firstEBB canContainEBB (TestBody 0 True)
+    Origin -> return $ firstEBB canContainEBB (TestBody 0 True Nothing)
     NotOrigin prevBlock -> do
       epoch <-
         frequency
@@ -672,7 +672,7 @@ generateCmd Model{..} =
           , (3, chooseEpoch (currentEpoch, currentEpoch + 5))
           ]
       let slotNo = slotNoOfEBB dbmChunkInfo epoch
-      return $ mkNextEBB canContainEBB prevBlock slotNo epoch (TestBody 0 True)
+      return $ mkNextEBB canContainEBB prevBlock slotNo epoch (TestBody 0 True Nothing)
 
   -- Both random points and existing points
   genRandomOrExisting :: Gen (RealPoint TestBlock)

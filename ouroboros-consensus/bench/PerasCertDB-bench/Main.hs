@@ -115,7 +115,7 @@ fragments = iterate' addSuccessorBlock genesisFragment
        in (xs AF.:> x) AF.:> TestBlock.mkNextBlock x nextBlockSlot dummyBody
 
   dummyBody :: TestBody
-  dummyBody = TestBody{tbForkNo = 0, tbIsValid = True}
+  dummyBody = TestBody{tbForkNo = 0, tbIsValid = True, tbPerasCertRound = Nothing}
 
 -- | Given a chain fragment, construct a weight snapshot where there's a boosted block every 90 slots
 uniformWeightSnapshot :: AF.AnchoredFragment TestBlock -> PerasWeightSnapshot TestBlock

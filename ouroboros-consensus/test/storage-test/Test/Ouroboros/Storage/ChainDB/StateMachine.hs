@@ -115,6 +115,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract
@@ -200,6 +201,7 @@ data Cmd blk it flr
   | GetTipHeader
   | GetTipPoint
   | GetBlockComponent (RealPoint blk)
+  | GetLatestPerasCertOnChainRound
   | -- | Only for blocks that may have been garbage collected.
     GetGCedBlockComponent (RealPoint blk)
   | GetMaxSlotNo
@@ -302,6 +304,7 @@ data Success blk it flr
   | MbChainUpdate (Maybe (ChainUpdate blk (AllComponents blk)))
   | MbPoint (Maybe (Point blk))
   | MaxSlot MaxSlotNo
+  | MbPerasRoundNo (Maybe PerasRoundNo)
   deriving (Functor, Foldable, Traversable)
 
 -- | Product of all 'BlockComponent's. As this is a GADT, generating random
@@ -340,6 +343,7 @@ type AllComponents blk =
 type TestConstraints blk =
   ( ConsensusProtocol (BlockProtocol blk)
   , LedgerSupportsProtocol blk
+  , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , Eq (ChainDepState (BlockProtocol blk))
@@ -437,6 +441,7 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
     GetTipHeader -> MbHeader <$> getTipHeader
     GetTipPoint -> Point <$> atomically getTipPoint
     GetBlockComponent pt -> MbAllComponents <$> getBlockComponent allComponents pt
+    GetLatestPerasCertOnChainRound -> MbPerasRoundNo <$> atomically getLatestPerasCertOnChainRound
     GetGCedBlockComponent pt -> mbGCedAllComponents <$> getBlockComponent allComponents pt
     GetIsValid pt -> isValidResult <$> ($ pt) <$> atomically getIsValid
     GetMaxSlotNo -> MaxSlot <$> atomically getMaxSlotNo
@@ -692,6 +697,7 @@ runPure cfg = \case
   GetTipHeader -> ok MbHeader $ query (fmap getHeader . Model.tipBlock)
   GetTipPoint -> ok Point $ query Model.tipPoint
   GetBlockComponent pt -> err MbAllComponents $ query (Model.getBlockComponentByPoint allComponents pt)
+  GetLatestPerasCertOnChainRound -> ok MbPerasRoundNo $ query Model.getLatestPerasCertOnChainRound
   GetGCedBlockComponent pt -> err mbGCedAllComponents $ query (Model.getBlockComponentByPoint allComponents pt)
   GetMaxSlotNo -> ok MaxSlot $ query Model.getMaxSlotNo
   GetIsValid pt -> ok isValidResult $ query (Model.isValid pt)
@@ -1074,6 +1080,11 @@ generator loe genBlock m@Model{..} =
       , -- To check that we're on the right chain
         (if empty then 1 else 10, return GetTipPoint)
       , (10, genGetBlockComponent)
+      , let freq = case loe of
+              LoEDisabled -> 10
+              -- The LoE does not yet support Peras.
+              LoEEnabled () -> 0
+         in (freq, genGetLatestPerasCertOnChainRound)
       , (if empty then 1 else 10, return GetMaxSlotNo)
       , (if empty then 1 else 10, genGetIsValid)
       , let freq = case loe of
@@ -1194,6 +1205,10 @@ generator loe genBlock m@Model{..} =
       if Model.garbageCollectablePoint secParam dbModel pt
         then GetGCedBlockComponent pt
         else GetBlockComponent pt
+
+  genGetLatestPerasCertOnChainRound :: Gen (Cmd blk it flr)
+  genGetLatestPerasCertOnChainRound =
+    return GetLatestPerasCertOnChainRound
 
   genAddBlock :: Gen (Cmd blk it flr)
   genAddBlock = do
@@ -1657,8 +1672,12 @@ type Blk = TestBlock
 -- ChainDB, blocks are added /out of order/, while in the ImmutableDB, they
 -- must be added /in order/. This generator can thus not be reused for the
 -- ImmutableDB.
-genBlk :: ImmutableDB.ChunkInfo -> Model Blk m r -> Gen (TestBlock, Persistent [TestBlock])
-genBlk chunkInfo Model{..} =
+genBlk ::
+  ImmutableDB.ChunkInfo ->
+  LoE () ->
+  Model Blk m r ->
+  Gen (TestBlock, Persistent [TestBlock])
+genBlk chunkInfo loe Model{..} =
   frequency
     [ (if noBlocksInChainDB then 0 else 1, withoutGapBlocks genAlreadyInChain)
     , (if noSavedGapBlocks then 0 else 20, withoutGapBlocks genGapBlock)
@@ -1688,16 +1707,31 @@ genBlk chunkInfo Model{..} =
   canContainEBB = const modelSupportsEBBs -- TODO: we could be more precise
   genBody :: Gen TestBody
   genBody = do
+    forkNo <-
+      choose (1, 3)
     isValid <-
       frequency
         [ (4, return True)
         , (1, return False)
         ]
-    forkNo <- choose (1, 3)
+    perasCertRound <- do
+      let maxRoundNo =
+            case Model.maxPerasRoundNo dbModel of
+              Nothing -> 0
+              Just (PerasRoundNo r) -> r + 1
+      frequency
+        [ (9, return Nothing)
+        , let freq = case loe of
+                LoEDisabled -> 1
+                -- The LoE does not yet support Peras.
+                LoEEnabled () -> 0
+           in (freq, Just . PerasRoundNo <$> choose (0, maxRoundNo))
+        ]
     return
       TestBody
         { tbForkNo = forkNo
         , tbIsValid = isValid
+        , tbPerasCertRound = perasCertRound
         }
 
   -- A block that already exists in the ChainDB
@@ -1873,7 +1907,7 @@ smUnused loe k chunkInfo =
   sm
     loe
     envUnused
-    (genBlk chunkInfo)
+    (genBlk chunkInfo loe)
     (mkTestCfg k chunkInfo)
     testInitExtLedger
 
@@ -1946,7 +1980,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
                 , varLoEFragment
                 , args
                 }
-            sm' = sm loe env (genBlk chunkInfo) testCfg testInitExtLedger
+            sm' = sm loe env (genBlk chunkInfo loe) testCfg testInitExtLedger
         (hist, model, res) <- QSM.runCommands' sm' cmds'
         trace <- getTrace
         return (hist, model, res, trace)
@@ -1968,30 +2002,37 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
     fses <- atomically $ traverse readTMVar nodeDBs
     let
       modelChain = Model.currentChain $ dbModel model
-      secParam = unNonZero (maxRollbacks (configSecurityParam testCfg))
+      secParam = configSecurityParam testCfg
+      hasImmutableBlocks = not (Chain.null (Model.immutableChain secParam (dbModel model)))
+      hasVolatileBlocks = not (AF.null (Model.volatileChain secParam id (dbModel model)))
       prop =
-        counterexample (show (configSecurityParam testCfg)) $
-          counterexample ("Model chain: " <> condense modelChain) $
-            counterexample ("TraceEvents: " <> unlines (map show trace)) $
-              tabulate "Chain length" [show (Chain.length modelChain)] $
-                tabulate "Security Parameter (k)" [show secParam] $
-                  tabulate "Chain length >= k" [show (Chain.length modelChain >= fromIntegral secParam)] $
-                    tabulate "TraceEvents" (map traceEventName trace) $
-                      res
-                        === Ok
-                        .&&. prop_trace testCfg (dbModel model) trace
-                        .&&. counterexample
-                          "ImmutableDB is leaking file handles"
-                          (Mock.numOpenHandles (nodeDBsImm fses) === 0)
-                        .&&. counterexample
-                          "VolatileDB is leaking file handles"
-                          (Mock.numOpenHandles (nodeDBsVol fses) === 0)
-                        .&&. counterexample
-                          "LedgerDB is leaking file handles"
-                          (Mock.numOpenHandles (nodeDBsLgr fses) === 0)
-                        .&&. counterexample
-                          "There were registered clean-up actions"
-                          (remainingCleanups === 0)
+        counterexample (show (configSecurityParam testCfg))
+          $ counterexample ("Model chain: " <> condense modelChain)
+          $ counterexample ("TraceEvents: " <> unlines (map show trace))
+          $ tabulate "Chain length" [show (Chain.length modelChain)]
+          $ tabulate
+            "Chain composition (has immutable blocks, has volatile blocks)"
+            [show (hasImmutableBlocks, hasVolatileBlocks)]
+          $ tabulate "Security Parameter (k)" [show secParam]
+          $ tabulate
+            "Chain length >= k"
+            [show (Chain.length modelChain >= fromIntegral (unNonZero (maxRollbacks secParam)))]
+          $ tabulate "TraceEvents" (map traceEventName trace)
+          $ res
+            === Ok
+            .&&. prop_trace testCfg (dbModel model) trace
+            .&&. counterexample
+              "ImmutableDB is leaking file handles"
+              (Mock.numOpenHandles (nodeDBsImm fses) === 0)
+            .&&. counterexample
+              "VolatileDB is leaking file handles"
+              (Mock.numOpenHandles (nodeDBsVol fses) === 0)
+            .&&. counterexample
+              "LedgerDB is leaking file handles"
+              (Mock.numOpenHandles (nodeDBsLgr fses) === 0)
+            .&&. counterexample
+              "There were registered clean-up actions"
+              (remainingCleanups === 0)
     return (hist, prop)
 
 prop_trace :: TopLevelConfig Blk -> DBModel Blk -> [TraceEvent Blk] -> Property

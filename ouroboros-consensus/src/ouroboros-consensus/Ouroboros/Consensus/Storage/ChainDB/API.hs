@@ -423,6 +423,9 @@ data ChainDB m blk = ChainDB
   --
   -- Currently, the only use-case of this function is to verify the immutability
   -- of a block from the big ledger peer snapshot file.
+  , getLatestPerasCertOnChainRound :: STM m (Maybe PerasRoundNo)
+  -- ^ Get the round number of the latest Peras certificate on the currently
+  -- preferred chain.
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --

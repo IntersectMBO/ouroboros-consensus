@@ -48,6 +48,7 @@ import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import Control.Monad.Except (runExcept, throwError)
 import Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors (Flip (..))
@@ -75,6 +76,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , IgnoringOverflow
   , TxMeasure
   )
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -108,18 +110,25 @@ type CardanoHardForkConstraints c =
   , TranslateProto (TPraos c) (Praos c)
   , ShelleyCompatible (TPraos c) ShelleyEra
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) ShelleyEra)
+  , LedgerSupportsPeras (ShelleyBlock (TPraos c) ShelleyEra)
   , ShelleyCompatible (TPraos c) AllegraEra
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) AllegraEra)
+  , LedgerSupportsPeras (ShelleyBlock (TPraos c) AllegraEra)
   , ShelleyCompatible (TPraos c) MaryEra
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) MaryEra)
+  , LedgerSupportsPeras (ShelleyBlock (TPraos c) MaryEra)
   , ShelleyCompatible (TPraos c) AlonzoEra
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) AlonzoEra)
+  , LedgerSupportsPeras (ShelleyBlock (TPraos c) AlonzoEra)
   , ShelleyCompatible (Praos c) BabbageEra
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) BabbageEra)
+  , LedgerSupportsPeras (ShelleyBlock (Praos c) BabbageEra)
   , ShelleyCompatible (Praos c) ConwayEra
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
+  , LedgerSupportsPeras (ShelleyBlock (Praos c) ConwayEra)
   , ShelleyCompatible (Praos c) DijkstraEra
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) DijkstraEra)
+  , LedgerSupportsPeras (ShelleyBlock (Praos c) DijkstraEra)
   )
 
 -- | When performing era translations, two eras have special behaviours on the
@@ -318,6 +327,7 @@ translateLedgerStateByronToShelleyWrapper =
                 , shelleyLedgerTransition =
                     ShelleyTransitionInfo{shelleyAfterVoting = 0}
                 , shelleyLedgerTables = emptyLedgerTables
+                , shelleyLedgerLatestPerasCertRound = SNothing
                 }
         }
 
@@ -653,12 +663,13 @@ translateLedgerStateAlonzoToBabbageWrapper =
   transPraosLS ::
     LedgerState (ShelleyBlock (TPraos c) AlonzoEra) mk ->
     LedgerState (ShelleyBlock (Praos c) AlonzoEra) mk
-  transPraosLS (ShelleyLedgerState wo nes st tb) =
+  transPraosLS (ShelleyLedgerState wo nes st tb lcr) =
     ShelleyLedgerState
       { shelleyLedgerTip = fmap castShelleyTip wo
       , shelleyLedgerState = nes
       , shelleyLedgerTransition = st
       , shelleyLedgerTables = coerce tb
+      , shelleyLedgerLatestPerasCertRound = lcr
       }
 
 translateLedgerTablesAlonzoToBabbageWrapper ::
