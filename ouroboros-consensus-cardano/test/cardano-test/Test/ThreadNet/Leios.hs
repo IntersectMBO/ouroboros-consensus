@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -8,6 +9,7 @@
 
 module Test.ThreadNet.Leios (tests) where
 
+import qualified Cardano.Chain.Update as Byron
 import Cardano.Ledger.Api (ConwayEra, eraProtVerLow)
 import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
 import Cardano.Ledger.BaseTypes (ProtVer (..), knownNonZeroBounded, unNonZero)
@@ -16,7 +18,9 @@ import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import Control.Monad (replicateM)
 import Data.Function ((&))
+import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy (..))
+import LeiosDemoTypes (TraceLeiosKernel (..))
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -27,10 +31,12 @@ import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
+import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Test.Cardano.Ledger.Alonzo.Examples.Consensus (exampleAlonzoGenesis)
 import Test.Cardano.Ledger.Conway.Examples.Consensus (exampleConwayGenesis)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Conway), hardForkInto)
-import Test.QuickCheck (Property, counterexample, withMaxSuccess)
+import Test.QuickCheck (Property, conjoin, counterexample, withMaxSuccess)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.ThreadNet.General
@@ -41,12 +47,14 @@ import Test.ThreadNet.General
   , noCalcMessageDelay
   , runTestNetwork
   )
+import Test.ThreadNet.Infra.Byron (theProposedSoftwareVersion)
 import qualified Test.ThreadNet.Infra.Byron as Byron
 import Test.ThreadNet.Infra.Shelley
   ( DecentralizationParam (..)
   , genCoreNode
   , mkGenesisConfig
   , mkKesConfig
+  , mkLeaderCredentials
   )
 import Test.ThreadNet.Network
   ( NodeOutput (..)
@@ -61,12 +69,6 @@ import Test.ThreadNet.Util.Seed (Seed (..), runGen)
 import Test.Util.HardFork.Future (Future (EraFinal))
 import Test.Util.Slots (NumSlots (..))
 
-import qualified Cardano.Chain.Update as Byron
-import Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import Test.ThreadNet.Infra.Byron (theProposedSoftwareVersion)
-import Test.ThreadNet.Infra.Shelley (mkLeaderCredentials)
-
 tests :: TestTree
 tests =
   testGroup
@@ -77,10 +79,21 @@ tests =
 
 prop_leios_blocksProduced :: Seed -> Property
 prop_leios_blocksProduced seed = do
-  not (null forgedBlocks)
-    & counterexample "no blocks were forged"
+  conjoin
+    [ not (null forgedBlocks)
+        & counterexample "no praos blocks were forged"
+    , not (null leiosForgedEBs)
+        & counterexample ("leios kernel traces: " <> show leiosTraces)
+        & counterexample "no endorser blocks were forged"
+    ]
  where
   forgedBlocks = foldMap nodeOutputForges testOutput.testOutputNodes
+
+  leiosForgedEBs = flip mapMaybe leiosTraces $ \case
+    TraceLeiosBlockForged{eb} -> Just eb
+    _ -> Nothing
+
+  leiosTraces = traceOfType testOutput @TraceLeiosKernel
 
   testOutput = runThreadNet seed numSlots
 
