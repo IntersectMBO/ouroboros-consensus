@@ -673,6 +673,8 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ChainSync.CSJ
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
+    Test.Consensus.Peras.Committee
+    Test.Consensus.Peras.Committee.Model
     Test.Consensus.Peras.Voting.Rules
     Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.MonadSTM.NormalForm
@@ -703,6 +705,7 @@ test-suite consensus-test
     io-sim,
     measures,
     mtl,
+    mwc-random,
     nonempty-containers,
     nothunks,
     ouroboros-consensus,
