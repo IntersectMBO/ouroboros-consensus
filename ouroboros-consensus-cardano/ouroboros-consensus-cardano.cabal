@@ -445,6 +445,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.Translation
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
+    Test.ThreadNet.Leios
     Test.ThreadNet.MaryAlonzo
     Test.ThreadNet.ShelleyAllegra
 
@@ -457,6 +458,7 @@ test-suite cardano-test
     cardano-ledger-alonzo-test,
     cardano-ledger-api,
     cardano-ledger-babbage-test,
+    cardano-ledger-conway-test,
     cardano-ledger-binary:testlib,
     cardano-ledger-byron,
     cardano-ledger-conway:testlib,
