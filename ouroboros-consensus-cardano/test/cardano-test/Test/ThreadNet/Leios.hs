@@ -183,6 +183,7 @@ runThreadNet initSeed numSlots =
       , nodeJoinPlan = trivialNodeJoinPlan numCoreNodes
       , nodeRestarts = noRestarts
       , txGenExtra =
+          -- FIXME: Generate txs on this network
           CardanoTxGenExtra
             { ctgeByronGenesisKeys = error "unused"
             , ctgeNetworkMagic = error "unused?" -- TODO
