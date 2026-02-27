@@ -64,10 +64,7 @@ tests: False
 benchmarks: False
 
 packages:
-  ouroboros-consensus
-  ouroboros-consensus-cardano
-  ouroboros-consensus-protocol
-  ouroboros-consensus-diffusion
+  .
   sop-extras
   strict-sop-core
 " > ./tmp/cabal.project
