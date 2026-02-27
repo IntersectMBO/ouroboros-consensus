@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-for x in $(find . -name '*.cabal' | grep -vE 'dist-newstyle|asserts\.cabal' | cut -c 3-); do
+for x in $(find . -name '*.cabal' | grep -vE 'dist-newstyle|asserts\.cabal|newer-ghcs\.cabal' | cut -c 3-); do
   (
     d=$(dirname $x)
     echo "== $d =="

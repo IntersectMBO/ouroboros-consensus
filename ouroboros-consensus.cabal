@@ -41,7 +41,14 @@ flag expensive-invariants
   manual: True
   default: False
 
+common ghc-9.14
+  if impl(ghc >=9.14)
+    ghc-options:
+      -Wno-redundant-constraints
+      -Wno-pattern-namespace-specifier
+
 common common-lib
+  import: ghc-9.14
   default-language: Haskell2010
   ghc-options:
     -Wall

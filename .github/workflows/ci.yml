@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.6.7", "9.10.3", "9.12.2"]
+        ghc: ["9.6.7", "9.10.3", "9.12.2", "9.14.1"]
         variant: [default, no-thunks]
         test-set: [all, no-thunks-safe]
         exclude:
@@ -50,7 +50,7 @@ jobs:
       # Modify this value to "invalidate" the Cabal cache.
       CABAL_CACHE_VERSION: "2024-07-04"
 
-      CABAL: "3.12.1.0"
+      CABAL: "3.16.1.0"
 
     steps:
     - uses: actions/checkout@v6
@@ -152,7 +152,7 @@ jobs:
     - name: Install cddl tools
       run: |
         gem install cddlc
-        cabal install cuddle-1.2.0.0 --index-state="2026-02-23T15:03:19Z" --ignore-project
+        cabal install cuddle-1.2.0.0 --allow-newer="tree-diff:base" --index-state="2026-02-23T15:03:19Z" --ignore-project
 
     - name: Test
       if: matrix.test-set == 'all'
