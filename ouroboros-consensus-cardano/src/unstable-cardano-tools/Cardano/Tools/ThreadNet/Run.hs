@@ -96,6 +96,7 @@ data Opts = Opts
   deriving stock (Show, Eq, Generic)
   deriving anyclass (ToJSON, FromJSON)
 
+-- FIXME: get rid of these hard-coded paths (and provide key fixtures)
 exampleThreadNetConfig :: ThreadNetConfig
 exampleThreadNetConfig =
   ThreadNetConfig
