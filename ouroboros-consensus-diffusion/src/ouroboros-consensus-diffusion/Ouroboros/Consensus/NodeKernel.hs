@@ -27,7 +27,7 @@ module Ouroboros.Consensus.NodeKernel
   , toConsensusMode
   ) where
 
-import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import Cardano.Base.FeatureFlags (CardanoFeatureFlag (..))
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
@@ -57,7 +57,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import Data.Proxy
-import Data.Set (Set)
+import Data.Set (Set, member)
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -256,6 +256,7 @@ initNodeKernel
   args@NodeKernelArgs
     { registry
     , cfg
+    , featureFlags
     , tracers
     , chainDB
     , initChainDB
@@ -397,6 +398,10 @@ initNodeKernel
           (txDecisionPolicy miniProtocolParameters)
           txChannelsVar
           sharedTxStateVar
+
+    when (PerasFlag `member` featureFlags) $ void $
+      forkLinkedThread registry "NodeKernel.voteMinting" $
+        undefined
 
     return
       NodeKernel
