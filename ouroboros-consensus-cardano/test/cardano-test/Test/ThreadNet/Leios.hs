@@ -10,9 +10,28 @@
 module Test.ThreadNet.Leios (tests) where
 
 import qualified Cardano.Chain.Update as Byron
-import Cardano.Ledger.Api (ConwayEra, eraProtVerLow)
+import Cardano.Ledger.Api
+  ( Addr (..)
+  , ConwayEra
+  , PParams
+  , Tx
+  , TxOut
+  , addrTxOutL
+  , bodyTxL
+  , eraProtVerLow
+  , feeTxBodyL
+  , getMinFeeTx
+  , inputsTxBodyL
+  , mkBasicTx
+  , mkBasicTxBody
+  , mkBasicTxOut
+  , outputsTxBodyL
+  , valueTxOutL
+  )
 import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
+import Cardano.Ledger.Api.Tx.In (TxIn)
 import Cardano.Ledger.BaseTypes (ProtVer (..), knownNonZeroBounded, unNonZero)
+import Cardano.Ledger.Val (coin, inject, (<->))
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
@@ -21,8 +40,11 @@ import Data.Function ((&))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy (..))
+import Data.Sequence.Strict ((|>))
+import qualified Data.Set as Set
 import LeiosDemoTypes (TraceLeiosKernel (..))
-import Ouroboros.Consensus.Block (blockNo)
+import Lens.Micro ((%~), (.~), (^.))
+import Ouroboros.Consensus.Block (SlotNo)
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -39,7 +61,7 @@ import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Test.Cardano.Ledger.Alonzo.Examples.Consensus (exampleAlonzoGenesis)
 import Test.Cardano.Ledger.Conway.Examples.Consensus (exampleConwayGenesis)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Conway), hardForkInto)
-import Test.QuickCheck (Property, conjoin, counterexample, withMaxSuccess)
+import Test.QuickCheck (Gen, Property, conjoin, counterexample, withMaxSuccess)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.ThreadNet.General
@@ -53,11 +75,14 @@ import Test.ThreadNet.General
 import Test.ThreadNet.Infra.Byron (theProposedSoftwareVersion)
 import qualified Test.ThreadNet.Infra.Byron as Byron
 import Test.ThreadNet.Infra.Shelley
-  ( DecentralizationParam (..)
+  ( CoreNode (..)
+  , DecentralizationParam (..)
   , genCoreNode
+  , mkCredential
   , mkGenesisConfig
   , mkKesConfig
   , mkLeaderCredentials
+  , signTx
   )
 import Test.ThreadNet.Network
   ( NodeOutput (..)
@@ -85,8 +110,8 @@ prop_leios_blocksProduced seed = do
   conjoin
     [ not (null forgedBlocks)
         & counterexample "no praos blocks were forged"
-    , any (\blk -> not . null $ extractTxs blk) (Map.elems forgedBlocks)
-        & counterexample ("txs per block: " <> show txsPerBlock)
+    , any (not . null) includedTxs
+        & counterexample ("txs per active slot: " <> show (length <$> includedTxs))
         & counterexample "all forged blocks were empty (no transactions)"
     , not (null leiosForgedEBs)
         & counterexample ("leios kernel traces: " <> show leiosTraces)
@@ -95,10 +120,7 @@ prop_leios_blocksProduced seed = do
  where
   forgedBlocks = foldMap nodeOutputForges testOutput.testOutputNodes
 
-  txsPerBlock =
-    [ (blockNo blk, length (extractTxs blk))
-    | blk <- Map.elems forgedBlocks
-    ]
+  includedTxs = extractTxs <$> forgedBlocks
 
   leiosForgedEBs = flip mapMaybe leiosTraces $ \case
     TraceLeiosBlockForged{eb} -> Just eb
@@ -194,11 +216,12 @@ runThreadNet initSeed numSlots =
       , nodeJoinPlan = trivialNodeJoinPlan numCoreNodes
       , nodeRestarts = noRestarts
       , txGenExtra =
-          -- FIXME: Generate txs on this network
           CardanoTxGenExtra
             { ctgeByronGenesisKeys = error "unused"
-            , ctgeNetworkMagic = error "unused?" -- TODO
+            , ctgeNetworkMagic = error "unused"
             , ctgeShelleyCoreNodes = coreNodes
+            , -- TODO: configurable demand, currently n txs per slot
+              ctgeExtraTxGen = respendTxGen
             }
       , version = newestVersion (Proxy @(CardanoBlock StandardCrypto))
       }
@@ -217,5 +240,40 @@ activeSlotCoeff = 1 / 20
 slotLength :: SlotLength
 slotLength = slotLengthFromSec 1
 
-maxLovelaceSupply :: Num n => n
+maxLovelaceSupply :: Num a => a
 maxLovelaceSupply = 100_000_000_000_000
+
+-- * Transaction generation
+
+respendTxGen ::
+  CoreNode StandardCrypto ->
+  SlotNo ->
+  PParams ConwayEra ->
+  Map.Map TxIn (TxOut ConwayEra) ->
+  Gen [Tx ConwayEra]
+respendTxGen coreNode _slotNo pparams utxos =
+  pure $ case Map.toList myUtxos of
+    [] -> []
+    (txIn, txOut) : _ -> [mkRespendTx txIn txOut]
+ where
+  myUtxos = Map.filter (ownedBy paymentSK) utxos
+
+  CoreNode{cnDelegateKey = paymentSK} = coreNode
+
+  mkRespendTx txIn txOut = buildTx $ \tx ->
+    let inCoin = coin (txOut ^. valueTxOutL)
+        feeCoin = getMinFeeTx pparams tx 0
+        outCoin = inCoin <-> feeCoin
+     in tx
+          & bodyTxL . inputsTxBodyL .~ Set.singleton txIn
+          & bodyTxL . outputsTxBodyL
+            .~ StrictSeq.singleton (mkBasicTxOut (txOut ^. addrTxOutL) (inject outCoin))
+          & bodyTxL . feeTxBodyL .~ feeCoin
+          & signTx paymentSK
+
+  ownedBy sk txOut = case txOut ^. addrTxOutL of
+    Addr _ cred _ -> cred == mkCredential sk
+    _ -> False
+
+buildTx :: (Tx ConwayEra -> Tx ConwayEra) -> Tx ConwayEra
+buildTx f = until (\x -> f x == x) f (mkBasicTx mkBasicTxBody)

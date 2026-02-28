@@ -33,6 +33,7 @@ module Test.ThreadNet.Infra.Shelley
   , mkSetDecentralizationParamTxs
   , mkVerKey
   , networkId
+  , signTx
   , tpraosSlotLength
   ) where
 
@@ -117,6 +118,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.IOLike
 import Quiet (Quiet (..))
+import Test.Cardano.Ledger.Core.KeyPair (mkWitnessVKey)
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL
   ( KeyPair (..)
   , mkWitnessesVKey
@@ -589,6 +591,12 @@ mkKeyHashVrf = hashVerKeyVRF @c . deriveVerKeyVRF
 
 networkId :: SL.Network
 networkId = SL.Testnet
+
+signTx :: SL.EraTx era => SignKeyDSIGN LK.DSIGN -> SL.Tx era -> SL.Tx era
+signTx sk tx =
+  tx
+    & SL.witsTxL . SL.addrTxWitsL
+      .~ Set.fromList [mkWitnessVKey (hashAnnotated (tx ^. SL.bodyTxL)) (mkKeyPair sk)]
 
 {-------------------------------------------------------------------------------
   Temporary Workaround
