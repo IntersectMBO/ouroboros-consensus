@@ -13,37 +13,38 @@ import qualified Cardano.Chain.Update as Byron
 import Cardano.Ledger.Api
   ( Addr (..)
   , ConwayEra
+  , EraTx
   , PParams
   , Tx
   , TxOut
   , addrTxOutL
   , bodyTxL
   , eraProtVerLow
-  , feeTxBodyL
-  , getMinFeeTx
   , inputsTxBodyL
   , mkBasicTx
   , mkBasicTxBody
   , mkBasicTxOut
   , outputsTxBodyL
+  , txIdTx
   , valueTxOutL
   )
 import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
-import Cardano.Ledger.Api.Tx.In (TxIn)
-import Cardano.Ledger.BaseTypes (ProtVer (..), knownNonZeroBounded, unNonZero)
-import Cardano.Ledger.Val (coin, inject, (<->))
+import Cardano.Ledger.Api.Tx.In (TxIn (..))
+import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded, unNonZero)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import Control.Monad (replicateM)
+import Data.Foldable (toList)
 import Data.Function ((&))
+import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import LeiosDemoTypes (TraceLeiosKernel (..))
-import Lens.Micro ((%~), (.~), (^.))
+import Lens.Micro ((%~), (^.))
 import Ouroboros.Consensus.Block (SlotNo)
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
@@ -220,8 +221,9 @@ runThreadNet initSeed numSlots =
             { ctgeByronGenesisKeys = error "unused"
             , ctgeNetworkMagic = error "unused"
             , ctgeShelleyCoreNodes = coreNodes
-            , -- TODO: configurable demand, currently n txs per slot
-              ctgeExtraTxGen = respendTxGen
+            , ctgeExtraTxGen = \cn _slot pparams utxo -> do
+                -- TODO: configurable demand, currently 5 tx per slot per node
+                pure . take 5 $ infiniteRespend cn pparams utxo
             }
       , version = newestVersion (Proxy @(CardanoBlock StandardCrypto))
       }
@@ -245,35 +247,42 @@ maxLovelaceSupply = 100_000_000_000_000
 
 -- * Transaction generation
 
-respendTxGen ::
+-- | Generates an infinite list of transactions that respend the first output
+-- owned by given 'CoreNode' (delegate key interpreted as payment key).
+infiniteRespend ::
   CoreNode StandardCrypto ->
-  SlotNo ->
   PParams ConwayEra ->
-  Map.Map TxIn (TxOut ConwayEra) ->
-  Gen [Tx ConwayEra]
-respendTxGen coreNode _slotNo pparams utxos =
-  pure $ case Map.toList myUtxos of
+  Map TxIn (TxOut ConwayEra) ->
+  [Tx ConwayEra]
+infiniteRespend coreNode pparams utxo =
+  case Map.toList myUtxo of
     [] -> []
-    (txIn, txOut) : _ -> [mkRespendTx txIn txOut]
+    (txIn, txOut) : _ ->
+      let tx = respendTx txIn txOut
+          utxo' = Map.delete txIn utxo <> utxoOfTx tx
+       in tx : infiniteRespend coreNode pparams utxo'
  where
-  myUtxos = Map.filter (ownedBy paymentSK) utxos
+  myUtxo = Map.filter (ownedBy paymentSK) utxo
 
   CoreNode{cnDelegateKey = paymentSK} = coreNode
 
-  mkRespendTx txIn txOut = buildTx $ \tx ->
-    let inCoin = coin (txOut ^. valueTxOutL)
-        feeCoin = getMinFeeTx pparams tx 0
-        outCoin = inCoin <-> feeCoin
-     in tx
-          & bodyTxL . inputsTxBodyL .~ Set.singleton txIn
-          & bodyTxL . outputsTxBodyL
-            .~ StrictSeq.singleton (mkBasicTxOut (txOut ^. addrTxOutL) (inject outCoin))
-          & bodyTxL . feeTxBodyL .~ feeCoin
-          & signTx paymentSK
+  respendTx txIn txOut = do
+    mkBasicTx mkBasicTxBody
+      & bodyTxL . inputsTxBodyL %~ Set.insert txIn
+      & bodyTxL . outputsTxBodyL %~ (|> mkBasicTxOut (txOut ^. addrTxOutL) (txOut ^. valueTxOutL))
+      -- NOTE: Fees are zero in thread net
+      -- & bodyTxL . feeTxBodyL .~ feeCoin
+      & signTx paymentSK
 
   ownedBy sk txOut = case txOut ^. addrTxOutL of
     Addr _ cred _ -> cred == mkCredential sk
     _ -> False
 
-buildTx :: (Tx ConwayEra -> Tx ConwayEra) -> Tx ConwayEra
-buildTx f = until (\x -> f x == x) f (mkBasicTx mkBasicTxBody)
+-- | Get the UTxO produced by a given Tx.
+utxoOfTx :: EraTx era => Tx era -> Map TxIn (TxOut era)
+utxoOfTx tx =
+  Map.fromList $ zip (map mkTxIn [0 ..]) outs
+ where
+  mkTxIn ix = TxIn txId $ TxIx ix
+  txId = txIdTx tx
+  outs = toList $ tx ^. bodyTxL . outputsTxBodyL
