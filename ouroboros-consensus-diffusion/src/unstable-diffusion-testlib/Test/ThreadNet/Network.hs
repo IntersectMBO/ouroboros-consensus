@@ -394,7 +394,7 @@ runThreadNetwork
           sharedRegistry
           clock
           -- traces when/why the mini protocol instances start and stop
-          (showTracing debugTracer)
+          nullTracer
           (version, blockVersion)
           (codecConfig, calcMessageDelay)
           vertexStatusVars
@@ -757,7 +757,7 @@ runThreadNetwork
                   , mcdbRegistry = registry
                   , mcdbNodeDBs = nodeDBs
                   }
-            tr = instrumentationTracer <> nullDebugTracer
+            tr = instrumentationTracer
          in args
               { cdbImmDbArgs =
                   (cdbImmDbArgs args)
@@ -777,7 +777,7 @@ runThreadNetwork
                   (cdbsArgs args)
                     { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
                       cdbsGcDelay = 0
-                    , cdbsTracer = instrumentationTracer <> nullDebugTracer
+                    , cdbsTracer = instrumentationTracer
                     }
               }
        where
@@ -983,7 +983,7 @@ runThreadNetwork
 
       let
         -- prop_general relies on these tracers
-        instrumentationTracers =
+        tracers =
           nullTracers
             { chainSyncClientTracer = Tracer $ \case
                 TraceLabelPeer _ (CSClient.TraceDownloadedHeader hdr) ->
@@ -1009,9 +1009,6 @@ runThreadNetwork
                          atomically $ modifyTVar leiosKernelEvents (lkt :)
                      )
             }
-
-        -- traces the node's local events other than those from the -- ChainDB
-        tracers = instrumentationTracers <> showTracers debugTracer
 
       let
         -- use a backoff delay of exactly one slot length (which the
@@ -1127,7 +1124,7 @@ runThreadNetwork
               nodeKernel
               -- these tracers report every message sent/received by this
               -- node
-              nullDebugProtocolTracers
+              NTN.nullTracers
               (customNodeToNodeCodecs pInfoConfig)
               -- REVIEW: This had "no limits" before using (const 0), this
               -- now moved to the BearerBytes class and we would need to
@@ -1783,20 +1780,6 @@ mkTestOutput vertexInfos = do
 {-------------------------------------------------------------------------------
   Constraints needed for verbose tracing
 -------------------------------------------------------------------------------}
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracer :: (Applicative m, Show a) => Tracer m a
-nullDebugTracer = showTracing debugTracer
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugProtocolTracers ::
-  ( Monad m
-  , HasHeader blk
-  , TracingConstraints blk
-  , Show peer
-  ) =>
-  NTN.Tracers m peer blk failure
-nullDebugProtocolTracers = NTN.showTracers debugTracer
 
 -- These constraints are when using @showTracer(s) debugTracer@ instead of
 -- @nullTracer(s)@.
