@@ -308,8 +308,8 @@ runThreadNetwork ::
   , MonadTimer m
   , RunNode blk
   , TxGen blk
-  , TracingConstraints blk
-  , HasCallStack
+  , -- TODO:, TracingConstraints blk
+    HasCallStack
   ) =>
   (forall a. Typeable a => Tracer m a) ->
   SystemTime m ->
@@ -995,6 +995,7 @@ runThreadNetwork
                 case ev of
                   TraceNodeIsLeader s -> atomically $ blockOnCrucial s
                   _ -> pure ()
+            , mempoolTracer = baseTracer
             , leiosKernelTracer = baseTracer
             }
 
