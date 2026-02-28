@@ -82,8 +82,8 @@ data CardanoTxGenExtra c = CardanoTxGenExtra
   , ctgeNetworkMagic :: Byron.NetworkMagic
   , ctgeShelleyCoreNodes :: [Shelley.CoreNode c]
   , ctgeExtraTxGen ::
-      Shelley.CoreNode c ->
       SlotNo ->
+      Shelley.CoreNode c ->
       SL.PParams ConwayEra ->
       Map SL.TxIn (SL.TxOut ConwayEra) ->
       Gen [SL.Tx ConwayEra]
@@ -101,8 +101,8 @@ instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
           fmap (map (GenTxConway . mkShelleyTx)) $
             ctgeExtraTxGen
               extra
-              coreNode
               curSlot
+              coreNode
               (getPParams . shelleyLedgerState $ st)
               (getValuesMK . getLedgerTables . shelleyLedgerTables $ st)
         _ -> pure []

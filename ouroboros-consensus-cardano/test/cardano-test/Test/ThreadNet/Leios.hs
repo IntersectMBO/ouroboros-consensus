@@ -30,7 +30,7 @@ import Cardano.Ledger.Api
   )
 import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
 import Cardano.Ledger.Api.Tx.In (TxIn (..))
-import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded, unNonZero)
+import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded, unNonZero, unSlotNo)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
@@ -39,10 +39,10 @@ import Data.Foldable (toList)
 import Data.Function ((&))
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
+import Data.Word (Word64)
 import LeiosDemoTypes (TraceLeiosKernel (..))
 import Lens.Micro ((%~), (^.))
 import Ouroboros.Consensus.Block (SlotNo)
@@ -56,13 +56,14 @@ import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
+import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Test.Cardano.Ledger.Alonzo.Examples.Consensus (exampleAlonzoGenesis)
 import Test.Cardano.Ledger.Conway.Examples.Consensus (exampleConwayGenesis)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Conway), hardForkInto)
-import Test.QuickCheck (Gen, Property, conjoin, counterexample, withMaxSuccess)
+import Test.QuickCheck (Property, Testable, conjoin, counterexample, withMaxSuccess)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.ThreadNet.General
@@ -107,27 +108,41 @@ tests =
     ]
 
 prop_leios_blocksProduced :: Seed -> Property
-prop_leios_blocksProduced seed = do
-  conjoin
-    [ not (null forgedBlocks)
-        & counterexample "no praos blocks were forged"
-    , any (not . null) includedTxs
-        & counterexample ("txs per active slot: " <> show (length <$> includedTxs))
-        & counterexample "all forged blocks were empty (no transactions)"
-    , not (null leiosForgedEBs)
-        & counterexample ("leios kernel traces: " <> show leiosTraces)
-        & counterexample "no endorser blocks were forged"
-    ]
+prop_leios_blocksProduced seed =
+  do
+    conjoin
+      [ not (null forgedBlocks)
+          & counterexample "no praos blocks were forged"
+      , any (not . null) includedTxs
+          & counterexample "all forged blocks were empty (no transactions)"
+          & prettyCounterexampleMap "txs per active slot" 120 (length <$> includedTxs)
+      , not (null leiosForgedEBs)
+          & counterexample "no endorser blocks were forged"
+          & prettyCounterexampleMap "forged leios EBs" 120 leiosForgedEBs
+          & prettyCounterexampleList "leios kernel traces" 120 leiosTraces
+      ]
+    & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
+    & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
  where
   forgedBlocks = foldMap nodeOutputForges testOutput.testOutputNodes
 
   includedTxs = extractTxs <$> forgedBlocks
 
-  leiosForgedEBs = flip mapMaybe leiosTraces $ \case
-    TraceLeiosBlockForged{eb} -> Just eb
-    _ -> Nothing
+  leiosForgedEBs = flip foldMap leiosTraces $ \case
+    LeiosDemoTypes.TraceLeiosBlockForged{slot, eb} -> Map.singleton slot eb
+    _ -> mempty
 
-  leiosTraces = traceOfType testOutput @TraceLeiosKernel
+  leiosTraces = traceOfType testOutput @LeiosDemoTypes.TraceLeiosKernel
+
+  mempoolTraces = traceOfType testOutput @(TraceEventMempool (CardanoBlock StandardCrypto))
+
+  mempoolAddedTxs = flip filter mempoolTraces $ \case
+    TraceMempoolAddedTx{} -> True
+    _ -> False
+
+  mempoolRejectedTxs = flip filter mempoolTraces $ \case
+    TraceMempoolRejectedTx{} -> True
+    _ -> False
 
   testOutput = runThreadNet seed numSlots
 
@@ -221,9 +236,8 @@ runThreadNet initSeed numSlots =
             { ctgeByronGenesisKeys = error "unused"
             , ctgeNetworkMagic = error "unused"
             , ctgeShelleyCoreNodes = coreNodes
-            , ctgeExtraTxGen = \cn _slot pparams utxo -> do
-                -- TODO: configurable demand, currently 5 tx per slot per node
-                pure . take 5 $ infiniteRespend cn pparams utxo
+            , ctgeExtraTxGen = \slot cn pparams utxo ->
+                pure $ constantLoadTxs numCoreNodes (TPS 100) slot cn pparams utxo
             }
       , version = newestVersion (Proxy @(CardanoBlock StandardCrypto))
       }
@@ -247,20 +261,49 @@ maxLovelaceSupply = 100_000_000_000_000
 
 -- * Transaction generation
 
--- | Generates an infinite list of transactions that respend the first output
--- owned by given 'CoreNode' (delegate key interpreted as payment key).
-infiniteRespend ::
+newtype TxPerSecond = TPS Word64
+
+-- | Generate a constant load of transactions per second over all nodes.
+constantLoadTxs ::
+  NumCoreNodes ->
+  TxPerSecond ->
+  SlotNo ->
   CoreNode StandardCrypto ->
   PParams ConwayEra ->
   Map TxIn (TxOut ConwayEra) ->
   [Tx ConwayEra]
-infiniteRespend coreNode pparams utxo =
+constantLoadTxs (NumCoreNodes n) (TPS txPerSecond) slot cn pparams utxo
+  -- FIXME: The node generator is called on every slot, but the ledger state /
+  -- utxo is only updated when a block was forged and adopted. This leads to the
+  -- same txs being generated, but the mempool rejecting them.
+  --
+  -- XXX: As a workaround, we only submit every 1/f slots, that is, on the
+  -- stochastic expected time between blocks.
+  | shouldSubmit =
+      take (fromIntegral $ txPerSecondPerNode * expectedBlockTime) $
+        infiniteRespendTxs cn pparams utxo
+  | otherwise = []
+ where
+  shouldSubmit = unSlotNo slot `mod` expectedBlockTime == 0
+
+  expectedBlockTime = truncate $ 1 / activeSlotCoeff
+
+  txPerSecondPerNode = txPerSecond `div` n
+
+-- | Generates an infinite list of transactions that respend the first output
+-- owned by given 'CoreNode' (delegate key interpreted as payment key).
+infiniteRespendTxs ::
+  CoreNode StandardCrypto ->
+  PParams ConwayEra ->
+  Map TxIn (TxOut ConwayEra) ->
+  [Tx ConwayEra]
+infiniteRespendTxs coreNode pparams utxo =
   case Map.toList myUtxo of
     [] -> []
     (txIn, txOut) : _ ->
       let tx = respendTx txIn txOut
           utxo' = Map.delete txIn utxo <> utxoOfTx tx
-       in tx : infiniteRespend coreNode pparams utxo'
+       in tx : infiniteRespendTxs coreNode pparams utxo'
  where
   myUtxo = Map.filter (ownedBy paymentSK) utxo
 
@@ -286,3 +329,62 @@ utxoOfTx tx =
   mkTxIn ix = TxIn txId $ TxIx ix
   txId = txIdTx tx
   outs = toList $ tx ^. bodyTxL . outputsTxBodyL
+
+-- | Pretty print a map of counterexamples, one on each row and eliding long
+-- entries to given maxLength. If maxLength is 0 or negative, no elision is
+-- performed.
+prettyCounterexampleMap ::
+  (Testable prop, Show a2, Show p) =>
+  String -> Int -> Map a2 p -> prop -> Property
+prettyCounterexampleMap title maxLength m prop =
+  prop
+    & counterexample (title <> ":\n" <> prettyMap)
+ where
+  prettyMap =
+    Map.toList m
+      & map (\(a, b) -> indented 2 . elided maxLength $ show a <> " -> " <> show b)
+      & unlines
+
+-- | Pretty print a list of counterexamples, one on each row and eliding long
+-- entries to given maxLength. If maxLength is 0 or negative, no elision is
+-- performed.
+prettyCounterexampleList ::
+  (Testable prop, Show a) =>
+  String -> Int -> [a] -> prop -> Property
+prettyCounterexampleList title maxLength xs prop =
+  prop
+    & counterexample (title <> ":\n" <> prettyList)
+ where
+  prettyList =
+    map (indented 2 . elided maxLength . show) xs
+      & unlines
+
+-- | Indent each line in a string by a given number of spaces.
+indented :: Int -> String -> String
+indented n =
+  unlines' . map (indent <>) . lines
+ where
+  indent = replicate n ' '
+
+  unlines' [] = []
+  unlines' [x] = x
+  unlines' (x : xs) = x <> "\n" <> unlines' xs
+
+-- | Elide a string to a target length by keeping the prefix and suffix and
+-- replacing the middle with an ellipsis. If target length is 0 or negative, no
+-- elision is performed.
+elided :: Int -> String -> String
+elided targetLength s
+  | targetLength <= 0 = s
+  | l < targetLength = s
+  | otherwise = prefix <> elipsis <> suffix
+ where
+  l = length s
+
+  halfLength = targetLength `div` 2
+
+  prefix = take halfLength s
+
+  suffix = drop (l - halfLength - length elipsis) s
+
+  elipsis = "..."
