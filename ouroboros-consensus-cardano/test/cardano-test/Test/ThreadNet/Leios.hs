@@ -18,9 +18,11 @@ import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import Control.Monad (replicateM)
 import Data.Function ((&))
+import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy (..))
 import LeiosDemoTypes (TraceLeiosKernel (..))
+import Ouroboros.Consensus.Block (blockNo)
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -30,6 +32,7 @@ import Ouroboros.Consensus.Cardano
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
 import Ouroboros.Consensus.Config (SecurityParam (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
@@ -82,12 +85,20 @@ prop_leios_blocksProduced seed = do
   conjoin
     [ not (null forgedBlocks)
         & counterexample "no praos blocks were forged"
+    , any (\blk -> not . null $ extractTxs blk) (Map.elems forgedBlocks)
+        & counterexample ("txs per block: " <> show txsPerBlock)
+        & counterexample "all forged blocks were empty (no transactions)"
     , not (null leiosForgedEBs)
         & counterexample ("leios kernel traces: " <> show leiosTraces)
         & counterexample "no endorser blocks were forged"
     ]
  where
   forgedBlocks = foldMap nodeOutputForges testOutput.testOutputNodes
+
+  txsPerBlock =
+    [ (blockNo blk, length (extractTxs blk))
+    | blk <- Map.elems forgedBlocks
+    ]
 
   leiosForgedEBs = flip mapMaybe leiosTraces $ \case
     TraceLeiosBlockForged{eb} -> Just eb
