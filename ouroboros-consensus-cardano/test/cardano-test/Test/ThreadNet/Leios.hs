@@ -33,7 +33,7 @@ import Cardano.Ledger.Api.Tx.In (TxIn (..))
 import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded, unNonZero)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
-import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
+import Cardano.Slotting.Time (SlotLength, slotLengthFromSec, slotLengthToSec)
 import Control.Monad (replicateM)
 import Data.Foldable (toList)
 import Data.Function ((&))
@@ -111,7 +111,7 @@ prop_leios_blocksProduced seed = do
   conjoin
     [ not (null forgedBlocks)
         & counterexample "no praos blocks were forged"
-    , any (not . null) includedTxs
+    , False -- any (not . null) includedTxs
         & counterexample ("txs per active slot: " <> show (length <$> includedTxs))
         & counterexample "all forged blocks were empty (no transactions)"
     , not (null leiosForgedEBs)
@@ -221,9 +221,8 @@ runThreadNet initSeed numSlots =
             { ctgeByronGenesisKeys = error "unused"
             , ctgeNetworkMagic = error "unused"
             , ctgeShelleyCoreNodes = coreNodes
-            , ctgeExtraTxGen = \cn _slot pparams utxo -> do
-                -- TODO: configurable demand, currently 5 tx per slot per node
-                pure . take 5 $ infiniteRespend cn pparams utxo
+            , ctgeExtraTxGen =
+                genConstantLoad numCoreNodes (TPS 30)
             }
       , version = newestVersion (Proxy @(CardanoBlock StandardCrypto))
       }
@@ -246,6 +245,31 @@ maxLovelaceSupply :: Num a => a
 maxLovelaceSupply = 100_000_000_000_000
 
 -- * Transaction generation
+
+newtype TxPerSecond = TPS Word
+
+-- | Generate a constant load of transactions per second over all nodes.
+genConstantLoad ::
+  NumCoreNodes ->
+  TxPerSecond ->
+  SlotNo ->
+  CoreNode StandardCrypto ->
+  PParams ConwayEra ->
+  Map TxIn (TxOut ConwayEra) ->
+  Gen [Tx ConwayEra]
+genConstantLoad (NumCoreNodes n) (TPS txPerSecond) _slot cn pparams utxo =
+  pure . take (fromInteger txPerSlotPerNode) $
+    -- FIXME: This restarts the tx chain on each slot. That is, the utxo are
+    -- "reconsidered" and the same txs are derived, but the mempool does not
+    -- accept them. Only when a block was forged and adopted, does the ledger
+    -- state advance. Consequently there are exactly TPS number of txs in every
+    -- block.
+    infiniteRespend cn pparams utxo
+ where
+  -- TODO: map to slots if not 1 slot = 1 second
+  txPerSlot = toInteger txPerSecond
+
+  txPerSlotPerNode = txPerSlot `div` toInteger n
 
 -- | Generates an infinite list of transactions that respend the first output
 -- owned by given 'CoreNode' (delegate key interpreted as payment key).
