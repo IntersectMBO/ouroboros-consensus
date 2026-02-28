@@ -467,6 +467,7 @@ test-suite cardano-test
     cardano-ledger-shelley-test,
     cardano-protocol-tpraos,
     cardano-slotting,
+    cardano-strict-containers,
     cborg,
     constraints,
     containers,

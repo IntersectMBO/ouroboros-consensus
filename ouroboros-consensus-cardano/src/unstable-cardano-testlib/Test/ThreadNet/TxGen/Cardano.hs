@@ -17,6 +17,7 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Signing as Byron
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.Address as SL (BootstrapAddress (..))
+import Cardano.Ledger.Api (ConwayEra)
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys.Bootstrap as SL (makeBootstrapWitness)
@@ -38,6 +39,7 @@ import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Block
   ( CardanoEras
   , GenTx (..)
+  , LedgerState (LedgerStateConway)
   , ShelleyEra
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
@@ -53,11 +55,10 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.Ledger.Basics
   ( ComputeLedgerEvents (..)
   , LedgerConfig
-  , LedgerState
   , TickedLedgerState
   , applyChainTick
   )
-import Ouroboros.Consensus.Ledger.Tables (ValuesMK)
+import Ouroboros.Consensus.Ledger.Tables (ValuesMK, getLedgerTables, getValuesMK)
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( applyDiffs
   , forgetLedgerTables
@@ -66,9 +67,13 @@ import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( tickedShelleyLedgerState
+  ( getPParams
+  , shelleyLedgerState
+  , shelleyLedgerTables
+  , tickedShelleyLedgerState
   )
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
+import Test.QuickCheck (Gen)
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.TxGen
 
@@ -76,14 +81,32 @@ data CardanoTxGenExtra c = CardanoTxGenExtra
   { ctgeByronGenesisKeys :: GeneratedSecrets
   , ctgeNetworkMagic :: Byron.NetworkMagic
   , ctgeShelleyCoreNodes :: [Shelley.CoreNode c]
+  , ctgeExtraTxGen ::
+      Shelley.CoreNode c ->
+      SlotNo ->
+      SL.PParams ConwayEra ->
+      Map SL.TxIn (SL.TxOut ConwayEra) ->
+      Gen [SL.Tx ConwayEra]
   }
 
 instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
   type TxGenExtra (CardanoBlock c) = CardanoTxGenExtra c
 
   -- TODO also generate " typical " Byron and Shelley transactions
-  testGenTxs (CoreNodeId i) _ncn curSlot cfg extra ls =
-    pure $ maybeToList $ migrateUTxO migrationInfo curSlot lcfg ls
+  testGenTxs (CoreNodeId i) _ncn curSlot cfg extra ls = do
+    let migrateTxs = maybeToList (migrateUTxO migrationInfo curSlot lcfg ls)
+    extraTxs <-
+      case ls of
+        LedgerStateConway st ->
+          fmap (map (GenTxConway . mkShelleyTx)) $
+            ctgeExtraTxGen
+              extra
+              coreNode
+              curSlot
+              (getPParams . shelleyLedgerState $ st)
+              (getValuesMK . getLedgerTables . shelleyLedgerTables $ st)
+        _ -> pure []
+    pure $ migrateTxs <> extraTxs
    where
     lcfg = topLevelConfigLedger cfg
 
@@ -110,7 +133,7 @@ instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
     byronSK :: Byron.SigningKey
     byronSK = gsRichSecrets !! fromIntegral i
 
-    Shelley.CoreNode
+    coreNode@Shelley.CoreNode
       { Shelley.cnDelegateKey = paymentSK
       , Shelley.cnStakingKey = stakingSK
       , Shelley.cnVRF = vrfSK

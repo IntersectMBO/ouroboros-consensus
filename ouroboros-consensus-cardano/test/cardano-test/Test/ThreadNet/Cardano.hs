@@ -256,6 +256,7 @@ prop_simple_cardano_convergence
                   CC.Common.makeNetworkMagic $
                     CC.Genesis.configProtocolMagic genesisByron
               , ctgeShelleyCoreNodes = coreNodes
+              , ctgeExtraTxGen = \_ _ _ _ -> pure []
               }
         , version = setupVersion
         }
