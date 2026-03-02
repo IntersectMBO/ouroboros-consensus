@@ -63,7 +63,7 @@ import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Test.Cardano.Ledger.Alonzo.Examples.Consensus (exampleAlonzoGenesis)
 import Test.Cardano.Ledger.Conway.Examples.Consensus (exampleConwayGenesis)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Conway), hardForkInto)
-import Test.QuickCheck (Property, Testable, conjoin, counterexample, withMaxSuccess)
+import Test.QuickCheck (Property, Testable, conjoin, counterexample, tabulate, withMaxSuccess)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.ThreadNet.General
@@ -113,22 +113,25 @@ prop_leios_blocksProduced seed =
     conjoin
       [ not (null forgedBlocks)
           & counterexample "no praos blocks were forged"
-      , any (not . null) includedTxs
+      , any (> 0) includedTxCounts
           & counterexample "all forged blocks were empty (no transactions)"
-          & prettyCounterexampleMap "txs per active slot" 120 (length <$> includedTxs)
-      , not (null leiosForgedEBs)
+          & prettyCounterexampleMap "txs per active slot" 120 includedTxCounts
+      , not (null forgedEBs)
           & counterexample "no endorser blocks were forged"
-          & prettyCounterexampleMap "forged leios EBs" 120 leiosForgedEBs
+          & prettyCounterexampleMap "forged leios EBs" 120 forgedEBs
           & prettyCounterexampleList "leios kernel traces" 120 leiosTraces
       ]
     & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
     & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
+    & tabulate "Praos blocks forged" [show $ length forgedBlocks]
+    & tabulate "Leios blocks forged" [show $ length forgedEBs]
+    & tabulate "Effective throughput" [show throughput]
  where
   forgedBlocks = foldMap nodeOutputForges testOutput.testOutputNodes
 
-  includedTxs = extractTxs <$> forgedBlocks
+  includedTxCounts = length . extractTxs <$> forgedBlocks
 
-  leiosForgedEBs = flip foldMap leiosTraces $ \case
+  forgedEBs = flip foldMap leiosTraces $ \case
     LeiosDemoTypes.TraceLeiosBlockForged{slot, eb} -> Map.singleton slot eb
     _ -> mempty
 
@@ -144,10 +147,12 @@ prop_leios_blocksProduced seed =
     TraceMempoolRejectedTx{} -> True
     _ -> False
 
-  testOutput = runThreadNet seed numSlots
+  throughput = fromIntegral (sum includedTxCounts) / fromRational numSlots :: Double
+
+  testOutput = runThreadNet seed (NumSlots $ ceiling numSlots)
 
   -- NOTE: There must be k Praos blocks after this time.
-  numSlots = NumSlots $ ceiling (3 * k / activeSlotCoeff :: Rational)
+  numSlots = 3 * k / activeSlotCoeff :: Rational
 
 runThreadNet :: Seed -> NumSlots -> TestOutput (CardanoBlock StandardCrypto)
 runThreadNet initSeed numSlots =
