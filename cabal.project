@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2026-02-17T10:15:41Z
+  , hackage.haskell.org 2026-02-27T00:53:34Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-02-17T21:19:19Z
+  , cardano-haskell-packages 2026-02-25T10:27:50Z
 
 
 packages:
@@ -30,7 +30,8 @@ benchmarks: true
 
 multi-repl: True
 
-import: scripts/asserts.cabal
+import: cabal/asserts.cabal
+import: cabal/newer-ghcs.cabal
 
 package ouroboros-network
   -- Certain ThreadNet tests rely on transactions to be submitted promptly after
@@ -43,17 +44,12 @@ if os (windows)
   constraints:
     bitvec -simd
 
-if impl (ghc >= 9.10)
-  allow-newer:
-    -- https://github.com/phadej/regression-simple/pull/14
-    , regression-simple:base
-
 -- Ledger main past the releases for node-cardano-10.6
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: bd2c3fc558c8b053b03f25a84fc02e26dd17d927
-  --sha256: sha256-JCzOtN0/eQob9IneXjihwxDgWZlSZ2ZdIkz2qBPhtU8=
+  tag: 532def7117121fc38184b20917acc250c9c8eb73
+  --sha256: sha256-IaxfKhCVMrvx6p6QMAcVRq9ZhOkwa3ss5KgsmLfo8As=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
