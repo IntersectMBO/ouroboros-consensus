@@ -123,6 +123,7 @@ class
 
   validatePerasCert ::
     PerasConfig blk ->
+    LedgerStateOrView blk ->
     PerasCert blk ->
     Either (PerasErr blk) (ValidatedPerasCert blk)
 

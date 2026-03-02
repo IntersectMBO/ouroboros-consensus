@@ -151,13 +151,22 @@ instance CanHardFork xs => NoThunks (HardForkPerasConfig xs)
 -- * Each Peras object also has a 'PerasRoundNo', that we can resolve to a slot
 --   wrapped in a era-indexed 'NS' thanks to 'Summary'/'Query' machinery _if we
 --   also have access to a 'LedgerState'_ (cf. 'forecastToViewAtRound').
---   That is the case in methods for votes:
+--
+-- * All methods except 'forgePerasCert' hence use 'forecastToViewAtRound' for
+--   getting up-to-date ledger information, but also for (complementary) era
+--   resolution:
 --   - in 'forgePerasVote', that is the sole way to determine the era, since we
 --     receive no 'NS'-wrapped parameter. So we rely on the roundNo era
 --     resolution logic to determine the era and dispatch to the correct
 --     implementation.
---   - in 'validatePerasVote', we make sure that the round-indicated era agrees
---     with the era of the supplied 'NS'-wrapped vote.
+--   - in 'validatePerasVote' and 'validatePerasCert', we make sure that the
+--     round-indicated era agrees with the era of the supplied 'NS'-wrapped
+--     vote or certificate.
+--   
+--   'forgePerasCert' is the exception: it receives its parameters already
+--   wrapped in a 'ValidatedPerasVotesReachingQuorum', that we use for era
+--   resolution (via 'ensureSameEraNonEmpty') and that already contains every
+--   ledger information needed for forging.
 --
 -- NOTE: If the interface of 'BlockSupportsPeras' ever changes, here's how to
 -- update this instance:
@@ -294,30 +303,38 @@ instance CanHardFork xs => BlockSupportsPeras (HardForkBlock xs) where
   -- Validate a certificate by delegating to the matching era's
   -- 'validatePerasCert'.
   --
-  -- The era to which we delegate is determined directly by the era of the
-  -- supplied certificate.
+  -- We use 'forecastToViewAtRound' to get a era-NS-indexed 'LedgerView'
+  -- corresponding to the certificate's 'PerasRoundNo'. We make sure that this
+  -- era indication matches the era of the supplied certificate.
   validatePerasCert ::
     PerasConfig (HardForkBlock xs) ->
+    LedgerStateOrView (HardForkBlock xs) ->
     PerasCert (HardForkBlock xs) ->
     Either
       (PerasErr (HardForkBlock xs))
       (ValidatedPerasCert (HardForkBlock xs))
-  validatePerasCert HardForkPerasConfig{hfpcPerEraPerasConfig} (OneEraPerasCert cert) =
+  validatePerasCert HardForkPerasConfig{hfpcPerEraPerasConfig, hfpcLedgerConfig} ledgerState cert@(OneEraPerasCert nsCert) = do
+    let roundNo = getPerasCertRound cert
+    -- Ledger state is forecast into ledger view for the target 'PerasRoundNo'.
+    (OneEraLedgerView nsLedgerView) <- forecastToViewAtRound hfpcLedgerConfig ledgerState roundNo
+    nsCertAndLedgerView <- ensureSameEraPair (nsCert, nsLedgerView)
+    -- Dispatch to the per-era validatePerasCert.
     hcollapse $
       hcizipWith
         proxySingle
-        ( \idx wrappedCfg wrappedCert ->
+        ( \idx wrappedCfg (Pair wrappedCert (WrapLedgerView ledgerView)) ->
             K $
               bimap
                 (SomePerasErr . OneEraPerasErr . injectNS idx . WrapPerasErr)
                 (OneEraValidatedPerasCert . injectNS idx . WrapValidatedPerasCert)
                 ( validatePerasCert
                     (unwrapPerasConfig wrappedCfg)
+                    ledgerView
                     (unwrapPerasCert wrappedCert)
                 )
         )
         (getPerEraPerasConfig hfpcPerEraPerasConfig)
-        cert
+        nsCertAndLedgerView
 
 {-------------------------------------------------------------------------------
   Accessor class instances for the HFC Peras-related types
