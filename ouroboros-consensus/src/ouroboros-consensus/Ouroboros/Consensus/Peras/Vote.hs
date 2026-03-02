@@ -7,17 +7,21 @@ module Ouroboros.Consensus.Peras.Vote
 
 import Ouroboros.Consensus.Peras.Vote.Aggregation as X
 import Ouroboros.Consensus.Peras.Voting.Rules (PerasVotingRulesDecision)
-import Ouroboros.Consensus.Util.Pred (Explainable (..), ExplanationMode (..))
+import Ouroboros.Consensus.Util.Pred (Explainable (..), ExplanationMode (..), ShowExplain)
+import Ouroboros.Consensus.Block (SlotNo)
+import Data.Word (Word64)
 
--- | TODO: remove type parameter when actual types are known for committee selection
-data TraceVotingEvent electionEvt
-  = TraceCommitteeSelectionEvent electionEvt
+-- | TODO: replace with actual type parameter for committee selection when known
+data TraceVotingEvent
+  = TraceCommitteeSelectionEvent (ShowExplain ())
   | TraceVotingRuleEvent PerasVotingRulesDecision
+  | TraceNoPerasEnabledAtSlot SlotNo
+  | TraceNoVoteAfterFirstSlotInRound Word64 -- slot index
 
-instance Explainable electionEvt => Explainable (TraceVotingEvent electionEvt) where
+instance Explainable TraceVotingEvent where
   explain mode = \case
     TraceCommitteeSelectionEvent evt -> "CommitteeSelection(" <> explain mode evt <> ")"
     TraceVotingRuleEvent evt -> "VotingRule(" <> explain mode evt <> ")"
 
-instance Explainable electionEvt => Show (TraceVotingEvent electionEvt) where
+instance Show TraceVotingEvent where
   show = explain Shallow

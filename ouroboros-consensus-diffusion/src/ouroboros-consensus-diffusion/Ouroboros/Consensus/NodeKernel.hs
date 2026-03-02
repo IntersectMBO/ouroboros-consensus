@@ -66,6 +66,9 @@ import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
+import Ouroboros.Consensus.HardFork.Abstract (hardForkSummary, HasHardForkHistory)
+import qualified Ouroboros.Consensus.HardFork.History.EraParams as History
+import qualified Ouroboros.Consensus.HardFork.History.Qry as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -97,6 +100,7 @@ import Ouroboros.Consensus.Node.Genesis
   )
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
+import Ouroboros.Consensus.Peras.Vote (TraceVotingEvent (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
@@ -400,8 +404,9 @@ initNodeKernel
           sharedTxStateVar
 
     when (PerasFlag `member` featureFlags) $ void $
-      forkLinkedThread registry "NodeKernel.voteMinting" $
-        undefined
+      forkLinkedWatcher registry "NodeKernel.voteMinting" $
+        knownSlotWatcher btime $
+          \currentSlot -> withEarlyExit_ $ voteMintingController st currentSlot
 
     return
       NodeKernel
@@ -437,6 +442,54 @@ initNodeKernel
         traverse_ cancelThread forgingThreads
         blockForging' <- traverse (forkBlockForging st) blockForging
         go blockForging'
+
+voteMintingController ::
+  forall m remotePeer localPeer blk.
+  ( IOLike m
+  , HasHardForkHistory blk
+  ) =>
+  InternalState m remotePeer localPeer blk ->
+  SlotNo ->
+  WithEarlyExit m ()
+voteMintingController IS{..} slotNo = do
+  extLedgerState <- lift $ atomically $ ChainDB.getCurrentLedger chainDB
+  let summary = hardForkSummary (configLedger cfg) (ledgerState extLedgerState)
+  slotIndex <- case History.runQuery (History.slotToPerasRoundNo slotNo) summary of
+    Right (History.PerasEnabled (_roundNo, slotIndex, _remainder)) -> pure slotIndex
+    Right History.NoPerasEnabled -> do
+      trace $ TraceNoPerasEnabledAtSlot slotNo
+      exitEarly
+    Left err@History.PastHorizon{} -> throwIO err -- TODO: should we panic instead? This PastHorizonException error should theoretically not happen for a slot we are currently in
+  when (slotIndex /= 0) $ do
+    trace $ TraceNoVoteAfterFirstSlotInRound slotIndex
+    exitEarly
+
+  -- Are we elected in the committee for this round?
+  committeeSelectionData <- retrieveCommitteeSelectionData
+
+  shouldVoteResult <- shouldVoteFromCommitteeSelectionData committeeSelectionData
+
+  ShouldVote voteProof reason
+  Shouldn'tVote reason
+
+  vote <- throwLeft (forgePerasVoteIfElligible committeeSelectionData) >>= \case
+    Nothing -> do
+      trace $ TraceNoVoteBecauseNotSelected slotNo
+      exitEarly
+    Just (vote, reason) -> pure vote
+
+  undefined
+
+  where
+    throwLeft :: Exception e => Either e a -> m a
+    throwLeft = either throwIO pure
+
+    retrieveCommitteeSelectionData :: m CommitteeSelectionData
+
+    trace :: TraceVotingEvent -> WithEarlyExit m ()
+    trace = lift . traceWith (votingLogicTracer tracers)
+
+data CommitteeSelectionData
 
 castTraceFetchDecision ::
   forall remotePeer blk.

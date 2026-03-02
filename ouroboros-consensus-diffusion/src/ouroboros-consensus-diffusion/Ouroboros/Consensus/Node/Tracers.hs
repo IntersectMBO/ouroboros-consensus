@@ -48,7 +48,6 @@ import Ouroboros.Consensus.Peras.Vote (TraceVotingEvent (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
   )
-import  Ouroboros.Consensus.Util.Pred (ShowExplain (..))
 import Ouroboros.Network.Block (Tip)
 import Ouroboros.Network.BlockFetch
   ( TraceFetchClientState
@@ -92,8 +91,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
       f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
   , dbfTracer :: f (CSJumping.TraceEventDbf remotePeer)
   , kesAgentTracer :: f KESAgentClientTrace
-  -- | TODO: remove type parameter when actual types are known for committee selection
-  , votingLogicTracer :: f (TraceVotingEvent (ShowExplain ()))
+  , votingLogicTracer :: f TraceVotingEvent
   }
 
 instance
