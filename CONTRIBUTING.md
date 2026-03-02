@@ -373,8 +373,8 @@ interactively:
  $ nix repl
 nix-repl> :lf .
 nix-repl> pkgs = legacyPackages.${__currentSystem}
-nix-repl> pkgs.hsPkgs.ouroboros-consensus-cardano.components.exes.db-
-pkgs.hsPkgs.ouroboros-consensus-cardano.components.exes.db-analyser     pkgs.hsPkgs.ouroboros-consensus-cardano.components.exes.db-synthesizer
+nix-repl> pkgs.hsPkgs.ouroboros-consensus.components.exes.db-
+pkgs.hsPkgs.ouroboros-consensus.components.exes.db-analyser     pkgs.hsPkgs.ouroboros-consensus.components.exes.db-synthesizer
 ```
 
 # Reporting a bug or requesting a feature

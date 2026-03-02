@@ -165,5 +165,22 @@ We have several sources of documentation:
 - [Formal specification](./docs/agda-spec/): this directory contains the formal (Agda)
   specification of the Consensus layer.
 
+## Other packages in the IOG/IntersectMBO namespaces that this project benefits from
+
+- [`sop-extras`](https://github.com/input-output-hk/sop-extras)
+- [`strict-sop-core`](https://github.com/input-output-hk/sop-extras)
+- [`rawlock`](https://github.com/IntersectMBO/io-classes-extra)
+- [`resource-registry`](https://github.com/IntersectMBO/io-classes-extra)
+- [`strict-checked-vars`](https://github.com/IntersectMBO/io-classes-extra)
+- [`fs-api`](https://github.com/input-output-hk/fs-sim)
+- [`fs-sim`](https://github.com/input-output-hk/fs-sim)
+- [`io-classes`](https://github.com/input-output-hk/io-sim)
+- [`io-sim`](https://github.com/input-output-hk/io-sim)
+- [`cardano-lmdb`](https://github.com/input-output-hk/haskell-lmdb)
+- [`cardano-lmdb-simple`](https://github.com/input-output-hk/lmdb-simple)
+- [`diff-containers`](https://github.com/input-output-hk/anti-diffs)
+- [`fingertree-rm`](https://github.com/input-output-hk/anti-diffs)
+- [`blockio`](https://github.com/IntersectMBO/lsm-tree)
+- [`lsm-tree`](https://github.com/IntersectMBO/lsm-tree)
 
 [webpage]: https://ouroboros-consensus.cardano.intersectmbo.org/
