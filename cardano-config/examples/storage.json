@@ -1,0 +1,12 @@
+{
+    "DatabasePath": {
+        "ImmutablePath": "imm",
+        "VolatilePath": "vol"
+    },
+    "LedgerDB": {
+        "Backend": "V2InMemory",
+        "NumOfDiskSnapshots": 2,
+        "QueryBatchSize": 100000,
+        "SnapshotInterval": 4320
+    }
+}
