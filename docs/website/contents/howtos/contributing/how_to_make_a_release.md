@@ -2,6 +2,14 @@
 
 This document explains how the Consensus team uses Pull Requests (PRs), version numbers, and branches to prepare releases of our packages.
 
+
+# Archeological note
+
+<details>
+
+<summary>What follows is the process Consensus followed until March 2026.</summary>
+
+
 Let us assume our repository contains two packages FOO and BAR.
 Two is enough to explain the complexities.
 The resulting rules can be generalized to any number of packages, as explained at the end of the document.
@@ -486,3 +494,4 @@ flowchart TD
     A --> C
     B --> C[ouroboros-consensus]
 ```
+</details>

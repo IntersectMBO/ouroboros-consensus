@@ -1,12 +1,6 @@
 # Ouroboros Consensus
 
-[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.28.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-0.28.0.0/)
-[![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.24.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-diffusion-0.24.0.0/)
-[![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.13.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-protocol-0.13.0.0/)
-[![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.26.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-cardano-0.26.0.0/)
-[![sop-extras](https://img.shields.io/badge/sop--extras-0.4.1.0-blue)](https://chap.intersectmbo.org/package/sop-extras-0.4.1.0/)
-[![strict-sop-core](https://img.shields.io/badge/strict--sop--core-0.1.3.0-blue)](https://chap.intersectmbo.org/package/strict-sop-core-0.1.3.0/)
-
+[![consensus](https://img.shields.io/badge/ouroboros--consensus-1.0.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-1.0.0.0/)
 
 [![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
 
@@ -19,10 +13,12 @@ them:
 
 ``` mermaid
 flowchart TD
-    D[ouroboros-consensus-diffusion] --> C
-    A[ouroboros-consensus-cardano] --> B[ouroboros-consensus-protocol]
+    A[ouroboros-consensus:cardano] --> B[ouroboros-consensus:protocol]
     A --> C
-    B --> C[ouroboros-consensus]
+    B --> C[ouroboros-consensus:ouroboros-consensus]
+    D[ouroboros-consensus:diffusion] --> C
+    E[ouroboros-consensus:lsm] --> C
+    F[ouroboros-consensus:lmdb] --> C
 ```
 
 The packages contain many test-suites that complicate the dependency graph as
@@ -48,10 +44,7 @@ because unfortunately, `cabal` doesn't have a command to list the [available
 targets](https://github.com/haskell/cabal/issues/4070):
 
 ``` bash
-for f in $(find ouroboros-consensus* *sop* -type f -name "*.cabal"); do
-    printf "Components of package %s:\n" $f;
-    grep -E "^(library|test-suite|executable|benchmark)" $f --color=never | column -t | sort | sed 's/^/\t/'
-done
+grep -E "^(library|test-suite|executable|benchmark)" ouroboros-consensus.cabal --color=never | column -t | sort | sed 's/^/\t/'
 ```
 
 ## Building the project
