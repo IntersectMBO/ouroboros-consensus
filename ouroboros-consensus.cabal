@@ -1974,3 +1974,23 @@ executable gen-header
 
   autogen-modules:
     Paths_ouroboros_consensus
+
+executable block-after
+  import: common-exe
+  hs-source-dirs: ouroboros-consensus-cardano/app
+  main-is: block-after.hs
+  build-depends:
+    aeson,
+    base,
+    bytestring,
+    cardano-crypto-class,
+    fs-api,
+    hex-text,
+    optparse-applicative,
+    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools},
+    resource-registry,
+    text,
+    with-utf8,
+
+  other-modules:
+    DBAnalyser.Parsers
