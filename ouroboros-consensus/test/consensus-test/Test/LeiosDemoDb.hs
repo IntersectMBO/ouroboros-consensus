@@ -1,6 +1,8 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- | Tests for the LeiosDemoDb interface.
 --
@@ -11,7 +13,8 @@ module Test.LeiosDemoDb (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadTChan)
-import Control.Exception (bracket)
+import Control.DeepSeq
+import Control.Exception (bracket, evaluate)
 import Control.Monad (forM, forM_, replicateM)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import qualified Data.ByteString as BS
@@ -359,12 +362,13 @@ prop_txsInsertThenRetrieve impl =
           leiosDbInsertEbBody db point eb
           -- Get the txHashes from the EB for the offsets we want to insert
           let ebTxList = V.toList (leiosEbTxs eb)
-              txsToInsert =
-                [ (txHash, txBytes)
-                | off <- offsetsToInsert
-                , let (txHash, _size) = ebTxList !! off
-                , let txBytes = BS.pack [fromIntegral off, 1, 2, 3] -- deterministic test bytes
-                ]
+              !txsToInsert =
+                force $
+                  [ (txHash, txBytes)
+                  | off <- offsetsToInsert
+                  , let (txHash, _size) = ebTxList !! off
+                  , let txBytes = BS.pack [fromIntegral off, 1, 2, 3] -- deterministic test bytes
+                  ]
           -- Insert txs into global txs table
           insertTime <- snd <$> timed (leiosDbInsertTxs db txsToInsert)
           -- Retrieve all offsets
@@ -410,7 +414,7 @@ prop_txsRetrieveMissing impl =
 prop_insertTxPerformance :: DbImpl -> Property
 prop_insertTxPerformance impl =
   forAllShrinkBlind genPerfParams shrinkPerfParams $ \(numEBs, numTxs) ->
-    forAllBlind (genPerfData numEBs numTxs) $ \(primeData, point, eb, txsToInsert) ->
+    forAllBlind (genPerfData numEBs numTxs) $ \(primeData, point, eb, force -> !txsToInsert) ->
       ioProperty $ withFreshDb impl $ \db -> do
         -- Prime the database with additional EBs to simulate load
         forM_ primeData $ \(primePoint, primeEb) -> do

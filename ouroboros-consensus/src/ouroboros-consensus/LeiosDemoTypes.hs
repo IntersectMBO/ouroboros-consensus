@@ -1,5 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
@@ -14,7 +15,7 @@ module LeiosDemoTypes (module LeiosDemoTypes) where
 import Cardano.Binary (enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Core (EraTx, Tx)
-import Cardano.Prelude (NonEmpty, toList, toString, (&))
+import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -71,7 +72,7 @@ prettyEbHash :: EbHash -> String
 prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
 
 newtype TxHash = MkTxHash ByteString
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, NFData)
 
 prettyTxHash :: TxHash -> String
 prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
