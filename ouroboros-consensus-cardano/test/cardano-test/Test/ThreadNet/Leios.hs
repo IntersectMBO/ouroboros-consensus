@@ -39,6 +39,7 @@ import Data.Foldable (toList)
 import Data.Function ((&))
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
@@ -89,6 +90,8 @@ import Test.ThreadNet.Infra.Shelley
 import Test.ThreadNet.Network
   ( NodeOutput (..)
   , TestNodeInitialization (..)
+  , TraceThreadNet (..)
+  , TraceThreadNetNode (..)
   )
 import Test.ThreadNet.TxGen.Cardano (CardanoTxGenExtra (..))
 import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
@@ -132,12 +135,16 @@ prop_leios_blocksProduced seed =
   includedTxCounts = length . extractTxs <$> forgedBlocks
 
   forgedEBs = flip foldMap leiosTraces $ \case
-    LeiosDemoTypes.TraceLeiosBlockForged{slot, eb} -> Map.singleton slot eb
+    TraceLeiosBlockForged{slot, eb} -> Map.singleton slot eb
     _ -> mempty
 
-  leiosTraces = traceOfType testOutput @LeiosDemoTypes.TraceLeiosKernel
+  leiosTraces = flip mapMaybe testOutput.allTraces $ \case
+    FromNode _ (FromLeios ev) -> Just ev
+    _ -> Nothing
 
-  mempoolTraces = traceOfType testOutput @(TraceEventMempool (CardanoBlock StandardCrypto))
+  mempoolTraces = flip mapMaybe testOutput.allTraces $ \case
+    FromNode _ (FromMempool ev) -> Just ev
+    _ -> Nothing
 
   mempoolAddedTxs = flip filter mempoolTraces $ \case
     TraceMempoolAddedTx{} -> True

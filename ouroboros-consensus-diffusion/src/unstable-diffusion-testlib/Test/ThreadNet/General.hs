@@ -238,10 +238,11 @@ runTestNetwork
     , txGenExtra
     , version = (networkVersion, blockVersion)
     }
-  mkTestConfigMB =
+  mkTestConfigMB = do
     case traceResult False trace of
       Left e -> throw e -- XXX Avoid impure exception
-      Right o -> o{traceOfType = selectTraceEventsDynamic trace}
+      Right o ->
+        o{allTraces = selectTraceEventsDynamic trace}
    where
     trace = runSimTrace $ do
       setCurrentTime dawnOfTime
