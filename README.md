@@ -1,57 +1,48 @@
 # Ouroboros Consensus
 
-[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.28.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-0.28.0.0/)
-[![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.24.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-diffusion-0.24.0.0/)
-[![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.13.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-protocol-0.13.0.0/)
-[![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.26.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-cardano-0.26.0.0/)
-[![sop-extras](https://img.shields.io/badge/sop--extras-0.4.1.0-blue)](https://chap.intersectmbo.org/package/sop-extras-0.4.1.0/)
-[![strict-sop-core](https://img.shields.io/badge/strict--sop--core-0.1.3.0-blue)](https://chap.intersectmbo.org/package/strict-sop-core-0.1.3.0/)
-
-
-[![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
+[![consensus](https://img.shields.io/badge/ouroboros--consensus-1.0.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-1.0.0.0/) [![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
 
 Implementation of the Ouroboros family of consensus algorithms.
 
 ## Libraries and executables
 
-This repository provides four packages, with the following dependencies among
+This repository provides six sublibraries, with the following dependencies among
 them:
 
 ``` mermaid
 flowchart TD
-    D[ouroboros-consensus-diffusion] --> C
-    A[ouroboros-consensus-cardano] --> B[ouroboros-consensus-protocol]
-    A --> C
-    B --> C[ouroboros-consensus]
+    A["ouroboros-consensus:cardano"] --> B["ouroboros-consensus:protocol"]
+    A --> C["ouroboros-consensus:ouroboros-consensus"]
+    B --> C
+    D["ouroboros-consensus:diffusion"] --> C
+    E["ouroboros-consensus:lsm"] --> C
+    F["ouroboros-consensus:lmdb"] --> C
 ```
 
-The packages contain many test-suites that complicate the dependency graph as
-they create new depencency arcs.
+The package contains many test-suites that complicate the dependency graph as
+they create new dependency arcs.
 
-This repository also provides four executables:
+This repository also provides some executables:
 
-- `ouroboros-consensus-cardano/app/db-analyser.hs`: for analyzing ChainDBs as
-  the ones created by the node. This helps identifying performance hotspots and
-  testing that the validating logic remains correct.
+| Name                 | Purpose                                                                                               |
+|----------------------|-------------------------------------------------------------------------------------------------------|
+| `db-analyser`        | Analyzing ChainDBs for testing and validation, or producing ledger snapshots                          |
+| `db-synthesizer`     | Quickly generate new synthetic chains for benchmarking                                                |
+| `db-truncater`       | Truncating an Immutable DB                                                                            |
+| `db-immutaliser`     | Converting the volatile suffix of the chain into immutable, so that `db-analyser` can also analyse it |
+| `immdb-server`       | Serves immutable blocks from a ChainDB in a Node-to-node connection                                   |
+| `gen-header`         | Generate and validate Praos headers                                                                   |
+| `snapshot-converter` | Converts snapshots among the UTxO-HD formats of the database (InMemory, LMDB, LSM)                    |
 
-- `ouroboros-consensus-cardano/app/db-synthesizer.hs`: for quickly generating
-  chains to be used in benchmarking.
-
-- `ouroboros-consensus-cardano/app/db-truncater.hs`: for truncating an immutable
-  DB.
-
-- `ouroboros-consensus-cardano/app/immdb-server.hs`: for serving a immutable DB
-  stored locally.
+Some documentation on how to use the tools can be found in the
+[`ouroboros-consensus:cardano` README](./ouroboros-consensus-cardano/README.md).
 
 To list all the available Cabal components, one can use the following script
 because unfortunately, `cabal` doesn't have a command to list the [available
 targets](https://github.com/haskell/cabal/issues/4070):
 
 ``` bash
-for f in $(find ouroboros-consensus* *sop* -type f -name "*.cabal"); do
-    printf "Components of package %s:\n" $f;
-    grep -E "^(library|test-suite|executable|benchmark)" $f --color=never | column -t | sort | sed 's/^/\t/'
-done
+grep -E "^(library|test-suite|executable|benchmark)" ouroboros-consensus.cabal --color=never | column -t | sort | sed 's/^/\t/'
 ```
 
 ## Building the project
@@ -174,5 +165,22 @@ We have several sources of documentation:
 - [Formal specification](./docs/agda-spec/): this directory contains the formal (Agda)
   specification of the Consensus layer.
 
+## Other packages in the IOG/IntersectMBO namespaces that this project benefits from
+
+- [`sop-extras`](https://github.com/input-output-hk/sop-extras)
+- [`strict-sop-core`](https://github.com/input-output-hk/sop-extras)
+- [`rawlock`](https://github.com/IntersectMBO/io-classes-extra)
+- [`resource-registry`](https://github.com/IntersectMBO/io-classes-extra)
+- [`strict-checked-vars`](https://github.com/IntersectMBO/io-classes-extra)
+- [`fs-api`](https://github.com/input-output-hk/fs-sim)
+- [`fs-sim`](https://github.com/input-output-hk/fs-sim)
+- [`io-classes`](https://github.com/input-output-hk/io-sim)
+- [`io-sim`](https://github.com/input-output-hk/io-sim)
+- [`cardano-lmdb`](https://github.com/input-output-hk/haskell-lmdb)
+- [`cardano-lmdb-simple`](https://github.com/input-output-hk/lmdb-simple)
+- [`diff-containers`](https://github.com/input-output-hk/anti-diffs)
+- [`fingertree-rm`](https://github.com/input-output-hk/anti-diffs)
+- [`blockio`](https://github.com/IntersectMBO/lsm-tree)
+- [`lsm-tree`](https://github.com/IntersectMBO/lsm-tree)
 
 [webpage]: https://ouroboros-consensus.cardano.intersectmbo.org/

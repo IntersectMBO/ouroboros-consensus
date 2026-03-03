@@ -2,6 +2,119 @@
 
 This document explains how the Consensus team uses Pull Requests (PRs), version numbers, and branches to prepare releases of our packages.
 
+The ouroboros-consensus repository consists on a single package `ouroboros-consensus` which contains multiple libraries.
+
+## Rules for Branches
+
+For each released `Major1` version, a new branch `backports-<major1>` might be created if changes need to ever be backported.
+If no changes were needed to be backported, no such branch would exist.
+
+RULE: A release branch should branch off the main branch just at a released commit.
+
+## Rules for PRs
+
+We classify each PR as either a _fresh_ PR or as a _backport_ PR.
+
+- A fresh PR is doing work that has never been done before (new feature, new bugfix, etc).
+  Except in the rare circumstances discussed in the previous section, every fresh PR will target the main branch.
+- The primary objective of a backport PR is merely to immitate some fresh PR.
+
+We maintain pending changelog entries in the same way that [`scriv`](https://github.com/nedbat/scriv) does, so that they do not generate conflicts and are not lost when rebasing/cherry-picking/etc PRs.
+
+The rules are then as follows.
+
+- RULE: A fresh PR MUST target the main branch, if possible.
+- RULE: A PR MUST NOT be merged into a branch unless it should be included in the next release from that branch.
+- RULE: A PR MUST add a pending changelog entry if it modifies non-testing code (i.e. Haskell code in sublibraries not named as `unstable-*`).
+- RULE: Each pending changelog entry MUST at the very least classify the alteration as a _patch_ level change (eg a bugfix), a _minor_ change (eg a non-breaking interface change), or a _major_ change (eg a breaking interface change).
+- RULE: The pending entries MUST NOT assume any specific version number of the previous release or the next release, because the entry may be backported etc.
+
+## Rules for Releases
+
+Having only one package means that all libraries are versioned in lockstep.
+We use the four components of a PVP version number:
+
+```
+┌────────┐ ┌────────┐ ┌───────┐ ┌───────┐
+│ Major1 │.│ Major2 │.│ Minor │.│ Patch │
+└────┬───┘ └────┬───┘ └───┬───┘ └───┬───┘
+     │          │         │         └─ releasing patch changes
+     │          │         └─────────── releasing non-breaking changes
+     │          └───────────────────── releasing breaking changes (backports)
+     └──────────────────────────────── releasing breaking changes (main)
+```
+
+Infinitely often, the Consensus team will decide the `ouroboros-consensus` package is ready for a next release (either from the main branch or from a release branch).
+IE We will eventually decide that the code of on the tip commit of a branch should be the code of our next release from that branch.
+We prepare that release as follows.
+
+- We review the pending changelog entries (eg by issuing `scriv collect --version DUMMY` to automatically collate the pending changelog entries).
+- RULE: We update the declared version (ie in the `.cabal` file) based on the content of those pending changelog entries.
+    - Let A.B.C.D be the version of the package currently declared on this branch.
+    - RULE: If any alteration was major-level and the release is happening in the `main` branch, then we bump to (A+1).0.0.0.
+    - RULE: Else if any alteration was major-level and the release is happening in a release branch, then we bump to A.(B+1).0.0.
+    - RULE: Else if any alteration was minor-level, then we bump to A.B.(C+1).0.
+    - RULE: Otherwise all alterations were patch-level, so we bump to A.B.C.(D+1).
+- RULE: We merge one final PR, which MUST do exactly the following and nothing more.
+    - RULE: It updates the version being released as described above.
+    - RULE: It flushes the pending changelog entries into the `CHANGELOG.md` file (eg by issuing `scriv collect`).
+    - RULE: A temporary PR in CHaP has to be opened where the new version is tentatively added.
+    - RULE: Only if the CHaP PR passes, then the release PR can be merged.
+- RULE: We tag that resulting merge commit as release-A.B.C.D.
+- RULE: The CHaP PR is updated to point to this new commit.
+- RULE: Finally, we announce this commit hash as the new release.
+
+## Installing `scriv`
+
+To manage the workflow described above, we will use the `scriv` tool slightly
+modified to support cabal files. If you use `nix` then you will find `scriv` in
+the Nix shell. Otherwise, the way to install it from source is:
+
+```
+pip install scriv
+```
+
+If you encounter an error mentioning:
+`pkg_resources.extern.packaging.version.InvalidVersion: Invalid version: ...` we
+found that downgrading `setuptools` to a version `< 66` seems to solve this
+problem.
+
+If you don't want to use virtual environments for python packages and
+installation complains with the error `error: externally-managed-environment`,
+pass in the flag `--break-system-packages`:
+
+```
+pip install --break-system-packages scriv
+```
+
+A more comfortable alternative is to use [`uv`](https://docs.astral.sh/uv/) to run scriv as:
+
+```
+uv tool run scriv
+```
+
+## Adding a changelog fragment
+
+When a given branch contains a change that deserves a changelog entry, you should add a changelog [fragment](https://scriv.readthedocs.io/en/stable/concepts.html#fragments).
+When we [cut a release](#rules-for-releases) the changelog fragments will be merged into a changelog update.
+To add a changelog fragment, use `scriv`.
+See [this section](#installing-scriv) for instructions on how to install it.
+
+To create a changelog fragment you can follow these steps:
+
+1. Run `scriv create` on the root directory of the repository.
+2. Edit the newly created file in `./changelog.d` by uncommenting and filling in
+   the appropriate section (Breaking, etc). Write the entry in the imperative,
+   as per [these guidelines][git-contributing-to-a-project].
+3. Add the file(s) to the branch.
+
+# Archeological note
+
+<details>
+
+<summary>What follows is the process Consensus followed until March 2026.</summary>
+
+
 Let us assume our repository contains two packages FOO and BAR.
 Two is enough to explain the complexities.
 The resulting rules can be generalized to any number of packages, as explained at the end of the document.
@@ -393,9 +506,6 @@ git pull
 ./scripts/release/release-to-chap.sh
 ```
 
-[contributing-to-a-project]: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#Commit-Guidelines
-[chap]: https://github.com/IntersectMBO/cardano-haskell-packages
-
 ## The first time we had to break this release process
 
 On the first half of April 2023, we were asked to get a new Consensus release
@@ -486,3 +596,7 @@ flowchart TD
     A --> C
     B --> C[ouroboros-consensus]
 ```
+</details>
+
+[contributing-to-a-project]: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#Commit-Guidelines
+[chap]: https://github.com/IntersectMBO/cardano-haskell-packages
