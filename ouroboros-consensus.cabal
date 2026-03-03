@@ -20,12 +20,12 @@ data-files:
   ouroboros-consensus-cardano/cddl/base.cddl
 
 extra-doc-files:
+  docs/haddocks/*.svg
   ouroboros-consensus-cardano/CHANGELOG.md
   ouroboros-consensus-cardano/README.md
   ouroboros-consensus-diffusion/CHANGELOG.md
   ouroboros-consensus-protocol/CHANGELOG.md
   ouroboros-consensus/CHANGELOG.md
-  ouroboros-consensus/docs/haddocks/*.svg
 
 source-repository head
   type: git
