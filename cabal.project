@@ -16,13 +16,10 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2026-02-27T00:53:34Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-02-25T10:27:50Z
+  , cardano-haskell-packages 2026-03-02T11:43:37Z
 
 
-packages:
-  .
-  sop-extras
-  strict-sop-core
+packages: .
 
 -- We want to always build the test-suites and benchmarks
 tests: true

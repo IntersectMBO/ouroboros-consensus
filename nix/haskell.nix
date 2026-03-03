@@ -102,7 +102,7 @@ in
     buildPhase = ''
       export CABAL_DIR=$(mktemp -d)
       touch $CABAL_DIR/config $out
-      cabal-docspec --no-cabal-plan ouroboros-consensus.cabal sop-extras/sop-extras.cabal strict-sop-core/strict-sop-core.cabal
+      cabal-docspec --no-cabal-plan ouroboros-consensus.cabal
     '';
   };
 }
