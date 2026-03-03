@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -39,12 +40,13 @@ import Data.Foldable (toList)
 import Data.Function ((&))
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import LeiosDemoTypes (LeiosEb, TraceLeiosKernel (..))
-import Lens.Micro (Lens', Traversal', (%~), (^.), (^..), each)
+import LeiosDemoTypes (TraceLeiosKernel (..))
+import Lens.Micro (each, (%~), (^.), (^..))
 import Ouroboros.Consensus.Block (SlotNo)
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
@@ -55,7 +57,7 @@ import Ouroboros.Consensus.Cardano
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
 import Ouroboros.Consensus.Config (SecurityParam (..))
-import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx, Validated, extractTxs)
+import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
@@ -89,8 +91,9 @@ import Test.ThreadNet.Infra.Shelley
 import Test.ThreadNet.Network
   ( NodeOutput (..)
   , TestNodeInitialization (..)
-  , TraceThreadNet (..)
-  , TraceThreadNetNode (..)
+  , _FromLeios
+  , _FromMempool
+  , _nodeEvent
   )
 import Test.ThreadNet.TxGen.Cardano (CardanoTxGenExtra (..))
 import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
@@ -137,11 +140,19 @@ prop_leios_blocksProduced seed =
 
   leiosTraces = traces ^.. each . _nodeEvent . _FromLeios
 
-  forgedEBs = Map.fromList $ leiosTraces ^.. each . _TraceLeiosBlockForged
+  forgedEBs = Map.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosBlockForged{slot, eb} -> Just (slot, eb)
+    _ -> Nothing
 
-  mempoolAddedTxs = traces ^.. each . _nodeEvent . _FromMempool . _TraceMempoolAddedTx
+  mempoolTraces = traces ^.. each . _nodeEvent . _FromMempool
 
-  mempoolRejectedTxs = traces ^.. each . _nodeEvent . _FromMempool . _TraceMempoolRejectedTx
+  mempoolAddedTxs = flip mapMaybe mempoolTraces $ \case
+    TraceMempoolAddedTx tx _ _ -> Just tx
+    _ -> Nothing
+
+  mempoolRejectedTxs = flip mapMaybe mempoolTraces $ \case
+    TraceMempoolRejectedTx tx _ _ -> Just tx
+    _ -> Nothing
 
   throughput = fromIntegral (sum includedTxCounts) / fromRational numSlots :: Double
 
@@ -149,6 +160,8 @@ prop_leios_blocksProduced seed =
 
   -- NOTE: There must be k Praos blocks after this time.
   numSlots = 3 * k / activeSlotCoeff :: Rational
+
+-- * Running the thread net
 
 runThreadNet :: Seed -> NumSlots -> TestOutput (CardanoBlock StandardCrypto)
 runThreadNet initSeed numSlots =
@@ -243,41 +256,6 @@ runThreadNet initSeed numSlots =
       , version = newestVersion (Proxy @(CardanoBlock StandardCrypto))
       }
 
--- * Optics for trace traversal
-
--- | 'TraceThreadNet' has a single constructor, so this is a total 'Lens''.
-_nodeEvent :: Lens' (TraceThreadNet blk) (TraceThreadNetNode blk)
-_nodeEvent f (FromNode nid ev) = FromNode nid <$> f ev
-
--- | Prism into the 'FromLeios' constructor.
-_FromLeios :: Traversal' (TraceThreadNetNode blk) TraceLeiosKernel
-_FromLeios f (FromLeios x) = FromLeios <$> f x
-_FromLeios _ x = pure x
-
--- | Prism into the 'FromMempool' constructor.
-_FromMempool :: Traversal' (TraceThreadNetNode blk) (TraceEventMempool blk)
-_FromMempool f (FromMempool x) = FromMempool <$> f x
-_FromMempool _ x = pure x
-
--- | Prism into 'TraceLeiosBlockForged', focusing on the slot and EB.
-_TraceLeiosBlockForged :: Traversal' TraceLeiosKernel (SlotNo, LeiosEb)
-_TraceLeiosBlockForged f TraceLeiosBlockForged{slot, eb, ebMeasure, mempoolRestMeasure} =
-  (\(s, e) -> TraceLeiosBlockForged{slot = s, eb = e, ebMeasure, mempoolRestMeasure})
-    <$> f (slot, eb)
-_TraceLeiosBlockForged _ x = pure x
-
--- | Prism into 'TraceMempoolAddedTx', focusing on the validated transaction.
-_TraceMempoolAddedTx :: Traversal' (TraceEventMempool blk) (Validated (GenTx blk))
-_TraceMempoolAddedTx f (TraceMempoolAddedTx tx before after) =
-  (\tx' -> TraceMempoolAddedTx tx' before after) <$> f tx
-_TraceMempoolAddedTx _ x = pure x
-
--- | Prism into 'TraceMempoolRejectedTx', focusing on the rejected transaction.
-_TraceMempoolRejectedTx :: Traversal' (TraceEventMempool blk) (GenTx blk)
-_TraceMempoolRejectedTx f (TraceMempoolRejectedTx tx err sz) =
-  (\tx' -> TraceMempoolRejectedTx tx' err sz) <$> f tx
-_TraceMempoolRejectedTx _ x = pure x
-
 -- * Fixtures
 
 k :: Num a => a
@@ -365,6 +343,8 @@ utxoOfTx tx =
   mkTxIn ix = TxIn txId $ TxIx ix
   txId = txIdTx tx
   outs = toList $ tx ^. bodyTxL . outputsTxBodyL
+
+-- * Property utilities
 
 -- | Pretty print a map of counterexamples, one on each row and eliding long
 -- entries to given maxLength. If maxLength is 0 or negative, no elision is
