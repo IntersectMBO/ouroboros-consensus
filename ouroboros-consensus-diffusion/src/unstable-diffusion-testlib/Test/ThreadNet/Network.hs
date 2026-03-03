@@ -37,8 +37,10 @@ module Test.ThreadNet.Network
   , NodeOutput (..)
   , TestOutput (..)
   , TraceThreadNet (..)
+  , _nodeEvent
   , TraceThreadNetNode (..)
-  , TraceNodeEvent (..)
+  , _FromMempool
+  , _FromLeios
   ) where
 
 import Cardano.Network.PeerSelection.Bootstrap
@@ -68,7 +70,8 @@ import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Stack
 import LeiosDemoDb (newLeiosDBInMemory)
-import LeiosDemoTypes (ForgedLeiosEb)
+import LeiosDemoTypes (ForgedLeiosEb, TraceLeiosKernel)
+import Lens.Micro (SimpleFold, folding)
 import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
@@ -1663,19 +1666,22 @@ data TestOutput blk = TestOutput
   , allTraces :: [TraceThreadNet blk]
   }
 
+-- | Type of all traces tracked by the ThreadNet.
 data TraceThreadNet blk
   = FromNode {fromNodeId :: CoreNodeId, fromNodeEvent :: TraceThreadNetNode blk}
+
+_nodeEvent :: SimpleFold (TraceThreadNet blk) (TraceThreadNetNode blk)
+_nodeEvent = folding $ \case FromNode _ ev -> Just ev
 
 data TraceThreadNetNode blk
   = FromLeios TraceLeiosKernel
   | FromMempool (TraceEventMempool blk)
 
--- | A trace event tagged with the originating node.
-data TraceNodeEvent a = TraceNodeEvent
-  { traceNodeId :: !CoreNodeId
-  , traceNodeEvent :: !a
-  }
-  deriving (Show, Typeable)
+_FromLeios :: SimpleFold (TraceThreadNetNode blk) TraceLeiosKernel
+_FromLeios = folding $ \case FromLeios x -> Just x; _ -> Nothing
+
+_FromMempool :: SimpleFold (TraceThreadNetNode blk) (TraceEventMempool blk)
+_FromMempool = folding $ \case FromMempool x -> Just x; _ -> Nothing
 
 -- | Gather the test output from the nodes
 mkTestOutput ::
