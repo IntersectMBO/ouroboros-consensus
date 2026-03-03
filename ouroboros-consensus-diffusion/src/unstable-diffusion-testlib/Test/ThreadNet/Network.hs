@@ -36,6 +36,9 @@ module Test.ThreadNet.Network
   , NodeDBs (..)
   , NodeOutput (..)
   , TestOutput (..)
+  , TraceThreadNet (..)
+  , TraceThreadNetNode (..)
+  , TraceNodeEvent (..)
   ) where
 
 import Cardano.Network.PeerSelection.Bootstrap
@@ -61,7 +64,6 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Typeable (Typeable)
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Stack
@@ -311,7 +313,7 @@ runThreadNetwork ::
   , -- TODO:, TracingConstraints blk
     HasCallStack
   ) =>
-  (forall a. Typeable a => Tracer m a) ->
+  Tracer m (TraceThreadNet blk) ->
   SystemTime m ->
   ThreadNetworkArgs m blk ->
   m (TestOutput blk)
@@ -977,6 +979,7 @@ runThreadNetwork
 
       let
         -- prop_general relies on these tracers
+        nodeTracer = FromNode coreNodeId >$< baseTracer
         tracers =
           nullTracers
             { chainSyncClientTracer = Tracer $ \case
@@ -995,8 +998,8 @@ runThreadNetwork
                 case ev of
                   TraceNodeIsLeader s -> atomically $ blockOnCrucial s
                   _ -> pure ()
-            , mempoolTracer = baseTracer
-            , leiosKernelTracer = baseTracer
+            , mempoolTracer = contramap FromMempool nodeTracer
+            , leiosKernelTracer = contramap FromLeios nodeTracer
             }
 
       let
@@ -1657,8 +1660,22 @@ data NodeOutput blk = NodeOutput
 data TestOutput blk = TestOutput
   { testOutputNodes :: Map NodeId (NodeOutput blk)
   , testOutputTipBlockNos :: Map SlotNo (Map NodeId (WithOrigin BlockNo))
-  , traceOfType :: forall a. Typeable a => [a]
+  , allTraces :: [TraceThreadNet blk]
   }
+
+data TraceThreadNet blk
+  = FromNode {fromNodeId :: CoreNodeId, fromNodeEvent :: TraceThreadNetNode blk}
+
+data TraceThreadNetNode blk
+  = FromLeios TraceLeiosKernel
+  | FromMempool (TraceEventMempool blk)
+
+-- | A trace event tagged with the originating node.
+data TraceNodeEvent a = TraceNodeEvent
+  { traceNodeId :: !CoreNodeId
+  , traceNodeEvent :: !a
+  }
+  deriving (Show, Typeable)
 
 -- | Gather the test output from the nodes
 mkTestOutput ::
@@ -1729,7 +1746,7 @@ mkTestOutput vertexInfos = do
     TestOutput
       { testOutputNodes = Map.unions nodeOutputs'
       , testOutputTipBlockNos = Map.unionsWith Map.union tipBlockNos'
-      , traceOfType = [] -- XXX: Only provided when run in io-sim from runTestNetwork
+      , allTraces = [] -- XXX: avoid monkey patching
       }
 
 {-------------------------------------------------------------------------------
