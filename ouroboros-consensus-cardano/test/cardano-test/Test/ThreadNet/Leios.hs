@@ -65,7 +65,15 @@ import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Test.Cardano.Ledger.Alonzo.Examples.Consensus (exampleAlonzoGenesis)
 import Test.Cardano.Ledger.Conway.Examples.Consensus (exampleConwayGenesis)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Conway), hardForkInto)
-import Test.QuickCheck (Property, Testable, conjoin, counterexample, tabulate, withMaxSuccess)
+import Test.QuickCheck
+  ( Property
+  , Testable
+  , conjoin
+  , counterexample
+  , tabulate
+  , withMaxSuccess
+  , (===)
+  )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.ThreadNet.General
@@ -124,6 +132,9 @@ prop_leios_blocksProduced seed =
         & counterexample "no endorser blocks were forged"
         & prettyCounterexampleMap "forged leios EBs" 120 forgedEBs
         & prettyCounterexampleList "leios kernel traces" 120 leiosTraces
+    , length forgedEBs === length acquiredEBs * numNodes
+        & counterexample "endorser blocks not fully diffused"
+        & prettyCounterexampleList "acquired leios EBs" 120 acquiredEBs
     ]
     & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
     & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
@@ -143,6 +154,10 @@ prop_leios_blocksProduced seed =
     TraceLeiosBlockForged{slot, eb} -> Just (slot, eb)
     _ -> Nothing
 
+  acquiredEBs = Set.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosBlockTxsAcquired point -> Just point
+    _ -> Nothing
+
   mempoolTraces = traces ^.. each . _nodeEvent . _FromMempool
 
   mempoolAddedTxs = flip mapMaybe mempoolTraces $ \case
@@ -155,15 +170,17 @@ prop_leios_blocksProduced seed =
 
   throughput = fromIntegral (sum includedTxCounts) / fromRational numSlots :: Double
 
-  testOutput = runThreadNet seed (NumSlots $ ceiling numSlots)
+  testOutput =
+    runThreadNet seed (NumSlots $ ceiling numSlots) (NumCoreNodes $ fromIntegral numNodes)
 
-  -- NOTE: There must be k Praos blocks after this time.
-  numSlots = 3 * k / activeSlotCoeff :: Rational
+  numNodes = 3
+
+  numSlots = 200
 
 -- * Running the thread net
 
-runThreadNet :: Seed -> NumSlots -> TestOutput (CardanoBlock StandardCrypto)
-runThreadNet initSeed numSlots =
+runThreadNet :: Seed -> NumSlots -> NumCoreNodes -> TestOutput (CardanoBlock StandardCrypto)
+runThreadNet initSeed numSlots numCoreNodes =
   runTestNetwork
     testConfig
     testConfigB
@@ -205,9 +222,7 @@ runThreadNet initSeed numSlots =
  where
   conwayProtVer = ProtVer (eraProtVerLow @ConwayEra) 0
 
-  n = 3
-
-  numCoreNodes = NumCoreNodes n
+  NumCoreNodes n = numCoreNodes
 
   coreNodes =
     runGen initSeed $
@@ -256,9 +271,6 @@ runThreadNet initSeed numSlots =
       }
 
 -- * Fixtures
-
-k :: Num a => a
-k = fromIntegral . unNonZero $ maxRollbacks securityParam
 
 securityParam :: SecurityParam
 securityParam = SecurityParam $ knownNonZeroBounded @10
@@ -364,14 +376,14 @@ prettyCounterexampleMap title maxLength m prop =
 -- entries to given maxLength. If maxLength is 0 or negative, no elision is
 -- performed.
 prettyCounterexampleList ::
-  (Testable prop, Show a) =>
-  String -> Int -> [a] -> prop -> Property
+  (Testable prop, Show a, Foldable f) =>
+  String -> Int -> f a -> prop -> Property
 prettyCounterexampleList title maxLength xs prop =
   prop
     & counterexample (title <> ":\n" <> prettyList)
  where
   prettyList =
-    map (indented 2 . elided maxLength . show) xs
+    map (indented 2 . elided maxLength . show) (toList xs)
       & unlines
 
 -- | Indent each line in a string by a given number of spaces.
