@@ -114,18 +114,17 @@ tests =
 
 prop_leios_blocksProduced :: Seed -> Property
 prop_leios_blocksProduced seed =
-  do
-    conjoin
-      [ not (null forgedBlocks)
-          & counterexample "no praos blocks were forged"
-      , any (> 0) includedTxCounts
-          & counterexample "all forged blocks were empty (no transactions)"
-          & prettyCounterexampleMap "txs per active slot" 120 includedTxCounts
-      , not (null forgedEBs)
-          & counterexample "no endorser blocks were forged"
-          & prettyCounterexampleMap "forged leios EBs" 120 forgedEBs
-          & prettyCounterexampleList "leios kernel traces" 120 leiosTraces
-      ]
+  conjoin
+    [ not (null forgedBlocks)
+        & counterexample "no praos blocks were forged"
+    , any (> 0) includedTxCounts
+        & counterexample "all forged blocks were empty (no transactions)"
+        & prettyCounterexampleMap "txs per active slot" 120 includedTxCounts
+    , not (null forgedEBs)
+        & counterexample "no endorser blocks were forged"
+        & prettyCounterexampleMap "forged leios EBs" 120 forgedEBs
+        & prettyCounterexampleList "leios kernel traces" 120 leiosTraces
+    ]
     & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
     & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
     & tabulate "Praos blocks forged" [show $ length forgedBlocks]

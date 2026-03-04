@@ -138,6 +138,7 @@ import Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
 import Ouroboros.Network.Protocol.Limits (waitForever)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
+import Ouroboros.Network.TxSubmission.Outbound (TraceTxSubmissionOutbound)
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
 import System.Random (mkStdGen, split)
@@ -1003,6 +1004,7 @@ runThreadNetwork
                   _ -> pure ()
             , mempoolTracer = contramap FromMempool nodeTracer
             , leiosKernelTracer = contramap FromLeios nodeTracer
+            , txOutboundTracer = contramap FromTxOutbound nodeTracer
             }
 
       let
@@ -1676,6 +1678,8 @@ _nodeEvent = folding $ \case FromNode _ ev -> Just ev
 data TraceThreadNetNode blk
   = FromLeios TraceLeiosKernel
   | FromMempool (TraceEventMempool blk)
+  | FromTxOutbound
+      (TraceLabelPeer (ConnectionId NodeId) (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
 
 _FromLeios :: SimpleFold (TraceThreadNetNode blk) TraceLeiosKernel
 _FromLeios = folding $ \case FromLeios x -> Just x; _ -> Nothing

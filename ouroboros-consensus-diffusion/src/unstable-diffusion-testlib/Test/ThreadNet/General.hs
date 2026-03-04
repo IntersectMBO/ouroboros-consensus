@@ -35,13 +35,14 @@ module Test.ThreadNet.General
   , plainTestNodeInitialization
   ) where
 
+import Control.Concurrent.Class.MonadSTM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception (assert, throw)
 import Control.Monad (guard)
 import Control.Monad.IOSim
-  ( runSimTrace
+  ( runSimOrThrow
+  , runSimTrace
   , selectTraceEventsDynamic
   , setCurrentTime
-  , traceM
   , traceResult
   )
 import Control.Tracer (Tracer (..), nullTracer)
@@ -65,7 +66,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
-import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain
@@ -215,7 +216,6 @@ runTestNetwork ::
   forall blk.
   ( RunNode blk
   , TxGen blk
-  , TracingConstraints blk
   , HasCallStack
   ) =>
   TestConfig ->
@@ -238,41 +238,37 @@ runTestNetwork
     , txGenExtra
     , version = (networkVersion, blockVersion)
     }
-  mkTestConfigMB = do
-    case traceResult False trace of
-      Left e -> throw e -- XXX Avoid impure exception
-      Right o ->
-        o{allTraces = selectTraceEventsDynamic trace}
-   where
-    trace = runSimTrace $ do
+  mkTestConfigMB =
+    runSimOrThrow $ do
+      -- Trace into TVar
+      tv <- newTVarIO []
+      let tracer = Tracer $ \t -> atomically $ modifyTVar tv (t :)
+      -- Time setup
       setCurrentTime dawnOfTime
-      let TestConfigMB
-            { nodeInfo
-            , mkRekeyM
-            } = mkTestConfigMB
-      let systemTime =
-            BTime.defaultSystemTime
-              (BTime.SystemStart dawnOfTime)
-              nullTracer
-      runThreadNetwork
-        (Tracer traceM)
-        systemTime
-        ThreadNetworkArgs
-          { tnaForgeEbbEnv = forgeEbbEnv
-          , tnaFuture = future
-          , tnaJoinPlan = nodeJoinPlan
-          , tnaMessageDelay = messageDelay
-          , tnaNodeInfo = nodeInfo
-          , tnaNumCoreNodes = numCoreNodes
-          , tnaNumSlots = numSlots
-          , tnaSeed = initSeed
-          , tnaMkRekeyM = mkRekeyM
-          , tnaRestarts = nodeRestarts
-          , tnaTopology = nodeTopology
-          , tnaTxGenExtra = txGenExtra
-          , tnaVersion = networkVersion
-          , tnaBlockVersion = blockVersion
-          }
+      let TestConfigMB{nodeInfo, mkRekeyM} = mkTestConfigMB
+      let systemTime = BTime.defaultSystemTime (BTime.SystemStart dawnOfTime) nullTracer
+      testOutput <-
+        runThreadNetwork
+          tracer
+          systemTime
+          ThreadNetworkArgs
+            { tnaForgeEbbEnv = forgeEbbEnv
+            , tnaFuture = future
+            , tnaJoinPlan = nodeJoinPlan
+            , tnaMessageDelay = messageDelay
+            , tnaNodeInfo = nodeInfo
+            , tnaNumCoreNodes = numCoreNodes
+            , tnaNumSlots = numSlots
+            , tnaSeed = initSeed
+            , tnaMkRekeyM = mkRekeyM
+            , tnaRestarts = nodeRestarts
+            , tnaTopology = nodeTopology
+            , tnaTxGenExtra = txGenExtra
+            , tnaVersion = networkVersion
+            , tnaBlockVersion = blockVersion
+            }
+      allTraces <- reverse <$> readTVarIO tv
+      pure $ testOutput{allTraces}
 
 {-------------------------------------------------------------------------------
   Test properties
