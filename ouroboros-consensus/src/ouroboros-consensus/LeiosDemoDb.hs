@@ -7,7 +7,7 @@
 
 module LeiosDemoDb (module LeiosDemoDb) where
 
-import Cardano.Prelude (foldM, forM_, maybeToList, when, void, traverse_)
+import Cardano.Prelude (foldM, forM_, maybeToList, traverse_, void, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
@@ -294,19 +294,17 @@ newLeiosDBSQLiteFromEnv = do
 -- blocked by writers.
 --
 -- TODO: Get rid of SQLOpenFullMutex and use proper concurrency control.
--- TODO: Switch to WAL mode for better read/write concurrency.
 newLeiosDBSQLite :: FilePath -> IO (LeiosDbHandle IO, IO ())
 newLeiosDBSQLite dbPath = do
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate, SQLOpenFullMutex] SQLVFSDefault
   traverse_ (dbExec db) $
     [ "pragma journal_mode = WAL;"
+    , -- This would probably be fine to set unless we care very strongly about consistency in the
+      -- event of sudden power / disk failure:
+      -- , "pragma synchronous = normal;"
 
-    -- This would probably be fine to set unless we care very strongly about consistency in the
-    -- event of sudden power / disk failure:
-    -- , "pragma synchronous = normal;"
-
-    , "pragma page_size = 32768;"
+      "pragma page_size = 32768;"
     , "pragma mmap_size = 268435500;"
     ]
   when shouldInitSchema $
