@@ -1,10 +1,10 @@
 {
   "Protocol": "Cardano",
-  "ByronGenesisFile": "byron-genesis.json",
-  "ShelleyGenesisFile": "shelley-genesis.json",
-  "AlonzoGenesisFile": "alonzo-genesis.json",
-  "ConwayGenesisFile": "conway-genesis.json",
-  "DijkstraGenesisFile": "dijkstra-genesis.json",
+  "ByronGenesisFile": "genesis/byron-genesis.json",
+  "ShelleyGenesisFile": "genesis/shelley-genesis.json",
+  "AlonzoGenesisFile": "genesis/alonzo-genesis.json",
+  "ConwayGenesisFile": "genesis/conway-genesis.json",
+  "DijkstraGenesisFile": "genesis/dijkstra-genesis.json",
 
   "LastKnownBlockVersion-Alt": 0,
   "LastKnownBlockVersion-Major": 3,
@@ -87,7 +87,7 @@
       "severity": "Silence"
     },
     "NodeState": {
-      "severity": "Debug"
+      "severity": "Notice"
     },
     "Resources": {
       "severity": "Silence"

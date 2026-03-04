@@ -1,0 +1,46 @@
+{
+    "tncCoreNodes" : [
+        {
+            "cncCardanoConfig" : "run-threadnet-example-config/config.json",
+            "cncKesSigningKey" : "run-threadnet-example-config/pools-keys/pool1/kes.skey",
+            "cncOCert" : "run-threadnet-example-config/pools-keys/pool1/opcert.cert",
+            "cncVrfSigningKey" : "run-threadnet-example-config/pools-keys/pool1/vrf.skey"
+        },
+        {
+            "cncCardanoConfig" : "run-threadnet-example-config/config.json",
+            "cncKesSigningKey" : "run-threadnet-example-config/pools-keys/pool2/kes.skey",
+            "cncOCert" : "run-threadnet-example-config/pools-keys/pool2/opcert.cert",
+            "cncVrfSigningKey" : "run-threadnet-example-config/pools-keys/pool2/vrf.skey"
+        },
+        {
+            "cncCardanoConfig" : "run-threadnet-example-config/config.json",
+            "cncKesSigningKey" : "run-threadnet-example-config/pools-keys/pool3/kes.skey",
+            "cncOCert" : "run-threadnet-example-config/pools-keys/pool3/opcert.cert",
+            "cncVrfSigningKey" : "run-threadnet-example-config/pools-keys/pool3/vrf.skey"
+        }
+    ],
+    "tncTopology" : {
+        "0" : [
+            1,
+            2
+        ],
+        "1" : [
+            0,
+            2
+        ],
+        "2" : [
+            0,
+            1
+        ]
+    },
+    "tncTxGenerators" : [
+        {
+            "tgcSubmitToNodes" : [
+                0
+            ],
+            "tgcTxGeneratorKind" : {
+                "tacPaymentSigningKey" : "run-threadnet-example-config/stake-delegators/delegator2/payment.skey"
+            }
+        }
+    ]
+}
