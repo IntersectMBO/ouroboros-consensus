@@ -847,6 +847,15 @@ benchmark ChainSync-client-bench
     unstable-consensus-testlib,
     with-utf8,
 
+benchmark leios-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: bench/leios-bench
+  main-is: Main.hs
+  build-depends:
+    base,
+    criterion,
+
 test-suite doctest
   import: common-test
   main-is: doctest.hs
