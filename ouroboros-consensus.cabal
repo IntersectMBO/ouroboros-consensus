@@ -943,6 +943,7 @@ test-suite doctest
 
 library protocol
   import: common-lib
+  visibility: public
   hs-source-dirs: ouroboros-consensus-protocol/src/ouroboros-consensus-protocol
   exposed-modules:
     Ouroboros.Consensus.Protocol.Ledger.HotKey
@@ -1028,6 +1029,7 @@ test-suite protocol-test
 
 library diffusion
   import: common-lib
+  visibility: public
   hs-source-dirs: ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion
   exposed-modules:
     Ouroboros.Consensus.Network.NodeToClient
@@ -1288,6 +1290,7 @@ test-suite consensus-diffusion-test
 
 library cardano
   import: common-lib
+  visibility: public
   hs-source-dirs:
     ouroboros-consensus-cardano/src/ouroboros-consensus-cardano
     ouroboros-consensus-cardano/src/byron
