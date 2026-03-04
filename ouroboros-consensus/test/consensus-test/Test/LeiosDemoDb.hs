@@ -80,15 +80,15 @@ withFreshDb :: DbImpl -> (LeiosDbHandle IO -> IO a) -> IO a
 withFreshDb InMemory action =
   bracket
     newLeiosDBInMemory
-    snd
-    (action . fst)
+    leiosDbClose
+    action
 withFreshDb SQLite action = do
   sysTmp <- getCanonicalTemporaryDirectory
   bracket
     ( do
         tmpDir <- createTempDirectory sysTmp "leios-test"
-        (db, close) <- newLeiosDBSQLite (tmpDir <> "/test.db")
-        pure (db, close >> removeDirectoryRecursive tmpDir)
+        db <- newLeiosDBSQLite (tmpDir <> "/test.db")
+        pure (db, leiosDbClose db >> removeDirectoryRecursive tmpDir)
     )
     snd
     (action . fst)
