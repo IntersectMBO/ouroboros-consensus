@@ -42,7 +42,7 @@ import Control.Monad (forM, guard)
 import Control.Monad.Except (runExceptT)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
-import Data.List (transpose)
+import Data.List (transpose, uncons)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Sequence.Strict as StrictSeq
@@ -131,7 +131,10 @@ runThreadNet args@RunThreadNetArgs{..} =
         , initSeed = Seed 0
         }
 
-    (pinfo, _) = protocolInfoCardano @_ @IO (cnCardanoProtocolParams . head . tnCoreNodes $ rtnaThreadNet) -- TODO(bladyjoker): Only to extract slot/epoch info
+    -- TODO(bladyjoker): Only to extract slot/epoch info
+    firstCoreNode = maybe (error $ show ("No nodes specified", callStack)) fst $ uncons (tnCoreNodes rtnaThreadNet)
+    (pinfo, _) = protocolInfoCardano @_ @IO (cnCardanoProtocolParams firstCoreNode)
+
     shelleyGenesis :: ShelleyGenesis =
       shelleyLedgerGenesis
         . shelleyLedgerConfig
