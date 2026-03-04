@@ -7,7 +7,7 @@
 
 module LeiosDemoDb (module LeiosDemoDb) where
 
-import Cardano.Prelude (foldM, forM_, maybeToList, when)
+import Cardano.Prelude (foldM, forM_, maybeToList, traverse_, void, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
@@ -51,7 +51,10 @@ import LeiosDemoTypes
   , leiosEbBodyItems
   , leiosEbBytesSize
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike, atomically)
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , atomically
+  )
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -102,6 +105,7 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
   , leiosDbFilterMissingTxs :: HasCallStack => [TxHash] -> m [TxHash]
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
+  , leiosDbClose :: m ()
   }
 
 type CompletedEbs = [LeiosPoint]
@@ -148,7 +152,7 @@ newLeiosDBInMemory = do
         , imEbBodies = Map.empty
         , imEbSlots = Map.empty
         }
-  pure $
+  pure
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
@@ -266,6 +270,7 @@ newLeiosDBInMemory = do
                   , not $ null missingEntries
                   ]
           pure LeiosFetchWork{missingEbBodies, missingEbTxs}
+      , leiosDbClose = pure ()
       }
 
 -- * SQLite implementation of LeiosDbHandle
@@ -286,12 +291,21 @@ newLeiosDBSQLiteFromEnv = do
 -- NOTE: All call sites of the handle will share a single database connection.
 -- This might be undesired if we switch to WAL mode where readers would not be
 -- blocked by writers.
+--
+-- TODO: Get rid of SQLOpenFullMutex and use proper concurrency control.
 newLeiosDBSQLite :: FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLite dbPath = do
-  -- TODO: not leak resources (the db connection)
   shouldInitSchema <- not <$> doesFileExist dbPath
-  putStrLn "Opening sqlite in full mutex mode"
   db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate, SQLOpenFullMutex] SQLVFSDefault
+  traverse_ (dbExec db) $
+    [ "pragma journal_mode = WAL;"
+    , -- This would probably be fine to set unless we care very strongly about consistency in the
+      -- event of sudden power / disk failure:
+      -- , "pragma synchronous = normal;"
+
+      "pragma page_size = 32768;"
+    , "pragma mmap_size = 268435500;"
+    ]
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
   dbExec db (fromString sql_attach_memTxPoints)
@@ -417,7 +431,7 @@ newLeiosDBSQLite dbPath = do
           dbWithPrepare db (fromString sql_flush_memTxPoints) $ \stmtFlush -> do
             dbStep1 stmtFlush
           pure results
-      , leiosDbFilterMissingEbBodies = \points ->
+      , leiosDbFilterMissingEbBodies = \points -> do
           -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries.
           dbWithBEGIN db $ do
             let pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
@@ -439,7 +453,7 @@ newLeiosDBSQLite dbPath = do
             dbWithPrepare db (fromString sql_flush_memEbHashes) $ \stmtFlush ->
               dbStep1 stmtFlush
             pure result
-      , leiosDbFilterMissingTxs = \txHashes ->
+      , leiosDbFilterMissingTxs = \txHashes -> do
           -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
           --   WHERE t.txHashBytes IN (SELECT unhex(value) FROM json_each(?))
           -- This would eliminate the need for mem.txHashes table and insert/flush overhead.
@@ -486,6 +500,7 @@ newLeiosDBSQLite dbPath = do
                       loop ((MkLeiosPoint slot ebHash, [(txOffset, txHash, txBytesSize)]) : acc)
             loop []
           pure LeiosFetchWork{missingEbBodies, missingEbTxs}
+      , leiosDbClose = void $ DB.close db
       }
 
 sql_schema :: String
@@ -498,7 +513,7 @@ sql_schema =
   \    ebBytesSize INTEGER NOT NULL\n\
   \  ,\n\
   \    PRIMARY KEY (ebSlot, ebHashBytes)\n\
-  \  ) WITHOUT ROWID;\n\
+  \  );\n\
   \CREATE INDEX idx_ebPoints_ebHashBytes ON ebPoints(ebHashBytes);\n\
   \CREATE TABLE ebTxs (\n\
   \    ebHashBytes BLOB NOT NULL   -- foreign key ebPoints.ebHashBytes\n\
@@ -510,7 +525,7 @@ sql_schema =
   \    txBytesSize INTEGER NOT NULL\n\
   \  ,\n\
   \    PRIMARY KEY (ebHashBytes, txOffset)\n\
-  \  ) WITHOUT ROWID;\n\
+  \  );\n\
   \CREATE INDEX idx_ebTxs_txHashBytes ON ebTxs(txHashBytes);\n\
   \CREATE TABLE txs (\n\
   \    txHashBytes BLOB NOT NULL PRIMARY KEY\n\
@@ -518,7 +533,7 @@ sql_schema =
   \    txBytes BLOB NOT NULL\n\
   \  ,\n\
   \    txBytesSize INTEGER NOT NULL\n\
-  \  ) WITHOUT ROWID;\n\
+  \  );\n\
   \"
 
 sql_scan_ebPoints :: String
@@ -582,7 +597,6 @@ sql_insert_memEbHashes :: String
 sql_insert_memEbHashes =
   "INSERT INTO mem.ebHashes (ebHashBytes) VALUES (?)"
 
--- | Filter: return ebHashes from temp table that have bodies in ebTxs
 -- | Filter: return ebHashes from temp table that do NOT have bodies in ebTxs
 sql_filter_missing_eb_bodies :: String
 sql_filter_missing_eb_bodies =
@@ -600,7 +614,6 @@ sql_insert_memTxHashes :: String
 sql_insert_memTxHashes =
   "INSERT INTO mem.txHashes (txHashBytes) VALUES (?)"
 
--- | Filter: return txHashes from temp table that exist in txs
 -- | Filter: return txHashes from temp table that do NOT exist in txs
 sql_filter_missing_txs :: String
 sql_filter_missing_txs =
