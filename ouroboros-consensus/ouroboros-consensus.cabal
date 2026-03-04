@@ -854,7 +854,12 @@ benchmark leios-bench
   main-is: Main.hs
   build-depends:
     base,
+    bytestring,
     criterion,
+    deepseq,
+    directory,
+    ouroboros-consensus,
+    temporary,
 
 test-suite doctest
   import: common-test
