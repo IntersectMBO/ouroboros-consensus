@@ -11,6 +11,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.NodeKernel
   ( -- * Node kernel
@@ -101,11 +102,23 @@ import Ouroboros.Consensus.Node.Genesis
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.Peras.Vote (TraceVotingEvent (..))
+import Ouroboros.Consensus.Peras.Voting.Rules
+  ( PerasVotingRulesDecision (..)
+  , isPerasVotingAllowed
+  )
+import Ouroboros.Consensus.Peras.Voting.View
+  ( PerasQryException (..)
+  , PerasVotingView (..)
+  , mkPerasVotingView
+  , runPerasQry
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
   , ChainDB
   )
+import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB (..), AddPerasCertResult (..))
+import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB (..), AddPerasVoteResult (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
@@ -444,9 +457,10 @@ initNodeKernel
         go blockForging'
 
 voteMintingController ::
-  forall m remotePeer localPeer blk.
+  forall m remotePeer localPeer blk cert.
   ( IOLike m
-  , HasHardForkHistory blk
+  , GetHeader blk, HasHardForkHistory blk
+  , cert ~ WithArrivalTime (ValidatedPerasCert blk)
   ) =>
   InternalState m remotePeer localPeer blk ->
   SlotNo ->
@@ -454,42 +468,153 @@ voteMintingController ::
 voteMintingController IS{..} slotNo = do
   extLedgerState <- lift $ atomically $ ChainDB.getCurrentLedger chainDB
   let summary = hardForkSummary (configLedger cfg) (ledgerState extLedgerState)
-  slotIndex <- case History.runQuery (History.slotToPerasRoundNo slotNo) summary of
-    Right (History.PerasEnabled (_roundNo, slotIndex, _remainder)) -> pure slotIndex
+  (roundNo, slotIndex) <- case History.runQuery (History.slotToPerasRoundNo slotNo) summary of
+    Right (History.PerasEnabled (roundNo, slotIndex, _remainder)) -> pure (roundNo, slotIndex)
     Right History.NoPerasEnabled -> do
       trace $ TraceNoPerasEnabledAtSlot slotNo
       exitEarly
-    Left err@History.PastHorizon{} -> throwIO err -- TODO: should we panic instead? This PastHorizonException error should theoretically not happen for a slot we are currently in
+    Left err -> queryError err
   when (slotIndex /= 0) $ do
-    trace $ TraceNoVoteAfterFirstSlotInRound slotIndex
+    trace $ TraceNoVoteAfterFirstSlotInRound roundNo slotIndex
     exitEarly
 
-  -- Are we elected in the committee for this round?
-  committeeSelectionData <- retrieveCommitteeSelectionData
+  perasCfg <- lift retrievePerasParams
+  (block :: Point blk) <- lift retrieveVoteCandidate
 
-  shouldVoteResult <- shouldVoteFromCommitteeSelectionData committeeSelectionData
+  -- TODO:
+  -- * Create VoteDB
+  -- * Create CertDB
+  -- * Add both to the internal state, probably?
+  PerasVoteDB{addVote} <- lift retrieveVoteDB
+  PerasCertDB{addCert} <- lift retrieveCertDB
 
-  ShouldVote voteProof reason
-  Shouldn'tVote reason
+  let votingViewQry = mkPerasVotingView
+        (toPerasParams perasCfg)
+        roundNo
+        undefined
+        undefined
+        undefined
 
-  vote <- throwLeft (forgePerasVoteIfElligible committeeSelectionData) >>= \case
-    Nothing -> do
-      trace $ TraceNoVoteBecauseNotSelected slotNo
+  (votingView :: PerasVotingView cert) <- case runPerasQry summary votingViewQry of
+    Right view -> pure view
+    Left PerasQryExceptionPerasDisabled -> do
+      trace $ TraceNoPerasEnabledAtSlot slotNo
       exitEarly
-    Just (vote, reason) -> pure vote
+    Left (PerasQryExceptionPastHorizon err) -> queryError err
 
-  undefined
+  -- Do the voting rules state that we should vote?
+  let votingDecision = isPerasVotingAllowed votingView
+
+  trace $ TraceVotingRuleEvent votingDecision
+
+  case votingDecision of
+    NoVote _ -> exitEarly
+    Vote _ -> pure ()
+
+  -- Are we elected in the committee for this round?
+  csData <- lift retrieveCommitteeSelectionData
+  myId <- lift retrieveVotingId
+  myPrivateData <- lift retrieveMyPrivateData
+
+  committeeMember <- case isCommitteeMember csData myId myPrivateData of
+    Nothing -> do
+      trace $ TraceNotElectedInRound roundNo
+      exitEarly
+    Just cm -> pure cm
+
+  trace $ TraceCommitteeSelectionEvent committeeMember
+
+  (time :: RelativeTime) <- case History.runQuery (History.slotToWallclock slotNo) summary of
+    Right (relTime, _) -> pure relTime
+    Left err -> queryError err
+
+  let vote = WithArrivalTime
+        { getArrivalTime = time
+        , forgetArrivalTime = forgePerasVoteForMember
+            perasCfg
+            committeeMember
+            roundNo
+            block
+        }
+
+  -- Add vote to DB
+  result <- lift $ atomically $ addVote vote
+  cert <- lift result >>= \case
+    PerasVoteAlreadyInDB ->
+      -- Error case: we've just minted the vote, it shouldn't exist already
+      error "TODO: replace with proper exception"
+    AddedPerasVoteButDidntGenerateNewCert ->
+      exitEarly
+    AddedPerasVoteAndGeneratedNewCert cert -> pure $ WithArrivalTime
+        { getArrivalTime = time
+        , forgetArrivalTime = cert
+        }
+
+  -- Add cert to DB
+  lift $ addCert cert >>= \case
+    PerasCertAlreadyInDB ->
+      -- Error case: we've just forged the cert, it shouldn't exist already
+      error "TODO: replace with proper exception"
+    AddedPerasCertToDB -> pure ()
 
   where
-    throwLeft :: Exception e => Either e a -> m a
-    throwLeft = either throwIO pure
-
-    retrieveCommitteeSelectionData :: m CommitteeSelectionData
-
     trace :: TraceVotingEvent -> WithEarlyExit m ()
     trace = lift . traceWith (votingLogicTracer tracers)
 
+    -- TODO: should we panic instead?
+    -- We are only running queries relative to the current slotNo,
+    -- we should never be past the forecast horizon.
+    queryError :: History.PastHorizonException -> WithEarlyExit m a
+    queryError err = throwIO err
+
+    -- TODO: fill in these functions once we can
+    retrieveCommitteeSelectionData :: m CommitteeSelectionData
+    retrieveCommitteeSelectionData = undefined
+
+    retrieveVotingId :: m CommitteeId
+    retrieveVotingId = undefined
+
+    retrieveMyPrivateData :: m CommitteeCandidatePrivateData
+    retrieveMyPrivateData = undefined
+
+    retrievePerasParams :: m (PerasCfg blk)
+    retrievePerasParams = undefined
+
+    retrieveVoteCandidate :: m (Point blk)
+    retrieveVoteCandidate = undefined
+
+    retrieveVoteDB :: m (PerasVoteDB m blk)
+    retrieveVoteDB = undefined
+
+    retrieveCertDB :: m (PerasCertDB m blk)
+    retrieveCertDB = undefined
+
+    toPerasParams :: PerasCfg blk -> PerasParams
+    toPerasParams = undefined
+
+-- Placeholder data from upcoming committee selection interface
+
+    isCommitteeMember ::
+      CommitteeSelectionData ->
+      CommitteeId ->
+      CommitteeCandidatePrivateData ->
+      Maybe CommitteeMember
+    isCommitteeMember = undefined
+
+    forgePerasVoteForMember ::
+      PerasCfg blk ->
+      CommitteeMember ->
+      PerasRoundNo ->
+      Point blk ->
+      ValidatedPerasVote blk
+    forgePerasVoteForMember = undefined
+
 data CommitteeSelectionData
+data CommitteeId
+data CommitteeCandidatePrivateData
+type CommitteeMember = ()
+
+-- End placeholder data
 
 castTraceFetchDecision ::
   forall remotePeer blk.
