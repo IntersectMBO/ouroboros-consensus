@@ -3,7 +3,7 @@
 let
   inherit (pkgs) lib haskell-nix;
   inherit (haskell-nix) haskellLib;
-  buildSystem = pkgs.buildPlatform.system;
+  buildSystem = pkgs.stdenv.buildPlatform.system;
 
   mkHaskellJobsFor = hsPkgs:
     let
