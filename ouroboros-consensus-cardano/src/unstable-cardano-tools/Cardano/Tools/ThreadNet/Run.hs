@@ -94,36 +94,114 @@ data Opts = Opts
   deriving stock (Show, Eq, Generic)
   deriving anyclass (ToJSON, FromJSON)
 
+run :: HasCallStack => Opts -> IO ()
+run Opts{..} = do
+  writeJson "foo-example-threadnet.config" exampleThreadNetConfig -- TODO(bladyjoker): Remove this (currently useful)
+  threadNetConfig <- readJson threadNetConfigFile
+  threadNet <- processThreadNetConfig threadNetConfig
+
+  let
+    testOutput =
+      runThreadNet $
+        RunThreadNetArgs
+          { rtnaSlots = slots
+          , rtnaTxsPerSlot = txsPerSlot
+          , rtnaThreadNet = threadNet
+          }
+
+  print $ Map.lookupMax . testOutputTipBlockNos $ testOutput
+
+  return ()
+
+data RunThreadNetArgs = RunThreadNetArgs
+  { rtnaSlots :: Integer
+  , rtnaTxsPerSlot :: Integer
+  , rtnaThreadNet :: ThreadNet
+  }
+
+runThreadNet :: HasCallStack => RunThreadNetArgs -> TestOutput (CardanoBlock StandardCrypto)
+runThreadNet args@RunThreadNetArgs{..} =
+  let
+    numCoreNodes = NumCoreNodes . fromIntegral . length . tnCoreNodes $ rtnaThreadNet
+    testConfig =
+      TestConfig
+        { numSlots = NumSlots $ fromIntegral rtnaSlots
+        , numCoreNodes
+        , nodeTopology = tnTopology rtnaThreadNet
+        , initSeed = Seed 0
+        }
+
+    (pinfo, _) = protocolInfoCardano @_ @IO (cnCardanoProtocolParams . head . tnCoreNodes $ rtnaThreadNet) -- TODO(bladyjoker): Only to extract slot/epoch info
+    shelleyGenesis :: ShelleyGenesis =
+      shelleyLedgerGenesis
+        . shelleyLedgerConfig
+        . ( \(CardanoLedgerConfig _cfgByron cfgShelley _cfgAllegra _cfgMary _cfgAlonzo _cfgBabbage _cfgConway) -> cfgShelley
+          )
+        . topLevelConfigLedger
+        . pInfoConfig
+        $ pinfo
+    slotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength shelleyGenesis
+    epochLength = sgEpochLength shelleyGenesis
+
+    testConfigB =
+      TestConfigB
+        { forgeEbbEnv = Nothing
+        , future =
+            EraFinal slotLength epochLength
+        , messageDelay = noCalcMessageDelay
+        , nodeJoinPlan = trivialNodeJoinPlan numCoreNodes
+        , nodeRestarts = noRestarts
+        , txGenExtra = args
+        , version = newestVersion (Proxy :: Proxy (CardanoBlock StandardCrypto))
+        }
+   in
+    runTestNetwork
+      testConfig
+      testConfigB
+      TestConfigMB
+        { nodeInfo = \(CoreNodeId ix) ->
+            let (protocolInfo, blockForging) =
+                  protocolInfoCardano . cnCardanoProtocolParams . (!! fromIntegral ix) . tnCoreNodes $ rtnaThreadNet
+             in TestNodeInitialization
+                  { tniProtocolInfo = protocolInfo
+                  , tniCrucialTxs = []
+                  , tniBlockForging = blockForging
+                  }
+        , mkRekeyM = Nothing
+        }
+
+-- * ThreadNet configuration
+
 exampleThreadNetConfig :: ThreadNetConfig
 exampleThreadNetConfig =
   ThreadNetConfig
     { tncCoreNodes =
         [ CoreNodeConfig
             { cncVrfSigningKey =
-                "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool1/vrf.skey"
+                "run-threadnet-example-config/pools-keys/pool1/vrf.skey"
             , cncKesSigningKey =
-                "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool1/kes.skey"
+                "run-threadnet-example-config/pools-keys/pool1/kes.skey"
             , cncOCert =
-                "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool1/opcert.cert"
+                "run-threadnet-example-config/pools-keys/pool1/opcert.cert"
             , cncCardanoConfig = "test-config/config.json"
             }
         , CoreNodeConfig
             { cncVrfSigningKey =
-                "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool2/vrf.skey"
+                "run-threadnet-example-config/pools-keys/pool2/vrf.skey"
             , cncKesSigningKey =
-                "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool2/kes.skey"
+                "run-threadnet-example-config/pools-keys/pool2/kes.skey"
             , cncOCert =
-                "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool2/opcert.cert"
-            , cncCardanoConfig = "test-config/config.json"
+                "run-threadnet-example-config/pools-keys/pool2/opcert.cert"
+            , cncCardanoConfig = "run-threadnet-example-config/config.json"
             }
         , CoreNodeConfig
             { cncVrfSigningKey =
-                "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool3/vrf.skey"
+                "run-threadnet-example-config/pools-keys/pool3/vrf.skey"
             , cncKesSigningKey =
-                "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool3/kes.skey"
+                "run-threadnet-example-config/pools-keys/pool3/kes.skey"
             , cncOCert =
-                "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/pools-keys/pool3/opcert.cert"
-            , cncCardanoConfig = "test-config/config.json"
+                "run-threadnet-example-config/pools-keys/pool3/opcert.cert"
+            , cncCardanoConfig = "run-threadnet-example-config/config.json"
             }
         ]
     , tncTopology =
@@ -139,7 +217,7 @@ exampleThreadNetConfig =
                 TransferAllConfigKind $
                   TransferAllConfig
                     { tacPaymentSigningKey =
-                        "/home/bladyjoker/github/input-output-hk/ouroboros-leios/demo/proto-devnet/config/stake-delegators/delegator2/payment.skey"
+                        "run-threadnet-example-config/stake-delegators/delegator2/payment.skey"
                     }
             }
         ]
@@ -242,7 +320,7 @@ processTransferAllConfig TransferAllConfig{..} = do
         tacPaymentSigningKey
 
   taPaymentSigningKey <-
-    either (\err -> die . show $ ("failed reading psk: ", err, callStack)) return errOrPsk
+    either (\err -> die . show $ ("Failed reading psk: ", err, callStack)) return errOrPsk
   return $ TransferAll{taPaymentSigningKey}
 
 processCoreNodeConfig :: HasCallStack => CoreNodeConfig -> IO CoreNode
@@ -267,82 +345,6 @@ processCoreNodeConfig CoreNodeConfig{..} = do
     mkCardanoProtocolParams creds (Cardano.CardanoBlockArgs cncCardanoConfig Nothing)
 
   return $ CoreNode cardanoProtocolParams
-
-run :: HasCallStack => Opts -> IO ()
-run Opts{..} = do
-  writeJson "foo-example-threadnet.config" exampleThreadNetConfig -- TODO(bladyjoker): Remove this (currently useful)
-  threadNetConfig <- readJson threadNetConfigFile
-  threadNet <- processThreadNetConfig threadNetConfig
-
-  let
-    testOutput =
-      runThreadNet $
-        RunThreadNetArgs
-          { rtnaSlots = slots
-          , rtnaTxsPerSlot = txsPerSlot
-          , rtnaThreadNet = threadNet
-          }
-
-  print $ Map.lookupMax . testOutputTipBlockNos $ testOutput
-
-  return ()
-
-data RunThreadNetArgs = RunThreadNetArgs
-  { rtnaSlots :: Integer
-  , rtnaTxsPerSlot :: Integer
-  , rtnaThreadNet :: ThreadNet
-  }
-
-runThreadNet :: HasCallStack => RunThreadNetArgs -> TestOutput (CardanoBlock StandardCrypto)
-runThreadNet args@RunThreadNetArgs{..} =
-  let
-    numCoreNodes = NumCoreNodes . fromIntegral . length . tnCoreNodes $ rtnaThreadNet
-    testConfig =
-      TestConfig
-        { numSlots = NumSlots $ fromIntegral rtnaSlots
-        , numCoreNodes
-        , nodeTopology = tnTopology rtnaThreadNet
-        , initSeed = Seed 0
-        }
-
-    (pinfo, _) = protocolInfoCardano @_ @IO (cnCardanoProtocolParams . head . tnCoreNodes $ rtnaThreadNet) -- TODO(bladyjoker): Only to extract slot/epoch info
-    shelleyGenesis :: ShelleyGenesis =
-      shelleyLedgerGenesis
-        . shelleyLedgerConfig
-        . ( \(CardanoLedgerConfig _cfgByron cfgShelley _cfgAllegra _cfgMary _cfgAlonzo _cfgBabbage _cfgConway) -> cfgShelley
-          )
-        . topLevelConfigLedger
-        . pInfoConfig
-        $ pinfo
-    slotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength shelleyGenesis
-    epochLength = sgEpochLength shelleyGenesis
-
-    testConfigB =
-      TestConfigB
-        { forgeEbbEnv = Nothing
-        , future =
-            EraFinal slotLength epochLength
-        , messageDelay = noCalcMessageDelay
-        , nodeJoinPlan = trivialNodeJoinPlan numCoreNodes
-        , nodeRestarts = noRestarts
-        , txGenExtra = args
-        , version = newestVersion (Proxy :: Proxy (CardanoBlock StandardCrypto))
-        }
-   in
-    runTestNetwork
-      testConfig
-      testConfigB
-      TestConfigMB
-        { nodeInfo = \(CoreNodeId ix) ->
-            let (protocolInfo, blockForging) =
-                  protocolInfoCardano . cnCardanoProtocolParams . (!! fromIntegral ix) . tnCoreNodes $ rtnaThreadNet
-             in TestNodeInitialization
-                  { tniProtocolInfo = protocolInfo
-                  , tniCrucialTxs = []
-                  , tniBlockForging = blockForging
-                  }
-        , mkRekeyM = Nothing
-        }
 
 -- * Transaction generators
 
@@ -419,20 +421,20 @@ transferAllTx (txOut, txOutRef, pparams, paymentKeyPair) = \tx ->
     txBody' =
       (tx ^. SL.bodyTxL)
         & SL.inputsTxBodyL
-        .~ Set.singleton txOutRef
+          .~ Set.singleton txOutRef
         & SL.outputsTxBodyL
-        .~ StrictSeq.fromList
-          [ SL.mkBasicTxOut (txOut ^. SL.addrTxOutL) (inject outCoin)
-          ]
+          .~ StrictSeq.fromList
+            [ SL.mkBasicTxOut (txOut ^. SL.addrTxOutL) (inject outCoin)
+            ]
         & SL.feeTxBodyL
-        .~ feeCoin
+          .~ feeCoin
    in
     if outCoin > inCoin
-      then error "spent all"
+      then error "spent all" -- FIX(bladyjoker): Tx building must be able to graciously fail
       else
         tx
           & SL.bodyTxL
-          .~ txBody'
+            .~ txBody'
           & signTx paymentKeyPair
 
 -- * Transaction building utils
@@ -449,10 +451,10 @@ signTx paymentKeyPair tx =
   let txBody = tx ^. SL.bodyTxL
    in tx
         & (SL.witsTxL . SL.addrTxWitsL)
-        .~ ( Set.fromList
-               [ TL.mkWitnessVKey (hashAnnotated txBody) paymentKeyPair
-               ]
-           )
+          .~ ( Set.fromList
+                 [ TL.mkWitnessVKey (hashAnnotated txBody) paymentKeyPair
+                 ]
+             )
 
 getUTxOs ::
   LedgerState
