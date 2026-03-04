@@ -498,10 +498,10 @@ instance
          in case v15Encoding of
               True
                 | BigLedgerPeers <- kind ->
-                    SomeLedgerPeerSnapshot Proxy $ LedgerBigPeerSnapshotV23 point magic bigLedgerPools
+                    SomeLedgerPeerSnapshot $ LedgerBigPeerSnapshotV23 point magic bigLedgerPools
                 | AllLedgerPeers <- kind ->
-                    SomeLedgerPeerSnapshot Proxy $ LedgerAllPeerSnapshotV23 point magic allPools
-              False -> SomeLedgerPeerSnapshot Proxy $ LedgerPeerSnapshotV2 (getTipSlot lst, bigLedgerPools)
+                    SomeLedgerPeerSnapshot $ LedgerAllPeerSnapshotV23 point magic allPools
+              False -> SomeLedgerPeerSnapshot $ LedgerPeerSnapshotV2 (getTipSlot lst, bigLedgerPools)
       QueryStakePoolDefaultVote stakePool ->
         SL.queryStakePoolDefaultVote st stakePool
       GetPoolDistr2 mPoolIds ->
