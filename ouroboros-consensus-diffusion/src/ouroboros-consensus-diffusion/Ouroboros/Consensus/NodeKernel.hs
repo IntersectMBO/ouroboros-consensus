@@ -109,6 +109,7 @@ import Ouroboros.Consensus.Peras.Voting.Rules
 import Ouroboros.Consensus.Peras.Voting.View
   ( PerasQryException (..)
   , PerasVotingView (..)
+  , WithBoostedBlockStatus (..)
   , mkPerasVotingView
   , runPerasQry
   )
@@ -481,21 +482,41 @@ voteMintingController IS{..} slotNo = do
     exitEarly
 
   perasCfg <- lift retrievePerasParams
-  (block :: Point blk) <- lift retrieveVoteCandidate
+  (candidateBlock :: Point blk) <- lift retrieveVoteCandidate
 
-  -- TODO:
-  -- * Create VoteDB
-  -- * Create CertDB
-  -- * Add both to the internal state, probably?
-  PerasVoteDB{addVote} <- lift retrieveVoteDB
-  PerasCertDB{addCert} <- lift retrieveCertDB
+  let PerasVoteDB{addVote} = voteDB
+      PerasCertDB
+        { addCert
+        , getLatestCertSeen
+        } = certDB
 
+  -- Retrieve all data for mkPerasVotingView in a single transaction
+  (latestCertSeen, latestCertOnChainRound, chainAtCandidateBlock) <- lift $ atomically $ do
+    currentChain <- ChainDB.getCurrentChain chainDB
+    latestCertSeen <- getLatestCertSeen >>= \case
+      Nothing -> pure Origin
+      Just cert -> do
+        let PerasCert{pcCertBoostedBlock = boostedBlock} = vpcCert $ forgetArrivalTime cert
+        -- REVIEW: is @castPoint@ correct here?
+        -- The problem is I'm trying to find a @Point blk@ in an @AnchoredFragment (Header blk)@
+        -- Maybe we should use @Point (Header blk)@ everywhere?
+        case (AF.castPoint boostedBlock) `AF.pointOnFragment` currentChain of
+          True -> pure $ NotOrigin $ CertWithVolatileBlock cert
+          False -> pure $ NotOrigin $ CertWithImmutableBlock cert
+
+    latestCertOnChainRound <- (maybe Origin NotOrigin) <$> getLatestPerasCertOnChainRound chainDB
+
+    chainAtCandidateBlock <- case AF.splitAfterPoint currentChain candidateBlock of
+      Nothing -> error "candidate block is not on volatile suffix"
+      Just (prefix, _suffix) -> pure prefix
+
+    pure (latestCertSeen, latestCertOnChainRound, chainAtCandidateBlock)
   let votingViewQry = mkPerasVotingView
         (toPerasParams perasCfg)
         roundNo
-        undefined
-        undefined
-        undefined
+        latestCertSeen
+        latestCertOnChainRound
+        chainAtCandidateBlock
 
   (votingView :: PerasVotingView cert) <- case runPerasQry summary votingViewQry of
     Right view -> pure view
@@ -536,7 +557,7 @@ voteMintingController IS{..} slotNo = do
             perasCfg
             committeeMember
             roundNo
-            block
+            candidateBlock
         }
 
   -- Add vote to DB
@@ -585,14 +606,12 @@ voteMintingController IS{..} slotNo = do
     retrieveVoteCandidate :: m (Point blk)
     retrieveVoteCandidate = undefined
 
-    retrieveVoteDB :: m (PerasVoteDB m blk)
-    retrieveVoteDB = undefined
-
-    retrieveCertDB :: m (PerasCertDB m blk)
-    retrieveCertDB = undefined
-
     toPerasParams :: PerasCfg blk -> PerasParams
     toPerasParams = undefined
+
+    -- Awaiting [Peras 17](https://github.com/IntersectMBO/ouroboros-consensus/pull/1864)
+    getLatestPerasCertOnChainRound :: ChainDB m blk -> STM m (Maybe PerasRoundNo)
+    getLatestPerasCertOnChainRound = undefined
 
 -- Placeholder data from upcoming committee selection interface
 
@@ -641,6 +660,8 @@ data InternalState m addrNTN addrNTC blk = IS
   , registry :: ResourceRegistry m
   , btime :: BlockchainTime m
   , chainDB :: ChainDB m blk
+  , voteDB :: PerasVoteDB m blk
+  , certDB :: PerasCertDB m blk
   , blockFetchInterface ::
       BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
   , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
@@ -664,6 +685,8 @@ initInternalState
   NodeKernelArgs
     { tracers
     , chainDB
+    , voteDB
+    , certDB
     , registry
     , cfg
     , blockFetchSize
