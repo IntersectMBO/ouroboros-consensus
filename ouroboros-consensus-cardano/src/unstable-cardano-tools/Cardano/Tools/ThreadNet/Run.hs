@@ -38,10 +38,11 @@ import Cardano.Node.Protocol.Shelley (readLeaderCredentials)
 import Cardano.Node.Types (ProtocolFilepaths (..))
 import Cardano.Tools.DBAnalyser.Block.Cardano (mkCardanoProtocolParams)
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
-import Control.Monad (forM, guard)
+import Control.Monad (forM, forM_, guard)
 import Control.Monad.Except (runExceptT)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
+import Data.Functor.Identity (Identity (runIdentity))
 import Data.List (transpose, uncons)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -50,7 +51,10 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Debug.Trace as Debug
 import GHC.Generics (Generic)
+import GHC.IO.Handle (Handle)
+import GHC.IO.IOMode (IOMode (WriteMode))
 import GHC.Stack (HasCallStack, callStack)
+import LeiosDemoDb (InMemoryLeiosDb (..))
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -60,13 +64,14 @@ import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams, protocolInfoCard
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract (ValuesMK, getValuesMK)
 import Ouroboros.Consensus.Node.ProtocolInfo
-import Ouroboros.Consensus.NodeId (CoreNodeId (CoreNodeId))
+import Ouroboros.Consensus.NodeId (CoreNodeId (CoreNodeId), unCoreNodeId)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger hiding (getPParams)
 import qualified Ouroboros.Consensus.Shelley.Ledger.Ledger as SL
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
 import System.Exit (die)
+import System.IO (hClose, hFlush, hPutStrLn, openFile)
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..))
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
 import Test.Cardano.Ledger.Shelley.Generator.ShelleyEraGen ()
@@ -74,7 +79,10 @@ import Test.QuickCheck (Gen)
 import Test.ThreadNet.General
 import Test.ThreadNet.Infra.Shelley ()
 import Test.ThreadNet.Network
-  ( TestNodeInitialization (..)
+  ( NodeOutput (..)
+  , TestNodeInitialization (..)
+  , TraceThreadNet (..)
+  , leiosDb
   )
 import Test.ThreadNet.TxGen (TxGen (..))
 import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
@@ -109,7 +117,29 @@ run Opts{..} = do
           , rtnaThreadNet = threadNet
           }
 
+  putStrLn "*** Tips"
   print $ Map.lookupMax . testOutputTipBlockNos $ testOutput
+
+  print "*** Outputting log files"
+
+  -- FIXME(bladyjoker): When the threadnet evaluation fails there's no logs to be seen, defeats the purpose I'd say.
+  _ <- forM_ (allTraces testOutput) $ \tr -> do
+    let
+      ix = unCoreNodeId . fromNodeId $ tr
+      logHandle = cnLog . (!! fromIntegral ix) . tnCoreNodes $ threadNet
+    hPutStrLn logHandle (show . fromNodeEvent $ tr)
+    hFlush logHandle
+
+  _ <- forM_ (tnCoreNodes threadNet) (hClose . cnLog)
+
+  putStrLn "*** Leios"
+
+  print $
+    ("eb-slotno", imEbSlots . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
+  print $
+    ("eb-points", imEbPoints . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
+  print $
+    ("eb-txs", length . imTxs . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
 
   return ()
 
@@ -187,6 +217,7 @@ exampleThreadNetConfig =
             , cncOCert =
                 "run-threadnet-example-config/pools-keys/pool1/opcert.cert"
             , cncCardanoConfig = "test-config/config.json"
+            , cncLog = "node1.log"
             }
         , CoreNodeConfig
             { cncVrfSigningKey =
@@ -196,6 +227,7 @@ exampleThreadNetConfig =
             , cncOCert =
                 "run-threadnet-example-config/pools-keys/pool2/opcert.cert"
             , cncCardanoConfig = "run-threadnet-example-config/config.json"
+            , cncLog = "node2.log"
             }
         , CoreNodeConfig
             { cncVrfSigningKey =
@@ -205,6 +237,7 @@ exampleThreadNetConfig =
             , cncOCert =
                 "run-threadnet-example-config/pools-keys/pool3/opcert.cert"
             , cncCardanoConfig = "run-threadnet-example-config/config.json"
+            , cncLog = "node3.log"
             }
         ]
     , tncTopology =
@@ -239,6 +272,7 @@ data CoreNodeConfig = CoreNodeConfig
   , cncKesSigningKey :: FilePath
   , cncOCert :: FilePath
   , cncCardanoConfig :: FilePath
+  , cncLog :: FilePath
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass (ToJSON, FromJSON)
@@ -266,8 +300,9 @@ data ThreadNet = ThreadNet
   , tnTxGenerators :: [TxGenerator]
   }
 
-newtype CoreNode = CoreNode
+data CoreNode = CoreNode
   { cnCardanoProtocolParams :: CardanoProtocolParams StandardCrypto
+  , cnLog :: Handle
   }
 
 data TxGenerator = TxGenerator
@@ -347,7 +382,8 @@ processCoreNodeConfig CoreNodeConfig{..} = do
   cardanoProtocolParams <-
     mkCardanoProtocolParams creds (Cardano.CardanoBlockArgs cncCardanoConfig Nothing)
 
-  return $ CoreNode cardanoProtocolParams
+  cnLog <- openFile cncLog WriteMode
+  return $ CoreNode cardanoProtocolParams cnLog
 
 -- * Transaction generators
 

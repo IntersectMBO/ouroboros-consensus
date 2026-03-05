@@ -4,19 +4,22 @@
             "cncCardanoConfig" : "run-threadnet-example-config/config.json",
             "cncKesSigningKey" : "run-threadnet-example-config/pools-keys/pool1/kes.skey",
             "cncOCert" : "run-threadnet-example-config/pools-keys/pool1/opcert.cert",
-            "cncVrfSigningKey" : "run-threadnet-example-config/pools-keys/pool1/vrf.skey"
+            "cncVrfSigningKey" : "run-threadnet-example-config/pools-keys/pool1/vrf.skey",
+            "cncLog": "node0.log"
         },
         {
             "cncCardanoConfig" : "run-threadnet-example-config/config.json",
             "cncKesSigningKey" : "run-threadnet-example-config/pools-keys/pool2/kes.skey",
             "cncOCert" : "run-threadnet-example-config/pools-keys/pool2/opcert.cert",
-            "cncVrfSigningKey" : "run-threadnet-example-config/pools-keys/pool2/vrf.skey"
+            "cncVrfSigningKey" : "run-threadnet-example-config/pools-keys/pool2/vrf.skey",
+            "cncLog": "node1.log"
         },
         {
             "cncCardanoConfig" : "run-threadnet-example-config/config.json",
             "cncKesSigningKey" : "run-threadnet-example-config/pools-keys/pool3/kes.skey",
             "cncOCert" : "run-threadnet-example-config/pools-keys/pool3/opcert.cert",
-            "cncVrfSigningKey" : "run-threadnet-example-config/pools-keys/pool3/vrf.skey"
+            "cncVrfSigningKey" : "run-threadnet-example-config/pools-keys/pool3/vrf.skey",
+            "cncLog": "node2.log"
         }
     ],
     "tncTopology" : {
