@@ -154,13 +154,10 @@ prop_leios_blocksProduced seed =
 
   leiosTraces = traces ^.. each . _nodeEvent . _FromLeios
 
-  forgedPoints =
-    Map.foldMapWithKey
-      (\slot eb -> Set.singleton $ MkLeiosPoint slot (hashLeiosEb eb))
-      forgedEBs
+  forgedPoints = Map.keysSet forgedEBs
 
   forgedEBs = Map.fromList . flip mapMaybe leiosTraces $ \case
-    TraceLeiosBlockForged{slot, eb} -> Just (slot, eb)
+    TraceLeiosBlockForged{slot, eb} -> Just (MkLeiosPoint slot (hashLeiosEb eb), eb)
     _ -> Nothing
 
   acquiredPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
