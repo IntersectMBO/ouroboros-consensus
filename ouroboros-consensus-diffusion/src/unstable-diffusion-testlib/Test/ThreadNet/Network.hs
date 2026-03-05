@@ -1469,6 +1469,20 @@ directedEdgeInner
                       NTN.aKeepAliveClient
                       NTN.aKeepAliveServer
                       (\_ -> pure ())
+                  , miniProtocol
+                      "LeiosFetch"
+                      neverReturns
+                      neverReturns
+                      NTN.aLeiosFetchClient
+                      NTN.aLeiosFetchServer
+                      (\_ -> pure ())
+                  , miniProtocol
+                      "LeiosNotify"
+                      neverReturns
+                      neverReturns
+                      NTN.aLeiosNotifyClient
+                      NTN.aLeiosNotifyServer
+                      (\_ -> pure ())
                   ]
    where
     getApp v =
