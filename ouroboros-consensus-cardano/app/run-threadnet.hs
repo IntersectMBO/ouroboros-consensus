@@ -4,23 +4,41 @@
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
-import Cardano.Tools.ThreadNet.Run (Opts (..))
-import qualified Cardano.Tools.ThreadNet.Run as RunThreadNet
+import Cardano.Tools.ThreadNet.Run (slots, threadNetConfigFile, txsPerSlot)
+import qualified Cardano.Tools.ThreadNet.Run as Run
 import Main.Utf8 (withStdTerminalHandles)
 import Options.Applicative
+
+data Opts
+  = Run Run.Opts
+  | DumpExampleConfig
 
 main :: IO ()
 main = withStdTerminalHandles $ do
   cryptoInit
-  RunThreadNet.run =<< execParser optsParser
+  res <- customExecParser (prefs showHelpOnEmpty) optsParserInfo
+  case res of
+    Run runOpts -> Run.run runOpts
+    DumpExampleConfig -> Run.writeExampleThreadNetConfig
 
-optsParser :: ParserInfo Opts
-optsParser =
-  info (helper <*> parse) $ fullDesc <> progDesc desc
+optsParserInfo :: ParserInfo Opts
+optsParserInfo =
+  info (helper <*> optsParser) $ fullDesc <> progDesc desc
  where
   desc = "Run ThreadNet, ie. run nodes in a simulated IO environment"
 
-  parse = do
+  optsParser =
+    hsubparser
+      ( command "run" (info (Run <$> runParser) (progDesc "Run the simulation"))
+          <> command
+            "dump-example-config"
+            ( info
+                (pure DumpExampleConfig)
+                (progDesc "Dump an example configuration file (example-threadnet.config)")
+            )
+      )
+
+  runParser = do
     threadNetConfigFile <-
       strOption $
         mconcat
@@ -48,7 +66,7 @@ optsParser =
           ]
 
     pure
-      Opts
+      Run.Opts
         { threadNetConfigFile
         , txsPerSlot
         , slots

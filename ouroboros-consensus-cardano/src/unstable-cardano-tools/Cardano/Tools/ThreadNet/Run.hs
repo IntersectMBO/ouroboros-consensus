@@ -21,6 +21,7 @@ module Cardano.Tools.ThreadNet.Run
   , ThreadNetConfig (..)
   , CoreNodeConfig (..)
   , run
+  , writeExampleThreadNetConfig
   ) where
 
 import Cardano.Api.Any (HasTypeProxy (proxyToAsType))
@@ -102,7 +103,6 @@ data Opts = Opts
 
 run :: HasCallStack => Opts -> IO ()
 run Opts{..} = do
-  writeJson "foo-example-threadnet.config" exampleThreadNetConfig -- TODO(bladyjoker): Remove this (currently useful)
   threadNetConfig <- readJson threadNetConfigFile
   threadNet <- processThreadNetConfig threadNetConfig
 
@@ -216,7 +216,7 @@ exampleThreadNetConfig =
                 "run-threadnet-example-config/pools-keys/pool1/kes.skey"
             , cncOCert =
                 "run-threadnet-example-config/pools-keys/pool1/opcert.cert"
-            , cncCardanoConfig = "test-config/config.json"
+            , cncCardanoConfig = "run-threadnet-example-config/config.json"
             , cncLog = "node1.log"
             }
         , CoreNodeConfig
@@ -258,6 +258,12 @@ exampleThreadNetConfig =
             }
         ]
     }
+
+writeExampleThreadNetConfig :: IO ()
+writeExampleThreadNetConfig = do
+  let configName = "example-threadnet.config"
+  putStrLn $ "Writing to " <> configName
+  writeJson configName exampleThreadNetConfig
 
 data ThreadNetConfig = ThreadNetConfig
   { tncCoreNodes :: [CoreNodeConfig]
