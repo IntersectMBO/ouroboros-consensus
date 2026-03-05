@@ -76,6 +76,7 @@ const sidebars = {
               },
               'howtos/adding_an_era',
               'howtos/versioning_a_new_query',
+              'howtos/inspecting_the_selection_of_a_node',
              ]
     }
   ],
