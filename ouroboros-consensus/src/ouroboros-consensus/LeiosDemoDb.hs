@@ -14,6 +14,7 @@ import Cardano.Prelude (Generic, foldM, forM_, maybeToList, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
+  , StrictTVar
   , dupTChan
   , modifyTVar
   , newBroadcastTChan
@@ -151,9 +152,13 @@ data EbTxEntry = EbTxEntry
 -- This is suitable for testing in IOSim.
 newLeiosDBInMemory :: IOLike m => m (LeiosDbHandle m)
 newLeiosDBInMemory = do
+  stateVar <- newTVarIO emptyInMemoryLeiosDb
+  newLeiosDBInMemoryWith stateVar
+
+newLeiosDBInMemoryWith :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDbHandle m)
+newLeiosDBInMemoryWith stateVar = do
   notificationChan <- atomically newBroadcastTChan
   let notify = writeTChan notificationChan
-  stateVar <- newTVarIO emptyInMemoryLeiosDb
   pure $
     LeiosDbHandle
       { subscribeEbNotifications =

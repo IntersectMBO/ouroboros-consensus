@@ -54,6 +54,7 @@ import Cardano.Network.PeerSelection.Bootstrap
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as Unchecked
 import qualified Control.Exception as Exn
 import Control.Monad
 import Control.Monad.Class.MonadTime.SI (MonadTime)
@@ -75,7 +76,11 @@ import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import GHC.Stack
-import LeiosDemoDb (InMemoryLeiosDb, emptyInMemoryLeiosDb, newLeiosDBInMemory)
+import LeiosDemoDb
+  ( InMemoryLeiosDb
+  , emptyInMemoryLeiosDb
+  , newLeiosDBInMemoryWith
+  )
 import LeiosDemoTypes (ForgedLeiosEb, TraceLeiosKernel)
 import Lens.Micro (SimpleFold, folding)
 import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
@@ -486,7 +491,7 @@ runThreadNetwork
       CoreNodeId ->
       VertexStatusVar m blk ->
       [EdgeStatusVar m] ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (StrictTVar m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m) ->
       StrictTVar m SlotNo ->
       m ()
     forkVertex
@@ -610,7 +615,7 @@ runThreadNetwork
       OracularClock m ->
       ResourceRegistry m ->
       VertexStatusVar m blk ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (StrictTVar m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m) ->
       StrictTVar m SlotNo ->
       m ()
     forkInstrumentation
@@ -836,7 +841,7 @@ runThreadNetwork
       ResourceRegistry m ->
       ProtocolInfo blk ->
       m [BlockForging m blk] ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (StrictTVar m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m) ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
       m
@@ -849,6 +854,7 @@ runThreadNetwork
       let NodeInfo
             { nodeInfoEvents
             , nodeInfoDBs
+            , nodeInfoLeios
             } = nodeInfo
 
       -- prop_general relies on these tracers
@@ -1054,7 +1060,8 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, psRng) = split rng
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
-      leiosDB <- newLeiosDBInMemory
+
+      leiosDB <- newLeiosDBInMemoryWith (leiosDb nodeInfoLeios)
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
@@ -1613,14 +1620,14 @@ deriving instance
 _emptyLeiosState :: LeiosState Identity
 _emptyLeiosState = LeiosState{leiosDb = pure emptyInMemoryLeiosDb}
 
-emptyLeiosStateTVar :: IOLike m => m (LeiosState (StrictTVar m))
+emptyLeiosStateTVar :: IOLike m => m (LeiosState (Unchecked.StrictTVar m))
 emptyLeiosStateTVar = atomically $ do
-  leiosDb <- newTVar emptyInMemoryLeiosDb
+  leiosDb <- Unchecked.newTVar emptyInMemoryLeiosDb
   return LeiosState{leiosDb}
 
-snapshotLeiosState :: IOLike m => LeiosState (StrictTVar m) -> m (LeiosState Identity)
+snapshotLeiosState :: IOLike m => LeiosState (Unchecked.StrictTVar m) -> m (LeiosState Identity)
 snapshotLeiosState ls = atomically $ do
-  leiosDb <- pure <$> readTVar (leiosDb ls)
+  leiosDb <- pure <$> Unchecked.readTVar (leiosDb ls)
   return LeiosState{leiosDb}
 
 -- | A vector with an @ev@-shaped element for a particular set of
@@ -1651,7 +1658,7 @@ newNodeInfo ::
   forall blk m.
   IOLike m =>
   m
-    ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (StrictTVar m)
+    ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m)
     , m (NodeInfo blk MockFS [] Identity)
     )
 newNodeInfo = do
