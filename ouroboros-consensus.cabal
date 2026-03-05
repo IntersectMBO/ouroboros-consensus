@@ -1052,11 +1052,9 @@ library diffusion
     Ouroboros.Consensus.Node.Run,
 
   build-depends:
-    aeson,
     base,
     bytestring,
     cardano-base,
-    cardano-binary,
     cardano-diffusion:{api, cardano-diffusion, protocols},
     cardano-slotting,
     cborg,
