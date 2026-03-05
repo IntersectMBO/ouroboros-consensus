@@ -14,7 +14,7 @@ module Test.LeiosDemoDb (tests) where
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadTChan)
 import Control.DeepSeq
-import Control.Exception (bracket, evaluate)
+import Control.Exception (bracket)
 import Control.Monad (forM, forM_, replicateM)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import qualified Data.ByteString as BS
