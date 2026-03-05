@@ -18,8 +18,8 @@ import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
-import qualified Test.LeiosDemoTypes (tests)
 import qualified Test.LeiosDemoDb (tests)
+import qualified Test.LeiosDemoTypes (tests)
 import Test.Tasty
 import Test.Util.TestEnv
   ( defaultMainWithTestEnv

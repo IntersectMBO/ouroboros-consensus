@@ -36,14 +36,11 @@ module Test.ThreadNet.General
   ) where
 
 import Control.Concurrent.Class.MonadSTM (atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception (assert, throw)
+import Control.Exception (assert)
 import Control.Monad (guard)
 import Control.Monad.IOSim
   ( runSimOrThrow
-  , runSimTrace
-  , selectTraceEventsDynamic
   , setCurrentTime
-  , traceResult
   )
 import Control.Tracer (Tracer (..), nullTracer)
 import qualified Data.Map.Strict as Map
@@ -66,7 +63,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
-import Ouroboros.Consensus.Util.IOLike (IOLike, SomeException, displayException, try)
+import Ouroboros.Consensus.Util.IOLike (IOLike, SomeException, try)
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain

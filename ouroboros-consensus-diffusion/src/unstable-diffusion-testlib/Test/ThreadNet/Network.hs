@@ -2,7 +2,10 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -42,6 +45,7 @@ module Test.ThreadNet.Network
   , _FromMempool
   , _FromLeios
   , mkTestOutput
+  , LeiosState (..)
   ) where
 
 import Cardano.Network.PeerSelection.Bootstrap
@@ -50,6 +54,7 @@ import Cardano.Network.PeerSelection.Bootstrap
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as Unchecked
 import qualified Control.Exception as Exn
 import Control.Monad
 import Control.Monad.Class.MonadTime.SI (MonadTime)
@@ -69,8 +74,13 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
+import GHC.Generics (Generic)
 import GHC.Stack
-import LeiosDemoDb (newLeiosDBInMemory)
+import LeiosDemoDb
+  ( InMemoryLeiosDb
+  , emptyInMemoryLeiosDb
+  , newLeiosDBInMemoryWith
+  )
 import LeiosDemoTypes (ForgedLeiosEb, TraceLeiosKernel)
 import Lens.Micro (SimpleFold, folding)
 import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
@@ -481,7 +491,7 @@ runThreadNetwork
       CoreNodeId ->
       VertexStatusVar m blk ->
       [EdgeStatusVar m] ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m) ->
       StrictTVar m SlotNo ->
       m ()
     forkVertex
@@ -605,7 +615,7 @@ runThreadNetwork
       OracularClock m ->
       ResourceRegistry m ->
       VertexStatusVar m blk ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m) ->
       StrictTVar m SlotNo ->
       m ()
     forkInstrumentation
@@ -831,7 +841,7 @@ runThreadNetwork
       ResourceRegistry m ->
       ProtocolInfo blk ->
       m [BlockForging m blk] ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m) ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
       m
@@ -844,6 +854,7 @@ runThreadNetwork
       let NodeInfo
             { nodeInfoEvents
             , nodeInfoDBs
+            , nodeInfoLeios
             } = nodeInfo
 
       -- prop_general relies on these tracers
@@ -1049,7 +1060,8 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, psRng) = split rng
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
-      leiosDB <- newLeiosDBInMemory
+
+      leiosDB <- newLeiosDBInMemoryWith (leiosDb nodeInfoLeios)
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
@@ -1589,10 +1601,34 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
   Node information not bound to lifetime of a specific node instance
 -------------------------------------------------------------------------------}
 
-data NodeInfo blk db ev = NodeInfo
+data NodeInfo blk db ev l = NodeInfo
   { nodeInfoEvents :: NodeEvents blk ev
   , nodeInfoDBs :: NodeDBs db
+  , nodeInfoLeios :: LeiosState l
   }
+
+-- `LeiosState` represents the part of the nodes' state that relates to Leios
+data LeiosState f = LeiosState
+  { leiosDb :: f InMemoryLeiosDb
+  }
+  deriving stock Generic
+
+deriving instance
+  (NoThunks (f InMemoryLeiosDb), NoThunks (f [TraceLeiosKernel])) =>
+  NoThunks (LeiosState f)
+
+_emptyLeiosState :: LeiosState Identity
+_emptyLeiosState = LeiosState{leiosDb = pure emptyInMemoryLeiosDb}
+
+emptyLeiosStateTVar :: IOLike m => m (LeiosState (Unchecked.StrictTVar m))
+emptyLeiosStateTVar = atomically $ do
+  leiosDb <- Unchecked.newTVar emptyInMemoryLeiosDb
+  return LeiosState{leiosDb}
+
+snapshotLeiosState :: IOLike m => LeiosState (Unchecked.StrictTVar m) -> m (LeiosState Identity)
+snapshotLeiosState ls = atomically $ do
+  leiosDb <- pure <$> Unchecked.readTVar (leiosDb ls)
+  return LeiosState{leiosDb}
 
 -- | A vector with an @ev@-shaped element for a particular set of
 -- instrumentation events
@@ -1622,8 +1658,8 @@ newNodeInfo ::
   forall blk m.
   IOLike m =>
   m
-    ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m)
-    , m (NodeInfo blk MockFS [])
+    ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m)
+    , m (NodeInfo blk MockFS [] Identity)
     )
 newNodeInfo = do
   (nodeInfoEvents, readEvents) <- do
@@ -1648,15 +1684,17 @@ newNodeInfo = do
     (v1, m1) <- mk
     (v2, m2) <- mk
     (v3, m3) <- mk
-    (v4, m4) <- mk
+    (v4 :: StrictTMVar m MockFS, m4 :: STM m MockFS) <- mk
     pure
       ( NodeDBs v1 v2 v3 v4
       , NodeDBs <$> m1 <*> m2 <*> m3 <*> m4
       )
 
+  nodeInfoLeios <- emptyLeiosStateTVar
+
   pure
-    ( NodeInfo{nodeInfoEvents, nodeInfoDBs}
-    , NodeInfo <$> readEvents <*> atomically readDBs
+    ( NodeInfo{nodeInfoEvents, nodeInfoDBs, nodeInfoLeios}
+    , NodeInfo <$> readEvents <*> atomically readDBs <*> snapshotLeiosState nodeInfoLeios
     )
 
 {-------------------------------------------------------------------------------
@@ -1675,6 +1713,7 @@ data NodeOutput blk = NodeOutput
   , nodeOutputSelects :: Map SlotNo [(RealPoint blk, BlockNo)]
   , nodeOutputUpdates :: [LedgerUpdate blk]
   , nodePipeliningEvents :: [ChainDB.TracePipeliningEvent blk]
+  , nodeLeiosState :: LeiosState Identity
   }
 
 data TestOutput blk = TestOutput
@@ -1717,7 +1756,7 @@ mkTestOutput ::
   forall m blk.
   (IOLike m, HasHeader blk) =>
   [ ( CoreNodeId
-    , m (NodeInfo blk MockFS [])
+    , m (NodeInfo blk MockFS [] Identity)
     , Chain blk
     , LedgerState blk EmptyMK
     )
@@ -1732,6 +1771,7 @@ mkTestOutput vertexInfos = do
         let NodeInfo
               { nodeInfoEvents
               , nodeInfoDBs
+              , nodeInfoLeios
               } = nodeInfo
         let NodeEvents
               { nodeEventsAdds
@@ -1770,6 +1810,7 @@ mkTestOutput vertexInfos = do
                 , nodeOutputNodeDBs = nodeInfoDBs
                 , nodeOutputUpdates = nodeEventsUpdates
                 , nodePipeliningEvents = nodeEventsPipelining
+                , nodeLeiosState = nodeInfoLeios
                 }
 
         pure

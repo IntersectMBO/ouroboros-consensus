@@ -81,7 +81,7 @@ instance Key PaymentKey where
     deriving anyclass SerialiseAsCBOR
 
   newtype SigningKey PaymentKey
-    = PaymentSigningKey (SignKeyDSIGN DSIGN)
+    = PaymentSigningKey {unPaymentSigningKey :: SignKeyDSIGN DSIGN}
     deriving (Show, IsString) via UsingRawBytesHex (SigningKey PaymentKey)
     deriving newtype (ToCBOR, FromCBOR)
     deriving anyclass SerialiseAsCBOR
