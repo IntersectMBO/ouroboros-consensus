@@ -55,7 +55,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , txMeasureMetricTxSizeBytes
   )
 import Ouroboros.Consensus.Util (ShowProxy (..))
-import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks (showTypeOf, wNoThunks))
+import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 import Text.Pretty.Simple (pShow)
 
 type BytesSize = Word32
@@ -516,10 +516,6 @@ data TraceLeiosKernel
   | TraceLeiosDbException LeiosDbException
 
 deriving instance Show TraceLeiosKernel
-
-instance NoThunks TraceLeiosKernel where
-  showTypeOf _ = "TraceLeiosKernel"
-  wNoThunks _ _ = return Nothing
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
