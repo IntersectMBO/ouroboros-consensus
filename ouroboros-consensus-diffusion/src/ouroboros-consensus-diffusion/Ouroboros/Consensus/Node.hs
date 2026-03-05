@@ -872,7 +872,10 @@ openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs
             fsImm
             fsVol
             flavorArgs
+            perasArgs
             defArgs
+      -- | FIXME: get Peras params either from configuration, or ledger state
+      perasArgs = mkPerasParams
    in (,args) <$> ChainDB.openDB args
 
 mkNodeKernelArgs ::
