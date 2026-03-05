@@ -219,6 +219,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , systemTime :: SystemTime m
   , chainDB :: ChainDB m blk
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
+  , perasVoteDB :: PerasVoteDB m blk
+  , perasCertDB :: PerasCertDB m blk
   , chainSyncFutureCheck :: SomeHeaderInFutureCheck m blk
   , chainSyncHistoricityCheck ::
       m GSM.GsmState ->
