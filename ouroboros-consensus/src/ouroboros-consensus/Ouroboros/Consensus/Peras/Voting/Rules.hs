@@ -50,7 +50,7 @@ import Ouroboros.Consensus.Peras.Params
   , PerasParams (..)
   )
 import Ouroboros.Consensus.Peras.Voting.View
-  ( LatestCertOnChainView (..)
+  ( LatestCertOnChainRoundView (..)
   , LatestCertSeenView (..)
   , PerasVotingView (..)
   )
@@ -230,26 +230,25 @@ perasVR2A
 -- This enforces chain quality and common prefix before leaving a cooldown
 -- period.
 perasVR2B ::
-  HasPerasCertRound cert =>
   PerasVotingView cert ->
   Pred PerasVotingRule
 perasVR2B
   PerasVotingView
     { perasParams
     , currRoundNo
-    , latestCertOnChain
+    , latestCertOnChainRound
     } =
     VR2B c := vr2b
    where
     vr2b =
-      case latestCertOnChain of
+      case latestCertOnChainRound of
         -- There is a certificate on chain ==> we must check its round number
-        NotOrigin cert ->
+        NotOrigin certRoundNo ->
           -- The certificate comes from a round older than the current one
-          (currRoundNo :>: getPerasCertRound (lcocCert cert))
+          (currRoundNo :>: lcocCertRound certRoundNo)
             -- The certificate round is c⋅K rounds away from the current one
             :/\: ( (currRoundNo `rmod` _K)
-                     :==: (getPerasCertRound (lcocCert cert) `rmod` _K)
+                     :==: (lcocCertRound certRoundNo `rmod` _K)
                  )
         -- There is no certificate on chain ==> check if we are recovering
         -- from an initial cooldown after having initially failed to
