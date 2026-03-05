@@ -183,11 +183,11 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
       mcdbNodeDBs <- emptyNodeDBs
       let cdbArgs = fromMinimalChainDbArgs MinimalChainDbArgs{..}
       pure $ ChainDB.updateTracer cdbTracer cdbArgs
-    (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
+    (_, (chainDB, _, _, ChainDBImpl.Internal{intAddBlockRunner})) <-
       allocate
         registry
         (\_ -> ChainDBImpl.openDBInternal chainDbArgs False)
-        (ChainDB.closeDB . fst)
+        (\(chainDB, _, _, _) -> ChainDB.closeDB chain)
     _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
     pure chainDB
 
