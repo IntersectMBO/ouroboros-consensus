@@ -141,8 +141,8 @@ type VoteDelegatees = Map (SL.Credential SL.Staking) SL.DRep
 -- once support for ntcV22/shelleyV14 is removed
 pattern GetLedgerPeerSnapshot ::
   () =>
-  (footprint ~ QFNoTables, result ~ SomeLedgerPeerSnapshot) =>
-  LedgerPeersKind ->
+  (footprint ~ QFNoTables, result ~ LedgerPeerSnapshot ledgerPeersKind) =>
+  SingLedgerPeersKind ledgerPeersKind ->
   BlockQuery (ShelleyBlock proto era) footprint result
 pattern GetLedgerPeerSnapshot kind = GetLedgerPeerSnapshot' True kind
 
@@ -342,12 +342,13 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   -- | A snapshot of all or big ledger peers
   -- use 'GetLedgerPeerSnapshot' pattern synonym
   GetLedgerPeerSnapshot' ::
+    forall proto era (ledgerPeersKind :: LedgerPeersKind).
     -- | >= Shelley v15/NtC v23
     -- TODO: remove once NodeToClientV_22/Shelley V14  is no longer supported,
     -- rename to GetLedgerPeerSnapshot and remove the pattern synonym
     Bool ->
-    LedgerPeersKind ->
-    BlockQuery (ShelleyBlock proto era) QFNoTables SomeLedgerPeerSnapshot
+    SingLedgerPeersKind ledgerPeersKind ->
+    BlockQuery (ShelleyBlock proto era) QFNoTables (LedgerPeerSnapshot ledgerPeersKind)
   QueryStakePoolDefaultVote ::
     CG.ConwayEraGov era =>
     KeyHash SL.StakePool ->
@@ -486,22 +487,34 @@ instance
         let allPools = second (fmap stakePoolRelayAccessPoint) <$> getPeers lst
             bigLedgerPools = accumulateBigLedgerStake allPools
             magic = getNetworkMagic cfg.getExtLedgerCfg.topLevelConfigBlock
-            point =
-              Point $
-                shelleyLedgerTipPoint lst
-                  & getPoint
-                  <&> \blk ->
-                    blk
-                      { blockPointHash =
-                          RawBlockHash $ toShortRawHash (Proxy @(ShelleyBlock proto era)) (blockPointHash blk)
-                      }
-         in case v15Encoding of
-              True
-                | BigLedgerPeers <- kind ->
-                    SomeLedgerPeerSnapshot $ LedgerBigPeerSnapshotV23 point magic bigLedgerPools
-                | AllLedgerPeers <- kind ->
-                    SomeLedgerPeerSnapshot $ LedgerAllPeerSnapshotV23 point magic allPools
-              False -> SomeLedgerPeerSnapshot $ LedgerPeerSnapshotV2 (getTipSlot lst, bigLedgerPools)
+         in case kind of
+              SingBigLedgerPeers
+                | v15Encoding ->
+                    -- TODO: with GHC-9.12 one can float the `point` binding
+                    -- outside of the case expression.
+                    let point =
+                          Point $
+                            shelleyLedgerTipPoint lst
+                              & getPoint
+                              <&> \blk ->
+                                blk
+                                  { blockPointHash =
+                                      RawBlockHash $ toShortRawHash (Proxy @(ShelleyBlock proto era)) (blockPointHash blk)
+                                  }
+                     in LedgerBigPeerSnapshotV23 point magic bigLedgerPools
+              SingBigLedgerPeers ->
+                LedgerPeerSnapshotV2 (getTipSlot lst, bigLedgerPools)
+              SingAllLedgerPeers ->
+                let point =
+                      Point $
+                        shelleyLedgerTipPoint lst
+                          & getPoint
+                          <&> \blk ->
+                            blk
+                              { blockPointHash =
+                                  RawBlockHash $ toShortRawHash (Proxy @(ShelleyBlock proto era)) (blockPointHash blk)
+                              }
+                 in LedgerAllPeerSnapshotV23 point magic allPools
       QueryStakePoolDefaultVote stakePool ->
         SL.queryStakePoolDefaultVote st stakePool
       GetPoolDistr2 mPoolIds ->
@@ -737,7 +750,8 @@ instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetRatifyState{} _ = Nothing
   sameDepIndex2 GetFuturePParams{} GetFuturePParams{} = Just Refl
   sameDepIndex2 GetFuturePParams{} _ = Nothing
-  sameDepIndex2 GetLedgerPeerSnapshot'{} GetLedgerPeerSnapshot'{} = Just Refl
+  sameDepIndex2 (GetLedgerPeerSnapshot' _ SingAllLedgerPeers) (GetLedgerPeerSnapshot' _ SingAllLedgerPeers) = Just Refl
+  sameDepIndex2 (GetLedgerPeerSnapshot' _ SingBigLedgerPeers) (GetLedgerPeerSnapshot' _ SingBigLedgerPeers) = Just Refl
   sameDepIndex2 GetLedgerPeerSnapshot'{} _ = Nothing
   sameDepIndex2 QueryStakePoolDefaultVote{} QueryStakePoolDefaultVote{} = Just Refl
   sameDepIndex2 QueryStakePoolDefaultVote{} _ = Nothing
@@ -920,8 +934,8 @@ encodeShelleyQuery query = case query of
    where
     peerKindTag =
       case peerKind of
-        AllLedgerPeers -> 0
-        BigLedgerPeers -> 1
+        SingAllLedgerPeers -> 0
+        SingBigLedgerPeers -> 1
   QueryStakePoolDefaultVote stakePoolKey ->
     CBOR.encodeListLen 2 <> CBOR.encodeWord8 35 <> LC.toEraCBOR @era stakePoolKey
   GetPoolDistr2 poolids ->
@@ -1002,13 +1016,13 @@ decodeShelleyQuery = do
     (1, 32) -> requireCG $ return $ SomeBlockQuery GetRatifyState
     (1, 33) -> requireCG $ return $ SomeBlockQuery GetFuturePParams
     -- TODO: remove (1, 34) once NodeToClientV_22 is no longer supported
-    (1, 34) -> return . SomeBlockQuery $ GetLedgerPeerSnapshot' False BigLedgerPeers
+    (1, 34) -> return . SomeBlockQuery $ GetLedgerPeerSnapshot' False SingBigLedgerPeers
     (2, 34) -> do
       -- >=v15
       peerKind <- CBOR.decodeWord8
-      SomeBlockQuery . GetLedgerPeerSnapshot' True <$> case peerKind of
-        0 -> pure AllLedgerPeers
-        1 -> pure BigLedgerPeers
+      case peerKind of
+        0 -> pure $ SomeBlockQuery (GetLedgerPeerSnapshot' True SingAllLedgerPeers)
+        1 -> pure $ SomeBlockQuery (GetLedgerPeerSnapshot' True SingBigLedgerPeers)
         _ -> failmsg $ "invalid peer kind tag " <> show tag
     (2, 35) -> requireCG $ SomeBlockQuery . QueryStakePoolDefaultVote <$> LC.fromEraCBOR @era
     (2, 36) -> SomeBlockQuery . GetPoolDistr2 <$> fromCBOR
@@ -1059,7 +1073,7 @@ encodeShelleyResult v query = case query of
   GetProposals{} -> LC.toEraCBOR @era
   GetRatifyState{} -> LC.toEraCBOR @era
   GetFuturePParams{} -> LC.toEraCBOR @era
-  GetLedgerPeerSnapshot'{} -> encodeLedgerPeerSnapshot' (ledgerPeerSnapshotSupportsSRV v)
+  GetLedgerPeerSnapshot'{} -> encodeLedgerPeerSnapshot (ledgerPeerSnapshotSupportsSRV v)
   QueryStakePoolDefaultVote{} -> toCBOR
   GetPoolDistr2{} -> LC.toEraCBOR @era
   GetStakeDistribution2{} -> LC.toEraCBOR @era
@@ -1108,7 +1122,7 @@ decodeShelleyResult v query = case query of
   GetProposals{} -> LC.fromEraCBOR @era
   GetRatifyState{} -> LC.fromEraCBOR @era
   GetFuturePParams{} -> LC.fromEraCBOR @era
-  GetLedgerPeerSnapshot'{} -> decodeLedgerPeerSnapshot
+  GetLedgerPeerSnapshot' _ ledgerPeersKind -> decodeLedgerPeerSnapshot ledgerPeersKind
   QueryStakePoolDefaultVote{} -> fromCBOR
   GetPoolDistr2{} -> LC.fromEraCBOR @era
   GetStakeDistribution2 -> LC.fromEraCBOR @era
