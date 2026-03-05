@@ -117,10 +117,21 @@ run Opts{..} = do
           , rtnaThreadNet = threadNet
           }
 
-  putStrLn "*** Tips"
-  print $ Map.lookupMax . testOutputTipBlockNos $ testOutput
+  -- NOTE(bladyjoker): Forcing here to have those Debug.traces printed sooner.
+  seq testOutput $ do
+    putStrLn "*** Tips"
+    print $ Map.lookupMax . testOutputTipBlockNos $ testOutput
 
-  print "*** Outputting log files"
+  putStrLn "*** Leios"
+
+  print $
+    ("eb-slotno", imEbSlots . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
+  print $
+    ("eb-points", imEbPoints . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
+  print $
+    ("eb-txs", length . imTxs . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
+
+  putStrLn "*** Outputting log files"
 
   -- FIXME(bladyjoker): When the threadnet evaluation fails there's no logs to be seen, defeats the purpose I'd say.
   _ <- forM_ (allTraces testOutput) $ \tr -> do
@@ -131,15 +142,6 @@ run Opts{..} = do
     hFlush logHandle
 
   _ <- forM_ (tnCoreNodes threadNet) (hClose . cnLog)
-
-  putStrLn "*** Leios"
-
-  print $
-    ("eb-slotno", imEbSlots . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
-  print $
-    ("eb-points", imEbPoints . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
-  print $
-    ("eb-txs", length . imTxs . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
 
   return ()
 
