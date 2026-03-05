@@ -45,7 +45,7 @@ import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import LeiosDemoTypes (TraceLeiosKernel (..))
+import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb)
 import Lens.Micro (each, (%~), (^.), (^..))
 import Ouroboros.Consensus.Block (SlotNo)
 import Ouroboros.Consensus.Cardano
@@ -132,9 +132,10 @@ prop_leios_blocksProduced seed =
         & counterexample "no endorser blocks were forged"
         & prettyCounterexampleMap "forged leios EBs" 120 forgedEBs
         & prettyCounterexampleList "leios kernel traces" 120 leiosTraces
-    , length forgedEBs === length acquiredEBs * numNodes
+    , length forgedPoints === length acquiredPoints
         & counterexample "endorser blocks not fully diffused"
-        & prettyCounterexampleList "acquired leios EBs" 120 acquiredEBs
+        & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
+        & prettyCounterexampleList "forged leios EBs" 120 forgedPoints
     ]
     & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
     & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
@@ -150,11 +151,16 @@ prop_leios_blocksProduced seed =
 
   leiosTraces = traces ^.. each . _nodeEvent . _FromLeios
 
+  forgedPoints =
+    Map.foldMapWithKey
+      (\slot eb -> Set.singleton $ MkLeiosPoint slot (hashLeiosEb eb))
+      forgedEBs
+
   forgedEBs = Map.fromList . flip mapMaybe leiosTraces $ \case
     TraceLeiosBlockForged{slot, eb} -> Just (slot, eb)
     _ -> Nothing
 
-  acquiredEBs = Set.fromList . flip mapMaybe leiosTraces $ \case
+  acquiredPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
     TraceLeiosBlockTxsAcquired point -> Just point
     _ -> Nothing
 
