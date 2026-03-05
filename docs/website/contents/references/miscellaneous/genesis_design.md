@@ -160,9 +160,15 @@ There are two main options.
 
 - Add a checkpoint in at least each interval in which the desired chain doesn't necessarily have greater GDD density than some potential alternative chain.
   This ensures the node will never see an alternative chain that would cause the GDD to disconnect from peers serving the (by fiat) desired chain.
+    - This the safer option, but may involve numerous checkpoints per disaster.
+    - In practice, we achieve it by introducing a checkpoint for the oldest block that whose slot is during the disaster interval and is on the ultimately preferred chain (aka the fixed up chain segment resulting from Disaster Recovery).
+    - Then, in addition to that first checkpoint, also add a checkpoint for every 2000th block along the preferred chain that is still during the disaster.
+      This 2000 number is the largest convenient number that's less than 2160, and it's also nice to have some wiggle room from the minimal necessary checkpoint density.
+    - "Brief" disasters might just need one single checkpoint.
 - Add merely one checkpoint that is after the weak interval.
   This is enough to ensure that a node that was tricked onto an alternative chain will not be able to finish its sync.
   But it's not enough to ensure the node will end up on the same chain as the honest network.
+    - This the less safe option: it only prevents the node from getting past the disaster on the wrong chain, without ensuring that the node can't get leashed/stuck before syncing past the disaster.
 
 It cannot be emphasized enough that the list of checkpoints in the configuration data must be obtained from/signed by a trusted source.
 
