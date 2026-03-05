@@ -140,8 +140,10 @@ type VoteDelegatees = Map (SL.Credential SL.Staking) SL.DRep
 -- convenience wrapper to hide the boolean, this pattern can be removed
 -- once support for ntcV22/shelleyV14 is removed
 pattern GetLedgerPeerSnapshot ::
+  () =>
+  (footprint ~ QFNoTables, result ~ SomeLedgerPeerSnapshot) =>
   LedgerPeersKind ->
-  BlockQuery (ShelleyBlock proto era) QFNoTables SomeLedgerPeerSnapshot
+  BlockQuery (ShelleyBlock proto era) footprint result
 pattern GetLedgerPeerSnapshot kind = GetLedgerPeerSnapshot' True kind
 
 data instance BlockQuery (ShelleyBlock proto era) fp result where
@@ -490,15 +492,16 @@ instance
                   & getPoint
                   <&> \blk ->
                     blk
-                      { blockPointHash = SomeHashableBlock (Proxy :: Proxy (ShelleyBlock proto era)) (blockPointHash blk)
+                      { blockPointHash =
+                          RawBlockHash $ toShortRawHash (Proxy @(ShelleyBlock proto era)) (blockPointHash blk)
                       }
          in case v15Encoding of
               True
                 | BigLedgerPeers <- kind ->
-                    SomeLedgerPeerSnapshot Proxy $ LedgerBigPeerSnapshotV23 point magic bigLedgerPools
+                    SomeLedgerPeerSnapshot $ LedgerBigPeerSnapshotV23 point magic bigLedgerPools
                 | AllLedgerPeers <- kind ->
-                    SomeLedgerPeerSnapshot Proxy $ LedgerAllPeerSnapshotV23 point magic allPools
-              False -> SomeLedgerPeerSnapshot Proxy $ LedgerPeerSnapshotV2 (getTipSlot lst, bigLedgerPools)
+                    SomeLedgerPeerSnapshot $ LedgerAllPeerSnapshotV23 point magic allPools
+              False -> SomeLedgerPeerSnapshot $ LedgerPeerSnapshotV2 (getTipSlot lst, bigLedgerPools)
       QueryStakePoolDefaultVote stakePool ->
         SL.queryStakePoolDefaultVote st stakePool
       GetPoolDistr2 mPoolIds ->
@@ -1105,7 +1108,7 @@ decodeShelleyResult v query = case query of
   GetProposals{} -> LC.fromEraCBOR @era
   GetRatifyState{} -> LC.fromEraCBOR @era
   GetFuturePParams{} -> LC.fromEraCBOR @era
-  GetLedgerPeerSnapshot'{} -> decodeLedgerPeerSnapshot (Proxy :: Proxy (ShelleyBlock proto era))
+  GetLedgerPeerSnapshot'{} -> decodeLedgerPeerSnapshot
   QueryStakePoolDefaultVote{} -> fromCBOR
   GetPoolDistr2{} -> LC.fromEraCBOR @era
   GetStakeDistribution2 -> LC.fromEraCBOR @era

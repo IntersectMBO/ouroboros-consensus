@@ -12,6 +12,8 @@ module Ouroboros.Consensus.Peras.SelectView
     WeightedSelectView (..)
   , wsvTotalWeight
   , weightedSelectView
+  , WeightedSelectViewReasonForSwitch (..)
+  , WithEmptyFragmentReasonForSwitch (..)
 
     -- * Utility: 'WithEmptyFragment'
   , WithEmptyFragment (..)
