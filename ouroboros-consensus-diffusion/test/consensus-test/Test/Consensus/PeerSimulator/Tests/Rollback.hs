@@ -1,10 +1,15 @@
 {-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 
-module Test.Consensus.PeerSimulator.Tests.Rollback (tests) where
+module Test.Consensus.PeerSimulator.Tests.Rollback
+  ( TestKey
+  , testSuite
+  ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Monad.Class.MonadTime.SI (Time (Time))
@@ -27,6 +32,7 @@ import Test.Consensus.Genesis.Setup.Classifiers
   , allAdversariesForecastable
   , classifiers
   )
+import Test.Consensus.Genesis.TestSuite
 import Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import Test.Consensus.PeerSimulator.StateView
 import Test.Consensus.PointSchedule
@@ -38,28 +44,43 @@ import Test.Consensus.PointSchedule.SinglePeer
   , scheduleTipPoint
   )
 import Test.QuickCheck
-import Test.Tasty
-import Test.Tasty.QuickCheck
 import Test.Util.Orphans.IOLike ()
-import Test.Util.TestBlock (TestBlock)
-import Test.Util.TestEnv (adjustQuickCheckTests)
 
-tests :: TestTree
-tests =
-  testGroup
-    "rollback"
-    [ adjustQuickCheckTests (`div` 2) $
-        testProperty "can rollback" prop_rollback
-    , adjustQuickCheckTests (`div` 2) $
-        testProperty "cannot rollback" prop_cannotRollback
-    ]
+-- | Default adjustment of required property test passes.
+-- Can be set individually on each test definition.
+desiredPasses :: Int -> Int
+desiredPasses = (`div` 2)
 
--- | @prop_rollback@ tests that the selection of the node under test
+data TestKey = CanRollback | CannotRollback
+  deriving stock (Eq, Ord, Generic)
+  deriving SmallKey via Generically TestKey
+
+testSuite ::
+  ( IssueTestBlock blk
+  , AF.HasHeader blk
+  , AF.HasHeader (Header blk)
+  , Eq blk
+  ) =>
+  TestSuite blk TestKey
+testSuite = group "rollback" . newTestSuite $ \case
+  CanRollback -> test_rollback
+  CannotRollback -> test_cannotRollback
+
+-- | Tests that the selection of the node under test
 -- changes branches when sent a rollback to a block no older than 'k' blocks
 -- before the current selection.
-prop_rollback :: Property
-prop_rollback = do
-  forAllGenesisTest @TestBlock
+test_rollback ::
+  ( IssueTestBlock blk
+  , AF.HasHeader blk
+  , AF.HasHeader (Header blk)
+  , Eq blk
+  ) =>
+  ConformanceTest blk
+test_rollback =
+  mkConformanceTest
+    "can rollback"
+    desiredPasses
+    id
     ( do
         -- Create a block tree with @1@ alternative chain, such that we can rollback
         -- from the trunk to that chain.
@@ -76,15 +97,24 @@ prop_rollback = do
     )
     defaultSchedulerConfig
     -- No shrinking because the schedule is tiny and hand-crafted
-    (\_ _ -> [])
+    mempty
     (\test -> not . hashOnTrunk (gtBlockTree test) . AF.headHash . svSelectedChain)
 
--- @prop_cannotRollback@ tests that the selection of the node under test *does
+-- | Tests that the selection of the node under test *does
 -- not* change branches when sent a rollback to a block strictly older than 'k'
 -- blocks before the current selection.
-prop_cannotRollback :: Property
-prop_cannotRollback =
-  forAllGenesisTest @TestBlock
+test_cannotRollback ::
+  ( IssueTestBlock blk
+  , AF.HasHeader blk
+  , AF.HasHeader (Header blk)
+  , Eq blk
+  ) =>
+  ConformanceTest blk
+test_cannotRollback =
+  mkConformanceTest
+    "cannot rollback"
+    desiredPasses
+    id
     ( do
         gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
         pure
@@ -95,7 +125,7 @@ prop_cannotRollback =
     )
     defaultSchedulerConfig
     -- No shrinking because the schedule is tiny and hand-crafted
-    (\_ _ -> [])
+    mempty
     (\test -> hashOnTrunk (gtBlockTree test) . AF.headHash . svSelectedChain)
 
 -- | A schedule that advertises all the points of the trunk up until the nth
