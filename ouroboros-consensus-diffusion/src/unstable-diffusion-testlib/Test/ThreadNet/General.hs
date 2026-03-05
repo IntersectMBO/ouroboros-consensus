@@ -35,21 +35,28 @@ module Test.ThreadNet.General
   , plainTestNodeInitialization
   ) where
 
-import Control.Concurrent.Class.MonadSTM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception (assert, throw)
 import Control.Monad (guard)
 import Control.Monad.IOSim
-  ( runSimOrThrow
+  ( SimEvent (..)
+  , SimEventType (..)
+  , SimTrace
+  , ppSimEvent
   , runSimTrace
   , selectTraceEventsDynamic
   , setCurrentTime
+  , traceM
   , traceResult
   )
 import Control.Tracer (Tracer (..), nullTracer)
+import Data.Dynamic (fromDynamic)
+import qualified Data.List.Trace as Trace
 import qualified Data.Map.Strict as Map
+import Data.Monoid (Endo (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
+import qualified Debug.Trace as Debug
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Block.Abstract as BA
@@ -66,7 +73,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
-import Ouroboros.Consensus.Util.IOLike (IOLike, SomeException, displayException, try)
+import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain
@@ -239,47 +246,46 @@ runTestNetwork
     , version = (networkVersion, blockVersion)
     }
   mkTestConfigMB =
-    -- TODO: this will not throw anymore and test suites need to explicitly
-    -- check for it in the TestOutput. This is needed since we wanted to provide
-    -- traces in presence of errors.
-    runSimOrThrow $ do
-      -- Trace into TVar
-      tv <- newTVarIO []
-      let tracer = Tracer $ \t -> atomically $ modifyTVar tv (t :)
-      -- Time setup
+    case traceResult False trace of
+      Left e -> ppDebug' trace $ throw e
+      Right x -> x{allTraces = selectTraceEventsDynamic trace}
+   where
+    trace = runSimTrace $ do
       setCurrentTime dawnOfTime
       let TestConfigMB{nodeInfo, mkRekeyM} = mkTestConfigMB
       let systemTime = BTime.defaultSystemTime (BTime.SystemStart dawnOfTime) nullTracer
-      result <-
-        try $
-          runThreadNetwork
-            tracer
-            systemTime
-            ThreadNetworkArgs
-              { tnaForgeEbbEnv = forgeEbbEnv
-              , tnaFuture = future
-              , tnaJoinPlan = nodeJoinPlan
-              , tnaMessageDelay = messageDelay
-              , tnaNodeInfo = nodeInfo
-              , tnaNumCoreNodes = numCoreNodes
-              , tnaNumSlots = numSlots
-              , tnaSeed = initSeed
-              , tnaMkRekeyM = mkRekeyM
-              , tnaRestarts = nodeRestarts
-              , tnaTopology = nodeTopology
-              , tnaTxGenExtra = txGenExtra
-              , tnaVersion = networkVersion
-              , tnaBlockVersion = blockVersion
-              }
-      case result of
-        Left (ex :: SomeException) -> do
-          allTraces <- reverse <$> readTVarIO tv
-          -- XXX: separate traces from test output
-          o <- mkTestOutput []
-          pure o{allTraces, exceptionThrown = Just ex}
-        Right testOutput -> do
-          allTraces <- reverse <$> readTVarIO tv
-          pure $ testOutput{allTraces}
+      runThreadNetwork
+        (Tracer traceM)
+        systemTime
+        ThreadNetworkArgs
+          { tnaForgeEbbEnv = forgeEbbEnv
+          , tnaFuture = future
+          , tnaJoinPlan = nodeJoinPlan
+          , tnaMessageDelay = messageDelay
+          , tnaNodeInfo = nodeInfo
+          , tnaNumCoreNodes = numCoreNodes
+          , tnaNumSlots = numSlots
+          , tnaSeed = initSeed
+          , tnaMkRekeyM = mkRekeyM
+          , tnaRestarts = nodeRestarts
+          , tnaTopology = nodeTopology
+          , tnaTxGenExtra = txGenExtra
+          , tnaVersion = networkVersion
+          , tnaBlockVersion = blockVersion
+          }
+
+    -- Variant of ppDebug, that actually prints the EventLog.
+    ppDebug' :: SimTrace a -> x -> x
+    ppDebug' =
+      appEndo
+        . foldMap (Endo . Debug.trace . show')
+        . Trace.toList
+     where
+      show' = \case
+        se@SimEvent{seType = EventLog dyn}
+          | Just v <- fromDynamic @(TraceThreadNet blk) dyn ->
+              ppSimEvent 0 0 0 se <> " -> " <> show v
+        se -> ppSimEvent 0 0 0 se
 
 {-------------------------------------------------------------------------------
   Test properties
