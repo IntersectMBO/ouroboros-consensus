@@ -31,7 +31,7 @@ import Cardano.Ledger.Api
   )
 import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
 import Cardano.Ledger.Api.Tx.In (TxIn (..))
-import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded, unNonZero, unSlotNo)
+import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded, unSlotNo)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
@@ -40,14 +40,14 @@ import Data.Foldable (toList)
 import Data.Function ((&))
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (mapMaybe)
+import Data.Maybe (isNothing, mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb)
 import Lens.Micro (each, (%~), (^.), (^..))
-import Ouroboros.Consensus.Block (SlotNo)
+import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -123,7 +123,10 @@ tests =
 prop_leios_blocksProduced :: Seed -> Property
 prop_leios_blocksProduced seed =
   conjoin
-    [ not (null forgedBlocks)
+    [ isNothing testOutput.exceptionThrown
+        & counterexample "test threw an exception"
+        & prettyCounterexampleList "all traces" 120 (show <$> traces)
+    , not (null forgedBlocks)
         & counterexample "no praos blocks were forged"
     , any (> 0) includedTxCounts
         & counterexample "all forged blocks were empty (no transactions)"
@@ -271,7 +274,10 @@ runThreadNet initSeed numSlots numCoreNodes =
             , ctgeNetworkMagic = error "unused"
             , ctgeShelleyCoreNodes = coreNodes
             , ctgeExtraTxGen = \slot cn pparams utxo ->
-                pure $ constantLoadTxs numCoreNodes (TPS 100) slot cn pparams utxo
+                -- NOTE: Stop generating txs 20 slots before end of test run.
+                if unSlotNo slot > unNumSlots numSlots - 20
+                  then pure []
+                  else pure $ constantLoadTxs numCoreNodes (TPS 100) slot cn pparams utxo
             }
       , version = newestVersion (Proxy @(CardanoBlock StandardCrypto))
       }

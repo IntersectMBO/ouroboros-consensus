@@ -66,7 +66,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
-import Ouroboros.Consensus.Util.IOLike (IOLike)
+import Ouroboros.Consensus.Util.IOLike (IOLike, SomeException, displayException, try)
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain
@@ -239,6 +239,9 @@ runTestNetwork
     , version = (networkVersion, blockVersion)
     }
   mkTestConfigMB =
+    -- TODO: this will not throw anymore and test suites need to explicitly
+    -- check for it in the TestOutput. This is needed since we wanted to provide
+    -- traces in presence of errors.
     runSimOrThrow $ do
       -- Trace into TVar
       tv <- newTVarIO []
@@ -247,28 +250,36 @@ runTestNetwork
       setCurrentTime dawnOfTime
       let TestConfigMB{nodeInfo, mkRekeyM} = mkTestConfigMB
       let systemTime = BTime.defaultSystemTime (BTime.SystemStart dawnOfTime) nullTracer
-      testOutput <-
-        runThreadNetwork
-          tracer
-          systemTime
-          ThreadNetworkArgs
-            { tnaForgeEbbEnv = forgeEbbEnv
-            , tnaFuture = future
-            , tnaJoinPlan = nodeJoinPlan
-            , tnaMessageDelay = messageDelay
-            , tnaNodeInfo = nodeInfo
-            , tnaNumCoreNodes = numCoreNodes
-            , tnaNumSlots = numSlots
-            , tnaSeed = initSeed
-            , tnaMkRekeyM = mkRekeyM
-            , tnaRestarts = nodeRestarts
-            , tnaTopology = nodeTopology
-            , tnaTxGenExtra = txGenExtra
-            , tnaVersion = networkVersion
-            , tnaBlockVersion = blockVersion
-            }
-      allTraces <- reverse <$> readTVarIO tv
-      pure $ testOutput{allTraces}
+      result <-
+        try $
+          runThreadNetwork
+            tracer
+            systemTime
+            ThreadNetworkArgs
+              { tnaForgeEbbEnv = forgeEbbEnv
+              , tnaFuture = future
+              , tnaJoinPlan = nodeJoinPlan
+              , tnaMessageDelay = messageDelay
+              , tnaNodeInfo = nodeInfo
+              , tnaNumCoreNodes = numCoreNodes
+              , tnaNumSlots = numSlots
+              , tnaSeed = initSeed
+              , tnaMkRekeyM = mkRekeyM
+              , tnaRestarts = nodeRestarts
+              , tnaTopology = nodeTopology
+              , tnaTxGenExtra = txGenExtra
+              , tnaVersion = networkVersion
+              , tnaBlockVersion = blockVersion
+              }
+      case result of
+        Left (ex :: SomeException) -> do
+          allTraces <- reverse <$> readTVarIO tv
+          -- XXX: separate traces from test output
+          o <- mkTestOutput []
+          pure o{allTraces, exceptionThrown = Just ex}
+        Right testOutput -> do
+          allTraces <- reverse <$> readTVarIO tv
+          pure $ testOutput{allTraces}
 
 {-------------------------------------------------------------------------------
   Test properties

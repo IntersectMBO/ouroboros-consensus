@@ -41,6 +41,7 @@ module Test.ThreadNet.Network
   , TraceThreadNetNode (..)
   , _FromMempool
   , _FromLeios
+  , mkTestOutput
   ) where
 
 import Cardano.Network.PeerSelection.Bootstrap
@@ -1680,11 +1681,14 @@ data TestOutput blk = TestOutput
   { testOutputNodes :: Map NodeId (NodeOutput blk)
   , testOutputTipBlockNos :: Map SlotNo (Map NodeId (WithOrigin BlockNo))
   , allTraces :: [TraceThreadNet blk]
+  , exceptionThrown :: Maybe SomeException
   }
 
 -- | Type of all traces tracked by the ThreadNet.
 data TraceThreadNet blk
   = FromNode {fromNodeId :: CoreNodeId, fromNodeEvent :: TraceThreadNetNode blk}
+
+deriving instance Show (TraceThreadNetNode blk) => Show (TraceThreadNet blk)
 
 _nodeEvent :: SimpleFold (TraceThreadNet blk) (TraceThreadNetNode blk)
 _nodeEvent = folding $ \case FromNode _ ev -> Just ev
@@ -1694,6 +1698,13 @@ data TraceThreadNetNode blk
   | FromMempool (TraceEventMempool blk)
   | FromTxOutbound
       (TraceLabelPeer (ConnectionId NodeId) (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
+
+deriving instance
+  ( Show (GenTx blk)
+  , Show (GenTxId blk)
+  , Show (TraceEventMempool blk)
+  ) =>
+  Show (TraceThreadNetNode blk)
 
 _FromLeios :: SimpleFold (TraceThreadNetNode blk) TraceLeiosKernel
 _FromLeios = folding $ \case FromLeios x -> Just x; _ -> Nothing
@@ -1771,6 +1782,7 @@ mkTestOutput vertexInfos = do
       { testOutputNodes = Map.unions nodeOutputs'
       , testOutputTipBlockNos = Map.unionsWith Map.union tipBlockNos'
       , allTraces = [] -- XXX: avoid monkey patching
+      , exceptionThrown = Nothing -- XXX: avoid monkey patching
       }
 
 {-------------------------------------------------------------------------------
