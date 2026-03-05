@@ -30,8 +30,9 @@ module Ouroboros.Consensus.Peras.Voting.View
   , perasRoundStart
   , perasChainAtCandidateBlock
   , LatestCertSeenView (..)
-  , LatestCertOnChainView (..)
+  , LatestCertOnChainRoundView (..)
   , PerasVotingView (..)
+  , WithBoostedBlockStatus (..)
   , mkPerasVotingView
   )
 where
@@ -180,9 +181,9 @@ data LatestCertSeenView cert
 --
 -- NOTE: if we add more fields here in the future, do not forget to add
 -- strictness annotations as needed.
-newtype LatestCertOnChainView cert
+newtype LatestCertOnChainRoundView
   = LatestCertOnChainView
-  { lcocCert :: cert
+  { lcocCertRound :: PerasRoundNo
   -- ^ Latest certificate present in our preferred chain
   }
   deriving Show
@@ -201,7 +202,7 @@ data PerasVotingView cert = PerasVotingView
   -- ^ The current Peras round number
   , latestCertSeen :: !(WithOrigin (LatestCertSeenView cert))
   -- ^ The most recent certificate seen by the voter
-  , latestCertOnChain :: !(WithOrigin (LatestCertOnChainView cert))
+  , latestCertOnChainRound :: !(WithOrigin LatestCertOnChainRoundView)
   -- ^ The most recent certificate present in our preferred chain
   }
   deriving Show
@@ -235,8 +236,8 @@ mkPerasVotingView ::
   PerasRoundNo ->
   -- | Most recent certificate seen by the voter
   WithOrigin (WithBoostedBlockStatus cert) ->
-  -- | Most recent certificate included in some block in our preferred chain
-  WithOrigin cert ->
+  -- | Round number of the most recent certificate included in some block in our preferred chain
+  WithOrigin PerasRoundNo ->
   -- | Prefix leading to the candidate block in the volatile suffix of our
   -- preferred chain
   AnchoredFragment (Header blk) ->
@@ -246,16 +247,16 @@ mkPerasVotingView
   perasParams
   currRoundNo
   latestCertSeen
-  latestCertOnChain
+  latestCertOnChainRound
   chainAtCandidateBlock = do
     latestCertSeenView <- traverse mkLatestCertSeenView latestCertSeen
-    latestCertOnChainView <- traverse mkLatestCertOnChainView latestCertOnChain
+    latestCertOnChainRoundView <- traverse mkLatestCertOnChainView latestCertOnChainRound
     pure $
       PerasVotingView
         { perasParams = perasParams
         , currRoundNo = currRoundNo
         , latestCertSeen = latestCertSeenView
-        , latestCertOnChain = latestCertOnChainView
+        , latestCertOnChainRound = latestCertOnChainRoundView
         }
    where
     mkLatestCertSeenView certWithProvenance = do
@@ -271,10 +272,10 @@ mkPerasVotingView
           , lcsCandidateBlockExtendsCert
           }
 
-    mkLatestCertOnChainView lcocCert =
+    mkLatestCertOnChainView lcocCertRound =
       pure $
         LatestCertOnChainView
-          { lcocCert
+          { lcocCertRound
           }
 
     -- Does the candidate block extend the one boosted by a certificate?

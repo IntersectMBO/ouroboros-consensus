@@ -150,6 +150,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
+import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -540,7 +542,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           forM_ (sanityCheckConfig cfg) $ \issue ->
             traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
-          (chainDB, finalArgs) <-
+          (chainDB, voteDB, certDB, finalArgs) <-
             openChainDB
               registry
               cfg
@@ -601,6 +603,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
                   historicityCheck
                   chainDB
+                  voteDB
+                  certDB
                   llrnMaxCaughtUpAge
                   (Just durationUntilTooOld)
                   gsmMarkerFileView
@@ -859,8 +863,13 @@ openChainDB ::
   Incomplete ChainDbArgs m blk ->
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
-  m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs =
+  m
+    ( ChainDB m blk
+    , PerasVoteDB m blk
+    , PerasCertDB m blk
+    , Complete ChainDbArgs m blk
+    )
+openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs = do
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -872,8 +881,12 @@ openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs
             fsImm
             fsVol
             flavorArgs
+            perasArgs
             defArgs
-   in (,args) <$> ChainDB.openDB args
+      -- | FIXME: get Peras params either from configuration, or ledger state
+      perasArgs = mkPerasParams
+  (chainDB, voteDB, certDB) <- ChainDB.openDBShowPeras args
+  pure (chainDB, voteDB, certDB, args)
 
 mkNodeKernelArgs ::
   forall m addrNTN addrNTC blk.
@@ -890,6 +903,8 @@ mkNodeKernelArgs ::
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   (m GSM.GsmState -> HistoricityCheck m blk) ->
   ChainDB m blk ->
+  PerasVoteDB m blk ->
+  PerasCertDB m blk ->
   NominalDiffTime ->
   Maybe (GSM.WrapDurationUntilTooOld m blk) ->
   GSM.MarkerFileView m ->
@@ -913,6 +928,8 @@ mkNodeKernelArgs
   chainSyncFutureCheck
   chainSyncHistoricityCheck
   chainDB
+  voteDB
+  certDB
   maxCaughtUpAge
   gsmDurationUntilTooOld
   gsmMarkerFileView
@@ -935,6 +952,8 @@ mkNodeKernelArgs
           , systemTime
           , chainDB
           , initChainDB = nodeInitChainDB
+          , voteDB
+          , certDB
           , chainSyncFutureCheck
           , chainSyncHistoricityCheck
           , blockFetchSize = estimateBlockSize

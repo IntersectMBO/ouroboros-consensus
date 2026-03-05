@@ -262,11 +262,11 @@ openChainDB registry getLoEFragment = do
             , mcdbTopLevelConfig
             , mcdbNodeDBs
             }
-  (_, (chainDB, ChainDB.Impl.Internal{ChainDB.Impl.intAddBlockRunner})) <-
+  (_, (chainDB, _, _, ChainDB.Impl.Internal{ChainDB.Impl.intAddBlockRunner})) <-
     allocate
       registry
       (\_ -> ChainDB.Impl.openDBInternal chainDbArgs False)
-      (ChainDB.closeDB . fst)
+      (\(chainDB, _, _, _) -> ChainDB.closeDB chainDB)
   _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
   pure chainDB
 
