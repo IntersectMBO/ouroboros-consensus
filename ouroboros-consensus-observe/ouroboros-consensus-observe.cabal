@@ -43,11 +43,11 @@ library
     Ouroboros.Consensus.Observe.ConsensusJson
 
   build-depends:
+    aeson >=2.2,
     base >=4.14 && <4.22,
+    base16-bytestring >=1.0,
     bytestring >=0.10 && <0.13,
     ouroboros-consensus ^>=0.27,
     ouroboros-consensus-cardano,
     ouroboros-consensus-diffusion,
     text,
-    aeson >= 2.2,
-    base16-bytestring >= 1.0
