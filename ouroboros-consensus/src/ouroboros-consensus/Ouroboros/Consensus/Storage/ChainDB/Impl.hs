@@ -82,6 +82,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (newFuse, whenJust)
 import Ouroboros.Consensus.Util.Args
@@ -177,6 +178,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
     perasCertDB <- PerasCertDB.openDB argsPerasCertDB
+    perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
@@ -258,6 +260,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
+            , cdbPerasVoteDB = perasVoteDB
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -331,6 +334,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     argsVolatileDb
     argsLgrDb
     argsPerasCertDB
+    argsPerasVoteDB
     cdbSpecificArgs = args
 
   -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')
