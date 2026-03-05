@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Cardano.Tools.ImmDBServer.Json (module Cardano.Tools.ImmDBServer.Json) where
