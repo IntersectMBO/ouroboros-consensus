@@ -30,7 +30,6 @@ import Cardano.Api.SerialiseTextEnvelope (readFileTextEnvelope)
 import qualified Cardano.Crypto.DSIGN as Crypto
 import qualified Cardano.Ledger.Api as SL
 import Cardano.Ledger.BaseTypes (TxIx (TxIx))
-import Cardano.Ledger.Hashes (HashAnnotated (hashAnnotated))
 import qualified Cardano.Ledger.Keys as Ledger
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Val (Val (coin, (<->)), inject)
@@ -73,11 +72,10 @@ import Ouroboros.Consensus.Shelley.Node
 import System.Exit (die)
 import System.IO (hClose, hFlush, hPutStrLn, openFile)
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..))
-import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
 import Test.Cardano.Ledger.Shelley.Generator.ShelleyEraGen ()
 import Test.QuickCheck (Gen)
 import Test.ThreadNet.General
-import Test.ThreadNet.Infra.Shelley ()
+import Test.ThreadNet.Infra.Shelley (mkKeyPair, signTx)
 import Test.ThreadNet.Network
   ( NodeOutput (..)
   , TestNodeInitialization (..)
@@ -420,15 +418,14 @@ handleTxGenerator ::
   CoreNodeId -> SL.PParams era -> Map SL.TxIn (SL.TxOut era) -> TxGenerator -> [SL.Tx era]
 handleTxGenerator coreNodeId pparams utxos TxGenerator{..} = do
   guard (coreNodeId `Set.member` tgSubmitToNodes)
-  tx <- case tgTxGeneratorKind of
+  case tgTxGeneratorKind of
     TransferAllKind ta -> handleTransferAllTx pparams utxos ta
-  return tx
 
 handleTransferAllTx ::
   SL.ShelleyBasedEra era => SL.PParams era -> Map SL.TxIn (SL.TxOut era) -> TransferAll -> [SL.Tx era]
 handleTransferAllTx pparams utxos TransferAll{..} = do
   let
-    paymentKeyPair = keyPairFromSigningKey taPaymentSigningKey
+    paymentKeyPair = mkKeyPair taPaymentSigningKey
     paymentCred = getPaymentCredFromKeyPair paymentKeyPair
   (txOutRef, txOut) <- Map.toList $ getUTxOsByPaymentCred utxos paymentCred
   transferAllTxSequence (txOut, txOutRef, pparams, paymentKeyPair)
@@ -476,26 +473,9 @@ transferAllTx (txOut, txOutRef, pparams, paymentKeyPair) = \tx ->
         tx
           & SL.bodyTxL
             .~ txBody'
-          & signTx paymentKeyPair
+          & signTx (sKey paymentKeyPair)
 
 -- * Transaction building utils
-
-keyPairFromSigningKey :: Crypto.SignKeyDSIGN Ledger.DSIGN -> KeyPair k
-keyPairFromSigningKey signingKey =
-  KeyPair
-    { vKey = SL.VKey . Crypto.deriveVerKeyDSIGN $ signingKey
-    , sKey = signingKey
-    }
-
-signTx :: SL.ShelleyBasedEra era => KeyPair k -> SL.Tx era -> SL.Tx era
-signTx paymentKeyPair tx =
-  let txBody = tx ^. SL.bodyTxL
-   in tx
-        & (SL.witsTxL . SL.addrTxWitsL)
-          .~ ( Set.fromList
-                 [ TL.mkWitnessVKey (hashAnnotated txBody) paymentKeyPair
-                 ]
-             )
 
 getUTxOs ::
   LedgerState
@@ -512,14 +492,12 @@ getUTxOsByPaymentCred ::
   SL.ShelleyBasedEra era =>
   Map SL.TxIn (SL.TxOut era) -> SL.Credential SL.Payment -> Map SL.TxIn (SL.TxOut era)
 getUTxOsByPaymentCred utxos payCred =
-  let res =
-        Map.filter
-          ( \txOut -> case txOut ^. SL.addrTxOutL of
-              SL.Addr _net payCred' _stakeRef -> payCred == payCred'
-              _ -> False
-          )
-          utxos
-   in res
+  Map.filter
+    ( \txOut -> case txOut ^. SL.addrTxOutL of
+        SL.Addr _net payCred' _stakeRef -> payCred == payCred'
+        _ -> False
+    )
+    utxos
 
 getPaymentCredFromKeyPair :: KeyPair 'SL.Payment -> SL.Credential SL.Payment
 getPaymentCredFromKeyPair keyPair =
