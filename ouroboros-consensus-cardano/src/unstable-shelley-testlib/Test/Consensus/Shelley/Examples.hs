@@ -164,7 +164,7 @@ fromShelleyLedgerExamples
         , ("GetStakeDistribution", SomeBlockQuery GetStakeDistribution)
         , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
-        , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot BigLedgerPeers))
+        , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
         , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
         , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
         ]
@@ -184,20 +184,19 @@ fromShelleyLedgerExamples
         ,
           ( "GetBigLedgerPeerSnapshot"
           , SomeResult
-              (GetLedgerPeerSnapshot BigLedgerPeers)
-              ( SomeLedgerPeerSnapshot $
-                  LedgerPeerSnapshotV2
-                    ( NotOrigin slotNo
-                    ,
-                      [
-                        ( AccPoolStake 0.9
-                        ,
-                          ( PoolStake 0.9
-                          , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
-                          )
+              (GetLedgerPeerSnapshot SingBigLedgerPeers)
+              ( LedgerPeerSnapshotV2
+                  ( NotOrigin slotNo
+                  ,
+                    [
+                      ( AccPoolStake 0.9
+                      ,
+                        ( PoolStake 0.9
+                        , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                         )
-                      ]
-                    )
+                      )
+                    ]
+                  )
               )
           )
         , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)
@@ -302,7 +301,7 @@ fromShelleyLedgerExamplesPraos
         , ("GetStakeDistribution", SomeBlockQuery GetStakeDistribution)
         , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
-        , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot BigLedgerPeers))
+        , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
         , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
         , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
         ]
@@ -322,20 +321,19 @@ fromShelleyLedgerExamplesPraos
         ,
           ( "GetBigLedgerPeerSnapshot"
           , SomeResult
-              (GetLedgerPeerSnapshot BigLedgerPeers)
-              ( SomeLedgerPeerSnapshot $
-                  LedgerPeerSnapshotV2
-                    ( NotOrigin slotNo
-                    ,
-                      [
-                        ( AccPoolStake 0.9
-                        ,
-                          ( PoolStake 0.9
-                          , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
-                          )
+              (GetLedgerPeerSnapshot SingBigLedgerPeers)
+              ( LedgerPeerSnapshotV2
+                  ( NotOrigin slotNo
+                  ,
+                    [
+                      ( AccPoolStake 0.9
+                      ,
+                        ( PoolStake 0.9
+                        , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                         )
-                      ]
-                    )
+                      )
+                    ]
+                  )
               )
           )
         , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)
