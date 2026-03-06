@@ -866,38 +866,29 @@ reproMempoolForge numBlks env = do
           <> "1 or 2 blocks at a time, not "
           <> show numBlks
 
-  withRegistry $ \reg -> do
-    mempool <-
-      Mempool.openMempoolWithoutSyncThread
-        reg
-        Mempool.LedgerInterface
-          { Mempool.getCurrentLedgerState = do
-              st <- LedgerDB.getVolatileTip ledgerDB
-              pure $
-                MempoolLedgerDBView
-                  (ledgerState st)
-                  ( do
-                      (rk, res) <-
-                        allocate
-                          reg
-                          (\_ -> LedgerDB.openReadOnlyForker ledgerDB (SpecificPoint (castPoint $ getTip st)))
-                          (either (const $ pure ()) LedgerDB.roforkerClose)
-                      case res of
-                        Left err -> release rk >> pure (Left err)
-                        Right v -> pure (Right (rk, LedgerDB.ledgerStateReadOnlyForker v))
-                  )
-          }
-        lCfg
-        -- one mebibyte should generously accomodate two blocks' worth of txs
-        ( Mempool.MempoolCapacityBytesOverride $
-            LedgerSupportsMempool.ByteSize32 $
-              1024 * 1024
-        )
-        (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
-        nullTracer
+  mempool <-
+    Mempool.openMempoolWithoutSyncThread
+      Mempool.LedgerInterface
+        { Mempool.getCurrentLedgerState = do
+            st <- LedgerDB.getVolatileTip ledgerDB
+            pure $
+              MempoolLedgerDBView
+                (ledgerState st)
+                ( fmap (fmap LedgerDB.ledgerStateReadOnlyForker) $
+                    LedgerDB.openReadOnlyForker ledgerDB (SpecificPoint (castPoint $ getTip st))
+                )
+        }
+      lCfg
+      -- one mebibyte should generously accomodate two blocks' worth of txs
+      ( Mempool.MempoolCapacityBytesOverride $
+          LedgerSupportsMempool.ByteSize32 $
+            1024 * 1024
+      )
+      (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
+      nullTracer
 
-    void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks mempool)
-    pure Nothing
+  void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks mempool)
+  pure Nothing
  where
   AnalysisEnv
     { cfg

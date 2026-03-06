@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Mempool.Update
 import Cardano.Slotting.Slot
 import Control.Monad.Class.MonadTimer.SI (MonadTimer, timeout)
 import Control.Monad.Except (runExcept)
-import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
@@ -212,7 +211,7 @@ doAddTx mpEnv caller wti tx = do
 
     eRes <- withTMVarAnd istate additionalCheck $
       \is () -> do
-        (_, frkr) <- readMVar forker
+        frkr <- readMVar forker
         tbs <-
           castLedgerTables
             <$> roforkerReadTables frkr (castLedgerTables $ getTransactionKeySets tx)
@@ -451,7 +450,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
               )
               (TxSeq.toList $ isTxs is)
           toKeep' = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . TxSeq.txTicketTx) toKeep
-      (_, frkr) <- readMVar forker
+      frkr <- readMVar forker
       tbs <- castLedgerTables <$> roforkerReadTables frkr (castLedgerTables toKeep')
       let (is', t) =
             pureRemoveTxs
@@ -568,12 +567,12 @@ implSyncWithLedger mpEnv =
                 Left{} -> do
                   traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
                   pure (Nothing, is)
-                Right (rkNew, frk) -> do
+                Right frk -> do
                   modifyMVar_
                     forkerMVar
-                    ( \(rkOld, _) -> do
-                        _ <- release rkOld
-                        pure (rkNew, frk)
+                    ( \frkOld -> do
+                        roforkerClose frkOld
+                        pure frk
                     )
                   tbs <- castLedgerTables <$> roforkerReadTables frk (castLedgerTables $ isTxKeys is)
                   let (is', mTrace) =

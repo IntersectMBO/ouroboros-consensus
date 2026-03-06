@@ -855,9 +855,10 @@ switchTo ::
   -- when reprocessing blocks that were postponed due to the Limit on Eagerness
   -- (cf 'ChainSelReprocessLoEBlocks').
   Maybe (RealPoint blk) ->
-  -- | Chain and ledger to switch to
+  -- | Chain diff to switch to
   ChainDiff (Header blk) ->
   ReasonForSwitch' blk ->
+  -- | Forker at the tip of the above ChainDiff
   Forker' m blk ->
   m ()
 switchTo CDB{..} weights triggerPt chainDiff reason forker = do
@@ -918,8 +919,8 @@ switchTo CDB{..} weights triggerPt chainDiff reason forker = do
 
         return (curChain, newChain, events, prevTentativeHeader, newLedger, closeOrphanedStates)
 
-  -- If an exception were to arrive before we run this, it might seem like the
-  -- resources could be leaked, but it actually doesn't matter because an
+  -- If an async exception were to arrive before we run this, it might seem like
+  -- the resources could be leaked, but it actually doesn't matter because an
   -- exception here means that the whole node is shutting down, so the ChainDB
   -- will be closed which will release any remaining resources via closing the
   -- LedgerDB.

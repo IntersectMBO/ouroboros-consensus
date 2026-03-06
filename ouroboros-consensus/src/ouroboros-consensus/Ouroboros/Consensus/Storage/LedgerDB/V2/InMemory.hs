@@ -97,7 +97,7 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) tables =
             , read = implRead tables
             , readRange = implReadRange tables
             , readAll = \_ -> pure tables
-            , duplicateWithDiffs = implPushDiffs tracer tables someFS
+            , duplicateWithDiffs = implDuplicateWithDiffs tracer tables someFS
             , takeHandleSnapshot = implTakeHandleSnapshot tables hasFS
             , tablesSize = Map.size . getValuesMK . getLedgerTables $ tables
             }
@@ -105,7 +105,7 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) tables =
 
 {-# INLINE implRead #-}
 {-# INLINE implReadRange #-}
-{-# INLINE implPushDiffs #-}
+{-# INLINE implDuplicateWithDiffs #-}
 {-# INLINE implTakeHandleSnapshot #-}
 
 implRead ::
@@ -129,7 +129,7 @@ implReadRange (LedgerTables (ValuesMK m)) _ (f, t) =
   let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
    in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
 
-implPushDiffs ::
+implDuplicateWithDiffs ::
   ( IOLike m
   , HasLedgerTables l
   , CanUpgradeLedgerTables l
@@ -143,7 +143,7 @@ implPushDiffs ::
   l mk1 ->
   l DiffMK ->
   m (LedgerTablesHandle m l)
-implPushDiffs !tracer tables !someFS st0 !diffs = do
+implDuplicateWithDiffs !tracer tables !someFS st0 !diffs = do
   let newtables =
         flip
           (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d)))

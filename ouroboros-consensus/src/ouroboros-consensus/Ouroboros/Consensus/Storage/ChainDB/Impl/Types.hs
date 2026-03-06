@@ -142,6 +142,7 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (Fuse)
 import Ouroboros.Consensus.Util.AnchoredFragment (ReasonForSwitch')
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -180,11 +181,11 @@ getEnv (CDBHandle varState) f =
     ChainDbClosed -> throwIO $ ClosedDBError @blk prettyCallStack
 
 getEnvTrans ::
-  forall t m blk r.
-  (MonadTrans t, IOLike m, HasCallStack, HasHeader blk) =>
+  forall m blk r.
+  (IOLike m, HasCallStack, HasHeader blk) =>
   ChainDbHandle m blk ->
-  (ChainDbEnv m blk -> t m r) ->
-  t m r
+  (ChainDbEnv m blk -> WithEarlyExit m r) ->
+  WithEarlyExit m r
 getEnvTrans (CDBHandle varState) f =
   lift (atomically (readTVar varState)) >>= \case
     ChainDbOpen env -> f env
@@ -211,12 +212,12 @@ getEnv2 h f a b = getEnv h (\env -> f env a b)
 
 -- | Variant 'of 'getEnv' for functions taking two arguments.
 getEnvTrans2 ::
-  (MonadTrans t, IOLike m, HasCallStack, HasHeader blk) =>
+  (IOLike m, HasCallStack, HasHeader blk) =>
   ChainDbHandle m blk ->
-  (ChainDbEnv m blk -> a -> b -> t m r) ->
+  (ChainDbEnv m blk -> a -> b -> WithEarlyExit m r) ->
   a ->
   b ->
-  t m r
+  WithEarlyExit m r
 getEnvTrans2 h f a b = getEnvTrans h (\env -> f env a b)
 
 -- | Variant of 'getEnv' that works in 'STM'.

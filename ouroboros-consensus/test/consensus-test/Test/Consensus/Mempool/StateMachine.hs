@@ -30,7 +30,6 @@ import Control.Arrow (second)
 import Control.Concurrent.Class.MonadSTM.Strict.TChan
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
-import Control.ResourceRegistry
 import qualified Control.Tracer as CT (Tracer (..), traceWith)
 import qualified Data.Foldable as Foldable
 import Data.Function (on)
@@ -501,7 +500,6 @@ data SUT m blk
       !(Mempool m blk)
       -- | Emulates a ledger db to the extent needed by the ledger interface.
       !(StrictTVar m (MockedLedgerDB blk))
-      !(ResourceRegistry m)
   deriving Generic
 
 deriving instance
@@ -530,9 +528,8 @@ newLedgerInterface ::
   , IOLike m
   ) =>
   LedgerState blk ValuesMK ->
-  ResourceRegistry m ->
   m (LedgerInterface m blk, StrictTVar m (MockedLedgerDB blk))
-newLedgerInterface initialLedger reg = do
+newLedgerInterface initialLedger = do
   t <- newTVarIO $ MockedLedgerDB initialLedger Set.empty
   pure
     ( LedgerInterface
@@ -541,20 +538,15 @@ newLedgerInterface initialLedger reg = do
             pure $
               MempoolLedgerDBView
                 (forgetLedgerTables st)
-                ( Right
-                    <$> allocate
-                      reg
-                      ( \_ ->
-                          pure $
-                            ReadOnlyForker
-                              { roforkerClose = pure ()
-                              , roforkerReadStatistics = pure $ Statistics 0
-                              , roforkerReadTables = pure . (projectLedgerTables st `restrictValues'`)
-                              , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
-                              , roforkerGetLedgerState = pure $ forgetLedgerTables st
-                              }
-                      )
-                      roforkerClose
+                ( pure $
+                    Right $
+                      ReadOnlyForker
+                        { roforkerClose = pure ()
+                        , roforkerReadStatistics = pure $ Statistics 0
+                        , roforkerReadTables = pure . (projectLedgerTables st `restrictValues'`)
+                        , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
+                        , roforkerGetLedgerState = pure $ forgetLedgerTables st
+                        }
                 )
         }
     , t
@@ -572,23 +564,21 @@ mkSUT ::
   ) =>
   LedgerConfig blk ->
   LedgerState blk ValuesMK ->
-  m (SUT m blk, CT.Tracer m String, ResourceRegistry m)
+  m (SUT m blk, CT.Tracer m String)
 mkSUT cfg initialLedger = do
-  reg <- unsafeNewRegistry
-  (lif, t) <- newLedgerInterface initialLedger reg
+  (lif, t) <- newLedgerInterface initialLedger
   trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool blk)))
   let trcr =
         CT.Tracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
           atomically . writeTChan trcrChan
   mempool <-
     openMempoolWithoutSyncThread
-      reg
       lif
       cfg
       (MempoolCapacityBytesOverride $ unIgnoringOverflow txMaxBytes')
       (Nothing :: Maybe MempoolTimeoutConfig)
       (CT.Tracer $ CT.traceWith trcr . Right)
-  pure (SUT mempool t reg, CT.Tracer $ atomically . writeTChan trcrChan . Left, reg)
+  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left)
 
 semantics ::
   ( LedgerSupportsMempool blk
@@ -600,8 +590,7 @@ semantics ::
   StrictTVar m (SUT m blk) ->
   m (Response blk Concrete)
 semantics trcr cmd r = do
-  SUT m t rr <- atomically $ readTVar r
-  unsafeRegisterMyThread rr
+  SUT m t <- atomically $ readTVar r
   case cmd of
     Action (TryAddTxs txs) -> do
       AddResult <$> mapM (addTx m AddTxForRemotePeer) txs
@@ -693,13 +682,8 @@ sm ::
   StateMachine (Model blk) (Command blk) m (Response blk) ->
   CT.Tracer m String ->
   StrictTVar m (SUT m blk) ->
-  ResourceRegistry m ->
   StateMachine (Model blk) (Command blk) m (Response blk)
-sm sm0 trcr ior reg =
-  sm0
-    { QC.semantics = \c -> semantics trcr c ior
-    , QC.cleanup = \_ -> closeRegistry reg
-    }
+sm sm0 trcr ior = sm0{QC.semantics = \c -> semantics trcr c ior}
 
 smUnused ::
   ( blk ~ TestBlock
@@ -753,9 +737,9 @@ prop_mempoolSequential cfg capacity initialState gTxs = forAllCommands sm0 Nothi
   \cmds ->
     monadicIO
       ( do
-          (sut, trcr, reg) <- run $ mkSUT cfg initialState
+          (sut, trcr) <- run $ mkSUT cfg initialState
           ior <- run $ newTVarIO sut
-          let sm' = sm sm0 trcr ior reg
+          let sm' = sm sm0 trcr ior
           (hist, model, res) <- runCommands sm' cmds
           prettyCommands sm0 hist
             $ checkCommandNames cmds
@@ -795,9 +779,9 @@ prop_mempoolParallel ::
   Property
 prop_mempoolParallel cfg capacity initialState ma gTxs = forAllParallelCommandsNTimes sm0 Nothing 100 $
   \cmds -> monadicIO $ do
-    (sut, trcr, reg) <- run $ mkSUT cfg initialState
+    (sut, trcr) <- run $ mkSUT cfg initialState
     ior <- run $ newTVarIO sut
-    let sm' = sm sm0 trcr ior reg
+    let sm' = sm sm0 trcr ior
     res <- runParallelCommands sm' cmds
     prettyParallelCommandsWithOpts
       cmds

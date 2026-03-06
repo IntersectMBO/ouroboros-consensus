@@ -453,7 +453,6 @@ library lmdb
     nothunks,
     ouroboros-consensus,
     rawlock,
-    resource-registry,
     serialise,
     sop-core,
     streaming,
@@ -641,7 +640,6 @@ library unstable-mempool-test-utils
     deepseq,
     io-classes:strict-stm,
     ouroboros-consensus,
-    resource-registry,
 
 library unstable-tutorials
   import: common-lib
@@ -1915,7 +1913,6 @@ library unstable-snapshot-conversion
     mtl,
     ouroboros-consensus:{cardano, lmdb, lsm, ouroboros-consensus},
     random,
-    resource-registry,
     serialise,
     sop-core,
     sop-extras,

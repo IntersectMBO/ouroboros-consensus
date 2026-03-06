@@ -80,7 +80,6 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   ) where
 
 import Control.Monad (void)
-import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -104,6 +103,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint)
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -231,16 +231,25 @@ data ChainDB m blk = ChainDB
   -- ^ Allocate a read only forker at the given point in the given resource
   -- registry.
   --
-  -- This function is to be used by LocalStateQuery server and the Mempool.
-  , withReadOnlyForkerAtPoint ::
-      forall t r.
-      (MonadTrans t, MonadThrow (t m)) =>
+  -- This function is to be used by LocalStateQuery server. Note ChainSel uses
+  -- the LedgerDB directly, none of these methods are used there.
+  , openReadOnlyForkerAtPoint ::
       Target (Point blk) ->
-      (Either GetForkerError (ReadOnlyForker' m blk) -> t m r) ->
-      t m r
+      m (Either GetForkerError (ReadOnlyForker' m blk))
+  -- ^ Open a forker at the given point. This resource is untracked.
+  --
+  -- It is intended to be used by the Mempool as closing the mempool means the
+  -- system is shutting down, so the resources does not need to be tracked. Note
+  -- ChainSel uses the LedgerDB directly, none of these methods are used there.
+  , withReadOnlyForkerAtPoint ::
+      forall r.
+      Target (Point blk) ->
+      (Either GetForkerError (ReadOnlyForker' m blk) -> WithEarlyExit m r) ->
+      WithEarlyExit m r
   -- ^ Run a continuation with a forker at the given target.
   --
-  -- This function is to be used by the forging loop.
+  -- This function is to be used by the forging loop. Note ChainSel uses the
+  -- LedgerDB directly, none of these methods are used there.
   , getTipBlock :: m (Maybe blk)
   -- ^ Get block at the tip of the chain, if one exists
   --

@@ -94,7 +94,10 @@
 --
 --   For the value handles, all the usages of those are bracketed or tracked in
 --   a resource registry, so they will be closed individually when an exception
---   arrives.
+--   arrives. The key difference is that in V1, the value handle cannot outlive
+--   the Forker (which is bracketed or tracked or doesn't matter because the
+--   node is shutting down), while in V2 the resources (handles) can outlive the
+--   forkers and be moved to the LedgerDB.
 --
 -- - LSM: This backend allocates a 'BlockIOFS' and a 'Session'. Using the
 --   session, new 'Tables' are allocated, but closing the session closes any
@@ -528,11 +531,7 @@ initialize ::
   InitDB db m blk ->
   SnapshotManager m n blk st ->
   Maybe DiskSnapshot ->
-  m
-    ( InitLog blk
-    , db
-    , Word64
-    )
+  m (InitLog blk, db, Word64)
 initialize
   replayTracer
   snapTracer
@@ -579,8 +578,8 @@ initialize
           traceWith snapTracer . InvalidSnapshot s $ InitFailureTooRecent s replayGoal
           tryNewestFirst (acc . InitFailure s (InitFailureTooRecent s replayGoal)) ss
         else do
-          eInit <- initFromSnapshot s
-          case eInit of
+          eInitDb <- initFromSnapshot s
+          case eInitDb of
             -- If the snapshot is missing a metadata file, issue a warning and try
             -- the next oldest snapshot
             Left err@(InitFailureRead (ReadMetadataError _ MetadataFileDoesNotExist)) -> do

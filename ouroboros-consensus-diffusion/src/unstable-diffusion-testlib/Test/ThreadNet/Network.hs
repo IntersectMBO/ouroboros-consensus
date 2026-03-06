@@ -652,11 +652,12 @@ runThreadNetwork
         m (ExtLedgerState blk EmptyMK)
       ) ->
       Mempool m blk ->
+      ResourceRegistry m ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
       m (Thread m Void)
-    forkCrucialTxs clock s0 unblockForge getTipPoint mforker mempool txs0 = do
-      testForkMempoolThread mempool "crucialTxs" $ do
+    forkCrucialTxs clock s0 unblockForge getTipPoint mforker mempool sharedRegistry txs0 = do
+      forkLinkedThread sharedRegistry "crucialTxs" $ do
         let loop (slot, mempFp) = do
               extLedger <- mforker $ lift . atomically . roforkerGetLedgerState
               let ledger = ledgerState extLedger
@@ -1181,9 +1182,8 @@ runThreadNetwork
           (ledgerTipPoint . ledgerState <$> ChainDB.getCurrentLedger chainDB)
           getForker
           mempool
+          registry
           txs0
-
-      void $ allocateThread registry (\_ -> pure threadCrucialTxs)
 
       forkTxProducer
         coreNodeId

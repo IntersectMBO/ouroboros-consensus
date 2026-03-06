@@ -408,10 +408,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbOpenHandlesLock :: !(RAWLock m ())
   -- ^ While holding a read lock (at least), all handles in the 'ldbSeq' are
   -- guaranteed to be open. During this time, the handle can be duplicated and
-  -- then be used independently, see 'unsafeGetStateRef' and 'withStateRef'.
+  -- then be used independently, see 'openStateRef' and 'withStateRef'.
   --
   -- We acquire read access when opening a duplicate of a handle (see
-  -- 'unsafeGetStateRef').
+  -- 'openGetStateRef').
   --
   -- We acquire write access when pruning the LedgerDB (see
   -- 'implGarbageCollect') and when closing orphaned handles in Chain selection
@@ -622,13 +622,8 @@ withForkerByRollback h n k = getEnv h $ \ldbEnv ->
     (either (const $ pure ()) forkerClose)
     (either (pure . Left) (fmap Right . k))
 
--- | Will release all handles in the 'foeLedgerSeq'.
---
--- This function receives an environment instead of reading it from
--- the DB such that we can close the forker even if the LedgerDB is
--- closed. In fact this should never happen as clients of the LedgerDB
--- (which are the ones opening forkers) should never outlive the
--- LedgerDB.
+-- | Will release all handles in the 'foeLedgerSeq', which will be only the
+-- first duplicate if the forker has been committed.
 implForkerClose ::
   IOLike m =>
   ForkerEnv m l ->
@@ -638,9 +633,9 @@ implForkerClose env = do
   if wasCommitted
     then
       traceWith (foeTracer env) (ForkerClose ForkerWasCommitted)
-    else do
-      closeLedgerSeq =<< readTVarIO (foeLedgerSeq env)
+    else
       traceWith (foeTracer env) (ForkerClose ForkerWasUncommitted)
+  closeLedgerSeq =<< readTVarIO (foeLedgerSeq env)
 
 newForker ::
   ( IOLike m

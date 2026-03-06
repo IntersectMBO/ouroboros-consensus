@@ -47,7 +47,7 @@ openMempool ::
 openMempool topLevelRegistry ledger cfg capacityOverride timeoutConfig tracer = do
   env <- initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer
   forkSyncStateOnTipPointChange env topLevelRegistry
-  return $ mkMempool env topLevelRegistry
+  return $ mkMempool env
 
 -- | Spawn a thread which syncs the 'Mempool' state whenever the 'LedgerState'
 -- changes.
@@ -93,15 +93,14 @@ openMempoolWithoutSyncThread ::
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
   ) =>
-  ResourceRegistry m ->
   LedgerInterface m blk ->
   LedgerConfig blk ->
   MempoolCapacityBytesOverride ->
   Maybe MempoolTimeoutConfig ->
   Tracer m (TraceEventMempool blk) ->
   m (Mempool m blk)
-openMempoolWithoutSyncThread registry ledger cfg capacityOverride timeoutConfig tracer =
-  flip mkMempool registry <$> initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer
+openMempoolWithoutSyncThread ledger cfg capacityOverride timeoutConfig tracer =
+  mkMempool <$> initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer
 
 mkMempool ::
   ( IOLike m
@@ -110,8 +109,8 @@ mkMempool ::
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
   ) =>
-  MempoolEnv m blk -> ResourceRegistry m -> Mempool m blk
-mkMempool mpEnv reg =
+  MempoolEnv m blk -> Mempool m blk
+mkMempool mpEnv =
   Mempool
     { addTx = fmap runIdentity .: implAddTx mpEnv ProductionAddTx
     , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
@@ -119,7 +118,6 @@ mkMempool mpEnv reg =
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getCapacity = isCapacity <$> readTMVar istate
     , testSyncWithLedger = implSyncWithLedger mpEnv
-    , testForkMempoolThread = forkLinkedThread reg
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }
  where

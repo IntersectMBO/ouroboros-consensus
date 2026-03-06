@@ -212,12 +212,7 @@ openDB ::
 openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} = do
   createDirectoryIfMissing hasFS True (mkFsPath [])
   ost <-
-    -- It is OK to disable the temp registry at this point because this
-    -- function is only used on initialization and the file handles have not
-    -- modified the files. An exception during the initialization will just
-    -- shut down the whole process which will close the handles. An exception
-    -- after the initialization will close the ChainDB which will close the
-    -- VolatileDB, closing the handles.
+    -- TODO: mkOpenState does not need to run in WithTempRegistry.
     runWithTempRegistry $
       (\x -> (x, x))
         <$> mkOpenState

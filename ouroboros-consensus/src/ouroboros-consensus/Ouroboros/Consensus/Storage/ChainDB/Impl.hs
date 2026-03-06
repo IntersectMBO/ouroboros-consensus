@@ -175,7 +175,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       )
 
   -- Note this is the only step that actually cares about the temporary registry
-  -- while initializing the ChainDB.
+  -- while initializing the ChainDB. It opens the handle to the backend and we
+  -- want to track that one to close it on exception, see "Resource management
+  -- in the LedgerDB" in "Ouroboros.Consensus.Storage.LedgerDB.API".
   (lgrDB, replayed) <-
     LedgerDB.openDB
       argsLgrDb
@@ -289,6 +291,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getPastLedger = getEnvSTM1 h Query.getPastLedger
             , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
             , allocInRegistryReadOnlyForkerAtPoint = getEnv2 h Query.allocInRegistryReadOnlyForkerAtPoint
+            , openReadOnlyForkerAtPoint = getEnv1 h Query.openReadOnlyForkerAtPoint
             , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
@@ -322,6 +325,13 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
     when launchBgTasks $ Background.launchBgTasks env replayed
 
+    -- Note we put the ChainDB in the top level registry before exiting the
+    -- 'runWithTempRegistry' scope. This way, the critical resources (actually
+    -- only the LedgerDB resources, see "Resource management in the LedgerDB"
+    -- note in "Ouroboros.Consensus.Storage.LedgerDB.API") are always tracked by
+    -- a registry. As the ChainDB is so fundamental to the execution of
+    -- Consensus, it is justified for the LedgerDB to temporarily allocate
+    -- resources with 'impossibleToNotTransfer'.
     _ <- allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return chainDB) API.closeDB
 
     return ((chainDB, testing), env)

@@ -178,10 +178,9 @@ closeLSMTable tracer t =
 duplicateLSMTable ::
   IOLike m =>
   Tracer m LedgerDBV2Trace ->
-  a ->
   UTxOTable m ->
   m (UTxOTable m)
-duplicateLSMTable tracer _ t = do
+duplicateLSMTable tracer t = do
   encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate t
 
 {-------------------------------------------------------------------------------
@@ -193,23 +192,19 @@ newLSMLedgerTablesHandle ::
   ( IOLike m
   , HasLedgerTables l
   , IndexedMemPack (l EmptyMK) (TxOut l)
-  , StandardHash l
-  , GetTip l
   ) =>
   Tracer m LedgerDBV2Trace ->
   -- | The size of the tables
   Word64 ->
-  -- | At which point these tables are being opened
-  Point l ->
   UTxOTable m ->
   m (LedgerTablesHandle m l)
-newLSMLedgerTablesHandle tracer utxosSize p t =
+newLSMLedgerTablesHandle tracer utxosSize t =
   encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $ do
     pure
       LedgerTablesHandle
         { close = closeLSMTable tracer t
-        , duplicateWithDiffs = implPushDiffs tracer t utxosSize
-        , duplicate = implDuplicate utxosSize p t tracer
+        , duplicateWithDiffs = implDuplicateWithDiffs tracer t utxosSize
+        , duplicate = implDuplicate utxosSize t tracer
         , read = implRead tracer t
         , readRange = implReadRange t
         , readAll = implReadAll t
@@ -221,35 +216,29 @@ newLSMLedgerTablesHandle tracer utxosSize p t =
 {-# INLINE implRead #-}
 {-# INLINE implReadRange #-}
 {-# INLINE implReadAll #-}
-{-# INLINE implPushDiffs #-}
+{-# INLINE implDuplicateWithDiffs #-}
 {-# INLINE implTakeHandleSnapshot #-}
 
 implDuplicate ::
   ( IOLike m
   , HasLedgerTables l
   , IndexedMemPack (l EmptyMK) (TxOut l)
-  , StandardHash l
-  , GetTip l
   ) =>
   Word64 ->
-  Point l ->
   UTxOTable m ->
   Tracer m LedgerDBV2Trace ->
   m (LedgerTablesHandle m l)
-implDuplicate size p t tracer =
-  duplicateLSMTable tracer p t
+implDuplicate size t tracer =
+  duplicateLSMTable tracer t
     >>= newLSMLedgerTablesHandle
       tracer
       size
-      p
 
-implPushDiffs ::
+implDuplicateWithDiffs ::
   forall m l mk.
   ( IOLike m
   , HasLedgerTables l
   , IndexedMemPack (l EmptyMK) (TxOut l)
-  , StandardHash l
-  , GetTip l
   ) =>
   Tracer m LedgerDBV2Trace ->
   UTxOTable m ->
@@ -257,8 +246,8 @@ implPushDiffs ::
   l mk ->
   l DiffMK ->
   m (LedgerTablesHandle m l)
-implPushDiffs tracer t0 size _ !st1@(getTip -> p) = do
-  t <- duplicateLSMTable tracer p t0
+implDuplicateWithDiffs tracer t0 size _ !st1 = do
+  t <- duplicateLSMTable tracer t0
   encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
     let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
     let vec = V.create $ do
@@ -282,7 +271,7 @@ implPushDiffs tracer t0 size _ !st1@(getTip -> p) = do
               size + ins - dels
 
     encloseTimedWith (BackendTrace . SomeBackendTrace . LSMUpdate >$< tracer) $ LSM.updates t vec
-    newLSMLedgerTablesHandle tracer size' p t
+    newLSMLedgerTablesHandle tracer size' t
  where
   f (Diff.Insert v) = LSM.Insert (toTxOutBytes (forgetLedgerTables st1) v) Nothing
   f Diff.Delete = LSM.Delete
@@ -558,7 +547,7 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
               (fromString $ snapshotToDirName ds)
               (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
 
-      h <- lift $ newLSMLedgerTablesHandle tracer msz (getTip extLedgerSt) values
+      h <- lift $ newLSMLedgerTablesHandle tracer msz values
       Monad.when
         (checksumAsRead /= snapshotChecksum snapshotMeta)
         $ throwE
@@ -681,7 +670,7 @@ instance
     let st' = forgetLedgerTables st
     (table, sz) <-
       tableFromValuesMK trcr (sessionResource res) st' (ltprj st)
-    StateRef st' <$> newLSMLedgerTablesHandle trcr sz (getTip st) table
+    StateRef st' <$> newLSMLedgerTablesHandle trcr sz table
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 
@@ -772,7 +761,7 @@ sinkLsmS ::
   Session m ->
   Sink m l
 sinkLsmS writeChunkSize (SomeHasFS hfs) ds session st stream = do
-  (r, utxosSize) <-
+  r <-
     bracket
       (lift $ LSM.newTable session)
       (lift . LSM.closeTable)
@@ -783,9 +772,9 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session st stream = do
               (LSM.toSnapshotName (snapshotToDirName ds))
               (LSM.SnapshotLabel $ T.pack "UTxO table")
               lsmTable
-          pure (r, utxosSize)
+          lift $ writeUTxOSizeFile hfs (snapshotToUTxOSizeFilePath ds) utxosSize
+          pure r
       )
-  lift $ writeUTxOSizeFile hfs (snapshotToUTxOSizeFilePath ds) utxosSize
   pure (fmap (,Nothing) r)
  where
   writeToTable :: UTxOTable m -> [(TxIn l, TxOut l)] -> m ()
@@ -810,37 +799,30 @@ mkLSMYieldArgs ::
   ( IOLike m
   , HasLedgerTables l
   , IndexedMemPack (l EmptyMK) (TxOut l)
-  , GetTip l
-  , StandardHash l
   ) =>
   -- | The filepath in which the LSM database lives. Must not have a trailing slash!
   FilePath ->
   -- | The complete name of the snapshot to open, so @<slotno>[_<suffix>]@.
   DiskSnapshot ->
   -- | Usually 'stdMkBlockIOFS'
-  (FilePath -> WithTempRegistry st m (SomeHasFSAndBlockIO m)) ->
+  (FilePath -> WithTempRegistry () m (SomeHasFSAndBlockIO m)) ->
   -- | Usually 'newStdGen'
   (m StdGen) ->
-  l EmptyMK ->
-  WithTempRegistry st m (YieldArgs m LSM l)
-mkLSMYieldArgs lsmDbPath ds mkFS mkGen st = do
-  shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <- mkFS lsmDbPath
-  salt <- fst . genWord64 <$> lift mkGen
-  session <-
-    allocateTemp
-      (LSM.openSession nullTracer hasFS blockIO salt (mkFsPath []))
-      (\t -> LSM.closeSession t >> pure True)
-      impossibleToNotTransfer
+  m (YieldArgs m LSM l)
+mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
+  shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
+    -- The Yield args will be created in the alloc step of a bracket so we do the
+    -- 'runWithTempRegistry' here as the resource will be closed by the outer
+    -- bracket anyways.
+    runWithTempRegistry $ (\x -> (x, ())) <$> mkFS lsmDbPath
+  salt <- fst . genWord64 <$> mkGen
+  session <- LSM.openSession nullTracer hasFS blockIO salt (mkFsPath [])
   tb <-
-    allocateTemp
-      ( LSM.openTableFromSnapshot
-          session
-          (LSM.toSnapshotName (snapshotToDirName ds))
-          (LSM.SnapshotLabel $ T.pack "UTxO table")
-      )
-      (\t -> LSM.closeTable t >> pure True)
-      impossibleToNotTransfer
-  h <- lift (newLSMLedgerTablesHandle nullTracer 0 (getTip st) tb)
+    LSM.openTableFromSnapshot
+      session
+      (LSM.toSnapshotName (snapshotToDirName ds))
+      (LSM.SnapshotLabel $ T.pack "UTxO table")
+  h <- newLSMLedgerTablesHandle nullTracer 0 tb
   pure $ YieldLSM 1000 h session shfsbio
 
 -- | Create Sink arguments for LSM
@@ -855,18 +837,18 @@ mkLSMSinkArgs ::
   -- | Usually 'ioHasFS'
   SomeHasFS m ->
   -- | Usually 'stdMkBlockIOFS'
-  (FilePath -> WithTempRegistry st m (SomeHasFSAndBlockIO m)) ->
+  (FilePath -> WithTempRegistry () m (SomeHasFSAndBlockIO m)) ->
   -- | Usually 'newStdGen'
   (m StdGen) ->
-  WithTempRegistry st m (SinkArgs m LSM l)
+  m (SinkArgs m LSM l)
 mkLSMSinkArgs lsmDbParentPath lsmDbPath ds snapFs mkBlockIOFS mkGen = do
-  shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <- mkBlockIOFS lsmDbParentPath
-  lift $ removeDirectoryRecursive hasFS lsmDbPath
-  lift $ createDirectory hasFS lsmDbPath
-  salt <- fst . genWord64 <$> lift mkGen
-  session <-
-    allocateTemp
-      (LSM.newSession nullTracer hasFS blockIO salt lsmDbPath)
-      (\t -> LSM.closeSession t >> pure True)
-      impossibleToNotTransfer
+  shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
+    -- The Sink args will be created in the alloc step of a bracket so we do the
+    -- 'runWithTempRegistry' here as the resource will be closed by the outer
+    -- bracket anyways.
+    runWithTempRegistry $ (\x -> (x, ())) <$> mkBlockIOFS lsmDbParentPath
+  removeDirectoryRecursive hasFS lsmDbPath
+  createDirectory hasFS lsmDbPath
+  salt <- fst . genWord64 <$> mkGen
+  session <- LSM.newSession nullTracer hasFS blockIO salt lsmDbPath
   pure (SinkLSM 1000 snapFs shfsbio ds session)

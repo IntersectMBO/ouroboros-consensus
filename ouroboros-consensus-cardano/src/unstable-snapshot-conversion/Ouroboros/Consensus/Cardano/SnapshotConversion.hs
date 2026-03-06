@@ -26,7 +26,6 @@ import Control.Monad (when)
 import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
-import Control.ResourceRegistry
 import Data.Bifunctor
 import Data.Char (toLower)
 import qualified Data.Text.Lazy as T
@@ -140,8 +139,7 @@ instance StandardHash blk => Show (Error blk) where
 data InEnv backend = InEnv
   { inState :: LedgerState (CardanoBlock StandardCrypto) EmptyMK
   -- ^ Ledger state (without tables) that will be used to index the snapshot.
-  , inStream ::
-      WithTempRegistry () IO (SomeBackend YieldArgs)
+  , inStream :: IO (SomeBackend YieldArgs)
   -- ^ Yield arguments for producing a stream of TxOuts
   , inProgressMsg :: String
   -- ^ A progress message (just for displaying)
@@ -152,8 +150,7 @@ data InEnv backend = InEnv
   }
 
 data OutEnv backend = OutEnv
-  { outStream ::
-      WithTempRegistry () IO (SomeBackend SinkArgs)
+  { outStream :: IO (SomeBackend SinkArgs)
   -- ^ Sink arguments for consuming a stream of TxOuts
   , outDeleteExtra :: Maybe FilePath
   -- ^ In case some other directory needs to be wiped out
@@ -336,7 +333,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       pure $
         InEnv
           st
-          (SomeBackend <$> mkLSMYieldArgs lsmDbPath inSnap stdMkBlockIOFS newStdGen st)
+          (SomeBackend <$> mkLSMYieldArgs lsmDbPath inSnap stdMkBlockIOFS newStdGen)
           ("LSM@[" <> lsmDbPath <> "]")
           c
           metadataCrc
@@ -381,31 +378,18 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
 
   stream ::
     LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-    WithTempRegistry () IO (SomeBackend YieldArgs) ->
-    WithTempRegistry () IO (SomeBackend SinkArgs) ->
+    IO (SomeBackend YieldArgs) ->
+    IO (SomeBackend SinkArgs) ->
     ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)
   stream st mYieldArgs mSinkArgs =
     ExceptT $
       bracket
-        ((,) <$> newTVarIO Nothing <*> newTVarIO Nothing)
-        ( \(tv1, tv2) -> do
-            readTVarIO tv1 >>= \case
-              Nothing -> pure ()
-              Just (SomeBackend yArgs) -> releaseYieldArgs yArgs
-            readTVarIO tv2 >>= \case
-              Nothing -> pure ()
-              Just (SomeBackend sArgs) -> releaseSinkArgs sArgs
+        ((,) <$> mYieldArgs <*> mSinkArgs)
+        ( \(SomeBackend (yArgs :: YieldArgs IO backend1 l), (SomeBackend (sArgs :: SinkArgs IO backend2 l))) -> do
+            releaseYieldArgs yArgs
+            releaseSinkArgs sArgs
         )
-        ( \(tv1, tv2) -> do
-            (SomeBackend (yArgs :: YieldArgs IO backend1 l), (SomeBackend (sArgs :: SinkArgs IO backend2 l))) <-
-              runWithTempRegistry $
-                (,()) <$> do
-                  s1 <- mYieldArgs
-                  s2 <- mSinkArgs
-                  lift $ atomically $ do
-                    writeTVar tv1 (Just s1)
-                    writeTVar tv2 (Just s2)
-                  pure (s1, s2)
+        ( \(SomeBackend (yArgs :: YieldArgs IO backend1 l), (SomeBackend (sArgs :: SinkArgs IO backend2 l))) -> do
             runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
         )
 

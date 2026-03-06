@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -20,6 +21,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
   , implForkerReadTables
   ) where
 
+import Control.Exception (throw)
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
@@ -109,38 +111,28 @@ closeForkerEnv ForkerEnv{foeBackingStoreValueHandle, foeTracer, foeWasCommitted}
 -- | Get the value handle in a forker, creating it on demand if this is the
 -- first time we access the tables.
 getValueHandle :: (GetTip l, IOLike m) => ForkerEnv m l blk -> m (LedgerBackingStoreValueHandle m l)
-getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} = mask $ \restore -> do
-  -- A slight variation of `modifyMVar`+`bracketOnError`. We want to keep the
-  -- bracketOnError scope open until we have written to the MVar but
-  -- `modifyMVar` doesn't allow for that. This code below does, note it is masked.
-  val <- takeMVar foeBackingStoreValueHandle
-  case val of
-    Right bsvh -> do
-      putMVar foeBackingStoreValueHandle (Right bsvh)
-      pure bsvh
+getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} = mask_ $ do
+  -- Note this is masked, so the inner function in 'modifyMVar' will also be
+  -- masked.
+  modifyMVar foeBackingStoreValueHandle $ \case
+    r@(Right bsvh) -> pure (r, bsvh)
     Left (l, bs) -> do
       bsvh <- bsValueHandle bs
-      restore
-        ( do
-            dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
-            if bsvhAtSlot bsvh == dblogSlot
-              then do
-                -- Release the read lock acquired when opening the forker.
-                atomically $ unsafeReleaseReadAccess l
-                putMVar foeBackingStoreValueHandle $ Right bsvh
-              else
-                error
-                  ( "Critical error: Value handles are created at "
-                      <> show (bsvhAtSlot bsvh)
-                      <> " while the db changelog is at "
-                      <> show dblogSlot
-                      <> ". There is either a race condition or a logic bug"
-                  )
-        )
-        `onException` do
-          bsvhClose bsvh
-          putMVar foeBackingStoreValueHandle $ Left (l, bs)
-      pure bsvh
+      dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
+      if bsvhAtSlot bsvh == dblogSlot
+        then do
+          -- Release the read lock acquired when opening the forker.
+          atomically $ unsafeReleaseReadAccess l
+          pure (Right bsvh, bsvh)
+        else
+          throw $
+            CriticalInvariantViolation
+              ( "Critical error: Value handles are created at "
+                  <> show (bsvhAtSlot bsvh)
+                  <> " while the db changelog is at "
+                  <> show dblogSlot
+                  <> ". There is either a race condition or a logic bug"
+              )
 
 implForkerReadTables ::
   (IOLike m, HasLedgerTables l, GetTip l) =>
@@ -356,7 +348,7 @@ implForkerCommit env = do
      in DbChangelog
           { changelogLastFlushedState = changelogLastFlushedState orig
           , changelogStates = case splitAfterOrigAnchor (changelogStates dblog) of
-              Nothing -> error "Forker chain does no longer intersect with selected chain."
+              Nothing -> throw $ CriticalInvariantViolation "Forker chain does no longer intersect with selected chain."
               Just (_, suffix) -> suffix
           , changelogDiffs =
               ltliftA2 (doPrune s) (changelogDiffs orig) (changelogDiffs dblog)
@@ -379,3 +371,7 @@ implForkerCommit env = do
       if DS.minSlot prunedSeq == DS.minSlot extendedSeq
         then extendedSeq
         else snd $ DS.splitAtSlot s extendedSeq
+
+newtype CriticalInvariantViolation = CriticalInvariantViolation {message :: String}
+  deriving Show
+  deriving anyclass Exception

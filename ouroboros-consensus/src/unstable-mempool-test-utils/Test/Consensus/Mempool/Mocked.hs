@@ -25,7 +25,6 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTVar
   )
 import Control.DeepSeq (NFData (rnf))
-import Control.ResourceRegistry
 import Control.Tracer (Tracer)
 import qualified Data.List.NonEmpty as NE
 import Ouroboros.Consensus.HeaderValidation as Header
@@ -81,7 +80,6 @@ openMockedMempool ::
   IO (MockedMempool IO blk)
 openMockedMempool capacityOverride tracer initialParams = do
   currentLedgerStateTVar <- newTVarIO (immpInitialState initialParams)
-  reg <- unsafeNewRegistry
   let ledgerItf =
         Mempool.LedgerInterface
           { Mempool.getCurrentLedgerState = do
@@ -89,26 +87,20 @@ openMockedMempool capacityOverride tracer initialParams = do
               pure $
                 MempoolLedgerDBView
                   (forgetLedgerTables st)
-                  ( Right
-                      <$> allocate
-                        reg
-                        ( \_ ->
-                            pure $
-                              ReadOnlyForker
-                                { roforkerClose = pure ()
-                                , roforkerGetLedgerState = pure (forgetLedgerTables st)
-                                , roforkerReadTables = \keys ->
-                                    pure $ projectLedgerTables st `restrictValues'` keys
-                                , roforkerReadStatistics = pure $ Statistics 0
-                                , roforkerRangeReadTables = \_ -> pure (emptyLedgerTables, Nothing)
-                                }
-                        )
-                        roforkerClose
+                  ( pure $
+                      Right $
+                        ReadOnlyForker
+                          { roforkerClose = pure ()
+                          , roforkerGetLedgerState = pure (forgetLedgerTables st)
+                          , roforkerReadTables = \keys ->
+                              pure $ projectLedgerTables st `restrictValues'` keys
+                          , roforkerReadStatistics = pure $ Statistics 0
+                          , roforkerRangeReadTables = \_ -> pure (emptyLedgerTables, Nothing)
+                          }
                   )
           }
   mempool <-
     Mempool.openMempoolWithoutSyncThread
-      reg
       ledgerItf
       (immpLedgerConfig initialParams)
       capacityOverride

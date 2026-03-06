@@ -16,7 +16,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -131,13 +130,11 @@ prop_sequential maxSuccess mkTestArguments getDiskDir fsOps actions =
   setup :: IO Environment
   setup = do
     cdb <- initChainDB
-    rr <- unsafeNewRegistry
-    initialEnvironment fsOps getDiskDir mkTestArguments cdb rr
+    initialEnvironment fsOps getDiskDir mkTestArguments cdb
 
   cleanup :: Environment -> IO ()
-  cleanup (Environment _ testInternals _ _ _ _ clean registry) = do
+  cleanup (Environment _ testInternals _ _ _ _ clean) = do
     closeLedgerDB testInternals
-    closeRegistry registry
     clean
 
   runner :: StateT Environment IO QC.Property -> QC.Property
@@ -160,9 +157,8 @@ initialEnvironment ::
   IO (FilePath, IO ()) ->
   (SecurityParam -> LSM.Salt -> FilePath -> TestArguments IO) ->
   ChainDB IO ->
-  ResourceRegistry IO ->
   IO Environment
-initialEnvironment fsOps getDiskDir mkTestArguments cdb rr = do
+initialEnvironment fsOps getDiskDir mkTestArguments cdb = do
   (sfs, cleanupFS) <- fsOps
   (diskDir, cleanupDisk) <- getDiskDir
   pure $
@@ -182,7 +178,6 @@ initialEnvironment fsOps getDiskDir mkTestArguments cdb rr = do
       sfs
       (pure $ NumOpenHandles 0)
       (cleanupFS >> cleanupDisk)
-      rr
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -579,9 +574,8 @@ openLedgerDB ::
   ChainDB IO ->
   LedgerDbCfg (ExtLedgerState TestBlock) ->
   SomeHasFS IO ->
-  ResourceRegistry IO ->
   IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock, IO NumOpenHandles)
-openLedgerDB flavArgs env cfg fs rr = do
+openLedgerDB flavArgs env cfg fs = do
   (stream, volBlocks) <- dbStreamAPI env
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
   replayGoal <- fmap (realPointToPoint . last . Map.keys) . atomically $ readTVar (dbBlocks env)
@@ -594,12 +588,11 @@ openLedgerDB flavArgs env cfg fs rr = do
           cfg
           tracer
           flavArgs
-          rr
           DefaultQueryBatchSize
           Nothing
   (ldb, _, od) <-
     runWithTempRegistry $
-      (,()) <$> case lgrBackendArgs args of
+      (\x -> (x, ())) <$> case lgrBackendArgs args of
         LedgerDbBackendArgsV1 bss ->
           let snapManager = V1.snapshotManager args
               initDb =
@@ -656,7 +649,6 @@ data Environment
       (SomeHasFS IO)
       !(IO NumOpenHandles)
       !(IO ())
-      !(ResourceRegistry IO)
 
 data LedgerDBError = ErrorValidateExceededRollback
 
@@ -664,30 +656,30 @@ instance RunModel Model (StateT Environment IO) where
   type Error Model (StateT Environment IO) = LedgerDBError
 
   perform _ (Init secParam salt) _ = do
-    Environment _ _ chainDb mkArgs fs _ cleanup rr <- get
+    Environment _ _ chainDb mkArgs fs _ cleanup <- get
     (ldb, testInternals, getNumOpenHandles) <- lift $ do
       let args = mkArgs secParam salt
-      openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs rr
+      openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs
     lift $
       garbageCollect ldb . fromWithOrigin 0 . pointSlot . getTip =<< atomically (getImmutableTip ldb)
-    put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup rr)
+    put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup)
     pure $ pure ()
   perform _ WipeLedgerDB _ = do
-    Environment _ testInternals _ _ _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ <- get
     lift $ wipeLedgerDB testInternals
     pure $ pure ()
   perform _ GetState _ = do
-    Environment ldb _ _ _ _ _ _ _ <- get
+    Environment ldb _ _ _ _ _ _ <- get
     lift $ fmap pure $ atomically $ (,) <$> getImmutableTip ldb <*> getVolatileTip ldb
   perform _ ForceTakeSnapshot _ = do
-    Environment _ testInternals _ _ _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ <- get
     lift $ takeSnapshotNOW testInternals TakeAtImmutableTip Nothing
     pure $ pure ()
   perform _ (ValidateAndCommit n blks0) _ =
     case NE.nonEmpty blks0 of
       Nothing -> pure $ pure ()
       Just blks -> do
-        Environment ldb _ chainDb _ _ _ _ _ <- get
+        Environment ldb _ chainDb _ _ _ _ <- get
         lift $ do
           atomically $
             modifyTVar (dbBlocks chainDb) $
@@ -708,17 +700,17 @@ instance RunModel Model (StateT Environment IO) where
             ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
             ValidateLedgerError (AnnLedgerError p _ err) -> error ("Unexpected ledger error" <> show err <> " on point " <> show p)
   perform state@(Model _ _ secParam) (DropAndRestore n salt) lk = do
-    Environment _ testInternals chainDb _ _ _ _ _ <- get
+    Environment _ testInternals chainDb _ _ _ _ <- get
     lift $ do
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
       closeLedgerDB testInternals
     perform state (Init secParam salt) lk
   perform _ OpenAndCloseForker _ = do
-    Environment ldb _ _ _ _ _ _ _ <- get
+    Environment ldb _ _ _ _ _ _ <- get
     lift $ withTipForker ldb (\_ -> pure ())
     pure $ pure ()
   perform _ TruncateSnapshots _ = do
-    Environment _ testInternals _ _ _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ <- get
     lift $ truncateSnapshots testInternals
     pure $ pure ()
   perform UnInit _ _ = error "Uninitialized model created a command different than Init"
@@ -782,7 +774,7 @@ mkTrackOpenHandles = do
 
 -- | Check that we didn't leak any 'LedgerTablesHandle's (with V2 only).
 checkNoLeakedHandles :: Environment -> IO QC.Property
-checkNoLeakedHandles (Environment _ testInternals _ _ _ getNumOpenHandles _ _) = do
+checkNoLeakedHandles (Environment _ testInternals _ _ _ getNumOpenHandles _) = do
   expected <- NumOpenHandles <$> LedgerDB.getNumLedgerTablesHandles testInternals
   actual <- getNumOpenHandles
   pure $

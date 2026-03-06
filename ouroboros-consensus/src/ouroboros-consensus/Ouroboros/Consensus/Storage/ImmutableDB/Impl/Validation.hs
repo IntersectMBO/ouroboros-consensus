@@ -105,15 +105,11 @@ validateAndReopen validateEnv registry valPol = wrapFsError (Proxy @blk) $ do
   case tip of
     Origin -> assert (chunk == firstChunkNo) $ do
       traceWith tracer NoValidLastLocation
-      -- It is OK to disable the temp registry at this point because this
-      -- function is only used on initialization and the file handles have not
-      -- modified the files. An exception during the initialization will just
-      -- shut down the whole process which will close the handles. An exception
-      -- after the initialization will close the ChainDB which will close the
-      -- ImmutableDB, closing the handles.
+      -- TODO: mkOpenState does not need to run in WithTempRegistry.
       runWithTempRegistry $ (\x -> (x, x)) <$> mkOpenState hasFS index chunk Origin MustBeNew
     NotOrigin tip' -> do
       traceWith tracer $ ValidatedLastLocation chunk tip'
+      -- TODO: mkOpenState does not need to run in WithTempRegistry.
       runWithTempRegistry $ (\x -> (x, x)) <$> mkOpenState hasFS index chunk tip AllowExisting
  where
   ValidateEnv{hasFS, tracer, cacheConfig, chunkInfo} = validateEnv

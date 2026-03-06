@@ -46,7 +46,6 @@ module Ouroboros.Consensus.Mempool.Impl.Common
 
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import Control.Monad.Trans.Except (runExcept)
-import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
@@ -207,32 +206,30 @@ newtype LedgerInterface m blk = LedgerInterface
 data MempoolLedgerDBView m blk = MempoolLedgerDBView
   { mldViewState :: LedgerState blk EmptyMK
   -- ^ The ledger state currently at the tip of the LedgerDB
-  , mldViewGetForker :: m (Either GetForkerError (ResourceKey m, ReadOnlyForker m (LedgerState blk)))
+  , mldViewGetForker :: m (Either GetForkerError (ReadOnlyForker m (LedgerState blk)))
   -- ^ An action to get a forker at 'mldViewState' or an error in the unlikely
   -- case that such state is now gone from the LedgerDB.
   --
-  -- The returned ResourceKey has to be used to close this forker when replacing
-  -- it with a new one.
+  -- The forker is not tracked as a resource because shutting down the mempool
+  -- only happens if the system is going down, and in that case open forkers are unimportant.
   }
 
 -- | Create a 'LedgerInterface' from a 'ChainDB'.
 chainDBLedgerInterface ::
   (IOLike m, IsLedger (LedgerState blk)) =>
   ChainDB m blk ->
-  ResourceRegistry m ->
   LedgerInterface m blk
-chainDBLedgerInterface chainDB topLevelRegistry =
+chainDBLedgerInterface chainDB =
   LedgerInterface
     { getCurrentLedgerState = do
         st <- ChainDB.getCurrentLedger chainDB
         pure
           $ MempoolLedgerDBView
             (ledgerState st)
-          $ fmap (second (fmap ledgerStateReadOnlyForker))
-          $ ChainDB.allocInRegistryReadOnlyForkerAtPoint
+          $ fmap (second ledgerStateReadOnlyForker)
+          $ ChainDB.openReadOnlyForkerAtPoint
             chainDB
             (SpecificPoint (castPoint $ getTip st))
-            topLevelRegistry
     }
 
 {-------------------------------------------------------------------------------
@@ -244,7 +241,7 @@ chainDBLedgerInterface chainDB topLevelRegistry =
 -- different operations.
 data MempoolEnv m blk = MempoolEnv
   { mpEnvLedger :: LedgerInterface m blk
-  , mpEnvForker :: StrictMVar m (ResourceKey m, ReadOnlyForker m (LedgerState blk))
+  , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk))
   , mpEnvLedgerCfg :: LedgerConfig blk
   , mpEnvStateVar :: StrictTMVar m (InternalState blk)
   , mpEnvAddTxsRemoteFifo :: StrictMVar m ()
@@ -273,8 +270,8 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
     -- the forker, the ledgerdb has changed. We just loop to try again here.
     Left{} -> do
       initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer
-    Right (rk, frk) -> do
-      frkMVar <- newMVar (rk, frk)
+    Right frk -> do
+      frkMVar <- newMVar frk
       let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
       isVar <-
         newTMVarIO $

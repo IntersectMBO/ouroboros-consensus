@@ -20,6 +20,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
   , module Ouroboros.Consensus.Storage.LedgerDB.Forker
   ) where
 
+import Control.Exception
+import Control.Monad (when)
 import Control.RAWLock (RAWLock, withWriteAccess)
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
@@ -117,6 +119,11 @@ implForkerPush env newState = do
     let st0 = current lseq
         st = forgetLedgerTables newState
 
+    -- We don't need to track this resource anywhere because if an exception
+    -- comes here, the exception will abort ChainSel and therefore the node is
+    -- shutting down so the resources (the Session in LSM) will be closed. See
+    -- "Resource management in the LedgerDB" in
+    -- "Ouroboros.Consensus.Storage.LedgerDB.API".
     tbs <- duplicateWithDiffs (tables $ currentHandle lseq) st0 newState
     atomically $ writeTVar (foeLedgerSeq env) (extend (StateRef st tbs) lseq)
 
@@ -125,6 +132,10 @@ implForkerCommit ::
   ForkerEnv m l ->
   STM m (m ())
 implForkerCommit env = do
+  wasCommitted <- readTVar (foeWasCommitted env)
+  when wasCommitted $
+    throw $
+      CriticalInvariantViolation "Critical invariant violation: forker has been committed twice"
   LedgerSeq lseq <- readTVar (foeLedgerSeq env)
   let intersectionSlot = getTipSlot $ state $ AS.anchor lseq
   let predicate = (== getTipHash (state (AS.anchor lseq))) . getTipHash . state
@@ -145,22 +156,24 @@ implForkerCommit env = do
           pure ((AS.anchor lseq, ldbToClose), LedgerSeq newdb)
       )
   writeTVar (foeWasCommitted env) True
-  -- Note it doesn't really matter what we put here as the forker will not be
-  -- used anymore. We put the 'toCloseForker' handle which will be closed by the
-  -- cleanup function below.
+  -- We put 'toCloseForker' in the LedgerSeq to then close it when closing the
+  -- forker.
   writeTVar (foeLedgerSeq env) (LedgerSeq (AS.Empty toCloseForker))
   pure
-    ( do
-        whenJust toCloseLdb $ \seqToClose ->
-          withWriteAccess (foeLedgerDbLock env) $ \() -> do
-            closeLedgerSeq seqToClose
-            pure ((), ())
-        close $ tables toCloseForker
+    ( whenJust toCloseLdb $ \seqToClose ->
+        withWriteAccess (foeLedgerDbLock env) $ \() -> do
+          closeLedgerSeq seqToClose
+          pure ((), ())
     )
  where
   theImpossible =
-    error $
-      unwords
-        [ "Critical invariant violation:"
-        , "Forker chain does no longer intersect with selected chain."
-        ]
+    throw $
+      CriticalInvariantViolation $
+        unwords
+          [ "Critical invariant violation:"
+          , "Forker chain does no longer intersect with selected chain."
+          ]
+
+newtype CriticalInvariantViolation = CriticalInvariantViolation {message :: String}
+  deriving Show
+  deriving anyclass Exception

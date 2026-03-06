@@ -463,6 +463,10 @@ type NetworkAddr addr =
 --   in a registry are deallocated in reverse order of allocation, any
 --   resources created by such threads will be deallocated before the
 --   ChainDB is closed, ensuring proper cleanup.
+--
+-- See also "Resource management in the LedgerDB" in
+-- "Ouroboros.Consensus.Storage.LedgerDB.API" for a note on how resources are
+-- tracked in the LedgerDB.
 runWith ::
   forall m addrNTN addrNTC blk.
   ( RunNode blk

@@ -239,7 +239,6 @@ initLedgerDB ::
   Chain TestBlock ->
   m (LedgerDB' m TestBlock)
 initLedgerDB s c = do
-  reg <- unsafeNewRegistry
   fs <- newTMVarIO MockFS.empty
   let args =
         LedgerDbArgs
@@ -250,7 +249,6 @@ initLedgerDB s c = do
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents
           , lgrQueryBatchSize = DefaultQueryBatchSize
-          , lgrRegistry = reg
           , lgrStartSnapshot = Nothing
           }
   ldb <-

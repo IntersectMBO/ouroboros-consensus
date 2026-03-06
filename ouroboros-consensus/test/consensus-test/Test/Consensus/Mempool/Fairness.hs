@@ -19,7 +19,6 @@ import Control.Concurrent (threadDelay)
 import qualified Control.Concurrent.Async as Async
 import Control.Exception (assert)
 import Control.Monad (forever, void)
-import Control.ResourceRegistry
 import qualified Control.Tracer as Tracer
 import Data.Foldable (asum)
 import qualified Data.List as List
@@ -90,7 +89,7 @@ type TestMempool = Mempool IO TestBlock
 -- See 'TestParams' for an explanation of the different parameters that
 -- influence this test.
 testTxSizeFairness :: TestParams -> IO ()
-testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOftxsToCollect, toleranceThreshold} = withRegistry $ \reg -> do
+testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOftxsToCollect, toleranceThreshold} = do
   ----------------------------------------------------------------------------
   --  Obtain a mempool.
   ----------------------------------------------------------------------------
@@ -102,20 +101,15 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
             pure $
               MempoolLedgerDBView
                 (testInitLedgerWithState NoPayLoadDependentState)
-                ( Right
-                    <$> allocate
-                      reg
-                      ( \_ ->
-                          pure $
-                            ReadOnlyForker
-                              { roforkerClose = pure ()
-                              , roforkerReadTables = const $ pure emptyLedgerTables
-                              , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
-                              , roforkerGetLedgerState = pure $ testInitLedgerWithState NoPayLoadDependentState
-                              , roforkerReadStatistics = pure $ Statistics 0
-                              }
-                      )
-                      roforkerClose
+                ( pure $
+                    Right $
+                      ReadOnlyForker
+                        { roforkerClose = pure ()
+                        , roforkerReadTables = const $ pure emptyLedgerTables
+                        , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
+                        , roforkerGetLedgerState = pure $ testInitLedgerWithState NoPayLoadDependentState
+                        , roforkerReadStatistics = pure $ Statistics 0
+                        }
                 )
         }
 
@@ -126,7 +120,6 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
 
   mempool <-
     Mempool.openMempoolWithoutSyncThread
-      reg
       ledgerItf
       (testBlockLedgerConfigFrom eraParams)
       (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)

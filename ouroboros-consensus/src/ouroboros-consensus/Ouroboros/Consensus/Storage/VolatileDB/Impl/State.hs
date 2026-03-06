@@ -301,6 +301,7 @@ closeOpenHandles :: HasFS m h -> OpenState blk h -> m ()
 closeOpenHandles HasFS{hClose} OpenState{currentWriteHandle} =
   hClose currentWriteHandle
 
+-- TODO: mkOpenState does not need to run in WithTempRegistry.
 mkOpenState ::
   forall m blk h.
   ( HasCallStack

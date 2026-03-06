@@ -38,7 +38,6 @@ import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.Monad.State (State, evalState, get, modify)
-import Control.ResourceRegistry
 import Control.Tracer (Tracer (..))
 import Data.Bifunctor (first, second)
 import Data.Either (isRight)
@@ -732,7 +731,7 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
   isOverride NoMempoolCapacityBytesOverride = False
 
   setUpAndRun :: forall m. (IOLike m, MonadTimer m) => m Property
-  setUpAndRun = withRegistry $ \reg -> do
+  setUpAndRun = do
     -- Set up the LedgerInterface
     varCurrentLedgerState <- uncheckedNewTVarM testLedgerState
     let ledgerInterface =
@@ -742,21 +741,16 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
                 pure $
                   MempoolLedgerDBView
                     (forgetLedgerTables st)
-                    ( Right
-                        <$> allocate
-                          reg
-                          ( \_ ->
-                              pure $
-                                ReadOnlyForker
-                                  { roforkerClose = pure ()
-                                  , roforkerReadTables =
-                                      pure . (projectLedgerTables st `restrictValues'`)
-                                  , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
-                                  , roforkerGetLedgerState = pure $ forgetLedgerTables st
-                                  , roforkerReadStatistics = pure $ Statistics 0
-                                  }
-                          )
-                          roforkerClose
+                    ( pure $
+                        Right $
+                          ReadOnlyForker
+                            { roforkerClose = pure ()
+                            , roforkerReadTables =
+                                pure . (projectLedgerTables st `restrictValues'`)
+                            , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
+                            , roforkerGetLedgerState = pure $ forgetLedgerTables st
+                            , roforkerReadStatistics = pure $ Statistics 0
+                            }
                     )
             }
 
@@ -768,7 +762,6 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
     -- Open the mempool and add the initial transactions
     mempool <-
       openMempoolWithoutSyncThread
-        reg
         ledgerInterface
         testLedgerCfg
         testMempoolCapOverride

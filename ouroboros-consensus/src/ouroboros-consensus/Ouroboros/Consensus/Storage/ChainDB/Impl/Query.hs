@@ -71,6 +71,7 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (eitherToMaybe)
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -308,15 +309,14 @@ openReadOnlyForkerAtPoint ::
   m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
 openReadOnlyForkerAtPoint CDB{..} = LedgerDB.openReadOnlyForker cdbLedgerDB
 
--- Note: the transformer monad is necessary to accomodate 'WithEarlyExit'
 withReadOnlyForkerAtPoint ::
-  (MonadTrans t, MonadThrow (t m), IOLike m) =>
+  IOLike m =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
   ( Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk) ->
-    t m r
+    WithEarlyExit m r
   ) ->
-  t m r
+  WithEarlyExit m r
 withReadOnlyForkerAtPoint cdb tgt =
   bracket
     (lift $ openReadOnlyForkerAtPoint cdb tgt)
