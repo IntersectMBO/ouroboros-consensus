@@ -36,6 +36,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Dual
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -266,6 +267,8 @@ instance NodeInitStorage DualByronBlock where
 {-------------------------------------------------------------------------------
   RunNode instance
 -------------------------------------------------------------------------------}
+
+instance LedgerSupportsPeras DualByronBlock
 
 instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown

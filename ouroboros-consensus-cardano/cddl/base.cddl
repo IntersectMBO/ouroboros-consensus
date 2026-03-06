@@ -28,6 +28,7 @@ nonce = [0] / [1, hash]
 point = [] / [ slotno, hash ]
 poolDistr = map<keyhash, individualPoolStake>
 slotno = word64
+roundno = word64
 stake = rational
 
 withOrigin<v> = [] / [v]
