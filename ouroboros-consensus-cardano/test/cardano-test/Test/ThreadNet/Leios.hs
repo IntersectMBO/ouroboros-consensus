@@ -31,7 +31,7 @@ import Cardano.Ledger.Api
   )
 import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
 import Cardano.Ledger.Api.Tx.In (TxIn (..))
-import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded, unSlotNo)
+import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
@@ -179,7 +179,7 @@ prop_leios_blocksProduced seed =
   testOutput =
     runThreadNet seed (NumSlots $ ceiling numSlots) (NumCoreNodes $ fromIntegral numNodes)
 
-  numNodes = 3
+  numNodes = 3 :: Integer
 
   numSlots = 200
 
