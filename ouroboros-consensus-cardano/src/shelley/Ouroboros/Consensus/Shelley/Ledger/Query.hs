@@ -1060,7 +1060,7 @@ encodeShelleyResult v query = case query of
   GetRatifyState{} -> LC.toEraCBOR @era
   GetFuturePParams{} -> LC.toEraCBOR @era
   GetLedgerPeerSnapshot'{} -> encodeLedgerPeerSnapshot' (ledgerPeerSnapshotSupportsSRV v)
-  QueryStakePoolDefaultVote{} -> toCBOR
+  QueryStakePoolDefaultVote{} -> LC.toEraCBOR @era
   GetPoolDistr2{} -> LC.toEraCBOR @era
   GetStakeDistribution2{} -> LC.toEraCBOR @era
   GetMaxMajorProtocolVersion -> toCBOR
@@ -1109,7 +1109,7 @@ decodeShelleyResult v query = case query of
   GetRatifyState{} -> LC.fromEraCBOR @era
   GetFuturePParams{} -> LC.fromEraCBOR @era
   GetLedgerPeerSnapshot'{} -> decodeLedgerPeerSnapshot
-  QueryStakePoolDefaultVote{} -> fromCBOR
+  QueryStakePoolDefaultVote{} -> LC.fromEraCBOR @era
   GetPoolDistr2{} -> LC.fromEraCBOR @era
   GetStakeDistribution2 -> LC.fromEraCBOR @era
   GetMaxMajorProtocolVersion -> fromCBOR
