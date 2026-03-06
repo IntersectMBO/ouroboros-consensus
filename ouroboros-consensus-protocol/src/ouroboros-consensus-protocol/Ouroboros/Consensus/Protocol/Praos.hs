@@ -35,6 +35,7 @@ module Ouroboros.Consensus.Protocol.Praos
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
+import Cardano.Ledger.Binary (DecCBOR (decCBOR), EncCBOR (encCBOR), natVersion, toPlainDecoder, toPlainEncoding)
 import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
@@ -313,12 +314,12 @@ instance Serialise PraosState where
           [ CBOR.encodeListLen 8
           , toCBOR praosStateLastSlot
           , toCBOR praosStateOCertCounters
-          , toCBOR praosStateEvolvingNonce
-          , toCBOR praosStateCandidateNonce
-          , toCBOR praosStateEpochNonce
-          , toCBOR praosStatePreviousEpochNonce
-          , toCBOR praosStateLabNonce
-          , toCBOR praosStateLastEpochBlockNonce
+          , toPlainEncoding (natVersion @9) (encCBOR praosStateEvolvingNonce)
+          , toPlainEncoding (natVersion @9) (encCBOR praosStateCandidateNonce)
+          , toPlainEncoding (natVersion @9) (encCBOR praosStateEpochNonce)
+          , toPlainEncoding (natVersion @9) (encCBOR praosStatePreviousEpochNonce)
+          , toPlainEncoding (natVersion @9) (encCBOR praosStateLabNonce)
+          , toPlainEncoding (natVersion @9) (encCBOR praosStateLastEpochBlockNonce)
           ]
 
   decode =
@@ -330,12 +331,12 @@ instance Serialise PraosState where
       PraosState
         <$> fromCBOR
         <*> fromCBOR
-        <*> fromCBOR
-        <*> fromCBOR
-        <*> fromCBOR
-        <*> fromCBOR
-        <*> fromCBOR
-        <*> fromCBOR
+        <*> toPlainDecoder Nothing (natVersion @9) decCBOR
+        <*> toPlainDecoder Nothing (natVersion @9) decCBOR
+        <*> toPlainDecoder Nothing (natVersion @9) decCBOR
+        <*> toPlainDecoder Nothing (natVersion @9) decCBOR
+        <*> toPlainDecoder Nothing (natVersion @9) decCBOR
+        <*> toPlainDecoder Nothing (natVersion @9) decCBOR
 
 data instance Ticked PraosState = TickedPraosState
   { tickedPraosStateChainDepState :: PraosState
