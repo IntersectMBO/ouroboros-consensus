@@ -212,16 +212,13 @@ openDB ::
 openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} = do
   createDirectoryIfMissing hasFS True (mkFsPath [])
   ost <-
-    -- TODO: mkOpenState does not need to run in WithTempRegistry.
-    runWithTempRegistry $
-      (\x -> (x, x))
-        <$> mkOpenState
-          volCodecConfig
-          hasFS
-          volCheckIntegrity
-          volValidationPolicy
-          volTracer
-          volMaxBlocksPerFile
+    mkOpenState
+      volCodecConfig
+      hasFS
+      volCheckIntegrity
+      volValidationPolicy
+      volTracer
+      volMaxBlocksPerFile
   stVar <- RAWLock.new (DbOpen ost)
   let env =
         VolatileDBEnv
