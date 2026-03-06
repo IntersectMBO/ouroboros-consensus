@@ -16,7 +16,6 @@
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE ViewPatterns #-}
 -- Needed for @NoThunks (Table m k v b)@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
