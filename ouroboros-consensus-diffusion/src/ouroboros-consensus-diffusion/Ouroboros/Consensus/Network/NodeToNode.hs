@@ -1267,7 +1267,8 @@ leiosNotifyProtocolLimits =
         addSafetyMargin $
           fromIntegral $
             Leios.maxLeiosNotifyIngressQueue $
-              Leios.demoLeiosFetchStaticEnv
+              Leios.demoLeiosFetchStaticEnv,
+      ON.burst = Nothing
     }
 
 leiosFetchProtocolLimits :: MiniProtocolLimits
@@ -1277,7 +1278,8 @@ leiosFetchProtocolLimits =
         addSafetyMargin $
           fromIntegral $
             Leios.maxLeiosFetchIngressQueue $
-              Leios.demoLeiosFetchStaticEnv
+              Leios.demoLeiosFetchStaticEnv,
+      ON.burst = Nothing
     }
 
 -- | Copied from ouroboros-network
