@@ -1239,14 +1239,10 @@ processAllSt_ db registry blockComponent startFrom cfg limit callback =
     FromLedgerState ledgerDB intLedgerDB = startFrom
 
     callback' (blk,b) = do
-      frk <-
-        LedgerDB.getForkerAtTarget ledgerDB registry VolatileTip >>= \case
-          Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
-          Right f -> pure f
-      oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-      oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-      let oldLedger = oldLedgerSt `withLedgerTables` oldLedgerTbs
-      LedgerDB.forkerClose frk
+      oldLedger <- LedgerDB.withPrivateTipForker ledgerDB $ \frk -> do
+        oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
+        oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
+        return $ oldLedgerSt `withLedgerTables` oldLedgerTbs
 
       let
         nextLedgerSt = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk oldLedger
