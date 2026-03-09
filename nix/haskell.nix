@@ -28,6 +28,10 @@ let
         ghcOptions = [ "-Werror" ];
       }))
       {
+        # disable haddocks for cardano-diffusion due to https://gitlab.haskell.org/ghc/ghc/-/issues/25739,
+        # and cardano-diffusion uses `type data` which triggers the bug.
+        packages.cardano-diffusion.doHaddock = false;
+        packages.ouroboros-network.doHaddock = false;
         # Options related to tasty and tasty-golden:
         packages.ouroboros-consensus.components.tests =
           lib.listToAttrs (map
