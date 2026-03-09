@@ -36,6 +36,12 @@ module Test.ThreadNet.Network
   , NodeDBs (..)
   , NodeOutput (..)
   , TestOutput (..)
+  , TraceThreadNet (..)
+  , _nodeEvent
+  , TraceThreadNetNode (..)
+  , _FromMempool
+  , _FromLeios
+  , mkTestOutput
   ) where
 
 import Cardano.Network.PeerSelection.Bootstrap
@@ -65,7 +71,8 @@ import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Stack
 import LeiosDemoDb (newLeiosDBInMemory)
-import LeiosDemoTypes (ForgedLeiosEb)
+import LeiosDemoTypes (ForgedLeiosEb, TraceLeiosKernel)
+import Lens.Micro (SimpleFold, folding)
 import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
@@ -132,6 +139,7 @@ import Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
 import Ouroboros.Network.Protocol.Limits (waitForever)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
+import Ouroboros.Network.TxSubmission.Outbound (TraceTxSubmissionOutbound)
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
 import System.Random (mkStdGen, split)
@@ -307,11 +315,15 @@ runThreadNetwork ::
   , MonadTimer m
   , RunNode blk
   , TxGen blk
-  , TracingConstraints blk
-  , HasCallStack
+  , -- TODO:, TracingConstraints blk
+    HasCallStack
   ) =>
-  SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
+  Tracer m (TraceThreadNet blk) ->
+  SystemTime m ->
+  ThreadNetworkArgs m blk ->
+  m (TestOutput blk)
 runThreadNetwork
+  baseTracer
   systemTime
   ThreadNetworkArgs
     { tnaForgeEbbEnv = mbForgeEbbEnv
@@ -384,7 +396,7 @@ runThreadNetwork
           sharedRegistry
           clock
           -- traces when/why the mini protocol instances start and stop
-          nullDebugTracer
+          nullTracer
           (version, blockVersion)
           (codecConfig, calcMessageDelay)
           vertexStatusVars
@@ -747,7 +759,7 @@ runThreadNetwork
                   , mcdbRegistry = registry
                   , mcdbNodeDBs = nodeDBs
                   }
-            tr = instrumentationTracer <> nullDebugTracer
+            tr = instrumentationTracer
          in args
               { cdbImmDbArgs =
                   (cdbImmDbArgs args)
@@ -767,7 +779,7 @@ runThreadNetwork
                   (cdbsArgs args)
                     { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
                       cdbsGcDelay = 0
-                    , cdbsTracer = instrumentationTracer <> nullDebugTracer
+                    , cdbsTracer = instrumentationTracer
                     }
               }
        where
@@ -972,7 +984,8 @@ runThreadNetwork
 
       let
         -- prop_general relies on these tracers
-        instrumentationTracers =
+        nodeTracer = FromNode coreNodeId >$< baseTracer
+        tracers =
           nullTracers
             { chainSyncClientTracer = Tracer $ \case
                 TraceLabelPeer _ (CSClient.TraceDownloadedHeader hdr) ->
@@ -990,10 +1003,10 @@ runThreadNetwork
                 case ev of
                   TraceNodeIsLeader s -> atomically $ blockOnCrucial s
                   _ -> pure ()
+            , mempoolTracer = contramap FromMempool nodeTracer
+            , leiosKernelTracer = contramap FromLeios nodeTracer
+            , txOutboundTracer = contramap FromTxOutbound nodeTracer
             }
-
-        -- traces the node's local events other than those from the -- ChainDB
-        tracers = instrumentationTracers <> nullDebugTracers
 
       let
         -- use a backoff delay of exactly one slot length (which the
@@ -1107,7 +1120,7 @@ runThreadNetwork
               nodeKernel
               -- these tracers report every message sent/received by this
               -- node
-              nullDebugProtocolTracers
+              NTN.nullTracers
               (customNodeToNodeCodecs pInfoConfig)
               -- REVIEW: This had "no limits" before using (const 0), this
               -- now moved to the BearerBytes class and we would need to
@@ -1457,6 +1470,20 @@ directedEdgeInner
                       NTN.aKeepAliveClient
                       NTN.aKeepAliveServer
                       (\_ -> pure ())
+                  , miniProtocol
+                      "LeiosFetch"
+                      neverReturns
+                      neverReturns
+                      NTN.aLeiosFetchClient
+                      NTN.aLeiosFetchServer
+                      (\_ -> pure ())
+                  , miniProtocol
+                      "LeiosNotify"
+                      neverReturns
+                      neverReturns
+                      NTN.aLeiosNotifyClient
+                      NTN.aLeiosNotifyServer
+                      (\_ -> pure ())
                   ]
    where
     getApp v =
@@ -1653,7 +1680,37 @@ data NodeOutput blk = NodeOutput
 data TestOutput blk = TestOutput
   { testOutputNodes :: Map NodeId (NodeOutput blk)
   , testOutputTipBlockNos :: Map SlotNo (Map NodeId (WithOrigin BlockNo))
+  , allTraces :: [TraceThreadNet blk]
+  , exceptionThrown :: Maybe SomeException
   }
+
+-- | Type of all traces tracked by the ThreadNet.
+data TraceThreadNet blk
+  = FromNode {fromNodeId :: CoreNodeId, fromNodeEvent :: TraceThreadNetNode blk}
+
+deriving instance Show (TraceThreadNetNode blk) => Show (TraceThreadNet blk)
+
+_nodeEvent :: SimpleFold (TraceThreadNet blk) (TraceThreadNetNode blk)
+_nodeEvent = folding $ \case FromNode _ ev -> Just ev
+
+data TraceThreadNetNode blk
+  = FromLeios TraceLeiosKernel
+  | FromMempool (TraceEventMempool blk)
+  | FromTxOutbound
+      (TraceLabelPeer (ConnectionId NodeId) (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
+
+deriving instance
+  ( Show (GenTx blk)
+  , Show (GenTxId blk)
+  , Show (TraceEventMempool blk)
+  ) =>
+  Show (TraceThreadNetNode blk)
+
+_FromLeios :: SimpleFold (TraceThreadNetNode blk) TraceLeiosKernel
+_FromLeios = folding $ \case FromLeios x -> Just x; _ -> Nothing
+
+_FromMempool :: SimpleFold (TraceThreadNetNode blk) (TraceEventMempool blk)
+_FromMempool = folding $ \case FromMempool x -> Just x; _ -> Nothing
 
 -- | Gather the test output from the nodes
 mkTestOutput ::
@@ -1724,36 +1781,13 @@ mkTestOutput vertexInfos = do
     TestOutput
       { testOutputNodes = Map.unions nodeOutputs'
       , testOutputTipBlockNos = Map.unionsWith Map.union tipBlockNos'
+      , allTraces = [] -- XXX: avoid monkey patching
+      , exceptionThrown = Nothing -- XXX: avoid monkey patching
       }
 
 {-------------------------------------------------------------------------------
   Constraints needed for verbose tracing
 -------------------------------------------------------------------------------}
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracer :: (Applicative m, Show a) => Tracer m a
-nullDebugTracer = nullTracer `asTypeOf` showTracing debugTracer
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracers ::
-  ( Monad m
-  , Show peer
-  , LedgerSupportsProtocol blk
-  , TracingConstraints blk
-  ) =>
-  Tracers m peer Void blk
-nullDebugTracers = nullTracers `asTypeOf` showTracers debugTracer
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugProtocolTracers ::
-  ( Monad m
-  , HasHeader blk
-  , TracingConstraints blk
-  , Show peer
-  ) =>
-  NTN.Tracers m peer blk failure
-nullDebugProtocolTracers =
-  NTN.nullTracers `asTypeOf` NTN.showTracers debugTracer
 
 -- These constraints are when using @showTracer(s) debugTracer@ instead of
 -- @nullTracer(s)@.

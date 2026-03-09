@@ -35,14 +35,28 @@ module Test.ThreadNet.General
   , plainTestNodeInitialization
   ) where
 
-import Control.Exception (assert)
+import Control.Exception (assert, throw)
 import Control.Monad (guard)
-import Control.Monad.IOSim (runSimOrThrow, setCurrentTime)
-import Control.Tracer (nullTracer)
+import Control.Monad.IOSim
+  ( SimEvent (..)
+  , SimEventType (..)
+  , SimTrace
+  , ppSimEvent
+  , runSimTrace
+  , selectTraceEventsDynamic
+  , setCurrentTime
+  , traceM
+  , traceResult
+  )
+import Control.Tracer (Tracer (..), nullTracer)
+import Data.Dynamic (fromDynamic)
+import qualified Data.List.Trace as Trace
 import qualified Data.Map.Strict as Map
+import Data.Monoid (Endo (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
+import qualified Debug.Trace as Debug
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Block.Abstract as BA
@@ -59,7 +73,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
-import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain
@@ -209,7 +223,6 @@ runTestNetwork ::
   forall blk.
   ( RunNode blk
   , TxGen blk
-  , TracingConstraints blk
   , HasCallStack
   ) =>
   TestConfig ->
@@ -233,17 +246,16 @@ runTestNetwork
     , version = (networkVersion, blockVersion)
     }
   mkTestConfigMB =
-    runSimOrThrow $ do
+    case traceResult False trace of
+      Left e -> ppDebug' trace $ throw e
+      Right x -> x{allTraces = selectTraceEventsDynamic trace}
+   where
+    trace = runSimTrace $ do
       setCurrentTime dawnOfTime
-      let TestConfigMB
-            { nodeInfo
-            , mkRekeyM
-            } = mkTestConfigMB
-      let systemTime =
-            BTime.defaultSystemTime
-              (BTime.SystemStart dawnOfTime)
-              nullTracer
+      let TestConfigMB{nodeInfo, mkRekeyM} = mkTestConfigMB
+      let systemTime = BTime.defaultSystemTime (BTime.SystemStart dawnOfTime) nullTracer
       runThreadNetwork
+        (Tracer traceM)
         systemTime
         ThreadNetworkArgs
           { tnaForgeEbbEnv = forgeEbbEnv
@@ -261,6 +273,19 @@ runTestNetwork
           , tnaVersion = networkVersion
           , tnaBlockVersion = blockVersion
           }
+
+    -- Variant of ppDebug, that actually prints the EventLog.
+    ppDebug' :: SimTrace a -> x -> x
+    ppDebug' =
+      appEndo
+        . foldMap (Endo . Debug.trace . show')
+        . Trace.toList
+     where
+      show' = \case
+        se@SimEvent{seType = EventLog dyn}
+          | Just v <- fromDynamic @(TraceThreadNet blk) dyn ->
+              ppSimEvent 0 0 0 se <> " -> " <> show v
+        se -> ppSimEvent 0 0 0 se
 
 {-------------------------------------------------------------------------------
   Test properties

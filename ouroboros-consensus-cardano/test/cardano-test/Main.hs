@@ -12,6 +12,7 @@ import qualified Test.Consensus.Cardano.Translation (tests)
 import Test.Tasty
 import qualified Test.ThreadNet.AllegraMary
 import qualified Test.ThreadNet.Cardano
+import qualified Test.ThreadNet.Leios
 import qualified Test.ThreadNet.MaryAlonzo
 import qualified Test.ThreadNet.ShelleyAllegra
 import Test.Util.TestEnv
@@ -35,6 +36,7 @@ tests =
     , Test.Consensus.Cardano.SupportsSanityCheck.tests
     , Test.ThreadNet.AllegraMary.tests
     , Test.ThreadNet.Cardano.tests
+    , Test.ThreadNet.Leios.tests
     , Test.ThreadNet.MaryAlonzo.tests
     , Test.ThreadNet.ShelleyAllegra.tests
     , Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server.tests
