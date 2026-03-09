@@ -229,6 +229,7 @@ library
     Ouroboros.Consensus.Node.Run
     Ouroboros.Consensus.Node.Serialisation
     Ouroboros.Consensus.NodeId
+    Ouroboros.Consensus.Peras.Crypto
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Vote
