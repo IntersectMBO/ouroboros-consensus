@@ -43,12 +43,13 @@ import Control.Monad.Except (runExceptT)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Functor.Identity (Identity (runIdentity))
-import Data.List (transpose, uncons)
+import Data.List (foldl', transpose, uncons)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Sequence.Strict as StrictSeq
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Word (Word64)
 import qualified Debug.Trace as Debug
 import GHC.Generics (Generic)
 import GHC.IO.Handle (Handle)
@@ -117,8 +118,11 @@ run Opts{..} = do
 
   -- NOTE(bladyjoker): Forcing here to have those Debug.traces printed sooner.
   seq testOutput $ do
-    putStrLn "*** Tips"
-    print $ Map.lookupMax . testOutputTipBlockNos $ testOutput
+    putStrLn "*** Exceptions?"
+    print $ exceptionThrown testOutput
+
+  putStrLn "*** Tips"
+  print $ Map.lookupMax . testOutputTipBlockNos $ testOutput
 
   putStrLn "*** Leios"
 
@@ -131,7 +135,6 @@ run Opts{..} = do
 
   putStrLn "*** Outputting log files"
 
-  -- FIXME(bladyjoker): When the threadnet evaluation fails there's no logs to be seen, defeats the purpose I'd say.
   _ <- forM_ (allTraces testOutput) $ \tr -> do
     let
       ix = unCoreNodeId . fromNodeId $ tr
@@ -241,10 +244,10 @@ exampleThreadNetConfig =
             }
         ]
     , tncTopology =
-        Map.fromList
-          [ (0, Set.fromList [1, 2])
-          , (1, Set.fromList [0, 2])
-          , (2, Set.fromList [0, 1])
+        Set.fromList
+          [ unorderedPair 0 1
+          , unorderedPair 0 2
+          , unorderedPair 1 2
           ]
     , tncTxGenerators =
         [ TxGeneratorConfig
@@ -267,11 +270,29 @@ writeExampleThreadNetConfig = do
 
 data ThreadNetConfig = ThreadNetConfig
   { tncCoreNodes :: [CoreNodeConfig]
-  , tncTopology :: Map Int (Set Int)
+  , tncTopology :: Set (UnorderedPair Word64)
   , tncTxGenerators :: [TxGeneratorConfig]
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass (ToJSON, FromJSON)
+
+data UnorderedPair a = UnorderedPair a a deriving stock (Show, Eq, Ord)
+
+-- `unorderedPair x y` is the only constructor of unordered pairs. `Ord` is required for 'canonical' construction.
+unorderedPair :: Ord a => a -> a -> UnorderedPair a
+unorderedPair x y = if x > y then UnorderedPair x y else UnorderedPair y x
+
+-- `let (x, y) = unUnorderedPair up` is the only deconstructor of unordered pairs. The returned pair is sorted ( `x` > `y`).
+unUnorderedPair :: UnorderedPair a -> (a, a)
+unUnorderedPair (UnorderedPair x y) = (x, y)
+
+instance (FromJSON a, Ord a) => FromJSON (UnorderedPair a) where
+  parseJSON v = do
+    (x, y) <- Aeson.parseJSON v
+    pure $ unorderedPair x y
+
+instance ToJSON a => ToJSON (UnorderedPair a) where
+  toJSON = Aeson.toJSON . unUnorderedPair
 
 data CoreNodeConfig = CoreNodeConfig
   { cncVrfSigningKey :: FilePath
@@ -327,12 +348,14 @@ processThreadNetConfig ::
 processThreadNetConfig ThreadNetConfig{..} = do
   tnCoreNodes <- forM tncCoreNodes processCoreNodeConfig
   let tnTopology =
-        NodeTopology . Map.fromList $
-          [ ( CoreNodeId . fromIntegral $ nodeIx
-            , Set.fromList . fmap (CoreNodeId . fromIntegral) . Set.toList $ connectsTo
+        NodeTopology $
+          foldl'
+            ( \acc up ->
+                let (l, r) = unUnorderedPair up
+                 in Map.insertWith (Set.union) (CoreNodeId l) (Set.singleton (CoreNodeId r)) acc
             )
-          | (nodeIx, connectsTo) <- Map.toList tncTopology
-          ]
+            Map.empty
+            (Set.toList tncTopology)
   tnTxGenerators <- forM tncTxGenerators $ \TxGeneratorConfig{..} -> do
     tgSubmitToNodes <-
       Set.fromList

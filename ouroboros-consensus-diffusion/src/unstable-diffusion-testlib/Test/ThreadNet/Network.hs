@@ -67,7 +67,6 @@ import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity (Identity)
 import qualified Data.IntMap as IntMap
 import qualified Data.List as List
-import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -133,6 +132,7 @@ import Ouroboros.Network.BlockFetch
   )
 import Ouroboros.Network.Channel
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
+import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
 import Ouroboros.Network.Mock.Chain (Chain (Genesis))
 import Ouroboros.Network.NodeToNode
   ( ConnectionId (..)
@@ -1011,12 +1011,15 @@ runThreadNetwork
                 _ -> pure ()
             , forgeTracer = Tracer $ \(TraceLabelCreds _ ev) -> do
                 traceWith (nodeEventsForges nodeInfoEvents) ev
+                traceWith nodeTracer (FromForge ev)
                 case ev of
                   TraceNodeIsLeader s -> atomically $ blockOnCrucial s
                   _ -> pure ()
             , mempoolTracer = contramap FromMempool nodeTracer
             , leiosKernelTracer = contramap FromLeios nodeTracer
             , txOutboundTracer = contramap FromTxOutbound nodeTracer
+            , keepAliveClientTracer = contramap FromKeepAliveClient nodeTracer
+            , consensusErrorTracer = contramap FromConsensusError nodeTracer
             }
 
       let
@@ -1345,40 +1348,36 @@ directedEdge ::
   (CoreNodeId, VertexStatusVar m blk) ->
   (CoreNodeId, VertexStatusVar m blk) ->
   m ()
-directedEdge registry tr version cfg clock edgeStatusVar client server =
-  loop
+directedEdge registry tr version cfg clock edgeStatusVar client server = forever $ do
+  restart <-
+    directedEdgeInner registry clock version cfg edgeStatusVar client server
+      `catch` hUnexpected
+  atomically $ writeTVar edgeStatusVar EDown
+  case restart of
+    RestartScheduled -> pure ()
+    RestartChainSyncTerminated -> do
+      -- "error" policy: restart at beginning of next slot
+      s <- OracularClock.getCurrentSlot clock
+      let s' = succ s
+      traceWith tr (s, MiniProtocolDelayed)
+      void $ OracularClock.blockUntilSlot clock s'
+      traceWith tr (s', MiniProtocolRestarting)
  where
-  loop = do
-    restart <-
-      directedEdgeInner registry clock version cfg edgeStatusVar client server
-        `catch` hUnexpected
-    atomically $ writeTVar edgeStatusVar EDown
-    case restart of
-      RestartScheduled -> pure ()
-      RestartChainSyncTerminated -> do
-        -- "error" policy: restart at beginning of next slot
-        s <- OracularClock.getCurrentSlot clock
-        let s' = succ s
-        traceWith tr (s, MiniProtocolDelayed)
-        void $ OracularClock.blockUntilSlot clock s'
-        traceWith tr (s', MiniProtocolRestarting)
-    loop
-   where
-    -- Wrap synchronous exceptions in 'MiniProtocolFatalException'
-    --
-    hUnexpected :: forall a. SomeException -> m a
-    hUnexpected e@(Exn.SomeException e') = case fromException e of
-      Just (_ :: Exn.AsyncException) -> throwIO e
-      Nothing -> case fromException e of
-        Just (_ :: Exn.SomeAsyncException) -> throwIO e
-        Nothing ->
-          throwIO
-            MiniProtocolFatalException
-              { mpfeType = Typeable.typeOf e'
-              , mpfeExn = e
-              , mpfeClient = fst client
-              , mpfeServer = fst server
-              }
+  -- Wrap synchronous exceptions in 'MiniProtocolFatalException'
+  --
+  hUnexpected :: forall a. SomeException -> m a
+  hUnexpected e@(Exn.SomeException e') = case fromException e of
+    Just (_ :: Exn.AsyncException) -> throwIO e
+    Nothing -> case fromException e of
+      Just (_ :: Exn.SomeAsyncException) -> throwIO e
+      Nothing ->
+        throwIO
+          MiniProtocolFatalException
+            { mpfeType = Typeable.typeOf e'
+            , mpfeExn = e
+            , mpfeClient = fst client
+            , mpfeServer = fst server
+            }
 
 -- | Spawn threads for all of the mini protocols
 --
@@ -1405,106 +1404,127 @@ directedEdgeInner
   (node1, vertexStatusVar1)
   (node2, vertexStatusVar2) = do
     -- block until both nodes are 'VUp'
-    (LimitedApp app1, LimitedApp app2) <- atomically $ do
-      (,) <$> getApp vertexStatusVar1 <*> getApp vertexStatusVar2
+    (LimitedApp app1, LimitedApp app2) <-
+      atomically $ (,) <$> getApp vertexStatusVar1 <*> getApp vertexStatusVar2
 
     atomically $ writeTVar edgeStatusVar EUp
 
-    let miniProtocol ::
-          String ->
-          -- \^ protocol name
-          (String -> a -> RestartCause) ->
-          (String -> b -> RestartCause) ->
-          ( LimitedApp' m NodeId blk ->
-            NodeToNodeVersion ->
-            ExpandedInitiatorContext NodeId m ->
-            Channel m msg ->
-            m (a, trailingBytes)
-          ) ->
-          -- \^ client action to run on node1
-          ( LimitedApp' m NodeId blk ->
-            NodeToNodeVersion ->
-            ResponderContext NodeId ->
-            Channel m msg ->
-            m (b, trailingBytes)
-          ) ->
-          -- \^ server action to run on node2
-          (msg -> m ()) ->
-          m (m RestartCause, m RestartCause)
-        miniProtocol proto retClient retServer client server middle = do
-          (chan, dualChan) <-
-            createConnectedChannelsWithDelay registry (node1, node2, proto) middle
-          pure
-            ( (retClient (proto <> ".client") . fst) <$> client app1 version initiatorCtx chan
-            , (retServer (proto <> ".server") . fst) <$> server app2 version responderCtx dualChan
-            )
-         where
-          initiatorCtx =
-            ExpandedInitiatorContext
-              { eicConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
-              , eicControlMessage = return Continue
-              , eicIsBigLedgerPeer = IsNotBigLedgerPeer
-              }
-          responderCtx =
-            ResponderContext
-              { rcConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
-              }
+    vertex1WatcherAsync <- async (watcher vertexStatusVar1)
+    vertex2WatcherAsync <- async (watcher vertexStatusVar2)
 
-    (>>= withAsyncsWaitAny) $
-      fmap flattenPairs $
-        sequence $
-          pure (watcher vertexStatusVar1, watcher vertexStatusVar2)
-            NE.:| [ miniProtocol
-                      "ChainSync"
-                      (\_s _ -> RestartChainSyncTerminated)
-                      (\_s () -> RestartChainSyncTerminated)
-                      NTN.aChainSyncClient
-                      NTN.aChainSyncServer
-                      chainSyncMiddle
-                  , miniProtocol
-                      "BlockFetch"
-                      neverReturns
-                      neverReturns
-                      NTN.aBlockFetchClient
-                      NTN.aBlockFetchServer
-                      (\_ -> pure ())
-                  , miniProtocol
-                      "TxSubmission"
-                      neverReturns
-                      neverReturns
-                      NTN.aTxSubmission2Client
-                      NTN.aTxSubmission2Server
-                      (\_ -> pure ())
-                  , miniProtocol
-                      "KeepAlive"
-                      neverReturns
-                      neverReturns
-                      NTN.aKeepAliveClient
-                      NTN.aKeepAliveServer
-                      (\_ -> pure ())
-                  , miniProtocol
-                      "LeiosFetch"
-                      neverReturns
-                      neverReturns
-                      NTN.aLeiosFetchClient
-                      NTN.aLeiosFetchServer
-                      (\_ -> pure ())
-                  , miniProtocol
-                      "LeiosNotify"
-                      neverReturns
-                      neverReturns
-                      NTN.aLeiosNotifyClient
-                      NTN.aLeiosNotifyServer
-                      (\_ -> pure ())
-                  ]
+    miniProtoAsyncs <-
+      fmap concat $
+        ( forM miniProtos $ \mp -> do
+            (cli, srv) <- mp app1 app2
+            cliAsync <- async cli
+            srvAsync <- async srv
+            return [cliAsync, srvAsync]
+        )
+
+    (_thread, restartCause) <-
+      waitAny $ [vertex1WatcherAsync, vertex2WatcherAsync] <> miniProtoAsyncs
+
+    return restartCause
    where
+    miniProtocol ::
+      String ->
+      -- \^ protocol name
+      (String -> a -> RestartCause) ->
+      (String -> b -> RestartCause) ->
+      ( LimitedApp' m NodeId blk ->
+        NodeToNodeVersion ->
+        ExpandedInitiatorContext NodeId m ->
+        Channel m msg ->
+        m (a, trailingBytes)
+      ) ->
+      -- \^ client action to run on node1
+      ( LimitedApp' m NodeId blk ->
+        NodeToNodeVersion ->
+        ResponderContext NodeId ->
+        Channel m msg ->
+        m (b, trailingBytes)
+      ) ->
+      -- \^ server action to run on node2
+      (msg -> m ()) ->
+      LimitedApp' m NodeId blk ->
+      LimitedApp' m NodeId blk ->
+      m (m RestartCause, m RestartCause)
+    miniProtocol
+      proto
+      retClient
+      retServer
+      client
+      server
+      middle
+      app1
+      app2 = do
+        (chan, dualChan) <-
+          createConnectedChannelsWithDelay registry (node1, node2, proto) middle
+        pure
+          ( (retClient (proto <> ".client") . fst) <$> client app1 version initiatorCtx chan
+          , (retServer (proto <> ".server") . fst) <$> server app2 version responderCtx dualChan
+          )
+       where
+        initiatorCtx =
+          ExpandedInitiatorContext
+            { eicConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
+            , eicControlMessage = return Continue
+            , eicIsBigLedgerPeer = IsNotBigLedgerPeer
+            }
+        responderCtx =
+          ResponderContext
+            { rcConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
+            }
+
+    miniProtos =
+      [ miniProtocol
+          "ChainSync"
+          (\_s _ -> RestartChainSyncTerminated)
+          (\_s () -> RestartChainSyncTerminated)
+          NTN.aChainSyncClient
+          NTN.aChainSyncServer
+          chainSyncMiddle
+      , miniProtocol
+          "BlockFetch"
+          neverReturns
+          neverReturns
+          NTN.aBlockFetchClient
+          NTN.aBlockFetchServer
+          (\_ -> pure ())
+      , miniProtocol
+          "TxSubmission"
+          neverReturns
+          neverReturns
+          NTN.aTxSubmission2Client
+          NTN.aTxSubmission2Server
+          (\_ -> pure ())
+      , miniProtocol
+          "KeepAlive"
+          neverReturns
+          neverReturns
+          NTN.aKeepAliveClient
+          NTN.aKeepAliveServer
+          (\_ -> pure ())
+      , miniProtocol
+          "LeiosFetch"
+          neverReturns
+          neverReturns
+          NTN.aLeiosFetchClient
+          NTN.aLeiosFetchServer
+          (\_ -> pure ())
+      , miniProtocol
+          "LeiosNotify"
+          neverReturns
+          neverReturns
+          NTN.aLeiosNotifyClient
+          NTN.aLeiosNotifyServer
+          (\_ -> pure ())
+      ]
+
     getApp v =
       readTVar v >>= \case
         VUp _ app -> pure app
         _ -> retry
-
-    flattenPairs :: forall a. NE.NonEmpty (a, a) -> NE.NonEmpty a
-    flattenPairs = uncurry (<>) . neUnzip
 
     neverReturns :: forall x void. String -> x -> void
     neverReturns s !_ = error $ s <> " never returns!"
@@ -1737,11 +1757,14 @@ data TraceThreadNetNode blk
   | FromMempool (TraceEventMempool blk)
   | FromTxOutbound
       (TraceLabelPeer (ConnectionId NodeId) (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
+  | FromKeepAliveClient (TraceKeepAliveClient (ConnectionId NodeId))
+  | FromForge (TraceForgeEvent blk)
+  | FromConsensusError SomeException
 
 deriving instance
-  ( Show (GenTx blk)
-  , Show (GenTxId blk)
-  , Show (TraceEventMempool blk)
+  ( Show (TraceEventMempool blk)
+  , Show (TraceForgeEvent blk)
+  , Show (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk))
   ) =>
   Show (TraceThreadNetNode blk)
 
@@ -1850,22 +1873,6 @@ type TracingConstraints blk =
   Ancillaries
 -------------------------------------------------------------------------------}
 
--- | Spawn multiple async actions and wait for the first one to complete.
---
--- Each child thread is spawned with 'withAsync' and so won't outlive this one.
--- In the use case where each child thread only terminates on an exception, the
--- 'waitAny' ensures that this parent thread will run until a child terminates
--- with an exception, and it will also reraise that exception.
---
--- Why 'NE.NonEmpty'? An empty argument list would have blocked indefinitely,
--- which is likely not intended.
-withAsyncsWaitAny :: forall m a. IOLike m => NE.NonEmpty (m a) -> m a
-withAsyncsWaitAny = go [] . NE.toList
- where
-  go acc = \case
-    [] -> snd <$> waitAny acc
-    m : ms -> withAsync m $ \h -> go (h : acc) ms
-
 -- | The partially instantiation of the 'NetworkApplication' type according to
 -- its use in this module
 --
@@ -1929,11 +1936,3 @@ data TxGenFailure
   deriving Show
 
 instance Exception TxGenFailure
-
--- In base@4.20 the Data.List.NonEmpty.unzip is deprecated and suggests that
--- Data.Function.unzip should be used instead,but base versions earlier than
--- 4.20 do not have that.
--- Neatest solution is to cargo cult it here and switch to Data.Function.unzip
--- later.
-neUnzip :: Functor f => f (a, b) -> (f a, f b)
-neUnzip xs = (fst <$> xs, snd <$> xs)
