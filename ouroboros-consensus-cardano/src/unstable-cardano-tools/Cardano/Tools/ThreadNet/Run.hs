@@ -43,7 +43,7 @@ import Control.Monad.Except (runExceptT)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Functor.Identity (Identity (runIdentity))
-import Data.List (foldl', transpose, uncons)
+import Data.List (transpose, uncons)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Sequence.Strict as StrictSeq
