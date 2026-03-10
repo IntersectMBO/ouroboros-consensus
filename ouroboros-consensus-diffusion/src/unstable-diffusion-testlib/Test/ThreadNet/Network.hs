@@ -1741,7 +1741,11 @@ data TestOutput blk = TestOutput
   , testOutputTipBlockNos :: Map SlotNo (Map NodeId (WithOrigin BlockNo))
   , allTraces :: [TraceThreadNet blk]
   , exceptionThrown :: Maybe SomeException
+  , iosimTrace :: String
   }
+
+instance Show (TestOutput blk) where
+  show _ = "TODO(bladyjoker): TestOutput show instance"
 
 -- | Type of all traces tracked by the ThreadNet.
 data TraceThreadNet blk
@@ -1847,6 +1851,7 @@ mkTestOutput vertexInfos = do
       , testOutputTipBlockNos = Map.unionsWith Map.union tipBlockNos'
       , allTraces = [] -- XXX: avoid monkey patching
       , exceptionThrown = Nothing -- XXX: avoid monkey patching
+      , iosimTrace = "" -- XXX: avoid monkey patching
       }
 
 {-------------------------------------------------------------------------------
