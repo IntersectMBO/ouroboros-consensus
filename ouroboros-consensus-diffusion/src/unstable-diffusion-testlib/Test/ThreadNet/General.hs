@@ -224,6 +224,7 @@ runTestNetwork ::
   ( RunNode blk
   , TxGen blk
   , HasCallStack
+  , Show blk
   ) =>
   TestConfig ->
   TestConfigB blk ->
