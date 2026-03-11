@@ -445,6 +445,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.Translation
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
+    Test.ThreadNet.Leios
     Test.ThreadNet.MaryAlonzo
     Test.ThreadNet.ShelleyAllegra
 
@@ -460,11 +461,13 @@ test-suite cardano-test
     cardano-ledger-binary:testlib,
     cardano-ledger-byron,
     cardano-ledger-conway:testlib,
+    cardano-ledger-conway-test,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-ledger-shelley,
     cardano-ledger-shelley-test,
     cardano-protocol-tpraos,
     cardano-slotting,
+    cardano-strict-containers,
     cborg,
     constraints,
     containers,
@@ -520,7 +523,11 @@ library unstable-cardano-tools
     Cardano.Tools.GitRev
     Cardano.Tools.Headers
     Cardano.Tools.ImmDBServer.Diffusion
+    Cardano.Tools.ImmDBServer.Json
+    Cardano.Tools.ImmDBServer.Json.Say
+    Cardano.Tools.ImmDBServer.Json.SendRecv
     Cardano.Tools.ImmDBServer.MiniProtocols
+    Cardano.Tools.ThreadNet.Run
 
   other-modules:
     Cardano.Api.Key
@@ -537,6 +544,7 @@ library unstable-cardano-tools
     Cardano.Node.Protocol.Shelley
 
   build-depends:
+    QuickCheck >=2.15,
     aeson,
     base >=4.14 && <4.22,
     base16-bytestring >=1.0,
@@ -548,13 +556,16 @@ library unstable-cardano-tools
     cardano-ledger-allegra,
     cardano-ledger-alonzo,
     cardano-ledger-api,
+    cardano-ledger-api >=1.11,
     cardano-ledger-babbage,
     cardano-ledger-binary,
     cardano-ledger-byron,
     cardano-ledger-conway,
     cardano-ledger-core,
+    cardano-ledger-core:testlib >=1.17,
     cardano-ledger-mary,
     cardano-ledger-shelley,
+    cardano-ledger-shelley-test,
     cardano-prelude,
     cardano-protocol-tpraos ^>=1.4,
     cardano-slotting,
@@ -568,13 +579,17 @@ library unstable-cardano-tools
     filepath,
     fs-api ^>=0.3,
     githash,
+    io-classes,
     microlens,
     mtl,
     network,
     network-mux,
     nothunks,
+    ouroboros-consensus:unstable-consensus-testlib,
     ouroboros-consensus ^>=0.27,
     ouroboros-consensus-cardano,
+    ouroboros-consensus-cardano:unstable-shelley-testlib,
+    ouroboros-consensus-diffusion:unstable-diffusion-testlib,
     ouroboros-consensus-diffusion ^>=0.23,
     ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib} ^>=0.12,
     ouroboros-network,
@@ -582,14 +597,17 @@ library unstable-cardano-tools
     ouroboros-network-framework ^>=0.18,
     ouroboros-network-protocols,
     resource-registry,
+    si-timers,
     singletons,
     sop-core,
     sop-extras,
     strict-sop-core,
     text,
     text-builder >=1,
+    time,
     transformers,
     transformers-except,
+    typed-protocols,
 
 executable db-analyser
   import: common-lib
@@ -671,12 +689,15 @@ executable immdb-server
   hs-source-dirs: app
   main-is: immdb-server.hs
   build-depends:
+    aeson,
     base,
     cardano-crypto-class,
+    cardano-slotting,
     network,
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:unstable-cardano-tools,
+    time,
     with-utf8,
 
 executable snapshot-converter
@@ -743,3 +764,14 @@ executable gen-header
 
   autogen-modules:
     Paths_ouroboros_consensus_cardano
+
+executable run-threadnet
+  import: common-lib
+  hs-source-dirs: app
+  main-is: run-threadnet.hs
+  build-depends:
+    base,
+    cardano-crypto-class,
+    optparse-applicative,
+    ouroboros-consensus-cardano:unstable-cardano-tools,
+    with-utf8,

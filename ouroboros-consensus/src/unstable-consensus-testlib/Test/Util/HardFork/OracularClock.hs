@@ -6,26 +6,30 @@
 --
 -- > import Test.Util.OracularClock (OracularClock(..))
 -- > import qualified Test.Util.OracularClock as OracularClock
-module Test.Util.HardFork.OracularClock (
-    EndOfDaysException (..)
+module Test.Util.HardFork.OracularClock
+  ( EndOfDaysException (..)
   , OracularClock (..)
   , forkEachSlot
   , mkOracularClock
   ) where
 
-import           Control.Monad (void, when)
-import           Control.ResourceRegistry
-import           Data.Foldable (toList)
-import           Data.Function (fix)
-import           Data.Time
-import           GHC.Stack
-import           Ouroboros.Consensus.Block
+import Control.Monad (void, when)
+import Control.ResourceRegistry
+import Data.Foldable (toList)
+import Data.Function (fix)
+import Data.Time
+import GHC.Stack
+import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.BlockchainTime as BTime
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.Time (nominalDelay)
-import           Test.Util.HardFork.Future (Future, futureSlotLengths,
-                     futureSlotToTime, futureTimeToSlot)
-import           Test.Util.Slots (NumSlots (..))
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.Time (nominalDelay)
+import Test.Util.HardFork.Future
+  ( Future
+  , futureSlotLengths
+  , futureSlotToTime
+  , futureTimeToSlot
+  )
+import Test.Util.Slots (NumSlots (..))
 
 -- | A clock that knows the future
 --
@@ -43,31 +47,27 @@ import           Test.Util.Slots (NumSlots (..))
 -- nodes adopt the same timeline, which must be /the/ 'Future' that this clock
 -- anticipates.
 data OracularClock m = OracularClock
-    { -- | Returns 'True' if the requested slot is already over
-      blockUntilSlot :: SlotNo -> m Bool
-
-      -- | The current delay duration until the onset of the next slot
-    , delayUntilNextSlot :: m NominalDiffTime
-
-      -- | A mock system time
-      --
-      -- Note that 'BTime.systemTimeCurrent' eventually raises
-      -- 'EndOfDaysException'.
-    , finiteSystemTime :: BTime.SystemTime m
-
-      -- | The current slot
-    , getCurrentSlot :: m SlotNo
-
-      -- | See 'forkEachSlot'
-    , forkEachSlot_ :: HasCallStack
-                    => ResourceRegistry m
-                    -> String
-                    -> (SlotNo -> m ())
-                    -> m (m ())
-
-      -- | Block until the clock is exhausted
-    , waitUntilDone :: m ()
-    }
+  { blockUntilSlot :: SlotNo -> m Bool
+  -- ^ Returns 'True' if the requested slot is already over
+  , delayUntilNextSlot :: m NominalDiffTime
+  -- ^ The current delay duration until the onset of the next slot
+  , finiteSystemTime :: BTime.SystemTime m
+  -- ^ A mock system time
+  --
+  -- Note that 'BTime.systemTimeCurrent' eventually raises
+  -- 'EndOfDaysException'.
+  , getCurrentSlot :: m SlotNo
+  -- ^ The current slot
+  , forkEachSlot_ ::
+      HasCallStack =>
+      ResourceRegistry m ->
+      String ->
+      (SlotNo -> m ()) ->
+      m (m ())
+  -- ^ See 'forkEachSlot'
+  , waitUntilDone :: m ()
+  -- ^ Block until the clock is exhausted
+  }
 
 -- | Forks a thread that executes an action at the onset of each slot
 --
@@ -78,14 +78,16 @@ data OracularClock m = OracularClock
 -- from within the given action will always return the correct slot.
 --
 -- See the discussion of ticker threads in 'getCurrentSlot'.
-forkEachSlot :: HasCallStack
-             => ResourceRegistry m
-             -> OracularClock m
-             -> String
-             -> (SlotNo -> m ())
-             -> m (m ())
+forkEachSlot ::
+  HasCallStack =>
+  ResourceRegistry m ->
+  OracularClock m ->
+  String ->
+  (SlotNo -> m ()) ->
+  m (m ())
 forkEachSlot reg clk = forkEachSlot_ clk reg
-    -- jumping the hoop so HasCallStack is useful
+
+-- jumping the hoop so HasCallStack is useful
 
 -- | See 'OracularClock'
 --
@@ -100,12 +102,15 @@ forkEachSlot reg clk = forkEachSlot_ clk reg
 -- its 'BTime.systemCurrentTime' ticks before any 'threadDelay'-ed thread
 -- scheduled to wake-up then does so. The 'BTime.defaultSystemTime' in the mock
 -- 'IO' monad provided by @io-sim@ satisfies this assumption.
-mkOracularClock :: forall m. (IOLike m)
-    => BTime.SystemTime m
-    -> NumSlots
-    -> Future
-    -> OracularClock m
-mkOracularClock BTime.SystemTime{..} numSlots future = OracularClock
+mkOracularClock ::
+  forall m.
+  IOLike m =>
+  BTime.SystemTime m ->
+  NumSlots ->
+  Future ->
+  OracularClock m
+mkOracularClock BTime.SystemTime{..} numSlots future =
+  OracularClock
     { blockUntilSlot = \slot -> do
         BTime.RelativeTime now <- finiteSystemTimeCurrent
         let later = futureSlotToTime future slot
@@ -116,83 +121,78 @@ mkOracularClock BTime.SystemTime{..} numSlots future = OracularClock
           exhaustedM
 
         blockUntilTime now later
-
     , delayUntilNextSlot = do
         (_slot, leftInSlot, _slotLength) <- getPresent
         pure leftInSlot
-
-    , finiteSystemTime = BTime.SystemTime
-        { BTime.systemTimeCurrent = finiteSystemTimeCurrent
-        , BTime.systemTimeWait    = systemTimeWait
-        }
-
+    , finiteSystemTime =
+        BTime.SystemTime
+          { BTime.systemTimeCurrent = finiteSystemTimeCurrent
+          , BTime.systemTimeWait = systemTimeWait
+          }
     , getCurrentSlot = do
         (slot, _leftInSlot, _slotLength) <- getPresent
         pure slot
-
     , forkEachSlot_ = \rr threadLabel action ->
         fmap cancelThread $
-        forkLinkedThread rr threadLabel $
-        fix $ \loop -> do
-          -- INVARIANT the slot returned here ascends monotonically unless
-          -- the underlying 'BTime.SystemTime' jumps backwards
-          (slot, leftInSlot, _slotLength) <- getPresent
+          forkLinkedThread rr threadLabel $
+            fix $ \loop -> do
+              -- INVARIANT the slot returned here ascends monotonically unless
+              -- the underlying 'BTime.SystemTime' jumps backwards
+              (slot, leftInSlot, _slotLength) <- getPresent
 
-          let lbl = threadLabel <> " [" <> show slot <> "]"
-          -- fork the action, so it can't threadDelay us
-          void $ forkLinkedThread rr lbl $ action slot
+              let lbl = threadLabel <> " [" <> show slot <> "]"
+              -- fork the action, so it can't threadDelay us
+              void $ forkLinkedThread rr lbl $ action slot
 
-          threadDelay $ nominalDelay leftInSlot
-          loop
-
+              threadDelay $ nominalDelay leftInSlot
+              loop
     , waitUntilDone = do
         BTime.RelativeTime now <- finiteSystemTimeCurrent
         void $ blockUntilTime now endOfDays
-
     }
-  where
-    -- when the clock becomes exhausted
-    endOfDays :: NominalDiffTime
-    endOfDays =
-        (sum . map BTime.getSlotLength) $
-        (take (fromIntegral n) . toList) $
+ where
+  -- when the clock becomes exhausted
+  endOfDays :: NominalDiffTime
+  endOfDays =
+    (sum . map BTime.getSlotLength) $
+      (take (fromIntegral n) . toList) $
         futureSlotLengths future
-      where
-        NumSlots n = numSlots
+   where
+    NumSlots n = numSlots
 
-    -- what any method called at exactly @endOfDays@ or blocked as of
-    -- @endOfDays@ ends up doing at the exact @endOfDays@ moment
-    exhaustedM :: forall a. m a
-    exhaustedM = do
-        -- throw if this thread isn't terminated in time
-        threadDelay $ picosecondsToDiffTime 1   -- the smallest possible delay
-        throwIO EndOfDaysException
+  -- what any method called at exactly @endOfDays@ or blocked as of
+  -- @endOfDays@ ends up doing at the exact @endOfDays@ moment
+  exhaustedM :: forall a. m a
+  exhaustedM = do
+    -- throw if this thread isn't terminated in time
+    threadDelay $ picosecondsToDiffTime 1 -- the smallest possible delay
+    throwIO EndOfDaysException
 
-    -- a 'BTime.systemTimeCurrent' that respects @endOfDays@
-    finiteSystemTimeCurrent :: m BTime.RelativeTime
-    finiteSystemTimeCurrent = do
-        t <- systemTimeCurrent
+  -- a 'BTime.systemTimeCurrent' that respects @endOfDays@
+  finiteSystemTimeCurrent :: m BTime.RelativeTime
+  finiteSystemTimeCurrent = do
+    t <- systemTimeCurrent
 
-        -- check if clock is exhausted
-        let tFinal = BTime.RelativeTime endOfDays
-        when (t >  tFinal) $ throwIO EndOfDaysException
-        when (t == tFinal) $ exhaustedM
+    -- check if clock is exhausted
+    let tFinal = BTime.RelativeTime endOfDays
+    when (t > tFinal) $ throwIO EndOfDaysException
+    when (t == tFinal) $ exhaustedM
 
-        pure t
+    pure t
 
-    getPresent :: m (SlotNo, NominalDiffTime, BTime.SlotLength)
-    getPresent = do
-        BTime.RelativeTime now <- finiteSystemTimeCurrent
-        pure $ futureTimeToSlot future now
+  getPresent :: m (SlotNo, NominalDiffTime, BTime.SlotLength)
+  getPresent = do
+    BTime.RelativeTime now <- finiteSystemTimeCurrent
+    pure $ futureTimeToSlot future now
 
-    blockUntilTime :: NominalDiffTime -> NominalDiffTime -> m Bool
-    blockUntilTime now later =
-        case compare now later of
-          LT -> do
-              threadDelay $ nominalDelay $ later - now
-              pure False
-          EQ -> pure False
-          GT -> pure True   -- ie " too late "
+  blockUntilTime :: NominalDiffTime -> NominalDiffTime -> m Bool
+  blockUntilTime now later =
+    case compare now later of
+      LT -> do
+        threadDelay $ nominalDelay $ later - now
+        pure False
+      EQ -> pure False
+      GT -> pure True -- ie " too late "
 
 -----
 
@@ -203,6 +203,6 @@ mkOracularClock BTime.SystemTime{..} numSlots future = OracularClock
 -- enough, the thread then throws this exception, which we don't catch
 -- anywhere.
 data EndOfDaysException = EndOfDaysException
-  deriving (Show)
+  deriving Show
 
 instance Exception EndOfDaysException
