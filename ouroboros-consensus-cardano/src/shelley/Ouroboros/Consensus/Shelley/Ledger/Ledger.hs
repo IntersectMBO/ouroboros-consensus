@@ -272,6 +272,7 @@ data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   , shelleyLedgerState :: !(SL.NewEpochState era)
   , shelleyLedgerTransition :: !ShelleyTransition
   , shelleyLedgerTables :: !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+  , shelleyLedgerLeiosState :: Maybe ()
   }
   deriving Generic
 
@@ -340,11 +341,11 @@ instance
           internsFromMap $
             shelleyLedgerState st
               ^. SL.nesEsL
-                . SL.esLStateL
-                . SL.lsCertStateL
-                . SL.certDStateL
-                . SL.dsUnifiedL
-                . SL.umElemsL
+              . SL.esLStateL
+              . SL.lsCertStateL
+              . SL.certDStateL
+              . SL.dsUnifiedL
+              . SL.umElemsL
      in LedgerTables . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
 
 instance
@@ -352,117 +353,73 @@ instance
   HasLedgerTables (LedgerState (ShelleyBlock proto era))
   where
   projectLedgerTables = shelleyLedgerTables
-  withLedgerTables st tables =
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      , shelleyLedgerTables = tables
-      }
-   where
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      } = st
+  withLedgerTables st tables = st{shelleyLedgerTables = tables}
 
 instance
   ShelleyBasedEra era =>
   HasLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   where
   projectLedgerTables = castLedgerTables . tickedShelleyLedgerTables
-  withLedgerTables st tables =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      , tickedShelleyLedgerTables = castLedgerTables tables
-      }
-   where
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      } = st
+  withLedgerTables st tables = st{tickedShelleyLedgerTables = castLedgerTables tables}
 
 instance
   ShelleyBasedEra era =>
   CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
   where
   stowLedgerTables st =
-    ShelleyLedgerState
-      { shelleyLedgerTip = shelleyLedgerTip
-      , shelleyLedgerState = shelleyLedgerState'
-      , shelleyLedgerTransition = shelleyLedgerTransition
+    st
+      { shelleyLedgerState = shelleyLedgerState'
       , shelleyLedgerTables = emptyLedgerTables
       }
    where
     (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO m
     ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
+      { shelleyLedgerState
       , shelleyLedgerTables = LedgerTables (ValuesMK m)
       } = st
   unstowLedgerTables st =
-    ShelleyLedgerState
-      { shelleyLedgerTip = shelleyLedgerTip
-      , shelleyLedgerState = shelleyLedgerState'
-      , shelleyLedgerTransition = shelleyLedgerTransition
+    st
+      { shelleyLedgerState = shelleyLedgerState'
       , shelleyLedgerTables = LedgerTables (ValuesMK (SL.unUTxO tbs))
       }
    where
     (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      } = st
+    ShelleyLedgerState{shelleyLedgerState} = st
 
 instance
   ShelleyBasedEra era =>
   CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   where
   stowLedgerTables st =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip = untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState = tickedShelleyLedgerState'
+    st
+      { tickedShelleyLedgerState = tickedShelleyLedgerState'
       , tickedShelleyLedgerTables = emptyLedgerTables
       }
    where
     (_, tickedShelleyLedgerState') =
       tickedShelleyLedgerState `slUtxoL` SL.UTxO tbs
     TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
+      { tickedShelleyLedgerState
       , tickedShelleyLedgerTables = LedgerTables (ValuesMK tbs)
       } = st
 
   unstowLedgerTables st =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip = untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState = tickedShelleyLedgerState'
+    st
+      { tickedShelleyLedgerState = tickedShelleyLedgerState'
       , tickedShelleyLedgerTables = LedgerTables (ValuesMK (SL.unUTxO tbs))
       }
    where
     (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      } = st
+    TickedShelleyLedgerState{tickedShelleyLedgerState} = st
 
 slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState era)
 slUtxoL st vals =
   st
     & SL.nesEsL
-      . SL.esLStateL
-      . SL.lsUTxOStateL
-      . SL.utxoL
-      <<.~ vals
+    . SL.esLStateL
+    . SL.lsUTxOStateL
+    . SL.utxoL
+    <<.~ vals
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -490,6 +447,7 @@ data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLe
   , tickedShelleyLedgerState :: !(SL.NewEpochState era)
   , tickedShelleyLedgerTables ::
       !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+  , tickedShelleyLedgerLeiosState :: Maybe ()
   }
   deriving Generic
 
@@ -526,6 +484,20 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
           , -- The UTxO set is only mutated by block/transaction execution and
             -- era translations, that is why we put empty tables here.
             tickedShelleyLedgerTables = emptyLedgerTables
+          , tickedShelleyLedgerLeiosState = Nothing
+          -- FIXME: A certificate may only be included if RB' is at least 3 × L hdr + L vote + L diff slots after RB.
+          -- Let's call this `predTooSoonToCertify :: AnnouncedEb -> Bool`
+          -- Idea: If we maintain a ledger state like
+          --
+          -- data LedgerLeiosState = LedgerLeiosState {
+          --     llsAnnouncedEb :: AnnouncedEb,
+          --     llsTooSoonToCertify :: Bool
+          --     }
+          -- data AnnouncedEb = AnnouncedEb {
+          --   announcedEb :: LeiosEb,
+          --   announcedAt :: SlotNo
+          -- }
+          -- We can use this method to update `llsTooSoonToCertify` depending on `predTooSoonToCertify`
           }
      where
       globals = shelleyLedgerGlobals cfg
