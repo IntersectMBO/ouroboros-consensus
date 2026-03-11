@@ -1421,9 +1421,9 @@ directedEdgeInner
             return [cliAsync, srvAsync]
         )
 
-    (_thread, restartCause) <-
-      waitAny $ [vertex1WatcherAsync, vertex2WatcherAsync] <> miniProtoAsyncs
-
+    let asyncs = [vertex1WatcherAsync, vertex2WatcherAsync] <> miniProtoAsyncs
+    -- NOTE(bladyjoker): Important to use `waitAnyCancel` to cancel other asyncs when any is done
+    (_doneAsync, restartCause) <- waitAnyCancel asyncs
     return restartCause
    where
     miniProtocol ::
@@ -1532,7 +1532,7 @@ directedEdgeInner
     -- terminates (by returning, not via exception) when the vertex starts
     -- 'VFalling'
     --
-    -- because of 'withAsyncsWaitAny' used above, this brings down the whole
+    -- because of 'waitAnyCancel' used above, this brings down the whole
     -- edge
     watcher :: VertexStatusVar m blk -> m RestartCause
     watcher v = do
