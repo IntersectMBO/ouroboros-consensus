@@ -193,6 +193,18 @@ module Ouroboros.Consensus.Cardano.Block
     , ChainDepStateShelley
     )
 
+    -- * EraIndex
+  , EraIndex
+    ( EraByron
+    , EraShelley
+    , EraAllegra
+    , EraMary
+    , EraAlonzo
+    , EraBabbage
+    , EraConway
+    , EraDijkstra
+    )
+
     -- * EraMismatch
   , EraMismatch (..)
   ) where
@@ -281,6 +293,39 @@ pattern TagAlonzo x = S (S (S (S (Z x))))
 pattern TagBabbage x = S (S (S (S (S (Z x)))))
 pattern TagConway x = S (S (S (S (S (S (Z x))))))
 pattern TagDijkstra x = S (S (S (S (S (S (S (Z x)))))))
+
+{-------------------------------------------------------------------------------
+  Indices of all cardano eras
+-------------------------------------------------------------------------------}
+
+pattern EraByron :: K () ByronBlock -> EraIndex (CardanoEras c)
+pattern EraShelley :: K () (ShelleyBlock (TPraos c) ShelleyEra) -> EraIndex (CardanoEras c)
+pattern EraAllegra :: K () (ShelleyBlock (TPraos c) AllegraEra) -> EraIndex (CardanoEras c)
+pattern EraMary :: K () (ShelleyBlock (TPraos c) MaryEra) -> EraIndex (CardanoEras c)
+pattern EraAlonzo :: K () (ShelleyBlock (TPraos c) AlonzoEra) -> EraIndex (CardanoEras c)
+pattern EraBabbage :: K () (ShelleyBlock (Praos c) BabbageEra) -> EraIndex (CardanoEras c)
+pattern EraConway :: K () (ShelleyBlock (Praos c) ConwayEra) -> EraIndex (CardanoEras c)
+pattern EraDijkstra :: K () (ShelleyBlock (Praos c) DijkstraEra) -> EraIndex (CardanoEras c)
+
+pattern EraByron x = EraIndex (TagByron x)
+pattern EraShelley x = EraIndex (TagShelley x)
+pattern EraAllegra x = EraIndex (TagAllegra x)
+pattern EraMary x = EraIndex (TagMary x)
+pattern EraAlonzo x = EraIndex (TagAlonzo x)
+pattern EraBabbage x = EraIndex (TagBabbage x)
+pattern EraConway x = EraIndex (TagConway x)
+pattern EraDijkstra x = EraIndex (TagDijkstra x)
+
+{-# COMPLETE
+  EraByron
+  , EraShelley
+  , EraAllegra
+  , EraMary
+  , EraAlonzo
+  , EraBabbage
+  , EraConway
+  , EraDijkstra
+  #-}
 
 {-------------------------------------------------------------------------------
   INTERNAL A telescope function for each era
