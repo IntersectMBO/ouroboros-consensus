@@ -38,10 +38,7 @@ module Test.ThreadNet.General
 import Control.Exception (assert, throw)
 import Control.Monad (guard)
 import Control.Monad.IOSim
-  ( SimEvent (..)
-  , SimEventType (..)
-  , SimTrace
-  , ppSimEvent
+  ( ppTrace
   , runSimTrace
   , selectTraceEventsDynamic
   , setCurrentTime
@@ -49,14 +46,10 @@ import Control.Monad.IOSim
   , traceResult
   )
 import Control.Tracer (Tracer (..), nullTracer)
-import Data.Dynamic (fromDynamic)
-import qualified Data.List.Trace as Trace
 import qualified Data.Map.Strict as Map
-import Data.Monoid (Endo (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import qualified Debug.Trace as Debug
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Block.Abstract as BA
@@ -247,8 +240,13 @@ runTestNetwork
     }
   mkTestConfigMB =
     case traceResult False trace of
-      Left e -> ppDebug' trace $ throw e
-      Right x -> x{allTraces = selectTraceEventsDynamic trace}
+      Left e -> throw e
+      Right x ->
+        x
+          { allTraces = selectTraceEventsDynamic trace
+          , iosimTrace = ppTrace trace
+          , exceptionThrown = Nothing
+          }
    where
     trace = runSimTrace $ do
       setCurrentTime dawnOfTime
@@ -273,19 +271,6 @@ runTestNetwork
           , tnaVersion = networkVersion
           , tnaBlockVersion = blockVersion
           }
-
-    -- Variant of ppDebug, that actually prints the EventLog.
-    ppDebug' :: SimTrace a -> x -> x
-    ppDebug' =
-      appEndo
-        . foldMap (Endo . Debug.trace . show')
-        . Trace.toList
-     where
-      show' = \case
-        se@SimEvent{seType = EventLog dyn}
-          | Just v <- fromDynamic @(TraceThreadNet blk) dyn ->
-              ppSimEvent 0 0 0 se <> " -> " <> show v
-        se -> ppSimEvent 0 0 0 se
 
 {-------------------------------------------------------------------------------
   Test properties

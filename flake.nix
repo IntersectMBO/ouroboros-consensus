@@ -83,8 +83,9 @@
           default = ghc96;
           ghc96 = hydraJobs.native.haskell96.devShell;
           ghc96-profiled = hydraJobs.native.haskell96.devShellProfiled;
-          ghc910 = hydraJobs.native.haskell910.devShell;
-          ghc910-profiled = hydraJobs.native.haskell910.devShellProfiled;
+          # FIXME(bladyjoker): Reintroduce eventually
+          # ghc910 = hydraJobs.native.haskell910.devShell;
+          # ghc910-profiled = hydraJobs.native.haskell910.devShellProfiled;
 
           agda-spec = pkgs.agda-spec.shell;
 

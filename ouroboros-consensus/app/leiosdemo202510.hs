@@ -464,7 +464,7 @@ msgLeiosBlockTxsRequest db ebId bitmaps = do
       die "A bitmap is zero"
     when (flip any idxs (> fromIntegral idxLimit)) $ do
       die $ "An offset exceeds the theoretical limit " <> show idxLimit
-    when (not $ and $ zipWith (<) idxs (tail idxs)) $ do
+    when (not $ and $ zipWith (<) idxs (drop 1 idxs)) $ do
       die "Offsets not strictly ascending"
   let nextOffsetDESC = \case
         [] -> Nothing

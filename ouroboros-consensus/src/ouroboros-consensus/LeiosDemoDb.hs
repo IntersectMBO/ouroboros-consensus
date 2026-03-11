@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -7,10 +10,11 @@
 
 module LeiosDemoDb (module LeiosDemoDb) where
 
-import Cardano.Prelude (foldM, forM_, maybeToList, traverse_, void, when)
+import Cardano.Prelude (Generic, foldM, forM_, maybeToList, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
+  , StrictTVar
   , dupTChan
   , modifyTVar
   , newBroadcastTChan
@@ -19,6 +23,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTChan
   )
 import Control.Exception (throwIO)
+import Control.Monad (void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , generalBracket
@@ -26,6 +31,7 @@ import Control.Monad.Class.MonadThrow
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Foldable (traverse_)
 import Data.Int (Int64)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
@@ -51,10 +57,7 @@ import LeiosDemoTypes
   , leiosEbBodyItems
   , leiosEbBytesSize
   )
-import Ouroboros.Consensus.Util.IOLike
-  ( IOLike
-  , atomically
-  )
+import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks, atomically)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -131,28 +134,32 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   , imEbBodies :: !(Map EbHash (IntMap {- txOffset -} EbTxEntry))
   , imEbSlots :: !(Map EbHash SlotNo)
   }
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+emptyInMemoryLeiosDb :: InMemoryLeiosDb
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty
 
 -- | EB transaction entry (references txs by hash, no bytes stored here)
 data EbTxEntry = EbTxEntry
   { eteTxHash :: !TxHash
   , eteTxBytesSize :: !BytesSize
   }
+  deriving stock Generic
+  deriving anyclass NoThunks
 
 -- | Create a new in-memory Leios database handle.
 -- This is suitable for testing in IOSim.
 newLeiosDBInMemory :: IOLike m => m (LeiosDbHandle m)
 newLeiosDBInMemory = do
+  stateVar <- newTVarIO emptyInMemoryLeiosDb
+  newLeiosDBInMemoryWith stateVar
+
+newLeiosDBInMemoryWith :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDbHandle m)
+newLeiosDBInMemoryWith stateVar = do
   notificationChan <- atomically newBroadcastTChan
   let notify = writeTChan notificationChan
-  stateVar <-
-    newTVarIO
-      InMemoryLeiosDb
-        { imTxs = Map.empty
-        , imEbPoints = IntMap.empty
-        , imEbBodies = Map.empty
-        , imEbSlots = Map.empty
-        }
-  pure
+  pure $
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
