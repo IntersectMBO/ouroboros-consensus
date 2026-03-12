@@ -233,6 +233,7 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> pure (LedgerTables EmptyMK)
+      <*> pure initShelleyLedgerLeiosState
 
 instance
   (Arbitrary (InstantStake era), CanMock proto era) =>
@@ -244,6 +245,7 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> (LedgerTables . ValuesMK <$> arbitrary)
+      <*> pure initShelleyLedgerLeiosState
 
 instance CanMock proto era => Arbitrary (AnnTip (ShelleyBlock proto era)) where
   arbitrary =
