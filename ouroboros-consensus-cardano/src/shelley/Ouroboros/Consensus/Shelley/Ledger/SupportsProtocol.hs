@@ -119,6 +119,6 @@ instance
         , shelleyLedgerState = shelleyLedgerState st
         , shelleyLedgerTransition = shelleyLedgerTransition st
         , shelleyLedgerTables = emptyLedgerTables
-        , shelleyLedgerLeiosState = shelleyLedgerLeiosState st -- FIXME
+        , shelleyLedgerLeiosState = shelleyLedgerLeiosState st
         }
     coerceTip (ShelleyTip slot block hash) = ShelleyTip slot block (coerce hash)

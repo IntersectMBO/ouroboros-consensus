@@ -272,7 +272,8 @@ castShelleyTip (ShelleyTip sn bn hh) =
 data ShelleyLedgerLeiosState = ShelleyLedgerLeiosState
   { sllsMaybeAnnouncedEb :: Maybe AnnouncedEb
   , sllsTooSoonToCertify :: Bool
-  , sllsTouched :: Int
+  , sllsApplyTickCount :: Int
+  , sllsApplyBlockCount :: Int
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -285,7 +286,7 @@ data AnnouncedEb = AnnouncedEb
   deriving anyclass NoThunks
 
 initShelleyLedgerLeiosState :: ShelleyLedgerLeiosState
-initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing False 0
+initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing False 0 0
 
 -- FIXME: A certificate may only be included if RB' is at least 3 × L hdr + L vote + L diff slots after RB.
 -- Let's call this `predTooSoonToCertify :: AnnouncedEb -> SlotNo -> Bool`
@@ -293,7 +294,7 @@ initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing False 0
 applyTickShelleyLedgerLeiosState :: ShelleyLedgerLeiosState -> SlotNo -> ShelleyLedgerLeiosState
 applyTickShelleyLedgerLeiosState leiosSt slotNo =
   leiosSt
-    { sllsTouched = sllsTouched leiosSt + 1
+    { sllsApplyTickCount = sllsApplyTickCount leiosSt + 1
     , sllsTooSoonToCertify =
         maybe False (\annEb -> predTooSoonToCertify annEb slotNo) $ sllsMaybeAnnouncedEb leiosSt
     }
@@ -308,7 +309,7 @@ predTooSoonToCertify annEb slotNo = unSlotNo slotNo - unSlotNo (announcedAt annE
 -- 2. Is blk a certificate? Yes: Apply Txs from the certified EBs (Probably goes up)
 applyBlockShelleyLedgerLeiosState ::
   ShelleyBlock proto era -> ShelleyLedgerLeiosState -> ShelleyLedgerLeiosState
-applyBlockShelleyLedgerLeiosState = error "FIXME(bladyjoker)"
+applyBlockShelleyLedgerLeiosState _blk leiosSt = leiosSt{sllsApplyBlockCount = sllsApplyBlockCount leiosSt + 1}
 
 data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   { shelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
