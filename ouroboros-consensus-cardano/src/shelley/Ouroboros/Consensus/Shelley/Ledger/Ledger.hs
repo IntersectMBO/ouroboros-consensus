@@ -105,7 +105,7 @@ import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes (LeiosEb)
+import LeiosDemoTypes (ForgedLeiosEb, point, pointSlotNo)
 import Lens.Micro
 import Lens.Micro.Extras (view)
 import NoThunks.Class (NoThunks (..))
@@ -270,19 +270,12 @@ castShelleyTip (ShelleyTip sn bn hh) =
     }
 
 data ShelleyLedgerLeiosState = ShelleyLedgerLeiosState
-  { sllsMaybeAnnouncedEb :: Maybe AnnouncedEb
+  { sllsMaybeAnnouncedEb :: Maybe ForgedLeiosEb -- NOTE(bladyjoker): Perhaps to call it CompleteLeiosEb?
   , sllsTooSoonToCertify :: Bool
   , sllsApplyTickCount :: Int
   , sllsApplyBlockCount :: Int
   , sllsApplyTickLastAt :: SlotNo
   , sllsApplyBlockLastAt :: SlotNo
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass NoThunks
-
-data AnnouncedEb = AnnouncedEb
-  { announcedEb :: LeiosEb
-  , announcedAt :: SlotNo
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -302,14 +295,15 @@ applyTickShelleyLedgerLeiosState leiosSt slotNo =
         maybe False (\annEb -> predTooSoonToCertify annEb slotNo) $ sllsMaybeAnnouncedEb leiosSt
     }
 
-predTooSoonToCertify :: AnnouncedEb -> SlotNo -> Bool
-predTooSoonToCertify annEb slotNo = unSlotNo slotNo - unSlotNo (announcedAt annEb) > certifyMinDuration
+predTooSoonToCertify :: ForgedLeiosEb -> SlotNo -> Bool
+predTooSoonToCertify annEb slotNo = unSlotNo slotNo - (unSlotNo . pointSlotNo . point $ annEb) > certifyMinDuration
  where
   certifyMinDuration = 10
 
 -- FIXME(bladyjoker): I sense that here is where given previous state and blk we inspect the blk to figure out:
 -- 1. Is blk announcing an EB? Yes: Update LeiosState with that EB and SlotNo, No: Override/Set whatever was there with Nothing
 -- 2. Is blk a certificate? Yes: Apply Txs from the certified EBs (Probably goes up)
+-- FIXME(bladyjoker): This requirs a change to ShelleyBlock
 applyBlockShelleyLedgerLeiosState ::
   ShelleyCompatible proto era =>
   ShelleyBlock proto era -> ShelleyLedgerLeiosState -> ShelleyLedgerLeiosState
