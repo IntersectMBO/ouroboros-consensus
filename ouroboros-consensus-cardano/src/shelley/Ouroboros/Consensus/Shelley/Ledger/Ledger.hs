@@ -274,6 +274,8 @@ data ShelleyLedgerLeiosState = ShelleyLedgerLeiosState
   , sllsTooSoonToCertify :: Bool
   , sllsApplyTickCount :: Int
   , sllsApplyBlockCount :: Int
+  , sllsApplyTickLastAt :: SlotNo
+  , sllsApplyBlockLastAt :: SlotNo
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -286,7 +288,7 @@ data AnnouncedEb = AnnouncedEb
   deriving anyclass NoThunks
 
 initShelleyLedgerLeiosState :: ShelleyLedgerLeiosState
-initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing False 0 0
+initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing False 0 0 (SlotNo 0) (SlotNo 0)
 
 -- FIXME: A certificate may only be included if RB' is at least 3 × L hdr + L vote + L diff slots after RB.
 -- Let's call this `predTooSoonToCertify :: AnnouncedEb -> SlotNo -> Bool`
@@ -295,6 +297,7 @@ applyTickShelleyLedgerLeiosState :: ShelleyLedgerLeiosState -> SlotNo -> Shelley
 applyTickShelleyLedgerLeiosState leiosSt slotNo =
   leiosSt
     { sllsApplyTickCount = sllsApplyTickCount leiosSt + 1
+    , sllsApplyTickLastAt = slotNo
     , sllsTooSoonToCertify =
         maybe False (\annEb -> predTooSoonToCertify annEb slotNo) $ sllsMaybeAnnouncedEb leiosSt
     }
@@ -308,8 +311,13 @@ predTooSoonToCertify annEb slotNo = unSlotNo slotNo - unSlotNo (announcedAt annE
 -- 1. Is blk announcing an EB? Yes: Update LeiosState with that EB and SlotNo, No: Override/Set whatever was there with Nothing
 -- 2. Is blk a certificate? Yes: Apply Txs from the certified EBs (Probably goes up)
 applyBlockShelleyLedgerLeiosState ::
+  ShelleyCompatible proto era =>
   ShelleyBlock proto era -> ShelleyLedgerLeiosState -> ShelleyLedgerLeiosState
-applyBlockShelleyLedgerLeiosState _blk leiosSt = leiosSt{sllsApplyBlockCount = sllsApplyBlockCount leiosSt + 1}
+applyBlockShelleyLedgerLeiosState blk leiosSt =
+  leiosSt
+    { sllsApplyBlockCount = sllsApplyBlockCount leiosSt + 1
+    , sllsApplyBlockLastAt = blockSlot blk
+    }
 
 data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   { shelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
