@@ -217,7 +217,6 @@ completeChainDbArgs
                   cdbsTopLevelConfig
                   (LedgerDB.ledgerDbCfgComputeLedgerEvents $ LedgerDB.lgrConfig (cdbLgrDbArgs defArgs))
             , LedgerDB.lgrBackendArgs = flavorArgs
-            , LedgerDB.lgrRegistry = registry
             }
       , cdbPerasCertDbArgs =
           PerasCertDB.PerasCertDbArgs

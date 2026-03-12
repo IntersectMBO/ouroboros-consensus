@@ -63,6 +63,7 @@ module Ouroboros.Consensus.Util
 
     -- * Monadic utilities
   , whenJust
+  , whenNothing
 
     -- * Test code
   , checkThat
@@ -360,6 +361,10 @@ lazyByteStringChunks n bs
 whenJust :: Applicative f => Maybe a -> (a -> f ()) -> f ()
 whenJust (Just x) f = f x
 whenJust Nothing _ = pure ()
+
+whenNothing :: Applicative f => Maybe a -> f () -> f ()
+whenNothing Just{} _ = pure ()
+whenNothing Nothing f = f
 
 {-------------------------------------------------------------------------------
   Test code

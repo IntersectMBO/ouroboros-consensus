@@ -38,7 +38,6 @@ import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.Monad.State (State, evalState, get, modify)
-import Control.ResourceRegistry
 import Control.Tracer (Tracer (..))
 import Data.Bifunctor (first, second)
 import Data.Either (isRight)
@@ -737,7 +736,7 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
     varCurrentLedgerState <- uncheckedNewTVarM testLedgerState
     let ledgerInterface =
           LedgerInterface
-            { getCurrentLedgerState = \_reg -> do
+            { getCurrentLedgerState = do
                 st <- readTVar varCurrentLedgerState
                 pure $
                   MempoolLedgerDBView
@@ -760,45 +759,43 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
     -- TODO use IOSim's dynamicTracer
     let tracer = Tracer $ \ev -> atomically $ modifyTVar varEvents (ev :)
 
-    withRegistry $ \reg -> do
-      -- Open the mempool and add the initial transactions
-      mempool <-
-        openMempoolWithoutSyncThread
-          reg
-          ledgerInterface
-          testLedgerCfg
-          testMempoolCapOverride
-          timeoutConfig
-          tracer
-      result <- addTxs mempool testInitialTxs
+    -- Open the mempool and add the initial transactions
+    mempool <-
+      openMempoolWithoutSyncThread
+        ledgerInterface
+        testLedgerCfg
+        testMempoolCapOverride
+        timeoutConfig
+        tracer
+    result <- addTxs mempool testInitialTxs
 
-      -- the invalid transactions are reported in the same order they were
-      -- added, so the first error is not the result of a cascade
-      sequence_
-        [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show err
-        | MempoolTxRejected invalidTx err <- result
-        ]
+    -- the invalid transactions are reported in the same order they were
+    -- added, so the first error is not the result of a cascade
+    sequence_
+      [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show err
+      | MempoolTxRejected invalidTx err <- result
+      ]
 
-      -- Clear the trace
-      atomically $ writeTVar varEvents []
+    -- Clear the trace
+    atomically $ writeTVar varEvents []
 
-      -- Apply the property to the 'TestMempool' record
-      res <-
-        property
-          <$> prop
-            TestMempool
-              { mempool
-              , getTraceEvents = atomically $ reverse <$> readTVar varEvents
-              , eraseTraceEvents = atomically $ writeTVar varEvents []
-              , addTxsToLedger = addTxsToLedger varCurrentLedgerState
-              , getCurrentLedger = readTVar varCurrentLedgerState
-              }
-      validContents <-
-        atomically $
-          checkMempoolValidity
-            <$> readTVar varCurrentLedgerState
-            <*> getSnapshot mempool
-      return $ res .&&. validContents
+    -- Apply the property to the 'TestMempool' record
+    res <-
+      property
+        <$> prop
+          TestMempool
+            { mempool
+            , getTraceEvents = atomically $ reverse <$> readTVar varEvents
+            , eraseTraceEvents = atomically $ writeTVar varEvents []
+            , addTxsToLedger = addTxsToLedger varCurrentLedgerState
+            , getCurrentLedger = readTVar varCurrentLedgerState
+            }
+    validContents <-
+      atomically $
+        checkMempoolValidity
+          <$> readTVar varCurrentLedgerState
+          <*> getSnapshot mempool
+    return $ res .&&. validContents
 
   addTxToLedger ::
     forall m.

@@ -91,7 +91,7 @@ run ::
   IO Void
 run immDBDir sockAddr cfg = withRegistry \registry ->
   ImmutableDB.withDB
-    (ImmutableDB.openDB (immDBArgs registry) runWithTempRegistry)
+    (ImmutableDB.openDB (immDBArgs registry))
     \immDB ->
       serve sockAddr $
         immDBServer
