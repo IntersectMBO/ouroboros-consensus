@@ -434,7 +434,7 @@ instance TxGen (CardanoBlock StandardCrypto) where
       utxos = getUTxOs st
      in
       return $
-        Debug.trace (show ("current slot", slotNo)) $
+        Debug.trace (show ("Node", coreNodeId, "current slot", slotNo, shelleyLedgerLeiosState st)) $
           -- Interleave transactions produced by each generator and take `rtnaTxsPerSlot` of them
           take (fromIntegral rtnaTxsPerSlot) . interleave $
             do

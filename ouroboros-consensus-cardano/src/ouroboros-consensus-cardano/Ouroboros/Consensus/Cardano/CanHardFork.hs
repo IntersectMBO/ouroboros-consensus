@@ -297,6 +297,7 @@ translateLedgerStateByronToShelleyWrapper =
                 , shelleyLedgerTransition =
                     ShelleyTransitionInfo{shelleyAfterVoting = 0}
                 , shelleyLedgerTables = emptyLedgerTables
+                , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
                 }
         }
 

@@ -525,9 +525,9 @@ instance
             internsFromMap $
               shelleyLedgerState st
                 ^. SL.nesEsL
-                . SL.esLStateL
-                . SL.lsCertStateL
-                . SL.certDStateL
-                . SL.dsUnifiedL
-                . SL.umElemsL
+                  . SL.esLStateL
+                  . SL.lsCertStateL
+                  . SL.certDStateL
+                  . SL.dsUnifiedL
+                  . SL.umElemsL
        in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))

@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
@@ -46,6 +48,7 @@ import Data.String (fromString)
 import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
+import GHC.Generics (Generic)
 import LeiosDemoException (LeiosDbException (..), jsonLeiosDbException)
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified Numeric
@@ -73,7 +76,8 @@ prettyEbHash :: EbHash -> String
 prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
 
 newtype TxHash = MkTxHash ByteString
-  deriving (Eq, Ord, Show, NFData, NoThunks)
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving anyclass (NFData, NoThunks)
 
 prettyTxHash :: TxHash -> String
 prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
@@ -81,7 +85,8 @@ prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
 -- | Uniquely identifies an endorser block in Leios. Could use 'Block SlotNo
 -- EbHash' eventually, but a dedicated type is better to explore.
 data LeiosPoint = MkLeiosPoint {pointSlotNo :: SlotNo, pointEbHash :: EbHash}
-  deriving (Show, Eq, Ord)
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving anyclass NoThunks
 
 instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
 
@@ -310,7 +315,8 @@ hashLeiosTx =
 data LeiosEb = MkLeiosEb
   { leiosEbTxs :: !(V.Vector (TxHash, BytesSize))
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
 -- | A newly forged 'LeiosEb' that includes the whole closure of endorsed
 -- transactions.
@@ -319,6 +325,8 @@ data ForgedLeiosEb = ForgedLeiosEb
   , body :: !LeiosEb
   , txClosure :: ![(TxHash, ByteString)]
   }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 

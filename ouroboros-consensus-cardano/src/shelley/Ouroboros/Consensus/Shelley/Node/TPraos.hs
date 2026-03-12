@@ -291,7 +291,7 @@ protocolInfoTPraosShelleyBased
                 L.createInitialState transitionCfg
           , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
           , shelleyLedgerTables = emptyLedgerTables
-          , shelleyLedgerLeiosState = Nothing
+          , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
           }
 
     initChainDepState :: TPraosState
