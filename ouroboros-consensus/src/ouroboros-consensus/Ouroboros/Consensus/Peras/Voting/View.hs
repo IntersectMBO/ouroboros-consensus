@@ -32,6 +32,7 @@ module Ouroboros.Consensus.Peras.Voting.View
   , LatestCertSeenView (..)
   , LatestCertOnChainView (..)
   , PerasVotingView (..)
+  , WithBoostedBlockStatus (..)
   , mkPerasVotingView
   )
 where

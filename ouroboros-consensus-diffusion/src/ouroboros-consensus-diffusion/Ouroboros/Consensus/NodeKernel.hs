@@ -11,6 +11,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.NodeKernel
   ( -- * Node kernel
@@ -66,6 +67,9 @@ import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
+import Ouroboros.Consensus.HardFork.Abstract (hardForkSummary, HasHardForkHistory)
+import qualified Ouroboros.Consensus.HardFork.History.EraParams as History
+import qualified Ouroboros.Consensus.HardFork.History.Qry as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -97,11 +101,25 @@ import Ouroboros.Consensus.Node.Genesis
   )
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
+import Ouroboros.Consensus.Peras.Vote (TraceVotingEvent (..))
+import Ouroboros.Consensus.Peras.Voting.Rules
+  ( PerasVotingRulesDecision (..)
+  , isPerasVotingAllowed
+  )
+import Ouroboros.Consensus.Peras.Voting.View
+  ( PerasQryException (..)
+  , PerasVotingView (..)
+  , WithBoostedBlockStatus (..)
+  , mkPerasVotingView
+  , runPerasQry
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
   , ChainDB
   )
+import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB (..), AddPerasCertResult (..))
+import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB (..), AddPerasVoteResult (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
@@ -402,8 +420,9 @@ initNodeKernel
           sharedTxStateVar
 
     when (PerasFlag `member` featureFlags) $ void $
-      forkLinkedThread registry "NodeKernel.voteMinting" $
-        undefined
+      forkLinkedWatcher registry "NodeKernel.voteMinting" $
+        knownSlotWatcher btime $
+          \currentSlot -> withEarlyExit_ $ voteMintingController st currentSlot
 
     return
       NodeKernel
@@ -440,6 +459,185 @@ initNodeKernel
         blockForging' <- traverse (forkBlockForging st) blockForging
         go blockForging'
 
+voteMintingController ::
+  forall m remotePeer localPeer blk cert.
+  ( IOLike m
+  , GetHeader blk, HasHardForkHistory blk
+  , cert ~ WithArrivalTime (ValidatedPerasCert blk)
+  ) =>
+  InternalState m remotePeer localPeer blk ->
+  SlotNo ->
+  WithEarlyExit m ()
+voteMintingController IS{cfg, chainDB, perasVoteDB, perasCertDB, tracers} slotNo = do
+  extLedgerState <- lift $ atomically $ ChainDB.getCurrentLedger chainDB
+  let summary = hardForkSummary (configLedger cfg) (ledgerState extLedgerState)
+  (roundNo, slotIndex) <- case History.runQuery (History.slotToPerasRoundNo slotNo) summary of
+    Right (History.PerasEnabled (roundNo, slotIndex, _remainder)) -> pure (roundNo, slotIndex)
+    Right History.NoPerasEnabled -> do
+      trace $ TraceNoPerasEnabledAtSlot slotNo
+      exitEarly
+    Left err -> queryError err
+  when (slotIndex /= 0) $ do
+    trace $ TraceNoVoteAfterFirstSlotInRound roundNo slotIndex
+    exitEarly
+
+  perasCfg <- lift retrievePerasCfg
+  let perasParams@PerasParams{perasBlockMinSlots} = toPerasParams perasCfg
+      candidateCutoff = SlotNo $ (unSlotNo slotNo) - (unPerasBlockMinSlots perasBlockMinSlots)
+
+  let PerasVoteDB{addVote} = perasVoteDB
+      PerasCertDB
+        { addCert
+        , getLatestCertSeen
+        } = perasCertDB
+
+  -- Retrieve all data for mkPerasVotingView in a single transaction
+  ( currentChain :: AnchoredFragment (Header blk)
+    , latestCertSeen :: WithOrigin cert
+    , latestCertOnChainRound :: WithOrigin PerasRoundNo
+    ) <- lift $ atomically $ do
+    currentChain <- ChainDB.getCurrentChain chainDB
+    latestCertSeen <- (maybe Origin NotOrigin) <$> getLatestCertSeen
+    latestCertOnChainRound <- (maybe Origin NotOrigin) <$> getLatestPerasCertOnChainRound chainDB
+    pure (currentChain, latestCertSeen, latestCertOnChainRound)
+
+  let (chainAtCandidateBlock, _) = AF.splitAtSlot candidateCutoff currentChain
+
+  candidateBlock <- case AF.null chainAtCandidateBlock of
+    True -> do
+      trace $ TraceNoPerasCandidateBeforeSlot candidateCutoff
+      exitEarly
+    False -> pure $ AF.castPoint $ AF.headPoint chainAtCandidateBlock
+
+  let latestCertSeenWithBoostedBlockStatus = latestCertSeen <&> \cert ->
+        let PerasCert{pcCertBoostedBlock = boostedBlock} = vpcCert $ forgetArrivalTime cert in
+        -- REVIEW: is @castPoint@ correct here?
+        -- The problem is I'm trying to find a @Point blk@ in an @AnchoredFragment (Header blk)@
+        -- Maybe we should use @Point (Header blk)@ everywhere?
+        case (AF.castPoint boostedBlock) `AF.pointOnFragment` currentChain of
+          True -> CertWithVolatileBlock cert
+          False -> CertWithImmutableBlock cert
+
+  let votingViewQry = mkPerasVotingView
+        perasParams
+        roundNo
+        latestCertSeenWithBoostedBlockStatus
+        latestCertOnChainRound
+        chainAtCandidateBlock
+  (votingView :: PerasVotingView cert) <- case runPerasQry summary votingViewQry of
+    Right view -> pure view
+    Left PerasQryExceptionPerasDisabled -> do
+      trace $ TraceNoPerasEnabledAtSlot slotNo
+      exitEarly
+    Left (PerasQryExceptionPastHorizon err) -> queryError err
+
+  -- Do the voting rules state that we should vote?
+  let votingDecision = isPerasVotingAllowed votingView
+  trace $ TraceVotingRuleEvent votingDecision
+  case votingDecision of
+    NoVote _ -> exitEarly
+    Vote _ -> pure ()
+
+  -- Are we elected in the committee for this round?
+  csData <- lift retrieveCommitteeSelectionData
+  myId <- lift retrieveVotingId
+  myPrivateData <- lift retrieveMyPrivateData
+
+  committeeMember <- case isCommitteeMember csData myId myPrivateData of
+    Nothing -> do
+      trace $ TraceNotElectedInRound roundNo
+      exitEarly
+    Just cm -> pure cm
+
+  trace $ TraceCommitteeSelectionEvent committeeMember
+
+  (time :: RelativeTime) <- case History.runQuery (History.slotToWallclock slotNo) summary of
+    Right (relTime, _) -> pure relTime
+    Left err -> queryError err
+
+  let vote = WithArrivalTime
+        { getArrivalTime = time
+        , forgetArrivalTime = forgePerasVoteForMember
+            perasCfg
+            committeeMember
+            roundNo
+            candidateBlock
+        }
+
+  -- Add vote to DB
+  result <- lift $ atomically $ addVote vote
+  cert <- lift result >>= \case
+    PerasVoteAlreadyInDB ->
+      -- Error case: we've just minted the vote, it shouldn't exist already
+      error "TODO: replace with proper exception"
+    AddedPerasVoteButDidntGenerateNewCert ->
+      exitEarly
+    AddedPerasVoteAndGeneratedNewCert cert -> pure $ WithArrivalTime
+        { getArrivalTime = time
+        , forgetArrivalTime = cert
+        }
+
+  -- Add cert to DB
+  lift $ addCert cert >>= \case
+    PerasCertAlreadyInDB ->
+      -- Error case: we've just forged the cert, it shouldn't exist already
+      error "TODO: replace with proper exception"
+    AddedPerasCertToDB -> pure ()
+
+  where
+    trace :: TraceVotingEvent -> WithEarlyExit m ()
+    trace = lift . traceWith (votingLogicTracer tracers)
+
+    -- TODO: should we panic instead?
+    -- We are only running queries relative to the current slotNo,
+    -- we should never be past the forecast horizon.
+    queryError :: History.PastHorizonException -> WithEarlyExit m a
+    queryError err = throwIO err
+
+    -- TODO: fill in these functions once we can
+    retrieveCommitteeSelectionData :: m CommitteeSelectionData
+    retrieveCommitteeSelectionData = undefined
+
+    retrieveVotingId :: m CommitteeId
+    retrieveVotingId = undefined
+
+    retrieveMyPrivateData :: m CommitteeCandidatePrivateData
+    retrieveMyPrivateData = undefined
+
+    retrievePerasCfg :: m (PerasCfg blk)
+    retrievePerasCfg = undefined
+
+    toPerasParams :: PerasCfg blk -> PerasParams
+    toPerasParams = undefined
+
+    -- Awaiting [Peras 17](https://github.com/IntersectMBO/ouroboros-consensus/pull/1864)
+    getLatestPerasCertOnChainRound :: ChainDB m blk -> STM m (Maybe PerasRoundNo)
+    getLatestPerasCertOnChainRound = undefined
+
+-- Placeholder data from upcoming committee selection interface
+
+    isCommitteeMember ::
+      CommitteeSelectionData ->
+      CommitteeId ->
+      CommitteeCandidatePrivateData ->
+      Maybe CommitteeMember
+    isCommitteeMember = undefined
+
+    forgePerasVoteForMember ::
+      PerasCfg blk ->
+      CommitteeMember ->
+      PerasRoundNo ->
+      Point blk ->
+      ValidatedPerasVote blk
+    forgePerasVoteForMember = undefined
+
+data CommitteeSelectionData
+data CommitteeId
+data CommitteeCandidatePrivateData
+type CommitteeMember = ()
+
+-- End placeholder data
+
 castTraceFetchDecision ::
   forall remotePeer blk.
   TraceDecisionEvent remotePeer (HeaderWithTime blk) -> TraceDecisionEvent remotePeer (Header blk)
@@ -463,6 +661,8 @@ data InternalState m addrNTN addrNTC blk = IS
   , registry :: ResourceRegistry m
   , btime :: BlockchainTime m
   , chainDB :: ChainDB m blk
+  , perasVoteDB :: PerasVoteDB m blk
+  , perasCertDB :: PerasCertDB m blk
   , blockFetchInterface ::
       BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
   , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
@@ -486,6 +686,8 @@ initInternalState
   NodeKernelArgs
     { tracers
     , chainDB
+    , perasVoteDB
+    , perasCertDB
     , registry
     , cfg
     , blockFetchSize
