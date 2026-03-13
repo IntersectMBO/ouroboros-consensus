@@ -115,6 +115,12 @@ library
     Ouroboros.Consensus.BlockchainTime.WallClock.Simple
     Ouroboros.Consensus.BlockchainTime.WallClock.Types
     Ouroboros.Consensus.BlockchainTime.WallClock.Util
+    Ouroboros.Consensus.Committee.AcrossEpochs
+    Ouroboros.Consensus.Committee.Crypto
+    Ouroboros.Consensus.Committee.LS
+    Ouroboros.Consensus.Committee.Types
+    Ouroboros.Consensus.Committee.WFA
+    Ouroboros.Consensus.Committee.WFALS
     Ouroboros.Consensus.Config
     Ouroboros.Consensus.Config.SecurityParam
     Ouroboros.Consensus.Config.SupportsNode
@@ -223,6 +229,7 @@ library
     Ouroboros.Consensus.Node.Run
     Ouroboros.Consensus.Node.Serialisation
     Ouroboros.Consensus.NodeId
+    Ouroboros.Consensus.Peras.Crypto
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Vote
@@ -342,6 +349,7 @@ library
   build-depends:
     FailT ^>=0.1.2,
     aeson,
+    array,
     base >=4.14 && <4.23,
     base-deriving-via,
     base16-bytestring >=1.0,
