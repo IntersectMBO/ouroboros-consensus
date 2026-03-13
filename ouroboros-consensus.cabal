@@ -671,6 +671,10 @@ test-suite consensus-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.BlockchainTime.Simple
+    Test.Consensus.Committee.WFALS
+    Test.Consensus.Committee.WFALS.Conformance
+    Test.Consensus.Committee.WFALS.Model
+    Test.Consensus.Committee.WFALS.Model.Test
     Test.Consensus.HardFork.Forecast
     Test.Consensus.HardFork.History
     Test.Consensus.HardFork.Infra
@@ -695,6 +699,8 @@ test-suite consensus-test
 
   build-depends:
     QuickCheck,
+    aeson,
+    array,
     async,
     base,
     base-deriving-via,
@@ -709,6 +715,8 @@ test-suite consensus-test
     contra-tracer,
     deepseq,
     diff-containers,
+    file-embed,
+    filepath,
     fingertree-rm,
     fs-api,
     fs-sim,
@@ -717,6 +725,7 @@ test-suite consensus-test
     io-sim,
     measures,
     mtl,
+    mwc-random,
     nonempty-containers,
     nothunks,
     ouroboros-consensus,

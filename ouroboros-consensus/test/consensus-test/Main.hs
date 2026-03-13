@@ -3,6 +3,7 @@
 module Main (main) where
 
 import qualified Test.Consensus.BlockchainTime.Simple (tests)
+import qualified Test.Consensus.Committee.WFALS (tests)
 import qualified Test.Consensus.HardFork.Forecast (tests)
 import qualified Test.Consensus.HardFork.History (tests)
 import qualified Test.Consensus.HardFork.Summary (tests)
@@ -35,6 +36,7 @@ tests =
   testGroup
     "ouroboros-consensus"
     [ Test.Consensus.BlockchainTime.Simple.tests
+    , Test.Consensus.Committee.WFALS.tests
     , Test.Consensus.HeaderValidation.tests
     , Test.Consensus.MiniProtocol.BlockFetch.Client.tests
     , Test.Consensus.MiniProtocol.ChainSync.CSJ.tests
