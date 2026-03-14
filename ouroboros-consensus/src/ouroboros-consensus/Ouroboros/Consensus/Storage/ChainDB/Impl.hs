@@ -11,6 +11,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   , SerialiseDiskConstraints
   , defaultArgs
   , openDB
+  , openDBShowPeras
   , withDB
 
     -- * Trace types
@@ -82,6 +83,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (newFuse, whenJust)
 import Ouroboros.Consensus.Util.Args
@@ -115,7 +117,7 @@ withDB ::
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
   m a
-withDB args = bracket (fst <$> openDBInternal args True) API.closeDB
+withDB args = bracket (openDB args) API.closeDB
 
 openDB ::
   forall m blk.
@@ -131,7 +133,30 @@ openDB ::
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
-openDB args = fst <$> openDBInternal args True
+openDB args = do
+  (chainDB, _, _, _) <- openDBInternal args True
+  pure chainDB
+
+openDBShowPeras ::
+  forall m blk.
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsDiffusionPipelining blk
+  , InspectLedger blk
+  , HasHardForkHistory blk
+  , ConvertRawHash blk
+  , SerialiseDiskConstraints blk
+  , LedgerSupportsLedgerDB blk
+  ) =>
+  Complete Args.ChainDbArgs m blk ->
+  m
+    ( ChainDB m blk
+    , PerasVoteDB.PerasVoteDB m blk
+    , PerasCertDB.PerasCertDB m blk
+    )
+openDBShowPeras args = do
+  (chainDB, voteDB, certDB, _) <- openDBInternal args True
+  pure (chainDB, voteDB, certDB)
 
 openDBInternal ::
   forall m blk.
@@ -149,7 +174,12 @@ openDBInternal ::
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks
   Bool ->
-  m (ChainDB m blk, Internal m blk)
+  m
+    ( ChainDB m blk
+    , PerasVoteDB.PerasVoteDB m blk
+    , PerasCertDB.PerasCertDB m blk
+    , Internal m blk
+    )
 openDBInternal args launchBgTasks = runWithTempRegistry $ do
   lift $ traceWith tracer $ TraceOpenEvent StartedOpeningDB
   lift $ traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
@@ -165,7 +195,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   lift $ traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
   volatileDB <- VolatileDB.openDB argsVolatileDb $ innerOpenCont VolatileDB.closeDB
   maxSlot <- lift $ atomically $ VolatileDB.getMaxSlotNo volatileDB
-  (chainDB, testing, env) <- lift $ do
+  (chainDB, voteDB, certDB, testing, env) <- lift $ do
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
     (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <-
@@ -179,6 +209,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         ledgerDbGetVolatileSuffix
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
+    perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB
     perasCertDB <- PerasCertDB.openDB argsPerasCertDB
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
@@ -253,6 +284,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
+            , cdbPerasVoteDB = perasVoteDB
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -315,11 +347,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
     when launchBgTasks $ Background.launchBgTasks env replayed
 
-    return (chainDB, testing, env)
+    return (chainDB, perasVoteDB, perasCertDB, testing, env)
 
   _ <- lift $ allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return chainDB) API.closeDB
 
-  return ((chainDB, testing), env)
+  return ((chainDB, voteDB, certDB, testing), env)
  where
   tracer = Args.cdbsTracer cdbSpecificArgs
   Args.ChainDbArgs
@@ -327,6 +359,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     argsVolatileDb
     argsLgrDb
     argsPerasCertDB
+    argsPerasVoteDB
     cdbSpecificArgs = args
 
   -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')

@@ -171,11 +171,11 @@ mkChainDb resources = do
               { cdbsLoE = traverse readTVarIO lrLoEVar
               }
         }
-  (_, (chainDB, internal)) <-
+  (_, (chainDB, _, _, internal)) <-
     allocate
       lrRegistry
       (\_ -> ChainDB.openDBInternal chainDbArgs False)
-      (ChainDB.closeDB . fst)
+      (\(chainDB, _, _, _) -> ChainDB.closeDB chainDB)
   let ChainDB.Internal{intCopyToImmutableDB, intAddBlockRunner} = internal
   void $ forkLinkedThread lrRegistry "AddBlockRunner" (void intAddBlockRunner)
   pure (chainDB, intCopyToImmutableDB)

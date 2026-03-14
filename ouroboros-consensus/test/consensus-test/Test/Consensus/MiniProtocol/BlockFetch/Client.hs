@@ -290,7 +290,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                 , mcdbNodeDBs = nodeDBs
                 }
       pure $ ChainDB.updateTracer cdbTracer args
-    (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
+    (_, (chainDB, _, _, ChainDBImpl.Internal{intAddBlockRunner})) <-
       allocate
         registry
         (\_ -> ChainDBImpl.openDBInternal chainDbArgs False)
