@@ -203,10 +203,13 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
   blockMatchesHeader hdr blk =
     -- Compute the hash the body of the block (the transactions) and compare
     -- that against the hash of the body stored in the header.
+    -- FIXME(bladyjoker): Update the hashing with the new additions
+    -- imo this should be SL.hashBody (which can then decide how that is done, eg, SL.hashTxSeq or EbHash)
+    -- TODO(bladyjoker): Hmm, perhaps having a certified EB doesn't require a 'body' at all and can be included in the header?
     SL.hashTxSeq @era txs == pHeaderBodyHash shelleyHdr
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
-    ShelleyBlock{shelleyBlockRaw = SL.Block _ txs} = blk
+    txs = SL.blockTxs . shelleyBlockRaw $ blk
 
   headerIsEBB = const Nothing
 

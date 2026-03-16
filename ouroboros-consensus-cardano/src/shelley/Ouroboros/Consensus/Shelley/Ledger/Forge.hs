@@ -6,15 +6,22 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
+import qualified Cardano.Ledger.Block as SL
 import qualified Cardano.Ledger.Core as Core (Tx)
 import qualified Cardano.Ledger.Core as SL (hashTxSeq, toTxSeq)
-import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
+import qualified Cardano.Ledger.Shelley.API as SL (extractTx)
 import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
 import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
+import qualified Data.ByteString as BL
 import qualified Data.Sequence.Strict as Seq
-import LeiosDemoTypes (ForgedLeiosEb, forgeLeiosEb)
+import LeiosDemoTypes
+  ( EbHash (ebHashBytes)
+  , ForgedLeiosEb (point)
+  , LeiosPoint (pointEbHash)
+  , forgeLeiosEb
+  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -66,22 +73,24 @@ forgeShelleyBlock
   ebTxs
   isLeader = do
     hdr <-
-      mkHeader @_ @(ProtoCrypto proto)
+      mkHeader @_ @(ProtoCrypto proto) -- FIXME(bladyjoker): EB announcement in header
         hotKey
         cbl
         isLeader
         curSlot
         curNo
         prevHash
-        (SL.hashTxSeq @era body)
+        (SL.hashTxSeq @era body) -- FIXME(bladyjoker): SL.hashTxSeq OR Certified EbHash???
         actualBodySize
         protocolVersion
-    let blk = mkShelleyBlock $ SL.Block hdr body
     -- Only build an EB if ebTxs is not empty
-    let eb = forgeLeiosEb curSlot <$> nonEmpty (extractTx <$> ebTxs)
+    let mayEb = forgeLeiosEb curSlot <$> nonEmpty (extractTx <$> ebTxs)
+        blk =
+          mkShelleyBlock $
+            SL.Block hdr body (toLedgerEbHash . pointEbHash . point <$> mayEb) False -- FIXME(bladyjoker): We need `mayCertifiedEb` in the arguments to `forgeShelleyBlock`
     return $
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
-        (blk, eb)
+        (blk, mayEb)
    where
     protocolVersion = shelleyProtocolVersion $ configBlock cfg
 
@@ -101,3 +110,7 @@ forgeShelleyBlock
         . castHash
         . getTipHash
         $ tickedLedger
+
+-- -.-
+toLedgerEbHash :: EbHash -> SL.EbHash
+toLedgerEbHash = SL.EbHash . BL.fromStrict . ebHashBytes

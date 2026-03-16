@@ -87,7 +87,7 @@ instance
   where
   arbitrary = mkShelleyBlock <$> blk
    where
-    blk = SL.Block <$> arbitrary <*> (toTxSeq @era <$> arbitrary)
+    blk = SL.Block <$> arbitrary <*> (toTxSeq @era <$> arbitrary) <*> pure Nothing <*> pure False -- FIXME(bladyjoker)
 
 -- | This uses a different upstream generator to ensure the header and block
 -- body relate as expected.
@@ -119,9 +119,9 @@ instance
     mkBlk sleBlock =
       mkShelleyBlock $
         let
-          SL.Block hdr1 bdy = sleBlock
+          SL.Block hdr1 bdy mayAnnEb mayCertEb = sleBlock
          in
-          SL.Block (translateHeader hdr1) bdy
+          SL.Block (translateHeader hdr1) bdy mayAnnEb mayCertEb
 
     translateHeader :: Crypto c => SL.BHeader c -> Praos.Header c
     translateHeader (SL.BHeader bhBody bhSig) =

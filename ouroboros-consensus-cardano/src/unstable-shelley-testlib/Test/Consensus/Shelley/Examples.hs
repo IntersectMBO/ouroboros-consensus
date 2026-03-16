@@ -263,8 +263,8 @@ fromShelleyLedgerExamplesPraos
    where
     blk =
       mkShelleyBlock $
-        let SL.Block hdr1 bdy = sleBlock
-         in SL.Block (translateHeader hdr1) bdy
+        let SL.Block hdr1 bdy mayAnnEb mayCertEb = sleBlock
+         in SL.Block (translateHeader hdr1) bdy mayAnnEb mayCertEb
 
     translateHeader :: SL.BHeader StandardCrypto -> Praos.Header StandardCrypto
     translateHeader (SL.BHeader bhBody bhSig) =

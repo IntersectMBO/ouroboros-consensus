@@ -26,6 +26,35 @@ packages:
   ouroboros-consensus-observe
   sop-extras
   strict-sop-core
+  -- ../leios-prototype-cardano-ledger/eras/allegra/impl
+  -- ../leios-prototype-cardano-ledger/eras/alonzo/impl
+  -- ../leios-prototype-cardano-ledger/eras/alonzo/test-suite
+  -- ../leios-prototype-cardano-ledger/eras/babbage/impl
+  -- ../leios-prototype-cardano-ledger/eras/babbage/test-suite
+  -- ../leios-prototype-cardano-ledger/eras/conway/impl
+  -- ../leios-prototype-cardano-ledger/eras/conway/test-suite
+  -- ../leios-prototype-cardano-ledger/eras/mary/impl
+  -- ../leios-prototype-cardano-ledger/eras/shelley/impl
+  -- ../leios-prototype-cardano-ledger/eras/shelley/test-suite
+  -- ../leios-prototype-cardano-ledger/eras/shelley-ma/test-suite
+  -- ../leios-prototype-cardano-ledger/libs/cardano-ledger-api
+  -- ../leios-prototype-cardano-ledger/libs/cardano-ledger-core
+  -- ../leios-prototype-cardano-ledger/libs/cardano-ledger-binary
+  -- ../leios-prototype-cardano-ledger/libs/cardano-protocol-tpraos
+  -- ../leios-prototype-cardano-ledger/libs/non-integral
+  -- ../leios-prototype-cardano-ledger/libs/small-steps
+  -- ../leios-prototype-cardano-ledger/libs/cardano-data
+  -- ../leios-prototype-cardano-ledger/libs/set-algebra
+  -- ../leios-prototype-cardano-ledger/libs/vector-map
+  -- ../leios-prototype-cardano-ledger/eras/byron/chain/executable-spec
+  -- ../leios-prototype-cardano-ledger/eras/byron/ledger/executable-spec
+  -- ../leios-prototype-cardano-ledger/eras/byron/ledger/impl
+  -- ../leios-prototype-cardano-ledger/eras/byron/ledger/impl/test
+  -- ../leios-prototype-cardano-ledger/eras/byron/crypto
+  -- ../leios-prototype-cardano-ledger/eras/byron/crypto/test
+  -- ../leios-prototype-cardano-ledger/libs/cardano-ledger-test
+  -- ../leios-prototype-cardano-ledger/libs/ledger-state
+  -- ../leios-prototype-cardano-ledger/libs/constrained-generators
 
 -- We want to always build the test-suites and benchmarks
 tests: true
@@ -90,8 +119,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger.git
-  tag: dacadb2be074b2881f0ec1bdd27ef49a2d15cdc9
-  --sha256: sha256-3RiIeVDdQMl30X9VlIswcWoLDKLY50x8qUqKasH5rK0=sha256-0LWD1zwOzhdcPJtBuw7pRDVcBd9CKJOFjm9o4BvsIMM=
+  tag: 6220eb51afc20f003cf80ae7cf773f420c9ac0e0
+  --sha256: sha256-RU4ONSssmnLsnFF0AhRSKyt42JbBqVt8fw/5g0zQlzU=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl

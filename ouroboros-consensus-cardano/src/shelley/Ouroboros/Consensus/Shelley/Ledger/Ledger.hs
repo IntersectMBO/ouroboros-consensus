@@ -77,6 +77,7 @@ import Cardano.Ledger.Binary.Plain
   , enforceSize
   )
 import qualified Cardano.Ledger.Block as Core
+import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
   ( Era
   , eraDecoder
@@ -98,6 +99,7 @@ import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
+import qualified Data.ByteString.Lazy as BL
 import Data.Coerce (coerce)
 import Data.Functor.Identity
 import Data.MemPack
@@ -105,7 +107,7 @@ import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes (ForgedLeiosEb, point, pointSlotNo)
+import LeiosDemoTypes (EbHash (MkEbHash), LeiosPoint (MkLeiosPoint), pointSlotNo)
 import Lens.Micro
 import Lens.Micro.Extras (view)
 import NoThunks.Class (NoThunks (..))
@@ -270,7 +272,7 @@ castShelleyTip (ShelleyTip sn bn hh) =
     }
 
 data ShelleyLedgerLeiosState = ShelleyLedgerLeiosState
-  { sllsMaybeAnnouncedEb :: Maybe ForgedLeiosEb -- NOTE(bladyjoker): Perhaps to call it CompleteLeiosEb?
+  { sllsMaybeAnnouncedEb :: Maybe LeiosPoint
   , sllsTooSoonToCertify :: Bool
   , sllsApplyTickCount :: Int
   , sllsApplyBlockCount :: Int
@@ -281,29 +283,31 @@ data ShelleyLedgerLeiosState = ShelleyLedgerLeiosState
   deriving anyclass NoThunks
 
 initShelleyLedgerLeiosState :: ShelleyLedgerLeiosState
-initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing False 0 0 (SlotNo 0) (SlotNo 0)
+initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing True 0 0 (SlotNo 0) (SlotNo 0)
 
 -- FIXME: A certificate may only be included if RB' is at least 3 × L hdr + L vote + L diff slots after RB.
 -- Let's call this `predTooSoonToCertify :: AnnouncedEb -> SlotNo -> Bool`
 -- We can use this method to update `sllsTooSoonToCertify` depending on `predTooSoonToCertify`
 applyTickShelleyLedgerLeiosState :: ShelleyLedgerLeiosState -> SlotNo -> ShelleyLedgerLeiosState
-applyTickShelleyLedgerLeiosState leiosSt slotNo =
+applyTickShelleyLedgerLeiosState leiosSt currSlotNo =
   leiosSt
     { sllsApplyTickCount = sllsApplyTickCount leiosSt + 1
-    , sllsApplyTickLastAt = slotNo
-    , sllsTooSoonToCertify =
-        maybe False (\annEb -> predTooSoonToCertify annEb slotNo) $ sllsMaybeAnnouncedEb leiosSt
+    , sllsApplyTickLastAt = currSlotNo
+    , sllsTooSoonToCertify = predTooSoonToCertify leiosSt currSlotNo
     }
 
-predTooSoonToCertify :: ForgedLeiosEb -> SlotNo -> Bool
-predTooSoonToCertify annEb slotNo = unSlotNo slotNo - (unSlotNo . pointSlotNo . point $ annEb) > certifyMinDuration
+predTooSoonToCertify :: ShelleyLedgerLeiosState -> SlotNo -> Bool
+predTooSoonToCertify leiosSt currSlotNo =
+  maybe
+    True
+    (\annEbPoint -> unSlotNo currSlotNo - (unSlotNo . pointSlotNo $ annEbPoint) <= certifyMinDuration)
+    (sllsMaybeAnnouncedEb leiosSt)
  where
-  certifyMinDuration = 10
+  certifyMinDuration = 10 -- FIXME(bladyjoker): Hardcore real value or wire in through config
 
 -- FIXME(bladyjoker): I sense that here is where given previous state and blk we inspect the blk to figure out:
--- 1. Is blk announcing an EB? Yes: Update LeiosState with that EB and SlotNo, No: Override/Set whatever was there with Nothing
--- 2. Is blk a certificate? Yes: Apply Txs from the certified EBs (Probably goes up)
--- FIXME(bladyjoker): This requirs a change to ShelleyBlock
+-- 1. Is blk announcing an EB? Yes: Update LeiosState with info about that EB; No: Override/Set whatever was there with Nothing
+-- 2. Is blk a denoting an EB Certificate? Yes: Apply Txs from the certified EBs (Probably goes up); No: Noop
 applyBlockShelleyLedgerLeiosState ::
   ShelleyCompatible proto era =>
   ShelleyBlock proto era -> ShelleyLedgerLeiosState -> ShelleyLedgerLeiosState
@@ -311,7 +315,13 @@ applyBlockShelleyLedgerLeiosState blk leiosSt =
   leiosSt
     { sllsApplyBlockCount = sllsApplyBlockCount leiosSt + 1
     , sllsApplyBlockLastAt = blockSlot blk
+    , sllsMaybeAnnouncedEb =
+        MkLeiosPoint (blockSlot blk) . fromLedgerEbHash <$> SL.blockMayAnnouncedEb (shelleyBlockRaw blk)
     }
+
+-- -.-
+fromLedgerEbHash :: SL.EbHash -> EbHash
+fromLedgerEbHash = MkEbHash . BL.toStrict . SL.unEbHash
 
 data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   { shelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
