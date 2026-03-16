@@ -16,6 +16,7 @@ import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import qualified Data.ByteString as BL
 import qualified Data.Sequence.Strict as Seq
+import LeiosDemoDb (LeiosDbHandle (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint))
 import LeiosDemoTypes
   ( EbHash (ebHashBytes)
   , ForgedLeiosEb (point)
@@ -33,6 +34,10 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
   )
 import Ouroboros.Consensus.Shelley.Ledger.Integrity
+import Ouroboros.Consensus.Shelley.Ledger.Ledger
+  ( ShelleyLedgerLeiosState (sllsMaybeAnnouncedEb, sllsTooSoonToCertify)
+  , Ticked (tickedShelleyLedgerLeiosState)
+  )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
@@ -80,26 +85,45 @@ forgeShelleyBlock
         curSlot
         curNo
         prevHash
-        (SL.hashTxSeq @era body) -- FIXME(bladyjoker): SL.hashTxSeq OR Certified EbHash???
+        (SL.hashTxSeq @era rbTxs') -- FIXME(bladyjoker): SL.hashBody = SL.hashTxSeq `or` SL.hashCert
         actualBodySize
         protocolVersion
     -- Only build an EB if ebTxs is not empty
-    let mayEb = forgeLeiosEb curSlot <$> nonEmpty (extractTx <$> ebTxs)
-        blk =
-          mkShelleyBlock $
-            SL.Block hdr body (toLedgerEbHash . pointEbHash . point <$> mayEb) False -- FIXME(bladyjoker): We need `mayCertifiedEb` in the arguments to `forgeShelleyBlock`
+    let
+      mayEb = forgeLeiosEb curSlot <$> nonEmpty (extractTx <$> ebTxs)
+
+      ledgerLeiosSt = tickedShelleyLedgerLeiosState tickedLedger
+
+      mayAnnouncedEb = toLedgerEbHash . pointEbHash . point <$> mayEb
+
+    (body, certifiesEb) <- case sllsMaybeAnnouncedEb ledgerLeiosSt of
+      Nothing -> return $ (rbTxs', False)
+      Just annEbPoint ->
+        if sllsTooSoonToCertify ledgerLeiosSt
+          then return $ (rbTxs', False)
+          else do
+            mayCompletedEb <- leiosDbQueryCompletedEbByPoint leiosDb annEbPoint
+            case mayCompletedEb of
+              Nothing -> return (rbTxs', False) -- This happens when EBs haven't been fully downloaded
+              Just _completeEb -> do
+                mayCert <- leiosDbQueryCertificateByPoint leiosDb annEbPoint
+                case mayCert of
+                  Nothing -> return (rbTxs', False) -- This happens when EBs have been downlaoded but voting hasn't finished
+                  Just cert -> return $ (SL.toTxSeq @era $ Seq.fromList [], True) -- FIXME(bladyjoker): Use `cert`
+    let blk = mkShelleyBlock $ SL.Block hdr body mayAnnouncedEb certifiesEb
+
     return $
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
         (blk, mayEb)
    where
     protocolVersion = shelleyProtocolVersion $ configBlock cfg
 
-    body =
+    rbTxs' =
       SL.toTxSeq @era $
         Seq.fromList $
           fmap extractTx rbTxs
 
-    actualBodySize = SL.bBodySize protocolVersion body
+    actualBodySize = SL.bBodySize protocolVersion rbTxs'
 
     extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
     extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx

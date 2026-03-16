@@ -330,6 +330,15 @@ data ForgedLeiosEb = ForgedLeiosEb
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
+newtype LeiosCertificate = LeiosCertificate
+  { unLeiosCertificate :: ByteString -- FIXME(bladyjoker): Mocked
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+trustNoVerifyLeiosCertificate :: LeiosCertificate
+trustNoVerifyLeiosCertificate = LeiosCertificate "trust me bruv"
+
 forgeLeiosEb :: EraTx era => SlotNo -> NonEmpty (Tx era) -> ForgedLeiosEb
 forgeLeiosEb slot txs =
   ForgedLeiosEb{point, body, txClosure}

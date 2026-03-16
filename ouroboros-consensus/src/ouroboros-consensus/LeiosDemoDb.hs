@@ -50,12 +50,15 @@ import LeiosDemoException (LeiosDbException (..))
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
+  , ForgedLeiosEb (..)
+  , LeiosCertificate
   , LeiosEb
   , LeiosNotification (..)
   , LeiosPoint (..)
   , TxHash (..)
   , leiosEbBodyItems
   , leiosEbBytesSize
+  , trustNoVerifyLeiosCertificate
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks, atomically)
 import System.Directory (doesFileExist)
@@ -108,6 +111,8 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
   , leiosDbFilterMissingTxs :: HasCallStack => [TxHash] -> m [TxHash]
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
+  , leiosDbQueryCompletedEbByPoint :: HasCallStack => LeiosPoint -> m (Maybe ForgedLeiosEb)
+  , leiosDbQueryCertificateByPoint :: HasCallStack => LeiosPoint -> m (Maybe LeiosCertificate)
   , leiosDbClose :: m ()
   }
 
@@ -277,6 +282,26 @@ newLeiosDBInMemoryWith stateVar = do
                   , not $ null missingEntries
                   ]
           pure LeiosFetchWork{missingEbBodies, missingEbTxs}
+      , leiosDbQueryCompletedEbByPoint = \ebPoint -> atomically $ do
+          state <- readTVar stateVar
+          let ebTxHashes =
+                [ eteTxHash entry
+                | entries <- maybeToList $ Map.lookup (pointEbHash ebPoint) (imEbBodies state)
+                , (_key, entry) <- IntMap.toList entries
+                ]
+              txClosure =
+                [ (ebTxHash, tx)
+                | ebTxHash <- ebTxHashes
+                , (tx, _txSize) <- maybeToList (Map.lookup ebTxHash (imTxs state))
+                ]
+          pure $
+            Just $
+              ForgedLeiosEb
+                { txClosure
+                , body = error "FIXME(bladyjoker): This is not needed, rather use CompleteEb or EbWithClosure"
+                , point = ebPoint
+                }
+      , leiosDbQueryCertificateByPoint = \_ebPoint -> return $ Just trustNoVerifyLeiosCertificate -- FIXME(bladyjoker): Mocked
       , leiosDbClose = pure ()
       }
 

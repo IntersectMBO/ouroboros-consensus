@@ -54,6 +54,9 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
 
     -- * Low-level UTxO manipulations
   , slUtxoL
+
+    -- * Leios
+  , ShelleyLedgerLeiosState (..)
   , initShelleyLedgerLeiosState
   ) where
 
