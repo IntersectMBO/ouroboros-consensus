@@ -10,6 +10,7 @@ module Ouroboros.Consensus.Peras.Params
     PerasIgnoranceRounds (..)
   , PerasCooldownRounds (..)
   , PerasBlockMinSlots (..)
+  , PerasCertMaxRounds (..)
   , PerasCertArrivalThreshold (..)
   , PerasRoundLength (..)
   , PerasWeight (..)
@@ -54,6 +55,13 @@ newtype PerasCooldownRounds
 newtype PerasBlockMinSlots
   = PerasBlockMinSlots {unPerasBlockMinSlots :: Word64}
   deriving Show via Quiet PerasBlockMinSlots
+  deriving stock Generic
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense)
+
+-- | Maximum age for a certificate to be included in a block, in rounds.
+newtype PerasCertMaxRounds
+  = PerasCertMaxRounds {unPerasCertMaxRounds :: Word64}
+  deriving Show via Quiet PerasCertMaxRounds
   deriving stock Generic
   deriving newtype (Enum, Eq, Ord, NoThunks, Condense)
 
@@ -114,6 +122,7 @@ data PerasParams = PerasParams
   { perasIgnoranceRounds :: PerasIgnoranceRounds
   , perasCooldownRounds :: PerasCooldownRounds
   , perasBlockMinSlots :: PerasBlockMinSlots
+  , perasCertMaxRounds :: PerasCertMaxRounds
   , perasCertArrivalThreshold :: PerasCertArrivalThreshold
   , perasRoundLength :: !PerasRoundLength
   , perasWeight :: !PerasWeight
@@ -134,6 +143,8 @@ mkPerasParams =
         error "perasCooldownRounds: not yet defined"
     , perasBlockMinSlots =
         error "perasBlockMinSlots: not yet defined"
+    , perasCertMaxRounds =
+        error "perasCertMaxRounds: not yet defined"
     , perasCertArrivalThreshold =
         error "perasCertArrivalThreshold: not yet defined"
     , perasRoundLength =
