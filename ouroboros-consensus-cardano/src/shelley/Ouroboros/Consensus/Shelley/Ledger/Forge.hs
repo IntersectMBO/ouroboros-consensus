@@ -16,6 +16,7 @@ import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import qualified Data.ByteString as BL
 import qualified Data.Sequence.Strict as Seq
+import qualified Debug.Trace as Debug
 import LeiosDemoDb (LeiosDbHandle (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint))
 import LeiosDemoTypes
   ( EbHash (ebHashBytes)
@@ -52,6 +53,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 forgeShelleyBlock ::
   forall m era proto mk.
   (ShelleyCompatible proto era, Monad m) =>
+  LeiosDbHandle m ->
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
   TopLevelConfig (ShelleyBlock proto era) ->
@@ -66,8 +68,9 @@ forgeShelleyBlock ::
   -- | EB Txs to include
   [Validated (GenTx (ShelleyBlock proto era))] ->
   IsLeader proto ->
-  m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
+  m (ShelleyBlock proto era, Maybe ForgedLeiosEb) -- TODO(bladyjoker): Returns (ShelleyBlock proto era, Maybe ForgedLeiosEb and Maybe CertifiedEb?)...
 forgeShelleyBlock
+  leiosDb
   hotKey
   cbl
   cfg
@@ -77,23 +80,10 @@ forgeShelleyBlock
   rbTxs
   ebTxs
   isLeader = do
-    hdr <-
-      mkHeader @_ @(ProtoCrypto proto) -- FIXME(bladyjoker): EB announcement in header
-        hotKey
-        cbl
-        isLeader
-        curSlot
-        curNo
-        prevHash
-        (SL.hashTxSeq @era rbTxs') -- FIXME(bladyjoker): SL.hashBody = SL.hashTxSeq `or` SL.hashCert
-        actualBodySize
-        protocolVersion
     -- Only build an EB if ebTxs is not empty
     let
       mayEb = forgeLeiosEb curSlot <$> nonEmpty (extractTx <$> ebTxs)
-
       ledgerLeiosSt = tickedShelleyLedgerLeiosState tickedLedger
-
       mayAnnouncedEb = toLedgerEbHash . pointEbHash . point <$> mayEb
 
     (body, certifiesEb) <- case sllsMaybeAnnouncedEb ledgerLeiosSt of
@@ -108,8 +98,22 @@ forgeShelleyBlock
               Just _completeEb -> do
                 mayCert <- leiosDbQueryCertificateByPoint leiosDb annEbPoint
                 case mayCert of
-                  Nothing -> return (rbTxs', False) -- This happens when EBs have been downlaoded but voting hasn't finished
-                  Just cert -> return $ (SL.toTxSeq @era $ Seq.fromList [], True) -- FIXME(bladyjoker): Use `cert`
+                  Nothing -> return (rbTxs', False) -- This happens when EBs have been downloaded but voting hasn't completed
+                  Just cert ->
+                    return $
+                      Debug.trace (show ("certifying", cert, annEbPoint)) (SL.toTxSeq @era $ Seq.fromList [], True) -- FIXME(bladyjoker): Use `cert`
+    hdr <-
+      mkHeader @_ @(ProtoCrypto proto) -- FIXME(bladyjoker): EB announcement in header
+        hotKey
+        cbl
+        isLeader
+        curSlot
+        curNo
+        prevHash
+        (SL.hashTxSeq @era body) -- FIXME(bladyjoker): SL.hashBody = SL.hashTxSeq `or` SL.hashCert
+        actualBodySize
+        protocolVersion
+
     let blk = mkShelleyBlock $ SL.Block hdr body mayAnnouncedEb certifiesEb
 
     return $

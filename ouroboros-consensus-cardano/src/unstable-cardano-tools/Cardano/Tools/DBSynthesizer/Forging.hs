@@ -220,6 +220,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
       lift $
         Block.forgeBlock
           blockForging'
+          (error "FIXME(bladyjoker): leiosDb")
           cfg
           bcBlockNo
           currentSlot

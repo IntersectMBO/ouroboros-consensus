@@ -306,7 +306,7 @@ predTooSoonToCertify leiosSt currSlotNo =
     (\annEbPoint -> unSlotNo currSlotNo - (unSlotNo . pointSlotNo $ annEbPoint) <= certifyMinDuration)
     (sllsMaybeAnnouncedEb leiosSt)
  where
-  certifyMinDuration = 10 -- FIXME(bladyjoker): Hardcore real value or wire in through config
+  certifyMinDuration = 1 -- FIXME(bladyjoker): Hardcore real value or wire in through config
 
 -- FIXME(bladyjoker): I sense that here is where given previous state and blk we inspect the blk to figure out:
 -- 1. Is blk announcing an EB? Yes: Update LeiosState with info about that EB; No: Override/Set whatever was there with Nothing

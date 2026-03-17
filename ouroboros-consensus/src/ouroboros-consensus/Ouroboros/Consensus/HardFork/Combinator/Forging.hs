@@ -27,6 +27,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP, ViewOptNP (..))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Text (Text)
+import LeiosDemoDb (LeiosDbHandle)
 import LeiosDemoTypes (ForgedLeiosEb)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -299,6 +300,7 @@ hardForkForgeBlock ::
   forall m xs empty.
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
+  LeiosDbHandle m ->
   TopLevelConfig (HardForkBlock xs) ->
   BlockNo ->
   SlotNo ->
@@ -309,6 +311,7 @@ hardForkForgeBlock ::
   m (HardForkBlock xs, Maybe ForgedLeiosEb)
 hardForkForgeBlock
   blockForging
+  leiosDb
   cfg
   bno
   sno
@@ -422,6 +425,7 @@ hardForkForgeBlock
                   (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
                   mBlockForging'
               )
+              leiosDb
               cfg'
               bno
               sno

@@ -27,6 +27,7 @@ import Control.Tracer (Tracer, traceWith)
 import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Stack
+import LeiosDemoDb (LeiosDbHandle)
 import LeiosDemoTypes (ForgedLeiosEb)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
@@ -120,6 +121,7 @@ data BlockForging m blk = BlockForging
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
   , forgeBlock ::
+      LeiosDbHandle m ->
       TopLevelConfig blk ->
       BlockNo -> -- Current block number
       SlotNo -> -- Current slot number

@@ -786,6 +786,7 @@ forkBlockForging IS{..} blockForging =
       lift $
         Block.forgeBlock
           blockForging
+          leiosDB
           cfg
           bcBlockNo
           currentSlot
