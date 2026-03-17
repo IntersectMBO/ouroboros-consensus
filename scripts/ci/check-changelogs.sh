@@ -2,7 +2,10 @@
 
 # Expected env vars:
 # - NO_CHANGELOG_LABEL: disables the check for changelog fragments additions
-# - BASE_REF: what to compare this branch against
+# - RELEASE_LABEL:
+# - BASE_REF: what to compare this branch against (default: "main")
+
+BASE_REF="${BASE_REF:-main}"
 
 ok=1
 
