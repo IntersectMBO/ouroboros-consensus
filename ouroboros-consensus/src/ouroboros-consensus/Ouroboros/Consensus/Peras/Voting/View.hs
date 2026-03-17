@@ -195,7 +195,7 @@ newtype LatestCertOnChainView cert
 -- boosted by the most recent certificate seen by the voter, which is provided
 -- to the rules via 'lcsCandidateBlockExtendsCert' inside 'latestCertSeen'.
 data PerasVotingView cert = PerasVotingView
-  { perasParams :: PerasParams
+  { perasParams :: !PerasParams
   -- ^ Peras protocol parameters
   , currRoundNo :: !PerasRoundNo
   -- ^ The current Peras round number
