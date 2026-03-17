@@ -294,13 +294,16 @@ newLeiosDBInMemoryWith stateVar = do
                 | ebTxHash <- ebTxHashes
                 , (tx, _txSize) <- maybeToList (Map.lookup ebTxHash (imTxs state))
                 ]
-          pure $
-            Just $
-              ForgedLeiosEb
-                { txClosure
-                , body = error "FIXME(bladyjoker): This is not needed, rather use CompleteEb or EbWithClosure"
-                , point = ebPoint
-                }
+          if length ebTxHashes == length txClosure
+            then
+              pure $
+                Just $
+                  ForgedLeiosEb
+                    { txClosure
+                    , body = error "FIXME(bladyjoker): This is not needed, rather use CompleteEb or EbWithClosure"
+                    , point = ebPoint
+                    }
+            else pure Nothing
       , leiosDbQueryCertificateByPoint = \_ebPoint -> return $ Just trustNoVerifyLeiosCertificate -- FIXME(bladyjoker): Mocked
       , leiosDbClose = pure ()
       }
