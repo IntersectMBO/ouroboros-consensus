@@ -94,9 +94,9 @@ echo "####### Checking the cabal version matches the version in the badge in the
 ver=$(grep "^version: " ouroboros-consensus.cabal | rev | cut -d' ' -f1 | rev)
 if ! grep -q "ouroboros--consensus-$ver" README.md; then
     echo "FAIL"
-    ok=1
+    ok=0
 else
     echo "OK"
 fi
 
-exit $ok
+exit $((! $ok))
