@@ -34,6 +34,30 @@ on:
     - cron: "0 0 1 * *"
 
 jobs:
+  # This aggregated job is necessary to make the 'skip-tests' label work consistently
+  # with branch protection rules.
+  #
+  # Set this job as the required check in branch protection rules instead of
+  # the individual "Build and test" matrix jobs. It reports success when tests
+  # pass or are intentionally skipped via the 'skip-tests' label.
+  ci-success:
+    name: All CI Jobs Successful or Skipped
+    if: always()
+    needs: [build-test-bench-haddocks, benchmarks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          build="${{ needs.build-test-bench-haddocks.result }}"
+          bench="${{ needs.benchmarks.result }}"
+          for r in "$build" "$bench"; do
+            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
+              echo "Job failed with result: $r"
+              exit 1
+            fi
+          done
+          echo "All jobs passed or were intentionally skipped."
+
   build-test-bench-haddocks:
     name: Build and test
     # skip building testing and benchmarking if the PR has the 'skip-tests' label attached
