@@ -285,10 +285,39 @@ jobs:
           echo "Benchmarks comparison skipped."
         fi
 
-  deploy-documentation:
-    name: Deploy documentation to GitHub Pages
+  deploy-haddocks:
+    name: Deploy haddocks
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build-test-bench-haddocks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download haddocks
+        uses: actions/download-artifact@v8
+        with:
+          name: haddocks
+
+      - name: Extract haddocks
+        run: tar vzxf haddocks.tgz
+
+      - name: Upload haddocks for GitHub Pages
+        uses: actions/upload-artifact@v7
+        with:
+          name: haddocks-site
+          path: ./docs/website/static/haddocks
+          retention-days: 1
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+  deploy-website:
+    name: Deploy website to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -313,16 +342,6 @@ jobs:
         run: |
           nix build -L .#consensus-pdfs
           cp -r --no-preserve=mode,ownership result/ static/pdfs
-
-      - name: Download haddocks
-        uses: actions/download-artifact@v8
-        with:
-          name: haddocks
-
-      - name: Copy haddocks
-        run: |
-          cd ../../
-          tar vzxf haddocks.tgz
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
