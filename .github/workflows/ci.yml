@@ -19,6 +19,8 @@ on:
         type: boolean
         default: false
   pull_request:
+    # re-evaluate the workflow when labels are added or removed.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   merge_group:
   push:
     branches:
@@ -34,6 +36,10 @@ on:
 jobs:
   build-test-bench-haddocks:
     name: Build and test
+    # skip building testing and benchmarking if the PR has the 'skip-tests' label attached
+    if: >-
+      github.event_name != 'pull_request'
+      || !contains(github.event.pull_request.labels.*.name, 'skip-tests')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
