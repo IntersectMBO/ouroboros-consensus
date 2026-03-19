@@ -305,6 +305,7 @@ data ExtWFAStakeDistr a = ExtWFAStakeDistr
   -- than the number of pools with positive stake, which would lead to incorrect
   -- results (e.g. granting persistent seats to voters with zero stake).
   }
+  deriving Show
 
 -- | Construct an extended cumulative stake distribution.
 --

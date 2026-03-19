@@ -42,6 +42,7 @@ module Test.Consensus.Committee.WFALS.Model
   , stakeDistrTotalStake
 
     -- * Fait Accompli Committee Selection
+  , WFAError
   , weightedFaitAccompliWith
   , weightedFaitAccompliPersistentSeats
   , weightedFaitAccompliThreshold
@@ -184,6 +185,9 @@ stakeDistrToDecreasingStakes tiebreaker distr =
 
 -- * Fait Accompli Committee Selection
 
+-- | Errors that can occur while computing a weighted Fait Accompli committee selection.
+type WFAError = String
+
 -- | Weighted Fait Accompli committee selection with a fallback mechanism.
 --
 -- This is mostly just plumbing to connect the result of
@@ -202,22 +206,22 @@ weightedFaitAccompliWith ::
   StakeDistr Ledger Global ->
   -- | Selected persistent and non-persistent seats with their corresponding
   -- voting stakes
-  ( StakeDistr Weight Persistent
-  , StakeDistr Weight Residual
-  )
-weightedFaitAccompliWith tiebreaker fallback globalNumSeats stakeDistr =
-  (persistentSeats, nonPersistentSeats)
- where
-  (persistentSeats, numNonPersistentSeats, residualStakeDistr) =
+  Either
+    WFAError
+    ( StakeDistr Weight Persistent
+    , StakeDistr Weight Residual
+    )
+weightedFaitAccompliWith tiebreaker fallback globalNumSeats stakeDistr = do
+  (persistentSeats, numNonPersistentSeats, residualStakeDistr) <-
     weightedFaitAccompliPersistentSeats
       tiebreaker
       globalNumSeats
       stakeDistr
-
-  nonPersistentSeats =
-    fallback
-      numNonPersistentSeats
-      residualStakeDistr
+  let nonPersistentSeats =
+        fallback
+          numNonPersistentSeats
+          residualStakeDistr
+  pure (persistentSeats, nonPersistentSeats)
 
 -- | First step of the weighted Fait Accompli committee selection.
 --
@@ -228,21 +232,23 @@ weightedFaitAccompliPersistentSeats ::
   (VoterId -> VoterId -> Ordering) ->
   NumSeats Global ->
   StakeDistr Ledger Global ->
-  ( StakeDistr Weight Persistent
-  , NumSeats Residual
-  , StakeDistr Ledger Residual
-  )
+  Either
+    WFAError
+    ( StakeDistr Weight Persistent
+    , NumSeats Residual
+    , StakeDistr Ledger Residual
+    )
 weightedFaitAccompliPersistentSeats tiebreaker globalNumSeats stakeDistr
   | globalNumSeats <= 0 =
-      error "Number of seats must be positive"
+      Left "Number of seats must be positive"
   | Map.size stakeDistr == 0 =
-      error "Stake distribution cannot be empty"
+      Left "Stake distribution cannot be empty"
   | sum stakeDistr == 0 =
-      error "Total stake must be positive"
+      Left "Total stake must be positive"
   | numPoolsWithPositiveStake < globalNumSeats =
-      error "Not enough voters with positive stake to fill all expected seats"
+      Left "Not enough voters with positive stake to fill all expected seats"
   | otherwise =
-      (persistentSeats, numNonPersistentSeats, residualStakeDistr)
+      Right (persistentSeats, numNonPersistentSeats, residualStakeDistr)
  where
   -- Number of voters with positive stake in the input distribution
   numPoolsWithPositiveStake =
