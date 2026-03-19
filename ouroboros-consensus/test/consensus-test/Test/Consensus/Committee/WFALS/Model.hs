@@ -54,7 +54,6 @@ import Data.Kind (Type)
 import Data.List (sortBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Ord (Down (..), comparing)
 import Data.Traversable (mapAccumR)
 import GHC.Generics (Generic)
 import Numeric.Natural (Natural, minusNaturalMaybe)
@@ -159,13 +158,27 @@ stakeDistrTotalStake ::
 stakeDistrTotalStake distr =
   sum (Map.elems distr)
 
--- | View a stake distribution as a non-increasing list of stakes
+-- | View a stake distribution as a non-increasing list of stakes.
+--
+-- Like the real implementation, this also uses a tiebreaker to control how
+-- voters with the same stake are ordered in the resulting list.
 stakeDistrToDecreasingStakes ::
   IsStake (Stake sr st) =>
+  (VoterId -> VoterId -> Ordering) ->
   StakeDistr sr st ->
   [(VoterId, Stake sr st)]
-stakeDistrToDecreasingStakes distr =
-  sortBy (comparing (Down . snd)) (Map.toList distr)
+stakeDistrToDecreasingStakes tiebreaker distr =
+  sortBy
+    descendingStakeWithTiebreaker
+    (Map.toList distr)
+ where
+  descendingStakeWithTiebreaker
+    (poolId1, stake1)
+    (poolId2, stake2)
+      -- The pools have different stake => sort them in descending order
+      | stake1 /= stake2 = compare stake2 stake1
+      -- The pools have the same stake => use the tiebreaker to sort them
+      | otherwise = tiebreaker poolId1 poolId2
 
 -------------------------------------------------------------------------------
 
@@ -176,6 +189,8 @@ stakeDistrToDecreasingStakes distr =
 -- This is mostly just plumbing to connect the result of
 -- 'weightedFaitAccompliPersistentSeats' with a given fallback scheme.
 weightedFaitAccompliWith ::
+  -- | Tiebreaker to control the order of voters with the same stake
+  (VoterId -> VoterId -> Ordering) ->
   -- | Fallback function for non-persistent seats
   ( NumSeats Residual ->
     StakeDistr Ledger Residual ->
@@ -190,11 +205,12 @@ weightedFaitAccompliWith ::
   ( StakeDistr Weight Persistent
   , StakeDistr Weight Residual
   )
-weightedFaitAccompliWith fallback globalNumSeats stakeDistr =
+weightedFaitAccompliWith tiebreaker fallback globalNumSeats stakeDistr =
   (persistentSeats, nonPersistentSeats)
  where
   (persistentSeats, numNonPersistentSeats, residualStakeDistr) =
     weightedFaitAccompliPersistentSeats
+      tiebreaker
       globalNumSeats
       stakeDistr
 
@@ -209,13 +225,14 @@ weightedFaitAccompliWith fallback globalNumSeats stakeDistr =
 -- Fait Accompli threshold, and returns the remaining stake distribution for the
 -- non-persistent seats selection.
 weightedFaitAccompliPersistentSeats ::
+  (VoterId -> VoterId -> Ordering) ->
   NumSeats Global ->
   StakeDistr Ledger Global ->
   ( StakeDistr Weight Persistent
   , NumSeats Residual
   , StakeDistr Ledger Residual
   )
-weightedFaitAccompliPersistentSeats globalNumSeats stakeDistr
+weightedFaitAccompliPersistentSeats tiebreaker globalNumSeats stakeDistr
   | globalNumSeats <= 0 =
       error "Number of seats must be positive"
   | Map.size stakeDistr == 0 =
@@ -277,7 +294,7 @@ weightedFaitAccompliPersistentSeats globalNumSeats stakeDistr
   rightCumulativeDecreasingStakes =
     accumStakeR $
       addSeatIndex $
-        stakeDistrToDecreasingStakes $
+        stakeDistrToDecreasingStakes tiebreaker $
           stakeDistr
    where
     -- Add an increasing seat index to each candidate

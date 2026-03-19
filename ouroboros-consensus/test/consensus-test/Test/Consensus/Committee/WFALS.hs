@@ -8,6 +8,7 @@ import qualified Cardano.Ledger.Keys as SL
 import qualified Data.Map.Strict as Map
 import Data.String (IsString (..))
 import qualified Ouroboros.Consensus.Committee.Types as WFA
+import Ouroboros.Consensus.Committee.WFA (WFATiebreaker (..))
 import qualified Ouroboros.Consensus.Committee.WFA as WFA
 import Test.Consensus.Committee.WFALS.Conformance (conformsToRustImplementation)
 import qualified Test.Consensus.Committee.WFALS.Model as Model
@@ -31,12 +32,19 @@ modelConformsToRustImplementation =
     mkStakeDistr
     model
  where
+  -- NOTE: this is not a good tiebreaker for real-world use, but it is
+  -- sufficient here because the actual order of pools with the same stake does
+  -- not matter when computing the persistent vs. non-persistent seat /counts/.
+  tiebreaker =
+    compare
+
   mkStakeDistr =
     Map.map Model.rationalToStake
 
   model stakeDistr targetCommitteeSize =
     let (persistentSeats, numNonPersistentSeats, _) =
           Model.weightedFaitAccompliPersistentSeats
+            tiebreaker
             (fromIntegral targetCommitteeSize)
             stakeDistr
      in ( fromIntegral (Map.size persistentSeats)
@@ -51,6 +59,12 @@ realImplementationConformsToRustImplementation =
     mkStakeDistr
     impl
  where
+  -- NOTE: this is not a good tiebreaker for real-world use, but it is
+  -- sufficient here because the actual order of pools with the same stake does
+  -- not matter when computing the persistent vs. non-persistent seat /counts/.
+  tiebreaker =
+    WFATiebreaker compare
+
   -- NOTE: we don't seem to have an easy way to convert the input hash into its
   -- corresponding 'KeyHash StakePool', so here we are just recreating a new one
   -- derived from the input string. This is fine for our purposes since we don't
@@ -61,7 +75,7 @@ realImplementationConformsToRustImplementation =
       ( \err ->
           error ("could not build a strake distribution: " <> show err)
       )
-      . WFA.mkExtWFAStakeDistr
+      . WFA.mkExtWFAStakeDistr tiebreaker
       . Map.mapKeys
         ( \str ->
             WFA.PoolId

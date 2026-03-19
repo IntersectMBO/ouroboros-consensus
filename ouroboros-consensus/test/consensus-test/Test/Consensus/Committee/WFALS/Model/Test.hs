@@ -163,7 +163,8 @@ tabulatePersistentToNonPersistentRatio
 prop_stakeDistrDecreasingStakes :: Property
 prop_stakeDistrDecreasingStakes =
   forAll (sized genStakeDistr) $ \stakeDistr -> do
-    let stakes = fmap snd (stakeDistrToDecreasingStakes stakeDistr)
+    let tiebreaker = compare -- unfair tiebreaker
+    let stakes = fmap snd (stakeDistrToDecreasingStakes tiebreaker stakeDistr)
     case stakes of
       [] -> True -- vacuously true for empty stake distributions
       (_ : rest) -> and (zipWith (>=) stakes rest)
@@ -173,8 +174,9 @@ prop_stakeDistrDecreasingStakes =
 prop_weightedFaitAccompliPersistentSeats_persistentSeatsRespectNumSeats :: Property
 prop_weightedFaitAccompliPersistentSeats_persistentSeatsRespectNumSeats =
   forAllStakeDistrAndNumSeats $ \stakeDistr numSeats -> do
+    let tiebreaker = compare -- unfair tiebreaker
     let (persistentSeats, numNonPersistentSeats, _) =
-          weightedFaitAccompliPersistentSeats numSeats stakeDistr
+          weightedFaitAccompliPersistentSeats tiebreaker numSeats stakeDistr
     let numPersistentSeats = fromIntegral (Map.size persistentSeats)
     tabulateTargetNumSeats numSeats
       . tabulateStakeDistrSize stakeDistr
@@ -194,8 +196,9 @@ prop_weightedFaitAccompliPersistentSeats_persistentSeatsRespectNumSeats =
 prop_weightedFaitAccompliPersistentSeats_persistentSeatsHaveLargeStake :: Property
 prop_weightedFaitAccompliPersistentSeats_persistentSeatsHaveLargeStake =
   forAllStakeDistrAndNumSeats $ \stakeDistr numSeats -> do
+    let tiebreaker = compare -- unfair tiebreaker
     let (persistentSeats, numNonPersistentSeats, residualStakeDistr) =
-          weightedFaitAccompliPersistentSeats numSeats stakeDistr
+          weightedFaitAccompliPersistentSeats tiebreaker numSeats stakeDistr
     let numPersistentSeats = fromIntegral (Map.size persistentSeats)
     let persistentStakes = Map.elems persistentSeats
     let residualStakes = Map.elems residualStakeDistr
@@ -222,8 +225,9 @@ prop_weightedFaitAccompliPersistentSeats_persistentSeatsHaveLargeStake =
 prop_weightedFaitAccompliPersistentSeats_totalStakePreserved :: Property
 prop_weightedFaitAccompliPersistentSeats_totalStakePreserved =
   forAllStakeDistrAndNumSeats $ \stakeDistr numSeats -> do
+    let tiebreaker = compare -- unfair tiebreaker
     let (persistentSeats, numNonPersistentSeats, residualStakeDistr) =
-          weightedFaitAccompliPersistentSeats numSeats stakeDistr
+          weightedFaitAccompliPersistentSeats tiebreaker numSeats stakeDistr
     let numPersistentSeats = fromIntegral (Map.size persistentSeats)
     let totalOriginalStake = stakeDistrTotalStake stakeDistr
     let totalPersistentStake = stakeDistrTotalStake persistentSeats
@@ -251,8 +255,9 @@ prop_weightedFaitAccompliPersistentSeats_totalStakePreserved =
 prop_weightedFaitAccompliPersistentSeats_nonPersistentSeatsCountCorrect :: Property
 prop_weightedFaitAccompliPersistentSeats_nonPersistentSeatsCountCorrect =
   forAllStakeDistrAndNumSeats $ \stakeDistr numSeats -> do
+    let tiebreaker = compare -- unfair tiebreaker
     let (persistentSeats, numNonPersistentSeats, _) =
-          weightedFaitAccompliPersistentSeats numSeats stakeDistr
+          weightedFaitAccompliPersistentSeats tiebreaker numSeats stakeDistr
     let numPersistentSeats = fromIntegral (Map.size persistentSeats)
     tabulateStakeDistrSize stakeDistr
       . tabulateTargetNumSeats numSeats
@@ -275,8 +280,9 @@ prop_weightedFaitAccompliPersistentSeats_nonPersistentSeatsCountCorrect =
 prop_weightedFaitAccompliPersistentSeats_residualSeatsDoNotQualify :: Property
 prop_weightedFaitAccompliPersistentSeats_residualSeatsDoNotQualify =
   forAllStakeDistrAndNumSeats $ \stakeDistr numSeats -> do
+    let tiebreaker = compare -- unfair tiebreaker
     let (persistentSeats, numNonPersistentSeats, residualStakeDistr) =
-          weightedFaitAccompliPersistentSeats numSeats stakeDistr
+          weightedFaitAccompliPersistentSeats tiebreaker numSeats stakeDistr
     let numPersistentSeats =
           fromIntegral (Map.size persistentSeats)
     let addSeatIndex =
@@ -302,7 +308,7 @@ prop_weightedFaitAccompliPersistentSeats_residualSeatsDoNotQualify =
     let rightCumulativeDecreasingResidualStakes =
           accumStakeR $
             addSeatIndex $
-              stakeDistrToDecreasingStakes residualStakeDistr
+              stakeDistrToDecreasingStakes tiebreaker residualStakeDistr
 
     let judgments =
           fmap
