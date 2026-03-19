@@ -307,8 +307,8 @@ instance ConvertRawHash blk => CryptoSupportsVoteSigning (PerasVoteCrypto blk) w
       sig
 
 instance ConvertRawHash blk => CryptoSupportsWFALS (PerasVoteCrypto blk) where
-  type WFALSPrivateKey (PerasVoteCrypto blk) = PerasBLSPrivateKey Any
-  type WFALSPublicKey (PerasVoteCrypto blk) = PerasBLSPublicKey Any
+  type PrivateKey (PerasVoteCrypto blk) = PerasBLSPrivateKey Any
+  type PublicKey (PerasVoteCrypto blk) = PerasBLSPublicKey Any
 
   getVoteSignaturePublicKey _ = coerce
   getVoteSignaturePrivateKey _ = coerce
@@ -350,12 +350,13 @@ instance CryptoSupportsVRF (PerasVoteCrypto blk) where
     NormalizedVRFOutput $
       toInteger vrfOutputNatural % vrfOutputMax
    where
+    -- TODO(peras): we need to settle on a concrete hash function to use here.
     vrfOutputNatural =
       bytesToNatural $
         Hash.hashToBytes $
           Hash.hashWith @HASH rawSerialiseSigDSIGN $
             unPerasSignature sig
     vrfOutputMax =
-      2 ^ ((8 :: Integer) * hashSize)
+      2 ^ ((8 :: Integer) * hashSize) - 1
     hashSize =
       fromIntegral @Word (Hash.hashSize (Proxy :: Proxy HASH))

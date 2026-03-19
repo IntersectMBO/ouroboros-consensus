@@ -40,7 +40,7 @@ modelConformsToRustImplementation =
           Model.weightedFaitAccompliPersistentSeats
             (fromIntegral targetCommitteeSize)
             stakeDistr
-     in ( Map.size persistentSeats
+     in ( fromIntegral (Map.size persistentSeats)
         , fromIntegral numNonPersistentSeats
         )
 
@@ -75,13 +75,12 @@ realImplementationConformsToRustImplementation =
             (WFA.LedgerStake stake, ())
         )
 
-  impl stakeDistr targetCommitteeSize =
-    let
-      (persistentSeats, nonPersistentSeats, _, _) =
-        WFA.weightedFaitAccompliSplitSeats
-          stakeDistr
-          (WFA.TargetCommitteeSize (fromIntegral targetCommitteeSize))
-     in
-      ( fromIntegral (WFA.unPersistentCommitteeSize persistentSeats)
-      , fromIntegral (WFA.unNonPersistentCommitteeSize nonPersistentSeats)
-      )
+  impl stakeDistr targetCommitteeSize = do
+    let totalSeats = WFA.TargetCommitteeSize (fromIntegral targetCommitteeSize)
+    case WFA.weightedFaitAccompliSplitSeats stakeDistr totalSeats of
+      Left err ->
+        error $ "weightedFaitAccompliSplitSeats failed with error: " <> show err
+      Right (persistentSeats, nonPersistentSeats, _, _) ->
+        ( fromIntegral (WFA.unPersistentCommitteeSize persistentSeats)
+        , fromIntegral (WFA.unNonPersistentCommitteeSize nonPersistentSeats)
+        )

@@ -14,6 +14,8 @@ module Ouroboros.Consensus.Committee.WFA
 
     -- * Cumulative stake distributions
   , SeatIndex (..)
+  , NumPoolsWithPositiveStake (..)
+  , WFAError (..)
   , ExtWFAStakeDistr (..)
   , mkExtWFAStakeDistr
   ) where
@@ -58,6 +60,17 @@ newtype TotalNonPersistentStake = TotalNonPersistentStake
   }
   deriving (Show, Eq)
 
+-- | Errors that can occur when trying to split the stake distribution into
+-- persistent and seats via weighted Fait-Accompli.
+data WFAError
+  = -- | The target committee size is larger than the number of pools with positive
+    -- stake in the underlying stake distribution, which would lead to incorrect
+    -- results (e.g. granting persistent seats to voters with zero stake).
+    NotEnoughPoolsWithPositiveStake
+      TargetCommitteeSize
+      NumPoolsWithPositiveStake
+  deriving (Show, Eq)
+
 -- | Split a stake distrubution into persistent and non-persistent committee
 -- seats according to the weighted Fait-Accompli scheme.
 --
@@ -71,21 +84,41 @@ weightedFaitAccompliSplitSeats ::
   ExtWFAStakeDistr c ->
   -- | Expected total committee size (persistent + non-persistent)
   TargetCommitteeSize ->
-  ( PersistentCommitteeSize
-  , NonPersistentCommitteeSize
-  , TotalPersistentStake
-  , TotalNonPersistentStake
-  )
-weightedFaitAccompliSplitSeats stakeDistr totalSeats =
-  assert (numPersistentVoters <= unTargetCommitteeSize totalSeats) $
-    ( PersistentCommitteeSize numPersistentVoters
-    , NonPersistentCommitteeSize numNonPersistentVoters
-    , TotalPersistentStake (Cumulative (LedgerStake persistentStake))
-    , TotalNonPersistentStake (Cumulative (LedgerStake nonPersistentStake))
+  Either
+    WFAError
+    ( PersistentCommitteeSize
+    , NonPersistentCommitteeSize
+    , TotalPersistentStake
+    , TotalNonPersistentStake
     )
+weightedFaitAccompliSplitSeats extWFAStakeDistr totalSeats
+  -- The target committee size must not be not larger than the actual number of
+  -- pools with positive stake in the underlying stake distribution. Otherwise,
+  -- it could lead to incorrect/non-desirable results (e.g., granting persistent
+  -- seats to voters with zero stake).
+  | notEnoughPoolsWithPositiveStake =
+      Left
+        ( NotEnoughPoolsWithPositiveStake
+            totalSeats
+            (numPoolsWithPositiveStake extWFAStakeDistr)
+        )
+  | otherwise =
+      -- We should have /at most/ as many persistent voters as the total
+      -- committee size, but not more.
+      assert (numPersistentVoters <= unTargetCommitteeSize totalSeats) $
+        Right
+          ( PersistentCommitteeSize numPersistentVoters
+          , NonPersistentCommitteeSize numNonPersistentVoters
+          , TotalPersistentStake (Cumulative (LedgerStake persistentStake))
+          , TotalNonPersistentStake (Cumulative (LedgerStake nonPersistentStake))
+          )
  where
+  notEnoughPoolsWithPositiveStake =
+    unNumPoolsWithPositiveStake (numPoolsWithPositiveStake extWFAStakeDistr)
+      < unTargetCommitteeSize totalSeats
+
   stakeDistrArray =
-    unExtWFAStakeDistr stakeDistr
+    unExtWFAStakeDistr extWFAStakeDistr
 
   ( numPersistentVoters
     , persistentStake
@@ -179,6 +212,12 @@ newtype SeatIndex = SeatIndex
   }
   deriving (Show, Eq, Ord, Enum, Ix)
 
+-- | Number of pools with positive stake in the underlying stake distribution
+newtype NumPoolsWithPositiveStake = NumPoolsWithPositiveStake
+  { unNumPoolsWithPositiveStake :: Word64
+  }
+  deriving (Show, Eq)
+
 -- | Extended cumulative stake distribution.
 --
 -- Stake distribution in descending order with precomputed right-cumulative
@@ -215,7 +254,7 @@ newtype SeatIndex = SeatIndex
 -- distribution across multiple committee selection instances derived from the
 -- same underlying stake distribution (e.g. Leios and Peras voting committees
 -- for the same epoch).
-newtype ExtWFAStakeDistr a = ExtWFAStakeDistr
+data ExtWFAStakeDistr a = ExtWFAStakeDistr
   { unExtWFAStakeDistr ::
       Array
         SeatIndex
@@ -224,6 +263,12 @@ newtype ExtWFAStakeDistr a = ExtWFAStakeDistr
         , LedgerStake -- Ledger stake of this voter
         , Cumulative LedgerStake -- Right-cumulative ledger stake of this voter
         )
+  , numPoolsWithPositiveStake :: NumPoolsWithPositiveStake
+  -- ^ Number of pools with positive stake in the underlying stake distribution.
+  -- This is also precomputed at the beginning of the epoch to prevent invalid
+  -- weighted Fait-Accompli instantiations with a target committee size larger
+  -- than the number of pools with positive stake, which would lead to incorrect
+  -- results (e.g. granting persistent seats to voters with zero stake).
   }
 
 -- | Construct an extended cumulative stake distribution
@@ -232,26 +277,44 @@ mkExtWFAStakeDistr ::
   ExtWFAStakeDistr a
 mkExtWFAStakeDistr pools =
   ExtWFAStakeDistr
-    . listArray (SeatIndex 0, SeatIndex (numPools - 1))
-    . snd
-    . List.mapAccumR accumStake (Cumulative (LedgerStake 0))
-    . List.sortBy descendingStake
-    . Map.toList
-    $ pools
+    { unExtWFAStakeDistr = stakeDistrArray
+    , numPoolsWithPositiveStake = numPoolsWithPositiveStakeAcc
+    }
  where
-  numPools =
-    fromIntegral (Map.size pools)
+  stakeDistrArray =
+    listArray
+      ( SeatIndex 0
+      , SeatIndex (fromIntegral (Map.size pools) - 1)
+      )
+      cumulativeStakeAndPools
+
+  ((_totalStake, numPoolsWithPositiveStakeAcc), cumulativeStakeAndPools) =
+    List.mapAccumR
+      accumStakeAndCountPoolsWithPositiveStake
+      ( Cumulative (LedgerStake 0)
+      , NumPoolsWithPositiveStake 0
+      )
+      . List.sortBy descendingStake
+      . Map.toList
+      $ pools
 
   descendingStake
     (_, (LedgerStake x, _))
     (_, (LedgerStake y, _)) =
       compare y x
 
-  accumStake
-    (Cumulative (LedgerStake stakeAccR))
+  accumStakeAndCountPoolsWithPositiveStake
+    (Cumulative (LedgerStake stakeAccR), NumPoolsWithPositiveStake numPoolsAccR)
     (poolId, (LedgerStake poolStake, poolPublicKey)) =
-      let stakeAccR' = stakeAccR + poolStake
-       in ( Cumulative (LedgerStake stakeAccR')
+      let stakeAccR' =
+            stakeAccR + poolStake
+          numPoolsAccR'
+            | poolStake > 0 = numPoolsAccR + 1
+            | otherwise = numPoolsAccR
+       in (
+            ( Cumulative (LedgerStake stakeAccR')
+            , NumPoolsWithPositiveStake numPoolsAccR'
+            )
           ,
             ( poolId
             , poolPublicKey

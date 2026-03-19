@@ -25,13 +25,14 @@ import Data.Array (Array)
 import qualified Data.Array as Array
 import qualified Data.FileEmbed as FileEmbed
 import Data.Map.Strict (Map)
+import Data.Word (Word64)
 import System.FilePath ((</>))
 import Test.Tasty (TestTree)
 import Test.Tasty.HUnit (assertEqual, testCase)
 
-type CommitteeSize = Int
-type NumPersistent = Int
-type NumNonPersistent = Int
+type CommitteeSize = Word64
+type NumPersistent = Word64
+type NumNonPersistent = Word64
 type PoolId = String
 type Stake = Rational
 type StakeDistr = Map PoolId Stake

@@ -81,6 +81,7 @@ import Ouroboros.Consensus.Committee.WFA
   , SeatIndex (..)
   , TotalNonPersistentStake (..)
   , TotalPersistentStake
+  , WFAError
   , weightedFaitAccompliSplitSeats
   )
 
@@ -165,33 +166,33 @@ class
   CryptoSupportsWFALS c
   where
   -- | Private key type for wFA^LS committee membership
-  type WFALSPrivateKey c
+  type PrivateKey c
 
   -- | Public key type for wFA^LS committee membership
-  type WFALSPublicKey c
+  type PublicKey c
 
   -- | Cast a committee public key into a vote signature public key
   getVoteSignaturePublicKey ::
     Proxy c ->
-    WFALSPublicKey c ->
+    PublicKey c ->
     VoteSignaturePublicKey c
 
   -- | Cast a committee private key into a vote signature private key
   getVoteSignaturePrivateKey ::
     Proxy c ->
-    WFALSPrivateKey c ->
+    PrivateKey c ->
     VoteSignaturePrivateKey c
 
   -- | Cast a committee public key into a VRF verification key
   getVRFVerifyKey ::
     Proxy c ->
-    WFALSPublicKey c ->
+    PublicKey c ->
     VRFVerifyKey c
 
   -- | Cast a committee private key into a VRF signing key
   getVRFSigningKey ::
     Proxy c ->
-    WFALSPrivateKey c ->
+    PrivateKey c ->
     VRFSigningKey c
 
 -- | Interface used to evaluate the membership of a party in a voting committee.
@@ -209,7 +210,7 @@ class
 -- composition at the beginning of such epoch.
 type CommitteeSelection :: Type -> Type
 data CommitteeSelection c = CommitteeSelection
-  { wfaStakeDistr :: !(ExtWFAStakeDistr (WFALSPublicKey c))
+  { wfaStakeDistr :: !(ExtWFAStakeDistr (PublicKey c))
   -- ^ Preaccumulated stake distrubution used to compute committee composition
   , candidateSeats :: !(Map PoolId SeatIndex)
   -- ^ Index of a given candidate in the cumulative stake distribution
@@ -232,31 +233,33 @@ mkCommitteeSelection ::
   -- | Expected committee size
   TargetCommitteeSize ->
   -- | Extended cumulative stake distribution of the potential voters
-  ExtWFAStakeDistr (WFALSPublicKey c) ->
-  CommitteeSelection c
-mkCommitteeSelection nonce totalSeats stakeDistr =
-  CommitteeSelection
-    { wfaStakeDistr = stakeDistr
-    , candidateSeats = seats
-    , persistentCommitteeSize = numPersistentVoters
-    , nonPersistentCommitteeSize = numNonPersistentVoters
-    , totalPersistentStake = persistentStake
-    , totalNonPersistentStake = nonPersistentStake
-    , epochNonce = nonce
-    }
- where
+  ExtWFAStakeDistr (PublicKey c) ->
+  Either WFAError (CommitteeSelection c)
+mkCommitteeSelection nonce totalSeats stakeDistr = do
   ( numPersistentVoters
     , numNonPersistentVoters
     , persistentStake
     , nonPersistentStake
-    ) = weightedFaitAccompliSplitSeats stakeDistr totalSeats
+    ) <-
+    weightedFaitAccompliSplitSeats stakeDistr totalSeats
 
-  seats =
-    Map.fromList
-      [ (poolId, seatIndex)
-      | (seatIndex, (poolId, _, _, _)) <-
-          Array.assocs (unExtWFAStakeDistr stakeDistr)
-      ]
+  let seats =
+        Map.fromList
+          [ (poolId, seatIndex)
+          | (seatIndex, (poolId, _, _, _)) <-
+              Array.assocs (unExtWFAStakeDistr stakeDistr)
+          ]
+
+  pure $
+    CommitteeSelection
+      { wfaStakeDistr = stakeDistr
+      , candidateSeats = seats
+      , persistentCommitteeSize = numPersistentVoters
+      , nonPersistentCommitteeSize = numNonPersistentVoters
+      , totalPersistentStake = persistentStake
+      , totalNonPersistentStake = nonPersistentStake
+      , epochNonce = nonce
+      }
 
 -- | Errors that can occur when checking the committee membership of a given
 -- voter (including ourselves)
@@ -341,7 +344,7 @@ seatIndexWithinBounds seatIndex selection =
 getCandidateInSeat ::
   SeatIndex ->
   CommitteeSelection c ->
-  (PoolId, WFALSPublicKey c, LedgerStake, Cumulative LedgerStake)
+  (PoolId, PublicKey c, LedgerStake, Cumulative LedgerStake)
 getCandidateInSeat seatIndex selection =
   (Array.!) distrArray seatIndex
  where
@@ -387,7 +390,7 @@ checkShouldVote ::
   forall c.
   CryptoSupportsWFALS c =>
   PoolId ->
-  WFALSPrivateKey c ->
+  PrivateKey c ->
   ElectionId c ->
   VoteMessage c ->
   CommitteeSelection c ->

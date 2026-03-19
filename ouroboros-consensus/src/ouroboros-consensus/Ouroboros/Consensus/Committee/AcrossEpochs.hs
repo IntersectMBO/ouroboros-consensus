@@ -17,10 +17,7 @@ import Cardano.Ledger.BaseTypes (Nonce)
 import Ouroboros.Consensus.Committee.Types
   ( TargetCommitteeSize
   )
-import Ouroboros.Consensus.Committee.WFA (ExtWFAStakeDistr)
-import Ouroboros.Consensus.Committee.WFALS
-  ( CryptoSupportsWFALS (..)
-  )
+import qualified Ouroboros.Consensus.Committee.WFA as WFA
 import qualified Ouroboros.Consensus.Committee.WFALS as WFALS
 
 data InterEpochCommitteeSelection c = InterEpochCommitteeSelection
@@ -33,24 +30,27 @@ newEpoch ::
   -- | New epoch nonce
   Nonce ->
   -- | New epoch cumulative stake distribution
-  ExtWFAStakeDistr (WFALSPublicKey c) ->
+  WFA.ExtWFAStakeDistr (WFALS.PublicKey c) ->
   -- | New epoch expected committee size
   TargetCommitteeSize ->
   -- | Current inter-epoch committee selection
   InterEpochCommitteeSelection c ->
-  InterEpochCommitteeSelection c
+  Either WFA.WFAError (InterEpochCommitteeSelection c)
 newEpoch
   newEpochNonce
   newEpochStakeDistr
   newEpochCommitteeSize
-  interEpochSelection =
-    InterEpochCommitteeSelection
-      { currEpochSelection =
-          WFALS.mkCommitteeSelection
-            newEpochNonce
-            newEpochCommitteeSize
-            newEpochStakeDistr
-      , prevEpochSelection =
-          currEpochSelection
-            interEpochSelection
-      }
+  interEpochSelection = do
+    newEpochSelection <-
+      WFALS.mkCommitteeSelection
+        newEpochNonce
+        newEpochCommitteeSize
+        newEpochStakeDistr
+    pure $
+      InterEpochCommitteeSelection
+        { currEpochSelection =
+            newEpochSelection
+        , prevEpochSelection =
+            currEpochSelection
+              interEpochSelection
+        }

@@ -11,7 +11,6 @@ module Ouroboros.Consensus.Committee.LS
   ) where
 
 import Cardano.Ledger.BaseTypes (FixedPoint)
-import Control.Exception (assert)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Committee.Crypto (NormalizedVRFOutput (..))
@@ -30,7 +29,7 @@ newtype LocalSortitionNumSeats = LocalSortitionNumSeats
   deriving stock (Show, Eq)
 
 -- | Compute how many non-persistent seats can be granted by local sortition to
--- a voter given its VRF output and stake
+-- a voter given their normalized VRF output and stake
 localSortitionNumSeats ::
   -- | Expected number of non-persistent voters in the committee
   NonPersistentCommitteeSize ->
@@ -44,18 +43,23 @@ localSortitionNumSeats ::
 localSortitionNumSeats
   (NonPersistentCommitteeSize numNonPersistentVoters)
   (TotalNonPersistentStake (Cumulative (LedgerStake totalNonPersistentStake)))
-  (LedgerStake ourStake)
-  (NormalizedVRFOutput normalizedVRFOutput) =
-    assert (totalNonPersistentStake > 0) $
-      assert (ourStake > 0) $
-        LocalSortitionNumSeats (fromIntegral expectedSeats)
+  (LedgerStake voterStake)
+  (NormalizedVRFOutput normalizedVRFOutput)
+    -- None of the non-persistent voters have any stake => nobody gets a seat.
+    -- NOTE: this check also exists to prevent division by zero below.
+    | totalNonPersistentStake <= 0 = LocalSortitionNumSeats 0
+    -- This voter has no stake (but some others do) => it does not get any seat.
+    -- NOTE: this is an optimization to avoid the expensive computation below.
+    | voterStake <= 0 = LocalSortitionNumSeats 0
+    -- This voter might be entitled to some seats => run the local sortition.
+    | otherwise = LocalSortitionNumSeats (fromIntegral expectedSeats)
    where
     -- Expected number of seats granted by local sortition
     lambda :: FixedPoint
     lambda =
       fromRational $
         fromIntegral numNonPersistentVoters
-          * ourStake
+          * voterStake
           / totalNonPersistentStake
 
     -- Compute the "orders" of the Poisson distribution with parameter lambda,
@@ -70,7 +74,12 @@ localSortitionNumSeats
           orders
 
     -- Estimate how many seats we get by comparing the normalized VRF output
-    -- against the thresholds defined by the orders
+    -- against the thresholds defined by the orders.
+    --
+    -- TODO(peras): evaluate whether the limit used below (3) makes sense in
+    -- this context. One possible starting point would be to understand why
+    -- @checkLeaderNatValue@ (in Ledger) also uses 3 as its own limit when
+    -- computing slot leadership proofs.
     expectedSeats :: Int
     expectedSeats =
       fromMaybe 0 $
