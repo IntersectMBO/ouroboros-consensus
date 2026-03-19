@@ -50,7 +50,6 @@ import LeiosDemoException (LeiosDbException (..))
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
-  , ForgedLeiosEb (..)
   , LeiosCertificate
   , LeiosEb
   , LeiosNotification (..)
@@ -111,7 +110,7 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
   , leiosDbFilterMissingTxs :: HasCallStack => [TxHash] -> m [TxHash]
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
-  , leiosDbQueryCompletedEbByPoint :: HasCallStack => LeiosPoint -> m (Maybe ForgedLeiosEb)
+  , leiosDbQueryCompletedEbByPoint :: HasCallStack => LeiosPoint -> m (Maybe [(TxHash, ByteString)])
   , leiosDbQueryCertificateByPoint :: HasCallStack => LeiosPoint -> m (Maybe LeiosCertificate)
   , leiosDbClose :: m ()
   }
@@ -300,14 +299,7 @@ newLeiosDBInMemoryWith stateVar = do
                 , (tx, _txSize) <- maybeToList (Map.lookup ebTxHash (imTxs state))
                 ]
           if length ebTxHashes == length txClosure
-            then
-              pure $
-                Just $
-                  ForgedLeiosEb
-                    { txClosure
-                    , body = error "FIXME(bladyjoker): This is not needed, rather use CompleteEb or EbWithClosure"
-                    , point = ebPoint
-                    }
+            then pure (Just txClosure)
             else pure Nothing
       , leiosDbQueryCertificateByPoint = \_ebPoint -> return $ Just trustNoVerifyLeiosCertificate -- FIXME(bladyjoker): Mocked
       , leiosDbClose = pure ()

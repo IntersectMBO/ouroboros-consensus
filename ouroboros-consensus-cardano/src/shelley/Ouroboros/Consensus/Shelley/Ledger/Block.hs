@@ -93,7 +93,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , pHeaderSlot
   )
 import Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (resolveLeiosBlock))
 import Ouroboros.Consensus.Storage.Serialisation
   ( DecodeDisk
   , EncodeDisk
@@ -156,9 +155,6 @@ instance
   ShowProxy (ShelleyBlock proto era)
 
 type instance HeaderHash (ShelleyBlock proto era) = ShelleyHash
-
-instance ResolveLeiosBlock (ShelleyBlock proto era) where
-  resolveLeiosBlock leiosDb extLedgerSt blk = error "In Shelley baby yea" -- FIXME
 
 mkShelleyBlock ::
   ShelleyCompatible proto era =>

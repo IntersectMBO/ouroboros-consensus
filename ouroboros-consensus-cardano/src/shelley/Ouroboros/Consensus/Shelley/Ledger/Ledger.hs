@@ -63,6 +63,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
+import qualified Cardano.Ledger.Binary as CB
 import Cardano.Ledger.Binary.Decoding
   ( decShareCBOR
   , decodeMap
@@ -102,14 +103,17 @@ import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Coerce (coerce)
 import Data.Functor.Identity
 import Data.MemPack
+import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosDemoDb (LeiosDbHandle (leiosDbQueryCompletedEbByPoint))
 import LeiosDemoTypes (EbHash (MkEbHash), LeiosPoint (MkLeiosPoint), pointSlotNo)
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -344,6 +348,36 @@ deriving instance
 deriving instance
   (ShelleyBasedEra era, ShowMK mk) =>
   Show (LedgerState (ShelleyBlock proto era) mk)
+
+-- NOTE(bladyjoker): Here because cyclic dep if in Block module
+instance ShelleyBasedEra era => ResolveLeiosBlock (ShelleyBlock proto era) where
+  resolveLeiosBlock leiosDb extLedgerSt blk | SL.blockCertifiesEb (shelleyBlockRaw blk) = do
+    let
+      mayAnnouncedEbPoint = sllsMaybeAnnouncedEb . shelleyLedgerLeiosState . ledgerState $ extLedgerSt
+    case mayAnnouncedEbPoint of
+      Nothing -> error "FIXME(bladyjoker): Certifying but not previously announced EB! Whai would you do that!?"
+      Just announcedEbPoint -> do
+        mayAnnouncedEb <- leiosDbQueryCompletedEbByPoint leiosDb announcedEbPoint
+        case mayAnnouncedEb of
+          Nothing ->
+            error
+              "FIXME(bladyjoker): What exactly does this mean? Announced EB is being certified by the current chain but it's not available?"
+          Just announcedEb ->
+            return
+              blk
+                { shelleyBlockResolvedTxs =
+                    Just
+                      . Core.toTxSeq
+                      . StrictSeq.fromList
+                      . fmap (deserialiseTx . snd)
+                      $ announcedEb
+                }
+  resolveLeiosBlock _leiosDb _extLedgerSt blk = return blk
+
+deserialiseTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Core.Tx era
+deserialiseTx bs = case CB.decodeFullAnnotator (Core.eraProtVerLow @era) "Leios Tx" CB.decCBOR (BL.fromStrict bs) of
+  Left err -> error $ "Failed to deserialise Tx era: " <> show err
+  Right tx -> tx
 
 -- | Information required to determine the hard fork point from Shelley to the
 -- next ledger

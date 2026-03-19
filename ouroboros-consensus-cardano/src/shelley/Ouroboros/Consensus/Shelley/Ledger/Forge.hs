@@ -92,10 +92,10 @@ forgeShelleyBlock
         if sllsTooSoonToCertify ledgerLeiosSt
           then return $ (rbTxs', False)
           else do
-            mayCompletedEb <- leiosDbQueryCompletedEbByPoint leiosDb annEbPoint
-            case mayCompletedEb of
+            mayEbClosure <- leiosDbQueryCompletedEbByPoint leiosDb annEbPoint
+            case mayEbClosure of
               Nothing -> return (rbTxs', False) -- This happens when EBs haven't been fully downloaded
-              Just _completeEb -> do
+              Just _EbClosure -> do
                 mayCert <- leiosDbQueryCertificateByPoint leiosDb annEbPoint
                 case mayCert of
                   Nothing -> return (rbTxs', False) -- This happens when EBs have been downloaded but voting hasn't completed

@@ -1,15 +1,18 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -193,7 +196,9 @@ import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HeaderValidation
-  ( OtherHeaderEnvelopeError
+  ( AnnTip (..)
+  , HeaderState (HeaderState, headerStateChainDep, headerStateTip)
+  , OtherHeaderEnvelopeError
   , TipInfo
   )
 import Ouroboros.Consensus.Ledger.Abstract (LedgerError)
@@ -1320,6 +1325,35 @@ pattern ChainDepStateConway st <-
   State.HardForkState
     (TeleConway _ _ _ _ _ _ (State.Current{currentState = WrapChainDepState st}))
 
+type CardanoExtLedgerState c mk = ExtLedgerState (CardanoBlock c) mk
+
+pattern ExtLedgerStateConway ::
+  ExtLedgerState (ShelleyBlock (Praos c) ConwayEra) mk ->
+  CardanoExtLedgerState c mk
+pattern ExtLedgerStateConway conwayExtLedgerSt <-
+  ( \(ExtLedgerState (LedgerStateConway lst) hst) ->
+      ExtLedgerState lst (toConwayHeaderState hst) ->
+      conwayExtLedgerSt
+    )
+
+toConwayHeaderState ::
+  HeaderState (CardanoBlock c) -> HeaderState (ShelleyBlock (Praos c) ConwayEra)
+toConwayHeaderState (HeaderState headerStateTip (ChainDepStateConway conwayHeaderStateChainDep)) =
+  HeaderState
+    { headerStateTip = toConwayAnnTip <$> headerStateTip
+    , headerStateChainDep = conwayHeaderStateChainDep
+    }
+toConwayHeaderState _ = error "Must be in Conway"
+
+toConwayAnnTip :: AnnTip (CardanoBlock c) -> AnnTip (ShelleyBlock (Praos c) ConwayEra)
+toConwayAnnTip AnnTip{annTipSlotNo, annTipBlockNo, annTipInfo = TipInfoConway tipInfo} =
+  AnnTip
+    { annTipSlotNo
+    , annTipBlockNo
+    , annTipInfo = tipInfo
+    }
+toConwayAnnTip _ = error "Must be in Conway"
+
 {-# COMPLETE
   ChainDepStateByron
   , ChainDepStateShelley
@@ -1335,7 +1369,10 @@ pattern ChainDepStateConway st <-
 injectConwayBlock :: ShelleyBlock (Praos c) ConwayEra -> CardanoBlock c
 injectConwayBlock = HardForkBlock . OneEraBlock . TagConway . I
 
-instance LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra) => ResolveLeiosBlock (CardanoBlock c) where
+instance
+  LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra) =>
+  ResolveLeiosBlock (CardanoBlock c)
+  where
   resolveLeiosBlock ::
     forall m mk.
     Monad m =>
@@ -1343,7 +1380,7 @@ instance LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra) => ResolveLei
     ExtLedgerState (CardanoBlock c) mk ->
     CardanoBlock c ->
     m (CardanoBlock c)
-  resolveLeiosBlock db (ExtLedgerState (LedgerStateConway conwayLedgerSt) _headerState) (BlockConway conwayBlk) =
+  resolveLeiosBlock db (ExtLedgerStateConway conwayExtLedgerSt) (BlockConway conwayBlk) =
     injectConwayBlock
-      <$> resolveLeiosBlock db (ExtLedgerState conwayLedgerSt (error "FIXME: headerState")) conwayBlk
+      <$> resolveLeiosBlock db conwayExtLedgerSt conwayBlk
   resolveLeiosBlock _ _ _ = error "WARN(bladyjoker): resolveLeiosBlock only works for Conway"
