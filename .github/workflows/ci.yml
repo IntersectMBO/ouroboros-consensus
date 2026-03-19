@@ -19,6 +19,8 @@ on:
         type: boolean
         default: false
   pull_request:
+    # re-evaluate the workflow when labels are added or removed.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   merge_group:
   push:
     branches:
@@ -32,8 +34,34 @@ on:
     - cron: "0 0 1 * *"
 
 jobs:
+  # This aggregated job is necessary to make the 'skip-tests' label work consistently
+  # with branch protection rules.
+  #
+  # Set this job as the required check in branch protection rules instead of
+  # the individual "Build and test" matrix jobs. It reports success when tests
+  # pass or are intentionally skipped via the 'skip-tests' label.
+  ci-success-or-skipped:
+    name: All CI Jobs Successful or Skipped
+    needs: [build-test-bench-haddocks, benchmarks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          build="${{ needs.build-test-bench-haddocks.result }}"
+          bench="${{ needs.benchmarks.result }}"
+          for r in "$build" "$bench"; do
+            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
+              echo "Job failed with result: $r"
+              exit 1
+            fi
+          done
+          echo "All jobs passed or were intentionally skipped."
+
   build-test-bench-haddocks:
     name: Build and test
+    # skip building testing and benchmarking if the PR has the 'skip-tests' label attached
+    if: >-
+      !contains(github.event.pull_request.labels.*.name, 'skip-tests')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -285,10 +313,39 @@ jobs:
           echo "Benchmarks comparison skipped."
         fi
 
-  deploy-documentation:
-    name: Deploy documentation to GitHub Pages
+  deploy-haddocks:
+    name: Deploy haddocks
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build-test-bench-haddocks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download haddocks
+        uses: actions/download-artifact@v8
+        with:
+          name: haddocks
+
+      - name: Extract haddocks
+        run: tar vzxf haddocks.tgz
+
+      - name: Upload haddocks for GitHub Pages
+        uses: actions/upload-artifact@v7
+        with:
+          name: haddocks-site
+          path: ./docs/website/static/haddocks
+          retention-days: 1
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+  deploy-website:
+    name: Deploy website to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -313,16 +370,6 @@ jobs:
         run: |
           nix build -L .#consensus-pdfs
           cp -r --no-preserve=mode,ownership result/ static/pdfs
-
-      - name: Download haddocks
-        uses: actions/download-artifact@v8
-        with:
-          name: haddocks
-
-      - name: Copy haddocks
-        run: |
-          cd ../../
-          tar vzxf haddocks.tgz
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
