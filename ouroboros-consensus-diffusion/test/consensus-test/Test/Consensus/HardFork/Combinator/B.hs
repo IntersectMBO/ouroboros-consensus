@@ -45,6 +45,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Void
 import GHC.Generics (Generic)
+import LeiosDemoDb (LeiosDbHandle)
 import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -270,6 +271,7 @@ type instance ForgeStateInfo BlockB = ()
 type instance ForgeStateUpdateError BlockB = Void
 
 forgeBlockB ::
+  LeiosDbHandle m ->
   TopLevelConfig BlockB ->
   BlockNo ->
   SlotNo ->
@@ -277,7 +279,7 @@ forgeBlockB ::
   [GenTx BlockB] ->
   IsLeader (BlockProtocol BlockB) ->
   BlockB
-forgeBlockB _ bno sno (TickedLedgerStateB st) _txs _ =
+forgeBlockB _ _ bno sno (TickedLedgerStateB st) _txs _ =
   BlkB
     { blkB_header =
         HdrB
@@ -298,9 +300,9 @@ blockForgingB =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot st txs _ebTxs proof ->
+    , forgeBlock = \leiosDb cfg bno slot st txs _ebTxs proof ->
         return . (,Nothing) $
-          forgeBlockB cfg bno slot st (fmap txForgetValidated txs) proof
+          forgeBlockB leiosDb cfg bno slot st (fmap txForgetValidated txs) proof
     }
 
 -- | A basic 'History.SafeZone'

@@ -880,105 +880,10 @@ runThreadNetwork
               pipeliningTracer
               nodeInfoDBs
               coreNodeId
+      leiosDB <- newLeiosDBInMemoryWith (lsLeiosDb nodeInfoLeios)
       chainDB <-
         snd
-          <$> allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB
-
-      let customForgeBlock ::
-            BlockForging m blk ->
-            LeiosDbHandle m ->
-            TopLevelConfig blk ->
-            BlockNo ->
-            SlotNo ->
-            TickedLedgerState blk mk ->
-            [Validated (GenTx blk)] ->
-            [Validated (GenTx blk)] ->
-            IsLeader (BlockProtocol blk) ->
-            m (blk, Maybe ForgedLeiosEb)
-          customForgeBlock origBlockForging leiosDb cfg' currentBno currentSlot tickedLdgSt txs ebTxs prf = do
-            let currentEpoch = HFF.futureSlotToEpoch future currentSlot
-
-            -- EBBs are only ever possible in the first era
-            let inFirstEra = HFF.futureEpochInFirstEra future currentEpoch
-
-            let ebbSlot :: SlotNo
-                ebbSlot = SlotNo $ x * y
-                 where
-                  EpochNo x = currentEpoch
-                  EpochSize y = epochSize0
-
-            let p :: Point blk
-                p = castPoint $ getTip tickedLdgSt
-
-            let needEBB = inFirstEra && NotOrigin ebbSlot > pointSlot p
-            case mbForgeEbbEnv <* guard needEBB of
-              Nothing ->
-                -- no EBB needed, forge without making one
-                forgeBlock
-                  origBlockForging
-                  leiosDb
-                  cfg'
-                  currentBno
-                  currentSlot
-                  (forgetLedgerTables tickedLdgSt)
-                  txs
-                  ebTxs
-                  prf
-              Just forgeEbbEnv -> do
-                -- The EBB shares its BlockNo with its predecessor (if
-                -- there is one)
-                let ebbBno = case currentBno of
-                      -- We assume this invariant:
-                      --
-                      -- If forging of EBBs is enabled then the node
-                      -- initialization is responsible for producing any
-                      -- proper non-EBB blocks with block number 0.
-                      --
-                      -- So this case is unreachable.
-                      0 -> error "Error, only node initialization can forge non-EBB with block number 0."
-                      n -> pred n
-                let ebb =
-                      forgeEBB
-                        forgeEbbEnv
-                        pInfoConfig
-                        ebbSlot
-                        ebbBno
-                        (pointHash p)
-
-                -- fail if the EBB is invalid
-                -- if it is valid, we retick to the /same/ slot
-                let apply = applyLedgerBlock OmitLedgerEvents (configLedger pInfoConfig)
-                    tables = emptyLedgerTables -- EBBs need no input tables
-                tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
-                  Left e -> Exn.throw $ JitEbbError @blk e
-                  Right st ->
-                    pure $
-                      applyChainTick
-                        OmitLedgerEvents
-                        (configLedger pInfoConfig)
-                        currentSlot
-                        (forgetLedgerTables st)
-
-                -- forge the block usings the ledger state that includes
-                -- the EBB
-                (blk, mayEb) <-
-                  forgeBlock
-                    origBlockForging
-                    leiosDb
-                    cfg'
-                    currentBno
-                    currentSlot
-                    (forgetLedgerTables tickedLdgSt')
-                    txs
-                    ebTxs
-                    prf
-
-                -- If the EBB or the subsequent block is invalid, then the
-                -- ChainDB will reject it as invalid, and
-                -- 'Test.ThreadNet.General.prop_general' will eventually fail
-                -- because of a block rejection.
-                void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment ebb
-                pure (blk, mayEb)
+          <$> allocate registry (const (ChainDB.openDB leiosDB chainDbArgs)) ChainDB.closeDB
 
       -- This variable holds the number of the earliest slot in which the
       -- crucial txs have not yet been added. In other words, it holds the
@@ -1068,7 +973,6 @@ runThreadNetwork
           (kaRng, psRng) = split rng
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
 
-      leiosDB <- newLeiosDBInMemoryWith (leiosDb nodeInfoLeios)
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
@@ -1129,7 +1033,21 @@ runThreadNetwork
       nodeKernel <- initNodeKernel nodeKernelArgs
 
       blockForging' <-
-        map (\bf -> bf{forgeBlock = customForgeBlock bf})
+        map
+          ( \bf ->
+              bf
+                { forgeBlock =
+                    customForgeBlock
+                      CustomForgeBlockArgs
+                        { cfbaFuture = future
+                        , cfbaEpochSize0 = epochSize0
+                        , cfbaMbForgeEbbEnv = mbForgeEbbEnv
+                        , cfbaPInfoConfig = pInfoConfig
+                        , cfbaChainDb = chainDB
+                        }
+                      bf
+                }
+          )
           <$> blockForging
       setBlockForging nodeKernel blockForging'
 
@@ -1266,6 +1184,117 @@ runThreadNetwork
           (const encodeNodeId)
           (const decodeNodeId)
           ntnVersion
+
+data CustomForgeBlockArgs m blk = CustomForgeBlockArgs
+  { cfbaFuture :: Future
+  , cfbaEpochSize0 :: EpochSize
+  , cfbaMbForgeEbbEnv :: Maybe (ForgeEbbEnv blk)
+  , cfbaPInfoConfig :: TopLevelConfig blk
+  , cfbaChainDb :: ChainDB.ChainDB m blk
+  }
+
+customForgeBlock ::
+  forall m blk mk.
+  ( IOLike m
+  , MonadTime m
+  , RunNode blk
+  , HasCallStack
+  ) =>
+  CustomForgeBlockArgs m blk ->
+  BlockForging m blk ->
+  LeiosDbHandle m ->
+  TopLevelConfig blk ->
+  BlockNo ->
+  SlotNo ->
+  TickedLedgerState blk mk ->
+  [Validated (GenTx blk)] ->
+  [Validated (GenTx blk)] ->
+  IsLeader (BlockProtocol blk) ->
+  m (blk, Maybe ForgedLeiosEb)
+customForgeBlock CustomForgeBlockArgs{..} origBlockForging leiosDb cfg' currentBno currentSlot tickedLdgSt txs ebTxs prf = do
+  let currentEpoch = HFF.futureSlotToEpoch cfbaFuture currentSlot
+
+  -- EBBs are only ever possible in the first era
+  let inFirstEra = HFF.futureEpochInFirstEra cfbaFuture currentEpoch
+
+  let ebbSlot :: SlotNo
+      ebbSlot = SlotNo $ x * y
+       where
+        EpochNo x = currentEpoch
+        EpochSize y = cfbaEpochSize0
+
+  let p :: Point blk
+      p = castPoint $ getTip tickedLdgSt
+
+  let needEBB = inFirstEra && NotOrigin ebbSlot > pointSlot p
+  case cfbaMbForgeEbbEnv <* guard needEBB of
+    Nothing ->
+      -- no EBB needed, forge without making one
+      forgeBlock
+        origBlockForging
+        leiosDb
+        cfg'
+        currentBno
+        currentSlot
+        (forgetLedgerTables tickedLdgSt)
+        txs
+        ebTxs
+        prf
+    Just forgeEbbEnv -> do
+      -- The EBB shares its BlockNo with its predecessor (if
+      -- there is one)
+      let ebbBno = case currentBno of
+            -- We assume this invariant:
+            --
+            -- If forging of EBBs is enabled then the node
+            -- initialization is responsible for producing any
+            -- proper non-EBB blocks with block number 0.
+            --
+            -- So this case is unreachable.
+            0 -> error "Error, only node initialization can forge non-EBB with block number 0."
+            n -> pred n
+      let ebb =
+            forgeEBB
+              forgeEbbEnv
+              cfbaPInfoConfig
+              ebbSlot
+              ebbBno
+              (pointHash p)
+
+      -- fail if the EBB is invalid
+      -- if it is valid, we retick to the /same/ slot
+      let apply = applyLedgerBlock OmitLedgerEvents (configLedger cfbaPInfoConfig)
+          tables = emptyLedgerTables -- EBBs need no input tables
+      tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
+        Left e -> Exn.throw $ JitEbbError @blk e
+        Right st ->
+          pure $
+            applyChainTick
+              OmitLedgerEvents
+              (configLedger cfbaPInfoConfig)
+              currentSlot
+              (forgetLedgerTables st)
+
+      -- forge the block usings the ledger state that includes
+      -- the EBB
+      (blk, mayEb) <-
+        forgeBlock
+          origBlockForging
+          leiosDb
+          cfg'
+          currentBno
+          currentSlot
+          (forgetLedgerTables tickedLdgSt')
+          txs
+          ebTxs
+          prf
+
+      -- If the EBB or the subsequent block is invalid, then the
+      -- ChainDB will reject it as invalid, and
+      -- 'Test.ThreadNet.General.prop_general' will eventually fail
+      -- because of a block rejection.
+      void $ ChainDB.addBlock cfbaChainDb InvalidBlockPunishment.noPunishment ebb
+      pure (blk, mayEb)
 
 -- | Sum of 'CodecFailure' (from @identityCodecs@) and 'DeserialiseFailure'
 -- (from @defaultCodecs@).
@@ -1633,7 +1662,7 @@ data NodeInfo blk db ev l = NodeInfo
 
 -- `LeiosState` represents the part of the nodes' state that relates to Leios
 data LeiosState f = LeiosState
-  { leiosDb :: f InMemoryLeiosDb
+  { lsLeiosDb :: f InMemoryLeiosDb
   }
   deriving stock Generic
 
@@ -1642,17 +1671,17 @@ deriving instance
   NoThunks (LeiosState f)
 
 _emptyLeiosState :: LeiosState Identity
-_emptyLeiosState = LeiosState{leiosDb = pure emptyInMemoryLeiosDb}
+_emptyLeiosState = LeiosState{lsLeiosDb = pure emptyInMemoryLeiosDb}
 
 emptyLeiosStateTVar :: IOLike m => m (LeiosState (Unchecked.StrictTVar m))
 emptyLeiosStateTVar = atomically $ do
-  leiosDb <- Unchecked.newTVar emptyInMemoryLeiosDb
-  return LeiosState{leiosDb}
+  lsLeiosDb <- Unchecked.newTVar emptyInMemoryLeiosDb
+  return LeiosState{lsLeiosDb}
 
 snapshotLeiosState :: IOLike m => LeiosState (Unchecked.StrictTVar m) -> m (LeiosState Identity)
 snapshotLeiosState ls = atomically $ do
-  leiosDb <- pure <$> Unchecked.readTVar (leiosDb ls)
-  return LeiosState{leiosDb}
+  lsLeiosDb <- pure <$> Unchecked.readTVar (lsLeiosDb ls)
+  return LeiosState{lsLeiosDb}
 
 -- | A vector with an @ev@-shaped element for a particular set of
 -- instrumentation events

@@ -120,6 +120,7 @@ class
   , ShowProxy (TxId (GenTx blk))
   , (forall fp. ShowQuery (BlockQuery blk fp))
   , LedgerSupportsLedgerDB blk
+  , ResolveLeiosBlock blk
   ) =>
   RunNode blk
 

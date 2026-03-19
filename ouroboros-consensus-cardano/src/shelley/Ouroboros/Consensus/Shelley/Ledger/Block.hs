@@ -51,7 +51,8 @@ import Cardano.Ledger.Binary
   )
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Ledger.Core as SL
-  ( eraDecoder
+  ( EraSegWits (TxSeq)
+  , eraDecoder
   , eraProtVerLow
   , toEraCBOR
   )
@@ -92,6 +93,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , pHeaderSlot
   )
 import Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (resolveLeiosBlock))
 import Ouroboros.Consensus.Storage.Serialisation
   ( DecodeDisk
   , EncodeDisk
@@ -143,6 +145,7 @@ instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) 
 data ShelleyBlock proto era = ShelleyBlock
   { shelleyBlockRaw :: !(SL.Block (ShelleyProtocolHeader proto) era)
   , shelleyBlockHeaderHash :: !ShelleyHash
+  , shelleyBlockResolvedTxs :: Maybe (SL.TxSeq era) -- NOTE(bladyjoker): Pretty much a hack to stuff the resolved tx closure associated with a LeiosCertificate
   }
 
 deriving instance ShelleyCompatible proto era => Show (ShelleyBlock proto era)
@@ -154,6 +157,9 @@ instance
 
 type instance HeaderHash (ShelleyBlock proto era) = ShelleyHash
 
+instance ResolveLeiosBlock (ShelleyBlock proto era) where
+  resolveLeiosBlock leiosDb extLedgerSt blk = error "In Shelley baby yea" -- FIXME
+
 mkShelleyBlock ::
   ShelleyCompatible proto era =>
   SL.Block (ShelleyProtocolHeader proto) era ->
@@ -162,6 +168,7 @@ mkShelleyBlock raw =
   ShelleyBlock
     { shelleyBlockRaw = raw
     , shelleyBlockHeaderHash = pHeaderHash $ SL.bheader raw
+    , shelleyBlockResolvedTxs = Nothing
     }
 
 class
@@ -194,7 +201,7 @@ instance
   ShowProxy (Header (ShelleyBlock proto era))
 
 instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
-  getHeader (ShelleyBlock rawBlk hdrHash) =
+  getHeader (ShelleyBlock rawBlk hdrHash _) =
     ShelleyHeader
       { shelleyHeaderRaw = SL.bheader rawBlk
       , shelleyHeaderHash = hdrHash

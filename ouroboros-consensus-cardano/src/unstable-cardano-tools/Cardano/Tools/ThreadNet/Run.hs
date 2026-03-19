@@ -83,7 +83,7 @@ import Test.ThreadNet.Network
   ( NodeOutput (..)
   , TestNodeInitialization (..)
   , TraceThreadNet (..)
-  , leiosDb
+  , lsLeiosDb
   )
 import Test.ThreadNet.TxGen (TxGen (..))
 import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
@@ -128,11 +128,11 @@ run Opts{..} = do
   putStrLn "*** Leios"
 
   print $
-    ("eb-slotno", imEbSlots . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
+    ("eb-slotno", imEbSlots . runIdentity . lsLeiosDb . nodeLeiosState <$> testOutputNodes testOutput)
   print $
-    ("eb-points", imEbPoints . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
+    ("eb-points", imEbPoints . runIdentity . lsLeiosDb . nodeLeiosState <$> testOutputNodes testOutput)
   print $
-    ("eb-txs", length . imTxs . runIdentity . leiosDb . nodeLeiosState <$> testOutputNodes testOutput)
+    ("eb-txs", length . imTxs . runIdentity . lsLeiosDb . nodeLeiosState <$> testOutputNodes testOutput)
 
   putStrLn "*** Outputting log files"
 

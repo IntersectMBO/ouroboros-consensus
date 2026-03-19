@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
@@ -620,6 +621,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
           (chainDB, finalArgs) <-
             openChainDB
+              rnLeiosDB
               registry
               cfg
               initLedger
@@ -911,7 +913,10 @@ stdWithCheckedDB pb tracer databasePath networkMagic body = do
 
 openChainDB ::
   forall m blk.
-  (RunNode blk, IOLike m) =>
+  ( RunNode blk
+  , IOLike m
+  ) =>
+  LeiosDbHandle m ->
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
@@ -926,7 +931,7 @@ openChainDB ::
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs =
+openChainDB leiosDb registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -939,7 +944,7 @@ openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs
             fsVol
             flavorArgs
             defArgs
-   in (,args) <$> ChainDB.openDB args
+   in (,args) <$> ChainDB.openDB leiosDb args
 
 mkNodeKernelArgs ::
   forall m addrNTN addrNTC blk.

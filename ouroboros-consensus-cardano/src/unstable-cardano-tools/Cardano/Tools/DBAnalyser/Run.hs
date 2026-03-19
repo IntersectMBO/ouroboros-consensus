@@ -22,6 +22,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.Inspect
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
   ( HasTxs
@@ -34,6 +35,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
@@ -57,6 +59,7 @@ openLedgerDB ::
   , LedgerDB.LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerDB.LedgerSupportsLedgerDB blk
+  , ResolveLeiosBlock IO (ExtLedgerState blk) blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   IO
@@ -68,6 +71,7 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
     LedgerDB.openDBInternal
       lgrDbArgs
       ( LedgerDB.V1.mkInitDb
+          (error "FIXME(bladyjoker)")
           lgrDbArgs
           bss
           (\_ -> error "no replay")
@@ -80,6 +84,7 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
     LedgerDB.openDBInternal
       lgrDbArgs
       ( LedgerDB.V2.mkInitDb
+          (error "FIXME(bladyjoker)")
           lgrDbArgs
           args
           (\_ -> error "no replay")
@@ -107,6 +112,7 @@ analyse ::
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk
   , CanStowLedgerTables (LedgerState blk)
+  , ResolveLeiosBlock IO (ExtLedgerState blk) blk
   ) =>
   DBAnalyserConfig ->
   Args blk ->

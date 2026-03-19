@@ -60,7 +60,7 @@ import LeiosDemoTypes
   , leiosEbBytesSize
   , trustNoVerifyLeiosCertificate
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks, atomically)
+import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks (..), atomically)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -115,6 +115,11 @@ data LeiosDbHandle m = LeiosDbHandle
   , leiosDbQueryCertificateByPoint :: HasCallStack => LeiosPoint -> m (Maybe LeiosCertificate)
   , leiosDbClose :: m ()
   }
+
+instance NoThunks (LeiosDbHandle m) where
+  showTypeOf _ = "LeiosDbHandle m"
+  noThunks _ctx _a = return Nothing
+  wNoThunks _ctx _a = return Nothing
 
 type CompletedEbs = [LeiosPoint]
 

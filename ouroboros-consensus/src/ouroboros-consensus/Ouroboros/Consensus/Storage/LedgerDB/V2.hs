@@ -34,6 +34,7 @@ import qualified Data.Set as Set
 import Data.Void
 import Data.Word
 import GHC.Generics
+import LeiosDemoDb (LeiosDbHandle)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -72,12 +73,14 @@ mkInitDb ::
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerSupportsInMemoryLedgerDB blk
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   Complete LedgerDbArgs m blk ->
   Complete V2.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
   InitDB (LedgerSeq' m blk) m blk
-mkInitDb args flavArgs getBlock =
+mkInitDb leiosDb args flavArgs getBlock =
   InitDB
     { initFromGenesis = emptyF =<< lgrGenesis
     , initFromSnapshot =
@@ -113,7 +116,7 @@ mkInitDb args flavArgs getBlock =
                 , ldbOpenHandlesLock = lock
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb h bss
+        pure $ implMkLedgerDb leiosDb h bss
     }
  where
   LedgerDbArgs
@@ -149,25 +152,26 @@ implMkLedgerDb ::
   forall m l blk.
   ( IOLike m
   , HasCallStack
-  , IsLedger l
   , l ~ ExtLedgerState blk
   , StandardHash l
   , HasLedgerTables l
   , LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   LedgerDBHandle m l blk ->
   HandleArgs ->
   (LedgerDB m l blk, TestInternals m l blk)
-implMkLedgerDb h bss =
+implMkLedgerDb leiosDb h bss =
   ( LedgerDB
       { getVolatileTip = getEnvSTM h implGetVolatileTip
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = \s -> getEnvSTM h (flip implGetPastLedgerState s)
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
       , getForkerAtTarget = newForkerAtTarget h
-      , validateFork = getEnv5 h (implValidate h)
+      , validateFork = getEnv5 h (implValidate leiosDb h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnvSTM h (flip implGarbageCollect s)
       , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot bss)
@@ -310,7 +314,9 @@ implValidate ::
   , LedgerSupportsProtocol blk
   , HasCallStack
   , l ~ ExtLedgerState blk
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
   ResourceRegistry m ->
@@ -319,8 +325,8 @@ implValidate ::
   Word64 ->
   [Header blk] ->
   m (ValidateResult m (ExtLedgerState blk) blk)
-implValidate h ldbEnv rr tr cache rollbacks hdrs =
-  validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+implValidate leiosDb h ldbEnv rr tr cache rollbacks hdrs =
+  validate leiosDb (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
     ValidateArgs
       (ldbResolveBlock ldbEnv)
       (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)

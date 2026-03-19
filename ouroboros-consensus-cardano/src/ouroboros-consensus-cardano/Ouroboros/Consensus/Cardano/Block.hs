@@ -1,12 +1,17 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Cardano.Block
   ( -- * Eras
@@ -181,6 +186,7 @@ import Data.Kind
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
+import LeiosDemoDb (LeiosDbHandle)
 import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import Ouroboros.Consensus.HardFork.Combinator
@@ -191,16 +197,19 @@ import Ouroboros.Consensus.HeaderValidation
   , TipInfo
   )
 import Ouroboros.Consensus.Ledger.Abstract (LedgerError)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (ExtLedgerState))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , GenTxId
   )
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (resolveLeiosBlock))
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -1320,3 +1329,21 @@ pattern ChainDepStateConway st <-
   , ChainDepStateBabbage
   , ChainDepStateConway
   #-}
+
+-- Leios
+
+injectConwayBlock :: ShelleyBlock (Praos c) ConwayEra -> CardanoBlock c
+injectConwayBlock = HardForkBlock . OneEraBlock . TagConway . I
+
+instance LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra) => ResolveLeiosBlock (CardanoBlock c) where
+  resolveLeiosBlock ::
+    forall m mk.
+    Monad m =>
+    LeiosDbHandle m ->
+    ExtLedgerState (CardanoBlock c) mk ->
+    CardanoBlock c ->
+    m (CardanoBlock c)
+  resolveLeiosBlock db (ExtLedgerState (LedgerStateConway conwayLedgerSt) _headerState) (BlockConway conwayBlk) =
+    injectConwayBlock
+      <$> resolveLeiosBlock db (ExtLedgerState conwayLedgerSt (error "FIXME: headerState")) conwayBlk
+  resolveLeiosBlock _ _ _ = error "WARN(bladyjoker): resolveLeiosBlock only works for Conway"

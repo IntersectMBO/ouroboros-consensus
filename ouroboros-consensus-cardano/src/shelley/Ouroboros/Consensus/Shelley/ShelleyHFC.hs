@@ -92,6 +92,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -101,6 +102,8 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 
 -- | Shelley as the single era in the hard fork combinator
 type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
+
+instance ResolveLeiosBlock (HardForkBlock '[ShelleyBlock proto era]) -- FIXME
 
 {-------------------------------------------------------------------------------
   NoHardForks instance

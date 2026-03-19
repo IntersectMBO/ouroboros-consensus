@@ -246,6 +246,8 @@ data TestBlockWith ptype = TestBlockWith
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass (Serialise, NoThunks, ToExpr)
 
+instance ResolveLeiosBlock (TestBlockWith a) -- FIXME
+
 -- | Create a block directly with the given parameters. This allows creating
 -- inconsistent blocks; prefer 'firstBlockWithPayload' or 'successorBlockWithPayload'.
 unsafeTestBlockWithPayload :: TestHash -> SlotNo -> Validity -> ptype -> TestBlockWith ptype
