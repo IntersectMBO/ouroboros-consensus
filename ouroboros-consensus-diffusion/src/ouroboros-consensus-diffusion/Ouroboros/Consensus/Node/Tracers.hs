@@ -44,6 +44,7 @@ import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
   )
 import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
+import Ouroboros.Consensus.Peras.Vote (TraceVotingEvent (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
   )
@@ -90,6 +91,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
       f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
   , dbfTracer :: f (CSJumping.TraceEventDbf remotePeer)
   , kesAgentTracer :: f KESAgentClientTrace
+  , votingLogicTracer :: f TraceVotingEvent
   }
 
 instance
@@ -121,6 +123,7 @@ instance
       , csjTracer = f csjTracer
       , dbfTracer = f dbfTracer
       , kesAgentTracer = f kesAgentTracer
+      , votingLogicTracer = f votingLogicTracer
       }
    where
     f ::
@@ -160,6 +163,7 @@ nullTracers =
     , kesAgentTracer = nullTracer
     , txLogicTracer = nullTracer
     , txCountersTracer = nullTracer
+    , votingLogicTracer = nullTracer
     }
 
 showTracers ::
@@ -202,6 +206,7 @@ showTracers tr =
     , csjTracer = showTracing tr
     , dbfTracer = showTracing tr
     , kesAgentTracer = showTracing tr
+    , votingLogicTracer = showTracing tr
     }
 
 {-------------------------------------------------------------------------------

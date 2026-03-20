@@ -407,7 +407,7 @@ open ::
   (IOLike m, TestConstraints blk) =>
   ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
-  (chainDB, internal) <- openDBInternal args False
+  (chainDB, _, _, internal) <- openDBInternal args False
   addBlockAsync <- async (intAddBlockRunner internal)
   link addBlockAsync
   return ChainDBState{chainDB, internal, addBlockAsync}

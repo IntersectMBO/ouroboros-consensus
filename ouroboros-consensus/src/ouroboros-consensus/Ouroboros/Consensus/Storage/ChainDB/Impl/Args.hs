@@ -45,6 +45,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -59,6 +60,7 @@ data ChainDbArgs f m blk = ChainDbArgs
   , cdbVolDbArgs :: VolatileDB.VolatileDbArgs f m blk
   , cdbLgrDbArgs :: LedgerDB.LedgerDbArgs f m blk
   , cdbPerasCertDbArgs :: PerasCertDB.PerasCertDbArgs f m blk
+  , cdbPerasVoteDbArgs :: PerasVoteDB.PerasVoteDbArgs f m blk
   , cdbsArgs :: ChainDbSpecificArgs f m blk
   }
 
@@ -148,6 +150,7 @@ defaultArgs =
     VolatileDB.defaultArgs
     (LedgerDB.defaultArgs $ LedgerDB.SomeBackendArgs InMemory.InMemArgs)
     PerasCertDB.defaultArgs
+    PerasVoteDB.defaultArgs
     defaultSpecificArgs
 
 ensureValidateAll ::
@@ -180,6 +183,7 @@ completeChainDbArgs ::
   -- | Volatile  FS, see 'NodeDatabasePaths'
   (RelativeMountPoint -> SomeHasFS m) ->
   LedgerDbBackendArgs m blk ->
+  PerasCfg blk ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
   Complete ChainDbArgs m blk
@@ -192,6 +196,7 @@ completeChainDbArgs
   mkImmFS
   mkVolFS
   flavorArgs
+  perasArgs
   defArgs =
     defArgs
       { cdbImmDbArgs =
@@ -222,6 +227,11 @@ completeChainDbArgs
       , cdbPerasCertDbArgs =
           PerasCertDB.PerasCertDbArgs
             { PerasCertDB.pcdbaTracer = PerasCertDB.pcdbaTracer (cdbPerasCertDbArgs defArgs)
+            }
+      , cdbPerasVoteDbArgs =
+          PerasVoteDB.PerasVoteDbArgs
+            { PerasVoteDB.pvdbaTracer = PerasVoteDB.pvdbaTracer (cdbPerasVoteDbArgs defArgs)
+            , PerasVoteDB.pvdbaPerasCfg = perasArgs
             }
       , cdbsArgs =
           (cdbsArgs defArgs)
