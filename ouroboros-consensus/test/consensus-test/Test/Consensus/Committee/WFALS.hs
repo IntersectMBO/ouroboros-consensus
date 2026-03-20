@@ -1,7 +1,6 @@
-module Test.Consensus.Committee.WFALS
-  ( tests
-  )
-where
+{-# LANGUAGE LambdaCase #-}
+
+module Test.Consensus.Committee.WFALS (tests) where
 
 import qualified Cardano.Crypto.DSIGN.Class as SL
 import qualified Cardano.Crypto.Seed as SL
@@ -58,7 +57,11 @@ realImplementationConformsToRustImplementation =
   -- inspect the actual pool IDs in the implementation, and we only rely on them
   -- being unique, which they should be as long as the input strings are unique.
   mkStakeDistr =
-    WFA.mkExtWFAStakeDistr
+    expectRight
+      ( \err ->
+          error ("could not build a strake distribution: " <> show err)
+      )
+      . WFA.mkExtWFAStakeDistr
       . Map.mapKeys
         ( \str ->
             WFA.PoolId
@@ -75,12 +78,21 @@ realImplementationConformsToRustImplementation =
             (WFA.LedgerStake stake, ())
         )
 
-  impl stakeDistr targetCommitteeSize = do
-    let totalSeats = WFA.TargetCommitteeSize (fromIntegral targetCommitteeSize)
-    case WFA.weightedFaitAccompliSplitSeats stakeDistr totalSeats of
-      Left err ->
-        error $ "weightedFaitAccompliSplitSeats failed with error: " <> show err
-      Right (persistentSeats, nonPersistentSeats, _, _) ->
-        ( fromIntegral (WFA.unPersistentCommitteeSize persistentSeats)
-        , fromIntegral (WFA.unNonPersistentCommitteeSize nonPersistentSeats)
-        )
+  impl stakeDistr targetCommitteeSize =
+    let
+      totalSeats =
+        WFA.TargetCommitteeSize (fromIntegral targetCommitteeSize)
+      (persistentSeats, nonPersistentSeats, _, _) =
+        expectRight
+          ( \err ->
+              error ("weightedFaitAccompliSplitSeats failed: " <> show err)
+          )
+          $ WFA.weightedFaitAccompliSplitSeats stakeDistr totalSeats
+     in
+      ( fromIntegral (WFA.unPersistentCommitteeSize persistentSeats)
+      , fromIntegral (WFA.unNonPersistentCommitteeSize nonPersistentSeats)
+      )
+
+  expectRight onLeft = \case
+    Left err -> onLeft err
+    Right a -> a

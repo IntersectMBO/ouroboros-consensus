@@ -63,7 +63,9 @@ newtype TotalNonPersistentStake = TotalNonPersistentStake
 -- | Errors that can occur when trying to split the stake distribution into
 -- persistent and seats via weighted Fait-Accompli.
 data WFAError
-  = -- | The target committee size is larger than the number of pools with positive
+  = -- | The underlying stake distribution is empty
+    EmptyStakeDistribution
+  | -- | The target committee size is larger than the number of pools with positive
     -- stake in the underlying stake distribution, which would lead to incorrect
     -- results (e.g. granting persistent seats to voters with zero stake).
     NotEnoughPoolsWithPositiveStake
@@ -271,15 +273,22 @@ data ExtWFAStakeDistr a = ExtWFAStakeDistr
   -- results (e.g. granting persistent seats to voters with zero stake).
   }
 
--- | Construct an extended cumulative stake distribution
+-- | Construct an extended cumulative stake distribution.
+--
+-- Returns an error if the underlying stake distribution is empty.
 mkExtWFAStakeDistr ::
   Map PoolId (LedgerStake, a) ->
-  ExtWFAStakeDistr a
-mkExtWFAStakeDistr pools =
-  ExtWFAStakeDistr
-    { unExtWFAStakeDistr = stakeDistrArray
-    , numPoolsWithPositiveStake = numPoolsWithPositiveStakeAcc
-    }
+  Either WFAError (ExtWFAStakeDistr a)
+mkExtWFAStakeDistr pools
+  | Map.null pools =
+      Left
+        EmptyStakeDistribution
+  | otherwise =
+      Right
+        ExtWFAStakeDistr
+          { unExtWFAStakeDistr = stakeDistrArray
+          , numPoolsWithPositiveStake = numPoolsWithPositiveStakeAcc
+          }
  where
   stakeDistrArray =
     listArray
