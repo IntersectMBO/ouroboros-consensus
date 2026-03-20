@@ -10,7 +10,9 @@
 
 module Test.Consensus.Shelley.Generators (SomeResult (..)) where
 
-import Cardano.Ledger.Core (TranslationContext, toTxSeq)
+import qualified Cardano.Ledger.Block as L
+import Cardano.Ledger.Core (TranslationContext)
+import qualified Cardano.Ledger.Core as L
 import Cardano.Ledger.Genesis
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.Translation
@@ -87,7 +89,12 @@ instance
   where
   arbitrary = mkShelleyBlock <$> blk
    where
-    blk = SL.Block <$> arbitrary <*> (toTxSeq @era <$> arbitrary) <*> pure Nothing <*> pure False -- FIXME(bladyjoker)
+    blk =
+      SL.Block
+        <$> arbitrary
+        <*> (L.BodyInline . L.toTxSeq @era <$> arbitrary)
+        <*> pure Nothing
+        <*> pure False -- FIXME(bladyjoker)
 
 -- | This uses a different upstream generator to ensure the header and block
 -- body relate as expected.

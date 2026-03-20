@@ -8,7 +8,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
 import qualified Cardano.Ledger.Block as SL
 import qualified Cardano.Ledger.Core as Core (Tx)
-import qualified Cardano.Ledger.Core as SL (hashTxSeq, toTxSeq)
+import qualified Cardano.Ledger.Core as SL (EraSegWits (TxSeq), toTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL (extractTx)
 import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
 import Cardano.Prelude (nonEmpty)
@@ -17,10 +17,13 @@ import Control.Exception
 import qualified Data.ByteString as BL
 import qualified Data.Sequence.Strict as Seq
 import qualified Debug.Trace as Debug
-import LeiosDemoDb (LeiosDbHandle (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint))
+import LeiosDemoDb
+  ( LeiosDbHandle (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint)
+  )
 import LeiosDemoTypes
   ( EbHash (ebHashBytes)
   , ForgedLeiosEb (point)
+  , LeiosCertificate (unLeiosCertificate)
   , LeiosPoint (pointEbHash)
   , forgeLeiosEb
   )
@@ -38,6 +41,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Integrity
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( ShelleyLedgerLeiosState (sllsMaybeAnnouncedEb, sllsTooSoonToCertify)
   , Ticked (tickedShelleyLedgerLeiosState)
+  , toTxSeq
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -87,21 +91,23 @@ forgeShelleyBlock
       mayAnnouncedEb = toLedgerEbHash . pointEbHash . point <$> mayEb
 
     (body, certifiesEb) <- case sllsMaybeAnnouncedEb ledgerLeiosSt of
-      Nothing -> return $ (rbTxs', False)
+      Nothing -> return $ (SL.BodyInline rbTxs', False)
       Just annEbPoint ->
         if sllsTooSoonToCertify ledgerLeiosSt
-          then return $ (rbTxs', False)
+          then return $ (SL.BodyInline rbTxs', False)
           else do
-            mayEbClosure <- leiosDbQueryCompletedEbByPoint leiosDb annEbPoint
+            mayEbClosure <- leiosDbQueryCompletedEbByPoint' leiosDb annEbPoint
             case mayEbClosure of
-              Nothing -> return (rbTxs', False) -- This happens when EBs haven't been fully downloaded
-              Just _EbClosure -> do
+              Nothing -> return (SL.BodyInline rbTxs', False) -- This happens when EBs haven't been fully downloaded
+              Just ebClosure -> do
                 mayCert <- leiosDbQueryCertificateByPoint leiosDb annEbPoint
                 case mayCert of
-                  Nothing -> return (rbTxs', False) -- This happens when EBs have been downloaded but voting hasn't completed
+                  Nothing -> return (SL.BodyInline rbTxs', False) -- This happens when EBs have been downloaded but voting hasn't completed
                   Just cert ->
                     return $
-                      Debug.trace (show ("certifying", cert, annEbPoint)) (SL.toTxSeq @era $ Seq.fromList [], True) -- FIXME(bladyjoker): Use `cert`
+                      Debug.trace
+                        (show ("certifying", cert, annEbPoint))
+                        (SL.BodyCertificate (toLedgerCert cert) (Just ebClosure), True)
     hdr <-
       mkHeader @_ @(ProtoCrypto proto) -- FIXME(bladyjoker): EB announcement in header
         hotKey
@@ -110,7 +116,7 @@ forgeShelleyBlock
         curSlot
         curNo
         prevHash
-        (SL.hashTxSeq @era body) -- FIXME(bladyjoker): SL.hashBody = SL.hashTxSeq `or` SL.hashCert
+        (SL.hashBody @era body) -- FIXME(bladyjoker): SL.hashBody = SL.hashTxSeq `or` SL.hashCert
         actualBodySize
         protocolVersion
 
@@ -139,6 +145,17 @@ forgeShelleyBlock
         . getTipHash
         $ tickedLedger
 
+-- TODO(bladyjoker): Find a home for these
 -- -.-
 toLedgerEbHash :: EbHash -> SL.EbHash
 toLedgerEbHash = SL.EbHash . BL.fromStrict . ebHashBytes
+
+toLedgerCert :: LeiosCertificate -> SL.Certificate
+toLedgerCert = SL.Certificate . BL.fromStrict . unLeiosCertificate
+
+leiosDbQueryCompletedEbByPoint' ::
+  forall m era.
+  (Monad m, ShelleyBasedEra era) => LeiosDbHandle m -> LeiosPoint -> m (Maybe (SL.TxSeq era))
+leiosDbQueryCompletedEbByPoint' leiosDb ebPoint = do
+  res <- leiosDbQueryCompletedEbByPoint leiosDb ebPoint
+  return $ toTxSeq <$> res

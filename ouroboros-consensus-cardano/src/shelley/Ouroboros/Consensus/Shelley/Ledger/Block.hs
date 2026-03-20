@@ -50,6 +50,7 @@ import Cardano.Ledger.Binary
   , serialize
   )
 import qualified Cardano.Ledger.Binary.Plain as Plain
+import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core as SL
   ( EraSegWits (TxSeq)
   , eraDecoder
@@ -144,7 +145,6 @@ instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) 
 data ShelleyBlock proto era = ShelleyBlock
   { shelleyBlockRaw :: !(SL.Block (ShelleyProtocolHeader proto) era)
   , shelleyBlockHeaderHash :: !ShelleyHash
-  , shelleyBlockResolvedTxs :: Maybe (SL.TxSeq era) -- NOTE(bladyjoker): Pretty much a hack to stuff the resolved tx closure associated with a LeiosCertificate
   }
 
 deriving instance ShelleyCompatible proto era => Show (ShelleyBlock proto era)
@@ -164,7 +164,6 @@ mkShelleyBlock raw =
   ShelleyBlock
     { shelleyBlockRaw = raw
     , shelleyBlockHeaderHash = pHeaderHash $ SL.bheader raw
-    , shelleyBlockResolvedTxs = Nothing
     }
 
 class
@@ -197,22 +196,19 @@ instance
   ShowProxy (Header (ShelleyBlock proto era))
 
 instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
-  getHeader (ShelleyBlock rawBlk hdrHash _) =
+  getHeader (ShelleyBlock rawBlk hdrHash) =
     ShelleyHeader
       { shelleyHeaderRaw = SL.bheader rawBlk
       , shelleyHeaderHash = hdrHash
       }
 
   blockMatchesHeader hdr blk =
-    -- Compute the hash the body of the block (the transactions) and compare
+    -- Compute the hash the body of the block (txs or cert) and compare
     -- that against the hash of the body stored in the header.
-    -- FIXME(bladyjoker): Update the hashing with the new additions
-    -- imo this should be SL.hashBody (which can then decide how that is done, eg, SL.hashTxSeq or EbHash)
-    -- TODO(bladyjoker): Hmm, perhaps having a certified EB doesn't require a 'body' at all and can be included in the header?
-    SL.hashTxSeq @era txs == pHeaderBodyHash shelleyHdr
+    SL.hashBody @era body == pHeaderBodyHash shelleyHdr
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
-    txs = SL.blockTxs . shelleyBlockRaw $ blk
+    body = SL.blockBody . shelleyBlockRaw $ blk
 
   headerIsEBB = const Nothing
 

@@ -213,7 +213,7 @@ import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, ShelleyCompatible)
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (resolveLeiosBlock))
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -1370,7 +1370,7 @@ injectConwayBlock :: ShelleyBlock (Praos c) ConwayEra -> CardanoBlock c
 injectConwayBlock = HardForkBlock . OneEraBlock . TagConway . I
 
 instance
-  LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra) =>
+  (ShelleyCompatible (Praos c) ConwayEra, LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)) =>
   ResolveLeiosBlock (CardanoBlock c)
   where
   resolveLeiosBlock ::
