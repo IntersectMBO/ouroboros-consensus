@@ -86,9 +86,11 @@ forgeShelleyBlock
   isLeader = do
     -- Only build an EB if ebTxs is not empty
     let
+      -- Current EB to announce
       mayEb = forgeLeiosEb curSlot <$> nonEmpty (extractTx <$> ebTxs)
-      ledgerLeiosSt = tickedShelleyLedgerLeiosState tickedLedger
       mayAnnouncedEb = toLedgerEbHash . pointEbHash . point <$> mayEb
+      -- Current Ledger state
+      ledgerLeiosSt = tickedShelleyLedgerLeiosState tickedLedger
 
     (body, certifiesEb) <- case sllsMaybeAnnouncedEb ledgerLeiosSt of
       Nothing -> return $ (SL.BodyInline rbTxs', False)
@@ -120,7 +122,13 @@ forgeShelleyBlock
         actualBodySize
         protocolVersion
 
-    let blk = mkShelleyBlock $ SL.Block hdr body mayAnnouncedEb certifiesEb
+    let blk =
+          mkShelleyBlock $
+            SL.Block
+              hdr
+              body
+              (if certifiesEb then Nothing else mayAnnouncedEb) -- TODO(bladyjoker): Skip announcement when certifying
+              certifiesEb
 
     return $
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $

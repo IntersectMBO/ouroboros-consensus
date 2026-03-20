@@ -56,7 +56,7 @@ import Cardano.Ledger.Core as SL
   , eraProtVerLow
   , toEraCBOR
   )
-import qualified Cardano.Ledger.Core as SL (TranslationContext, hashTxSeq)
+import qualified Cardano.Ledger.Core as SL (TranslationContext)
 import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
