@@ -31,7 +31,7 @@
 module Ouroboros.Consensus.Committee.WFALS
   ( -- * Voting committee membership
     MembershipType (..)
-  , MemberhipProof
+  , MembershipProof
   , CommitteeMember (..)
 
     -- * Committee votes
@@ -96,28 +96,28 @@ data MembershipType
   deriving Show
 
 -- | Proof of committee membership for a given voter
-type MemberhipProof :: Type -> MembershipType -> Type
-data MemberhipProof crypto membership where
-  PersistentMemberProof ::
+type MembershipProof :: Type -> MembershipType -> Type
+data MembershipProof crypto membership where
+  PersistentMembershipProof ::
     SeatIndex ->
     VoteSignature crypto ->
-    MemberhipProof crypto Persistent
-  NonPersistentMemberProof ::
+    MembershipProof crypto Persistent
+  NonPersistentMembershipProof ::
     LocalSortitionNumSeats ->
     VRFOutput crypto ->
     VoteSignature crypto ->
-    MemberhipProof crypto NonPersistent
+    MembershipProof crypto NonPersistent
 
 -- | Committee members (i.e., no longer candidates)
 type CommitteeMember :: Type -> Type
 data CommitteeMember crypto
   = -- | A persistent member of the voting committee
     PersistentCommitteeMember
-      (MemberhipProof crypto Persistent)
+      (MembershipProof crypto Persistent)
       LedgerStake
   | -- | A (realized) non-persistent member of the voting committee
     NonPersistentCommitteeMember
-      (MemberhipProof crypto NonPersistent)
+      (MembershipProof crypto NonPersistent)
       LedgerStake
 
 -- * Committee votes
@@ -266,7 +266,7 @@ mkCommitteeSelection nonce totalSeats stakeDistr = do
 data CommitteeSelectionError
   = -- | A voter ID is missing from the committee selection
     MissingPoolId PoolId
-  | -- | A voter claims to be a persistent member of the committe, but it's not
+  | -- | A voter claims to be a persistent member of the committee, but it's not
     NotAPersistentMember SeatIndex
   | -- | A voter claims to be a non-persistent member of the committe, but it's not
     NotANonPersistentMember PoolId
@@ -297,14 +297,14 @@ committeeMemberWeight ::
 committeeMemberWeight selection = \case
   -- Persistent members have their voting power equal to their stake
   PersistentCommitteeMember
-    (PersistentMemberProof _seatIndex _sig)
+    (PersistentMembershipProof _seatIndex _sig)
     (LedgerStake stake) ->
       VoteWeight stake
   -- Non-persistent members have their voting power proportional to their
   -- number of seats granted by local sortition and their stake (normalized
   -- by the total non-persistent stake)
   NonPersistentCommitteeMember
-    (NonPersistentMemberProof numSeats _sig _vrfOutput)
+    (NonPersistentMembershipProof numSeats _sig _vrfOutput)
     (LedgerStake stake) ->
       VoteWeight $
         fromIntegral (unLocalSortitionNumSeats numSeats)
@@ -411,7 +411,7 @@ checkShouldVote ourId ourPrivateKey electionId message selection
             pure $
               Just $
                 PersistentCommitteeMember
-                  (PersistentMemberProof seatIndex sig)
+                  (PersistentMembershipProof seatIndex sig)
                   ourStake
           False -> do
             let vrfContext =
@@ -430,7 +430,7 @@ checkShouldVote ourId ourPrivateKey electionId message selection
                 pure $
                   Just $
                     NonPersistentCommitteeMember
-                      (NonPersistentMemberProof numSeats vrfOutput sig)
+                      (NonPersistentMembershipProof numSeats vrfOutput sig)
                       ourStake
   | otherwise =
       Left (MissingPoolId ourId)
@@ -457,7 +457,7 @@ verifyVote vote selection =
           pure $
             Just $
               PersistentCommitteeMember
-                (PersistentMemberProof seatIndex sig)
+                (PersistentMembershipProof seatIndex sig)
                 voterStake
       | otherwise -> do
           Left (NotAPersistentMember seatIndex)
@@ -488,7 +488,7 @@ verifyVote vote selection =
                 pure $
                   Just $
                     NonPersistentCommitteeMember
-                      (NonPersistentMemberProof numSeats vrfOutput sig)
+                      (NonPersistentMembershipProof numSeats vrfOutput sig)
                       voterStake
       | otherwise ->
           Left (NotANonPersistentMember poolId)
