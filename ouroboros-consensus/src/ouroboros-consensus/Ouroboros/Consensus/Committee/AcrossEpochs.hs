@@ -20,9 +20,9 @@ import Ouroboros.Consensus.Committee.Types
 import qualified Ouroboros.Consensus.Committee.WFA as WFA
 import qualified Ouroboros.Consensus.Committee.WFALS as WFALS
 
-data InterEpochCommitteeSelection c = InterEpochCommitteeSelection
-  { currEpochSelection :: WFALS.CommitteeSelection c
-  , prevEpochSelection :: WFALS.CommitteeSelection c
+data InterEpochCommitteeSelection crypto = InterEpochCommitteeSelection
+  { currEpochSelection :: WFALS.CommitteeSelection crypto
+  , prevEpochSelection :: WFALS.CommitteeSelection crypto
   }
 
 -- | Update an inter-epoch committee selection at the beginning of a new epoch
@@ -30,12 +30,12 @@ newEpoch ::
   -- | New epoch nonce
   Nonce ->
   -- | New epoch cumulative stake distribution
-  WFA.ExtWFAStakeDistr (WFALS.PublicKey c) ->
+  WFA.ExtWFAStakeDistr (WFALS.PublicKey crypto) ->
   -- | New epoch expected committee size
   TargetCommitteeSize ->
   -- | Current inter-epoch committee selection
-  InterEpochCommitteeSelection c ->
-  Either WFA.WFAError (InterEpochCommitteeSelection c)
+  InterEpochCommitteeSelection crypto ->
+  Either WFA.WFAError (InterEpochCommitteeSelection crypto)
 newEpoch
   newEpochNonce
   newEpochStakeDistr

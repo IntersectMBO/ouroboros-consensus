@@ -97,38 +97,38 @@ data MembershipType
 
 -- | Proof of committee membership for a given voter
 type MemberhipProof :: Type -> MembershipType -> Type
-data MemberhipProof c m where
+data MemberhipProof crypto m where
   PersistentMemberProof ::
     SeatIndex ->
-    VoteSignature c ->
-    MemberhipProof c Persistent
+    VoteSignature crypto ->
+    MemberhipProof crypto Persistent
   NonPersistentMemberProof ::
     LocalSortitionNumSeats ->
-    VRFOutput c ->
-    VoteSignature c ->
-    MemberhipProof c NonPersistent
+    VRFOutput crypto ->
+    VoteSignature crypto ->
+    MemberhipProof crypto NonPersistent
 
 -- | Committee members (i.e., no longer candidates)
 type CommitteeMember :: Type -> Type
-data CommitteeMember c
+data CommitteeMember crypto
   = -- | A persistent member of the voting committee
     PersistentCommitteeMember
-      (MemberhipProof c Persistent)
+      (MemberhipProof crypto Persistent)
       LedgerStake
   | -- | A (realized) non-persistent member of the voting committee
     NonPersistentCommitteeMember
-      (MemberhipProof c NonPersistent)
+      (MemberhipProof crypto NonPersistent)
       LedgerStake
 
 -- * Committee votes
 
 -- | Interface for votes that can be validated under the wFA^LS scheme
-class VoteSupportsWFALS c vote where
+class VoteSupportsWFALS crypto vote where
   -- | Project a vote to its wFA^LS view, which contains only the information
   -- needed to validate it against a given committee selection
   getVoteView ::
     vote ->
-    (forall m. VoteView c m -> r) ->
+    (forall m. VoteView crypto m -> r) ->
     r
 
 -- | View of a committee selection vote.
@@ -136,20 +136,20 @@ class VoteSupportsWFALS c vote where
 -- This is a projection of a vote containing only the information needed to
 -- validate it against a given committee selection.
 type VoteView :: Type -> MembershipType -> Type
-data VoteView c m where
+data VoteView crypto m where
   PersistentVote ::
     SeatIndex ->
-    ElectionId c ->
-    VoteMessage c ->
-    VoteSignature c ->
-    VoteView c Persistent
+    ElectionId crypto ->
+    VoteMessage crypto ->
+    VoteSignature crypto ->
+    VoteView crypto Persistent
   NonPersistentVote ::
     PoolId ->
-    ElectionId c ->
-    VoteMessage c ->
-    VRFOutput c ->
-    VoteSignature c ->
-    VoteView c NonPersistent
+    ElectionId crypto ->
+    VoteMessage crypto ->
+    VRFOutput crypto ->
+    VoteSignature crypto ->
+    VoteView crypto NonPersistent
 
 -- * Committee membership interface
 
@@ -160,40 +160,40 @@ data VoteView c m where
 -- be possible to use different crypto primitives for each of these operations
 -- if needed.
 class
-  ( CryptoSupportsVoteSigning c
-  , CryptoSupportsVRF c
+  ( CryptoSupportsVoteSigning crypto
+  , CryptoSupportsVRF crypto
   ) =>
-  CryptoSupportsWFALS c
+  CryptoSupportsWFALS crypto
   where
   -- | Private key type for wFA^LS committee membership
-  type PrivateKey c
+  type PrivateKey crypto
 
   -- | Public key type for wFA^LS committee membership
-  type PublicKey c
+  type PublicKey crypto
 
   -- | Cast a committee public key into a vote signature public key
   getVoteSignaturePublicKey ::
-    Proxy c ->
-    PublicKey c ->
-    VoteSignaturePublicKey c
+    Proxy crypto ->
+    PublicKey crypto ->
+    VoteSignaturePublicKey crypto
 
   -- | Cast a committee private key into a vote signature private key
   getVoteSignaturePrivateKey ::
-    Proxy c ->
-    PrivateKey c ->
-    VoteSignaturePrivateKey c
+    Proxy crypto ->
+    PrivateKey crypto ->
+    VoteSignaturePrivateKey crypto
 
   -- | Cast a committee public key into a VRF verification key
   getVRFVerifyKey ::
-    Proxy c ->
-    PublicKey c ->
-    VRFVerifyKey c
+    Proxy crypto ->
+    PublicKey crypto ->
+    VRFVerifyKey crypto
 
   -- | Cast a committee private key into a VRF signing key
   getVRFSigningKey ::
-    Proxy c ->
-    PrivateKey c ->
-    VRFSigningKey c
+    Proxy crypto ->
+    PrivateKey crypto ->
+    VRFSigningKey crypto
 
 -- | Interface used to evaluate the membership of a party in a voting committee.
 --
@@ -209,8 +209,8 @@ class
 -- us partially apply much of the relevant information about the committee
 -- composition at the beginning of such epoch.
 type CommitteeSelection :: Type -> Type
-data CommitteeSelection c = CommitteeSelection
-  { wfaStakeDistr :: !(ExtWFAStakeDistr (PublicKey c))
+data CommitteeSelection crypto = CommitteeSelection
+  { wfaStakeDistr :: !(ExtWFAStakeDistr (PublicKey crypto))
   -- ^ Preaccumulated stake distrubution used to compute committee composition
   , candidateSeats :: !(Map PoolId SeatIndex)
   -- ^ Index of a given candidate in the cumulative stake distribution
@@ -233,8 +233,8 @@ mkCommitteeSelection ::
   -- | Expected committee size
   TargetCommitteeSize ->
   -- | Extended cumulative stake distribution of the potential voters
-  ExtWFAStakeDistr (PublicKey c) ->
-  Either WFAError (CommitteeSelection c)
+  ExtWFAStakeDistr (PublicKey crypto) ->
+  Either WFAError (CommitteeSelection crypto)
 mkCommitteeSelection nonce totalSeats stakeDistr = do
   ( numPersistentVoters
     , numNonPersistentVoters
@@ -291,8 +291,8 @@ data CommitteeSelectionError
 --     they are actually selected to vote via local sortition) is equal to their
 --     ledger stake normalized by the total non-persistent stake.
 committeeMemberWeight ::
-  CommitteeSelection c ->
-  CommitteeMember c ->
+  CommitteeSelection crypto ->
+  CommitteeMember crypto ->
   VoteWeight
 committeeMemberWeight selection = \case
   -- Persistent members have their voting power equal to their stake
@@ -317,7 +317,7 @@ committeeMemberWeight selection = \case
 -- | Check if a voter is a persistent member of a committee
 isPersistentMember ::
   SeatIndex ->
-  CommitteeSelection c ->
+  CommitteeSelection crypto ->
   Bool
 isPersistentMember seatIndex selection =
   unSeatIndex seatIndex
@@ -326,7 +326,7 @@ isPersistentMember seatIndex selection =
 -- | Check that a seat index is within bounds in a committee selection
 seatIndexWithinBounds ::
   SeatIndex ->
-  CommitteeSelection c ->
+  CommitteeSelection crypto ->
   Bool
 seatIndexWithinBounds seatIndex selection =
   unSeatIndex seatIndex >= unSeatIndex lowerBound
@@ -343,8 +343,8 @@ seatIndexWithinBounds seatIndex selection =
 -- PRECONDITION: the seat index must be within bounds in the committee selection
 getCandidateInSeat ::
   SeatIndex ->
-  CommitteeSelection c ->
-  (PoolId, PublicKey c, LedgerStake, Cumulative LedgerStake)
+  CommitteeSelection crypto ->
+  (PoolId, PublicKey crypto, LedgerStake, Cumulative LedgerStake)
 getCandidateInSeat seatIndex selection =
   (Array.!) distrArray seatIndex
  where
@@ -352,12 +352,12 @@ getCandidateInSeat seatIndex selection =
 
 -- | Check the validity of a vote signature
 checkVoteSignature ::
-  forall c.
-  CryptoSupportsVoteSigning c =>
-  VoteSignaturePublicKey c ->
-  ElectionId c ->
-  VoteMessage c ->
-  VoteSignature c ->
+  forall crypto.
+  CryptoSupportsVoteSigning crypto =>
+  VoteSignaturePublicKey crypto ->
+  ElectionId crypto ->
+  VoteMessage crypto ->
+  VoteSignature crypto ->
   Either CommitteeSelectionError ()
 checkVoteSignature voterPublicKey electionId message sig =
   first InvalidVoteSignature $ do
@@ -369,39 +369,43 @@ checkVoteSignature voterPublicKey electionId message sig =
 
 -- | Get the VRF output associated to a given context
 checkVRFOutput ::
-  forall c.
-  CryptoSupportsVRF c =>
-  VRFPoolContext c ->
-  ElectionId c ->
-  CommitteeSelection c ->
-  Either CommitteeSelectionError (VRFOutput c)
+  forall crypto.
+  CryptoSupportsVRF crypto =>
+  VRFPoolContext crypto ->
+  ElectionId crypto ->
+  CommitteeSelection crypto ->
+  Either CommitteeSelectionError (VRFOutput crypto)
 checkVRFOutput context electionId selection =
   first LocalSortitionError $ do
     evalVRF
       context
       ( mkVRFElectionInput
-          @c
+          @crypto
           (epochNonce selection)
           electionId
       )
 
 -- | Check whether we should vote in a given election.
 checkShouldVote ::
-  forall c.
-  CryptoSupportsWFALS c =>
+  forall crypto.
+  CryptoSupportsWFALS crypto =>
   PoolId ->
-  PrivateKey c ->
-  ElectionId c ->
-  VoteMessage c ->
-  CommitteeSelection c ->
-  Either CommitteeSelectionError (Maybe (CommitteeMember c))
+  PrivateKey crypto ->
+  ElectionId crypto ->
+  VoteMessage crypto ->
+  CommitteeSelection crypto ->
+  Either CommitteeSelectionError (Maybe (CommitteeMember crypto))
 checkShouldVote ourId ourPrivateKey electionId message selection
   | Just seatIndex <- Map.lookup ourId (candidateSeats selection) =
       assert (seatIndexWithinBounds seatIndex selection) $ do
-        let (_, _, ourStake, _) = getCandidateInSeat seatIndex selection
-        let ourSignaturePrivateKey = getVoteSignaturePrivateKey (Proxy @c) ourPrivateKey
-        let ourVRFSigningKey = getVRFSigningKey (Proxy @c) ourPrivateKey
-        let sig = signVote ourSignaturePrivateKey electionId message
+        let (_, _, ourStake, _) =
+              getCandidateInSeat seatIndex selection
+        let ourSignaturePrivateKey =
+              getVoteSignaturePrivateKey (Proxy @crypto) ourPrivateKey
+        let ourVRFSigningKey =
+              getVRFSigningKey (Proxy @crypto) ourPrivateKey
+        let sig =
+              signVote ourSignaturePrivateKey electionId message
         case isPersistentMember seatIndex selection of
           True -> do
             pure $
@@ -410,7 +414,8 @@ checkShouldVote ourId ourPrivateKey electionId message selection
                   (PersistentMemberProof seatIndex sig)
                   ourStake
           False -> do
-            let vrfContext = VRFSignContext ourVRFSigningKey
+            let vrfContext =
+                  VRFSignContext ourVRFSigningKey
             vrfOutput <- checkVRFOutput vrfContext electionId selection
             let numSeats =
                   localSortitionNumSeats
@@ -432,19 +437,21 @@ checkShouldVote ourId ourPrivateKey electionId message selection
 
 -- | Check the validity of a vote in a given election.
 verifyVote ::
-  forall c vote.
-  ( CryptoSupportsWFALS c
-  , VoteSupportsWFALS c vote
+  forall crypto vote.
+  ( CryptoSupportsWFALS crypto
+  , VoteSupportsWFALS crypto vote
   ) =>
   vote ->
-  CommitteeSelection c ->
-  Either CommitteeSelectionError (Maybe (CommitteeMember c))
+  CommitteeSelection crypto ->
+  Either CommitteeSelectionError (Maybe (CommitteeMember crypto))
 verifyVote vote selection =
-  getVoteView @c vote $ \case
+  getVoteView @crypto vote $ \case
     PersistentVote seatIndex electionId message sig
       | seatIndexWithinBounds seatIndex selection -> do
-          let (_, voterPublicKey, voterStake, _) = getCandidateInSeat seatIndex selection
-          let voterSignaturePublicKey = getVoteSignaturePublicKey (Proxy @c) voterPublicKey
+          let (_, voterPublicKey, voterStake, _) =
+                getCandidateInSeat seatIndex selection
+          let voterSignaturePublicKey =
+                getVoteSignaturePublicKey (Proxy @crypto) voterPublicKey
           checkVoteSignature voterSignaturePublicKey electionId message sig
           pure $
             Just $
@@ -456,10 +463,14 @@ verifyVote vote selection =
     NonPersistentVote poolId electionId message vrfOutput sig
       | Just seatIndex <- Map.lookup poolId (candidateSeats selection) ->
           assert (seatIndexWithinBounds seatIndex selection) $ do
-            let (_, voterPublicKey, voterStake, _) = getCandidateInSeat seatIndex selection
-            let voterSignaturePublicKey = getVoteSignaturePublicKey (Proxy @c) voterPublicKey
-            let voterVRFVerifyKey = getVRFVerifyKey (Proxy @c) voterPublicKey
-            let vrfContext = VRFVerifyContext voterVRFVerifyKey vrfOutput
+            let (_, voterPublicKey, voterStake, _) =
+                  getCandidateInSeat seatIndex selection
+            let voterSignaturePublicKey =
+                  getVoteSignaturePublicKey (Proxy @crypto) voterPublicKey
+            let voterVRFVerifyKey =
+                  getVRFVerifyKey (Proxy @crypto) voterPublicKey
+            let vrfContext =
+                  VRFVerifyContext voterVRFVerifyKey vrfOutput
             checkVoteSignature voterSignaturePublicKey electionId message sig
             void $ checkVRFOutput vrfContext electionId selection
             let numSeats =
