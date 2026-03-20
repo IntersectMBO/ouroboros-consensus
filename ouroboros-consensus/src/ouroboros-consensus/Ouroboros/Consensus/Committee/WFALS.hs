@@ -97,7 +97,7 @@ data MembershipType
 
 -- | Proof of committee membership for a given voter
 type MemberhipProof :: Type -> MembershipType -> Type
-data MemberhipProof crypto m where
+data MemberhipProof crypto membership where
   PersistentMemberProof ::
     SeatIndex ->
     VoteSignature crypto ->
@@ -128,7 +128,7 @@ class VoteSupportsWFALS crypto vote where
   -- needed to validate it against a given committee selection
   getVoteView ::
     vote ->
-    (forall m. VoteView crypto m -> r) ->
+    (forall membership. VoteView crypto membership -> r) ->
     r
 
 -- | View of a committee selection vote.
@@ -136,7 +136,7 @@ class VoteSupportsWFALS crypto vote where
 -- This is a projection of a vote containing only the information needed to
 -- validate it against a given committee selection.
 type VoteView :: Type -> MembershipType -> Type
-data VoteView crypto m where
+data VoteView crypto membership where
   PersistentVote ::
     SeatIndex ->
     ElectionId crypto ->
@@ -338,7 +338,7 @@ seatIndexWithinBounds seatIndex selection =
         wfaStakeDistr $
           selection
 
--- | Retrieve the candidate information associated to a given seat index
+-- | Retrieve the candidate information associated to a given seat index.
 --
 -- PRECONDITION: the seat index must be within bounds in the committee selection
 getCandidateInSeat ::
