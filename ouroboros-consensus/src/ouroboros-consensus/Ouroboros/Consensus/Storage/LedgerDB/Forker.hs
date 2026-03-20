@@ -453,17 +453,21 @@ applyBlock ::
   Forker bm l blk ->
   m (ValidLedgerState (l DiffMK))
 applyBlock leiosDb evs cfg ap fo = case ap of
-  ReapplyVal b ->
+  ReapplyVal b -> do
+    l <- liftBase $ atomically $ forkerGetLedgerState fo
+    b' <- liftBase $ resolveLeiosBlock leiosDb l b
+    vs <- withLedgerTables l <$> liftBase (forkerReadTables fo (getBlockKeySets b'))
+    ValidLedgerState <$> (return . tickThenReapply evs cfg b') vs
+  ApplyVal b -> do
+    l <- liftBase $ atomically $ forkerGetLedgerState fo
+    b' <- liftBase $ resolveLeiosBlock leiosDb l b
+    vs <- withLedgerTables l <$> liftBase (forkerReadTables fo (getBlockKeySets b'))
     ValidLedgerState
-      <$> withValues b (return . tickThenReapply evs cfg b)
-  ApplyVal b ->
-    ValidLedgerState
-      <$> withValues
-        b
-        ( either (throwLedgerError fo (blockRealPoint b)) return
-            . runExcept
-            . tickThenApply evs cfg b
-        )
+      <$> ( either (throwLedgerError fo (blockRealPoint b')) return
+              . runExcept
+              . tickThenApply evs cfg b'
+          )
+        vs
   ReapplyRef r -> do
     b <- doResolveBlock r
     applyBlock leiosDb evs cfg (ReapplyVal b) fo
@@ -472,15 +476,6 @@ applyBlock leiosDb evs cfg ap fo = case ap of
     applyBlock leiosDb evs cfg (ApplyVal b) fo
   Weaken ap' ->
     applyBlock leiosDb evs cfg ap' fo
- where
-  withValues :: blk -> (l ValuesMK -> m (l DiffMK)) -> m (l DiffMK)
-  withValues blk f = do
-    l <- liftBase $ atomically $ forkerGetLedgerState fo
-    blk' <- liftBase $ resolveLeiosBlock leiosDb l blk
-    vs <-
-      withLedgerTables l
-        <$> liftBase (forkerReadTables fo (getBlockKeySets blk'))
-    f vs
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.
