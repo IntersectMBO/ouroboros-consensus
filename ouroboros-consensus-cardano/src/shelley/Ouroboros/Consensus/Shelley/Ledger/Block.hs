@@ -52,8 +52,7 @@ import Cardano.Ledger.Binary
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core as SL
-  ( EraSegWits (TxSeq)
-  , eraDecoder
+  ( eraDecoder
   , eraProtVerLow
   , toEraCBOR
   )
