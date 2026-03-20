@@ -447,7 +447,8 @@ verifyVote ::
 verifyVote vote selection =
   getVoteView @crypto vote $ \case
     PersistentVote seatIndex electionId message sig
-      | seatIndexWithinBounds seatIndex selection -> do
+      | seatIndexWithinBounds seatIndex selection
+      , isPersistentMember seatIndex selection -> do
           let (_, voterPublicKey, voterStake, _) =
                 getCandidateInSeat seatIndex selection
           let voterSignaturePublicKey =
@@ -461,7 +462,8 @@ verifyVote vote selection =
       | otherwise -> do
           Left (NotAPersistentMember seatIndex)
     NonPersistentVote poolId electionId message vrfOutput sig
-      | Just seatIndex <- Map.lookup poolId (candidateSeats selection) ->
+      | Just seatIndex <- Map.lookup poolId (candidateSeats selection)
+      , not (isPersistentMember seatIndex selection) ->
           assert (seatIndexWithinBounds seatIndex selection) $ do
             let (_, voterPublicKey, voterStake, _) =
                   getCandidateInSeat seatIndex selection
