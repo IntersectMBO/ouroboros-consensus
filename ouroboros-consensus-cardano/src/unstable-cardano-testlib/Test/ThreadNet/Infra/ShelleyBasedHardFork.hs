@@ -629,3 +629,7 @@ instance
         (Proxy @MemPackTxOut)
         (const $ Comp $ WrapTxOut <$> unpackM)
       $ Telescope.tip idx
+
+-- * Leios
+
+instance ResolveLeiosBlock (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
