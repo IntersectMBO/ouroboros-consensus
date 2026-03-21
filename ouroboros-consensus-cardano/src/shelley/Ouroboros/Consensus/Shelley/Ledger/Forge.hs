@@ -10,7 +10,6 @@ import qualified Cardano.Ledger.Block as SL
 import qualified Cardano.Ledger.Core as Core (Tx)
 import qualified Cardano.Ledger.Core as SL (EraSegWits (TxSeq), toTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL (extractTx)
-import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
 import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
@@ -118,8 +117,8 @@ forgeShelleyBlock
         curSlot
         curNo
         prevHash
-        (SL.hashBody @era body) -- FIXME(bladyjoker): SL.hashBody = SL.hashTxSeq `or` SL.hashCert
-        actualBodySize
+        (SL.hashBody @era body)
+        (SL.bodyBytesSize protocolVersion body)
         protocolVersion
 
     let blk =
@@ -140,8 +139,6 @@ forgeShelleyBlock
       SL.toTxSeq @era $
         Seq.fromList $
           fmap extractTx rbTxs
-
-    actualBodySize = SL.bBodySize protocolVersion rbTxs'
 
     extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
     extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx
