@@ -907,8 +907,9 @@ runThreadNetwork
         nodeTracer = FromNode coreNodeId >$< baseTracer
         tracers =
           nullTracers
-            { chainSyncClientTracer = Tracer $ \case
-                TraceLabelPeer _ (CSClient.TraceDownloadedHeader hdr) ->
+            { chainSyncClientTracer = Tracer $ \ev -> case ev of
+                TraceLabelPeer _ (CSClient.TraceDownloadedHeader hdr) -> do
+                  traceWith nodeTracer (FromChainSyncClient ev)
                   case blockPoint hdr of
                     GenesisPoint -> pure ()
                     BlockPoint s h ->
@@ -1797,11 +1798,14 @@ data TraceThreadNetNode blk
   | FromKeepAliveClient (TraceKeepAliveClient (ConnectionId NodeId))
   | FromForge (TraceForgeEvent blk)
   | FromConsensusError SomeException
+  | FromChainSyncClient
+      ((TraceLabelPeer (ConnectionId NodeId) (CSClient.TraceChainSyncClientEvent blk)))
 
 deriving instance
   ( Show (TraceEventMempool blk)
   , Show (TraceForgeEvent blk)
   , Show (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk))
+  , Show (CSClient.TraceChainSyncClientEvent blk)
   ) =>
   Show (TraceThreadNetNode blk)
 
