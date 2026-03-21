@@ -1383,4 +1383,4 @@ instance
   resolveLeiosBlock db (ExtLedgerStateConway conwayExtLedgerSt) (BlockConway conwayBlk) =
     injectConwayBlock
       <$> resolveLeiosBlock db conwayExtLedgerSt conwayBlk
-  resolveLeiosBlock _ _ _ = error "WARN(bladyjoker): resolveLeiosBlock only works for Conway"
+  resolveLeiosBlock _ _ blk = return blk

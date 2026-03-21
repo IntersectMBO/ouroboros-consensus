@@ -434,7 +434,7 @@ toRealPoint (Weaken ap) = toRealPoint ap
 class ResolveLeiosBlock blk where
   resolveLeiosBlock ::
     (IsLedger (ExtLedgerState blk), Monad m) => LeiosDbHandle m -> ExtLedgerState blk mk -> blk -> m blk
-  resolveLeiosBlock _ _ _ = error "WARN(bladyjoker): This should only be implemented by HFC and Shelley"
+  resolveLeiosBlock _ _ blk = return blk
 
 -- | Apply blocks to the given forker
 applyBlock ::
