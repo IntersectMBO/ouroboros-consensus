@@ -3,7 +3,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -12,6 +11,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
@@ -117,7 +117,14 @@ import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb (LeiosDbHandle (leiosDbQueryCompletedEbByPoint))
-import LeiosDemoTypes (EbHash (MkEbHash), LeiosPoint (MkLeiosPoint), TxHash, pointSlotNo)
+import LeiosDemoTypes
+  ( EbHash (MkEbHash)
+  , LeiosPoint (MkLeiosPoint)
+  , TxHash
+  , decodeLeiosPoint
+  , encodeLeiosPoint
+  , pointSlotNo
+  )
 import Lens.Micro
 import Lens.Micro.Extras (view)
 import NoThunks.Class (NoThunks (..))
@@ -449,11 +456,11 @@ instance
           internsFromMap $
             shelleyLedgerState st
               ^. SL.nesEsL
-                . SL.esLStateL
-                . SL.lsCertStateL
-                . SL.certDStateL
-                . SL.dsUnifiedL
-                . SL.umElemsL
+              . SL.esLStateL
+              . SL.lsCertStateL
+              . SL.certDStateL
+              . SL.dsUnifiedL
+              . SL.umElemsL
      in LedgerTables . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
 
 instance
@@ -524,10 +531,10 @@ slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState
 slUtxoL st vals =
   st
     & SL.nesEsL
-      . SL.esLStateL
-      . SL.lsUTxOStateL
-      . SL.utxoL
-      <<.~ vals
+    . SL.esLStateL
+    . SL.lsUTxOStateL
+    . SL.utxoL
+    <<.~ vals
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -910,7 +917,41 @@ instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
   upgradeTables _ _ = id
 
 encodeShelleyLedgerLeiosState :: ShelleyLedgerLeiosState -> Encoding
-encodeShelleyLedgerLeiosState = error "FIXME(bladyjoker)"
+encodeShelleyLedgerLeiosState = toCBOR
+
+instance ToCBOR ShelleyLedgerLeiosState where
+  toCBOR ShelleyLedgerLeiosState{..} =
+    mconcat
+      [ CBOR.encodeListLen 6
+      , toCBOR sllsMaybeAnnouncedEb
+      , toCBOR sllsTooSoonToCertify
+      , toCBOR sllsApplyTickCount
+      , toCBOR sllsApplyBlockCount
+      , toCBOR sllsApplyTickLastAt
+      , toCBOR sllsApplyBlockLastAt
+      ]
+
+instance ToCBOR LeiosPoint where
+  toCBOR = encodeLeiosPoint
+
+instance FromCBOR LeiosPoint where
+  fromCBOR = decodeLeiosPoint
 
 decodeShelleyLedgerLeiosState :: forall s. Decoder s ShelleyLedgerLeiosState
-decodeShelleyLedgerLeiosState = error "FIXME(bladyjoker)"
+decodeShelleyLedgerLeiosState = do
+  enforceSize "ShelleyLedgerLeiosState" 6
+  sllsMaybeAnnouncedEb <- fromCBOR
+  sllsTooSoonToCertify <- fromCBOR
+  sllsApplyTickCount <- fromCBOR
+  sllsApplyBlockCount <- fromCBOR
+  sllsApplyTickLastAt <- fromCBOR
+  sllsApplyBlockLastAt <- fromCBOR
+  return
+    ShelleyLedgerLeiosState
+      { sllsMaybeAnnouncedEb
+      , sllsTooSoonToCertify
+      , sllsApplyTickCount
+      , sllsApplyBlockCount
+      , sllsApplyTickLastAt
+      , sllsApplyBlockLastAt
+      }
