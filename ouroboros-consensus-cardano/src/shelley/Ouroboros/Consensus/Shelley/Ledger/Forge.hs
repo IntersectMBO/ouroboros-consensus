@@ -71,7 +71,7 @@ forgeShelleyBlock ::
   -- | EB Txs to include
   [Validated (GenTx (ShelleyBlock proto era))] ->
   IsLeader proto ->
-  m (ShelleyBlock proto era, Maybe ForgedLeiosEb) -- TODO(bladyjoker): Returns (ShelleyBlock proto era, Maybe ForgedLeiosEb and Maybe CertifiedEb?)...
+  m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
 forgeShelleyBlock
   leiosDb
   hotKey

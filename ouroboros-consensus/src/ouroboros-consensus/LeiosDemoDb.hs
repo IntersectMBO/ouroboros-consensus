@@ -532,6 +532,21 @@ newLeiosDBSQLite dbPath = do
                       loop ((MkLeiosPoint slot ebHash, [(txOffset, txHash, txBytesSize)]) : acc)
             loop []
           pure LeiosFetchWork{missingEbBodies, missingEbTxs}
+      , leiosDbQueryCompletedEbByPoint = \ebPoint ->
+          dbWithBEGIN db $ dbWithPrepare db (fromString sqlQueryCompletedEbByPoint) $ \stmt -> do
+            dbBindBlob stmt 1 (ebHashBytes . pointEbHash $ ebPoint)
+            -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key .. dbBindBlob stmt 2 (unSlotNo . pointSlotNo $ ebPoint)
+            let loop acc =
+                  dbStep stmt >>= \case
+                    DB.Done -> pure $ Just (reverse acc)
+                    DB.Row -> do
+                      txHash <- MkTxHash <$> DB.columnBlob stmt 0
+                      txBytes :: ByteString <- DB.columnBlob stmt 1
+                      if txBytes == mempty
+                        then return Nothing
+                        else loop ((txHash, txBytes) : acc)
+            loop []
+      , leiosDbQueryCertificateByPoint = \_ebPoint -> return $ Just trustNoVerifyLeiosCertificate -- FIXME(bladyjoker): Mocked
       , leiosDbClose = void $ DB.close db
       }
 
@@ -719,6 +734,16 @@ sql_attach_memTxPoints =
   \    ebHashBytes BLOB NOT NULL PRIMARY KEY\n\
   \  ) WITHOUT ROWID;\n\
   \"
+
+sqlQueryCompletedEbByPoint :: String
+sqlQueryCompletedEbByPoint =
+  unlines
+    [ "SELECT ebTx.txHashBytes, tx.txBytes"
+    , "FROM ebTxs as ebTx"
+    , "WHERE ebTx.ebHashBytes = ?"
+    , "LEFT JOIN txs as tx ON ebTx.txHashBytes = tx.txHashBytes"
+    , "ORDER BY ebTx.txOffset ASC"
+    ]
 
 -- * Low-level terminating SQLite functions
 
