@@ -165,9 +165,12 @@ import LeiosDemoDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
   ( ForgedLeiosEb
+  , LeiosEb (..)
   , LeiosOutstanding
   , LeiosPeerVars
+  , LeiosPoint (..)
   , TraceLeiosKernel (..)
+  , hashLeiosEb
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
@@ -452,6 +455,13 @@ initNodeKernel
           duration = iterationEnd `diffTime` iterationStart
       traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
       threadDelay $ loopInterval - duration
+
+    void $ forkLinkedThread registry "NodeKernel.leiosVoting" $ forever $ do
+      let tracer = leiosKernelTracer tracers
+      -- FIXME: fake it till you make it
+      let point = MkLeiosPoint (SlotNo 0) (hashLeiosEb $ MkLeiosEb mempty)
+      traceWith tracer TraceLeiosVoted{point}
+      threadDelay 5
 
     return
       NodeKernel
