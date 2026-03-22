@@ -170,6 +170,7 @@ prop_leios seed =
     , propConsistentChains
     , certificationGapIsCorrect
         .||. length certifyingBlocks <= 1
+    , propVoting
     ]
  where
   numNodes = 3 :: Integer
@@ -194,6 +195,14 @@ prop_leios seed =
 
   acquiredPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
     TraceLeiosBlockTxsAcquired point -> Just point
+    _ -> Nothing
+
+  propVoting =
+    length votedPoints > 0
+      & counterexample "never voted"
+
+  votedPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosVoted{point} -> Just point
     _ -> Nothing
 
   mempoolTraces = traces ^.. each . _nodeEvent . _FromMempool
