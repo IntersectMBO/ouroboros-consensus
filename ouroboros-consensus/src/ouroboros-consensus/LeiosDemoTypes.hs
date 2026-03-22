@@ -64,7 +64,7 @@ import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 import Text.Pretty.Simple (pShow)
 
-type BytesSize = Word32
+-- * Hashes and identities
 
 newtype PeerId a = MkPeerId a
   deriving (Eq, Ord)
@@ -478,46 +478,13 @@ decodeLeiosEb = do
   fmap MkLeiosEb $ V.generateM n $ \_i -> do
     (,) <$> (fmap MkTxHash CBOR.decodeBytes) <*> CBOR.decodeWord32
 
--- TODO which of these limits are allowed to be exceeded by at most one
--- request?
-data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
-  { maxRequestedBytesSize :: BytesSize
-  -- ^ At most this many outstanding bytes requested from all peers together
-  , maxRequestedBytesSizePerPeer :: BytesSize
-  -- ^ At most this many outstanding bytes requested from each peer
-  , maxRequestBytesSize :: BytesSize
-  -- ^ At most this many outstanding bytes per request
-  , maxRequestsPerEb :: Int
-  -- ^ At most this many outstanding requests for each EB body
-  , maxRequestsPerTx :: Int
-  -- ^ At most this many outstanding requests for each individual tx
-  , maxLeiosNotifyIngressQueue :: BytesSize
-  -- ^ @maximumIngressQueue@ for LeiosNotify
-  , maxLeiosFetchIngressQueue :: BytesSize
-  -- ^ @maximumIngressQueue@ for LeiosFetch
-  }
+-- * Voting
 
-demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
-demoLeiosFetchStaticEnv =
-  MkLeiosFetchStaticEnv
-    { maxRequestedBytesSize = 50 * million
-    , maxRequestedBytesSizePerPeer = 5 * million
-    , maxRequestBytesSize = 500 * thousand
-    , maxRequestsPerEb = 2
-    , maxRequestsPerTx = 2
-    , maxLeiosNotifyIngressQueue = 1 * millionBase2
-    , maxLeiosFetchIngressQueue = 50 * millionBase2
-    }
- where
-  million :: Num a => a
-  million = 10 ^ (6 :: Int)
-  millionBase2 :: Num a => a
-  millionBase2 = 2 ^ (20 :: Int)
-  thousand :: Num a => a
-  thousand = 10 ^ (3 :: Int)
-=======
+-- | Voter in a committee, identified by their seat index.
+newtype Voter = MkVoter {voterIndex :: Word16}
+  deriving Show
+
 -- * Tracing
->>>>>>> d367aad3a (Organize definitions in LeiosDemoTypes)
 
 messageLeiosFetchToObject ::
   Message (LeiosFetch LeiosPoint LeiosEb LeiosTx) st st' ->
@@ -570,6 +537,7 @@ data TraceLeiosKernel
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
   | TraceLeiosVoted {point :: LeiosPoint}
+  | TraceLeiosVoteAcquired {point :: LeiosPoint, voter :: Voter}
   | TraceLeiosDbException LeiosDbException
 
 deriving instance Show TraceLeiosKernel
@@ -620,6 +588,13 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosBlockVoted"
       , "slot" .= point.pointSlotNo
       , "hash" .= prettyEbHash point.pointEbHash
+      ]
+  TraceLeiosVoteAcquired{point, voter} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockVoteAcquired"
+      , "slot" .= point.pointSlotNo
+      , "hash" .= prettyEbHash point.pointEbHash
+      , "voter" .= voter.voterIndex
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
