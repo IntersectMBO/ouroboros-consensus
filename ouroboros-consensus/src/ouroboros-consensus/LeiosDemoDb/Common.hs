@@ -4,6 +4,7 @@
 module LeiosDemoDb.Common
   ( withLeiosDb
   , LeiosDbHandle (..)
+  , LeiosEbNotification (..)
   , LeiosDbConnection (..)
   , LeiosFetchWork (..)
   , CompletedEbs
@@ -19,7 +20,6 @@ import LeiosDemoTypes
   , EbHash
   , LeiosCertificate
   , LeiosEb
-  , LeiosNotification
   , LeiosPoint
   , TxHash
   )
@@ -31,14 +31,18 @@ withLeiosDb db action =
     action conn
 
 data LeiosDbHandle m = LeiosDbHandle
-  { subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosNotification)
+  { subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosEbNotification)
   -- ^ Subscribe to new EBs and EBTxs being stored by the LeiosDB. This will
   -- only inform about new additions, starting from when this function was
   -- called.
-  -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosNotification })
+  -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , open :: m (LeiosDbConnection m)
   -- ^ Open a new connection to the LeiosDb.
   }
+
+data LeiosEbNotification
+  = AcquiredEb LeiosPoint BytesSize
+  | AcquiredEbTxs LeiosPoint
 
 -- | Single connection to the LeiosDb.
 --
