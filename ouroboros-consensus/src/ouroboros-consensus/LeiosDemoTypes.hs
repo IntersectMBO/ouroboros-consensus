@@ -64,7 +64,7 @@ import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 import Text.Pretty.Simple (pShow)
 
-type BytesSize = Word32
+-- * Hashes and identities
 
 newtype PeerId a = MkPeerId a
   deriving (Eq, Ord)
@@ -478,6 +478,12 @@ decodeLeiosEb = do
   fmap MkLeiosEb $ V.generateM n $ \_i -> do
     (,) <$> (fmap MkTxHash CBOR.decodeBytes) <*> CBOR.decodeWord32
 
+-- * Voting
+
+-- | Voter in a committee, identified by their seat index.
+newtype Voter = MkVoter {voterIndex :: Word16}
+  deriving Show
+
 -- * Tracing
 
 messageLeiosFetchToObject ::
@@ -531,6 +537,7 @@ data TraceLeiosKernel
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
   | TraceLeiosVoted {point :: LeiosPoint}
+  | TraceLeiosVoteAcquired {point :: LeiosPoint, voter :: Voter}
   | TraceLeiosDbException LeiosDbException
 
 deriving instance Show TraceLeiosKernel
@@ -581,6 +588,13 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosBlockVoted"
       , "slot" .= point.pointSlotNo
       , "hash" .= prettyEbHash point.pointEbHash
+      ]
+  TraceLeiosVoteAcquired{point, voter} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockVoteAcquired"
+      , "slot" .= point.pointSlotNo
+      , "hash" .= prettyEbHash point.pointEbHash
+      , "voter" .= voter.voterIndex
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
