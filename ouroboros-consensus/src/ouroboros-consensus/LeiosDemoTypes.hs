@@ -439,9 +439,39 @@ decodeLeiosEb = do
 
 -- * Voting
 
+-- | A selected committee in which each 'VoterId' has a 'Weight'.
+data Committee
+
+-- | A vote in the Leios protocol.
+data LeiosVote = MkLeiosVote
+  { electionId :: ElectionId
+  , ebHash :: EbHash
+  , voterId :: VoterId
+  , voteSignature :: VoteSignature
+  }
+
+-- | Identifier for the voting round. In Leios, this is the slot number of the
+-- EB to vote on.
+type ElectionId = SlotNo
+
 -- | Voter in a committee, identified by their seat index.
-newtype Voter = MkVoter {voterIndex :: Word16}
+newtype VoterId = MkVoterId {voterIndex :: Word16}
   deriving Show
+
+-- FIXME: proper signing of votes using BLS (SigDSIGN BLS12381MinSigDSIGN)
+type VoteSignature = Bool
+
+-- | Validate a 'LeiosVote' against a selected 'Commitee'.
+validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
+validateLeiosVote _ MkLeiosVote{voteSignature} =
+  -- FIXME: proper signing of votes
+  if not voteSignature
+    then Left InvalidSignature
+    else Right 1 -- FIXME: proper weights
+
+data VoteInvalid = InvalidSignature
+
+type Weight = Rational
 
 -- * Tracing
 
@@ -496,7 +526,7 @@ data TraceLeiosKernel
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
   | TraceLeiosVoted {point :: LeiosPoint}
-  | TraceLeiosVoteAcquired {point :: LeiosPoint, voter :: Voter}
+  | TraceLeiosVoteAcquired {point :: LeiosPoint, voter :: VoterId}
   | TraceLeiosDbException LeiosDbException
 
 deriving instance Show TraceLeiosKernel
