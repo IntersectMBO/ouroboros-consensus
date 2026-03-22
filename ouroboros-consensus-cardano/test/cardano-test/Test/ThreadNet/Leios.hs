@@ -142,6 +142,10 @@ prop_leios seed =
         & counterexample "not voted on all acquired EBs"
         & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
         & prettyCounterexampleList "voted on EBs" 120 votedPoints
+    , Map.keysSet acquiredVotes == votedPoints
+        & counterexample "created votes not diffused"
+        & prettyCounterexampleMap "acquired votes" 120 acquiredVotes
+        & prettyCounterexampleList "voted on EBs" 120 votedPoints
     ]
     & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
     & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
@@ -169,6 +173,10 @@ prop_leios seed =
 
   votedPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
     TraceLeiosVoted{point} -> Just point
+    _ -> Nothing
+
+  acquiredVotes = Map.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosVoteAcquired{point, voter} -> Just (point, voter)
     _ -> Nothing
 
   mempoolTraces = traces ^.. each . _nodeEvent . _FromMempool

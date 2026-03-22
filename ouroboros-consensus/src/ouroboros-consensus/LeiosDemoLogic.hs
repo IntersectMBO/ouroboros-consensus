@@ -346,6 +346,8 @@ leiosFetchLogicIteration env offerings =
               Just (_ebHash, txOffset) -> case Map.lookup point (Leios.missingEbTxs acc) of
                 Nothing -> error "impossible!"
                 Just v -> case IntMap.lookup txOffset v of
+                  -- FIXME: The impossible happened a couple times now; seen on threadnet, e.g.
+                  -- quickcheck-replay="(SMGen 6167466632372597732 16114949122102642019,0)"
                   Nothing -> error "impossible!"
                   Just (_txHash, x) -> x
             accNew' =
