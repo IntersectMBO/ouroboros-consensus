@@ -458,9 +458,17 @@ initNodeKernel
 
     void $ forkLinkedThread registry "NodeKernel.leiosVoting" $ forever $ do
       let tracer = leiosKernelTracer tracers
+      -- Find vote candidates
+      -- TODO: get notified on new EBs acquired and filter not too old
+      -- TODO: or: poll available EBs that are not too old
+      -- For each candidate
+      -- TODO: check whether already voted
+      -- TODO: validate EB closures
+      -- TODO: create vote
       -- FIXME: fake it till you make it
       let point = MkLeiosPoint (SlotNo 0) (hashLeiosEb $ MkLeiosEb mempty)
       traceWith tracer TraceLeiosVoted{point}
+      -- TODO: store vote in memory and notify downstream peers
       threadDelay 5
 
     return
