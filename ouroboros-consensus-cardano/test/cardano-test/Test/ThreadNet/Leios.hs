@@ -74,7 +74,7 @@ import Test.QuickCheck
   , withMaxSuccess
   , (===)
   )
-import Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestTree)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.ThreadNet.General
   ( TestConfig (..)
@@ -114,14 +114,11 @@ import Test.Util.Slots (NumSlots (..))
 
 tests :: TestTree
 tests =
-  testGroup
-    "Leios ThreadNet"
-    [ testProperty "EB production" $
-        withMaxSuccess 1 prop_leios_blocksProduced
-    ]
+  testProperty "Leios ThreadNet" $
+    withMaxSuccess 10 prop_leios
 
-prop_leios_blocksProduced :: Seed -> Property
-prop_leios_blocksProduced seed =
+prop_leios :: Seed -> Property
+prop_leios seed =
   conjoin
     [ isNothing testOutput.exceptionThrown
         & counterexample "test threw an exception"
@@ -139,6 +136,8 @@ prop_leios_blocksProduced seed =
         & counterexample "endorser blocks not fully diffused"
         & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
         & prettyCounterexampleList "forged leios EBs" 120 forgedPoints
+    , length votedPoints > 0
+        & counterexample "never voted"
     ]
     & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
     & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
@@ -162,6 +161,10 @@ prop_leios_blocksProduced seed =
 
   acquiredPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
     TraceLeiosBlockTxsAcquired point -> Just point
+    _ -> Nothing
+
+  votedPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosVoted{point} -> Just point
     _ -> Nothing
 
   mempoolTraces = traces ^.. each . _nodeEvent . _FromMempool

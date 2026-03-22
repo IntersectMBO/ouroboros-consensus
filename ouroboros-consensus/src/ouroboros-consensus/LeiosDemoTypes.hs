@@ -1,10 +1,12 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -513,6 +515,7 @@ data TraceLeiosKernel
       , mempoolRestMeasure :: m
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
+  | TraceLeiosVoted {point :: LeiosPoint}
   | TraceLeiosDbException LeiosDbException
 
 deriving instance Show TraceLeiosKernel
@@ -557,6 +560,12 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosBlockStored"
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
+      ]
+  TraceLeiosVoted{point} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockVoted"
+      , "slot" .= point.pointSlotNo
+      , "hash" .= prettyEbHash point.pointEbHash
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
