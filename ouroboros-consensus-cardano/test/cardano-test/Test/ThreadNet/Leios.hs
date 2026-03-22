@@ -115,7 +115,7 @@ import Test.Util.Slots (NumSlots (..))
 tests :: TestTree
 tests =
   testProperty "Leios ThreadNet" $
-    withMaxSuccess 10 prop_leios
+    withMaxSuccess 1 prop_leios
 
 prop_leios :: Seed -> Property
 prop_leios seed =

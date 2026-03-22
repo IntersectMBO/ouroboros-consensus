@@ -459,9 +459,9 @@ demoLeiosFetchStaticEnv =
 
 -----
 
-data LeiosNotification
-  = LeiosOfferBlock LeiosPoint BytesSize
-  | LeiosOfferBlockTxs LeiosPoint
+data LeiosEbNotification
+  = AcquiredEb LeiosPoint BytesSize
+  | AcquiredEbTxs LeiosPoint
 
 -----
 

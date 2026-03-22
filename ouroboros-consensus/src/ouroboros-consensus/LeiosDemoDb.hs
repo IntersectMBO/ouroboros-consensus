@@ -51,7 +51,7 @@ import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
   , LeiosEb
-  , LeiosNotification (..)
+  , LeiosEbNotification (..)
   , LeiosPoint (..)
   , TxHash (..)
   , leiosEbBodyItems
@@ -71,10 +71,8 @@ import System.Exit (die)
 -- original low-level SQL code where multiple operations could be grouped in a
 -- single BEGIN/COMMIT block. For use cases requiring multi-operation atomicity,
 -- consider adding batch operations to this interface.
---
--- TODO: use LeiosPoint and LeiosEb types in the interface instead of raw tuples.
 data LeiosDbHandle m = LeiosDbHandle
-  { subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosNotification)
+  { subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosEbNotification)
   -- ^ Subscribe to new EBs and EBTxs being stored by the LeiosDB. This will
   -- only inform about new additions, starting from when this function was
   -- called.
@@ -89,13 +87,13 @@ data LeiosDbHandle m = LeiosDbHandle
   -- - Missing EB bodies: EBs in ebPoints without entries in ebTxs
   -- - Missing TXs: TXs in ebTxs without entries in txs
   -- NOTE: This is O(n) and should only be used at startup for initialization.
-  , -- NOTE: yields a LeiosOfferBlock notification
+  , -- NOTE: yields a AcquiredEb notification
     leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m ()
   , -- TODO: Take [LeiosTx] and hash on insert?
     leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
   -- ^ Insert transactions into the global txs table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
-  -- and emits LeiosOfferBlockTxs notifications for each.
+  -- and emits AcquiredEbTxs notifications for each.
   --
   -- NOTE: Duplicate notifications may be emitted if the same EB becomes
   -- complete via multiple insert batches (e.g., if txs are inserted twice).
@@ -215,7 +213,7 @@ newLeiosDBInMemoryWith stateVar = do
                 { imEbBodies = Map.insert point.pointEbHash entries (imEbBodies s)
                 , imEbSlots = Map.insert point.pointEbHash point.pointSlotNo (imEbSlots s)
                 }
-            notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
+            notify $ AcquiredEb point (leiosEbBytesSize eb)
       , leiosDbInsertTxs = \txs -> atomically $ do
           -- Insert all txs into global txs table
           let insertedTxHashes = [txHash | (txHash, _) <- txs]
@@ -236,7 +234,7 @@ newLeiosDBInMemoryWith stateVar = do
                 , all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
                 , slot <- maybeToList $ Map.lookup ebHash (imEbSlots state)
                 ]
-          forM_ completed $ notify . LeiosOfferBlockTxs
+          forM_ completed $ notify . AcquiredEbTxs
           pure completed
       , leiosDbBatchRetrieveTxs = \ebHash offsets -> atomically $ do
           state <- readTVar stateVar
@@ -374,7 +372,7 @@ newLeiosDBSQLite dbPath = do
                   dbReset stmt
               )
               items
-          notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
+          notify $ AcquiredEb point (leiosEbBytesSize eb)
       , leiosDbInsertTxs = \txs -> do
           -- Insert all txs into global txs table, then check for newly-complete EBs
           completed <- dbWithBEGIN db $ do
@@ -406,7 +404,7 @@ newLeiosDBSQLite dbPath = do
               ebMap <- foldM checkTxHash Map.empty txs
               pure [MkLeiosPoint slot ebHash | (ebHash, slot) <- Map.toList ebMap]
           -- Emit notifications for each completed EB
-          forM_ completed $ notify . LeiosOfferBlockTxs
+          forM_ completed $ notify . AcquiredEbTxs
           pure completed
       , leiosDbBatchRetrieveTxs = \ebHash offsets -> dbWithBEGIN db $ do
           -- First, insert offsets into temp table

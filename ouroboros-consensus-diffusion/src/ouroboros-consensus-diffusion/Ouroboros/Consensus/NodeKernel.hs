@@ -154,6 +154,7 @@ import System.Random (StdGen)
 
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import LeiosDemoDb
@@ -165,12 +166,10 @@ import LeiosDemoDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
   ( ForgedLeiosEb
-  , LeiosEb (..)
+  , LeiosEbNotification (..)
   , LeiosOutstanding
   , LeiosPeerVars
-  , LeiosPoint (..)
   , TraceLeiosKernel (..)
-  , hashLeiosEb
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
@@ -456,20 +455,27 @@ initNodeKernel
       traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
       threadDelay $ loopInterval - duration
 
-    void $ forkLinkedThread registry "NodeKernel.leiosVoting" $ forever $ do
+    void $ forkLinkedThread registry "NodeKernel.leiosVoting" $ do
       let tracer = leiosKernelTracer tracers
-      -- Find vote candidates
-      -- TODO: get notified on new EBs acquired and filter not too old
-      -- TODO: or: poll available EBs that are not too old
-      -- For each candidate
-      -- TODO: check whether already voted
-      -- TODO: validate EB closures
-      -- TODO: create vote
-      -- FIXME: fake it till you make it
-      let point = MkLeiosPoint (SlotNo 0) (hashLeiosEb $ MkLeiosEb mempty)
-      traceWith tracer TraceLeiosVoted{point}
-      -- TODO: store vote in memory and notify downstream peers
-      threadDelay 5
+      -- Subscribe to EBs for which we have the full closure
+      chan <- subscribeEbNotifications leiosDB
+      let getNext f =
+            atomically (readTChan chan) >>= \case
+              AcquiredEb{} -> pure ()
+              AcquiredEbTxs point -> f point
+      forever $ do
+        -- TODO: Need to poll available EBs instead? Otherwise we would not vote
+        -- when we switch to a chain only later
+        getNext $ \point -> do
+          -- FIXME: check not too old; use tip or wall clock time?
+          let tooOld = const False
+          unless (tooOld point) $ do
+            -- TODO: check whether already voted
+            -- TODO: validate EB closures against selected chain
+            -- TODO: create vote (sign the eb hash)
+            -- TODO: store vote in memory and notify downstream peers
+            -- FIXME: fake it till you make it
+            traceWith tracer TraceLeiosVoted{point}
 
     return
       NodeKernel

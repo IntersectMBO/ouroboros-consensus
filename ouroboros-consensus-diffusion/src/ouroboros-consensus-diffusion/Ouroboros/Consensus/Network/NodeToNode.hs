@@ -71,7 +71,7 @@ import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
 import LeiosDemoTypes
   ( LeiosEb
-  , LeiosNotification (..)
+  , LeiosEbNotification (..)
   , LeiosPoint (..)
   , LeiosTx
   , TraceLeiosPeer (..)
@@ -381,9 +381,9 @@ mkHandlers
           chan <- subscribeEbNotifications leiosDB
           pure . leiosNotifyServerPeer $ do
             atomically (readTChan chan) >>= \case
-              LeiosOfferBlock point ebSize ->
+              AcquiredEb point ebSize ->
                 pure $ MsgLeiosBlockOffer point ebSize
-              LeiosOfferBlockTxs point ->
+              AcquiredEbTxs point ->
                 pure $ MsgLeiosBlockTxsOffer point
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           reqVar <-
