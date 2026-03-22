@@ -740,8 +740,8 @@ sqlQueryCompletedEbByPoint =
   unlines
     [ "SELECT ebTx.txHashBytes, tx.txBytes"
     , "FROM ebTxs as ebTx"
-    , "WHERE ebTx.ebHashBytes = ?"
     , "LEFT JOIN txs as tx ON ebTx.txHashBytes = tx.txHashBytes"
+    , "WHERE ebTx.ebHashBytes = ?"
     , "ORDER BY ebTx.txOffset ASC"
     ]
 
