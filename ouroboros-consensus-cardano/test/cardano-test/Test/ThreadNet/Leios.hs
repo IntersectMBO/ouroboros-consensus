@@ -198,8 +198,14 @@ prop_leios seed =
     _ -> Nothing
 
   propVoting =
-    length votedPoints > 0
-      & counterexample "never voted"
+    conjoin
+      [ length votedPoints > 0
+          & counterexample "never voted"
+      , acquiredPoints `Set.isSubsetOf` votedPoints
+          & counterexample "not voted on all acquired EBs"
+          & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
+          & prettyCounterexampleList "voted on EBs" 120 votedPoints
+      ]
 
   votedPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
     TraceLeiosVoted{point} -> Just point
