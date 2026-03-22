@@ -138,6 +138,10 @@ prop_leios seed =
         & prettyCounterexampleList "forged leios EBs" 120 forgedPoints
     , length votedPoints > 0
         & counterexample "never voted"
+    , acquiredPoints `Set.isSubsetOf` votedPoints
+        & counterexample "not voted on all acquired EBs"
+        & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
+        & prettyCounterexampleList "voted on EBs" 120 votedPoints
     ]
     & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
     & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
