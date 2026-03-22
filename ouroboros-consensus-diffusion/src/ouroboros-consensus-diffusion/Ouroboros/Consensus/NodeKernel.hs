@@ -159,6 +159,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import LeiosDemoDb
   ( LeiosDbHandle (..)
+  , LeiosEbNotification (..)
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
@@ -166,7 +167,6 @@ import LeiosDemoDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
   ( ForgedLeiosEb
-  , LeiosEbNotification (..)
   , LeiosOutstanding
   , LeiosPeerVars
   , TraceLeiosKernel (..)

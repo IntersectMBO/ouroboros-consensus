@@ -65,13 +65,12 @@ import qualified Data.Map as Map
 import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Void (Void)
-import LeiosDemoDb (LeiosDbHandle (subscribeEbNotifications))
+import LeiosDemoDb (LeiosDbHandle (subscribeEbNotifications), LeiosEbNotification (..))
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
 import LeiosDemoTypes
   ( LeiosEb
-  , LeiosEbNotification (..)
   , LeiosPoint (..)
   , LeiosTx
   , TraceLeiosPeer (..)

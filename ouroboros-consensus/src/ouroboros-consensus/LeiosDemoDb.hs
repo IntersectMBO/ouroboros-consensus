@@ -51,7 +51,6 @@ import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
   , LeiosEb
-  , LeiosEbNotification (..)
   , LeiosPoint (..)
   , TxHash (..)
   , leiosEbBodyItems
@@ -108,6 +107,10 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
   , leiosDbClose :: m ()
   }
+
+data LeiosEbNotification
+  = AcquiredEb LeiosPoint BytesSize
+  | AcquiredEbTxs LeiosPoint
 
 type CompletedEbs = [LeiosPoint]
 
