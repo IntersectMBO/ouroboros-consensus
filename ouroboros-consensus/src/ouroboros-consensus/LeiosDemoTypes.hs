@@ -131,7 +131,9 @@ instance FromCBOR EbAnnouncement where
     enforceSize "EbAnnouncement" 2
     EbAnnouncement <$> decode <*> decode
 
------
+-- * Fetch logic types
+
+type BytesSize = Word32
 
 data LeiosFetchRequest
   = LeiosBlockRequest LeiosBlockRequest
@@ -168,8 +170,6 @@ prettyBitmap (idx, bitmap) =
   n = Bits.countLeadingZeros bitmap
 
   padding = replicate (n `div` 4) '0'
-
------
 
 --
 -- Compare the following data types to the @LeiosFetchDynamicEnv@ and
@@ -313,7 +313,45 @@ prettyLeiosOutstanding x =
     , blockingPerEb
     } = x
 
------
+-- TODO which of these limits are allowed to be exceeded by at most one
+-- request?
+data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
+  { maxRequestedBytesSize :: BytesSize
+  -- ^ At most this many outstanding bytes requested from all peers together
+  , maxRequestedBytesSizePerPeer :: BytesSize
+  -- ^ At most this many outstanding bytes requested from each peer
+  , maxRequestBytesSize :: BytesSize
+  -- ^ At most this many outstanding bytes per request
+  , maxRequestsPerEb :: Int
+  -- ^ At most this many outstanding requests for each EB body
+  , maxRequestsPerTx :: Int
+  -- ^ At most this many outstanding requests for each individual tx
+  , maxLeiosNotifyIngressQueue :: BytesSize
+  -- ^ @maximumIngressQueue@ for LeiosNotify
+  , maxLeiosFetchIngressQueue :: BytesSize
+  -- ^ @maximumIngressQueue@ for LeiosFetch
+  }
+
+demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
+demoLeiosFetchStaticEnv =
+  MkLeiosFetchStaticEnv
+    { maxRequestedBytesSize = 50 * million
+    , maxRequestedBytesSizePerPeer = 5 * million
+    , maxRequestBytesSize = 500 * thousand
+    , maxRequestsPerEb = 2
+    , maxRequestsPerTx = 2
+    , maxLeiosNotifyIngressQueue = 1 * millionBase2
+    , maxLeiosFetchIngressQueue = 50 * millionBase2
+    }
+ where
+  million :: Num a => a
+  million = 10 ^ (6 :: Int)
+  millionBase2 :: Num a => a
+  millionBase2 = 2 ^ (20 :: Int)
+  thousand :: Num a => a
+  thousand = 10 ^ (3 :: Int)
+
+-- * LeiosTx newtype
 
 -- | A wrapper around transaction bytes for the simple purpose of serving them.
 -- This typically contains a CBOR-encoded 'Tx era'.
@@ -335,6 +373,8 @@ decodeLeiosTx =
 hashLeiosTx :: LeiosTx -> TxHash
 hashLeiosTx =
   MkTxHash . Hash.hashToBytes . Hash.hashWith @HASH cbor
+
+-- * Endorser Block
 
 -- | An Endorser Block as it is submitted through the network.
 -- TODO: Keep track of the slot of an EB?
@@ -438,65 +478,7 @@ decodeLeiosEb = do
   fmap MkLeiosEb $ V.generateM n $ \_i -> do
     (,) <$> (fmap MkTxHash CBOR.decodeBytes) <*> CBOR.decodeWord32
 
------
-
-maxMsgLeiosBlockBytesSize :: BytesSize
-maxMsgLeiosBlockBytesSize = 500 * 10 ^ (3 :: Int) -- from CIP-0164's recommendations
-
-minEbItemBytesSize :: BytesSize
-minEbItemBytesSize = (32 - hashOverhead) + minSizeOverhead
- where
-  hashOverhead = 1 + 1 -- bytestring major byte + a length = 32
-  minSizeOverhead = 1 + 1 -- int major byte + a value at low as 55
-
-maxTxsPerEb :: Int
-maxTxsPerEb =
-  fromIntegral $
-    (maxMsgLeiosBlockBytesSize - msgOverhead - sequenceOverhead)
-      `div` minEbItemBytesSize
- where
-  msgOverhead = 1 + 1 -- short list len + small word
-  sequenceOverhead = 1 + 2 -- sequence major byte + a length > 255
-
------
-
--- TODO which of these limits are allowed to be exceeded by at most one
--- request?
-data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
-  { maxRequestedBytesSize :: BytesSize
-  -- ^ At most this many outstanding bytes requested from all peers together
-  , maxRequestedBytesSizePerPeer :: BytesSize
-  -- ^ At most this many outstanding bytes requested from each peer
-  , maxRequestBytesSize :: BytesSize
-  -- ^ At most this many outstanding bytes per request
-  , maxRequestsPerEb :: Int
-  -- ^ At most this many outstanding requests for each EB body
-  , maxRequestsPerTx :: Int
-  -- ^ At most this many outstanding requests for each individual tx
-  , maxLeiosNotifyIngressQueue :: BytesSize
-  -- ^ @maximumIngressQueue@ for LeiosNotify
-  , maxLeiosFetchIngressQueue :: BytesSize
-  -- ^ @maximumIngressQueue@ for LeiosFetch
-  }
-
-demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
-demoLeiosFetchStaticEnv =
-  MkLeiosFetchStaticEnv
-    { maxRequestedBytesSize = 50 * million
-    , maxRequestedBytesSizePerPeer = 5 * million
-    , maxRequestBytesSize = 500 * thousand
-    , maxRequestsPerEb = 2
-    , maxRequestsPerTx = 2
-    , maxLeiosNotifyIngressQueue = 1 * millionBase2
-    , maxLeiosFetchIngressQueue = 50 * millionBase2
-    }
- where
-  million :: Num a => a
-  million = 10 ^ (6 :: Int)
-  millionBase2 :: Num a => a
-  millionBase2 = 2 ^ (20 :: Int)
-  thousand :: Num a => a
-  thousand = 10 ^ (3 :: Int)
+-- * Tracing
 
 messageLeiosFetchToObject ::
   Message (LeiosFetch LeiosPoint LeiosEb LeiosTx) st st' ->
@@ -612,6 +594,26 @@ traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
 traceLeiosPeerToObject = \case
   MkTraceLeiosPeer s -> fromString "msg" .= Aeson.String (fromString s)
   TraceLeiosPeerDbException e -> jsonLeiosDbException e
+
+-- * Protocol parameters
+
+maxMsgLeiosBlockBytesSize :: BytesSize
+maxMsgLeiosBlockBytesSize = 500 * 10 ^ (3 :: Int) -- from CIP-0164's recommendations
+
+minEbItemBytesSize :: BytesSize
+minEbItemBytesSize = (32 - hashOverhead) + minSizeOverhead
+ where
+  hashOverhead = 1 + 1 -- bytestring major byte + a length = 32
+  minSizeOverhead = 1 + 1 -- int major byte + a value at low as 55
+
+maxTxsPerEb :: Int
+maxTxsPerEb =
+  fromIntegral $
+    (maxMsgLeiosBlockBytesSize - msgOverhead - sequenceOverhead)
+      `div` minEbItemBytesSize
+ where
+  msgOverhead = 1 + 1 -- short list len + small word
+  sequenceOverhead = 1 + 2 -- sequence major byte + a length > 255
 
 leiosMempoolSize :: ByteSize32
 leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))
