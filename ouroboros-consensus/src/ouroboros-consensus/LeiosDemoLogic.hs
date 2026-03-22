@@ -590,6 +590,8 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
         -- the fetching logic does download it. This results in a duplicate
         -- insert here. We can of course make the database ignore the
         -- duplicates, but we should have not even fetched it.
+        -- REVIEW: ^^^^ this should be resolved
+        -- TODO: This was encountered again, but likely because of a race on two fetches.
         leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
     -- update NodeKernel state
