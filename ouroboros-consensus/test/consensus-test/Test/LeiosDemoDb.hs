@@ -151,6 +151,13 @@ mkTestGroups impl =
       , testProperty "returns only missing TXs" $ prop_filterTxsCorrect impl
       , testProperty "filter performance" $ prop_filterTxsPerformance impl
       ]
+  , testGroup
+      "queryCompletedEbByPoint"
+      [ testProperty "complete EB returns Just with tx data" $ prop_completedEbComplete impl
+      , testProperty "no txs returns Nothing" $ prop_completedEbMissingTxs impl
+      , testProperty "partial txs returns Nothing" $ prop_completedEbPartialTxs impl
+      , testProperty "no body returns Nothing" $ prop_completedEbNoBody impl
+      ]
   ]
 
 -- * QuickCheck generators
@@ -975,6 +982,93 @@ prop_filterTxsPerformance impl =
     numMissing <- chooseInt (1, max 1 (size * 20))
     pure (numInserted, numMissing)
   shrinkPerfParams (a, b) = [(a', b) | a' <- shrink a, a' >= 1] ++ [(a, b') | b' <- shrink b, b' >= 1]
+
+-- * Property tests for queryCompletedEbByPoint
+
+-- | Property: complete EB (all txs inserted) returns Just with correct tx data.
+prop_completedEbComplete :: DbImpl -> Property
+prop_completedEbComplete impl =
+  forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
+    forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
+      forAllBlind genTxBytes $ \txBytes ->
+        ioProperty $ withFreshDb impl $ \db -> do
+          leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
+          leiosDbInsertEbBody db point eb
+          let ebTxList = V.toList (leiosEbTxs eb)
+              txsToInsert = [(txHash, txBytes) | (txHash, _size) <- ebTxList]
+          _ <- leiosDbInsertTxs db txsToInsert
+          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint db point
+          let expectedHashes = map fst txsToInsert
+              check = case result of
+                Nothing ->
+                  False & counterexample "Expected Just, got Nothing"
+                Just txData ->
+                  conjoin
+                    [ length txData === numTxs
+                        & counterexample "Wrong number of txs"
+                    , all (`elem` map fst txData) expectedHashes
+                        & counterexample "Missing expected tx hashes"
+                    , all (== txBytes) (map snd txData)
+                        & counterexample "Wrong tx bytes"
+                    ]
+          pure $
+            check
+              & tabulate "queryCompletedEbByPoint (complete)" [timeBucket queryTime]
+              & tabulate "numTxs" [magnitudeBucket numTxs]
+
+-- | Property: EB with body but no txs returns Nothing.
+prop_completedEbMissingTxs :: DbImpl -> Property
+prop_completedEbMissingTxs impl =
+  forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
+    forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
+      ioProperty $ withFreshDb impl $ \db -> do
+        leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
+        leiosDbInsertEbBody db point eb
+        (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint db point
+        pure $
+          result === Nothing
+            & counterexample "Expected Nothing when no txs are present"
+            & tabulate "queryCompletedEbByPoint (no txs)" [timeBucket queryTime]
+            & tabulate "numTxs" [magnitudeBucket numTxs]
+
+-- | Property: EB with partial txs (at least one missing) returns Nothing.
+prop_completedEbPartialTxs :: DbImpl -> Property
+prop_completedEbPartialTxs impl =
+  forAllShrinkShow (chooseInt (2, 20)) shrink show $ \numTxs ->
+    forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
+      forAllBlind genTxBytes $ \txBytes ->
+        ioProperty $ withFreshDb impl $ \db -> do
+          leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
+          leiosDbInsertEbBody db point eb
+          -- Insert only the first half of txs, leaving at least one missing
+          let ebTxList = V.toList (leiosEbTxs eb)
+              partialTxs = take (numTxs `div` 2) ebTxList
+              txsToInsert = [(txHash, txBytes) | (txHash, _size) <- partialTxs]
+          _ <- leiosDbInsertTxs db txsToInsert
+          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint db point
+          pure $
+            result === Nothing
+              & counterexample
+                ( "Expected Nothing with "
+                    ++ show (length txsToInsert)
+                    ++ "/"
+                    ++ show numTxs
+                    ++ " txs present"
+                )
+              & tabulate "queryCompletedEbByPoint (partial txs)" [timeBucket queryTime]
+              & tabulate "numTxs" [magnitudeBucket numTxs]
+
+-- | Property: EB with only a point announced (no body) returns Nothing.
+prop_completedEbNoBody :: DbImpl -> Property
+prop_completedEbNoBody impl =
+  forAll genPoint $ \point ->
+    ioProperty $ withFreshDb impl $ \db -> do
+      leiosDbInsertEbPoint db point 1000
+      (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint db point
+      pure $
+        result === Nothing
+          & counterexample "Expected Nothing for EB with no body inserted"
+          & tabulate "queryCompletedEbByPoint (no body)" [timeBucket queryTime]
 
 -- | Split a list into chunks of given size.
 chunksOf :: Int -> [a] -> [[a]]

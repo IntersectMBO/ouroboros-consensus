@@ -288,19 +288,18 @@ newLeiosDBInMemoryWith stateVar = do
           pure LeiosFetchWork{missingEbBodies, missingEbTxs}
       , leiosDbQueryCompletedEbByPoint = \ebPoint -> atomically $ do
           state <- readTVar stateVar
-          let ebTxHashes =
-                [ eteTxHash entry
-                | entries <- maybeToList $ Map.lookup (pointEbHash ebPoint) (imEbBodies state)
-                , (_key, entry) <- IntMap.toList entries
-                ]
-              txClosure =
-                [ (ebTxHash, tx)
-                | ebTxHash <- ebTxHashes
-                , (tx, _txSize) <- maybeToList (Map.lookup ebTxHash (imTxs state))
-                ]
-          if length ebTxHashes == length txClosure
-            then pure (Just txClosure)
-            else pure Nothing
+          case Map.lookup (pointEbHash ebPoint) (imEbBodies state) of
+            Nothing -> pure Nothing
+            Just entries ->
+              let ebTxHashes = [eteTxHash e | e <- IntMap.elems entries]
+                  txClosure =
+                    [ (ebTxHash, tx)
+                    | ebTxHash <- ebTxHashes
+                    , (tx, _txSize) <- maybeToList (Map.lookup ebTxHash (imTxs state))
+                    ]
+               in if length ebTxHashes == length txClosure
+                    then pure (Just txClosure)
+                    else pure Nothing
       , leiosDbQueryCertificateByPoint = \_ebPoint -> return $ Just trustNoVerifyLeiosCertificate -- FIXME(bladyjoker): Mocked
       , leiosDbClose = pure ()
       }
@@ -538,7 +537,9 @@ newLeiosDBSQLite dbPath = do
             -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key .. dbBindBlob stmt 2 (unSlotNo . pointSlotNo $ ebPoint)
             let loop acc =
                   dbStep stmt >>= \case
-                    DB.Done -> pure $ Just (reverse acc)
+                    DB.Done ->
+                      -- No rows means the EB body hasn't been downloaded yet
+                      if null acc then pure Nothing else pure $ Just (reverse acc)
                     DB.Row -> do
                       txHash <- MkTxHash <$> DB.columnBlob stmt 0
                       txBytes :: ByteString <- DB.columnBlob stmt 1
