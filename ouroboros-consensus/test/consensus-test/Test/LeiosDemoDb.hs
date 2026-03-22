@@ -23,6 +23,7 @@ import Data.Time.Clock (DiffTime)
 import qualified Data.Vector as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
+  , LeiosEbNotification (..)
   , LeiosFetchWork (..)
   , leiosDbBatchRetrieveTxs
   , leiosDbFilterMissingEbBodies
@@ -42,7 +43,6 @@ import LeiosDemoDb
 import LeiosDemoTypes
   ( EbHash (..)
   , LeiosEb (..)
-  , LeiosNotification (..)
   , LeiosPoint (..)
   , TxHash (..)
   , leiosEbBytesSize
@@ -428,10 +428,10 @@ test_singleSubscriber db = do
     leiosDbInsertEbBody con point eb
   notification <- atomically $ readTChan chan
   case notification of
-    LeiosOfferBlock notifPoint _ ->
+    AcquiredEb notifPoint _ ->
       notifPoint @?= point
-    LeiosOfferBlockTxs _ ->
-      assertFailure "expected LeiosOfferBlock, got LeiosOfferBlockTxs"
+    AcquiredEbTxs _ ->
+      assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
 -- | Test that multiple subscribers each receive the notification.
 test_multipleSubscribers :: LeiosDbHandle IO -> IO ()
@@ -452,7 +452,7 @@ test_multipleSubscribers db = do
   assertOfferBlock point notif2
   assertOfferBlock point notif3
 
--- | Test that the notification contains the correct LeiosOfferBlock data.
+-- | Test that the notification contains the correct AcquiredEb data.
 test_correctData :: LeiosDbHandle IO -> IO ()
 test_correctData db = do
   chan <- subscribeEbNotifications db
@@ -464,12 +464,12 @@ test_correctData db = do
     leiosDbInsertEbBody con point eb
   notification <- atomically $ readTChan chan
   case notification of
-    LeiosOfferBlock notifPoint notifSize -> do
+    AcquiredEb notifPoint notifSize -> do
       notifPoint.pointSlotNo @?= point.pointSlotNo
       notifPoint.pointEbHash @?= point.pointEbHash
       notifSize @?= expectedSize
-    LeiosOfferBlockTxs _ ->
-      assertFailure "expected LeiosOfferBlock, got LeiosOfferBlockTxs"
+    AcquiredEbTxs _ ->
+      assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
 -- | Test that a subscriber who subscribes after an insertion does not receive
 -- the past notification.
@@ -517,7 +517,7 @@ test_multipleNotifications db = do
     (uncurry assertOfferBlock)
     (zip points notifications)
 
--- | Test that no LeiosOfferBlockTxs notification is produced when only some
+-- | Test that no AcquiredEbTxs notification is produced when only some
 -- transactions have been inserted via leiosDbInsertTxs.
 test_noOfferBlockTxsBeforeComplete :: LeiosDbHandle IO -> IO ()
 test_noOfferBlockTxsBeforeComplete db = do
@@ -542,7 +542,7 @@ test_noOfferBlockTxsBeforeComplete db = do
       Nothing -> pure ()
       Just _ -> assertFailure "should not notify before all txs are inserted"
 
--- | Test that a LeiosOfferBlockTxs notification is produced when all
+-- | Test that a AcquiredEbTxs notification is produced when all
 -- transactions are inserted via leiosDbInsertTxs.
 test_offerBlockTxs :: LeiosDbHandle IO -> IO ()
 test_offerBlockTxs db = do
@@ -665,21 +665,21 @@ prop_fetchWorkCompleteTxs impl =
 
 -- * Test utilities
 
--- | Assert that a notification is LeiosOfferBlock with the expected point.
-assertOfferBlock :: LeiosPoint -> LeiosNotification -> IO ()
+-- | Assert that a notification is AcquiredEb with the expected point.
+assertOfferBlock :: LeiosPoint -> LeiosEbNotification -> IO ()
 assertOfferBlock expectedPoint = \case
-  LeiosOfferBlock actualPoint _ ->
+  AcquiredEb actualPoint _ ->
     actualPoint @?= expectedPoint
-  LeiosOfferBlockTxs _ ->
-    assertFailure "expected LeiosOfferBlock, got LeiosOfferBlockTxs"
+  AcquiredEbTxs _ ->
+    assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
--- | Assert that a notification is LeiosOfferBlockTxs with the expected point.
-assertOfferBlockTxs :: LeiosPoint -> LeiosNotification -> IO ()
+-- | Assert that a notification is AcquiredEbTxs with the expected point.
+assertOfferBlockTxs :: LeiosPoint -> LeiosEbNotification -> IO ()
 assertOfferBlockTxs expectedPoint = \case
-  LeiosOfferBlockTxs actualPoint ->
+  AcquiredEbTxs actualPoint ->
     actualPoint @?= expectedPoint
-  LeiosOfferBlock _ _ ->
-    assertFailure "expected LeiosOfferBlockTxs, got LeiosOfferBlock"
+  AcquiredEb _ _ ->
+    assertFailure "expected AcquiredEbTxs, got AcquiredEb"
 
 -- * Property tests for filterHaveEbBodies
 

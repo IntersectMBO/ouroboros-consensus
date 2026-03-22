@@ -65,14 +65,16 @@ import qualified Data.Map as Map
 import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Void (Void)
-import LeiosDemoDb (LeiosDbHandle (subscribeEbNotifications))
+import LeiosDemoDb
+  ( LeiosDbHandle (subscribeEbNotifications)
+  , LeiosEbNotification (..)
+  )
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
 import LeiosDemoTypes
   ( LeiosEb
-  , LeiosNotification (..)
   , LeiosPoint (..)
   , LeiosTx
   , TraceLeiosPeer (..)
@@ -382,9 +384,9 @@ mkHandlers
           chan <- subscribeEbNotifications leiosDB
           pure . leiosNotifyServerPeer $ do
             atomically (readTChan chan) >>= \case
-              LeiosOfferBlock point ebSize ->
+              AcquiredEb point ebSize ->
                 pure $ MsgLeiosBlockOffer point ebSize
-              LeiosOfferBlockTxs point ->
+              AcquiredEbTxs point ->
                 pure $ MsgLeiosBlockTxsOffer point
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           reqVar <-

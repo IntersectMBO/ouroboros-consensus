@@ -49,6 +49,7 @@ import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosEbNotification (..)
   , LeiosFetchWork (..)
   )
 import LeiosDemoException (LeiosDbException (..))
@@ -56,7 +57,6 @@ import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
   , LeiosEb
-  , LeiosNotification (..)
   , LeiosPoint (..)
   , TxHash (..)
   , leiosEbBodyItems
@@ -98,7 +98,7 @@ newLeiosDBSQLite dbPath = do
 
 -- * Connection management
 
-openSQLiteConnection :: FilePath -> StrictTChan IO LeiosNotification -> IO (LeiosDbConnection IO)
+openSQLiteConnection :: FilePath -> StrictTChan IO LeiosEbNotification -> IO (LeiosDbConnection IO)
 openSQLiteConnection dbPath notificationChan = do
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault
@@ -174,7 +174,7 @@ sqlLookupEbBody db ebHash =
               loop ((txHash, size) : acc)
     loop []
 
-sqlInsertEbBody :: DB.Database -> (LeiosNotification -> IO ()) -> LeiosPoint -> LeiosEb -> IO ()
+sqlInsertEbBody :: DB.Database -> (LeiosEbNotification -> IO ()) -> LeiosPoint -> LeiosEb -> IO ()
 sqlInsertEbBody db notify point eb = do
   let items = leiosEbBodyItems eb
   when (null items) $
@@ -197,10 +197,10 @@ sqlInsertEbBody db notify point eb = do
       dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
       dbBindInt64 stmt 3 (fromIntegral $ unSlotNo point.pointSlotNo)
       dbStep1 stmt
-  notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
+  notify $ AcquiredEb point (leiosEbBytesSize eb)
 
 sqlInsertTxs ::
-  DB.Database -> (LeiosNotification -> IO ()) -> [(TxHash, ByteString)] -> IO CompletedEbs
+  DB.Database -> (LeiosEbNotification -> IO ()) -> [(TxHash, ByteString)] -> IO CompletedEbs
 sqlInsertTxs db notify txs = do
   completed <- dbWithBEGIN db $ do
     stmtInsert <- dbPrepare db (fromString sql_insert_tx)
@@ -232,7 +232,7 @@ sqlInsertTxs db notify txs = do
                 loop (MkLeiosPoint slot ebHash : acc)
       loop []
   -- Emit notifications for each completed EB
-  forM_ completed $ notify . LeiosOfferBlockTxs
+  forM_ completed $ notify . AcquiredEbTxs
   pure completed
 
 sqlBatchRetrieveTxs :: DB.Database -> EbHash -> [Int] -> IO [(Int, TxHash, Maybe ByteString)]

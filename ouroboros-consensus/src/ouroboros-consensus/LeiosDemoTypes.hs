@@ -501,14 +501,6 @@ demoLeiosFetchStaticEnv =
   thousand :: Num a => a
   thousand = 10 ^ (3 :: Int)
 
------
-
-data LeiosNotification
-  = LeiosOfferBlock LeiosPoint BytesSize
-  | LeiosOfferBlockTxs LeiosPoint
-
------
-
 messageLeiosFetchToObject ::
   Message (LeiosFetch LeiosPoint LeiosEb LeiosTx) st st' ->
   Aeson.Object
