@@ -63,7 +63,9 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
   ( noPunishment
   )
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.Util.EarlyExit hiding (lift)
+import Ouroboros.Consensus.Util.EarlyExit
+  ( withEarlyExit
+  )
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.AnchoredFragment as AF
   ( Anchor (..)
@@ -207,18 +209,21 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
             (ledgerState unticked)
 
     -- Let the caller generate transactions
-    txs <- ExceptT
-      . fmap (Right . fromJust)
-      . withEarlyExit
-      . withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint)
+    let withReadOnlyForkerAtPoint' cdb tgt k =
+          -- type legos just to reuse the same Forker combinator as
+          -- the node's forging loop
+          ExceptT . fmap (Right . fromJust) . withEarlyExit $
+            withReadOnlyForkerAtPoint cdb tgt (Trans.lift . k)
+    txs <- withReadOnlyForkerAtPoint'
+      chainDB
+      (SpecificPoint bcPrevPoint)
       $ \case
         Left{} -> error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!"
         Right frk ->
-          Trans.lift $
-            genTxs
-              currentSlot
-              frk
-              tickedLedgerState
+          genTxs
+            currentSlot
+            frk
+            tickedLedgerState
 
     -- Actually produce the block
     newBlock <-
