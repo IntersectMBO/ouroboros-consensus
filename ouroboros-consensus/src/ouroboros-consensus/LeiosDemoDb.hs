@@ -236,6 +236,8 @@ newLeiosDBInMemoryWith stateVar = do
                 , all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
                 , slot <- maybeToList $ Map.lookup ebHash (imEbSlots state)
                 ]
+          -- FIXME: We saw an offer being sent twice to a downstream, just
+          -- after we completed a following closure and notified that.
           forM_ completed $ notify . LeiosOfferBlockTxs
           pure completed
       , leiosDbBatchRetrieveTxs = \ebHash offsets -> atomically $ do
