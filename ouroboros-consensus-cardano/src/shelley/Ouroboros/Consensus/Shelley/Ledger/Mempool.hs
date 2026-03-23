@@ -90,6 +90,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
+import LeiosDemoTypes (leiosEBMaxClosureSize)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -742,7 +743,6 @@ instance
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
   ebCapacityTxMeasure _cfg = Just . leiosEndorserBlockMeasure
 
--- TODO(bladyjoker): Same as RB
 leiosEndorserBlockMeasure ::
   forall proto era mk.
   ( ShelleyCompatible proto era
@@ -750,4 +750,17 @@ leiosEndorserBlockMeasure ::
   ) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
   ConwayMeasure
-leiosEndorserBlockMeasure = blockCapacityConwayMeasure
+leiosEndorserBlockMeasure st =
+  ConwayMeasure
+    { alonzoMeasure =
+        (blockCapacityAlonzoMeasure st)
+          { byteSize =
+              IgnoringOverflow leiosEBMaxClosureSize
+          }
+    , refScriptsSize =
+        IgnoringOverflow $
+          ByteSize32 $
+            fromIntegral $
+              -- For post-Conway eras, this will become a protocol parameter.
+              SL.maxRefScriptSizePerBlock
+    }
