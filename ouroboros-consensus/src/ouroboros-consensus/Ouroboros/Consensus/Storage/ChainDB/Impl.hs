@@ -176,8 +176,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
   -- Note this is the only step that actually cares about the temporary registry
   -- while initializing the ChainDB. It opens the handle to the backend and we
-  -- want to track that one to close it on exception, see "Resource management
-  -- in the LedgerDB" in "Ouroboros.Consensus.Storage.LedgerDB.API".
+  -- want to track that one to close it on exception. See "Resource management
+  -- in the LedgerDB" in "Ouroboros.Consensus.Storage.LedgerDB.API" for an
+  -- explanation of why.
   (lgrDB, replayed) <-
     LedgerDB.openDB
       argsLgrDb
