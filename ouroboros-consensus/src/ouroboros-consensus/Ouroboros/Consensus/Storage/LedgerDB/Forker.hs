@@ -292,7 +292,7 @@ data ValidateArgs m l blk = ValidateArgs
   , withForkerAtFromTip :: !(forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r))
   -- ^ Create a forker from the tip
   , onSuccess :: !(SuccessForkerAction m l)
-  -- ^ Continuation to run when the selection was successful
+  -- ^ Continuation to run when the validation was successful
   , trace :: !(TraceValidateEvent blk -> m ())
   -- ^ A tracer for validate events
   , blockCache :: BlockCache blk
