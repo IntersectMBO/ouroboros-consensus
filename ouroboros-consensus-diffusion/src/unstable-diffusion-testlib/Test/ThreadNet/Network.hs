@@ -1174,7 +1174,7 @@ runThreadNetwork
       --
       -- TODO Is there a risk that this will block because the 'forkTxProducer'
       -- fills up the mempool too quickly?
-      threadCrucialTxs <-
+      _ <-
         forkCrucialTxs
           clock
           joinSlot
