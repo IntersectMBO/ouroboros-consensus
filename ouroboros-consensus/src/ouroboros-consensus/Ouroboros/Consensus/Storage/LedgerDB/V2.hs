@@ -290,7 +290,7 @@ implValidate ::
   BlockCache blk ->
   Word64 ->
   NonEmpty (Header blk) ->
-  (Forker m l -> m ()) ->
+  SuccessForkerAction m l ->
   m (ValidateResult l blk)
 implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
   validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $

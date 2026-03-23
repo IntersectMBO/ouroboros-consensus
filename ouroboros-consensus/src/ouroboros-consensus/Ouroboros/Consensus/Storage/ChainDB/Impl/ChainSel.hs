@@ -237,7 +237,10 @@ initialChainSelection
         assert (all (shouldSwitch . preferAnchoredCandidate bcfg weights curChain . fst) candidates) $ do
           cse <- chainSelEnv
           fmap (getSuffix . fst)
-            <$> chainSelection cse (first Diff.extend <$> candidates) (\_ _ -> join . atomically . forkerCommit)
+            <$> chainSelection
+              cse
+              (first Diff.extend <$> candidates)
+              (\_ _ -> MkSuccessForkerAction $ join . atomically . forkerCommit)
      where
       curpt = AF.anchorPoint curChain
       chainSelEnv = do
@@ -859,9 +862,8 @@ switchTo ::
   ChainDiff (Header blk) ->
   ReasonForSwitch' blk ->
   -- | Forker at the tip of the above ChainDiff
-  Forker' m blk ->
-  m ()
-switchTo CDB{..} weights triggerPt chainDiff reason forker = do
+  SuccessForkerAction m (ExtLedgerState blk)
+switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \forker -> do
   traceWith addBlockTracer $
     ChangingSelection $
       castPoint $
@@ -1084,7 +1086,7 @@ chainSelection ::
   -- | The candidates
   NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
   -- | The continuation to run on succesfully validating a candidate.
-  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> Forker' m blk -> m ()) ->
+  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m (ExtLedgerState blk)) ->
   -- | The (valid) chain diff and corresponding LedgerDB that was selected,
   -- or 'Nothing' if there is no valid chain diff preferred over the current
   -- chain.
@@ -1260,7 +1262,7 @@ validateCandidate ::
   ChainDiff (Header blk) ->
   -- | Invariant: This non-empty list of headers is the list of headers in the ChainDiff above
   NonEmpty (Header blk) ->
-  (Forker' m blk -> m ()) ->
+  SuccessForkerAction m (ExtLedgerState blk) ->
   m (ValidationResult blk)
 validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders onSuccess =
   LedgerDB.validateFork

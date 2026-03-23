@@ -275,7 +275,7 @@ initLedgerDB s c = do
           BlockCache.empty
           0
           (NE.map getHeader chain)
-          (join . atomically . LedgerDB.forkerCommit)
+          (MkSuccessForkerAction $ join . atomically . LedgerDB.forkerCommit)
       case result of
         LedgerDB.ValidateSuccessful -> do
           pure ()

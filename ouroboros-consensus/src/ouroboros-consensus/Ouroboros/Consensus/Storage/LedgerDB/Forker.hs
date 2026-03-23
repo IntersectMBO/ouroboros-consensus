@@ -45,6 +45,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , AnnLedgerError (..)
   , AnnLedgerError'
   , ResolveBlock
+  , SuccessForkerAction (..)
   , ValidateArgs (..)
   , ValidateResult (..)
   , validate
@@ -290,7 +291,7 @@ data ValidateArgs m l blk = ValidateArgs
   -- ^ Get the current set of previously applied blocks
   , withForkerAtFromTip :: !(forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r))
   -- ^ Create a forker from the tip
-  , onSuccess :: !(Forker m l -> m ())
+  , onSuccess :: !(SuccessForkerAction m l)
   -- ^ Continuation to run when the selection was successful
   , trace :: !(TraceValidateEvent blk -> m ())
   -- ^ A tracer for validate events
@@ -384,7 +385,7 @@ switch ::
   -- | New blocks to apply
   NonEmpty (Ap m l blk) ->
   ResolveBlock m blk ->
-  (Forker m l -> m ()) ->
+  SuccessForkerAction m l ->
   m (Either GetForkerError (Either (AnnLedgerError l blk) ()))
 switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
   withForkerAtFromTip numRollbacks $ \fo -> do
@@ -400,7 +401,7 @@ switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSucc
         doResolve
     case ePush of
       Left err -> pure (Left err)
-      Right () -> fmap Right $ onSuccess fo
+      Right () -> fmap Right $ applySuccessForkerAction onSuccess fo
 
 {-------------------------------------------------------------------------------
   Apply blocks
@@ -518,6 +519,22 @@ type ResolveBlock m blk = RealPoint blk -> m blk
 {-------------------------------------------------------------------------------
   Validation
 -------------------------------------------------------------------------------}
+
+-- | A helpful type for a callback of the validation logic
+--
+-- The latest iteration of the maintenance of backend resources held
+-- by 'Forker's relies heavily on 'bracket'. For that reason, we end
+-- up passing a "success continuation" through several layers of
+-- interface, which runs inside of those brackets.
+--
+-- This type makes that continuation easier to recognize. In
+-- particular, any continuation that ends with @res -> m ()@ is
+-- commonly used as "how to close a @res@", which is *NOT* the case
+-- here. So it's preferable to use this more perspicious type in
+-- signatures.
+newtype SuccessForkerAction m l = MkSuccessForkerAction
+  { applySuccessForkerAction :: Forker m l -> m ()
+  }
 
 -- | When validating a sequence of blocks, these are the possible outcomes.
 data ValidateResult l blk

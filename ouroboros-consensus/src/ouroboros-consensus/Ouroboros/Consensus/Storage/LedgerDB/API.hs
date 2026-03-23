@@ -283,7 +283,7 @@ data LedgerDB m l blk = LedgerDB
       BlockCache blk ->
       Word64 ->
       NonEmpty (Header blk) ->
-      (Forker m l -> m ()) ->
+      SuccessForkerAction m l ->
       m (ValidateResult l blk)
   -- ^ Try to apply a sequence of blocks on top of the LedgerDB, first rolling
   -- back as many blocks as the passed @Word64@.

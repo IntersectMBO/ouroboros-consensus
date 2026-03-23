@@ -629,7 +629,7 @@ openLedgerDB flavArgs env cfg fs = do
           BlockCache.empty
           0
           (NE.map getHeader volBlocks')
-          (Monad.join . atomically . forkerCommit)
+          (MkSuccessForkerAction $ Monad.join . atomically . forkerCommit)
       case vr of
         ValidateSuccessful -> pure ()
         _ -> error "Couldn't restart the chain, failed to apply volatile blocks!"
@@ -685,7 +685,7 @@ instance RunModel Model (StateT Environment IO) where
             modifyTVar (dbBlocks chainDb) $
               repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) $ NE.toList blks)
 
-          vr <- validateFork ldb (const $ pure ()) BlockCache.empty n (NE.map getHeader blks) $ \forker -> do
+          vr <- validateFork ldb (const $ pure ()) BlockCache.empty n (NE.map getHeader blks) $ MkSuccessForkerAction $ \forker -> do
             atomically $
               modifyTVar (dbChain chainDb) $
                 (reverse (map blockRealPoint $ NE.toList blks) ++) . drop (fromIntegral n)
