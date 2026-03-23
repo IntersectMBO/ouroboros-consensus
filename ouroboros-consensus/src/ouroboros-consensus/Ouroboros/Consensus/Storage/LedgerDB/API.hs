@@ -457,7 +457,7 @@ configLedgerDb config evs =
 -- | Database error
 --
 -- Thrown upon incorrect use: invalid input.
-newtype LedgerDbError
+data LedgerDbError
   = -- | The LedgerDB is closed.
     --
     -- This will be thrown when performing some operations on the LedgerDB. The
