@@ -433,14 +433,14 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
   pure Nothing
  where
   AnalysisEnv{db, registry, startFrom, cfg, limit, tracer} = env
-  FromLedgerState initLedgerDB internal = startFrom
+  FromLedgerState ldb internal = startFrom
 
   process :: () -> blk -> IO (NextStep, ())
   process _ blk = do
     let ledgerCfg = ExtLedgerCfg cfg
-    oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip initLedgerDB
+    oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
     LedgerDB.withTipForker
-      initLedgerDB
+      ldb
       ( \frk -> do
           tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
           case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk (oldLedger `withLedgerTables` tbs) of
@@ -449,12 +449,12 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
               join $ IOLike.atomically $ LedgerDB.forkerCommit frk
               when (blockSlot blk > slotNo) $ issueWarning blk
               when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-              LedgerDB.tryFlush initLedgerDB
-              LedgerDB.garbageCollect initLedgerDB
+              LedgerDB.tryFlush ldb
+              LedgerDB.garbageCollect ldb
                 . fromWithOrigin 0
                 . pointSlot
                 . getTip
-                =<< IOLike.atomically (LedgerDB.getImmutableTip initLedgerDB)
+                =<< IOLike.atomically (LedgerDB.getImmutableTip ldb)
               when (blockSlot blk >= slotNo) storeLedgerState
               return (continue blk, ())
             Left err -> do
@@ -481,7 +481,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
 
   storeLedgerState :: IO ()
   storeLedgerState =
-    IOLike.atomically (pointSlot <$> LedgerDB.currentPoint initLedgerDB) >>= \case
+    IOLike.atomically (pointSlot <$> LedgerDB.currentPoint ldb) >>= \case
       NotOrigin slot -> do
         LedgerDB.takeSnapshotNOW internal LedgerDB.TakeAtVolatileTip (Just "db-analyser")
         traceWith tracer $ SnapshotStoredEvent slot
@@ -519,14 +519,14 @@ checkNoThunksEvery
     void $ processAll db registry GetBlock startFrom limit () process
     pure Nothing
    where
-    FromLedgerState initLedgerDB internal = startFrom
+    FromLedgerState ldb internal = startFrom
 
     process :: () -> blk -> IO ()
     process _ blk = do
-      oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip initLedgerDB
+      oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
       tbs <-
         LedgerDB.withTipForker
-          initLedgerDB
+          ldb
           (\frk -> LedgerDB.forkerReadTables frk (getBlockKeySets blk))
       let oldLedger' = oldLedger `withLedgerTables` tbs
       let ledgerCfg = ExtLedgerCfg cfg
@@ -546,7 +546,7 @@ checkNoThunksEvery
         IOLike.evaluate (ledgerState newLedger') >>= checkNoThunks bn
 
       LedgerDB.push internal newLedger
-      LedgerDB.tryFlush initLedgerDB
+      LedgerDB.tryFlush ldb
 
     checkNoThunks :: NoThunksMK mk => BlockNo -> LedgerState blk mk -> IO ()
     checkNoThunks bn ls =
@@ -569,20 +569,19 @@ traceLedgerProcessing ::
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
   (AnalysisEnv{db, registry, startFrom, cfg, limit}) = do
-    void $ processAll db registry GetBlock startFrom limit () (process initLedgerDB)
+    void $ processAll db registry GetBlock startFrom limit () process
     pure Nothing
    where
-    FromLedgerState initLedgerDB internal = startFrom
+    FromLedgerState ldb internal = startFrom
 
     process ::
-      LedgerDB.LedgerDB' IO blk ->
       () ->
       blk ->
       IO ()
-    process ledgerDB _ blk = do
+    process _ blk = do
       oldLedger <-
         LedgerDB.withTipForker
-          initLedgerDB
+          ldb
           ( \frk -> do
               oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
               oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
@@ -600,7 +599,7 @@ traceLedgerProcessing
       mapM_ Debug.traceMarkerIO traces
 
       LedgerDB.push internal newLedger
-      LedgerDB.tryFlush ledgerDB
+      LedgerDB.tryFlush ldb
 
 {-------------------------------------------------------------------------------
   Analysis: maintain a ledger state and time the five major ledger calculations
@@ -794,25 +793,23 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
   withFile mOutFile $ \outFileHandle -> do
     writeHeaderLine outFileHandle separator (HasAnalysis.blockApplicationMetrics @blk)
     void $
-      processAll db registry GetBlock startFrom limit () (process initLedgerDB internal outFileHandle)
+      processAll db registry GetBlock startFrom limit () (process outFileHandle)
     pure Nothing
  where
   separator = ", "
 
   AnalysisEnv{db, registry, startFrom, cfg, limit} = env
-  FromLedgerState initLedgerDB internal = startFrom
+  FromLedgerState ldb intLedgerDB = startFrom
 
   process ::
-    LedgerDB.LedgerDB' IO blk ->
-    LedgerDB.TestInternals' IO blk ->
     IO.Handle ->
     () ->
     blk ->
     IO ()
-  process ledgerDB intLedgerDB outFileHandle _ blk = do
+  process outFileHandle _ blk = do
     oldLedger <-
       LedgerDB.withTipForker
-        initLedgerDB
+        ldb
         ( \frk -> do
             oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
             oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
@@ -836,7 +833,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
       IO.hFlush outFileHandle
 
     LedgerDB.push intLedgerDB nextLedgerSt
-    LedgerDB.tryFlush ledgerDB
+    LedgerDB.tryFlush ldb
 
     pure ()
 
