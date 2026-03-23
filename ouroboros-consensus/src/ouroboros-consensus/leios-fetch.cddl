@@ -15,8 +15,11 @@ msgLeiosBlock = [1, endorser_block]
 msgLeiosBlockTxsRequest = [2, point, bitmaps]
 msgLeiosBlockTxs = [3, point, bitmaps, txList] 
 
-point ; TODO
-endorser_block ; TODO
-bitmaps ; TODO
-txList = [ *tx.tx ] ; REVIEW: how to specify length-definite list?
+point = [slot, eb_hash]
+endorser_block = any ; TODO
+bitmaps = any ; TODO
+txList = [ *tx ] ; REVIEW: how to specify length-definite list?
 
+slot = uint .size 8
+eb_hash = bytes .size 32
+tx = any ; TODO: use conway.tx
