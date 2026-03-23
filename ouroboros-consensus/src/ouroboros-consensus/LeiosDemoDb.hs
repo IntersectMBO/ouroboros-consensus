@@ -59,7 +59,13 @@ import LeiosDemoTypes
   , leiosEbBytesSize
   , trustNoVerifyLeiosCertificate
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks (..), atomically)
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , NoThunks (..)
+  , atomically
+  , newMVar
+  , withMVar
+  )
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -324,6 +330,8 @@ newLeiosDBSQLiteFromEnv = do
 -- blocked by writers.
 --
 -- TODO: Get rid of SQLOpenFullMutex and use proper concurrency control.
+--
+-- TODO: Make this a connection and not share it across threads (get rid of mutexes)
 newLeiosDBSQLite :: FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLite dbPath = do
   shouldInitSchema <- not <$> doesFileExist dbPath
@@ -344,209 +352,224 @@ newLeiosDBSQLite dbPath = do
   notificationChan <- atomically newBroadcastTChan
   let notify = atomically . writeTChan notificationChan
 
+  mutex <- newMVar ()
+
   pure
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
       , leiosDbScanEbPoints =
-          dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_ebPoints) $ \stmt -> do
-            let loop acc =
-                  dbStep stmt >>= \case
-                    DB.Done -> pure (reverse acc)
-                    DB.Row -> do
-                      slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-                      hash <- MkEbHash <$> DB.columnBlob stmt 1
-                      loop ((slot, hash) : acc)
-            loop []
-      , leiosDbLookupEbPoint = \ebHash ->
-          dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebPoint) $ \stmt -> do
-            dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
-            dbStep stmt >>= \case
-              DB.Done -> pure Nothing
-              DB.Row -> do
-                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-                pure (Just slot)
-      , leiosDbInsertEbPoint = \point ebBytesSize ->
-          dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebPoint) $ \stmt -> do
-            dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-            dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
-            dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
-            dbStep1 stmt
-      , leiosDbLookupEbBody = \ebHash ->
-          dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebBodies) $ \stmt -> do
-            dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
-            let loop acc =
-                  dbStep stmt >>= \case
-                    DB.Done -> pure (reverse acc)
-                    DB.Row -> do
-                      txHash <- MkTxHash <$> DB.columnBlob stmt 0
-                      size <- fromIntegral <$> DB.columnInt64 stmt 1
-                      loop ((txHash, size) : acc)
-            loop []
-      , leiosDbInsertEbBody = \point eb -> do
-          let items = leiosEbBodyItems eb
-          when (null items) $
-            error "leiosDbInsertEbBody: empty EB body (programmer error)"
-          dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebBody) $ \stmt ->
-            mapM_
-              ( \(txOffset, txHash, txBytesSize) -> do
-                  dbBindBlob stmt 1 point.pointEbHash.ebHashBytes
-                  dbBindInt64 stmt 2 (fromIntegral txOffset)
-                  dbBindBlob stmt 3 (let MkTxHash bytes = txHash in bytes)
-                  dbBindInt64 stmt 4 (fromIntegral txBytesSize)
-                  dbStep1 stmt
-                  dbReset stmt
-              )
-              items
-          notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
-      , leiosDbInsertTxs = \txs -> do
-          -- Insert all txs into global txs table, then check for newly-complete EBs
-          completed <- dbWithBEGIN db $ do
-            -- INSERT OR IGNORE all txs
-            dbWithPrepare db (fromString sql_insert_tx) $ \stmtTx ->
-              forM_ txs $ \(txHash, txBytes) -> do
-                let txBytesSize = fromIntegral $ BS.length txBytes
-                    txHashBytes = let MkTxHash bytes = txHash in bytes
-                dbBindBlob stmtTx 1 txHashBytes
-                dbBindBlob stmtTx 2 txBytes
-                dbBindInt64 stmtTx 3 txBytesSize
-                dbStep1 stmtTx
-                dbReset stmtTx
-            -- For each inserted txHash, find EBs that are now complete
-            -- Collect results in a Map to deduplicate (same EB may be found via multiple txHashes)
-            dbWithPrepare db (fromString sql_find_complete_ebs) $ \stmt -> do
-              let checkTxHash acc (txHash, _) = do
-                    dbBindBlob stmt 1 (let MkTxHash bytes = txHash in bytes)
-                    let loop acc' =
-                          dbStep stmt >>= \case
-                            DB.Done -> pure acc'
-                            DB.Row -> do
-                              ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-                              slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
-                              loop (Map.insert ebHash slot acc')
-                    result <- loop acc
-                    dbReset stmt
-                    pure result
-              ebMap <- foldM checkTxHash Map.empty txs
-              pure [MkLeiosPoint slot ebHash | (ebHash, slot) <- Map.toList ebMap]
-          -- Emit notifications for each completed EB
-          forM_ completed $ notify . LeiosOfferBlockTxs
-          pure completed
-      , leiosDbBatchRetrieveTxs = \ebHash offsets -> dbWithBEGIN db $ do
-          -- First, insert offsets into temp table
-          dbWithPrepare db (fromString sql_insert_memTxPoints) $ \stmtInsert -> do
-            mapM_
-              ( \offset -> do
-                  dbBindBlob stmtInsert 1 (let MkEbHash bytes = ebHash in bytes)
-                  dbBindInt64 stmtInsert 2 (fromIntegral offset)
-                  dbStep1 stmtInsert
-                  dbReset stmtInsert
-              )
-              offsets
-
-          -- Then retrieve from ebTxs LEFT JOIN txs
-          results <- dbWithPrepare db (fromString sql_retrieve_from_ebTxs) $ \stmtRetrieve -> do
-            let loop acc =
-                  dbStep stmtRetrieve >>= \case
-                    DB.Done -> pure (reverse acc)
-                    DB.Row -> do
-                      offset <- fromIntegral <$> DB.columnInt64 stmtRetrieve 0
-                      txHash <- MkTxHash <$> DB.columnBlob stmtRetrieve 1
-                      -- Column 2 is from LEFT JOIN, NULL if tx not in txs table
-                      txBytes <- DB.columnBlob stmtRetrieve 2
-                      let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
-                      loop ((offset, txHash, mbTxBytes) : acc)
-            loop []
-
-          -- Flush temp table
-          dbWithPrepare db (fromString sql_flush_memTxPoints) $ \stmtFlush -> do
-            dbStep1 stmtFlush
-          pure results
-      , leiosDbFilterMissingEbBodies = \points -> do
-          -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries.
-          dbWithBEGIN db $ do
-            let pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
-            dbWithPrepare db (fromString sql_insert_memEbHashes) $ \stmtInsert ->
-              forM_ points $ \p -> do
-                dbBindBlob stmtInsert 1 p.pointEbHash.ebHashBytes
-                dbStep1 stmtInsert
-                dbReset stmtInsert
-            result <- dbWithPrepare db (fromString sql_filter_missing_eb_bodies) $ \stmt -> do
+          withMVar mutex $ \_ ->
+            dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_ebPoints) $ \stmt -> do
               let loop acc =
                     dbStep stmt >>= \case
                       DB.Done -> pure (reverse acc)
                       DB.Row -> do
-                        ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-                        case Map.lookup ebHash pointsByHash of
-                          Just p -> loop (p : acc)
-                          Nothing -> loop acc
+                        slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+                        hash <- MkEbHash <$> DB.columnBlob stmt 1
+                        loop ((slot, hash) : acc)
               loop []
-            dbWithPrepare db (fromString sql_flush_memEbHashes) $ \stmtFlush ->
-              dbStep1 stmtFlush
-            pure result
-      , leiosDbFilterMissingTxs = \txHashes -> do
-          -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
-          --   WHERE t.txHashBytes IN (SELECT unhex(value) FROM json_each(?))
-          -- This would eliminate the need for mem.txHashes table and insert/flush overhead.
-          dbWithBEGIN db $ do
-            dbWithPrepare db (fromString sql_insert_memTxHashes) $ \stmtInsert ->
-              forM_ txHashes $ \(MkTxHash bytes) -> do
-                dbBindBlob stmtInsert 1 bytes
-                dbStep1 stmtInsert
-                dbReset stmtInsert
-            result <- dbWithPrepare db (fromString sql_filter_missing_txs) $ \stmt -> do
+      , leiosDbLookupEbPoint = \ebHash ->
+          withMVar mutex $ \_ ->
+            dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebPoint) $ \stmt -> do
+              dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+              dbStep stmt >>= \case
+                DB.Done -> pure Nothing
+                DB.Row -> do
+                  slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+                  pure (Just slot)
+      , leiosDbInsertEbPoint = \point ebBytesSize ->
+          withMVar mutex $ \_ ->
+            dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebPoint) $ \stmt -> do
+              dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
+              dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
+              dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
+              dbStep1 stmt
+      , leiosDbLookupEbBody = \ebHash ->
+          withMVar mutex $ \_ ->
+            dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebBodies) $ \stmt -> do
+              dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
               let loop acc =
                     dbStep stmt >>= \case
                       DB.Done -> pure (reverse acc)
                       DB.Row -> do
                         txHash <- MkTxHash <$> DB.columnBlob stmt 0
-                        loop (txHash : acc)
+                        size <- fromIntegral <$> DB.columnInt64 stmt 1
+                        loop ((txHash, size) : acc)
               loop []
-            dbWithPrepare db (fromString sql_flush_memTxHashes) $ \stmtFlush ->
-              dbStep1 stmtFlush
-            pure result
-      , leiosDbQueryFetchWork = dbWithBEGIN db $ do
-          -- Query missing EB bodies
-          missingEbBodies <- dbWithPrepare db (fromString sql_query_missing_eb_bodies) $ \stmt -> do
-            let loop acc =
-                  dbStep stmt >>= \case
-                    DB.Done -> pure (Map.fromList (reverse acc))
-                    DB.Row -> do
-                      slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-                      ebHash <- MkEbHash <$> DB.columnBlob stmt 1
-                      ebBytesSize <- fromIntegral <$> DB.columnInt64 stmt 2
-                      loop ((MkLeiosPoint slot ebHash, ebBytesSize) : acc)
-            loop []
-          -- Query missing TXs, grouped by EB
-          missingEbTxs <- dbWithPrepare db (fromString sql_query_missing_eb_txs) $ \stmt -> do
-            let loop acc =
-                  dbStep stmt >>= \case
-                    DB.Done -> pure (Map.fromListWith (++) (reverse acc))
-                    DB.Row -> do
-                      slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-                      ebHash <- MkEbHash <$> DB.columnBlob stmt 1
-                      txOffset <- fromIntegral <$> DB.columnInt64 stmt 2
-                      txHash <- MkTxHash <$> DB.columnBlob stmt 3
-                      txBytesSize <- fromIntegral <$> DB.columnInt64 stmt 4
-                      loop ((MkLeiosPoint slot ebHash, [(txOffset, txHash, txBytesSize)]) : acc)
-            loop []
-          pure LeiosFetchWork{missingEbBodies, missingEbTxs}
+      , leiosDbInsertEbBody = \point eb ->
+          withMVar mutex $ \_ -> do
+            let items = leiosEbBodyItems eb
+            when (null items) $
+              error "leiosDbInsertEbBody: empty EB body (programmer error)"
+            dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebBody) $ \stmt ->
+              mapM_
+                ( \(txOffset, txHash, txBytesSize) -> do
+                    dbBindBlob stmt 1 point.pointEbHash.ebHashBytes
+                    dbBindInt64 stmt 2 (fromIntegral txOffset)
+                    dbBindBlob stmt 3 (let MkTxHash bytes = txHash in bytes)
+                    dbBindInt64 stmt 4 (fromIntegral txBytesSize)
+                    dbStep1 stmt
+                    dbReset stmt
+                )
+                items
+            notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
+      , leiosDbInsertTxs = \txs ->
+          withMVar mutex $ \_ -> do
+            -- Insert all txs into global txs table, then check for newly-complete EBs
+            completed <- dbWithBEGIN db $ do
+              -- INSERT OR IGNORE all txs
+              dbWithPrepare db (fromString sql_insert_tx) $ \stmtTx ->
+                forM_ txs $ \(txHash, txBytes) -> do
+                  let txBytesSize = fromIntegral $ BS.length txBytes
+                      txHashBytes = let MkTxHash bytes = txHash in bytes
+                  dbBindBlob stmtTx 1 txHashBytes
+                  dbBindBlob stmtTx 2 txBytes
+                  dbBindInt64 stmtTx 3 txBytesSize
+                  dbStep1 stmtTx
+                  dbReset stmtTx
+              -- For each inserted txHash, find EBs that are now complete
+              -- Collect results in a Map to deduplicate (same EB may be found via multiple txHashes)
+              dbWithPrepare db (fromString sql_find_complete_ebs) $ \stmt -> do
+                let checkTxHash acc (txHash, _) = do
+                      dbBindBlob stmt 1 (let MkTxHash bytes = txHash in bytes)
+                      let loop acc' =
+                            dbStep stmt >>= \case
+                              DB.Done -> pure acc'
+                              DB.Row -> do
+                                ebHash <- MkEbHash <$> DB.columnBlob stmt 0
+                                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
+                                loop (Map.insert ebHash slot acc')
+                      result <- loop acc
+                      dbReset stmt
+                      pure result
+                ebMap <- foldM checkTxHash Map.empty txs
+                pure [MkLeiosPoint slot ebHash | (ebHash, slot) <- Map.toList ebMap]
+            -- Emit notifications for each completed EB
+            forM_ completed $ notify . LeiosOfferBlockTxs
+            pure completed
+      , leiosDbBatchRetrieveTxs = \ebHash offsets ->
+          withMVar mutex $ \_ ->
+            dbWithBEGIN db $ do
+              -- First, insert offsets into temp table
+              dbWithPrepare db (fromString sql_insert_memTxPoints) $ \stmtInsert -> do
+                mapM_
+                  ( \offset -> do
+                      dbBindBlob stmtInsert 1 (let MkEbHash bytes = ebHash in bytes)
+                      dbBindInt64 stmtInsert 2 (fromIntegral offset)
+                      dbStep1 stmtInsert
+                      dbReset stmtInsert
+                  )
+                  offsets
+
+              -- Then retrieve from ebTxs LEFT JOIN txs
+              results <- dbWithPrepare db (fromString sql_retrieve_from_ebTxs) $ \stmtRetrieve -> do
+                let loop acc =
+                      dbStep stmtRetrieve >>= \case
+                        DB.Done -> pure (reverse acc)
+                        DB.Row -> do
+                          offset <- fromIntegral <$> DB.columnInt64 stmtRetrieve 0
+                          txHash <- MkTxHash <$> DB.columnBlob stmtRetrieve 1
+                          -- Column 2 is from LEFT JOIN, NULL if tx not in txs table
+                          txBytes <- DB.columnBlob stmtRetrieve 2
+                          let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
+                          loop ((offset, txHash, mbTxBytes) : acc)
+                loop []
+
+              -- Flush temp table
+              dbWithPrepare db (fromString sql_flush_memTxPoints) $ \stmtFlush -> do
+                dbStep1 stmtFlush
+              pure results
+      , leiosDbFilterMissingEbBodies = \points -> do
+          withMVar mutex $ \_ ->
+            -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries.
+            dbWithBEGIN db $ do
+              let pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
+              dbWithPrepare db (fromString sql_insert_memEbHashes) $ \stmtInsert ->
+                forM_ points $ \p -> do
+                  dbBindBlob stmtInsert 1 p.pointEbHash.ebHashBytes
+                  dbStep1 stmtInsert
+                  dbReset stmtInsert
+              result <- dbWithPrepare db (fromString sql_filter_missing_eb_bodies) $ \stmt -> do
+                let loop acc =
+                      dbStep stmt >>= \case
+                        DB.Done -> pure (reverse acc)
+                        DB.Row -> do
+                          ebHash <- MkEbHash <$> DB.columnBlob stmt 0
+                          case Map.lookup ebHash pointsByHash of
+                            Just p -> loop (p : acc)
+                            Nothing -> loop acc
+                loop []
+              dbWithPrepare db (fromString sql_flush_memEbHashes) $ \stmtFlush ->
+                dbStep1 stmtFlush
+              pure result
+      , leiosDbFilterMissingTxs = \txHashes ->
+          withMVar mutex $ \_ -> do
+            -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
+            --   WHERE t.txHashBytes IN (SELECT unhex(value) FROM json_each(?))
+            -- This would eliminate the need for mem.txHashes table and insert/flush overhead.
+            dbWithBEGIN db $ do
+              dbWithPrepare db (fromString sql_insert_memTxHashes) $ \stmtInsert ->
+                forM_ txHashes $ \(MkTxHash bytes) -> do
+                  dbBindBlob stmtInsert 1 bytes
+                  dbStep1 stmtInsert
+                  dbReset stmtInsert
+              result <- dbWithPrepare db (fromString sql_filter_missing_txs) $ \stmt -> do
+                let loop acc =
+                      dbStep stmt >>= \case
+                        DB.Done -> pure (reverse acc)
+                        DB.Row -> do
+                          txHash <- MkTxHash <$> DB.columnBlob stmt 0
+                          loop (txHash : acc)
+                loop []
+              dbWithPrepare db (fromString sql_flush_memTxHashes) $ \stmtFlush ->
+                dbStep1 stmtFlush
+              pure result
+      , leiosDbQueryFetchWork =
+          withMVar mutex $ \_ ->
+            dbWithBEGIN db $ do
+              -- Query missing EB bodies
+              missingEbBodies <- dbWithPrepare db (fromString sql_query_missing_eb_bodies) $ \stmt -> do
+                let loop acc =
+                      dbStep stmt >>= \case
+                        DB.Done -> pure (Map.fromList (reverse acc))
+                        DB.Row -> do
+                          slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+                          ebHash <- MkEbHash <$> DB.columnBlob stmt 1
+                          ebBytesSize <- fromIntegral <$> DB.columnInt64 stmt 2
+                          loop ((MkLeiosPoint slot ebHash, ebBytesSize) : acc)
+                loop []
+              -- Query missing TXs, grouped by EB
+              missingEbTxs <- dbWithPrepare db (fromString sql_query_missing_eb_txs) $ \stmt -> do
+                let loop acc =
+                      dbStep stmt >>= \case
+                        DB.Done -> pure (Map.fromListWith (++) (reverse acc))
+                        DB.Row -> do
+                          slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+                          ebHash <- MkEbHash <$> DB.columnBlob stmt 1
+                          txOffset <- fromIntegral <$> DB.columnInt64 stmt 2
+                          txHash <- MkTxHash <$> DB.columnBlob stmt 3
+                          txBytesSize <- fromIntegral <$> DB.columnInt64 stmt 4
+                          loop ((MkLeiosPoint slot ebHash, [(txOffset, txHash, txBytesSize)]) : acc)
+                loop []
+              pure LeiosFetchWork{missingEbBodies, missingEbTxs}
       , leiosDbQueryCompletedEbByPoint = \ebPoint ->
-          dbWithBEGIN db $ dbWithPrepare db (fromString sqlQueryCompletedEbByPoint) $ \stmt -> do
-            dbBindBlob stmt 1 (ebHashBytes . pointEbHash $ ebPoint)
-            -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key .. dbBindBlob stmt 2 (unSlotNo . pointSlotNo $ ebPoint)
-            let loop acc =
-                  dbStep stmt >>= \case
-                    DB.Done ->
-                      -- No rows means the EB body hasn't been downloaded yet
-                      if null acc then pure Nothing else pure $ Just (reverse acc)
-                    DB.Row -> do
-                      txHash <- MkTxHash <$> DB.columnBlob stmt 0
-                      txBytes :: ByteString <- DB.columnBlob stmt 1
-                      if txBytes == mempty
-                        then return Nothing
-                        else loop ((txHash, txBytes) : acc)
-            loop []
+          withMVar mutex $ \_ ->
+            dbWithBEGIN db $ dbWithPrepare db (fromString sqlQueryCompletedEbByPoint) $ \stmt -> do
+              dbBindBlob stmt 1 (ebHashBytes . pointEbHash $ ebPoint)
+              -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key .. dbBindBlob stmt 2 (unSlotNo . pointSlotNo $ ebPoint)
+              let loop acc =
+                    dbStep stmt >>= \case
+                      DB.Done ->
+                        -- No rows means the EB body hasn't been downloaded yet
+                        if null acc then pure Nothing else pure $ Just (reverse acc)
+                      DB.Row -> do
+                        txHash <- MkTxHash <$> DB.columnBlob stmt 0
+                        txBytes :: ByteString <- DB.columnBlob stmt 1
+                        if txBytes == mempty
+                          then return Nothing
+                          else loop ((txHash, txBytes) : acc)
+              loop []
       , leiosDbQueryCertificateByPoint = \_ebPoint -> return $ Just trustNoVerifyLeiosCertificate -- FIXME(bladyjoker): Mocked
       , leiosDbClose = void $ DB.close db
       }
