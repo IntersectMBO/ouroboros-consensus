@@ -10,7 +10,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | 'Arbitrary' instances intended for serialisation roundtrip tests for
@@ -24,46 +23,48 @@
 module Test.Consensus.Cardano.Generators () where
 
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromMaybe)
-import           Data.Proxy
-import           Data.SOP.BasicFunctors
-import           Data.SOP.Constraint
-import           Data.SOP.Counting (Exactly (..))
-import           Data.SOP.Index
-import           Data.SOP.NonEmpty
-import           Data.SOP.Sing
-import           Data.SOP.Strict
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Byron.ByronHFC
-import           Ouroboros.Consensus.Byron.Ledger
-import           Ouroboros.Consensus.Cardano.Block
-import           Ouroboros.Consensus.Cardano.CanHardFork
-import           Ouroboros.Consensus.Cardano.Node ()
-import           Ouroboros.Consensus.HardFork.Combinator
-import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
+import Data.Maybe (catMaybes, fromMaybe)
+import Data.Proxy
+import Data.SOP.BasicFunctors
+import Data.SOP.Constraint
+import Data.SOP.Counting (Exactly (..))
+import Data.SOP.Index
+import Data.SOP.NonEmpty
+import Data.SOP.Sing
+import Data.SOP.Strict
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Byron.ByronHFC
+import Ouroboros.Consensus.Byron.Ledger
+import Ouroboros.Consensus.Cardano.Block
+import Ouroboros.Consensus.Cardano.CanHardFork
+import Ouroboros.Consensus.Cardano.Node ()
+import Ouroboros.Consensus.HardFork.Combinator
+import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.HeaderValidation
-import           Ouroboros.Consensus.Ledger.Query
-import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-import           Ouroboros.Consensus.Node.Serialisation (Some (..))
-import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import           Ouroboros.Consensus.Shelley.HFEras ()
-import           Ouroboros.Consensus.Shelley.Ledger
-import           Ouroboros.Consensus.Shelley.Ledger.Block ()
-import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Test.Cardano.Ledger.Alonzo.Arbitrary ()
-import           Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
-import           Test.Cardano.Ledger.Conway.Arbitrary ()
-import           Test.Consensus.Byron.Generators ()
-import           Test.Consensus.Cardano.MockCrypto
-import           Test.Consensus.Protocol.Serialisation.Generators ()
-import           Test.Consensus.Shelley.Generators
-import           Test.Consensus.Shelley.MockCrypto (CanMock)
-import           Test.QuickCheck
-import           Test.Util.Orphans.Arbitrary ()
-import           Test.Util.Serialisation.Roundtrip (Coherent (..),
-                     WithVersion (..))
+import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.Serialisation (Some (..))
+import Ouroboros.Consensus.Protocol.TPraos (TPraos)
+import Ouroboros.Consensus.Shelley.HFEras ()
+import Ouroboros.Consensus.Shelley.Ledger
+import Ouroboros.Consensus.Shelley.Ledger.Block ()
+import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
+import Ouroboros.Consensus.TypeFamilyWrappers
+import Test.Cardano.Ledger.Alonzo.Arbitrary ()
+import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
+import Test.Cardano.Ledger.Conway.Arbitrary ()
+import Test.Consensus.Byron.Generators ()
+import Test.Consensus.Cardano.MockCrypto
+import Test.Consensus.Protocol.Serialisation.Generators ()
+import Test.Consensus.Shelley.Generators
+import Test.Consensus.Shelley.MockCrypto (CanMock)
+import Test.QuickCheck
+import Test.Util.Orphans.Arbitrary ()
+import Test.Util.Serialisation.Roundtrip
+  ( Coherent (..)
+  , WithVersion (..)
+  )
 
 {-------------------------------------------------------------------------------
   Disk
@@ -71,70 +72,78 @@ import           Test.Util.Serialisation.Roundtrip (Coherent (..),
 
 instance Arbitrary (CardanoBlock MockCryptoCompatByron) where
   arbitrary =
-      oneof $ catMaybes $ hcollapse generators
-    where
-      generators ::
-        NP
-          (K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))))
-          (CardanoEras MockCryptoCompatByron)
-      generators =
-            mk BlockByron
-         :* mk BlockShelley
-         :* mk BlockAllegra
-         :* mk BlockMary
-         :* mk BlockAlonzo
-         :* mk BlockBabbage
-         :* mk BlockConway
-         :* Nil
+    oneof $ catMaybes $ hcollapse generators
+   where
+    generators ::
+      NP
+        (K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))))
+        (CardanoEras MockCryptoCompatByron)
+    generators =
+      mk BlockByron
+        :* mk BlockShelley
+        :* mk BlockAllegra
+        :* mk BlockMary
+        :* mk BlockAlonzo
+        :* mk BlockBabbage
+        :* mk BlockConway
+        :* Nil
 
-      mk ::
-           forall a x. Arbitrary a
-        => (a -> CardanoBlock MockCryptoCompatByron)
-        -> K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))) x
-      mk f = K $ Just $ f <$> arbitrary
+    mk ::
+      forall a x.
+      Arbitrary a =>
+      (a -> CardanoBlock MockCryptoCompatByron) ->
+      K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))) x
+    mk f = K $ Just $ f <$> arbitrary
 
 instance Arbitrary (Coherent (CardanoBlock MockCryptoCompatByron)) where
   arbitrary =
-      fmap Coherent $ oneof $ catMaybes $ hcollapse generators
-    where
-      generators ::
-        NP
-          (K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))))
-          (CardanoEras MockCryptoCompatByron)
-      generators =
-            mk BlockByron
-         :* mk BlockShelley
-         :* mk BlockAllegra
-         :* mk BlockMary
-         :* mk BlockAlonzo
-         :* mk BlockBabbage
-         :* mk BlockConway
-         :* Nil
+    fmap Coherent $ oneof $ catMaybes $ hcollapse generators
+   where
+    generators ::
+      NP
+        (K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))))
+        (CardanoEras MockCryptoCompatByron)
+    generators =
+      mk BlockByron
+        :* mk BlockShelley
+        :* mk BlockAllegra
+        :* mk BlockMary
+        :* mk BlockAlonzo
+        :* mk BlockBabbage
+        :* mk BlockConway
+        :* Nil
 
-      mk ::
-           forall a x. Arbitrary (Coherent a)
-        => (a -> CardanoBlock MockCryptoCompatByron)
-        -> K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))) x
-      mk f = K $ Just $ f . getCoherent <$> arbitrary
+    mk ::
+      forall a x.
+      Arbitrary (Coherent a) =>
+      (a -> CardanoBlock MockCryptoCompatByron) ->
+      K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))) x
+    mk f = K $ Just $ f . getCoherent <$> arbitrary
 
 instance Arbitrary (CardanoHeader MockCryptoCompatByron) where
   arbitrary = getHeader <$> arbitrary
 
-instance (CanMock (TPraos c) ShelleyEra, CardanoHardForkConstraints c)
-      => Arbitrary (OneEraHash (CardanoEras c)) where
+instance
+  (CanMock (TPraos c) ShelleyEra, CardanoHardForkConstraints c) =>
+  Arbitrary (OneEraHash (CardanoEras c))
+  where
   arbitrary = inj <$> arbitrary
-    where
-      inj :: NS WrapHeaderHash (CardanoEras c) -> OneEraHash (CardanoEras c)
-      inj = hcollapse . hcmap proxySingle aux
+   where
+    inj :: NS WrapHeaderHash (CardanoEras c) -> OneEraHash (CardanoEras c)
+    inj = hcollapse . hcmap proxySingle aux
 
-      aux ::
-           forall blk. SingleEraBlock blk
-        => WrapHeaderHash blk -> K (OneEraHash (CardanoEras c)) blk
-      aux = K . OneEraHash . toShortRawHash (Proxy @blk) . unwrapHeaderHash
+    aux ::
+      forall blk.
+      SingleEraBlock blk =>
+      WrapHeaderHash blk -> K (OneEraHash (CardanoEras c)) blk
+    aux = K . OneEraHash . toShortRawHash (Proxy @blk) . unwrapHeaderHash
 
-instance (c ~ MockCryptoCompatByron, ShelleyBasedEra ShelleyEra)
-      => Arbitrary (AnnTip (CardanoBlock c)) where
-  arbitrary = AnnTip
+instance
+  (c ~ MockCryptoCompatByron, ShelleyBasedEra ShelleyEra) =>
+  Arbitrary (AnnTip (CardanoBlock c))
+  where
+  arbitrary =
+    AnnTip
       <$> (SlotNo <$> arbitrary)
       <*> arbitrary
       <*> (OneEraTipInfo <$> arbitrary)
@@ -143,150 +152,315 @@ instance (c ~ MockCryptoCompatByron, ShelleyBasedEra ShelleyEra)
   NodeToNode
 -------------------------------------------------------------------------------}
 
-instance CardanoHardForkConstraints c
-      => Arbitrary (HardForkNodeToNodeVersion (CardanoEras c)) where
+instance
+  CardanoHardForkConstraints c =>
+  Arbitrary (HardForkNodeToNodeVersion (CardanoEras c))
+  where
   arbitrary =
     elements $ Map.elems $ supportedNodeToNodeVersions (Proxy @(CardanoBlock c))
 
-deriving instance Arbitrary (BlockNodeToNodeVersion blk)
-               => Arbitrary (WrapNodeToNodeVersion  blk)
+deriving instance
+  Arbitrary (BlockNodeToNodeVersion blk) =>
+  Arbitrary (WrapNodeToNodeVersion blk)
 
 arbitraryNodeToNode ::
-     ( Arbitrary (WithVersion ByronNodeToNodeVersion byron)
-     , Arbitrary (WithVersion ShelleyNodeToNodeVersion shelley)
-     , Arbitrary (WithVersion ShelleyNodeToNodeVersion allegra)
-     , Arbitrary (WithVersion ShelleyNodeToNodeVersion mary)
-     , Arbitrary (WithVersion ShelleyNodeToNodeVersion alonzo)
-     , Arbitrary (WithVersion ShelleyNodeToNodeVersion babbage)
-     , Arbitrary (WithVersion ShelleyNodeToNodeVersion conway)
-     )
-  => (byron   -> cardano)
-  -> (shelley -> cardano)
-  -> (allegra -> cardano)
-  -> (mary    -> cardano)
-  -> (alonzo  -> cardano)
-  -> (babbage -> cardano)
-  -> (conway  -> cardano)
-  -> Gen (WithVersion (HardForkNodeToNodeVersion (CardanoEras c)) cardano)
-arbitraryNodeToNode injByron injShelley injAllegra injMary injAlonzo injBabbage injConway = oneof
-    [
-    -- Byron before HFC
-      (\(WithVersion versionByron b) ->
+  ( Arbitrary (WithVersion ByronNodeToNodeVersion byron)
+  , Arbitrary (WithVersion ShelleyNodeToNodeVersion shelley)
+  , Arbitrary (WithVersion ShelleyNodeToNodeVersion allegra)
+  , Arbitrary (WithVersion ShelleyNodeToNodeVersion mary)
+  , Arbitrary (WithVersion ShelleyNodeToNodeVersion alonzo)
+  , Arbitrary (WithVersion ShelleyNodeToNodeVersion babbage)
+  , Arbitrary (WithVersion ShelleyNodeToNodeVersion conway)
+  ) =>
+  (byron -> cardano) ->
+  (shelley -> cardano) ->
+  (allegra -> cardano) ->
+  (mary -> cardano) ->
+  (alonzo -> cardano) ->
+  (babbage -> cardano) ->
+  (conway -> cardano) ->
+  Gen (WithVersion (HardForkNodeToNodeVersion (CardanoEras c)) cardano)
+arbitraryNodeToNode injByron injShelley injAllegra injMary injAlonzo injBabbage injConway =
+  oneof
+    [ -- Byron before HFC
+      ( \(WithVersion versionByron b) ->
           WithVersion
             (HardForkNodeToNodeDisabled versionByron)
-            (injByron b))
+            (injByron b)
+      )
         <$> arbitrary
-    -- Note that any value generated by the V1 Byron generator is also fine
-    -- when using Byron V2.
-    , (\    (WithVersion versionByron x) versionShelley versionAllegra versionMary versionAlonzo versionBabbage versionConway ->
-        distrib          versionByron    versionShelley versionAllegra versionMary versionAlonzo versionBabbage versionConway
+    , -- Note that any value generated by the V1 Byron generator is also fine
+      -- when using Byron V2.
+      ( \(WithVersion versionByron x) versionShelley versionAllegra versionMary versionAlonzo versionBabbage versionConway ->
+          distrib
+            versionByron
+            versionShelley
+            versionAllegra
+            versionMary
+            versionAlonzo
+            versionBabbage
+            versionConway
             (injByron x)
       )
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , (\        versionByron (WithVersion versionShelley x) versionAllegra versionMary versionAlonzo versionBabbage versionConway ->
-        distrib versionByron              versionShelley    versionAllegra versionMary versionAlonzo versionBabbage versionConway
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , ( \versionByron (WithVersion versionShelley x) versionAllegra versionMary versionAlonzo versionBabbage versionConway ->
+          distrib
+            versionByron
+            versionShelley
+            versionAllegra
+            versionMary
+            versionAlonzo
+            versionBabbage
+            versionConway
             (injShelley x)
       )
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , (\        versionByron versionShelley (WithVersion versionAllegra x) versionMary versionAlonzo versionBabbage versionConway ->
-        distrib versionByron versionShelley              versionAllegra    versionMary versionAlonzo versionBabbage versionConway
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , ( \versionByron versionShelley (WithVersion versionAllegra x) versionMary versionAlonzo versionBabbage versionConway ->
+          distrib
+            versionByron
+            versionShelley
+            versionAllegra
+            versionMary
+            versionAlonzo
+            versionBabbage
+            versionConway
             (injAllegra x)
       )
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , (\        versionByron versionShelley versionAllegra (WithVersion versionMary x) versionAlonzo versionBabbage versionConway ->
-        distrib versionByron versionShelley versionAllegra              versionMary    versionAlonzo versionBabbage versionConway
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , ( \versionByron versionShelley versionAllegra (WithVersion versionMary x) versionAlonzo versionBabbage versionConway ->
+          distrib
+            versionByron
+            versionShelley
+            versionAllegra
+            versionMary
+            versionAlonzo
+            versionBabbage
+            versionConway
             (injMary x)
       )
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , (\        versionByron versionShelley versionAllegra versionMary (WithVersion versionAlonzo x) versionBabbage versionConway ->
-        distrib versionByron versionShelley versionAllegra versionMary              versionAlonzo    versionBabbage versionConway
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , ( \versionByron versionShelley versionAllegra versionMary (WithVersion versionAlonzo x) versionBabbage versionConway ->
+          distrib
+            versionByron
+            versionShelley
+            versionAllegra
+            versionMary
+            versionAlonzo
+            versionBabbage
+            versionConway
             (injAlonzo x)
       )
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , (\        versionByron versionShelley versionAllegra versionMary versionAlonzo (WithVersion versionBabbage x) versionConway ->
-        distrib versionByron versionShelley versionAllegra versionMary versionAlonzo              versionBabbage    versionConway
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , ( \versionByron versionShelley versionAllegra versionMary versionAlonzo (WithVersion versionBabbage x) versionConway ->
+          distrib
+            versionByron
+            versionShelley
+            versionAllegra
+            versionMary
+            versionAlonzo
+            versionBabbage
+            versionConway
             (injBabbage x)
       )
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , (\        versionByron versionShelley versionAllegra versionMary versionAlonzo versionBabbage (WithVersion versionConway x) ->
-        distrib versionByron versionShelley versionAllegra versionMary versionAlonzo versionBabbage              versionConway
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , ( \versionByron versionShelley versionAllegra versionMary versionAlonzo versionBabbage (WithVersion versionConway x) ->
+          distrib
+            versionByron
+            versionShelley
+            versionAllegra
+            versionMary
+            versionAlonzo
+            versionBabbage
+            versionConway
             (injConway x)
       )
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
     ]
+ where
+  distrib
+    versionByron
+    versionShelley
+    versionAllegra
+    versionMary
+    versionAlonzo
+    versionBabbage
+    versionConway
+    x =
+      WithVersion
+        ( HardForkNodeToNodeEnabled
+            maxBound
+            ( WrapNodeToNodeVersion versionByron
+                :* WrapNodeToNodeVersion versionShelley
+                :* WrapNodeToNodeVersion versionAllegra
+                :* WrapNodeToNodeVersion versionMary
+                :* WrapNodeToNodeVersion versionAlonzo
+                :* WrapNodeToNodeVersion versionBabbage
+                :* WrapNodeToNodeVersion versionConway
+                :* Nil
+            )
+        )
+        x
+
+instance
+  c ~ MockCryptoCompatByron =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToNodeVersion (CardanoEras c))
+        (SomeSecond (NestedCtxt Header) (CardanoBlock c))
+    )
   where
-    distrib versionByron versionShelley versionAllegra versionMary versionAlonzo versionBabbage versionConway
-            x =
-        WithVersion
-            (HardForkNodeToNodeEnabled
-              maxBound
-              (  WrapNodeToNodeVersion versionByron
-              :* WrapNodeToNodeVersion versionShelley
-              :* WrapNodeToNodeVersion versionAllegra
-              :* WrapNodeToNodeVersion versionMary
-              :* WrapNodeToNodeVersion versionAlonzo
-              :* WrapNodeToNodeVersion versionBabbage
-              :* WrapNodeToNodeVersion versionConway
-              :* Nil
-              ))
-            x
-
-
-instance c ~ MockCryptoCompatByron
-      => Arbitrary (WithVersion (HardForkNodeToNodeVersion (CardanoEras c))
-                                (SomeSecond (NestedCtxt Header) (CardanoBlock c))) where
   arbitrary = arbitraryNodeToNode injByron injShelley injAllegra injMary injAlonzo injBabbage injConway
-    where
-      injByron   = mapSomeNestedCtxt NCZ
-      injShelley = mapSomeNestedCtxt (NCS . NCZ)
-      injAllegra = mapSomeNestedCtxt (NCS . NCS . NCZ)
-      injMary    = mapSomeNestedCtxt (NCS . NCS . NCS . NCZ)
-      injAlonzo  = mapSomeNestedCtxt (NCS . NCS . NCS . NCS . NCZ)
-      injBabbage = mapSomeNestedCtxt (NCS . NCS . NCS . NCS . NCS . NCZ)
-      injConway  = mapSomeNestedCtxt (NCS . NCS . NCS . NCS . NCS . NCS . NCZ)
+   where
+    injByron = mapSomeNestedCtxt NCZ
+    injShelley = mapSomeNestedCtxt (NCS . NCZ)
+    injAllegra = mapSomeNestedCtxt (NCS . NCS . NCZ)
+    injMary = mapSomeNestedCtxt (NCS . NCS . NCS . NCZ)
+    injAlonzo = mapSomeNestedCtxt (NCS . NCS . NCS . NCS . NCZ)
+    injBabbage = mapSomeNestedCtxt (NCS . NCS . NCS . NCS . NCS . NCZ)
+    injConway = mapSomeNestedCtxt (NCS . NCS . NCS . NCS . NCS . NCS . NCZ)
 
-instance c ~ MockCryptoCompatByron
-      => Arbitrary (WithVersion (HardForkNodeToNodeVersion (CardanoEras c))
-                                (CardanoBlock c)) where
-  arbitrary = arbitraryNodeToNode BlockByron BlockShelley BlockAllegra BlockMary BlockAlonzo BlockBabbage BlockConway
+instance
+  c ~ MockCryptoCompatByron =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToNodeVersion (CardanoEras c))
+        (CardanoBlock c)
+    )
+  where
+  arbitrary =
+    arbitraryNodeToNode
+      BlockByron
+      BlockShelley
+      BlockAllegra
+      BlockMary
+      BlockAlonzo
+      BlockBabbage
+      BlockConway
 
-instance c ~ MockCryptoCompatByron
-      => Arbitrary (WithVersion (HardForkNodeToNodeVersion (CardanoEras c))
-                                (CardanoHeader c)) where
-  arbitrary = arbitraryNodeToNode HeaderByron HeaderShelley HeaderAllegra HeaderMary HeaderAlonzo HeaderBabbage HeaderConway
+instance
+  c ~ MockCryptoCompatByron =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToNodeVersion (CardanoEras c))
+        (CardanoHeader c)
+    )
+  where
+  arbitrary =
+    arbitraryNodeToNode
+      HeaderByron
+      HeaderShelley
+      HeaderAllegra
+      HeaderMary
+      HeaderAlonzo
+      HeaderBabbage
+      HeaderConway
 
-instance c ~ MockCryptoCompatByron
-      => Arbitrary (WithVersion (HardForkNodeToNodeVersion (CardanoEras c))
-                                (CardanoGenTx c)) where
-  arbitrary = arbitraryNodeToNode GenTxByron GenTxShelley GenTxAllegra GenTxMary GenTxAlonzo GenTxBabbage GenTxConway
+instance
+  c ~ MockCryptoCompatByron =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToNodeVersion (CardanoEras c))
+        (CardanoGenTx c)
+    )
+  where
+  arbitrary =
+    arbitraryNodeToNode
+      GenTxByron
+      GenTxShelley
+      GenTxAllegra
+      GenTxMary
+      GenTxAlonzo
+      GenTxBabbage
+      GenTxConway
 
-instance c ~ MockCryptoCompatByron
-      => Arbitrary (WithVersion (HardForkNodeToNodeVersion (CardanoEras c))
-                                (CardanoGenTxId c)) where
-  arbitrary = arbitraryNodeToNode GenTxIdByron GenTxIdShelley GenTxIdAllegra GenTxIdMary GenTxIdAlonzo GenTxIdBabbage GenTxIdConway
+instance
+  c ~ MockCryptoCompatByron =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToNodeVersion (CardanoEras c))
+        (CardanoGenTxId c)
+    )
+  where
+  arbitrary =
+    arbitraryNodeToNode
+      GenTxIdByron
+      GenTxIdShelley
+      GenTxIdAllegra
+      GenTxIdMary
+      GenTxIdAlonzo
+      GenTxIdBabbage
+      GenTxIdConway
 
 {-------------------------------------------------------------------------------
   NodeToClient
 -------------------------------------------------------------------------------}
 
-instance CardanoHardForkConstraints c
-      => Arbitrary (HardForkNodeToClientVersion (CardanoEras c)) where
+instance
+  CardanoHardForkConstraints c =>
+  Arbitrary (HardForkNodeToClientVersion (CardanoEras c))
+  where
   arbitrary =
     elements $ Map.elems $ supportedNodeToClientVersions (Proxy @(CardanoBlock c))
 
-newtype HardForkEnabledNodeToClientVersion c = HardForkEnabledNodeToClientVersion {
-      getHardForkEnabledNodeToClientVersion :: HardForkNodeToClientVersion (CardanoEras c)
-    }
+newtype HardForkEnabledNodeToClientVersion c = HardForkEnabledNodeToClientVersion
+  { getHardForkEnabledNodeToClientVersion :: HardForkNodeToClientVersion (CardanoEras c)
+  }
 
-deriving newtype instance CardanoHardForkConstraints c
-                       => Eq (HardForkEnabledNodeToClientVersion c)
-deriving newtype instance CardanoHardForkConstraints c
-                       => Show (HardForkEnabledNodeToClientVersion c)
+deriving newtype instance
+  CardanoHardForkConstraints c =>
+  Eq (HardForkEnabledNodeToClientVersion c)
+deriving newtype instance
+  CardanoHardForkConstraints c =>
+  Show (HardForkEnabledNodeToClientVersion c)
 
-instance CardanoHardForkConstraints c
-      => Arbitrary (HardForkEnabledNodeToClientVersion c) where
+instance
+  CardanoHardForkConstraints c =>
+  Arbitrary (HardForkEnabledNodeToClientVersion c)
+  where
   arbitrary =
-        elements
+    elements
       . map HardForkEnabledNodeToClientVersion
       . filter isHardForkNodeToClientEnabled
       . Map.elems
@@ -299,288 +473,439 @@ instance CardanoHardForkConstraints c
 -- PRECONDITION: 'supportedNodeToClientVersions' must include a version that
 -- satisfies this condition.
 _genWithHardForkSpecificNodeToClientVersion ::
-     forall c. CardanoHardForkConstraints c
-  => (HardForkSpecificNodeToClientVersion -> Bool)
-  -> Gen (HardForkNodeToClientVersion (CardanoEras c))
+  forall c.
+  CardanoHardForkConstraints c =>
+  (HardForkSpecificNodeToClientVersion -> Bool) ->
+  Gen (HardForkNodeToClientVersion (CardanoEras c))
 _genWithHardForkSpecificNodeToClientVersion p =
-      elements
+  elements
     . filter p'
     . Map.elems
     . supportedNodeToClientVersions
     $ Proxy @(CardanoBlock c)
-  where
-    p' :: HardForkNodeToClientVersion (CardanoEras c) -> Bool
-    p' (HardForkNodeToClientEnabled v _) = p v
-    p' (HardForkNodeToClientDisabled {}) = False
+ where
+  p' :: HardForkNodeToClientVersion (CardanoEras c) -> Bool
+  p' (HardForkNodeToClientEnabled v _) = p v
+  p' (HardForkNodeToClientDisabled{}) = False
 
-instance Arbitrary (BlockNodeToClientVersion blk)
-     => Arbitrary (EraNodeToClientVersion blk) where
-  arbitrary = frequency
-    [ (1, pure EraNodeToClientDisabled)
-    , (9, EraNodeToClientEnabled <$> arbitrary)
-    ]
+instance
+  Arbitrary (BlockNodeToClientVersion blk) =>
+  Arbitrary (EraNodeToClientVersion blk)
+  where
+  arbitrary =
+    frequency
+      [ (1, pure EraNodeToClientDisabled)
+      , (9, EraNodeToClientEnabled <$> arbitrary)
+      ]
 
 arbitraryNodeToClient ::
-     ( Arbitrary (WithVersion ByronNodeToClientVersion   byron)
-     , Arbitrary (WithVersion ShelleyNodeToClientVersion shelley)
-     , Arbitrary (WithVersion ShelleyNodeToClientVersion allegra)
-     , Arbitrary (WithVersion ShelleyNodeToClientVersion mary)
-     , Arbitrary (WithVersion ShelleyNodeToClientVersion alonzo)
-     , Arbitrary (WithVersion ShelleyNodeToClientVersion babbage)
-     , Arbitrary (WithVersion ShelleyNodeToClientVersion conway)
-     )
-  => (byron   -> cardano)
-  -> (shelley -> cardano)
-  -> (allegra -> cardano)
-  -> (mary    -> cardano)
-  -> (alonzo  -> cardano)
-  -> (babbage -> cardano)
-  -> (conway  -> cardano)
-  -> Gen (WithVersion (HardForkNodeToClientVersion (CardanoEras c)) cardano)
-arbitraryNodeToClient injByron injShelley injAllegra injMary injAlonzo injBabbage injConway = oneof
+  ( Arbitrary (WithVersion ByronNodeToClientVersion byron)
+  , Arbitrary (WithVersion ShelleyNodeToClientVersion shelley)
+  , Arbitrary (WithVersion ShelleyNodeToClientVersion allegra)
+  , Arbitrary (WithVersion ShelleyNodeToClientVersion mary)
+  , Arbitrary (WithVersion ShelleyNodeToClientVersion alonzo)
+  , Arbitrary (WithVersion ShelleyNodeToClientVersion babbage)
+  , Arbitrary (WithVersion ShelleyNodeToClientVersion conway)
+  ) =>
+  (byron -> cardano) ->
+  (shelley -> cardano) ->
+  (allegra -> cardano) ->
+  (mary -> cardano) ->
+  (alonzo -> cardano) ->
+  (babbage -> cardano) ->
+  (conway -> cardano) ->
+  Gen (WithVersion (HardForkNodeToClientVersion (CardanoEras c)) cardano)
+arbitraryNodeToClient injByron injShelley injAllegra injMary injAlonzo injBabbage injConway =
+  oneof
     -- Byron + HardFork disabled
-    [ (\(WithVersion versionByron b) ->
+    [ ( \(WithVersion versionByron b) ->
           WithVersion
             (HardForkNodeToClientDisabled versionByron)
-            (injByron b))
+            (injByron b)
+      )
         <$> arbitrary
-    -- Byron + HardFork enabled.
-    , (\(WithVersion versionByron b) versionShelley versionAllegra versionMary versionAlonzo versionBabbage versionConway ->
+    , -- Byron + HardFork enabled.
+      ( \(WithVersion versionByron b) versionShelley versionAllegra versionMary versionAlonzo versionBabbage versionConway ->
           WithVersion
-            (HardForkNodeToClientEnabled
-              maxBound
-              (  EraNodeToClientEnabled versionByron
-              :* EraNodeToClientEnabled versionShelley
-              :* versionAllegra
-              :* versionMary
-              :* versionAlonzo
-              :* versionBabbage
-              :* versionConway
-              :* Nil
-              ))
-            (injByron b))
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    -- Shelley + HardFork enabled
-    , (\versionByron (WithVersion versionShelley s) versionAllegra versionMary versionAlonzo versionBabbage versionConway ->
+            ( HardForkNodeToClientEnabled
+                maxBound
+                ( EraNodeToClientEnabled versionByron
+                    :* EraNodeToClientEnabled versionShelley
+                    :* versionAllegra
+                    :* versionMary
+                    :* versionAlonzo
+                    :* versionBabbage
+                    :* versionConway
+                    :* Nil
+                )
+            )
+            (injByron b)
+      )
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , -- Shelley + HardFork enabled
+      ( \versionByron (WithVersion versionShelley s) versionAllegra versionMary versionAlonzo versionBabbage versionConway ->
           WithVersion
-            (HardForkNodeToClientEnabled
-              maxBound
-              (  EraNodeToClientEnabled versionByron
-              :* EraNodeToClientEnabled versionShelley
-              :* versionAllegra
-              :* versionMary
-              :* versionAlonzo
-              :* versionBabbage
-              :* versionConway
-              :* Nil
-              ))
-            (injShelley s))
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    -- Allegra + HardFork enabled
-    , (\versionByron versionShelley (WithVersion versionAllegra a) versionMary versionAlonzo versionBabbage versionConway ->
+            ( HardForkNodeToClientEnabled
+                maxBound
+                ( EraNodeToClientEnabled versionByron
+                    :* EraNodeToClientEnabled versionShelley
+                    :* versionAllegra
+                    :* versionMary
+                    :* versionAlonzo
+                    :* versionBabbage
+                    :* versionConway
+                    :* Nil
+                )
+            )
+            (injShelley s)
+      )
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , -- Allegra + HardFork enabled
+      ( \versionByron versionShelley (WithVersion versionAllegra a) versionMary versionAlonzo versionBabbage versionConway ->
           WithVersion
-            (HardForkNodeToClientEnabled
-              maxBound
-              (  EraNodeToClientEnabled versionByron
-              :* EraNodeToClientEnabled versionShelley
-              :* EraNodeToClientEnabled versionAllegra
-              :* versionMary
-              :* versionAlonzo
-              :* versionBabbage
-              :* versionConway
-              :* Nil
-              ))
-            (injAllegra a))
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    -- Mary + HardFork enabled
-    , (\versionByron versionShelley versionAllegra (WithVersion versionMary m) versionAlonzo versionBabbage versionConway ->
+            ( HardForkNodeToClientEnabled
+                maxBound
+                ( EraNodeToClientEnabled versionByron
+                    :* EraNodeToClientEnabled versionShelley
+                    :* EraNodeToClientEnabled versionAllegra
+                    :* versionMary
+                    :* versionAlonzo
+                    :* versionBabbage
+                    :* versionConway
+                    :* Nil
+                )
+            )
+            (injAllegra a)
+      )
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , -- Mary + HardFork enabled
+      ( \versionByron versionShelley versionAllegra (WithVersion versionMary m) versionAlonzo versionBabbage versionConway ->
           WithVersion
-            (HardForkNodeToClientEnabled
-              maxBound
-              (  EraNodeToClientEnabled versionByron
-              :* EraNodeToClientEnabled versionShelley
-              :* EraNodeToClientEnabled versionAllegra
-              :* EraNodeToClientEnabled versionMary
-              :* versionAlonzo
-              :* versionBabbage
-              :* versionConway
-              :* Nil
-              ))
-            (injMary m))
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    -- Alonzo + HardFork enabled
-    , (\versionByron versionShelley versionAllegra versionMary (WithVersion versionAlonzo a) versionBabbage versionConway ->
+            ( HardForkNodeToClientEnabled
+                maxBound
+                ( EraNodeToClientEnabled versionByron
+                    :* EraNodeToClientEnabled versionShelley
+                    :* EraNodeToClientEnabled versionAllegra
+                    :* EraNodeToClientEnabled versionMary
+                    :* versionAlonzo
+                    :* versionBabbage
+                    :* versionConway
+                    :* Nil
+                )
+            )
+            (injMary m)
+      )
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , -- Alonzo + HardFork enabled
+      ( \versionByron versionShelley versionAllegra versionMary (WithVersion versionAlonzo a) versionBabbage versionConway ->
           WithVersion
-            (HardForkNodeToClientEnabled
-              maxBound
-              (  EraNodeToClientEnabled versionByron
-              :* EraNodeToClientEnabled versionShelley
-              :* EraNodeToClientEnabled versionAllegra
-              :* EraNodeToClientEnabled versionMary
-              :* EraNodeToClientEnabled versionAlonzo
-              :* versionBabbage
-              :* versionConway
-              :* Nil
-              ))
-            (injAlonzo a))
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    -- Babbage + HardFork enabled
-    , (\versionByron versionShelley versionAllegra versionMary versionAlonzo (WithVersion versionBabbage a) versionConway ->
+            ( HardForkNodeToClientEnabled
+                maxBound
+                ( EraNodeToClientEnabled versionByron
+                    :* EraNodeToClientEnabled versionShelley
+                    :* EraNodeToClientEnabled versionAllegra
+                    :* EraNodeToClientEnabled versionMary
+                    :* EraNodeToClientEnabled versionAlonzo
+                    :* versionBabbage
+                    :* versionConway
+                    :* Nil
+                )
+            )
+            (injAlonzo a)
+      )
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , -- Babbage + HardFork enabled
+      ( \versionByron versionShelley versionAllegra versionMary versionAlonzo (WithVersion versionBabbage a) versionConway ->
           WithVersion
-            (HardForkNodeToClientEnabled
-              maxBound
-              (  EraNodeToClientEnabled versionByron
-              :* EraNodeToClientEnabled versionShelley
-              :* EraNodeToClientEnabled versionAllegra
-              :* EraNodeToClientEnabled versionMary
-              :* EraNodeToClientEnabled versionAlonzo
-              :* EraNodeToClientEnabled versionBabbage
-              :* versionConway
-              :* Nil
-              ))
-            (injBabbage a))
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    -- Conway + HardFork enabled
-    , (\versionByron versionShelley versionAllegra versionMary versionAlonzo versionBabbage (WithVersion versionConway a) ->
+            ( HardForkNodeToClientEnabled
+                maxBound
+                ( EraNodeToClientEnabled versionByron
+                    :* EraNodeToClientEnabled versionShelley
+                    :* EraNodeToClientEnabled versionAllegra
+                    :* EraNodeToClientEnabled versionMary
+                    :* EraNodeToClientEnabled versionAlonzo
+                    :* EraNodeToClientEnabled versionBabbage
+                    :* versionConway
+                    :* Nil
+                )
+            )
+            (injBabbage a)
+      )
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+    , -- Conway + HardFork enabled
+      ( \versionByron versionShelley versionAllegra versionMary versionAlonzo versionBabbage (WithVersion versionConway a) ->
           WithVersion
-            (HardForkNodeToClientEnabled
-              maxBound
-              (  EraNodeToClientEnabled versionByron
-              :* EraNodeToClientEnabled versionShelley
-              :* EraNodeToClientEnabled versionAllegra
-              :* EraNodeToClientEnabled versionMary
-              :* EraNodeToClientEnabled versionAlonzo
-              :* EraNodeToClientEnabled versionBabbage
-              :* EraNodeToClientEnabled versionConway
-              :* Nil
-              ))
-            (injConway a))
-        <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+            ( HardForkNodeToClientEnabled
+                maxBound
+                ( EraNodeToClientEnabled versionByron
+                    :* EraNodeToClientEnabled versionShelley
+                    :* EraNodeToClientEnabled versionAllegra
+                    :* EraNodeToClientEnabled versionMary
+                    :* EraNodeToClientEnabled versionAlonzo
+                    :* EraNodeToClientEnabled versionBabbage
+                    :* EraNodeToClientEnabled versionConway
+                    :* Nil
+                )
+            )
+            (injConway a)
+      )
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
     ]
 
-instance c ~ MockCryptoCompatByron
-      => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
-                                (CardanoBlock c)) where
-  arbitrary = arbitraryNodeToClient BlockByron BlockShelley BlockAllegra BlockMary BlockAlonzo BlockBabbage BlockConway
+instance
+  c ~ MockCryptoCompatByron =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToClientVersion (CardanoEras c))
+        (CardanoBlock c)
+    )
+  where
+  arbitrary =
+    arbitraryNodeToClient
+      BlockByron
+      BlockShelley
+      BlockAllegra
+      BlockMary
+      BlockAlonzo
+      BlockBabbage
+      BlockConway
 
-instance c ~ MockCryptoCompatByron
-      => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
-                                (CardanoGenTx c)) where
-  arbitrary = arbitraryNodeToClient GenTxByron GenTxShelley GenTxAllegra GenTxMary GenTxAlonzo GenTxBabbage GenTxConway
+instance
+  c ~ MockCryptoCompatByron =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToClientVersion (CardanoEras c))
+        (CardanoGenTx c)
+    )
+  where
+  arbitrary =
+    arbitraryNodeToClient
+      GenTxByron
+      GenTxShelley
+      GenTxAllegra
+      GenTxMary
+      GenTxAlonzo
+      GenTxBabbage
+      GenTxConway
 
-instance c ~ MockCryptoCompatByron
-      => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
-                                (CardanoApplyTxErr c)) where
-  arbitrary = frequency
-      [ (8, arbitraryNodeToClient ApplyTxErrByron ApplyTxErrShelley ApplyTxErrAllegra ApplyTxErrMary ApplyTxErrAlonzo ApplyTxErrBabbage ApplyTxErrConway)
-      , (2, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> (HardForkApplyTxErrWrongEra <$> arbitrary))
+instance
+  c ~ MockCryptoCompatByron =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToClientVersion (CardanoEras c))
+        (CardanoApplyTxErr c)
+    )
+  where
+  arbitrary =
+    frequency
+      [
+        ( 8
+        , arbitraryNodeToClient
+            ApplyTxErrByron
+            ApplyTxErrShelley
+            ApplyTxErrAllegra
+            ApplyTxErrMary
+            ApplyTxErrAlonzo
+            ApplyTxErrBabbage
+            ApplyTxErrConway
+        )
+      ,
+        ( 2
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> (HardForkApplyTxErrWrongEra <$> arbitrary)
+        )
       ]
   shrink = traverse aux
-    where
-      aux :: CardanoApplyTxErr MockCryptoCompatByron
-         -> [CardanoApplyTxErr MockCryptoCompatByron]
-      aux (HardForkApplyTxErrFromEra (OneEraApplyTxErr x)) =
-          HardForkApplyTxErrFromEra . OneEraApplyTxErr <$> shrink x
-      aux (HardForkApplyTxErrWrongEra x) =
-          HardForkApplyTxErrWrongEra <$> shrink x
+   where
+    aux ::
+      CardanoApplyTxErr MockCryptoCompatByron ->
+      [CardanoApplyTxErr MockCryptoCompatByron]
+    aux (HardForkApplyTxErrFromEra (OneEraApplyTxErr x)) =
+      HardForkApplyTxErrFromEra . OneEraApplyTxErr <$> shrink x
+    aux (HardForkApplyTxErrWrongEra x) =
+      HardForkApplyTxErrWrongEra <$> shrink x
 
 instance Arbitrary (Some QueryAnytime) where
   arbitrary = return $ Some GetEraStart
 
-instance CardanoHardForkConstraints c
-      => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
-                                (Some (QueryHardFork (CardanoEras c)))) where
-  arbitrary = frequency
-      [ (1, do version <- getHardForkEnabledNodeToClientVersion <$> arbitrary
-               return $ WithVersion version (Some GetInterpreter))
-      , (1, do version <- getHardForkEnabledNodeToClientVersion <$> arbitrary
-               return $ WithVersion version (Some GetCurrentEra))
+instance
+  CardanoHardForkConstraints c =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToClientVersion (CardanoEras c))
+        (Some (QueryHardFork (CardanoEras c)))
+    )
+  where
+  arbitrary =
+    frequency
+      [
+        ( 1
+        , do
+            version <- getHardForkEnabledNodeToClientVersion <$> arbitrary
+            return $ WithVersion version (Some GetInterpreter)
+        )
+      ,
+        ( 1
+        , do
+            version <- getHardForkEnabledNodeToClientVersion <$> arbitrary
+            return $ WithVersion version (Some GetCurrentEra)
+        )
       ]
 
-instance c ~ MockCryptoCompatByron
-      => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
-                                (SomeBlockQuery (BlockQuery (CardanoBlock c)))) where
-  arbitrary = frequency
+instance
+  c ~ MockCryptoCompatByron =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToClientVersion (CardanoEras c))
+        (SomeBlockQuery (BlockQuery (CardanoBlock c)))
+    )
+  where
+  arbitrary =
+    frequency
       [ (1, arbitraryNodeToClient injByron injShelley injAllegra injMary injAlonzo injBabbage injConway)
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> (injAnytimeByron <$> arbitrary))
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> (injAnytimeShelley <$> arbitrary))
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> (injAnytimeAllegra <$> arbitrary))
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> (injAnytimeMary <$> arbitrary))
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> (injAnytimeAlonzo <$> arbitrary))
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> (injAnytimeBabbage <$> arbitrary))
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> (injAnytimeConway <$> arbitrary))
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> (injAnytimeByron <$> arbitrary)
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> (injAnytimeShelley <$> arbitrary)
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> (injAnytimeAllegra <$> arbitrary)
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> (injAnytimeMary <$> arbitrary)
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> (injAnytimeAlonzo <$> arbitrary)
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> (injAnytimeBabbage <$> arbitrary)
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> (injAnytimeConway <$> arbitrary)
+        )
       , (1, fmap injHardFork <$> arbitrary)
       ]
-    where
-      injByron          (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentByron   query)
-      injShelley        (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentShelley query)
-      injAllegra        (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentAllegra query)
-      injMary           (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentMary    query)
-      injAlonzo         (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentAlonzo  query)
-      injBabbage        (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentBabbage query)
-      injConway         (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentConway  query)
-      injAnytimeByron   (Some      query)      = SomeBlockQuery (QueryAnytimeByron     query)
-      injAnytimeShelley (Some      query)      = SomeBlockQuery (QueryAnytimeShelley   query)
-      injAnytimeAllegra (Some      query)      = SomeBlockQuery (QueryAnytimeAllegra   query)
-      injAnytimeMary    (Some      query)      = SomeBlockQuery (QueryAnytimeMary      query)
-      injAnytimeAlonzo  (Some      query)      = SomeBlockQuery (QueryAnytimeAlonzo    query)
-      injAnytimeBabbage (Some      query)      = SomeBlockQuery (QueryAnytimeBabbage   query)
-      injAnytimeConway  (Some      query)      = SomeBlockQuery (QueryAnytimeConway    query)
-      injHardFork       (Some      query)      = SomeBlockQuery (QueryHardFork         query)
+   where
+    injByron (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentByron query)
+    injShelley (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentShelley query)
+    injAllegra (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentAllegra query)
+    injMary (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentMary query)
+    injAlonzo (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentAlonzo query)
+    injBabbage (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentBabbage query)
+    injConway (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentConway query)
+    injAnytimeByron (Some query) = SomeBlockQuery (QueryAnytimeByron query)
+    injAnytimeShelley (Some query) = SomeBlockQuery (QueryAnytimeShelley query)
+    injAnytimeAllegra (Some query) = SomeBlockQuery (QueryAnytimeAllegra query)
+    injAnytimeMary (Some query) = SomeBlockQuery (QueryAnytimeMary query)
+    injAnytimeAlonzo (Some query) = SomeBlockQuery (QueryAnytimeAlonzo query)
+    injAnytimeBabbage (Some query) = SomeBlockQuery (QueryAnytimeBabbage query)
+    injAnytimeConway (Some query) = SomeBlockQuery (QueryAnytimeConway query)
+    injHardFork (Some query) = SomeBlockQuery (QueryHardFork query)
 
 instance Arbitrary History.EraEnd where
-  arbitrary = oneof
+  arbitrary =
+    oneof
       [ History.EraEnd <$> arbitrary
       , return History.EraUnbounded
       ]
 
 instance Arbitrary History.EraSummary where
-  arbitrary = History.EraSummary
+  arbitrary =
+    History.EraSummary
       <$> arbitrary
       <*> arbitrary
       <*> arbitrary
 
 instance (Arbitrary a, SListI xs) => Arbitrary (NonEmpty xs a) where
   arbitrary = do
-      let nbXs = lengthSList (Proxy @xs)
-      len <- choose (1, nbXs)
-      xs  <- vectorOf len arbitrary
-      return $ fromMaybe (error "nonEmptyFromList failed") $ nonEmptyFromList xs
+    let nbXs = lengthSList (Proxy @xs)
+    len <- choose (1, nbXs)
+    xs <- vectorOf len arbitrary
+    return $ fromMaybe (error "nonEmptyFromList failed") $ nonEmptyFromList xs
 
 instance Arbitrary (History.Interpreter (CardanoEras c)) where
   arbitrary =
-      History.mkInterpreter . History.Summary . enforceInvariant <$> arbitrary
-    where
-      -- Enforce the invariant that when the last era in the summary is the
-      -- final era, it is unbounded. The decoder relies on this.
-      enforceInvariant xs
-        | length (nonEmptyToList xs) == lengthSList (Proxy @(CardanoEras c))
-        = fixEndBound xs
-        | otherwise
-        = xs
+    History.mkInterpreter . History.Summary . enforceInvariant <$> arbitrary
+   where
+    -- Enforce the invariant that when the last era in the summary is the
+    -- final era, it is unbounded. The decoder relies on this.
+    enforceInvariant xs
+      | length (nonEmptyToList xs) == lengthSList (Proxy @(CardanoEras c)) =
+          fixEndBound xs
+      | otherwise =
+          xs
 
-      fixEndBound ::
-           NonEmpty xs History.EraSummary
-        -> NonEmpty xs History.EraSummary
-      fixEndBound (NonEmptyCons e es) = NonEmptyCons e (fixEndBound es)
-      fixEndBound (NonEmptyOne  e)    =
-          NonEmptyOne  e { History.eraEnd = History.EraUnbounded }
+    fixEndBound ::
+      NonEmpty xs History.EraSummary ->
+      NonEmpty xs History.EraSummary
+    fixEndBound (NonEmptyCons e es) = NonEmptyCons e (fixEndBound es)
+    fixEndBound (NonEmptyOne e) =
+      NonEmptyOne e{History.eraEnd = History.EraUnbounded}
 
 instance Arbitrary (EraIndex (CardanoEras c)) where
   arbitrary = do
@@ -590,147 +915,205 @@ instance Arbitrary (EraIndex (CardanoEras c)) where
       Nothing -> error $ "nsFromIndex failed for " <> show index
       Just ns -> return $ eraIndexFromNS ns
 
-instance c ~ MockCryptoCompatByron
-      => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
-                                (SomeResult (CardanoBlock c))) where
-  arbitrary = frequency
+instance
+  c ~ MockCryptoCompatByron =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToClientVersion (CardanoEras c))
+        (SomeResult (CardanoBlock c))
+    )
+  where
+  arbitrary =
+    frequency
       [ (1, arbitraryNodeToClient injByron injShelley injAllegra injMary injAlonzo injBabbage injConway)
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> genQueryIfCurrentResultEraMismatch)
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> genQueryAnytimeResultByron)
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> genQueryAnytimeResultShelley)
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> genQueryAnytimeResultAllegra)
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> genQueryAnytimeResultMary)
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> genQueryAnytimeResultAlonzo)
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> genQueryAnytimeResultBabbage)
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> genQueryAnytimeResultConway)
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> genQueryIfCurrentResultEraMismatch
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> genQueryAnytimeResultByron
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> genQueryAnytimeResultShelley
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> genQueryAnytimeResultAllegra
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> genQueryAnytimeResultMary
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> genQueryAnytimeResultAlonzo
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> genQueryAnytimeResultBabbage
+        )
+      ,
+        ( 1
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> genQueryAnytimeResultConway
+        )
       , (1, genQueryHardForkResult)
       ]
-    where
-      injByron   (SomeResult q r) = SomeResult (QueryIfCurrentByron   q) (QueryResultSuccess r)
-      injShelley (SomeResult q r) = SomeResult (QueryIfCurrentShelley q) (QueryResultSuccess r)
-      injAllegra (SomeResult q r) = SomeResult (QueryIfCurrentAllegra q) (QueryResultSuccess r)
-      injMary    (SomeResult q r) = SomeResult (QueryIfCurrentMary    q) (QueryResultSuccess r)
-      injAlonzo  (SomeResult q r) = SomeResult (QueryIfCurrentAlonzo  q) (QueryResultSuccess r)
-      injBabbage (SomeResult q r) = SomeResult (QueryIfCurrentBabbage q) (QueryResultSuccess r)
-      injConway  (SomeResult q r) = SomeResult (QueryIfCurrentConway  q) (QueryResultSuccess r)
+   where
+    injByron (SomeResult q r) = SomeResult (QueryIfCurrentByron q) (QueryResultSuccess r)
+    injShelley (SomeResult q r) = SomeResult (QueryIfCurrentShelley q) (QueryResultSuccess r)
+    injAllegra (SomeResult q r) = SomeResult (QueryIfCurrentAllegra q) (QueryResultSuccess r)
+    injMary (SomeResult q r) = SomeResult (QueryIfCurrentMary q) (QueryResultSuccess r)
+    injAlonzo (SomeResult q r) = SomeResult (QueryIfCurrentAlonzo q) (QueryResultSuccess r)
+    injBabbage (SomeResult q r) = SomeResult (QueryIfCurrentBabbage q) (QueryResultSuccess r)
+    injConway (SomeResult q r) = SomeResult (QueryIfCurrentConway q) (QueryResultSuccess r)
 
-      -- In practice, when sending a Byron query you'll never get a mismatch
-      -- saying that your query is from the Shelley era while the ledger is
-      -- from Byron. Only the inverse. We ignore that in this generator, as it
-      -- doesn't matter for serialisation purposes, we just generate a random
-      -- 'MismatchEraInfo'.
-      genQueryIfCurrentResultEraMismatch :: Gen (SomeResult (CardanoBlock c))
-      genQueryIfCurrentResultEraMismatch = oneof
-          [ (\(SomeResult q (_ :: result)) mismatch ->
-                SomeResult (QueryIfCurrentByron q) (Left @_ @result mismatch))
-              <$> arbitrary <*> arbitrary
-          , (\(SomeResult q (_ :: result)) mismatch ->
-                SomeResult (QueryIfCurrentShelley q) (Left @_ @result mismatch))
-              <$> arbitrary <*> arbitrary
-          , (\(SomeResult q (_ :: result)) mismatch ->
-                SomeResult (QueryIfCurrentAllegra q) (Left @_ @result mismatch))
-              <$> arbitrary <*> arbitrary
-          , (\(SomeResult q (_ :: result)) mismatch ->
-                SomeResult (QueryIfCurrentMary q) (Left @_ @result mismatch))
-              <$> arbitrary <*> arbitrary
-          , (\(SomeResult q (_ :: result)) mismatch ->
-                SomeResult (QueryIfCurrentAlonzo q) (Left @_ @result mismatch))
-              <$> arbitrary <*> arbitrary
-          , (\(SomeResult q (_ :: result)) mismatch ->
-                SomeResult (QueryIfCurrentBabbage q) (Left @_ @result mismatch))
-              <$> arbitrary <*> arbitrary
-          , (\(SomeResult q (_ :: result)) mismatch ->
-                SomeResult (QueryIfCurrentConway q) (Left @_ @result mismatch))
-              <$> arbitrary <*> arbitrary
-          ]
+    -- In practice, when sending a Byron query you'll never get a mismatch
+    -- saying that your query is from the Shelley era while the ledger is
+    -- from Byron. Only the inverse. We ignore that in this generator, as it
+    -- doesn't matter for serialisation purposes, we just generate a random
+    -- 'MismatchEraInfo'.
+    genQueryIfCurrentResultEraMismatch :: Gen (SomeResult (CardanoBlock c))
+    genQueryIfCurrentResultEraMismatch =
+      oneof
+        [ ( \(SomeResult q (_ :: result)) mismatch ->
+              SomeResult (QueryIfCurrentByron q) (Left @_ @result mismatch)
+          )
+            <$> arbitrary
+            <*> arbitrary
+        , ( \(SomeResult q (_ :: result)) mismatch ->
+              SomeResult (QueryIfCurrentShelley q) (Left @_ @result mismatch)
+          )
+            <$> arbitrary
+            <*> arbitrary
+        , ( \(SomeResult q (_ :: result)) mismatch ->
+              SomeResult (QueryIfCurrentAllegra q) (Left @_ @result mismatch)
+          )
+            <$> arbitrary
+            <*> arbitrary
+        , ( \(SomeResult q (_ :: result)) mismatch ->
+              SomeResult (QueryIfCurrentMary q) (Left @_ @result mismatch)
+          )
+            <$> arbitrary
+            <*> arbitrary
+        , ( \(SomeResult q (_ :: result)) mismatch ->
+              SomeResult (QueryIfCurrentAlonzo q) (Left @_ @result mismatch)
+          )
+            <$> arbitrary
+            <*> arbitrary
+        , ( \(SomeResult q (_ :: result)) mismatch ->
+              SomeResult (QueryIfCurrentBabbage q) (Left @_ @result mismatch)
+          )
+            <$> arbitrary
+            <*> arbitrary
+        , ( \(SomeResult q (_ :: result)) mismatch ->
+              SomeResult (QueryIfCurrentConway q) (Left @_ @result mismatch)
+          )
+            <$> arbitrary
+            <*> arbitrary
+        ]
 
-      genQueryAnytimeResultByron :: Gen (SomeResult (CardanoBlock c))
-      genQueryAnytimeResultByron =
-          SomeResult (QueryAnytimeByron GetEraStart) <$> arbitrary
+    genQueryAnytimeResultByron :: Gen (SomeResult (CardanoBlock c))
+    genQueryAnytimeResultByron =
+      SomeResult (QueryAnytimeByron GetEraStart) <$> arbitrary
 
-      genQueryAnytimeResultShelley :: Gen (SomeResult (CardanoBlock c))
-      genQueryAnytimeResultShelley =
-          SomeResult (QueryAnytimeShelley GetEraStart) <$> arbitrary
+    genQueryAnytimeResultShelley :: Gen (SomeResult (CardanoBlock c))
+    genQueryAnytimeResultShelley =
+      SomeResult (QueryAnytimeShelley GetEraStart) <$> arbitrary
 
-      genQueryAnytimeResultAllegra :: Gen (SomeResult (CardanoBlock c))
-      genQueryAnytimeResultAllegra =
-          SomeResult (QueryAnytimeAllegra GetEraStart) <$> arbitrary
+    genQueryAnytimeResultAllegra :: Gen (SomeResult (CardanoBlock c))
+    genQueryAnytimeResultAllegra =
+      SomeResult (QueryAnytimeAllegra GetEraStart) <$> arbitrary
 
-      genQueryAnytimeResultMary :: Gen (SomeResult (CardanoBlock c))
-      genQueryAnytimeResultMary =
-          SomeResult (QueryAnytimeMary GetEraStart) <$> arbitrary
+    genQueryAnytimeResultMary :: Gen (SomeResult (CardanoBlock c))
+    genQueryAnytimeResultMary =
+      SomeResult (QueryAnytimeMary GetEraStart) <$> arbitrary
 
-      genQueryAnytimeResultAlonzo :: Gen (SomeResult (CardanoBlock c))
-      genQueryAnytimeResultAlonzo =
-          SomeResult (QueryAnytimeAlonzo GetEraStart) <$> arbitrary
+    genQueryAnytimeResultAlonzo :: Gen (SomeResult (CardanoBlock c))
+    genQueryAnytimeResultAlonzo =
+      SomeResult (QueryAnytimeAlonzo GetEraStart) <$> arbitrary
 
-      genQueryAnytimeResultBabbage :: Gen (SomeResult (CardanoBlock c))
-      genQueryAnytimeResultBabbage =
-          SomeResult (QueryAnytimeBabbage GetEraStart) <$> arbitrary
+    genQueryAnytimeResultBabbage :: Gen (SomeResult (CardanoBlock c))
+    genQueryAnytimeResultBabbage =
+      SomeResult (QueryAnytimeBabbage GetEraStart) <$> arbitrary
 
-      genQueryAnytimeResultConway :: Gen (SomeResult (CardanoBlock c))
-      genQueryAnytimeResultConway =
-          SomeResult (QueryAnytimeConway GetEraStart) <$> arbitrary
+    genQueryAnytimeResultConway :: Gen (SomeResult (CardanoBlock c))
+    genQueryAnytimeResultConway =
+      SomeResult (QueryAnytimeConway GetEraStart) <$> arbitrary
 
-      genQueryHardForkResult ::
-           Gen (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
-                            (SomeResult (CardanoBlock c)))
-      genQueryHardForkResult = oneof
-          [ WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> (SomeResult (QueryHardFork GetInterpreter) <$> arbitrary)
-          , WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> (SomeResult (QueryHardFork GetCurrentEra) <$> arbitrary)
-          ]
+    genQueryHardForkResult ::
+      Gen
+        ( WithVersion
+            (HardForkNodeToClientVersion (CardanoEras c))
+            (SomeResult (CardanoBlock c))
+        )
+    genQueryHardForkResult =
+      oneof
+        [ WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> (SomeResult (QueryHardFork GetInterpreter) <$> arbitrary)
+        , WithVersion
+            <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+            <*> (SomeResult (QueryHardFork GetCurrentEra) <$> arbitrary)
+        ]
 
 {------------------------------------------------------------------------------
   Ledger Config
 ------------------------------------------------------------------------------}
 
-
 -- | See 'encodeNodeToClientNP' and 'decodeNodeToClientNP'.
-instance CardanoHardForkConstraints c
-      => Arbitrary (WithVersion
-                     (HardForkNodeToClientVersion (CardanoEras c))
-                     (HardForkLedgerConfig (CardanoEras c))
-                   ) where
-  arbitrary = WithVersion
+instance
+  CardanoHardForkConstraints c =>
+  Arbitrary
+    ( WithVersion
+        (HardForkNodeToClientVersion (CardanoEras c))
+        (HardForkLedgerConfig (CardanoEras c))
+    )
+  where
+  arbitrary =
+    WithVersion
       -- Use a version that enables all eras. We assume that all eras are
       -- enabled in the maximum supported version.
       (snd $ fromMaybe err $ Map.lookupMax $ supportedNodeToClientVersions (Proxy @(CardanoBlock c)))
       <$> arbitrary
-    where
-      err = error "Expected at least 1 supported note-to-client version, but `supportedNodeToClientVersions` has none"
+   where
+    err =
+      error
+        "Expected at least 1 supported note-to-client version, but `supportedNodeToClientVersions` has none"
 
-instance CardanoHardForkConstraints c
-      => Arbitrary (HardForkLedgerConfig (CardanoEras c)) where
+instance
+  CardanoHardForkConstraints c =>
+  Arbitrary (HardForkLedgerConfig (CardanoEras c))
+  where
   arbitrary = HardForkLedgerConfig <$> arbitrary <*> arbitrary
 
 instance SListI xs => Arbitrary (History.Shape xs) where
   arbitrary = History.Shape . Exactly <$> hsequenceK (hpure (K arbitrary))
 
-instance (CardanoHardForkConstraints c)
-      => Arbitrary (PerEraLedgerConfig (CardanoEras c)) where
+instance
+  CardanoHardForkConstraints c =>
+  Arbitrary (PerEraLedgerConfig (CardanoEras c))
+  where
   arbitrary =
-      fmap PerEraLedgerConfig . hsequence'
-    $ hcpure (Proxy @(Compose Arbitrary WrapPartialLedgerConfig)) (Comp arbitrary)
+    fmap PerEraLedgerConfig . hsequence' $
+      hcpure (Proxy @(Compose Arbitrary WrapPartialLedgerConfig)) (Comp arbitrary)
 
 instance Arbitrary (PartialLedgerConfig blk) => Arbitrary (WrapPartialLedgerConfig blk) where
   arbitrary = WrapPartialLedgerConfig <$> arbitrary
@@ -738,13 +1121,16 @@ instance Arbitrary (PartialLedgerConfig blk) => Arbitrary (WrapPartialLedgerConf
 instance Arbitrary ByronPartialLedgerConfig where
   arbitrary = ByronPartialLedgerConfig <$> arbitrary <*> arbitrary
 
-instance Arbitrary (ShelleyLedgerConfig era)
-      => Arbitrary (ShelleyPartialLedgerConfig era) where
+instance
+  Arbitrary (ShelleyLedgerConfig era) =>
+  Arbitrary (ShelleyPartialLedgerConfig era)
+  where
   arbitrary = ShelleyPartialLedgerConfig <$> arbitrary <*> arbitrary
 
 instance Arbitrary TriggerHardFork where
-  arbitrary = oneof [
-      TriggerHardForkAtVersion <$> arbitrary
-    , TriggerHardForkAtEpoch <$> arbitrary
-    , pure TriggerHardForkNotDuringThisExecution
-    ]
+  arbitrary =
+    oneof
+      [ TriggerHardForkAtVersion <$> arbitrary
+      , TriggerHardForkAtEpoch <$> arbitrary
+      , pure TriggerHardForkNotDuringThisExecution
+      ]

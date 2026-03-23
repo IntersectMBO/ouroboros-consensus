@@ -1,19 +1,19 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Ouroboros.Consensus.Byron.Ledger.Integrity (
-    verifyBlockIntegrity
+module Ouroboros.Consensus.Byron.Ledger.Integrity
+  ( verifyBlockIntegrity
   , verifyHeaderIntegrity
   , verifyHeaderSignature
   ) where
 
 import qualified Cardano.Chain.Block as CC
 import qualified Cardano.Crypto.DSIGN.Class as CC.Crypto
-import           Data.Either (isRight)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Byron.Ledger.Block
-import           Ouroboros.Consensus.Byron.Ledger.Config
-import           Ouroboros.Consensus.Byron.Ledger.PBFT ()
-import           Ouroboros.Consensus.Protocol.PBFT
+import Data.Either (isRight)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Byron.Ledger.Block
+import Ouroboros.Consensus.Byron.Ledger.Config
+import Ouroboros.Consensus.Byron.Ledger.PBFT ()
+import Ouroboros.Consensus.Protocol.PBFT
 
 -- | Verify whether a header matches its signature.
 --
@@ -21,17 +21,18 @@ import           Ouroboros.Consensus.Protocol.PBFT
 -- This function will always return 'True' for an EBB.
 verifyHeaderSignature :: BlockConfig ByronBlock -> Header ByronBlock -> Bool
 verifyHeaderSignature cfg hdr =
-    case validateView cfg hdr of
-      PBftValidateBoundary{} ->
-        -- EBB, no signature to check
-        True
-      PBftValidateRegular fields signed contextDSIGN ->
-        let PBftFields { pbftIssuer, pbftSignature } = fields
-        in isRight $ CC.Crypto.verifySignedDSIGN
-             contextDSIGN
-             pbftIssuer
-             signed
-             pbftSignature
+  case validateView cfg hdr of
+    PBftValidateBoundary{} ->
+      -- EBB, no signature to check
+      True
+    PBftValidateRegular fields signed contextDSIGN ->
+      let PBftFields{pbftIssuer, pbftSignature} = fields
+       in isRight $
+            CC.Crypto.verifySignedDSIGN
+              contextDSIGN
+              pbftIssuer
+              signed
+              pbftSignature
 
 -- | Verify whether a header is not corrupted.
 --
@@ -43,15 +44,16 @@ verifyHeaderSignature cfg hdr =
 -- This function will always return 'True' for an EBB.
 verifyHeaderIntegrity :: BlockConfig ByronBlock -> Header ByronBlock -> Bool
 verifyHeaderIntegrity cfg hdr =
-    verifyHeaderSignature cfg hdr &&
+  verifyHeaderSignature cfg hdr
+    &&
     -- @CC.headerProtocolMagicId@ is the only field of a regular header that
     -- is not signed, so check it manually.
     case byronHeaderRaw hdr of
-        CC.ABOBBlockHdr h    -> CC.headerProtocolMagicId h == protocolMagicId
-        -- EBB, we can't check it
-        CC.ABOBBoundaryHdr _ -> True
-  where
-    protocolMagicId = byronProtocolMagicId cfg
+      CC.ABOBBlockHdr h -> CC.headerProtocolMagicId h == protocolMagicId
+      -- EBB, we can't check it
+      CC.ABOBBoundaryHdr _ -> True
+ where
+  protocolMagicId = byronProtocolMagicId cfg
 
 -- | Verifies whether the block is not corrupted by checking its signature and
 -- witnesses.
@@ -60,7 +62,7 @@ verifyHeaderIntegrity cfg hdr =
 -- anything for an EBB.
 verifyBlockIntegrity :: BlockConfig ByronBlock -> ByronBlock -> Bool
 verifyBlockIntegrity cfg blk =
-    verifyHeaderIntegrity cfg hdr &&
-    blockMatchesHeader        hdr blk
-  where
-    hdr = getHeader blk
+  verifyHeaderIntegrity cfg hdr
+    && blockMatchesHeader hdr blk
+ where
+  hdr = getHeader blk
