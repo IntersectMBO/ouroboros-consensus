@@ -28,6 +28,7 @@ import TextBuilder (TextBuilder)
 import Cardano.Ledger.BaseTypes (ProtVer)
 import qualified Barbies
 import Data.Text (Text)
+import Numeric.Natural
 
 {-------------------------------------------------------------------------------
   HasAnalysis
@@ -109,8 +110,14 @@ data TxFeatures f = MkTxFeatures
     -- ^ Number of certs which are governance certs
   , num_deleg_certs :: f Int
     -- ^ Number of certs which are deleg certs
+  , step_budget :: f Natural
+    -- ^ The declared maximum number of steps that scripts can take in the
+    -- transaction, in total (as in execution units).
+  , mem_budget :: f Natural
+    -- ^ The declared maximum of memory consumed by scripts in the transaction
+    -- (as in execution units).
   , min_fee :: f Int
-    -- ^ TODO
+    -- ^ The minimum fee as currently computed by the consensus implementation
   }
   deriving (Generic, Barbies.FunctorB, Barbies.TraversableB, Barbies.ApplicativeB, Barbies.ConstraintsB)
 

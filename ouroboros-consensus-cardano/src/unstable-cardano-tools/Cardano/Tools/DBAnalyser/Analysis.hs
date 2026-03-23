@@ -421,6 +421,8 @@ txFeaturesNames =
     , num_pool_certs = "#pool_certs"
     , num_gov_certs = "#gov_certs"
     , num_deleg_certs = "#deleg_certs"
+    , step_budget = "step_budget"
+    , mem_budget = "mem_budget"
     , min_fee = "min_fee"
     }
 

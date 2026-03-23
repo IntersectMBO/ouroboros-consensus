@@ -85,6 +85,7 @@ import Data.Functor.Identity (Identity (..))
 import Cardano.Ledger.Coin (Coin(..))
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables)
+import Numeric.Natural
 
 -- | Usable for each Shelley-based era
 instance
@@ -94,6 +95,7 @@ instance
   , EraScripts (Ledger.Script era)
   , EraHasName era
   , EraDatum era
+  , EraExUnits era
   , EraTx era
   , EraTxWits era
   , EraTxBody era
@@ -221,6 +223,8 @@ instance
             , num_pool_certs = Identity $ length $ toListOf (certs . eraFilterPoolCert Proxy) tx
             , num_gov_certs = Identity $ length $ toListOf (certs . eraFilterGovCert Proxy) tx
             , num_deleg_certs = Identity $ length $ toListOf (certs . eraFilterDelegCert Proxy) tx
+            , step_budget = Identity $ eraStepBudget tx
+            , mem_budget = Identity $ eraMemBudget tx
             , min_fee = Identity $ fromIntegral $ unCoin $
                 Core.getMinFeeTx
                   (view (to shelleyLedgerState . SL.newEpochStateGovStateL . LState.curPParamsGovStateL) lsb)
@@ -483,3 +487,41 @@ instance EraDatum AllegraEra where
 
 instance EraDatum MaryEra where
   eraDatumSize _ = 0 -- Mary era has no datums
+
+class EraExUnits era where
+  eraStepBudget :: Ledger.Tx era -> Natural
+  eraMemBudget :: Ledger.Tx era -> Natural
+
+stepBudgetDefault :: (Ledger.EraTx era, AlonzoEraTxWits era) => Ledger.Tx era -> Natural
+stepBudgetDefault tx = Alonzo.exUnitsSteps (Alonzo.totExUnits tx)
+
+memBudgetDefault :: (Ledger.EraTx era, AlonzoEraTxWits era) => Ledger.Tx era -> Natural
+memBudgetDefault tx = Alonzo.exUnitsMem (Alonzo.totExUnits tx)
+
+instance EraExUnits AlonzoEra where
+  eraStepBudget = stepBudgetDefault
+  eraMemBudget = memBudgetDefault
+
+instance EraExUnits BabbageEra where
+  eraStepBudget = stepBudgetDefault
+  eraMemBudget = memBudgetDefault
+
+instance EraExUnits ConwayEra where
+  eraStepBudget = stepBudgetDefault
+  eraMemBudget = memBudgetDefault
+
+instance EraExUnits DijkstraEra where
+  eraStepBudget = stepBudgetDefault
+  eraMemBudget = memBudgetDefault
+
+instance EraExUnits ShelleyEra where
+  eraStepBudget _ = 0
+  eraMemBudget _ = 0
+
+instance EraExUnits AllegraEra where
+  eraStepBudget _ = 0
+  eraMemBudget _ = 0
+
+instance EraExUnits MaryEra where
+  eraStepBudget _ = 0
+  eraMemBudget _ = 0
