@@ -92,12 +92,13 @@
 --   Therefore, the 'BackingStore' is not allocated in any resource or tracked
 --   in any way as a resource.
 --
---   For the value handles, all the usages of those are bracketed or tracked in
---   a resource registry, so they will be closed individually when an exception
---   arrives. The key difference is that in V1, the value handle cannot outlive
---   the Forker (which is bracketed or tracked or doesn't matter because the
---   node is shutting down), while in V2 the resources (handles) can outlive the
---   forkers and be moved to the LedgerDB.
+--   For the value handles, all the usages of those are bracketed or
+--   tracked in a resource registry, so they will be closed
+--   individually when an exception arrives. The key difference is
+--   that in V1, the value handle cannot outlive the Forker (see
+--   "'Forker' management in the running node" below), while in V2 the
+--   resources (handles) can outlive the forkers and be moved to the
+--   LedgerDB.
 --
 -- - LSM: This backend allocates a 'BlockIOFS' and a 'Session'. Using the
 --   session, new 'Tables' are allocated, but closing the session closes any
@@ -108,6 +109,63 @@
 --   be closed by closing the ChainDB which is tracked in the top-level
 --   registry. Therefore we don't need to keep track of the 'Table' handles nor
 --   we need to further keep track of the 'BlockIOFS' and the 'Session'.
+--
+-- = 'Forker' management in the running node
+--
+-- The 'openForkerAtTarget' method of the 'LedgerDB' type is the
+-- lowest-level method for opening a Forker. This comment describes
+-- the tree formed by definition-and-use edges rooted at
+-- 'openForkerAtTarget'. It doesn't describe the entire tree, but
+-- rather just enough to confirm that 'Forker's will not be leaked
+-- /during the extended execution of the running node/. There are a
+-- few helpful clarifications to make before elaborating that tree.
+--
+-- - This comment is only concerned with the running node. In
+--   contrast, the shutting down node is addressed by the "Resource
+--   management in the LedgerDB" section above. There are two key
+--   ideas. First, the shut down routines don't open additional
+--   Forkers. Second, it's OK for the shut down routines to not
+--   necessarily close their local/owned Forkers, since the Forker
+--   backends either don't require that or already take care of open
+--   handles when their top-level "close" method is called.
+--
+-- - Some subtrees, like the 'withTipForker' subtree, are irrelevant
+--   to this comment, because they explicitly use 'bracket' or a
+--   short-lived 'ResourceRegstiry' and so can't contribute to any
+--   leaks. To clarify: there would be leaks if those brackets were
+--   indefinitely nested or if the registry outlived multiple
+--   iterations, etc. But that itself would be an unacceptable stack
+--   leak, for example. Such unbounded nesting/registries are
+--   therefore beyond the scope of this comment.
+--
+-- - Tools (like @db-analyser@) and tests are also beyond the scope of
+--   this comment, so those subtrees are mentioned but not elaborated.
+--
+-- - It turns out that the resulting tree is currently merely a list
+--   of such uninteresting subtrees, so the nub of this comment can be
+--   linear despite describing a tree.
+--
+-- At the time of writing, the (linear spine of the) def-use tree is
+-- as follows.
+--
+-- - 'openForkerAtTarget' is used directly only to define
+--   'withTipForker' (bracketed) and 'openReadOnlyForker'.
+--
+-- - 'openReadOnlyForker' is used directly only in @db-analyser@
+--   (tool), in tests, and to define 'openReadOnlyForkerAtPoint'.
+--
+-- - 'openReadOnlyForkerAtPoint' is used directly only to define
+--   'allocInRegistryReadOnlyForkerAtPoint' (registered), to define
+--   'withReadOnlyForkerAtPoint' (bracketed), and to construct a
+--   'MempoolLedgerDBView'.
+--
+--  - The Forker part of 'MempoolLedgerDBView' is used directly only
+--    in 'initMempoolEnv' (called by 'openMempool') and in
+--    'implSyncWithLedger. If an exception arrives during
+--    'openMempool', then node will shutdown, so leaks are not a
+--    concern here. The syncing-with-ledger use is bracketed via
+--    'modifyMVar_' to close the old forker just before replacing it
+--    with the new one.
 --
 -- === __(image code)__
 -- >>> import Image.LaTeX.Render
@@ -276,8 +334,10 @@ data LedgerDB m l blk = LedgerDB
       m (Either GetForkerError (Forker m l))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
-  -- 'GetForkerError'. Note this will allocate resources so it has to be
-  -- bracketed downstream.
+  -- 'GetForkerError'.
+  --
+  -- Note this will allocate resources; see the "'Forker' management
+  -- in the running node" comment above.
   , validateFork ::
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
