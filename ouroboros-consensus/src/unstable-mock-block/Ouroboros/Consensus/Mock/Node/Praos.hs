@@ -26,6 +26,7 @@ import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Protocol.Praos
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Util.IOLike
 
 type MockPraosBlock = SimplePraosBlock SimpleMockCrypto PraosMockCrypto
@@ -135,7 +136,7 @@ praosBlockForging cid initHotKey = do
               . second forgeStateUpdateInfoFromUpdateInfo
               . evolveKey sno
       , checkCanForge = \_ _ _ _ _ -> return ()
-      , forgeBlock = \cfg bno sno tickedLedgerSt txs _ebtxs isLeader -> do
+      , forgeBlock = \_leiosDb cfg bno sno tickedLedgerSt txs _ebtxs isLeader -> do
           hotKey <- readMVar varHotKey
           return . (,Nothing) $
             forgeSimple
@@ -147,3 +148,7 @@ praosBlockForging cid initHotKey = do
               (map txForgetValidated txs)
               isLeader
       }
+
+-- * Leios
+
+instance ResolveLeiosBlock (SimplePraosBlock c c')

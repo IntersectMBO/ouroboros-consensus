@@ -101,7 +101,7 @@ simpleBlockForging aCanBeLeader aForgeExt =
     , canBeLeader = aCanBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot lst txs _ebtxs proof ->
+    , forgeBlock = \_leiosDb cfg bno slot lst txs _ebtxs proof ->
         return . (,Nothing) $
           forgeSimple
             aForgeExt

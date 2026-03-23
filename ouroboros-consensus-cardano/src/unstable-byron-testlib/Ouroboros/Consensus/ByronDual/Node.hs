@@ -44,6 +44,7 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Delegation as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Keys as Spec.Test
@@ -65,7 +66,7 @@ dualByronBlockForging creds =
     , updateForgeState = \cfg ->
         fmap castForgeStateUpdateInfo .: updateForgeState (dualTopLevelConfigMain cfg)
     , checkCanForge = checkCanForge . dualTopLevelConfigMain
-    , forgeBlock = \cfg b s ls txs _ebTxs isLeader ->
+    , forgeBlock = \_leiosDb cfg b s ls txs _ebTxs isLeader ->
         -- XXX: Adding Leios EB support here feels so wrong
         return . (,Nothing) $
           forgeDualByronBlock cfg b s ls txs isLeader
@@ -281,3 +282,7 @@ deriving via
     BlockSupportsDiffusionPipelining DualByronBlock
 
 instance RunNode DualByronBlock
+
+-- * Leios
+
+instance ResolveLeiosBlock DualByronBlock

@@ -47,6 +47,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.SOP.Dict as Dict
 import Data.Word
+import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -458,6 +459,7 @@ blockNotFound =
 -------------------------------------------------------------------------------}
 
 openLedgerDB ::
+  ResolveLeiosBlock TestBlock =>
   Complete LedgerDbFlavorArgs IO ->
   ChainDB IO ->
   LedgerDbCfg (ExtLedgerState TestBlock) ->
@@ -468,6 +470,7 @@ openLedgerDB flavArgs env cfg fs = do
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
   replayGoal <- fmap (realPointToPoint . last . Map.keys) . atomically $ readTVar (dbBlocks env)
   rr <- unsafeNewRegistry
+  leiosDb <- newLeiosDBInMemory
   let args =
         LedgerDbArgs
           (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots)
@@ -483,6 +486,7 @@ openLedgerDB flavArgs env cfg fs = do
     LedgerDbFlavorArgsV1 bss ->
       let initDb =
             V1.mkInitDb
+              leiosDb
               args
               bss
               getBlock
@@ -490,6 +494,7 @@ openLedgerDB flavArgs env cfg fs = do
     LedgerDbFlavorArgsV2 bss ->
       let initDb =
             V2.mkInitDb
+              leiosDb
               args
               bss
               getBlock
@@ -517,7 +522,7 @@ data Environment
       (SomeHasFS IO)
       (IO ())
 
-instance RunModel Model (StateT Environment IO) where
+instance ResolveLeiosBlock TestBlock => RunModel Model (StateT Environment IO) where
   perform _ (Init secParam) _ = do
     Environment _ _ chainDb mkArgs fs cleanup <- get
     (ldb, testInternals) <- lift $ do

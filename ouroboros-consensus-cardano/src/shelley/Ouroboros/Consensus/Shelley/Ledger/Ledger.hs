@@ -3,7 +3,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -12,6 +11,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
@@ -54,11 +54,18 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
 
     -- * Low-level UTxO manipulations
   , slUtxoL
+
+    -- * Leios
+  , ShelleyLedgerLeiosState (..)
+  , initShelleyLedgerLeiosState
+  , deserialiseShelleyTx
+  , toTxSeq
   ) where
 
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
+import qualified Cardano.Ledger.Binary as CB
 import Cardano.Ledger.Binary.Decoding
   ( decShareCBOR
   , decodeMap
@@ -75,7 +82,9 @@ import Cardano.Ledger.Binary.Plain
   , ToCBOR (..)
   , enforceSize
   )
+import Cardano.Ledger.Block (Block (blockBody))
 import qualified Cardano.Ledger.Block as Core
+import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
   ( Era
   , eraDecoder
@@ -84,7 +93,7 @@ import Cardano.Ledger.Core
   )
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Cardano.Ledger.Shelley.Governance as SL
+import qualified Cardano.Ledger.Shelley.Core as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.UMap as SL
 import Cardano.Slotting.EpochInfo
@@ -97,13 +106,25 @@ import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BL
 import Data.Coerce (coerce)
 import Data.Functor.Identity
 import Data.MemPack
+import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosDemoDb (LeiosDbHandle (leiosDbQueryCompletedEbByPoint))
+import LeiosDemoTypes
+  ( EbHash (MkEbHash)
+  , LeiosPoint (MkLeiosPoint)
+  , TxHash
+  , decodeLeiosPoint
+  , encodeLeiosPoint
+  , pointSlotNo
+  )
 import Lens.Micro
 import Lens.Micro.Extras (view)
 import NoThunks.Class (NoThunks (..))
@@ -267,11 +288,64 @@ castShelleyTip (ShelleyTip sn bn hh) =
     , shelleyTipHash = coerce hh
     }
 
+data ShelleyLedgerLeiosState = ShelleyLedgerLeiosState
+  { sllsMaybeAnnouncedEb :: Maybe LeiosPoint
+  , sllsTooSoonToCertify :: Bool
+  , sllsApplyTickCount :: Int
+  , sllsApplyBlockCount :: Int
+  , sllsApplyTickLastAt :: SlotNo
+  , sllsApplyBlockLastAt :: SlotNo
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+initShelleyLedgerLeiosState :: ShelleyLedgerLeiosState
+initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing True 0 0 (SlotNo 0) (SlotNo 0)
+
+-- FIXME: A certificate may only be included if RB' is at least 3 × L hdr + L vote + L diff slots after RB.
+-- Let's call this `predTooSoonToCertify :: AnnouncedEb -> SlotNo -> Bool`
+-- We can use this method to update `sllsTooSoonToCertify` depending on `predTooSoonToCertify`
+applyTickShelleyLedgerLeiosState :: ShelleyLedgerLeiosState -> SlotNo -> ShelleyLedgerLeiosState
+applyTickShelleyLedgerLeiosState leiosSt currSlotNo =
+  leiosSt
+    { sllsApplyTickCount = sllsApplyTickCount leiosSt + 1
+    , sllsApplyTickLastAt = currSlotNo
+    , sllsTooSoonToCertify = predTooSoonToCertify leiosSt currSlotNo
+    }
+
+predTooSoonToCertify :: ShelleyLedgerLeiosState -> SlotNo -> Bool
+predTooSoonToCertify leiosSt currSlotNo =
+  maybe
+    True
+    (\annEbPoint -> unSlotNo currSlotNo - (unSlotNo . pointSlotNo $ annEbPoint) <= certifyMinDuration)
+    (sllsMaybeAnnouncedEb leiosSt)
+ where
+  certifyMinDuration = 10 -- FIXME(bladyjoker): Hardcore real value or wire in through config
+
+-- FIXME(bladyjoker): I sense that here is where given previous state and blk we inspect the blk to figure out:
+-- 1. Is blk announcing an EB? Yes: Update LeiosState with info about that EB; No: Override/Set whatever was there with Nothing
+-- 2. Is blk a denoting an EB Certificate? Yes: Apply Txs from the certified EBs (Probably goes up); No: Noop
+applyBlockShelleyLedgerLeiosState ::
+  ShelleyCompatible proto era =>
+  ShelleyBlock proto era -> ShelleyLedgerLeiosState -> ShelleyLedgerLeiosState
+applyBlockShelleyLedgerLeiosState blk leiosSt =
+  leiosSt
+    { sllsApplyBlockCount = sllsApplyBlockCount leiosSt + 1
+    , sllsApplyBlockLastAt = blockSlot blk
+    , sllsMaybeAnnouncedEb =
+        MkLeiosPoint (blockSlot blk) . fromLedgerEbHash <$> SL.blockMayAnnouncedEb (shelleyBlockRaw blk)
+    }
+
+-- -.-
+fromLedgerEbHash :: SL.EbHash -> EbHash
+fromLedgerEbHash = MkEbHash . BL.toStrict . SL.unEbHash
+
 data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   { shelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
   , shelleyLedgerState :: !(SL.NewEpochState era)
   , shelleyLedgerTransition :: !ShelleyTransition
   , shelleyLedgerTables :: !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+  , shelleyLedgerLeiosState :: ShelleyLedgerLeiosState
   }
   deriving Generic
 
@@ -284,6 +358,48 @@ deriving instance
 deriving instance
   (ShelleyBasedEra era, ShowMK mk) =>
   Show (LedgerState (ShelleyBlock proto era) mk)
+
+-- NOTE(bladyjoker): Here because cyclic dep if in Block module
+instance
+  ShelleyCompatible proto era =>
+  ResolveLeiosBlock (ShelleyBlock proto era)
+  where
+  resolveLeiosBlock
+    leiosDb
+    extLedgerSt
+    blk@(ShelleyBlock{shelleyBlockRaw = lblk@(SL.Block _ (SL.BodyCertificate cert Nothing) _ certifiesEb)})
+      | certifiesEb = do
+          let
+            mayAnnouncedEbPoint = sllsMaybeAnnouncedEb . shelleyLedgerLeiosState . ledgerState $ extLedgerSt
+          case mayAnnouncedEbPoint of
+            Nothing ->
+              error $
+                "FIXME(bladyjoker): Certifying but not previously announced EB! Whai would you do that!? "
+                  <> show cert
+            Just announcedEbPoint -> do
+              mayAnnouncedEb <- leiosDbQueryCompletedEbByPoint leiosDb announcedEbPoint
+              case mayAnnouncedEb of
+                Nothing ->
+                  error $
+                    "FIXME(bladyjoker): What exactly does this mean? Announced EB is being certified by the current chain but it's not available?"
+                      <> show cert
+                Just announcedEb ->
+                  return $
+                    blk
+                      { shelleyBlockRaw =
+                          lblk
+                            { blockBody = SL.BodyCertificate cert (Just (toTxSeq announcedEb))
+                            }
+                      }
+  resolveLeiosBlock _leiosDb _extLedgerSt blk = return blk
+
+deserialiseShelleyTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Core.Tx era
+deserialiseShelleyTx bs = case CB.decodeFullAnnotator (Core.eraProtVerLow @era) "Leios Tx" CB.decCBOR (BL.fromStrict bs) of
+  Left err -> error $ "Failed to deserialise Tx era: " <> show err
+  Right tx -> tx
+
+toTxSeq :: forall era. ShelleyBasedEra era => [(TxHash, BS.ByteString)] -> SL.TxSeq era
+toTxSeq = Core.toTxSeq . StrictSeq.fromList . fmap (deserialiseShelleyTx . snd)
 
 -- | Information required to determine the hard fork point from Shelley to the
 -- next ledger
@@ -352,108 +468,64 @@ instance
   HasLedgerTables (LedgerState (ShelleyBlock proto era))
   where
   projectLedgerTables = shelleyLedgerTables
-  withLedgerTables st tables =
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      , shelleyLedgerTables = tables
-      }
-   where
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      } = st
+  withLedgerTables st tables = st{shelleyLedgerTables = tables}
 
 instance
   ShelleyBasedEra era =>
   HasLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   where
   projectLedgerTables = castLedgerTables . tickedShelleyLedgerTables
-  withLedgerTables st tables =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      , tickedShelleyLedgerTables = castLedgerTables tables
-      }
-   where
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      } = st
+  withLedgerTables st tables = st{tickedShelleyLedgerTables = castLedgerTables tables}
 
 instance
   ShelleyBasedEra era =>
   CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
   where
   stowLedgerTables st =
-    ShelleyLedgerState
-      { shelleyLedgerTip = shelleyLedgerTip
-      , shelleyLedgerState = shelleyLedgerState'
-      , shelleyLedgerTransition = shelleyLedgerTransition
+    st
+      { shelleyLedgerState = shelleyLedgerState'
       , shelleyLedgerTables = emptyLedgerTables
       }
    where
     (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO m
     ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
+      { shelleyLedgerState
       , shelleyLedgerTables = LedgerTables (ValuesMK m)
       } = st
   unstowLedgerTables st =
-    ShelleyLedgerState
-      { shelleyLedgerTip = shelleyLedgerTip
-      , shelleyLedgerState = shelleyLedgerState'
-      , shelleyLedgerTransition = shelleyLedgerTransition
+    st
+      { shelleyLedgerState = shelleyLedgerState'
       , shelleyLedgerTables = LedgerTables (ValuesMK (SL.unUTxO tbs))
       }
    where
     (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      } = st
+    ShelleyLedgerState{shelleyLedgerState} = st
 
 instance
   ShelleyBasedEra era =>
   CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
   where
   stowLedgerTables st =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip = untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState = tickedShelleyLedgerState'
+    st
+      { tickedShelleyLedgerState = tickedShelleyLedgerState'
       , tickedShelleyLedgerTables = emptyLedgerTables
       }
    where
     (_, tickedShelleyLedgerState') =
       tickedShelleyLedgerState `slUtxoL` SL.UTxO tbs
     TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
+      { tickedShelleyLedgerState
       , tickedShelleyLedgerTables = LedgerTables (ValuesMK tbs)
       } = st
 
   unstowLedgerTables st =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip = untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState = tickedShelleyLedgerState'
+    st
+      { tickedShelleyLedgerState = tickedShelleyLedgerState'
       , tickedShelleyLedgerTables = LedgerTables (ValuesMK (SL.unUTxO tbs))
       }
    where
     (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      } = st
+    TickedShelleyLedgerState{tickedShelleyLedgerState} = st
 
 slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState era)
 slUtxoL st vals =
@@ -490,6 +562,7 @@ data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLe
   , tickedShelleyLedgerState :: !(SL.NewEpochState era)
   , tickedShelleyLedgerTables ::
       !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+  , tickedShelleyLedgerLeiosState :: ShelleyLedgerLeiosState
   }
   deriving Generic
 
@@ -511,6 +584,7 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
       { shelleyLedgerTip
       , shelleyLedgerState
       , shelleyLedgerTransition
+      , shelleyLedgerLeiosState
       } =
       appTick globals shelleyLedgerState slotNo <&> \l' ->
         TickedShelleyLedgerState
@@ -526,6 +600,7 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
           , -- The UTxO set is only mutated by block/transaction execution and
             -- era translations, that is why we put empty tables here.
             tickedShelleyLedgerTables = emptyLedgerTables
+          , tickedShelleyLedgerLeiosState = applyTickShelleyLedgerLeiosState shelleyLedgerLeiosState slotNo
           }
      where
       globals = shelleyLedgerGlobals cfg
@@ -666,6 +741,8 @@ applyHelper f cfg blk stBefore = do
                           shelleyAfterVoting tickedShelleyLedgerTransition
                     }
               , shelleyLedgerTables = emptyLedgerTables
+              , shelleyLedgerLeiosState =
+                  applyBlockShelleyLedgerLeiosState blk (tickedShelleyLedgerLeiosState stBefore)
               }
  where
   globals = shelleyLedgerGlobals cfg
@@ -800,13 +877,15 @@ encodeShelleyLedgerState
     { shelleyLedgerTip
     , shelleyLedgerState
     , shelleyLedgerTransition
+    , shelleyLedgerLeiosState
     } =
     encodeVersion serialisationFormatVersion2 $
       mconcat
-        [ CBOR.encodeListLen 3
+        [ CBOR.encodeListLen 4
         , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
         , toCBOR shelleyLedgerState
         , encodeShelleyTransition shelleyLedgerTransition
+        , encodeShelleyLedgerLeiosState shelleyLedgerLeiosState
         ]
 
 decodeShelleyLedgerState ::
@@ -820,17 +899,59 @@ decodeShelleyLedgerState =
  where
   decodeShelleyLedgerState2 :: Decoder s' (LedgerState (ShelleyBlock proto era) EmptyMK)
   decodeShelleyLedgerState2 = do
-    enforceSize "LedgerState ShelleyBlock" 3
+    enforceSize "LedgerState ShelleyBlock" 4
     shelleyLedgerTip <- decodeWithOrigin decodeShelleyTip
     shelleyLedgerState <- fromCBOR
     shelleyLedgerTransition <- decodeShelleyTransition
+    shelleyLedgerLeiosState <- decodeShelleyLedgerLeiosState
     return
       ShelleyLedgerState
         { shelleyLedgerTip
         , shelleyLedgerState
         , shelleyLedgerTransition
         , shelleyLedgerTables = emptyLedgerTables
+        , shelleyLedgerLeiosState
         }
 
 instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
   upgradeTables _ _ = id
+
+encodeShelleyLedgerLeiosState :: ShelleyLedgerLeiosState -> Encoding
+encodeShelleyLedgerLeiosState = toCBOR
+
+instance ToCBOR ShelleyLedgerLeiosState where
+  toCBOR ShelleyLedgerLeiosState{..} =
+    mconcat
+      [ CBOR.encodeListLen 6
+      , toCBOR sllsMaybeAnnouncedEb
+      , toCBOR sllsTooSoonToCertify
+      , toCBOR sllsApplyTickCount
+      , toCBOR sllsApplyBlockCount
+      , toCBOR sllsApplyTickLastAt
+      , toCBOR sllsApplyBlockLastAt
+      ]
+
+instance ToCBOR LeiosPoint where
+  toCBOR = encodeLeiosPoint
+
+instance FromCBOR LeiosPoint where
+  fromCBOR = decodeLeiosPoint
+
+decodeShelleyLedgerLeiosState :: forall s. Decoder s ShelleyLedgerLeiosState
+decodeShelleyLedgerLeiosState = do
+  enforceSize "ShelleyLedgerLeiosState" 6
+  sllsMaybeAnnouncedEb <- fromCBOR
+  sllsTooSoonToCertify <- fromCBOR
+  sllsApplyTickCount <- fromCBOR
+  sllsApplyBlockCount <- fromCBOR
+  sllsApplyTickLastAt <- fromCBOR
+  sllsApplyBlockLastAt <- fromCBOR
+  return
+    ShelleyLedgerLeiosState
+      { sllsMaybeAnnouncedEb
+      , sllsTooSoonToCertify
+      , sllsApplyTickCount
+      , sllsApplyBlockCount
+      , sllsApplyTickLastAt
+      , sllsApplyBlockLastAt
+      }

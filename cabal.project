@@ -26,6 +26,35 @@ packages:
   ouroboros-consensus-observe
   sop-extras
   strict-sop-core
+  -- ../leios-prototype-cardano-ledger/eras/allegra/impl
+  -- ../leios-prototype-cardano-ledger/eras/alonzo/impl
+  -- ../leios-prototype-cardano-ledger/eras/alonzo/test-suite
+  -- ../leios-prototype-cardano-ledger/eras/babbage/impl
+  -- ../leios-prototype-cardano-ledger/eras/babbage/test-suite
+  -- ../leios-prototype-cardano-ledger/eras/conway/impl
+  -- ../leios-prototype-cardano-ledger/eras/conway/test-suite
+  -- ../leios-prototype-cardano-ledger/eras/mary/impl
+  -- ../leios-prototype-cardano-ledger/eras/shelley/impl
+  -- ../leios-prototype-cardano-ledger/eras/shelley/test-suite
+  -- ../leios-prototype-cardano-ledger/eras/shelley-ma/test-suite
+  -- ../leios-prototype-cardano-ledger/libs/cardano-ledger-api
+  -- ../leios-prototype-cardano-ledger/libs/cardano-ledger-core
+  -- ../leios-prototype-cardano-ledger/libs/cardano-ledger-binary
+  -- ../leios-prototype-cardano-ledger/libs/cardano-protocol-tpraos
+  -- ../leios-prototype-cardano-ledger/libs/non-integral
+  -- ../leios-prototype-cardano-ledger/libs/small-steps
+  -- ../leios-prototype-cardano-ledger/libs/cardano-data
+  -- ../leios-prototype-cardano-ledger/libs/set-algebra
+  -- ../leios-prototype-cardano-ledger/libs/vector-map
+  -- ../leios-prototype-cardano-ledger/eras/byron/chain/executable-spec
+  -- ../leios-prototype-cardano-ledger/eras/byron/ledger/executable-spec
+  -- ../leios-prototype-cardano-ledger/eras/byron/ledger/impl
+  -- ../leios-prototype-cardano-ledger/eras/byron/ledger/impl/test
+  -- ../leios-prototype-cardano-ledger/eras/byron/crypto
+  -- ../leios-prototype-cardano-ledger/eras/byron/crypto/test
+  -- ../leios-prototype-cardano-ledger/libs/cardano-ledger-test
+  -- ../leios-prototype-cardano-ledger/libs/ledger-state
+  -- ../leios-prototype-cardano-ledger/libs/constrained-generators
 
 -- We want to always build the test-suites and benchmarks
 tests: true
@@ -85,3 +114,40 @@ source-repository-package
     ouroboros-network-testing
     ntp-client
     cardano-client
+
+-- Points to cardano-ledger/leios-prototype
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger.git
+  tag: 1327573bfb86f7e596151f77d03fc38982be8749
+  --sha256: sha256-CzA6eucrpsc8WMAtG9aNP0DcGtCxghHe0HSX+Yxvcd8=
+  subdir:
+    eras/allegra/impl
+    eras/alonzo/impl
+    eras/alonzo/test-suite
+    eras/babbage/impl
+    eras/babbage/test-suite
+    eras/conway/impl
+    eras/conway/test-suite
+    eras/mary/impl
+    eras/shelley/impl
+    eras/shelley/test-suite
+    eras/shelley-ma/test-suite
+    libs/cardano-ledger-api
+    libs/cardano-ledger-core
+    libs/cardano-ledger-binary
+    libs/cardano-protocol-tpraos
+    libs/non-integral
+    libs/small-steps
+    libs/cardano-data
+    libs/set-algebra
+    libs/vector-map
+    eras/byron/chain/executable-spec
+    eras/byron/ledger/executable-spec
+    eras/byron/ledger/impl
+    eras/byron/ledger/impl/test
+    eras/byron/crypto
+    eras/byron/crypto/test
+    libs/cardano-ledger-test
+    libs/ledger-state
+    libs/constrained-generators

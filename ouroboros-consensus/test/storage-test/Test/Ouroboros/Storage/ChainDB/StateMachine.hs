@@ -100,6 +100,7 @@ import Data.Void (Void)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
+import LeiosDemoDb (newLeiosDBInMemory)
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -125,7 +126,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
-import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
+import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB, ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -335,6 +336,7 @@ type TestConstraints blk =
   , LedgerTablesAreTrivial (LedgerState blk)
   , LedgerSupportsLedgerDB blk
   , ImmutableEraParams blk
+  , ResolveLeiosBlock blk
   )
 
 deriving instance
@@ -378,7 +380,8 @@ open ::
   (IOLike m, TestConstraints blk) =>
   ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
-  (chainDB, internal) <- openDBInternal args False
+  leiosDb <- newLeiosDBInMemory
+  (chainDB, internal) <- openDBInternal leiosDb args False
   addBlockAsync <- async (intAddBlockRunner internal)
   link addBlockAsync
   return ChainDBState{chainDB, internal, addBlockAsync}
@@ -1663,7 +1666,8 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
             counterexample ("TraceEvents: " <> unlines (map show trace)) $
               tabulate "Chain length" [show (Chain.length modelChain)] $
                 tabulate "TraceEvents" (map traceEventName trace) $
-                  res === Ok
+                  res
+                    === Ok
                     .&&. prop_trace testCfg (dbModel model) trace
                     .&&. counterexample
                       "ImmutableDB is leaking file handles"

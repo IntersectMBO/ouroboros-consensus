@@ -830,3 +830,7 @@ simpleBlockBinaryBlockInfo b =
     { headerOffset = 1 -- For the 'encodeListLen'
     , headerSize = fromIntegral $ Lazy.length $ serialise (getHeader b)
     }
+
+-- * Leios
+
+instance ResolveLeiosBlock (SimpleBlock SimpleMockCrypto ext)

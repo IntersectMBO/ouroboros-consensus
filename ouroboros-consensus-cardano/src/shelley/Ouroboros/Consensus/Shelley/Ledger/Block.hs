@@ -50,12 +50,13 @@ import Cardano.Ledger.Binary
   , serialize
   )
 import qualified Cardano.Ledger.Binary.Plain as Plain
+import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core as SL
   ( eraDecoder
   , eraProtVerLow
   , toEraCBOR
   )
-import qualified Cardano.Ledger.Core as SL (TranslationContext, hashTxSeq)
+import qualified Cardano.Ledger.Core as SL (TranslationContext)
 import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
@@ -201,12 +202,12 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
       }
 
   blockMatchesHeader hdr blk =
-    -- Compute the hash the body of the block (the transactions) and compare
+    -- Compute the hash the body of the block (txs or cert) and compare
     -- that against the hash of the body stored in the header.
-    SL.hashTxSeq @era txs == pHeaderBodyHash shelleyHdr
+    SL.hashBody @era body == pHeaderBodyHash shelleyHdr
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
-    ShelleyBlock{shelleyBlockRaw = SL.Block _ txs} = blk
+    body = SL.blockBody . shelleyBlockRaw $ blk
 
   headerIsEBB = const Nothing
 

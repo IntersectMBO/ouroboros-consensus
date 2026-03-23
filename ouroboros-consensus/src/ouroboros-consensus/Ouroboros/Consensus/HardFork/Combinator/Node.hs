@@ -27,6 +27,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck ()
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 
 {-------------------------------------------------------------------------------
   ConfigSupportsNode
@@ -66,5 +67,6 @@ instance
   , BlockSupportsHFLedgerQuery xs
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
+  , ResolveLeiosBlock (HardForkBlock xs)
   ) =>
   RunNode (HardForkBlock xs)

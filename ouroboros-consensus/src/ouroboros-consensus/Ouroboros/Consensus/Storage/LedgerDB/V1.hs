@@ -36,6 +36,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosDemoDb (LeiosDbHandle)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -79,12 +80,14 @@ mkInitDb ::
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   Complete LedgerDbArgs m blk ->
   Complete V1.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
   InitDB (DbChangelog' blk, BackingStore' m blk) m blk
-mkInitDb args bss getBlock =
+mkInitDb leiosDb args bss getBlock =
   InitDB
     { initFromGenesis = do
         st <- lgrGenesis
@@ -139,7 +142,7 @@ mkInitDb args bss getBlock =
                 , ldbResolveBlock = getBlock
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb h
+        pure $ implMkLedgerDb leiosDb h
     }
  where
   bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
@@ -168,17 +171,19 @@ implMkLedgerDb ::
   , ApplyBlock l blk
   , l ~ ExtLedgerState blk
   , HasHardForkHistory blk
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   LedgerDBHandle m l blk ->
   (LedgerDB' m blk, TestInternals' m blk)
-implMkLedgerDb h =
+implMkLedgerDb leiosDb h =
   ( LedgerDB
       { getVolatileTip = getEnvSTM h implGetVolatileTip
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = getEnvSTM1 h implGetPastLedgerState
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
       , getForkerAtTarget = newForkerAtTarget h
-      , validateFork = getEnv5 h (implValidate h)
+      , validateFork = getEnv5 h (implValidate leiosDb h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnvSTM1 h implGarbageCollect
       , tryTakeSnapshot = getEnv2 h implTryTakeSnapshot
@@ -240,7 +245,9 @@ implValidate ::
   , LedgerSupportsProtocol blk
   , HasCallStack
   , l ~ ExtLedgerState blk
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
   ResourceRegistry m ->
@@ -249,8 +256,8 @@ implValidate ::
   Word64 ->
   [Header blk] ->
   m (ValidateResult m (ExtLedgerState blk) blk)
-implValidate h ldbEnv rr tr cache rollbacks hdrs =
-  validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+implValidate leiosDb h ldbEnv rr tr cache rollbacks hdrs =
+  validate leiosDb (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
     ValidateArgs
       (ldbResolveBlock ldbEnv)
       (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)

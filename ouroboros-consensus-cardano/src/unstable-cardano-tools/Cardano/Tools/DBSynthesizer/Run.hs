@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -36,6 +37,7 @@ import qualified Data.Set as Set
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
 import Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
@@ -48,6 +50,7 @@ import Ouroboros.Consensus.Shelley.Node
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import Ouroboros.Consensus.Util.IOLike (atomically)
@@ -131,6 +134,7 @@ eitherParseJson v = case fromJSON v of
   Success a -> Right a
 
 synthesize ::
+  ResolveLeiosBlock IO (ExtLedgerState blk) blk =>
   ( TopLevelConfig (CardanoBlock StandardCrypto) ->
     GenTxs (CardanoBlock StandardCrypto) mk
   ) ->
@@ -164,7 +168,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
         putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
         preOpenChainDB synthOpenMode confDbDir
         let dbTracer = nullTracer
-        ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
+        ChainDB.withDB (error "FIXME(bladyjoker)") (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
           slotNo <- do
             tip <- atomically (ChainDB.getTipPoint chainDB)
             pure $ case pointSlot tip of

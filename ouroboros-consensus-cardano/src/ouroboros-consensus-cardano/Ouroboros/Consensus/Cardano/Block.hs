@@ -1,12 +1,20 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Cardano.Block
   ( -- * Eras
@@ -181,26 +189,32 @@ import Data.Kind
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
+import LeiosDemoDb (LeiosDbHandle)
 import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HeaderValidation
-  ( OtherHeaderEnvelopeError
+  ( AnnTip (..)
+  , HeaderState (HeaderState, headerStateChainDep, headerStateTip)
+  , OtherHeaderEnvelopeError
   , TipInfo
   )
 import Ouroboros.Consensus.Ledger.Abstract (LedgerError)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (ExtLedgerState))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , GenTxId
   )
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, ShelleyCompatible)
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (resolveLeiosBlock))
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -1311,6 +1325,35 @@ pattern ChainDepStateConway st <-
   State.HardForkState
     (TeleConway _ _ _ _ _ _ (State.Current{currentState = WrapChainDepState st}))
 
+type CardanoExtLedgerState c mk = ExtLedgerState (CardanoBlock c) mk
+
+pattern ExtLedgerStateConway ::
+  ExtLedgerState (ShelleyBlock (Praos c) ConwayEra) mk ->
+  CardanoExtLedgerState c mk
+pattern ExtLedgerStateConway conwayExtLedgerSt <-
+  ( \(ExtLedgerState (LedgerStateConway lst) hst) ->
+      ExtLedgerState lst (toConwayHeaderState hst) ->
+      conwayExtLedgerSt
+    )
+
+toConwayHeaderState ::
+  HeaderState (CardanoBlock c) -> HeaderState (ShelleyBlock (Praos c) ConwayEra)
+toConwayHeaderState (HeaderState headerStateTip (ChainDepStateConway conwayHeaderStateChainDep)) =
+  HeaderState
+    { headerStateTip = toConwayAnnTip <$> headerStateTip
+    , headerStateChainDep = conwayHeaderStateChainDep
+    }
+toConwayHeaderState _ = error "Must be in Conway"
+
+toConwayAnnTip :: AnnTip (CardanoBlock c) -> AnnTip (ShelleyBlock (Praos c) ConwayEra)
+toConwayAnnTip AnnTip{annTipSlotNo, annTipBlockNo, annTipInfo = TipInfoConway tipInfo} =
+  AnnTip
+    { annTipSlotNo
+    , annTipBlockNo
+    , annTipInfo = tipInfo
+    }
+toConwayAnnTip _ = error "Must be in Conway"
+
 {-# COMPLETE
   ChainDepStateByron
   , ChainDepStateShelley
@@ -1320,3 +1363,24 @@ pattern ChainDepStateConway st <-
   , ChainDepStateBabbage
   , ChainDepStateConway
   #-}
+
+-- Leios
+
+injectConwayBlock :: ShelleyBlock (Praos c) ConwayEra -> CardanoBlock c
+injectConwayBlock = HardForkBlock . OneEraBlock . TagConway . I
+
+instance
+  (ShelleyCompatible (Praos c) ConwayEra, LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)) =>
+  ResolveLeiosBlock (CardanoBlock c)
+  where
+  resolveLeiosBlock ::
+    forall m mk.
+    Monad m =>
+    LeiosDbHandle m ->
+    ExtLedgerState (CardanoBlock c) mk ->
+    CardanoBlock c ->
+    m (CardanoBlock c)
+  resolveLeiosBlock db (ExtLedgerStateConway conwayExtLedgerSt) (BlockConway conwayBlk) =
+    injectConwayBlock
+      <$> resolveLeiosBlock db conwayExtLedgerSt conwayBlk
+  resolveLeiosBlock _ _ blk = return blk

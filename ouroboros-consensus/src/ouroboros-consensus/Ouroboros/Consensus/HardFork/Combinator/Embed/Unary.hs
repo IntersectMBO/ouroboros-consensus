@@ -454,13 +454,14 @@ instance Functor m => Isomorphic (BlockForging m) where
               )
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno tickedLgrSt rbTxs ebTxs isLeader ->
+      , forgeBlock = \leiosDb cfg bno sno tickedLgrSt rbTxs ebTxs isLeader ->
           ( \(hfRb :: HardForkBlock '[blk], mayEb) ->
               ( project' (Proxy @(I blk)) hfRb
               , mayEb
               )
           )
             <$> forgeBlock
+              leiosDb
               (inject cfg)
               bno
               sno
@@ -504,13 +505,14 @@ instance Functor m => Isomorphic (BlockForging m) where
               (projTickedChainDepSt tickedChainDepSt)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno tickedLgrSt rbTxs ebTxs isLeader ->
+      , forgeBlock = \leiosDb cfg bno sno tickedLgrSt rbTxs ebTxs isLeader ->
           ( \(hfRb :: blk, mayEb) ->
               ( inject' (Proxy @(I blk)) hfRb
               , mayEb
               )
           )
             <$> forgeBlock
+              leiosDb
               (project cfg)
               bno
               sno
