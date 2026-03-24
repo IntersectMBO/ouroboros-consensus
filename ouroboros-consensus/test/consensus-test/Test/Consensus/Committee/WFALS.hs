@@ -20,6 +20,7 @@ import Test.Consensus.Committee.WFALS.Conformance (conformsToRustImplementation)
 import qualified Test.Consensus.Committee.WFALS.Model as Model
 import qualified Test.Consensus.Committee.WFALS.Model.Test as Model
 import qualified Test.Consensus.Committee.WFALS.Model.Utils as Model
+import qualified Test.Consensus.Committee.WFALS.Test as Impl
 import Test.Consensus.Committee.WFALS.Utils (mkPoolId)
 import Test.QuickCheck
   ( Property
@@ -38,6 +39,7 @@ tests =
   testGroup
     "weighted Fait-Accompli committee selection tests"
     [ Model.tests
+    , Impl.tests
     , modelConformsToRustImplementation
     , realImplementationConformsToRustImplementation
     , modelConformsToRealImplementation
