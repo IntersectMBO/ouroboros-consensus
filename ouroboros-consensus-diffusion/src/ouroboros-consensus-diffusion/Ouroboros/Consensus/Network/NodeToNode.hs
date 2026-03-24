@@ -1179,7 +1179,8 @@ initiator miniProtocolParameters version versionData Apps{..} =
                 , ON.miniProtocolLimits = leiosNotifyProtocolLimits
                 , ON.miniProtocolRun =
                     InitiatorProtocolOnly
-                      (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
+                      (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx)),
+                  ON.miniProtocolWeight = 1
                 }
             , ON.MiniProtocol
                 { ON.miniProtocolNum = leiosFetchMiniProtocolNum
@@ -1187,7 +1188,8 @@ initiator miniProtocolParameters version versionData Apps{..} =
                 , ON.miniProtocolLimits = leiosFetchProtocolLimits
                 , ON.miniProtocolRun =
                     InitiatorProtocolOnly
-                      (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx))
+                      (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx)),
+                  ON.miniProtocolWeight = 1
                 }
             ]
       }
@@ -1247,6 +1249,7 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
                     InitiatorAndResponderProtocol
                       (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
                       (MiniProtocolCb (\responderCtx -> aLeiosNotifyServer version responderCtx))
+                , ON.miniProtocolWeight = 1
                 }
             , ON.MiniProtocol
                 { ON.miniProtocolNum = leiosFetchMiniProtocolNum
@@ -1256,6 +1259,7 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
                     InitiatorAndResponderProtocol
                       (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx))
                       (MiniProtocolCb (\responderCtx -> aLeiosFetchServer version responderCtx))
+                , ON.miniProtocolWeight = 1
                 }
             ]
       }

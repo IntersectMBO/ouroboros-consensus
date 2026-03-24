@@ -231,6 +231,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
         , miniProtocolLimits = limits N2N.defaultMiniProtocolParameters
         , miniProtocolRun = ResponderProtocolOnly proto
         , miniProtocolStart
+        , miniProtocolWeight = 1
         }
 
 responderContextToConnectionIdString :: Show addr => N2N.ResponderContext addr -> String

@@ -70,8 +70,8 @@ if impl (ghc >= 9.12)
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network.git
-  tag: c3c4cfc7eb27644b7496f59bfb2e82d3449e29bd
-  --sha256: sha256-j2pQ9lmpesOnjnoAaxTuAQ9JrRJf9L6qyh4zX7x4wWk=
+  tag: fa06ccc2f7fd6f09b6008a6709b7ece02b645e18
+  --sha256: sha256-e7QxacDpjjag59DjDrLrfs9YtHRmIMlKtWlxiEu6Ko8=
   subdir:
     cardano-ping
     monoidal-synchronisation
