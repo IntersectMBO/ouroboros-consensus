@@ -18,6 +18,9 @@ module Ouroboros.Consensus.Committee.WFA
   , WFAError (..)
   , ExtWFAStakeDistr (..)
   , mkExtWFAStakeDistr
+  , getCandidateInSeat
+  , seatIndexWithinBounds
+  , Candidate
   ) where
 
 import Control.Exception (assert)
@@ -212,7 +215,7 @@ isAbovePersistentSeatThreshold
 newtype SeatIndex = SeatIndex
   { unSeatIndex :: Word64
   }
-  deriving (Show, Eq, Ord, Enum, Ix)
+  deriving (Show, Eq, Ord, Num, Real, Enum, Ix, Integral)
 
 -- | Number of pools with positive stake in the underlying stake distribution
 newtype NumPoolsWithPositiveStake = NumPoolsWithPositiveStake
@@ -272,6 +275,7 @@ data ExtWFAStakeDistr a = ExtWFAStakeDistr
   -- than the number of pools with positive stake, which would lead to incorrect
   -- results (e.g. granting persistent seats to voters with zero stake).
   }
+  deriving (Eq, Show)
 
 -- | Construct an extended cumulative stake distribution.
 --
@@ -331,3 +335,28 @@ mkExtWFAStakeDistr pools
             , Cumulative (LedgerStake stakeAccR')
             )
           )
+
+type Candidate a = (SeatIndex, PoolId, a, LedgerStake, Cumulative LedgerStake)
+
+-- | Retrieve the candidate information associated to a given seat index.
+--
+-- PRECONDITION: the seat index must be within bounds in the stake distribution
+getCandidateInSeat ::
+  SeatIndex ->
+  ExtWFAStakeDistr a ->
+  Candidate a
+getCandidateInSeat seatIndex distr =
+  let (poolId, payload, stake, cumStake) = (Array.!) (unExtWFAStakeDistr distr) seatIndex
+   in (seatIndex, poolId, payload, stake, cumStake)
+
+-- | Check that a seat index is within bounds in a stake distribution
+seatIndexWithinBounds ::
+  SeatIndex ->
+  ExtWFAStakeDistr a ->
+  Bool
+seatIndexWithinBounds seatIndex distr =
+  unSeatIndex seatIndex >= unSeatIndex lowerBound
+    && unSeatIndex seatIndex <= unSeatIndex upperBound
+ where
+  (lowerBound, upperBound) =
+    Array.bounds $ unExtWFAStakeDistr distr

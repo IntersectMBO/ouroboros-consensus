@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -11,6 +12,7 @@ module Ouroboros.Consensus.Committee.LS
   ) where
 
 import Cardano.Ledger.BaseTypes (FixedPoint)
+import Cardano.Ledger.BaseTypes.NonZero (HasZero (..))
 import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Committee.Crypto (NormalizedVRFOutput (..))
@@ -26,7 +28,8 @@ import Ouroboros.Consensus.Committee.WFA
 newtype LocalSortitionNumSeats = LocalSortitionNumSeats
   { unLocalSortitionNumSeats :: Word64
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Num, HasZero)
 
 -- | Compute how many non-persistent seats can be granted by local sortition to
 -- a voter given their normalized VRF output and stake

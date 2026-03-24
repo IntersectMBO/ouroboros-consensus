@@ -64,8 +64,7 @@ import Ouroboros.Consensus.Committee.Crypto
 import qualified Ouroboros.Consensus.Committee.Crypto as CommitteeSelection
 import Ouroboros.Consensus.Committee.Types (PoolId (..))
 import Ouroboros.Consensus.Committee.WFALS
-  ( CryptoSupportsWFALS (..)
-  , VoteSupportsWFALS (..)
+  ( CryptoSupportsWFALS
   )
 
 -- * Generic Peras vote crypto types
@@ -314,10 +313,6 @@ instance ConvertRawHash blk => CryptoSupportsWFALS (PerasVoteCrypto blk) where
   getVoteSignaturePrivateKey _ = coerce
   getVRFVerifyKey _ = coerce
   getVRFSigningKey _ = coerce
-
-instance VoteSupportsWFALS (PerasVoteCrypto blk) (PerasVote blk) where
-  getVoteView (PerasVote{}) k =
-    k $ error "getWFALSVoteView: not yet implemented for PerasVote"
 
 -- ** VRF crypto for Peras (degenerate instance for now)
 
