@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeApplications #-}
+
 module Main (main) where
 
 import qualified Cardano.Configuration.CliArgs as CLI
@@ -9,6 +11,7 @@ import Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
+import Control.Exception (SomeException, displayException, try)
 import qualified Cardano.Tools.DBTruncater.Run as DBTruncater
 import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
 import Data.String (fromString)
@@ -96,6 +99,12 @@ testTruncaterConfig =
     { DBTruncater.dbDir = chainDB
     , DBTruncater.truncateAfter = DBTruncater.TruncateAfterSlot truncateAfter
     , DBTruncater.verbose = False
+    }
+
+testTraceLedgerAnalyserConfig :: DBAnalyserConfig
+testTraceLedgerAnalyserConfig =
+  testAnalyserConfig
+    { analysis = TraceLedgerProcessing
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
@@ -207,6 +216,39 @@ blockCountTest logStep = do
 
   mkEbHash c = UnsafeHash (fromString (replicate 32 c))
 
+testTraceLedgerAcrossEraTransition :: (String -> IO ()) -> Assertion
+testTraceLedgerAcrossEraTransition logStep = do
+  logStep "running synthesis - create"
+  (options, protocol) <-
+    either assertFailure pure
+      =<< DBSynthesizer.initialize
+        testNodeFilePaths
+        testNodeCredentials
+        testSynthOptionsCreate
+  _resultCreate <- DBSynthesizer.synthesize genTxs options protocol
+
+  logStep "running synthesis - append"
+  _resultAppend <-
+    DBSynthesizer.synthesize genTxs options{confOptions = testSynthOptionsAppend} protocol
+
+  logStep "copy volatile to immutable DB"
+  DBImmutaliser.run testImmutaliserConfig
+
+  logStep "running trace-ledger analysis"
+  result <-
+    try @SomeException $
+      DBAnalyser.analyse testTraceLedgerAnalyserConfig testBlockArgs
+
+  case result of
+    Left err ->
+      assertFailure $
+        "trace-ledger crashed across era transition: "
+          ++ displayException err
+    Right _ ->
+      pure ()
+ where
+  genTxs _ _ _ _ = pure []
+
 tests :: TestTree
 tests =
   testGroup
@@ -215,6 +257,9 @@ tests =
     , Test.Cardano.Tools.DBAnalyser.NodeConfig.tests
     , testCaseSteps "synthesize, analyse and truncate\n" blockCountTest
     , Test.Cardano.Tools.Headers.tests
+    , testCaseSteps
+        "db-analyser trace-ledger does not crash across era transitions\n"
+        testTraceLedgerAcrossEraTransition
     ]
 
 main :: IO ()
