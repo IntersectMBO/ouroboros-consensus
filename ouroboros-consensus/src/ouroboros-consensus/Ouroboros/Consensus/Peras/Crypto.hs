@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Peras.Crypto
   , perasVerifyWithRole
   , perasCreateProofOfPossession
   , perasVerifyProofOfPossession
+  , perasWFATiebreaker
   ) where
 
 import Cardano.Crypto.DSIGN
@@ -40,6 +41,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import Data.Coerce (coerce)
+import Data.Function (on)
 import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
 import Data.Ratio ((%))
@@ -63,6 +65,7 @@ import Ouroboros.Consensus.Committee.Crypto
   )
 import qualified Ouroboros.Consensus.Committee.Crypto as CommitteeSelection
 import Ouroboros.Consensus.Committee.Types (PoolId (..))
+import Ouroboros.Consensus.Committee.WFA (WFATiebreaker (..))
 import Ouroboros.Consensus.Committee.WFALS
   ( CryptoSupportsWFALS (..)
   , VoteSupportsWFALS (..)
@@ -281,6 +284,48 @@ data PerasVoteCrypto blk
 -- | Peras elections are identified by their round number
 type instance ElectionId (PerasVoteCrypto blk) = PerasRoundNo
 
+-- ** WFALS support for Peras
+
+instance ConvertRawHash blk => CryptoSupportsWFALS (PerasVoteCrypto blk) where
+  type PrivateKey (PerasVoteCrypto blk) = PerasBLSPrivateKey Any
+  type PublicKey (PerasVoteCrypto blk) = PerasBLSPublicKey Any
+
+  getVoteSignaturePublicKey _ = coerce
+  getVoteSignaturePrivateKey _ = coerce
+  getVRFVerifyKey _ = coerce
+  getVRFSigningKey _ = coerce
+
+instance VoteSupportsWFALS (PerasVoteCrypto blk) (PerasVote blk) where
+  getVoteView (PerasVote{}) k =
+    k $ error "getWFALSVoteView: not yet implemented for PerasVote"
+
+-- | Fair weighted Fait-Accompli tiebreaker for Peras.
+--
+-- For this, we also throw the the current epoch nonce into the mix to avoid
+-- giving an adversary an edge to manipulate the tiebreaking in their favor,
+-- as they cannot predict the epoch nonce in advance.
+perasWFATiebreaker :: Nonce -> WFATiebreaker
+perasWFATiebreaker epochNonce =
+  WFATiebreaker (compare `on` hashWithNonce)
+ where
+  hashWithNonce :: PoolId -> Hash HASH (SigDSIGN BLS12381MinSigDSIGN)
+  hashWithNonce poolId =
+    Hash.castHash
+      . Hash.hashWith id
+      . runByteBuilder (32 + 32)
+      $ epochNonceBytes <> poolIdBytes
+   where
+    epochNonceBytes =
+      case epochNonce of
+        NeutralNonce -> mempty
+        Nonce h -> BS.byteStringCopy (Hash.hashToBytes h)
+    poolIdBytes =
+      BS.byteStringCopy
+        . Hash.hashToBytes
+        . unKeyHash
+        . unPoolId
+        $ poolId
+
 -- ** Vote crypto for Peras (degenerate instance for now)
 
 instance ConvertRawHash blk => CryptoSupportsVoteSigning (PerasVoteCrypto blk) where
@@ -305,19 +350,6 @@ instance ConvertRawHash blk => CryptoSupportsVoteSigning (PerasVoteCrypto blk) w
       pk
       (hashVoteSignature roundNo point)
       sig
-
-instance ConvertRawHash blk => CryptoSupportsWFALS (PerasVoteCrypto blk) where
-  type PrivateKey (PerasVoteCrypto blk) = PerasBLSPrivateKey Any
-  type PublicKey (PerasVoteCrypto blk) = PerasBLSPublicKey Any
-
-  getVoteSignaturePublicKey _ = coerce
-  getVoteSignaturePrivateKey _ = coerce
-  getVRFVerifyKey _ = coerce
-  getVRFSigningKey _ = coerce
-
-instance VoteSupportsWFALS (PerasVoteCrypto blk) (PerasVote blk) where
-  getVoteView (PerasVote{}) k =
-    k $ error "getWFALSVoteView: not yet implemented for PerasVote"
 
 -- ** VRF crypto for Peras (degenerate instance for now)
 

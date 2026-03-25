@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Committee.WFA
   , SeatIndex (..)
   , NumPoolsWithPositiveStake (..)
   , WFAError (..)
+  , WFATiebreaker (..)
   , ExtWFAStakeDistr (..)
   , mkExtWFAStakeDistr
   ) where
@@ -220,6 +221,38 @@ newtype NumPoolsWithPositiveStake = NumPoolsWithPositiveStake
   }
   deriving (Show, Eq)
 
+-- | Tiebreaker for voters with the same stake in the cumulative stake.
+--
+-- This is needed to ensure that the cumulative stake distribution is fair with
+-- respect to the edge case where there are multiple voters with the same stake
+-- around the persistent seat threshold, e.g.:
+--
+--   | seat index | stake | selection outcome |
+--   |------------|-------|-------------------|
+--   | 0          | 50    | persistent        |
+--   | 1          | 30    | persistent        |
+--   | 2          | 20    | persistent        |
+--   | 3          | 20    | non-persistent    |
+--   | 4          | 20    | non-persistent    |
+--   | 5          | 10    | non-persistent    |
+--   | ...        | ...   | ...               |
+--
+-- In the case above, the pools with seat index 2, 3 and 4 have the same stake,
+-- but (under some hypothetical parameterization) only the one with seat index 2
+-- can be granted a persistent seat according to the weighted Fait-Accompli
+-- scheme. Then, the job of this tiebreaker is to ensure that the seat index 2
+-- is fairly distributed among the pools with the same stake.
+--
+-- One possible implementation of this tiebreaker is to sort the pools with the
+-- same stake according to the hash of the epoch nonce and the pool ID. This way
+-- the tiebreaker would be deterministic and resilient to manipulation since an
+-- adversary would not be able to predict the epoch nonce in advance.
+newtype WFATiebreaker = WFATiebreaker
+  { unWFATiebreaker :: PoolId -> PoolId -> Ordering
+  -- ^ Given two pool IDs, returns an ordering between them to be used as a
+  -- tiebreaker for voters with the same stake.
+  }
+
 -- | Extended cumulative stake distribution.
 --
 -- Stake distribution in descending order with precomputed right-cumulative
@@ -272,14 +305,16 @@ data ExtWFAStakeDistr a = ExtWFAStakeDistr
   -- than the number of pools with positive stake, which would lead to incorrect
   -- results (e.g. granting persistent seats to voters with zero stake).
   }
+  deriving Show
 
 -- | Construct an extended cumulative stake distribution.
 --
 -- Returns an error if the underlying stake distribution is empty.
 mkExtWFAStakeDistr ::
+  WFATiebreaker ->
   Map PoolId (LedgerStake, a) ->
   Either WFAError (ExtWFAStakeDistr a)
-mkExtWFAStakeDistr pools
+mkExtWFAStakeDistr tiebreaker pools
   | Map.null pools =
       Left
         EmptyStakeDistribution
@@ -303,14 +338,17 @@ mkExtWFAStakeDistr pools
       ( Cumulative (LedgerStake 0)
       , NumPoolsWithPositiveStake 0
       )
-      . List.sortBy descendingStake
+      . List.sortBy descendingStakeWithTiebreaker
       . Map.toList
       $ pools
 
-  descendingStake
-    (_, (LedgerStake x, _))
-    (_, (LedgerStake y, _)) =
-      compare y x
+  descendingStakeWithTiebreaker
+    (poolId1, (LedgerStake stake1, _))
+    (poolId2, (LedgerStake stake2, _))
+      -- The pools have the same stake => use the tiebreaker to sort them
+      | stake1 == stake2 = unWFATiebreaker tiebreaker poolId1 poolId2
+      -- The pools have different stake => sort them in descending order
+      | otherwise = compare stake2 stake1
 
   accumStakeAndCountPoolsWithPositiveStake
     (Cumulative (LedgerStake stakeAccR), NumPoolsWithPositiveStake numPoolsAccR)

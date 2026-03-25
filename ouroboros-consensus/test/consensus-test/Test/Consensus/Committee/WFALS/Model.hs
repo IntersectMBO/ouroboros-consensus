@@ -42,6 +42,7 @@ module Test.Consensus.Committee.WFALS.Model
   , stakeDistrTotalStake
 
     -- * Fait Accompli Committee Selection
+  , WFAError
   , weightedFaitAccompliWith
   , weightedFaitAccompliPersistentSeats
   , weightedFaitAccompliThreshold
@@ -54,7 +55,6 @@ import Data.Kind (Type)
 import Data.List (sortBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Ord (Down (..), comparing)
 import Data.Traversable (mapAccumR)
 import GHC.Generics (Generic)
 import Numeric.Natural (Natural, minusNaturalMaybe)
@@ -159,23 +159,42 @@ stakeDistrTotalStake ::
 stakeDistrTotalStake distr =
   sum (Map.elems distr)
 
--- | View a stake distribution as a non-increasing list of stakes
+-- | View a stake distribution as a non-increasing list of stakes.
+--
+-- Like the real implementation, this also uses a tiebreaker to control how
+-- voters with the same stake are ordered in the resulting list.
 stakeDistrToDecreasingStakes ::
   IsStake (Stake sr st) =>
+  (VoterId -> VoterId -> Ordering) ->
   StakeDistr sr st ->
   [(VoterId, Stake sr st)]
-stakeDistrToDecreasingStakes distr =
-  sortBy (comparing (Down . snd)) (Map.toList distr)
+stakeDistrToDecreasingStakes tiebreaker distr =
+  sortBy
+    descendingStakeWithTiebreaker
+    (Map.toList distr)
+ where
+  descendingStakeWithTiebreaker
+    (poolId1, stake1)
+    (poolId2, stake2)
+      -- The pools have different stake => sort them in descending order
+      | stake1 /= stake2 = compare stake2 stake1
+      -- The pools have the same stake => use the tiebreaker to sort them
+      | otherwise = tiebreaker poolId1 poolId2
 
 -------------------------------------------------------------------------------
 
 -- * Fait Accompli Committee Selection
+
+-- | Errors that can occur while computing a weighted Fait Accompli committee selection.
+type WFAError = String
 
 -- | Weighted Fait Accompli committee selection with a fallback mechanism.
 --
 -- This is mostly just plumbing to connect the result of
 -- 'weightedFaitAccompliPersistentSeats' with a given fallback scheme.
 weightedFaitAccompliWith ::
+  -- | Tiebreaker to control the order of voters with the same stake
+  (VoterId -> VoterId -> Ordering) ->
   -- | Fallback function for non-persistent seats
   ( NumSeats Residual ->
     StakeDistr Ledger Residual ->
@@ -187,21 +206,22 @@ weightedFaitAccompliWith ::
   StakeDistr Ledger Global ->
   -- | Selected persistent and non-persistent seats with their corresponding
   -- voting stakes
-  ( StakeDistr Weight Persistent
-  , StakeDistr Weight Residual
-  )
-weightedFaitAccompliWith fallback globalNumSeats stakeDistr =
-  (persistentSeats, nonPersistentSeats)
- where
-  (persistentSeats, numNonPersistentSeats, residualStakeDistr) =
+  Either
+    WFAError
+    ( StakeDistr Weight Persistent
+    , StakeDistr Weight Residual
+    )
+weightedFaitAccompliWith tiebreaker fallback globalNumSeats stakeDistr = do
+  (persistentSeats, numNonPersistentSeats, residualStakeDistr) <-
     weightedFaitAccompliPersistentSeats
+      tiebreaker
       globalNumSeats
       stakeDistr
-
-  nonPersistentSeats =
-    fallback
-      numNonPersistentSeats
-      residualStakeDistr
+  let nonPersistentSeats =
+        fallback
+          numNonPersistentSeats
+          residualStakeDistr
+  pure (persistentSeats, nonPersistentSeats)
 
 -- | First step of the weighted Fait Accompli committee selection.
 --
@@ -209,23 +229,26 @@ weightedFaitAccompliWith fallback globalNumSeats stakeDistr =
 -- Fait Accompli threshold, and returns the remaining stake distribution for the
 -- non-persistent seats selection.
 weightedFaitAccompliPersistentSeats ::
+  (VoterId -> VoterId -> Ordering) ->
   NumSeats Global ->
   StakeDistr Ledger Global ->
-  ( StakeDistr Weight Persistent
-  , NumSeats Residual
-  , StakeDistr Ledger Residual
-  )
-weightedFaitAccompliPersistentSeats globalNumSeats stakeDistr
+  Either
+    WFAError
+    ( StakeDistr Weight Persistent
+    , NumSeats Residual
+    , StakeDistr Ledger Residual
+    )
+weightedFaitAccompliPersistentSeats tiebreaker globalNumSeats stakeDistr
   | globalNumSeats <= 0 =
-      error "Number of seats must be positive"
+      Left "Number of seats must be positive"
   | Map.size stakeDistr == 0 =
-      error "Stake distribution cannot be empty"
+      Left "Stake distribution cannot be empty"
   | sum stakeDistr == 0 =
-      error "Total stake must be positive"
+      Left "Total stake must be positive"
   | numPoolsWithPositiveStake < globalNumSeats =
-      error "Not enough voters with positive stake to fill all expected seats"
+      Left "Not enough voters with positive stake to fill all expected seats"
   | otherwise =
-      (persistentSeats, numNonPersistentSeats, residualStakeDistr)
+      Right (persistentSeats, numNonPersistentSeats, residualStakeDistr)
  where
   -- Number of voters with positive stake in the input distribution
   numPoolsWithPositiveStake =
@@ -277,7 +300,7 @@ weightedFaitAccompliPersistentSeats globalNumSeats stakeDistr
   rightCumulativeDecreasingStakes =
     accumStakeR $
       addSeatIndex $
-        stakeDistrToDecreasingStakes $
+        stakeDistrToDecreasingStakes tiebreaker $
           stakeDistr
    where
     -- Add an increasing seat index to each candidate

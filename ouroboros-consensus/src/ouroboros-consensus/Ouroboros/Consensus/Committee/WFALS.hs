@@ -5,9 +5,11 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Weighted Fait-Accompli with Local Sortition (wFA^LS) committee selection.
 --
@@ -32,6 +34,10 @@ module Ouroboros.Consensus.Committee.WFALS
   ( -- * Voting committee membership
     MembershipType (..)
   , MembershipProof
+  , membershipProofVoteSignature
+  , membershipProofSeatIndex
+  , membershipProofNumSeats
+  , membershipProofVRFOutput
   , CommitteeMember (..)
 
     -- * Committee votes
@@ -108,6 +114,43 @@ data MembershipProof crypto membership where
     VoteSignature crypto ->
     MembershipProof crypto NonPersistent
 
+membershipProofVoteSignature ::
+  MembershipProof crypto membership ->
+  VoteSignature crypto
+membershipProofVoteSignature = \case
+  PersistentMembershipProof _ sig -> sig
+  NonPersistentMembershipProof _ _ sig -> sig
+
+membershipProofSeatIndex ::
+  MembershipProof crypto Persistent ->
+  SeatIndex
+membershipProofSeatIndex (PersistentMembershipProof seatIndex _) =
+  seatIndex
+
+membershipProofNumSeats ::
+  MembershipProof crypto NonPersistent ->
+  LocalSortitionNumSeats
+membershipProofNumSeats (NonPersistentMembershipProof numSeats _ _) =
+  numSeats
+
+membershipProofVRFOutput ::
+  MembershipProof crypto NonPersistent ->
+  VRFOutput crypto
+membershipProofVRFOutput (NonPersistentMembershipProof _ vrfOutput _) =
+  vrfOutput
+
+deriving instance
+  ( Show (VRFOutput crypto)
+  , Show (VoteSignature crypto)
+  ) =>
+  Show (MembershipProof crypto membership)
+
+deriving instance
+  ( Eq (VRFOutput crypto)
+  , Eq (VoteSignature crypto)
+  ) =>
+  Eq (MembershipProof crypto membership)
+
 -- | Committee members (i.e., no longer candidates)
 type CommitteeMember :: Type -> Type
 data CommitteeMember crypto
@@ -119,6 +162,18 @@ data CommitteeMember crypto
     NonPersistentCommitteeMember
       (MembershipProof crypto NonPersistent)
       LedgerStake
+
+deriving instance
+  ( Show (VRFOutput crypto)
+  , Show (VoteSignature crypto)
+  ) =>
+  Show (CommitteeMember crypto)
+
+deriving instance
+  ( Eq (VRFOutput crypto)
+  , Eq (VoteSignature crypto)
+  ) =>
+  Eq (CommitteeMember crypto)
 
 -- * Committee votes
 
