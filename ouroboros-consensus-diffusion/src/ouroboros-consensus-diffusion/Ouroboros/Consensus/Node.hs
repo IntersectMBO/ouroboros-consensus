@@ -86,6 +86,7 @@ import Cardano.Network.NodeToNode
   , blockFetchPipeliningMax
   , defaultMiniProtocolParameters
   )
+import Cardano.Network.NodeToNode.Version (getLocalPerasSupport)
 import Cardano.Network.PeerSelection (ChurnMode (..), PeerTrustable, UseBootstrapPeers (..))
 import Cardano.Network.Protocol.ChainSync.Codec.TimeLimits (timeLimitsChainSync)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -177,6 +178,7 @@ import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   ( decodeRemoteAddress
   , encodeRemoteAddress
   )
+import Ouroboros.Network.PerasSupport (PerasSupport (..))
 import Ouroboros.Network.RethrowPolicy
 import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
@@ -324,7 +326,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
   --
   -- 'run' will not return before this does.
   , llrnVersionDataNTC :: NodeToClientVersionData
-  , llrnVersionDataNTN :: NodeToNodeVersionData
+  , llrnVersionDataNTN :: NodeToNodeVersion -> NodeToNodeVersionData
   , llrnNodeToNodeVersions :: Map NodeToNodeVersion (BlockNodeToNodeVersion blk)
   -- ^ node-to-node protocol versions to run.
   , llrnNodeToClientVersions :: Map NodeToClientVersion (BlockNodeToClientVersion blk)
@@ -755,7 +757,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               combineVersions
                 [ simpleSingletonVersions
                     version
-                    llrnVersionDataNTN
+                    (llrnVersionDataNTN version)
                     ( \versionData ->
                         NTN.initiator miniProtocolParams version versionData
                         -- Initiator side won't start responder side of Peer
@@ -770,7 +772,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               combineVersions
                 [ simpleSingletonVersions
                     version
-                    llrnVersionDataNTN
+                    (llrnVersionDataNTN version)
                     ( \versionData ->
                         NTN.initiatorAndResponder miniProtocolParams version versionData $
                           ntnApps blockVersion
@@ -999,13 +1001,15 @@ stdVersionDataNTN ::
   NetworkMagic ->
   DiffusionMode ->
   PeerSharing ->
+  PerasSupport ->
   NodeToNodeVersionData
-stdVersionDataNTN networkMagic diffusionMode peerSharing =
+stdVersionDataNTN networkMagic diffusionMode peerSharing perasSupport =
   NodeToNodeVersionData
     { networkMagic
     , diffusionMode
     , peerSharing
     , query = False
+    , perasSupport
     }
 
 stdVersionDataNTC :: NetworkMagic -> NodeToClientVersionData
@@ -1072,11 +1076,12 @@ stdLowLevelRunNodeArgsIO
                 apps
         , llrnVersionDataNTC =
             stdVersionDataNTC networkMagic
-        , llrnVersionDataNTN =
+        , llrnVersionDataNTN = \version ->
             stdVersionDataNTN
               networkMagic
               (Diffusion.dcMode srnDiffusionConfiguration)
               rnPeerSharing
+              (getLocalPerasSupport rnFeatureFlags version)
         , llrnNodeToNodeVersions =
             limitToLatestReleasedVersion
               fst

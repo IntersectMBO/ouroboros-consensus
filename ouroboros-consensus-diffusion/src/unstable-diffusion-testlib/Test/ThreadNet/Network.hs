@@ -45,8 +45,8 @@ import Cardano.Network.NodeToNode
   ( ConnectionId (..)
   , ExpandedInitiatorContext (..)
   , IsBigLedgerPeer (..)
-  , MiniProtocolParameters (..)
   , ResponderContext (..)
+  , defaultMiniProtocolParameters
   )
 import Cardano.Network.PeerSelection
   ( PeerTrustable (..)
@@ -1079,14 +1079,7 @@ runThreadNetwork
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
               , txSubmissionRng = txRng
-              , miniProtocolParameters =
-                  MiniProtocolParameters
-                    { chainSyncPipeliningHighMark = 4
-                    , chainSyncPipeliningLowMark = 2
-                    , blockFetchPipeliningMax = 10
-                    , txDecisionPolicy =
-                        defaultTxDecisionPolicy{maxUnacknowledgedTxIds = 1000} -- TODO ?
-                    }
+              , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =
                   BlockFetchConfiguration
                     { bfcMaxConcurrencyBulkSync = 1

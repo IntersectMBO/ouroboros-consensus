@@ -63,6 +63,7 @@ import Ouroboros.Network.Mux
   , RunMiniProtocol (..)
   )
 import Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing (..))
+import Ouroboros.Network.PerasSupport (PerasSupport (..))
 import Ouroboros.Network.Protocol.BlockFetch.Server
 import Ouroboros.Network.Protocol.ChainSync.Server
 import Ouroboros.Network.Protocol.Handshake.Version (Version (..))
@@ -106,6 +107,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
               networkMagic
               N2N.InitiatorOnlyDiffusionMode
               PeerSharingDisabled
+              PerasUnsupported
         }
 
   application ::

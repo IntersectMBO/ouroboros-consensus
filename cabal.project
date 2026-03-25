@@ -43,3 +43,15 @@ package ouroboros-network
 if os (windows)
   constraints:
     bitvec -simd
+
+-- Depend on Network main "main-peras-5202-merged" tagged commit,
+-- after PR #5202 adding ObjectDiffusion miniprotocol for Peras has been merged
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: main-peras-5202-merged
+  --sha256: sha256-IDLqfxc12jmYxKYUNC6+Dk2cQBWOpSs/V/SpBgNE63s=
+  subdir:
+    ouroboros-network
+    cardano-diffusion
+    network-mux
