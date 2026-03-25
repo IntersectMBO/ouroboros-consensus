@@ -120,7 +120,6 @@ library
     Ouroboros.Consensus.Config.SupportsNode
     Ouroboros.Consensus.Forecast
     Ouroboros.Consensus.Fragment.Diff
-    Ouroboros.Consensus.Fragment.ValidatedDiff
     Ouroboros.Consensus.Genesis.Governor
     Ouroboros.Consensus.HardFork.Abstract
     Ouroboros.Consensus.HardFork.Combinator
@@ -414,6 +413,7 @@ library lsm
     contra-tracer,
     filepath,
     fs-api,
+    io-classes:mtl,
     lsm-tree,
     mempack,
     mtl,
@@ -454,7 +454,6 @@ library lmdb
     nothunks,
     ouroboros-consensus,
     rawlock,
-    resource-registry,
     serialise,
     sop-core,
     streaming,
@@ -642,7 +641,6 @@ library unstable-mempool-test-utils
     deepseq,
     io-classes:strict-stm,
     ouroboros-consensus,
-    resource-registry,
 
 library unstable-tutorials
   import: common-lib
@@ -857,7 +855,7 @@ test-suite storage-test
     mtl,
     nothunks,
     ouroboros-consensus:{lmdb, lsm, ouroboros-consensus},
-    ouroboros-network:{api, api-tests-lib, protocols, protocols-tests-lib},
+    ouroboros-network:{api, api-tests-lib, protocols-tests-lib},
     pretty-show,
     quickcheck-dynamic ^>=4,
     quickcheck-lockstep ^>=0.8,
@@ -1926,7 +1924,6 @@ library unstable-snapshot-conversion
     mtl,
     ouroboros-consensus:{cardano, lmdb, lsm, ouroboros-consensus},
     random,
-    resource-registry,
     serialise,
     sop-core,
     sop-extras,

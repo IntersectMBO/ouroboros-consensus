@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Args
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
-import Control.ResourceRegistry
 import Control.Tracer
 import Data.Kind
 import Data.Word
@@ -59,7 +58,6 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   , lgrConfig :: LedgerDbCfgF f (ExtLedgerState blk)
   , lgrTracer :: !(Tracer m (TraceEvent blk))
   , lgrBackendArgs :: LedgerDbBackendArgs m blk
-  , lgrRegistry :: HKD f (ResourceRegistry m)
   , lgrQueryBatchSize :: QueryBatchSize
   , lgrStartSnapshot :: Maybe DiskSnapshot
   -- ^ If provided, the ledgerdb will start using said snapshot and fallback
@@ -83,7 +81,6 @@ defaultArgs backendArgs =
     , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
       -- will be the default for end-users.
       lgrBackendArgs = LedgerDbBackendArgsV2 backendArgs
-    , lgrRegistry = NoDefault
     , lgrStartSnapshot = Nothing
     }
 

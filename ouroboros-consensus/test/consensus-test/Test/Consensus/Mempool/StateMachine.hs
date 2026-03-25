@@ -30,7 +30,6 @@ import Control.Arrow (second)
 import Control.Concurrent.Class.MonadSTM.Strict.TChan
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
-import Control.ResourceRegistry
 import qualified Control.Tracer as CT (Tracer (..), traceWith)
 import qualified Data.Foldable as Foldable
 import Data.Function (on)
@@ -506,6 +505,7 @@ data SUT m blk
 deriving instance
   ( NoThunks (Mempool m blk)
   , NoThunks (StrictTVar m (MockedLedgerDB blk))
+  , IOLike m
   ) =>
   NoThunks (SUT m blk)
 
@@ -523,9 +523,9 @@ data MockedLedgerDB blk = MockedLedgerDB
 -- | Create a ledger interface and provide the tvar to modify it when switching
 -- ledgers.
 newLedgerInterface ::
-  ( MonadSTM m
-  , NoThunks (MockedLedgerDB blk)
+  ( NoThunks (MockedLedgerDB blk)
   , LedgerSupportsMempool blk
+  , IOLike m
   ) =>
   LedgerState blk ValuesMK ->
   m (LedgerInterface m blk, StrictTVar m (MockedLedgerDB blk))
@@ -533,7 +533,7 @@ newLedgerInterface initialLedger = do
   t <- newTVarIO $ MockedLedgerDB initialLedger Set.empty
   pure
     ( LedgerInterface
-        { getCurrentLedgerState = \_reg -> do
+        { getCurrentLedgerState = do
             st <- ldbTip <$> readTVar t
             pure $
               MempoolLedgerDBView
@@ -564,28 +564,26 @@ mkSUT ::
   ) =>
   LedgerConfig blk ->
   LedgerState blk ValuesMK ->
-  m (SUT m blk, CT.Tracer m String, ResourceRegistry m)
+  m (SUT m blk, CT.Tracer m String)
 mkSUT cfg initialLedger = do
   (lif, t) <- newLedgerInterface initialLedger
   trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool blk)))
   let trcr =
         CT.Tracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
           atomically . writeTChan trcrChan
-  reg <- unsafeNewRegistry
   mempool <-
     openMempoolWithoutSyncThread
-      reg
       lif
       cfg
       (MempoolCapacityBytesOverride $ unIgnoringOverflow txMaxBytes')
       (Nothing :: Maybe MempoolTimeoutConfig)
       (CT.Tracer $ CT.traceWith trcr . Right)
-  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left, reg)
+  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left)
 
 semantics ::
-  ( MonadSTM m
-  , LedgerSupportsMempool blk
+  ( LedgerSupportsMempool blk
   , ValidateEnvelope blk
+  , IOLike m
   ) =>
   CT.Tracer m String ->
   Command blk Concrete ->
@@ -684,13 +682,8 @@ sm ::
   StateMachine (Model blk) (Command blk) m (Response blk) ->
   CT.Tracer m String ->
   StrictTVar m (SUT m blk) ->
-  ResourceRegistry m ->
   StateMachine (Model blk) (Command blk) m (Response blk)
-sm sm0 trcr ior reg =
-  sm0
-    { QC.semantics = \c -> semantics trcr c ior
-    , QC.cleanup = \_ -> closeRegistry reg
-    }
+sm sm0 trcr ior = sm0{QC.semantics = \c -> semantics trcr c ior}
 
 smUnused ::
   ( blk ~ TestBlock
@@ -744,9 +737,9 @@ prop_mempoolSequential cfg capacity initialState gTxs = forAllCommands sm0 Nothi
   \cmds ->
     monadicIO
       ( do
-          (sut, trcr, reg) <- run $ mkSUT cfg initialState
+          (sut, trcr) <- run $ mkSUT cfg initialState
           ior <- run $ newTVarIO sut
-          let sm' = sm sm0 trcr ior reg
+          let sm' = sm sm0 trcr ior
           (hist, model, res) <- runCommands sm' cmds
           prettyCommands sm0 hist
             $ checkCommandNames cmds
@@ -786,9 +779,9 @@ prop_mempoolParallel ::
   Property
 prop_mempoolParallel cfg capacity initialState ma gTxs = forAllParallelCommandsNTimes sm0 Nothing 100 $
   \cmds -> monadicIO $ do
-    (sut, trcr, reg) <- run $ mkSUT cfg initialState
+    (sut, trcr) <- run $ mkSUT cfg initialState
     ior <- run $ newTVarIO sut
-    let sm' = sm sm0 trcr ior reg
+    let sm' = sm sm0 trcr ior
     res <- runParallelCommands sm' cmds
     prettyParallelCommandsWithOpts
       cmds

@@ -10,7 +10,8 @@
 -- | Queries
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   ( -- * Queries
-    getBlockComponent
+    allocInRegistryReadOnlyForkerAtPoint
+  , getBlockComponent
   , getCurrentChain
   , getCurrentChainWithTime
   , getCurrentLedger
@@ -24,12 +25,13 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getPerasWeightSnapshot
   , getPerasCertSnapshot
   , getLatestPerasCertOnChainRound
-  , getReadOnlyForkerAtPoint
   , getStatistics
   , getTipBlock
   , getTipHeader
   , getTipPoint
+  , openReadOnlyForkerAtPoint
   , waitForImmutableBlock
+  , withReadOnlyForkerAtPoint
 
     -- * Low-level queries
   , getAnyBlockComponent
@@ -39,7 +41,9 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   ) where
 
 import Cardano.Ledger.BaseTypes (WithOrigin (..))
-import Control.ResourceRegistry (ResourceRegistry)
+import Control.Monad (void)
+import Control.Monad.Trans.Class
+import Control.ResourceRegistry
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
@@ -69,6 +73,7 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (eitherToMaybe)
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -283,13 +288,41 @@ getPastLedger ::
   STM m (Maybe (ExtLedgerState blk EmptyMK))
 getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
-getReadOnlyForkerAtPoint ::
+allocInRegistryReadOnlyForkerAtPoint ::
   IOLike m =>
   ChainDbEnv m blk ->
+  Target (Point blk) ->
   ResourceRegistry m ->
+  m (Either LedgerDB.GetForkerError (ResourceKey m, LedgerDB.ReadOnlyForker' m blk))
+allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
+  (rk, forker) <-
+    allocate
+      rr
+      (\_ -> openReadOnlyForkerAtPoint cdb tgt)
+      (either (const $ pure ()) LedgerDB.roforkerClose)
+  case forker of
+    Left err -> void (release rk) >> pure (Left err)
+    Right v -> pure (Right (rk, v))
+
+openReadOnlyForkerAtPoint ::
+  IOLike m =>
+  ChainDbEnv m blk ->
   Target (Point blk) ->
   m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
-getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
+openReadOnlyForkerAtPoint CDB{..} = LedgerDB.openReadOnlyForker cdbLedgerDB
+
+withReadOnlyForkerAtPoint ::
+  IOLike m =>
+  ChainDbEnv m blk ->
+  Target (Point blk) ->
+  ( Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk) ->
+    WithEarlyExit m r
+  ) ->
+  WithEarlyExit m r
+withReadOnlyForkerAtPoint cdb tgt =
+  bracket
+    (lift $ openReadOnlyForkerAtPoint cdb tgt)
+    (either (const $ pure ()) (lift . LedgerDB.roforkerClose))
 
 getStatistics :: IOLike m => ChainDbEnv m blk -> m LedgerDB.Statistics
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
