@@ -25,7 +25,6 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTVar
   )
 import Control.DeepSeq (NFData (rnf))
-import Control.ResourceRegistry
 import Control.Tracer (Tracer)
 import qualified Data.List.NonEmpty as NE
 import Ouroboros.Consensus.HeaderValidation as Header
@@ -81,10 +80,9 @@ openMockedMempool ::
   IO (MockedMempool IO blk)
 openMockedMempool capacityOverride tracer initialParams = do
   currentLedgerStateTVar <- newTVarIO (immpInitialState initialParams)
-  reg <- unsafeNewRegistry
   let ledgerItf =
         Mempool.LedgerInterface
-          { Mempool.getCurrentLedgerState = \_reg -> do
+          { Mempool.getCurrentLedgerState = do
               st <- readTVar currentLedgerStateTVar
               pure $
                 MempoolLedgerDBView
@@ -103,7 +101,6 @@ openMockedMempool capacityOverride tracer initialParams = do
           }
   mempool <-
     Mempool.openMempoolWithoutSyncThread
-      reg
       ledgerItf
       (immpLedgerConfig initialParams)
       capacityOverride

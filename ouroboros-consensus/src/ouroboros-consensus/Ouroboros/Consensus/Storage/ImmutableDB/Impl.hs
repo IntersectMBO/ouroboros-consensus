@@ -238,7 +238,7 @@ getHashForSlot = getHashForSlot_
 ------------------------------------------------------------------------------}
 
 openDB ::
-  forall m blk ans.
+  forall m blk.
   ( IOLike m
   , GetPrevHash blk
   , ConvertRawHash blk
@@ -246,16 +246,13 @@ openDB ::
   , HasCallStack
   ) =>
   Complete ImmutableDbArgs m blk ->
-  (forall st. WithTempRegistry st m (ImmutableDB m blk, st) -> ans) ->
-  ans
-openDB args cont =
-  openDBInternal args (cont . fmap swizzle)
- where
-  swizzle ((immdb, _internal), ost) = (immdb, ost)
+  m (ImmutableDB m blk)
+openDB args =
+  fst <$> openDBInternal args
 
 -- | For testing purposes: exposes internals via 'Internal'
 openDBInternal ::
-  forall m blk ans.
+  forall m blk.
   ( IOLike m
   , GetPrevHash blk
   , ConvertRawHash blk
@@ -263,16 +260,9 @@ openDBInternal ::
   , HasCallStack
   ) =>
   Complete ImmutableDbArgs m blk ->
-  ( forall h.
-    WithTempRegistry
-      (OpenState m blk h)
-      m
-      ((ImmutableDB m blk, Internal m blk), OpenState m blk h) ->
-    ans
-  ) ->
-  ans
-openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} cont = cont $ do
-  lift $ createDirectoryIfMissing hasFS True (mkFsPath [])
+  m (ImmutableDB m blk, Internal m blk)
+openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} = do
+  createDirectoryIfMissing hasFS True (mkFsPath [])
   let validateEnv =
         ValidateEnv
           { hasFS = hasFS
@@ -284,7 +274,7 @@ openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} cont = cont $ do
           }
   ost <- validateAndReopen validateEnv immRegistry immValidationPolicy
 
-  stVar <- lift $ newSVar (DbOpen ost)
+  stVar <- newSVar (DbOpen ost)
 
   let dbEnv =
         ImmutableDBEnv
@@ -311,7 +301,7 @@ openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} cont = cont $ do
           , getHashForSlot_ = getHashForSlotImpl dbEnv
           }
 
-  return ((db, internal), ost)
+  return (db, internal)
 
 closeDBImpl ::
   forall m blk.

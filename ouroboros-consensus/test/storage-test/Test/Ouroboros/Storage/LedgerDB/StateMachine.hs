@@ -79,7 +79,6 @@ import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Block
-import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import qualified System.Directory as Dir
 import System.FS.API
 import qualified System.FS.IO as FSIO
@@ -131,22 +130,21 @@ prop_sequential maxSuccess mkTestArguments getDiskDir fsOps actions =
   setup :: IO Environment
   setup = do
     cdb <- initChainDB
-    rr <- unsafeNewRegistry
-    initialEnvironment fsOps getDiskDir mkTestArguments cdb rr
+    initialEnvironment fsOps getDiskDir mkTestArguments cdb
 
   cleanup :: Environment -> IO ()
-  cleanup (Environment _ testInternals _ _ _ _ clean registry) = do
-    closeRegistry registry
+  cleanup (Environment _ testInternals _ _ _ _ clean) = do
     closeLedgerDB testInternals
     clean
 
   runner :: StateT Environment IO QC.Property -> QC.Property
   runner mprop =
-    QC.ioProperty $
-      bracket setup cleanup $
+    QC.ioProperty $ do
+      bracketOnError setup cleanup $
         \env0 -> do
           (prop1, env1) <- runStateT mprop env0
           p2 <- checkNoLeakedHandles env1
+          cleanup env1
           pure $ prop1 QC..&&. p2
 
 -- | The initial environment is mostly undefined because it will be initialized
@@ -159,21 +157,27 @@ initialEnvironment ::
   IO (FilePath, IO ()) ->
   (SecurityParam -> LSM.Salt -> FilePath -> TestArguments IO) ->
   ChainDB IO ->
-  ResourceRegistry IO ->
   IO Environment
-initialEnvironment fsOps getDiskDir mkTestArguments cdb rr = do
+initialEnvironment fsOps getDiskDir mkTestArguments cdb = do
   (sfs, cleanupFS) <- fsOps
   (diskDir, cleanupDisk) <- getDiskDir
   pure $
     Environment
       undefined
-      (TestInternals undefined undefined undefined undefined undefined (pure ()) (pure 0))
+      ( TestInternals
+          undefined
+          undefined
+          undefined
+          undefined
+          undefined
+          (pure ())
+          (pure 0)
+      )
       cdb
       (\sp st -> mkTestArguments sp st diskDir)
       sfs
       (pure $ NumOpenHandles 0)
       (cleanupFS >> cleanupDisk)
-      rr
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -570,9 +574,8 @@ openLedgerDB ::
   ChainDB IO ->
   LedgerDbCfg (ExtLedgerState TestBlock) ->
   SomeHasFS IO ->
-  ResourceRegistry IO ->
   IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock, IO NumOpenHandles)
-openLedgerDB flavArgs env cfg fs rr = do
+openLedgerDB flavArgs env cfg fs = do
   (stream, volBlocks) <- dbStreamAPI env
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
   replayGoal <- fmap (realPointToPoint . last . Map.keys) . atomically $ readTVar (dbBlocks env)
@@ -585,45 +588,50 @@ openLedgerDB flavArgs env cfg fs rr = do
           cfg
           tracer
           flavArgs
-          rr
           DefaultQueryBatchSize
           Nothing
-  (ldb, _, od) <- case lgrBackendArgs args of
-    LedgerDbBackendArgsV1 bss ->
-      let snapManager = V1.snapshotManager args
-          initDb =
-            V1.mkInitDb
-              args
-              bss
-              getBlock
-              snapManager
-              (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
-       in openDBInternal args initDb snapManager stream replayGoal
-    LedgerDbBackendArgsV2 (V2.SomeBackendArgs bArgs) -> do
-      res <-
-        mkResources
-          (Proxy @TestBlock)
-          (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
-          bArgs
-          (lgrRegistry args)
-          (lgrHasFS args)
-      let snapManager =
-            V2.snapshotManager
+  (ldb, _, od) <-
+    runWithTempRegistry $
+      (\x -> (x, ())) <$> case lgrBackendArgs args of
+        LedgerDbBackendArgsV1 bss ->
+          let snapManager = V1.snapshotManager args
+              initDb =
+                V1.mkInitDb
+                  args
+                  bss
+                  getBlock
+                  snapManager
+                  (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
+           in lift $ openDBInternal args initDb snapManager stream replayGoal
+        LedgerDbBackendArgsV2 (V2.SomeBackendArgs bArgs) -> do
+          res <-
+            mkResources
               (Proxy @TestBlock)
-              res
-              (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
-              (LedgerDBSnapshotEvent >$< lgrTracer args)
+              (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
+              bArgs
               (lgrHasFS args)
-      let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
-      openDBInternal args initDb snapManager stream replayGoal
+          let snapManager =
+                V2.snapshotManager
+                  (Proxy @TestBlock)
+                  res
+                  (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
+                  (LedgerDBSnapshotEvent >$< lgrTracer args)
+                  (lgrHasFS args)
+          let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
+          lift $ openDBInternal args initDb snapManager stream replayGoal
   case NE.nonEmpty volBlocks of
     Nothing -> pure ()
-    Just volBlocks' -> withRegistry $ \reg -> do
-      vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (NE.map getHeader volBlocks')
+    Just volBlocks' -> do
+      vr <-
+        validateFork
+          ldb
+          (const $ pure ())
+          BlockCache.empty
+          0
+          (NE.map getHeader volBlocks')
+          (MkSuccessForkerAction $ Monad.join . atomically . forkerCommit)
       case vr of
-        ValidateSuccessful forker -> do
-          atomically (forkerCommit forker)
-          forkerClose forker
+        ValidateSuccessful -> pure ()
         _ -> error "Couldn't restart the chain, failed to apply volatile blocks!"
   pure (ldb, od, getNumOpenHandles)
 
@@ -641,7 +649,6 @@ data Environment
       (SomeHasFS IO)
       !(IO NumOpenHandles)
       !(IO ())
-      !(ResourceRegistry IO)
 
 data LedgerDBError = ErrorValidateExceededRollback
 
@@ -649,68 +656,61 @@ instance RunModel Model (StateT Environment IO) where
   type Error Model (StateT Environment IO) = LedgerDBError
 
   perform _ (Init secParam salt) _ = do
-    Environment _ _ chainDb mkArgs fs _ cleanup rr <- get
+    Environment _ _ chainDb mkArgs fs _ cleanup <- get
     (ldb, testInternals, getNumOpenHandles) <- lift $ do
       let args = mkArgs secParam salt
-      -- TODO after a drop and restore we restart the db but the session has been closed below where I wrote blahblahblah
-      openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs rr
+      openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs
     lift $
       garbageCollect ldb . fromWithOrigin 0 . pointSlot . getTip =<< atomically (getImmutableTip ldb)
-    put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup rr)
+    put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup)
     pure $ pure ()
   perform _ WipeLedgerDB _ = do
-    Environment _ testInternals _ _ _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ <- get
     lift $ wipeLedgerDB testInternals
     pure $ pure ()
   perform _ GetState _ = do
-    Environment ldb _ _ _ _ _ _ _ <- get
+    Environment ldb _ _ _ _ _ _ <- get
     lift $ fmap pure $ atomically $ (,) <$> getImmutableTip ldb <*> getVolatileTip ldb
   perform _ ForceTakeSnapshot _ = do
-    Environment _ testInternals _ _ _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ <- get
     lift $ takeSnapshotNOW testInternals TakeAtImmutableTip Nothing
     pure $ pure ()
   perform _ (ValidateAndCommit n blks0) _ =
     case NE.nonEmpty blks0 of
       Nothing -> pure $ pure ()
       Just blks -> do
-        Environment ldb _ chainDb _ _ _ _ _ <- get
+        Environment ldb _ chainDb _ _ _ _ <- get
         lift $ do
           atomically $
             modifyTVar (dbBlocks chainDb) $
               repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) $ NE.toList blks)
-          withRegistry $ \rr -> do
-            vr <- validateFork ldb rr (const $ pure ()) BlockCache.empty n (NE.map getHeader blks)
-            case vr of
-              ValidateSuccessful forker -> do
-                atomically $
-                  modifyTVar (dbChain chainDb) $
-                    (reverse (map blockRealPoint $ NE.toList blks) ++) . drop (fromIntegral n)
-                atomically (forkerCommit forker)
-                forkerClose forker
-                immTipPoint <- getTip <$> atomically (getImmutableTip ldb)
 
-                garbageCollect ldb . fromWithOrigin 0 $ pointSlot immTipPoint
-                atomically $ writeTVar (dbImmTip chainDb) $ castPoint immTipPoint
-                pure $ pure ()
-              ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
-              ValidateLedgerError (AnnLedgerError p _ err) -> error ("Unexpected ledger error" <> show err <> " on point " <> show p)
+          vr <- validateFork ldb (const $ pure ()) BlockCache.empty n (NE.map getHeader blks) $ MkSuccessForkerAction $ \forker -> do
+            atomically $
+              modifyTVar (dbChain chainDb) $
+                (reverse (map blockRealPoint $ NE.toList blks) ++) . drop (fromIntegral n)
+            Monad.join $ atomically (forkerCommit forker)
+
+            immTipPoint <- getTip <$> atomically (getImmutableTip ldb)
+
+            garbageCollect ldb . fromWithOrigin 0 $ pointSlot immTipPoint
+            atomically $ writeTVar (dbImmTip chainDb) $ castPoint immTipPoint
+          case vr of
+            ValidateSuccessful -> pure $ Right ()
+            ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
+            ValidateLedgerError (AnnLedgerError p _ err) -> error ("Unexpected ledger error" <> show err <> " on point " <> show p)
   perform state@(Model _ _ secParam) (DropAndRestore n salt) lk = do
-    Environment _ testInternals chainDb _ _ _ _ _ <- get
+    Environment _ testInternals chainDb _ _ _ _ <- get
     lift $ do
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
-      -- blahblahblah
       closeLedgerDB testInternals
     perform state (Init secParam salt) lk
   perform _ OpenAndCloseForker _ = do
-    Environment ldb _ _ _ _ _ _ _ <- get
-    lift $ withRegistry $ \rr -> do
-      eFrk <- LedgerDB.getForkerAtTarget ldb rr VolatileTip
-      case eFrk of
-        Left err -> error $ "Impossible: can't acquire forker at tip: " <> show err
-        Right frk -> forkerClose frk
+    Environment ldb _ _ _ _ _ _ <- get
+    lift $ withTipForker ldb (\_ -> pure ())
     pure $ pure ()
   perform _ TruncateSnapshots _ = do
-    Environment _ testInternals _ _ _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ <- get
     lift $ truncateSnapshots testInternals
     pure $ pure ()
   perform UnInit _ _ = error "Uninitialized model created a command different than Init"
@@ -774,10 +774,14 @@ mkTrackOpenHandles = do
 
 -- | Check that we didn't leak any 'LedgerTablesHandle's (with V2 only).
 checkNoLeakedHandles :: Environment -> IO QC.Property
-checkNoLeakedHandles (Environment _ testInternals _ _ _ getNumOpenHandles _ _) = do
+checkNoLeakedHandles (Environment _ testInternals _ _ _ getNumOpenHandles _) = do
   expected <- NumOpenHandles <$> LedgerDB.getNumLedgerTablesHandles testInternals
   actual <- getNumOpenHandles
   pure $
     QC.counterexample
-      ("leaked handles, expected " <> show expected <> ", but actual " <> show actual)
+      ( "num of open handles mismatch, ledgerdb says there are these handles "
+          <> show expected
+          <> ", but the traces indicate that there are now these handles "
+          <> show actual
+      )
       (actual == expected)

@@ -19,7 +19,6 @@ import Control.Concurrent (threadDelay)
 import qualified Control.Concurrent.Async as Async
 import Control.Exception (assert)
 import Control.Monad (forever, void)
-import Control.ResourceRegistry
 import qualified Control.Tracer as Tracer
 import Data.Foldable (asum)
 import qualified Data.List as List
@@ -98,7 +97,7 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
     ledgerItf :: Mempool.LedgerInterface IO TestBlock
     ledgerItf =
       Mempool.LedgerInterface
-        { Mempool.getCurrentLedgerState = \_reg ->
+        { Mempool.getCurrentLedgerState =
             pure $
               MempoolLedgerDBView
                 (testInitLedgerWithState NoPayLoadDependentState)
@@ -118,38 +117,37 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
       HardFork.defaultEraParams
         (Consensus.SecurityParam $ knownNonZeroBounded @10)
         (Time.slotLengthFromSec 2)
-  withRegistry $ \reg -> do
-    mempool <-
-      Mempool.openMempoolWithoutSyncThread
-        reg
-        ledgerItf
-        (testBlockLedgerConfigFrom eraParams)
-        (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
-        (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
-        Tracer.nullTracer
-    ----------------------------------------------------------------------------
-    --  Add and collect transactions
-    ----------------------------------------------------------------------------
-    let waitForSmallAddersToFillMempool = threadDelay 1_000
-    txs <-
-      runConcurrently
-        [ adders mempool smallTxSize
-        , waitForSmallAddersToFillMempool >> adders mempool largeTxSize
-        , waitForSmallAddersToFillMempool >> remover mempool nrOftxsToCollect
-        ]
 
-    ----------------------------------------------------------------------------
-    --  Count the small and large transactions
-    ----------------------------------------------------------------------------
-    let
-      nrSmall :: Double
-      nrLarge :: Double
-      (nrSmall, nrLarge) =
-        (fromIntegral . length *** fromIntegral . length) $
-          List.partition (<= smallTxSize) $
-            fmap txSize txs
-    length txs @?= nrOftxsToCollect
-    theRatioOfTheDifferenceBetween nrSmall nrLarge `isBelow` toleranceThreshold
+  mempool <-
+    Mempool.openMempoolWithoutSyncThread
+      ledgerItf
+      (testBlockLedgerConfigFrom eraParams)
+      (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
+      (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
+      Tracer.nullTracer
+  ----------------------------------------------------------------------------
+  --  Add and collect transactions
+  ----------------------------------------------------------------------------
+  let waitForSmallAddersToFillMempool = threadDelay 1_000
+  txs <-
+    runConcurrently
+      [ adders mempool smallTxSize
+      , waitForSmallAddersToFillMempool >> adders mempool largeTxSize
+      , waitForSmallAddersToFillMempool >> remover mempool nrOftxsToCollect
+      ]
+
+  ----------------------------------------------------------------------------
+  --  Count the small and large transactions
+  ----------------------------------------------------------------------------
+  let
+    nrSmall :: Double
+    nrLarge :: Double
+    (nrSmall, nrLarge) =
+      (fromIntegral . length *** fromIntegral . length) $
+        List.partition (<= smallTxSize) $
+          fmap txSize txs
+  length txs @?= nrOftxsToCollect
+  theRatioOfTheDifferenceBetween nrSmall nrLarge `isBelow` toleranceThreshold
  where
   theRatioOfTheDifferenceBetween x y = (abs (x - y) / (x + y), x, y)
 

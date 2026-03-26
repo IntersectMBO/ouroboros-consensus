@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , getEnv
   , getEnv1
   , getEnv2
+  , getEnvTrans2
   , getEnvSTM
   , getEnvSTM1
 
@@ -81,6 +82,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   ) where
 
 import Control.Monad (when)
+import Control.Monad.Trans.Class
 import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
@@ -140,6 +142,7 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (Fuse)
 import Ouroboros.Consensus.Util.AnchoredFragment (ReasonForSwitch')
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -177,6 +180,17 @@ getEnv (CDBHandle varState) f =
     ChainDbOpen env -> f env
     ChainDbClosed -> throwIO $ ClosedDBError @blk prettyCallStack
 
+getEnvTrans ::
+  forall m blk r.
+  (IOLike m, HasCallStack, HasHeader blk) =>
+  ChainDbHandle m blk ->
+  (ChainDbEnv m blk -> WithEarlyExit m r) ->
+  WithEarlyExit m r
+getEnvTrans (CDBHandle varState) f =
+  lift (atomically (readTVar varState)) >>= \case
+    ChainDbOpen env -> f env
+    ChainDbClosed -> lift $ throwIO $ ClosedDBError @blk prettyCallStack
+
 -- | Variant 'of 'getEnv' for functions taking one argument.
 getEnv1 ::
   (IOLike m, HasCallStack, HasHeader blk) =>
@@ -195,6 +209,16 @@ getEnv2 ::
   b ->
   m r
 getEnv2 h f a b = getEnv h (\env -> f env a b)
+
+-- | Variant 'of 'getEnv' for functions taking two arguments.
+getEnvTrans2 ::
+  (IOLike m, HasCallStack, HasHeader blk) =>
+  ChainDbHandle m blk ->
+  (ChainDbEnv m blk -> a -> b -> WithEarlyExit m r) ->
+  a ->
+  b ->
+  WithEarlyExit m r
+getEnvTrans2 h f a b = getEnvTrans h (\env -> f env a b)
 
 -- | Variant of 'getEnv' that works in 'STM'.
 getEnvSTM ::

@@ -76,6 +76,97 @@
 -- Note that whenever we say /ledger state/ we mean the @'ExtLedgerState' blk
 -- mk@ type described in "Ouroboros.Consensus.Ledger.Basics".
 --
+-- = Resource management in the LedgerDB
+--
+-- The LedgerDB has currently 3 backends it can use:
+--
+-- - InMemory: This backend is pure except for tracing. No resources are allocated.
+--
+-- - LMDB: This backend allocates a 'BackingStore' and
+--   'BackingStoreValueHandle's on it. The 'BackingStore' does not necessarily
+--   need to be closed as described in [the LMDB
+--   documentation](http://www.lmdb.tech/doc/group__internal.html#ga52dd98d0c542378370cd6b712ff961b5):
+--
+--   > Closing a database handle is not necessary, but lets mdb_dbi_open() reuse the handle value.
+--
+--   Therefore, the 'BackingStore' is not allocated in any resource or tracked
+--   in any way as a resource.
+--
+--   For the value handles, all the usages of those are bracketed or
+--   tracked in a resource registry, so they will be closed
+--   individually when an exception arrives. The key difference is
+--   that in V1, the value handle cannot outlive the Forker (see
+--   "'Forker' management in the running node" below), while in V2 the
+--   resources (handles) can outlive the forkers and be moved to the
+--   LedgerDB.
+--
+-- - LSM: This backend allocates a 'BlockIOFS' and a 'Session'. Using the
+--   session, new 'Tables' are allocated, but closing the session closes any
+--   existing 'Tables' handles.
+--
+--   Both the 'BlockIOFS' and the 'Session' are stored in the 'ldbResources' of
+--   the LedgerDB, and closing the LedgerDB will release them. The LedgerDB will
+--   be closed by closing the ChainDB which is tracked in the top-level
+--   registry. Therefore we don't need to keep track of the 'Table' handles nor
+--   we need to further keep track of the 'BlockIOFS' and the 'Session'.
+--
+-- = 'Forker' management in the running node
+--
+-- The 'openForkerAtTarget' method of the 'LedgerDB' type is the
+-- lowest-level method for opening a Forker. This comment describes
+-- the tree formed by definition-and-use edges rooted at
+-- 'openForkerAtTarget'. It doesn't describe the entire tree, but
+-- rather just enough to confirm that 'Forker's will not be leaked
+-- /during the extended execution of the running node/. There are a
+-- few helpful clarifications to make before elaborating that tree.
+--
+-- - This comment is only concerned with the running node. In
+--   contrast, the shutting down node is addressed by the "Resource
+--   management in the LedgerDB" section above. There are two key
+--   ideas. First, the shut down routines don't open additional
+--   Forkers. Second, it's OK for the shut down routines to not
+--   necessarily close their local/owned Forkers, since the Forker
+--   backends either don't require that or already take care of open
+--   handles when their top-level "close" method is called.
+--
+-- - Some subtrees, like the 'withTipForker' subtree, are irrelevant
+--   to this comment, because they explicitly use 'bracket' or a
+--   short-lived 'ResourceRegstiry' and so can't contribute to any
+--   leaks. To clarify: there would be leaks if those brackets were
+--   indefinitely nested or if the registry outlived multiple
+--   iterations, etc. But that itself would be an unacceptable stack
+--   leak, for example. Such unbounded nesting/registries are
+--   therefore beyond the scope of this comment.
+--
+-- - Tools (like @db-analyser@) and tests are also beyond the scope of
+--   this comment, so those subtrees are mentioned but not elaborated.
+--
+-- - It turns out that the resulting tree is currently merely a list
+--   of such uninteresting subtrees, so the nub of this comment can be
+--   linear despite describing a tree.
+--
+-- At the time of writing, the (linear spine of the) def-use tree is
+-- as follows.
+--
+-- - 'openForkerAtTarget' is used directly only to define
+--   'withTipForker' (bracketed) and 'openReadOnlyForker'.
+--
+-- - 'openReadOnlyForker' is used directly only in @db-analyser@
+--   (tool), in tests, and to define 'openReadOnlyForkerAtPoint'.
+--
+-- - 'openReadOnlyForkerAtPoint' is used directly only to define
+--   'allocInRegistryReadOnlyForkerAtPoint' (registered), to define
+--   'withReadOnlyForkerAtPoint' (bracketed), and to construct a
+--   'MempoolLedgerDBView'.
+--
+--  - The Forker part of 'MempoolLedgerDBView' is used directly only
+--    in 'initMempoolEnv' (called by 'openMempool') and in
+--    'implSyncWithLedger. If an exception arrives during
+--    'openMempool', then node will shutdown, so leaks are not a
+--    concern here. The syncing-with-ledger use is bracketed via
+--    'modifyMVar_' to close the old forker just before replacing it
+--    with the new one.
+--
 -- === __(image code)__
 -- >>> import Image.LaTeX.Render
 -- >>> import Control.Monad
@@ -142,9 +233,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbError (..)
 
     -- * Forker
-  , getReadOnlyForker
+  , openReadOnlyForker
   , getTipStatistics
-  , withPrivateTipForker
   , withTipForker
 
     -- * Snapshots
@@ -167,7 +257,6 @@ import Codec.CBOR.Read
 import Codec.Serialise
 import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
-import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
@@ -240,24 +329,27 @@ data LedgerDB m l blk = LedgerDB
       l ~ ExtLedgerState blk =>
       STM m (HeaderStateHistory blk)
   -- ^ Get the header state history for all ledger states in the LedgerDB.
-  , getForkerAtTarget ::
-      ResourceRegistry m ->
+  , openForkerAtTarget ::
       Target (Point blk) ->
       m (Either GetForkerError (Forker m l))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
   -- 'GetForkerError'.
   --
-  -- We pass in the producer/consumer registry.
+  -- Note this will allocate resources; see the "'Forker' management
+  -- in the running node" comment above.
   , validateFork ::
-      ResourceRegistry m ->
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
       Word64 ->
       NonEmpty (Header blk) ->
-      m (ValidateResult m l blk)
+      SuccessForkerAction m l ->
+      m (ValidateResult l blk)
   -- ^ Try to apply a sequence of blocks on top of the LedgerDB, first rolling
   -- back as many blocks as the passed @Word64@.
+  --
+  -- The passed continuation will be executed if the result of validation is
+  -- fully successful.
   , getPrevApplied :: STM m (Set (RealPoint blk))
   -- ^ Get the references to blocks that have previously been applied.
   , garbageCollect :: SlotNo -> m ()
@@ -365,14 +457,12 @@ configLedgerDb config evs =
 -- | Database error
 --
 -- Thrown upon incorrect use: invalid input.
-data LedgerDbError blk
+data LedgerDbError
   = -- | The LedgerDB is closed.
     --
     -- This will be thrown when performing some operations on the LedgerDB. The
     -- 'CallStack' of the operation on the LedgerDB is included in the error.
     ClosedDBError PrettyCallStack
-  | -- | A Forker is closed.
-    ClosedForkerError ForkerKey PrettyCallStack
   deriving Show
   deriving anyclass Exception
 
@@ -384,30 +474,12 @@ data LedgerDbError blk
 withTipForker ::
   IOLike m =>
   LedgerDB m l blk ->
-  ResourceRegistry m ->
   (Forker m l -> m a) ->
   m a
-withTipForker ldb rr =
+withTipForker ldb =
   bracket
     ( do
-        eFrk <- getForkerAtTarget ldb rr VolatileTip
-        case eFrk of
-          Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
-          Right frk -> pure frk
-    )
-    forkerClose
-
--- | Like 'withTipForker', but it uses a private registry to allocate and
--- de-allocate the forker.
-withPrivateTipForker ::
-  IOLike m =>
-  LedgerDB m l blk ->
-  (Forker m l -> m a) ->
-  m a
-withPrivateTipForker ldb =
-  bracketWithPrivateRegistry
-    ( \rr -> do
-        eFrk <- getForkerAtTarget ldb rr VolatileTip
+        eFrk <- openForkerAtTarget ldb VolatileTip
         case eFrk of
           Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
           Right frk -> pure frk
@@ -419,15 +491,14 @@ getTipStatistics ::
   IOLike m =>
   LedgerDB m l blk ->
   m Statistics
-getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
+getTipStatistics ldb = withTipForker ldb forkerReadStatistics
 
-getReadOnlyForker ::
+openReadOnlyForker ::
   MonadSTM m =>
   LedgerDB m l blk ->
-  ResourceRegistry m ->
   Target (Point blk) ->
   m (Either GetForkerError (ReadOnlyForker m l))
-getReadOnlyForker ldb rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb rr pt
+openReadOnlyForker ldb pt = fmap readOnlyForker <$> openForkerAtTarget ldb pt
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -539,16 +610,14 @@ initialize
     tryNewestFirst ::
       (InitLog blk -> InitLog blk) ->
       [DiskSnapshot] ->
-      m
-        ( InitLog blk
-        , db
-        , Word64
-        )
+      m (InitLog blk, db, Word64)
     tryNewestFirst acc [] = do
       -- We're out of snapshots. Start at genesis
       traceWith (TraceReplayStartEvent >$< replayTracer) ReplayFromGenesis
       let replayTracer'' = decorateReplayTracerWithStart (Point Origin) replayTracer'
+
       initDb <- initFromGenesis
+
       traceMarkerIO "Genesis loaded"
       (db, replayed) <-
         replayStartingWith
@@ -816,8 +885,10 @@ class StreamingBackend m backend l where
   data SinkArgs m backend l
 
   yield :: Proxy backend -> YieldArgs m backend l -> Yield m l
+  releaseYieldArgs :: YieldArgs m backend l -> m ()
 
   sink :: Proxy backend -> SinkArgs m backend l -> Sink m l
+  releaseSinkArgs :: SinkArgs m backend l -> m ()
 
 type Yield m l =
   l EmptyMK ->

@@ -549,7 +549,7 @@ implSyncWithLedger mpEnv =
       --
       -- Just for performance reasons, we will avoid re-validating the mempool
       -- if the state didn't change.
-      withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface registry) $
+      withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
         \is (MempoolLedgerDBView ls meFrk) -> do
           let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
           if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
@@ -570,8 +570,8 @@ implSyncWithLedger mpEnv =
                 Right frk -> do
                   modifyMVar_
                     forkerMVar
-                    ( \oldFrk -> do
-                        roforkerClose oldFrk
+                    ( \frkOld -> do
+                        roforkerClose frkOld
                         pure frk
                     )
                   tbs <- castLedgerTables <$> roforkerReadTables frk (castLedgerTables $ isTxKeys is)
@@ -594,7 +594,6 @@ implSyncWithLedger mpEnv =
     { mpEnvStateVar = istate
     , mpEnvForker = forkerMVar
     , mpEnvLedger = ldgrInterface
-    , mpEnvRegistry = registry
     , mpEnvTracer = trcr
     , mpEnvLedgerCfg = cfg
     , mpEnvCapacityOverride = capacityOverride
