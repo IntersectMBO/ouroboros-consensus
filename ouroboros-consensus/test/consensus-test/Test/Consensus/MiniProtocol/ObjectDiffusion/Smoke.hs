@@ -48,7 +48,7 @@ import Ouroboros.Consensus.Util.IOLike
   , writeTVar
   )
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion (..))
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec (codecObjectDiffusionId)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   ( ObjectDiffusionInboundPipelined

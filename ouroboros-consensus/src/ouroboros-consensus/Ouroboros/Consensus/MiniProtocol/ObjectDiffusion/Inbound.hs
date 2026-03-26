@@ -43,7 +43,7 @@ import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.Util.NormalForm.Invariant (noThunksInvariant)
 import Ouroboros.Network.ControlMessage
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 

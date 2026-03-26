@@ -20,7 +20,7 @@ import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as Seq
 import Data.Set qualified as Set
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
 
