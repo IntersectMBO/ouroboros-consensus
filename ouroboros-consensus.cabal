@@ -236,11 +236,11 @@ library
     Ouroboros.Consensus.Node.Run
     Ouroboros.Consensus.Node.Serialisation
     Ouroboros.Consensus.NodeId
-    Ouroboros.Consensus.Peras.Cert
+    Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Cert.Inclusion
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
-    Ouroboros.Consensus.Peras.Vote
+    Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Voting.Rules
     Ouroboros.Consensus.Peras.Voting.View
