@@ -10,8 +10,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
   , ObjectDiffusionOutboundError (..)
   ) where
 
-import Control.Exception (assert)
-import Control.Monad (forM, unless, when)
+import Control.Monad (unless, when, join)
 import Control.Monad.Class.MonadSTM
 import Control.Monad.Class.MonadThrow
 import Control.Tracer (Tracer, traceWith)
@@ -23,6 +22,8 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
+import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
 
 -- Note: This module is inspired from TxSubmission outbound side.
 
@@ -43,7 +44,7 @@ data TraceObjectDiffusionOutbound objectId object
 data ObjectDiffusionOutboundError
   = ProtocolErrorAckedTooManyObjectIds
   | ProtocolErrorRequestedNothing
-  | ProtocolErrorRequestedTooManyObjectIds NumObjectIdsReq NumObjectsOutstanding
+  | ProtocolErrorRequestedTooManyObjectIds NumObjectIdsReq NumObjectsUnacknowledged
   | ProtocolErrorRequestBlocking
   | ProtocolErrorRequestNonBlocking
   | ProtocolErrorRequestedUnavailableObject
@@ -80,10 +81,10 @@ data OutboundSt objectId object ticketNo = OutboundSt
 
 objectDiffusionOutbound ::
   forall objectId object ticketNo m.
-  (Ord objectId, Ord ticketNo, MonadSTM m, MonadThrow m) =>
+  (Ord objectId, MonadSTM m, MonadThrow m) =>
   Tracer m (TraceObjectDiffusionOutbound objectId object) ->
   -- | Maximum number of unacknowledged objectIds allowed
-  NumObjectsOutstanding ->
+  NumObjectsUnacknowledged ->
   ObjectPoolReader objectId object ticketNo m ->
   NodeToNodeVersion ->
   ObjectDiffusionOutbound objectId object m ()
@@ -100,17 +101,15 @@ objectDiffusionOutbound tracer maxFifoLength ObjectPoolReader{..} _version =
 
   updateStNewObjects ::
     OutboundSt objectId object ticketNo ->
-    [(object, ticketNo)] ->
+    [(ticketNo, object)] ->
     OutboundSt objectId object ticketNo
-  updateStNewObjects !OutboundSt{..} newObjectsWithTicketNos =
-    -- These objects should all be fresh
-    assert (all (\(_, ticketNo) -> ticketNo > lastTicketNo) newObjectsWithTicketNos) $
+  updateStNewObjects !OutboundSt{..} sortedNewContent =
       let !outstandingFifo' =
             outstandingFifo
-              <> (Seq.fromList $ fst <$> newObjectsWithTicketNos)
+              <> (Seq.fromList $ snd <$> sortedNewContent)
           !lastTicketNo'
-            | null newObjectsWithTicketNos = lastTicketNo
-            | otherwise = snd $ last newObjectsWithTicketNos
+            | null sortedNewContent = lastTicketNo
+            | otherwise = fst $ last sortedNewContent
        in OutboundSt
             { outstandingFifo = outstandingFifo'
             , lastTicketNo = lastTicketNo'
@@ -154,32 +153,32 @@ objectDiffusionOutbound tracer maxFifoLength ObjectPoolReader{..} _version =
         unless (Seq.null outstandingFifo') $
           throwIO ProtocolErrorRequestBlocking
 
-        newContent <- atomically $ do
-          newObjectsWithTicketNos <-
-            oprObjectsAfter
-              lastTicketNo
-              (fromIntegral numIdsToReq)
-          check (not $ null newObjectsWithTicketNos)
-          pure newObjectsWithTicketNos
+        -- oprObjectsAfter returns STM (Maybe (m (Map ...))).
+        -- The STM layer retries efficiently until new content is signalled (Just).
+        -- However, in rare cases the IO action may still yield an empty
+        -- map (e.g. objects GC'd between the STM check and IO read),
+        -- so we loop in IO as well.
+        let getNewContent = do
+              content <- join . atomically $ do
+                maybeNewObjectsAction <-
+                  oprObjectsAfter
+                    lastTicketNo
+                    (fromIntegral numIdsToReq)
+                case maybeNewObjectsAction of
+                  Nothing -> retry
+                  Just newObjectsAction -> pure newObjectsAction
+              if null content then getNewContent else pure content
+        sortedNewContent <- Map.toAscList <$> getNewContent
 
-        newObjectsWithTicketNos <- forM newContent $
-          \(ticketNo, _, getObject) -> do
-            object <- getObject
-            pure (object, ticketNo)
-
-        let !newIds = oprObjectId . fst <$> newObjectsWithTicketNos
-            st'' = updateStNewObjects st' newObjectsWithTicketNos
+        let !newIds = oprObjectId . snd <$> sortedNewContent
+            st'' = updateStNewObjects st' sortedNewContent
 
         traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjectIds newIds)
 
-        -- Assert objects is non-empty: we blocked until objects was
-        -- non-null, and we know numIdsToReq > 0, hence
-        -- `take numIdsToReq objects` is non-null.
-        assert (not $ null newObjectsWithTicketNos) $
-          pure $
-            SendMsgReplyObjectIds
-              (BlockingReply (NonEmpty.fromList $ newIds))
-              (makeBundle st'')
+        pure $
+          SendMsgReplyObjectIds
+            (BlockingReply (NonEmpty.fromList $ newIds))
+            (makeBundle st'')
 
       -----------------------------------------------------------------------
       SingNonBlocking -> do
@@ -188,16 +187,17 @@ objectDiffusionOutbound tracer maxFifoLength ObjectPoolReader{..} _version =
         when (Seq.null outstandingFifo') $
           throwIO ProtocolErrorRequestNonBlocking
 
-        newContent <-
-          atomically $
-            oprObjectsAfter lastTicketNo (fromIntegral numIdsToReq)
-        newObjectsWithTicketNos <- forM newContent $
-          \(ticketNo, _, getObject) -> do
-            object <- getObject
-            pure (object, ticketNo)
+        let getNewContent = join . atomically $ do
+              maybeNewObjectsAction <-
+                oprObjectsAfter
+                  lastTicketNo
+                  (fromIntegral numIdsToReq)
+              pure $ fromMaybe (pure Map.empty) maybeNewObjectsAction
 
-        let !newIds = oprObjectId . fst <$> newObjectsWithTicketNos
-            st'' = updateStNewObjects st' newObjectsWithTicketNos
+        sortedNewContent <- Map.toAscList <$> getNewContent
+
+        let !newIds = oprObjectId . snd <$> sortedNewContent
+            st'' = updateStNewObjects st' sortedNewContent
 
         traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjectIds newIds)
 

@@ -145,7 +145,7 @@ objectDiffusionInbound ::
   Tracer m (TraceObjectDiffusionInbound objectId object) ->
   -- | Maximum values for outstanding FIFO length, number of IDs to request,
   -- and number of objects to request
-  (NumObjectsOutstanding, NumObjectIdsReq, NumObjectsReq) ->
+  (NumObjectsUnacknowledged, NumObjectIdsReq, NumObjectsReq) ->
   ObjectPoolWriter objectId object m ->
   NodeToNodeVersion ->
   ControlMessageSTM m ->

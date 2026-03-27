@@ -60,7 +60,7 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound
   )
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type
   ( NumObjectIdsReq (..)
-  , NumObjectsOutstanding (..)
+  , NumObjectsUnacknowledged (..)
   , NumObjectsReq (..)
   , ObjectDiffusion
   )
@@ -163,7 +163,7 @@ mkMockPoolInterfaces objects = do
 -- Protocol constants
 
 newtype ProtocolConstants
-  = ProtocolConstants (NumObjectsOutstanding, NumObjectIdsReq, NumObjectsReq)
+  = ProtocolConstants (NumObjectsUnacknowledged, NumObjectIdsReq, NumObjectsReq)
   deriving Show
 
 instance Arbitrary ProtocolConstants where
@@ -173,7 +173,7 @@ instance Arbitrary ProtocolConstants where
     maxObjectsToReq <- choose (2, maxIdsToReq)
     pure $
       ProtocolConstants
-        ( NumObjectsOutstanding maxFifoSize
+        ( NumObjectsUnacknowledged maxFifoSize
         , NumObjectIdsReq maxIdsToReq
         , NumObjectsReq maxObjectsToReq
         )
