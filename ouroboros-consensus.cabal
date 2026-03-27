@@ -314,6 +314,7 @@ library
     Ouroboros.Consensus.Util.AnchoredSeq
     Ouroboros.Consensus.Util.Args
     Ouroboros.Consensus.Util.Assert
+    Ouroboros.Consensus.Util.Bitmap
     Ouroboros.Consensus.Util.CBOR
     Ouroboros.Consensus.Util.CRC
     Ouroboros.Consensus.Util.CallStack
