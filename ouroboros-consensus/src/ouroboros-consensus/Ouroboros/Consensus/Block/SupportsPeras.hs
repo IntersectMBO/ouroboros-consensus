@@ -15,6 +15,8 @@
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
   , onPerasRoundNo
+  , PerasBoostedBlock (..)
+  , PerasSeatIndex (..)
   , PerasVoteId (..)
   , PerasVoteTarget (..)
   , PerasVoterId (..)
@@ -49,7 +51,13 @@ module Ouroboros.Consensus.Block.SupportsPeras
 
 import Cardano.Binary (FromCBOR, ToCBOR)
 import qualified Cardano.Binary as KeyHash
-import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
+import Cardano.Ledger.Hashes
+  ( EraIndependentBlockHeader
+  , HASH
+  , Hash
+  , KeyHash
+  , KeyRole (..)
+  )
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
@@ -60,7 +68,7 @@ import qualified Data.Map as Map
 import Data.Map.Strict (Map)
 import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
-import Data.Word (Word64)
+import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
@@ -92,6 +100,26 @@ onPerasRoundNo ::
   (Word64 -> Word64 -> Word64) ->
   (PerasRoundNo -> PerasRoundNo -> PerasRoundNo)
 onPerasRoundNo = coerce
+
+-- ** Boosted blocks
+
+-- | The hash of the block being voted for in a Peras election
+newtype PerasBoostedBlock
+  = PerasBoostedBlock
+  { unPerasBoostedBlock :: Hash HASH EraIndependentBlockHeader
+  }
+  deriving stock (Eq, Ord, Show)
+  deriving newtype (FromCBOR, ToCBOR)
+
+-- ** Seat indices
+
+-- | Seat index in the voting committee used for Peras
+newtype PerasSeatIndex
+  = PerasSeatIndex
+  { unPerasSeatIndex :: Word16
+  }
+  deriving stock (Eq, Ord, Show)
+  deriving newtype (FromCBOR, ToCBOR, Enum, Bounded)
 
 -- ** Stake pool distributions
 
