@@ -14,6 +14,8 @@
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
   , onPerasRoundNo
+  , PerasBoostedBlock (..)
+  , PerasSeatIndex (..)
   , PerasVoteId (..)
   , PerasVoteTarget (..)
   , PerasVoterId (..)
@@ -59,10 +61,15 @@ import qualified Data.Map as Map
 import Data.Map.Strict (Map)
 import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
-import Data.Word (Word64)
+import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Block.RealPoint
+  ( Bytes32RealPoint
+  , decodeBytes32RealPoint
+  , encodeBytes32RealPoint
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Util
@@ -91,6 +98,31 @@ onPerasRoundNo ::
   (Word64 -> Word64 -> Word64) ->
   (PerasRoundNo -> PerasRoundNo -> PerasRoundNo)
 onPerasRoundNo = coerce
+
+-- ** Boosted blocks
+
+-- | The slot number and 32-byte hash of the block being voted for
+newtype PerasBoostedBlock
+  = PerasBoostedBlock
+  { unPerasBoostedBlock :: Bytes32RealPoint
+  }
+  deriving stock (Eq, Show)
+
+instance FromCBOR PerasBoostedBlock where
+  fromCBOR = PerasBoostedBlock <$> decodeBytes32RealPoint
+
+instance ToCBOR PerasBoostedBlock where
+  toCBOR = encodeBytes32RealPoint . unPerasBoostedBlock
+
+-- ** Seat indices
+
+-- | Seat index in the voting committee used for Peras
+newtype PerasSeatIndex
+  = PerasSeatIndex
+  { unPerasSeatIndex :: Word16
+  }
+  deriving stock (Eq, Ord, Show)
+  deriving newtype (FromCBOR, ToCBOR, Enum, Bounded)
 
 -- ** Stake pool distributions
 
