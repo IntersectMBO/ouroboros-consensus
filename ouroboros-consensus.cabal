@@ -696,6 +696,7 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ChainSync.CSJ
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
+    Test.Consensus.Peras.Crypto.Serialisation
     Test.Consensus.Peras.Voting.Rules
     Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.MonadSTM.NormalForm
@@ -709,6 +710,7 @@ test-suite consensus-test
     async,
     base,
     base-deriving-via,
+    bytestring,
     cardano-binary,
     cardano-crypto-class:{cardano-crypto-class, testlib},
     cardano-diffusion:api,
