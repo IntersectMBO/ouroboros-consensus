@@ -364,7 +364,7 @@ library
     fingertree-rm >=1.0,
     fs-api ^>=0.4,
     hashable,
-    io-classes:{io-classes, si-timers, strict-mvar, strict-stm} >=1.8.0.1 || ^>=1.9,
+    io-classes:{io-classes, si-timers, strict-mvar, strict-stm} ^>=1.8.0.1 || ^>=1.9,
     measures,
     mempack,
     monoid-subclasses,
