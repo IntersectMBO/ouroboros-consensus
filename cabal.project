@@ -16,8 +16,11 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2026-03-17T01:21:06Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-03-13T16:01:53Z
+  , cardano-haskell-packages 2026-03-30T15:30:34Z
 
+active-repositories:
+  , :rest
+  , cardano-haskell-packages:override
 
 packages: .
 
