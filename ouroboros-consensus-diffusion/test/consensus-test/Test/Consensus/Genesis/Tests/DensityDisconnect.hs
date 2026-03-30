@@ -1,18 +1,31 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Test.Consensus.Genesis.Tests.DensityDisconnect (tests) where
+-- | Genesis density disconnect tests.
+module Test.Consensus.Genesis.Tests.DensityDisconnect
+  ( TestKey
+  , testSuite
+  , tests
+  ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
-import Cardano.Slotting.Slot (SlotNo (unSlotNo), WithOrigin (..))
+import Cardano.Slotting.Slot
+  ( SlotNo (unSlotNo)
+  , WithOrigin (..)
+  )
 import Control.Exception (fromException)
 import Control.Monad.Class.MonadTime.SI (Time (..))
 import Data.Bifunctor
-import Data.Foldable (maximumBy, minimumBy, toList)
+import Data.Foldable
+  ( maximumBy
+  , minimumBy
+  , toList
+  )
 import Data.Function (on)
 import Data.Functor (($>), (<&>))
 import Data.List (intercalate)
@@ -31,7 +44,10 @@ import Ouroboros.Consensus.Block
   , fromWithOrigin
   , withOrigin
   )
-import Ouroboros.Consensus.Block.Abstract (Header, getHeader)
+import Ouroboros.Consensus.Block.Abstract
+  ( Header
+  , getHeader
+  )
 import Ouroboros.Consensus.Config.SecurityParam
   ( SecurityParam (SecurityParam)
   , maxRollbacks
@@ -60,6 +76,7 @@ import Test.Consensus.Genesis.Setup.Classifiers
   ( classifiers
   , genesisWindowAfterIntersection
   )
+import Test.Consensus.Genesis.TestSuite
 import Test.Consensus.PeerSimulator.Run
   ( SchedulerConfig (scEnableLoE)
   , defaultSchedulerConfig
@@ -72,18 +89,14 @@ import Test.Consensus.PeerSimulator.StateView
 import Test.Consensus.PeerSimulator.Trace (prettyDensityBounds)
 import Test.Consensus.PointSchedule
 import Test.Consensus.PointSchedule.Peers
-import Test.Consensus.PointSchedule.Shrinking
-  ( shrinkByRemovingAdversaries
-  )
+import Test.Consensus.PointSchedule.Shrinking (shrinkByRemovingAdversaries)
 import Test.Consensus.PointSchedule.SinglePeer
   ( SchedulePoint (..)
   , scheduleBlockPoint
   , scheduleHeaderPoint
   , scheduleTipPoint
   )
-import Test.Ouroboros.Consensus.QuickCheck.Extras
-  ( unsafeMapSuchThatJust
-  )
+import Test.Ouroboros.Consensus.QuickCheck.Extras (unsafeMapSuchThatJust)
 import Test.QuickCheck
 import qualified Test.QuickCheck as QC
 import Test.Tasty
@@ -91,22 +104,52 @@ import Test.Tasty.QuickCheck
 import Test.Util.Header (attachSlotTimeToFragment)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.PartialAccessors
-import Test.Util.TersePrinting (terseHFragment, terseHWTFragment, terseHeader)
-import Test.Util.TestBlock (TestBlock, singleNodeTestConfig)
+import Test.Util.TersePrinting
+  ( terseHFragment
+  , terseHWTFragment
+  , terseHeader
+  )
+import Test.Util.TestBlock
+  ( TestBlock
+  , singleNodeTestConfig
+  )
 import Test.Util.TestEnv
   ( adjustQuickCheckMaxSize
   , adjustQuickCheckTests
   )
 
+-- | Default adjustment of required property test passes.
+-- Can be set individually on each test definition.
+adjustDesiredPasses :: Int -> Int
+adjustDesiredPasses = (* 10)
+
+-- | Default adjustment of max test case size.
+-- Can be set individually on each test definition.
+adjustTestMaxSize :: Int -> Int
+adjustTestMaxSize = (`div` 5)
+
+-- | Each value of this type uniquely corresponds to a test defined in this module.
+data TestKey = TriggersChainSelection
+  deriving stock (Eq, Ord, Generic)
+  deriving SmallKey via Generically TestKey
+
+testSuite ::
+  ( HasHeader blk
+  , IssueTestBlock blk
+  , Ord blk
+  ) =>
+  TestSuite blk TestKey
+testSuite = group "density disconnect" $ newTestSuite $ \case
+  TriggersChainSelection -> test_densityDisconnectTriggersChainSel
+
 tests :: TestTree
 tests =
-  adjustQuickCheckTests (* 10) $
-    adjustQuickCheckMaxSize (`div` 5) $
+  adjustQuickCheckTests adjustDesiredPasses $
+    adjustQuickCheckMaxSize adjustTestMaxSize $
       testGroup
         "gdd"
         [ testProperty "basic" prop_densityDisconnectStatic
         , testProperty "monotonicity" prop_densityDisconnectMonotonic
-        , testProperty "re-triggers chain selection on disconnection" prop_densityDisconnectTriggersChainSel
         ]
 
 branchTip :: AnchoredFragment TestBlock -> Tip TestBlock
@@ -513,9 +556,17 @@ prop_densityDisconnectMonotonic =
 -- | Tests that a GDD disconnection re-triggers chain selection, i.e. when the current
 -- selection is blocked by LoE, and the leashing adversary reveals it is not dense enough,
 -- it gets disconnected and then the selection progresses.
-prop_densityDisconnectTriggersChainSel :: Property
-prop_densityDisconnectTriggersChainSel =
-  forAllGenesisTest @TestBlock
+test_densityDisconnectTriggersChainSel ::
+  ( HasHeader blk
+  , IssueTestBlock blk
+  , Ord blk
+  ) =>
+  ConformanceTest blk
+test_densityDisconnectTriggersChainSel =
+  mkConformanceTest
+    "re-triggers chain selection on disconnection"
+    adjustDesiredPasses
+    adjustTestMaxSize
     ( do
         gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
         let ps = lowDensitySchedule gtBlockTree

@@ -1,14 +1,21 @@
 {-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Test.Consensus.Genesis.Tests.LoP (tests) where
+-- | Limit on Patience tests.
+module Test.Consensus.Genesis.Tests.LoP
+  ( TestKey
+  , testSuite
+  ) where
 
 import Data.Functor (($>))
 import Data.Ratio ((%))
+import Ouroboros.Consensus.Block.Abstract (Header)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import Ouroboros.Consensus.Util.IOLike
   ( DiffTime
@@ -25,6 +32,7 @@ import Ouroboros.Network.AnchoredFragment
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import Test.Consensus.Genesis.Setup
+import Test.Consensus.Genesis.TestSuite
 import Test.Consensus.PeerSimulator.Run
   ( SchedulerConfig (..)
   , defaultSchedulerConfig
@@ -42,51 +50,70 @@ import Test.Consensus.PointSchedule.SinglePeer
   , scheduleHeaderPoint
   , scheduleTipPoint
   )
-import Test.Tasty
-import Test.Tasty.QuickCheck
 import Test.Util.Orphans.IOLike ()
 import Test.Util.PartialAccessors
-import Test.Util.TestBlock (TestBlock)
-import Test.Util.TestEnv
-  ( adjustQuickCheckMaxSize
-  , adjustQuickCheckTests
-  )
 
-tests :: TestTree
-tests =
-  adjustQuickCheckTests (* 10) $
-    testGroup
-      "LoP"
-      [ -- \| NOTE: Running the test that must _not_ timeout (@prop_smoke False@) takes
-        -- significantly more time than the one that does. This is because the former
-        -- does all the computation (serving the headers, validating them, serving the
-        -- block, validating them) while the former does nothing, because it timeouts
-        -- before reaching the last tick of the point schedule.
-        adjustQuickCheckMaxSize (`div` 5) $
-          testProperty "wait just enough" (prop_wait False)
-      , testProperty "wait too much" (prop_wait True)
-      , adjustQuickCheckMaxSize (`div` 5) $
-          testProperty "wait behind forecast horizon" prop_waitBehindForecastHorizon
-      , adjustQuickCheckMaxSize (`div` 5) $
-          testProperty "serve just fast enough" (prop_serve False)
-      , adjustQuickCheckMaxSize (`div` 5) $
-          testProperty "serve too slow" (prop_serve True)
-      , adjustQuickCheckMaxSize (`div` 5) $
-          testProperty "delaying attack succeeds without LoP" (prop_delayAttack False)
-      , adjustQuickCheckMaxSize (`div` 5) $
-          testProperty "delaying attack fails with LoP" (prop_delayAttack True)
-      ]
+-- | Default adjustment of required property test passes.
+-- Can be set individually on each test definition.
+adjustDesiredPasses :: Int -> Int
+adjustDesiredPasses = (* 10)
+
+-- | Default adjustment of max test case size.
+-- Can be set individually on each test definition.
+adjustTestMaxSize :: Int -> Int
+adjustTestMaxSize = (`div` 5)
+
+-- | Each value of this type uniquely corresponds to a test defined in this module.
+data TestKey
+  = WaitJustEnoughUntilEmpty
+  | WaitTooMuchUntilEmpty
+  | WaitBehindForecastHorizon
+  | ServeJustFastEnough
+  | ServeTooSlow
+  | DelayAttackSucceeds
+  | DelayAttackFails
+  deriving stock (Eq, Ord, Generic)
+  deriving SmallKey via Generically TestKey
+
+testSuite ::
+  ( HasHeader blk
+  , HasHeader (Header blk)
+  , IssueTestBlock blk
+  , Ord blk
+  ) =>
+  TestSuite blk TestKey
+testSuite = group "LoP" $ newTestSuite $ \case
+  WaitJustEnoughUntilEmpty -> test_wait "wait just enough" False
+  WaitTooMuchUntilEmpty -> test_wait "wait too much" True
+  WaitBehindForecastHorizon -> test_waitBehindForecastHorizon
+  ServeJustFastEnough -> test_serve "serve just fast enough" False
+  ServeTooSlow -> test_serve "serve too slow" True
+  DelayAttackSucceeds -> test_delayAttack "delaying attack succeeds without LoP" False
+  DelayAttackFails -> test_delayAttack "delaying attack fails with LoP" True
 
 -- | Simple test in which we connect to only one peer, who advertises the tip of
 -- the block tree trunk and then does nothing. If the given boolean,
--- @mustTimeout@, if @True@, then we wait just long enough for the LoP bucket to
+-- @mustTimeout@, is @True@, then we wait just long enough for the LoP bucket to
 -- empty; we expect to observe an 'EmptyBucket' exception in the ChainSync
 -- client. If @mustTimeout@ is @False@, then we wait not quite as long, so the
 -- LoP bucket should not be empty at the end of the test and we should observe
 -- no exception in the ChainSync client.
-prop_wait :: Bool -> Property
-prop_wait mustTimeout =
-  forAllGenesisTest @TestBlock
+test_wait ::
+  ( HasHeader blk
+  , IssueTestBlock blk
+  , Ord blk
+  ) =>
+  String -> Bool -> ConformanceTest blk
+test_wait description mustTimeout =
+  mkConformanceTest
+    description
+    adjustDesiredPasses
+    -- NOTE: Running the test that must _not_ timeout takes significantly
+    -- more time than the one that does. This is because the former does all
+    -- the computation (serving the headers, validating them, serving the block,
+    -- validating them) while the latter does nothing, because it timeouts
+    -- before reaching the last tick of the point schedule.
+    (case mustTimeout of False -> adjustTestMaxSize; True -> id)
     ( do
         gt@GenesisTest{gtBlockTree} <- genChains (pure 0)
         let ps = dullSchedule 10 (btTrunk gtBlockTree)
@@ -122,9 +149,17 @@ prop_wait mustTimeout =
 -- then be disabled and that, therefore, one could wait forever in this state.
 -- We disable the timeouts and check that, indeed, the ChainSync client observes
 -- no exception.
-prop_waitBehindForecastHorizon :: Property
-prop_waitBehindForecastHorizon =
-  forAllGenesisTest @TestBlock
+test_waitBehindForecastHorizon ::
+  ( HasHeader blk
+  , IssueTestBlock blk
+  , Ord blk
+  ) =>
+  ConformanceTest blk
+test_waitBehindForecastHorizon =
+  mkConformanceTest
+    "wait behind forecast horizon"
+    adjustDesiredPasses
+    adjustTestMaxSize
     ( do
         gt@GenesisTest{gtBlockTree} <- genChains (pure 0)
         let ps = dullSchedule (btTrunk gtBlockTree)
@@ -157,7 +192,7 @@ prop_waitBehindForecastHorizon =
 -- slow enough to lose against the LoP bucket.
 --
 -- Let @c@ be the bucket capacity, @r@ be the bucket rate and @t@ be the time
--- between blocks, then the bucket level right right before getting the token
+-- between blocks, then the bucket level right before getting the token
 -- for the @k@th block will be:
 --
 -- > c - krt + (k-1)
@@ -170,9 +205,17 @@ prop_waitBehindForecastHorizon =
 -- We will have two versions of this test: one where we serve the @n-1@th block
 -- but succumb before serving the @n@th block, and one where we do manage to
 -- serve the @n@th block, barely.
-prop_serve :: Bool -> Property
-prop_serve mustTimeout =
-  forAllGenesisTest @TestBlock
+test_serve ::
+  ( HasHeader blk
+  , IssueTestBlock blk
+  , Ord blk
+  ) =>
+  String -> Bool -> ConformanceTest blk
+test_serve description mustTimeout =
+  mkConformanceTest
+    description
+    adjustDesiredPasses
+    adjustTestMaxSize
     ( do
         gt@GenesisTest{gtBlockTree} <- genChains (pure 0)
         let lbpRate = borderlineRate (AF.length (btTrunk gtBlockTree))
@@ -223,46 +266,56 @@ prop_serve mustTimeout =
       , psMinEndTime = Time 0
       }
 
--- NOTE: Same as 'LoE.prop_adversaryHitsTimeouts' with LoP instead of timeouts.
-prop_delayAttack :: Bool -> Property
-prop_delayAttack lopEnabled =
-  -- Here we can't shrink because we exploit the properties of the point schedule to wait
-  -- at the end of the test for the adversaries to get disconnected, by adding an extra point.
-  -- If this point gets removed by the shrinker, we lose that property and the test becomes useless.
-  noShrinking $
-    forAllGenesisTest @TestBlock
-      ( do
-          gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
-          let gt' = gt{gtLoPBucketParams = LoPBucketParams{lbpCapacity = 10, lbpRate = 1}}
-              ps = delaySchedule gtBlockTree
-          pure $ gt' $> ps
-      )
-      -- NOTE: Crucially, there must not be timeouts for this test.
-      ( defaultSchedulerConfig
-          { scEnableChainSyncTimeouts = False
-          , scEnableLoE = True
-          , scEnableLoP = lopEnabled
-          }
-      )
-      shrinkPeerSchedules
-      ( \GenesisTest{gtBlockTree} stateView@StateView{svSelectedChain} ->
-          let
-            -- The tip of the blocktree trunk.
-            treeTipPoint = AF.headPoint $ btTrunk gtBlockTree
-            -- The tip of the selection.
-            selectedTipPoint = AF.castPoint $ AF.headPoint svSelectedChain
-            -- If LoP is enabled, then the adversary should have been killed
-            -- and the selection should be the whole trunk.
-            selectedCorrect = lopEnabled == (treeTipPoint == selectedTipPoint)
-            -- If LoP is enabled, then we expect exactly one `EmptyBucket`
-            -- exception in the adversary's ChainSync.
-            exceptionsCorrect = case exceptionsByComponent ChainSyncClient stateView of
-              [] -> not lopEnabled
-              [fromException -> Just CSClient.EmptyBucket] -> lopEnabled
-              _ -> False
-           in
-            selectedCorrect && exceptionsCorrect
-      )
+-- | Same as 'Test.Consensus.Genesis.LoE.test_adversaryHitsTimeouts'
+-- with LoP instead of timeouts.
+test_delayAttack ::
+  ( HasHeader blk
+  , HasHeader (Header blk)
+  , IssueTestBlock blk
+  ) =>
+  String -> Bool -> ConformanceTest blk
+test_delayAttack description lopEnabled =
+  mkConformanceTest
+    description
+    adjustDesiredPasses
+    adjustTestMaxSize
+    ( do
+        gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
+        let gt' = gt{gtLoPBucketParams = LoPBucketParams{lbpCapacity = 10, lbpRate = 1}}
+            ps = delaySchedule gtBlockTree
+        pure $ gt' $> ps
+    )
+    -- NOTE: Crucially, there must not be timeouts for this test.
+    ( defaultSchedulerConfig
+        { scEnableChainSyncTimeouts = False
+        , scEnableLoE = True
+        , scEnableLoP = lopEnabled
+        }
+    )
+    -- Here we can't shrink because we exploit the properties of the point
+    -- schedule to wait at the end of the test for the adversaries to get
+    -- disconnected, by adding an extra point.
+    -- If this point gets removed by the shrinker, we lose that property and
+    -- the test becomes useless.
+    mempty
+    ( \GenesisTest{gtBlockTree} stateView@StateView{svSelectedChain} ->
+        let
+          -- The tip of the blocktree trunk.
+          treeTipPoint = AF.headPoint $ btTrunk gtBlockTree
+          -- The tip of the selection.
+          selectedTipPoint = AF.castPoint $ AF.headPoint svSelectedChain
+          -- If LoP is enabled, then the adversary should have been killed
+          -- and the selection should be the whole trunk.
+          selectedCorrect = lopEnabled == (treeTipPoint == selectedTipPoint)
+          -- If LoP is enabled, then we expect exactly one `EmptyBucket`
+          -- exception in the adversary's ChainSync.
+          exceptionsCorrect = case exceptionsByComponent ChainSyncClient stateView of
+            [] -> not lopEnabled
+            [fromException -> Just CSClient.EmptyBucket] -> lopEnabled
+            _ -> False
+         in
+          selectedCorrect && exceptionsCorrect
+    )
  where
   delaySchedule :: HasHeader blk => BlockTree blk -> PointSchedule blk
   delaySchedule tree =
