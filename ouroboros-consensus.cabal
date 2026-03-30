@@ -212,9 +212,12 @@ library
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
     Ouroboros.Consensus.Node.GsmState
     Ouroboros.Consensus.Node.InitStorage
     Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -371,7 +374,7 @@ library
     mtl,
     multiset ^>=0.3,
     nothunks ^>=0.2 || ^>=0.3,
-    ouroboros-network:{api, api-tests-lib, protocols} ^>=1.0,
+    ouroboros-network:{api, api-tests-lib, protocols} ^>=1.1,
     primitive,
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
@@ -689,6 +692,8 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ChainSync.CSJ
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
+    Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke
+    Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
     Test.Consensus.Peras.Voting.Rules
     Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.MonadSTM.NormalForm
