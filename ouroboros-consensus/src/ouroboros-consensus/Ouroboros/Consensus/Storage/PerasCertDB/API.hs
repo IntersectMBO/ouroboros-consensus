@@ -62,6 +62,10 @@ data PerasCertSnapshot blk = PerasCertSnapshot
   -- The result is a map of ticket numbers to validated certificates.
   }
 
+-- Instance needed for testing w.r.t. certificate inclusion rules.
+instance Show (PerasCertSnapshot blk) where
+  show _ = "PerasCertSnapshot(..)"
+
 -- | A sequence number, incremented every time we receive a new certificate.
 --
 -- Note that we will /usually/ receive certificates monotonically by round
