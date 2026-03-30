@@ -17,6 +17,7 @@ import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.CSJ (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
+import qualified Test.Consensus.Peras.Crypto.Serialisation (tests)
 import qualified Test.Consensus.Peras.Voting.Rules (tests)
 import qualified Test.Consensus.Peras.WeightSnapshot (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
@@ -50,7 +51,8 @@ tests =
         ]
     , testGroup
         "Peras"
-        [ Test.Consensus.Peras.Voting.Rules.tests
+        [ Test.Consensus.Peras.Crypto.Serialisation.tests
+        , Test.Consensus.Peras.Voting.Rules.tests
         , Test.Consensus.Peras.WeightSnapshot.tests
         ]
     , Test.Consensus.Util.MonadSTM.NormalForm.tests
