@@ -222,9 +222,19 @@ weightedFaitAccompliPersistentSeats globalNumSeats stakeDistr
       error "Stake distribution cannot be empty"
   | sum stakeDistr == 0 =
       error "Total stake must be positive"
+  | numPoolsWithPositiveStake < globalNumSeats =
+      error "Not enough voters with positive stake to fill all expected seats"
   | otherwise =
       (persistentSeats, numNonPersistentSeats, residualStakeDistr)
  where
+  -- Number of voters with positive stake in the input distribution
+  numPoolsWithPositiveStake =
+    fromIntegral
+      . length
+      . filter (> 0)
+      . Map.elems
+      $ stakeDistr
+
   -- Persistent seats selected deterministically based on their ledger stake.
   -- NOTE: their voting stake is *exactly* their ledger stake.
   persistentSeats =
