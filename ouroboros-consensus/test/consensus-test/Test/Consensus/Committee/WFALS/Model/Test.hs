@@ -82,16 +82,22 @@ genStakeDistr size = do
 -- * Property helpers
 
 -- | Helper to generate stake distributions along with a number of seats that
--- could possibly exceed the number of nodes in the stake distribution.
+-- lies within the accepatable range [1, #{nodes with positive stake}]
 forAllStakeDistrAndNumSeats ::
   (StakeDistr Ledger Global -> NumSeats Global -> Property) ->
   Property
 forAllStakeDistrAndNumSeats p =
   forAll (sized genStakeDistr) $ \stakeDistr -> do
-    let numNodes = fromIntegral (Map.size stakeDistr)
-    -- generate a number of seats that could possibly exceed the number of nodes
-    let genNumSeats = fromInteger <$> choose (1, numNodes + 1)
-    forAll genNumSeats $ \numSeats -> p stakeDistr numSeats
+    let numPositiveStakeNodes =
+          fromIntegral
+            . length
+            . filter ((> 0) . stakeToRational)
+            . Map.elems
+            $ stakeDistr
+    let genNumSeats =
+          fromInteger <$> choose (1, numPositiveStakeNodes)
+    forAll genNumSeats $ \numSeats ->
+      p stakeDistr numSeats
 
 -- | Tabulate the target number of seats
 tabulateTargetNumSeats :: NumSeats Global -> Property -> Property
