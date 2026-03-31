@@ -15,6 +15,9 @@ on:
       - reopened
       # see https://stackoverflow.com/a/77497491
       - edited
+      # re-evaluate the workflow when labels are added or removed.
+      - labeled
+      - unlabeled
   merge_group:
 
 jobs:
