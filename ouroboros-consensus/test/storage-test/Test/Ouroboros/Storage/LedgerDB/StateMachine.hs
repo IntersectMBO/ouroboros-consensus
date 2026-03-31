@@ -459,7 +459,6 @@ blockNotFound =
 -------------------------------------------------------------------------------}
 
 openLedgerDB ::
-  ResolveLeiosBlock TestBlock =>
   Complete LedgerDbFlavorArgs IO ->
   ChainDB IO ->
   LedgerDbCfg (ExtLedgerState TestBlock) ->
@@ -522,7 +521,7 @@ data Environment
       (SomeHasFS IO)
       (IO ())
 
-instance ResolveLeiosBlock TestBlock => RunModel Model (StateT Environment IO) where
+instance RunModel Model (StateT Environment IO) where
   perform _ (Init secParam) _ = do
     Environment _ _ chainDb mkArgs fs cleanup <- get
     (ldb, testInternals) <- lift $ do
