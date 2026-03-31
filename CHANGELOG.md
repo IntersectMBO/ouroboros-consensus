@@ -6,6 +6,33 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-2.0.0.0'></a>
+## 2.0.0.0 -- 2026-03-31
+
+### Breaking
+
+- ChainDB API: remove `getReadOnlyForkerAtPoint` in favor of
+  `allocInRegistryReadOnlyForkerAtPoint`, `openReadOnlyForkerAtPoint` and
+  `withReadOnlyForkerAtPoint`.
+- LedgerDB API: remove `getForkerAtTarget` in favor of `openForkerAtTarget`
+  which no longer expects a `ResourceRegistry`.
+- LedgerDB initialization now runs in `WithTempRegistry st m` for tracking the
+  LedgerDB resources.
+- LedgerDB API: rename `mkLSMArgs` to `mkLSMArgsIO`
+- `ValidateArgs`: remove `resourceReg` for a continuation `onSuccess` that will
+  be run if the candidate is fully valid.
+- The continuation in `localStateQueryServer` now returns a `ResourceKey` as it
+  should allocate the resource in a `ResourceRegistry`.
+- The Mempool no longer uses `ResourceRegistry` anywhere.
+
+### Non-Breaking
+
+- Bump upper bound on io-classes dependency.
+
+### Patch
+
+- Updated bound on `ouroboros-network` to `^>=1.1`.
+
 <a id='changelog-1.0.0.0'></a>
 ## 1.0.0.0 -- 2026-03-16
 
