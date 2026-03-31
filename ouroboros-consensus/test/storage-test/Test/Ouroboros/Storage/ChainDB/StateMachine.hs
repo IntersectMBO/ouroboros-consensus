@@ -38,7 +38,8 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   , FollowerRef
   , IterRef
   , IteratorResult (..)
-  , IteratorResultGCed (..)
+  --  , IteratorResultGCed (..)
+  , Persistent (..)
 
     -- * Responses
   , Resp (..)
@@ -97,7 +98,7 @@ import Data.Proxy
 import Data.TreeDiff
 import Data.Typeable
 import Data.Void (Void)
-import Data.Word (Word16, Word64)
+import Data.Word
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
 import NoThunks.Class (AllowThunk (..))
@@ -210,9 +211,9 @@ data Cmd blk it flr
   | -- | Update the LoE fragment and run chain selection.
     UpdateLoE (AnchoredFragment blk)
   | IteratorNext it
-  | -- | Only for blocks that may have been garbage collected.
-    IteratorNextGCed it
-  | IteratorClose it
+  | -- | -- | Only for blocks that may have been garbage collected.
+    --   IteratorNextGCed it
+    IteratorClose it
   | NewFollower ChainType
   | -- | 'followerInstructionBlocking' is excluded, as it requires multiple
     -- threads. Its code path is pretty much the same as 'followerInstruction'
@@ -294,13 +295,13 @@ data Success blk it flr
   | MbAllComponents (Maybe (AllComponents blk))
   | MbGCedAllComponents (MaybeGCedBlock (AllComponents blk))
   | MbHeader (Maybe (Header blk))
-  | Point (Point blk)
+  | SuccessPoint (Point blk)
   | IsValid IsValidResult
   | UnknownRange (UnknownRange blk)
   | Iter it
   | IterResult (IteratorResult blk (AllComponents blk))
-  | IterResultGCed (IteratorResultGCed blk)
-  | Flr flr
+  | --   | IterResultGCed (IteratorResult blk (AllComponents blk))
+    Flr flr
   | MbChainUpdate (Maybe (ChainUpdate blk (AllComponents blk)))
   | MbPoint (Maybe (Point blk))
   | MaxSlot MaxSlotNo
@@ -434,21 +435,21 @@ run ::
   m (Success blk (TestIterator m blk) (TestFollower m blk))
 run cfg env@ChainDBEnv{varDB, ..} cmd =
   readTVarIO varDB >>= \st@ChainDBState{chainDB = chainDB@ChainDB{..}, internal} -> case cmd of
-    AddBlock blk _ -> Point <$> advanceAndAdd st blk
+    AddBlock blk _ -> SuccessPoint <$> advanceAndAdd st blk
     AddPerasCert cert _ -> Unit <$> addPerasCertSync chainDB cert
     GetCurrentChain -> Chain <$> atomically getCurrentChain
     GetTipBlock -> MbBlock <$> getTipBlock
     GetTipHeader -> MbHeader <$> getTipHeader
-    GetTipPoint -> Point <$> atomically getTipPoint
+    GetTipPoint -> SuccessPoint <$> atomically getTipPoint
     GetBlockComponent pt -> MbAllComponents <$> getBlockComponent allComponents pt
     GetLatestPerasCertOnChainRound -> MbPerasRoundNo <$> atomically getLatestPerasCertOnChainRound
     GetGCedBlockComponent pt -> mbGCedAllComponents <$> getBlockComponent allComponents pt
     GetIsValid pt -> isValidResult <$> ($ pt) <$> atomically getIsValid
     GetMaxSlotNo -> MaxSlot <$> atomically getMaxSlotNo
-    UpdateLoE frag -> Point <$> updateLoE st frag
+    UpdateLoE frag -> SuccessPoint <$> updateLoE st frag
     Stream from to -> iter =<< stream registry allComponents from to
     IteratorNext it -> IterResult <$> iteratorNext (unWithEq it)
-    IteratorNextGCed it -> iterResultGCed <$> iteratorNext (unWithEq it)
+    --    IteratorNextGCed it -> iterResultGCed <$> iteratorNext (unWithEq it)
     IteratorClose it -> Unit <$> iteratorClose (unWithEq it)
     NewFollower ct -> follower =<< newFollower registry ct allComponents
     FollowerInstruction flr -> MbChainUpdate <$> followerInstruction (unWithEq flr)
@@ -459,11 +460,11 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
     PersistBlks -> ignore <$> persistBlks DoNotGarbageCollect internal
     PersistBlksThenGC -> ignore <$> persistBlks GarbageCollect internal
     UpdateLedgerSnapshots -> ignore <$> intTryTakeSnapshot internal
-    WipeVolatileDB -> Point <$> wipeVolatileDB st
+    WipeVolatileDB -> SuccessPoint <$> wipeVolatileDB st
  where
   mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True
   isValidResult = IsValid . IsValidResult True
-  iterResultGCed = IterResultGCed . IteratorResultGCed True
+  --  iterResultGCed = IterResultGCed . IteratorResultGCed True
   iter = either (return . UnknownRange) (fmap Iter . giveWithEq)
   follower = fmap Flr . giveWithEq
   ignore _ = Unit ()
@@ -569,40 +570,40 @@ instance Eq blk => Eq (MaybeGCedBlock blk) where
       (Just b1, Just b2) -> b1 == b2
       _ -> True
 
--- | Similar to 'MaybeGCedBlock', but for the block returned by
--- 'iteratorNext'. A garbage-collected block could result in
--- 'IteratorBlockGCed' instead of 'IteratorResult'.
-data IteratorResultGCed blk = IteratorResultGCed
-  { real :: Bool
-  -- ^ 'True':  result of calling 'getBlock' on the real implementation
-  -- ^ 'False': result of calling 'getBlock' on the model implementation
-  , iterResult :: IteratorResult blk (AllComponents blk)
-  }
+-- -- | Similar to 'MaybeGCedBlock', but for the block returned by
+-- -- 'iteratorNext'. A garbage-collected block could result in
+-- -- 'IteratorBlockGCed' instead of 'IteratorResult'.
+-- data IteratorResultGCed blk = IteratorResultGCed
+--   { real :: Bool
+--   -- ^ 'True':  result of calling 'getBlock' on the real implementation
+--   -- ^ 'False': result of calling 'getBlock' on the model implementation
+--   , iterResult :: IteratorResult blk (AllComponents blk)
+--   }
 
-deriving instance
-  ( Show blk
-  , Show (Header blk)
-  , StandardHash blk
-  , HasNestedContent Header blk
-  ) =>
-  Show (IteratorResultGCed blk)
+-- deriving instance
+--   ( Show blk
+--   , Show (Header blk)
+--   , StandardHash blk
+--   , HasNestedContent Header blk
+--   ) =>
+--   Show (IteratorResultGCed blk)
 
-instance
-  (Eq blk, Eq (Header blk), StandardHash blk, HasNestedContent Header blk) =>
-  Eq (IteratorResultGCed blk)
-  where
-  IteratorResultGCed real1 iterResult1 == IteratorResultGCed real2 iterResult2 =
-    case (real1, real2) of
-      (False, False) -> iterResult1 == iterResult2
-      (True, _) -> eqIfNotGCed
-      (_, True) -> eqIfNotGCed
-   where
-    eqIfNotGCed = case (iterResult1, iterResult2) of
-      (IteratorBlockGCed{}, _) -> True
-      (_, IteratorBlockGCed{}) -> True
-      (IteratorResult b1, IteratorResult b2) -> b1 == b2
-      (IteratorExhausted, IteratorExhausted) -> True
-      _ -> False
+-- instance
+--   (Eq blk, Eq (Header blk), StandardHash blk, HasNestedContent Header blk) =>
+--   Eq (IteratorResultGCed blk)
+--   where
+--   IteratorResultGCed real1 iterResult1 == IteratorResultGCed real2 iterResult2 =
+--     case (real1, real2) of
+--       (False, False) -> iterResult1 == iterResult2
+--       (True, _) -> eqIfNotGCed
+--       (_, True) -> eqIfNotGCed
+--    where
+--     eqIfNotGCed = case (iterResult1, iterResult2) of
+--       (IteratorBlockGCed{}, _) -> True
+--       (_, IteratorBlockGCed{}) -> True
+--       (IteratorResult b1, IteratorResult b2) -> b1 == b2
+--       (IteratorExhausted, IteratorExhausted) -> True
+--       _ -> False
 
 -- | The model knows about all valid blocks whereas the real implementation
 -- only knows about blocks that have been validated in the VolatileDB if they
@@ -690,21 +691,21 @@ runPure ::
   DBModel blk ->
   (Resp blk IteratorId FollowerId, DBModel blk)
 runPure cfg = \case
-  AddBlock blk _ -> ok Point $ update (add blk)
+  AddBlock blk _ -> ok SuccessPoint $ update (add blk)
   AddPerasCert cert _ -> ok Unit $ ((),) . update (Model.addPerasCert cfg cert)
   GetCurrentChain -> ok Chain $ query (Model.volatileChain k getHeader)
   GetTipBlock -> ok MbBlock $ query Model.tipBlock
   GetTipHeader -> ok MbHeader $ query (fmap getHeader . Model.tipBlock)
-  GetTipPoint -> ok Point $ query Model.tipPoint
+  GetTipPoint -> ok SuccessPoint $ query Model.tipPoint
   GetBlockComponent pt -> err MbAllComponents $ query (Model.getBlockComponentByPoint allComponents pt)
   GetLatestPerasCertOnChainRound -> ok MbPerasRoundNo $ query Model.getLatestPerasCertOnChainRound
   GetGCedBlockComponent pt -> err mbGCedAllComponents $ query (Model.getBlockComponentByPoint allComponents pt)
   GetMaxSlotNo -> ok MaxSlot $ query Model.getMaxSlotNo
   GetIsValid pt -> ok isValidResult $ query (Model.isValid pt)
-  UpdateLoE frag -> ok Point $ update (Model.updateLoE cfg frag)
+  UpdateLoE frag -> ok SuccessPoint $ update (Model.updateLoE cfg frag)
   Stream from to -> err iter $ updateE (Model.stream k from to)
   IteratorNext it -> ok IterResult $ update (Model.iteratorNext it allComponents)
-  IteratorNextGCed it -> ok iterResultGCed $ update (Model.iteratorNext it allComponents)
+  --  IteratorNextGCed it -> ok iterResultGCed $ update (Model.iteratorNext it allComponents)
   IteratorClose it -> ok Unit $ update_ (Model.iteratorClose it)
   -- As tentative followers differ from normal followers only during chain
   -- selection, this test can not distinguish between them due to its
@@ -731,7 +732,7 @@ runPure cfg = \case
   UpdateLedgerSnapshots -> ok Unit $ update_ (Model.copyToImmutableDB k GarbageCollect)
   Close -> openOrClosed $ update_ Model.closeDB
   Reopen -> openOrClosed $ update_ Model.reopen
-  WipeVolatileDB -> ok Point $ update (Model.wipeVolatileDB cfg)
+  WipeVolatileDB -> ok SuccessPoint $ update (Model.wipeVolatileDB cfg)
  where
   k = configSecurityParam cfg
 
@@ -741,7 +742,7 @@ runPure cfg = \case
 
   iter = either UnknownRange Iter
   mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock False
-  iterResultGCed = IterResultGCed . IteratorResultGCed False
+  --  iterResultGCed = IterResultGCed . IteratorResultGCed False
   isValidResult = IsValid . IsValidResult False
 
   query f m = (f m, m)
@@ -921,10 +922,11 @@ initModel ::
   LoE () ->
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
+  Word32 ->
   Model blk m r
-initModel loe cfg initLedger =
+initModel loe cfg initLedger maxBlks =
   Model
-    { dbModel = Model.empty loe initLedger
+    { dbModel = Model.empty loe initLedger maxBlks
     , knownIters = RE.empty
     , knownFollowers = RE.empty
     , modelConfig = QSM.Opaque cfg
@@ -1300,9 +1302,10 @@ generator loe genBlock m@Model{..} =
             dbModel
             (knownIters RE.! it)
     return $
-      if blockCanBeGCed
-        then IteratorNextGCed it
-        else IteratorNext it
+      -- if blockCanBeGCed
+      --   then IteratorNextGCed it
+      --   else
+      IteratorNext it
 
   genNewFollower = NewFollower <$> elements [SelectedChain, TentativeChain]
 
@@ -1368,7 +1371,7 @@ precondition Model{..} (At cmd) =
       GetBlockComponent pt -> Not $ garbageCollectable pt
       GetGCedBlockComponent pt -> garbageCollectable pt
       IteratorNext it -> Not $ garbageCollectableIteratorNext it
-      IteratorNextGCed it -> garbageCollectableIteratorNext it
+      -- IteratorNextGCed it -> garbageCollectableIteratorNext it
       -- TODO The real implementation allows streaming blocks from the
       -- VolatileDB that have no path to the current chain. The model
       -- implementation disallows this, as it only allows streaming from one of
@@ -1491,14 +1494,15 @@ sm ::
   (Model blk IO Symbolic -> Gen (blk, Persistent [blk])) ->
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
+  Word32 ->
   StateMachine
     (Model blk IO)
     (At Cmd blk IO)
     IO
     (At Resp blk IO)
-sm loe env genBlock cfg initLedger =
+sm loe env genBlock cfg initLedger maxBlks =
   StateMachine
-    { initModel = initModel loe cfg initLedger
+    { initModel = initModel loe cfg initLedger maxBlks
     , transition = transition
     , precondition = precondition
     , postcondition = postcondition cfg
@@ -1902,28 +1906,31 @@ smUnused ::
   LoE () ->
   SecurityParam ->
   ImmutableDB.ChunkInfo ->
+  Word32 ->
   StateMachine (Model Blk IO) (At Cmd Blk IO) IO (At Resp Blk IO)
-smUnused loe k chunkInfo =
+smUnused loe k chunkInfo maxBlks =
   sm
     loe
     envUnused
     (genBlk chunkInfo loe)
     (mkTestCfg k chunkInfo)
     testInitExtLedger
+    maxBlks
 
 prop_sequential :: LoE () -> SmallChunkInfo -> Property
 prop_sequential loe smallChunkInfo@(SmallChunkInfo chunkInfo) =
-  QC.forAll genSecurityParam $ \k ->
-    forAllCommands (smUnused loe k chunkInfo) Nothing $
-      runCmdsLockstep loe k smallChunkInfo
+  QC.forAll ((,) <$> genSecurityParam <*> QC.choose (1, 4)) $ \(k, maxBlks) ->
+    forAllCommands (smUnused loe k chunkInfo maxBlks) Nothing $
+      runCmdsLockstep loe k maxBlks smallChunkInfo
 
 runCmdsLockstep ::
   LoE () ->
   SecurityParam ->
+  Word32 ->
   SmallChunkInfo ->
   QSM.Commands (At Cmd Blk IO) (At Resp Blk IO) ->
   Property
-runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
+runCmdsLockstep loe k maxBlks (SmallChunkInfo chunkInfo) cmds =
   QC.monadicIO $ do
     let
       -- Current test case command names.
@@ -1931,10 +1938,10 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
       ctcCmdNames = fmap (show . cmdName . QSM.getCommand) $ QSM.unCommands cmds
 
     (hist, prop) <- QC.run $ test cmds
-    prettyCommands (smUnused loe k chunkInfo) hist
+    prettyCommands (smUnused loe k chunkInfo maxBlks) hist
       $ tabulate
         "Tags"
-        (map show $ tag (execCmds (QSM.initModel (smUnused loe k chunkInfo)) cmds))
+        (map show $ tag (execCmds (QSM.initModel (smUnused loe k chunkInfo maxBlks)) cmds))
       $ tabulate "Command sequence length" [show $ length ctcCmdNames]
       $ tabulate "Commands" ctcCmdNames
       $ prop
@@ -1980,7 +1987,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
                 , varLoEFragment
                 , args
                 }
-            sm' = sm loe env (genBlk chunkInfo loe) testCfg testInitExtLedger
+            sm' = sm loe env (genBlk chunkInfo loe) testCfg testInitExtLedger maxBlks
         (hist, model, res) <- QSM.runCommands' sm' cmds'
         trace <- getTrace
         return (hist, model, res, trace)

@@ -55,7 +55,7 @@ tests =
     ]
 
 addBlocks :: LoE () -> [TestBlock] -> M.Model TestBlock
-addBlocks loe blks = M.addBlocks cfg blks (M.empty loe (convertMapKind testInitExtLedger))
+addBlocks loe blks = M.addBlocks cfg blks (M.empty loe (convertMapKind testInitExtLedger) 1000)
  where
   cfg = singleNodeTestConfig
 

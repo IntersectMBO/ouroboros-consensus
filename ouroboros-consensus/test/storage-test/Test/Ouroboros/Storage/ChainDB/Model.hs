@@ -96,6 +96,8 @@ import Data.Foldable (foldMap')
 import Data.Function (on, (&))
 import Data.Functor (($>), (<&>))
 import Data.List (isInfixOf, isPrefixOf, sortBy)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust)
@@ -103,6 +105,7 @@ import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.TreeDiff
+import Data.Word
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -147,7 +150,8 @@ type IteratorId = Int
 
 -- | Model of the chain DB
 data Model blk = Model
-  { volatileDbBlocks :: Map (HeaderHash blk) blk
+  { volatileDbFiles :: NonEmpty [blk]
+  , maxBlocksPerFile :: Word32
   -- ^ The VolatileDB
   , immutableDbChain :: Chain blk
   -- ^ The ImmutableDB
@@ -181,6 +185,10 @@ deriving instance
   ToExpr (Model blk)
 
 deriving instance (LedgerSupportsProtocol blk, Show blk) => Show (Model blk)
+
+volatileDbBlocks :: HasHeader blk => Model blk -> Map (HeaderHash blk) blk
+volatileDbBlocks m =
+  Map.fromList [(blockHash b, b) | b <- concat (volatileDbFiles m)]
 
 {-------------------------------------------------------------------------------
   Queries
@@ -406,10 +414,12 @@ empty ::
   HasHeader blk =>
   LoE () ->
   ExtLedgerState blk EmptyMK ->
+  Word32 ->
   Model blk
-empty loe initLedger =
+empty loe initLedger maxBlocksPerFile =
   Model
-    { volatileDbBlocks = Map.empty
+    { volatileDbFiles = NE.singleton []
+    , maxBlocksPerFile = maxBlocksPerFile
     , immutableDbChain = Chain.Genesis
     , perasCerts = Map.empty
     , cps = CPS.initChainProducerState Chain.Genesis
@@ -435,7 +445,7 @@ addBlock cfg blk m
       chainSelection
         cfg
         m
-          { volatileDbBlocks = Map.insert (blockHash blk) blk (volatileDbBlocks m)
+          { volatileDbFiles = volatileDbFiles'
           }
  where
   secParam = configSecurityParam cfg
@@ -450,6 +460,14 @@ addBlock cfg blk m
       ||
       -- If it's an invalid block we've seen before, ignore it.
       Map.member (blockHash blk) (invalid m)
+
+  volatileDbFiles' =
+    if fromIntegral (length current') >= maxBlocksPerFile m
+      then [] NE.:| (current' : older)
+      else current' NE.:| older
+   where
+    current NE.:| older = volatileDbFiles m
+    current' = blk : current
 
 addPerasCert ::
   forall blk.
@@ -478,7 +496,8 @@ chainSelection ::
   Model blk
 chainSelection cfg m =
   Model
-    { volatileDbBlocks = volatileDbBlocks m
+    { volatileDbFiles = volatileDbFiles m
+    , maxBlocksPerFile = maxBlocksPerFile m
     , immutableDbChain = immutableDbChain m
     , perasCerts = perasCerts m
     , cps = CPS.switchFork newChain (cps m)
@@ -681,11 +700,12 @@ iteratorNext itrId blockComponent m =
     Just (b : bs)
       | blockHash b `Map.member` blocks m ->
           (IteratorResult $ getBlockComponent b blockComponent, updateIter bs)
-    -- The next block `b` was part of a dead fork and has been garbage
-    -- collected.  The system-under-test then closes the iterator, and we set
-    -- the state of the iterator to the empty list to mimic that behaviour.
-    Just (b : _) ->
-      (IteratorBlockGCed $ blockRealPoint b, updateIter [])
+      | otherwise ->
+          -- The next block `b` was part of a dead fork and its containing file has
+          -- been garbage collected. The real implementation returns
+          -- 'IteratorBlockGCed' and leaves the iterator stuck on this block
+          -- indefinitely (its state is not updated). We do the same here.
+          (IteratorBlockGCed $ blockRealPoint b, m)
     Nothing ->
       error "iteratorNext: unknown iterator ID"
  where
@@ -1094,15 +1114,19 @@ garbageCollect ::
   SecurityParam -> Model blk -> Model blk
 garbageCollect secParam m@Model{..} =
   m
-    { volatileDbBlocks = Map.filter (not . collectable) volatileDbBlocks
+    { volatileDbFiles = current NE.:| filter (not . fileCanGC) older
     -- TODO garbage collection Peras certs?
     -- See https://github.com/tweag/cardano-peras/issues/121
     }
  where
-  -- TODO what about iterators that will stream garbage collected blocks?
+  threshold = immutableSlotNo secParam m
 
-  collectable :: blk -> Bool
-  collectable = garbageCollectable secParam m
+  fileCanGC [] = True -- empty completed file, always drop, but should never happen
+  fileCanGC blks = NotOrigin (maximum (map blockSlot blks)) < threshold
+
+  current NE.:| older = volatileDbFiles
+
+-- TODO what about iterators that will stream garbage collected blocks?
 
 data ShouldGarbageCollect = GarbageCollect | DoNotGarbageCollect
   deriving (Eq, Show)
@@ -1149,7 +1173,7 @@ wipeVolatileDB cfg m =
  where
   m' =
     (closeDB m)
-      { volatileDbBlocks = Map.empty
+      { volatileDbFiles = NE.singleton []
       , perasCerts = Map.empty
       , cps = CPS.switchFork newChain (cps m)
       , currentLedger = newLedger

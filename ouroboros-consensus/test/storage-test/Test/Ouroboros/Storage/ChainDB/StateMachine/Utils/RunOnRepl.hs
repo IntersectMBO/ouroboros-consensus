@@ -42,7 +42,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine.Utils.RunOnRepl
     -- * Patterns needed to disambiguate the 'At' and 'Command' symbols printed
 
   --   by the 'ChainDB.StateMachine' tests.
-  , pattern At
+  -- , pattern At
   , pattern Command
 
     -- * Re-exports needed for compiling a 'ChainDB.StateMachine' inside the repl.
@@ -81,6 +81,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine.Utils.RunOnRepl
   , SlotNo (..)
   ) where
 
+import Data.Word
 import Ouroboros.Consensus.Block
   ( BlockNo (BlockNo)
   , ChainHash (BlockHash, GenesisHash)
@@ -121,7 +122,7 @@ import Test.Ouroboros.Storage.TestBlock
   )
 import Test.QuickCheck (quickCheck)
 import Test.StateMachine.Types
-  ( Commands (Commands)
+  ( Commands (..)
   , Reference (Reference)
   , Symbolic (Symbolic)
   , Var (Var)
@@ -130,8 +131,8 @@ import qualified Test.StateMachine.Types as StateMachine.Types
 import Test.Util.ChunkInfo (SmallChunkInfo (SmallChunkInfo))
 import Test.Util.Orphans.ToExpr ()
 
-pattern At :: Block SlotNo (Block.HeaderHash blk) -> Block.Point blk
-pattern At x = Block.Point (Point.At x)
+-- pattern At :: Block SlotNo (Block.HeaderHash blk) -> Block.Point blk
+-- pattern At x = Block.Point (Point.At x)
 
 pattern Command ::
   t1 blk1 (IterRef blk1 m1 Symbolic) (FollowerRef blk1 m1 Symbolic) ->
@@ -144,8 +145,9 @@ pattern Command cmd rsp xs =
 quickCheckCmdsLockStep ::
   LoE () ->
   SecurityParam ->
+  Word32 ->
   SmallChunkInfo ->
   Commands (StateMachine.At Cmd TestBlock IO) (StateMachine.At Resp TestBlock IO) ->
   IO ()
-quickCheckCmdsLockStep loe k chunkInfo cmds =
-  quickCheck $ runCmdsLockstep loe k chunkInfo cmds
+quickCheckCmdsLockStep loe k maxBlks chunkInfo cmds =
+  quickCheck $ runCmdsLockstep loe k maxBlks chunkInfo cmds

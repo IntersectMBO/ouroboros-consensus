@@ -348,7 +348,7 @@ runModelIO loe expr = toAssertion (runModel newModel topLevelConfig expr)
  where
   chunkInfo = ImmutableDB.simpleChunkInfo 100
   k = SecurityParam (knownNonZeroBounded @2)
-  newModel = Model.empty loe testInitExtLedger
+  newModel = Model.empty loe testInitExtLedger 1000
   topLevelConfig = mkTestCfg k chunkInfo
 
 -- | Helper function to run the test against the actual chain database and
