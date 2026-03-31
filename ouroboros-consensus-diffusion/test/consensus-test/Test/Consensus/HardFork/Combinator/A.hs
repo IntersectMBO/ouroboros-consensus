@@ -356,7 +356,7 @@ blockForgingA =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot st txs _ebTxs proof ->
+    , forgeBlock = \_leiosDb cfg bno slot st txs _ebTxs proof ->
         return . (,Nothing) $
           forgeBlockA cfg bno slot st (fmap txForgetValidated txs) proof
     }

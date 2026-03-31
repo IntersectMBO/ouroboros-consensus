@@ -26,7 +26,6 @@ import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Protocol.Praos
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Util.IOLike
 
 type MockPraosBlock = SimplePraosBlock SimpleMockCrypto PraosMockCrypto
@@ -148,7 +147,3 @@ praosBlockForging cid initHotKey = do
               (map txForgetValidated txs)
               isLeader
       }
-
--- * Leios
-
-instance ResolveLeiosBlock (SimplePraosBlock c c')

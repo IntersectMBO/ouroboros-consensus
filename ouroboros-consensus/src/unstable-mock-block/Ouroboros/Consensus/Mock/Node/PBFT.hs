@@ -25,7 +25,6 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 
 type MockPBftBlock = SimplePBftBlock SimpleMockCrypto PBftMockCrypto
 
@@ -121,7 +120,3 @@ pbftBlockForging canBeLeader =
             (map txForgetValidated txs)
             proof
     }
-
--- * Leios
-
-instance ResolveLeiosBlock (SimplePBftBlock c c')

@@ -40,6 +40,7 @@ import Control.ResourceRegistry
 import Control.Tracer (nullTracer)
 import Data.Function (on)
 import Data.Functor (void)
+import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
@@ -242,6 +243,7 @@ openChainDB ::
   ChainDB.GetLoEFragment m TestBlock ->
   m (ChainDB m TestBlock)
 openChainDB registry getLoEFragment = do
+  leiosDb <- newLeiosDBInMemory
   chainDbArgs <- do
     mcdbNodeDBs <- emptyNodeDBs
     let mcdbTopLevelConfig = cfg
@@ -263,7 +265,7 @@ openChainDB registry getLoEFragment = do
   (_, (chainDB, ChainDB.Impl.Internal{ChainDB.Impl.intAddBlockRunner})) <-
     allocate
       registry
-      (\_ -> ChainDB.Impl.openDBInternal chainDbArgs False)
+      (\_ -> ChainDB.Impl.openDBInternal leiosDb chainDbArgs False)
       (ChainDB.closeDB . fst)
   _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
   pure chainDB

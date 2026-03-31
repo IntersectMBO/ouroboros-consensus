@@ -833,4 +833,4 @@ simpleBlockBinaryBlockInfo b =
 
 -- * Leios
 
-instance ResolveLeiosBlock (SimpleBlock SimpleMockCrypto ext)
+instance ResolveLeiosBlock (SimpleBlock' c ext ext)

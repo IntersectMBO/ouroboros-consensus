@@ -22,7 +22,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Basics
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.Inspect
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
   ( HasTxs
@@ -59,7 +58,7 @@ openLedgerDB ::
   , LedgerDB.LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerDB.LedgerSupportsLedgerDB blk
-  , ResolveLeiosBlock IO (ExtLedgerState blk) blk
+  , ResolveLeiosBlock blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   IO
@@ -112,7 +111,6 @@ analyse ::
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk
   , CanStowLedgerTables (LedgerState blk)
-  , ResolveLeiosBlock IO (ExtLedgerState blk) blk
   ) =>
   DBAnalyserConfig ->
   Args blk ->
