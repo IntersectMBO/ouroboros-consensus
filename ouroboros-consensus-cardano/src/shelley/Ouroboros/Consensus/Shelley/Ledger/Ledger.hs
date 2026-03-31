@@ -302,9 +302,6 @@ data ShelleyLedgerLeiosState = ShelleyLedgerLeiosState
 initShelleyLedgerLeiosState :: ShelleyLedgerLeiosState
 initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing True 0 0 (SlotNo 0) (SlotNo 0)
 
--- FIXME: A certificate may only be included if RB' is at least 3 × L hdr + L vote + L diff slots after RB.
--- Let's call this `predTooSoonToCertify :: AnnouncedEb -> SlotNo -> Bool`
--- We can use this method to update `sllsTooSoonToCertify` depending on `predTooSoonToCertify`
 applyTickShelleyLedgerLeiosState :: ShelleyLedgerLeiosState -> SlotNo -> ShelleyLedgerLeiosState
 applyTickShelleyLedgerLeiosState leiosSt currSlotNo =
   leiosSt
@@ -322,9 +319,6 @@ predTooSoonToCertify leiosSt currSlotNo =
  where
   certifyMinDuration = 10 -- FIXME(bladyjoker): Hardcore real value or wire in through config
 
--- FIXME(bladyjoker): I sense that here is where given previous state and blk we inspect the blk to figure out:
--- 1. Is blk announcing an EB? Yes: Update LeiosState with info about that EB; No: Override/Set whatever was there with Nothing
--- 2. Is blk a denoting an EB Certificate? Yes: Apply Txs from the certified EBs (Probably goes up); No: Noop
 applyBlockShelleyLedgerLeiosState ::
   ShelleyCompatible proto era =>
   ShelleyBlock proto era -> ShelleyLedgerLeiosState -> ShelleyLedgerLeiosState

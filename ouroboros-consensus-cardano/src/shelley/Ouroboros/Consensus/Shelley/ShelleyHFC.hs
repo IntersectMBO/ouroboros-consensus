@@ -103,7 +103,7 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 -- | Shelley as the single era in the hard fork combinator
 type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
 
-instance ResolveLeiosBlock (HardForkBlock '[ShelleyBlock proto era]) -- FIXME
+instance ResolveLeiosBlock (HardForkBlock '[ShelleyBlock proto era]) -- FIXME(bladyjoker)
 
 {-------------------------------------------------------------------------------
   NoHardForks instance

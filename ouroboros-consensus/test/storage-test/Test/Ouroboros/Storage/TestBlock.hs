@@ -142,8 +142,7 @@ data TestBlock = TestBlock
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NoThunks, Serialise)
 
-instance ResolveLeiosBlock TestBlock where
-  resolveLeiosBlock _ _ _ = error "FIXME(bladyjoker): resolveLeiosBlock for TestBlock"
+instance ResolveLeiosBlock TestBlock
 
 -- | Hash of a 'TestHeader'
 newtype TestHeaderHash = TestHeaderHash Int
