@@ -185,5 +185,5 @@ instance
   ) =>
   ToExpr (MempoolAddTxResult blk)
   where
-  toExpr (MempoolTxAdded vtx) = App "Added" [toExpr vtx]
+  toExpr (MempoolTxAdded vtx _) = App "Added" [toExpr vtx]
   toExpr (MempoolTxRejected tx e) = App "Rejected" [toExpr tx, App (show e) []]

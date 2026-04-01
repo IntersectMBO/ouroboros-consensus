@@ -159,7 +159,7 @@ prop_Mempool_addTxs_result setup =
     return $
       counterexample (ppTxs (txs setup)) $
         [ case res of
-            MempoolTxAdded vtx -> (txForgetValidated vtx, True)
+            MempoolTxAdded vtx _ -> (txForgetValidated vtx, True)
             MempoolTxRejected tx _err -> (tx, False)
         | res <- result
         ]

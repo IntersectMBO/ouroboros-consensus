@@ -35,6 +35,7 @@ module Ouroboros.Consensus.Ledger.Tables.Utils
 
     -- ** Combining diffs
   , prependDiffs
+  , rawPrependDiffs
 
     -- * Operations on 'TrackingMK'
 

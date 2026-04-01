@@ -152,14 +152,13 @@ class
   -- first state one that contains the values for all the transactions.
   reapplyTx ::
     HasCallStack =>
-    ComputeDiffs ->
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     Validated (GenTx blk) ->
     -- | Contains at least the values for the tx to reapply
     TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk TrackingMK)
+    Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -180,29 +179,39 @@ class
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
-    [(Validated (GenTx blk), extra)] ->
+    [(Validated (GenTx blk), LedgerTables (TickedLedgerState blk) DiffMK, extra)] ->
     TickedLedgerState blk ValuesMK ->
     ReapplyTxsResult extra blk
   reapplyTxs doDiffs cfg slot txs st =
-    ( \(err, val, st') ->
+    ( \(err, val, st', dfs) ->
         ReapplyTxsResult
           err
           (reverse val)
-          st'
+          ( case doDiffs of
+              IgnoreDiffs -> attachEmptyDiffs st'
+              ComputeDiffs ->
+                st'
+                  `withLedgerTables` ( ltliftA2
+                                         (\(ValuesMK v) (DiffMK dfs') -> TrackingMK v dfs')
+                                         (projectLedgerTables st')
+                                         dfs
+                                     )
+          )
     )
       $ Foldable.foldl'
-        ( \(accE, accV, st') (tx, extra) ->
-            case runExcept (reapplyTx doDiffs cfg slot tx $ trackingToValues st') of
-              Left err -> (Invalidated tx err : accE, accV, st')
+        ( \(accE, accV, st', dfs) (tx, df, extra) ->
+            case runExcept (reapplyTx cfg slot tx st') of
+              Left err -> (Invalidated tx err : accE, accV, st', dfs)
               Right st'' ->
                 ( accE
-                , (tx, extra) : accV
+                , (tx, df, extra) : accV
+                , st''
                 , case doDiffs of
-                    ComputeDiffs -> prependTrackingDiffs st' st''
-                    IgnoreDiffs -> st''
+                    IgnoreDiffs -> dfs
+                    ComputeDiffs -> LedgerTables $ getLedgerTables dfs `rawPrependDiffs` getLedgerTables df
                 )
         )
-        ([], [], attachEmptyDiffs st)
+        ([], [], st, emptyLedgerTables)
         txs
 
   -- | Discard the evidence that transaction has been previously validated
@@ -260,7 +269,7 @@ data ReapplyTxsResult extra blk
   = ReapplyTxsResult
   { invalidatedTxs :: ![Invalidated blk]
   -- ^ txs that are now invalid. Order doesn't matter
-  , validatedTxs :: ![(Validated (GenTx blk), extra)]
+  , validatedTxs :: ![(Validated (GenTx blk), LedgerTables (TickedLedgerState blk) DiffMK, extra)]
   -- ^ txs that are valid again, order must be the same as the order in
   -- which txs were received
   , resultingState :: !(TickedLedgerState blk TrackingMK)

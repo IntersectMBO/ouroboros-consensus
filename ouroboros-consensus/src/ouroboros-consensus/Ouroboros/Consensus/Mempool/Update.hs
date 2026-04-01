@@ -412,11 +412,11 @@ pureTryAddTx mpEnv cfg wti tx is values =
                           MempoolRejectedByLedger
                           (isMempoolSize is)
                       )
-                (Right vtx, is') ->
+                (Right (vtx, df), is') ->
                   Processed $ \dur ->
                     TransactionProcessingResult
                       (Just (is' dur))
-                      (MempoolTxAdded vtx)
+                      (MempoolTxAdded vtx df)
                       ( TraceMempoolAddedTx
                           vtx
                           (isMempoolSize is)
@@ -446,10 +446,11 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
               ( (`notElem` Set.fromList (NE.toList toRemove))
                   . txId
                   . txForgetValidated
+                  . fst
                   . txTicketTx
               )
               (TxSeq.toList $ isTxs is)
-          toKeep' = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . TxSeq.txTicketTx) toKeep
+          toKeep' = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst . TxSeq.txTicketTx) toKeep
       frkr <- readMVar forker
       tbs <- castLedgerTables <$> roforkerReadTables frkr (castLedgerTables toKeep')
       let (is', t) =
@@ -486,7 +487,10 @@ pureRemoveTxs ::
   LedgerTables (LedgerState blk) ValuesMK ->
   TicketNo ->
   -- | Txs to keep
-  [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
+  [ TxTicket
+      (TxMeasureWithDiffTime blk)
+      (Validated (GenTx blk), LedgerTables (TickedLedgerState blk) DiffMK)
+  ] ->
   -- | IDs to remove
   NE.NonEmpty (GenTxId blk) ->
   (InternalState blk, TraceEventMempool blk)

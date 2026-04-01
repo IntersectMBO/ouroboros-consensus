@@ -395,8 +395,8 @@ instance LedgerSupportsMempool BlockA where
       InitiateAtoB -> do
         return (TickedLedgerStateA $ st{lgrA_transition = Just sno}, ValidatedGenTxA tx)
 
-  reapplyTx _ cfg slot tx st =
-    attachAndApplyDiffs st . fst <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) st
+  reapplyTx cfg slot tx st =
+    applyDiffs st . fst <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) st
 
   txForgetValidated = forgetValidatedGenTxA
 
