@@ -399,8 +399,6 @@ The core contributors to consensus codebase are:
 
 -   [Javier Sagredo](https://github.com/jasagredo)
 
--   [Fraser Murray](https://github.com/fraser-iohk)
-
 -   [Damian Nadales](https://github.com/dnadales)
 
 -   [Georgy Lukyanov](https://github.com/geo2a)
