@@ -687,7 +687,6 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
         )
 
   reapplyTx
-    doDiffs
     DualLedgerConfig{..}
     slot
     tx@ValidatedDualGenTx{..}
@@ -696,13 +695,11 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
         agreeOnError
           DualGenTxErr
           ( reapplyTx
-              doDiffs
               dualLedgerConfigMain
               slot
               vDualGenTxMain
               tickedDualLedgerStateMain
           , reapplyTx
-              doDiffs
               dualLedgerConfigAux
               slot
               vDualGenTxAux
@@ -711,7 +708,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
       return $
         TickedDualLedgerState
           { tickedDualLedgerStateMain = main'
-          , tickedDualLedgerStateAux = trackingToValues aux'
+          , tickedDualLedgerStateAux = aux'
           , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
           , tickedDualLedgerStateBridge =
               updateBridgeWithTx

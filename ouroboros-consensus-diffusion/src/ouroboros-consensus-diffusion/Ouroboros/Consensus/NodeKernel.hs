@@ -945,7 +945,7 @@ getMempoolWriter mempool =
 
   getTxId :: MempoolAddTxResult blk -> Either (TxId (GenTx blk)) (TxId (GenTx blk), ())
   getTxId = \case
-    MempoolTxAdded tx -> Left $ txId (txForgetValidated tx)
+    MempoolTxAdded tx _ -> Left $ txId (txForgetValidated tx)
     MempoolTxRejected tx _reason -> Right $ (txId tx, ())
 
 {-------------------------------------------------------------------------------

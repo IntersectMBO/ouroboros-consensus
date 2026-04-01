@@ -26,8 +26,9 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
   , hardForkApplyTxErrToEither
   ) where
 
-import Control.Arrow (first, (+++))
+import Control.Arrow ((+++))
 import Control.Monad.Except
+import qualified Data.Foldable as F
 import Data.Functor.Identity
 import Data.Functor.Product
 import Data.Kind (Type)
@@ -55,6 +56,7 @@ import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
 
@@ -115,7 +117,11 @@ type instance ApplyTxErr (HardForkBlock xs) = HardForkApplyTxErr xs
 type DecomposedReapplyTxsResult extra xs =
   (,,)
     [Invalidated (HardForkBlock xs)]
-    [(Validated (GenTx (HardForkBlock xs)), extra)]
+    [ ( Validated (GenTx (HardForkBlock xs))
+      , LedgerTables (TickedLedgerState (HardForkBlock xs)) DiffMK
+      , extra
+      )
+    ]
     :.: FlipTickedLedgerState TrackingMK
 
 instance
@@ -125,13 +131,12 @@ instance
   ) =>
   LedgerSupportsMempool (HardForkBlock xs)
   where
-  applyTx = applyHelper ModeApply ComputeDiffs
+  applyTx = applyHelper ModeApply
 
-  reapplyTx doDiffs cfg slot vtx tls =
+  reapplyTx cfg slot vtx tls =
     fst
       <$> applyHelper
         ModeReapply
-        doDiffs
         cfg
         DoNotIntervene
         slot
@@ -144,7 +149,11 @@ instance
     LedgerConfig (HardForkBlock xs) ->
     SlotNo ->
     -- \^ Slot number of the block containing the tx
-    [(Validated (GenTx (HardForkBlock xs)), extra)] ->
+    [ ( Validated (GenTx (HardForkBlock xs))
+      , LedgerTables (TickedLedgerState (HardForkBlock xs)) DiffMK
+      , extra
+      )
+    ] ->
     TickedLedgerState (HardForkBlock xs) ValuesMK ->
     ReapplyTxsResult extra (HardForkBlock xs)
   reapplyTxs
@@ -154,7 +163,19 @@ instance
     vtxs
     (TickedHardForkLedgerState transition hardForkState) =
       ( \(err, val, st') ->
-          ReapplyTxsResult (mismatched' ++ err) val (TickedHardForkLedgerState transition st')
+          let st'' = TickedHardForkLedgerState transition st'
+           in ReapplyTxsResult
+                (mismatched' ++ err)
+                val
+                ( case doDiffs of
+                    IgnoreDiffs -> st''
+                    ComputeDiffs ->
+                      st''
+                        `withLedgerTables` ltliftA2
+                          ((\(TrackingMK v _) (DiffMK d) -> TrackingMK v d))
+                          (projectLedgerTables st'')
+                          (F.foldl' (\acc (_, df, _) -> ltliftA2 rawPrependDiffs acc df) emptyLedgerTables val)
+                )
       )
         . hsequence'
         $ hcizipWith
@@ -178,12 +199,13 @@ instance
         matchPolyTxsTele
           -- How to translate txs to later eras
           ( InPairs.hmap
-              (\(Pair2 _ (InjectPolyTx w)) -> InjectPolyTx (\(Comp (ex, tx)) -> Comp . (ex,) <$> w tx))
+              (\(Pair2 _ (InjectPolyTx w)) -> InjectPolyTx (\(Comp (ex, df, tx)) -> Comp . (ex,df,) <$> w tx))
               (InPairs.requiringBoth cfgs hardForkInjectTxs)
           )
           (State.getHardForkState hardForkState)
           ( map
-              (\(tx, extra) -> hmap (Comp . (extra,)) . getOneEraValidatedGenTx . getHardForkValidatedGenTx $ tx)
+              ( \(tx, df, extra) -> hmap (Comp . (extra,df,)) . getOneEraValidatedGenTx . getHardForkValidatedGenTx $ tx
+              )
               vtxs
           )
 
@@ -200,11 +222,13 @@ instance
                 )
                 . HardForkValidatedGenTx
                 . OneEraValidatedGenTx
-                . hmap (snd . unComp)
+                . hmap (trd . unComp)
                 . fst
                 $ x
           )
           mismatched
+
+      trd (_, _, x) = x
 
       modeApplyCurrent ::
         forall blk.
@@ -213,23 +237,29 @@ instance
         WrapLedgerConfig blk ->
         Product
           (FlipTickedLedgerState ValuesMK)
-          ([] :.: (,) extra :.: WrapValidatedGenTx)
+          ( []
+              :.: (,,) extra (LedgerTables (TickedLedgerState (HardForkBlock xs)) DiffMK)
+              :.: WrapValidatedGenTx
+          )
           blk ->
         DecomposedReapplyTxsResult extra xs blk
       modeApplyCurrent index cfg (Pair (FlipTickedLedgerState st) txs) =
         let ReapplyTxsResult err val st' =
               reapplyTxs
-                doDiffs
+                IgnoreDiffs
                 (unwrapLedgerConfig cfg)
                 slot
-                [(unwrapValidatedGenTx tx, tk) | (Comp (tk, tx)) <- unComp txs]
+                [(unwrapValidatedGenTx tx, emptyLedgerTables, (df, tk)) | (Comp (tk, df, tx)) <- unComp txs]
                 st
          in Comp
               ( [ injectValidatedGenTx index (getInvalidated x) `Invalidated` injectApplyTxErr index (getReason x)
                 | x <- err
                 ]
               , map
-                  (first (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx))
+                  ( ( \(x, _, (z1, z2)) ->
+                        (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx $ x, z1, z2)
+                    )
+                  )
                   val
               , FlipTickedLedgerState st'
               )
@@ -413,7 +443,7 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 -- | 'applyHelper' has to return one of these, depending on the apply mode used.
 type family ApplyMK k where
   ApplyMK (ApplyHelperMode GenTx) = DiffMK
-  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = TrackingMK
+  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = ValuesMK
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs txIn blk = ApplyResult
@@ -429,7 +459,6 @@ applyHelper ::
   forall xs txIn.
   CanHardFork xs =>
   ApplyHelperMode txIn ->
-  ComputeDiffs ->
   LedgerConfig (HardForkBlock xs) ->
   WhetherToIntervene ->
   SlotNo ->
@@ -442,7 +471,6 @@ applyHelper ::
     )
 applyHelper
   mode
-  doDiffs
   HardForkLedgerConfig{..}
   wti
   slot
@@ -541,7 +569,7 @@ applyHelper
                     }
               ModeReapply -> do
                 let vtx' = unwrapValidatedGenTx tx'
-                st' <- reapplyTx doDiffs lcfg slot vtx' st
+                st' <- reapplyTx lcfg slot vtx' st
                 -- provide the given transaction, which was already validated
                 pure
                   ApplyResult
