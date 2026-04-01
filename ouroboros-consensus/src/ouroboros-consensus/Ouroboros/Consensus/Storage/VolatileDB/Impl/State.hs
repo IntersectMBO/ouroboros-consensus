@@ -40,7 +40,6 @@ import Control.RAWLock (RAWLock)
 import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry
   ( WithTempRegistry
-  , allocateTemp
   , modifyWithTempRegistry
   )
 import Control.Tracer (Tracer, traceWith)
@@ -301,7 +300,6 @@ closeOpenHandles :: HasFS m h -> OpenState blk h -> m ()
 closeOpenHandles HasFS{hClose} OpenState{currentWriteHandle} =
   hClose currentWriteHandle
 
--- TODO: mkOpenState does not need to run in WithTempRegistry.
 mkOpenState ::
   forall m blk h.
   ( HasCallStack
@@ -310,7 +308,6 @@ mkOpenState ::
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
   , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
-  , Eq h
   ) =>
   CodecConfig blk ->
   HasFS m h ->
@@ -318,11 +315,11 @@ mkOpenState ::
   BlockValidationPolicy ->
   Tracer m (TraceEvent blk) ->
   BlocksPerFile ->
-  WithTempRegistry (OpenState blk h) m (OpenState blk h)
+  m (OpenState blk h)
 mkOpenState ccfg hasFS@HasFS{..} checkInvariants validationPolicy tracer maxBlocksPerFile = do
-  lift $ createDirectoryIfMissing True dbDir
-  allFiles <- map toFsPath . Set.toList <$> lift (listDirectory dbDir)
-  filesWithIds <- lift $ logInvalidFiles $ parseAllFds allFiles
+  createDirectoryIfMissing True dbDir
+  allFiles <- map toFsPath . Set.toList <$> listDirectory dbDir
+  filesWithIds <- logInvalidFiles $ parseAllFds allFiles
   mkOpenStateHelper
     ccfg
     hasFS
@@ -363,7 +360,6 @@ mkOpenStateHelper ::
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
   , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
-  , Eq h
   ) =>
   CodecConfig blk ->
   HasFS m h ->
@@ -372,11 +368,10 @@ mkOpenStateHelper ::
   Tracer m (TraceEvent blk) ->
   BlocksPerFile ->
   [(FileId, FsPath)] ->
-  WithTempRegistry (OpenState blk h) m (OpenState blk h)
+  m (OpenState blk h)
 mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPerFile files = do
   (currentMap', currentRevMap', currentSuccMap') <-
-    lift $
-      foldM validateFile (Index.empty, Map.empty, Map.empty) files
+    foldM validateFile (Index.empty, Map.empty, Map.empty) files
 
   let (currentWriteId, currentMap'') = case Index.lastFile currentMap' of
         -- The DB is empty. Create a new file with 'FileId' 0
@@ -393,12 +388,14 @@ mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPer
 
   let currentWritePath = filePath currentWriteId
 
-  currentWriteHandle <-
-    allocateTemp
-      (hOpen hasFS currentWritePath (AppendMode AllowExisting))
-      (hClose' hasFS)
-      ((==) . currentWriteHandle)
-  currentWriteOffset <- lift $ hGetSize hasFS currentWriteHandle
+  -- We don't need to track this handle in any resource registry because this
+  -- function is called on startup of the ChainDB, and the file has not been
+  -- modified. Once the startup phase is complete, the ChainDB is in the top
+  -- level registry which will close the ChainDB on exceptions, which will close
+  -- the VolatileDB, which will close this handle.
+  currentWriteHandle <- hOpen hasFS currentWritePath (AppendMode AllowExisting)
+  currentWriteOffset <-
+    hGetSize hasFS currentWriteHandle `onException` hClose hasFS currentWriteHandle
 
   return
     OpenState

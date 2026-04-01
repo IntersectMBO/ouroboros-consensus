@@ -99,8 +99,6 @@ data OpenState m blk h = OpenState
 ------------------------------------------------------------------------------}
 
 -- | Create the internal open state for the given chunk.
---
--- TODO: mkOpenState does not need to run in WithTempRegistry.
 mkOpenState ::
   forall m blk h.
   (HasCallStack, IOLike m, Eq h) =>
