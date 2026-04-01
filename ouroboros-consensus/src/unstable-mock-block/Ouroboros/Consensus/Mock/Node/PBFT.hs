@@ -109,7 +109,7 @@ pbftBlockForging canBeLeader =
             canBeLeader
             slot
             tickedPBftState
-    , forgeBlock = \cfg slot bno lst txs _ebtxs proof ->
+    , forgeBlock = \_leiosDb cfg slot bno lst txs _ebtxs proof ->
         return . (,Nothing) $
           forgeSimple
             forgePBftExt

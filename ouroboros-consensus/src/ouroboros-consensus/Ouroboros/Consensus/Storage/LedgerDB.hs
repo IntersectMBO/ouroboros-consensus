@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Storage.LedgerDB
 
 import Data.Functor.Contravariant ((>$<))
 import Data.Word
+import LeiosDemoDb (LeiosDbHandle)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -44,7 +45,9 @@ openDB ::
   , HasCallStack
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->
   -- | Stream source for blocks.
@@ -60,24 +63,28 @@ openDB ::
   ResolveBlock m blk ->
   m (LedgerDB' m blk, Word64)
 openDB
+  leiosDb
   args
   stream
   replayGoal
-  getBlock = case lgrFlavorArgs args of
-    LedgerDbFlavorArgsV1 bss ->
-      let initDb =
-            V1.mkInitDb
-              args
-              bss
-              getBlock
-       in doOpenDB args initDb stream replayGoal
-    LedgerDbFlavorArgsV2 bss ->
-      let initDb =
-            V2.mkInitDb
-              args
-              bss
-              getBlock
-       in doOpenDB args initDb stream replayGoal
+  getBlock =
+    case lgrFlavorArgs args of
+      LedgerDbFlavorArgsV1 bss ->
+        let initDb =
+              V1.mkInitDb
+                leiosDb
+                args
+                bss
+                getBlock
+         in doOpenDB args initDb stream replayGoal
+      LedgerDbFlavorArgsV2 bss ->
+        let initDb =
+              V2.mkInitDb
+                leiosDb
+                args
+                bss
+                getBlock
+         in doOpenDB args initDb stream replayGoal
 
 {-------------------------------------------------------------------------------
   Opening a LedgerDB

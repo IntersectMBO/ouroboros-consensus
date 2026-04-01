@@ -106,8 +106,9 @@ praosSharedBlockForging
           praosCheckCanForge
             (configConsensus cfg)
             curSlot
-      , forgeBlock = \cfg blkNo slotNo ledgerState rbTxs ebTxs isLeader ->
+      , forgeBlock = \leiosDb cfg blkNo slotNo ledgerState rbTxs ebTxs isLeader ->
           forgeShelleyBlock
+            leiosDb
             hotKey
             canBeLeader
             cfg

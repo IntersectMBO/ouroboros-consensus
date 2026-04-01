@@ -9,6 +9,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -51,6 +52,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , PushStart (..)
   , Pushing (..)
   , TraceValidateEvent (..)
+
+    -- * Leios
+  , ResolveLeiosBlock (..)
   ) where
 
 import Control.Monad (void)
@@ -69,6 +73,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
+import LeiosDemoDb (LeiosDbHandle)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -265,16 +270,19 @@ validate ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , HasCallStack
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   ComputeLedgerEvents ->
   ValidateArgs m blk ->
   m (ValidateResult' m blk)
-validate evs args = do
+validate leiosDb evs args = do
   aps <- mkAps <$> atomically prevApplied
   res <-
     fmap rewrap $
       defaultResolveWithErrors resolve $
         switch
+          leiosDb
           forkerAtFromTip
           resourceReg
           evs
@@ -341,7 +349,8 @@ validate evs args = do
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
+  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  LeiosDbHandle bm ->
   (ResourceRegistry bm -> Word64 -> bm (Either GetForkerError (Forker bm l blk))) ->
   ResourceRegistry bm ->
   ComputeLedgerEvents ->
@@ -352,7 +361,7 @@ switch ::
   -- | New blocks to apply
   [Ap bm m l blk c] ->
   m (Either GetForkerError (Forker bm l blk))
-switch forkerAtFromTip rr evs cfg numRollbacks trace newBlocks = do
+switch leiosDb forkerAtFromTip rr evs cfg numRollbacks trace newBlocks = do
   foEith <- liftBase $ forkerAtFromTip rr numRollbacks
   case foEith of
     Left rbExceeded -> pure $ Left rbExceeded
@@ -365,6 +374,7 @@ switch forkerAtFromTip rr evs cfg numRollbacks trace newBlocks = do
               goal = PushGoal . toRealPoint . last $ newBlocks
           void $
             applyThenPushMany
+              leiosDb
               (trace . StartedPushingBlockToTheLedgerDb start goal)
               evs
               cfg
@@ -421,43 +431,51 @@ toRealPoint (ReapplyRef rp) = rp
 toRealPoint (ApplyRef rp) = rp
 toRealPoint (Weaken ap) = toRealPoint ap
 
+class ResolveLeiosBlock blk where
+  resolveLeiosBlock ::
+    (IsLedger (ExtLedgerState blk), Monad m) => LeiosDbHandle m -> ExtLedgerState blk mk -> blk -> m blk
+  resolveLeiosBlock _ _ blk = return blk
+
 -- | Apply blocks to the given forker
 applyBlock ::
   forall m bm c l blk.
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
+  ( ApplyBlock l blk
+  , MonadBase bm m
+  , c
+  , MonadSTM bm
+  , ResolveLeiosBlock blk
+  , l ~ ExtLedgerState blk
+  ) =>
+  LeiosDbHandle bm ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap bm m l blk c ->
   Forker bm l blk ->
   m (ValidLedgerState (l DiffMK))
-applyBlock evs cfg ap fo = case ap of
-  ReapplyVal b ->
+applyBlock leiosDb evs cfg ap fo = case ap of
+  ReapplyVal b -> do
+    l <- liftBase $ atomically $ forkerGetLedgerState fo
+    b' <- liftBase $ resolveLeiosBlock leiosDb l b
+    vs <- withLedgerTables l <$> liftBase (forkerReadTables fo (getBlockKeySets b'))
+    ValidLedgerState <$> (return . tickThenReapply evs cfg b') vs
+  ApplyVal b -> do
+    l <- liftBase $ atomically $ forkerGetLedgerState fo
+    b' <- liftBase $ resolveLeiosBlock leiosDb l b
+    vs <- withLedgerTables l <$> liftBase (forkerReadTables fo (getBlockKeySets b'))
     ValidLedgerState
-      <$> withValues b (return . tickThenReapply evs cfg b)
-  ApplyVal b ->
-    ValidLedgerState
-      <$> withValues
-        b
-        ( either (throwLedgerError fo (blockRealPoint b)) return
-            . runExcept
-            . tickThenApply evs cfg b
-        )
+      <$> ( either (throwLedgerError fo (blockRealPoint b')) return
+              . runExcept
+              . tickThenApply evs cfg b'
+          )
+        vs
   ReapplyRef r -> do
     b <- doResolveBlock r
-    applyBlock evs cfg (ReapplyVal b) fo
+    applyBlock leiosDb evs cfg (ReapplyVal b) fo
   ApplyRef r -> do
     b <- doResolveBlock r
-    applyBlock evs cfg (ApplyVal b) fo
+    applyBlock leiosDb evs cfg (ApplyVal b) fo
   Weaken ap' ->
-    applyBlock evs cfg ap' fo
- where
-  withValues :: blk -> (l ValuesMK -> m (l DiffMK)) -> m (l DiffMK)
-  withValues blk f = do
-    l <- liftBase $ atomically $ forkerGetLedgerState fo
-    vs <-
-      withLedgerTables l
-        <$> liftBase (forkerReadTables fo (getBlockKeySets blk))
-    f vs
+    applyBlock leiosDb evs cfg ap' fo
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.
@@ -465,30 +483,32 @@ applyBlock evs cfg ap fo = case ap of
 -- Note that we require @c@ (from the particular choice of @Ap m l blk c@) so
 -- this sometimes can throw ledger errors.
 applyThenPush ::
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
+  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  LeiosDbHandle bm ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap bm m l blk c ->
   Forker bm l blk ->
   m ()
-applyThenPush evs cfg ap fo =
+applyThenPush leiosDb evs cfg ap fo =
   liftBase . forkerPush fo . getValidLedgerState
-    =<< applyBlock evs cfg ap fo
+    =<< applyBlock leiosDb evs cfg ap fo
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
-  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm) =>
+  (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  LeiosDbHandle bm ->
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   [Ap bm m l blk c] ->
   Forker bm l blk ->
   m ()
-applyThenPushMany trace evs cfg aps fo = mapM_ pushAndTrace aps
+applyThenPushMany leiosDb trace evs cfg aps fo = mapM_ pushAndTrace aps
  where
   pushAndTrace ap = do
     trace $ Pushing . toRealPoint $ ap
-    applyThenPush evs cfg ap fo
+    applyThenPush leiosDb evs cfg ap fo
 
 {-------------------------------------------------------------------------------
   Annotated ledger errors

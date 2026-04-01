@@ -45,6 +45,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -54,6 +55,8 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 
 -- | Byron as the single era in the hard fork combinator
 type ByronBlockHFC = HardForkBlock '[ByronBlock]
+
+instance ResolveLeiosBlock (HardForkBlock '[ByronBlock]) -- FIXME
 
 {-------------------------------------------------------------------------------
   NoHardForks instance

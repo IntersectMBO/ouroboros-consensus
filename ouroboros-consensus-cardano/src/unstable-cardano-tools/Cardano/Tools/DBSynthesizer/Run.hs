@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -164,7 +165,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
         putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
         preOpenChainDB synthOpenMode confDbDir
         let dbTracer = nullTracer
-        ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
+        ChainDB.withDB (error "FIXME(bladyjoker)") (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
           slotNo <- do
             tip <- atomically (ChainDB.getTipPoint chainDB)
             pure $ case pointSlot tip of

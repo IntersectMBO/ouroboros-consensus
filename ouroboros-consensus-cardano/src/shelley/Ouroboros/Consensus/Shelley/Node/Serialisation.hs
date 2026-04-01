@@ -136,7 +136,7 @@ instance
     -- >    1A 00010000 # bytes(65536)
     --
     -- Which is 7 bytes, enough for up to 4294967295 bytes.
-    overhead = 7 {- CBOR-in-CBOR -} + 1 {- encodeListLen -}
+    overhead = 7 {- CBOR-in-CBOR -} + 1 {- encodeListLen -} + 4 {- FIXME(bladyjoker): Why is this estimated? Anyhow, I'm guessing here -}
     bodySize = fromIntegral . pHeaderBlockSize . shelleyHeaderRaw $ hdr
     hdrSize = fromIntegral . pHeaderSize . shelleyHeaderRaw $ hdr
 

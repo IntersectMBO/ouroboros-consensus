@@ -47,6 +47,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.SOP.Dict as Dict
 import Data.Word
+import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -468,6 +469,7 @@ openLedgerDB flavArgs env cfg fs = do
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
   replayGoal <- fmap (realPointToPoint . last . Map.keys) . atomically $ readTVar (dbBlocks env)
   rr <- unsafeNewRegistry
+  leiosDb <- newLeiosDBInMemory
   let args =
         LedgerDbArgs
           (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots)
@@ -483,6 +485,7 @@ openLedgerDB flavArgs env cfg fs = do
     LedgerDbFlavorArgsV1 bss ->
       let initDb =
             V1.mkInitDb
+              leiosDb
               args
               bss
               getBlock
@@ -490,6 +493,7 @@ openLedgerDB flavArgs env cfg fs = do
     LedgerDbFlavorArgsV2 bss ->
       let initDb =
             V2.mkInitDb
+              leiosDb
               args
               bss
               getBlock

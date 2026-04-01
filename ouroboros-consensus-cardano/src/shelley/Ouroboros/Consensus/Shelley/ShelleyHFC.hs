@@ -92,6 +92,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -101,6 +102,8 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 
 -- | Shelley as the single era in the hard fork combinator
 type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
+
+instance ResolveLeiosBlock (HardForkBlock '[ShelleyBlock proto era]) -- FIXME(bladyjoker)
 
 {-------------------------------------------------------------------------------
   NoHardForks instance
@@ -366,7 +369,7 @@ instance
   ) =>
   SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto)
   where
-  translateEra ctxt (Comp (Flip (ShelleyLedgerState tip state _transition tables))) = do
+  translateEra ctxt (Comp (Flip (ShelleyLedgerState tip state _transition tables leios))) = do
     tip' <- mapM (SL.translateEra ctxt) tip
     state' <- SL.translateEra ctxt state
     return $
@@ -377,6 +380,7 @@ instance
             , shelleyLedgerState = state'
             , shelleyLedgerTransition = ShelleyTransitionInfo 0
             , shelleyLedgerTables = translateShelleyTables tables
+            , shelleyLedgerLeiosState = leios
             }
 
 translateShelleyTables ::

@@ -19,6 +19,7 @@ import Data.Functor (void)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
+import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
@@ -125,6 +126,7 @@ mkChainDb resources = do
     -- - Immutable DB and Volatile DB are preserved for the next interval
     void $ swapTMVar (nodeDBsGsm lrCdb) MockFS.empty
     void $ swapTMVar (nodeDBsLgr lrCdb) MockFS.empty
+  leiosDb <- newLeiosDBInMemory
   chainDbArgs <- do
     let args =
           updateTracer
@@ -148,7 +150,7 @@ mkChainDb resources = do
   (_, (chainDB, internal)) <-
     allocate
       lrRegistry
-      (\_ -> ChainDB.openDBInternal chainDbArgs False)
+      (\_ -> ChainDB.openDBInternal leiosDb chainDbArgs False)
       (ChainDB.closeDB . fst)
   let ChainDB.Internal{intCopyToImmutableDB, intAddBlockRunner} = internal
   void $ forkLinkedThread lrRegistry "AddBlockRunner" (void intAddBlockRunner)

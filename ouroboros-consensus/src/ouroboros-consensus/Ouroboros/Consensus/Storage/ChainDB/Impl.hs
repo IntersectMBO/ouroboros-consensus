@@ -53,6 +53,7 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack (HasCallStack)
+import LeiosDemoDb (LeiosDbHandle)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
@@ -76,7 +77,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
+import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB, ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (newFuse, whenJust, withFuse)
@@ -105,11 +106,13 @@ withDB ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , LedgerSupportsLedgerDB blk
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
   m a
-withDB args = bracket (fst <$> openDBInternal args True) API.closeDB
+withDB leiosDb args = bracket (fst <$> openDBInternal leiosDb args True) API.closeDB
 
 openDB ::
   forall m blk.
@@ -121,10 +124,12 @@ openDB ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , LedgerSupportsLedgerDB blk
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
-openDB args = fst <$> openDBInternal args True
+openDB leiosDb args = fst <$> openDBInternal leiosDb args True
 
 openDBInternal ::
   forall m blk.
@@ -137,12 +142,14 @@ openDBInternal ::
   , SerialiseDiskConstraints blk
   , HasCallStack
   , LedgerSupportsLedgerDB blk
+  , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks
   Bool ->
   m (ChainDB m blk, Internal m blk)
-openDBInternal args launchBgTasks = runWithTempRegistry $ do
+openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
   lift $ traceWith tracer $ TraceOpenEvent StartedOpeningDB
   lift $ traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
   immutableDB <- ImmutableDB.openDB argsImmutableDb $ innerOpenCont ImmutableDB.closeDB
@@ -162,6 +169,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
     (lgrDB, replayed) <-
       LedgerDB.openDB
+        leiosDb
         argsLgrDb
         (ImmutableDB.streamAPI immutableDB)
         immutableDbTipPoint

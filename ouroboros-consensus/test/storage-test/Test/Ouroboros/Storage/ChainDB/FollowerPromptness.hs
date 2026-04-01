@@ -30,6 +30,7 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
+import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -175,6 +176,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
     Tracer m (ChainDBImpl.TraceEvent TestBlock) ->
     m (ChainDB m TestBlock)
   openChainDB registry cdbTracer = do
+    leiosDb <- newLeiosDBInMemory
     chainDbArgs <- do
       let mcdbTopLevelConfig = singleNodeTestConfigWithK securityParam
           mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
@@ -186,7 +188,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
       allocate
         registry
-        (\_ -> ChainDBImpl.openDBInternal chainDbArgs False)
+        (\_ -> ChainDBImpl.openDBInternal leiosDb chainDbArgs False)
         (ChainDB.closeDB . fst)
     _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
     pure chainDB

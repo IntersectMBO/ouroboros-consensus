@@ -782,10 +782,12 @@ forkBlockForging IS{..} blockForging =
     -- TODO: Needs access to Leios certificate of (blockNo - 1), if it exists
     -- and decide whether we want to put txs or the leios certificate into the
     -- body.
+    -- NOTE(bladyjoker): I stuffed this logic in the Shelley `forgeBlock` as it relies on `shelleyLedgerLeiosState` field of the `ShelleyLedgerState`
     (newBlock, mayForgedEb) <-
       lift $
         Block.forgeBlock
           blockForging
+          leiosDB
           cfg
           bcBlockNo
           currentSlot

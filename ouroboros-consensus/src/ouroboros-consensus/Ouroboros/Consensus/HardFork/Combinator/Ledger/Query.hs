@@ -32,6 +32,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
   , encodeQueryHardForkResult
   , getHardForkQuery
   , hardForkQueryInfo
+  , distribExtLedgerState
+  , distribHeaderState
   ) where
 
 import Cardano.Binary (enforceSize)

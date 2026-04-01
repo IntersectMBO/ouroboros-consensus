@@ -70,6 +70,7 @@ import Cardano.Ledger.Binary
   , FullByteString (..)
   , ToCBOR (..)
   )
+import qualified Cardano.Ledger.Block as L
 import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.Rules as SL
 import qualified Cardano.Ledger.Conway.UTxO as SL
@@ -89,6 +90,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
+import LeiosDemoTypes (leiosEBMaxClosureSize)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -214,11 +216,9 @@ instance ShelleyBasedEra era => ConvertRawTxId (GenTx (ShelleyBlock proto era)) 
     Hash.hashToBytesShort . SL.extractHash . SL.unTxId $ i
 
 instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
+  -- FIXME(bladyjoker): `bodyTxs` is unsafe and will probably fail
   extractTxs =
-    map mkShelleyTx
-      . txSeqToList
-      . SL.bbody
-      . shelleyBlockRaw
+    map mkShelleyTx . txSeqToList . L.bodyTxs . L.blockBody . shelleyBlockRaw
    where
     txSeqToList :: TxSeq era -> [Tx era]
     txSeqToList = toList . fromTxSeq @era
@@ -743,7 +743,6 @@ instance
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
   ebCapacityTxMeasure _cfg = Just . leiosEndorserBlockMeasure
 
--- TODO(bladyjoker): Same as RB
 leiosEndorserBlockMeasure ::
   forall proto era mk.
   ( ShelleyCompatible proto era
@@ -751,4 +750,17 @@ leiosEndorserBlockMeasure ::
   ) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
   ConwayMeasure
-leiosEndorserBlockMeasure = blockCapacityConwayMeasure
+leiosEndorserBlockMeasure st =
+  ConwayMeasure
+    { alonzoMeasure =
+        (blockCapacityAlonzoMeasure st)
+          { byteSize =
+              IgnoringOverflow leiosEBMaxClosureSize
+          }
+    , refScriptsSize =
+        IgnoringOverflow $
+          ByteSize32 $
+            fromIntegral $
+              -- For post-Conway eras, this will become a protocol parameter.
+              SL.maxRefScriptSizePerBlock
+    }

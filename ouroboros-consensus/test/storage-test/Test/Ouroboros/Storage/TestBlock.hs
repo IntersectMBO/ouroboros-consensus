@@ -142,6 +142,8 @@ data TestBlock = TestBlock
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NoThunks, Serialise)
 
+instance ResolveLeiosBlock TestBlock
+
 -- | Hash of a 'TestHeader'
 newtype TestHeaderHash = TestHeaderHash Int
   deriving stock (Eq, Ord, Show, Generic)
