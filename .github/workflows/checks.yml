@@ -21,6 +21,29 @@ on:
   merge_group:
 
 jobs:
+  no-merge-commits:
+
+    name: No merge commits in PR
+
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        # Check out the actual PR head, not the synthetic merge commit that
+        # actions/checkout produces by default for pull_request events.
+        ref: ${{ github.event.pull_request.head.sha }}
+
+    - env:
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+      run: ./scripts/ci/check-no-merge-commits.sh
+
   consensus-changelog:
 
     name: Changelogs
