@@ -56,12 +56,12 @@ The polymorphic core (in [`ouroboros-consensus`][oc-src]) defines the consensus 
 - [`shelley`][shelley-src] — Shelley-based eras (Shelley through Conway): Praos protocol, shared ledger integration
 - [`ouroboros-consensus-cardano`][cardano-src] — the Cardano block type combining all eras, hard fork transitions, and node configuration
 
-[Components' Data Flow](../references/data_flow.md) explains how ChainDB, the mempool, and the mini-protocols interact.
+[Components' Data Flow](data_flow.md) explains how ChainDB, the mempool, and the mini-protocols interact.
 
 ## Further reading
 
 - [Design Goals](design_goals.md) — the design principles behind the system; start here to understand why the system is the way it is
-- [Components' Data Flow](../references/data_flow.md) — how ChainDB, the mempool, and the mini-protocols interact
+- [Components' Data Flow](data_flow.md) — how ChainDB, the mempool, and the mini-protocols interact
 - [Ledger Interaction](ledger_interaction.md) — how the consensus layer interfaces with the ledger and network layers
 - [Queries](queries.md) — how consensus exposes information to clients
 - [Node Tasks](node_tasks.md) — a practical view of what a running node does
