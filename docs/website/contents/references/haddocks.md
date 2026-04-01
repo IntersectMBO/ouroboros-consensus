@@ -1,5 +1,7 @@
 # Haddocks
 
-The Haddocks for our GitHub repository can be found here https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/
+The generated API documentation (Haddocks) for the packages in this repository is published at:
 
-TODO this article is a stub; is it supposed to merely be that link?
+https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/
+
+This covers the public modules of `ouroboros-consensus:{ouroboros-consensus, cardano, diffusion, protocol, lsm, lmdb}` and related packages.

@@ -138,7 +138,7 @@ In Shelley, applying a block to a ledger state means running the `BBODY` transit
 Consensus checks the validity of blocks when selecting chains in ChainSelection.
 
 For Byron, Consensus calls either `validateBlock` or `validateBoundary` from
-`cardano-ledger-byron` depending on whether a regular block or an [EBB](./ebbs)
+`cardano-ledger-byron` depending on whether a regular block or an EBB (Epoch Boundary Block)
 is being validated.
 
 For the Shelley eras, `cardano-ledger-shelley` exposes a function

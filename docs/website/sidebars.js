@@ -26,22 +26,7 @@ const sidebars = {
               'explanations/data_flow',
               'explanations/ledger_interaction',
               'explanations/queries',
-              'explanations/network_interaction',
-              'explanations/consensus_protocol',
-              'explanations/mempool',
-              'explanations/genesis_design',
-              'explanations/managing_updates',
-              'explanations/starting_up_consensus_layer',
               'explanations/node_tasks',
-              { type: 'category',
-                label: 'Storage Layer',
-                items: ['explanations/storage_layer/index',
-                        'explanations/storage_layer/immutable_db',
-                        'explanations/storage_layer/volatile_db',
-                        'explanations/storage_layer/ledger_db',
-                       ]
-              },
-              'explanations/ebbs',
              ]
     }
   ],
@@ -51,8 +36,6 @@ const sidebars = {
       items: ['tutorials/index',
               'tutorials/preflight_guide',
               'tutorials/instantiating_consensus',
-              'tutorials/sop',
-              'tutorials/hfc',
              ]
     }
   ],
@@ -63,17 +46,10 @@ const sidebars = {
               { type: 'category',
                 label: 'Contributing',
                 items: ['howtos/contributing/sanity_checks',
-                        'howtos/contributing/reporting_a_bug',
                         'howtos/contributing/consensus_git_process',
                         'howtos/contributing/how_to_make_a_release',
                         'howtos/contributing/style_guide',
                        ]
-              },
-              { type: 'category',
-                label: 'Working with Stored Data',
-                items: ['howtos/working_with_stored_data/analysing_a_chain',
-                        'howtos/working_with_stored_data/serving_a_chain',
-                        'howtos/working_with_stored_data/manipulating_data',                           ]
               },
               'howtos/adding_an_era',
               'howtos/versioning_a_new_query',
@@ -90,7 +66,6 @@ const sidebars = {
               'references/haddocks',
               'references/data_flow',
               'references/block_diagrams_of_data',
-              'references/serialisation',
               'references/additional_material',
               'references/technical_reports',
               { type: 'category',
