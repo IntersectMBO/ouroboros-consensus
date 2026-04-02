@@ -28,6 +28,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
 
 import Control.Arrow ((+++))
 import Control.Monad.Except
+import Data.Foldable (foldl')
 import Data.Functor.Identity
 import Data.Functor.Product
 import Data.Kind (Type)
