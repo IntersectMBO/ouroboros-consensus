@@ -39,6 +39,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     -- * Exported for tests
   , LSM.Salt
   , SomeHasFSAndBlockIO (..)
+
+    -- * Exported for db-sync LSM integration
+  , openLSMHandleFromSnapshot
   ) where
 
 import Codec.Serialise (decode)
@@ -181,6 +184,46 @@ duplicateLSMTable ::
   m (UTxOTable m)
 duplicateLSMTable tracer t = do
   encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate t
+
+-- | Open an LSM table from a named snapshot and wrap it in a
+-- 'LedgerTablesHandle'. This is useful for consumers that manage their own
+-- ledger state separately (e.g. db-sync).
+--
+-- The returned handle must be closed by the caller.
+openLSMHandleFromSnapshot ::
+  forall m l.
+  ( IOLike m
+  , HasLedgerTables l
+  , IndexedMemPack (l EmptyMK) (TxOut l)
+  ) =>
+  Tracer m LedgerDBV2Trace ->
+  Resources m LSM ->
+  String ->
+  m (LedgerTablesHandle m l)
+openLSMHandleFromSnapshot tracer res snapshotName =
+  openLSMHandleFromSnapshot' tracer (sessionResource res) 0 snapshotName
+
+-- | Internal helper used by both 'openLSMHandleFromSnapshot' and
+-- 'loadSnapshot'.
+openLSMHandleFromSnapshot' ::
+  forall m l.
+  ( IOLike m
+  , HasLedgerTables l
+  , IndexedMemPack (l EmptyMK) (TxOut l)
+  ) =>
+  Tracer m LedgerDBV2Trace ->
+  Session m ->
+  Word64 ->
+  String ->
+  m (LedgerTablesHandle m l)
+openLSMHandleFromSnapshot' tracer session utxosSize snapshotName = do
+  table <-
+    encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
+      LSM.openTableFromSnapshot
+        session
+        (fromString snapshotName)
+        (LSM.SnapshotLabel $ Text.pack "UTxO table")
+  newLSMLedgerTablesHandle tracer utxosSize table
 
 {-------------------------------------------------------------------------------
   LedgerTablesHandle
@@ -538,15 +581,7 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwE InitFailureGenesis
     NotOrigin pt -> do
-      values <-
-        lift $
-          encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
-            LSM.openTableFromSnapshot
-              session
-              (fromString $ snapshotToDirName ds)
-              (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
-
-      h <- lift $ newLSMLedgerTablesHandle tracer msz values
+      h <- lift $ openLSMHandleFromSnapshot' tracer session msz (snapshotToDirName ds)
       Monad.when
         (checksumAsRead /= snapshotChecksum snapshotMeta)
         $ throwE
