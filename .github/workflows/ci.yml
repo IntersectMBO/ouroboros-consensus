@@ -313,11 +313,19 @@ jobs:
           echo "Benchmarks comparison skipped."
         fi
 
-  deploy-haddocks:
-    name: Deploy haddocks
+  deploy-website:
+    name: Deploy website to GitHub Pages
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build-test-bench-haddocks
     runs-on: ubuntu-latest
+    # Most run steps (yarn install, yarn build, nix build) operate on the
+    # Docusaurus project, so we default to its directory. The haddock
+    # extraction step overrides this to run from the repo root, because the
+    # tarball contains paths relative to the repo root
+    # (./docs/website/static/haddocks/...).
+    defaults:
+      run:
+        working-directory: ./docs/website
     steps:
       - uses: actions/checkout@v6
 
@@ -326,34 +334,9 @@ jobs:
         with:
           name: haddocks
 
-      - name: Extract haddocks
+      - name: Extract haddocks into static directory
+        working-directory: .
         run: tar vzxf haddocks.tgz
-
-      - name: Upload haddocks for GitHub Pages
-        uses: actions/upload-artifact@v7
-        with:
-          name: haddocks-site
-          path: ./docs/website/static/haddocks
-          retention-days: 1
-    permissions:
-      pages: write
-      id-token: write
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-  deploy-website:
-    name: Deploy website to GitHub Pages
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./docs/website
-    strategy:
-       fail-fast: false
-    steps:
-      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v6
         with:
