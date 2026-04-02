@@ -681,11 +681,17 @@ iteratorNext itrId blockComponent m =
     Just (b : bs)
       | blockHash b `Map.member` blocks m ->
           (IteratorResult $ getBlockComponent b blockComponent, updateIter bs)
-    -- The next block `b` was part of a dead fork and has been garbage
-    -- collected.  The system-under-test then closes the iterator, and we set
-    -- the state of the iterator to the empty list to mimic that behaviour.
-    Just (b : _) ->
-      (IteratorBlockGCed $ blockRealPoint b, updateIter [])
+      | otherwise ->
+          -- The next block `b` was part of a dead fork and maybe was garbage
+          -- collected. The system-under-test will keep running the iterator
+          -- until the whole file in which the current block was stored has been
+          -- garbage collected. Here we always return IteratorBlockGCed so that
+          -- the comparison eqIfNotGCed succeeds.
+          --
+          -- We could instead mimic what the SUT does but that requires making
+          -- the model aware of the fact that the SUT removes whole files at
+          -- once, which is an implementation detail.
+          (IteratorBlockGCed $ blockRealPoint b, m)
     Nothing ->
       error "iteratorNext: unknown iterator ID"
  where

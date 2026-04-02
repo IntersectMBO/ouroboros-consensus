@@ -574,8 +574,8 @@ instance Eq blk => Eq (MaybeGCedBlock blk) where
 -- 'IteratorBlockGCed' instead of 'IteratorResult'.
 data IteratorResultGCed blk = IteratorResultGCed
   { real :: Bool
-  -- ^ 'True':  result of calling 'getBlock' on the real implementation
-  -- ^ 'False': result of calling 'getBlock' on the model implementation
+  -- ^ 'True':  result of calling 'iteratorNext' on the real implementation
+  -- ^ 'False': result of calling 'iteratorNext' on the model implementation
   , iterResult :: IteratorResult blk (AllComponents blk)
   }
 
@@ -598,8 +598,8 @@ instance
       (_, True) -> eqIfNotGCed
    where
     eqIfNotGCed = case (iterResult1, iterResult2) of
-      (IteratorBlockGCed{}, _) -> True
-      (_, IteratorBlockGCed{}) -> True
+      (IteratorBlockGCed{}, _) -> not real1
+      (_, IteratorBlockGCed{}) -> not real2
       (IteratorResult b1, IteratorResult b2) -> b1 == b2
       (IteratorExhausted, IteratorExhausted) -> True
       _ -> False

@@ -226,8 +226,15 @@ ouroboros_network_3999 = do
   -- The remainder of the elements in the iterator are part of the dead fork,
   -- and may have been garbage-collected.
   let options =
-        [ -- The dead fork has been garbage-collected.
+        [ -- If the dead fork has been garbage-collected, the SUT, *given that
+          -- the minimal chaindb args set the max blocks per file to 4* will
+          -- close the iterator, as the block will really be GCed.
           [API.IteratorBlockGCed $ blockRealPoint b2, API.IteratorExhausted]
+        , -- The model will always think that the block has been garbage
+          -- collected, and will keep returning the same thing. This way we
+          -- abstract away from how the implementation internally works
+          -- (deleting whole files).
+          [API.IteratorBlockGCed $ blockRealPoint b2, API.IteratorBlockGCed $ blockRealPoint b2]
         , -- The dead fork has not been garbage-collected yet.
           [API.IteratorResult b2, API.IteratorResult b3]
         ]
