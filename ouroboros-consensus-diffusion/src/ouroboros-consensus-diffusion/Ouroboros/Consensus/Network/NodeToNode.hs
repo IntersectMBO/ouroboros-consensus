@@ -147,12 +147,14 @@ import Ouroboros.Network.Protocol.TxSubmission2.Type
 import Ouroboros.Network.TxSubmission.Inbound.V1
 import Ouroboros.Network.TxSubmission.Inbound.V2
   ( PeerTxAPI
-  , TraceTxLogic
   , TxDecisionPolicy (..)
-  , TxSubmissionLogicVersion (..)
   , defaultTxDecisionPolicy
   , txSubmissionInboundV2
   , withPeer
+  )
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types
+  ( TraceTxLogic
+  , TxSubmissionLogicVersion (..)
   )
 import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( mapTxSubmissionMempoolReader
@@ -321,7 +323,9 @@ mkHandlers
                       (Node.txInboundTracer tracers)
                   )
                   txSubmissionInitDelay
+                  (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
                   (getMempoolWriter getMempool)
+                  txWireSize
                   api
             TxSubmissionLogicV1 ->
               Left $
@@ -653,7 +657,6 @@ mkApps ::
   , ShowProxy (Header blk)
   , ShowProxy (TxId (GenTx blk))
   , ShowProxy (GenTx blk)
-  , Show addrNTN
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   ) =>
@@ -671,7 +674,7 @@ mkApps ::
   ReportPeerMetrics m (ConnectionId addrNTN) ->
   Handlers m addrNTN blk ->
   Apps m addrNTN bCS bBF bTX bKA bPS NodeToNodeInitiatorResult ()
-mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
+mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
   Apps{..}
  where
   (chainSyncRng, chainSyncRng') = splitGen rng
@@ -857,16 +860,12 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
         runServer legacyTxSubmissionServer
       Right newTxSubmissionServer ->
         withPeer
-          (TraceLabelPeer them `contramap` tTxLogicTracer)
-          (getTxChannelsVar kernel)
-          (getTxMempoolSem kernel)
           defaultTxDecisionPolicy
-          (getSharedTxStateVar kernel)
           ( mapTxSubmissionMempoolReader txForgetValidated $
               getMempoolReader (getMempool kernel)
           )
-          (getMempoolWriter (getMempool kernel))
-          txWireSize
+          (getSharedTxStateVar kernel)
+          (getTxCountersVar kernel)
           them
           $ \api ->
             runServer (newTxSubmissionServer api)

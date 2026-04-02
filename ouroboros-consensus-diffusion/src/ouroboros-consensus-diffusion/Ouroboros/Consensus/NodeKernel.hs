@@ -144,20 +144,18 @@ import Ouroboros.Network.PeerSharing
   , ps_POLICY_PEER_SHARE_STICKY_TIME
   )
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
-import Ouroboros.Network.TxSubmission.Inbound.V1
-  ( TxSubmissionInitDelay
-  , TxSubmissionMempoolWriter
-  )
-import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
 import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
   ( SharedTxStateVar
-  , TxChannelsVar
-  , TxMempoolSem
-  , decisionLogicThreads
+  , TxSubmissionCountersVar
   , newSharedTxStateVar
-  , newTxChannelsVar
-  , newTxMempoolSem
+  , newTxSubmissionCountersVar
+  , txCountersThreadV2
   )
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types
+  ( TxSubmissionInitDelay
+  , emptySharedTxState
+  )
+import qualified Ouroboros.Network.TxSubmission.Inbound.V2.Types as InboundV2
 import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
   )
@@ -200,13 +198,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
   , getBlockchainTime :: BlockchainTime m
-  , getTxChannelsVar :: TxChannelsVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
-  -- ^ Communication channels between `TxSubmission` client mini-protocol and
-  -- decision logic.
-  , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+  , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk)
   -- ^ Shared state of all `TxSubmission` clients.
-  , getTxMempoolSem :: TxMempoolSem m
-  -- ^ A semaphore used by tx-submission for submitting `tx`s to the mempool.
+  , getTxCountersVar :: TxSubmissionCountersVar m
+  -- ^ Monotonic tx-submission counters.
   }
 
 -- | Arguments required when initializing a node
@@ -263,11 +258,9 @@ initNodeKernel
     , btime
     , gsmArgs
     , peerSharingRng
-    , txSubmissionRng
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
-    , miniProtocolParameters
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -350,9 +343,8 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_STICKY_TIME
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
-    txChannelsVar <- newTxChannelsVar
-    sharedTxStateVar <- newSharedTxStateVar txSubmissionRng
-    txMempoolSem <- newTxMempoolSem
+    sharedTxStateVar <- newSharedTxStateVar emptySharedTxState
+    txCountersVar <- newTxSubmissionCountersVar mempty
 
     case gnkaLoEAndGDDArgs genesisArgs of
       LoEAndGDDDisabled -> pure ()
@@ -390,13 +382,10 @@ initNodeKernel
           blockFetchConfiguration
 
     void $
-      forkLinkedThread registry "NodeKernel.decisionLogicThreads" $
-        decisionLogicThreads
-          (txLogicTracer tracers)
+      forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
+        txCountersThreadV2
           (txCountersTracer tracers)
-          (txDecisionPolicy miniProtocolParameters)
-          txChannelsVar
-          sharedTxStateVar
+          txCountersVar
 
     return
       NodeKernel
@@ -415,9 +404,8 @@ initNodeKernel
             varOutboundConnectionsState
         , getDiffusionPipeliningSupport
         , getBlockchainTime = btime
-        , getTxChannelsVar = txChannelsVar
         , getSharedTxStateVar = sharedTxStateVar
-        , getTxMempoolSem = txMempoolSem
+        , getTxCountersVar = txCountersVar
         }
    where
     blockForgingController ::
@@ -931,11 +919,11 @@ getMempoolWriter ::
   , HasTxId (GenTx blk)
   ) =>
   Mempool m blk ->
-  TxSubmissionMempoolWriter (GenTxId blk) (GenTx blk) TicketNo m ()
+  InboundV2.TxSubmissionMempoolWriter (GenTxId blk) (GenTx blk) TicketNo m ()
 getMempoolWriter mempool =
-  Inbound.TxSubmissionMempoolWriter
-    { Inbound.txId = txId
-    , mempoolAddTxs = \txs ->
+  InboundV2.TxSubmissionMempoolWriter
+    { InboundV2.txId = txId
+    , InboundV2.mempoolAddTxs = \txs ->
         partitionTxIds <$> addTxs mempool txs
     }
  where

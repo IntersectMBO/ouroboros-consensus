@@ -144,7 +144,7 @@ import Ouroboros.Network.Protocol.Limits (ProtocolTimeLimitsWithRnd (..), waitFo
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import Ouroboros.Network.Protocol.TxSubmission2.Type
-import Ouroboros.Network.TxSubmission.Inbound.V2
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types
   ( TxSubmissionInitDelay (..)
   , TxSubmissionLogicVersion (..)
   )

@@ -178,8 +178,10 @@ import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   , encodeRemoteAddress
   )
 import Ouroboros.Network.RethrowPolicy
-import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
-import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types
+  ( TxSubmissionInitDelay
+  , TxSubmissionLogicVersion
+  )
 import qualified SafeWildCards
 import System.Exit (ExitCode (..))
 import System.FS.API (SomeHasFS (..))
@@ -474,7 +476,6 @@ runWith ::
   , Hashable addrNTN -- the constraint comes from `initNodeKernel`
   , NetworkIO m
   , NetworkAddr addrNTN
-  , Show addrNTN
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->

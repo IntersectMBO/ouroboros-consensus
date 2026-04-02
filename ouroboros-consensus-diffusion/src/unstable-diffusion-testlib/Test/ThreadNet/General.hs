@@ -64,7 +64,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain
-import Ouroboros.Network.TxSubmission.Inbound.V2
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types
   ( TxSubmissionLogicVersion (..)
   )
 import System.FS.Sim.MockFS (MockFS)
