@@ -18,7 +18,8 @@ Cardano distinguishes two kinds of network connections:
 - **[Node-to-Client (NTC)](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Network/NodeToClient.hs)** for communication with local clients (wallets, explorers, CLI tools), which are trusted.
 
 This distinction matters because NTN and NTC connections offer different sets of mini-protocols and have different security considerations.
-NTN connections are further split into upstream (peers from which we receive data) and downstream (peers to which we send data).
+NTN connections are further split into upstream (peers from which we pull data) and downstream (peers to which we serve data).
+All NTN mini-protocols are pull-based: data is only sent in response to requests from the other side, providing natural backpressure.
 
 Blocks are split into a [header and a body](../references/glossary.md#header-and-body).
 Headers are small and can be validated cheaply, so nodes exchange and validate headers first before downloading full block bodies.
@@ -28,9 +29,12 @@ This is reflected in the NTN mini-protocols:
 - **TxSubmission** — exchanges transactions between peers
 
 The NTC mini-protocols are:
+- **ChainSync** — same protocol as NTN, but exchanges full blocks instead of headers
 - **LocalTxSubmission** — clients submit transactions
 - **LocalStateQuery** — clients query the current ledger state
 - **LocalTxMonitor** — clients monitor the mempool
+
+These protocols are also pull-based, except for LocalTxSubmission where the client pushes transactions directly — this is acceptable because local clients are trusted.
 
 Inside the consensus layer, three main components handle this data:
 - **ChainDB** stores the blockchain and performs [chain selection](../references/glossary.md#chain-selection) when new blocks arrive.
@@ -45,7 +49,7 @@ The following sections describe each of these flows in detail.
 
 When a node learns about new blocks from upstream peers, the process happens in two stages.
 
-First, the [ChainSync][chainsync-client] mini-protocol exchanges headers with each upstream peer.
+First, the [ChainSync][chainsync-client] mini-protocol requests headers from each upstream peer.
 As headers arrive, they are validated using the chain state and [ledger views](../references/glossary.md#ledger-view) obtained from ChainDB.
 
 Valid headers are assembled into candidate chain fragments — one per upstream peer.
@@ -76,8 +80,8 @@ This two-stage design means the node only downloads full blocks for chains that 
 
 ## Block diffusion (NTN downstream)
 
-When a downstream peer requests blocks, the node serves them from ChainDB.
-The [ChainSync server][chainsync-server] notifies downstream peers about new headers, and the [BlockFetch server][blockfetch-server] serves block bodies on request.
+Downstream peers pull headers and block bodies from the node (their upstream) via the [ChainSync server][chainsync-server] and [BlockFetch server][blockfetch-server].
+The node serves them from ChainDB.
 
 ```mermaid
 graph TD
@@ -160,12 +164,14 @@ graph TD
     end
 
     Client -->|state queries| ChainDB
+    ChainDB -->|ledger state| Client
     Client -->|mempool queries| Mempool
+    Mempool -->|mempool contents| Client
 ```
 
 ## Internal flows
 
-The consensus layer's internal components also exchange data among themselves.
+The consensus layer's internal components also exchange data with each other.
 
 **Chain selection and block validation**:
 When blocks arrive at [ChainDB][chaindb-api], they are placed in a queue.
@@ -199,29 +205,6 @@ graph TD
     ChainDB -->|ledger states| Forging
     Mempool -->|transactions| Forging
     Forging -->|new blocks| ChainDB
-```
-
-## Passive node
-
-The data flow is much simpler for a node that does not forge blocks, has no downstream peers, and no local clients — its sole purpose is to follow the chain and store it on disk.
-
-```mermaid
-graph TD
-    subgraph NTN["NTN Upstream"]
-        Peer["Upstream Peer"]
-    end
-
-    subgraph Consensus["Consensus"]
-        CS["ChainSync"]
-        BF["BlockFetch"]
-        ChainDB["ChainDB"]
-    end
-
-    Peer -->|headers| CS
-    ChainDB -->|chain state, ledger views| CS
-    CS -->|candidate chains| BF
-    Peer -->|blocks| BF
-    BF -->|blocks| ChainDB
 ```
 
 ## See also
