@@ -89,9 +89,12 @@ Candidates that fork deeper than [*k*](#security-parameter-k) blocks from the cu
 Chain selection is triggered when a new block arrives at [ChainDB][chaindb-api] (downloaded via [BlockFetch](data_flow.md#block-flow-ntn-upstream)).
 It is implemented as a [single-threaded process][chainsel] inside ChainDB — not in a separate protocol component — because ChainDB knows what candidates exist and when new blocks arrive.
 
-The core of the process is finding the preferred candidate among the [chain fragments](../references/glossary.md#prefixTipEtc-and-fragment-chain-fragment) that fork from the [immutable tip](../references/glossary.md#immutable-tip).
+The core of the process is finding the preferred candidate among the [chain fragments](../references/glossary.md#prefixTipEtc-and-fragment-chain-fragment) that extend or fork from the current selection at or after the [immutable tip](../references/glossary.md#immutable-tip).
 As part of adopting a candidate, its blocks are validated by applying them via the ledger.
-If any block fails validation, the candidate is rejected.
+If a block fails validation, it is [recorded as invalid][invalid-block] and the candidate is [truncated][truncate-candidate] to the last valid block.
+All remaining candidates containing the invalid block are also truncated, and chain selection restarts with the updated candidate list.
+Valid prefixes are preserved because blocks from different peers are mixed in the VolatileDB — an invalid block from one peer might sit on a valid chain from another.
+The peer that sent the block triggering chain selection is [punished][punish-peer] if the invalid block is at or before that block in the chain.
 
 ChainDB assumes that no blocks come from the far future — this is enforced earlier by [ChainSync](data_flow.md#block-flow-ntn-upstream), which rejects headers with timestamps too far ahead of the node's wall clock.
 One caveat: during initialization, blocks already in the VolatileDB are not checked for future timestamps.
@@ -104,11 +107,14 @@ When chain selection succeeds:
 - A volatile fragment is selected as the current chain.
 - Blocks at the beginning of the selected fragment may become immutable, moving past the *k* boundary.
 - An [extended ledger state](../references/glossary.md#extended-ledger-state) is produced for each block in the selected volatile fragment.
+- The new selection is made available for other peers to download via [ChainSync](data_flow.md#block-flow-ntn-upstream).
 
 ## Security parameter *k*
 
 The [security parameter *k*][security-param] is the maximum number of blocks the node will ever roll back.
 On Cardano, *k* = 2160.
+With an [active slot coefficient](../references/glossary.md#active-slot-coefficient-f) of 1/20 and a slot length of one second, a block is expected every 20 seconds on average, so *k* blocks are produced in roughly 12 hours.
+Even under adversarial conditions, the [chain growth property](../references/glossary.md#chain-growth-property) guarantees at least *k* blocks within ~36 hours (3*k*/*f* slots).
 This is not just a practical limit — it is required by the [Ouroboros][ouroboros-papers] analysis for consensus to be reached.
 The consensus layer assumes *k* always applies, even for protocols like BFT and Genesis where the formal requirement is slightly different.
 
@@ -117,13 +123,12 @@ The consensus layer assumes *k* always applies, even for protocols like BFT and 
 The guarantee that rollbacks are bounded by *k* is exploited throughout the system:
 
 - **Storage split** — [ChainDB](../references/glossary.md#chaindb) divides the chain into an ImmutableDB (blocks beyond *k*) and a VolatileDB (the last *k* blocks).
-  Since the vast majority of the chain is immutable, block lookup is very efficient.
+  Since the vast majority of the chain is immutable, it can be stored in a simple append-only structure where blocks are efficiently looked up by index rather than searched for.
 - **Chain selection** rejects candidates that fork deeper than *k* from the current tip, as described [above](#the-selection-process).
 - **Historical ledger states** — when switching to a new fork, blocks must be validated against the ledger state at the rollback point.
-  Without *k*, reconstructing that state would require replaying the entire chain.
-  With *k*, the node only needs to maintain at most *k* historical ledger states.
-- **Bounded work for tracking peers** — without a rollback limit, evaluating alternative chains would require unbounded storage and validation work.
-  With *k*, validating and storing *k*+1 blocks per peer suffices.
+  With *k*, the node knows it only needs to maintain [*k*+1 historical ledger states][ledger-db-states], enabling efficient rollbacks without having to reconstruct the state by replaying from the beginning of the chain.
+- **Peer tracking** — the [ChainSync client][chainsync-client] only tracks candidate fragments that fork within the last *k* blocks.
+  Peers whose chains fork deeper are [disconnected][fork-too-deep].
 - **Forecast range** — [header validation](#header-validation) needs [ledger views](../references/glossary.md#ledger-view) for future slots; the range over which these can be forecast is bounded by *k*.
 
 ### Limitations
@@ -198,7 +203,7 @@ Placing the sampling decision in the ledger means the consensus algorithm works 
 
 The consensus layer accesses the `LedgerView` through [`LedgerSupportsProtocol`][ledger-supports-protocol], which provides:
 - `protocolLedgerView` — extract the view from a ticked ledger state.
-- [`ledgerViewForecastAt`][ledger-view-forecast] — obtain a `LedgerView` for a future slot without having seen the intervening blocks.
+- [`ledgerViewForecastAt`][ledger-view-forecast] — obtain a `LedgerView` for a future slot from a ledger state at a prior slot, without having seen the intervening blocks.
   This is needed to validate headers on candidate chains that extend beyond the current tip.
 
 Forecasting is distinct from ticking: ticking advances a full ledger state to a slot (expensive, no blocks allowed in between), while forecasting returns only the `LedgerView` (fast, blocks may exist in between).
@@ -209,14 +214,14 @@ Cross-era forecasting — forecasting across a hard fork boundary — is more co
 The class above is parameterized by a protocol `p`, not a block type.
 Several additional type families and classes provide the glue between blocks and protocols:
 
-- [`BlockProtocol`][block-protocol] — a type family that maps each block type to its consensus protocol.
-  A block is designed for a single protocol.
+- [`BlockProtocol`][block-protocol] — a type family that maps each concrete block type to its consensus protocol.
+  For example, `ShelleyBlock` is parameterized by the protocol, so it can be instantiated with either TPraos or Praos.
 - [`BlockSupportsProtocol`][block-supports-protocol] — provides projections from a concrete header to the [`SelectView`][select-view] (for [chain comparison](#comparing-candidates)) and `ValidateView` (for [header validation](#header-validation)) that the protocol needs.
 - [`LedgerSupportsProtocol`][ledger-supports-protocol] — bridges the ledger and the protocol, providing the `LedgerView` and forecasting.
 - [`ValidateEnvelope`][validate-envelope] — defines the [envelope checks](#header-validation) (block number, slot, hash chain).
 - [`ProtocolHeaderSupportsProtocol`][protocol-header-supports-protocol] — a Shelley-specific bridge that provides additional projections from protocol headers.
 
-The Cardano chain combines all eras (and their protocols) through the Hard Fork Combinator, which provides composite instances for these classes.
+The Cardano chain combines all eras (and their protocols) through the Hard Fork Combinator, which provides composite instances for `ConsensusProtocol` and the classes above.
 
 ## Further reading
 
@@ -247,5 +252,11 @@ The Cardano chain combines all eras (and their protocols) through the Hard Fork 
 [validate-envelope]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L357
 [validate-header]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L503
 [in-future-check]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client/InFutureCheck.hs#L134
+[invalid-block]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L1284
+[truncate-candidate]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L1132
+[punish-peer]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L1294
+[ledger-db-states]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V2.hs#L212
+[chainsync-client]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs
+[fork-too-deep]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs#L869
 [praos-paper]: https://iohk.io/en/research/library/papers/ouroboros-praos-an-adaptively-secure-semi-synchronous-proof-of-stake-protocol/
 [ouroboros-papers]: https://iohk.io/en/research/library/

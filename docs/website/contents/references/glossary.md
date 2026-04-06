@@ -212,7 +212,7 @@ When Ouroboros runs as intended, all short forks are short-lived.
 ## ;Extended ledger state
 
 The combination of a [ledger state](#ledger-state) and the consensus protocol's chain-dependent state (`ChainDepState`) at a given point on the chain.
-The extended ledger state is produced for each block during [chain selection](#chainsync) and is needed for both block validation and protocol operations such as leadership checks and header validation.
+The extended ledger state is produced for each block during [chain selection](#chaindb) and is needed for both block validation and protocol operations such as leadership checks and header validation.
 
 ## ;Forecasting
 
@@ -343,7 +343,7 @@ The immutable chain of whichever well-connected and caught-up honest node has th
 
 ## ;Immutable tip
 
-The most recent block on the node's chain that is considered [immutable](#immutability-stable-settled-etc) — i.e., it has at least *k* descendants on the current selection.
+The most recent block on the node's chain that is considered [immutable](#immutability-stable-settled-etc) — i.e., it has at least *k* descendants on the current selection, unless on-disk data in [ChainDB](#chaindb) is corrupted.
 In the storage layer, this is the boundary between the [ImmutableDB](#immutable-chain) and the VolatileDB.
 Chain selection only considers candidate fragments that fork from at or after the immutable tip.
 
