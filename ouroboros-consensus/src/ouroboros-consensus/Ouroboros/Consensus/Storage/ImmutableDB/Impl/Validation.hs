@@ -102,15 +102,26 @@ validateAndReopen validateEnv registry valPol = wrapFsError (Proxy @blk) $ do
       cacheConfig
       chunkInfo
       chunk
-  case tip of
-    Origin -> assert (chunk == firstChunkNo) $ do
-      traceWith tracer NoValidLastLocation
-      -- TODO: mkOpenState does not need to run in WithTempRegistry.
-      runWithTempRegistry $ (\x -> (x, x)) <$> mkOpenState hasFS index chunk Origin MustBeNew
-    NotOrigin tip' -> do
-      traceWith tracer $ ValidatedLastLocation chunk tip'
-      -- TODO: mkOpenState does not need to run in WithTempRegistry.
-      runWithTempRegistry $ (\x -> (x, x)) <$> mkOpenState hasFS index chunk tip AllowExisting
+  -- We could omit using a temporary registry in this function because we are
+  -- initializing the system, the handles will not be modified during this step,
+  -- and an exception will either bring down the whole system or do so after
+  -- closing the ChainDB (which after initialization is in the top level
+  -- registry). However, the implementation uses 'mkOpenState' while running
+  -- several times, and in those cases it is important to run with a temporary
+  -- registry until the new handle has been put in the OpenState and will be
+  -- closed by the ChainDB closing.
+  --
+  -- Because of the above, in this particular function we can execute the
+  -- WithTempRegistry block here and don't need to propagate it any further, but
+  -- we cannot get rid of it entirely by modifying 'mkOpenState'.
+  runWithTempRegistry $
+    (\x -> (x, x)) <$> case tip of
+      Origin -> assert (chunk == firstChunkNo) $ do
+        lift $ traceWith tracer NoValidLastLocation
+        mkOpenState hasFS index chunk Origin MustBeNew
+      NotOrigin tip' -> do
+        lift $ traceWith tracer $ ValidatedLastLocation chunk tip'
+        mkOpenState hasFS index chunk tip AllowExisting
  where
   ValidateEnv{hasFS, tracer, cacheConfig, chunkInfo} = validateEnv
   cacheTracer = contramap TraceCacheEvent tracer
