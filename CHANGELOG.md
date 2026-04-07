@@ -6,6 +6,22 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-3.0.0.0'></a>
+## 3.0.0.0 -- 2026-04-07
+
+### Breaking
+
+- `reapplyTx` now doesn't compute the differences, and instead relies on `reapplyTxs` already having them cached.
+- Removed `ComputeDiffs` in favor of `WhatToDoWithTxDiffs`.
+
+### Non-Breaking
+
+- Don't use `WithTempRegistry` in the VolatileDB open routine.
+
+### Patch
+
+- Transaction differences are cached the first time the transaction is validated, and re-used when revalidating the mempool on forging and syncing with the LedgerDB.
+
 <a id='changelog-2.0.0.0'></a>
 ## 2.0.0.0 -- 2026-03-31
 
