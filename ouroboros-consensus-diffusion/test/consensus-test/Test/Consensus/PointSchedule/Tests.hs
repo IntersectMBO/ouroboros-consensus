@@ -47,7 +47,7 @@ import Test.Util.TestEnv
 tests :: TestTree
 tests =
   adjustQuickCheckTests (* 100) $
-    adjustOption (\(QuickCheckMaxSize n) -> QuickCheckMaxSize (n `div` 10)) $
+    adjustQuickCheckMaxSize (`div` 10) $
       testGroup
         "PointSchedule"
         [ testProperty "zipMany" prop_zipMany
