@@ -28,16 +28,12 @@ implGetSnapshotFor ::
   m (MempoolSnapshot blk)
 implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
   is <- atomically $ readTMVar istate
-  let txs =
-        [ TxSeq.TxTicket tx tn tz
-        | TxSeq.TxTicket (ValidatedTxWithDiffs tx _) tn tz <- TxSeq.toList $ isTxs is
-        ]
   if pointHash (isTip is) == castHash (getTipHash ticked)
     && isSlotNo is == slot
     then
       -- We are looking for a snapshot exactly for the ledger state we already
       -- have cached, then just return it.
-      pure $ snapshotFromValidTxs txs (castPoint $ isTip is) (isSlotNo is)
+      pure $ snapshotFromIS is
     else do
       values <-
         if pointHash (isTip is) == castHash (getTipHash ticked)
@@ -47,9 +43,18 @@ implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
           -- We are looking for a snapshot at a different state, so we
           -- need to read the values from the ledgerdb.
           else readUntickedTables (isTxKeys is)
-      pure $ computeSnapshot cfg slot ticked values txs
+      pure $
+        computeSnapshot
+          capacityOverride
+          cfg
+          slot
+          ticked
+          values
+          (isLastTicketNo is)
+          (TxSeq.toList $ isTxs is)
  where
   MempoolEnv
     { mpEnvStateVar = istate
     , mpEnvLedgerCfg = cfg
+    , mpEnvCapacityOverride = capacityOverride
     } = mpEnv

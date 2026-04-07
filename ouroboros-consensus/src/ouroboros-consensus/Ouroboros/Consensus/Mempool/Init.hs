@@ -19,7 +19,6 @@ import Ouroboros.Consensus.Mempool.API (Mempool (..), MempoolTimeoutConfig)
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.Query
-import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Mempool.Update
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
@@ -121,14 +120,6 @@ mkMempool mpEnv =
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }
  where
-  snapshotFromIS is =
-    snapshotFromValidTxs
-      [ TxSeq.TxTicket tx tn tz
-      | TxSeq.TxTicket (ValidatedTxWithDiffs tx _) tn tz <- TxSeq.toList $ isTxs is
-      ]
-      (isTip is)
-      (isSlotNo is)
-
   MempoolEnv
     { mpEnvStateVar = istate
     } = mpEnv
