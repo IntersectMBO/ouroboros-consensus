@@ -130,7 +130,7 @@ instance LedgerSupportsMempool ByronBlock where
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
-  reapplyTx _ cfg slot vtx st =
+  reapplyTx cfg slot vtx st =
     applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto

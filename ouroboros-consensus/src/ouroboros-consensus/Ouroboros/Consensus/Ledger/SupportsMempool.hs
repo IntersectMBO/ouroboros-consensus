@@ -2,15 +2,19 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , ByteSize32 (..)
-  , ComputeDiffs (..)
+  , WhatToDoWithTxDiffs (..)
+  , InputTxDiffs
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -85,27 +89,16 @@ data WhetherToIntervene
     Intervene
   deriving Show
 
--- | Whether to keep track of the diffs produced by applying the transactions.
---
--- When getting a mempool snapshot, we will revalidate all the
--- transactions but we won't do anything useful with the resulting
--- state. We can safely omit computing the differences in this case.
---
--- This optimization is worthwile as snapshotting is in the critical
--- path of block minting, and we don't make use of the resulting
--- state, only of the transactions that remain valid.
---
--- Eventually, the Ledger rules will construct the differences for us,
--- so this optimization will no longer be needed. That's why we chose
--- to go with a boolean isomorph instead of something fancier.
-data ComputeDiffs
-  = -- | This option should be used when syncing the mempool with the
-    -- LedgerDB, to store a useful state in the mempool.
-    ComputeDiffs
-  | -- | This option should be used only when snapshotting the mempool,
-    -- as we discard the resulting state anyways.
-    IgnoreDiffs
-  deriving Show
+-- | When we are revalidating the transactions in the mempool, we either will
+-- store the resulting differences (when re-syncing with the LedgerDB) or we
+-- simply don't care (when acquiring a mempool snapshot for forging a block).
+type data WhatToDoWithTxDiffs = Collect | Discard
+
+-- | This type family serves to make sure that when we are going to discard the
+-- differences, we don't even have differences around that we might misuse.
+type family InputTxDiffs blk wtd where
+  InputTxDiffs blk Discard = ()
+  InputTxDiffs blk Collect = LedgerTables (TickedLedgerState blk) DiffMK
 
 class
   ( UpdateLedger blk
@@ -152,14 +145,13 @@ class
   -- first state one that contains the values for all the transactions.
   reapplyTx ::
     HasCallStack =>
-    ComputeDiffs ->
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     Validated (GenTx blk) ->
     -- | Contains at least the values for the tx to reapply
     TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk TrackingMK)
+    Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -176,34 +168,30 @@ class
   -- in the same order as they were given, as we will use those later on to
   -- filter a list of 'TxTicket's.
   reapplyTxs ::
-    ComputeDiffs ->
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
-    [(Validated (GenTx blk), extra)] ->
+    [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
     TickedLedgerState blk ValuesMK ->
-    ReapplyTxsResult extra blk
-  reapplyTxs doDiffs cfg slot txs st =
-    ( \(err, val, st') ->
-        ReapplyTxsResult
-          err
-          (reverse val)
-          st'
-    )
-      $ Foldable.foldl'
-        ( \(accE, accV, st') (tx, extra) ->
-            case runExcept (reapplyTx doDiffs cfg slot tx $ trackingToValues st') of
-              Left err -> (Invalidated tx err : accE, accV, st')
-              Right st'' ->
-                ( accE
-                , (tx, extra) : accV
-                , case doDiffs of
-                    ComputeDiffs -> prependTrackingDiffs st' st''
-                    IgnoreDiffs -> st''
-                )
+    ReapplyTxsResult extra blk wtd
+  reapplyTxs cfg slot txs st =
+    (\(err, val, st') -> ReapplyTxsResult err (reverse val) (forgetLedgerTables st')) $
+      foldReapplyTxs fst3 txs
+   where
+    fst3 (a, _, _) = a
+
+    foldReapplyTxs ::
+      (a -> Validated (GenTx blk)) ->
+      [a] ->
+      ([Invalidated blk], [a], TickedLedgerState blk ValuesMK)
+    foldReapplyTxs projectTx =
+      Foldable.foldl'
+        ( \(accE, accV, st') a ->
+            case runExcept (reapplyTx cfg slot (projectTx a) st') of
+              Left err -> (Invalidated (projectTx a) err : accE, accV, st')
+              Right st'' -> (accE, a : accV, st'')
         )
-        ([], [], attachEmptyDiffs st)
-        txs
+        ([], [], st)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
@@ -226,6 +214,9 @@ class
   -- be able to remove this optimization altogether.
 
   -- | Prepend diffs on ledger states
+  --
+  -- Intended to be non-default in the HardFork instance for optimizing
+  -- performance.
   prependMempoolDiffs ::
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk DiffMK ->
@@ -233,6 +224,9 @@ class
   prependMempoolDiffs = prependDiffs
 
   -- | Apply diffs on ledger states
+  --
+  -- Intended to be non-default in the HardFork instance for optimizing
+  -- performance.
   applyMempoolDiffs ::
     LedgerTables (LedgerState blk) ValuesMK ->
     LedgerTables (LedgerState blk) KeysMK ->
@@ -256,15 +250,14 @@ class
 nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
 
-data ReapplyTxsResult extra blk
+data ReapplyTxsResult extra blk wtd
   = ReapplyTxsResult
   { invalidatedTxs :: ![Invalidated blk]
   -- ^ txs that are now invalid. Order doesn't matter
-  , validatedTxs :: ![(Validated (GenTx blk), extra)]
+  , validatedTxs :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
   -- ^ txs that are valid again, order must be the same as the order in
   -- which txs were received
-  , resultingState :: !(TickedLedgerState blk TrackingMK)
-  -- ^ Resulting ledger state
+  , resultingState :: !(TickedLedgerState blk EmptyMK)
   }
 
 -- | A generalized transaction, 'GenTx', identifier.

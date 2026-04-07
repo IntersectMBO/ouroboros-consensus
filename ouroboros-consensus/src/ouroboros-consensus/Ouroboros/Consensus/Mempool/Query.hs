@@ -33,7 +33,7 @@ implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
     then
       -- We are looking for a snapshot exactly for the ledger state we already
       -- have cached, then just return it.
-      pure . snapshotFromIS $ is
+      pure $ snapshotFromIS is
     else do
       values <-
         if pointHash (isTip is) == castHash (getTipHash ticked)

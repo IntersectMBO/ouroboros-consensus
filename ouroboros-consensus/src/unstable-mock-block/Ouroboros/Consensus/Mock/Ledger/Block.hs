@@ -618,8 +618,8 @@ instance
       , ValidatedSimpleGenTx tx
       )
 
-  reapplyTx _ cfg slot vtx st =
-    attachAndApplyDiffs st . fst
+  reapplyTx cfg slot vtx st =
+    applyDiffs st . fst
       <$> applyTx cfg DoNotIntervene slot (forgetValidatedSimpleGenTx vtx) st
 
   txForgetValidated = forgetValidatedSimpleGenTx

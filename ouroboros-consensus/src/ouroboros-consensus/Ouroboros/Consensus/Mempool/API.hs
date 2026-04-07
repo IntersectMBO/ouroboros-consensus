@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -313,19 +314,28 @@ data MempoolTimeoutConfig = MempoolTimeoutConfig
 -- | The result of attempting to add a transaction to the mempool.
 data MempoolAddTxResult blk
   = -- | The transaction was added to the mempool.
-    MempoolTxAdded !(Validated (GenTx blk))
+    MempoolTxAdded !(Validated (GenTx blk)) !(LedgerTables (TickedLedgerState blk) DiffMK)
   | -- | The transaction was rejected and could not be added to the mempool
     -- for the specified reason.
     MempoolTxRejected !(GenTx blk) !(ApplyTxErr blk)
 
 deriving instance
-  (Eq (GenTx blk), Eq (Validated (GenTx blk)), Eq (ApplyTxErr blk)) => Eq (MempoolAddTxResult blk)
+  ( Eq (GenTx blk)
+  , Eq (Validated (GenTx blk))
+  , Eq (ApplyTxErr blk)
+  , Eq (LedgerTables (TickedLedgerState blk) DiffMK)
+  ) =>
+  Eq (MempoolAddTxResult blk)
 deriving instance
-  (Show (GenTx blk), Show (Validated (GenTx blk)), Show (ApplyTxErr blk)) =>
+  ( Show (GenTx blk)
+  , Show (Validated (GenTx blk))
+  , Show (ApplyTxErr blk)
+  , Show (LedgerTables (TickedLedgerState blk) DiffMK)
+  ) =>
   Show (MempoolAddTxResult blk)
 
 mempoolTxAddedToMaybe :: MempoolAddTxResult blk -> Maybe (Validated (GenTx blk))
-mempoolTxAddedToMaybe (MempoolTxAdded vtx) = Just vtx
+mempoolTxAddedToMaybe (MempoolTxAdded vtx _) = Just vtx
 mempoolTxAddedToMaybe _ = Nothing
 
 isMempoolTxAdded :: MempoolAddTxResult blk -> Bool
@@ -442,7 +452,7 @@ data MempoolSnapshot blk = MempoolSnapshot
   -- ^ Get the size of the mempool snapshot.
   , snapshotSlotNo :: SlotNo
   -- ^ The block number of the "virtual block" under construction
-  , snapshotStateHash :: ChainHash (TickedLedgerState blk)
+  , snapshotStateHash :: ChainHash blk
   -- ^ The resulting state currently in the mempool after applying the
   -- transactions
   , snapshotPoint :: Point blk

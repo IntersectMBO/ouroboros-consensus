@@ -74,8 +74,7 @@ forkSyncStateOnTipPointChange menv reg =
         }
  where
   action :: Point blk -> m ()
-  action _a =
-    void $ implSyncWithLedger menv
+  action _a = implSyncWithLedger (const ()) menv
 
   -- Using the tip ('Point') allows for quicker equality checks
   getCurrentTip :: STM m (Point blk)
@@ -117,7 +116,7 @@ mkMempool mpEnv =
     , getSnapshot = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getCapacity = isCapacity <$> readTMVar istate
-    , testSyncWithLedger = implSyncWithLedger mpEnv
+    , testSyncWithLedger = implSyncWithLedger snapshotFromIS mpEnv
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }
  where
