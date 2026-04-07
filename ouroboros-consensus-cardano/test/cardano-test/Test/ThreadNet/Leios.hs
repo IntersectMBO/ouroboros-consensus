@@ -63,7 +63,7 @@ import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInf
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
-import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
+import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..), ProtocolInfo (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block (shelleyBlockRaw)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
@@ -190,7 +190,7 @@ prop_leios_blocksProduced seed =
 
   throughput = fromIntegral (sum includedTxCounts) / fromRational numSlots :: Double
 
-  testOutput =
+  (testOutput, _protocolInfo) =
     runThreadNet seed (NumSlots $ ceiling numSlots) (NumCoreNodes $ fromIntegral numNodes)
 
   numNodes = 3 :: Integer
@@ -199,47 +199,56 @@ prop_leios_blocksProduced seed =
 
 -- * Running the thread net
 
-runThreadNet :: Seed -> NumSlots -> NumCoreNodes -> TestOutput (CardanoBlock StandardCrypto)
+runThreadNet ::
+  Seed ->
+  NumSlots ->
+  NumCoreNodes ->
+  (TestOutput (CardanoBlock StandardCrypto), ProtocolInfo (CardanoBlock StandardCrypto))
 runThreadNet initSeed numSlots numCoreNodes =
-  runTestNetwork
-    testConfig
-    testConfigB
-    TestConfigMB
-      { nodeInfo = \(CoreNodeId nid) ->
-          let (protocolInfo, blockForging) =
-                protocolInfoCardano
-                  CardanoProtocolParams
-                    { byronProtocolParams =
-                        ProtocolParamsByron
-                          { byronGenesis
-                          , byronPbftSignatureThreshold = Nothing
-                          , byronProtocolVersion = Byron.ProtocolVersion 0 0 0
-                          , byronSoftwareVersion = theProposedSoftwareVersion
-                          , byronLeaderCredentials = Nothing
-                          }
-                    , shelleyBasedProtocolParams =
-                        ProtocolParamsShelleyBased
-                          { shelleyBasedInitialNonce = NeutralNonce
-                          , shelleyBasedLeaderCredentials =
-                              -- NOTE: Needed to hard-fork into shelley. After
-                              -- that, with d=0, it's stake based leaders.
-                              pure . mkLeaderCredentials $ coreNodes !! fromIntegral nid
-                          }
-                    , cardanoHardForkTriggers = hardForkInto Conway
-                    , cardanoLedgerTransitionConfig =
-                        -- TODO: provide better alonzo/conway genesis
-                        mkLatestTransitionConfig shelleyGenesis exampleAlonzoGenesis exampleConwayGenesis
-                    , cardanoCheckpoints = mempty
-                    , cardanoProtocolVersion = conwayProtVer
-                    }
-           in TestNodeInitialization
-                { tniProtocolInfo = protocolInfo
-                , tniCrucialTxs = []
-                , tniBlockForging = blockForging
-                }
-      , mkRekeyM = Nothing
-      }
+  ( runTestNetwork
+      testConfig
+      testConfigB
+      TestConfigMB
+        { nodeInfo = \(CoreNodeId nid) ->
+            let (protocolInfo, blockForging) = protocolInfoCardano (cardanoProtocolParams nid)
+             in TestNodeInitialization
+                  { tniProtocolInfo = protocolInfo
+                  , tniCrucialTxs = []
+                  , tniBlockForging = blockForging
+                  }
+        , mkRekeyM = Nothing
+        }
+  , protocolInfo0
+  )
  where
+  protocolInfo0 = fst $ protocolInfoCardano @StandardCrypto @IO (cardanoProtocolParams (0 :: Word64))
+
+  cardanoProtocolParams nid =
+    CardanoProtocolParams
+      { byronProtocolParams =
+          ProtocolParamsByron
+            { byronGenesis
+            , byronPbftSignatureThreshold = Nothing
+            , byronProtocolVersion = Byron.ProtocolVersion 0 0 0
+            , byronSoftwareVersion = theProposedSoftwareVersion
+            , byronLeaderCredentials = Nothing
+            }
+      , shelleyBasedProtocolParams =
+          ProtocolParamsShelleyBased
+            { shelleyBasedInitialNonce = NeutralNonce
+            , shelleyBasedLeaderCredentials =
+                -- NOTE: Needed to hard-fork into shelley. After
+                -- that, with d=0, it's stake based leaders.
+                pure . mkLeaderCredentials $ coreNodes !! fromIntegral nid
+            }
+      , cardanoHardForkTriggers = hardForkInto Conway
+      , cardanoLedgerTransitionConfig =
+          -- TODO: provide better alonzo/conway genesis
+          mkLatestTransitionConfig shelleyGenesis exampleAlonzoGenesis exampleConwayGenesis
+      , cardanoCheckpoints = mempty
+      , cardanoProtocolVersion = conwayProtVer
+      }
+
   conwayProtVer = ProtVer (eraProtVerLow @ConwayEra) 0
 
   NumCoreNodes n = numCoreNodes
