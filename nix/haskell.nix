@@ -4,7 +4,22 @@ let
   inherit (prev) lib;
   fs = lib.fileset;
   inherit (final) haskell-nix;
-
+  # We're restricting the source closure for the Haskell project to avoid unnecessary reruns of builds and tests.
+  # NOTE(bladyjoker): Add any files needed for the Haskell compilation here.
+  ouroborosConsensusSrc = fs.toSource {
+    root = ./..;
+    fileset = fs.unions [
+      ../LICENSE
+      ../NOTICE
+      ../cabal
+      ../cabal.project
+      ../ouroboros-consensus
+      ../ouroboros-consensus-cardano
+      ../ouroboros-consensus-diffusion
+      ../ouroboros-consensus-protocol
+      ../ouroboros-consensus.cabal
+    ];
+  };
   forAllProjectPackages = cfg: args@{ config, lib, ... }: {
     options.packages = lib.genAttrs config.package-keys (_:
       lib.mkOption {
@@ -14,7 +29,7 @@ let
       });
   };
   hsPkgs = haskell-nix.cabalProject {
-    src = ./..;
+    src = ouroborosConsensusSrc;
     compiler-nix-name = "ghc967";
     flake.variants = {
       ghc910 = { compiler-nix-name = lib.mkForce "ghc9103"; };
@@ -74,7 +89,7 @@ let
       noAsserts = {
         src = lib.mkForce (final.applyPatches {
           name = "consensus-src-no-asserts";
-          src = ./..;
+          src = ouroborosConsensusSrc;
           postPatch = ''echo > cabal/asserts.cabal'';
         });
       };
