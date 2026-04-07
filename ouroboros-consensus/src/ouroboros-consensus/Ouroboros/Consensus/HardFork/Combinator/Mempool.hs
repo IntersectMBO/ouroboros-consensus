@@ -28,7 +28,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
 
 import Control.Arrow ((+++))
 import Control.Monad.Except
-import qualified Data.Foldable as F
 import Data.Functor.Identity
 import Data.Functor.Product
 import Data.Kind (Type)
@@ -56,7 +55,6 @@ import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
 
@@ -114,15 +112,15 @@ type instance ApplyTxErr (HardForkBlock xs) = HardForkApplyTxErr xs
 --
 -- This is also isomorphic to
 -- @'Ouroboros.Consensus.Ledger.SupportsMempool.ReapplyTxsResult' (HardForkBlock xs)@
-type DecomposedReapplyTxsResult extra xs =
+type DecomposedReapplyTxsResult extra xs wtd =
   (,,)
     [Invalidated (HardForkBlock xs)]
     [ ( Validated (GenTx (HardForkBlock xs))
-      , LedgerTables (TickedLedgerState (HardForkBlock xs)) DiffMK
+      , InputTxDiffs (HardForkBlock xs) wtd
       , extra
       )
     ]
-    :.: FlipTickedLedgerState DiffMK
+    :.: FlipTickedLedgerState EmptyMK
 
 instance
   ( CanHardFork xs
@@ -144,37 +142,26 @@ instance
         tls
 
   reapplyTxs ::
-    forall extra.
-    ComputeDiffs ->
+    forall wtd extra.
     LedgerConfig (HardForkBlock xs) ->
     SlotNo ->
     -- \^ Slot number of the block containing the tx
     [ ( Validated (GenTx (HardForkBlock xs))
-      , LedgerTables (TickedLedgerState (HardForkBlock xs)) DiffMK
+      , InputTxDiffs (HardForkBlock xs) wtd
       , extra
       )
     ] ->
     TickedLedgerState (HardForkBlock xs) ValuesMK ->
-    ReapplyTxsResult extra (HardForkBlock xs)
+    ReapplyTxsResult extra (HardForkBlock xs) wtd
   reapplyTxs
-    doDiffs
     HardForkLedgerConfig{..}
     slot
     vtxs
     (TickedHardForkLedgerState transition hardForkState) =
-      ( \(err, val, st') ->
-          let st'' = TickedHardForkLedgerState transition st'
-           in ReapplyTxsResult
-                (mismatched' ++ err)
-                val
-                ( case doDiffs of
-                    IgnoreDiffs -> st''
-                    ComputeDiffs ->
-                      st''
-                        `withLedgerTables` (F.foldl' (\acc (_, df, _) -> ltliftA2 rawPrependDiffs acc df) emptyLedgerTables val)
-                )
+      ( \(err, val, st) ->
+          ReapplyTxsResult (mismatched' ++ err) val (TickedHardForkLedgerState transition st)
       )
-        . hsequence'
+        $ hsequence'
         $ hcizipWith
           proxySingle
           modeApplyCurrent
@@ -200,30 +187,24 @@ instance
               (InPairs.requiringBoth cfgs hardForkInjectTxs)
           )
           (State.getHardForkState hardForkState)
-          ( map
-              ( \(tx, df, extra) -> hmap (Comp . (extra,df,)) . getOneEraValidatedGenTx . getHardForkValidatedGenTx $ tx
-              )
-              vtxs
-          )
+          [ hmap (Comp . (extra,df,)) . getOneEraValidatedGenTx . getHardForkValidatedGenTx $ tx
+          | (tx, df, extra) <- vtxs
+          ]
 
       mismatched' :: [Invalidated (HardForkBlock xs)]
       mismatched' =
-        map
-          ( \x ->
-              flip
-                Invalidated
-                ( HardForkApplyTxErrWrongEra $
-                    MismatchEraInfo $
-                      Match.bihcmap proxySingle singleEraInfo ledgerInfo $
-                        snd x
-                )
-                . HardForkValidatedGenTx
-                . OneEraValidatedGenTx
-                . hmap (thd . unComp)
-                . fst
-                $ x
-          )
-          mismatched
+        [ flip
+            Invalidated
+            ( HardForkApplyTxErrWrongEra $
+                MismatchEraInfo $
+                  Match.bihcmap proxySingle singleEraInfo ledgerInfo y
+            )
+            . HardForkValidatedGenTx
+            . OneEraValidatedGenTx
+            . hmap (thd . unComp)
+            $ x
+        | (x, y) <- mismatched
+        ]
 
       thd (_, _, x) = x
 
@@ -235,29 +216,25 @@ instance
         Product
           (FlipTickedLedgerState ValuesMK)
           ( []
-              :.: (,,) extra (LedgerTables (TickedLedgerState (HardForkBlock xs)) DiffMK)
+              :.: (,,) extra (InputTxDiffs (HardForkBlock xs) wtd)
               :.: WrapValidatedGenTx
           )
           blk ->
-        DecomposedReapplyTxsResult extra xs blk
+        DecomposedReapplyTxsResult extra xs wtd blk
       modeApplyCurrent index cfg (Pair (FlipTickedLedgerState st) txs) =
         let ReapplyTxsResult err val st' =
-              reapplyTxs
-                IgnoreDiffs
+              reapplyTxs @blk @Discard
                 (unwrapLedgerConfig cfg)
                 slot
-                [(unwrapValidatedGenTx tx, emptyLedgerTables, (df, tk)) | (Comp (tk, df, tx)) <- unComp txs]
+                [(unwrapValidatedGenTx tx, (), (df, tk)) | (Comp (tk, df, tx)) <- unComp txs]
                 st
          in Comp
               ( [ injectValidatedGenTx index (getInvalidated x) `Invalidated` injectApplyTxErr index (getReason x)
                 | x <- err
                 ]
-              , map
-                  ( ( \(x, _, (z1, z2)) ->
-                        (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx $ x, z1, z2)
-                    )
-                  )
-                  val
+              , [ (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx $ x, z1, z2)
+                | (x, (), (z1, z2)) <- val
+                ]
               , FlipTickedLedgerState st'
               )
 

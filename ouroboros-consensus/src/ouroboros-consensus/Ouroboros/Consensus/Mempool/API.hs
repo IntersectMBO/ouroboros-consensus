@@ -452,7 +452,7 @@ data MempoolSnapshot blk = MempoolSnapshot
   -- ^ Get the size of the mempool snapshot.
   , snapshotSlotNo :: SlotNo
   -- ^ The block number of the "virtual block" under construction
-  , snapshotStateHash :: ChainHash (TickedLedgerState blk)
+  , snapshotStateHash :: ChainHash blk
   -- ^ The resulting state currently in the mempool after applying the
   -- transactions
   , snapshotPoint :: Point blk

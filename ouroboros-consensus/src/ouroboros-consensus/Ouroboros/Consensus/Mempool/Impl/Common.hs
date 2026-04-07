@@ -15,6 +15,7 @@
 module Ouroboros.Consensus.Mempool.Impl.Common
   ( -- * Internal state
     InternalState (..)
+  , ValidatedTxWithDiffs (..)
   , isMempoolSize
 
     -- * Mempool environment
@@ -38,7 +39,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   , jsonMempoolRejectionDetails
 
     -- * Conversions
-  , snapshotFromIS
+  , snapshotFromValidTxs
 
     -- * Ticking a ledger state
   , tickLedgerState
@@ -80,13 +81,28 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
   Internal State
 -------------------------------------------------------------------------------}
 
+-- | We cache the differences produced by validating each transaction, as the
+-- current differences in UTxO-HD do not depend on which block the transaction
+-- was validated. This means that these differences cannot be "stale", as long
+-- as the transaction is considered, the differences will be the same. If we
+-- extend UTxO-HD to consider more differences, this might be violated and we
+-- will have to reconsider what we can cache and what we can't.
+data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
+  { validatedTx :: !(Validated (GenTx blk))
+  , validatedTxDiffs :: !(LedgerTables (TickedLedgerState blk) DiffMK)
+  }
+  deriving Generic
+
+deriving instance
+  ( NoThunks (Validated (GenTx blk))
+  , NoThunks (TxIn (LedgerState blk))
+  , NoThunks (TxOut (LedgerState blk))
+  ) =>
+  NoThunks (ValidatedTxWithDiffs blk)
+
 -- | Internal state in the mempool
 data InternalState blk = IS
-  { isTxs ::
-      !( TxSeq
-           (TxMeasureWithDiffTime blk)
-           (Validated (GenTx blk), LedgerTables (TickedLedgerState blk) DiffMK)
-       )
+  { isTxs :: !(TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
   -- ^ Transactions currently in the mempool
   --
   -- NOTE: the total size of the transactions in 'isTxs' may exceed the
@@ -352,7 +368,11 @@ validateNewTransaction cfg wti tx txsz origValues st is =
       , \dur ->
           is
             { isTxs =
-                isTxs :> TxTicket (vtx, projectLedgerTables st') nextTicketNo (MkTxMeasureWithDiffTime txsz dur)
+                isTxs
+                  :> TxTicket
+                    (ValidatedTxWithDiffs vtx (projectLedgerTables st'))
+                    nextTicketNo
+                    (MkTxMeasureWithDiffTime txsz dur)
             , isTxKeys = isTxKeys <> getTransactionKeySets tx
             , isTxValues = ltliftA2 unionValues isTxValues origValues
             , isTxIds = Set.insert (txId tx) isTxIds
@@ -381,6 +401,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
 -- revalidating the whole set of transactions onto a new state, or if we remove
 -- some transactions and revalidate the remaining ones.
 revalidateTxsFor ::
+  forall blk.
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
@@ -391,30 +412,27 @@ revalidateTxsFor ::
   LedgerTables (LedgerState blk) ValuesMK ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
-  [ TxTicket
-      (TxMeasureWithDiffTime blk)
-      (Validated (GenTx blk), LedgerTables (TickedLedgerState blk) DiffMK)
-  ] ->
+  [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
   RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
-  let theTxs = map wrap txTickets
-      wrap = \(TxTicket (tx, df) tk tz) -> (tx, df, (tk, tz))
-      unwrap = \(tx, df, (tk, tz)) -> TxTicket (tx, df) tk tz
-      ReapplyTxsResult err val st' =
-        reapplyTxs ComputeDiffs cfg slot theTxs $
-          applyMempoolDiffs
-            values
-            (Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) theTxs)
-            st
-      keys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) val
-      fst3 (x, _, _) = x
+  let inputTxs = map wrap txTickets
+      inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
+
+      ReapplyTxsResult err validTxs st' =
+        reapplyTxs @blk @Collect cfg slot inputTxs $
+          applyMempoolDiffs values inputKeys st
+
+      outputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) validTxs
+      outputDiffs = Foldable.foldl' rawPrependDiffs (DiffMK mempty) $ map (getLedgerTables . snd3) validTxs
    in RevalidateTxsResult
         ( IS
-            { isTxs = TxSeq.fromList $ map unwrap val
-            , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) val
-            , isTxKeys = keys
-            , isTxValues = ltliftA2 restrictValuesMK values keys
-            , isLedgerState = st'
+            { isTxs = TxSeq.fromList $ map unwrap validTxs
+            , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) validTxs
+            , isTxKeys = outputKeys
+            , isTxValues = ltliftA2 restrictValuesMK values outputKeys
+            , isLedgerState =
+                st'
+                  `withLedgerTables` (ltliftA2 rawPrependDiffs (projectLedgerTables st) (LedgerTables outputDiffs))
             , isTip = castPoint $ getTip st
             , isSlotNo = slot
             , isLastTicketNo = lastTicketNo
@@ -422,6 +440,11 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
             }
         )
         err
+ where
+  wrap = \(TxTicket (ValidatedTxWithDiffs tx df) tk tz) -> (tx, df, (tk, tz))
+  unwrap = \(tx, df, (tk, tz)) -> TxTicket (ValidatedTxWithDiffs tx df) tk tz
+  fst3 (x, _, _) = x
+  snd3 (_, x, _) = x
 
 data RevalidateTxsResult blk
   = RevalidateTxsResult
@@ -434,111 +457,98 @@ data RevalidateTxsResult blk
 -- | Compute snapshot is largely the same as revalidate the transactions
 -- but we ignore the diffs.
 computeSnapshot ::
+  forall blk.
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
   -- | The ticked ledger state againt which txs will be revalidated
   TickedLedgerState blk DiffMK ->
   -- | The tables with all the inputs for the transactions
   LedgerTables (LedgerState blk) ValuesMK ->
-  -- | 'isLastTicketNo' and 'vrLastTicketNo'
-  TicketNo ->
-  [ TxTicket
-      (TxMeasureWithDiffTime blk)
-      (Validated (GenTx blk), LedgerTables (TickedLedgerState blk) DiffMK)
-  ] ->
+  [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
   MempoolSnapshot blk
-computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
-  let theTxs = map wrap txTickets
-      wrap = (\(TxTicket (tx, df) tk tz) -> (tx, df, (tk, tz)))
-      unwrap = (\(tx, df, (tk, tz)) -> TxTicket (tx, df) tk tz)
-      ReapplyTxsResult _ val st' =
-        reapplyTxs IgnoreDiffs cfg slot theTxs $
-          applyMempoolDiffs
-            values
-            (Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) theTxs)
-            st
-      fst3 (x, _, _) = x
-   in snapshotFromIS $
-        IS
-          { isTxs = TxSeq.fromList $ map unwrap val
-          , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) val
-          , -- These two can be empty since we don't need the resulting
-            -- values at all when making a snapshot, as we won't update
-            -- the internal state.
-            isTxKeys = emptyLedgerTables
-          , isTxValues = emptyLedgerTables
-          , isLedgerState = st'
-          , isTip = castPoint $ getTip st
-          , isSlotNo = slot
-          , isLastTicketNo = lastTicketNo
-          , isCapacity = computeMempoolCapacity cfg st' capacityOverride
-          }
+computeSnapshot cfg slot st values txTickets =
+  let inputTxs = map wrap txTickets
+      inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
+   in snapshotFromValidTxs
+        ( map unwrap $
+            validatedTxs $
+              reapplyTxs @blk @Discard cfg slot inputTxs $
+                applyMempoolDiffs values inputKeys st
+        )
+        (castPoint $ getTip st)
+        slot
+ where
+  fst3 (x, _, _) = x
+  wrap = (\(TxTicket tx tk tz) -> (tx, (), (tk, tz)))
+  unwrap = (\(tx, (), (tk, tz)) -> (TxTicket tx tk tz))
 
 {-------------------------------------------------------------------------------
   Conversions
 -------------------------------------------------------------------------------}
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
-snapshotFromIS ::
+snapshotFromValidTxs ::
   forall blk.
-  (HasTxId (GenTx blk), TxLimits blk, GetTip (TickedLedgerState blk)) =>
-  InternalState blk ->
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
+  Point blk ->
+  SlotNo ->
   MempoolSnapshot blk
-snapshotFromIS is =
+snapshotFromValidTxs validTxs tipPoint slot =
   MempoolSnapshot
-    { snapshotTxs = implSnapshotGetTxs is
-    , snapshotTxsAfter = implSnapshotGetTxsAfter is
-    , snapshotLookupTx = implSnapshotGetTx is
-    , snapshotHasTx = implSnapshotHasTx is
-    , snapshotMempoolSize = implSnapshotGetMempoolSize is
-    , snapshotSlotNo = isSlotNo is
-    , snapshotStateHash = getTipHash $ isLedgerState is
-    , snapshotTake = implSnapshotTake is
-    , snapshotPoint = castPoint $ getTip $ isLedgerState is
+    { snapshotTxs = implSnapshotGetTxs
+    , snapshotTxsAfter = implSnapshotGetTxsAfter
+    , snapshotLookupTx = implSnapshotGetTx
+    , snapshotHasTx = implSnapshotHasTx
+    , snapshotMempoolSize = implSnapshotGetMempoolSize
+    , snapshotSlotNo = slot
+    , snapshotStateHash = pointHash tipPoint
+    , snapshotTake = implSnapshotTake
+    , snapshotPoint = castPoint tipPoint
     }
  where
+  txs = TxSeq.fromList validTxs
+  txIds = Set.fromList $ map (txId . txForgetValidated . txTicketTx) validTxs
+
   implSnapshotGetTxs ::
-    InternalState blk ->
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
-  implSnapshotGetTxs = flip implSnapshotGetTxsAfter TxSeq.zeroTicketNo
+  implSnapshotGetTxs = implSnapshotGetTxsAfter TxSeq.zeroTicketNo
 
   implSnapshotGetTxsAfter ::
-    InternalState blk ->
     TicketNo ->
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
-  implSnapshotGetTxsAfter IS{isTxs} =
-    (\x -> [(a, b, forgetTxMeasureWithDiffTime c) | ((a, _), b, c) <- x])
+  implSnapshotGetTxsAfter =
+    (\x -> [(a, b, forgetTxMeasureWithDiffTime c) | (a, b, c) <- x])
       . TxSeq.toTuples
       . snd
-      . TxSeq.splitAfterTicketNo isTxs
+      . TxSeq.splitAfterTicketNo txs
 
   implSnapshotTake ::
-    InternalState blk ->
     TxMeasure blk ->
     ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
-  implSnapshotTake IS{isTxs} limit =
-    (map (fst . TxSeq.txTicketTx) (TxSeq.toList x), TxSeq.toSize x)
+  implSnapshotTake limit =
+    (map TxSeq.txTicketTx (TxSeq.toList x), TxSeq.toSize x)
    where
-    (x, _y) = TxSeq.splitAfterTxSize isTxs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
+    (x, _y) = TxSeq.splitAfterTxSize txs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
 
   implSnapshotGetTx ::
-    InternalState blk ->
     TicketNo ->
     Maybe (Validated (GenTx blk))
-  implSnapshotGetTx IS{isTxs} = fmap fst . (isTxs `TxSeq.lookupByTicketNo`)
+  implSnapshotGetTx = (txs `TxSeq.lookupByTicketNo`)
 
   implSnapshotHasTx ::
-    InternalState blk ->
     GenTxId blk ->
     Bool
-  implSnapshotHasTx IS{isTxIds} = flip Set.member isTxIds
+  implSnapshotHasTx = (`Set.member` txIds)
 
   implSnapshotGetMempoolSize ::
-    InternalState blk ->
     MempoolSize
-  implSnapshotGetMempoolSize = isMempoolSize
+  implSnapshotGetMempoolSize =
+    MempoolSize
+      { msNumTxs = fromIntegral $ length $ txs
+      , msNumBytes = txMeasureByteSize $ forgetTxMeasureWithDiffTime $ TxSeq.toSize $ txs
+      }
 
 {-------------------------------------------------------------------------------
   Tracing support for the mempool operations

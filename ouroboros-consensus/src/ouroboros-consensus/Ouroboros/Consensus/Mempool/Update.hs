@@ -446,11 +446,14 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
               ( (`notElem` Set.fromList (NE.toList toRemove))
                   . txId
                   . txForgetValidated
-                  . fst
+                  . validatedTx
                   . txTicketTx
               )
               (TxSeq.toList $ isTxs is)
-          toKeep' = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst . TxSeq.txTicketTx) toKeep
+          toKeep' =
+            Foldable.foldMap'
+              (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx)
+              toKeep
       frkr <- readMVar forker
       tbs <- castLedgerTables <$> roforkerReadTables frkr (castLedgerTables toKeep')
       let (is', t) =
@@ -487,10 +490,7 @@ pureRemoveTxs ::
   LedgerTables (LedgerState blk) ValuesMK ->
   TicketNo ->
   -- | Txs to keep
-  [ TxTicket
-      (TxMeasureWithDiffTime blk)
-      (Validated (GenTx blk), LedgerTables (TickedLedgerState blk) DiffMK)
-  ] ->
+  [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
   -- | IDs to remove
   NE.NonEmpty (GenTxId blk) ->
   (InternalState blk, TraceEventMempool blk)
@@ -522,9 +522,15 @@ implSyncWithLedger ::
   , ValidateEnvelope blk
   , HasTxId (GenTx blk)
   ) =>
+  -- | This argument is only to be able to acquire a snapshot in the same
+  -- atomically block as the re-sync when testing the mempool in the QSM
+  -- parallel tests. We could instead always compute a snapshot and ignore it in
+  -- the common case, but it seems acceptable to not even create the thunk for
+  -- it. This will be set to @const ()@ on the code that is run by the node.
+  (InternalState blk -> r) ->
   MempoolEnv m blk ->
-  m (MempoolSnapshot blk)
-implSyncWithLedger mpEnv =
+  m r
+implSyncWithLedger projectResult mpEnv =
   encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer mpEnv) $ do
     res <-
       -- There could possibly be a race condition if we used there the state
@@ -560,7 +566,7 @@ implSyncWithLedger mpEnv =
             then do
               -- The tip didn't change, put the same state.
               traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
-              pure (Just (snapshotFromIS is), is)
+              pure (Just (projectResult is), is)
             else do
               -- The tip changed, we have to revalidate
               eFrk <- meFrk
@@ -588,11 +594,10 @@ implSyncWithLedger mpEnv =
                           tbs
                           is
                   whenJust mTrace (traceWith trcr)
-                  pure (Just (snapshotFromIS is'), is')
-    maybe
-      (implSyncWithLedger mpEnv)
-      pure
-      res
+                  pure (Just (projectResult is'), is')
+    case res of
+      Nothing -> implSyncWithLedger projectResult mpEnv
+      Just res' -> pure res'
  where
   MempoolEnv
     { mpEnvStateVar = istate
