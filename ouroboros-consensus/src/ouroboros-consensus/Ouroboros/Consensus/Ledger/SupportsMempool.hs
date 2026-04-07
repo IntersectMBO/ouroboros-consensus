@@ -188,14 +188,8 @@ class
           err
           (reverse val)
           ( case doDiffs of
-              IgnoreDiffs -> attachEmptyDiffs st'
-              ComputeDiffs ->
-                st'
-                  `withLedgerTables` ( ltliftA2
-                                         (\(ValuesMK v) (DiffMK dfs') -> TrackingMK v dfs')
-                                         (projectLedgerTables st')
-                                         dfs
-                                     )
+              IgnoreDiffs -> st' `withLedgerTables` emptyLedgerTables
+              ComputeDiffs -> st' `withLedgerTables` dfs
           )
     )
       $ Foldable.foldl'
@@ -272,7 +266,7 @@ data ReapplyTxsResult extra blk
   , validatedTxs :: ![(Validated (GenTx blk), LedgerTables (TickedLedgerState blk) DiffMK, extra)]
   -- ^ txs that are valid again, order must be the same as the order in
   -- which txs were received
-  , resultingState :: !(TickedLedgerState blk TrackingMK)
+  , resultingState :: !(TickedLedgerState blk DiffMK)
   -- ^ Resulting ledger state
   }
 

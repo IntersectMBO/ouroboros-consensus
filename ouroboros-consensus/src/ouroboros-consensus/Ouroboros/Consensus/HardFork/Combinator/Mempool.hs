@@ -122,7 +122,7 @@ type DecomposedReapplyTxsResult extra xs =
       , extra
       )
     ]
-    :.: FlipTickedLedgerState TrackingMK
+    :.: FlipTickedLedgerState DiffMK
 
 instance
   ( CanHardFork xs
@@ -171,10 +171,7 @@ instance
                     IgnoreDiffs -> st''
                     ComputeDiffs ->
                       st''
-                        `withLedgerTables` ltliftA2
-                          ((\(TrackingMK v _) (DiffMK d) -> TrackingMK v d))
-                          (projectLedgerTables st'')
-                          (F.foldl' (\acc (_, df, _) -> ltliftA2 rawPrependDiffs acc df) emptyLedgerTables val)
+                        `withLedgerTables` (F.foldl' (\acc (_, df, _) -> ltliftA2 rawPrependDiffs acc df) emptyLedgerTables val)
                 )
       )
         . hsequence'
@@ -222,13 +219,13 @@ instance
                 )
                 . HardForkValidatedGenTx
                 . OneEraValidatedGenTx
-                . hmap (trd . unComp)
+                . hmap (thd . unComp)
                 . fst
                 $ x
           )
           mismatched
 
-      trd (_, _, x) = x
+      thd (_, _, x) = x
 
       modeApplyCurrent ::
         forall blk.

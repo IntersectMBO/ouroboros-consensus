@@ -414,7 +414,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
             , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) val
             , isTxKeys = keys
             , isTxValues = ltliftA2 restrictValuesMK values keys
-            , isLedgerState = trackingToDiffs st'
+            , isLedgerState = st'
             , isTip = castPoint $ getTip st
             , isSlotNo = slot
             , isLastTicketNo = lastTicketNo
@@ -469,7 +469,7 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
             -- the internal state.
             isTxKeys = emptyLedgerTables
           , isTxValues = emptyLedgerTables
-          , isLedgerState = trackingToDiffs st'
+          , isLedgerState = st'
           , isTip = castPoint $ getTip st
           , isSlotNo = slot
           , isLastTicketNo = lastTicketNo
