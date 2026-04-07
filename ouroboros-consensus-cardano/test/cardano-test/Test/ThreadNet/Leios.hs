@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
@@ -48,6 +49,8 @@ import Data.Word (Word64)
 import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb)
 import Lens.Micro (each, (%~), (^.), (^..))
 import Ouroboros.Consensus.Block (SlotNo (..))
+import qualified Ouroboros.Network.Mock.Chain as Chain
+import qualified Cardano.Ledger.Block as SL
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -55,12 +58,14 @@ import Ouroboros.Consensus.Cardano
   , ProtocolParamsShelleyBased (..)
   , ShelleyGenesis (..)
   )
+import Ouroboros.Consensus.Cardano.Block (pattern BlockConway)
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Shelley.Ledger.Block (shelleyBlockRaw)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Test.Cardano.Ledger.Alonzo.Examples.Consensus (exampleAlonzoGenesis)
 import Test.Cardano.Ledger.Conway.Examples.Consensus (exampleConwayGenesis)
@@ -144,6 +149,7 @@ prop_leios_blocksProduced seed =
     & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
     & tabulate "Praos blocks forged" [show $ length forgedBlocks]
     & tabulate "Leios blocks forged" [show $ length forgedEBs]
+    & tabulate "Certifying blocks" [show $ length certifyingBlocks]
     & tabulate "Effective throughput" [show throughput]
  where
   traces = testOutput.allTraces
@@ -173,6 +179,14 @@ prop_leios_blocksProduced seed =
   mempoolRejectedTxs = flip mapMaybe mempoolTraces $ \case
     TraceMempoolRejectedTx tx _ _ -> Just tx
     _ -> Nothing
+
+  nodeChains = nodeOutputFinalChain <$> testOutput.testOutputNodes
+
+  certifyingBlocks =
+    [ blk
+    | blk@(BlockConway shelleyBlk) <- concatMap Chain.toOldestFirst nodeChains
+    , SL.blockCertifiesEb (shelleyBlockRaw shelleyBlk)
+    ]
 
   throughput = fromIntegral (sum includedTxCounts) / fromRational numSlots :: Double
 

@@ -479,6 +479,7 @@ test-suite cardano-test
     ouroboros-consensus-diffusion:unstable-diffusion-testlib,
     ouroboros-consensus-protocol,
     ouroboros-network-api,
+    ouroboros-network-mock,
     ouroboros-network-protocols:{ouroboros-network-protocols, testlib},
     pretty-simple,
     sop-core,
