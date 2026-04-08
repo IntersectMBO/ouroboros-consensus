@@ -317,11 +317,11 @@ triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) =
 --  * Garbage collection.
 ledgerDbTaskWatcher ::
   forall m blk.
-  IOLike m =>
+  (IOLike m, ConsensusProtocol (BlockProtocol blk), GetHeader blk, HasHeader blk) =>
   ChainDbEnv m blk ->
   LedgerDbTasksTrigger m ->
   Watcher m SlotNo SlotNo
-ledgerDbTaskWatcher CDB{..} (LedgerDbTasksTrigger varSt) =
+ledgerDbTaskWatcher cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
   Watcher
     { wFingerprint = id
     , wInitial = Nothing

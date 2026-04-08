@@ -345,6 +345,7 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
     mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
     for mLastSnapshotRequested $ \lastSnapshotRequested -> do
       pure $ snapshotRequestTime `diffTime` lastSnapshotRequested
+  -- calculate and duplicate the ledger tables handles that we will be taking snapshots of
   handles <- RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
     lseq@(LedgerSeq immutableStates) <- atomically $ do
       LedgerSeq states <- readTVar $ ldbSeq env
@@ -367,9 +368,12 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
       let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
       (slot,) <$> (duplicateStateRef $ anchorHandle $ snd $ prune pruneStrat lseq)
 
+  -- look at the list of the ledger tables handles from the previous step and take the snapshots
   case handles of
     [] -> pure ()
     _ -> do
+      copyBlocks
+
       delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
       let slotsOfHandles =
             case NonEmpty.nonEmpty $ map fst handles of

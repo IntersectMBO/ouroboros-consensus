@@ -345,6 +345,8 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
   case snapshotSlots of
     [] -> pure ()
     _ -> do
+      copyBlocks
+
       delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
       let nonEmptySnapshotSlots =
             case NonEmpty.nonEmpty $ snapshotSlots of

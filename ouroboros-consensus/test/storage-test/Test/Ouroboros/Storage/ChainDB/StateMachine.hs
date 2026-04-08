@@ -744,13 +744,7 @@ runPure cfg = \case
   -- in the system under test. It would be better if we modelled the
   -- snapshots so that this aspect of the system would be explicitly
   -- specified. See https://github.com/IntersectMBO/ouroboros-network/issues/3375
-  --
-  -- Apart from that, to ensure that whenever we write a snapshot we have copied
-  -- the blocks to the immdb, we run the copying synchronously in the
-  -- snapshotting logic
-  -- (https://github.com/IntersectMBO/ouroboros-consensus/issues/1822), so we
-  -- update the model accordingly here.
-  UpdateLedgerSnapshots -> ok Unit $ update_ (Model.copyToImmutableDB k GarbageCollect)
+  UpdateLedgerSnapshots -> ok Unit $ update_ id
   Close -> openOrClosed $ update_ Model.closeDB
   Reopen -> openOrClosed $ update_ Model.reopen
   WipeVolatileDB -> ok Point $ update (Model.wipeVolatileDB cfg)
