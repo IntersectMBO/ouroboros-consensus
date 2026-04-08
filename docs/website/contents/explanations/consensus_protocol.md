@@ -93,7 +93,7 @@ The core of the process is finding the preferred candidate among the [chain frag
 As part of adopting a candidate, its blocks are validated by applying them via the ledger.
 If a block fails validation, it is [recorded as invalid][invalid-block] and the candidate is [truncated][truncate-candidate] to the last valid block.
 All remaining candidates containing the invalid block are also truncated, and chain selection restarts with the updated candidate list.
-Valid prefixes are preserved because blocks from different peers are mixed in the VolatileDB — an invalid block from one peer might sit on a valid chain from another.
+Valid prefixes are preserved because blocks from different peers are mixed in the VolatileDB — the valid prefix before an invalid block from one peer might be part of a valid chain from another.
 The peer that sent the block triggering chain selection is [punished][punish-peer] if the invalid block is at or before that block in the chain.
 
 ChainDB assumes that no blocks come from the far future — this is enforced earlier by [ChainSync](data_flow.md#block-flow-ntn-upstream), which rejects headers with timestamps too far ahead of the node's wall clock.
