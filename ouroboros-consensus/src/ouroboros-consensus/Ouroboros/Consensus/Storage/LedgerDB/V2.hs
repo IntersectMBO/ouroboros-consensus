@@ -161,7 +161,7 @@ implMkLedgerDb h snapManager =
           , validateFork = getEnv5 h (implValidate h)
           , getPrevApplied = getEnvSTM h implGetPrevApplied
           , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
-          , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot snapManager)
+          , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
           , tryFlush = getEnv h implTryFlush
           , closeDB = implCloseDB h
           }
@@ -334,14 +334,16 @@ implTryTakeSnapshot ::
   ) =>
   SnapshotManager m m blk (StateRef m l) ->
   LedgerDBEnv m l blk ->
+  m () ->
   Time ->
   (SnapshotDelayRange -> m DiffTime) ->
   m ()
-implTryTakeSnapshot snapManager env snapshotRequestTime getRandomDelay = do
+implTryTakeSnapshot snapManager env copyBlocks snapshotRequestTime getRandomDelay = do
   timeSinceLastSnapshot <- do
     mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
     for mLastSnapshotRequested $ \lastSnapshotRequested -> do
       pure $ snapshotRequestTime `diffTime` lastSnapshotRequested
+  -- calculate and duplicate the ledger tables handles that we will be taking snapshots of
   handles <- RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
     lseq@(LedgerSeq immutableStates) <- atomically $ do
       LedgerSeq states <- readTVar $ ldbSeq env
@@ -364,9 +366,12 @@ implTryTakeSnapshot snapManager env snapshotRequestTime getRandomDelay = do
       let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
       duplicateStateRef $ anchorHandle $ snd $ prune pruneStrat lseq
 
+  -- look at the list of the ledger tables handles from the previous step and take the snapshots
   case handles of
     [] -> pure ()
     _ -> do
+      copyBlocks
+
       delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
       traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
         SnapshotRequestDelayed snapshotRequestTime delayBeforeSnapshotting (length handles)
@@ -510,15 +515,16 @@ getEnv (LDBHandle varState) f =
     LedgerDBOpen env -> f env
     LedgerDBClosed -> throwIO $ ClosedDBError prettyCallStack
 
--- | Variant 'of 'getEnv' for functions taking two arguments.
-getEnv2 ::
+-- | Variant 'of 'getEnv' for functions taking three arguments.
+getEnv3 ::
   IOLike m =>
   LedgerDBHandle m l blk ->
-  (LedgerDBEnv m l blk -> a -> b -> m r) ->
+  (LedgerDBEnv m l blk -> a -> b -> c -> m r) ->
   a ->
   b ->
+  c ->
   m r
-getEnv2 h f a b = getEnv h (\env -> f env a b)
+getEnv3 h f a b c = getEnv h (\env -> f env a b c)
 
 -- | Variant 'of 'getEnv' for functions taking five arguments.
 getEnv5 ::

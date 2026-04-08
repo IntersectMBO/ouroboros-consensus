@@ -359,11 +359,18 @@ data LedgerDB m l blk = LedgerDB
   --  * The set of previously applied points.
   , tryTakeSnapshot ::
       l ~ ExtLedgerState blk =>
+      m () ->
       Time ->
       (SnapshotDelayRange -> m DiffTime) ->
       m ()
   -- ^ If the provided arguments indicate so (based on the SnapshotPolicy with
   -- which this LedgerDB was opened), take a snapshot and delete stale ones.
+  --
+  -- The arguments are:
+  -- - a callback to run before taking a snapshot. Usually it should be the
+  --   it will flush the immutable blocks from the VolatileDB into the
+  --   ImmutableDB.
+  -- - The time when the snapshot should be taken.
   --
   -- For V1, this MUST NOT be called concurrently with 'garbageCollect' and/or
   -- 'tryFlush'.

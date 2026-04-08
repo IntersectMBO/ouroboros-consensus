@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , getEnv
   , getEnv1
   , getEnv2
+  , getEnv3
   , getEnvTrans2
   , getEnvSTM
   , getEnvSTM1
@@ -211,6 +212,17 @@ getEnv2 ::
   b ->
   m r
 getEnv2 h f a b = getEnv h (\env -> f env a b)
+
+-- | Variant 'of 'getEnv' for functions taking three arguments.
+getEnv3 ::
+  (IOLike m, HasCallStack, HasHeader blk) =>
+  ChainDbHandle m blk ->
+  (ChainDbEnv m blk -> a -> b -> c -> m r) ->
+  a ->
+  b ->
+  c ->
+  m r
+getEnv3 h f a b c = getEnv h (\env -> f env a b c)
 
 -- | Variant 'of 'getEnv' for functions taking two arguments.
 getEnvTrans2 ::
@@ -412,7 +424,7 @@ data Internal m blk = Internal
   -- returned. This can be used for a garbage collection on the VolatileDB.
   , intGarbageCollect :: SlotNo -> m ()
   -- ^ Perform garbage collection for blocks <= the given 'SlotNo'.
-  , intTryTakeSnapshot :: Time -> (SnapshotDelayRange -> m DiffTime) -> m ()
+  , intTryTakeSnapshot :: m () -> Time -> (SnapshotDelayRange -> m DiffTime) -> m ()
   -- ^ Write a new LedgerDB snapshot to disk and remove the oldest one(s).
   , intAddBlockRunner :: m Void
   -- ^ Start the loop that adds blocks to the ChainDB retrieved from the
