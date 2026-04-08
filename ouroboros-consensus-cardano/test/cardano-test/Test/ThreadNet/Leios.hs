@@ -36,16 +36,20 @@ import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
-import Control.Monad (replicateM)
+import Control.Monad (foldM, replicateM)
 import Data.Foldable (toList)
 import Data.Function ((&))
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Functor.Identity (runIdentity)
 import Data.Maybe (isNothing, mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
+import Control.Monad.IOSim (runSimOrThrow)
+import LeiosDemoDb (LeiosDbHandle, newLeiosDBInMemoryWith)
+import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as StrictTVar
 import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb)
 import Lens.Micro (each, (%~), (^.), (^..))
 import Ouroboros.Consensus.Block (SlotNo (..))
@@ -61,12 +65,25 @@ import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Block (pattern BlockConway)
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
 import Ouroboros.Consensus.Config (SecurityParam (..))
+import Ouroboros.Consensus.Ledger.Abstract
+  ( ComputeLedgerEvents (OmitLedgerEvents)
+  , LedgerCfg
+  , tickThenReapply
+  )
+import Ouroboros.Consensus.Ledger.Basics (ValuesMK)
+import Ouroboros.Consensus.Ledger.Extended
+  ( ExtLedgerCfg (..)
+  , ExtLedgerState (..)
+  , ledgerState
+  )
+import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..), ProtocolInfo (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block (shelleyBlockRaw)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Test.Cardano.Ledger.Alonzo.Examples.Consensus (exampleAlonzoGenesis)
 import Test.Cardano.Ledger.Conway.Examples.Consensus (exampleConwayGenesis)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Conway), hardForkInto)
@@ -77,6 +94,7 @@ import Test.QuickCheck
   , counterexample
   , tabulate
   , withMaxSuccess
+  , (.&&.)
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
@@ -102,7 +120,8 @@ import Test.ThreadNet.Infra.Shelley
   , signTx
   )
 import Test.ThreadNet.Network
-  ( NodeOutput (..)
+  ( LeiosState (..)
+  , NodeOutput (..)
   , TestNodeInitialization (..)
   , _FromLeios
   , _FromMempool
@@ -123,6 +142,8 @@ tests =
     "Leios ThreadNet"
     [ testProperty "EB production" $
         withMaxSuccess 1 prop_leios_blocksProduced
+    , testProperty "EB certificate inclusion" $
+        withMaxSuccess 1 prop_leios_ebCertificateInclusion
     ]
 
 prop_leios_blocksProduced :: Seed -> Property
@@ -196,6 +217,74 @@ prop_leios_blocksProduced seed =
   numNodes = 3 :: Integer
 
   numSlots = 200
+
+-- | Verify that independently replaying the chain with EB resolution produces
+-- the same ledger state as the one computed by the ChainDB during the
+-- simulation. This proves that EB transactions from certified EBs are
+-- actually applied to the ledger.
+prop_leios_ebCertificateInclusion :: Seed -> Property
+prop_leios_ebCertificateInclusion seed =
+    (not (null certifyingBlocks)
+      & counterexample "no certifying blocks — test is vacuous")
+    .&&. (foldedLedger === expectedLedger)
+ where
+  (testOutput, ProtocolInfo{pInfoConfig, pInfoInitLedger}) =
+    runThreadNet seed (NumSlots numSlots) (NumCoreNodes $ fromIntegral numNodes)
+
+  -- Pick any node — all nodes should converge to the same chain.
+  someNode = snd . Map.findMin $ testOutput.testOutputNodes
+
+  nodeChains = nodeOutputFinalChain <$> testOutput.testOutputNodes
+
+  certifyingBlocks =
+    [ blk
+    | blk@(BlockConway shelleyBlk) <- concatMap Chain.toOldestFirst nodeChains
+    , SL.blockCertifiesEb (shelleyBlockRaw shelleyBlk)
+    ]
+
+  -- nodeOutputFinalLedger has EmptyMK (tables stripped by ChainDB on
+  -- extraction), so we strip the fold result's tables for comparison.
+  expectedLedger = nodeOutputFinalLedger someNode
+
+  -- resolveLeiosBlock and newLeiosDBInMemoryWith require IOLike, but the
+  -- ThreadNet simulation has already finished. We run the fold in IOSim
+  -- to satisfy the constraint while keeping the test pure.
+  foldedLedger = runSimOrThrow $ do
+    let db = runIdentity . lsLeiosDb . nodeLeiosState $ someNode
+    -- Use the unchecked StrictTVar — newLeiosDBInMemoryWith expects the
+    -- strict-stm variant, not the checked one from IOLike.
+    stateVar <- StrictTVar.newTVarIO db
+    leiosDb <- newLeiosDBInMemoryWith stateVar
+    let chain = Chain.toOldestFirst . nodeOutputFinalChain $ someNode
+        cfg = ExtLedgerCfg pInfoConfig
+    foldedState <- foldWithResolution leiosDb cfg chain pInfoInitLedger
+    pure $ forgetLedgerTables . ledgerState $ foldedState
+
+  numNodes = 3 :: Integer
+  numSlots = 200 :: Word64
+
+-- | Fold a chain of blocks over an initial ledger state, resolving Leios
+-- blocks (filling in EB transaction closures for certifying blocks) before
+-- each application.
+--
+-- We use 'tickThenReapply' because the blocks have already been validated
+-- by the ChainDB. We use 'applyDiffs' instead of 'applyDiffForKeys'
+-- because we need to accumulate the full UTxO — 'applyDiffForKeys' only
+-- retains entries referenced by the current block, which is designed for
+-- the LedgerDB's backing store architecture.
+foldWithResolution ::
+  Monad m =>
+  LeiosDbHandle m ->
+  LedgerCfg (ExtLedgerState (CardanoBlock StandardCrypto)) ->
+  [CardanoBlock StandardCrypto] ->
+  ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
+  m (ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK)
+foldWithResolution leiosDb cfg blks initState =
+  foldM step initState blks
+ where
+  step state blk = do
+    blk' <- resolveLeiosBlock leiosDb state blk
+    pure $ applyDiffs state $ tickThenReapply OmitLedgerEvents cfg blk' state
 
 -- * Running the thread net
 
