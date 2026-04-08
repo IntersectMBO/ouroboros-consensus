@@ -598,6 +598,7 @@ instance
       (_, True) -> eqIfNotGCed
    where
     eqIfNotGCed = case (iterResult1, iterResult2) of
+      (IteratorBlockGCed{}, IteratorBlockGCed{}) -> not (real1 && real2)
       (IteratorBlockGCed{}, _) -> not real1
       (_, IteratorBlockGCed{}) -> not real2
       (IteratorResult b1, IteratorResult b2) -> b1 == b2
