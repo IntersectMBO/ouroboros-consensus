@@ -466,10 +466,7 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
     PersistBlksThenGC -> ignore <$> persistBlks GarbageCollect internal
     UpdateLedgerSnapshots -> do
       now <- getMonotonicTime
-      -- TODO(geo2a): for now, we don't copy the immutable blocks when taking
-      -- a ledger state snapshot, because the model does not faithfully implement
-      -- this behaviour
-      let copyImmutableBlocks = pure ()
+      let copyImmutableBlocks = persistBlks GarbageCollect internal
       ignore <$> intTryTakeSnapshot internal copyImmutableBlocks now (\_ -> pure 0)
     WipeVolatileDB -> Point <$> wipeVolatileDB st
  where
@@ -735,7 +732,7 @@ runPure cfg = \case
   -- in the system under test. It would be better if we modelled the
   -- snapshots so that this aspect of the system would be explicitly
   -- specified. See https://github.com/IntersectMBO/ouroboros-network/issues/3375
-  UpdateLedgerSnapshots -> ok Unit $ update_ id
+  UpdateLedgerSnapshots -> ok Unit $ update_ (Model.copyToImmutableDB k GarbageCollect)
   Close -> openOrClosed $ update_ Model.closeDB
   Reopen -> openOrClosed $ update_ Model.reopen
   WipeVolatileDB -> ok Point $ update (Model.wipeVolatileDB cfg)
