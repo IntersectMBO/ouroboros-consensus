@@ -119,6 +119,7 @@ library
     Ouroboros.Consensus.Committee.Class
     Ouroboros.Consensus.Committee.Crypto
     Ouroboros.Consensus.Committee.Types
+    Ouroboros.Consensus.Committee.WFA
     Ouroboros.Consensus.Config
     Ouroboros.Consensus.Config.SecurityParam
     Ouroboros.Consensus.Config.SupportsNode
@@ -351,6 +352,7 @@ library
 
   build-depends:
     aeson,
+    array,
     base >=4.14 && <4.23,
     base-deriving-via,
     base16-bytestring >=1.0,
