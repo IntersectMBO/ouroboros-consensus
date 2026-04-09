@@ -118,6 +118,7 @@ library
     Ouroboros.Consensus.Committee.AcrossEpochs
     Ouroboros.Consensus.Committee.Class
     Ouroboros.Consensus.Committee.Crypto
+    Ouroboros.Consensus.Committee.EveryoneVotes
     Ouroboros.Consensus.Committee.LS
     Ouroboros.Consensus.Committee.Types
     Ouroboros.Consensus.Committee.WFA
