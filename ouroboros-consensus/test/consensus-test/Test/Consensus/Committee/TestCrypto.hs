@@ -34,7 +34,7 @@ import Cardano.Crypto.DSIGN
   )
 import Cardano.Crypto.Hash (ByteString, Hash)
 import qualified Cardano.Crypto.Hash as Hash
-import Cardano.Ledger.BaseTypes (Nonce (..), mkNonceFromNumber)
+import Cardano.Ledger.BaseTypes (Nonce (..))
 import Cardano.Ledger.Binary (runByteBuilder)
 import Cardano.Ledger.Hashes (HASH)
 import Control.Monad (when)
@@ -63,6 +63,7 @@ import Ouroboros.Consensus.Committee.Crypto
   )
 import Ouroboros.Consensus.Committee.Crypto.BLS (KeyRole (..))
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
+import Test.Consensus.Committee.Utils (genEpochNonce)
 import Test.QuickCheck
   ( Arbitrary (..)
   , Gen
@@ -72,7 +73,6 @@ import Test.QuickCheck
   , choose
   , counterexample
   , forAll
-  , frequency
   , suchThat
   , tabulate
   , vectorOf
@@ -233,13 +233,6 @@ instance CryptoSupportsBatchVRFVerification TestCrypto where
         $ sigs
 
 -- * QuickCheck helpers
-
-genEpochNonce :: Gen Nonce
-genEpochNonce =
-  frequency
-    [ (1, pure NeutralNonce)
-    , (9, mkNonceFromNumber <$> arbitrary)
-    ]
 
 genElectionId :: Gen (ElectionId TestCrypto)
 genElectionId =
