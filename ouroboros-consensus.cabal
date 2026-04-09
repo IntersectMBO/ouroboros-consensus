@@ -121,6 +121,7 @@ library
     Ouroboros.Consensus.Committee.LS
     Ouroboros.Consensus.Committee.Types
     Ouroboros.Consensus.Committee.WFA
+    Ouroboros.Consensus.Committee.WFALS
     Ouroboros.Consensus.Config
     Ouroboros.Consensus.Config.SecurityParam
     Ouroboros.Consensus.Config.SupportsNode
