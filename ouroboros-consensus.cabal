@@ -689,6 +689,7 @@ test-suite consensus-test
     Test.Consensus.Committee.WFALS.Model
     Test.Consensus.Committee.WFALS.Model.Tests
     Test.Consensus.Committee.WFALS.Model.Utils
+    Test.Consensus.Committee.WFALS.Tests
     Test.Consensus.HardFork.Forecast
     Test.Consensus.HardFork.History
     Test.Consensus.HardFork.Infra
