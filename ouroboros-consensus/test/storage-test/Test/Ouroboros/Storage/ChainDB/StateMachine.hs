@@ -35,6 +35,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   ( -- * Commands
     At (..)
   , Cmd (..)
+  , Persistent (..)
   , FollowerRef
   , IterRef
   , IteratorResult (..)
@@ -49,15 +50,20 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   , ShouldGarbageCollect (..)
 
     -- * Running the model
+  , DBModel
   , runCmdsLockstep
+  , runPure
 
     -- * System under test
   , ChainDBEnv (..)
   , ChainDBState (..)
+  , TestFollower
+  , TestIterator
   , close
   , mkTestCfg
   , open
   , persistBlks
+  , run
 
     -- * Specifying block components
   , AllComponents

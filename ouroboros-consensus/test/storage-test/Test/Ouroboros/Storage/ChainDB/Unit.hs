@@ -38,16 +38,11 @@ import Ouroboros.Consensus.Block.RealPoint
   )
 import Ouroboros.Consensus.Config
   ( TopLevelConfig
-  , configSecurityParam
   )
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
-import Ouroboros.Consensus.Ledger.SupportsProtocol
-  ( LedgerSupportsProtocol
-  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
-import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl (TraceEvent)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import Ouroboros.Consensus.Storage.Common
@@ -65,7 +60,6 @@ import Test.Ouroboros.Storage.ChainDB.StateMachine
   ( AllComponents
   , ChainDBEnv (..)
   , ChainDBState (..)
-  , ShouldGarbageCollect (..)
   , TestConstraints
   , allComponents
   , close
@@ -187,7 +181,7 @@ ouroboros_network_4183 =
         f <- newFollower
         void $ followerForward f [blockPoint b1]
         void $ addBlock $ mkNextBlock b4 4 $ fork 0
-        persistBlks DoNotGarbageCollect
+        persistBlks
         void $ addBlock $ mkNextBlock b3 3 $ fork 1
         followerInstruction f >>= \case
           Right (Just (RollBack actual)) ->
@@ -217,7 +211,7 @@ ouroboros_network_3999 = do
   b5 <- addBlock $ mkNextBlock b4 4 $ fork 2
   b6 <- addBlock $ mkNextBlock b5 5 $ fork 2
   void $ addBlock $ mkNextBlock b6 6 $ fork 2
-  persistBlks GarbageCollect
+  persistBlksThenGC
 
   -- The block b1 is part of the current chain, so should always be returned.
   result <- iteratorNextBlock i
@@ -259,7 +253,7 @@ waitForImmutableBlock_existingBlock = do
   _b3 <- addBlock $ mkNextBlock b2 2 $ fork0
   -- copy the blocks older than @k@ into ImmutableDB,
   -- should copy only b1
-  persistBlks DoNotGarbageCollect
+  persistBlks
   -- request the immutable block
   waitForImmutableBlock (blockRealPoint b1) >>= \case
     Left e -> failWith (show e)
@@ -285,7 +279,7 @@ waitForImmutableBlock_existingBlockConcurrent = do
     _b3 <- addBlock $ mkNextBlock b2 2 $ fork0
     -- copy the blocks older than @k@ into ImmutableDB,
     -- should copy only b1
-    persistBlks DoNotGarbageCollect
+    persistBlks
 
   targetBlock = firstBlock 0 fork0
   fork0 = TestBody 0 True Nothing
@@ -302,7 +296,7 @@ waitForImmutableBlock_wrongHash = do
   _b4 <- addBlock $ mkNextBlock b3 3 $ fork0
   -- copy the blocks older than @k@ into ImmutableDB,
   -- should copy only b1 and b2
-  persistBlks DoNotGarbageCollect
+  persistBlks
   -- request a block at a filled slot, but give the wrong hash
   let targetPoint = RealPoint 0 (TestHeaderHash 0)
   -- expect to get the block at slot 0 and the correct hash
@@ -325,7 +319,7 @@ waitForImmutableBlock_emptySlot = do
   _b4 <- addBlock $ mkNextBlock b3 4 $ fork0
   -- copy the blocks older than @k@ into ImmutableDB,
   -- should copy only b1
-  persistBlks DoNotGarbageCollect
+  persistBlks
   -- request a block at an empty slot, the hash doesn't matter
   let targetPoint = RealPoint 0 (TestHeaderHash 0)
   -- expect to get the block at slot 1 and the correct hash
@@ -434,7 +428,9 @@ class SupportsUnitTest m where
           (Maybe (Point (Block m)))
       )
 
-  persistBlks :: ShouldGarbageCollect -> m ()
+  persistBlks :: m ()
+
+  persistBlksThenGC :: m ()
 
   stream ::
     StreamFrom (Block m) ->
@@ -477,55 +473,68 @@ runModel ::
 runModel model topLevelConfig expr =
   runExcept (runReaderT (evalStateT (runModelM expr) model) topLevelConfig)
 
-withModelContext :: (Model blk -> TopLevelConfig blk -> (a, Model blk)) -> ModelM blk a
-withModelContext f = do
+-- | Run a 'Cmd' against the model via 'SM.runPure'.
+runModelCmd ::
+  TestConstraints blk =>
+  SM.Cmd blk Model.IteratorId Model.FollowerId ->
+  ModelM blk (SM.Success blk Model.IteratorId Model.FollowerId)
+runModelCmd cmd = do
   model <- get
-  topLevelConfig <- ask
-  let (a, model') = f model topLevelConfig
+  cfg <- ask
+  let (SM.Resp resp, model') = SM.runPure cfg cmd model
   put model'
-  pure a
+  case resp of
+    Left err -> failWith $ "runModelCmd: ChainDbError: " <> show err
+    Right success -> pure success
 
 instance
-  (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk)) =>
+  (TestConstraints blk, LedgerTablesAreTrivial (LedgerState blk)) =>
   SupportsUnitTest (ModelM blk)
   where
   type FollowerId (ModelM blk) = Model.FollowerId
   type IteratorId (ModelM blk) = Model.IteratorId
   type Block (ModelM blk) = blk
 
-  newFollower = withModelContext $ \model _ ->
-    Model.newFollower model
+  newFollower = do
+    result <- runModelCmd (SM.NewFollower API.SelectedChain)
+    case result of
+      SM.Flr fid -> pure fid
+      _ -> error "newFollower: unexpected result"
 
-  followerInstruction followerId = withModelContext $ \model _ ->
-    case Model.followerInstruction followerId allComponents model of
-      Left err -> (Left err, model)
-      Right (mChainUpdate, model') -> (Right mChainUpdate, model')
+  followerInstruction followerId = do
+    result <- runModelCmd (SM.FollowerInstruction followerId)
+    case result of
+      SM.MbChainUpdate mcu -> pure (Right mcu)
+      _ -> error "followerInstruction: unexpected result"
 
   addBlock blk = do
-    -- Ensure that blocks are not characterized as invalid because they are
-    -- from the future.
-    withModelContext $ \model cfg -> ((), Model.addBlock cfg blk model)
+    void $ runModelCmd (SM.AddBlock blk (SM.Persistent []))
     pure blk
 
-  followerForward followerId points = withModelContext $ \model _ ->
-    case Model.followerForward followerId points model of
-      Left err -> (Left err, model)
-      Right (mChainUpdate, model') -> (Right mChainUpdate, model')
+  followerForward followerId points = do
+    result <- runModelCmd (SM.FollowerForward followerId points)
+    case result of
+      SM.MbPoint mp -> pure (Right mp)
+      _ -> error "followerForward: unexpected result"
 
-  persistBlks shouldGarbageCollect = withModelContext $ \model cfg ->
-    do
-      let k = configSecurityParam cfg
-      pure $ Model.copyToImmutableDB k shouldGarbageCollect model
+  persistBlks =
+    void $ runModelCmd SM.PersistBlks
 
-  stream from to = withModelContext $ \model cfg ->
-    do
-      let k = configSecurityParam cfg
-      case Model.stream k from to model of
-        Left err -> (Left err, model)
-        Right (result, model') -> (Right result, model')
+  persistBlksThenGC =
+    void $ runModelCmd SM.PersistBlksThenGC
 
-  iteratorNext iteratorId = withModelContext $ \model _ ->
-    Model.iteratorNext iteratorId allComponents model
+  stream from to = do
+    result <- runModelCmd (SM.Stream from to)
+    case result of
+      SM.Iter iid -> pure (Right (Right iid))
+      SM.UnknownRange ur -> pure (Right (Left ur))
+      _ -> error "stream: unexpected result"
+
+  iteratorNext iteratorId = do
+    result <- runModelCmd (SM.IteratorNext iteratorId)
+    case result of
+      SM.IterResult ir -> pure ir
+      _ -> error "iteratorNext: unexpected result"
 
   -- the implementation is intentionally left trivial
   waitForImmutableBlock _ = pure . Left $ API.TargetNewerThanTip
@@ -622,23 +631,30 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
               }
      in updateTracer tracer args
 
-instance IOLike m => SupportsUnitTest (SystemM blk m) where
+-- | Run a 'Cmd' against the real ChainDB via 'SM.run'.
+runCmd ::
+  (IOLike m, TestConstraints blk) =>
+  SM.Cmd blk (SM.TestIterator m blk) (SM.TestFollower m blk) ->
+  SystemM blk m (SM.Success blk (SM.TestIterator m blk) (SM.TestFollower m blk))
+runCmd cmd = do
+  env <- ask
+  let cfg = cdbsTopLevelConfig . cdbsArgs $ args env
+  SystemM $ lift $ lift $ SM.run cfg env cmd
+
+instance (IOLike m, TestConstraints blk) => SupportsUnitTest (SystemM blk m) where
   type IteratorId (SystemM blk m) = API.Iterator m blk (AllComponents blk)
   type FollowerId (SystemM blk m) = API.Follower m blk (AllComponents blk)
   type Block (SystemM blk m) = blk
 
   addBlock blk = do
-    env <- ask
-    SystemM $ lift $ lift $ do
-      api <- chainDB <$> readTVarIO (varDB env)
-      void $ API.addBlock api API.noPunishment blk
-      pure blk
+    void $ runCmd (SM.AddBlock blk (SM.Persistent []))
+    pure blk
 
-  persistBlks shouldGarbageCollect = do
-    env <- ask
-    SystemM $ lift $ lift $ do
-      internal <- internal <$> readTVarIO (varDB env)
-      SM.persistBlks shouldGarbageCollect internal
+  persistBlks =
+    void $ runCmd SM.PersistBlks
+
+  persistBlksThenGC =
+    void $ runCmd SM.PersistBlksThenGC
 
   newFollower = do
     env <- ask
