@@ -27,6 +27,7 @@ import Test.Consensus.Committee.WFALS.Model
 import qualified Test.Consensus.Committee.WFALS.Model as Model
 import qualified Test.Consensus.Committee.WFALS.Model.Tests as Model
 import qualified Test.Consensus.Committee.WFALS.Model.Utils as Model
+import qualified Test.Consensus.Committee.WFALS.Tests as Impl
 import Test.QuickCheck
   ( Property
   , Testable (..)
@@ -44,6 +45,7 @@ tests =
   testGroup
     "WFALS"
     [ Model.tests
+    , Impl.tests
     , modelConformsToRustImplementation
     , realImplementationConformsToRustImplementation
     , modelConformsToRealImplementation
