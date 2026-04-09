@@ -75,20 +75,18 @@ data LeiosFetchContext m = MkLeiosFetchContext
   { leiosDb :: !(LeiosDbHandle m)
   , leiosEbBuffer :: !(MV.MVector (PrimState m) (TxHash, BytesSize))
   , leiosEbTxsBuffer :: !(MV.MVector (PrimState m) LeiosTx)
-  , leiosWriteLock :: !(MVar m ())
   }
 
 newLeiosFetchContext ::
   PrimMonad m =>
-  MVar m () ->
   LeiosDbHandle m ->
   m (LeiosFetchContext m)
-newLeiosFetchContext leiosWriteLock leiosDb = do
+newLeiosFetchContext leiosDb = do
   -- each LeiosFetch server calls this when it initializes
   leiosEbBuffer <- MV.new maxTxsPerEb
   leiosEbTxsBuffer <- MV.new maxTxsPerEb
   pure
-    MkLeiosFetchContext{leiosDb, leiosEbBuffer, leiosEbTxsBuffer, leiosWriteLock}
+    MkLeiosFetchContext{leiosDb, leiosEbBuffer, leiosEbTxsBuffer}
 
 -----
 
@@ -116,16 +114,15 @@ msgLeiosBlockRequest ::
   LeiosPoint ->
   m LeiosEb
 msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
-  let MkLeiosFetchContext{leiosDb = db, leiosEbBuffer = buf, leiosWriteLock} = leiosContext
-  n <- MVar.withMVar leiosWriteLock $ \() -> do
-    traceException tracer TraceLeiosPeerDbException $ do
-      -- get the EB items using new db
-      items <- leiosDbLookupEbBody db pointEbHash
-      let loop !i [] = pure i
-          loop !i ((txHash, txBytesSize) : rest) = do
-            MV.write buf i (txHash, txBytesSize)
-            loop (i + 1) rest
-      loop 0 items
+  let MkLeiosFetchContext{leiosDb = db, leiosEbBuffer = buf} = leiosContext
+  n <- traceException tracer TraceLeiosPeerDbException $ do
+    -- get the EB items using new db
+    items <- leiosDbLookupEbBody db pointEbHash
+    let loop !i [] = pure i
+        loop !i ((txHash, txBytesSize) : rest) = do
+          MV.write buf i (txHash, txBytesSize)
+          loop (i + 1) rest
+    loop 0 items
   v <- V.freeze $ MV.slice 0 n buf
   pure $ MkLeiosEb v
 
@@ -137,7 +134,7 @@ msgLeiosBlockTxsRequest ::
   [(Word16, Word64)] ->
   m (V.Vector LeiosTx)
 msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
-  let MkLeiosFetchContext{leiosDb = db, leiosEbTxsBuffer = buf, leiosWriteLock} = leiosContext
+  let MkLeiosFetchContext{leiosDb = db, leiosEbTxsBuffer = buf} = leiosContext
   do
     let idxs = map fst bitmaps
     let idxLimit = maxTxsPerEb `div` 64
@@ -154,7 +151,7 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
           Just (i, bitmap') ->
             Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
       txOffsets = unfoldr nextOffset bitmaps
-  n <- MVar.withMVar leiosWriteLock $ \() -> do
+  n <- do
     -- Use new db to batch retrieve transactions
     results <- leiosDbBatchRetrieveTxs db point.pointEbHash txOffsets
     -- Process results and write to buffer
@@ -475,8 +472,7 @@ nextLeiosFetchClientCommand ::
   Tracer m TraceLeiosKernel ->
   Tracer m TraceLeiosPeer ->
   StrictSTM.STM m Bool ->
-  ( MVar m ()
-  , MVar m (LeiosOutstanding pid)
+  ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
   LeiosDbHandle m ->
@@ -528,8 +524,7 @@ msgLeiosBlock ::
   ) =>
   Tracer m TraceLeiosKernel ->
   Tracer m TraceLeiosPeer ->
-  ( MVar m ()
-  , MVar m (LeiosOutstanding pid)
+  ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
   LeiosDbHandle m ->
@@ -537,7 +532,7 @@ msgLeiosBlock ::
   LeiosBlockRequest ->
   LeiosEb ->
   m ()
-msgLeiosBlock ktracer tracer (writeLock, outstandingVar, readyVar) db peerId req eb = do
+msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
   -- validate it
   let MkLeiosBlockRequest point ebBytesSize = req
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
@@ -552,7 +547,7 @@ msgLeiosBlock ktracer tracer (writeLock, outstandingVar, readyVar) db peerId req
   -- ingest it
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let novel = not $ Set.member ebHash (Leios.acquiredEbBodies outstanding)
-    when novel $ MVar.withMVar writeLock $ \() -> do
+    when novel $ do
       -- TODO don't hold the outstanding mvar during this IO
       traceException tracer TraceLeiosPeerDbException $ do
         -- NOTE: The point should already be in the table because of the
@@ -646,8 +641,7 @@ msgLeiosBlockTxs ::
   ) =>
   Tracer m TraceLeiosKernel ->
   Tracer m TraceLeiosPeer ->
-  ( MVar m ()
-  , MVar m (LeiosOutstanding pid)
+  ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
   LeiosDbHandle m ->
@@ -655,7 +649,7 @@ msgLeiosBlockTxs ::
   LeiosBlockTxsRequest ->
   V.Vector LeiosTx ->
   m ()
-msgLeiosBlockTxs ktracer tracer (writeLock, outstandingVar, readyVar) db peerId req txs = do
+msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
   -- validate it
   -- TODO: could validate the returned point + bitmaps too (added to response recently)
@@ -681,15 +675,8 @@ msgLeiosBlockTxs ktracer tracer (writeLock, outstandingVar, readyVar) db peerId 
       offsets = unfoldr nextOffset bitmaps
   -- ingest
   traceException tracer TraceLeiosPeerDbException $ do
-    MVar.withMVar writeLock $ \() -> do
-      -- REVIEW: These operations were previously wrapped in a single dbWithBEGIN
-      -- transaction but are now separate db calls. For SQLite, each operation is
-      -- transactional, but they're not in a single atomic transaction anymore.
-      -- This may need to be fixed by adding a batch update operation to the db or
-      -- ensuring transactional semantics. Use new db for both txCache and ebTxs
-      -- updates
-      completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
-      forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+    completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
+    forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let (requestedTxPeers', txOffsetss', txsBytesSize) =

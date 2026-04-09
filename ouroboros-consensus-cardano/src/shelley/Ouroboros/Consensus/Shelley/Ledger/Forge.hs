@@ -15,10 +15,7 @@ import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import qualified Data.ByteString as BL
 import qualified Data.Sequence.Strict as Seq
-import qualified Debug.Trace as Debug
-import LeiosDemoDb
-  ( LeiosDbHandle (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint)
-  )
+import LeiosDemoDb (LeiosDbHandle (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint))
 import LeiosDemoTypes
   ( EbHash (ebHashBytes)
   , ForgedLeiosEb (point)
@@ -106,9 +103,7 @@ forgeShelleyBlock
                   Nothing -> return (SL.BodyInline rbTxs', False) -- This happens when EBs have been downloaded but voting hasn't completed
                   Just cert ->
                     return $
-                      Debug.trace
-                        (show ("certifying", cert, annEbPoint))
-                        (SL.BodyCertificate (toLedgerCert cert) (Just ebClosure), True)
+                      (SL.BodyCertificate (toLedgerCert cert) (Just ebClosure), True)
     hdr <-
       mkHeader @_ @(ProtoCrypto proto) -- FIXME(bladyjoker): EB announcement in header
         hotKey
