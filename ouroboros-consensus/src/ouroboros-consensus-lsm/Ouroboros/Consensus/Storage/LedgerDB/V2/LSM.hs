@@ -24,7 +24,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( -- * Backend API
     LSM
   , Backend (..)
-  , Args (LSMArgs)
+  , ResourcesArgs (LSMArgs)
+  , HandleArgsFromSnapshotArgs (HandleArgsFromSnapshotArgs)
   , Trace (..)
   , LSM.LSMTreeTrace (..)
   , mkLSMArgsIO
@@ -518,10 +519,10 @@ loadSnapshot ::
   Tracer m LedgerDBV2Trace ->
   CodecConfig blk ->
   SomeHasFS m ->
-  Session m ->
+  Resources m LSM ->
   DiskSnapshot ->
   ExceptT (SnapshotFailure blk) m (StateRef m (ExtLedgerState blk), RealPoint blk)
-loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
+loadSnapshot tracer ccfg fs@(SomeHasFS hfs) res ds = do
   fileEx <- lift $ doesFileExist hfs (snapshotToDirPath ds)
   Monad.when fileEx $ throwE $ InitFailureRead ReadSnapshotIsLegacy
   snapshotMeta <-
@@ -538,15 +539,9 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwE InitFailureGenesis
     NotOrigin pt -> do
-      values <-
+      h <-
         lift $
-          encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
-            LSM.openTableFromSnapshot
-              session
-              (fromString $ snapshotToDirName ds)
-              (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
-
-      h <- lift $ newLSMLedgerTablesHandle tracer msz values
+          handleArgsFromSnapshot res ds (HandleArgsFromSnapshotArgs tracer msz) >>= mkHandle tracer
       Monad.when
         (checksumAsRead /= snapshotChecksum snapshotMeta)
         $ throwE
@@ -619,13 +614,16 @@ instance
   ) =>
   Backend m LSM blk
   where
-  data Args m LSM
+  data ResourcesArgs m LSM
     = LSMArgs
         FsPath
         -- \^ The file path relative to the fast storage directory in which the LSM
         -- trees database will be located.
         Salt
         (forall st. WithTempRegistry st m (SomeHasFSAndBlockIO m))
+
+  data HandleArgs m LSM blk = HandleArgs Word64 (UTxOTable m)
+  data HandleArgsFromSnapshotArgs m LSM = HandleArgsFromSnapshotArgs (Tracer m LedgerDBV2Trace) Word64
 
   data Resources m LSM = LSMResources
     { sessionResource :: !(Session m)
@@ -640,6 +638,21 @@ instance
     | LSMSnap EnclosingTimed
     | LSMOpenSession EnclosingTimed
     deriving Show
+
+  mkHandle trcr (HandleArgs sz tb) = newLSMLedgerTablesHandle trcr sz tb
+
+  handleArgsFromSnapshot (LSMResources session _) ds (HandleArgsFromSnapshotArgs tracer sz) =
+    HandleArgs sz
+      <$> encloseTimedWith
+        (TraceLedgerTablesHandleCreateFirst >$< tracer)
+        ( LSM.openTableFromSnapshot
+            session
+            (LSM.toSnapshotName (snapshotToDirName ds))
+            (LSM.SnapshotLabel $ T.pack "UTxO table")
+        )
+
+  handleArgsFromValues tracer (LSMResources session _) st =
+    uncurry (flip HandleArgs) <$> tableFromValuesMK tracer session (forgetLedgerTables st) (ltprj st)
 
   mkResources _ trcr (LSMArgs path salt mkFS) _ = do
     sblockio@(SomeHasFSAndBlockIO fs blockio) <- mkFS
@@ -662,14 +675,12 @@ instance
     LSM.closeSession session
     BIO.close blockio
 
-  openStateRefFromSnapshot trcr ccfg shfs res ds = do
-    loadSnapshot trcr ccfg shfs (sessionResource res) ds
+  openStateRefFromSnapshot trcr ccfg shfs res ds =
+    loadSnapshot trcr ccfg shfs res ds
 
   createAndPopulateStateRefFromGenesis trcr res st = do
-    let st' = forgetLedgerTables st
-    (table, sz) <-
-      tableFromValuesMK trcr (sessionResource res) st' (ltprj st)
-    StateRef st' <$> newLSMLedgerTablesHandle trcr sz table
+    hArgs <- handleArgsFromValues trcr res st
+    StateRef (forgetLedgerTables st) <$> mkHandle trcr hArgs
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 

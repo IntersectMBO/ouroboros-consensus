@@ -36,11 +36,18 @@ import System.FS.API
 -- | Operations needed to open and operate a LedgerDB V2
 class NoThunks (Resources m backend) => Backend m backend blk where
   -- | The Arguments that will be used initially to create the 'Resources'.
-  data Args m backend
+  data ResourcesArgs m backend
 
   -- | The Resources that will be stored in the LedgerDB environment and given
   -- to the handle operations.
   data Resources m backend
+
+  -- | The args to pass when going to create handle args from a snapshot
+  data HandleArgsFromSnapshotArgs m backend
+
+  -- | The arguments to create a handle, either from a snapshot or from the
+  -- genesis
+  data HandleArgs m backend blk
 
   -- | A trace dependent on the particular backend.
   data Trace backend
@@ -50,12 +57,33 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   mkResources ::
     Proxy blk ->
     Tracer m LedgerDBV2Trace ->
-    Args m backend ->
+    ResourcesArgs m backend ->
+    -- | The filesystem where the snapshots are stored (@chaindb/ledger@).
     SomeHasFS m ->
     WithTempRegistry fState m (Resources m backend)
 
   -- | Release the acquired resources.
   releaseResources :: Proxy blk -> Resources m backend -> m ()
+
+  -- | Create a handle from 'HandleArgs'
+  mkHandle ::
+    Tracer m LedgerDBV2Trace ->
+    HandleArgs m backend blk ->
+    m (LedgerTablesHandle m (ExtLedgerState blk))
+
+  -- | Create the 'HandleArgs' from a snapshot
+  handleArgsFromSnapshot ::
+    Resources m backend ->
+    DiskSnapshot ->
+    HandleArgsFromSnapshotArgs m backend ->
+    m (HandleArgs m backend blk)
+
+  -- | Create the 'HandleArgs' from values
+  handleArgsFromValues ::
+    Tracer m LedgerDBV2Trace ->
+    Resources m backend ->
+    ExtLedgerState blk ValuesMK ->
+    m (HandleArgs m backend blk)
 
   -- | Create a new handle from the given Genesis state.
   createAndPopulateStateRefFromGenesis ::
@@ -68,6 +96,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   openStateRefFromSnapshot ::
     Tracer m LedgerDBV2Trace ->
     CodecConfig blk ->
+    -- | The filesystem where the snapshots are stored (@chaindb/ledger@).
     SomeHasFS m ->
     Resources m backend ->
     DiskSnapshot ->
@@ -82,6 +111,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     Resources m backend ->
     CodecConfig blk ->
     Tracer m (TraceSnapshotEvent blk) ->
+    -- | The filesystem where the snapshots are stored (@chaindb/ledger@).
     SomeHasFS m ->
     SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
 
@@ -97,7 +127,7 @@ instance Show SomeBackendTrace where
   show (SomeBackendTrace tr) = show tr
 
 data SomeBackendArgs m blk where
-  SomeBackendArgs :: Backend m backend blk => Args m backend -> SomeBackendArgs m blk
+  SomeBackendArgs :: Backend m backend blk => ResourcesArgs m backend -> SomeBackendArgs m blk
 
 data SomeResources m blk where
   SomeResources :: Backend m backend blk => Resources m backend -> SomeResources m blk

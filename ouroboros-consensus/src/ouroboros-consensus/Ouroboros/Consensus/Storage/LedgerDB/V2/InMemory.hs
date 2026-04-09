@@ -14,7 +14,8 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
   ( Backend (..)
-  , Args (InMemArgs)
+  , ResourcesArgs (InMemArgs)
+  , HandleArgs (HandleArgs)
   , Trace (NoTrace)
   , Mem
   , YieldArgs (YieldInMemory)
@@ -272,7 +273,7 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) ds = do
         throwE $
           InitFailureRead $
             ReadSnapshotDataCorruption
-      h <- lift $ newInMemoryLedgerTablesHandle tracer fs values
+      h <- lift $ mkHandle tracer (HandleArgs (Resources fs) values)
       pure (StateRef extLedgerSt h, pt)
 
 snapshotToTablesPath :: DiskSnapshot -> FsPath
@@ -288,17 +289,26 @@ instance
   ) =>
   Backend m Mem blk
   where
-  data Args m Mem = InMemArgs
+  data ResourcesArgs m Mem = InMemArgs
   newtype Resources m Mem = Resources (SomeHasFS m)
     deriving newtype NoThunks
+  data HandleArgs m Mem blk
+    = HandleArgs (Resources m Mem) (LedgerTables (ExtLedgerState blk) ValuesMK)
+  newtype HandleArgsFromSnapshotArgs m Mem = HandleArgsFromSnapshotArgs Void
   newtype Trace Mem = NoTrace Void
     deriving newtype Show
 
+  mkHandle trcr (HandleArgs (Resources shfs) values) =
+    newInMemoryLedgerTablesHandle trcr shfs values
+  handleArgsFromSnapshot _ _ (HandleArgsFromSnapshotArgs v) = absurd v
+  handleArgsFromValues _ res st =
+    pure (HandleArgs res (ltprj st))
+
   mkResources _ _ _ = pure . Resources
   releaseResources _ _ = pure ()
-  createAndPopulateStateRefFromGenesis tracer (Resources shfs) values =
+  createAndPopulateStateRefFromGenesis tracer res values =
     StateRef (forgetLedgerTables values)
-      <$> newInMemoryLedgerTablesHandle tracer shfs (ltprj values)
+      <$> (handleArgsFromValues tracer res values >>= mkHandle tracer)
   openStateRefFromSnapshot trcr ccfg shfs _ ds =
     loadSnapshot trcr ccfg shfs ds
   snapshotManager _ _ =
