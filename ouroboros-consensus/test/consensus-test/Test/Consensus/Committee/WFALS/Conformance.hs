@@ -5,7 +5,13 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Test.Consensus.Committee.WFALS.Conformance
-  ( conformsToRustImplementation
+  ( CommitteeSize
+  , NumPersistent
+  , NumNonPersistent
+  , PoolId
+  , Stake
+  , StakeDistr
+  , conformsToRustImplementation
   )
 where
 
@@ -19,14 +25,14 @@ import Data.Array (Array)
 import qualified Data.Array as Array
 import qualified Data.FileEmbed as FileEmbed
 import Data.Map.Strict (Map)
+import Data.Word (Word64)
 import System.FilePath ((</>))
-import Test.QuickCheck (Property)
-import Test.QuickCheck.Gen (Gen, choose)
-import Test.QuickCheck.Property (counterexample, forAll, (===))
+import Test.Tasty (TestTree)
+import Test.Tasty.HUnit (assertEqual, testCase)
 
-type CommitteeSize = Int
-type NumPersistent = Int
-type NumNonPersistent = Int
+type CommitteeSize = Word64
+type NumPersistent = Word64
+type NumNonPersistent = Word64
 type PoolId = String
 type Stake = Rational
 type StakeDistr = Map PoolId Stake
@@ -68,8 +74,8 @@ rustResults =
     Array.listArray (0, length pairs - 1) pairs
 
 -- | Embedded stake distribution
-stakeDistr :: StakeDistr
-stakeDistr =
+exampleStakeDistr :: StakeDistr
+exampleStakeDistr =
   either error id $
     eitherDecodeStrict $
       $( FileEmbed.embedFile $
@@ -80,41 +86,43 @@ stakeDistr =
              </> "stake_distr.json"
        )
 
--- | Sample a value from an array
-sampleArray :: Array Int a -> Gen a
-sampleArray array = do
-  i <- choose (Array.bounds array)
-  pure $ (Array.!) array i
-
 -- | Check that a weighted fait accompli committee selection implementation
 -- conforms to the Rust implementation by comparing the number persistent and
 -- non-persistent committee members it selects for a given target committee size.
 conformsToRustImplementation ::
-  ( Map PoolId Stake ->
+  String ->
+  (Map PoolId Stake -> stakeDistr) ->
+  ( stakeDistr ->
     CommitteeSize ->
     ( NumPersistent
     , NumNonPersistent
     )
   ) ->
-  Property
-conformsToRustImplementation wfals = do
-  forAll (sampleArray rustResults) $
-    \RustResult
-       { targetCommitteeSize
-       , numPersistent
-       , numNonPersistent
-       } -> do
-        let (actualNumPersistent, actualNumNonPersistent) =
-              wfals stakeDistr targetCommitteeSize
-        counterexample
-          ( unlines
-              [ "Target committee size: "
-                  <> show targetCommitteeSize
-              , "Expected (persistent, non-persistent): "
-                  <> show (numPersistent, numNonPersistent)
-              , "Actual (persistent, non-persistent): "
-                  <> show (actualNumPersistent, actualNumNonPersistent)
-              ]
-          )
-          $ (actualNumPersistent, actualNumNonPersistent)
-            === (numPersistent, numNonPersistent)
+  TestTree
+conformsToRustImplementation name mkStakeDistr wfa = do
+  testCase name (go (Array.bounds rustResults))
+ where
+  stakeDistr = mkStakeDistr exampleStakeDistr
+
+  go (currStep, lastStep)
+    | currStep > lastStep =
+        pure ()
+    | otherwise = do
+        step ((Array.!) rustResults currStep)
+        go (succ currStep, lastStep)
+
+  step RustResult{targetCommitteeSize, numPersistent, numNonPersistent} = do
+    let (actualNumPersistent, actualNumNonPersistent) =
+          wfa stakeDistr targetCommitteeSize
+    assertEqual
+      ( unlines
+          [ "Target committee size: "
+              <> show targetCommitteeSize
+          , "Expected (persistent, non-persistent): "
+              <> show (numPersistent, numNonPersistent)
+          , "Actual (persistent, non-persistent): "
+              <> show (actualNumPersistent, actualNumNonPersistent)
+          ]
+      )
+      (numPersistent, numNonPersistent)
+      (actualNumPersistent, actualNumNonPersistent)
