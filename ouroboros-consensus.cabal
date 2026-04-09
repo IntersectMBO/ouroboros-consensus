@@ -682,6 +682,7 @@ test-suite consensus-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.BlockchainTime.Simple
+    Test.Consensus.Committee.Utils
     Test.Consensus.Committee.WFALS
     Test.Consensus.Committee.WFALS.Conformance
     Test.Consensus.Committee.WFALS.Model
