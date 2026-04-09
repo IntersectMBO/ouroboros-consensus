@@ -137,7 +137,14 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+  ( OverrideOrDefault (..)
+  , SnapshotFrequency (..)
+  , SnapshotFrequencyArgs (..)
+  , SnapshotPolicyArgs (..)
+  , defaultSnapshotPolicy
+  )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -726,18 +733,15 @@ runPure cfg = \case
   FollowerClose flr -> ok Unit $ update_ (Model.followerClose flr)
   PersistBlks -> ok Unit $ update_ (Model.copyToImmutableDB k DoNotGarbageCollect)
   PersistBlksThenGC -> ok Unit $ update_ (Model.copyToImmutableDB k GarbageCollect)
-  -- TODO: The model does not capture the notion of ledger snapshots,
-  -- therefore we ignore this command here. This introduces an assymetry in
-  -- the way the 'UpdateLedgerSnapshots' command is handled in the model and
-  -- in the system under test. It would be better if we modelled the
-  -- snapshots so that this aspect of the system would be explicitly
-  -- specified. See https://github.com/IntersectMBO/ouroboros-network/issues/3375
-  UpdateLedgerSnapshots -> ok Unit $ update_ (Model.copyToImmutableDB k GarbageCollect)
+  UpdateLedgerSnapshots ->
+    let copyImmutableBlocks = Model.copyToImmutableDB k GarbageCollect
+     in ok Unit $ update_ (Model.takeSnapshot copyImmutableBlocks snapshotPolicy k)
   Close -> openOrClosed $ update_ Model.closeDB
   Reopen -> openOrClosed $ update_ Model.reopen
   WipeVolatileDB -> ok Point $ update (Model.wipeVolatileDB cfg)
  where
   k = configSecurityParam cfg
+  snapshotPolicy = defaultSnapshotPolicy k testSnapshotPolicyArgs
 
   add blk m = (Model.tipPoint m', m')
    where
@@ -767,6 +771,23 @@ runPure cfg = \case
 
   -- Executed whether the ChainDB is open or closed.
   openOrClosed f = first (Resp . Right . Unit) . f
+
+-- | Snapshot policy arguments used with rate limiting disabled.
+-- Rate limiting is disabled so that the model does not need to track
+-- wall-clock time.
+testSnapshotPolicyArgs :: SnapshotPolicyArgs
+testSnapshotPolicyArgs =
+  SnapshotPolicyArgs
+    { spaFrequency =
+        SnapshotFrequency
+          SnapshotFrequencyArgs
+            { sfaInterval = UseDefault
+            , sfaOffset = UseDefault
+            , sfaRateLimit = Override 0
+            , sfaDelaySnapshotRange = UseDefault
+            }
+    , spaNum = UseDefault
+    }
 
 runIO ::
   TestConstraints blk =>
@@ -2157,6 +2178,10 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
           , cdbVolDbArgs =
               (cdbVolDbArgs args)
                 { VolatileDB.volCheckIntegrity = testBlockIsValid
+                }
+          , cdbLgrDbArgs =
+              (cdbLgrDbArgs args)
+                { LedgerDB.lgrSnapshotPolicyArgs = testSnapshotPolicyArgs
                 }
           }
 

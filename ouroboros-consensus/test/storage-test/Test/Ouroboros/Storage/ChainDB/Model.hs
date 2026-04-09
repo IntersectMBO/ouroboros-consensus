@@ -72,6 +72,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , chains
   , closeDB
   , copyToImmutableDB
+  , takeSnapshot
   , garbageCollectable
   , garbageCollectableIteratorNext
   , garbageCollectablePoint
@@ -91,7 +92,7 @@ import Control.Monad (unless)
 import Control.Monad.Except (runExcept)
 import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as Lazy
-import Data.Containers.ListUtils (nubOrdOn)
+import Data.Containers.ListUtils (nubOrd, nubOrdOn)
 import Data.Foldable (foldMap')
 import Data.Function (on, (&))
 import Data.Functor (($>), (<&>))
@@ -130,6 +131,10 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanImmTip)
 import Ouroboros.Consensus.Storage.Common ()
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+  ( SnapshotPolicy (..)
+  , SnapshotSelectorContext (..)
+  )
 import Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
 import Ouroboros.Consensus.Util.IOLike (MonadSTM)
@@ -1130,6 +1135,34 @@ copyToImmutableDB secParam shouldCollectGarbage m =
  where
   garbageCollectIf GarbageCollect = garbageCollect secParam
   garbageCollectIf DoNotGarbageCollect = id
+
+-- | Simualate the /side effects/ of taking a ledger state snapshot,
+-- specifically the flushing of the immutable blocks from the volatile DB.
+--
+-- The model does not actually track snapshots, but makes a decision whether or not
+-- to take a snapshot. Flushing the immutable blocks is necessary to make sure the
+-- taken ledger state snapshot corresponds to an immutable block that exists in ImmutableDB.
+takeSnapshot ::
+  forall blk.
+  HasHeader blk =>
+  (Model blk -> Model blk) ->
+  SnapshotPolicy ->
+  SecurityParam ->
+  Model blk ->
+  Model blk
+takeSnapshot copyImmutableBlocks SnapshotPolicy{onDiskSnapshotSelector} secParam m =
+  let -- Compute the list of slot numbers of the immutable blocks.
+      -- Possible duplicates due to EBBs are removed.
+      immutableSlots = nubOrd . map blockSlot $ Chain.toOldestFirst (immutableChain secParam m)
+      snapshotSelectorCtx = SnapshotSelectorContext
+              { sscTimeSinceLast = Nothing
+              , sscSnapshotSlots = immutableSlots
+              }
+      snapshotSlots = onDiskSnapshotSelector snapshotSelectorCtx
+  in if null snapshotSlots
+     then m
+     else copyImmutableBlocks m
+
 
 closeDB :: Model blk -> Model blk
 closeDB m@Model{..} =
