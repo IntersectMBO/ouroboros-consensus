@@ -52,7 +52,7 @@ import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint)
+import Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint, genesisPoint)
 import qualified Ouroboros.Network.Mock.Chain as Mock
 import Test.Ouroboros.Storage.ChainDB.Model (Model)
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
@@ -115,6 +115,15 @@ tests =
         , testGroup
             "Empty slot, returns block at next filled slot"
             [testCase "system" $ runSystemIO waitForImmutableBlock_emptySlot]
+        ]
+    , testGroup
+        "Interaction of ImmutableDB, wiping the VolatileDB and ledger state snapshots"
+        [ testGroup
+            "Chain not long enough to take a snapshot, so blocks are not persisted into ImmutableDB and are lost."
+            [testCase "system" $ runSystemIO updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot]
+        , testGroup
+            "Chain is long enough to take a snapshot, blocks are copied into ImmutableDB."
+            [testCase "system" $ runSystemIO updateLedgerSnapshots_WipeVolatileDB_withSnapshot]
         ]
     ]
 
@@ -329,6 +338,63 @@ waitForImmutableBlock_emptySlot = do
  where
   fork0 = TestBody 0 True Nothing
 
+-- | Taking a ledger state snapshot should only copy blocks to the
+-- ImmutableDB when the snapshot policy selects slots for snapshotting. When the
+-- immutable chain is too short, no blocks should be flushed, and WipeVolatileDB
+-- should recover to the tip of the (empty) ImmutableDB.
+--
+-- See 'updateLedgerSnapshots_WipeVolatileDB_withSnapshot' for the scenario where
+-- the snapshot is taken.
+updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot ::
+  forall m.
+  ( Block m ~ TestBlock
+  , SupportsUnitTest m
+  , MonadError TestFailure m
+  ) =>
+  m ()
+updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot = do
+  b1 <- addBlock $ firstBlock 1 $ fork0
+  b2 <- addBlock $ mkNextBlock b1 3 $ fork0
+  _b3 <- addBlock $ mkNextBlock b2 5 $ fork0
+
+  -- With k=2, 3 blocks are not enough to trigger a snapshot,
+  updateLedgerSnapshots
+
+  tip <- wipeVolatileDB
+  tip
+    == genesisPoint
+      `orFailWith` ("Expected ChainDB tip after wiping VolatileDB to be at Genesis, but got: " <> show tip)
+ where
+  fork0 = TestBody 1 True Nothing
+
+-- | See 'updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot' for details.
+updateLedgerSnapshots_WipeVolatileDB_withSnapshot ::
+  forall m.
+  ( Block m ~ TestBlock
+  , SupportsUnitTest m
+  , MonadError TestFailure m
+  ) =>
+  m ()
+updateLedgerSnapshots_WipeVolatileDB_withSnapshot = do
+  b1 <- addBlock $ firstBlock 1 $ fork0
+  b2 <- addBlock $ mkNextBlock b1 3 $ fork0
+  b3 <- addBlock $ mkNextBlock b2 5 $ fork0
+  b4 <- addBlock $ mkNextBlock b3 7 $ fork0
+  _ <- addBlock $ mkNextBlock b4 9 $ fork0
+
+  updateLedgerSnapshots
+
+  tip <- wipeVolatileDB
+  tip
+    /= genesisPoint
+      `orFailWith` ("Expected ChainDB non-Origin tip after wiping VolatileDB, got: " <> show tip)
+ where
+  fork0 = TestBody 1 True Nothing
+
+{-------------------------------------------------------------------------------
+  Helpers and testing infrastructure
+-------------------------------------------------------------------------------}
+
 streamAssertSuccess ::
   (MonadError TestFailure m, SupportsUnitTest m, Mock.HasHeader (Block m)) =>
   StreamFrom (Block m) -> StreamTo (Block m) -> m (IteratorId m)
@@ -444,6 +510,10 @@ class SupportsUnitTest m where
     IteratorId m ->
     m (API.IteratorResult (Block m) (AllComponents (Block m)))
 
+  updateLedgerSnapshots :: m ()
+
+  wipeVolatileDB :: m (Point (Block m))
+
   waitForImmutableBlock ::
     RealPoint (Block m) -> m (Either API.SeekBlockError (RealPoint (Block m)))
 
@@ -521,6 +591,15 @@ instance
 
   persistBlksThenGC =
     void $ runModelCmd SM.PersistBlksThenGC
+
+  updateLedgerSnapshots =
+    void $ runModelCmd SM.UpdateLedgerSnapshots
+
+  wipeVolatileDB = do
+    result <- runModelCmd SM.WipeVolatileDB
+    case result of
+      SM.Point p -> pure p
+      _ -> error $ "wipeVolatileDB: unexpected result" <> show result
 
   stream from to = do
     result <- runModelCmd (SM.Stream from to)
@@ -655,6 +734,15 @@ instance (IOLike m, TestConstraints blk) => SupportsUnitTest (SystemM blk m) whe
 
   persistBlksThenGC =
     void $ runCmd SM.PersistBlksThenGC
+
+  updateLedgerSnapshots = do
+    void $ runCmd SM.UpdateLedgerSnapshots
+
+  wipeVolatileDB = do
+    result <- runCmd SM.WipeVolatileDB
+    case result of
+      SM.Point p -> pure p
+      _ -> error $ "wipeVolatileDB: unexpected result"
 
   newFollower = do
     result <- runCmd (SM.NewFollower API.SelectedChain)
