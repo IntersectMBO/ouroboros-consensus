@@ -62,6 +62,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   , close
   , mkTestCfg
   , open
+  , reopen
   , persistBlks
   , run
 
