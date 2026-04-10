@@ -40,6 +40,13 @@ import Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.Except
 import Control.ResourceRegistry
+  ( ResourceRegistry
+  , Thread
+  , allocate
+  , cancelThread
+  , forkLinkedThread
+  , withRegistry
+  )
 import Control.Tracer
 import Data.Bifunctor (second)
 import Data.Data (Typeable)
@@ -157,11 +164,13 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Data.Map (Map)
 import qualified Data.Map as Map
 import LeiosDemoDb
-  ( LeiosDbHandle (..)
+  ( LeiosDbConnection
+  , LeiosDbHandle (..)
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
   )
+import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
   ( ForgedLeiosEb
@@ -402,40 +411,42 @@ initNodeKernel
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
 
-    void $ forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ forever $ do
-      let tracer = leiosKernelTracer tracers
-      traceWith tracer $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
-      () <- MVar.takeMVar getLeiosReady
-      iterationStart <- getMonotonicTime
-      leiosPeersVars <- MVar.readMVar getLeiosPeersVars
-      offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
-      newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
-        -- Filter outstanding work against DB before running fetch iteration.
-        -- This removes EBs and TXs we already have (e.g., from forging or other peers).
-        filteredOutstanding <-
-          Leios.filterMissingWork leiosDB outstanding
-        traceWith tracer $ MkTraceLeiosKernel "leiosFetchLogic: filtered"
-        let (!outstanding', newDecisions) =
-              Leios.leiosFetchLogicIteration
-                Leios.demoLeiosFetchStaticEnv
-                offerings
-                filteredOutstanding
-        pure (outstanding', newDecisions)
-      traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: decided"
-      let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
-      traceWith tracer $
-        MkTraceLeiosKernel $
-          "leiosFetchLogic: "
-            ++ show (sum (fmap length newRequests))
-            ++ " new reqs"
-      (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
-        atomically $ do
-          StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
-      iterationEnd <- getMonotonicTime
-      let loopInterval = 0.5 :: DiffTime -- TODO magic number
-          duration = iterationEnd `diffTime` iterationStart
-      traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
-      threadDelay $ loopInterval - duration
+    void $
+      forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ do
+        leiosConn <- allocate_ registry (LeiosDb.open leiosDB) LeiosDb.close
+        forever $ do
+          let tracer = leiosKernelTracer tracers
+          traceWith tracer $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
+          () <- MVar.takeMVar getLeiosReady
+          iterationStart <- getMonotonicTime
+          leiosPeersVars <- MVar.readMVar getLeiosPeersVars
+          offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
+          newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+            -- Filter outstanding work against DB before running fetch iteration.
+            -- This removes EBs and TXs we already have (e.g., from forging or other peers).
+            filteredOutstanding <- Leios.filterMissingWork leiosConn outstanding
+            traceWith tracer $ MkTraceLeiosKernel "leiosFetchLogic: filtered"
+            let (!outstanding', newDecisions) =
+                  Leios.leiosFetchLogicIteration
+                    Leios.demoLeiosFetchStaticEnv
+                    offerings
+                    filteredOutstanding
+            pure (outstanding', newDecisions)
+          traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: decided"
+          let newRequests = Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
+          traceWith tracer $
+            MkTraceLeiosKernel $
+              "leiosFetchLogic: "
+                ++ show (sum (fmap length newRequests))
+                ++ " new reqs"
+          (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
+            atomically $ do
+              StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
+          iterationEnd <- getMonotonicTime
+          let loopInterval = 0.5 :: DiffTime -- TODO magic number
+              duration = iterationEnd `diffTime` iterationStart
+          traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
+          threadDelay $ loopInterval - duration
 
     return
       NodeKernel
@@ -586,15 +597,18 @@ forkBlockForging ::
   m (Thread m Void)
 forkBlockForging IS{..} blockForging =
   forkLinkedWatcher registry threadLabel $
-    knownSlotWatcher btime $
-      \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go rr currentSlot)
+    knownSlotWatcher btime $ \currentSlot ->
+      withRegistry $ \rr -> do
+        leiosConn <- allocate_ rr (LeiosDb.open leiosDB) LeiosDb.close
+        withEarlyExit_ $
+          go rr currentSlot leiosConn
  where
   threadLabel :: String
   threadLabel =
     "NodeKernel.blockForging." <> Text.unpack (forgeLabel blockForging)
 
-  go :: ResourceRegistry m -> SlotNo -> WithEarlyExit m ()
-  go reg currentSlot = do
+  go :: ResourceRegistry m -> SlotNo -> LeiosDbConnection m -> WithEarlyExit m ()
+  go reg currentSlot leiosConn = do
     trace $ TraceStartLeadershipCheck currentSlot
 
     -- Figure out which block to connect to
@@ -768,7 +782,7 @@ forkBlockForging IS{..} blockForging =
       lift $
         Block.forgeBlock
           blockForging
-          leiosDB
+          leiosConn
           cfg
           bcBlockNo
           currentSlot
@@ -850,9 +864,9 @@ forkBlockForging IS{..} blockForging =
       -- Store generated EB so it can be diffused
       for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
         lift $ do
-          leiosDbInsertEbPoint leiosDB eb.point (Leios.leiosEbBytesSize eb.body)
-          leiosDbInsertEbBody leiosDB eb.point eb.body
-          void $ leiosDbInsertTxs leiosDB eb.txClosure
+          leiosDbInsertEbPoint leiosConn eb.point (Leios.leiosEbBytesSize eb.body)
+          leiosDbInsertEbBody leiosConn eb.point eb.body
+          void $ leiosDbInsertTxs leiosConn eb.txClosure
         traceLeios TraceLeiosBlockStored{slot = currentSlot, eb = eb.body}
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()
@@ -1070,3 +1084,15 @@ getImmTipSlot ::
 getImmTipSlot kernel =
   getTipSlot
     <$> ChainDB.getImmutableLedger (getChainDB kernel)
+
+-- | A helper for 'allocate' when the acquired resource is not needed in the release action.
+allocate_ ::
+  (MonadSTM m, MonadMask m, MonadThread m) =>
+  ResourceRegistry m ->
+  -- | Acquire
+  m a ->
+  -- | Release
+  (a -> m ()) ->
+  m a
+allocate_ registry acquire release =
+  snd <$> allocate registry (const acquire) release

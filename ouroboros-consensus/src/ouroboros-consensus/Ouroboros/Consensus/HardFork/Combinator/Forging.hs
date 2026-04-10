@@ -27,7 +27,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP, ViewOptNP (..))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Text (Text)
-import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoTypes (ForgedLeiosEb)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -300,7 +300,7 @@ hardForkForgeBlock ::
   forall m xs empty.
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   TopLevelConfig (HardForkBlock xs) ->
   BlockNo ->
   SlotNo ->

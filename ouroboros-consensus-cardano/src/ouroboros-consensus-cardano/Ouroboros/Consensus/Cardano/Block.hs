@@ -189,7 +189,7 @@ import Data.Kind
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
-import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb (LeiosDbConnection)
 import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import Ouroboros.Consensus.HardFork.Combinator
@@ -1376,7 +1376,7 @@ instance
   resolveLeiosBlock ::
     forall m mk.
     Monad m =>
-    LeiosDbHandle m ->
+    LeiosDbConnection m ->
     ExtLedgerState (CardanoBlock c) mk ->
     CardanoBlock c ->
     m (CardanoBlock c)

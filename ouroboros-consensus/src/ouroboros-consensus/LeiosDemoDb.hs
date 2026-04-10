@@ -6,10 +6,10 @@ module LeiosDemoDb
   , CompletedEbs
 
     -- * In-memory implementation
-  , InMemoryLeiosDb
   , emptyInMemoryLeiosDb
   , newLeiosDBInMemory
   , newLeiosDBInMemoryWith
+  , InMemoryLeiosDb (..)
 
     -- * SQLite implementation
   , newLeiosDBSQLiteFromEnv

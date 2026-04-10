@@ -36,7 +36,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb (LeiosDbConnection)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -82,12 +82,11 @@ mkInitDb ::
   , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
   ) =>
-  LeiosDbHandle m ->
   Complete LedgerDbArgs m blk ->
   Complete V1.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
   InitDB (DbChangelog' blk, BackingStore' m blk) m blk
-mkInitDb leiosDb args bss getBlock =
+mkInitDb args bss getBlock =
   InitDB
     { initFromGenesis = do
         st <- lgrGenesis
@@ -142,7 +141,7 @@ mkInitDb leiosDb args bss getBlock =
                 , ldbResolveBlock = getBlock
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb leiosDb h
+        pure $ implMkLedgerDb h
     }
  where
   bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
@@ -173,17 +172,16 @@ implMkLedgerDb ::
   , HasHardForkHistory blk
   , ResolveLeiosBlock blk
   ) =>
-  LeiosDbHandle m ->
   LedgerDBHandle m l blk ->
   (LedgerDB' m blk, TestInternals' m blk)
-implMkLedgerDb leiosDb h =
+implMkLedgerDb h =
   ( LedgerDB
       { getVolatileTip = getEnvSTM h implGetVolatileTip
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = getEnvSTM1 h implGetPastLedgerState
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
       , getForkerAtTarget = newForkerAtTarget h
-      , validateFork = getEnv5 h (implValidate leiosDb h)
+      , validateFork = \leiosDb -> getEnv5 h (implValidate leiosDb h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnvSTM1 h implGarbageCollect
       , tryTakeSnapshot = getEnv2 h implTryTakeSnapshot
@@ -247,7 +245,7 @@ implValidate ::
   , l ~ ExtLedgerState blk
   , ResolveLeiosBlock blk
   ) =>
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
   ResourceRegistry m ->

@@ -15,7 +15,11 @@ import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import qualified Data.ByteString as BL
 import qualified Data.Sequence.Strict as Seq
-import LeiosDemoDb (LeiosDbHandle (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint))
+import LeiosDemoDb
+  ( LeiosDbConnection
+  , leiosDbQueryCertificateByPoint
+  , leiosDbQueryCompletedEbByPoint
+  )
 import LeiosDemoTypes
   ( EbHash (ebHashBytes)
   , ForgedLeiosEb (point)
@@ -53,7 +57,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 forgeShelleyBlock ::
   forall m era proto mk.
   (ShelleyCompatible proto era, Monad m) =>
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
   TopLevelConfig (ShelleyBlock proto era) ->
@@ -155,7 +159,7 @@ toLedgerCert = SL.Certificate . BL.fromStrict . unLeiosCertificate
 
 leiosDbQueryCompletedEbByPoint' ::
   forall m era.
-  (Monad m, ShelleyBasedEra era) => LeiosDbHandle m -> LeiosPoint -> m (Maybe (SL.TxSeq era))
+  (Monad m, ShelleyBasedEra era) => LeiosDbConnection m -> LeiosPoint -> m (Maybe (SL.TxSeq era))
 leiosDbQueryCompletedEbByPoint' leiosDb ebPoint = do
   res <- leiosDbQueryCompletedEbByPoint leiosDb ebPoint
   return $ toTxSeq <$> res

@@ -4,12 +4,12 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
-module LeiosDemoDb.InMemory (
-  InMemoryLeiosDb,
-  emptyInMemoryLeiosDb,
-  newLeiosDBInMemory,
-  newLeiosDBInMemoryWith,
-) where
+module LeiosDemoDb.InMemory
+  ( InMemoryLeiosDb (..)
+  , emptyInMemoryLeiosDb
+  , newLeiosDBInMemory
+  , newLeiosDBInMemoryWith
+  ) where
 
 import Cardano.Prelude (Generic, forM_, maybeToList, when)
 import Cardano.Slotting.Slot (SlotNo (..))
@@ -198,7 +198,8 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
   forM_ completed $ writeTChan notificationChan . LeiosOfferBlockTxs
   pure completed
 
-imBatchRetrieveTxs :: IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+imBatchRetrieveTxs ::
+  IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
 imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
   state <- readTVar stateVar
   case Map.lookup ebHash (imEbBodies state) of
@@ -210,7 +211,8 @@ imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
         , Just entry <- [IntMap.lookup offset offsetMap]
         ]
 
-imFilterMissingEbBodies :: IOLike m => StrictTVar m InMemoryLeiosDb -> [LeiosPoint] -> m [LeiosPoint]
+imFilterMissingEbBodies ::
+  IOLike m => StrictTVar m InMemoryLeiosDb -> [LeiosPoint] -> m [LeiosPoint]
 imFilterMissingEbBodies stateVar points = atomically $ do
   state <- readTVar stateVar
   pure [p | p <- points, not $ Map.member p.pointEbHash (imEbBodies state)]
@@ -243,7 +245,8 @@ imQueryFetchWork stateVar = atomically $ do
           ]
   pure LeiosFetchWork{missingEbBodies, missingEbTxs}
 
-imQueryCompletedEbByPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [(TxHash, ByteString)])
+imQueryCompletedEbByPoint ::
+  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [(TxHash, ByteString)])
 imQueryCompletedEbByPoint stateVar ebPoint = atomically $ do
   state <- readTVar stateVar
   case Map.lookup (pointEbHash ebPoint) (imEbBodies state) of

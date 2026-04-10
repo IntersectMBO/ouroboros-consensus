@@ -70,7 +70,6 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
     LedgerDB.openDBInternal
       lgrDbArgs
       ( LedgerDB.V1.mkInitDb
-          (error "FIXME(bladyjoker)")
           lgrDbArgs
           bss
           (\_ -> error "no replay")
@@ -83,7 +82,6 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
     LedgerDB.openDBInternal
       lgrDbArgs
       ( LedgerDB.V2.mkInitDb
-          (error "FIXME(bladyjoker)")
           lgrDbArgs
           args
           (\_ -> error "no replay")

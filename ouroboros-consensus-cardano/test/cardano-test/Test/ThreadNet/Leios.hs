@@ -50,7 +50,7 @@ import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import LeiosDemoDb (LeiosDbHandle, newLeiosDBInMemoryWith)
+import LeiosDemoDb (LeiosDbConnection, newLeiosDBInMemoryWith, withLeiosDb)
 import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb)
 import Lens.Micro (each, (%~), (^.), (^..))
 import Ouroboros.Consensus.Block (SlotNo (..))
@@ -263,10 +263,11 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
   let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
   stateVar <- StrictTVar.newTVarIO db
   leiosDb <- newLeiosDBInMemoryWith stateVar
-  let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
-      cfg = ExtLedgerCfg topConfig
-  foldedState <- foldWithResolution leiosDb cfg chain initLedger
-  pure $ forgetLedgerTables . ledgerState $ foldedState
+  withLeiosDb leiosDb $ \leiosConn -> do
+    let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
+        cfg = ExtLedgerCfg topConfig
+    foldedState <- foldWithResolution leiosConn cfg chain initLedger
+    pure $ forgetLedgerTables . ledgerState $ foldedState
 
 -- | Fold a chain of blocks over an initial ledger state, resolving Leios
 -- blocks (filling in EB transaction closures for certifying blocks) before
@@ -279,7 +280,7 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
 -- the LedgerDB's backing store architecture.
 foldWithResolution ::
   Monad m =>
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   LedgerCfg (ExtLedgerState (CardanoBlock StandardCrypto)) ->
   [CardanoBlock StandardCrypto] ->
   ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->

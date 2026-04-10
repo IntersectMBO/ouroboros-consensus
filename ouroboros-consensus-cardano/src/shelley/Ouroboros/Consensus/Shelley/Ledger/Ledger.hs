@@ -116,7 +116,7 @@ import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbHandle (leiosDbQueryCompletedEbByPoint))
+import LeiosDemoDb (leiosDbQueryCompletedEbByPoint)
 import LeiosDemoTypes
   ( EbHash (MkEbHash)
   , LeiosPoint (MkLeiosPoint)
@@ -359,7 +359,7 @@ instance
   ResolveLeiosBlock (ShelleyBlock proto era)
   where
   resolveLeiosBlock
-    leiosDb
+    leiosConn
     extLedgerSt
     blk@(ShelleyBlock{shelleyBlockRaw = lblk@(SL.Block _ (SL.BodyCertificate cert Nothing) _ certifiesEb)})
       | certifiesEb = do
@@ -371,7 +371,7 @@ instance
                 "FIXME(bladyjoker): Certifying but not previously announced EB! Whai would you do that!? "
                   <> show cert
             Just announcedEbPoint -> do
-              mayAnnouncedEb <- leiosDbQueryCompletedEbByPoint leiosDb announcedEbPoint
+              mayAnnouncedEb <- leiosDbQueryCompletedEbByPoint leiosConn announcedEbPoint
               case mayAnnouncedEb of
                 Nothing ->
                   error $

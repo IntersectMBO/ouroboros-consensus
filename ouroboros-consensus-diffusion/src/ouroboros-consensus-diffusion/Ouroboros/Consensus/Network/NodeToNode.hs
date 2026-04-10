@@ -66,6 +66,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Void (Void)
 import LeiosDemoDb (LeiosDbHandle (subscribeEbNotifications))
+import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
@@ -396,6 +397,7 @@ mkHandlers
                       threadDelay (0.010 :: DiffTime)
                       loop
              in loop
+          leiosConn <- LeiosDb.open leiosDB -- TODO: cleanup
           pure $
             leiosFetchClientPeerPipelined $
               Leios.nextLeiosFetchClientCommand
@@ -403,7 +405,7 @@ mkHandlers
                 (leiosPeerTracer peer)
                 ((== Terminate) <$> controlMessageSTM)
                 (getLeiosOutstanding, getLeiosReady)
-                leiosDB
+                leiosConn
                 (Leios.MkPeerId peer)
                 reqVar
       , hLeiosFetchServer = \_version peer -> Effect $ do

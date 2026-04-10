@@ -56,6 +56,7 @@ import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import LeiosDemoDb (LeiosDbHandle (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -92,14 +93,15 @@ launchBgTasks ::
   , InspectLedger blk
   , HasHardForkHistory blk
   ) =>
+  LeiosDbHandle m ->
   ChainDbEnv m blk ->
   -- | Number of immutable blocks replayed on ledger DB startup
   Word64 ->
   m ()
-launchBgTasks cdb@CDB{..} replayed = do
+launchBgTasks leiosDb cdb@CDB{..} replayed = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
-      addBlockRunner cdbChainSelFuse cdb
+      addBlockRunner leiosDb cdbChainSelFuse cdb
   gcSchedule <- newGcSchedule
   !gcThread <-
     launch "ChainDB.gcScheduleRunner" $
@@ -519,44 +521,47 @@ addBlockRunner ::
   , HasHardForkHistory blk
   , HasCallStack
   ) =>
+  LeiosDbHandle m ->
   Fuse m ->
   ChainDbEnv m blk ->
   m Void
-addBlockRunner fuse cdb@CDB{..} = forever $ do
-  let trace = traceWith cdbTracer . TraceAddBlockEvent
-  trace $ PoppedBlockFromQueue RisingEdge
-  -- if the `chainSelSync` does not complete because it was killed by an async
-  -- exception (or it errored), notify the blocked thread
-  withFuse fuse $
-    bracketOnError
-      (lift $ getChainSelMessage starvationTracer cdbChainSelStarvation cdbChainSelQueue)
-      ( \message -> lift $ atomically $ do
-          case message of
-            ChainSelReprocessLoEBlocks varProcessed ->
-              void $ tryPutTMVar varProcessed ()
-            ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
-              _ <-
-                tryPutTMVar
-                  varBlockWrittenToDisk
-                  False
-              _ <-
-                tryPutTMVar
-                  varBlockProcessed
-                  (FailedToAddBlock "Failed to add block synchronously")
-              pure ()
-          closeChainSelQueue cdbChainSelQueue
-      )
-      ( \message -> do
-          lift $ case message of
-            ChainSelReprocessLoEBlocks _ ->
-              trace PoppedReprocessLoEBlocksFromQueue
-            ChainSelAddBlock BlockToAdd{blockToAdd} ->
-              trace $
-                PoppedBlockFromQueue $
-                  FallingEdgeWith $
-                    blockRealPoint blockToAdd
-          chainSelSync cdb message
-          lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
-      )
+addBlockRunner leiosDb fuse cdb@CDB{..} = do
+  leiosConn <- open leiosDb
+  forever $ do
+    let trace = traceWith cdbTracer . TraceAddBlockEvent
+    trace $ PoppedBlockFromQueue RisingEdge
+    -- if the `chainSelSync` does not complete because it was killed by an async
+    -- exception (or it errored), notify the blocked thread
+    withFuse fuse $
+      bracketOnError
+        (lift $ getChainSelMessage starvationTracer cdbChainSelStarvation cdbChainSelQueue)
+        ( \message -> lift $ atomically $ do
+            case message of
+              ChainSelReprocessLoEBlocks varProcessed ->
+                void $ tryPutTMVar varProcessed ()
+              ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
+                _ <-
+                  tryPutTMVar
+                    varBlockWrittenToDisk
+                    False
+                _ <-
+                  tryPutTMVar
+                    varBlockProcessed
+                    (FailedToAddBlock "Failed to add block synchronously")
+                pure ()
+            closeChainSelQueue cdbChainSelQueue
+        )
+        ( \message -> do
+            lift $ case message of
+              ChainSelReprocessLoEBlocks _ ->
+                trace PoppedReprocessLoEBlocksFromQueue
+              ChainSelAddBlock BlockToAdd{blockToAdd} ->
+                trace $
+                  PoppedBlockFromQueue $
+                    FallingEdgeWith $
+                      blockRealPoint blockToAdd
+            chainSelSync leiosConn cdb message
+            lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
+        )
  where
   starvationTracer = Tracer $ traceWith cdbTracer . TraceChainSelStarvationEvent

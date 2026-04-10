@@ -1,14 +1,12 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RankNTypes #-}
 
-module LeiosDemoDb.Types (
-  LeiosDbHandle (..),
-  LeiosDbConnection (..),
-  LeiosFetchWork (..),
-  CompletedEbs,
-) where
+module LeiosDemoDb.Types
+  ( LeiosDbHandle (..)
+  , LeiosDbConnection (..)
+  , LeiosFetchWork (..)
+  , CompletedEbs
+  ) where
 
 import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
