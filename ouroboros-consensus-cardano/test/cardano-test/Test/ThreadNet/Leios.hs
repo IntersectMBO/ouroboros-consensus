@@ -64,13 +64,13 @@ import Ouroboros.Consensus.Cardano
   )
 import Ouroboros.Consensus.Cardano.Block (pattern BlockConway)
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
-import Ouroboros.Consensus.Config (SecurityParam (..))
+import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import Ouroboros.Consensus.Ledger.Abstract
   ( ComputeLedgerEvents (OmitLedgerEvents)
   , LedgerCfg
   , tickThenReapply
   )
-import Ouroboros.Consensus.Ledger.Basics (ValuesMK)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState, ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended
   ( ExtLedgerCfg (..)
   , ExtLedgerState (..)
@@ -246,22 +246,26 @@ prop_leios_ebCertificateInclusion seed =
   -- extraction), so we strip the fold result's tables for comparison.
   expectedLedger = nodeOutputFinalLedger someNode
 
-  -- resolveLeiosBlock and newLeiosDBInMemoryWith require IOLike, but the
-  -- ThreadNet simulation has already finished. We run the fold in IOSim
-  -- to satisfy the constraint while keeping the test pure.
-  foldedLedger = runSimOrThrow $ do
-    let db = runIdentity . lsLeiosDb . nodeLeiosState $ someNode
-    -- Use the unchecked StrictTVar — newLeiosDBInMemoryWith expects the
-    -- strict-stm variant, not the checked one from IOLike.
-    stateVar <- StrictTVar.newTVarIO db
-    leiosDb <- newLeiosDBInMemoryWith stateVar
-    let chain = Chain.toOldestFirst . nodeOutputFinalChain $ someNode
-        cfg = ExtLedgerCfg pInfoConfig
-    foldedState <- foldWithResolution leiosDb cfg chain pInfoInitLedger
-    pure $ forgetLedgerTables . ledgerState $ foldedState
+  foldedLedger = replayNodeChain pInfoConfig pInfoInitLedger someNode
 
   numNodes = 3 :: Integer
   numSlots = 200 :: Word64
+
+-- | Replay a node's chain with Leios block resolution and return the
+-- resulting ledger state.
+replayNodeChain ::
+  TopLevelConfig (CardanoBlock StandardCrypto) ->
+  ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
+  NodeOutput (CardanoBlock StandardCrypto) ->
+  LedgerState (CardanoBlock StandardCrypto) EmptyMK
+replayNodeChain topConfig initLedger node = runSimOrThrow $ do
+  let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
+  stateVar <- StrictTVar.newTVarIO db
+  leiosDb <- newLeiosDBInMemoryWith stateVar
+  let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
+      cfg = ExtLedgerCfg topConfig
+  foldedState <- foldWithResolution leiosDb cfg chain initLedger
+  pure $ forgetLedgerTables . ledgerState $ foldedState
 
 -- | Fold a chain of blocks over an initial ledger state, resolving Leios
 -- blocks (filling in EB transaction closures for certifying blocks) before

@@ -52,7 +52,7 @@ tests :: TestTree
 tests =
   testGroup
     "Ledger state consistency"
-    [ testProperty "BFT replay matches final state" prop_replay_matches_final_state
+    [ testProperty "Chain replay matches node's ChainDB state" prop_replay_matches_final_state
     ]
 
 data TestSetup = TestSetup
