@@ -314,7 +314,6 @@ implValidate ::
   , l ~ ExtLedgerState blk
   , ResolveLeiosBlock blk
   ) =>
-  -- REVIEW: Is this shared across threads?
   LeiosDbConnection m ->
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->

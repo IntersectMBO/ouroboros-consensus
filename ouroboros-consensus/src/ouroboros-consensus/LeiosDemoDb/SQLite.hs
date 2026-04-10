@@ -4,19 +4,20 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module LeiosDemoDb.SQLite (
-  newLeiosDBSQLiteFromEnv,
-  newLeiosDBSQLite,
+module LeiosDemoDb.SQLite
+  ( newLeiosDBSQLiteFromEnv
+  , newLeiosDBSQLite
 
-  -- * SQL strings (re-exported for leiosdemo app)
-  sql_schema,
-  sql_insert_ebPoint,
-  sql_insert_ebBody,
-  sql_insert_tx,
-) where
+    -- * SQL strings (re-exported for leiosdemo app)
+  , sql_schema
+  , sql_insert_ebPoint
+  , sql_insert_ebBody
+  , sql_insert_tx
+  ) where
 
 import Cardano.Prelude (foldM, forM_, when)
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
   , dupTChan
@@ -30,6 +31,7 @@ import Control.Monad.Class.MonadThrow
   , generalBracket
   )
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
+import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Int (Int64)
@@ -99,14 +101,14 @@ openSQLiteConnection :: FilePath -> StrictTChan IO LeiosNotification -> IO (Leio
 openSQLiteConnection dbPath notificationChan = do
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate, SQLOpenFullMutex] SQLVFSDefault
-  traverse_ (dbExec db) $
-    [ "pragma journal_mode = WAL;"
-    , -- This would probably be fine to set unless we care very strongly about consistency in the
-      -- event of sudden power / disk failure:
-      -- , "pragma synchronous = normal;"
-      "pragma page_size = 32768;"
-    , "pragma mmap_size = 268435500;"
-    ]
+  -- traverse_ (dbExec db) $
+  --   [ "pragma journal_mode = WAL;"
+  --   , -- This would probably be fine to set unless we care very strongly about consistency in the
+  --     -- event of sudden power / disk failure:
+  --     -- , "pragma synchronous = normal;"
+  --     "pragma page_size = 32768;"
+  --   , "pragma mmap_size = 268435500;"
+  --   ]
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
   dbExec db (fromString sql_attach_memTxPoints)
@@ -191,7 +193,8 @@ sqlInsertEbBody db notify point eb = do
       items
   notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
 
-sqlInsertTxs :: DB.Database -> (LeiosNotification -> IO ()) -> [(TxHash, ByteString)] -> IO CompletedEbs
+sqlInsertTxs ::
+  DB.Database -> (LeiosNotification -> IO ()) -> [(TxHash, ByteString)] -> IO CompletedEbs
 sqlInsertTxs db notify txs = do
   -- Insert all txs into global txs table, then check for newly-complete EBs
   completed <- dbWithBEGIN db $ do
@@ -553,32 +556,30 @@ sqlQueryCompletedEbByPoint' =
 -- * Low-level terminating SQLite functions
 
 dbBindBlob :: HasCallStack => DB.Statement -> DB.ParamIndex -> ByteString -> IO ()
-dbBindBlob q p v = withDie $ DB.bindBlob q p v
+dbBindBlob q p v = withDieStmt q $ DB.bindBlob q p v
 
 dbBindInt64 :: HasCallStack => DB.Statement -> DB.ParamIndex -> Int64 -> IO ()
-dbBindInt64 q p v = withDie $ DB.bindInt64 q p v
+dbBindInt64 q p v = withDieStmt q $ DB.bindInt64 q p v
 
 dbExec :: HasCallStack => DB.Database -> DB.Utf8 -> IO ()
-dbExec db q =
-  DB.exec db q >>= \case
-    Left (err, reason) -> throwDbException err (Just $ show reason)
-    Right () -> pure ()
+dbExec db q = withDie db $ fmap (first fst) $ DB.exec db q
 
 dbFinalize :: HasCallStack => DB.Statement -> IO ()
-dbFinalize q = withDie $ DB.finalize q
+dbFinalize q = withDieStmt q $ DB.finalize q
 
 dbPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> IO DB.Statement
-dbPrepare db q = withDieJust $ DB.prepare db q
+dbPrepare db q = withDieJust db $ DB.prepare db q
 
 dbWithPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> (DB.Statement -> IO a) -> IO a
 dbWithPrepare db q k = bracket (dbPrepare db q) dbFinalize k
 
+-- TODO: alternative: bind and use https://www.sqlite.org/c3ref/busy_handler.html
 dbWithBEGIN :: HasCallStack => DB.Database -> IO a -> IO a
 dbWithBEGIN db k =
   do
     fmap fst
     $ generalBracket
-      (dbExec db (fromString "BEGIN"))
+      (dbExec db (fromString "BEGIN IMMEDIATE"))
       ( \() -> \case
           MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
           MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
@@ -587,23 +588,44 @@ dbWithBEGIN db k =
       (\() -> k)
 
 dbReset :: HasCallStack => DB.Statement -> IO ()
-dbReset stmt = withDie $ DB.reset stmt
+dbReset stmt = withDieStmt stmt $ DB.reset stmt
 
 dbStep :: HasCallStack => DB.Statement -> IO DB.StepResult
-dbStep stmt = withDie $ DB.stepNoCB stmt
+dbStep stmt = withDieStmt stmt $ DB.stepNoCB stmt
 
 dbStep1 :: HasCallStack => DB.Statement -> IO ()
-dbStep1 stmt = withDieDone $ DB.stepNoCB stmt
+dbStep1 stmt = withDieDoneStmt stmt $ DB.stepNoCB stmt
 
-withDie :: HasCallStack => IO (Either DB.Error a) -> IO a
-withDie io =
-  io >>= \case
-    Left e -> throwDbException e Nothing
-    Right x -> pure x
+-- ** Error "handling"
 
-withDieJust :: HasCallStack => IO (Either DB.Error (Maybe a)) -> IO a
-withDieJust io =
-  withDie io >>= \case
+maxBusyRetries :: Int
+maxBusyRetries = 1000
+
+-- | Execute a database action that may return an error. If the error is
+-- 'DB.ErrorBusy', retry up to 'maxBusyRetries' times with a 1ms delay.
+-- Otherwise and after exhausting retries, throws a 'LeiosDbException' with the
+-- error message from the database.
+withDie :: HasCallStack => DB.Database -> IO (Either DB.Error a) -> IO a
+withDie db = go maxBusyRetries
+ where
+  go 0 io =
+    io >>= \case
+      Left e -> throwDbException db e
+      Right x -> pure x
+  go n io =
+    io >>= \case
+      Left DB.ErrorBusy -> threadDelay 1000 >> go (n - 1) io
+      Left e -> throwDbException db e
+      Right x -> pure x
+
+withDieStmt :: HasCallStack => DB.Statement -> IO (Either DB.Error a) -> IO a
+withDieStmt stmt io = do
+  db <- DB.getStatementDatabase stmt
+  withDie db io
+
+withDieJust :: HasCallStack => DB.Database -> IO (Either DB.Error (Maybe a)) -> IO a
+withDieJust db io =
+  withDie db io >>= \case
     Nothing ->
       throwIO $
         LeiosDbException
@@ -612,9 +634,10 @@ withDieJust io =
           }
     Just x -> pure x
 
-withDieDone :: HasCallStack => IO (Either DB.Error DB.StepResult) -> IO ()
-withDieDone io =
-  withDie io >>= \case
+withDieDoneStmt :: HasCallStack => DB.Statement -> IO (Either DB.Error DB.StepResult) -> IO ()
+withDieDoneStmt stmt io = do
+  db <- DB.getStatementDatabase stmt
+  withDie db io >>= \case
     DB.Row ->
       throwIO $
         LeiosDbException
@@ -623,11 +646,11 @@ withDieDone io =
           }
     DB.Done -> pure ()
 
-throwDbException :: HasCallStack => DB.Error -> Maybe String -> IO a
-throwDbException e mmsg =
-  throwIO $ LeiosDbException{errorMessage, callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack}
- where
-  errorMessage =
-    show e <> case mmsg of
-      Just msg -> ": " <> msg
-      Nothing -> ""
+throwDbException :: HasCallStack => DB.Database -> DB.Error -> IO a
+throwDbException db e = do
+  reason <- DB.errmsg db
+  throwIO $
+    LeiosDbException
+      { errorMessage = show e <> ": " <> show reason
+      , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
+      }

@@ -45,7 +45,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Void
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb (LeiosDbConnection)
 import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -271,7 +271,7 @@ type instance ForgeStateInfo BlockB = ()
 type instance ForgeStateUpdateError BlockB = Void
 
 forgeBlockB ::
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   TopLevelConfig BlockB ->
   BlockNo ->
   SlotNo ->
