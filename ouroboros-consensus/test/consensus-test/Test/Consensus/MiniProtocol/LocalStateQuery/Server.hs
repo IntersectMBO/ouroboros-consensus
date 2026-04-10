@@ -26,7 +26,6 @@ import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import LeiosDemoDb (LeiosDbHandle (..))
 import qualified LeiosDemoDb as LeiosDb
 import Network.TypedProtocol.Stateful.Proofs (connect)
 import Ouroboros.Consensus.Block
