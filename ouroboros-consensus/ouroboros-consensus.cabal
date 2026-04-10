@@ -68,6 +68,9 @@ library
   hs-source-dirs: src/ouroboros-consensus
   exposed-modules:
     LeiosDemoDb
+    LeiosDemoDb.InMemory
+    LeiosDemoDb.SQLite
+    LeiosDemoDb.Types
     LeiosDemoException
     LeiosDemoLogic
     LeiosDemoOnlyTestFetch
