@@ -237,6 +237,7 @@ library
     Ouroboros.Consensus.NodeId
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Cert.Inclusion
+    Ouroboros.Consensus.Peras.Crypto.BLS
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Vote.V1
