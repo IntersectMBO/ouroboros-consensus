@@ -19,6 +19,7 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
+import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), pointSlot)
 import Ouroboros.Consensus.Block.Abstract (StandardHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasVoteBlock (..)
@@ -289,17 +290,31 @@ getForgedCertForRound roundNo model =
   Map.lookup roundNo (certs model)
 
 garbageCollect ::
-  PerasRoundNo ->
+  SlotNo ->
   Model blk ->
   Model blk
-garbageCollect roundNo model =
+garbageCollect slotNo model =
   model
     { votes =
         Map.filterWithKey
-          (\voteTarget _ -> pvtRoundNo voteTarget >= roundNo)
+          (\voteTarget _ -> not (Set.member (pvtRoundNo voteTarget) roundsToDelete))
           (votes model)
     , certs =
         Map.filterWithKey
-          (\r _ -> r >= roundNo)
+          (\roundNo _ -> not (Set.member roundNo roundsToDelete))
           (certs model)
     }
+ where
+  -- A round is deleted when ALL of its vote targets point to blocks strictly
+  -- older than the GC threshold, i.e. when even its youngest target is old.
+  roundsToDelete =
+    Map.keysSet $
+      Map.filter (< NotOrigin slotNo) youngestSlotByRound
+
+  -- The youngest target slot across all vote targets for a given round.
+  youngestSlotByRound =
+    Map.fromListWith
+      max
+      [ (pvtRoundNo vt, pointSlot (pvtBlock vt))
+      | vt <- Map.keys (votes model)
+      ]

@@ -118,7 +118,7 @@ data TraceEvent blk
       (WithArrivalTime (ValidatedPerasVote blk))
       (AddPerasVoteResult blk)
   | GarbageCollected
-      PerasRoundNo
+      SlotNo
   deriving stock (Show, Eq, Generic)
 
 {------------------------------------------------------------------------------
@@ -284,14 +284,14 @@ implGarbageCollect ::
   forall m blk.
   IOLike m =>
   PerasVoteDbEnv m blk ->
-  PerasRoundNo ->
+  SlotNo ->
   STM m (m ())
-implGarbageCollect PerasVoteDbEnv{pvdeTracer, pvdeState} roundNo = do
+implGarbageCollect PerasVoteDbEnv{pvdeTracer, pvdeState} slotNo = do
   -- No need to update the 'Fingerprint' as we only remove votes that do
   -- not matter for comparing interesting chains.
   modifyTVar pvdeState (fmap gc)
   pure $ do
-    traceWith pvdeTracer (GarbageCollected roundNo)
+    traceWith pvdeTracer (GarbageCollected slotNo)
     return ()
  where
   gc :: PerasVoteDbState blk -> PerasVoteDbState blk
@@ -302,22 +302,38 @@ implGarbageCollect PerasVoteDbEnv{pvdeTracer, pvdeState} roundNo = do
       , pvdsVotesByTicket
       , pvdsLastTicketNo
       } =
-      let pvsRoundVoteStates' =
-            Map.filterWithKey
-              (\rNo _ -> rNo >= roundNo)
-              pvdsRoundVoteStates
-          (pvsVotesByTicket', votesToRemove) =
-            Map.partition
-              (\vote -> getPerasVoteRound vote >= roundNo)
-              pvdsVotesByTicket
-          pvsVoteIds' =
-            Foldable.foldl'
-              (\set vote -> Set.delete (getPerasVoteId vote) set)
-              pvdsVoteIds
-              votesToRemove
-       in PerasVoteDbState
-            { pvdsVoteIds = pvsVoteIds'
-            , pvdsRoundVoteStates = pvsRoundVoteStates'
-            , pvdsVotesByTicket = pvsVotesByTicket'
-            , pvdsLastTicketNo = pvdsLastTicketNo
-            }
+      let
+        -- First, determine which rounds to delete based on the round vote
+        -- state: a round is deleted only when the youngest target of all its
+        -- votes is strictly older than the GC threshold.
+        --
+        -- NOTE:
+        -- This conservative approach could cause round states to be kept
+        -- for a long time if an attacker keeps adding votes for a given
+        -- round but with a target far into the future,
+        -- see https://github.com/tweag/cardano-peras/issues/218
+        (roundsToDelete, pvsRoundVoteStates') =
+          Map.partition
+            (\rvs -> getPerasRoundVoteStateMaxTargetedSlot rvs < NotOrigin slotNo)
+            pvdsRoundVoteStates
+        deletedRoundNos =
+          Map.keysSet roundsToDelete
+        -- Then, remove all votes belonging to deleted rounds from the
+        -- by-ticket index
+        (pvsVotesByTicket', votesToRemove) =
+          Map.partition
+            (\vote -> not (Set.member (getPerasVoteRound vote) deletedRoundNos))
+            pvdsVotesByTicket
+        -- Finally, remove the corresponding ids from the set of vote ids
+        pvsVoteIds' =
+          Foldable.foldl'
+            (\set vote -> Set.delete (getPerasVoteId vote) set)
+            pvdsVoteIds
+            votesToRemove
+       in
+        PerasVoteDbState
+          { pvdsVoteIds = pvsVoteIds'
+          , pvdsRoundVoteStates = pvsRoundVoteStates'
+          , pvdsVotesByTicket = pvsVotesByTicket'
+          , pvdsLastTicketNo = pvdsLastTicketNo
+          }

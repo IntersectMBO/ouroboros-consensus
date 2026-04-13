@@ -20,7 +20,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime, forgetArrivalTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , mkPerasWeightSnapshot
@@ -48,12 +48,16 @@ closeDB _ = Model{open = False, certs = Set.empty, latestCertSeen = Nothing}
 addCert ::
   StandardHash blk =>
   Model blk -> WithArrivalTime (ValidatedPerasCert blk) -> Model blk
-addCert model@Model{certs} cert
+addCert model@Model{certs, latestCertSeen} cert
   | certs `hasRoundNo` cert = model
-  | otherwise = model{certs = certs', latestCertSeen = safeMaximumOn roundNo (Set.toList certs')}
+  | otherwise = model{certs = certs', latestCertSeen = latestCertSeen'}
  where
   certs' = Set.insert cert certs
-  roundNo = getPerasCertRound . forgetArrivalTime
+  latestCertSeen' = case latestCertSeen of
+    Nothing -> Just cert
+    Just prev
+      | getPerasCertRound cert > getPerasCertRound prev -> Just cert
+      | otherwise -> Just prev
 
 hasRoundNo ::
   Set (WithArrivalTime (ValidatedPerasCert blk)) ->
@@ -77,7 +81,7 @@ getLatestCertSeen Model{latestCertSeen} =
   latestCertSeen
 
 garbageCollect :: SlotNo -> Model blk -> Model blk
-garbageCollect slot model@Model{certs} =
+garbageCollect slotNo model@Model{certs} =
   model{certs = Set.filter keepCert certs}
  where
-  keepCert cert = pointSlot (getPerasCertBoostedBlock cert) >= NotOrigin slot
+  keepCert cert = pointSlot (getPerasCertBoostedBlock cert) >= NotOrigin slotNo

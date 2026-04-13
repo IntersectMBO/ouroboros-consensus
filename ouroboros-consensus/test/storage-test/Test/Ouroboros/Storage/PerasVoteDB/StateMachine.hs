@@ -153,7 +153,7 @@ instance StateModel Model where
       PerasRoundNo ->
       Action Model (Maybe (ValidatedPerasCert TestBlock))
     GarbageCollect ::
-      PerasRoundNo ->
+      SlotNo ->
       Action Model ()
 
   arbitraryAction _ (Model m)
@@ -202,8 +202,8 @@ instance StateModel Model where
       pure (GetForgedCertForRound roundNo)
 
     genGarbageCollect = do
-      roundNo <- genRoundNo
-      pure (GarbageCollect roundNo)
+      slotNo <- SlotNo <$> choose @Word64 (0, 9)
+      pure (GarbageCollect slotNo)
 
     genPoint = do
       frequency
@@ -256,7 +256,7 @@ instance StateModel Model where
       GetVoteIds -> Model $ m
       GetVotesAfter _ -> Model $ m
       GetForgedCertForRound _ -> Model $ m
-      GarbageCollect roundNo -> Model $ Model.garbageCollect roundNo m
+      GarbageCollect slotNo -> Model $ Model.garbageCollect slotNo m
 
   precondition (Model m) action =
     case action of
@@ -292,9 +292,9 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
       GetForgedCertForRound roundNo -> do
         voteDB <- get
         lift $ atomically $ PerasVoteDB.getForgedCertForRound voteDB roundNo
-      GarbageCollect roundNo -> do
+      GarbageCollect slotNo -> do
         voteDB <- get
-        lift $ join $ atomically $ PerasVoteDB.garbageCollect voteDB roundNo
+        lift $ join $ atomically $ PerasVoteDB.garbageCollect voteDB slotNo
 
   postcondition (Model model, _) (AddVote vote) _ actual = do
     let (expected, _) = Model.addVote vote model
