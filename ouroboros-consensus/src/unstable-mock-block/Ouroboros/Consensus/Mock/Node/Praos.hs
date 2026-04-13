@@ -146,4 +146,5 @@ praosBlockForging cid initHotKey = do
               tickedLedgerSt
               (map txForgetValidated txs)
               isLeader
+      , leiosDecideForgeType = \_ -> return ForgeTxsRb
       }

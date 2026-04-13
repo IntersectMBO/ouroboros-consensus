@@ -70,6 +70,7 @@ dualByronBlockForging creds =
         -- XXX: Adding Leios EB support here feels so wrong
         return . (,Nothing) $
           forgeDualByronBlock cfg b s ls txs isLeader
+    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
  where
   BlockForging{..} = byronBlockForging creds

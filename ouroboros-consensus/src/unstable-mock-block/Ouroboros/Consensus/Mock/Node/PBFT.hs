@@ -119,4 +119,5 @@ pbftBlockForging canBeLeader =
             lst
             (map txForgetValidated txs)
             proof
+    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }

@@ -111,6 +111,7 @@ simpleBlockForging aCanBeLeader aForgeExt =
             lst
             (map txForgetValidated txs)
             proof
+    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
  where
   _ = keepRedundantConstraint (Proxy @(ForgeStateUpdateError (SimpleBlock c ext) ~ Void))
