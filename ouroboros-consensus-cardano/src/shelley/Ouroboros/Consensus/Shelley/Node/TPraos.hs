@@ -136,9 +136,9 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
           (configConsensus cfg)
           forgingVRFHash
           curSlot
-    , forgeBlock = \leiosDb cfg blkNo slotNo ledgerState rbTxs ebTxs isLeader ->
+    , forgeBlock = \forgeType cfg blkNo slotNo ledgerState rbTxs ebTxs isLeader ->
         forgeShelleyBlock
-          leiosDb
+          forgeType
           hotKey
           canBeLeader
           cfg
@@ -148,6 +148,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
           rbTxs
           ebTxs
           isLeader
+    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
  where
   ShelleyLeaderCredentials
@@ -292,7 +293,6 @@ protocolInfoTPraosShelleyBased
                 L.createInitialState transitionCfg
           , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
           , shelleyLedgerTables = emptyLedgerTables
-          , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
           }
 
     initChainDepState :: TPraosState

@@ -77,6 +77,7 @@ import LeiosDemoDb (LeiosDbHandle)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HeaderValidation (HeaderState)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -431,9 +432,13 @@ toRealPoint (ReapplyRef rp) = rp
 toRealPoint (ApplyRef rp) = rp
 toRealPoint (Weaken ap) = toRealPoint ap
 
+-- FIXME(bladyjoker): This is a hack that works! We're blindly guessing that `blk` might contain
+-- something that can be resolved like a LeiosCertificate and it returns a `blk` that hopefully has
+-- a fully resolved `blk` that can be applied.
+-- Imo a morally correct approach would to have `data RankingBlock blk = LedgerRb blk | CertRb LeiosCertificate` which we can use to make such distincion and manage the resolution process here and elsewhere in the abstract code base.
 class ResolveLeiosBlock blk where
   resolveLeiosBlock ::
-    (IsLedger (ExtLedgerState blk), Monad m) => LeiosDbHandle m -> ExtLedgerState blk mk -> blk -> m blk
+    Monad m => LeiosDbHandle m -> HeaderState blk -> blk -> m blk
   resolveLeiosBlock _ _ blk = return blk
 
 -- | Apply blocks to the given forker
@@ -455,17 +460,17 @@ applyBlock ::
 applyBlock leiosDb evs cfg ap fo = case ap of
   ReapplyVal b -> do
     l <- liftBase $ atomically $ forkerGetLedgerState fo
-    b' <- liftBase $ resolveLeiosBlock leiosDb l b
+    b' <- liftBase $ resolveLeiosBlock leiosDb (headerState l) b
     vs <- withLedgerTables l <$> liftBase (forkerReadTables fo (getBlockKeySets b'))
-    ValidLedgerState <$> (return . tickThenReapply evs cfg b') vs
+    ValidLedgerState <$> (return . tickThenReapply evs cfg b') vs -- FIXME(bladyjoker): This is incorrect, if b' was a Certificate the it is based on the previous Ledger state
   ApplyVal b -> do
     l <- liftBase $ atomically $ forkerGetLedgerState fo
-    b' <- liftBase $ resolveLeiosBlock leiosDb l b
+    b' <- liftBase $ resolveLeiosBlock leiosDb (headerState l) b
     vs <- withLedgerTables l <$> liftBase (forkerReadTables fo (getBlockKeySets b'))
     ValidLedgerState
       <$> ( either (throwLedgerError fo (blockRealPoint b')) return
               . runExcept
-              . tickThenApply evs cfg b'
+              . tickThenApply evs cfg b' -- FIXME(bladyjoker): This is incorrect, if b' was a Certificate the it is based on the previous Ledger state
           )
         vs
   ReapplyRef r -> do

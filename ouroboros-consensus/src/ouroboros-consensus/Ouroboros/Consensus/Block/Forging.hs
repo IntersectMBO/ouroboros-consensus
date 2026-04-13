@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
@@ -14,21 +15,24 @@ module Ouroboros.Consensus.Block.Forging
   , ForgeStateInfo
   , ForgeStateUpdateError
   , ForgeStateUpdateInfo (..)
+  , ForgeType (..)
   , ShouldForge (..)
   , castForgeStateUpdateInfo
   , checkShouldForge
   , forgeStateUpdateInfoFromUpdateInfo
+  , LeiosDecideForgeTypeArgs (..)
 
     -- * 'UpdateInfo'
   , UpdateInfo (..)
   ) where
 
 import Control.Tracer (Tracer, traceWith)
+import Data.ByteString (ByteString)
 import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Stack
 import LeiosDemoDb (LeiosDbHandle)
-import LeiosDemoTypes (ForgedLeiosEb)
+import LeiosDemoTypes (ForgedLeiosEb, LeiosCertificate, TraceLeiosKernel, TxHash)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -121,13 +125,13 @@ data BlockForging m blk = BlockForging
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
   , forgeBlock ::
-      LeiosDbHandle m ->
+      ForgeType ->
       TopLevelConfig blk ->
       BlockNo -> -- Current block number
       SlotNo -> -- Current slot number
       TickedLedgerState blk EmptyMK -> -- Current ledger state
-      [Validated (GenTx blk)] -> -- Transactions to include in the Ranking Block
-      [Validated (GenTx blk)] -> -- Transaction to include in the EndorserBlock
+      [Validated (GenTx blk)] -> -- Transactions to include in the TxsRb
+      [Validated (GenTx blk)] -> -- Transaction to include in the Eb
       IsLeader (BlockProtocol blk) -> -- Proof we are leader
       m (blk, Maybe ForgedLeiosEb)
   -- ^ Forge a block
@@ -145,6 +149,16 @@ data BlockForging m blk = BlockForging
   -- even when used as part of the hard fork combinator.
   --
   -- PRECONDITION: 'checkCanForge' returned @Right ()@.
+  , leiosDecideForgeType :: Monad m => LeiosDecideForgeTypeArgs m blk -> m ForgeType
+  }
+
+data ForgeType = ForgeTxsRb | ForgeCertRb LeiosCertificate [(TxHash, ByteString)]
+  deriving stock (Show, Eq)
+
+data LeiosDecideForgeTypeArgs m blk = LeiosDecideForgeTypeArgs
+  { ldftaLeiosDb :: LeiosDbHandle m
+  , ldftaLeiosTracer :: Tracer m TraceLeiosKernel
+  , ldftaChainDepState :: ChainDepState (BlockProtocol blk)
   }
 
 data ShouldForge blk

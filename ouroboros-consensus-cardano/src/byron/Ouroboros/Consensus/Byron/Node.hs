@@ -141,11 +141,12 @@ byronBlockForging creds =
           canBeLeader
           slot
           tickedPBftState
-    , forgeBlock = \_leiosDb cfg blkNo slotNo ledgerState rbTxs _ebTxs isLeader ->
+    , forgeBlock = \_forgeType cfg blkNo slotNo ledgerState rbTxs _ebTxs isLeader ->
         let
           byronBlock = forgeByronBlock cfg blkNo slotNo ledgerState rbTxs isLeader
          in
           return (byronBlock, Nothing)
+    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
  where
   canBeLeader = mkPBftCanBeLeader creds

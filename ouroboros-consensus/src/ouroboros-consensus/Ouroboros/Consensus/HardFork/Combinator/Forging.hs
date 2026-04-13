@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -27,7 +28,6 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP, ViewOptNP (..))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Text (Text)
-import LeiosDemoDb (LeiosDbHandle)
 import LeiosDemoTypes (ForgedLeiosEb)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -92,7 +92,40 @@ hardForkBlockForging label blockForging =
     , updateForgeState = hardForkUpdateForgeState blockForging
     , checkCanForge = hardForkCheckCanForge blockForging
     , forgeBlock = hardForkForgeBlock blockForging
+    , leiosDecideForgeType = hardForkLeiosDecideForgeType blockForging
     }
+
+hardForkLeiosDecideForgeType ::
+  forall m xs.
+  (CanHardFork xs, Monad m) =>
+  NonEmptyOptNP (BlockForging m) xs -> LeiosDecideForgeTypeArgs m (HardForkBlock xs) -> m ForgeType
+hardForkLeiosDecideForgeType
+  blockForging
+  LeiosDecideForgeTypeArgs
+    { ldftaLeiosTracer
+    , ldftaLeiosDb
+    , ldftaChainDepState = ldftaChainDepStateHfc
+    } =
+    hcollapse $
+      hzipWith
+        decideForEra
+        (OptNP.toNP blockForging)
+        (State.tip ldftaChainDepStateHfc)
+   where
+    decideForEra ::
+      forall blk.
+      (Maybe :.: BlockForging m) blk ->
+      WrapChainDepState blk ->
+      K (m ForgeType) blk
+    decideForEra (Comp Nothing) _ = K (return ForgeTxsRb)
+    decideForEra (Comp (Just bf)) (WrapChainDepState cds) =
+      K $
+        leiosDecideForgeType bf $
+          LeiosDecideForgeTypeArgs
+            { ldftaLeiosTracer
+            , ldftaLeiosDb
+            , ldftaChainDepState = cds
+            }
 
 hardForkCanBeLeader ::
   CanHardFork xs =>
@@ -300,7 +333,7 @@ hardForkForgeBlock ::
   forall m xs empty.
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
-  LeiosDbHandle m ->
+  ForgeType ->
   TopLevelConfig (HardForkBlock xs) ->
   BlockNo ->
   SlotNo ->
