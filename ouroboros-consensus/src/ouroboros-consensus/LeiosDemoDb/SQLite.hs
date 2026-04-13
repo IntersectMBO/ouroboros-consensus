@@ -15,7 +15,7 @@ module LeiosDemoDb.SQLite
   , sql_insert_tx
   ) where
 
-import Cardano.Prelude (foldM, forM_, when)
+import Cardano.Prelude (foldM, forM_, traverse_, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -100,15 +100,13 @@ newLeiosDBSQLite dbPath = do
 openSQLiteConnection :: FilePath -> StrictTChan IO LeiosNotification -> IO (LeiosDbConnection IO)
 openSQLiteConnection dbPath notificationChan = do
   shouldInitSchema <- not <$> doesFileExist dbPath
-  db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate, SQLOpenFullMutex] SQLVFSDefault
-  -- traverse_ (dbExec db) $
-  --   [ "pragma journal_mode = WAL;"
-  --   , -- This would probably be fine to set unless we care very strongly about consistency in the
-  --     -- event of sudden power / disk failure:
-  --     -- , "pragma synchronous = normal;"
-  --     "pragma page_size = 32768;"
-  --   , "pragma mmap_size = 268435500;"
-  --   ]
+  db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault
+  traverse_ (dbExec db) $
+    [ "pragma journal_mode = WAL;"
+    , "pragma synchronous = normal;"
+    , "pragma page_size = 32768;"
+    , "pragma mmap_size = 268435500;"
+    ]
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
   dbExec db (fromString sql_attach_memTxPoints)
