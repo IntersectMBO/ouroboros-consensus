@@ -23,12 +23,6 @@ module LeiosDemoDb
   , sql_insert_tx
   ) where
 
-import Control.Monad.Class.MonadThrow (MonadThrow, bracket)
+import LeiosDemoDb.Common
 import LeiosDemoDb.InMemory
 import LeiosDemoDb.SQLite
-import LeiosDemoDb.Types
-
-withLeiosDb :: MonadThrow m => LeiosDbHandle m -> (LeiosDbConnection m -> m a) -> m a
-withLeiosDb db action =
-  bracket (open db) close $ \conn ->
-    action conn

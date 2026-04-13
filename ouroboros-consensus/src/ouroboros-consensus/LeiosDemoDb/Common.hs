@@ -1,8 +1,9 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RankNTypes #-}
 
-module LeiosDemoDb.Types
-  ( LeiosDbHandle (..)
+module LeiosDemoDb.Common
+  ( withLeiosDb
+  , LeiosDbHandle (..)
   , LeiosDbConnection (..)
   , LeiosFetchWork (..)
   , CompletedEbs
@@ -22,7 +23,12 @@ import LeiosDemoTypes
   , LeiosPoint
   , TxHash
   )
-import Ouroboros.Consensus.Util.IOLike (NoThunks (..))
+import Ouroboros.Consensus.Util.IOLike (MonadThrow, NoThunks (..), bracket)
+
+withLeiosDb :: MonadThrow m => LeiosDbHandle m -> (LeiosDbConnection m -> m a) -> m a
+withLeiosDb db action =
+  bracket (open db) close $ \conn ->
+    action conn
 
 data LeiosDbHandle m = LeiosDbHandle
   { subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosNotification)

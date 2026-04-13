@@ -29,7 +29,12 @@ import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import LeiosDemoDb.Types
+import LeiosDemoDb.Common
+  ( CompletedEbs
+  , LeiosDbConnection (..)
+  , LeiosDbHandle (..)
+  , LeiosFetchWork (..)
+  )
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)

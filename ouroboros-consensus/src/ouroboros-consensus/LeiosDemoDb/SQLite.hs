@@ -32,7 +32,6 @@ import Control.Monad.Class.MonadThrow
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.Foldable (traverse_)
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
 import Data.String (fromString)
@@ -44,7 +43,12 @@ import Database.SQLite3
 import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
-import LeiosDemoDb.Types
+import LeiosDemoDb.Common
+  ( CompletedEbs
+  , LeiosDbConnection (..)
+  , LeiosDbHandle (..)
+  , LeiosFetchWork (..)
+  )
 import LeiosDemoException (LeiosDbException (..))
 import LeiosDemoTypes
   ( BytesSize
