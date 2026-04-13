@@ -4,8 +4,8 @@ import qualified Test.Consensus.Ledger.Mock (tests)
 import qualified Test.Consensus.Ledger.Mock.LedgerTables (tests)
 import Test.Tasty
 import qualified Test.ThreadNet.BFT (tests)
-import qualified Test.ThreadNet.LedgerStateConsistency (tests)
 import qualified Test.ThreadNet.LeaderSchedule (tests)
+import qualified Test.ThreadNet.LedgerStateConsistency (tests)
 import qualified Test.ThreadNet.PBFT (tests)
 import qualified Test.ThreadNet.Praos (tests)
 import Test.Util.TestEnv

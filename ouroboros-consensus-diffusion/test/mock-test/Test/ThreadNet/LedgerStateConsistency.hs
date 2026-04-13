@@ -14,7 +14,6 @@ module Test.ThreadNet.LedgerStateConsistency (tests) where
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import Data.List (foldl')
 import qualified Data.Map.Strict as Map
-import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config.SecurityParam
@@ -60,7 +59,7 @@ data TestSetup = TestSetup
   , setupTestConfig :: TestConfig
   , setupNodeJoinPlan :: NodeJoinPlan
   }
-  deriving (Show)
+  deriving Show
 
 instance Arbitrary TestSetup where
   arbitrary = do
@@ -79,10 +78,10 @@ prop_replay_matches_final_state
     , setupTestConfig = testConfig
     , setupNodeJoinPlan = nodeJoinPlan
     } =
-    counterexample ("chain length: " <> show (length chain))
-      $ counterexample ("node join plan: " <> show nodeJoinPlan)
-      $ not (null chain)
-        ==> forgetLedgerTables (ledgerState foldedState) === expectedLedger
+    counterexample ("chain length: " <> show (length chain)) $
+      counterexample ("node join plan: " <> show nodeJoinPlan) $
+        not (null chain) ==>
+          forgetLedgerTables (ledgerState foldedState) === expectedLedger
    where
     TestConfig{numCoreNodes} = testConfig
     slotLength = slotLengthFromSec 20

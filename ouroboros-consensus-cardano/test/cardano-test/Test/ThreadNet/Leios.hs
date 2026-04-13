@@ -1,10 +1,10 @@
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -33,28 +33,27 @@ import Cardano.Ledger.Api
 import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
 import Cardano.Ledger.Api.Tx.In (TxIn (..))
 import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded)
+import qualified Cardano.Ledger.Block as SL
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
+import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as StrictTVar
 import Control.Monad (foldM, replicateM)
+import Control.Monad.IOSim (runSimOrThrow)
 import Data.Foldable (toList)
 import Data.Function ((&))
+import Data.Functor.Identity (runIdentity)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import Data.Functor.Identity (runIdentity)
 import Data.Maybe (isNothing, mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import Control.Monad.IOSim (runSimOrThrow)
 import LeiosDemoDb (LeiosDbHandle, newLeiosDBInMemoryWith)
-import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as StrictTVar
 import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb)
 import Lens.Micro (each, (%~), (^.), (^..))
 import Ouroboros.Consensus.Block (SlotNo (..))
-import qualified Ouroboros.Network.Mock.Chain as Chain
-import qualified Cardano.Ledger.Block as SL
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -76,14 +75,15 @@ import Ouroboros.Consensus.Ledger.Extended
   , ExtLedgerState (..)
   , ledgerState
   )
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
+import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
 import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..), ProtocolInfo (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block (shelleyBlockRaw)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
+import qualified Ouroboros.Network.Mock.Chain as Chain
 import Test.Cardano.Ledger.Alonzo.Examples.Consensus (exampleAlonzoGenesis)
 import Test.Cardano.Ledger.Conway.Examples.Consensus (exampleConwayGenesis)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Conway), hardForkInto)
@@ -224,8 +224,9 @@ prop_leios_blocksProduced seed =
 -- actually applied to the ledger.
 prop_leios_ebCertificateInclusion :: Seed -> Property
 prop_leios_ebCertificateInclusion seed =
-    (not (null certifyingBlocks)
-      & counterexample "no certifying blocks — test is vacuous")
+  ( not (null certifyingBlocks)
+      & counterexample "no certifying blocks — test is vacuous"
+  )
     .&&. (foldedLedger === expectedLedger)
  where
   (testOutput, ProtocolInfo{pInfoConfig, pInfoInitLedger}) =
