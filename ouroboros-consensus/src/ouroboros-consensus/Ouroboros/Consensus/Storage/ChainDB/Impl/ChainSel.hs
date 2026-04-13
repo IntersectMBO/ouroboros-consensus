@@ -19,6 +19,7 @@
 module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   ( addBlockAsync
   , addPerasCertAsync
+  , addPerasVoteWithAsyncCertHandling
   , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
@@ -50,7 +51,7 @@ import qualified Data.Set as Set
 import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
 import qualified Ouroboros.Consensus.Fragment.Diff as Diff
@@ -70,7 +71,7 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
-  , AddPerasCertPromise
+  , AddPerasCertPromise (..)
   , BlockComponent (..)
   , ChainType (..)
   , LoE (..)
@@ -92,6 +93,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB hiding (yield)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
+import Ouroboros.Consensus.Storage.PerasVoteDB.API (AddPerasVoteResult (..), PerasVoteDB (addVote))
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
@@ -307,6 +309,23 @@ addPerasCertAsync ::
 addPerasCertAsync CDB{cdbTracer, cdbChainSelQueue} =
   addPerasCertToQueue (TraceAddPerasCertEvent >$< cdbTracer) cdbChainSelQueue
 
+-- | Add a Peras vote to the VoteDB contained in the ChainDB, and if this
+-- results in a new cert being generated, add that cert /asynchronously/ to
+-- the ChainDB as well.
+addPerasVoteWithAsyncCertHandling ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  m (Maybe (AddPerasCertPromise m))
+addPerasVoteWithAsyncCertHandling cdb@CDB{cdbPerasVoteDB} vote = do
+  addVoteRes <- join . atomically . addVote cdbPerasVoteDB $ vote
+  case addVoteRes of
+    AddedPerasVoteAndGeneratedNewCert cert -> do
+      let certTime = getArrivalTime vote
+      Just <$> addPerasCertAsync cdb (WithArrivalTime (certTime) cert)
+    _ -> pure Nothing
+
 -- | Schedule reprocessing of blocks postponed by the LoE.
 triggerChainSelectionAsync ::
   forall m blk.
@@ -472,7 +491,8 @@ chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
       exitEarly
 
     -- Add the certificate to the PerasCertDB.
-    lift (lift $ PerasCertDB.addCert cdbPerasCertDB cert) >>= \case
+    certRes <- lift $ lift $ join $ atomically $ PerasCertDB.addCert cdbPerasCertDB cert
+    case certRes of
       PerasCertDB.AddedPerasCertToDB -> pure ()
       -- If it already is in the PerasCertDB, we are done.
       PerasCertDB.PerasCertAlreadyInDB -> exitEarly

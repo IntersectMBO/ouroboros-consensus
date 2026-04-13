@@ -25,9 +25,10 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , addBlockWaitWrittenToDisk
   , addBlock_
 
-    -- * Adding a Peras certificate
+    -- * Adding a Peras certificate or vote
   , AddPerasCertPromise (..)
   , addPerasCertSync
+  , addPerasVoteSync
 
     -- * Trigger chain selection
   , ChainSelectionPromise (..)
@@ -81,6 +82,8 @@ module Ouroboros.Consensus.Storage.ChainDB.API
 
 import Control.Monad (void)
 import Control.ResourceRegistry
+import Data.Map (Map)
+import Data.Set (Set)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
@@ -100,7 +103,12 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , ReadOnlyForker'
   , Statistics
   )
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
+import Ouroboros.Consensus.Storage.PerasCertDB.API
+  ( PerasCertTicketNo
+  )
+import Ouroboros.Consensus.Storage.PerasVoteDB.API
+  ( PerasVoteTicketNo
+  )
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.EarlyExit
@@ -417,15 +425,42 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m Statistics
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
-  , addPerasCertAsync :: WithArrivalTime (ValidatedPerasCert blk) -> m (AddPerasCertPromise m)
-  -- ^ Asynchronously insert a certificate to the DB. If this leads to a fork to
-  -- be weightier than our current selection, this will trigger a fork switch.
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
   -- all blocks newer than the current immutable tip.
-  , getPerasCertSnapshot :: STM m (PerasCertSnapshot blk)
-  -- ^ Get the Peras certificate snapshot, containing the currently-known
-  -- certificates boosting blocks newer than the immutable tip.
+  , getLatestPerasCertSeen :: STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+  -- ^ Get the latest Peras certificate that has been seen by this node.
+  , getLatestPerasCertOnChainRound :: STM m (Maybe PerasRoundNo)
+  -- ^ Get the round number of the latest Peras certificate on the currently
+  -- preferred chain.
+  --
+  -- Returns 'Nothing' if the block does not contain a Peras certificate, or
+  -- if the block is from an era that does not support Peras certificates.
+  , addPerasCertAsync :: WithArrivalTime (ValidatedPerasCert blk) -> m (AddPerasCertPromise m)
+  -- ^ Asynchronously insert a certificate to the DB. If this leads to a fork to
+  -- be weightier than our current selection, this will trigger a fork switch.
+  , getPerasCertsAfter ::
+      PerasCertTicketNo ->
+      STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
+  -- ^ Get all known Peras certs with a ticket number strictly greater than the
+  -- given one, in ascending order. The values are 'm' actions to allow
+  -- implementations with on-disk storage.
+  , getPerasCertIds :: STM m (Set PerasRoundNo)
+  -- ^ Get the set of all Peras certificate round numbers currently in the
+  -- database.
+  , addPerasVoteWithAsyncCertHandling ::
+      WithArrivalTime (ValidatedPerasVote blk) ->
+      m (Maybe (AddPerasCertPromise m))
+  -- ^ Add a Peras vote to the vote database. If a certificate is produced in
+  -- the process (quorum reached), it will be added via 'addPerasCertAsync'
+  -- under the hood, in which case the corresponding promise will be returned.
+  , getPerasVotesAfter ::
+      PerasVoteTicketNo ->
+      STM m (Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
+  -- ^ Get all known Peras votes with a ticket number strictly greater than the
+  -- given one, in ascending order.
+  , getPerasVoteIds :: STM m (Set (PerasVoteId blk))
+  -- ^ Get the set of all Peras vote IDs currently in the database.
   , waitForImmutableBlock :: RealPoint blk -> m (Either SeekBlockError (RealPoint blk))
   -- ^ Wait until the immutable tip's slot is equal or greater than the given slot:
   --   - returns the block when it becomes the immutable tip,
@@ -439,12 +474,6 @@ data ChainDB m blk = ChainDB
   --
   -- Currently, the only use-case of this function is to verify the immutability
   -- of a block from the big ledger peer snapshot file.
-  , getLatestPerasCertOnChainRound :: STM m (Maybe PerasRoundNo)
-  -- ^ Get the round number of the latest Peras certificate on the currently
-  -- preferred chain.
-  --
-  -- Returns 'Nothing' if the block does not contain a Peras certificate, or
-  -- if the block is from an era that does not support Peras certificates.
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --
@@ -565,7 +594,7 @@ triggerChainSelection chainDB =
   waitChainSelectionPromise =<< chainSelAsync chainDB
 
 {-------------------------------------------------------------------------------
-  Adding a Peras certificate
+  Adding a Peras certificate or vote
 -------------------------------------------------------------------------------}
 
 newtype AddPerasCertPromise m = AddPerasCertPromise
@@ -580,6 +609,13 @@ newtype AddPerasCertPromise m = AddPerasCertPromise
 addPerasCertSync :: IOLike m => ChainDB m blk -> WithArrivalTime (ValidatedPerasCert blk) -> m ()
 addPerasCertSync chainDB cert =
   waitPerasCertProcessed =<< addPerasCertAsync chainDB cert
+
+addPerasVoteSync :: IOLike m => ChainDB m blk -> WithArrivalTime (ValidatedPerasVote blk) -> m ()
+addPerasVoteSync chainDB vote = do
+  mCertPromise <- addPerasVoteWithAsyncCertHandling chainDB vote
+  case mCertPromise of
+    Nothing -> return ()
+    Just certPromise -> waitPerasCertProcessed certPromise
 
 {-------------------------------------------------------------------------------
   Serialised block/header with its point

@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
 
     -- * Executing garbage collection
   , garbageCollectBlocks
+  , garbageCollectPeras
 
     -- * Scheduling garbage collections
   , GcParams (..)
@@ -42,7 +43,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   ) where
 
 import Control.Exception (assert)
-import Control.Monad (forM_, forever, void, when)
+import Control.Monad (forM_, forever, join, void, when)
 import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
@@ -73,6 +74,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
@@ -109,9 +111,10 @@ launchBgTasks cdb@CDB{..} replayed = do
 
   gcSchedule <- newGcSchedule
   !gcThread <-
-    launch "ChainDB.gcBlocksScheduleRunner" $
-      gcScheduleRunner gcSchedule $
-        garbageCollectBlocks cdb
+    launch "ChainDB.gcBlocksAndPerasScheduleRunner" $
+      gcScheduleRunner gcSchedule $ \slot -> do
+        garbageCollectBlocks cdb slot
+        garbageCollectPeras cdb slot
 
   !copyToImmutableDBThread <-
     launch "ChainDB.copyToImmutableDBRunner" $
@@ -402,8 +405,19 @@ garbageCollectBlocks CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
-  PerasCertDB.garbageCollect cdbPerasCertDB slotNo
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
+
+-- | Garbage-collect Peras state (certificates and votes) whose target slot is
+-- strictly smaller than the given 'SlotNo'.
+garbageCollectPeras ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  SlotNo ->
+  m ()
+garbageCollectPeras CDB{..} slotNo = do
+  join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB slotNo
+  join . atomically $ PerasVoteDB.garbageCollect cdbPerasVoteDB slotNo
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections
