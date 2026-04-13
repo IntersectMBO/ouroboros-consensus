@@ -8,7 +8,6 @@ module Test.Ouroboros.Storage.PerasCertDB.Model
   ( Model (..)
   , initModel
   , openDB
-  , closeDB
   , addCert
   , getWeightSnapshot
   , getLatestCertSeen
@@ -18,6 +17,7 @@ module Test.Ouroboros.Storage.PerasCertDB.Model
 
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.TreeDiff (ToExpr (..), defaultExprViaShow)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -25,7 +25,6 @@ import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , mkPerasWeightSnapshot
   )
-import Ouroboros.Consensus.Util (safeMaximumOn)
 
 data Model blk = Model
   { certs :: Set (WithArrivalTime (ValidatedPerasCert blk))
@@ -36,14 +35,14 @@ data Model blk = Model
 
 deriving instance StandardHash blk => Show (Model blk)
 
+instance StandardHash blk => ToExpr (Model blk) where
+  toExpr = defaultExprViaShow
+
 initModel :: Model blk
 initModel = Model{open = False, certs = Set.empty, latestCertSeen = Nothing}
 
 openDB :: Model blk -> Model blk
 openDB model = model{open = True}
-
-closeDB :: Model blk -> Model blk
-closeDB _ = Model{open = False, certs = Set.empty, latestCertSeen = Nothing}
 
 addCert ::
   StandardHash blk =>

@@ -26,6 +26,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , addBlockPromise
   , addBlocks
   , addPerasCert
+  , addPerasVote
   , empty
 
     -- * Queries
@@ -46,7 +47,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , invalid
   , isOpen
   , isValid
-  , maxPerasRoundNo
+  , roundNoOfLatestCertSeen
   , tipBlock
   , tipPoint
   , volatileChain
@@ -80,6 +81,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , initLedger
   , reopen
   , updateLoE
+  , perasCertModel
   , validChains
   , volatileDbBlocks
   , wipeVolatileDB
@@ -105,7 +107,7 @@ import qualified Data.Set as Set
 import Data.TreeDiff
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -130,6 +132,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanImmTip)
 import Ouroboros.Consensus.Storage.Common ()
+import Ouroboros.Consensus.Storage.PerasVoteDB.API (AddPerasVoteResult (..))
 import Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
 import Ouroboros.Consensus.Util.IOLike (MonadSTM)
@@ -141,6 +144,8 @@ import qualified Ouroboros.Network.Mock.Chain as Chain
 import Ouroboros.Network.Mock.ProducerState (ChainProducerState)
 import qualified Ouroboros.Network.Mock.ProducerState as CPS
 import Test.Cardano.Slotting.TreeDiff ()
+import qualified Test.Ouroboros.Storage.PerasCertDB.Model as PerasCertDBModel
+import qualified Test.Ouroboros.Storage.PerasVoteDB.Model as PerasVoteDBModel
 import Test.Util.Orphans.ToExpr ()
 
 type IteratorId = Int
@@ -151,7 +156,8 @@ data Model blk = Model
   -- ^ The VolatileDB
   , immutableDbChain :: Chain blk
   -- ^ The ImmutableDB
-  , perasCerts :: Map PerasRoundNo (WithArrivalTime (ValidatedPerasCert blk))
+  , perasCertModel :: PerasCertDBModel.Model blk
+  , perasVoteModel :: PerasVoteDBModel.Model blk
   , cps :: CPS.ChainProducerState blk
   , currentLedger :: ExtLedgerState blk EmptyMK
   , initLedger :: ExtLedgerState blk EmptyMK
@@ -177,6 +183,8 @@ deriving instance
   , ToExpr (Chain blk)
   , ToExpr (ChainProducerState blk)
   , ToExpr (ExtLedgerState blk EmptyMK)
+  , StandardHash blk
+  , Show blk
   ) =>
   ToExpr (Model blk)
 
@@ -389,14 +397,10 @@ getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
 getLoEFragment = loeFragment
 
 perasWeights :: StandardHash blk => Model blk -> PerasWeightSnapshot blk
-perasWeights =
-  mkPerasWeightSnapshot
-    . fmap (\cert -> (getPerasCertBoostedBlock cert, getPerasCertBoost cert))
-    . Map.elems
-    . perasCerts
+perasWeights = PerasCertDBModel.getWeightSnapshot . perasCertModel
 
-maxPerasRoundNo :: Model blk -> Maybe PerasRoundNo
-maxPerasRoundNo m = fst <$> Map.lookupMax (perasCerts m)
+roundNoOfLatestCertSeen :: Model blk -> Maybe PerasRoundNo
+roundNoOfLatestCertSeen m = getPerasCertRound <$> PerasCertDBModel.getLatestCertSeen (perasCertModel m)
 
 {-------------------------------------------------------------------------------
   Construction
@@ -411,7 +415,8 @@ empty loe initLedger =
   Model
     { volatileDbBlocks = Map.empty
     , immutableDbChain = Chain.Genesis
-    , perasCerts = Map.empty
+    , perasCertModel = PerasCertDBModel.openDB PerasCertDBModel.initModel
+    , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel mkPerasParams)
     , cps = CPS.initChainProducerState Chain.Genesis
     , currentLedger = initLedger
     , initLedger = initLedger
@@ -458,15 +463,24 @@ addPerasCert ::
   WithArrivalTime (ValidatedPerasCert blk) ->
   Model blk ->
   Model blk
-addPerasCert cfg cert m
-  -- Do not alter the model when a certificate for that round already exists.
-  | Map.member certRound (perasCerts m) = m
-  | otherwise =
-      chainSelection
-        cfg
-        m{perasCerts = Map.insert certRound cert (perasCerts m)}
- where
-  certRound = getPerasCertRound cert
+addPerasCert cfg cert m =
+  chainSelection cfg m{perasCertModel = PerasCertDBModel.addCert (perasCertModel m) cert}
+
+addPerasVote ::
+  forall blk.
+  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  TopLevelConfig blk ->
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  Model blk ->
+  Model blk
+addPerasVote cfg vote m =
+  case PerasVoteDBModel.addVote vote (perasVoteModel m) of
+    (Right (AddedPerasVoteAndGeneratedNewCert freshCert), perasVoteModel') ->
+      let creationTime = getArrivalTime vote
+          certWithArrival = WithArrivalTime creationTime freshCert
+       in addPerasCert cfg certWithArrival m{perasVoteModel = perasVoteModel'}
+    (Right _, perasVoteModel') -> m{perasVoteModel = perasVoteModel'}
+    (Left e, _) -> error $ "Unexpected error when adding a vote to the model: " <> show e
 
 chainSelection ::
   forall blk.
@@ -480,7 +494,8 @@ chainSelection cfg m =
   Model
     { volatileDbBlocks = volatileDbBlocks m
     , immutableDbChain = immutableDbChain m
-    , perasCerts = perasCerts m
+    , perasCertModel = perasCertModel m
+    , perasVoteModel = perasVoteModel m
     , cps = CPS.switchFork newChain (cps m)
     , currentLedger = newLedger
     , initLedger = initLedger m
@@ -1156,7 +1171,8 @@ wipeVolatileDB cfg m =
   m' =
     (closeDB m)
       { volatileDbBlocks = Map.empty
-      , perasCerts = Map.empty
+      , perasCertModel = PerasCertDBModel.openDB PerasCertDBModel.initModel
+      , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel mkPerasParams)
       , cps = CPS.switchFork newChain (cps m)
       , currentLedger = newLedger
       , invalid = Map.empty

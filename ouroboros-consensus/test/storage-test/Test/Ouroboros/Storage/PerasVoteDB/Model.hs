@@ -18,6 +18,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.TreeDiff (ToExpr (..), defaultExprViaShow)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), pointSlot)
 import Ouroboros.Consensus.Block.Abstract (StandardHash)
@@ -74,6 +75,9 @@ data Model blk = Model
   -- ^ Forged certificates indexed by round number
   }
   deriving (Show, Generic)
+
+instance StandardHash blk => ToExpr (Model blk) where
+  toExpr = defaultExprViaShow
 
 initModel :: PerasCfg blk -> Model blk
 initModel cfg =
