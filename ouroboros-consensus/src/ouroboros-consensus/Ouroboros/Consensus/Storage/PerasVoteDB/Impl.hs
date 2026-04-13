@@ -20,11 +20,6 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
 
     -- * Trace types
   , TraceEvent (..)
-
-    -- * Exceptions
-  , ExistingPerasRoundWinner (..)
-  , BlockedPerasRoundWinner (..)
-  , PerasVoteDbError (..)
   ) where
 
 import Control.Monad (when)
@@ -125,30 +120,6 @@ data TraceEvent blk
   | GarbageCollected
       PerasRoundNo
   deriving stock (Show, Eq, Generic)
-
-{-------------------------------------------------------------------------------
-  Exceptions
--------------------------------------------------------------------------------}
-
-newtype ExistingPerasRoundWinner blk
-  = ExistingPerasRoundWinner (Point blk, PerasVoteStake)
-  deriving stock (Show, Eq)
-
-newtype BlockedPerasRoundWinner blk
-  = BlockedPerasRoundWinner (Point blk, PerasVoteStake)
-  deriving stock (Show, Eq)
-
-data PerasVoteDbError blk
-  = -- | Attempted to add a vote that would lead to multiple winners for the
-    -- same round
-    MultipleWinnersInRound
-      PerasRoundNo
-      (ExistingPerasRoundWinner blk)
-      (BlockedPerasRoundWinner blk)
-  | -- | An error occurred while forging a certificate
-    ForgingCertError (PerasForgeErr blk)
-  deriving stock Show
-  deriving anyclass Exception
 
 {------------------------------------------------------------------------------
   Creating the database

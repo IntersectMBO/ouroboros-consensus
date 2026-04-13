@@ -12,6 +12,11 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.API
   , PerasVoteTicketNo
   , zeroPerasVoteTicketNo
 
+    -- * Exceptions
+  , ExistingPerasRoundWinner (..)
+  , BlockedPerasRoundWinner (..)
+  , PerasVoteDbError (..)
+
     -- * Invariants
   , prop_addVoteThenGetVoteIds
   , prop_getVotesAfterZero
@@ -20,6 +25,7 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.API
   , prop_addVoteThenGetForgedCertForRound
   ) where
 
+import Control.Exception (Exception)
 import Control.Monad (join)
 import qualified Data.List as List
 import Data.Map (Map)
@@ -78,6 +84,30 @@ data AddPerasVoteResult blk
   | AddedPerasVoteAndGeneratedNewCert (ValidatedPerasCert blk)
   deriving stock (Generic, Eq, Ord, Show)
   deriving anyclass NoThunks
+
+{-------------------------------------------------------------------------------
+  Exceptions
+-------------------------------------------------------------------------------}
+
+newtype ExistingPerasRoundWinner blk
+  = ExistingPerasRoundWinner (Point blk, PerasVoteStake)
+  deriving stock (Show, Eq)
+
+newtype BlockedPerasRoundWinner blk
+  = BlockedPerasRoundWinner (Point blk, PerasVoteStake)
+  deriving stock (Show, Eq)
+
+data PerasVoteDbError blk
+  = -- | Attempted to add a vote that would lead to multiple winners for the
+    -- same round
+    MultipleWinnersInRound
+      PerasRoundNo
+      (ExistingPerasRoundWinner blk)
+      (BlockedPerasRoundWinner blk)
+  | -- | An error occurred while forging a certificate
+    ForgingCertError (PerasForgeErr blk)
+  deriving stock Show
+  deriving anyclass Exception
 
 -- * Invariants
 
