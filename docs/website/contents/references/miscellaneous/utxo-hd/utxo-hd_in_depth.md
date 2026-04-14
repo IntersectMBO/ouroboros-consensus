@@ -291,7 +291,7 @@ backends cannot be used with the other backend, and will require a replay.
 
 :::info
 
-The mentioned replays can be avoided by using the `snapshot-converter` utility, as described in [the migration guide](migrating.mdx#convert-the-existing-ledger-snapshots-with-snapshot-converter).
+The mentioned replays can be avoided by using the `snapshot-converter` utility, as described in [the migration guide](migrating.mdx#upgrading-a-ledger-snapshots-from-104x-to-105x).
 
 :::
 

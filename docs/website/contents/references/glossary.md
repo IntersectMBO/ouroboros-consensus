@@ -93,6 +93,12 @@ Here $f$ refers to the [active slot coefficient](#active-slot-coefficient-f).
 
 The main Praos theorem also establishes a similarly-shaped bound on the probability of the immutable chain having less than `k` blocks in any contiguous run of `s` slots. The IOG researchers chose `s=3k/f` for Cardano. We started calling it `scg`, since `s` is a pretty common identifier.
 
+## ;Chain selection
+
+The process of deciding which chain to select as the best one out of the candidate chains served by peers and new locally forged blocks.
+Each Consensus protocol defines how Chain selection should be performed.
+Selecting a new chain causes revalidation of the [Mempool](#mempool) contents and serves the new chain to peers via [ChainSync](#chainsync).
+
 ## ;ChainSync
 
 Chain sync is a mini protocol to exchange chains of headers.
@@ -426,6 +432,10 @@ An adversary presents to a syncing node a chain that forks from the honest chain
 The node relies on the exact value of [`k`](#security-parameter), at least for engineering purposes.
 By appeal to [Common Prefix](#common-prefix), the node design is incapable of discarding its selection's immutable prefix (eg this bounds the honest node's RAM requirements).
 If a peer tries to send blocks that diverges deeper than that, the node disconnects from them.
+
+## ;Mempool
+
+A sequence of pending transactions which are valid on top of the tip of the current selection. The list is revalidated whenever the selection changes.
 
 ## ;Mini protocol
 
