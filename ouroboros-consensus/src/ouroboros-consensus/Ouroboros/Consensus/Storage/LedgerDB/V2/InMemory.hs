@@ -442,11 +442,11 @@ sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) ds _ s =
     let !crc1 = updateCRC bs crc
     go tb crc1 writeChunkSize mempty s'
   go tb !crc n m s' = do
-    mbs <- S.uncons s'
+    mbs <- S.next s'
     case mbs of
-      Nothing -> do
+      Left r -> do
         let bs = toStrictByteString $ mconcat [encK k <> encV v | (k, v) <- reverse m]
         lift $ void $ hPutSome fs tb bs
         let !crc1 = updateCRC bs crc
-        (,crc1) <$> S.effects s'
-      Just (item, s'') -> go tb crc (n - 1) (item : m) s''
+        pure (r, crc1)
+      Right (item, s'') -> go tb crc (n - 1) (item : m) s''
