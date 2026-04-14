@@ -1,6 +1,6 @@
 # Ouroboros Consensus
 
-[![consensus](https://img.shields.io/badge/ouroboros--consensus-3.0.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-3.0.0.0/) [![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
+[![consensus](https://img.shields.io/badge/ouroboros--consensus-3.0.1.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-3.0.1.0/) [![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
 
 Implementation of the Ouroboros family of consensus algorithms.
 

@@ -16,6 +16,7 @@
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 -- Needed for @NoThunks (Table m k v b)@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -96,7 +97,7 @@ import System.FS.API
 import System.FS.API.Lazy (hGetAll, hPutAll)
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
-import System.FilePath (splitDirectories)
+import System.FilePath (splitDirectories, splitFileName)
 import System.Random
 import Prelude hiding (read)
 
@@ -476,6 +477,7 @@ readUTxOSizeFile hfs p = do
 
 -- | Delete snapshot from disk and also from the LSM tree database.
 implDeleteSnapshotIfTemporary ::
+  forall m blk.
   IOLike m =>
   Session m ->
   SomeHasFS m ->
@@ -488,7 +490,11 @@ implDeleteSnapshotIfTemporary
   tracer
   ss =
     Monad.when (diskSnapshotIsTemporary ss) $ do
-      deleteState `finally` deleteLsmTable
+      -- If an exception comes up while trying to delete snapshots we just
+      -- swallow it and continue. We don't really care if the snapshot was half
+      -- written or whatever, as the running node does not use existing
+      -- snapshots.
+      mapM_ (try @m @SomeException) [deleteState, deleteLsmTable]
       traceWith tracer (DeletedSnapshot ss)
    where
     deleteState = do
@@ -786,12 +792,12 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session st stream = do
     lift $ writeToTable lsmTable accUTxOs
     go utxosSize lsmTable writeChunkSize mempty stream'
   go utxosSize lsmTable numToRead accUTxOs stream' = do
-    mItem <- S.uncons stream'
+    mItem <- S.next stream'
     case mItem of
-      Nothing -> do
+      Left r -> do
         lift $ writeToTable lsmTable accUTxOs
-        (,utxosSize) <$> S.effects stream'
-      Just (item, stream'') -> go (utxosSize + 1) lsmTable (numToRead - 1) (item : accUTxOs) stream''
+        pure (r, utxosSize)
+      Right (item, stream'') -> go (utxosSize + 1) lsmTable (numToRead - 1) (item : accUTxOs) stream''
 
 -- | Create Yield arguments for LSM
 mkLSMYieldArgs ::
@@ -827,10 +833,8 @@ mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
 -- | Create Sink arguments for LSM
 mkLSMSinkArgs ::
   IOLike m =>
-  -- | The filepath in which the LSM database should be opened.
+  -- | The filepath for the LSM database
   FilePath ->
-  -- | The name for the lsm database
-  FsPath ->
   -- | The filepath to the snapshot to be created, so @.../.../ledger/<slotno>[_<suffix>]@.
   DiskSnapshot ->
   -- | Usually 'ioHasFS'
@@ -840,14 +844,15 @@ mkLSMSinkArgs ::
   -- | Usually 'newStdGen'
   (m StdGen) ->
   m (SinkArgs m LSM l)
-mkLSMSinkArgs lsmDbParentPath lsmDbPath ds snapFs mkBlockIOFS mkGen = do
+mkLSMSinkArgs (splitFileName -> (lsmDbParentPath, lsmDbPath)) ds snapFs mkBlockIOFS mkGen = do
   shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
     -- The Sink args will be created in the alloc step of a bracket so we do the
     -- 'runWithTempRegistry' here as the resource will be closed by the outer
     -- bracket anyways.
     runWithTempRegistry $ (\x -> (x, ())) <$> mkBlockIOFS lsmDbParentPath
-  removeDirectoryRecursive hasFS lsmDbPath
-  createDirectory hasFS lsmDbPath
+  let lsmDbPath' = mkFsPath [lsmDbPath]
+  removeDirectoryRecursive hasFS lsmDbPath'
+  createDirectory hasFS lsmDbPath'
   salt <- fst . genWord64 <$> mkGen
-  session <- LSM.newSession nullTracer hasFS blockIO salt lsmDbPath
+  session <- LSM.newSession nullTracer hasFS blockIO salt lsmDbPath'
   pure (SinkLSM 1000 snapFs shfsbio ds session)

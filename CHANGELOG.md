@@ -6,6 +6,20 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-3.0.1.0'></a>
+## 3.0.1.0 -- 2026-04-14
+
+### Non-Breaking
+
+- Add PerasMaxCertRound protocol parameter.
+- Add Peras certificate inclusion rules.
+
+### Patch
+
+- Ignore exceptions when deleting a snapshot.
+- Allow for empty UTxO tables in tables streaming (which is only relevant for Byron snapshots)
+- Fix directory management in LSM-trees snapshot conversion.
+
 <a id='changelog-3.0.0.0'></a>
 ## 3.0.0.0 -- 2026-04-07
 
