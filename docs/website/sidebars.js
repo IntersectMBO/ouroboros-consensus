@@ -24,6 +24,7 @@ const sidebars = {
       items: ['explanations/index',
               'explanations/design_goals',
               'explanations/data_flow',
+              'explanations/consensus_protocol',
               'explanations/ledger_interaction',
               'explanations/queries',
               'explanations/node_tasks',
