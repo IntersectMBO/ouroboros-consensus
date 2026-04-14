@@ -248,14 +248,9 @@ encodeLeiosFetch encodeP encodeEb encodeTx = encode
         <> encodeBitmaps bitmaps
         <> CBOR.encodeListLen (fromIntegral $ V.length txs)
         <> foldMap encodeTx txs
-    -- MsgLeiosVotesRequest
-    -- MsgLeiosVoteDelivery
-    -- MsgLeiosBlockRangeRequest
-    -- MsgLeiosNextBlockAndTxsInRange
-    -- MsgLeiosLastBlockAndTxsInRange
     MsgDone ->
       CBOR.encodeListLen 1
-        <> CBOR.encodeWord 9
+        <> CBOR.encodeWord 4
 
 decodeLeiosFetch ::
   forall

@@ -215,10 +215,9 @@ encodeLeiosNotify encodeP encodeA = encode
       CBOR.encodeListLen 2
         <> CBOR.encodeWord 3
         <> encodeP p
-    -- votes offer
     MsgDone ->
       CBOR.encodeListLen 1
-        <> CBOR.encodeWord 5
+        <> CBOR.encodeWord 4
 
 decodeLeiosNotify ::
   forall
