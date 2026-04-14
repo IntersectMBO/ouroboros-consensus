@@ -357,14 +357,13 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
           Nothing
           ("LMDB@[" <> snapshotToDirName outSnap <> "]")
           UTxOHDLMDBSnapshot
-    Snapshot (LSMSnapshot _ (F.splitFileName . getLSMDatabaseDir -> (lsmDbParentPath, lsmDbPath))) _ -> do
+    Snapshot (LSMSnapshot _ (LSMDatabaseFilePath lsmDbPath)) _ -> do
       checkSnapSlot st outSnap
       pure $
         OutEnv
           ( SomeBackend
               <$> mkLSMSinkArgs
-                lsmDbParentPath
-                (mkFsPath [lsmDbPath])
+                lsmDbPath
                 outSnap
                 outSomeHasFS
                 stdMkBlockIOFS

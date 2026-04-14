@@ -16,6 +16,7 @@
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 -- Needed for @NoThunks (Table m k v b)@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -96,7 +97,7 @@ import System.FS.API
 import System.FS.API.Lazy (hGetAll, hPutAll)
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
-import System.FilePath (splitDirectories)
+import System.FilePath (splitDirectories, splitFileName)
 import System.Random
 import Prelude hiding (read)
 
@@ -827,10 +828,8 @@ mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
 -- | Create Sink arguments for LSM
 mkLSMSinkArgs ::
   IOLike m =>
-  -- | The filepath in which the LSM database should be opened.
+  -- | The filepath for the LSM database
   FilePath ->
-  -- | The name for the lsm database
-  FsPath ->
   -- | The filepath to the snapshot to be created, so @.../.../ledger/<slotno>[_<suffix>]@.
   DiskSnapshot ->
   -- | Usually 'ioHasFS'
@@ -840,14 +839,15 @@ mkLSMSinkArgs ::
   -- | Usually 'newStdGen'
   (m StdGen) ->
   m (SinkArgs m LSM l)
-mkLSMSinkArgs lsmDbParentPath lsmDbPath ds snapFs mkBlockIOFS mkGen = do
+mkLSMSinkArgs (splitFileName -> (lsmDbParentPath, lsmDbPath)) ds snapFs mkBlockIOFS mkGen = do
   shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
     -- The Sink args will be created in the alloc step of a bracket so we do the
     -- 'runWithTempRegistry' here as the resource will be closed by the outer
     -- bracket anyways.
     runWithTempRegistry $ (\x -> (x, ())) <$> mkBlockIOFS lsmDbParentPath
-  removeDirectoryRecursive hasFS lsmDbPath
-  createDirectory hasFS lsmDbPath
+  let lsmDbPath' = mkFsPath [lsmDbPath]
+  removeDirectoryRecursive hasFS lsmDbPath'
+  createDirectory hasFS lsmDbPath'
   salt <- fst . genWord64 <$> mkGen
-  session <- LSM.newSession nullTracer hasFS blockIO salt lsmDbPath
+  session <- LSM.newSession nullTracer hasFS blockIO salt lsmDbPath'
   pure (SinkLSM 1000 snapFs shfsbio ds session)
