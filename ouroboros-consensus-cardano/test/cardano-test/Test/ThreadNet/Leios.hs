@@ -34,6 +34,7 @@ import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
 import Cardano.Ledger.Api.Tx.In (TxIn (..))
 import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded)
 import qualified Cardano.Ledger.Block as SL
+import Cardano.Ledger.Core (fromTxSeq, sizeTxF)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
@@ -61,7 +62,7 @@ import Ouroboros.Consensus.Cardano
   , ProtocolParamsShelleyBased (..)
   , ShelleyGenesis (..)
   )
-import Ouroboros.Consensus.Cardano.Block (pattern BlockConway)
+import Ouroboros.Consensus.Cardano.Block (pattern BlockConway, pattern LedgerStateConway)
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import Ouroboros.Consensus.Ledger.Abstract
@@ -81,6 +82,10 @@ import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..), ProtocolInfo (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block (shelleyBlockRaw)
+import Ouroboros.Consensus.Shelley.Ledger.Ledger
+  ( ShelleyLedgerLeiosState (..)
+  , shelleyLedgerLeiosState
+  )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -93,7 +98,6 @@ import Test.QuickCheck
   , conjoin
   , counterexample
   , tabulate
-  , withMaxSuccess
   , (.&&.)
   , (===)
   )
@@ -140,10 +144,9 @@ tests :: TestTree
 tests =
   testGroup
     "Leios ThreadNet"
-    [ testProperty "EB production" $
-        withMaxSuccess 1 prop_leios_blocksProduced
-    , testProperty "EB certificate inclusion" $
-        withMaxSuccess 1 prop_leios_ebCertificateInclusion
+    [ testProperty "EB production" prop_leios_blocksProduced
+    , testProperty "EB certificate inclusion" prop_leios_ebCertificateInclusion
+    , testProperty "Cumulative tx bytes" prop_leios_cumulativeTxBytes
     ]
 
 prop_leios_blocksProduced :: Seed -> Property
@@ -251,6 +254,67 @@ prop_leios_ebCertificateInclusion seed =
 
   numNodes = 3 :: Integer
   numSlots = 200 :: Word64
+
+-- | Verify that 'sllsCumulativeTxBytes' in the final ledger state matches an
+-- independently computed sum of individual transaction sizes over the chain.
+--
+-- The independent sum resolves certifying blocks (filling in EB transaction
+-- closures from the LeiosDB) and then sums 'sizeTxF' per transaction — the
+-- same data the accumulator sees, but computed outside of
+-- 'applyBlockShelleyLedgerLeiosState'.
+prop_leios_cumulativeTxBytes :: Seed -> Property
+prop_leios_cumulativeTxBytes seed =
+  ( cumTxBytes > 0
+      & counterexample "cumulative tx bytes is 0 — no transactions were applied"
+  )
+    .&&. ( cumTxBytes === expectedCumTxBytes
+            & counterexample ("ledger state: " <> show cumTxBytes)
+            & counterexample ("independent sum: " <> show expectedCumTxBytes)
+         )
+ where
+  (testOutput, ProtocolInfo{pInfoConfig, pInfoInitLedger}) =
+    runThreadNet seed (NumSlots numSlots) (NumCoreNodes $ fromIntegral numNodes)
+
+  someNode = snd . Map.findMin $ testOutput.testOutputNodes
+
+  cumTxBytes = case nodeOutputFinalLedger someNode of
+    LedgerStateConway st -> sllsCumulativeTxBytes (shelleyLedgerLeiosState st)
+    _ -> error "expected Conway ledger state"
+
+  expectedCumTxBytes = sumChainTxBytes pInfoConfig pInfoInitLedger someNode
+
+  numNodes = 3 :: Integer
+  numSlots = 200 :: Word64
+
+-- | Independently compute cumulative tx bytes by resolving each block in the
+-- chain (filling in EB closures from the LeiosDB) and summing individual
+-- 'sizeTxF' values per transaction.
+sumChainTxBytes ::
+  TopLevelConfig (CardanoBlock StandardCrypto) ->
+  ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
+  NodeOutput (CardanoBlock StandardCrypto) ->
+  Word64
+sumChainTxBytes topConfig initLedger node = runSimOrThrow $ do
+  let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
+  stateVar <- StrictTVar.newTVarIO db
+  leiosDb <- newLeiosDBInMemoryWith stateVar
+  let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
+      cfg = ExtLedgerCfg topConfig
+  fst <$> foldM (step leiosDb cfg) (0, initLedger) chain
+ where
+  step leiosDb cfg (total, st) blk = do
+    blk' <- resolveLeiosBlock leiosDb st blk
+    let txBytes = blockTxSizeSum blk'
+        st' = applyDiffs st $ tickThenReapply OmitLedgerEvents cfg blk' st
+    pure (total + txBytes, st')
+
+  blockTxSizeSum (BlockConway shelleyBlk) =
+    let txs = toList $ fromTxSeq $ SL.bodyTxs $ SL.blockBody $ shelleyBlockRaw shelleyBlk
+     in fromIntegral $ sum $ map (^. sizeTxF) txs
+  -- Byron blocks don't go through 'applyBlockShelleyLedgerLeiosState'
+  -- (it only applies to Shelley-based eras), so they contribute 0 to the
+  -- cumulative tx bytes.
+  blockTxSizeSum _ = 0
 
 -- | Replay a node's chain with Leios block resolution and return the
 -- resulting ledger state.
