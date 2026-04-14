@@ -922,12 +922,12 @@ sinkLmdbS writeChunkSize bs copyTo hint s = do
     lift $ bs sl (hint, hint) (LedgerTables $ DiffMK $ Diff.fromMapInserts m)
     go writeChunkSize mempty s'
   go n m s' = do
-    mbs <- S.uncons s'
+    mbs <- S.next s'
     case mbs of
-      Nothing -> do
+      Left r -> do
         lift $ bs sl (hint, hint) (LedgerTables $ DiffMK $ Diff.fromMapInserts m)
-        S.effects s'
-      Just ((k, v), s'') ->
+        pure r
+      Right ((k, v), s'') ->
         go (n - 1) (Map.insert k v m) s''
 
 yieldLmdbS ::

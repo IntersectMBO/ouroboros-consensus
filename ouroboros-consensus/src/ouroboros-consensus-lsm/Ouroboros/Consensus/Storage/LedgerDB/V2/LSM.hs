@@ -786,12 +786,12 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session st stream = do
     lift $ writeToTable lsmTable accUTxOs
     go utxosSize lsmTable writeChunkSize mempty stream'
   go utxosSize lsmTable numToRead accUTxOs stream' = do
-    mItem <- S.uncons stream'
+    mItem <- S.next stream'
     case mItem of
-      Nothing -> do
+      Left r -> do
         lift $ writeToTable lsmTable accUTxOs
-        (,utxosSize) <$> S.effects stream'
-      Just (item, stream'') -> go (utxosSize + 1) lsmTable (numToRead - 1) (item : accUTxOs) stream''
+        pure (r, utxosSize)
+      Right (item, stream'') -> go (utxosSize + 1) lsmTable (numToRead - 1) (item : accUTxOs) stream''
 
 -- | Create Yield arguments for LSM
 mkLSMYieldArgs ::

@@ -42,7 +42,7 @@ mkInMemYieldArgs fs ds (HardForkLedgerState (HardForkState idx)) =
         (Current (Flip LedgerState EmptyMK) -.-> K (Decoders L))
         (CardanoEras StandardCrypto)
     np =
-      (Fn $ const $ K $ error "Byron")
+      (Fn $ K . (\_ -> Decoders (error "Byron") (error "Byron")) . unFlip . currentState)
         :* (Fn $ K . fromEra ShelleyTxOut . unFlip . currentState)
         :* (Fn $ K . fromEra AllegraTxOut . unFlip . currentState)
         :* (Fn $ K . fromEra MaryTxOut . unFlip . currentState)
