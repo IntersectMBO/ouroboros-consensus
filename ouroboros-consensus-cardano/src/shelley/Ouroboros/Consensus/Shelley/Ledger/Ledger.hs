@@ -336,9 +336,12 @@ applyBlockShelleyLedgerLeiosState blk leiosSt =
         sllsCumulativeTxBytes leiosSt + blockTxBytes
     }
  where
-  blockTxBytes =
-    let txs = toList $ fromTxSeq $ SL.bodyTxs $ SL.blockBody $ shelleyBlockRaw blk
-     in fromIntegral $ sum $ map (view sizeTxF) txs
+  blockTxBytes = case SL.blockBody (shelleyBlockRaw blk) of
+    SL.BodyInline txSeq ->
+      fromIntegral $ sum $ map (view sizeTxF) $ toList $ fromTxSeq txSeq
+    SL.BodyCertificate _ (Just txSeq) ->
+      fromIntegral $ sum $ map (view sizeTxF) $ toList $ fromTxSeq txSeq
+    SL.BodyCertificate _ Nothing -> 0
 
 -- -.-
 fromLedgerEbHash :: SL.EbHash -> EbHash

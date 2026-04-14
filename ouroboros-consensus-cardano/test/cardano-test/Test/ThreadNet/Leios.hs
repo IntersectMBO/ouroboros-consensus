@@ -264,12 +264,12 @@ prop_leios_ebCertificateInclusion seed =
 -- 'applyBlockShelleyLedgerLeiosState'.
 prop_leios_cumulativeTxBytes :: Seed -> Property
 prop_leios_cumulativeTxBytes seed =
-  ( cumTxBytes > 0
+  ( cumulativeTxBytes > 0
       & counterexample "cumulative tx bytes is 0 — no transactions were applied"
   )
-    .&&. ( cumTxBytes === expectedCumTxBytes
-            & counterexample ("ledger state: " <> show cumTxBytes)
-            & counterexample ("independent sum: " <> show expectedCumTxBytes)
+    .&&. ( cumulativeTxBytes === expectedCumulativeTxBytes
+            & counterexample ("ledger state: " <> show cumulativeTxBytes)
+            & counterexample ("independent sum: " <> show expectedCumulativeTxBytes)
          )
  where
   (testOutput, ProtocolInfo{pInfoConfig, pInfoInitLedger}) =
@@ -277,11 +277,11 @@ prop_leios_cumulativeTxBytes seed =
 
   someNode = snd . Map.findMin $ testOutput.testOutputNodes
 
-  cumTxBytes = case nodeOutputFinalLedger someNode of
+  cumulativeTxBytes = case nodeOutputFinalLedger someNode of
     LedgerStateConway st -> sllsCumulativeTxBytes (shelleyLedgerLeiosState st)
     _ -> error "expected Conway ledger state"
 
-  expectedCumTxBytes = sumChainTxBytes pInfoConfig pInfoInitLedger someNode
+  expectedCumulativeTxBytes = sumChainTxBytes pInfoConfig pInfoInitLedger someNode
 
   numNodes = 3 :: Integer
   numSlots = 200 :: Word64
@@ -289,6 +289,10 @@ prop_leios_cumulativeTxBytes seed =
 -- | Independently compute cumulative tx bytes by resolving each block in the
 -- chain (filling in EB closures from the LeiosDB) and summing individual
 -- 'sizeTxF' values per transaction.
+--
+-- TODO: 'sumChainTxBytes' and 'replayNodeChain' share the same
+-- resolve-and-fold structure. Factor out a generic chain fold that accepts a
+-- per-block accumulator.
 sumChainTxBytes ::
   TopLevelConfig (CardanoBlock StandardCrypto) ->
   ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
@@ -309,12 +313,17 @@ sumChainTxBytes topConfig initLedger node = runSimOrThrow $ do
     pure (total + txBytes, st')
 
   blockTxSizeSum (BlockConway shelleyBlk) =
-    let txs = toList $ fromTxSeq $ SL.bodyTxs $ SL.blockBody $ shelleyBlockRaw shelleyBlk
-     in fromIntegral $ sum $ map (^. sizeTxF) txs
+    case SL.blockBody (shelleyBlockRaw shelleyBlk) of
+      SL.BodyInline txSeq -> sumTxSizes txSeq
+      SL.BodyCertificate _ (Just txSeq) -> sumTxSizes txSeq
+      SL.BodyCertificate _ Nothing -> 0
   -- Byron blocks don't go through 'applyBlockShelleyLedgerLeiosState'
   -- (it only applies to Shelley-based eras), so they contribute 0 to the
   -- cumulative tx bytes.
   blockTxSizeSum _ = 0
+
+  sumTxSizes txSeq =
+    fromIntegral $ sum $ map (^. sizeTxF) $ toList $ fromTxSeq txSeq
 
 -- | Replay a node's chain with Leios block resolution and return the
 -- resulting ledger state.
