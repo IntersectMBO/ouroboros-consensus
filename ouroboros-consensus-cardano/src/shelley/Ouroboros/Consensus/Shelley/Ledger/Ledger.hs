@@ -295,12 +295,13 @@ data ShelleyLedgerLeiosState = ShelleyLedgerLeiosState
   , sllsApplyBlockCount :: Int
   , sllsApplyTickLastAt :: SlotNo
   , sllsApplyBlockLastAt :: SlotNo
+  , sllsCumulativeTxBytes :: Word64
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
 initShelleyLedgerLeiosState :: ShelleyLedgerLeiosState
-initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing True 0 0 (SlotNo 0) (SlotNo 0)
+initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing True 0 0 (SlotNo 0) (SlotNo 0) 0
 
 applyTickShelleyLedgerLeiosState :: ShelleyLedgerLeiosState -> SlotNo -> ShelleyLedgerLeiosState
 applyTickShelleyLedgerLeiosState leiosSt currSlotNo =
@@ -916,13 +917,14 @@ encodeShelleyLedgerLeiosState = toCBOR
 instance ToCBOR ShelleyLedgerLeiosState where
   toCBOR ShelleyLedgerLeiosState{..} =
     mconcat
-      [ CBOR.encodeListLen 6
+      [ CBOR.encodeListLen 7
       , toCBOR sllsMaybeAnnouncedEb
       , toCBOR sllsTooSoonToCertify
       , toCBOR sllsApplyTickCount
       , toCBOR sllsApplyBlockCount
       , toCBOR sllsApplyTickLastAt
       , toCBOR sllsApplyBlockLastAt
+      , toCBOR sllsCumulativeTxBytes
       ]
 
 instance ToCBOR LeiosPoint where
@@ -933,13 +935,14 @@ instance FromCBOR LeiosPoint where
 
 decodeShelleyLedgerLeiosState :: forall s. Decoder s ShelleyLedgerLeiosState
 decodeShelleyLedgerLeiosState = do
-  enforceSize "ShelleyLedgerLeiosState" 6
+  enforceSize "ShelleyLedgerLeiosState" 7
   sllsMaybeAnnouncedEb <- fromCBOR
   sllsTooSoonToCertify <- fromCBOR
   sllsApplyTickCount <- fromCBOR
   sllsApplyBlockCount <- fromCBOR
   sllsApplyTickLastAt <- fromCBOR
   sllsApplyBlockLastAt <- fromCBOR
+  sllsCumulativeTxBytes <- fromCBOR
   return
     ShelleyLedgerLeiosState
       { sllsMaybeAnnouncedEb
@@ -948,4 +951,5 @@ decodeShelleyLedgerLeiosState = do
       , sllsApplyBlockCount
       , sllsApplyTickLastAt
       , sllsApplyBlockLastAt
+      , sllsCumulativeTxBytes
       }
