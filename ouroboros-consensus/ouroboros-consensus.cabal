@@ -852,16 +852,16 @@ benchmark leios-db-bench
   type: exitcode-stdio-1.0
   hs-source-dirs: bench/leios-db-bench
   main-is: Main.hs
-  ghc-options: "-with-rtsopts=-N4"
+  ghc-options: -with-rtsopts=-N4
   build-depends:
     async,
     base,
     bytestring,
     cardano-slotting,
-    si-timers,
-    time,
     ouroboros-consensus,
+    si-timers,
     temporary,
+    time,
     vector,
 
 test-suite doctest
