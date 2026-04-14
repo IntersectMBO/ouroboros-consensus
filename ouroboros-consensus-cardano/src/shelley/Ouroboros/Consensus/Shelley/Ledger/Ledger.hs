@@ -88,8 +88,10 @@ import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
   ( Era
   , eraDecoder
+  , fromTxSeq
   , ppMaxBHSizeL
   , ppMaxTxSizeL
+  , sizeTxF
   )
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -109,6 +111,7 @@ import qualified Control.State.Transition.Extended as STS
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Coerce (coerce)
+import Data.Foldable (toList)
 import Data.Functor.Identity
 import Data.MemPack
 import qualified Data.Sequence.Strict as StrictSeq
@@ -329,7 +332,13 @@ applyBlockShelleyLedgerLeiosState blk leiosSt =
     , sllsApplyBlockLastAt = blockSlot blk
     , sllsMaybeAnnouncedEb =
         MkLeiosPoint (blockSlot blk) . fromLedgerEbHash <$> SL.blockMayAnnouncedEb (shelleyBlockRaw blk)
+    , sllsCumulativeTxBytes =
+        sllsCumulativeTxBytes leiosSt + blockTxBytes
     }
+ where
+  blockTxBytes =
+    let txs = toList $ fromTxSeq $ SL.bodyTxs $ SL.blockBody $ shelleyBlockRaw blk
+     in fromIntegral $ sum $ map (view sizeTxF) txs
 
 -- -.-
 fromLedgerEbHash :: SL.EbHash -> EbHash
