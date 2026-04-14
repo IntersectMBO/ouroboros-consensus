@@ -304,9 +304,11 @@ defaultListSnapshots (SomeHasFS HasFS{listDirectory}) =
 
 -- | Delete snapshot from disk
 defaultDeleteSnapshotIfTemporary ::
-  (Monad m, HasCallStack) => SomeHasFS m -> Tracer m (TraceSnapshotEvent blk) -> DiskSnapshot -> m ()
+  forall m blk.
+  (MonadCatch m, HasCallStack) =>
+  SomeHasFS m -> Tracer m (TraceSnapshotEvent blk) -> DiskSnapshot -> m ()
 defaultDeleteSnapshotIfTemporary (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) tracer ss =
-  when (diskSnapshotIsTemporary ss) $ do
+  when (diskSnapshotIsTemporary ss) $ void $ try @m @SomeException $ do
     let p = snapshotToDirPath ss
     exists <- doesDirectoryExist p
     when exists (removeDirectoryRecursive p)

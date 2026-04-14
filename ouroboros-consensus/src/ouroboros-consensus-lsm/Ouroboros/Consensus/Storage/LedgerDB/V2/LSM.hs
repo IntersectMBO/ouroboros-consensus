@@ -477,6 +477,7 @@ readUTxOSizeFile hfs p = do
 
 -- | Delete snapshot from disk and also from the LSM tree database.
 implDeleteSnapshotIfTemporary ::
+  forall m blk.
   IOLike m =>
   Session m ->
   SomeHasFS m ->
@@ -489,7 +490,11 @@ implDeleteSnapshotIfTemporary
   tracer
   ss =
     Monad.when (diskSnapshotIsTemporary ss) $ do
-      deleteState `finally` deleteLsmTable
+      -- If an exception comes up while trying to delete snapshots we just
+      -- swallow it and continue. We don't really care if the snapshot was half
+      -- written or whatever, as the running node does not use existing
+      -- snapshots.
+      mapM_ (try @m @SomeException) [deleteState, deleteLsmTable]
       traceWith tracer (DeletedSnapshot ss)
    where
     deleteState = do
