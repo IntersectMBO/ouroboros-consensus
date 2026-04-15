@@ -4,6 +4,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -32,12 +33,16 @@ import Cardano.Ledger.Api
 import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
 import Cardano.Ledger.Api.Tx.In (TxIn (..))
 import Cardano.Ledger.BaseTypes (ProtVer (..), TxIx (..), knownNonZeroBounded)
+import qualified Cardano.Ledger.Block as SL
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
-import Control.Monad (replicateM)
+import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as StrictTVar
+import Control.Monad (foldM, replicateM)
+import Control.Monad.IOSim (runSimOrThrow)
 import Data.Foldable (toList)
 import Data.Function ((&))
+import Data.Functor.Identity (runIdentity)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing, mapMaybe)
@@ -45,6 +50,7 @@ import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
+import LeiosDemoDb (LeiosDbHandle, newLeiosDBInMemoryWith)
 import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb)
 import Lens.Micro (each, (%~), (^.), (^..))
 import Ouroboros.Consensus.Block (SlotNo (..))
@@ -55,13 +61,29 @@ import Ouroboros.Consensus.Cardano
   , ProtocolParamsShelleyBased (..)
   , ShelleyGenesis (..)
   )
+import Ouroboros.Consensus.Cardano.Block (pattern BlockConway)
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
-import Ouroboros.Consensus.Config (SecurityParam (..))
+import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
+import Ouroboros.Consensus.Ledger.Abstract
+  ( ComputeLedgerEvents (OmitLedgerEvents)
+  , LedgerCfg
+  , tickThenReapply
+  )
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState, ValuesMK)
+import Ouroboros.Consensus.Ledger.Extended
+  ( ExtLedgerCfg (..)
+  , ExtLedgerState (..)
+  , ledgerState
+  )
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
+import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
 import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
-import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
+import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..), ProtocolInfo (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Shelley.Ledger.Block (shelleyBlockRaw)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
+import qualified Ouroboros.Network.Mock.Chain as Chain
 import Test.Cardano.Ledger.Alonzo.Examples.Consensus (exampleAlonzoGenesis)
 import Test.Cardano.Ledger.Conway.Examples.Consensus (exampleConwayGenesis)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Conway), hardForkInto)
@@ -72,6 +94,7 @@ import Test.QuickCheck
   , counterexample
   , tabulate
   , withMaxSuccess
+  , (.&&.)
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
@@ -97,7 +120,8 @@ import Test.ThreadNet.Infra.Shelley
   , signTx
   )
 import Test.ThreadNet.Network
-  ( NodeOutput (..)
+  ( LeiosState (..)
+  , NodeOutput (..)
   , TestNodeInitialization (..)
   , _FromLeios
   , _FromMempool
@@ -118,6 +142,8 @@ tests =
     "Leios ThreadNet"
     [ testProperty "EB production" $
         withMaxSuccess 1 prop_leios_blocksProduced
+    , testProperty "EB certificate inclusion" $
+        withMaxSuccess 1 prop_leios_ebCertificateInclusion
     ]
 
 prop_leios_blocksProduced :: Seed -> Property
@@ -144,6 +170,7 @@ prop_leios_blocksProduced seed =
     & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
     & tabulate "Praos blocks forged" [show $ length forgedBlocks]
     & tabulate "Leios blocks forged" [show $ length forgedEBs]
+    & tabulate "Certifying blocks" [show $ length certifyingBlocks]
     & tabulate "Effective throughput" [show throughput]
  where
   traces = testOutput.allTraces
@@ -174,58 +201,148 @@ prop_leios_blocksProduced seed =
     TraceMempoolRejectedTx tx _ _ -> Just tx
     _ -> Nothing
 
+  nodeChains = nodeOutputFinalChain <$> testOutput.testOutputNodes
+
+  certifyingBlocks =
+    [ blk
+    | blk@(BlockConway shelleyBlk) <- concatMap Chain.toOldestFirst nodeChains
+    , SL.blockCertifiesEb (shelleyBlockRaw shelleyBlk)
+    ]
+
   throughput = fromIntegral (sum includedTxCounts) / fromRational numSlots :: Double
 
-  testOutput =
+  (testOutput, _protocolInfo) =
     runThreadNet seed (NumSlots $ ceiling numSlots) (NumCoreNodes $ fromIntegral numNodes)
 
   numNodes = 3 :: Integer
 
   numSlots = 200
 
+-- | Verify that independently replaying the chain with EB resolution produces
+-- the same ledger state as the one computed by the ChainDB during the
+-- simulation. This proves that EB transactions from certified EBs are
+-- actually applied to the ledger.
+prop_leios_ebCertificateInclusion :: Seed -> Property
+prop_leios_ebCertificateInclusion seed =
+  ( not (null certifyingBlocks)
+      & counterexample "no certifying blocks — test is vacuous"
+  )
+    .&&. (foldedLedger === expectedLedger)
+ where
+  (testOutput, ProtocolInfo{pInfoConfig, pInfoInitLedger}) =
+    runThreadNet seed (NumSlots numSlots) (NumCoreNodes $ fromIntegral numNodes)
+
+  -- Pick any node — all nodes should converge to the same chain.
+  someNode = snd . Map.findMin $ testOutput.testOutputNodes
+
+  nodeChains = nodeOutputFinalChain <$> testOutput.testOutputNodes
+
+  certifyingBlocks =
+    [ blk
+    | blk@(BlockConway shelleyBlk) <- concatMap Chain.toOldestFirst nodeChains
+    , SL.blockCertifiesEb (shelleyBlockRaw shelleyBlk)
+    ]
+
+  -- nodeOutputFinalLedger has EmptyMK (tables stripped by ChainDB on
+  -- extraction), so we strip the fold result's tables for comparison.
+  expectedLedger = nodeOutputFinalLedger someNode
+
+  foldedLedger = replayNodeChain pInfoConfig pInfoInitLedger someNode
+
+  numNodes = 3 :: Integer
+  numSlots = 200 :: Word64
+
+-- | Replay a node's chain with Leios block resolution and return the
+-- resulting ledger state.
+replayNodeChain ::
+  TopLevelConfig (CardanoBlock StandardCrypto) ->
+  ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
+  NodeOutput (CardanoBlock StandardCrypto) ->
+  LedgerState (CardanoBlock StandardCrypto) EmptyMK
+replayNodeChain topConfig initLedger node = runSimOrThrow $ do
+  let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
+  stateVar <- StrictTVar.newTVarIO db
+  leiosDb <- newLeiosDBInMemoryWith stateVar
+  let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
+      cfg = ExtLedgerCfg topConfig
+  foldedState <- foldWithResolution leiosDb cfg chain initLedger
+  pure $ forgetLedgerTables . ledgerState $ foldedState
+
+-- | Fold a chain of blocks over an initial ledger state, resolving Leios
+-- blocks (filling in EB transaction closures for certifying blocks) before
+-- each application.
+--
+-- We use 'tickThenReapply' because the blocks have already been validated
+-- by the ChainDB. We use 'applyDiffs' instead of 'applyDiffForKeys'
+-- because we need to accumulate the full UTxO — 'applyDiffForKeys' only
+-- retains entries referenced by the current block, which is designed for
+-- the LedgerDB's backing store architecture.
+foldWithResolution ::
+  Monad m =>
+  LeiosDbHandle m ->
+  LedgerCfg (ExtLedgerState (CardanoBlock StandardCrypto)) ->
+  [CardanoBlock StandardCrypto] ->
+  ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
+  m (ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK)
+foldWithResolution leiosDb cfg blks initState =
+  foldM step initState blks
+ where
+  step state blk = do
+    blk' <- resolveLeiosBlock leiosDb state blk
+    pure $ applyDiffs state $ tickThenReapply OmitLedgerEvents cfg blk' state
+
 -- * Running the thread net
 
-runThreadNet :: Seed -> NumSlots -> NumCoreNodes -> TestOutput (CardanoBlock StandardCrypto)
+runThreadNet ::
+  Seed ->
+  NumSlots ->
+  NumCoreNodes ->
+  (TestOutput (CardanoBlock StandardCrypto), ProtocolInfo (CardanoBlock StandardCrypto))
 runThreadNet initSeed numSlots numCoreNodes =
-  runTestNetwork
-    testConfig
-    testConfigB
-    TestConfigMB
-      { nodeInfo = \(CoreNodeId nid) ->
-          let (protocolInfo, blockForging) =
-                protocolInfoCardano
-                  CardanoProtocolParams
-                    { byronProtocolParams =
-                        ProtocolParamsByron
-                          { byronGenesis
-                          , byronPbftSignatureThreshold = Nothing
-                          , byronProtocolVersion = Byron.ProtocolVersion 0 0 0
-                          , byronSoftwareVersion = theProposedSoftwareVersion
-                          , byronLeaderCredentials = Nothing
-                          }
-                    , shelleyBasedProtocolParams =
-                        ProtocolParamsShelleyBased
-                          { shelleyBasedInitialNonce = NeutralNonce
-                          , shelleyBasedLeaderCredentials =
-                              -- NOTE: Needed to hard-fork into shelley. After
-                              -- that, with d=0, it's stake based leaders.
-                              pure . mkLeaderCredentials $ coreNodes !! fromIntegral nid
-                          }
-                    , cardanoHardForkTriggers = hardForkInto Conway
-                    , cardanoLedgerTransitionConfig =
-                        -- TODO: provide better alonzo/conway genesis
-                        mkLatestTransitionConfig shelleyGenesis exampleAlonzoGenesis exampleConwayGenesis
-                    , cardanoCheckpoints = mempty
-                    , cardanoProtocolVersion = conwayProtVer
-                    }
-           in TestNodeInitialization
-                { tniProtocolInfo = protocolInfo
-                , tniCrucialTxs = []
-                , tniBlockForging = blockForging
-                }
-      , mkRekeyM = Nothing
-      }
+  ( runTestNetwork
+      testConfig
+      testConfigB
+      TestConfigMB
+        { nodeInfo = \(CoreNodeId nid) ->
+            let (protocolInfo, blockForging) = protocolInfoCardano (cardanoProtocolParams nid)
+             in TestNodeInitialization
+                  { tniProtocolInfo = protocolInfo
+                  , tniCrucialTxs = []
+                  , tniBlockForging = blockForging
+                  }
+        , mkRekeyM = Nothing
+        }
+  , protocolInfo0
+  )
  where
+  protocolInfo0 = fst $ protocolInfoCardano @StandardCrypto @IO (cardanoProtocolParams (0 :: Word64))
+
+  cardanoProtocolParams nid =
+    CardanoProtocolParams
+      { byronProtocolParams =
+          ProtocolParamsByron
+            { byronGenesis
+            , byronPbftSignatureThreshold = Nothing
+            , byronProtocolVersion = Byron.ProtocolVersion 0 0 0
+            , byronSoftwareVersion = theProposedSoftwareVersion
+            , byronLeaderCredentials = Nothing
+            }
+      , shelleyBasedProtocolParams =
+          ProtocolParamsShelleyBased
+            { shelleyBasedInitialNonce = NeutralNonce
+            , shelleyBasedLeaderCredentials =
+                -- NOTE: Needed to hard-fork into shelley. After
+                -- that, with d=0, it's stake based leaders.
+                pure . mkLeaderCredentials $ coreNodes !! fromIntegral nid
+            }
+      , cardanoHardForkTriggers = hardForkInto Conway
+      , cardanoLedgerTransitionConfig =
+          -- TODO: provide better alonzo/conway genesis
+          mkLatestTransitionConfig shelleyGenesis exampleAlonzoGenesis exampleConwayGenesis
+      , cardanoCheckpoints = mempty
+      , cardanoProtocolVersion = conwayProtVer
+      }
+
   conwayProtVer = ProtVer (eraProtVerLow @ConwayEra) 0
 
   NumCoreNodes n = numCoreNodes

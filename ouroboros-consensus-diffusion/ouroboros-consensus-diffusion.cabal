@@ -204,6 +204,7 @@ test-suite mock-test
     Test.Consensus.Ledger.Mock.LedgerTables
     Test.ThreadNet.BFT
     Test.ThreadNet.LeaderSchedule
+    Test.ThreadNet.LedgerStateConsistency
     Test.ThreadNet.PBFT
     Test.ThreadNet.Praos
 
