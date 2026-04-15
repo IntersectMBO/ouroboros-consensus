@@ -16,7 +16,7 @@
 --   10 'leiosDbBatchRetrieveTxs' calls cycling through the pre-populated EBs.
 --
 -- All data is deterministic (no QuickCheck generators), so runs are stable and
--- comparable before\/after lock-removal refactors.
+-- comparable across refactors.
 --
 -- Usage:
 --
@@ -29,8 +29,8 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
 import Control.Monad (forM, forM_, replicateM_, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
-import Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector as V
@@ -208,7 +208,11 @@ insertOneEb :: LeiosDbHandle IO -> Int -> IO ()
 insertOneEb db ebIdx = do
   let point = genPoint ebIdx
       eb = genEb ebIdx
-      txs = [(genTxHash ebIdx txIdx, fixedTxBytes) | txIdx <- [0 .. txsPerEb - 1]]
+      txs =
+        [ (h, genTx h)
+        | txIdx <- [0 .. txsPerEb - 1]
+        , let h = genTxHash ebIdx txIdx
+        ]
   leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
   leiosDbInsertEbBody db point eb
   _ <- leiosDbInsertTxs db txs
@@ -216,33 +220,15 @@ insertOneEb db ebIdx = do
 
 -- * Deterministic data generation
 
--- | 'EbHash' from a 32-bit index: 4 index bytes followed by 28 zeros.
-genEbHash :: Int -> EbHash
-genEbHash i =
-  MkEbHash $
-    BS.pack
-      [ fromIntegral (i .&. 0xFF)
-      , fromIntegral ((i `shiftR` 8) .&. 0xFF)
-      , fromIntegral ((i `shiftR` 16) .&. 0xFF)
-      , fromIntegral ((i `shiftR` 24) .&. 0xFF)
-      ]
-      <> BS.replicate 28 0
-
--- | 'TxHash' from an EB index + TX offset: 4 bytes followed by 28 ones.
-genTxHash :: Int -> Int -> TxHash
-genTxHash ebIdx txIdx =
-  MkTxHash $
-    BS.pack
-      [ fromIntegral (ebIdx .&. 0xFF)
-      , fromIntegral ((ebIdx `shiftR` 8) .&. 0xFF)
-      , fromIntegral (txIdx .&. 0xFF)
-      , fromIntegral ((txIdx `shiftR` 8) .&. 0xFF)
-      ]
-      <> BS.replicate 28 1
-
 -- | 'LeiosPoint' from an index (SlotNo = index).
 genPoint :: Int -> LeiosPoint
 genPoint i = MkLeiosPoint (SlotNo $ fromIntegral i) (genEbHash i)
+
+-- | 'EbHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
+genEbHash :: Int -> EbHash
+genEbHash i =
+  let tag = BS8.pack ("ebHash:" <> show i)
+   in MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
 
 -- | 'LeiosEb' with 'txsPerEb' transactions (200 bytes each).
 genEb :: Int -> LeiosEb
@@ -251,6 +237,16 @@ genEb ebIdx =
     V.fromList
       [(genTxHash ebIdx txIdx, 200 :: BytesSize) | txIdx <- [0 .. txsPerEb - 1]]
 
--- | Fixed TX payload: 16 KiB zeros (realistic worst-case size).
-fixedTxBytes :: BS.ByteString
-fixedTxBytes = BS.replicate 16_384 0
+-- | 'TxHash' from an EB index + TX offset: \"txHash:<ebIdx>:<txIdx>\" padded
+-- to 32 bytes with zeros.
+--
+-- NOTE: This is taking an EB index as it always generates the worst case of
+-- fully disjunct transaction closures between EBs.
+genTxHash :: Int -> Int -> TxHash
+genTxHash ebIdx txIdx =
+  let tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
+   in MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+
+-- | Generate a TX payload: the TX hash bytes padded with zeros to 16 KiB.
+genTx :: TxHash -> BS.ByteString
+genTx (MkTxHash h) = h <> BS.replicate (16_384 - BS.length h) 0
