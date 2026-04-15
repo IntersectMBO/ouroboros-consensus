@@ -402,14 +402,13 @@ mkHandlers
                 (Node.leiosKernelTracer tracers)
                 (leiosPeerTracer peer)
                 ((== Terminate) <$> controlMessageSTM)
-                (getLeiosWriteLock, getLeiosOutstanding, getLeiosReady)
+                (getLeiosOutstanding, getLeiosReady)
                 leiosDB
                 (Leios.MkPeerId peer)
                 reqVar
       , hLeiosFetchServer = \_version peer -> Effect $ do
           leiosFetchContext <-
             Leios.newLeiosFetchContext
-              getLeiosWriteLock
               leiosDB
           pure $
             leiosFetchServerPeer
@@ -429,7 +428,6 @@ mkHandlers
       , getLeiosPeersVars
       , getLeiosOutstanding
       , getLeiosReady
-      , getLeiosWriteLock
       } = nodeKernel
 
     leiosPeerTracer peer = TraceLabelPeer peer `contramap` Node.leiosPeerTracer tracers

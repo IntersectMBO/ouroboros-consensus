@@ -847,6 +847,23 @@ benchmark ChainSync-client-bench
     unstable-consensus-testlib,
     with-utf8,
 
+benchmark leios-db-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: bench/leios-db-bench
+  main-is: Main.hs
+  ghc-options: -with-rtsopts=-N4
+  build-depends:
+    async,
+    base,
+    bytestring,
+    cardano-slotting,
+    ouroboros-consensus,
+    si-timers,
+    temporary,
+    time,
+    vector,
+
 test-suite doctest
   import: common-test
   main-is: doctest.hs
