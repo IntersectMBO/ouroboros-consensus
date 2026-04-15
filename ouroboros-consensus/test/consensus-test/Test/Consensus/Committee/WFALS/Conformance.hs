@@ -46,7 +46,12 @@ instance FromJSON RustResult where
       <*> obj .: "persistent"
       <*> obj .: "nonpersistent"
 
--- | Embedded Rust implementation results
+-- | Embedded Rust implementation results.
+--
+-- These are the results of the Rust implementation when applied to
+-- 'exampleStakeDistr' for every valid target committee size, i.e., from 1 to
+-- the maximum number of pools with strictly positive stake, which, in the case
+-- of 'exampleStakeDistr', corresponds to 2052 pools.
 rustResults :: Array Int RustResult
 rustResults =
   either error toArray $
