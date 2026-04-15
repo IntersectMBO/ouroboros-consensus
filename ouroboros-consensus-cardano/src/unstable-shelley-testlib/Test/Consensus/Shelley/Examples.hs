@@ -221,6 +221,7 @@ fromShelleyLedgerExamples
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = LedgerTables EmptyMK
         , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
+        , shelleyCumulativeTxBytes = 0
         }
     chainDepState = TPraosState (NotOrigin 1) sleChainDepState
     extLedgerState =
@@ -332,6 +333,7 @@ fromShelleyLedgerExamplesPraos
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = emptyLedgerTables
         , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
+        , shelleyCumulativeTxBytes = 0
         }
     chainDepState =
       translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto)) $

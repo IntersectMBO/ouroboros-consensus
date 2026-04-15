@@ -83,8 +83,7 @@ import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..), ProtocolInfo (.
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block (shelleyBlockRaw)
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( ShelleyLedgerLeiosState (..)
-  , shelleyLedgerLeiosState
+  ( shelleyCumulativeTxBytes
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
@@ -255,13 +254,12 @@ prop_leios_ebCertificateInclusion seed =
   numNodes = 3 :: Integer
   numSlots = 200 :: Word64
 
--- | Verify that 'sllsCumulativeTxBytes' in the final ledger state matches an
--- independently computed sum of individual transaction sizes over the chain.
+-- | Verify that 'shelleyCumulativeTxBytes' in the final ledger state matches
+-- an independently computed sum of individual transaction sizes over the chain.
 --
 -- The independent sum resolves certifying blocks (filling in EB transaction
 -- closures from the LeiosDB) and then sums 'sizeTxF' per transaction — the
--- same data the accumulator sees, but computed outside of
--- 'applyBlockShelleyLedgerLeiosState'.
+-- same data the accumulator sees, but computed outside of block application.
 prop_leios_cumulativeTxBytes :: Seed -> Property
 prop_leios_cumulativeTxBytes seed =
   ( cumulativeTxBytes > 0
@@ -278,7 +276,7 @@ prop_leios_cumulativeTxBytes seed =
   someNode = snd . Map.findMin $ testOutput.testOutputNodes
 
   cumulativeTxBytes = case nodeOutputFinalLedger someNode of
-    LedgerStateConway st -> sllsCumulativeTxBytes (shelleyLedgerLeiosState st)
+    LedgerStateConway st -> shelleyCumulativeTxBytes st
     _ -> error "expected Conway ledger state"
 
   expectedCumulativeTxBytes = sumChainTxBytes pInfoConfig pInfoInitLedger someNode
@@ -317,9 +315,8 @@ sumChainTxBytes topConfig initLedger node = runSimOrThrow $ do
       SL.BodyInline txSeq -> sumTxSizes txSeq
       SL.BodyCertificate _ (Just txSeq) -> sumTxSizes txSeq
       SL.BodyCertificate _ Nothing -> 0
-  -- Byron blocks don't go through 'applyBlockShelleyLedgerLeiosState'
-  -- (it only applies to Shelley-based eras), so they contribute 0 to the
-  -- cumulative tx bytes.
+  -- Byron blocks don't go through Shelley block application, so they
+  -- contribute 0 to the cumulative tx bytes.
   blockTxSizeSum _ = 0
 
   sumTxSizes txSeq =

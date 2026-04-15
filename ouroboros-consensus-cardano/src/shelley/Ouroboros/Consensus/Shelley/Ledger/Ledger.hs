@@ -298,13 +298,12 @@ data ShelleyLedgerLeiosState = ShelleyLedgerLeiosState
   , sllsApplyBlockCount :: Int
   , sllsApplyTickLastAt :: SlotNo
   , sllsApplyBlockLastAt :: SlotNo
-  , sllsCumulativeTxBytes :: Word64
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
 initShelleyLedgerLeiosState :: ShelleyLedgerLeiosState
-initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing True 0 0 (SlotNo 0) (SlotNo 0) 0
+initShelleyLedgerLeiosState = ShelleyLedgerLeiosState Nothing True 0 0 (SlotNo 0) (SlotNo 0)
 
 applyTickShelleyLedgerLeiosState :: ShelleyLedgerLeiosState -> SlotNo -> ShelleyLedgerLeiosState
 applyTickShelleyLedgerLeiosState leiosSt currSlotNo =
@@ -332,16 +331,17 @@ applyBlockShelleyLedgerLeiosState blk leiosSt =
     , sllsApplyBlockLastAt = blockSlot blk
     , sllsMaybeAnnouncedEb =
         MkLeiosPoint (blockSlot blk) . fromLedgerEbHash <$> SL.blockMayAnnouncedEb (shelleyBlockRaw blk)
-    , sllsCumulativeTxBytes =
-        sllsCumulativeTxBytes leiosSt + blockTxBytes
     }
- where
-  blockTxBytes = case SL.blockBody (shelleyBlockRaw blk) of
-    SL.BodyInline txSeq ->
-      fromIntegral $ sum $ map (view sizeTxF) $ toList $ fromTxSeq txSeq
-    SL.BodyCertificate _ (Just txSeq) ->
-      fromIntegral $ sum $ map (view sizeTxF) $ toList $ fromTxSeq txSeq
-    SL.BodyCertificate _ Nothing -> 0
+
+blockTxBytes ::
+  ShelleyCompatible proto era =>
+  ShelleyBlock proto era -> Word64
+blockTxBytes blk = case SL.blockBody (shelleyBlockRaw blk) of
+  SL.BodyInline txSeq ->
+    fromIntegral $ sum $ map (view sizeTxF) $ toList $ fromTxSeq txSeq
+  SL.BodyCertificate _ (Just txSeq) ->
+    fromIntegral $ sum $ map (view sizeTxF) $ toList $ fromTxSeq txSeq
+  SL.BodyCertificate _ Nothing -> 0
 
 -- -.-
 fromLedgerEbHash :: SL.EbHash -> EbHash
@@ -353,6 +353,7 @@ data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   , shelleyLedgerTransition :: !ShelleyTransition
   , shelleyLedgerTables :: !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
   , shelleyLedgerLeiosState :: ShelleyLedgerLeiosState
+  , shelleyCumulativeTxBytes :: !Word64
   }
   deriving Generic
 
@@ -570,6 +571,7 @@ data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLe
   , tickedShelleyLedgerTables ::
       !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
   , tickedShelleyLedgerLeiosState :: ShelleyLedgerLeiosState
+  , tickedShelleyCumulativeTxBytes :: !Word64
   }
   deriving Generic
 
@@ -592,6 +594,7 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
       , shelleyLedgerState
       , shelleyLedgerTransition
       , shelleyLedgerLeiosState
+      , shelleyCumulativeTxBytes
       } =
       appTick globals shelleyLedgerState slotNo <&> \l' ->
         TickedShelleyLedgerState
@@ -608,6 +611,7 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
             -- era translations, that is why we put empty tables here.
             tickedShelleyLedgerTables = emptyLedgerTables
           , tickedShelleyLedgerLeiosState = applyTickShelleyLedgerLeiosState shelleyLedgerLeiosState slotNo
+          , tickedShelleyCumulativeTxBytes = shelleyCumulativeTxBytes
           }
      where
       globals = shelleyLedgerGlobals cfg
@@ -750,6 +754,8 @@ applyHelper f cfg blk stBefore = do
               , shelleyLedgerTables = emptyLedgerTables
               , shelleyLedgerLeiosState =
                   applyBlockShelleyLedgerLeiosState blk (tickedShelleyLedgerLeiosState stBefore)
+              , shelleyCumulativeTxBytes =
+                  tickedShelleyCumulativeTxBytes stBefore + blockTxBytes blk
               }
  where
   globals = shelleyLedgerGlobals cfg
@@ -885,14 +891,16 @@ encodeShelleyLedgerState
     , shelleyLedgerState
     , shelleyLedgerTransition
     , shelleyLedgerLeiosState
+    , shelleyCumulativeTxBytes
     } =
     encodeVersion serialisationFormatVersion2 $
       mconcat
-        [ CBOR.encodeListLen 4
+        [ CBOR.encodeListLen 5
         , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
         , toCBOR shelleyLedgerState
         , encodeShelleyTransition shelleyLedgerTransition
         , encodeShelleyLedgerLeiosState shelleyLedgerLeiosState
+        , toCBOR shelleyCumulativeTxBytes
         ]
 
 decodeShelleyLedgerState ::
@@ -906,11 +914,12 @@ decodeShelleyLedgerState =
  where
   decodeShelleyLedgerState2 :: Decoder s' (LedgerState (ShelleyBlock proto era) EmptyMK)
   decodeShelleyLedgerState2 = do
-    enforceSize "LedgerState ShelleyBlock" 4
+    enforceSize "LedgerState ShelleyBlock" 5
     shelleyLedgerTip <- decodeWithOrigin decodeShelleyTip
     shelleyLedgerState <- fromCBOR
     shelleyLedgerTransition <- decodeShelleyTransition
     shelleyLedgerLeiosState <- decodeShelleyLedgerLeiosState
+    shelleyCumulativeTxBytes <- fromCBOR
     return
       ShelleyLedgerState
         { shelleyLedgerTip
@@ -918,6 +927,7 @@ decodeShelleyLedgerState =
         , shelleyLedgerTransition
         , shelleyLedgerTables = emptyLedgerTables
         , shelleyLedgerLeiosState
+        , shelleyCumulativeTxBytes
         }
 
 instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
@@ -929,14 +939,13 @@ encodeShelleyLedgerLeiosState = toCBOR
 instance ToCBOR ShelleyLedgerLeiosState where
   toCBOR ShelleyLedgerLeiosState{..} =
     mconcat
-      [ CBOR.encodeListLen 7
+      [ CBOR.encodeListLen 6
       , toCBOR sllsMaybeAnnouncedEb
       , toCBOR sllsTooSoonToCertify
       , toCBOR sllsApplyTickCount
       , toCBOR sllsApplyBlockCount
       , toCBOR sllsApplyTickLastAt
       , toCBOR sllsApplyBlockLastAt
-      , toCBOR sllsCumulativeTxBytes
       ]
 
 instance ToCBOR LeiosPoint where
@@ -947,14 +956,13 @@ instance FromCBOR LeiosPoint where
 
 decodeShelleyLedgerLeiosState :: forall s. Decoder s ShelleyLedgerLeiosState
 decodeShelleyLedgerLeiosState = do
-  enforceSize "ShelleyLedgerLeiosState" 7
+  enforceSize "ShelleyLedgerLeiosState" 6
   sllsMaybeAnnouncedEb <- fromCBOR
   sllsTooSoonToCertify <- fromCBOR
   sllsApplyTickCount <- fromCBOR
   sllsApplyBlockCount <- fromCBOR
   sllsApplyTickLastAt <- fromCBOR
   sllsApplyBlockLastAt <- fromCBOR
-  sllsCumulativeTxBytes <- fromCBOR
   return
     ShelleyLedgerLeiosState
       { sllsMaybeAnnouncedEb
@@ -963,5 +971,4 @@ decodeShelleyLedgerLeiosState = do
       , sllsApplyBlockCount
       , sllsApplyTickLastAt
       , sllsApplyBlockLastAt
-      , sllsCumulativeTxBytes
       }
