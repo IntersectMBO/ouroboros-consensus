@@ -203,10 +203,13 @@ prop_leios_blocksProduced seed =
 
   nodeChains = nodeOutputFinalChain <$> testOutput.testOutputNodes
 
+  certifyingBlocks :: [CardanoBlock StandardCrypto]
   certifyingBlocks =
     [ blk
-    | blk@(BlockConway shelleyBlk) <- concatMap Chain.toOldestFirst nodeChains
-    , SL.blockCertifiesEb (shelleyBlockRaw shelleyBlk)
+    | blk@(BlockConway conwayBlk) <- concatMap Chain.toOldestFirst nodeChains
+    , case shelleyBlockRaw conwayBlk of
+        SL.Block _ (SL.BodyCertificate _ _) -> True
+        _ -> False
     ]
 
   throughput = fromIntegral (sum includedTxCounts) / fromRational numSlots :: Double
@@ -240,7 +243,9 @@ prop_leios_ebCertificateInclusion seed =
   certifyingBlocks =
     [ blk
     | blk@(BlockConway shelleyBlk) <- concatMap Chain.toOldestFirst nodeChains
-    , SL.blockCertifiesEb (shelleyBlockRaw shelleyBlk)
+    , case shelleyBlockRaw shelleyBlk of
+        SL.Block _ (SL.BodyCertificate _ _) -> True
+        _ -> False
     ]
 
   -- nodeOutputFinalLedger has EmptyMK (tables stripped by ChainDB on
@@ -288,7 +293,7 @@ foldWithResolution leiosDb cfg blks initState =
   foldM step initState blks
  where
   step state blk = do
-    blk' <- resolveLeiosBlock leiosDb state blk
+    blk' <- resolveLeiosBlock leiosDb (headerState state) blk
     pure $ applyDiffs state $ tickThenReapply OmitLedgerEvents cfg blk' state
 
 -- * Running the thread net

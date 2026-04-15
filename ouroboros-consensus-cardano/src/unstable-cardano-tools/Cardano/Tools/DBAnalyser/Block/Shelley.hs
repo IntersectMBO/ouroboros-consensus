@@ -62,13 +62,13 @@ instance
   HasAnalysis (ShelleyBlock proto era)
   where
   countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
-    SL.Block _ body _ _ -> sum $ fmap countOutputs (Core.fromTxSeq @era $ L.bodyTxs body)
+    SL.Block _ body -> sum $ fmap countOutputs (Core.fromTxSeq @era $ L.bodyTxs body)
    where
     countOutputs :: Core.Tx era -> Int
     countOutputs tx = length $ tx ^. Core.bodyTxL . Core.outputsTxBodyL
 
   blockTxSizes blk = case Shelley.shelleyBlockRaw blk of
-    SL.Block _ body _ _ ->
+    SL.Block _ body ->
       toList $
         fmap (fromIntegral . view Core.sizeTxF) (Core.fromTxSeq @era $ L.bodyTxs body)
 
@@ -101,7 +101,7 @@ instance
    where
     txs :: StrictSeq (Core.Tx era)
     txs = case Shelley.shelleyBlockRaw blk of
-      SL.Block _ body _ _ -> Core.fromTxSeq @era $ L.bodyTxs body
+      SL.Block _ body -> Core.fromTxSeq @era $ L.bodyTxs body
 
   -- For the time being we do not support any block application
   -- metrics for Shelley-only eras.

@@ -101,7 +101,7 @@ simpleBlockForging aCanBeLeader aForgeExt =
     , canBeLeader = aCanBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \_leiosDb cfg bno slot lst txs _ebtxs proof ->
+    , forgeBlock = \_ cfg bno slot lst txs _ebtxs proof ->
         return . (,Nothing) $
           forgeSimple
             aForgeExt
@@ -111,6 +111,7 @@ simpleBlockForging aCanBeLeader aForgeExt =
             lst
             (map txForgetValidated txs)
             proof
+    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
  where
   _ = keepRedundantConstraint (Proxy @(ForgeStateUpdateError (SimpleBlock c ext) ~ Void))

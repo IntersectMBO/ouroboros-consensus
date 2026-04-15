@@ -127,12 +127,14 @@ run Opts{..} = do
 
   putStrLn "*** Leios"
 
-  print $
-    ("eb-slotno", imEbSlots . runIdentity . lsLeiosDb . nodeLeiosState <$> testOutputNodes testOutput)
-  print $
-    ("eb-points", imEbPoints . runIdentity . lsLeiosDb . nodeLeiosState <$> testOutputNodes testOutput)
-  print $
-    ("eb-txs", length . imTxs . runIdentity . lsLeiosDb . nodeLeiosState <$> testOutputNodes testOutput)
+  forM_ (Map.toList . testOutputNodes $ testOutput) $ \(nodeId, nodeOut) -> do
+    print $ "Node " <> show nodeId
+    print $
+      ("> eb-slotno", imEbSlots . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
+    print $
+      ("> eb-points", imEbPoints . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
+    print $
+      ("> eb-txs", length . imTxs . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
 
   putStrLn "*** Outputting log files"
 
@@ -434,7 +436,7 @@ instance TxGen (CardanoBlock StandardCrypto) where
       utxos = getUTxOs st
      in
       return $
-        Debug.trace (show ("Node", coreNodeId, "current slot", slotNo, shelleyLedgerLeiosState st)) $
+        Debug.trace (show ("Node", coreNodeId, "current slot", slotNo)) $
           -- Interleave transactions produced by each generator and take `rtnaTxsPerSlot` of them
           take (fromIntegral rtnaTxsPerSlot) . interleave $
             do

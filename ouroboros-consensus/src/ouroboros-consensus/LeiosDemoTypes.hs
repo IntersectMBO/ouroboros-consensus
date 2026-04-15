@@ -15,8 +15,9 @@
 
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
-import Cardano.Binary (enforceSize, serialize', toCBOR)
+import Cardano.Binary (FromCBOR, ToCBOR, enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import Cardano.Ledger.Core (EraTx, Tx)
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
@@ -24,7 +25,7 @@ import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import Codec.Serialise (decode, encode)
+import Codec.Serialise (Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
@@ -70,14 +71,21 @@ newtype PeerId a = MkPeerId a
 type HASH = Hash.Blake2b_256
 
 newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
-  deriving newtype (Eq, Ord, Show, NoThunks)
+  deriving newtype (Eq, Ord, NoThunks, Serialise, DecCBOR, EncCBOR, ToCBOR, FromCBOR)
+  deriving stock Generic
+
+instance Show EbHash where
+  show = prettyEbHash
 
 prettyEbHash :: EbHash -> String
 prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
 
 newtype TxHash = MkTxHash ByteString
-  deriving stock (Eq, Ord, Show, Generic)
+  deriving stock (Eq, Ord, Generic)
   deriving anyclass (NFData, NoThunks)
+
+instance Show TxHash where
+  show = prettyTxHash
 
 prettyTxHash :: TxHash -> String
 prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
@@ -98,12 +106,12 @@ encodeLeiosPoint :: LeiosPoint -> Encoding
 encodeLeiosPoint (MkLeiosPoint ebSlot (MkEbHash ebHash)) =
   CBOR.encodeListLen 2
     <> encode ebSlot
-    <> CBOR.encodeBytes ebHash
+    <> encode ebHash
 
 decodeLeiosPoint :: Decoder s LeiosPoint
 decodeLeiosPoint = do
   enforceSize (fromString "LeiosPoint") 2
-  MkLeiosPoint <$> decode <*> (MkEbHash <$> decode)
+  MkLeiosPoint <$> decode <*> decode
 
 -----
 

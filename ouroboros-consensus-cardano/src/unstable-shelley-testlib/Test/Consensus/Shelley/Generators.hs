@@ -31,6 +31,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import Ouroboros.Consensus.Protocol.Praos.Header (BodyType (LedgerBlock))
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosState (..))
 import Ouroboros.Consensus.Shelley.Eras
@@ -93,8 +94,6 @@ instance
       SL.Block
         <$> arbitrary
         <*> (L.BodyInline . L.toTxSeq @era <$> arbitrary)
-        <*> pure Nothing
-        <*> pure False -- FIXME(bladyjoker)
 
 -- | This uses a different upstream generator to ensure the header and block
 -- body relate as expected.
@@ -126,9 +125,9 @@ instance
     mkBlk sleBlock =
       mkShelleyBlock $
         let
-          SL.Block hdr1 bdy mayAnnEb mayCertEb = sleBlock
+          SL.Block hdr1 bdy = sleBlock
          in
-          SL.Block (translateHeader hdr1) bdy mayAnnEb mayCertEb
+          SL.Block (translateHeader hdr1) bdy
 
     translateHeader :: Crypto c => SL.BHeader c -> Praos.Header c
     translateHeader (SL.BHeader bhBody bhSig) =
@@ -144,8 +143,10 @@ instance
           , Praos.hbVrfRes = coerce $ SL.bheaderEta bhBody
           , Praos.hbBodySize = SL.bsize bhBody
           , Praos.hbBodyHash = SL.bhash bhBody
+          , Praos.hbBodyType = LedgerBlock
           , Praos.hbOCert = SL.bheaderOCert bhBody
           , Praos.hbProtVer = SL.bprotver bhBody
+          , Praos.hbMayEbAnnouncement = Nothing
           }
       hSig = coerce bhSig
 
@@ -240,7 +241,6 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> pure (LedgerTables EmptyMK)
-      <*> pure initShelleyLedgerLeiosState
 
 instance
   (Arbitrary (InstantStake era), CanMock proto era) =>
@@ -252,7 +252,6 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> (LedgerTables . ValuesMK <$> arbitrary)
-      <*> pure initShelleyLedgerLeiosState
 
 instance CanMock proto era => Arbitrary (AnnTip (ShelleyBlock proto era)) where
   arbitrary =

@@ -50,6 +50,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , pHeaderIssuer
   )
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -116,6 +117,7 @@ instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto
 
 instance
   ( ShelleyCompatible proto era
+  , ResolveLeiosBlock (ShelleyBlock proto era)
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , BlockSupportsSanityCheck (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)

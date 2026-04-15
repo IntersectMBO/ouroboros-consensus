@@ -183,6 +183,7 @@ module Ouroboros.Consensus.Cardano.Block
 
     -- * EraMismatch
   , EraMismatch (..)
+  , pattern ExtLedgerStateConway
   ) where
 
 import Data.Kind
@@ -190,7 +191,7 @@ import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
 import LeiosDemoDb (LeiosDbHandle)
-import Ouroboros.Consensus.Block (BlockProtocol)
+import Ouroboros.Consensus.Block (BlockProtocol, WithOrigin (NotOrigin, Origin))
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -210,7 +211,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, ShelleyCompatible)
@@ -1336,14 +1337,29 @@ pattern ExtLedgerStateConway conwayExtLedgerSt <-
       conwayExtLedgerSt
     )
 
+pattern ConwayHeaderState ::
+  HeaderState (ShelleyBlock (Praos c) ConwayEra) ->
+  HeaderState (CardanoBlock c)
+pattern ConwayHeaderState conwayHeaderState <- (toConwayHeaderState -> conwayHeaderState)
+
 toConwayHeaderState ::
   HeaderState (CardanoBlock c) -> HeaderState (ShelleyBlock (Praos c) ConwayEra)
-toConwayHeaderState (HeaderState headerStateTip (ChainDepStateConway conwayHeaderStateChainDep)) =
+toConwayHeaderState (HeaderState (NotOrigin (ConwayAnnTip conwayAnnTip)) (ChainDepStateConway conwayHeaderStateChainDep)) =
   HeaderState
-    { headerStateTip = toConwayAnnTip <$> headerStateTip
+    { headerStateTip = NotOrigin conwayAnnTip
+    , headerStateChainDep = conwayHeaderStateChainDep
+    }
+toConwayHeaderState (HeaderState Origin (ChainDepStateConway conwayHeaderStateChainDep)) =
+  HeaderState
+    { headerStateTip = Origin
     , headerStateChainDep = conwayHeaderStateChainDep
     }
 toConwayHeaderState _ = error "Must be in Conway"
+
+pattern ConwayAnnTip ::
+  AnnTip (ShelleyBlock (Praos c) ConwayEra) ->
+  AnnTip (CardanoBlock c)
+pattern ConwayAnnTip conwayAnnTip <- (toConwayAnnTip -> conwayAnnTip)
 
 toConwayAnnTip :: AnnTip (CardanoBlock c) -> AnnTip (ShelleyBlock (Praos c) ConwayEra)
 toConwayAnnTip AnnTip{annTipSlotNo, annTipBlockNo, annTipInfo = TipInfoConway tipInfo} =
@@ -1370,17 +1386,20 @@ injectConwayBlock :: ShelleyBlock (Praos c) ConwayEra -> CardanoBlock c
 injectConwayBlock = HardForkBlock . OneEraBlock . TagConway . I
 
 instance
-  (ShelleyCompatible (Praos c) ConwayEra, LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)) =>
+  ( PraosCrypto c
+  , ShelleyCompatible (Praos c) ConwayEra
+  , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
+  ) =>
   ResolveLeiosBlock (CardanoBlock c)
   where
   resolveLeiosBlock ::
-    forall m mk.
+    forall m.
     Monad m =>
     LeiosDbHandle m ->
-    ExtLedgerState (CardanoBlock c) mk ->
+    HeaderState (CardanoBlock c) ->
     CardanoBlock c ->
     m (CardanoBlock c)
-  resolveLeiosBlock db (ExtLedgerStateConway conwayExtLedgerSt) (BlockConway conwayBlk) =
+  resolveLeiosBlock db (ConwayHeaderState conwayHdrSt) (BlockConway conwayBlk) =
     injectConwayBlock
-      <$> resolveLeiosBlock db conwayExtLedgerSt conwayBlk
+      <$> resolveLeiosBlock db conwayHdrSt conwayBlk
   resolveLeiosBlock _ _ blk = return blk
