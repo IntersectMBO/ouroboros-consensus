@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -67,6 +68,7 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
+import System.Random (randomIO)
 
 -- * Public API
 
@@ -600,9 +602,9 @@ maxBusyRetries :: Int
 maxBusyRetries = 1000
 
 -- | Execute a database action that may return an error. If the error is
--- 'DB.ErrorBusy', retry up to 'maxBusyRetries' times with a 1ms delay.
--- Otherwise and after exhausting retries, throws a 'LeiosDbException' with the
--- error message from the database.
+-- 'DB.ErrorBusy', retry up to 'maxBusyRetries' times with exponential backoff
+-- and jitter. Otherwise and after exhausting retries, throws a
+-- 'LeiosDbException' with the error message from the database.
 withDie :: HasCallStack => DB.Database -> IO (Either DB.Error a) -> IO a
 withDie db = go maxBusyRetries
  where
@@ -612,7 +614,15 @@ withDie db = go maxBusyRetries
       Right x -> pure x
   go n io =
     io >>= \case
-      Left DB.ErrorBusy -> threadDelay 1000 >> go (n - 1) io
+      -- TODO: Expose and use sqlite3_busy_timeout instead
+      Left DB.ErrorBusy -> do
+        -- Linear backoff with jitter: base delay increases each retry, plus
+        -- random jitter up to the base delay, with a 0.1ms floor.
+        let retryNum = maxBusyRetries - n
+            baseDelay = 100
+        jitter <- (`mod` baseDelay) <$> randomIO
+        threadDelay (baseDelay * retryNum + jitter)
+        go (n - 1) io
       Left e -> throwDbException db e
       Right x -> pure x
 
