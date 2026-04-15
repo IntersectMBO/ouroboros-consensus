@@ -6,14 +6,15 @@
 --
 -- The following three roles run concurrently against the same SQLite handle:
 --
--- * __Active reader__ (fetch logic loop): 10 rounds of
+-- * __Fetch logic__ (1 thread): 10 rounds of
 --   'leiosDbFilterMissingEbBodies' + 'leiosDbFilterMissingTxs'.
 --
--- * __Writers__ (2 threads): each inserts 20 fresh EBs via
---   'leiosDbInsertEbPoint' → 'leiosDbInsertEbBody' → 'leiosDbInsertTxs'.
+-- * __Fetch clients__ (configurable, default 2 threads): each inserts 20 fresh
+--   EBs via 'leiosDbInsertEbPoint' → 'leiosDbInsertEbBody' → 'leiosDbInsertTxs'.
 --
--- * __Serving readers__ (8 threads): each does 30 'leiosDbLookupEbBody' +
---   10 'leiosDbBatchRetrieveTxs' calls cycling through the pre-populated EBs.
+-- * __Fetch servers__ (configurable, default 8 threads): each does 30
+--   'leiosDbLookupEbBody' + 10 'leiosDbBatchRetrieveTxs' calls cycling through
+--   the pre-populated EBs.
 --
 -- All data is deterministic (no QuickCheck generators), so runs are stable and
 -- comparable across refactors.
@@ -61,9 +62,9 @@ main = do
       , "  Total TXs         : " <> show (numPrePopulatedEbs * txsPerEb)
       , ""
       , "Concurrent workload per iteration:"
-      , "  Active reader (×1): 10 rounds of filterMissingEbBodies (200+200) + filterMissingTxs (500+500)"
-      , "  Writers       (×2): 20 insertEbPoint/insertEbBody/insertTxs each"
-      , "  Readers       (×" <> show numServingThreads <> "): 30 lookupEbBody + 10 batchRetrieveTxs each"
+      , "  Fetch logic   (×1): 10 rounds of filterMissingEbBodies (200+200) + filterMissingTxs (500+500)"
+      , "  Fetch clients (×" <> show numFetchClients <> "): 20 insertEbPoint/insertEbBody/insertTxs each"
+      , "  Fetch servers (×" <> show numFetchServers <> "): 30 lookupEbBody + 10 batchRetrieveTxs each"
       , ""
       , "Runs: 1 warmup + " <> show numRuns <> " timed"
       , ""
@@ -83,9 +84,13 @@ numPrePopulatedEbs = 500
 txsPerEb :: Int
 txsPerEb = 200
 
--- | Number of serving-reader threads (represents downstream peers).
-numServingThreads :: Int
-numServingThreads = 8
+-- | Number of fetch client threads (writers that insert fresh EBs).
+numFetchClients :: Int
+numFetchClients = 2
+
+-- | Number of fetch server threads (readers serving downstream peers).
+numFetchServers :: Int
+numFetchServers = 8
 
 -- | Timed repetitions (plus one warmup).
 numRuns :: Int
@@ -94,52 +99,47 @@ numRuns = 5
 -- * The benchmark
 
 -- | All three production roles running concurrently against one DB handle.
---
--- Per iteration:
---
--- * Active reader (1 thread): 10 rounds of @filterMissingEbBodies@ on
---   200 present + 200 absent points, and @filterMissingTxs@ on 500 present +
---   500 absent hashes.
---
--- * Writers (2 threads): each inserts 20 fresh EBs with full TX payloads.
---   Indices are unique per iteration via 'beWriterIdx'.
---
--- * Serving readers (8 threads): each does 30 @lookupEbBody@ + 10
---   @batchRetrieveTxs@ (sampled offsets) cycling through pre-populated EBs.
 benchConcurrentAll :: BenchEnv -> IO ()
 benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerIdxRef} = do
-  -- Allocate 40 fresh EB indices for the writers in this iteration.
-  startIdx <- atomicModifyIORef' writerIdxRef (\n -> (n + 40, n))
-  let writerRange1 = [startIdx .. startIdx + 19]
-      writerRange2 = [startIdx + 20 .. startIdx + 39]
-      -- Active reader mirrors filterMissingWork from LeiosDemoLogic
-      activeReader =
-        replicateM_ 10 $ do
-          let existingPoints = take 200 points
-              -- Points beyond the pre-populated range — guaranteed missing
-              missingPoints = [genPoint i | i <- [10_000 .. 10_199]]
-          _ <- leiosDbFilterMissingEbBodies db (existingPoints ++ missingPoints)
-          let existingHashes = [genTxHash 0 i | i <- [0 .. 499]]
-              missingHashes = [genTxHash 10_000 i | i <- [0 .. 499]]
-          _ <- leiosDbFilterMissingTxs db (existingHashes ++ missingHashes)
-          pure ()
-      -- Writers insert fresh EBs (unique per call)
-      writer range = forM_ range (insertOneEb db)
-      -- Serving readers mirror msgLeiosBlockRequest / msgLeiosBlockTxsRequest
-      sampleOffsets = [0, 10 .. txsPerEb - 1]
-      servingOps i = do
-        let ebPoints = take 30 $ drop (i * 30) (cycle points)
-            txPoints = take 10 $ drop (i * 10) (cycle points)
-        forM_ ebPoints $ \p -> leiosDbLookupEbBody db p.pointEbHash
-        forM_ txPoints $ \p -> leiosDbBatchRetrieveTxs db p.pointEbHash sampleOffsets
-  -- Start active reader and writers; serving readers are the "main" work.
-  ar <- async activeReader
-  w1 <- async (writer writerRange1)
-  w2 <- async (writer writerRange2)
-  mapConcurrently_ servingOps [0 .. numServingThreads - 1]
-  wait ar
-  wait w1
-  wait w2
+  startIdx <- atomicModifyIORef' writerIdxRef (\n -> (n + numFetchClients * ebsPerClient, n))
+  fl <- async (fetchLogic db points)
+  clients <- forM (clientRanges startIdx) $ \range -> async (fetchClient db range)
+  mapConcurrently_ (fetchServer db points) [0 .. numFetchServers - 1]
+  wait fl
+  forM_ clients wait
+ where
+  ebsPerClient = 20
+  clientRanges startIdx =
+    [ [startIdx + i * ebsPerClient .. startIdx + (i + 1) * ebsPerClient - 1]
+    | i <- [0 .. numFetchClients - 1]
+    ]
+
+-- | Mirrors the fetch logic loop: filters for missing EB bodies and TXs.
+fetchLogic :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
+fetchLogic db points =
+  replicateM_ 10 $ do
+    _ <- leiosDbFilterMissingEbBodies db (existingPoints ++ missingPoints)
+    _ <- leiosDbFilterMissingTxs db (existingHashes ++ missingHashes)
+    pure ()
+ where
+  existingPoints = take 200 points
+  missingPoints = [genPoint i | i <- [10_000 .. 10_199]]
+  existingHashes = [genTxHash 0 i | i <- [0 .. 499]]
+  missingHashes = [genTxHash 10_000 i | i <- [0 .. 499]]
+
+-- | Mirrors a fetch client: inserts fresh EBs with full TX payloads.
+fetchClient :: LeiosDbHandle IO -> [Int] -> IO ()
+fetchClient db range = forM_ range (insertOneEb db)
+
+-- | Mirrors a fetch server: looks up EB bodies and retrieves TX batches.
+fetchServer :: LeiosDbHandle IO -> [LeiosPoint] -> Int -> IO ()
+fetchServer db points i = do
+  forM_ ebPoints $ \p -> leiosDbLookupEbBody db p.pointEbHash
+  forM_ txPoints $ \p -> leiosDbBatchRetrieveTxs db p.pointEbHash sampleOffsets
+ where
+  sampleOffsets = [0, 10 .. txsPerEb - 1]
+  ebPoints = take 30 $ drop (i * 30) (cycle points)
+  txPoints = take 10 $ drop (i * 10) (cycle points)
 
 -- * Benchmark environment
 
@@ -225,9 +225,9 @@ genPoint i = MkLeiosPoint (SlotNo $ fromIntegral i) (genEbHash i)
 
 -- | 'EbHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
 genEbHash :: Int -> EbHash
-genEbHash i =
-  let tag = BS8.pack ("ebHash:" <> show i)
-   in MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genEbHash i = MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
+ where
+  tag = BS8.pack ("ebHash:" <> show i)
 
 -- | 'LeiosEb' with 'txsPerEb' transactions (200 bytes each).
 genEb :: Int -> LeiosEb
@@ -242,9 +242,9 @@ genEb ebIdx =
 -- NOTE: This is taking an EB index as it always generates the worst case of
 -- fully disjunct transaction closures between EBs.
 genTxHash :: Int -> Int -> TxHash
-genTxHash ebIdx txIdx =
-  let tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
-   in MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genTxHash ebIdx txIdx = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+ where
+  tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 
 -- | Generate a TX payload: the TX hash bytes padded with zeros to 16 KiB.
 genTx :: TxHash -> BS.ByteString
