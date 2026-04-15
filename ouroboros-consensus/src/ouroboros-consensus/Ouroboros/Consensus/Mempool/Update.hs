@@ -486,7 +486,7 @@ pureRemoveTxs ::
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
-  TickedLedgerState blk DiffMK ->
+  LedgerState blk DiffMK ->
   LedgerTables (LedgerState blk) ValuesMK ->
   TicketNo ->
   -- | Txs to keep
@@ -561,8 +561,7 @@ implSyncWithLedger projectResult mpEnv =
       -- if the state didn't change.
       withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
         \is (MempoolLedgerDBView ls meFrk) -> do
-          let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
-          if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
+          if pointHash (isTip is) == castHash (getTipHash ls)
             then do
               -- The tip didn't change, put the same state.
               traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
@@ -589,8 +588,7 @@ implSyncWithLedger projectResult mpEnv =
                         pureSyncWithLedger
                           capacityOverride
                           cfg
-                          slot
-                          ls'
+                          (ls `withLedgerTables` emptyLedgerTables)
                           tbs
                           is
                   whenJust mTrace (traceWith trcr)
@@ -616,19 +614,18 @@ pureSyncWithLedger ::
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
-  SlotNo ->
-  TickedLedgerState blk DiffMK ->
+  LedgerState blk DiffMK ->
   LedgerTables (LedgerState blk) ValuesMK ->
   InternalState blk ->
   ( InternalState blk
   , Maybe (TraceEventMempool blk)
   )
-pureSyncWithLedger capacityOverride lcfg slot lstate values istate =
+pureSyncWithLedger capacityOverride lcfg lstate values istate =
   let RevalidateTxsResult is' removed =
         revalidateTxsFor
           capacityOverride
           lcfg
-          slot
+          (fromWithOrigin undefined $ pointSlot $ getTip lstate)
           lstate
           values
           (isLastTicketNo istate)

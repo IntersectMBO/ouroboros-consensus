@@ -17,6 +17,8 @@ module Ouroboros.Consensus.Mempool.Impl.Common
     InternalState (..)
   , ValidatedTxWithDiffs (..)
   , isMempoolSize
+  , isSlotNo
+  , isTip
 
     -- * Mempool environment
   , MempoolEnv (..)
@@ -89,7 +91,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 -- will have to reconsider what we can cache and what we can't.
 data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
   { validatedTx :: !(Validated (GenTx blk))
-  , validatedTxDiffs :: !(LedgerTables (TickedLedgerState blk) DiffMK)
+  , validatedTxDiffs :: !(LedgerTables (LedgerState blk) DiffMK)
   }
   deriving Generic
 
@@ -133,23 +135,13 @@ data InternalState blk = IS
   -- values.
   --
   -- INVARIANT: 'isTxValues' should be equal to @getForkerAtTarget ... 'isLedgerState' >>= \f -> forkerReadTables f isTxKeys@
-  , isLedgerState :: !(TickedLedgerState blk DiffMK)
+  , isLedgerState :: !(LedgerState blk DiffMK)
   -- ^ The cached ledger state after applying the transactions in the
   -- Mempool against the chain's ledger state. New transactions will be
   -- validated against this ledger.
   --
   -- INVARIANT: 'isLedgerState' is the ledger resulting from applying the
   -- transactions in 'isTxs' against the ledger identified 'isTip' as tip.
-  , isTip :: !(Point blk)
-  -- ^ The tip of the chain that 'isTxs' was validated against
-  , isSlotNo :: !SlotNo
-  -- ^ The most recent 'SlotNo' that 'isTxs' was validated against
-  --
-  -- Note in particular that if the mempool is revalidated against a state S
-  -- at slot s, then the state will be ticked (for now to the successor
-  -- slot, see 'tickLedgerState') and 'isSlotNo' will be set to @succ s@,
-  -- which is different from the slot of the original ledger state, which
-  -- will remain in 'isTip'.
   , isLastTicketNo :: !TicketNo
   -- ^ The mempool 'TicketNo' counter.
   --
@@ -171,10 +163,16 @@ data InternalState blk = IS
   }
   deriving Generic
 
+isTip :: GetTip (LedgerState blk) => InternalState blk -> Point blk
+isTip = castPoint . getTip . isLedgerState
+
+isSlotNo :: GetTip (LedgerState blk) => InternalState blk -> SlotNo
+isSlotNo = fromWithOrigin undefined . pointSlot . isTip
+
 deriving instance
   ( NoThunks (Validated (GenTx blk))
   , NoThunks (GenTxId blk)
-  , NoThunks (TickedLedgerState blk DiffMK)
+  , NoThunks (LedgerState blk DiffMK)
   , NoThunks (TxIn (LedgerState blk))
   , NoThunks (TxOut (LedgerState blk))
   , NoThunks (TxMeasure blk)
@@ -198,18 +196,15 @@ initInternalState ::
   -- | Used for 'isLastTicketNo'
   TicketNo ->
   LedgerConfig blk ->
-  SlotNo ->
-  TickedLedgerState blk DiffMK ->
+  LedgerState blk DiffMK ->
   InternalState blk
-initInternalState capacityOverride lastTicketNo cfg slot st =
+initInternalState capacityOverride lastTicketNo cfg st =
   IS
     { isTxs = TxSeq.Empty
     , isTxIds = Set.empty
     , isTxKeys = emptyLedgerTables
     , isTxValues = emptyLedgerTables
     , isLedgerState = st
-    , isTip = castPoint $ getTip st
-    , isSlotNo = slot
     , isLastTicketNo = lastTicketNo
     , isCapacity = computeMempoolCapacity cfg st capacityOverride
     }
@@ -292,10 +287,13 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
       initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer
     Right frk -> do
       frkMVar <- newMVar frk
-      let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
       isVar <-
         newTMVarIO $
-          initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+          initInternalState
+            capacityOverride
+            TxSeq.zeroTicketNo
+            cfg
+            (st `withLedgerTables` emptyLedgerTables)
       addTxRemoteFifo <- newMVar ()
       addTxAllFifo <- newMVar ()
       return
@@ -355,13 +353,13 @@ validateNewTransaction ::
   -- advanced through the diffs in the internal state. One could think we can
   -- create this value here, but it is needed for some other uses like calling
   -- 'txMeasure' before this function.
-  TickedLedgerState blk ValuesMK ->
+  LedgerState blk ValuesMK ->
   InternalState blk ->
-  ( Either (ApplyTxErr blk) (Validated (GenTx blk), LedgerTables (TickedLedgerState blk) DiffMK)
+  ( Either (ApplyTxErr blk) (Validated (GenTx blk), LedgerTables (LedgerState blk) DiffMK)
   , DiffTimeMeasure -> InternalState blk
   )
 validateNewTransaction cfg wti tx txsz origValues st is =
-  case runExcept (applyTx cfg wti isSlotNo tx st) of
+  case runExcept (applyTx cfg wti tx st) of
     Left err -> (Left err, \_dur -> is)
     Right (st', vtx) ->
       ( Right (vtx, projectLedgerTables st')
@@ -388,7 +386,6 @@ validateNewTransaction cfg wti tx txsz origValues st is =
     , isTxValues
     , isLedgerState
     , isLastTicketNo
-    , isSlotNo
     } = is
 
   nextTicketNo = succ isLastTicketNo
@@ -407,7 +404,7 @@ revalidateTxsFor ::
   LedgerConfig blk ->
   SlotNo ->
   -- | The ticked ledger state againt which txs will be revalidated
-  TickedLedgerState blk DiffMK ->
+  LedgerState blk DiffMK ->
   -- | The tables with all the inputs for the transactions
   LedgerTables (LedgerState blk) ValuesMK ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
@@ -433,8 +430,6 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
             , isLedgerState =
                 st'
                   `withLedgerTables` (ltliftA2 rawPrependDiffs (projectLedgerTables st) (LedgerTables outputDiffs))
-            , isTip = castPoint $ getTip st
-            , isSlotNo = slot
             , isLastTicketNo = lastTicketNo
             , isCapacity = computeMempoolCapacity cfg st' capacityOverride
             }
@@ -461,7 +456,7 @@ computeSnapshot ::
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   LedgerConfig blk ->
   SlotNo ->
-  -- | The ticked ledger state againt which txs will be revalidated
+  -- | The ticked ledger state against which txs will be revalidated
   TickedLedgerState blk DiffMK ->
   -- | The tables with all the inputs for the transactions
   LedgerTables (LedgerState blk) ValuesMK ->
@@ -474,7 +469,7 @@ computeSnapshot cfg slot st values txTickets =
         ( map unwrap $
             validatedTxs $
               reapplyTxs @blk @Discard cfg slot inputTxs $
-                applyMempoolDiffs values inputKeys st
+                applyMempoolDiffs values inputKeys undefined -- st
         )
         (castPoint $ getTip st)
         slot

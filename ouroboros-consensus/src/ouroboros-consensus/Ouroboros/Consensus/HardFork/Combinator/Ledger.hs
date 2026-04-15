@@ -849,9 +849,9 @@ shiftUpdate = go
 -------------------------------------------------------------------------------}
 
 ledgerInfo ::
-  forall blk mk.
+  forall f blk.
   SingleEraBlock blk =>
-  Current (FlipTickedLedgerState mk) blk -> LedgerEraInfo blk
+  Current f blk -> LedgerEraInfo blk
 ledgerInfo _ = LedgerEraInfo $ singleEraInfo (Proxy @blk)
 
 ledgerViewInfo ::

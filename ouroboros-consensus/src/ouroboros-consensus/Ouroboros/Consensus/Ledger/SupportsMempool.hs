@@ -98,7 +98,7 @@ type data WhatToDoWithTxDiffs = Collect | Discard
 -- differences, we don't even have differences around that we might misuse.
 type family InputTxDiffs blk wtd where
   InputTxDiffs blk Discard = ()
-  InputTxDiffs blk Collect = LedgerTables (TickedLedgerState blk) DiffMK
+  InputTxDiffs blk Collect = LedgerTables (LedgerState blk) DiffMK
 
 class
   ( UpdateLedger blk
@@ -126,12 +126,10 @@ class
   applyTx ::
     LedgerConfig blk ->
     WhetherToIntervene ->
-    -- | Slot number of the block containing the tx
-    SlotNo ->
     GenTx blk ->
     -- | Contain only the values for the tx to apply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk DiffMK, Validated (GenTx blk))
+    LedgerState blk ValuesMK ->
+    Except (ApplyTxErr blk) (LedgerState blk DiffMK, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -150,8 +148,8 @@ class
     SlotNo ->
     Validated (GenTx blk) ->
     -- | Contains at least the values for the tx to reapply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
+    LedgerState blk ValuesMK ->
+    Except (ApplyTxErr blk) (LedgerState blk ValuesMK)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -172,7 +170,7 @@ class
     -- | Slot number of the block containing the tx
     SlotNo ->
     [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
-    TickedLedgerState blk ValuesMK ->
+    LedgerState blk ValuesMK ->
     ReapplyTxsResult extra blk wtd
   reapplyTxs cfg slot txs st =
     (\(err, val, st') -> ReapplyTxsResult err (reverse val) (forgetLedgerTables st')) $
@@ -183,7 +181,7 @@ class
     foldReapplyTxs ::
       (a -> Validated (GenTx blk)) ->
       [a] ->
-      ([Invalidated blk], [a], TickedLedgerState blk ValuesMK)
+      ([Invalidated blk], [a], LedgerState blk ValuesMK)
     foldReapplyTxs projectTx =
       Foldable.foldl'
         ( \(accE, accV, st') a ->
@@ -218,9 +216,9 @@ class
   -- Intended to be non-default in the HardFork instance for optimizing
   -- performance.
   prependMempoolDiffs ::
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk DiffMK
+    LedgerState blk DiffMK ->
+    LedgerState blk DiffMK ->
+    LedgerState blk DiffMK
   prependMempoolDiffs = prependDiffs
 
   -- | Apply diffs on ledger states
@@ -230,8 +228,8 @@ class
   applyMempoolDiffs ::
     LedgerTables (LedgerState blk) ValuesMK ->
     LedgerTables (LedgerState blk) KeysMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk ValuesMK
+    LedgerState blk DiffMK ->
+    LedgerState blk ValuesMK
   applyMempoolDiffs = applyDiffForKeysOnTables
 
   -- | The ledger rules' error type for the mempool's current era might allow
@@ -241,7 +239,7 @@ class
   -- node-to-client mini protocol sends when a tx is rejected.
   mkMempoolApplyTxError ::
     -- | for the HFC
-    TickedLedgerState blk mk ->
+    LedgerState blk mk ->
     Text ->
     Maybe (ApplyTxErr blk)
 
@@ -257,7 +255,7 @@ data ReapplyTxsResult extra blk wtd
   , validatedTxs :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
   -- ^ txs that are valid again, order must be the same as the order in
   -- which txs were received
-  , resultingState :: !(TickedLedgerState blk EmptyMK)
+  , resultingState :: !(LedgerState blk EmptyMK)
   }
 
 -- | A generalized transaction, 'GenTx', identifier.
@@ -368,7 +366,7 @@ class
     LedgerConfig blk ->
     -- | This state needs values as a transaction measure might depend on
     -- those. For example in Cardano they look at the reference scripts.
-    TickedLedgerState blk ValuesMK ->
+    LedgerState blk ValuesMK ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasure blk)
 
@@ -376,7 +374,7 @@ class
   blockCapacityTxMeasure ::
     -- | at least for symmetry with 'txMeasure'
     LedgerConfig blk ->
-    TickedLedgerState blk mk ->
+    LedgerState blk mk ->
     TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@

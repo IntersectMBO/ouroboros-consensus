@@ -648,24 +648,21 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
   applyTx
     DualLedgerConfig{..}
     wti
-    slot
     DualGenTx{..}
-    TickedDualLedgerState{..} = do
+    DualLedgerState{..} = do
       ((main', mainVtx), (aux', auxVtx)) <-
         agreeOnError
           DualGenTxErr
           ( applyTx
               dualLedgerConfigMain
               wti
-              slot
               dualGenTxMain
-              tickedDualLedgerStateMain
+              dualLedgerStateMain
           , applyTx
               dualLedgerConfigAux
               wti
-              slot
               dualGenTxAux
-              tickedDualLedgerStateAux
+              dualLedgerStateAux
           )
       let vtx =
             ValidatedDualGenTx
@@ -674,14 +671,11 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
               , vDualGenTxBridge = dualGenTxBridge
               }
       return
-        ( TickedDualLedgerState
-            { tickedDualLedgerStateMain = main'
-            , tickedDualLedgerStateAux = applyDiffs tickedDualLedgerStateAux aux'
-            , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
-            , tickedDualLedgerStateBridge =
-                updateBridgeWithTx
-                  vtx
-                  tickedDualLedgerStateBridge
+        ( DualLedgerState
+            { dualLedgerStateMain = main'
+            , dualLedgerStateAux = applyDiffs dualLedgerStateAux aux'
+            , dualLedgerStateBridge =
+                updateBridgeWithTx vtx dualLedgerStateBridge
             }
         , vtx
         )
@@ -690,7 +684,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
     DualLedgerConfig{..}
     slot
     tx@ValidatedDualGenTx{..}
-    TickedDualLedgerState{..} = do
+    DualLedgerState{..} = do
       (main', aux') <-
         agreeOnError
           DualGenTxErr
@@ -698,22 +692,21 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
               dualLedgerConfigMain
               slot
               vDualGenTxMain
-              tickedDualLedgerStateMain
+              dualLedgerStateMain
           , reapplyTx
               dualLedgerConfigAux
               slot
               vDualGenTxAux
-              tickedDualLedgerStateAux
+              dualLedgerStateAux
           )
       return $
-        TickedDualLedgerState
-          { tickedDualLedgerStateMain = main'
-          , tickedDualLedgerStateAux = aux'
-          , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
-          , tickedDualLedgerStateBridge =
+        DualLedgerState
+          { dualLedgerStateMain = main'
+          , dualLedgerStateAux = aux'
+          , dualLedgerStateBridge =
               updateBridgeWithTx
                 tx
-                tickedDualLedgerStateBridge
+                dualLedgerStateBridge
           }
 
   txForgetValidated vtx =
@@ -734,24 +727,24 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
       . getTransactionKeySets @m
       . dualGenTxMain
 
-  mkMempoolApplyTxError TickedDualLedgerState{..} txt = do
-    x <- mkMempoolApplyTxError tickedDualLedgerStateMain txt
-    y <- mkMempoolApplyTxError tickedDualLedgerStateAux txt
+  mkMempoolApplyTxError DualLedgerState{..} txt = do
+    x <- mkMempoolApplyTxError dualLedgerStateMain txt
+    y <- mkMempoolApplyTxError dualLedgerStateAux txt
     Just $ DualGenTxErr x y
 
 instance Bridge m a => TxLimits (DualBlock m a) where
   type TxMeasure (DualBlock m a) = TxMeasure m
 
   txWireSize = txWireSize . dualGenTxMain
-  txMeasure DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
+  txMeasure DualLedgerConfig{..} DualLedgerState{..} DualGenTx{..} =
     do
       mapExcept (inj +++ id)
-      $ txMeasure dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
+      $ txMeasure dualLedgerConfigMain dualLedgerStateMain dualGenTxMain
    where
     inj m = DualGenTxErr m (error "ByronSpec has no tx-too-big error")
 
-  blockCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
-    blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
+  blockCapacityTxMeasure DualLedgerConfig{..} DualLedgerState{..} =
+    blockCapacityTxMeasure dualLedgerConfigMain dualLedgerStateMain
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId
