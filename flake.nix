@@ -95,10 +95,8 @@
         } // leiosDemo.devShells;
         inherit hydraJobs;
         legacyPackages = pkgs;
-        packages =
-          hydraJobs.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano // {
-            leios-mvd-test = pkgs.testers.nixosTest (import ./nix/leios-mvd/test.nix { inherit inputs pkgs; });
-          };
+        formatter = hydraJobs.native.formattingLinting.run;
+        packages = hydraJobs.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano;
       }
     );
 }

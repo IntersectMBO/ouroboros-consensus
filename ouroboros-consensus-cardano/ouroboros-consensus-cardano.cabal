@@ -150,6 +150,7 @@ library
     cardano-strict-containers,
     cborg ^>=0.2.2,
     containers >=0.5 && <0.8,
+    contra-tracer,
     crypton,
     deepseq,
     formatting >=6.3 && <7.3,

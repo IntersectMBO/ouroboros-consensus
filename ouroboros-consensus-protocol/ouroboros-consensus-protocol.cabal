@@ -104,6 +104,7 @@ library unstable-protocol-testlib
     cardano-protocol-tpraos,
     cardano-slotting,
     containers,
+    ouroboros-consensus,
     ouroboros-consensus-protocol,
     text,
 
