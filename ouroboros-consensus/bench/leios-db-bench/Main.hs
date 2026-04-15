@@ -6,7 +6,7 @@
 --
 -- The following three roles run concurrently against the same SQLite handle:
 --
--- * __Fetch logic__ (1 thread): 10 rounds of
+-- * __Fetch logic__ (1 thread): configurable rounds of
 --   'leiosDbFilterMissingEbBodies' + 'leiosDbFilterMissingTxs'.
 --
 -- * __Fetch clients__ (configurable, default 2 threads): each inserts 20 fresh
@@ -71,7 +71,9 @@ main = do
       , "  Total TXs         : " <> show (numPrePopulatedEbs * txsPerEb)
       , ""
       , "Concurrent workload per iteration:"
-      , "  Fetch logic   (×1): 10 rounds of filterMissingEbBodies (200+200) + filterMissingTxs (500+500)"
+      , "  Fetch logic   (×1): "
+          <> show numFetchLogicRounds
+          <> " rounds of filterMissingEbBodies (200+200) + filterMissingTxs (500+500)"
       , "  Fetch clients (×" <> show numFetchClients <> "): 20 insertEbPoint/insertEbBody/insertTxs each"
       , "  Fetch servers (×" <> show numFetchServers <> "): 30 lookupEbBody + 10 batchRetrieveTxs each"
       , ""
@@ -94,11 +96,15 @@ txsPerEb = 200
 
 -- | Number of fetch client threads (writers that insert fresh EBs).
 numFetchClients :: Int
-numFetchClients = 2
+numFetchClients = 3
 
 -- | Number of fetch server threads (readers serving downstream peers).
 numFetchServers :: Int
-numFetchServers = 8
+numFetchServers = 3
+
+-- | Number of rounds the fetch logic thread performs per iteration.
+numFetchLogicRounds :: Int
+numFetchLogicRounds = 100
 
 -- | Timed repetitions (plus one warmup).
 numRuns :: Int
@@ -126,7 +132,7 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
 fetchLogic :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
 fetchLogic db points =
   withLeiosDb db $ \c ->
-    replicateM_ 10 $ do
+    replicateM_ numFetchLogicRounds $ do
       _ <- leiosDbFilterMissingEbBodies c (existingPoints ++ missingPoints)
       _ <- leiosDbFilterMissingTxs c (existingHashes ++ missingHashes)
       pure ()
