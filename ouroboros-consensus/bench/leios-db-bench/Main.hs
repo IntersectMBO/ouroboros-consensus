@@ -47,7 +47,7 @@ import LeiosDemoTypes
   , leiosEbBytesSize
   )
 import System.IO (hFlush, stdout)
-import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
+import System.IO.Temp (withSystemTempDirectory)
 
 main :: IO ()
 main = do
@@ -68,9 +68,10 @@ main = do
       , "Runs: 1 warmup + " <> show numRuns <> " timed"
       , ""
       ]
-  env <- setupBenchEnv
-  runBench (benchConcurrentAll env)
-  leiosDbClose env.beDb
+  withSystemTempDirectory "leios-db-bench" $ \tmpDir -> do
+    env <- setupBenchEnv tmpDir
+    runBench (benchConcurrentAll env)
+    leiosDbClose env.beDb
 
 -- * Configuration
 
@@ -153,10 +154,8 @@ data BenchEnv = BenchEnv
 
 -- | Create a fresh SQLite DB and insert 'numPrePopulatedEbs' complete EBs.
 -- This setup cost is not included in the timed measurements.
-setupBenchEnv :: IO BenchEnv
-setupBenchEnv = do
-  sysTmp <- getCanonicalTemporaryDirectory
-  tmpDir <- createTempDirectory sysTmp "leios-db-bench"
+setupBenchEnv :: FilePath -> IO BenchEnv
+setupBenchEnv tmpDir = do
   db <- newLeiosDBSQLite (tmpDir <> "/bench.db")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
