@@ -1,6 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -599,12 +598,12 @@ dbStep1 stmt = withDieDoneStmt stmt $ DB.stepNoCB stmt
 -- ** Error "handling"
 
 maxBusyRetries :: Int
-maxBusyRetries = 1000
+maxBusyRetries = 10000
 
 -- | Execute a database action that may return an error. If the error is
--- 'DB.ErrorBusy', retry up to 'maxBusyRetries' times with exponential backoff
--- and jitter. Otherwise and after exhausting retries, throws a
--- 'LeiosDbException' with the error message from the database.
+-- 'DB.ErrorBusy', retry up to 'maxBusyRetries' times with linear backoff and
+-- jitter. Otherwise and after exhausting retries, throws a 'LeiosDbException'
+-- with the error message from the database.
 withDie :: HasCallStack => DB.Database -> IO (Either DB.Error a) -> IO a
 withDie db = go maxBusyRetries
  where
