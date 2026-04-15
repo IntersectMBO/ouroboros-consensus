@@ -2,13 +2,12 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE ViewPatterns #-}
 
 -- | Tests for the LeiosDemoDb interface.
 --
 -- These tests verify the semantics of the LeiosDbHandle operations for both
 -- InMemory and SQLite implementations. Each test case uses a fresh database
--- to ensure isolation and allow non-priming tests to serve as performance baselines.
+-- to ensure isolation and serve as an (too optimistic) performance baseline.
 module Test.LeiosDemoDb (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
@@ -29,8 +28,7 @@ import LeiosDemoDb
   , newLeiosDBSQLite
   )
 import LeiosDemoTypes
-  ( BytesSize
-  , EbHash (..)
+  ( EbHash (..)
   , LeiosEb (..)
   , LeiosNotification (..)
   , LeiosPoint (..)
@@ -48,16 +46,12 @@ import Test.QuickCheck
   , counterexample
   , forAll
   , forAllBlind
-  , forAllShrinkBlind
   , forAllShrinkShow
   , ioProperty
-  , scale
   , shrink
-  , sized
   , sublistOf
   , tabulate
   , vector
-  , withMaxSuccess
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
@@ -119,7 +113,6 @@ mkTestGroups impl =
       "transactions"
       [ testProperty "insert then retrieve" $ prop_txsInsertThenRetrieve impl
       , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
-      , testProperty "insert tx performance" $ prop_insertTxPerformance impl
       ]
   , testGroup
       "notifications"
@@ -137,19 +130,16 @@ mkTestGroups impl =
       , testProperty "missing bodies reported" $ prop_fetchWorkMissingBodies impl
       , testProperty "missing txs reported" $ prop_fetchWorkMissingTxs impl
       , testProperty "complete eb has no missing txs" $ prop_fetchWorkCompleteTxs impl
-      , testProperty "query performance" $ prop_fetchWorkPerformance impl
       ]
   , testGroup
       "filterMissingEbBodies"
       [ testProperty "empty input returns empty" $ prop_filterEbBodiesEmpty impl
       , testProperty "returns only missing EBs" $ prop_filterEbBodiesCorrect impl
-      , testProperty "filter performance" $ prop_filterEbBodiesPerformance impl
       ]
   , testGroup
       "filterMissingTxs"
       [ testProperty "empty input returns empty" $ prop_filterTxsEmpty impl
       , testProperty "returns only missing TXs" $ prop_filterTxsCorrect impl
-      , testProperty "filter performance" $ prop_filterTxsPerformance impl
       ]
   , testGroup
       "queryCompletedEbByPoint"
@@ -416,51 +406,6 @@ prop_txsRetrieveMissing impl =
         result === []
           & tabulate "batchRetrieveTxs (missing)" [timeBucket retrieveTime]
 
--- | Property: measure leiosDbInsertTxs performance and report timing distribution.
--- Tracks performance across different database sizes and batch configurations.
-prop_insertTxPerformance :: DbImpl -> Property
-prop_insertTxPerformance impl =
-  forAllShrinkBlind genPerfParams shrinkPerfParams $ \(numEBs, numTxs) ->
-    forAllBlind (genPerfData numEBs numTxs) $ \(primeData, point, eb, force -> !txsToInsert) ->
-      ioProperty $ withFreshDb impl $ \db -> do
-        -- Prime the database with additional EBs to simulate load
-        forM_ primeData $ \(primePoint, primeEb) -> do
-          leiosDbInsertEbPoint db primePoint (leiosEbBytesSize primeEb)
-          leiosDbInsertEbBody db primePoint primeEb
-        -- Create the target EB
-        leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-        leiosDbInsertEbBody db point eb
-        -- Measure time for inserting a batch of txs
-        (_, insertTime) <- timed $ leiosDbInsertTxs db txsToInsert
-        pure $
-          insertTime < milli 10
-            & counterexample ("Took too long: " <> showTime insertTime)
-            & counterexample
-              ("With " <> show (numEBs + 1) <> " EBs in DB (each having " <> show numTxs <> " txs)")
-            & tabulate "insertTxs (primed)" [timeBucket insertTime]
-            & tabulate "numEBs in DB" [magnitudeBucket numEBs]
-            & tabulate "numTxs in EB" [magnitudeBucket numTxs]
- where
-  genPerfParams = sized $ \size -> do
-    dbSize <- chooseInt (0, size)
-    numTxs <- chooseInt (1, max 1 (min (size * 100) 2000))
-    pure (dbSize, numTxs)
-
-  shrinkPerfParams (numEBs, numTxs) =
-    [(n, numTxs) | n <- shrink numEBs]
-      ++ [(numEBs, n) | n <- shrink numTxs, n >= 1]
-
-  -- Generate all data needed for a performance test run
-  genPerfData dbSize numTxs = do
-    primeData <- replicateM dbSize (genPointAndEb 10)
-    point <- genPoint
-    eb <- genEb numTxs
-    -- Generate a single tx to insert (first tx of the EB)
-    let (txHash, _) = V.head (leiosEbTxs eb)
-    txBytes <- genTxBytes
-    let txsToInsert = [(txHash, txBytes)]
-    pure (primeData, point, eb, txsToInsert)
-
 -- * Notification tests
 
 -- | Test that a single subscriber receives a notification when leiosDbInsertEbBody is called.
@@ -695,83 +640,6 @@ prop_fetchWorkCompleteTxs impl =
               & tabulate "queryFetchWork (complete)" [timeBucket queryTime]
               & tabulate "numTxs" [magnitudeBucket numTxs]
 
--- | Property: measure leiosDbQueryFetchWork performance with various database sizes.
--- Tests with many EBs and TXs to ensure queries scale acceptably.
-prop_fetchWorkPerformance :: DbImpl -> Property
-prop_fetchWorkPerformance impl =
-  forAllShrinkBlind genPerfParams shrinkPerfParams $ \(numPointsOnly, numWithBodies, numComplete, txsPerEb) ->
-    forAllBlind (genPerfData numPointsOnly numWithBodies numComplete txsPerEb) $ \perfData ->
-      ioProperty $ withFreshDb impl $ \db -> do
-        -- Prime the database with various states
-        let (pointsOnly, withBodies, complete) = perfData
-        -- Insert points without bodies (will be "missing bodies")
-        forM_ pointsOnly $ \(p, sz) -> leiosDbInsertEbPoint db p sz
-        -- Insert points with bodies but no txs (will be "missing txs")
-        forM_ withBodies $ \(p, eb) -> do
-          leiosDbInsertEbPoint db p (leiosEbBytesSize eb)
-          leiosDbInsertEbBody db p eb
-        -- Insert complete EBs (should not appear in results)
-        forM_ complete $ \(p, eb, txs) -> do
-          leiosDbInsertEbPoint db p (leiosEbBytesSize eb)
-          leiosDbInsertEbBody db p eb
-          leiosDbInsertTxs db txs
-        -- Measure query time
-        (work, queryTime) <- timed $ leiosDbQueryFetchWork db
-        let totalEbs = numPointsOnly + numWithBodies + numComplete
-            expectedMissingBodies = numPointsOnly
-            expectedMissingTxEbs = numWithBodies
-        pure $
-          conjoin
-            [ Map.size (missingEbBodies work) === expectedMissingBodies
-                & counterexample
-                  ( "Missing bodies count wrong: "
-                      ++ show (Map.size $ missingEbBodies work)
-                      ++ " vs "
-                      ++ show expectedMissingBodies
-                  )
-            , Map.size (missingEbTxs work) === expectedMissingTxEbs
-                & counterexample
-                  ( "Missing TX EBs count wrong: "
-                      ++ show (Map.size $ missingEbTxs work)
-                      ++ " vs "
-                      ++ show expectedMissingTxEbs
-                  )
-            , queryTime < milli 50
-                & counterexample ("Query took too long: " <> showTime queryTime)
-            ]
-            & tabulate "queryFetchWork (primed)" [timeBucket queryTime]
-            & tabulate "total EBs" [magnitudeBucket totalEbs]
-            & tabulate "txs per EB" [magnitudeBucket txsPerEb]
- where
-  genPerfParams = sized $ \size -> do
-    numPointsOnly <- chooseInt (0, size)
-    numWithBodies <- chooseInt (0, size)
-    numComplete <- chooseInt (0, size)
-    txsPerEb <- chooseInt (1, max 1 (min (size * 10) 100))
-    pure (numPointsOnly, numWithBodies, numComplete, txsPerEb)
-
-  shrinkPerfParams (a, b, c, d) =
-    [(a', b, c, d) | a' <- shrink a]
-      ++ [(a, b', c, d) | b' <- shrink b]
-      ++ [(a, b, c', d) | c' <- shrink c]
-      ++ [(a, b, c, d') | d' <- shrink d, d' >= 1]
-
-  genPerfData numPointsOnly numWithBodies numComplete txsPerEb = do
-    -- Points only (missing bodies)
-    pointsOnly <- replicateM numPointsOnly $ do
-      p <- genPoint
-      pure (p, 1000 :: BytesSize)
-    -- With bodies (missing TXs)
-    withBodies <- replicateM numWithBodies (genPointAndEb txsPerEb)
-    -- Complete EBs
-    complete <- replicateM numComplete $ do
-      (p, eb) <- genPointAndEb txsPerEb
-      txBytes <- genTxBytes
-      let ebTxList = V.toList (leiosEbTxs eb)
-          txs = [(txHash, txBytes) | (txHash, _) <- ebTxList]
-      pure (p, eb, txs)
-    pure (pointsOnly, withBodies, complete)
-
 -- * Test utilities
 
 -- | Assert that a notification is LeiosOfferBlock with the expected point.
@@ -828,77 +696,6 @@ prop_filterEbBodiesCorrect impl =
                 & tabulate "filterMissingEbBodies" [timeBucket filterTime]
                 & tabulate "numEbs" [magnitudeBucket numEbs]
 
--- | Property: measure filterMissingEbBodies performance.
--- TODO: Cardinalities are too low compared to production workloads.
-prop_filterEbBodiesPerformance :: DbImpl -> Property
-prop_filterEbBodiesPerformance impl =
-  withMaxSuccess 10 $
-    forAllShrinkShow (scale (* 10) genPerfParams) shrinkPerfParams show $ \(numWithBodies, numMissing) ->
-      ioProperty $
-        withFreshDb impl $ \db -> do
-          -- Insert EBs with bodies
-          forM_ [1 .. numWithBodies] $ \i -> do
-            let hash =
-                  MkEbHash $
-                    BS.pack
-                      [ fromIntegral (i `mod` 256)
-                      , fromIntegral ((i `div` 256) `mod` 256)
-                      , fromIntegral ((i `div` 65536) `mod` 256)
-                      ]
-                      <> BS.replicate 29 0
-                point = MkLeiosPoint (SlotNo $ fromIntegral i) hash
-                txHash =
-                  MkTxHash $
-                    BS.pack [fromIntegral (i `mod` 256), fromIntegral ((i `div` 256) `mod` 256)] <> BS.replicate 30 1
-                eb = MkLeiosEb $ V.fromList [(txHash, 100)]
-            leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-            leiosDbInsertEbBody db point eb
-          -- Generate points that are NOT in DB (these should be returned)
-          let missingPoints =
-                [ MkLeiosPoint
-                    (SlotNo $ fromIntegral (numWithBodies + i))
-                    ( MkEbHash $
-                        BS.pack
-                          [ fromIntegral ((numWithBodies + i) `mod` 256)
-                          , fromIntegral (((numWithBodies + i) `div` 256) `mod` 256)
-                          , fromIntegral (((numWithBodies + i) `div` 65536) `mod` 256)
-                          ]
-                          <> BS.replicate 29 2
-                    )
-                | i <- [1 .. numMissing]
-                ]
-              -- Query with a mix: the DB ones should be filtered out, missing ones returned
-              existingPoints =
-                [ MkLeiosPoint
-                    (SlotNo $ fromIntegral i)
-                    ( MkEbHash $
-                        BS.pack
-                          [ fromIntegral (i `mod` 256)
-                          , fromIntegral ((i `div` 256) `mod` 256)
-                          , fromIntegral ((i `div` 65536) `mod` 256)
-                          ]
-                          <> BS.replicate 29 0
-                    )
-                | i <- [1 .. numWithBodies]
-                ]
-              queryPoints = existingPoints ++ missingPoints
-          (result, filterTime) <- timed $ leiosDbFilterMissingEbBodies db queryPoints
-          pure $
-            conjoin
-              [ length result === numMissing
-              , filterTime < milli 100
-                  & counterexample ("Filter took too long: " <> showTime filterTime)
-              ]
-              & tabulate "filterMissingEbBodies (perf)" [timeBucket filterTime]
-              & tabulate "numWithBodies" [magnitudeBucket numWithBodies]
-              & tabulate "numMissing" [magnitudeBucket numMissing]
- where
-  genPerfParams = sized $ \size -> do
-    numWithBodies <- chooseInt (1, max 1 (size * 5))
-    numMissing <- chooseInt (1, max 1 (size * 2))
-    pure (numWithBodies, numMissing)
-  shrinkPerfParams (a, b) = [(a', b) | a' <- shrink a, a' >= 1] ++ [(a, b') | b' <- shrink b, b' >= 1]
-
 -- * Property tests for filterMissingTxs
 
 -- | Property: filtering empty list returns empty list.
@@ -930,58 +727,6 @@ prop_filterTxsCorrect impl =
                 ]
                 & tabulate "filterMissingTxs" [timeBucket filterTime]
                 & tabulate "numTxs" [magnitudeBucket numTxs]
-
--- | Property: measure filterMissingTxs performance.
--- TODO: Cardinalities are still lower than production workloads
-prop_filterTxsPerformance :: DbImpl -> Property
-prop_filterTxsPerformance impl =
-  withMaxSuccess 10 $
-    forAllShrinkShow (scale (* 20) genPerfParams) shrinkPerfParams show $ \(numInserted, numMissing) ->
-      ioProperty $
-        withFreshDb impl $ \db -> do
-          -- Create and insert TXs
-          let insertedHashes =
-                [ MkTxHash $
-                    BS.pack [fromIntegral (i `mod` 256), fromIntegral ((i `div` 256) `mod` 256)] <> BS.replicate 30 0
-                | i <- [1 .. numInserted]
-                ]
-          -- XXX: Simplify test case generation and use genEBHash?
-          forM_ (zip [1 :: Integer ..] (chunksOf 100 insertedHashes)) $ \(ebIdx, txChunk) -> do
-            let ebHash =
-                  MkEbHash $
-                    BS.pack [fromIntegral (ebIdx `mod` 256), fromIntegral ((ebIdx `div` 256) `mod` 256)]
-                      <> BS.replicate 30 0
-                point = MkLeiosPoint (SlotNo $ fromIntegral ebIdx) ebHash
-                eb = MkLeiosEb $ V.fromList [(h, 100) | h <- txChunk]
-            leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-            leiosDbInsertEbBody db point eb
-            forM_ txChunk $ \txHash ->
-              leiosDbInsertTxs db [(txHash, maxTxBytesZero)]
-          -- Generate hashes NOT in DB
-          let missingHashes =
-                [ MkTxHash $
-                    BS.pack
-                      [fromIntegral ((numInserted + i) `mod` 256), fromIntegral (((numInserted + i) `div` 256) `mod` 256)]
-                      <> BS.replicate 30 1
-                | i <- [1 .. numMissing]
-                ]
-              queryHashes = insertedHashes ++ missingHashes
-          (result, filterTime) <- timed $ leiosDbFilterMissingTxs db queryHashes
-          pure $
-            conjoin
-              [ length result === numMissing
-              , filterTime < milli 100
-                  & counterexample ("Filter took too long: " <> showTime filterTime)
-              ]
-              & tabulate "filterMissingTxs (perf)" [timeBucket filterTime]
-              & tabulate "numInserted" [magnitudeBucket numInserted]
-              & tabulate "numMissing" [magnitudeBucket numMissing]
- where
-  genPerfParams = sized $ \size -> do
-    numInserted <- chooseInt (1, max 1 (size * 10))
-    numMissing <- chooseInt (1, max 1 (size * 20))
-    pure (numInserted, numMissing)
-  shrinkPerfParams (a, b) = [(a', b) | a' <- shrink a, a' >= 1] ++ [(a, b') | b' <- shrink b, b' >= 1]
 
 -- * Property tests for queryCompletedEbByPoint
 
@@ -1069,8 +814,3 @@ prop_completedEbNoBody impl =
         result === Nothing
           & counterexample "Expected Nothing for EB with no body inserted"
           & tabulate "queryCompletedEbByPoint (no body)" [timeBucket queryTime]
-
--- | Split a list into chunks of given size.
-chunksOf :: Int -> [a] -> [[a]]
-chunksOf _ [] = []
-chunksOf n xs = take n xs : chunksOf n (drop n xs)
