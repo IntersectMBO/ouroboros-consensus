@@ -687,6 +687,7 @@ test-suite consensus-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.BlockchainTime.Simple
+    Test.Consensus.Committee.Class
     Test.Consensus.Committee.EveryoneVotes
     Test.Consensus.Committee.EveryoneVotes.Tests
     Test.Consensus.Committee.TestCrypto
