@@ -173,8 +173,8 @@ import Data.Set (Set)
 import Data.Void (absurd)
 import Data.Word
 import GHC.Generics (Generic)
-import NoThunks.Class
 import LeiosDemoDb (LeiosDbConnection)
+import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderStateHistory

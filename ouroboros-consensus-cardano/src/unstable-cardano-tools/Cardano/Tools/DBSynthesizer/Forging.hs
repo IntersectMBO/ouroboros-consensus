@@ -23,6 +23,7 @@ import Data.Either (isRight)
 import Data.Maybe (isJust)
 import Data.Proxy
 import Data.Word (Word64)
+import LeiosDemoDb (LeiosDbConnection)
 import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
@@ -99,11 +100,12 @@ runForge ::
   SlotNo ->
   ForgeLimit ->
   ChainDB IO blk ->
+  LeiosDbConnection IO ->
   [BlockForging IO blk] ->
   TopLevelConfig blk ->
   GenTxs blk mk ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
+runForge epochSize_ nextSlot opts chainDB leiosDB blockForging cfg genTxs = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
   endState <- go initialForgeState{currentSlot = nextSlot}
@@ -220,7 +222,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
       lift $
         Block.forgeBlock
           blockForging'
-          (error "FIXME(bladyjoker): leiosDb")
+          leiosDB
           cfg
           bcBlockNo
           currentSlot

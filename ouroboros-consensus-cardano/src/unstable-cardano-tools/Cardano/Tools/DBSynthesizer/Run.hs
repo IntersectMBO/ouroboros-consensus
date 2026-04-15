@@ -34,6 +34,7 @@ import Data.Aeson as Aeson
 import Data.Bool (bool)
 import Data.ByteString as BS (ByteString, readFile)
 import qualified Data.Set as Set
+import LeiosDemoDb (newLeiosDBSQLite, withLeiosDb)
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
 import Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
@@ -165,7 +166,9 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
         putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
         preOpenChainDB synthOpenMode confDbDir
         let dbTracer = nullTracer
-        ChainDB.withDB (error "FIXME(bladyjoker)") (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
+        putStrLn $ "--> opening/creating LeiosDB at: leios.db"
+        leiosDB <- newLeiosDBSQLite "leios.db"
+        ChainDB.withDB leiosDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
           slotNo <- do
             tip <- atomically (ChainDB.getTipPoint chainDB)
             pure $ case pointSlot tip of
@@ -173,7 +176,8 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
               At s -> succ s
 
           putStrLn $ "--> starting at: " ++ show slotNo
-          runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig $ genTxs pInfoConfig
+          withLeiosDb leiosDB $ \leiosConn ->
+            runForge epochSize slotNo synthLimit chainDB leiosConn forgers pInfoConfig $ genTxs pInfoConfig
       else do
         putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
         pure $ ForgeResult 0
