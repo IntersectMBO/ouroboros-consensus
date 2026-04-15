@@ -3,6 +3,7 @@
 module Main (main) where
 
 import qualified Test.Consensus.BlockchainTime.Simple (tests)
+import qualified Test.Consensus.Committee.Class (tests)
 import qualified Test.Consensus.Committee.EveryoneVotes (tests)
 import qualified Test.Consensus.Committee.TestCrypto (tests)
 import qualified Test.Consensus.Committee.WFALS (tests)
@@ -46,6 +47,7 @@ tests =
         "Committee"
         [ Test.Consensus.Committee.WFALS.tests
         , Test.Consensus.Committee.EveryoneVotes.tests
+        , Test.Consensus.Committee.Class.tests
         , Test.Consensus.Committee.TestCrypto.tests
         ]
     , Test.Consensus.HeaderValidation.tests
