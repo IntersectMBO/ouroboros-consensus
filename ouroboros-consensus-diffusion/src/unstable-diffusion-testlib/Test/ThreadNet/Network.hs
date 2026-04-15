@@ -77,7 +77,6 @@ import GHC.Generics (Generic)
 import GHC.Stack
 import LeiosDemoDb
   ( InMemoryLeiosDb
-  , LeiosDbConnection
   , emptyInMemoryLeiosDb
   , newLeiosDBInMemoryWith
   )
@@ -1203,7 +1202,7 @@ customForgeBlock ::
   ) =>
   CustomForgeBlockArgs m blk ->
   BlockForging m blk ->
-  LeiosDbConnection m ->
+  ForgeType ->
   TopLevelConfig blk ->
   BlockNo ->
   SlotNo ->
@@ -1212,7 +1211,7 @@ customForgeBlock ::
   [Validated (GenTx blk)] ->
   IsLeader (BlockProtocol blk) ->
   m (blk, Maybe ForgedLeiosEb)
-customForgeBlock CustomForgeBlockArgs{..} origBlockForging leiosConn cfg' currentBno currentSlot tickedLdgSt txs ebTxs prf = do
+customForgeBlock CustomForgeBlockArgs{..} origBlockForging forgeType cfg' currentBno currentSlot tickedLdgSt txs ebTxs prf = do
   let currentEpoch = HFF.futureSlotToEpoch cfbaFuture currentSlot
 
   -- EBBs are only ever possible in the first era
@@ -1233,7 +1232,7 @@ customForgeBlock CustomForgeBlockArgs{..} origBlockForging leiosConn cfg' curren
       -- no EBB needed, forge without making one
       forgeBlock
         origBlockForging
-        leiosConn
+        forgeType
         cfg'
         currentBno
         currentSlot
@@ -1281,7 +1280,7 @@ customForgeBlock CustomForgeBlockArgs{..} origBlockForging leiosConn cfg' curren
       (blk, mayEb) <-
         forgeBlock
           origBlockForging
-          leiosConn
+          forgeType
           cfg'
           currentBno
           currentSlot

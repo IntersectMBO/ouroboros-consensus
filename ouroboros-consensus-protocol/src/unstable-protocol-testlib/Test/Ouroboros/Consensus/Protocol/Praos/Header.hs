@@ -98,7 +98,8 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Protocol.Praos (PraosValidationErr (..))
 import Ouroboros.Consensus.Protocol.Praos.Header
-  ( Header
+  ( BodyType (LedgerBlock)
+  , Header
   , HeaderBody (..)
   , pattern Header
   )
@@ -445,6 +446,8 @@ genHeaderBody context = do
   hbBodySize <- choose (1000, 90000)
   hbBodyHash <- genHash
   (hbOCert, kesPeriod) <- genCert hbSlotNo context
+  let hbMayEbAnnouncement = Nothing
+      hbBodyType = LedgerBlock
   let hbProtVer = protocolVersionZero
       headerBody = HeaderBody{..}
   pure $ (headerBody, kesPeriod)

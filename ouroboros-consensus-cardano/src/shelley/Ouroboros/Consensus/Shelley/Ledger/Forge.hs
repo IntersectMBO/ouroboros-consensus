@@ -8,21 +8,15 @@ module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
 import qualified Cardano.Ledger.Block as SL
 import qualified Cardano.Ledger.Core as Core (Tx)
-import qualified Cardano.Ledger.Core as SL (EraSegWits (TxSeq), toTxSeq)
+import qualified Cardano.Ledger.Core as SL (toTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL (extractTx)
 import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import qualified Data.ByteString as BL
 import qualified Data.Sequence.Strict as Seq
-import LeiosDemoDb
-  ( LeiosDbConnection
-  , leiosDbQueryCertificateByPoint
-  , leiosDbQueryCompletedEbByPoint
-  )
 import LeiosDemoTypes
-  ( EbHash (ebHashBytes)
-  , ForgedLeiosEb (point)
+  ( ForgedLeiosEb (point)
   , LeiosCertificate (unLeiosCertificate)
   , LeiosPoint (pointEbHash)
   , forgeLeiosEb
@@ -33,15 +27,14 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, IsLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
+import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
   )
 import Ouroboros.Consensus.Shelley.Ledger.Integrity
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( ShelleyLedgerLeiosState (sllsMaybeAnnouncedEb, sllsTooSoonToCertify)
-  , Ticked (tickedShelleyLedgerLeiosState)
-  , toTxSeq
+  ( toTxSeq
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -57,7 +50,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 forgeShelleyBlock ::
   forall m era proto mk.
   (ShelleyCompatible proto era, Monad m) =>
-  LeiosDbConnection m ->
+  ForgeType ->
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
   TopLevelConfig (ShelleyBlock proto era) ->
@@ -74,7 +67,7 @@ forgeShelleyBlock ::
   IsLeader proto ->
   m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
 forgeShelleyBlock
-  leiosDb
+  forgeType
   hotKey
   cbl
   cfg
@@ -88,45 +81,51 @@ forgeShelleyBlock
     let
       -- Current EB to announce
       mayEb = forgeLeiosEb curSlot <$> nonEmpty (extractTx <$> ebTxs)
-      mayAnnouncedEb = toLedgerEbHash . pointEbHash . point <$> mayEb
-      -- Current Ledger state
-      ledgerLeiosSt = tickedShelleyLedgerLeiosState tickedLedger
 
-    (body, certifiesEb) <- case sllsMaybeAnnouncedEb ledgerLeiosSt of
-      Nothing -> return $ (SL.BodyInline rbTxs', False)
-      Just annEbPoint ->
-        if sllsTooSoonToCertify ledgerLeiosSt
-          then return $ (SL.BodyInline rbTxs', False)
-          else do
-            mayEbClosure <- leiosDbQueryCompletedEbByPoint' leiosDb annEbPoint
-            case mayEbClosure of
-              Nothing -> return (SL.BodyInline rbTxs', False) -- This happens when EBs haven't been fully downloaded
-              Just ebClosure -> do
-                mayCert <- leiosDbQueryCertificateByPoint leiosDb annEbPoint
-                case mayCert of
-                  Nothing -> return (SL.BodyInline rbTxs', False) -- This happens when EBs have been downloaded but voting hasn't completed
-                  Just cert ->
-                    return $
-                      (SL.BodyCertificate (toLedgerCert cert) (Just ebClosure), True)
-    hdr <-
-      mkHeader @_ @(ProtoCrypto proto) -- FIXME(bladyjoker): EB announcement in header
-        hotKey
-        cbl
-        isLeader
-        curSlot
-        curNo
-        prevHash
-        (SL.hashBody @era body)
-        (SL.bodyBytesSize protocolVersion body)
-        protocolVersion
+    blk <- case forgeType of
+      ForgeTxsRb -> do
+        let body = SL.BodyInline rbTxs'
 
-    let blk =
-          mkShelleyBlock $
-            SL.Block
-              hdr
-              body
-              (if certifiesEb then Nothing else mayAnnouncedEb) -- TODO(bladyjoker): Skip announcement when certifying
-              certifiesEb
+        hdr <-
+          mkHeader @_ @(ProtoCrypto proto)
+            hotKey
+            cbl
+            isLeader
+            curSlot
+            curNo
+            prevHash
+            (SL.hashBody @era body)
+            (SL.bodyBytesSize protocolVersion body)
+            Praos.LedgerBlock
+            protocolVersion
+            (pointEbHash . point <$> mayEb)
+        let blk =
+              mkShelleyBlock $
+                SL.Block
+                  hdr
+                  body
+        return blk
+      ForgeCertRb cert ebClosure -> do
+        let body = SL.BodyCertificate (toLedgerCert cert) (Just . toTxSeq $ ebClosure)
+        hdr <-
+          mkHeader @_ @(ProtoCrypto proto)
+            hotKey
+            cbl
+            isLeader
+            curSlot
+            curNo
+            prevHash
+            (SL.hashBody @era body)
+            (SL.bodyBytesSize protocolVersion body)
+            Praos.LeiosCertificate
+            protocolVersion
+            Nothing -- FIXME(bladyjoker): Skip announcement when certifying https://github.com/input-output-hk/ouroboros-leios/issues/838
+        let blk =
+              mkShelleyBlock $
+                SL.Block
+                  hdr
+                  body
+        return blk
 
     return $
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
@@ -149,17 +148,5 @@ forgeShelleyBlock
         . getTipHash
         $ tickedLedger
 
--- TODO(bladyjoker): Find a home for these
--- -.-
-toLedgerEbHash :: EbHash -> SL.EbHash
-toLedgerEbHash = SL.EbHash . BL.fromStrict . ebHashBytes
-
 toLedgerCert :: LeiosCertificate -> SL.Certificate
 toLedgerCert = SL.Certificate . BL.fromStrict . unLeiosCertificate
-
-leiosDbQueryCompletedEbByPoint' ::
-  forall m era.
-  (Monad m, ShelleyBasedEra era) => LeiosDbConnection m -> LeiosPoint -> m (Maybe (SL.TxSeq era))
-leiosDbQueryCompletedEbByPoint' leiosDb ebPoint = do
-  res <- leiosDbQueryCompletedEbByPoint leiosDb ebPoint
-  return $ toTxSeq <$> res

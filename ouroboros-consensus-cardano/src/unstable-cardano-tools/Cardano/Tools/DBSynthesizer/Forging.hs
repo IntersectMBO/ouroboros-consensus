@@ -27,6 +27,7 @@ import LeiosDemoDb (LeiosDbConnection)
 import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
+  , ForgeType (ForgeTxsRb)
   , ShouldForge (..)
   , checkShouldForge
   )
@@ -105,7 +106,7 @@ runForge ::
   TopLevelConfig blk ->
   GenTxs blk mk ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB leiosDB blockForging cfg genTxs = do
+runForge epochSize_ nextSlot opts chainDB _leiosConn blockForging cfg genTxs = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
   endState <- go initialForgeState{currentSlot = nextSlot}
@@ -222,7 +223,7 @@ runForge epochSize_ nextSlot opts chainDB leiosDB blockForging cfg genTxs = do
       lift $
         Block.forgeBlock
           blockForging'
-          leiosDB
+          ForgeTxsRb
           cfg
           bcBlockNo
           currentSlot

@@ -314,6 +314,7 @@ library
     cardano-binary,
     cardano-crypto-class,
     cardano-ledger-core ^>=1.17,
+    cardano-ledger-binary,
     cardano-lmdb >=0.4,
     cardano-lmdb-simple ^>=0.8,
     cardano-prelude,

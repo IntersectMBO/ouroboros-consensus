@@ -369,7 +369,7 @@ instance
   ) =>
   SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto)
   where
-  translateEra ctxt (Comp (Flip (ShelleyLedgerState tip state _transition tables leios ctb))) = do
+  translateEra ctxt (Comp (Flip (ShelleyLedgerState tip state _transition tables ctb))) = do
     tip' <- mapM (SL.translateEra ctxt) tip
     state' <- SL.translateEra ctxt state
     return $
@@ -380,7 +380,6 @@ instance
             , shelleyLedgerState = state'
             , shelleyLedgerTransition = ShelleyTransitionInfo 0
             , shelleyLedgerTables = translateShelleyTables tables
-            , shelleyLedgerLeiosState = leios
             , shelleyCumulativeTxBytes = ctb
             }
 
@@ -529,9 +528,9 @@ instance
             internsFromMap $
               shelleyLedgerState st
                 ^. SL.nesEsL
-                  . SL.esLStateL
-                  . SL.lsCertStateL
-                  . SL.certDStateL
-                  . SL.dsUnifiedL
-                  . SL.umElemsL
+                . SL.esLStateL
+                . SL.lsCertStateL
+                . SL.certDStateL
+                . SL.dsUnifiedL
+                . SL.umElemsL
        in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))

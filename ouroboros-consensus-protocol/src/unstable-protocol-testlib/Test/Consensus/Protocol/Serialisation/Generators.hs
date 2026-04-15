@@ -17,10 +17,12 @@ import Cardano.Slotting.Slot
   ( SlotNo (SlotNo)
   , WithOrigin (At, Origin)
   )
-import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
+import LeiosDemoTypes (EbHash (MkEbHash))
+import Ouroboros.Consensus.Protocol.Praos (LeiosState (LeiosState), PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Header
-  ( Header (Header)
+  ( BodyType (LedgerBlock, LeiosCertificate)
+  , Header (Header)
   , HeaderBody (HeaderBody)
   )
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF)
@@ -57,7 +59,9 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> certVrf
           <*> arbitrary
           <*> arbitrary
+          <*> arbitrary
           <*> ocert
+          <*> arbitrary
           <*> arbitrary
 
 instance Praos.PraosCrypto c => Arbitrary (Header c) where
@@ -81,3 +85,13 @@ instance Arbitrary PraosState where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
+      <*> arbitrary
+
+instance Arbitrary EbHash where
+  arbitrary = MkEbHash <$> arbitrary -- FIXME(bladyjoker): hash size
+
+instance Arbitrary BodyType where
+  arbitrary = oneof [pure LeiosCertificate, pure LedgerBlock]
+
+instance Arbitrary LeiosState where
+  arbitrary = pure $ LeiosState Nothing False

@@ -714,6 +714,16 @@ forkBlockForging IS{..} blockForging =
     -- At this point we have established that we are indeed slot leader
     trace $ TraceNodeIsLeader currentSlot
 
+    -- Leios: decide if we're forging an CertRb or a TxsRb
+    forgeType <-
+      lift $
+        leiosDecideForgeType blockForging $
+          LeiosDecideForgeTypeArgs
+            { ldftaChainDepState = headerStateChainDep (headerState unticked)
+            , ldftaLeiosTracer = leiosKernelTracer tracers
+            , ldftaLeiosDb = leiosConn
+            }
+
     -- Tick the ledger state for the 'SlotNo' we're producing a block for
     let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
         tickedLedgerState =
@@ -782,7 +792,7 @@ forkBlockForging IS{..} blockForging =
       lift $
         Block.forgeBlock
           blockForging
-          leiosConn
+          forgeType
           cfg
           bcBlockNo
           currentSlot

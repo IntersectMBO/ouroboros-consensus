@@ -66,10 +66,11 @@ dualByronBlockForging creds =
     , updateForgeState = \cfg ->
         fmap castForgeStateUpdateInfo .: updateForgeState (dualTopLevelConfigMain cfg)
     , checkCanForge = checkCanForge . dualTopLevelConfigMain
-    , forgeBlock = \_leiosDb cfg b s ls txs _ebTxs isLeader ->
+    , forgeBlock = \_ cfg b s ls txs _ebTxs isLeader ->
         -- XXX: Adding Leios EB support here feels so wrong
         return . (,Nothing) $
           forgeDualByronBlock cfg b s ls txs isLeader
+    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
  where
   BlockForging{..} = byronBlockForging creds

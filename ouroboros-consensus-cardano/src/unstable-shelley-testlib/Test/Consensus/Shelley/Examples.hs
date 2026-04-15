@@ -44,7 +44,8 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Header
-  ( HeaderBody (HeaderBody)
+  ( BodyType (LedgerBlock)
+  , HeaderBody (HeaderBody)
   )
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Protocol.TPraos
@@ -220,7 +221,6 @@ fromShelleyLedgerExamples
         , shelleyLedgerState = sleNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = LedgerTables EmptyMK
-        , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
         , shelleyCumulativeTxBytes = 0
         }
     chainDepState = TPraosState (NotOrigin 1) sleChainDepState
@@ -264,8 +264,8 @@ fromShelleyLedgerExamplesPraos
    where
     blk =
       mkShelleyBlock $
-        let SL.Block hdr1 bdy mayAnnEb mayCertEb = sleBlock
-         in SL.Block (translateHeader hdr1) bdy mayAnnEb mayCertEb
+        let SL.Block hdr1 bdy = sleBlock
+         in SL.Block (translateHeader hdr1) bdy
 
     translateHeader :: SL.BHeader StandardCrypto -> Praos.Header StandardCrypto
     translateHeader (SL.BHeader bhBody bhSig) =
@@ -281,8 +281,10 @@ fromShelleyLedgerExamplesPraos
           , hbVrfRes = coerce $ SL.bheaderEta bhBody
           , hbBodySize = SL.bsize bhBody
           , hbBodyHash = SL.bhash bhBody
+          , hbBodyType = LedgerBlock
           , hbOCert = SL.bheaderOCert bhBody
           , hbProtVer = SL.bprotver bhBody
+          , hbMayEbAnnouncement = Nothing
           }
       hSig = coerce bhSig
     hash = ShelleyHash $ SL.unHashHeader sleHashHeader
@@ -332,7 +334,6 @@ fromShelleyLedgerExamplesPraos
         , shelleyLedgerState = sleNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = emptyLedgerTables
-        , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
         , shelleyCumulativeTxBytes = 0
         }
     chainDepState =
