@@ -93,7 +93,6 @@ library unstable-protocol-testlib
     aeson,
     base,
     base16-bytestring,
-    ouroboros-consensus,
     bytestring,
     cardano-crypto-class ^>=2.2,
     cardano-crypto-praos ^>=2.2,
@@ -104,6 +103,7 @@ library unstable-protocol-testlib
     cardano-protocol-tpraos,
     cardano-slotting,
     containers,
+    ouroboros-consensus,
     ouroboros-consensus-protocol,
     text,
 
