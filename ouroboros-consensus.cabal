@@ -1805,6 +1805,7 @@ library unstable-cardano-tools
     dot,
     filepath,
     fs-api,
+    githash,
     microlens,
     mtl,
     network,
