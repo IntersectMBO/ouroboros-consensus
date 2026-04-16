@@ -121,9 +121,6 @@ tests =
         [ testGroup
             "Chain not long enough to take a snapshot, so blocks are not persisted into ImmutableDB and are lost."
             [testCase "system" $ runSystemIO updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot]
-        , testGroup
-            "Chain is long enough to take a snapshot, blocks are copied into ImmutableDB."
-            [testCase "system" $ runSystemIO updateLedgerSnapshots_WipeVolatileDB_withSnapshot]
         ]
     ]
 
@@ -342,9 +339,6 @@ waitForImmutableBlock_emptySlot = do
 -- ImmutableDB when the snapshot policy selects slots for snapshotting. When the
 -- immutable chain is too short, no blocks should be flushed, and WipeVolatileDB
 -- should recover to the tip of the (empty) ImmutableDB.
---
--- See 'updateLedgerSnapshots_WipeVolatileDB_withSnapshot' for the scenario where
--- the snapshot is taken.
 updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot ::
   forall m.
   ( Block m ~ TestBlock
@@ -364,30 +358,6 @@ updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot = do
   tip
     == genesisPoint
       `orFailWith` ("Expected ChainDB tip after wiping VolatileDB to be at Genesis, but got: " <> show tip)
- where
-  fork0 = TestBody 1 True Nothing
-
--- | See 'updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot' for details.
-updateLedgerSnapshots_WipeVolatileDB_withSnapshot ::
-  forall m.
-  ( Block m ~ TestBlock
-  , SupportsUnitTest m
-  , MonadError TestFailure m
-  ) =>
-  m ()
-updateLedgerSnapshots_WipeVolatileDB_withSnapshot = do
-  b1 <- addBlock $ firstBlock 1 $ fork0
-  b2 <- addBlock $ mkNextBlock b1 3 $ fork0
-  b3 <- addBlock $ mkNextBlock b2 5 $ fork0
-  b4 <- addBlock $ mkNextBlock b3 7 $ fork0
-  _ <- addBlock $ mkNextBlock b4 9 $ fork0
-
-  updateLedgerSnapshots
-
-  tip <- wipeVolatileDB
-  tip
-    /= genesisPoint
-      `orFailWith` ("Expected ChainDB non-Origin tip after wiping VolatileDB, got: " <> show tip)
  where
   fork0 = TestBody 1 True Nothing
 

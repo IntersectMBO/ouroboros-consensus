@@ -475,11 +475,18 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
     PersistBlks -> ignore <$> persistBlks DoNotGarbageCollect internal
     PersistBlksThenGC -> ignore <$> persistBlks GarbageCollect internal
     UpdateLedgerSnapshots -> do
-      -- TODO(geo2a): for now, we don't copy the immutable blocks when taking
-      -- a ledger state snapshot, because the model does not faithfully implement
-      -- this behaviour
-      let copyImmutableBlocks = pure ()
-      ignore <$> intTryTakeSnapshot internal copyImmutableBlocks (\_ -> pure 0)
+      -- In these tests, we don't copy the immutable blocks when taking
+      -- a ledger state snapshot, because the model cannot yet faithfully implement
+      -- this behaviour. In production, the snapshots are taken conditionally, and the
+      -- 'tryTakeSnapshot' routine will only copy blocks only if it does take a snapshot.
+      -- The model can only always either copy or not, unconditionally, as it does not
+      -- implement the snapshot decision logic.
+      --
+      -- TODO(geo2a): re-enable copying when the model has a notion of ledger state
+      --              snapshots and can conditionally copy to ImmutableDB.
+      -- let copyImmutableBlocks = persistBlks GarbageCollect internal
+      let noCopyImmutableBlocks = pure ()
+      ignore <$> intTryTakeSnapshot internal noCopyImmutableBlocks (\_ -> pure 0)
     WipeVolatileDB -> Point <$> wipeVolatileDB st
  where
   mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True
