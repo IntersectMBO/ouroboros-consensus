@@ -467,9 +467,9 @@ computeSnapshot cfg slot st values txTickets =
       inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
    in snapshotFromValidTxs
         ( map unwrap $
-            validatedTxs $
-              reapplyTxs @blk @Discard cfg slot inputTxs $
-                applyMempoolDiffs values inputKeys undefined -- st
+            validatedTxs' $
+              reapplyTxs' @blk @Discard cfg slot inputTxs $
+                applyMempoolDiffs' values inputKeys st
         )
         (castPoint $ getTip st)
         slot

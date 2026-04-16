@@ -124,14 +124,26 @@ instance LedgerSupportsMempool ByronBlock where
    where
     tx' = toMempoolPayload tx
 
-  applyTx cfg _wti slot tx st =
-    (\st' -> (st', ValidatedByronTx tx))
-      <$> applyByronGenTx validationMode cfg slot tx st
+  applyTx cfg _wti tx st =
+    (\st' -> (st{byronLedgerState = st'}, ValidatedByronTx tx))
+      <$> applyByronGenTx
+        validationMode
+        cfg
+        (fromWithOrigin undefined $ pointSlot $ getTip st)
+        tx
+        (byronLedgerState st)
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
+  reapplyTx' cfg slot vtx st =
+    (\st' -> st{tickedByronLedgerState = st'})
+      <$> applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) (tickedByronLedgerState st)
+   where
+    validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
+
   reapplyTx cfg slot vtx st =
-    applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st
+    (\st' -> st{byronLedgerState = st'})
+      <$> applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) (byronLedgerState st)
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
@@ -158,7 +170,7 @@ instance TxLimits ByronBlock where
       ByteSize32 $
         CC.getMaxBlockSize cvs - byronBlockEncodingOverhead
    where
-    cvs = tickedByronLedgerState st
+    cvs = byronLedgerState st
 
   txMeasure _cfg st tx =
     if txszNat > maxTxSize
@@ -170,7 +182,7 @@ instance TxLimits ByronBlock where
       Update.ppMaxTxSize $
         CC.adoptedProtocolParameters $
           CC.cvsUpdateState $
-            tickedByronLedgerState st
+            byronLedgerState st
 
     txszNat = fromIntegral txsz :: Natural
 
@@ -293,16 +305,15 @@ applyByronGenTx ::
   LedgerConfig ByronBlock ->
   SlotNo ->
   GenTx ByronBlock ->
-  TickedLedgerState ByronBlock mk1 ->
-  Except (ApplyTxErr ByronBlock) (TickedLedgerState ByronBlock mk2)
-applyByronGenTx validationMode cfg slot genTx st =
-  (\state -> st{tickedByronLedgerState = state})
-    <$> CC.applyMempoolPayload
-      validationMode
-      cfg
-      (toByronSlotNo slot)
-      (toMempoolPayload genTx)
-      (tickedByronLedgerState st)
+  CC.ChainValidationState ->
+  Except (ApplyTxErr ByronBlock) CC.ChainValidationState
+applyByronGenTx validationMode cfg slotNo genTx st =
+  CC.applyMempoolPayload
+    validationMode
+    cfg
+    (toByronSlotNo slotNo)
+    (toMempoolPayload genTx)
+    st
 
 {-------------------------------------------------------------------------------
   Serialisation

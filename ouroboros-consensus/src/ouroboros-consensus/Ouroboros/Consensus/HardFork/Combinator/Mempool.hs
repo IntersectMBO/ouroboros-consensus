@@ -140,6 +140,16 @@ instance
         (WrapValidatedGenTx vtx)
         tls
 
+  reapplyTx' _cfg _slot _vtx _tls = undefined
+
+  -- fst
+  --   <$> applyHelper
+  --     (ModeReapply slot)
+  --     cfg
+  --     DoNotIntervene
+  --     (WrapValidatedGenTx vtx)
+  --     tls
+
   reapplyTxs ::
     forall wtd extra.
     LedgerConfig (HardForkBlock xs) ->
@@ -350,6 +360,33 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
             blockCapacityTxMeasure
               (completeLedgerConfig' (State.epochInfoLedger cfg (hardForkLedgerStatePerEra hardForkState)) pcfg)
               (unFlip st')
+
+  blockCapacityTxMeasure'
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState) =
+      hcollapse $
+        hcizipWith proxySingle aux pcfgs hardForkState
+     where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      aux ::
+        SingleEraBlock blk =>
+        Index xs blk ->
+        WrapPartialLedgerConfig blk ->
+        FlipTickedLedgerState mk blk ->
+        K (HardForkTxMeasure xs) blk
+      aux idx pcfg st' =
+        K $
+          hardForkInjTxMeasure . injectNS idx . WrapTxMeasure $
+            blockCapacityTxMeasure'
+              ( completeLedgerConfig'
+                  ( State.epochInfoPrecomputedTransitionInfo
+                      hardForkLedgerConfigShape
+                      transition
+                      hardForkState
+                  )
+                  pcfg
+              )
+              (getFlipTickedLedgerState st')
 
   txMeasure
     hcfg@HardForkLedgerConfig{..}

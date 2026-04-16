@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , Invalidated (..)
   , LedgerSupportsMempool (..)
   , ReapplyTxsResult (..)
+  , ReapplyTxsResult' (..)
   , TxId
   , TxLimits (..)
   , TxMeasureMetrics (..)
@@ -151,6 +152,16 @@ class
     LedgerState blk ValuesMK ->
     Except (ApplyTxErr blk) (LedgerState blk ValuesMK)
 
+  reapplyTx' ::
+    HasCallStack =>
+    LedgerConfig blk ->
+    -- | Slot number of the block containing the tx
+    SlotNo ->
+    Validated (GenTx blk) ->
+    -- | Contains at least the values for the tx to reapply
+    TickedLedgerState blk ValuesMK ->
+    Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
+
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
   -- It is never the case that we reapply one single transaction, we always
@@ -186,6 +197,32 @@ class
       Foldable.foldl'
         ( \(accE, accV, st') a ->
             case runExcept (reapplyTx cfg slot (projectTx a) st') of
+              Left err -> (Invalidated (projectTx a) err : accE, accV, st')
+              Right st'' -> (accE, a : accV, st'')
+        )
+        ([], [], st)
+
+  reapplyTxs' ::
+    LedgerConfig blk ->
+    -- | Slot number of the block containing the tx
+    SlotNo ->
+    [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
+    TickedLedgerState blk ValuesMK ->
+    ReapplyTxsResult' extra blk wtd
+  reapplyTxs' cfg slot txs st =
+    (\(err, val, st') -> ReapplyTxsResult' err (reverse val) (forgetLedgerTables st')) $
+      foldReapplyTxs fst3 txs
+   where
+    fst3 (a, _, _) = a
+
+    foldReapplyTxs ::
+      (a -> Validated (GenTx blk)) ->
+      [a] ->
+      ([Invalidated blk], [a], TickedLedgerState blk ValuesMK)
+    foldReapplyTxs projectTx =
+      Foldable.foldl'
+        ( \(accE, accV, st') a ->
+            case runExcept (reapplyTx' cfg slot (projectTx a) st') of
               Left err -> (Invalidated (projectTx a) err : accE, accV, st')
               Right st'' -> (accE, a : accV, st'')
         )
@@ -232,6 +269,17 @@ class
     LedgerState blk ValuesMK
   applyMempoolDiffs = applyDiffForKeysOnTables
 
+  -- | Apply diffs on ledger states
+  --
+  -- Intended to be non-default in the HardFork instance for optimizing
+  -- performance.
+  applyMempoolDiffs' ::
+    LedgerTables (LedgerState blk) ValuesMK ->
+    LedgerTables (LedgerState blk) KeysMK ->
+    TickedLedgerState blk DiffMK ->
+    TickedLedgerState blk ValuesMK
+  applyMempoolDiffs' = applyDiffForKeysOnTables
+
   -- | The ledger rules' error type for the mempool's current era might allow
   -- the mempool to reject a tx for its own reasons.
   --
@@ -245,8 +293,18 @@ class
 
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
-nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
+nothingMkMempoolApplyTxError :: LedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
+
+data ReapplyTxsResult' extra blk wtd
+  = ReapplyTxsResult'
+  { invalidatedTxs' :: ![Invalidated blk]
+  -- ^ txs that are now invalid. Order doesn't matter
+  , validatedTxs' :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
+  -- ^ txs that are valid again, order must be the same as the order in
+  -- which txs were received
+  , resultingState' :: !(TickedLedgerState blk EmptyMK)
+  }
 
 data ReapplyTxsResult extra blk wtd
   = ReapplyTxsResult
@@ -375,6 +433,13 @@ class
     -- | at least for symmetry with 'txMeasure'
     LedgerConfig blk ->
     LedgerState blk mk ->
+    TxMeasure blk
+
+  -- | What is the allowed capacity for the txs in an individual block?
+  blockCapacityTxMeasure' ::
+    -- | at least for symmetry with 'txMeasure'
+    LedgerConfig blk ->
+    TickedLedgerState blk mk ->
     TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@

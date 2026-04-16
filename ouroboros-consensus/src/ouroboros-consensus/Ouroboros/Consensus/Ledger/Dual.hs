@@ -680,6 +680,36 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
         , vtx
         )
 
+  reapplyTx'
+    DualLedgerConfig{..}
+    slot
+    tx@ValidatedDualGenTx{..}
+    TickedDualLedgerState{..} = do
+      (main', aux') <-
+        agreeOnError
+          DualGenTxErr
+          ( reapplyTx'
+              dualLedgerConfigMain
+              slot
+              vDualGenTxMain
+              tickedDualLedgerStateMain
+          , reapplyTx'
+              dualLedgerConfigAux
+              slot
+              vDualGenTxAux
+              tickedDualLedgerStateAux
+          )
+      return $
+        TickedDualLedgerState
+          { tickedDualLedgerStateMain = main'
+          , tickedDualLedgerStateAux = aux'
+          , tickedDualLedgerStateBridge =
+              updateBridgeWithTx
+                tx
+                tickedDualLedgerStateBridge
+          , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
+          }
+
   reapplyTx
     DualLedgerConfig{..}
     slot
@@ -745,6 +775,9 @@ instance Bridge m a => TxLimits (DualBlock m a) where
 
   blockCapacityTxMeasure DualLedgerConfig{..} DualLedgerState{..} =
     blockCapacityTxMeasure dualLedgerConfigMain dualLedgerStateMain
+
+  blockCapacityTxMeasure' DualLedgerConfig{..} TickedDualLedgerState{..} =
+    blockCapacityTxMeasure' dualLedgerConfigMain tickedDualLedgerStateMain
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId
