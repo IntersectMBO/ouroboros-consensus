@@ -366,7 +366,9 @@ instance ToCBOR LeiosState where
       ]
 
 instance FromCBOR LeiosState where
-  fromCBOR = LeiosState <$> fromCBOR <*> fromCBOR
+  fromCBOR = do
+    enforceSize "LeiosState" 2
+    LeiosState <$> fromCBOR <*> fromCBOR
 
 tickChainDepStateLeios :: LeiosState -> WithOrigin SlotNo -> SlotNo -> LeiosState
 tickChainDepStateLeios leiosSt prevSlotNo currSlotNo =
