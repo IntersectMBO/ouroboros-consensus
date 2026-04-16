@@ -35,6 +35,7 @@ import qualified Data.Set as Set
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import Data.Word (Word16, Word64)
+import qualified Debug.Trace as Debug
 import LeiosDemoDb (LeiosDbHandle (..))
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
@@ -342,8 +343,8 @@ leiosFetchLogicIteration env offerings =
               Nothing -> error "impossible!"
               Just (_ebHash, txOffset) -> case Map.lookup point (Leios.missingEbTxs acc) of
                 Nothing -> error "impossible!"
-                Just v -> case IntMap.lookup txOffset v of
-                  Nothing -> error "impossible!"
+                Just txsByTxOffset -> case IntMap.lookup txOffset txsByTxOffset of
+                  Nothing -> Debug.trace (show (Leios.missingEbTxs acc, txsByTxOffset)) error "impossible!"
                   Just (_txHash, x) -> x
             accNew' =
               MkLeiosFetchDecisions $
