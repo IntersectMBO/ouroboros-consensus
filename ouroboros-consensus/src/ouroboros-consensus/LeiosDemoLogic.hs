@@ -35,7 +35,19 @@ import qualified Data.Set as Set
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import Data.Word (Word16, Word64)
-import LeiosDemoDb (LeiosDbHandle (..))
+import LeiosDemoDb
+  ( LeiosDbConnection
+  , LeiosDbHandle (..)
+  , leiosDbBatchRetrieveTxs
+  , leiosDbFilterMissingEbBodies
+  , leiosDbFilterMissingTxs
+  , leiosDbInsertEbBody
+  , leiosDbInsertEbPoint
+  , leiosDbInsertTxs
+  , leiosDbLookupEbBody
+  , leiosDbLookupEbPoint
+  )
+import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
   ( BytesSize
@@ -72,7 +84,7 @@ data SomeLeiosFetchContext m
   = MkSomeLeiosFetchContext !(LeiosFetchContext m)
 
 data LeiosFetchContext m = MkLeiosFetchContext
-  { leiosDb :: !(LeiosDbHandle m)
+  { leiosDbConn :: !(LeiosDbConnection m)
   , leiosEbBuffer :: !(MV.MVector (PrimState m) (TxHash, BytesSize))
   , leiosEbTxsBuffer :: !(MV.MVector (PrimState m) LeiosTx)
   }
@@ -85,8 +97,9 @@ newLeiosFetchContext leiosDb = do
   -- each LeiosFetch server calls this when it initializes
   leiosEbBuffer <- MV.new maxTxsPerEb
   leiosEbTxsBuffer <- MV.new maxTxsPerEb
+  leiosDbConn <- LeiosDb.open leiosDb -- TODO: cleanup resources
   pure
-    MkLeiosFetchContext{leiosDb, leiosEbBuffer, leiosEbTxsBuffer}
+    MkLeiosFetchContext{leiosDbConn, leiosEbBuffer, leiosEbTxsBuffer}
 
 -----
 
@@ -114,10 +127,10 @@ msgLeiosBlockRequest ::
   LeiosPoint ->
   m LeiosEb
 msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
-  let MkLeiosFetchContext{leiosDb = db, leiosEbBuffer = buf} = leiosContext
+  let MkLeiosFetchContext{leiosDbConn, leiosEbBuffer = buf} = leiosContext
   n <- traceException tracer TraceLeiosPeerDbException $ do
     -- get the EB items using new db
-    items <- leiosDbLookupEbBody db pointEbHash
+    items <- leiosDbLookupEbBody leiosDbConn pointEbHash
     let loop !i [] = pure i
         loop !i ((txHash, txBytesSize) : rest) = do
           MV.write buf i (txHash, txBytesSize)
@@ -134,7 +147,7 @@ msgLeiosBlockTxsRequest ::
   [(Word16, Word64)] ->
   m (V.Vector LeiosTx)
 msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
-  let MkLeiosFetchContext{leiosDb = db, leiosEbTxsBuffer = buf} = leiosContext
+  let MkLeiosFetchContext{leiosDbConn, leiosEbTxsBuffer = buf} = leiosContext
   do
     let idxs = map fst bitmaps
     let idxLimit = maxTxsPerEb `div` 64
@@ -153,7 +166,7 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
       txOffsets = unfoldr nextOffset bitmaps
   n <- do
     -- Use new db to batch retrieve transactions
-    results <- leiosDbBatchRetrieveTxs db point.pointEbHash txOffsets
+    results <- leiosDbBatchRetrieveTxs leiosDbConn point.pointEbHash txOffsets
     -- Process results and write to buffer
     -- REVIEW: why a mutable vector?
     let loop !i [] = pure i
@@ -206,7 +219,7 @@ emptyLeiosFetchDecisions = MkLeiosFetchDecisions Map.empty
 -- that have been acquired (possibly from other sources like forging).
 filterMissingWork ::
   IOLike m =>
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   LeiosOutstanding pid ->
   m (LeiosOutstanding pid)
 filterMissingWork db outstanding = do
@@ -475,7 +488,7 @@ nextLeiosFetchClientCommand ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   PeerId pid ->
   StrictTVar m (Seq LeiosFetchRequest) ->
   m
@@ -527,7 +540,7 @@ msgLeiosBlock ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   PeerId pid ->
   LeiosBlockRequest ->
   LeiosEb ->
@@ -644,7 +657,7 @@ msgLeiosBlockTxs ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   PeerId pid ->
   LeiosBlockTxsRequest ->
   V.Vector LeiosTx ->

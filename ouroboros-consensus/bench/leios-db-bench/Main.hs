@@ -6,7 +6,7 @@
 --
 -- The following three roles run concurrently against the same SQLite handle:
 --
--- * __Fetch logic__ (1 thread): 10 rounds of
+-- * __Fetch logic__ (1 thread): configurable rounds of
 --   'leiosDbFilterMissingEbBodies' + 'leiosDbFilterMissingTxs'.
 --
 -- * __Fetch clients__ (configurable, default 2 threads): each inserts 20 fresh
@@ -36,8 +36,17 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector as V
 import LeiosDemoDb
-  ( LeiosDbHandle (..)
+  ( LeiosDbConnection
+  , LeiosDbHandle (..)
+  , leiosDbBatchRetrieveTxs
+  , leiosDbFilterMissingEbBodies
+  , leiosDbFilterMissingTxs
+  , leiosDbInsertEbBody
+  , leiosDbInsertEbPoint
+  , leiosDbInsertTxs
+  , leiosDbLookupEbBody
   , newLeiosDBSQLite
+  , withLeiosDb
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -62,7 +71,9 @@ main = do
       , "  Total TXs         : " <> show (numPrePopulatedEbs * txsPerEb)
       , ""
       , "Concurrent workload per iteration:"
-      , "  Fetch logic   (×1): 10 rounds of filterMissingEbBodies (200+200) + filterMissingTxs (500+500)"
+      , "  Fetch logic   (×1): "
+          <> show numFetchLogicRounds
+          <> " rounds of filterMissingEbBodies (200+200) + filterMissingTxs (500+500)"
       , "  Fetch clients (×" <> show numFetchClients <> "): 20 insertEbPoint/insertEbBody/insertTxs each"
       , "  Fetch servers (×" <> show numFetchServers <> "): 30 lookupEbBody + 10 batchRetrieveTxs each"
       , ""
@@ -72,7 +83,6 @@ main = do
   withSystemTempDirectory "leios-db-bench" $ \tmpDir -> do
     env <- setupBenchEnv tmpDir
     runBench (benchConcurrentAll env)
-    leiosDbClose env.beDb
 
 -- * Configuration
 
@@ -86,11 +96,15 @@ txsPerEb = 200
 
 -- | Number of fetch client threads (writers that insert fresh EBs).
 numFetchClients :: Int
-numFetchClients = 2
+numFetchClients = 3
 
 -- | Number of fetch server threads (readers serving downstream peers).
 numFetchServers :: Int
-numFetchServers = 8
+numFetchServers = 3
+
+-- | Number of rounds the fetch logic thread performs per iteration.
+numFetchLogicRounds :: Int
+numFetchLogicRounds = 100
 
 -- | Timed repetitions (plus one warmup).
 numRuns :: Int
@@ -117,10 +131,11 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
 -- | Mirrors the fetch logic loop: filters for missing EB bodies and TXs.
 fetchLogic :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
 fetchLogic db points =
-  replicateM_ 10 $ do
-    _ <- leiosDbFilterMissingEbBodies db (existingPoints ++ missingPoints)
-    _ <- leiosDbFilterMissingTxs db (existingHashes ++ missingHashes)
-    pure ()
+  withLeiosDb db $ \c ->
+    replicateM_ numFetchLogicRounds $ do
+      _ <- leiosDbFilterMissingEbBodies c (existingPoints ++ missingPoints)
+      _ <- leiosDbFilterMissingTxs c (existingHashes ++ missingHashes)
+      pure ()
  where
   existingPoints = take 200 points
   missingPoints = [genPoint i | i <- [10_000 .. 10_199]]
@@ -129,13 +144,16 @@ fetchLogic db points =
 
 -- | Mirrors a fetch client: inserts fresh EBs with full TX payloads.
 fetchClient :: LeiosDbHandle IO -> [Int] -> IO ()
-fetchClient db range = forM_ range (insertOneEb db)
+fetchClient db range =
+  withLeiosDb db $ \c ->
+    forM_ range (insertOneEb c)
 
 -- | Mirrors a fetch server: looks up EB bodies and retrieves TX batches.
 fetchServer :: LeiosDbHandle IO -> [LeiosPoint] -> Int -> IO ()
-fetchServer db points i = do
-  forM_ ebPoints $ \p -> leiosDbLookupEbBody db p.pointEbHash
-  forM_ txPoints $ \p -> leiosDbBatchRetrieveTxs db p.pointEbHash sampleOffsets
+fetchServer db points i =
+  withLeiosDb db $ \c -> do
+    forM_ ebPoints $ \p -> leiosDbLookupEbBody c p.pointEbHash
+    forM_ txPoints $ \p -> leiosDbBatchRetrieveTxs c p.pointEbHash sampleOffsets
  where
   sampleOffsets = [0, 10 .. txsPerEb - 1]
   ebPoints = take 30 $ drop (i * 30) (cycle points)
@@ -159,7 +177,7 @@ setupBenchEnv tmpDir = do
   db <- newLeiosDBSQLite (tmpDir <> "/bench.db")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
-    insertOneEb db i
+    withLeiosDb db (`insertOneEb` i)
     when (i `mod` (numPrePopulatedEbs `div` 10) == numPrePopulatedEbs `div` 10 - 1) $
       putStr (show (i + 1) <> " ") >> hFlush stdout
   putStrLn "done"
@@ -203,8 +221,8 @@ showTime t
 -- * DB helpers
 
 -- | Insert one complete EB (point + body + all TXs) by index.
-insertOneEb :: LeiosDbHandle IO -> Int -> IO ()
-insertOneEb db ebIdx = do
+insertOneEb :: Monad m => LeiosDbConnection m -> Int -> m ()
+insertOneEb conn ebIdx = do
   let point = genPoint ebIdx
       eb = genEb ebIdx
       txs =
@@ -212,9 +230,9 @@ insertOneEb db ebIdx = do
         | txIdx <- [0 .. txsPerEb - 1]
         , let h = genTxHash ebIdx txIdx
         ]
-  leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-  leiosDbInsertEbBody db point eb
-  _ <- leiosDbInsertTxs db txs
+  leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
+  leiosDbInsertEbBody conn point eb
+  _ <- leiosDbInsertTxs conn txs
   pure ()
 
 -- * Deterministic data generation

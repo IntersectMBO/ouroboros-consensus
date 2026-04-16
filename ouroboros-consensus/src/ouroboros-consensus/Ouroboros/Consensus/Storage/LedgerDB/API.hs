@@ -173,6 +173,7 @@ import Data.Set (Set)
 import Data.Void (absurd)
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosDemoDb (LeiosDbConnection)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -242,6 +243,7 @@ data LedgerDB m l blk = LedgerDB
   -- We pass in the producer/consumer registry.
   , validateFork ::
       l ~ ExtLedgerState blk =>
+      LeiosDbConnection m ->
       ResourceRegistry m ->
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->

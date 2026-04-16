@@ -47,7 +47,8 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.SOP.Dict as Dict
 import Data.Word
-import LeiosDemoDb (newLeiosDBInMemory)
+import LeiosDemoDb (LeiosDbHandle, newLeiosDBInMemory)
+import qualified LeiosDemoDb as LeiosDb
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -112,7 +113,7 @@ prop_sequential ::
 prop_sequential maxSuccess mkTestArguments getLmdbDir fsOps as = QC.withMaxSuccess maxSuccess $
   QC.monadicIO $ do
     ref <- lift $ initialEnvironment fsOps getLmdbDir mkTestArguments =<< initChainDB
-    (_, Environment _ testInternals _ _ _ clean) <- runPropertyStateT (runActions as) ref
+    (_, Environment _ testInternals _ _ _ _ clean) <- runPropertyStateT (runActions as) ref
     QC.run $ closeLedgerDB testInternals >> clean
     QC.assert True
 
@@ -130,11 +131,13 @@ initialEnvironment ::
 initialEnvironment fsOps getLmdbDir mkTestArguments cdb = do
   (sfs, cleanupFS) <- fsOps
   (lmdbDir, cleanupLMDB) <- getLmdbDir
+  leiosDb <- newLeiosDBInMemory
   pure $
     Environment
       undefined
       (TestInternals undefined undefined undefined undefined undefined (pure ()))
       cdb
+      leiosDb
       (flip mkTestArguments lmdbDir)
       sfs
       (cleanupFS >> cleanupLMDB)
@@ -469,7 +472,6 @@ openLedgerDB flavArgs env cfg fs = do
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
   replayGoal <- fmap (realPointToPoint . last . Map.keys) . atomically $ readTVar (dbBlocks env)
   rr <- unsafeNewRegistry
-  leiosDb <- newLeiosDBInMemory
   let args =
         LedgerDbArgs
           (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots)
@@ -485,7 +487,6 @@ openLedgerDB flavArgs env cfg fs = do
     LedgerDbFlavorArgsV1 bss ->
       let initDb =
             V1.mkInitDb
-              leiosDb
               args
               bss
               getBlock
@@ -493,13 +494,14 @@ openLedgerDB flavArgs env cfg fs = do
     LedgerDbFlavorArgsV2 bss ->
       let initDb =
             V2.mkInitDb
-              leiosDb
               args
               bss
               getBlock
        in openDBInternal args initDb stream replayGoal
+  leiosDb <- newLeiosDBInMemory
   withRegistry $ \reg -> do
-    vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
+    leiosConn <- snd <$> allocate rr (const $ LeiosDb.open leiosDb) LeiosDb.close
+    vr <- validateFork ldb leiosConn reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
     case vr of
       ValidateSuccessful forker -> do
         atomically (forkerCommit forker)
@@ -517,34 +519,36 @@ data Environment
       (LedgerDB' IO TestBlock)
       (TestInternals' IO TestBlock)
       (ChainDB IO)
+      (LeiosDbHandle IO)
       (SecurityParam -> TestArguments IO)
       (SomeHasFS IO)
       (IO ())
 
 instance RunModel Model (StateT Environment IO) where
   perform _ (Init secParam) _ = do
-    Environment _ _ chainDb mkArgs fs cleanup <- get
+    Environment _ _ chainDb leiosDb mkArgs fs cleanup <- get
     (ldb, testInternals) <- lift $ do
       let args = mkArgs secParam
       openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs
-    put (Environment ldb testInternals chainDb mkArgs fs cleanup)
+    put (Environment ldb testInternals chainDb leiosDb mkArgs fs cleanup)
   perform _ WipeLedgerDB _ = do
-    Environment _ testInternals _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ <- get
     lift $ wipeLedgerDB testInternals
   perform _ GetState _ = do
-    Environment ldb _ _ _ _ _ <- get
+    Environment ldb _ _ _ _ _ _ <- get
     lift $ atomically $ (,) <$> getImmutableTip ldb <*> getVolatileTip ldb
   perform _ ForceTakeSnapshot _ = do
-    Environment _ testInternals _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ <- get
     lift $ takeSnapshotNOW testInternals TakeAtImmutableTip Nothing
   perform _ (ValidateAndCommit n blks) _ = do
-    Environment ldb _ chainDb _ _ _ <- get
+    Environment ldb _ chainDb leiosDb _ _ _ <- get
     lift $ do
       atomically $
         modifyTVar (dbBlocks chainDb) $
           repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) blks)
       withRegistry $ \rr -> do
-        vr <- validateFork ldb rr (const $ pure ()) BlockCache.empty n (map getHeader blks)
+        leiosConn <- snd <$> allocate rr (const $ LeiosDb.open leiosDb) LeiosDb.close
+        vr <- validateFork ldb leiosConn rr (const $ pure ()) BlockCache.empty n (map getHeader blks)
         case vr of
           ValidateSuccessful forker -> do
             atomically $ modifyTVar (dbChain chainDb) (reverse (map blockRealPoint blks) ++)
@@ -553,13 +557,13 @@ instance RunModel Model (StateT Environment IO) where
           ValidateExceededRollBack{} -> error "Unexpected Rollback"
           ValidateLedgerError (AnnLedgerError forker _ _) -> forkerClose forker >> error "Unexpected ledger error"
   perform state@(Model _ secParam) (DropAndRestore n) lk = do
-    Environment _ testInternals chainDb _ _ _ <- get
+    Environment _ testInternals chainDb _ _ _ _ <- get
     lift $ do
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
       closeLedgerDB testInternals
     perform state (Init secParam) lk
   perform _ TruncateSnapshots _ = do
-    Environment _ testInternals _ _ _ _ <- get
+    Environment _ testInternals _ _ _ _ _ <- get
     lift $ truncateSnapshots testInternals
   perform UnInit _ _ = error "Uninitialized model created a command different than Init"
 

@@ -34,7 +34,7 @@ import qualified Data.Set as Set
 import Data.Void
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb (LeiosDbConnection)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -75,12 +75,11 @@ mkInitDb ::
   , LedgerSupportsInMemoryLedgerDB blk
   , ResolveLeiosBlock blk
   ) =>
-  LeiosDbHandle m ->
   Complete LedgerDbArgs m blk ->
   Complete V2.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
   InitDB (LedgerSeq' m blk) m blk
-mkInitDb leiosDb args flavArgs getBlock =
+mkInitDb args flavArgs getBlock =
   InitDB
     { initFromGenesis = emptyF =<< lgrGenesis
     , initFromSnapshot =
@@ -116,7 +115,7 @@ mkInitDb leiosDb args flavArgs getBlock =
                 , ldbOpenHandlesLock = lock
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb leiosDb h bss
+        pure $ implMkLedgerDb h bss
     }
  where
   LedgerDbArgs
@@ -160,18 +159,17 @@ implMkLedgerDb ::
   , HasHardForkHistory blk
   , ResolveLeiosBlock blk
   ) =>
-  LeiosDbHandle m ->
   LedgerDBHandle m l blk ->
   HandleArgs ->
   (LedgerDB m l blk, TestInternals m l blk)
-implMkLedgerDb leiosDb h bss =
+implMkLedgerDb h bss =
   ( LedgerDB
       { getVolatileTip = getEnvSTM h implGetVolatileTip
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = \s -> getEnvSTM h (flip implGetPastLedgerState s)
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
       , getForkerAtTarget = newForkerAtTarget h
-      , validateFork = getEnv5 h (implValidate leiosDb h)
+      , validateFork = \leiosDb -> getEnv5 h (implValidate leiosDb h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnvSTM h (flip implGarbageCollect s)
       , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot bss)
@@ -316,7 +314,7 @@ implValidate ::
   , l ~ ExtLedgerState blk
   , ResolveLeiosBlock blk
   ) =>
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
   ResourceRegistry m ->

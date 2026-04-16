@@ -24,8 +24,20 @@ import qualified Data.Vector as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosFetchWork (..)
+  , leiosDbBatchRetrieveTxs
+  , leiosDbFilterMissingEbBodies
+  , leiosDbFilterMissingTxs
+  , leiosDbInsertEbBody
+  , leiosDbInsertEbPoint
+  , leiosDbInsertTxs
+  , leiosDbLookupEbBody
+  , leiosDbLookupEbPoint
+  , leiosDbQueryCompletedEbByPoint
+  , leiosDbQueryFetchWork
+  , leiosDbScanEbPoints
   , newLeiosDBInMemory
   , newLeiosDBSQLite
+  , withLeiosDb
   )
 import LeiosDemoTypes
   ( EbHash (..)
@@ -72,17 +84,14 @@ data DbImpl
 -- Ensures proper cleanup for SQLite databases.
 withFreshDb :: DbImpl -> (LeiosDbHandle IO -> IO a) -> IO a
 withFreshDb InMemory action =
-  bracket
-    newLeiosDBInMemory
-    leiosDbClose
-    action
+  newLeiosDBInMemory >>= action
 withFreshDb SQLite action = do
   sysTmp <- getCanonicalTemporaryDirectory
   bracket
     ( do
         tmpDir <- createTempDirectory sysTmp "leios-test"
         db <- newLeiosDBSQLite (tmpDir <> "/test.db")
-        pure (db, leiosDbClose db >> removeDirectoryRecursive tmpDir)
+        pure (db, removeDirectoryRecursive tmpDir)
     )
     snd
     (action . fst)
@@ -270,9 +279,9 @@ magnitudeBucket size
 prop_pointsInsertThenScan :: DbImpl -> Property
 prop_pointsInsertThenScan impl =
   forAll genPoint $ \point ->
-    ioProperty $ withFreshDb impl $ \db -> do
-      (_, insertTime) <- timed $ leiosDbInsertEbPoint db point 1000
-      (points, scanTime) <- timed $ leiosDbScanEbPoints db
+    ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+      (_, insertTime) <- timed $ leiosDbInsertEbPoint con point 1000
+      (points, scanTime) <- timed $ leiosDbScanEbPoints con
       pure $
         (point.pointSlotNo, point.pointEbHash) `elem` points
           & tabulate "insertEbPoint" [timeBucket insertTime]
@@ -282,9 +291,9 @@ prop_pointsInsertThenScan impl =
 prop_pointsInsertThenLookup :: DbImpl -> Property
 prop_pointsInsertThenLookup impl =
   forAll genPoint $ \point ->
-    ioProperty $ withFreshDb impl $ \db -> do
-      (_, insertTime) <- timed $ leiosDbInsertEbPoint db point 1000
-      (result, lookupTime) <- timed $ leiosDbLookupEbPoint db point.pointEbHash
+    ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+      (_, insertTime) <- timed $ leiosDbInsertEbPoint con point 1000
+      (result, lookupTime) <- timed $ leiosDbLookupEbPoint con point.pointEbHash
       pure $
         result === Just point.pointSlotNo
           & tabulate "insertEbPoint" [timeBucket insertTime]
@@ -294,8 +303,8 @@ prop_pointsInsertThenLookup impl =
 prop_pointsLookupMissing :: DbImpl -> Property
 prop_pointsLookupMissing impl =
   forAll genEbHash $ \missingHash ->
-    ioProperty $ withFreshDb impl $ \db -> do
-      (result, lookupTime) <- timed $ leiosDbLookupEbPoint db missingHash
+    ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+      (result, lookupTime) <- timed $ leiosDbLookupEbPoint con missingHash
       pure $
         result === Nothing
           & tabulate "lookupEbPoint (missing)" [timeBucket lookupTime]
@@ -305,10 +314,10 @@ prop_pointsAccumulate :: DbImpl -> Property
 prop_pointsAccumulate impl =
   forAllShrinkShow (chooseInt (1, 10)) shrink show $ \count ->
     forAll (replicateM count genPoint) $ \points ->
-      ioProperty $ withFreshDb impl $ \db -> do
+      ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
         insertTimes <- forM points $ \p ->
-          snd <$> timed (leiosDbInsertEbPoint db p 1000)
-        (scanned, scanTime) <- timed $ leiosDbScanEbPoints db
+          snd <$> timed (leiosDbInsertEbPoint con p 1000)
+        (scanned, scanTime) <- timed $ leiosDbScanEbPoints con
         let expected = [(p.pointSlotNo, p.pointEbHash) | p <- points]
         pure $
           all (`elem` scanned) expected
@@ -322,11 +331,11 @@ prop_ebsInsertThenLookup :: DbImpl -> Property
 prop_ebsInsertThenLookup impl =
   forAllShrinkShow (chooseInt (1, 50)) shrink show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
-      ioProperty $ withFreshDb impl $ \db -> do
+      ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
         let expectedTxs = V.toList (leiosEbTxs eb)
-        leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-        (_, insertTime) <- timed $ leiosDbInsertEbBody db point eb
-        (result, lookupTime) <- timed $ leiosDbLookupEbBody db point.pointEbHash
+        leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+        (_, insertTime) <- timed $ leiosDbInsertEbBody con point eb
+        (result, lookupTime) <- timed $ leiosDbLookupEbBody con point.pointEbHash
         pure $
           result == expectedTxs
             & counterexample ("Expected: " ++ show expectedTxs ++ "\nGot: " ++ show result)
@@ -337,8 +346,8 @@ prop_ebsInsertThenLookup impl =
 prop_ebsLookupMissing :: DbImpl -> Property
 prop_ebsLookupMissing impl =
   forAll genEbHash $ \missingHash ->
-    ioProperty $ withFreshDb impl $ \db -> do
-      (result, lookupTime) <- timed $ leiosDbLookupEbBody db missingHash
+    ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+      (result, lookupTime) <- timed $ leiosDbLookupEbBody con missingHash
       pure $
         result === []
           & tabulate "lookupEbBody (missing)" [timeBucket lookupTime]
@@ -353,10 +362,10 @@ prop_txsInsertThenRetrieve impl =
   forAllShrinkShow (chooseInt (1, 50)) shrink show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       forAllBlind (sublistOf [0 .. numTxs - 1]) $ \offsetsToInsert ->
-        ioProperty $ withFreshDb impl $ \db -> do
+        ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
           -- Insert the EB first (point then body)
-          leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-          leiosDbInsertEbBody db point eb
+          leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+          leiosDbInsertEbBody con point eb
           -- Get the txHashes from the EB for the offsets we want to insert
           let ebTxList = V.toList (leiosEbTxs eb)
               !txsToInsert =
@@ -367,10 +376,10 @@ prop_txsInsertThenRetrieve impl =
                   , let txBytes = BS.pack [fromIntegral off, 1, 2, 3] -- deterministic test bytes
                   ]
           -- Insert txs into global txs table
-          insertTime <- snd <$> timed (leiosDbInsertTxs db txsToInsert)
+          insertTime <- snd <$> timed (leiosDbInsertTxs con txsToInsert)
           -- Retrieve all offsets
           let allOffsets = [0 .. numTxs - 1]
-          (results, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs db point.pointEbHash allOffsets
+          (results, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs con point.pointEbHash allOffsets
           -- Check that inserted txs have bytes, others don't
           let checkResult (off, _txHash, mBytes) =
                 if off `elem` offsetsToInsert
@@ -400,8 +409,8 @@ prop_txsInsertThenRetrieve impl =
 prop_txsRetrieveMissing :: DbImpl -> Property
 prop_txsRetrieveMissing impl =
   forAll genEbHash $ \missingHash ->
-    ioProperty $ withFreshDb impl $ \db -> do
-      (result, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs db missingHash [0, 1, 2]
+    ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+      (result, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs con missingHash [0, 1, 2]
       pure $
         result === []
           & tabulate "batchRetrieveTxs (missing)" [timeBucket retrieveTime]
@@ -414,8 +423,9 @@ test_singleSubscriber db = do
   chan <- subscribeEbNotifications db
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3
-  leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-  leiosDbInsertEbBody db point eb
+  withLeiosDb db $ \con -> do
+    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbBody con point eb
   notification <- atomically $ readTChan chan
   case notification of
     LeiosOfferBlock notifPoint _ ->
@@ -431,8 +441,9 @@ test_multipleSubscribers db = do
   chan3 <- subscribeEbNotifications db
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 5
-  leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-  leiosDbInsertEbBody db point eb
+  withLeiosDb db $ \con -> do
+    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbBody con point eb
   -- All subscribers should receive the notification
   notif1 <- atomically $ readTChan chan1
   notif2 <- atomically $ readTChan chan2
@@ -448,8 +459,9 @@ test_correctData db = do
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 10
       expectedSize = leiosEbBytesSize eb
-  leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-  leiosDbInsertEbBody db point eb
+  withLeiosDb db $ \con -> do
+    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbBody con point eb
   notification <- atomically $ readTChan chan
   case notification of
     LeiosOfferBlock notifPoint notifSize -> do
@@ -466,8 +478,9 @@ test_lateSubscriber db = do
   -- Insert before subscribing
   let point1 = mkTestPoint (SlotNo 1) 1
       eb1 = mkTestEb 2
-  leiosDbInsertEbPoint db point1 (leiosEbBytesSize eb1)
-  leiosDbInsertEbBody db point1 eb1
+  withLeiosDb db $ \con -> do
+    leiosDbInsertEbPoint con point1 (leiosEbBytesSize eb1)
+    leiosDbInsertEbBody con point1 eb1
   -- Now subscribe
   chan <- subscribeEbNotifications db
   -- The channel should be empty (no past notifications)
@@ -478,8 +491,9 @@ test_lateSubscriber db = do
   -- But new insertions should be received
   let point2 = mkTestPoint (SlotNo 2) 2
       eb2 = mkTestEb 3
-  leiosDbInsertEbPoint db point2 (leiosEbBytesSize eb2)
-  leiosDbInsertEbBody db point2 eb2
+  withLeiosDb db $ \con -> do
+    leiosDbInsertEbPoint con point2 (leiosEbBytesSize eb2)
+    leiosDbInsertEbBody con point2 eb2
   notification <- atomically $ readTChan chan
   assertOfferBlock point2 notification
 
@@ -493,9 +507,10 @@ test_multipleNotifications db = do
         ]
       ebs = [mkTestEb i | i <- [1 .. 5]]
   -- Insert all (point then body for each)
-  forM_ (zip points ebs) $ \(point, eb) -> do
-    leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-    leiosDbInsertEbBody db point eb
+  withLeiosDb db $ \con ->
+    forM_ (zip points ebs) $ \(point, eb) -> do
+      leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+      leiosDbInsertEbBody con point eb
   -- Read all notifications and verify order
   notifications <- replicateM 5 (atomically $ readTChan chan)
   mapM_
@@ -510,21 +525,22 @@ test_noOfferBlockTxsBeforeComplete db = do
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3 -- 3 transactions
       ebTxList = V.toList (leiosEbTxs eb)
-  leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-  leiosDbInsertEbBody db point eb
-  -- Consume the LeiosOfferBlock notification
-  _ <- atomically $ readTChan chan
-  -- Insert only 2 of 3 txs (by txHash)
-  let txsToInsert =
-        [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
-        | (i, (txHash, _size)) <- zip [0 :: Int, 1] ebTxList
-        ]
-  _ <- leiosDbInsertTxs db txsToInsert
-  -- No LeiosOfferBlockTxs notification should be available
-  maybeNotif <- atomically $ tryReadTChan chan
-  case maybeNotif of
-    Nothing -> pure ()
-    Just _ -> assertFailure "should not notify before all txs are inserted"
+  withLeiosDb db $ \con -> do
+    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbBody con point eb
+    -- Consume the LeiosOfferBlock notification
+    _ <- atomically $ readTChan chan
+    -- Insert only 2 of 3 txs (by txHash)
+    let txsToInsert =
+          [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
+          | (i, (txHash, _size)) <- zip [0 :: Int, 1] ebTxList
+          ]
+    _ <- leiosDbInsertTxs con txsToInsert
+    -- No LeiosOfferBlockTxs notification should be available
+    maybeNotif <- atomically $ tryReadTChan chan
+    case maybeNotif of
+      Nothing -> pure ()
+      Just _ -> assertFailure "should not notify before all txs are inserted"
 
 -- | Test that a LeiosOfferBlockTxs notification is produced when all
 -- transactions are inserted via leiosDbInsertTxs.
@@ -534,28 +550,29 @@ test_offerBlockTxs db = do
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3 -- 3 transactions
       ebTxList = V.toList (leiosEbTxs eb)
-  -- Insert the EB (point then body)
-  leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-  leiosDbInsertEbBody db point eb
-  -- Consume the LeiosOfferBlock notification
-  _ <- atomically $ readTChan chan
-  -- Insert all txs (by txHash)
-  let txsToInsert =
-        [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
-        | (i, (txHash, _size)) <- zip [0 :: Int ..] ebTxList
-        ]
-  _ <- leiosDbInsertTxs db txsToInsert
-  -- FIXME: blocks forever if impl not working
-  notification <- atomically $ readTChan chan
-  assertOfferBlockTxs point notification
+  withLeiosDb db $ \con -> do
+    -- Insert the EB (point then body)
+    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbBody con point eb
+    -- Consume the LeiosOfferBlock notification
+    _ <- atomically $ readTChan chan
+    -- Insert all txs (by txHash)
+    let txsToInsert =
+          [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
+          | (i, (txHash, _size)) <- zip [0 :: Int ..] ebTxList
+          ]
+    _ <- leiosDbInsertTxs con txsToInsert
+    -- FIXME: blocks forever if impl not working
+    notification <- atomically $ readTChan chan
+    assertOfferBlockTxs point notification
 
 -- * Property tests for queryFetchWork
 
 -- | Property: empty database returns empty fetch work.
 prop_fetchWorkEmpty :: DbImpl -> Property
 prop_fetchWorkEmpty impl =
-  ioProperty $ withFreshDb impl $ \db -> do
-    (work, queryTime) <- timed $ leiosDbQueryFetchWork db
+  ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+    (work, queryTime) <- timed $ leiosDbQueryFetchWork con
     pure $
       conjoin
         [ missingEbBodies work === Map.empty
@@ -570,46 +587,50 @@ prop_fetchWorkMissingBodies :: DbImpl -> Property
 prop_fetchWorkMissingBodies impl =
   forAllShrinkShow (chooseInt (1, 10)) shrink show $ \count ->
     forAll (replicateM count genPoint) $ \points ->
-      ioProperty $ withFreshDb impl $ \db -> do
-        -- Insert points without bodies
-        forM_ points $ \p -> leiosDbInsertEbPoint db p 1000
-        (work, queryTime) <- timed $ leiosDbQueryFetchWork db
-        let expectedMap = Map.fromList [(p, 1000) | p <- points]
-        pure $
-          missingEbBodies work === expectedMap
-            & counterexample ("Expected: " ++ show expectedMap)
-            & counterexample ("Got: " ++ show (missingEbBodies work))
-            & tabulate "queryFetchWork (missing bodies)" [timeBucket queryTime]
-            & tabulate "numPoints" [magnitudeBucket count]
+      ioProperty $
+        withFreshDb impl $ \db ->
+          withLeiosDb db $ \con -> do
+            -- Insert points without bodies
+            forM_ points $ \p -> leiosDbInsertEbPoint con p 1000
+            (work, queryTime) <- timed $ leiosDbQueryFetchWork con
+            let expectedMap = Map.fromList [(p, 1000) | p <- points]
+            pure $
+              missingEbBodies work === expectedMap
+                & counterexample ("Expected: " ++ show expectedMap)
+                & counterexample ("Got: " ++ show (missingEbBodies work))
+                & tabulate "queryFetchWork (missing bodies)" [timeBucket queryTime]
+                & tabulate "numPoints" [magnitudeBucket count]
 
 -- | Property: EBs with bodies but missing TXs are reported.
 prop_fetchWorkMissingTxs :: DbImpl -> Property
 prop_fetchWorkMissingTxs impl =
   forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
-      ioProperty $ withFreshDb impl $ \db -> do
-        -- Insert point and body, but no txs
-        leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-        leiosDbInsertEbBody db point eb
-        (work, queryTime) <- timed $ leiosDbQueryFetchWork db
-        let expectedTxCount = numTxs
-        pure $
-          conjoin
-            [ -- Should have no missing bodies (we inserted the body)
-              missingEbBodies work === Map.empty
-                & counterexample "Should have no missing bodies"
-            , -- Should have the EB with missing TXs
-              Map.size (missingEbTxs work) === 1
-                & counterexample ("Expected 1 EB with missing TXs, got: " ++ show (Map.size $ missingEbTxs work))
-            , -- The missing TX count should match
-              case Map.toList (missingEbTxs work) of
-                [(_, txs)] ->
-                  length txs === expectedTxCount
-                    & counterexample ("Expected " ++ show expectedTxCount ++ " missing TXs, got: " ++ show (length txs))
-                _ -> False & counterexample "Unexpected missing TXs structure"
-            ]
-            & tabulate "queryFetchWork (missing txs)" [timeBucket queryTime]
-            & tabulate "numTxs" [magnitudeBucket numTxs]
+      ioProperty $
+        withFreshDb impl $ \db ->
+          withLeiosDb db $ \con -> do
+            -- Insert point and body, but no txs
+            leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+            leiosDbInsertEbBody con point eb
+            (work, queryTime) <- timed $ leiosDbQueryFetchWork con
+            let expectedTxCount = numTxs
+            pure $
+              conjoin
+                [ -- Should have no missing bodies (we inserted the body)
+                  missingEbBodies work === Map.empty
+                    & counterexample "Should have no missing bodies"
+                , -- Should have the EB with missing TXs
+                  Map.size (missingEbTxs work) === 1
+                    & counterexample ("Expected 1 EB with missing TXs, got: " ++ show (Map.size $ missingEbTxs work))
+                , -- The missing TX count should match
+                  case Map.toList (missingEbTxs work) of
+                    [(_, txs)] ->
+                      length txs === expectedTxCount
+                        & counterexample ("Expected " ++ show expectedTxCount ++ " missing TXs, got: " ++ show (length txs))
+                    _ -> False & counterexample "Unexpected missing TXs structure"
+                ]
+                & tabulate "queryFetchWork (missing txs)" [timeBucket queryTime]
+                & tabulate "numTxs" [magnitudeBucket numTxs]
 
 -- | Property: EBs with all TXs present have no missing TXs.
 prop_fetchWorkCompleteTxs :: DbImpl -> Property
@@ -617,28 +638,30 @@ prop_fetchWorkCompleteTxs impl =
   forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       forAllBlind genTxBytes $ \baseTxBytes ->
-        ioProperty $ withFreshDb impl $ \db -> do
-          -- Insert point, body, and all txs
-          leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-          leiosDbInsertEbBody db point eb
-          let ebTxList = V.toList (leiosEbTxs eb)
-              txsToInsert =
-                [ (txHash, baseTxBytes)
-                | (txHash, _size) <- ebTxList
-                ]
-          _ <- leiosDbInsertTxs db txsToInsert
-          (work, queryTime) <- timed $ leiosDbQueryFetchWork db
-          pure $
-            conjoin
-              [ -- Should have no missing bodies
-                missingEbBodies work === Map.empty
-                  & counterexample "Should have no missing bodies"
-              , -- Should have no missing TXs
-                missingEbTxs work === Map.empty
-                  & counterexample ("Should have no missing TXs, got: " ++ show (missingEbTxs work))
-              ]
-              & tabulate "queryFetchWork (complete)" [timeBucket queryTime]
-              & tabulate "numTxs" [magnitudeBucket numTxs]
+        ioProperty $
+          withFreshDb impl $ \db ->
+            withLeiosDb db $ \con -> do
+              -- Insert point, body, and all txs
+              leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+              leiosDbInsertEbBody con point eb
+              let ebTxList = V.toList (leiosEbTxs eb)
+                  txsToInsert =
+                    [ (txHash, baseTxBytes)
+                    | (txHash, _size) <- ebTxList
+                    ]
+              _ <- leiosDbInsertTxs con txsToInsert
+              (work, queryTime) <- timed $ leiosDbQueryFetchWork con
+              pure $
+                conjoin
+                  [ -- Should have no missing bodies
+                    missingEbBodies work === Map.empty
+                      & counterexample "Should have no missing bodies"
+                  , -- Should have no missing TXs
+                    missingEbTxs work === Map.empty
+                      & counterexample ("Should have no missing TXs, got: " ++ show (missingEbTxs work))
+                  ]
+                  & tabulate "queryFetchWork (complete)" [timeBucket queryTime]
+                  & tabulate "numTxs" [magnitudeBucket numTxs]
 
 -- * Test utilities
 
@@ -662,9 +685,9 @@ assertOfferBlockTxs expectedPoint = \case
 
 -- | Property: filtering empty list returns empty list.
 prop_filterEbBodiesEmpty :: DbImpl -> Property
-prop_filterEbBodiesEmpty impl = ioProperty $
-  withFreshDb impl $ \db -> do
-    result <- leiosDbFilterMissingEbBodies db []
+prop_filterEbBodiesEmpty impl =
+  ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+    result <- leiosDbFilterMissingEbBodies con []
     pure $ result === []
 
 -- | Property: filter returns exactly the EBs whose bodies are missing.
@@ -674,35 +697,36 @@ prop_filterEbBodiesCorrect impl =
     forAll (replicateM numEbs (genPointAndEb 5)) $ \pointsAndEbs ->
       forAllBlind (sublistOf pointsAndEbs) $ \toInsert ->
         ioProperty $
-          withFreshDb impl $ \db -> do
-            -- Insert some EBs (those in toInsert will have bodies)
-            forM_ toInsert $ \(point, eb) -> do
-              leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-              leiosDbInsertEbBody db point eb
-            -- Also insert points without bodies for the rest
-            let withoutBodies = filter (`notElem` toInsert) pointsAndEbs
-            forM_ withoutBodies $ \(point, eb) ->
-              leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-            -- Filter should return the ones WITHOUT bodies
-            let allPoints = [p | (p, _) <- pointsAndEbs]
-                expectedMissing = [p | (p, _) <- withoutBodies]
-            (result, filterTime) <- timed $ leiosDbFilterMissingEbBodies db allPoints
-            pure $
-              conjoin
-                [ length result === length expectedMissing
-                , all (`elem` expectedMissing) result === True
-                , all (`elem` result) expectedMissing === True
-                ]
-                & tabulate "filterMissingEbBodies" [timeBucket filterTime]
-                & tabulate "numEbs" [magnitudeBucket numEbs]
+          withFreshDb impl $ \db ->
+            withLeiosDb db $ \con -> do
+              -- Insert some EBs (those in toInsert will have bodies)
+              forM_ toInsert $ \(point, eb) -> do
+                leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+                leiosDbInsertEbBody con point eb
+              -- Also insert points without bodies for the rest
+              let withoutBodies = filter (`notElem` toInsert) pointsAndEbs
+              forM_ withoutBodies $ \(point, eb) ->
+                leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+              -- Filter should return the ones WITHOUT bodies
+              let allPoints = [p | (p, _) <- pointsAndEbs]
+                  expectedMissing = [p | (p, _) <- withoutBodies]
+              (result, filterTime) <- timed $ leiosDbFilterMissingEbBodies con allPoints
+              pure $
+                conjoin
+                  [ length result === length expectedMissing
+                  , all (`elem` expectedMissing) result === True
+                  , all (`elem` result) expectedMissing === True
+                  ]
+                  & tabulate "filterMissingEbBodies" [timeBucket filterTime]
+                  & tabulate "numEbs" [magnitudeBucket numEbs]
 
 -- * Property tests for filterMissingTxs
 
 -- | Property: filtering empty list returns empty list.
 prop_filterTxsEmpty :: DbImpl -> Property
-prop_filterTxsEmpty impl = ioProperty $
-  withFreshDb impl $ \db -> do
-    result <- leiosDbFilterMissingTxs db []
+prop_filterTxsEmpty impl =
+  ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+    result <- leiosDbFilterMissingTxs con []
     pure $ result === []
 
 -- | Property: filter returns exactly the TXs we do NOT have.
@@ -711,22 +735,21 @@ prop_filterTxsCorrect impl =
   forAll (chooseInt (1, 50)) $ \numTxs ->
     forAllBlind (replicateM numTxs genTxHash) $ \txHashes ->
       forAllBlind (sublistOf txHashes) $ \toInsert ->
-        ioProperty $
-          withFreshDb impl $ \db -> do
-            -- Insert some TXs
-            forM_ toInsert $ \txHash ->
-              leiosDbInsertTxs db [(txHash, maxTxBytesZero)]
-            -- Filter should return the ones NOT inserted
-            let expectedMissing = filter (`notElem` toInsert) txHashes
-            (result, filterTime) <- timed $ leiosDbFilterMissingTxs db txHashes
-            pure $
-              conjoin
-                [ length result === length expectedMissing
-                , all (`elem` expectedMissing) result === True
-                , all (`elem` result) expectedMissing === True
-                ]
-                & tabulate "filterMissingTxs" [timeBucket filterTime]
-                & tabulate "numTxs" [magnitudeBucket numTxs]
+        ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+          -- Insert some TXs
+          forM_ toInsert $ \txHash ->
+            leiosDbInsertTxs con [(txHash, maxTxBytesZero)]
+          -- Filter should return the ones NOT inserted
+          let expectedMissing = filter (`notElem` toInsert) txHashes
+          (result, filterTime) <- timed $ leiosDbFilterMissingTxs con txHashes
+          pure $
+            conjoin
+              [ length result === length expectedMissing
+              , all (`elem` expectedMissing) result === True
+              , all (`elem` result) expectedMissing === True
+              ]
+              & tabulate "filterMissingTxs" [timeBucket filterTime]
+              & tabulate "numTxs" [magnitudeBucket numTxs]
 
 -- * Property tests for queryCompletedEbByPoint
 
@@ -736,13 +759,13 @@ prop_completedEbComplete impl =
   forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       forAllBlind genTxBytes $ \txBytes ->
-        ioProperty $ withFreshDb impl $ \db -> do
-          leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-          leiosDbInsertEbBody db point eb
+        ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+          leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+          leiosDbInsertEbBody con point eb
           let ebTxList = V.toList (leiosEbTxs eb)
               txsToInsert = [(txHash, txBytes) | (txHash, _size) <- ebTxList]
-          _ <- leiosDbInsertTxs db txsToInsert
-          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint db point
+          _ <- leiosDbInsertTxs con txsToInsert
+          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
           let expectedHashes = map fst txsToInsert
               check = case result of
                 Nothing ->
@@ -766,10 +789,10 @@ prop_completedEbMissingTxs :: DbImpl -> Property
 prop_completedEbMissingTxs impl =
   forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
-      ioProperty $ withFreshDb impl $ \db -> do
-        leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-        leiosDbInsertEbBody db point eb
-        (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint db point
+      ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+        leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+        leiosDbInsertEbBody con point eb
+        (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
         pure $
           result === Nothing
             & counterexample "Expected Nothing when no txs are present"
@@ -782,15 +805,15 @@ prop_completedEbPartialTxs impl =
   forAllShrinkShow (chooseInt (2, 20)) shrink show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       forAllBlind genTxBytes $ \txBytes ->
-        ioProperty $ withFreshDb impl $ \db -> do
-          leiosDbInsertEbPoint db point (leiosEbBytesSize eb)
-          leiosDbInsertEbBody db point eb
+        ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+          leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+          leiosDbInsertEbBody con point eb
           -- Insert only the first half of txs, leaving at least one missing
           let ebTxList = V.toList (leiosEbTxs eb)
               partialTxs = take (numTxs `div` 2) ebTxList
               txsToInsert = [(txHash, txBytes) | (txHash, _size) <- partialTxs]
-          _ <- leiosDbInsertTxs db txsToInsert
-          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint db point
+          _ <- leiosDbInsertTxs con txsToInsert
+          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
           pure $
             result === Nothing
               & counterexample
@@ -807,9 +830,9 @@ prop_completedEbPartialTxs impl =
 prop_completedEbNoBody :: DbImpl -> Property
 prop_completedEbNoBody impl =
   forAll genPoint $ \point ->
-    ioProperty $ withFreshDb impl $ \db -> do
-      leiosDbInsertEbPoint db point 1000
-      (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint db point
+    ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
+      leiosDbInsertEbPoint con point 1000
+      (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
       pure $
         result === Nothing
           & counterexample "Expected Nothing for EB with no body inserted"

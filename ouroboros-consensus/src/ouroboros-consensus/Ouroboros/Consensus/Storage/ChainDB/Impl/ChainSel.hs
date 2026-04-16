@@ -43,6 +43,7 @@ import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
+import LeiosDemoDb (LeiosDbConnection)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
@@ -115,6 +116,7 @@ initialChainSelection ::
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   ) =>
+  LeiosDbConnection m ->
   ImmutableDB m blk ->
   VolatileDB m blk ->
   LedgerDB.LedgerDB' m blk ->
@@ -125,6 +127,7 @@ initialChainSelection ::
   LoE () ->
   m (ChainAndLedger m blk)
 initialChainSelection
+  leiosDb
   immutableDB
   volatileDB
   lgrDB
@@ -270,7 +273,8 @@ initialChainSelection
         varTentativeHeader <- newTVarIO SNothing
         pure
           ChainSelEnv
-            { lgrDB
+            { leiosDb
+            , lgrDB
             , bcfg
             , varInvalid
             , blockCache = BlockCache.empty
@@ -345,6 +349,7 @@ chainSelSync ::
   , HasHardForkHistory blk
   , HasCallStack
   ) =>
+  LeiosDbConnection m ->
   ChainDbEnv m blk ->
   ChainSelMessage m blk ->
   Electric m ()
@@ -362,7 +367,7 @@ chainSelSync ::
 -- Note that we do this even when we are caught-up, as we might want to select
 -- blocks that were originally postponed by the LoE, but can be adopted once we
 -- conclude that we are caught-up (and hence are longer bound by the LoE).
-chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
+chainSelSync leiosDb cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
   (succsOf, chain) <- lift $ atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
     (,)
@@ -381,9 +386,9 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
         _ -> VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
   loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
   for_ loeHeaders $ \hdr ->
-    chainSelectionForBlock cdb BlockCache.empty hdr noPunishment
+    chainSelectionForBlock leiosDb cdb BlockCache.empty hdr noPunishment
   lift $ atomically $ putTMVar varProcessed ()
-chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
+chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   (isMember, invalid, curChain) <-
     lift $
       atomically $
@@ -421,7 +426,7 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
+        chainSelectionForBlock leiosDb cdb (BlockCache.singleton b) hdr blockPunish
 
   newTip <- lift $ atomically $ Query.getTipPoint cdb
 
@@ -527,12 +532,13 @@ chainSelectionForBlock ::
   , HasHardForkHistory blk
   , HasCallStack
   ) =>
+  LeiosDbConnection m ->
   ChainDbEnv m blk ->
   BlockCache blk ->
   Header blk ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
+chainSelectionForBlock leiosDb cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
   (invalid, succsOf, lookupBlockInfo, curChain, tipPoint) <-
     atomically $
       (,,,,)
@@ -638,7 +644,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
   mkChainSelEnv :: ChainAndLedger m blk -> ChainSelEnv m blk
   mkChainSelEnv curChainAndLedger =
     ChainSelEnv
-      { lgrDB = cdbLedgerDB
+      { leiosDb = leiosDb
+      , lgrDB = cdbLedgerDB
       , bcfg = configBlock cdbTopLevelConfig
       , varInvalid = cdbInvalid
       , varTentativeState = cdbTentativeState
@@ -1021,7 +1028,8 @@ getKnownHeaderThroughCache volatileDB hash =
 
 -- | Environment used by 'chainSelection' and related functions.
 data ChainSelEnv m blk = ChainSelEnv
-  { lgrDB :: LedgerDB.LedgerDB' m blk
+  { leiosDb :: LeiosDbConnection m
+  , lgrDB :: LedgerDB.LedgerDB' m blk
   , validationTracer :: Tracer m (TraceValidationEvent blk)
   , pipeliningTracer :: Tracer m (TracePipeliningEvent blk)
   , bcfg :: BlockConfig blk
@@ -1255,7 +1263,7 @@ ledgerValidateCandidate ::
   ChainDiff (Header blk) ->
   m (ValidatedChainDiff (Header blk) (Forker' m blk))
 ledgerValidateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
-  LedgerDB.validateFork lgrDB rr traceUpdate blockCache rollback newBlocks >>= \case
+  LedgerDB.validateFork lgrDB leiosDb rr traceUpdate blockCache rollback newBlocks >>= \case
     ValidateExceededRollBack{} ->
       -- Impossible: we asked the LedgerDB to roll back past the immutable
       -- tip, which is impossible, since the candidates we construct must
@@ -1299,7 +1307,8 @@ ledgerValidateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
       ValidatedDiff.newM chainDiff ledger'
  where
   ChainSelEnv
-    { lgrDB
+    { leiosDb
+    , lgrDB
     , validationTracer
     , blockCache
     , varInvalid

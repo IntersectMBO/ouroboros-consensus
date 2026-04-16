@@ -73,7 +73,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb (LeiosDbConnection)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -272,7 +272,7 @@ validate ::
   , HasCallStack
   , ResolveLeiosBlock blk
   ) =>
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   ComputeLedgerEvents ->
   ValidateArgs m blk ->
   m (ValidateResult' m blk)
@@ -350,7 +350,7 @@ validate leiosDb evs args = do
 -- new blocks.
 switch ::
   (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
-  LeiosDbHandle bm ->
+  LeiosDbConnection bm ->
   (ResourceRegistry bm -> Word64 -> bm (Either GetForkerError (Forker bm l blk))) ->
   ResourceRegistry bm ->
   ComputeLedgerEvents ->
@@ -433,7 +433,8 @@ toRealPoint (Weaken ap) = toRealPoint ap
 
 class ResolveLeiosBlock blk where
   resolveLeiosBlock ::
-    (IsLedger (ExtLedgerState blk), Monad m) => LeiosDbHandle m -> ExtLedgerState blk mk -> blk -> m blk
+    (IsLedger (ExtLedgerState blk), Monad m) =>
+    LeiosDbConnection m -> ExtLedgerState blk mk -> blk -> m blk
   resolveLeiosBlock _ _ blk = return blk
 
 -- | Apply blocks to the given forker
@@ -446,7 +447,7 @@ applyBlock ::
   , ResolveLeiosBlock blk
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbHandle bm ->
+  LeiosDbConnection bm ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap bm m l blk c ->
@@ -484,7 +485,7 @@ applyBlock leiosDb evs cfg ap fo = case ap of
 -- this sometimes can throw ledger errors.
 applyThenPush ::
   (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
-  LeiosDbHandle bm ->
+  LeiosDbConnection bm ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap bm m l blk c ->
@@ -497,7 +498,7 @@ applyThenPush leiosDb evs cfg ap fo =
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
   (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
-  LeiosDbHandle bm ->
+  LeiosDbConnection bm ->
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
   LedgerCfg l ->

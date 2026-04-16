@@ -53,7 +53,7 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb (LeiosDbConnection (..), LeiosDbHandle (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
@@ -169,7 +169,6 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
     (lgrDB, replayed) <-
       LedgerDB.openDB
-        leiosDb
         argsLgrDb
         (ImmutableDB.streamAPI immutableDB)
         immutableDbTipPoint
@@ -183,8 +182,10 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     chain <- withRegistry $ \rr -> do
+      (_, leiosConn) <- allocate rr (const $ open leiosDb) close
       chainAndLedger <-
         ChainSel.initialChainSelection
+          leiosConn
           immutableDB
           volatileDB
           lgrDB
@@ -290,7 +291,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
             , intGarbageCollect = getEnv1 h Background.garbageCollect
             , intTryTakeSnapshot = getEnv h $ \env' ->
                 void $ LedgerDB.tryTakeSnapshot (cdbLedgerDB env') Nothing maxBound
-            , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
+            , intAddBlockRunner = getEnv h (Background.addBlockRunner leiosDb addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
             }
 
@@ -300,7 +301,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env replayed
+    when launchBgTasks $ Background.launchBgTasks leiosDb env replayed
 
     return (chainDB, testing, env)
 

@@ -26,7 +26,7 @@ import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import LeiosDemoDb (newLeiosDBInMemory)
+import qualified LeiosDemoDb as LeiosDb
 import Network.TypedProtocol.Stateful.Proofs (connect)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -226,7 +226,7 @@ initLedgerDB ::
 initLedgerDB s c = do
   reg <- unsafeNewRegistry
   fs <- newTMVarIO MockFS.empty
-  leiosDb <- newLeiosDBInMemory
+  leiosDb <- LeiosDb.newLeiosDBInMemory
   let args =
         LedgerDbArgs
           { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
@@ -239,10 +239,10 @@ initLedgerDB s c = do
           , lgrRegistry = reg
           , lgrStartSnapshot = Nothing
           }
+  leiosConn <- LeiosDb.open leiosDb
   ldb <-
     fst
       <$> LedgerDB.openDB
-        leiosDb
         args
         streamAPI
         (Chain.headPoint c)
@@ -251,6 +251,7 @@ initLedgerDB s c = do
   result <-
     LedgerDB.validateFork
       ldb
+      leiosConn
       reg
       (const $ pure ())
       BlockCache.empty
