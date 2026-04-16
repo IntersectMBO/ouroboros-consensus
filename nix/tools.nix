@@ -49,14 +49,20 @@ in
   };
   set-git-rev = drv:
     let
-      patched-drv = final.applyPatches {
-        name = "${drv.name}-with-git-rev";
-        src = drv;
-        postPatch = ''
-          ${final.haskellBuildUtils}/bin/set-git-rev \
-            ${lib.escapeShellArg inputs.self.rev} bin/*
-        '';
-      };
+      patched-drv = final.buildPackages.runCommand "${drv.name}-with-git-rev" {
+        inherit (drv) meta passthru;
+        nativeBuildInputs = lib.optionals final.stdenv.hostPlatform.isDarwin
+          [ final.darwin.signingUtils ];
+      } (''
+        mkdir -p $out
+        cp --no-preserve=timestamps --recursive ${drv}/* $out/
+        chmod -R +w $out/bin
+        ${final.pkgsBuildBuild.haskellBuildUtils}/bin/set-git-rev ${lib.escapeShellArg inputs.self.rev} $out/bin/*
+      '' + lib.optionalString final.stdenv.hostPlatform.isDarwin ''
+        for exe in $out/bin/*; do
+          signIfRequired "$exe"
+        done
+      '');
     in
     if inputs.self ? rev then patched-drv else drv;
 }
