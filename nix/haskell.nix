@@ -28,6 +28,14 @@ let
         );
       });
   };
+  # Pass the git revision as a compile-time GHC preprocessor flag, so that
+  # executables embed the commit hash without binary patching (set-git-rev).
+  # Binary patching breaks Mach-O code signatures on aarch64-darwin.
+  gitRevFlag =
+    if inputs.self ? rev
+    then [("--ghc-option=-D__GIT_REV__=\\\"" + inputs.self.rev + "\\\"")]
+    else [];
+
   hsPkgs = haskell-nix.cabalProject {
     src = ouroborosConsensusSrc;
     compiler-nix-name = "ghc967";
@@ -42,6 +50,12 @@ let
       (forAllProjectPackages ({ ... }: {
         ghcOptions = [ "-Werror" ];
       }))
+      {
+        # Embed the git revision at compile time via a CPP flag, replacing the
+        # old set-git-rev binary patching approach which broke Mach-O code
+        # signatures on aarch64-darwin.
+        packages.ouroboros-consensus.configureFlags = gitRevFlag;
+      }
       {
         # disable haddocks for cardano-diffusion due to https://gitlab.haskell.org/ghc/ghc/-/issues/25739,
         # and cardano-diffusion uses `type data` which triggers the bug.

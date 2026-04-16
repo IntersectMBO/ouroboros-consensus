@@ -42,21 +42,4 @@ in
 
   # remove once our nixpkgs contains https://github.com/NixOS/nixpkgs/pull/394873
   cddlc = final.callPackage ./cddlc/package.nix { };
-
-  haskellBuildUtils = prev.haskellBuildUtils.override {
-    inherit (final.hsPkgs.args) compiler-nix-name;
-    index-state = tool-index-state;
-  };
-  set-git-rev = drv:
-    let
-      patched-drv = final.applyPatches {
-        name = "${drv.name}-with-git-rev";
-        src = drv;
-        postPatch = ''
-          ${final.haskellBuildUtils}/bin/set-git-rev \
-            ${lib.escapeShellArg inputs.self.rev} bin/*
-        '';
-      };
-    in
-    if inputs.self ? rev then patched-drv else drv;
 }

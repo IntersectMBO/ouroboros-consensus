@@ -16,20 +16,16 @@ let
       isCardanoExe = p:
         let i = p.identifier;
         in i.name == "ouroboros-consensus" && i.component-type == "exe";
-      setGitRevs =
-        lib.mapAttrsRecursiveCond (as: !lib.isDerivation as)
-          (_: p: if isCardanoExe p then pkgs.set-git-rev p else p);
     in
     {
       build =
-        setGitRevs (haskellLib.mkFlakePackages projectHsPkgs);
+        haskellLib.mkFlakePackages projectHsPkgs;
       checks =
         haskellLib.mkFlakeChecks (haskellLib.collectChecks' projectHsPkgs);
       exesNoAsserts =
-        setGitRevs
-          (lib.mapAttrs' (_: p: lib.nameValuePair p.identifier.component-name p)
-            (lib.filterAttrs (_: isCardanoExe)
-              (haskellLib.mkFlakePackages projectHsPkgsNoAsserts)));
+        lib.mapAttrs' (_: p: lib.nameValuePair p.identifier.component-name p)
+          (lib.filterAttrs (_: isCardanoExe)
+            (haskellLib.mkFlakePackages projectHsPkgsNoAsserts));
     } // lib.optionalAttrs noCross {
       devShell =
         import ./shell.nix { inherit inputs pkgs hsPkgs; };
