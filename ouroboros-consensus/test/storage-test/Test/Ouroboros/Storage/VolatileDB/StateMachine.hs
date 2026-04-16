@@ -54,9 +54,11 @@ import Ouroboros.Consensus.Storage.VolatileDB
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types (FileId)
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Util
 import Ouroboros.Consensus.Util.IOLike
+import qualified Control.Exception as E
 import Ouroboros.Network.Block (MaxSlotNo)
 import System.FS.API.Lazy
 import System.FS.Sim.Error
+import System.FS.Sim.STM (simHasFS)
 import qualified System.FS.Sim.MockFS as Mock
 import System.Random (getStdRandom, randomR)
 import Test.Ouroboros.Storage.Orphans ()
@@ -136,6 +138,10 @@ data Cmd
   | GetMaxSlotNo
   | Corruption Corruptions
   | DuplicateBlock FileId Block
+  | -- | Delete a VolatileDB file directly from disk while the DB is open.
+    -- This simulates the condition from issue #1991 where the in-memory index
+    -- references a file that no longer exists on disk.
+    DeleteFileFromDisk FileId
   deriving (Show, Generic)
 
 data CmdErr = CmdErr
@@ -187,9 +193,13 @@ instance CommandNames (At CmdErr) where
   cmdName (At (CmdErr{cmd})) = constrName cmd
   cmdNames (_ :: Proxy (At CmdErr r)) = constrNames (Proxy @Cmd)
 
-newtype Model (r :: Type -> Type) = Model
+data Model (r :: Type -> Type) = Model
   { dbModel :: DBModel Block
   -- ^ A model of the database.
+  , filesDeletedFromDisk :: Set FileId
+  -- ^ Files that have been deleted from disk while the DB is open
+  -- (issue #1991 reproduction). These files are still referenced by the
+  -- implementation's in-memory index, but the actual files are gone.
   }
   deriving (Generic, Show)
 
@@ -216,15 +226,60 @@ lockstep model cmdErr =
     , eventMockResp = mockResp
     }
  where
-  (mockResp, dbModel') = step model cmdErr
-  model' = Model dbModel'
+  (mockResp, model') = step model cmdErr
 
 -- | Key property of the model is that we can go from real to mock responses.
 toMock :: Model r -> At t r -> t
 toMock _ (At t) = t
 
-step :: Model r -> At CmdErr r -> (Resp, DBModel Block)
-step model@Model{..} cmderr = runPureErr dbModel (toMock model cmderr)
+step :: Model r -> At CmdErr r -> (Resp, Model r)
+step model@Model{..} cmderr =
+  let cmd = toMock model cmderr
+      CmdErr rawCmd _ = cmd
+  in case rawCmd of
+    DeleteFileFromDisk fileId ->
+      -- The model doesn't change fileIndex — the VolatileDB's in-memory index
+      -- still has the blocks. We only track which files were deleted on disk.
+      ( Resp (Right (Unit ()))
+      , model{filesDeletedFromDisk = Set.insert fileId filesDeletedFromDisk}
+      )
+    _ ->
+      let -- Commands that close+reopen the DB cause the index to be rebuilt
+          -- from disk. This happens for:
+          -- 1. Commands that explicitly reopen: ReOpen, Corruption, DuplicateBlock
+          -- 2. Commands with error injection (err = Just _), because the
+          --    semantics closes+reopens after an error before retrying.
+          --
+          -- When files were deleted on disk (filesDeletedFromDisk), a reopen
+          -- means the model must also remove those files from fileIndex.
+          CmdErr _ mbErrors = cmd
+          causesReopen = case rawCmd of
+            ReOpen -> True
+            Corruption{} -> True
+            DuplicateBlock{} -> True
+            _ -> False
+          -- Error injection also causes close+reopen
+          hasErrorInjection = case mbErrors of
+            Just _ -> True
+            Nothing -> False
+          willReopen = causesReopen || hasErrorInjection
+          adjustedDbModel
+            | willReopen && not (Set.null filesDeletedFromDisk) =
+                dbModel
+                  { fileIndex =
+                      Map.filterWithKey
+                        (\fId _ -> fId `Set.notMember` filesDeletedFromDisk)
+                        (fileIndex dbModel)
+                  }
+            | otherwise = dbModel
+          (resp, dbModel') = runPureErr adjustedDbModel cmd
+      in ( resp
+         , model
+            { dbModel = dbModel'
+            , filesDeletedFromDisk =
+                if willReopen then Set.empty else filesDeletedFromDisk
+            }
+         )
 
 runPure :: Cmd -> DBModel Block -> (Resp, DBModel Block)
 runPure = \case
@@ -238,6 +293,8 @@ runPure = \case
   PutBlock blk -> ok Unit $ updateE_ (putBlockModel blk)
   Corruption cors -> ok Unit $ update_ (withClosedDB (runCorruptionsModel cors))
   DuplicateBlock{} -> ok Unit $ update_ (withClosedDB noop)
+  -- DeleteFileFromDisk is handled directly in 'step', not here.
+  DeleteFileFromDisk{} -> error "DeleteFileFromDisk should not reach runPure"
  where
   queryE f m = (f m, m)
 
@@ -282,7 +339,7 @@ sm env dbm =
     }
 
 initModelImpl :: DBModel Block -> Model r
-initModelImpl = Model
+initModelImpl dbm = Model dbm Set.empty
 
 transitionImpl :: Model r -> At CmdErr r -> At Resp r -> Model r
 transitionImpl model cmd _ = eventAfter $ lockstep model cmd
@@ -299,6 +356,12 @@ preconditionImpl Model{..} (At (CmdErr cmd mbErrors)) =
     DuplicateBlock fileId blk -> case fileIdContainingBlock (blockHash blk) of
       Nothing -> Bot
       Just fileId' -> fileId .>= fileId'
+    -- Only delete a file that exists and is not the current write file
+    DeleteFileFromDisk fileId ->
+      Boolean (open dbModel)
+        .&& Boolean (fileId `Map.member` fileIndex dbModel)
+        .&& Boolean (fileId /= getCurrentFileId dbModel)
+        .&& Boolean (not (null (getBlocksInFile (fileIndex dbModel Map.! fileId))))
     _ -> Top
  where
   -- \| Corruption commands are not allowed to have errors.
@@ -346,12 +409,23 @@ generatorCmdImpl Model{..} =
       , Corruption <$> generateCorruptions (NE.fromList dbFiles)
       )
     , (if isEmpty then 0 else 1, genDuplicateBlock)
+    , -- Issue #1991: delete a non-current file while DB is open
+      ( if length nonCurrentFilesWithBlocks > 0 && open dbModel then 2 else 0
+      , DeleteFileFromDisk . fst <$> elements nonCurrentFilesWithBlocks
+      )
     ]
  where
   blockIdx = blockIndex dbModel
   dbFiles = getDBFiles dbModel
   isEmpty = Map.null blockIdx
   canContainEBB = const True
+  -- Files that are not the current write file and contain at least one block
+  nonCurrentFilesWithBlocks =
+    [ (fId, blks)
+    | (fId, blks) <- Map.toList (fileIndex dbModel)
+    , fId /= getCurrentFileId dbModel
+    , not (null (getBlocksInFile blks))
+    ]
 
   getSlot :: HeaderHash Block -> Maybe SlotNo
   getSlot hash = blockSlot <$> Map.lookup hash blockIdx
@@ -468,6 +542,7 @@ generatorImpl m@Model{..} = Just $ do
 allowErrorFor :: Cmd -> Bool
 allowErrorFor Corruption{} = False
 allowErrorFor DuplicateBlock{} = False
+allowErrorFor DeleteFileFromDisk{} = False
 allowErrorFor _ = True
 
 shrinkerImpl :: Model Symbolic -> At CmdErr Symbolic -> [At CmdErr Symbolic]
@@ -488,6 +563,9 @@ data VolatileDBEnv = VolatileDBEnv
   { varErrors :: StrictTVar IO Errors
   , varDB :: StrictTVar IO (VolatileDB IO Block)
   , args :: VolatileDbArgs Identity IO Block
+  , varMockFS :: StrictTMVar IO Mock.MockFS
+  -- ^ Direct access to the mock filesystem, used by DeleteFileFromDisk
+  -- to bypass the VolatileDB API and simErrorHasFS layer.
   }
 
 -- | Opens a new VolatileDB and stores it in 'varDB'.
@@ -499,18 +577,30 @@ reopenDB VolatileDBEnv{varDB, args} = do
   void $ atomically $ swapTVar varDB db
 
 semanticsImpl :: VolatileDBEnv -> At CmdErr Concrete -> IO (At Resp Concrete)
-semanticsImpl env@VolatileDBEnv{varDB, varErrors} (At (CmdErr cmd mbErrors)) =
-  At . Resp <$> case mbErrors of
-    Nothing -> tryVolatileDB (Proxy @Block) (runDB env cmd)
-    Just errors -> do
-      _ <-
-        withErrors (unsafeToUncheckedStrictTVar varErrors) errors $
-          tryVolatileDB (Proxy @Block) (runDB env cmd)
-      -- As all operations on the VolatileDB are idempotent, close (not
-      -- idempotent by default!), reopen it, and run the command again.
-      readTVarIO varDB >>= idemPotentCloseDB
-      reopenDB env
-      tryVolatileDB (Proxy @Block) (runDB env cmd)
+semanticsImpl env@VolatileDBEnv{varDB, varErrors, varMockFS} (At (CmdErr cmd mbErrors)) =
+  At . Resp <$> case cmd of
+    -- DeleteFileFromDisk bypasses the VolatileDB API AND the simErrorHasFS
+    -- layer: it manipulates the mock filesystem directly, leaving the
+    -- VolatileDB's in-memory index stale. This simulates the condition from
+    -- issue #1991.
+    DeleteFileFromDisk fileId -> do
+      -- Use simHasFS (plain, no error injection) to delete the file directly
+      let plainFs = simHasFS varMockFS
+      E.catch
+        (removeFile plainFs (filePath fileId))
+        (\(_ :: FsError) -> return ())
+      return $ Right $ Unit ()
+    _ -> case mbErrors of
+      Nothing -> tryVolatileDB (Proxy @Block) (runDB env cmd)
+      Just errors -> do
+        _ <-
+          withErrors (unsafeToUncheckedStrictTVar varErrors) errors $
+            tryVolatileDB (Proxy @Block) (runDB env cmd)
+        -- As all operations on the VolatileDB are idempotent, close (not
+        -- idempotent by default!), reopen it, and run the command again.
+        readTVarIO varDB >>= idemPotentCloseDB
+        reopenDB env
+        tryVolatileDB (Proxy @Block) (runDB env cmd)
 
 idemPotentCloseDB :: VolatileDB IO Block -> IO ()
 idemPotentCloseDB db =
@@ -544,6 +634,9 @@ runDB env@VolatileDBEnv{varDB, args = VolatileDbArgs{volHasFS = SomeHasFS hasFS}
       withClosedDB $
         withFile hasFS (filePath fileId) (AppendMode AllowExisting) $ \hndl ->
           void $ hPutAll hasFS hndl (testBlockToLazyByteString blk)
+    -- DeleteFileFromDisk is handled directly in semanticsImpl
+    DeleteFileFromDisk{} ->
+      error "DeleteFileFromDisk should be handled in semanticsImpl"
  where
   withClosedDB :: IO () -> IO Success
   withClosedDB action = do
@@ -555,7 +648,7 @@ runDB env@VolatileDBEnv{varDB, args = VolatileDbArgs{volHasFS = SomeHasFS hasFS}
 mockImpl :: Model Symbolic -> At CmdErr Symbolic -> GenSym (At Resp Symbolic)
 mockImpl model cmdErr = At <$> return mockResp
  where
-  (mockResp, _dbModel') = step model cmdErr
+  (mockResp, _model') = step model cmdErr
 
 prop_sequential :: Property
 prop_sequential = forAllCommands smUnused Nothing $ \cmds -> monadicIO $ do
@@ -614,7 +707,7 @@ test cmds = do
     -- in the TVar.
     (\varDB -> readTVarIO varDB >>= closeDB)
     $ \varDB -> do
-      let env = VolatileDBEnv{varErrors, varDB, args}
+      let env = VolatileDBEnv{varErrors, varDB, args, varMockFS = varFs}
           sm' = sm env dbm
       (hist, _model, res) <- QSM.runCommands' sm' cmds
       trace <- getTrace

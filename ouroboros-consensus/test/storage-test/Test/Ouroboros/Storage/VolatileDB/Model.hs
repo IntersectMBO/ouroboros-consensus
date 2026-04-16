@@ -32,6 +32,7 @@ module Test.Ouroboros.Storage.VolatileDB.Model
   , blockHashes
   , blockIndex
   , getCurrentFile
+  , getCurrentFileId
   , getDBFileIds
   , getDBFiles
   ) where
