@@ -162,6 +162,7 @@ import System.Random (StdGen)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
+import qualified Data.ByteString as BS
 import Data.Map (Map)
 import qualified Data.Map as Map
 import LeiosDemoDb
@@ -179,6 +180,7 @@ import LeiosDemoTypes
   , LeiosOutstanding
   , LeiosPeerVars
   , TraceLeiosKernel (..)
+  , VoterId (..)
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
@@ -458,12 +460,17 @@ initNodeKernel
             atomically (readTChan chan) >>= \case
               AcquiredEb{} -> pure ()
               AcquiredEbTxs point -> f point
+      -- Access voting key and derive voter id
+      votingKey <- case topLevelConfigVotingKey cfg of
+        Nothing -> throwIO $ userError "NodeKernel.leiosVoting requires a topLevelConfigVotingKey"
+        Just key -> pure key
+      -- TODO: derive from committee within ledger state, also move within loop (changes across epochs)
+      let me = MkVoterId . fromIntegral $ BS.head votingKey
       forever $ do
         -- TODO: Need to poll available EBs instead? Otherwise we would not vote
         -- when we switch to a chain only later
         getNext $ \point -> do
-          -- FIXME: check not too old; use tip or wall clock time?
-          let tooOld = const False
+          let tooOld = const False -- TODO: check not too old; use tip or wall clock time?
           unless (tooOld point) $ do
             -- TODO: check whether already voted
             -- TODO: validate EB closures against selected chain
@@ -471,6 +478,7 @@ initNodeKernel
             -- TODO: store vote in memory and notify downstream peers
             -- FIXME: fake it till you make it
             traceWith tracer TraceLeiosVoted{point}
+            traceWith tracer TraceLeiosVoteAcquired{point, voter = me}
 
     return
       NodeKernel

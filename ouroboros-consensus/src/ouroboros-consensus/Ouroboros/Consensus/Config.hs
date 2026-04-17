@@ -32,6 +32,7 @@ module Ouroboros.Consensus.Config
   , module Ouroboros.Consensus.Config.SecurityParam
   ) where
 
+import Data.ByteString (ByteString)
 import Data.Coerce
 import Data.Map.Strict (Map)
 import GHC.Generics (Generic)
@@ -53,6 +54,8 @@ data TopLevelConfig blk = TopLevelConfig
   , topLevelConfigCodec :: !(CodecConfig blk)
   , topLevelConfigStorage :: !(StorageConfig blk)
   , topLevelConfigCheckpoints :: !(CheckpointsMap blk)
+  , -- REVIEW: Is this the best way to route additional keys into consensus for Leios/Peras?
+    topLevelConfigVotingKey :: Maybe ByteString
   }
   deriving Generic
 
@@ -98,7 +101,14 @@ mkTopLevelConfig ::
   CheckpointsMap blk ->
   TopLevelConfig blk
 mkTopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMap =
-  TopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMap
+  TopLevelConfig
+    prtclCfg
+    ledgerCfg
+    blockCfg
+    codecCfg
+    storageCfg
+    checkpointsMap
+    Nothing
 
 configConsensus :: TopLevelConfig blk -> ConsensusConfig (BlockProtocol blk)
 configConsensus = topLevelConfigProtocol
@@ -139,6 +149,7 @@ castTopLevelConfig TopLevelConfig{..} =
     , topLevelConfigCodec = coerce topLevelConfigCodec
     , topLevelConfigStorage = coerce topLevelConfigStorage
     , topLevelConfigCheckpoints = coerce topLevelConfigCheckpoints
+    , topLevelConfigVotingKey = Nothing
     }
 
 castCheckpointsMap ::

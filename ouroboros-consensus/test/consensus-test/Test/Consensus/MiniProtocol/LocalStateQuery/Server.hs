@@ -286,6 +286,7 @@ testCfg securityParam =
     , topLevelConfigCodec = TestBlockCodecConfig
     , topLevelConfigStorage = TestBlockStorageConfig
     , topLevelConfigCheckpoints = emptyCheckpointsMap
+    , topLevelConfigVotingKey = Nothing
     }
  where
   slotLength :: SlotLength

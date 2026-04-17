@@ -6,6 +6,7 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Binary (protocolInfoBinary) where
 
+import Control.Applicative ((<|>))
 import Control.Exception (assert)
 import Data.Align (alignWith)
 import Data.SOP.Counting (exactlyTwo)
@@ -94,6 +95,7 @@ protocolInfoBinary
                     PerEraStorageConfig $
                       (storageConfig1 :* storageConfig2 :* Nil)
               , topLevelConfigCheckpoints = emptyCheckpointsMap
+              , topLevelConfigVotingKey = votingKey2 <|> votingKey1
               }
         , pInfoInitLedger =
             ExtLedgerState
@@ -118,6 +120,7 @@ protocolInfoBinary
           , topLevelConfigBlock = blockConfig1
           , topLevelConfigCodec = codecConfig1
           , topLevelConfigStorage = storageConfig1
+          , topLevelConfigVotingKey = votingKey1
           }
       , pInfoInitLedger =
         ExtLedgerState
@@ -134,6 +137,7 @@ protocolInfoBinary
           , topLevelConfigBlock = blockConfig2
           , topLevelConfigCodec = codecConfig2
           , topLevelConfigStorage = storageConfig2
+          , topLevelConfigVotingKey = votingKey2
           }
       } = protocolInfo2
 
