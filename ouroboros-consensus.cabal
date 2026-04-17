@@ -41,6 +41,13 @@ flag expensive-invariants
   manual: True
   default: False
 
+flag external-git-rev
+  description:
+    Git revision is provided externally via CPP (-D__GIT_REV__).
+    When enabled, the githash package is not required.
+  manual: True
+  default: False
+
 common ghc-9.14
   if impl(ghc >=9.14)
     ghc-options:
@@ -1805,7 +1812,6 @@ library unstable-cardano-tools
     dot,
     filepath,
     fs-api,
-    githash,
     microlens,
     mtl,
     network,
@@ -1823,6 +1829,9 @@ library unstable-cardano-tools
     text-builder >=1,
     transformers,
     transformers-except,
+
+  if !flag(external-git-rev)
+    build-depends: githash
 
 executable db-analyser
   import: common-lib

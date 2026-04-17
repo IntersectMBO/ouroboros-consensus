@@ -55,6 +55,10 @@ let
         # old set-git-rev binary patching approach which broke Mach-O code
         # signatures on aarch64-darwin.
         packages.ouroboros-consensus.configureFlags = gitRevFlag;
+        # When the git revision is provided externally, the githash TH fallback
+        # is not compiled, so we must disable the dependency to satisfy
+        # -Wunused-packages.
+        packages.ouroboros-consensus.flags.external-git-rev = inputs.self ? rev;
       }
       {
         # disable haddocks for cardano-diffusion due to https://gitlab.haskell.org/ghc/ghc/-/issues/25739,
