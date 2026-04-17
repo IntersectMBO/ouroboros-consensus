@@ -385,6 +385,9 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
 
       for_ handles $ \(_, h) -> do
         Monad.void $ takeSnapshot snapManager Nothing h
+        Monad.void $ close . tables $ h
+      -- we don't bracket around the handles because it is tedious. An exception that may occur
+      -- before we close them would bring the whole cardano-node down anyway.
 
       atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
       Monad.void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
