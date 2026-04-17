@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -55,9 +56,13 @@ data TopLevelConfig blk = TopLevelConfig
   , topLevelConfigStorage :: !(StorageConfig blk)
   , topLevelConfigCheckpoints :: !(CheckpointsMap blk)
   , -- REVIEW: Is this the best way to route additional keys into consensus for Leios/Peras?
-    topLevelConfigVotingKey :: Maybe ByteString
+    topLevelConfigVotingKey :: Maybe VotingKey
   }
   deriving Generic
+
+-- TODO: make this an existential, e.g.
+-- data VotingKey = (forall scheme. DSIGNAlgorithm scheme => SignKeyDSIGN scheme)
+type VotingKey = ByteString
 
 instance
   ( ConsensusProtocol (BlockProtocol blk)
