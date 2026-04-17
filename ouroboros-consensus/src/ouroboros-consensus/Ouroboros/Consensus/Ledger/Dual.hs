@@ -680,64 +680,62 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
         , vtx
         )
 
-  reapplyTx'
+  reapplyTxBoth
+    mode
     DualLedgerConfig{..}
     slot
     tx@ValidatedDualGenTx{..}
-    TickedDualLedgerState{..} = do
-      (main', aux') <-
-        agreeOnError
-          DualGenTxErr
-          ( reapplyTx'
-              dualLedgerConfigMain
-              slot
-              vDualGenTxMain
-              tickedDualLedgerStateMain
-          , reapplyTx'
-              dualLedgerConfigAux
-              slot
-              vDualGenTxAux
-              tickedDualLedgerStateAux
-          )
-      return $
-        TickedDualLedgerState
-          { tickedDualLedgerStateMain = main'
-          , tickedDualLedgerStateAux = aux'
-          , tickedDualLedgerStateBridge =
-              updateBridgeWithTx
-                tx
-                tickedDualLedgerStateBridge
-          , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
-          }
-
-  reapplyTx
-    DualLedgerConfig{..}
-    slot
-    tx@ValidatedDualGenTx{..}
-    DualLedgerState{..} = do
-      (main', aux') <-
-        agreeOnError
-          DualGenTxErr
-          ( reapplyTx
-              dualLedgerConfigMain
-              slot
-              vDualGenTxMain
-              dualLedgerStateMain
-          , reapplyTx
-              dualLedgerConfigAux
-              slot
-              vDualGenTxAux
-              dualLedgerStateAux
-          )
-      return $
-        DualLedgerState
-          { dualLedgerStateMain = main'
-          , dualLedgerStateAux = aux'
-          , dualLedgerStateBridge =
-              updateBridgeWithTx
-                tx
-                dualLedgerStateBridge
-          }
+    st = case (mode, st) of
+      (ReapplyLedgerState, DualLedgerState{..}) -> do
+        (main', aux') <-
+          agreeOnError
+            DualGenTxErr
+            ( reapplyTx
+                dualLedgerConfigMain
+                slot
+                vDualGenTxMain
+                dualLedgerStateMain
+            , reapplyTx
+                dualLedgerConfigAux
+                slot
+                vDualGenTxAux
+                dualLedgerStateAux
+            )
+        return $
+          DualLedgerState
+            { dualLedgerStateMain = main'
+            , dualLedgerStateAux = aux'
+            , dualLedgerStateBridge =
+                updateBridgeWithTx
+                  tx
+                  dualLedgerStateBridge
+            }
+      (ReapplyTickedLedgerState, CompAp TickedDualLedgerState{..}) -> do
+        (main', aux') <-
+          agreeOnError
+            DualGenTxErr
+            ( reapplyTx'
+                dualLedgerConfigMain
+                slot
+                vDualGenTxMain
+                $ CompAp tickedDualLedgerStateMain
+            , reapplyTx'
+                dualLedgerConfigAux
+                slot
+                vDualGenTxAux
+                $ CompAp tickedDualLedgerStateAux
+            )
+        return $
+          CompAp
+            TickedDualLedgerState
+              { tickedDualLedgerStateMain = unCompAp main'
+              , tickedDualLedgerStateAux = unCompAp aux'
+              , tickedDualLedgerStateBridge =
+                  updateBridgeWithTx
+                    tx
+                    tickedDualLedgerStateBridge
+              , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
+              }
 
   txForgetValidated vtx =
     DualGenTx
@@ -773,11 +771,14 @@ instance Bridge m a => TxLimits (DualBlock m a) where
    where
     inj m = DualGenTxErr m (error "ByronSpec has no tx-too-big error")
 
-  blockCapacityTxMeasure DualLedgerConfig{..} DualLedgerState{..} =
-    blockCapacityTxMeasure dualLedgerConfigMain dualLedgerStateMain
-
-  blockCapacityTxMeasure' DualLedgerConfig{..} TickedDualLedgerState{..} =
-    blockCapacityTxMeasure' dualLedgerConfigMain tickedDualLedgerStateMain
+  blockCapacityTxMeasure mode DualLedgerConfig{..} st =
+    case mode of
+      ReapplyLedgerState -> blockCapacityTxMeasure ReapplyLedgerState dualLedgerConfigMain (dualLedgerStateMain st)
+      ReapplyTickedLedgerState ->
+        blockCapacityTxMeasure
+          ReapplyTickedLedgerState
+          dualLedgerConfigMain
+          (CompAp $ tickedDualLedgerStateMain $ unCompAp st)
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId

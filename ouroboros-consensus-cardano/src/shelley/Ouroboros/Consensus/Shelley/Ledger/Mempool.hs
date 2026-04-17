@@ -112,7 +112,7 @@ import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( BigEndianTxIn (..)
-  , LedgerState (ShelleyLedgerState, shelleyLedgerState)
+  , LedgerState (shelleyLedgerState)
   , ShelleyLedgerConfig (shelleyLedgerGlobals)
   , Ticked (tickedShelleyLedgerState)
   , getPParams
@@ -187,9 +187,7 @@ instance
 
   applyTx = applyShelleyTx
 
-  reapplyTx' = reapplyShelleyTx'
-
-  reapplyTx = reapplyShelleyTx
+  reapplyTxBoth = reapplyShelleyTx
 
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 
@@ -301,7 +299,7 @@ applyShelleyTx cfg wti (ShelleyTx _ tx) st0 = do
       innerSt :: SL.NewEpochState era
       innerSt = shelleyLedgerState st1
 
-  (mempoolState', vtx) <-
+  (mempoolState, vtx) <-
     applyShelleyBasedTx
       (shelleyLedgerGlobals cfg)
       (SL.mkMempoolEnv innerSt (fromWithOrigin undefined $ pointSlot $ getTip st0))
@@ -314,59 +312,68 @@ applyShelleyTx cfg wti (ShelleyTx _ tx) st0 = do
         trackingToDiffs $
           calculateDifference st0 $
             unstowLedgerTables $
-              set theLedgerLens mempoolState' st1
+              setMempoolState ReapplyLedgerState mempoolState st1
 
   pure (st', mkShelleyValidatedTx vtx)
 
 reapplyShelleyTx ::
+  forall l proto era.
   ShelleyBasedEra era =>
+  ReapplyMode l ->
   LedgerConfig (ShelleyBlock proto era) ->
   SlotNo ->
   Validated (GenTx (ShelleyBlock proto era)) ->
-  LedgerState (ShelleyBlock proto era) ValuesMK ->
-  Except (ApplyTxErr (ShelleyBlock proto era)) (LedgerState (ShelleyBlock proto era) ValuesMK)
-reapplyShelleyTx cfg _ vgtx st0 = do
-  let st1 = stowLedgerTables st0
-      innerSt = shelleyLedgerState st1
+  l (ShelleyBlock proto era) ValuesMK ->
+  Except (ApplyTxErr (ShelleyBlock proto era)) (l (ShelleyBlock proto era) ValuesMK)
+reapplyShelleyTx mode cfg _ vgtx st0 = do
+  let st1 = stow st0
+      innerSt = getInner st1
 
-  mempoolState' <-
+  mempoolState <-
     liftEither $
       SL.reapplyTx
         (shelleyLedgerGlobals cfg)
-        (SL.mkMempoolEnv innerSt (fromWithOrigin undefined $ pointSlot $ getTip st0))
+        (SL.mkMempoolEnv innerSt (fromWithOrigin undefined $ pointSlot $ ttt st0))
         (SL.mkMempoolState innerSt)
         vtx
 
-  pure $
-    unstowLedgerTables $
-      set theLedgerLens mempoolState' st1
+  pure $ unstow $ setMempoolState mode mempoolState st1
  where
+  stow :: l (ShelleyBlock proto era) ValuesMK -> l (ShelleyBlock proto era) EmptyMK
+  unstow :: l (ShelleyBlock proto era) EmptyMK -> l (ShelleyBlock proto era) ValuesMK
+  getInner :: l (ShelleyBlock proto era) EmptyMK -> SL.NewEpochState era
+  ttt :: l (ShelleyBlock proto era) ValuesMK -> Point (ShelleyBlock proto era)
+  (stow, unstow, getInner, ttt) = case mode of
+    ReapplyLedgerState ->
+      ( stowLedgerTables
+      , unstowLedgerTables
+      , shelleyLedgerState
+      , castPoint @(LedgerState (ShelleyBlock proto era)) @(ShelleyBlock proto era) . getTip
+      )
+    ReapplyTickedLedgerState ->
+      ( CompAp . stowLedgerTables . unCompAp
+      , CompAp . unstowLedgerTables . unCompAp
+      , tickedShelleyLedgerState . unCompAp
+      , castPoint @(TickedLedgerState (ShelleyBlock proto era)) @(ShelleyBlock proto era)
+          . getTip
+          . unCompAp
+      )
+
   ShelleyValidatedTx _txid vtx = vgtx
 
-reapplyShelleyTx' ::
-  ShelleyBasedEra era =>
-  LedgerConfig (ShelleyBlock proto era) ->
-  SlotNo ->
-  Validated (GenTx (ShelleyBlock proto era)) ->
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
-  Except (ApplyTxErr (ShelleyBlock proto era)) (TickedLedgerState (ShelleyBlock proto era) ValuesMK)
-reapplyShelleyTx' cfg _ vgtx st0 = do
-  let st1 = stowLedgerTables st0
-      innerSt = tickedShelleyLedgerState st1
-
-  mempoolState' <-
-    liftEither $
-      SL.reapplyTx
-        (shelleyLedgerGlobals cfg)
-        (SL.mkMempoolEnv innerSt (fromWithOrigin undefined $ pointSlot $ getTip st0))
-        (SL.mkMempoolState innerSt)
-        vtx
-
-  pure $
-    unstowLedgerTables $
-      set theTickedLedgerLens mempoolState' st1
- where
-  ShelleyValidatedTx _txid vtx = vgtx
+setMempoolState ::
+  ReapplyMode l ->
+  SL.LedgerState era ->
+  l (ShelleyBlock proto era) mk ->
+  l (ShelleyBlock proto era) mk
+setMempoolState mode mempoolState st = case mode of
+  ReapplyLedgerState -> st{shelleyLedgerState = set SL.overNewEpochState mempoolState (shelleyLedgerState st)}
+  ReapplyTickedLedgerState ->
+    CompAp
+      (unCompAp st)
+        { tickedShelleyLedgerState =
+            set SL.overNewEpochState mempoolState (tickedShelleyLedgerState $ unCompAp st)
+        }
 
 -- | The lens combinator
 set ::
@@ -376,24 +383,6 @@ set ::
   t
 set lens inner outer =
   runIdentity $ lens (\_ -> Identity inner) outer
-
-theLedgerLens ::
-  Functor f =>
-  (SL.LedgerState era -> f (SL.LedgerState era)) ->
-  LedgerState (ShelleyBlock proto era) mk ->
-  f (LedgerState (ShelleyBlock proto era) mk)
-theLedgerLens f x =
-  (\y -> x{shelleyLedgerState = y})
-    <$> SL.overNewEpochState f (shelleyLedgerState x)
-
-theTickedLedgerLens ::
-  Functor f =>
-  (SL.LedgerState era -> f (SL.LedgerState era)) ->
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  f (TickedLedgerState (ShelleyBlock proto era) mk)
-theTickedLedgerLens f x =
-  (\y -> x{tickedShelleyLedgerState = y})
-    <$> SL.overNewEpochState f (tickedShelleyLedgerState x)
 
 {-------------------------------------------------------------------------------
   Tx Limits
@@ -419,15 +408,19 @@ runValidation = liftEither . (unTxErrorSG +++ id) . V.toEither
 
 txsMaxBytes ::
   ShelleyCompatible proto era =>
-  LedgerState (ShelleyBlock proto era) mk ->
+  ReapplyMode l ->
+  l (ShelleyBlock proto era) mk ->
   IgnoringOverflow ByteSize32
-txsMaxBytes ShelleyLedgerState{shelleyLedgerState} =
+txsMaxBytes mode st =
   -- `maxBlockBodySize` is expected to be bigger than `fixedBlockBodyOverhead`
   IgnoringOverflow $
     ByteSize32 $
       maxBlockBodySize - fixedBlockBodyOverhead
  where
-  maxBlockBodySize = getPParams shelleyLedgerState ^. ppMaxBBSizeL
+  maxBlockBodySize = getPParams s ^. ppMaxBBSizeL
+  s = case mode of
+    ReapplyLedgerState -> shelleyLedgerState st
+    ReapplyTickedLedgerState -> tickedShelleyLedgerState $ unCompAp st
 
 txInBlockSize ::
   (ShelleyCompatible proto era, MaxTxSizeUTxO era) =>
@@ -553,19 +546,19 @@ instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) 
   type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  blockCapacityTxMeasure mode _cfg = txsMaxBytes mode
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
   type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  blockCapacityTxMeasure mode _cfg = txsMaxBytes mode
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  blockCapacityTxMeasure mode _cfg = txsMaxBytes mode
 
 -----
 
@@ -600,17 +593,20 @@ fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
 
 blockCapacityAlonzoMeasure ::
-  forall proto era mk.
+  forall proto era l mk.
   (ShelleyCompatible proto era, L.AlonzoEraPParams era) =>
-  LedgerState (ShelleyBlock proto era) mk ->
+  ReapplyMode l ->
+  l (ShelleyBlock proto era) mk ->
   AlonzoMeasure
-blockCapacityAlonzoMeasure ledgerState =
+blockCapacityAlonzoMeasure mode ledgerState =
   AlonzoMeasure
-    { byteSize = txsMaxBytes ledgerState
+    { byteSize = txsMaxBytes mode ledgerState
     , exUnits = fromExUnits $ pparams ^. ppMaxBlockExUnitsL
     }
  where
-  pparams = getPParams $ shelleyLedgerState ledgerState
+  pparams = getPParams $ case mode of
+    ReapplyLedgerState -> shelleyLedgerState ledgerState
+    ReapplyTickedLedgerState -> tickedShelleyLedgerState $ unCompAp ledgerState
 
 txMeasureAlonzo ::
   forall proto era.
@@ -697,7 +693,7 @@ instance
   type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
-  blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+  blockCapacityTxMeasure mode _cfg = blockCapacityAlonzoMeasure mode
 
 -----
 
@@ -712,13 +708,14 @@ newtype DijkstraMeasure = DijkstraMeasure
     via (InstantiatedAt Generic DijkstraMeasure)
 
 blockCapacityDijkstraMeasure ::
-  forall proto era mk.
+  forall proto era l mk.
   ( ShelleyCompatible proto era
   , SL.ConwayEraPParams era
   ) =>
-  LedgerState (ShelleyBlock proto era) mk ->
+  ReapplyMode l ->
+  l (ShelleyBlock proto era) mk ->
   DijkstraMeasure
-blockCapacityDijkstraMeasure = DijkstraMeasure . blockCapacityConwayMeasure
+blockCapacityDijkstraMeasure mode = DijkstraMeasure . blockCapacityConwayMeasure mode
 
 txMeasureDijkstra ::
   forall proto era.
@@ -766,21 +763,24 @@ instance TxMeasureMetrics ConwayMeasure where
     unIgnoringOverflow . refScriptsSize
 
 blockCapacityConwayMeasure ::
-  forall proto era mk.
+  forall proto era l mk.
   ( ShelleyCompatible proto era
   , SL.ConwayEraPParams era
   ) =>
-  LedgerState (ShelleyBlock proto era) mk ->
+  ReapplyMode l ->
+  l (ShelleyBlock proto era) mk ->
   ConwayMeasure
-blockCapacityConwayMeasure st =
+blockCapacityConwayMeasure mode st =
   ConwayMeasure
-    { alonzoMeasure = blockCapacityAlonzoMeasure st
+    { alonzoMeasure = blockCapacityAlonzoMeasure mode st
     , refScriptsSize =
         IgnoringOverflow $
           ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)
     }
  where
-  pparams = getPParams $ shelleyLedgerState st
+  pparams = getPParams $ case mode of
+    ReapplyLedgerState -> shelleyLedgerState st
+    ReapplyTickedLedgerState -> tickedShelleyLedgerState $ unCompAp st
 
 txMeasureConway ::
   forall proto era.
@@ -840,7 +840,7 @@ instance
   type TxMeasure (ShelleyBlock p BabbageEra) = AlonzoMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
-  blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+  blockCapacityTxMeasure mode _cfg = blockCapacityAlonzoMeasure mode
 
 instance
   ShelleyCompatible p ConwayEra =>
@@ -849,7 +849,7 @@ instance
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
   txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
-  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  blockCapacityTxMeasure mode _cfg = blockCapacityConwayMeasure mode
 
 instance
   ShelleyCompatible p DijkstraEra =>
@@ -857,5 +857,5 @@ instance
   where
   type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureDijkstra st tx
-  blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure
+  blockCapacityTxMeasure mode _cfg = blockCapacityDijkstraMeasure mode
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)

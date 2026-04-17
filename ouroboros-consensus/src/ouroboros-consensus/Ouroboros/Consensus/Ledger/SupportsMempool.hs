@@ -4,11 +4,13 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
@@ -22,6 +24,10 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , HasTxId (..)
   , HasTxs (..)
   , IgnoringOverflow (..)
+  , ReapplyMode (..)
+  , reapplyTx
+  , reapplyTx'
+  , applyMempoolDiffs
   , Invalidated (..)
   , LedgerSupportsMempool (..)
   , ReapplyTxsResult (..)
@@ -52,6 +58,7 @@ import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Ticked
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -97,9 +104,41 @@ type data WhatToDoWithTxDiffs = Collect | Discard
 
 -- | This type family serves to make sure that when we are going to discard the
 -- differences, we don't even have differences around that we might misuse.
-type family InputTxDiffs blk wtd where
+type family InputTxDiffs blk l where
   InputTxDiffs blk Discard = ()
   InputTxDiffs blk Collect = LedgerTables (LedgerState blk) DiffMK
+
+type ReapplyMode :: (Type -> MapKind -> Type) -> Type
+data ReapplyMode l where
+  ReapplyLedgerState :: ReapplyMode LedgerState
+  ReapplyTickedLedgerState :: ReapplyMode (Ticked :.^: LedgerState)
+
+type ReapplyTx l blk =
+  LedgerConfig blk ->
+  -- | Slot number of the block containing the tx
+  SlotNo ->
+  Validated (GenTx blk) ->
+  -- | Contains at least the values for the tx to reapply
+  l blk ValuesMK ->
+  Except (ApplyTxErr blk) (l blk ValuesMK)
+
+type ReapplyTxs l blk wtd extra =
+  LedgerConfig blk ->
+  -- | Slot number of the block containing the tx
+  SlotNo ->
+  [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
+  l blk ValuesMK ->
+  ReapplyTxsResult l extra blk wtd
+
+data ReapplyTxsResult l extra blk wtd
+  = ReapplyTxsResult
+  { invalidatedTxs :: ![Invalidated blk]
+  -- ^ txs that are now invalid. Order doesn't matter
+  , validatedTxs :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
+  -- ^ txs that are valid again, order must be the same as the order in
+  -- which txs were received
+  , resultingState :: !(l blk EmptyMK)
+  }
 
 class
   ( UpdateLedger blk
@@ -142,25 +181,7 @@ class
   -- The returned ledger state contains the resulting values too so that this
   -- function can be used to reapply a list of transactions, providing as a
   -- first state one that contains the values for all the transactions.
-  reapplyTx ::
-    HasCallStack =>
-    LedgerConfig blk ->
-    -- | Slot number of the block containing the tx
-    SlotNo ->
-    Validated (GenTx blk) ->
-    -- | Contains at least the values for the tx to reapply
-    LedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (LedgerState blk ValuesMK)
-
-  reapplyTx' ::
-    HasCallStack =>
-    LedgerConfig blk ->
-    -- | Slot number of the block containing the tx
-    SlotNo ->
-    Validated (GenTx blk) ->
-    -- | Contains at least the values for the tx to reapply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
+  reapplyTxBoth :: HasCallStack => ReapplyMode l -> ReapplyTx l blk
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -176,53 +197,30 @@ class
   -- Notice: It is crucial that the list of validated transactions returned is
   -- in the same order as they were given, as we will use those later on to
   -- filter a list of 'TxTicket's.
-  reapplyTxs ::
-    LedgerConfig blk ->
-    -- | Slot number of the block containing the tx
-    SlotNo ->
-    [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
-    LedgerState blk ValuesMK ->
-    ReapplyTxsResult extra blk wtd
-  reapplyTxs cfg slot txs st =
-    (\(err, val, st') -> ReapplyTxsResult err (reverse val) (forgetLedgerTables st')) $
-      foldReapplyTxs fst3 txs
+  reapplyTxsBoth ::
+    forall l wtd extra. ReapplyMode l -> ReapplyTxs l blk wtd extra
+  reapplyTxsBoth mode cfg slot txs st =
+    ( \(err, val, st') ->
+        ReapplyTxsResult
+          err
+          (reverse val)
+          ( case mode of
+              ReapplyLedgerState -> forgetLedgerTables st'
+              ReapplyTickedLedgerState -> CompAp $ forgetLedgerTables $ unCompAp st'
+          )
+    )
+      $ foldReapplyTxs fst3 txs
    where
     fst3 (a, _, _) = a
 
     foldReapplyTxs ::
       (a -> Validated (GenTx blk)) ->
       [a] ->
-      ([Invalidated blk], [a], LedgerState blk ValuesMK)
+      ([Invalidated blk], [a], l blk ValuesMK)
     foldReapplyTxs projectTx =
       Foldable.foldl'
         ( \(accE, accV, st') a ->
-            case runExcept (reapplyTx cfg slot (projectTx a) st') of
-              Left err -> (Invalidated (projectTx a) err : accE, accV, st')
-              Right st'' -> (accE, a : accV, st'')
-        )
-        ([], [], st)
-
-  reapplyTxs' ::
-    LedgerConfig blk ->
-    -- | Slot number of the block containing the tx
-    SlotNo ->
-    [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
-    TickedLedgerState blk ValuesMK ->
-    ReapplyTxsResult' extra blk wtd
-  reapplyTxs' cfg slot txs st =
-    (\(err, val, st') -> ReapplyTxsResult' err (reverse val) (forgetLedgerTables st')) $
-      foldReapplyTxs fst3 txs
-   where
-    fst3 (a, _, _) = a
-
-    foldReapplyTxs ::
-      (a -> Validated (GenTx blk)) ->
-      [a] ->
-      ([Invalidated blk], [a], TickedLedgerState blk ValuesMK)
-    foldReapplyTxs projectTx =
-      Foldable.foldl'
-        ( \(accE, accV, st') a ->
-            case runExcept (reapplyTx' cfg slot (projectTx a) st') of
+            case runExcept (reapplyTxBoth mode cfg slot (projectTx a) st') of
               Left err -> (Invalidated (projectTx a) err : accE, accV, st')
               Right st'' -> (accE, a : accV, st'')
         )
@@ -262,23 +260,15 @@ class
   --
   -- Intended to be non-default in the HardFork instance for optimizing
   -- performance.
-  applyMempoolDiffs ::
+  applyMempoolDiffsMode ::
+    ReapplyMode l ->
     LedgerTables (LedgerState blk) ValuesMK ->
     LedgerTables (LedgerState blk) KeysMK ->
-    LedgerState blk DiffMK ->
-    LedgerState blk ValuesMK
-  applyMempoolDiffs = applyDiffForKeysOnTables
-
-  -- | Apply diffs on ledger states
-  --
-  -- Intended to be non-default in the HardFork instance for optimizing
-  -- performance.
-  applyMempoolDiffs' ::
-    LedgerTables (LedgerState blk) ValuesMK ->
-    LedgerTables (LedgerState blk) KeysMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk ValuesMK
-  applyMempoolDiffs' = applyDiffForKeysOnTables
+    l blk DiffMK ->
+    l blk ValuesMK
+  applyMempoolDiffsMode mode vs ks l = case mode of
+    ReapplyLedgerState -> applyDiffForKeysOnTables vs ks l
+    ReapplyTickedLedgerState -> CompAp $ applyDiffForKeysOnTables vs ks (unCompAp l)
 
   -- | The ledger rules' error type for the mempool's current era might allow
   -- the mempool to reject a tx for its own reasons.
@@ -290,6 +280,20 @@ class
     LedgerState blk mk ->
     Text ->
     Maybe (ApplyTxErr blk)
+
+reapplyTx :: LedgerSupportsMempool blk => ReapplyTx LedgerState blk
+reapplyTx cfg slot vtx st = reapplyTxBoth ReapplyLedgerState cfg slot vtx st
+
+reapplyTx' :: LedgerSupportsMempool blk => ReapplyTx (Ticked :.^: LedgerState) blk
+reapplyTx' cfg slot vtx st = reapplyTxBoth ReapplyTickedLedgerState cfg slot vtx st
+
+applyMempoolDiffs ::
+  LedgerSupportsMempool blk =>
+  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables (LedgerState blk) KeysMK ->
+  LedgerState blk DiffMK ->
+  LedgerState blk ValuesMK
+applyMempoolDiffs = applyMempoolDiffsMode ReapplyLedgerState
 
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
@@ -304,16 +308,6 @@ data ReapplyTxsResult' extra blk wtd
   -- ^ txs that are valid again, order must be the same as the order in
   -- which txs were received
   , resultingState' :: !(TickedLedgerState blk EmptyMK)
-  }
-
-data ReapplyTxsResult extra blk wtd
-  = ReapplyTxsResult
-  { invalidatedTxs :: ![Invalidated blk]
-  -- ^ txs that are now invalid. Order doesn't matter
-  , validatedTxs :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
-  -- ^ txs that are valid again, order must be the same as the order in
-  -- which txs were received
-  , resultingState :: !(LedgerState blk EmptyMK)
   }
 
 -- | A generalized transaction, 'GenTx', identifier.
@@ -431,15 +425,9 @@ class
   -- | What is the allowed capacity for the txs in an individual block?
   blockCapacityTxMeasure ::
     -- | at least for symmetry with 'txMeasure'
+    ReapplyMode l ->
     LedgerConfig blk ->
-    LedgerState blk mk ->
-    TxMeasure blk
-
-  -- | What is the allowed capacity for the txs in an individual block?
-  blockCapacityTxMeasure' ::
-    -- | at least for symmetry with 'txMeasure'
-    LedgerConfig blk ->
-    TickedLedgerState blk mk ->
+    l blk mk ->
     TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@

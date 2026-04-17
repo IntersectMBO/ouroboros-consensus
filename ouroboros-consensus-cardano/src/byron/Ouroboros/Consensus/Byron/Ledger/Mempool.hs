@@ -135,15 +135,19 @@ instance LedgerSupportsMempool ByronBlock where
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
-  reapplyTx' cfg slot vtx st =
-    (\st' -> st{tickedByronLedgerState = st'})
-      <$> applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) (tickedByronLedgerState st)
-   where
-    validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
-
-  reapplyTx cfg slot vtx st =
-    (\st' -> st{byronLedgerState = st'})
-      <$> applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) (byronLedgerState st)
+  reapplyTxBoth mode cfg slot vtx st =
+    case mode of
+      ReapplyLedgerState ->
+        (\st' -> st{byronLedgerState = st'})
+          <$> applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) (byronLedgerState st)
+      ReapplyTickedLedgerState ->
+        (\st' -> CompAp $ (unCompAp st){tickedByronLedgerState = st'})
+          <$> applyByronGenTx
+            validationMode
+            cfg
+            slot
+            (forgetValidatedByronTx vtx)
+            (tickedByronLedgerState $ unCompAp st)
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
@@ -165,12 +169,14 @@ instance TxLimits ByronBlock where
       . CC.mempoolPayloadRecoverBytes
       . toMempoolPayload
 
-  blockCapacityTxMeasure _cfg st =
+  blockCapacityTxMeasure mode _cfg st =
     IgnoringOverflow $
       ByteSize32 $
         CC.getMaxBlockSize cvs - byronBlockEncodingOverhead
    where
-    cvs = byronLedgerState st
+    cvs = case mode of
+      ReapplyLedgerState -> byronLedgerState st
+      ReapplyTickedLedgerState -> tickedByronLedgerState $ unCompAp st
 
   txMeasure _cfg st tx =
     if txszNat > maxTxSize

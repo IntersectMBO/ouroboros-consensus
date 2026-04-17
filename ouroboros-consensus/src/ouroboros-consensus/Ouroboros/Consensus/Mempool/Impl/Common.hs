@@ -206,7 +206,7 @@ initInternalState capacityOverride lastTicketNo cfg st =
     , isTxValues = emptyLedgerTables
     , isLedgerState = st
     , isLastTicketNo = lastTicketNo
-    , isCapacity = computeMempoolCapacity cfg st capacityOverride
+    , isCapacity = computeMempoolCapacity ReapplyLedgerState cfg st capacityOverride
     }
 
 {-------------------------------------------------------------------------------
@@ -416,7 +416,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
       inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
 
       ReapplyTxsResult err validTxs st' =
-        reapplyTxs @blk @Collect cfg slot inputTxs $
+        reapplyTxsBoth @blk @_ @Collect ReapplyLedgerState cfg slot inputTxs $
           applyMempoolDiffs values inputKeys st
 
       outputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) validTxs
@@ -431,7 +431,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
                 st'
                   `withLedgerTables` (ltliftA2 rawPrependDiffs (projectLedgerTables st) (LedgerTables outputDiffs))
             , isLastTicketNo = lastTicketNo
-            , isCapacity = computeMempoolCapacity cfg st' capacityOverride
+            , isCapacity = computeMempoolCapacity ReapplyLedgerState cfg st' capacityOverride
             }
         )
         err
@@ -467,9 +467,10 @@ computeSnapshot cfg slot st values txTickets =
       inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
    in snapshotFromValidTxs
         ( map unwrap $
-            validatedTxs' $
-              reapplyTxs' @blk @Discard cfg slot inputTxs $
-                applyMempoolDiffs' values inputKeys st
+            validatedTxs $
+              reapplyTxsBoth @blk @_ @Discard ReapplyTickedLedgerState cfg slot inputTxs $
+                applyMempoolDiffsMode ReapplyTickedLedgerState values inputKeys $
+                  CompAp st
         )
         (castPoint $ getTip st)
         slot
