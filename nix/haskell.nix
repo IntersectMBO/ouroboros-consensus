@@ -33,8 +33,8 @@ let
   # Binary patching breaks Mach-O code signatures on aarch64-darwin.
   gitRevFlag =
     if inputs.self ? rev
-    then [("--ghc-option=-D__GIT_REV__=\\\"" + inputs.self.rev + "\\\"")]
-    else [];
+    then [ ("--ghc-option=-D__GIT_REV__=\\\"" + inputs.self.rev + "\\\"") ]
+    else [ ];
 
   hsPkgs = haskell-nix.cabalProject {
     src = ouroborosConsensusSrc;

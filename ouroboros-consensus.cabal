@@ -45,6 +45,7 @@ flag external-git-rev
   description:
     Git revision is provided externally via CPP (-D__GIT_REV__).
     When enabled, the githash package is not required.
+
   manual: True
   default: False
 
@@ -1832,6 +1833,7 @@ library unstable-cardano-tools
 
   if !flag(external-git-rev)
     build-depends: githash
+    other-modules: Cardano.Tools.GitRev.FromGit
 
 executable db-analyser
   import: common-lib
