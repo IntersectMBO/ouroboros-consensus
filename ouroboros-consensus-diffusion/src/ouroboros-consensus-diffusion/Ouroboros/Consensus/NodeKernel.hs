@@ -788,18 +788,18 @@ forkBlockForging IS{..} blockForging =
     -- and decide whether we want to put txs or the leios certificate into the
     -- body.
     -- NOTE(bladyjoker): I stuffed this logic in the Shelley `forgeBlock` as it relies on `shelleyLedgerLeiosState` field of the `ShelleyLedgerState`
-    (newBlock, mayForgedEb) <-
-      lift $
-        Block.forgeBlock
-          blockForging
-          forgeType
-          cfg
-          bcBlockNo
-          currentSlot
-          (forgetLedgerTables tickedLedgerState)
-          rbTxsList
-          ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
-          proof
+    let forgeBlockArgs =
+          ForgeBlockArgs
+            { fbIsLeader = proof
+            , fbEbTxs = ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
+            , fbRbTxs = rbTxsList
+            , fbCurrentTickedLedgerState = (forgetLedgerTables tickedLedgerState)
+            , fbCurrentSlotNo = currentSlot
+            , fbCurrentBlockNo = bcBlockNo
+            , fbConfig = cfg
+            , fbForgeType = forgeType
+            }
+    (newBlock, mayForgedEb) <- lift $ Block.forgeBlock blockForging forgeBlockArgs
 
     trace $
       TraceForgedBlock currentSlot $

@@ -1194,7 +1194,7 @@ data CustomForgeBlockArgs m blk = CustomForgeBlockArgs
   }
 
 customForgeBlock ::
-  forall m blk mk.
+  forall m blk.
   ( IOLike m
   , MonadTime m
   , RunNode blk
@@ -1202,17 +1202,10 @@ customForgeBlock ::
   ) =>
   CustomForgeBlockArgs m blk ->
   BlockForging m blk ->
-  ForgeType ->
-  TopLevelConfig blk ->
-  BlockNo ->
-  SlotNo ->
-  TickedLedgerState blk mk ->
-  [Validated (GenTx blk)] ->
-  [Validated (GenTx blk)] ->
-  IsLeader (BlockProtocol blk) ->
+  ForgeBlockArgs blk ->
   m (blk, Maybe ForgedLeiosEb)
-customForgeBlock CustomForgeBlockArgs{..} origBlockForging forgeType cfg' currentBno currentSlot tickedLdgSt txs ebTxs prf = do
-  let currentEpoch = HFF.futureSlotToEpoch cfbaFuture currentSlot
+customForgeBlock CustomForgeBlockArgs{..} origBlockForging forgeBlockArgs@ForgeBlockArgs{..} = do
+  let currentEpoch = HFF.futureSlotToEpoch cfbaFuture fbCurrentSlotNo
 
   -- EBBs are only ever possible in the first era
   let inFirstEra = HFF.futureEpochInFirstEra cfbaFuture currentEpoch
@@ -1224,26 +1217,15 @@ customForgeBlock CustomForgeBlockArgs{..} origBlockForging forgeType cfg' curren
         EpochSize y = cfbaEpochSize0
 
   let p :: Point blk
-      p = castPoint $ getTip tickedLdgSt
+      p = castPoint $ getTip fbCurrentTickedLedgerState
 
   let needEBB = inFirstEra && NotOrigin ebbSlot > pointSlot p
   case cfbaMbForgeEbbEnv <* guard needEBB of
-    Nothing ->
-      -- no EBB needed, forge without making one
-      forgeBlock
-        origBlockForging
-        forgeType
-        cfg'
-        currentBno
-        currentSlot
-        (forgetLedgerTables tickedLdgSt)
-        txs
-        ebTxs
-        prf
+    Nothing -> forgeBlock origBlockForging forgeBlockArgs -- no EBB needed, forge without making one
     Just forgeEbbEnv -> do
       -- The EBB shares its BlockNo with its predecessor (if
       -- there is one)
-      let ebbBno = case currentBno of
+      let ebbBno = case fbCurrentBlockNo of
             -- We assume this invariant:
             --
             -- If forging of EBBs is enabled then the node
@@ -1265,14 +1247,14 @@ customForgeBlock CustomForgeBlockArgs{..} origBlockForging forgeType cfg' curren
       -- if it is valid, we retick to the /same/ slot
       let apply = applyLedgerBlock OmitLedgerEvents (configLedger cfbaPInfoConfig)
           tables = emptyLedgerTables -- EBBs need no input tables
-      tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
+      tickedLdgSt' <- case Exc.runExcept $ apply ebb (fbCurrentTickedLedgerState `withLedgerTables` tables) of
         Left e -> Exn.throw $ JitEbbError @blk e
         Right st ->
           pure $
             applyChainTick
               OmitLedgerEvents
               (configLedger cfbaPInfoConfig)
-              currentSlot
+              fbCurrentSlotNo
               (forgetLedgerTables st)
 
       -- forge the block usings the ledger state that includes
@@ -1280,14 +1262,9 @@ customForgeBlock CustomForgeBlockArgs{..} origBlockForging forgeType cfg' curren
       (blk, mayEb) <-
         forgeBlock
           origBlockForging
-          forgeType
-          cfg'
-          currentBno
-          currentSlot
-          (forgetLedgerTables tickedLdgSt')
-          txs
-          ebTxs
-          prf
+          $ forgeBlockArgs
+            { fbCurrentTickedLedgerState = forgetLedgerTables tickedLdgSt'
+            }
 
       -- If the EBB or the subsequent block is invalid, then the
       -- ChainDB will reject it as invalid, and

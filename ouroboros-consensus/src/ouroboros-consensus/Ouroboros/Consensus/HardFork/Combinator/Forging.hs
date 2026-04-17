@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -333,25 +334,11 @@ hardForkForgeBlock ::
   forall m xs empty.
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
-  ForgeType ->
-  TopLevelConfig (HardForkBlock xs) ->
-  BlockNo ->
-  SlotNo ->
-  TickedLedgerState (HardForkBlock xs) EmptyMK ->
-  [Validated (GenTx (HardForkBlock xs))] ->
-  [Validated (GenTx (HardForkBlock xs))] ->
-  HardForkIsLeader xs ->
+  ForgeBlockArgs (HardForkBlock xs) ->
   m (HardForkBlock xs, Maybe ForgedLeiosEb)
 hardForkForgeBlock
   blockForging
-  leiosDb
-  cfg
-  bno
-  sno
-  (TickedHardForkLedgerState transition ledgerState)
-  rbTxs
-  ebTxs
-  isLeader =
+  ForgeBlockArgs{..} =
     fmap undistrib $ hsequence' isLeaderAndLedgerStateAndBlocks
    where
     isLeaderAndLedgerStateAndBlocks :: NS (m :.: Product I (Const (Maybe ForgedLeiosEb))) xs
@@ -366,19 +353,19 @@ hardForkForgeBlock
         -- it statically.
         $ Match.mustMatchNS
           "IsLeader"
-          (getOneEraIsLeader isLeader)
-          (State.tip ledgerState)
+          (getOneEraIsLeader fbIsLeader)
+          (State.tip . tickedHardForkLedgerStatePerEra $ fbCurrentTickedLedgerState)
 
     injectTxs =
       injectValidatedTxs
-        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) rbTxs)
-        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) ebTxs)
-    cfgs = distribTopLevelConfig ei cfg
+        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) fbRbTxs)
+        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) fbEbTxs)
+    cfgs = distribTopLevelConfig ei fbConfig
     ei =
       State.epochInfoPrecomputedTransitionInfo
-        (hardForkLedgerConfigShape (configLedger cfg))
-        transition
-        ledgerState
+        (hardForkLedgerConfigShape (configLedger fbConfig))
+        (tickedHardForkLedgerStateTransition fbCurrentTickedLedgerState)
+        (tickedHardForkLedgerStatePerEra fbCurrentTickedLedgerState)
 
     missingBlockForgingImpossible :: EraIndex xs -> String
     missingBlockForgingImpossible eraIndex =
@@ -458,11 +445,13 @@ hardForkForgeBlock
                   (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
                   mBlockForging'
               )
-              leiosDb
-              cfg'
-              bno
-              sno
-              ledgerState'
-              (map unwrapValidatedGenTx rbTxs')
-              (map unwrapValidatedGenTx ebTxs')
-              isLeader'
+              ForgeBlockArgs
+                { fbIsLeader = isLeader'
+                , fbEbTxs = (map unwrapValidatedGenTx ebTxs')
+                , fbRbTxs = (map unwrapValidatedGenTx rbTxs')
+                , fbCurrentTickedLedgerState = ledgerState'
+                , fbCurrentSlotNo
+                , fbCurrentBlockNo
+                , fbConfig = cfg'
+                , fbForgeType
+                }

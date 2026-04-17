@@ -299,9 +299,16 @@ blockForgingB =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \forgeType cfg bno slot st txs _ebTxs proof ->
+    , forgeBlock = \ForgeBlockArgs{..} ->
         return . (,Nothing) $
-          forgeBlockB forgeType cfg bno slot st (fmap txForgetValidated txs) proof
+          forgeBlockB
+            fbForgeType
+            fbConfig
+            fbCurrentBlockNo
+            fbCurrentSlotNo
+            fbCurrentTickedLedgerState
+            (txForgetValidated <$> fbRbTxs)
+            fbIsLeader
     , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
 

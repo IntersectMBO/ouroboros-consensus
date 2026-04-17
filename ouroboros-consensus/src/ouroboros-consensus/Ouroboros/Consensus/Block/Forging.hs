@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Block.Forging
   , checkShouldForge
   , forgeStateUpdateInfoFromUpdateInfo
   , LeiosDecideForgeTypeArgs (..)
+  , ForgeBlockArgs (..)
 
     -- * 'UpdateInfo'
   , UpdateInfo (..)
@@ -124,16 +125,7 @@ data BlockForging m blk = BlockForging
   -- to see whether we can actually forge a block.
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
-  , forgeBlock ::
-      ForgeType ->
-      TopLevelConfig blk ->
-      BlockNo -> -- Current block number
-      SlotNo -> -- Current slot number
-      TickedLedgerState blk EmptyMK -> -- Current ledger state
-      [Validated (GenTx blk)] -> -- Transactions to include in the TxsRb
-      [Validated (GenTx blk)] -> -- Transaction to include in the Eb
-      IsLeader (BlockProtocol blk) -> -- Proof we are leader
-      m (blk, Maybe ForgedLeiosEb)
+  , forgeBlock :: ForgeBlockArgs blk -> m (blk, Maybe ForgedLeiosEb)
   -- ^ Forge a block
   --
   -- The function is passed the prefix of the mempool that will fit within
@@ -150,6 +142,17 @@ data BlockForging m blk = BlockForging
   --
   -- PRECONDITION: 'checkCanForge' returned @Right ()@.
   , leiosDecideForgeType :: Monad m => LeiosDecideForgeTypeArgs m blk -> m ForgeType
+  }
+
+data ForgeBlockArgs blk = ForgeBlockArgs
+  { fbForgeType :: ForgeType
+  , fbConfig :: TopLevelConfig blk
+  , fbCurrentBlockNo :: BlockNo -- Current block number,
+  , fbCurrentSlotNo :: SlotNo -- Current slot number
+  , fbCurrentTickedLedgerState :: TickedLedgerState blk EmptyMK -- Current ledger state
+  , fbRbTxs :: [Validated (GenTx blk)] -- Transactions to include in the TxsRb
+  , fbEbTxs :: [Validated (GenTx blk)] -- Transaction to include in the Eb
+  , fbIsLeader :: IsLeader (BlockProtocol blk) -- Proof we are leader
   }
 
 data ForgeType = ForgeTxsRb | ForgeCertRb LeiosCertificate [(TxHash, ByteString)]

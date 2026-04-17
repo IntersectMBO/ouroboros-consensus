@@ -25,6 +25,7 @@ import Data.Proxy
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection)
 import Ouroboros.Consensus.Block.Abstract as Block
+import Ouroboros.Consensus.Block.Forging (ForgeBlockArgs (..))
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
   , ForgeType (ForgeTxsRb)
@@ -223,14 +224,16 @@ runForge epochSize_ nextSlot opts chainDB _leiosConn blockForging cfg genTxs = d
       lift $
         Block.forgeBlock
           blockForging'
-          ForgeTxsRb
-          cfg
-          bcBlockNo
-          currentSlot
-          (forgetLedgerTables tickedLedgerState)
-          txs
-          mempty
-          proof
+          ForgeBlockArgs
+            { fbIsLeader = proof
+            , fbEbTxs = mempty
+            , fbRbTxs = txs
+            , fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
+            , fbCurrentSlotNo = currentSlot
+            , fbCurrentBlockNo = bcBlockNo
+            , fbConfig = cfg
+            , fbForgeType = ForgeTxsRb
+            }
 
     -- Add the block to the chain DB (synchronously) and verify adoption
     let noPunish = InvalidBlockPunishment.noPunishment

@@ -1,5 +1,5 @@
-{-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -25,7 +25,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, IsLeader)
+import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -48,105 +48,83 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 -------------------------------------------------------------------------------}
 
 forgeShelleyBlock ::
-  forall m era proto mk.
+  forall m era proto.
   (ShelleyCompatible proto era, Monad m) =>
-  ForgeType ->
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
-  TopLevelConfig (ShelleyBlock proto era) ->
-  -- | Current block number
-  BlockNo ->
-  -- | Current slot number
-  SlotNo ->
-  -- | Current ledger
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  -- | RB Txs to include
-  [Validated (GenTx (ShelleyBlock proto era))] ->
-  -- | EB Txs to include
-  [Validated (GenTx (ShelleyBlock proto era))] ->
-  IsLeader proto ->
+  ForgeBlockArgs (ShelleyBlock proto era) ->
   m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
-forgeShelleyBlock
-  forgeType
-  hotKey
-  cbl
-  cfg
-  curNo
-  curSlot
-  tickedLedger
-  rbTxs
-  ebTxs
-  isLeader = do
-    -- Only build an EB if ebTxs is not empty
-    let
-      -- Current EB to announce
-      mayEb = forgeLeiosEb curSlot <$> nonEmpty (extractTx <$> ebTxs)
+forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
+  -- Only build an EB if ebTxs is not empty
+  let
+    -- Current EB to announce
+    mayEb = forgeLeiosEb fbCurrentSlotNo <$> nonEmpty (extractTx <$> fbEbTxs)
 
-    blk <- case forgeType of
-      ForgeTxsRb -> do
-        let body = SL.BodyInline rbTxs'
+  blk <- case fbForgeType of
+    ForgeTxsRb -> do
+      let body = SL.BodyInline rbTxs'
 
-        hdr <-
-          mkHeader @_ @(ProtoCrypto proto)
-            hotKey
-            cbl
-            isLeader
-            curSlot
-            curNo
-            prevHash
-            (SL.hashBody @era body)
-            (SL.bodyBytesSize protocolVersion body)
-            Praos.LedgerBlock
-            protocolVersion
-            (pointEbHash . point <$> mayEb)
-        let blk =
-              mkShelleyBlock $
-                SL.Block
-                  hdr
-                  body
-        return blk
-      ForgeCertRb cert ebClosure -> do
-        let body = SL.BodyCertificate (toLedgerCert cert) (Just . toTxSeq $ ebClosure)
-        hdr <-
-          mkHeader @_ @(ProtoCrypto proto)
-            hotKey
-            cbl
-            isLeader
-            curSlot
-            curNo
-            prevHash
-            (SL.hashBody @era body)
-            (SL.bodyBytesSize protocolVersion body)
-            Praos.LeiosCertificate
-            protocolVersion
-            Nothing -- FIXME(bladyjoker): Skip announcement when certifying https://github.com/input-output-hk/ouroboros-leios/issues/838
-        let blk =
-              mkShelleyBlock $
-                SL.Block
-                  hdr
-                  body
-        return blk
+      hdr <-
+        mkHeader @_ @(ProtoCrypto proto)
+          hotKey
+          cbl
+          fbIsLeader
+          fbCurrentSlotNo
+          fbCurrentBlockNo
+          prevHash
+          (SL.hashBody @era body)
+          (SL.bodyBytesSize protocolVersion body)
+          Praos.LedgerBlock
+          protocolVersion
+          (pointEbHash . point <$> mayEb)
+      let blk =
+            mkShelleyBlock $
+              SL.Block
+                hdr
+                body
+      return blk
+    ForgeCertRb cert ebClosure -> do
+      let body = SL.BodyCertificate (toLedgerCert cert) (Just . toTxSeq $ ebClosure)
+      hdr <-
+        mkHeader @_ @(ProtoCrypto proto)
+          hotKey
+          cbl
+          fbIsLeader
+          fbCurrentSlotNo
+          fbCurrentBlockNo
+          prevHash
+          (SL.hashBody @era body)
+          (SL.bodyBytesSize protocolVersion body)
+          Praos.LeiosCertificate
+          protocolVersion
+          Nothing -- FIXME(bladyjoker): Skip announcement when certifying https://github.com/input-output-hk/ouroboros-leios/issues/838
+      let blk =
+            mkShelleyBlock $
+              SL.Block
+                hdr
+                body
+      return blk
 
-    return $
-      assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
-        (blk, mayEb)
-   where
-    protocolVersion = shelleyProtocolVersion $ configBlock cfg
+  return $
+    assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
+      (blk, mayEb)
+ where
+  protocolVersion = shelleyProtocolVersion $ configBlock fbConfig
 
-    rbTxs' =
-      SL.toTxSeq @era $
-        Seq.fromList $
-          fmap extractTx rbTxs
+  rbTxs' =
+    SL.toTxSeq @era $
+      Seq.fromList $
+        fmap extractTx fbRbTxs
 
-    extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
-    extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx
+  extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
+  extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx
 
-    prevHash :: SL.PrevHash
-    prevHash =
-      toShelleyPrevHash @proto
-        . castHash
-        . getTipHash
-        $ tickedLedger
+  prevHash :: SL.PrevHash
+  prevHash =
+    toShelleyPrevHash @proto
+      . castHash
+      . getTipHash
+      $ fbCurrentTickedLedgerState
 
 toLedgerCert :: LeiosCertificate -> SL.Certificate
 toLedgerCert = SL.Certificate . BL.fromStrict . unLeiosCertificate

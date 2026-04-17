@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -109,15 +110,15 @@ pbftBlockForging canBeLeader =
             canBeLeader
             slot
             tickedPBftState
-    , forgeBlock = \_ cfg slot bno lst txs _ebtxs proof ->
+    , forgeBlock = \ForgeBlockArgs{..} ->
         return . (,Nothing) $
           forgeSimple
             forgePBftExt
-            cfg
-            slot
-            bno
-            lst
-            (map txForgetValidated txs)
-            proof
+            fbConfig
+            fbCurrentBlockNo
+            fbCurrentSlotNo
+            fbCurrentTickedLedgerState
+            (txForgetValidated <$> fbRbTxs)
+            fbIsLeader
     , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
