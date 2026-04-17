@@ -22,7 +22,7 @@ fi
 
 case "$(uname -s)" in
     MINGW*)     path="$(pwd -W | sed 's_/_\\\\_g')\\\\ouroboros-consensus";;
-    *)          path="$(pwd)/ouroboros-consensus";;
+    *)          path="$(pwd -P)/ouroboros-consensus";;
 esac
 
 $fdcmd --full-path "$path" \
