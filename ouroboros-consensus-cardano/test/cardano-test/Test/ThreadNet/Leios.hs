@@ -258,8 +258,8 @@ prop_leios seed =
             & counterexample "cumulative tx bytes is 0 — no transactions were applied"
         )
           .&&. ( actual === expected
-                  & counterexample ("ledger state: " <> show actual)
-                  & counterexample ("independent sum: " <> show expected)
+                   & counterexample ("ledger state: " <> show actual)
+                   & counterexample ("independent sum: " <> show expected)
                )
 
 -- | Independently compute cumulative tx bytes by resolving each block in the
