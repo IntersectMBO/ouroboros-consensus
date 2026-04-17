@@ -138,43 +138,42 @@ import Test.ThreadNet.Util.NodeTopology (meshNodeTopology)
 import Test.ThreadNet.Util.Seed (Seed (..), runGen)
 import Test.Util.HardFork.Future (Future (EraFinal))
 import Test.Util.Slots (NumSlots (..))
+import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
   testGroup
     "Leios ThreadNet"
-    [ testProperty "EB production" prop_leios_blocksProduced
-    , testProperty "EB certificate inclusion" prop_leios_ebCertificateInclusion
-    , testProperty "Cumulative tx bytes" prop_leios_cumulativeTxBytes
+    [ adjustQuickCheckTests (`div` 10) $
+        testProperty "basic functionality" prop_leios
     ]
 
-prop_leios_blocksProduced :: Seed -> Property
-prop_leios_blocksProduced seed =
+-- | Verify a suite of basic Leios ThreadNet invariants in a single run:
+--
+-- * EB production, transaction inclusion, and EB diffusion.
+-- * Replaying the chain with EB resolution produces the same ledger state
+--   as the one computed by the ChainDB during the simulation. This proves
+--   that EB transactions from certified EBs are actually applied to the
+--   ledger.
+-- * 'shelleyCumulativeTxBytes' in the final ledger state matches an
+--   independently computed sum of individual transaction sizes over the
+--   chain (resolving certifying blocks via the LeiosDB and summing
+--   'sizeTxF' per transaction — the same data the accumulator sees, but
+--   computed outside of block application).
+prop_leios :: Seed -> Property
+prop_leios seed =
   conjoin
-    [ isNothing testOutput.exceptionThrown
-        & counterexample "test threw an exception"
-        & prettyCounterexampleList "all traces" 120 (show <$> traces)
-    , not (null forgedBlocks)
-        & counterexample "no praos blocks were forged"
-    , any (> 0) includedTxCounts
-        & counterexample "all forged blocks were empty (no transactions)"
-        & prettyCounterexampleMap "txs per active slot" 120 includedTxCounts
-    , not (null forgedEBs)
-        & counterexample "no endorser blocks were forged"
-        & prettyCounterexampleMap "forged leios EBs" 120 forgedEBs
-        & prettyCounterexampleList "leios kernel traces" 120 leiosTraces
-    , length forgedPoints === length acquiredPoints
-        & counterexample "endorser blocks not fully diffused"
-        & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
-        & prettyCounterexampleList "forged leios EBs" 120 forgedPoints
+    [ blocksProduced
+    , ebCertificateInclusion
+    , cumulativeTxBytes
     ]
-    & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
-    & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
-    & tabulate "Praos blocks forged" [show $ length forgedBlocks]
-    & tabulate "Leios blocks forged" [show $ length forgedEBs]
-    & tabulate "Certifying blocks" [show $ length certifyingBlocks]
-    & tabulate "Effective throughput" [show throughput]
  where
+  numNodes = 3 :: Integer
+  numSlots = 200 :: Word64
+
+  (testOutput, ProtocolInfo{pInfoConfig, pInfoInitLedger}) =
+    runThreadNet seed (NumSlots numSlots) (NumCoreNodes $ fromIntegral numNodes)
+
   traces = testOutput.allTraces
 
   forgedBlocks = foldMap nodeOutputForges testOutput.testOutputNodes
@@ -211,78 +210,57 @@ prop_leios_blocksProduced seed =
     , SL.blockCertifiesEb (shelleyBlockRaw shelleyBlk)
     ]
 
-  throughput = fromIntegral (sum includedTxCounts) / fromRational numSlots :: Double
-
-  (testOutput, _protocolInfo) =
-    runThreadNet seed (NumSlots $ ceiling numSlots) (NumCoreNodes $ fromIntegral numNodes)
-
-  numNodes = 3 :: Integer
-
-  numSlots = 200
-
--- | Verify that independently replaying the chain with EB resolution produces
--- the same ledger state as the one computed by the ChainDB during the
--- simulation. This proves that EB transactions from certified EBs are
--- actually applied to the ledger.
-prop_leios_ebCertificateInclusion :: Seed -> Property
-prop_leios_ebCertificateInclusion seed =
-  ( not (null certifyingBlocks)
-      & counterexample "no certifying blocks — test is vacuous"
-  )
-    .&&. (foldedLedger === expectedLedger)
- where
-  (testOutput, ProtocolInfo{pInfoConfig, pInfoInitLedger}) =
-    runThreadNet seed (NumSlots numSlots) (NumCoreNodes $ fromIntegral numNodes)
+  throughput = fromIntegral (sum includedTxCounts) / fromIntegral numSlots :: Double
 
   -- Pick any node — all nodes should converge to the same chain.
   someNode = snd . Map.findMin $ testOutput.testOutputNodes
 
-  nodeChains = nodeOutputFinalChain <$> testOutput.testOutputNodes
+  blocksProduced =
+    conjoin
+      [ isNothing testOutput.exceptionThrown
+          & counterexample "test threw an exception"
+          & prettyCounterexampleList "all traces" 120 (show <$> traces)
+      , not (null forgedBlocks)
+          & counterexample "no praos blocks were forged"
+      , any (> 0) includedTxCounts
+          & counterexample "all forged blocks were empty (no transactions)"
+          & prettyCounterexampleMap "txs per active slot" 120 includedTxCounts
+      , not (null forgedEBs)
+          & counterexample "no endorser blocks were forged"
+          & prettyCounterexampleMap "forged leios EBs" 120 forgedEBs
+          & prettyCounterexampleList "leios kernel traces" 120 leiosTraces
+      , length forgedPoints === length acquiredPoints
+          & counterexample "endorser blocks not fully diffused"
+          & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
+          & prettyCounterexampleList "forged leios EBs" 120 forgedPoints
+      ]
+      & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
+      & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
+      & tabulate "Praos blocks forged" [show $ length forgedBlocks]
+      & tabulate "Leios blocks forged" [show $ length forgedEBs]
+      & tabulate "Certifying blocks" [show $ length certifyingBlocks]
+      & tabulate "Effective throughput" [show throughput]
 
-  certifyingBlocks =
-    [ blk
-    | blk@(BlockConway shelleyBlk) <- concatMap Chain.toOldestFirst nodeChains
-    , SL.blockCertifiesEb (shelleyBlockRaw shelleyBlk)
-    ]
+  ebCertificateInclusion =
+    let expectedLedger = nodeOutputFinalLedger someNode
+        foldedLedger = replayNodeChain pInfoConfig pInfoInitLedger someNode
+     in ( not (null certifyingBlocks)
+            & counterexample "no certifying blocks — test is vacuous"
+        )
+          .&&. (foldedLedger === expectedLedger)
 
-  -- nodeOutputFinalLedger has EmptyMK (tables stripped by ChainDB on
-  -- extraction), so we strip the fold result's tables for comparison.
-  expectedLedger = nodeOutputFinalLedger someNode
-
-  foldedLedger = replayNodeChain pInfoConfig pInfoInitLedger someNode
-
-  numNodes = 3 :: Integer
-  numSlots = 200 :: Word64
-
--- | Verify that 'shelleyCumulativeTxBytes' in the final ledger state matches
--- an independently computed sum of individual transaction sizes over the chain.
---
--- The independent sum resolves certifying blocks (filling in EB transaction
--- closures from the LeiosDB) and then sums 'sizeTxF' per transaction — the
--- same data the accumulator sees, but computed outside of block application.
-prop_leios_cumulativeTxBytes :: Seed -> Property
-prop_leios_cumulativeTxBytes seed =
-  ( cumulativeTxBytes > 0
-      & counterexample "cumulative tx bytes is 0 — no transactions were applied"
-  )
-    .&&. ( cumulativeTxBytes === expectedCumulativeTxBytes
-            & counterexample ("ledger state: " <> show cumulativeTxBytes)
-            & counterexample ("independent sum: " <> show expectedCumulativeTxBytes)
-         )
- where
-  (testOutput, ProtocolInfo{pInfoConfig, pInfoInitLedger}) =
-    runThreadNet seed (NumSlots numSlots) (NumCoreNodes $ fromIntegral numNodes)
-
-  someNode = snd . Map.findMin $ testOutput.testOutputNodes
-
-  cumulativeTxBytes = case nodeOutputFinalLedger someNode of
-    LedgerStateConway st -> shelleyCumulativeTxBytes st
-    _ -> error "expected Conway ledger state"
-
-  expectedCumulativeTxBytes = sumChainTxBytes pInfoConfig pInfoInitLedger someNode
-
-  numNodes = 3 :: Integer
-  numSlots = 200 :: Word64
+  cumulativeTxBytes =
+    let actual = case nodeOutputFinalLedger someNode of
+          LedgerStateConway st -> shelleyCumulativeTxBytes st
+          _ -> error "expected Conway ledger state"
+        expected = sumChainTxBytes pInfoConfig pInfoInitLedger someNode
+     in ( actual > 0
+            & counterexample "cumulative tx bytes is 0 — no transactions were applied"
+        )
+          .&&. ( actual === expected
+                  & counterexample ("ledger state: " <> show actual)
+                  & counterexample ("independent sum: " <> show expected)
+               )
 
 -- | Independently compute cumulative tx bytes by resolving each block in the
 -- chain (filling in EB closures from the LeiosDB) and summing individual
