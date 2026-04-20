@@ -115,6 +115,10 @@ library
     Ouroboros.Consensus.BlockchainTime.WallClock.Simple
     Ouroboros.Consensus.BlockchainTime.WallClock.Types
     Ouroboros.Consensus.BlockchainTime.WallClock.Util
+    Ouroboros.Consensus.Committee.AcrossEpochs
+    Ouroboros.Consensus.Committee.Class
+    Ouroboros.Consensus.Committee.Crypto
+    Ouroboros.Consensus.Committee.Types
     Ouroboros.Consensus.Config
     Ouroboros.Consensus.Config.SecurityParam
     Ouroboros.Consensus.Config.SupportsNode
@@ -372,6 +376,7 @@ library
     monoid-subclasses,
     mtl,
     multiset ^>=0.3,
+    nonempty-containers,
     nothunks ^>=0.2 || ^>=0.3,
     ouroboros-network:{api, api-tests-lib, protocols} ^>=1.1,
     primitive,
