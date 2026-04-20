@@ -23,6 +23,8 @@ module Ouroboros.Consensus.Peras.Cert.Inclusion
   , needCertRules
   ) where
 
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Ouroboros.Consensus.Block (WithOrigin (..), withOriginToMaybe)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasCertRound (..)
@@ -30,8 +32,6 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasRoundNo (..)
   )
 import Ouroboros.Consensus.Peras.Params (PerasCertMaxRounds (..), PerasParams (..))
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
-import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.Pred
   ( Evidence (..)
@@ -73,7 +73,7 @@ data PerasCertInclusionView cert blk = PerasCertInclusionView
   -- ^ The latest certificate seen by the voter
   , latestCertOnChain :: !(WithOrigin (LatestCertOnChainView cert))
   -- ^ The most recent certificate present in our preferred chain
-  , certSnapshot :: !(PerasCertSnapshot blk)
+  , certIds :: !(Set PerasRoundNo)
   -- ^ A snapshot of the certificates we have in our database
   }
   deriving Show
@@ -97,8 +97,8 @@ mkPerasCertInclusionView ::
   WithOrigin cert ->
   -- | Round number of the latest certificate present in our preferred chain
   WithOrigin PerasRoundNo ->
-  -- | Snapshot of the certificates we have in our database
-  PerasCertSnapshot blk ->
+  -- | Set of certificates (by their round number) present in our database
+  Set PerasRoundNo ->
   -- | Constructed certificate inclusion view
   Maybe (PerasCertInclusionView cert blk)
 mkPerasCertInclusionView
@@ -106,7 +106,7 @@ mkPerasCertInclusionView
   currRoundNo
   latestCertSeen
   latestCertOnChain
-  certSnapshopt = do
+  certIds = do
     latestCertSeenView <- withOriginToMaybe (mkLatestCertSeenView latestCertSeen)
     latestCertOnChainView <- traverse mkLatestCertOnChainView latestCertOnChain
     pure $
@@ -115,7 +115,7 @@ mkPerasCertInclusionView
         , currRoundNo = currRoundNo
         , latestCertSeen = latestCertSeenView
         , latestCertOnChain = latestCertOnChainView
-        , certSnapshot = certSnapshopt
+        , certIds = certIds
         }
    where
     mkLatestCertSeenView = fmap $ \cert ->
@@ -246,7 +246,7 @@ noCertsFromTwoRoundsAgo ::
 noCertsFromTwoRoundsAgo
   PerasCertInclusionView
     { currRoundNo
-    , certSnapshot
+    , certIds
     }
     -- We cannot have possibly seen a certificate from two rounds ago if we are
     -- in round 0 or 1. In that case, this is vacuously false.
@@ -260,7 +260,7 @@ noCertsFromTwoRoundsAgo
           := Not (Bool containsCertFromTwoRoundsAgo)
    where
     containsCertFromTwoRoundsAgo =
-      PerasCertDB.containsCert certSnapshot (currRoundNo - 2)
+      (currRoundNo - 2) `Set.member` certIds
 
 -- | latestCertSeenIsNotExpired: the latest certificate seen has not yet expired
 -- according to the current round number and the Peras protocol parameters
