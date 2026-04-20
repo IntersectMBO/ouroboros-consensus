@@ -342,6 +342,15 @@ leiosFetchLogicIteration env offerings =
       ebHash `Set.member` ebHashes -- peer has offered this EB body
       ]
 
+  goTx2 ::
+    LeiosOutstanding pid ->
+    LeiosFetchDecisions pid ->
+    [Either (LeiosPoint, BytesSize) (LeiosPoint, TxHash)] ->
+    LeiosPoint ->
+    TxHash ->
+    Map EbHash Int ->
+    Set (PeerId pid) ->
+    (LeiosOutstanding pid, LeiosFetchDecisions pid)
   goTx2 !acc !accNew targets point txHash txOffsets peerIds
     | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
       =
