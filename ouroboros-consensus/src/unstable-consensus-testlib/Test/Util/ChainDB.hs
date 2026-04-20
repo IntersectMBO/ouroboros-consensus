@@ -22,6 +22,7 @@ import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Params (mkPerasParams)
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
   )
@@ -33,6 +34,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
+import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
@@ -137,6 +139,11 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
     , cdbPerasCertDbArgs =
         PerasCertDbArgs
           { pcdbaTracer = nullTracer
+          }
+    , cdbPerasVoteDbArgs =
+        PerasVoteDbArgs
+          { pvdbaTracer = nullTracer
+          , pvdbaPerasCfg = mkPerasParams
           }
     , cdbsArgs =
         ChainDbSpecificArgs

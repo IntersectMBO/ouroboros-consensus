@@ -15,6 +15,8 @@
 -- denote ignored variables.
 module Test.Consensus.Peras.Cert.Inclusion (tests) where
 
+import Data.Set (Set)
+import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (WithOrigin (..))
 import Ouroboros.Consensus.Block.SupportsPeras
@@ -34,7 +36,6 @@ import Ouroboros.Consensus.Peras.Params
   , PerasParams (..)
   , mkPerasParams
   )
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot (..))
 import Ouroboros.Consensus.Util.Pred (Evidence (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -91,7 +92,7 @@ needCertModel
     , currRoundNo
     , latestCertSeen
     , latestCertOnChain
-    , certSnapshot
+    , certIds
     } =
     PerasCertInclusionDecisionModel
       { shouldIncludeCert =
@@ -109,7 +110,7 @@ needCertModel
     noCertsFromTwoRoundsAgo =
       if currRoundNo < 2
         then False
-        else not (containsCert certSnapshot (currRoundNo - 2))
+        else not ((currRoundNo - 2) `Set.member` certIds)
 
     latestCertSeenIsNotExpired =
       currRoundNo
@@ -283,18 +284,14 @@ genLatestCertOnChain roundNo = do
       { lcocRoundNo = certRoundNo
       }
 
-genPerasCertSnapshot :: PerasRoundNo -> Gen (PerasCertSnapshot TestBlk)
-genPerasCertSnapshot currRoundNo = do
+genPerasCertIds :: PerasRoundNo -> Gen (Set PerasRoundNo)
+genPerasCertIds currRoundNo = do
   -- Decide whether to include a cert from two rounds ago
   containsCertFromTwoRoundsAgo <- arbitrary
   pure $
-    PerasCertSnapshot
-      { containsCert = \roundNo ->
-          containsCertFromTwoRoundsAgo
-            && roundNo == currRoundNo - 2
-      , getCertsAfter = \_ ->
-          mempty
-      }
+    if containsCertFromTwoRoundsAgo && currRoundNo >= 2
+      then Set.singleton (currRoundNo - 2)
+      else Set.empty
 
 genPerasCertInclusionView :: Gen (PerasCertInclusionView TestCert TestBlk)
 genPerasCertInclusionView = do
@@ -302,14 +299,14 @@ genPerasCertInclusionView = do
   currRoundNo <- genPerasRoundNo
   latestCertSeen <- genLatestCertSeen currRoundNo
   latestCertOnChain <- genWithOrigin (genLatestCertOnChain currRoundNo)
-  certSnapshopt <- genPerasCertSnapshot currRoundNo
+  certIds <- genPerasCertIds currRoundNo
   pure
     PerasCertInclusionView
       { perasParams
       , currRoundNo
       , latestCertSeen = latestCertSeen
       , latestCertOnChain = latestCertOnChain
-      , certSnapshot = certSnapshopt
+      , certIds = certIds
       }
  where
   genWithOrigin gen =

@@ -26,6 +26,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDBError)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
+import Ouroboros.Consensus.Storage.PerasVoteDB.API (PerasVoteDbError (..))
 import Ouroboros.Consensus.Storage.VolatileDB.API (VolatileDBError)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.API as VolatileDB
 import Ouroboros.Network.RethrowPolicy
@@ -97,6 +98,14 @@ consensusRethrowPolicy pb =
     -- for some blocks we used to have but got GCed. This means the
     -- peer is on a chain that forks off more than @k@ blocks away.
     <> mkRethrowPolicy (\_ctx (_ :: BlockFetchServerException) -> distantPeer)
+    -- Peras components as part of the ChainDB can create exceptions, see
+    -- https://github.com/tweag/cardano-peras/issues/216
+    <> mkRethrowPolicy
+      ( \_ctx (e :: PerasVoteDbError blk) ->
+          case e of
+            MultipleWinnersInRound{} -> ourBug -- TODO: should we instead shutdown the node?
+            ForgingCertError{} -> ourBug
+      )
     -- Some chain sync client exceptions indicate malicious behaviour,
     -- others merely mean that we should disconnect from this client
     -- because we have diverged too much.

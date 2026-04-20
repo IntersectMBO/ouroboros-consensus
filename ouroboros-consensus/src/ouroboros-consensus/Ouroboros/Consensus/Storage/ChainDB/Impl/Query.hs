@@ -23,7 +23,11 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getMaxSlotNo
   , getPastLedger
   , getPerasWeightSnapshot
-  , getPerasCertSnapshot
+  , getLatestPerasCertSeen
+  , getPerasCertsAfter
+  , getPerasCertIds
+  , getPerasVotesAfter
+  , getPerasVoteIds
   , getLatestPerasCertOnChainRound
   , getStatistics
   , getTipBlock
@@ -44,9 +48,12 @@ import Cardano.Ledger.BaseTypes (WithOrigin (..))
 import Control.Monad (void)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
@@ -69,7 +76,13 @@ import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
+import Ouroboros.Consensus.Storage.PerasCertDB.API
+  ( PerasCertTicketNo
+  )
+import Ouroboros.Consensus.Storage.PerasVoteDB.API
+  ( PerasVoteTicketNo
+  )
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (eitherToMaybe)
@@ -331,9 +344,29 @@ getPerasWeightSnapshot ::
   ChainDbEnv m blk -> STM m (WithFingerprint (PerasWeightSnapshot blk))
 getPerasWeightSnapshot CDB{..} = PerasCertDB.getWeightSnapshot cdbPerasCertDB
 
-getPerasCertSnapshot ::
-  ChainDbEnv m blk -> STM m (PerasCertSnapshot blk)
-getPerasCertSnapshot CDB{..} = PerasCertDB.getCertSnapshot cdbPerasCertDB
+getLatestPerasCertSeen ::
+  ChainDbEnv m blk -> STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+getLatestPerasCertSeen CDB{..} = PerasCertDB.getLatestCertSeen cdbPerasCertDB
+
+getPerasCertsAfter ::
+  ChainDbEnv m blk ->
+  PerasCertTicketNo ->
+  STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
+getPerasCertsAfter CDB{..} = PerasCertDB.getCertsAfter cdbPerasCertDB
+
+getPerasCertIds ::
+  ChainDbEnv m blk -> STM m (Set PerasRoundNo)
+getPerasCertIds CDB{..} = PerasCertDB.getCertIds cdbPerasCertDB
+
+getPerasVotesAfter ::
+  ChainDbEnv m blk ->
+  PerasVoteTicketNo ->
+  STM m (Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
+getPerasVotesAfter CDB{..} = PerasVoteDB.getVotesAfter cdbPerasVoteDB
+
+getPerasVoteIds ::
+  ChainDbEnv m blk -> STM m (Set (PerasVoteId blk))
+getPerasVoteIds CDB{..} = PerasVoteDB.getVoteIds cdbPerasVoteDB
 
 -- | Wait until the slot of the given point is smaller or equal than the immutable tip slot,
 --   and then return:

@@ -79,6 +79,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (newFuse, whenJust)
 import Ouroboros.Consensus.Util.Args
@@ -194,7 +195,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   lift $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
-    perasCertDB <- PerasCertDB.openDB argsPerasCertDB
+    perasCertDB <- PerasCertDB.createDB argsPerasCertDB
+    perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
@@ -267,6 +269,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
+            , cdbPerasVoteDB = perasVoteDB
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -301,7 +304,12 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
-            , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
+            , getLatestPerasCertSeen = getEnvSTM h Query.getLatestPerasCertSeen
+            , getPerasCertsAfter = getEnvSTM1 h Query.getPerasCertsAfter
+            , getPerasCertIds = getEnvSTM h Query.getPerasCertIds
+            , addPerasVoteWithAsyncCertHandling = getEnv1 h ChainSel.addPerasVoteWithAsyncCertHandling
+            , getPerasVotesAfter = getEnvSTM1 h Query.getPerasVotesAfter
+            , getPerasVoteIds = getEnvSTM h Query.getPerasVoteIds
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
             }
@@ -311,6 +319,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             { intCopyToImmutableDB = getEnv h Background.copyToImmutableDB
             , intGarbageCollect = \slot -> getEnv h $ \e -> do
                 Background.garbageCollectBlocks e slot
+                Background.garbageCollectPeras e slot
                 LedgerDB.garbageCollect (cdbLedgerDB e) slot
             , intTryTakeSnapshot = getEnv h $ \env' ->
                 void $
@@ -348,6 +357,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     argsVolatileDb
     argsLgrDb
     argsPerasCertDB
+    argsPerasVoteDB
     cdbSpecificArgs = args
 
   -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')

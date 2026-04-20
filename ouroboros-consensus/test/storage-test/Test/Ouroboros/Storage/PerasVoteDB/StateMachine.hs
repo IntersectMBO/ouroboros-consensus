@@ -8,7 +8,13 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Test.Ouroboros.Storage.PerasVoteDB.StateMachine (tests) where
+module Test.Ouroboros.Storage.PerasVoteDB.StateMachine
+  ( tests
+
+    -- * Reusable generators
+  , genVoterId
+  , genVoteStake
+  ) where
 
 import qualified Cardano.Crypto.DSIGN.Class as SL
 import qualified Cardano.Crypto.Seed as SL
@@ -56,17 +62,17 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB
-  , PerasVoteDbError
+  , PerasVoteDbError (..)
   , PerasVoteTicketNo
   )
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
-import Ouroboros.Consensus.Storage.PerasVoteDB.Impl (PerasVoteDbError (..))
 import Ouroboros.Consensus.Util.Orphans ()
 import Test.Cardano.Ledger.Binary.Arbitrary ()
 import Test.Ouroboros.Storage.Orphans ()
 import qualified Test.Ouroboros.Storage.PerasVoteDB.Model as Model
 import Test.QuickCheck
   ( Arbitrary (..)
+  , Gen
   , Property
   , choose
   , elements
@@ -153,7 +159,7 @@ instance StateModel Model where
       PerasRoundNo ->
       Action Model (Maybe (ValidatedPerasCert TestBlock))
     GarbageCollect ::
-      PerasRoundNo ->
+      SlotNo ->
       Action Model ()
 
   arbitraryAction _ (Model m)
@@ -202,8 +208,8 @@ instance StateModel Model where
       pure (GetForgedCertForRound roundNo)
 
     genGarbageCollect = do
-      roundNo <- genRoundNo
-      pure (GarbageCollect roundNo)
+      slotNo <- SlotNo <$> choose @Word64 (0, 9)
+      pure (GarbageCollect slotNo)
 
     genPoint = do
       frequency
@@ -224,24 +230,6 @@ instance StateModel Model where
       n <- choose @Word64 (0, 9)
       pure (PerasRoundNo n)
 
-    genVoterId = do
-      -- We want to force collisions when adding votes, so we need to restrict
-      -- the key space a lot here. Otherwise we might never hit the case where
-      -- the same voter casts two votes for the same round/block.
-      let mkVoterKey = fromString . replicate 32
-      bytes <- mkVoterKey <$> elements [chr c | c <- [0 .. 99]]
-      let signKey = SL.genKeyDSIGN (SL.mkSeedFromBytes bytes)
-      let verKey = SL.deriveVerKeyDSIGN signKey
-      let keyHash = SL.hashKey (SL.VKey verKey)
-      pure (PerasVoterId keyHash)
-
-    genVoteStake = do
-      -- Make it so that we always require multiple votes to reach a quorum.
-      -- This is assumming a quorum threshold strictly larger than 50%, which is
-      -- a very conservative assumption for Peras.
-      stake <- (1 %) <$> choose (2, 10) -- stake between 1/2 and 1/10
-      pure (PerasVoteStake stake)
-
     genRelativeTime = do
       time <- fromIntegral <$> arbitrary @Word64
       pure (RelativeTime time)
@@ -256,7 +244,7 @@ instance StateModel Model where
       GetVoteIds -> Model $ m
       GetVotesAfter _ -> Model $ m
       GetForgedCertForRound _ -> Model $ m
-      GarbageCollect roundNo -> Model $ Model.garbageCollect roundNo m
+      GarbageCollect slotNo -> Model $ Model.garbageCollect slotNo m
 
   precondition (Model m) action =
     case action of
@@ -292,9 +280,9 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
       GetForgedCertForRound roundNo -> do
         voteDB <- get
         lift $ atomically $ PerasVoteDB.getForgedCertForRound voteDB roundNo
-      GarbageCollect roundNo -> do
+      GarbageCollect slotNo -> do
         voteDB <- get
-        lift $ join $ atomically $ PerasVoteDB.garbageCollect voteDB roundNo
+        lift $ join $ atomically $ PerasVoteDB.garbageCollect voteDB slotNo
 
   postcondition (Model model, _) (AddVote vote) _ actual = do
     let (expected, _) = Model.addVote vote model
@@ -361,6 +349,32 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
     tabulate "GetForgedCertForRound" [tag]
   monitoring _ _ _ _ =
     id
+
+-- * Reusable generators
+
+-- | Generate a random 'PerasVoterId'.
+--
+-- We want to force collisions when adding votes, so we need to restrict
+-- the key space a lot here. Otherwise we might never hit the case where
+-- the same voter casts two votes for the same round/block.
+genVoterId :: Gen PerasVoterId
+genVoterId = do
+  let mkVoterKey = fromString . replicate 32
+  bytes <- mkVoterKey <$> elements [chr c | c <- [0 .. 99]]
+  let signKey = SL.genKeyDSIGN (SL.mkSeedFromBytes bytes)
+  let verKey = SL.deriveVerKeyDSIGN signKey
+  let keyHash = SL.hashKey (SL.VKey verKey)
+  pure (PerasVoterId keyHash)
+
+-- | Generate a random 'PerasVoteStake'.
+--
+-- Make it so that we always require multiple votes to reach a quorum.
+-- This is assuming a quorum threshold strictly larger than 50%, which is
+-- a very conservative assumption for Peras.
+genVoteStake :: Gen PerasVoteStake
+genVoteStake = do
+  stake <- (1 %) <$> choose (2, 10) -- stake between 1/2 and 1/10
+  pure (PerasVoteStake stake)
 
 -- * Helpers
 

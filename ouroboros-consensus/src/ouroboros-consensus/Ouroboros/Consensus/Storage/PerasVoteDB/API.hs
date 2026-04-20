@@ -12,6 +12,11 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.API
   , PerasVoteTicketNo
   , zeroPerasVoteTicketNo
 
+    -- * Exceptions
+  , ExistingPerasRoundWinner (..)
+  , BlockedPerasRoundWinner (..)
+  , PerasVoteDbError (..)
+
     -- * Invariants
   , prop_addVoteThenGetVoteIds
   , prop_getVotesAfterZero
@@ -20,6 +25,7 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.API
   , prop_addVoteThenGetForgedCertForRound
   ) where
 
+import Control.Exception (Exception)
 import Control.Monad (join)
 import qualified Data.List as List
 import Data.Map (Map)
@@ -55,9 +61,10 @@ data PerasVoteDB m blk = PerasVoteDB
       STM m (Maybe (ValidatedPerasCert blk))
   -- ^ Get the certificate if quorum was reached for the given round.
   , garbageCollect ::
-      PerasRoundNo ->
+      SlotNo ->
       STM m (m ())
-  -- ^ Garbage-collect state strictly older than the given slot number.
+  -- ^ Garbage-collect votes whose target slot is strictly smaller than
+  -- the given slot number.
   --
   -- NOTE: the resulting computation over 'm' is there solely for tracing
   -- purposes. Use the `join . atomically` pattern to consume its output.
@@ -79,7 +86,33 @@ data AddPerasVoteResult blk
   deriving stock (Generic, Eq, Ord, Show)
   deriving anyclass NoThunks
 
+{-------------------------------------------------------------------------------
+  Exceptions
+-------------------------------------------------------------------------------}
+
+newtype ExistingPerasRoundWinner blk
+  = ExistingPerasRoundWinner (Point blk, PerasVoteStake)
+  deriving stock (Show, Eq)
+
+newtype BlockedPerasRoundWinner blk
+  = BlockedPerasRoundWinner (Point blk, PerasVoteStake)
+  deriving stock (Show, Eq)
+
+data PerasVoteDbError blk
+  = -- | Attempted to add a vote that would lead to multiple winners for the
+    -- same round
+    MultipleWinnersInRound
+      PerasRoundNo
+      (ExistingPerasRoundWinner blk)
+      (BlockedPerasRoundWinner blk)
+  | -- | An error occurred while forging a certificate
+    ForgingCertError (PerasForgeErr blk)
+  deriving stock Show
+  deriving anyclass Exception
+
 -- * Invariants
+
+-- (currently not enforced, see https://github.com/tweag/cardano-peras/issues/217)
 
 -- | After adding a vote, its ID should be present in 'getVoteIds'.
 prop_addVoteThenGetVoteIds ::
@@ -126,19 +159,19 @@ prop_getVotesAfterMonotonic db ticketNo =
       tickets == List.sort tickets
         && all (> ticketNo) tickets
 
--- | After garbage collection for round N, no votes for rounds <N should remain.
+-- | After garbage collection for slot S, no votes with target slot < S should remain.
 prop_garbageCollectRemovesOldVotes ::
   MonadSTM m =>
   PerasVoteDB m blk ->
-  PerasRoundNo ->
+  SlotNo ->
   m Bool
-prop_garbageCollectRemovesOldVotes db roundNo =
+prop_garbageCollectRemovesOldVotes db slotNo =
   atomically $ do
-    _ <- garbageCollect db roundNo
+    _ <- garbageCollect db slotNo
     allVotes <- getVotesAfter db zeroPerasVoteTicketNo
-    let roundsNos = getPerasVoteRound . forgetArrivalTime <$> Map.elems allVotes
+    let targetSlots = pointSlot . getPerasVoteBlock . forgetArrivalTime <$> Map.elems allVotes
     pure $
-      all (>= roundNo) roundsNos
+      all (>= NotOrigin slotNo) targetSlots
 
 -- | When adding a vote results in a certificate just being forged for a round,
 -- this certificate should also be retrievable via 'getForgedCertForRound'.

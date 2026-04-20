@@ -133,6 +133,8 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB)
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
   ( VolatileDB
@@ -382,6 +384,7 @@ data ChainDbEnv m blk = CDB
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
+  , cdbPerasVoteDB :: !(PerasVoteDB m blk)
   }
   deriving Generic
 
@@ -777,6 +780,7 @@ data TraceEvent blk
   | TraceImmutableDBEvent (ImmutableDB.TraceEvent blk)
   | TraceVolatileDBEvent (VolatileDB.TraceEvent blk)
   | TracePerasCertDbEvent (PerasCertDB.TraceEvent blk)
+  | TracePerasVoteDbEvent (PerasVoteDB.TraceEvent blk)
   | TraceLastShutdownUnclean
   | TraceChainSelStarvationEvent (TraceChainSelStarvationEvent blk)
   | TraceAddPerasCertEvent (TraceAddPerasCertEvent blk)

@@ -85,6 +85,7 @@ module Ouroboros.Consensus.Peras.Vote.Aggregation
   , pattern VoteDidntGenerateNewCert
   , updatePerasRoundVoteStates
   , getPerasRoundVoteStateCertMaybe
+  , getPerasRoundVoteStateMaxTargetedSlot
   , UpdateRoundVoteStateError (..)
   ) where
 
@@ -146,6 +147,26 @@ getPerasRoundVoteStateCertMaybe = \case
       Just cert
   _ ->
     Nothing
+
+-- | Get the youngest (maximum) slot targeted by a vote in this round.
+--
+-- This is useful for garbage collection: a round voting data can be fully
+-- collected only when its youngest targeted slot is strictly older than the
+-- GC threshold.
+getPerasRoundVoteStateMaxTargetedSlot ::
+  PerasRoundVoteState blk ->
+  WithOrigin SlotNo
+getPerasRoundVoteStateMaxTargetedSlot PerasRoundVoteState{prvsState} =
+  case prvsState of
+    Left NoQuorum{candidateStates} ->
+      maximumOrOrigin $ map pointSlot $ Map.keys candidateStates
+    Right Quorum{winnerState, loserStates} ->
+      maximumOrOrigin $
+        pointSlot (getPerasVoteBlock winnerState)
+          : (pointSlot <$> Map.keys loserStates)
+ where
+  maximumOrOrigin [] = Origin
+  maximumOrOrigin xs = maximum xs
 
 -- | Create a fresh round vote state for the given round number
 freshRoundVoteState ::
