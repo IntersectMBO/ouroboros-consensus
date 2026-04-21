@@ -717,6 +717,7 @@ test-suite consensus-test
     Test.Consensus.Peras.Util
     Test.Consensus.Peras.Voting.Rules
     Test.Consensus.Peras.WeightSnapshot
+    Test.Consensus.Util.Bitmap
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Pred
     Test.Consensus.Util.Versioned
