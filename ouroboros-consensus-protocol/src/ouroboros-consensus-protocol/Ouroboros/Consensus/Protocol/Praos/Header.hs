@@ -39,6 +39,7 @@ import Cardano.Ledger.Binary
   , DecCBOR (decCBOR)
   , EncCBOR (..)
   , ToCBOR (..)
+  , decodeListLen
   , encodedSigKESSizeExpr
   , serialize'
   , unCBORGroup
@@ -214,20 +215,36 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
           !> To hbMayEbAnnouncement
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
-  decCBOR =
-    decode $
-      RecD HeaderBody
-        <! From
-        <! From
-        <! From
-        <! From
-        <! D decodeVerKeyVRF
-        <! From
-        <! From
-        <! From
-        <! mapCoder unCBORGroup From
-        <! From
-        <! From
+  decCBOR = do
+    len <- decodeListLen
+    hbBlockNo <- decCBOR
+    hbSlotNo <- decCBOR
+    hbPrev <- decCBOR
+    hbVk <- decCBOR
+    hbVrfVk <- decodeVerKeyVRF
+    hbVrfRes <- decCBOR
+    hbBodySize <- decCBOR
+    hbBodyHash <- decCBOR
+    hbOCert <- unCBORGroup <$> decCBOR
+    hbProtVer <- decCBOR
+    hbMayEbAnnouncement <- case len of
+      10 -> return Nothing
+      11 -> decCBOR
+      _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
+    return $
+      HeaderBody
+        { hbBlockNo
+        , hbSlotNo
+        , hbPrev
+        , hbVk
+        , hbVrfVk
+        , hbVrfRes
+        , hbBodySize
+        , hbBodyHash
+        , hbOCert
+        , hbProtVer
+        , hbMayEbAnnouncement
+        }
 
 encodeHeaderRaw ::
   Crypto crypto =>
