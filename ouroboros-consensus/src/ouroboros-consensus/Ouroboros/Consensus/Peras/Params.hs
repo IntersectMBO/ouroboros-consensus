@@ -119,11 +119,11 @@ newtype PerasQuorumStakeThresholdSafetyMargin
 --
 -- TODO: make fields strict when we have concrete default values for them.
 data PerasParams = PerasParams
-  { perasIgnoranceRounds :: PerasIgnoranceRounds
-  , perasCooldownRounds :: PerasCooldownRounds
-  , perasBlockMinSlots :: PerasBlockMinSlots
-  , perasCertMaxRounds :: PerasCertMaxRounds
-  , perasCertArrivalThreshold :: PerasCertArrivalThreshold
+  { perasIgnoranceRounds :: !PerasIgnoranceRounds
+  , perasCooldownRounds :: !PerasCooldownRounds
+  , perasBlockMinSlots :: !PerasBlockMinSlots
+  , perasCertMaxRounds :: !PerasCertMaxRounds
+  , perasCertArrivalThreshold :: !PerasCertArrivalThreshold
   , perasRoundLength :: !PerasRoundLength
   , perasWeight :: !PerasWeight
   , perasQuorumStakeThreshold :: !PerasQuorumStakeThreshold
@@ -136,17 +136,36 @@ data PerasParams = PerasParams
 -- NOTE: in the future this will depend on a concrete 'BlockConfig'.
 mkPerasParams :: PerasParams
 mkPerasParams =
+  -- Many of these parameters are provided with sensible default values for now,
+  -- waiting for a final decision (in a future stage of the project) on the
+  -- exact values to use. See https://github.com/tweag/cardano-peras/issues/97.
+  --
+  -- We set tentatively T_heal to 2B/asc = 600 slots, as the CIP suggests a
+  -- bigO(B/asc) for that value so that sufficiently many blocks are produced to
+  -- overcome an adversarially boosted block.
+  --
+  -- We also set tentatively perasCertArrivalThreshold (= X in the formal spec)
+  -- to 30 slots (it must be strictly smaller than perasRoundLength)
+  -- See https://github.com/tweag/cardano-peras/issues/88 and
+  -- https://github.com/tweag/cardano-peras/issues/99 for more information on
+  -- this parameter.
+  --
+  -- We also have T_cp = 129_600 and T_cq = 43_200 as per the design document
   PerasParams
-    { perasIgnoranceRounds =
-        error "perasIgnoranceRounds: not yet defined"
-    , perasCooldownRounds =
-        error "perasCooldownRounds: not yet defined"
-    , perasBlockMinSlots =
-        error "perasBlockMinSlots: not yet defined"
-    , perasCertMaxRounds =
-        error "perasCertMaxRounds: not yet defined"
+    { -- ceil(T_heal + T_cq) / perasRoundLength) as per the design document
+      perasIgnoranceRounds =
+        PerasIgnoranceRounds 487
+    , -- ceil(T_heal + T_cq + T_cp) / perasRoundLength) + 1 as per the design document
+      perasCooldownRounds =
+        PerasCooldownRounds 1928
+    , -- must be between 30 and 900 as per the design document
+      perasBlockMinSlots =
+        PerasBlockMinSlots 90
+    , -- equal to perasIgnoranceRounds as per the design document
+      perasCertMaxRounds =
+        PerasCertMaxRounds 487
     , perasCertArrivalThreshold =
-        error "perasCertArrivalThreshold: not yet defined"
+        PerasCertArrivalThreshold 30
     , perasRoundLength =
         PerasRoundLength 90
     , perasWeight =
