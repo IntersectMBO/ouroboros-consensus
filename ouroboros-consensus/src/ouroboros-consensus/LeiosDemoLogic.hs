@@ -359,7 +359,7 @@ leiosFetchLogicIteration env offerings =
     | Set.size peerIds < Leios.maxRequestsPerTx env -- we would like to request it from an additional peer
     -- TODO if requests list priority, does this limit apply even if the
     -- tx has only been requested at lower priorities?
-    , Just (peerId, txOffsets') <- choosePeerTx peerIds acc txOffsets =
+    , Just (peerId, txOffsets') <- choosePeerTx peerIds acc txOffsets txBytesSize =
         -- there's a peer who offered it and we haven't already requested it from them
         let accNew' =
               MkLeiosFetchDecisions $
@@ -382,8 +382,12 @@ leiosFetchLogicIteration env offerings =
         go1 acc accNew targets
 
   choosePeerTx ::
-    Set (PeerId pid) -> LeiosOutstanding pid -> Map EbHash (Int, BytesSize) -> Maybe (PeerId pid, Map EbHash Int)
-  choosePeerTx peerIds acc txOffsets =
+    Set (PeerId pid) ->
+    LeiosOutstanding pid ->
+    Map EbHash (Int, BytesSize) ->
+    BytesSize ->
+    Maybe (PeerId pid, Map EbHash Int)
+  choosePeerTx peerIds acc txOffsets targetBytesSize =
     foldr (\a _ -> Just a) Nothing $
       [ (peerId, Map.map fst txOffsets')
       | (peerId, (_ebIds, ebIds)) <-
@@ -394,7 +398,9 @@ leiosFetchLogicIteration env offerings =
           <= Leios.maxRequestedBytesSizePerPeer env
       , -- peer can be sent more requests
       let txOffsets' = txOffsets `Map.restrictKeys` ebIds
-      , not $ Map.null txOffsets' -- peer has offered an EB closure that includes this tx
+      , case Map.lookupMax txOffsets' of
+          Nothing -> False
+          Just (_k, (_offset, sz)) -> targetBytesSize == sz -- peer has offered at least one EB closure that includes this tx with the same size
       ]
 
 packRequests ::
