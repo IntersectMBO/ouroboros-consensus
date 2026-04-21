@@ -244,15 +244,15 @@ filterMissingWork db outstanding = do
           Map.map
             (IntMap.filter (\(txHash, _) -> Set.member txHash stillMissingTxSet))
             (Leios.missingEbTxs outstanding)
-      filteredTxOffsetss =
+      filteredReverseEbIndexByTx =
         Map.filterWithKey
           (\txHash _ -> Set.member txHash stillMissingTxSet)
-          (Leios.txOffsetss outstanding)
+          (Leios.reverseEbIndexByTx outstanding)
   pure $
     outstanding
       { Leios.missingEbBodies = filteredMissingEbBodies
       , Leios.missingEbTxs = filteredMissingEbTxs
-      , Leios.txOffsetss = filteredTxOffsetss
+      , Leios.reverseEbIndexByTx = filteredReverseEbIndexByTx
       , Leios.acquiredEbBodies =
           Leios.acquiredEbBodies outstanding `Set.union` Set.fromList acquiredEbHashes
       }
@@ -291,7 +291,7 @@ leiosFetchLogicIteration env offerings =
             peerIds = Map.findWithDefault Set.empty point.pointEbHash (Leios.requestedEbPeers acc) ->
           goEb2 acc accNew targets point ebBytesSize peerIds
     Right (point, txBytesSize, txHash) : targets ->
-      let !txOffsets = case Map.lookup txHash (Leios.txOffsetss acc) of
+      let !txOffsets = case Map.lookup txHash (Leios.reverseEbIndexByTx acc) of
             Nothing -> error "impossible!"
             Just x -> x
           peerIds :: Set (PeerId pid)
@@ -627,12 +627,12 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
                           (let MkLeiosEb v = eb in v)
                       )
                       (Leios.missingEbTxs outstanding)
-                , Leios.txOffsetss =
+                , Leios.reverseEbIndexByTx =
                     V.ifoldl
                       ( \acc i (txHash, txBytesSize) ->
                           Map.insertWith Map.union txHash (Map.singleton ebHash (i, txBytesSize)) acc
                       )
-                      (Leios.txOffsetss outstanding)
+                      (Leios.reverseEbIndexByTx outstanding)
                       (let MkLeiosEb v = eb in v)
                 , Leios.requestedBytesSize = Leios.requestedBytesSize outstanding - ebBytesSize
                 , Leios.requestedBytesSizePerPeer =
@@ -701,12 +701,12 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
     forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
-    let (requestedTxPeers', txOffsetss', txsBytesSize) =
+    let (requestedTxPeers', reverseEbIndexByTx', txsBytesSize) =
           ( \f ->
               V.foldl
                 f
                 ( Leios.requestedTxPeers outstanding
-                , Leios.txOffsetss outstanding
+                , Leios.reverseEbIndexByTx outstanding
                 , 0
                 )
                 (txHashes `V.zip` txBytess)
@@ -728,7 +728,7 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
                   (delIf IntMap.null . (`IntMap.withoutKeys` offsetsSet))
                   point
                   (Leios.missingEbTxs outstanding)
-            , Leios.txOffsetss = txOffsetss'
+            , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
             , Leios.blockingPerEb =
                 if IntMap.null beatOtherPeers
                   then Leios.blockingPerEb outstanding
