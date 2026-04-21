@@ -48,7 +48,7 @@ import Data.Kind (Type)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbHash)
+import LeiosDemoTypes (EbAnnouncement)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -61,7 +61,6 @@ import Ouroboros.Consensus.Protocol.Abstract
   , ValidateView
   )
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import Ouroboros.Consensus.Protocol.Praos.Header (BodyType)
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 
@@ -162,12 +161,10 @@ class ProtocolHeaderSupportsKES proto where
     Hash.Hash HASH EraIndependentBlockBody ->
     -- | Size of the block body
     Int ->
-    -- | Type of the block body
-    BodyType ->
     -- | Protocol version
     ProtVer ->
     -- | Leios EB announcement
-    Maybe EbHash ->
+    Maybe EbAnnouncement ->
     m (ShelleyProtocolHeader proto)
 
 -- | ProtocolHeaderSupportsProtocol` provides support for the concrete

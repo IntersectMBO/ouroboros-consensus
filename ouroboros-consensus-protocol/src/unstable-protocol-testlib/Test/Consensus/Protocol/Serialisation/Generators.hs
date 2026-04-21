@@ -17,19 +17,19 @@ import Cardano.Slotting.Slot
   ( SlotNo (SlotNo)
   , WithOrigin (At, Origin)
   )
-import LeiosDemoTypes (EbHash (MkEbHash))
+import qualified Data.ByteString as BS
+import LeiosDemoTypes (EbAnnouncement (EbAnnouncement), EbHash (MkEbHash))
 import Ouroboros.Consensus.Protocol.Praos (LeiosState (LeiosState), PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Header
-  ( BodyType (LedgerBlock, LeiosCertificate)
-  , Header (Header)
+  ( Header (Header)
   , HeaderBody (HeaderBody)
   )
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Crypto.KES ()
 import Test.Crypto.VRF ()
-import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
+import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof, vector)
 
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
@@ -59,7 +59,6 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> certVrf
           <*> arbitrary
           <*> arbitrary
-          <*> arbitrary
           <*> ocert
           <*> arbitrary
           <*> arbitrary
@@ -87,11 +86,8 @@ instance Arbitrary PraosState where
       <*> arbitrary
       <*> arbitrary
 
-instance Arbitrary EbHash where
-  arbitrary = MkEbHash <$> arbitrary -- FIXME(bladyjoker): hash size
-
-instance Arbitrary BodyType where
-  arbitrary = oneof [pure LeiosCertificate, pure LedgerBlock]
+instance Arbitrary EbAnnouncement where
+  arbitrary = EbAnnouncement <$> (MkEbHash . BS.pack <$> vector 32) <*> arbitrary
 
 instance Arbitrary LeiosState where
-  arbitrary = pure $ LeiosState Nothing False
+  arbitrary = pure $ LeiosState Nothing False 0

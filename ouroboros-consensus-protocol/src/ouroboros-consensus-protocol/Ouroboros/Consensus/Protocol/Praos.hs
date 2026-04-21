@@ -98,7 +98,7 @@ import Data.Proxy (Proxy (Proxy))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbHash)
+import LeiosDemoTypes (BytesSize, EbAnnouncement (ebAnnouncementSize))
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
@@ -348,27 +348,29 @@ data instance Ticked PraosState = TickedPraosState
   }
 
 data LeiosState = LeiosState
-  { leiosStatePreviousAnnouncement :: Maybe EbHash
+  { leiosStatePreviousAnnouncement :: Maybe EbAnnouncement
   , leiosStateCanCertify :: Bool
+  , leiosStateCumulativeEbAnnouncementSize :: BytesSize
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
 initLeiosState :: LeiosState
-initLeiosState = LeiosState Nothing False
+initLeiosState = LeiosState Nothing False 0
 
 instance ToCBOR LeiosState where
   toCBOR LeiosState{..} =
     mconcat
-      [ CBOR.encodeListLen 2
+      [ CBOR.encodeListLen 3
       , toCBOR leiosStatePreviousAnnouncement
       , toCBOR leiosStateCanCertify
+      , toCBOR leiosStateCumulativeEbAnnouncementSize
       ]
 
 instance FromCBOR LeiosState where
   fromCBOR = do
-    enforceSize "LeiosState" 2
-    LeiosState <$> fromCBOR <*> fromCBOR
+    enforceSize "LeiosState" 3
+    LeiosState <$> fromCBOR <*> fromCBOR <*> fromCBOR
 
 tickChainDepStateLeios :: LeiosState -> WithOrigin SlotNo -> SlotNo -> LeiosState
 tickChainDepStateLeios leiosSt prevSlotNo currSlotNo =
@@ -380,7 +382,7 @@ leiosTooSoonToCertify :: LeiosState -> WithOrigin SlotNo -> SlotNo -> Bool
 leiosTooSoonToCertify leiosSt prevSlotNo currSlotNo =
   maybe
     True
-    ( \_annEbHash ->
+    ( \_ebAnn ->
         unSlotNo currSlotNo - unSlotNo (withOriginToSlotNo prevSlotNo) <= certifyMinDuration
     )
     (leiosStatePreviousAnnouncement leiosSt)
@@ -395,6 +397,9 @@ reupdateChainDepStateLeios :: Views.HeaderView c -> LeiosState -> LeiosState
 reupdateChainDepStateLeios hdr leiosState =
   leiosState
     { leiosStatePreviousAnnouncement = Views.hvMayEbAnnouncement hdr
+    , leiosStateCumulativeEbAnnouncementSize =
+        leiosStateCumulativeEbAnnouncementSize leiosState
+          + maybe 0 ebAnnouncementSize (Views.hvMayEbAnnouncement hdr)
     }
 
 -- | Errors which we might encounter

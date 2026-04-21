@@ -22,10 +22,12 @@ import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import Control.Tracer (traceWith)
 import qualified Data.Text as T
-import LeiosDemoDb
-  ( LeiosDbConnection (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint)
+import LeiosDemoDb (LeiosDbConnection (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint))
+import LeiosDemoTypes
+  ( EbAnnouncement (EbAnnouncement, ebAnnouncementHash)
+  , LeiosPoint (..)
+  , TraceLeiosKernel (MkTraceLeiosKernel)
   )
-import LeiosDemoTypes (EbHash, LeiosPoint (..), TraceLeiosKernel (MkTraceLeiosKernel))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configConsensus)
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
@@ -132,13 +134,13 @@ leiosDecideForgeTypePraos args = do
     Nothing -> do
       traceLeios $ MkTraceLeiosKernel $ "leiosDecideForgeTypePraos: No previous EB announcement"
       return ForgeTxsRb
-    Just (ebHash :: EbHash) ->
+    Just (EbAnnouncement{..}) ->
       if leiosStateCanCertify
         then do
           let ebPoint =
                 MkLeiosPoint
                   { pointSlotNo = withOriginToSlotNo . praosStateLastSlot $ praosState -- NOTE(bladyjoker): We're using previous slot no (as in of the previous block)
-                  , pointEbHash = ebHash
+                  , pointEbHash = ebAnnouncementHash
                   }
           mayEbClosure <- leiosDbQueryCompletedEbByPoint leiosDb ebPoint
           case mayEbClosure of

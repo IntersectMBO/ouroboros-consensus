@@ -44,8 +44,7 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Header
-  ( BodyType (LedgerBlock)
-  , HeaderBody (HeaderBody)
+  ( HeaderBody (HeaderBody)
   )
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Protocol.TPraos
@@ -281,7 +280,6 @@ fromShelleyLedgerExamplesPraos
           , hbVrfRes = coerce $ SL.bheaderEta bhBody
           , hbBodySize = SL.bsize bhBody
           , hbBodyHash = SL.bhash bhBody
-          , hbBodyType = LedgerBlock
           , hbOCert = SL.bheaderOCert bhBody
           , hbProtVer = SL.bprotver bhBody
           , hbMayEbAnnouncement = Nothing

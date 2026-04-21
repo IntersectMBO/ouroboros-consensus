@@ -31,7 +31,6 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import Ouroboros.Consensus.Protocol.Praos.Header (BodyType (LedgerBlock))
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosState (..))
 import Ouroboros.Consensus.Shelley.Eras
@@ -143,7 +142,6 @@ instance
           , Praos.hbVrfRes = coerce $ SL.bheaderEta bhBody
           , Praos.hbBodySize = SL.bsize bhBody
           , Praos.hbBodyHash = SL.bhash bhBody
-          , Praos.hbBodyType = LedgerBlock
           , Praos.hbOCert = SL.bheaderOCert bhBody
           , Praos.hbProtVer = SL.bprotver bhBody
           , Praos.hbMayEbAnnouncement = Nothing

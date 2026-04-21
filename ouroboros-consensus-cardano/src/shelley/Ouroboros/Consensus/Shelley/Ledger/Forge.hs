@@ -16,10 +16,12 @@ import Control.Exception
 import qualified Data.ByteString as BL
 import qualified Data.Sequence.Strict as Seq
 import LeiosDemoTypes
-  ( ForgedLeiosEb (point)
+  ( EbAnnouncement (EbAnnouncement)
+  , ForgedLeiosEb (body, point)
   , LeiosCertificate (unLeiosCertificate)
   , LeiosPoint (pointEbHash)
   , forgeLeiosEb
+  , leiosEbBytesSize
   )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -27,7 +29,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
@@ -58,7 +59,10 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   -- Only build an EB if ebTxs is not empty
   let
     -- Current EB to announce
-    mayEb = forgeLeiosEb fbCurrentSlotNo <$> nonEmpty (extractTx <$> fbEbTxs)
+    mayForgedEbAnn :: Maybe (ForgedLeiosEb, EbAnnouncement) = do
+      forgedEb <- forgeLeiosEb fbCurrentSlotNo <$> nonEmpty (extractTx <$> fbEbTxs)
+      let ebAnn = EbAnnouncement (pointEbHash . point $ forgedEb) (leiosEbBytesSize . body $ forgedEb)
+      return (forgedEb, ebAnn)
 
   blk <- case fbForgeType of
     ForgeTxsRb -> do
@@ -74,9 +78,8 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
           prevHash
           (SL.hashBody @era body)
           (SL.bodyBytesSize protocolVersion body)
-          Praos.LedgerBlock
           protocolVersion
-          (pointEbHash . point <$> mayEb)
+          (snd <$> mayForgedEbAnn)
       let blk =
             mkShelleyBlock $
               SL.Block
@@ -95,7 +98,6 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
           prevHash
           (SL.hashBody @era body)
           (SL.bodyBytesSize protocolVersion body)
-          Praos.LeiosCertificate
           protocolVersion
           Nothing -- FIXME(bladyjoker): Skip announcement when certifying https://github.com/input-output-hk/ouroboros-leios/issues/838
       let blk =
@@ -107,7 +109,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
 
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
-      (blk, mayEb)
+      (blk, fst <$> mayForgedEbAnn) -- FIXME
  where
   protocolVersion = shelleyProtocolVersion $ configBlock fbConfig
 

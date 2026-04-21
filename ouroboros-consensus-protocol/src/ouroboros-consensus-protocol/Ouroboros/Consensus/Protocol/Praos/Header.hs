@@ -1,9 +1,7 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -27,7 +25,6 @@ module Ouroboros.Consensus.Protocol.Praos.Header
   , HeaderBody (..)
   , headerHash
   , headerSize
-  , BodyType (..)
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
@@ -42,7 +39,6 @@ import Cardano.Ledger.Binary
   , DecCBOR (decCBOR)
   , EncCBOR (..)
   , ToCBOR (..)
-  , decodeInt8
   , encodedSigKESSizeExpr
   , serialize'
   , unCBORGroup
@@ -55,7 +51,6 @@ import Cardano.Ledger.Binary.Crypto
   , encodeSignedKES
   , encodeVerKeyVRF
   )
-import Cardano.Ledger.Binary.Encoding (encodeInt8)
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
@@ -72,7 +67,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Word (Word32)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbHash)
+import LeiosDemoTypes (EbAnnouncement)
 import NoThunks.Class (AllowThunksIn (..), NoThunks (..))
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
@@ -95,13 +90,11 @@ data HeaderBody crypto = HeaderBody
   -- ^ Size of the block body
   , hbBodyHash :: !(Hash.Hash HASH EraIndependentBlockBody)
   -- ^ Hash of block body
-  , hbBodyType :: !BodyType
-  -- ^ Type of the block body
   , hbOCert :: !(OCert crypto)
   -- ^ operational certificate
   , hbProtVer :: !ProtVer
   -- ^ protocol version
-  , hbMayEbAnnouncement :: Maybe EbHash
+  , hbMayEbAnnouncement :: Maybe EbAnnouncement
   -- ^ Leios EB announcement
   }
   deriving Generic
@@ -202,7 +195,6 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbVrfRes
       , hbBodySize
       , hbBodyHash
-      , hbBodyType
       , hbOCert
       , hbProtVer
       , hbMayEbAnnouncement
@@ -217,7 +209,6 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
           !> To hbVrfRes
           !> To hbBodySize
           !> To hbBodyHash
-          !> To hbBodyType
           !> To hbOCert
           !> To hbProtVer
           !> To hbMayEbAnnouncement
@@ -231,7 +222,6 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         <! From
         <! From
         <! D decodeVerKeyVRF
-        <! From
         <! From
         <! From
         <! From
@@ -268,18 +258,3 @@ instance Crypto c => DecCBOR (Annotator (Header c)) where
   decCBOR = do
     (Annotator getT, Annotator getBytes) <- withSlice decCBOR
     pure (Annotator (\fullbytes -> HeaderConstr (getT fullbytes) (BSL.toStrict (getBytes fullbytes))))
-
-data BodyType = LedgerBlock | LeiosCertificate
-  deriving stock (Generic, Show, Eq, Ord)
-  deriving anyclass NoThunks
-
-instance EncCBOR BodyType where
-  encCBOR LedgerBlock = encodeInt8 0
-  encCBOR LeiosCertificate = encodeInt8 1
-
-instance DecCBOR BodyType where
-  decCBOR =
-    decodeInt8 >>= \case
-      0 -> return LedgerBlock
-      1 -> return LeiosCertificate
-      tag -> fail $ "Invalid BodyType with tag " <> show tag

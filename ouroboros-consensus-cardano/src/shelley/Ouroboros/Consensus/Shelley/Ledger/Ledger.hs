@@ -118,7 +118,8 @@ import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb (leiosDbQueryCompletedEbByPoint)
 import LeiosDemoTypes
-  ( LeiosPoint (MkLeiosPoint)
+  ( EbAnnouncement (ebAnnouncementHash)
+  , LeiosPoint (MkLeiosPoint)
   , TxHash
   , pointEbHash
   , pointSlotNo
@@ -353,7 +354,7 @@ instance
               leiosDb
               ( MkLeiosPoint
                   { pointSlotNo = withOriginToSlotNo previousSlot
-                  , pointEbHash = previousEbAnnouncement
+                  , pointEbHash = ebAnnouncementHash previousEbAnnouncement
                   }
               )
           case mayAnnouncedEb of
