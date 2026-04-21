@@ -23,6 +23,7 @@ import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
 import qualified Test.Consensus.Peras.Cert.Inclusion (tests)
 import qualified Test.Consensus.Peras.Serialisation (tests)
+import qualified Test.Consensus.Peras.Voting.Committee (tests)
 import qualified Test.Consensus.Peras.Voting.Rules (tests)
 import qualified Test.Consensus.Peras.WeightSnapshot (tests)
 import qualified Test.Consensus.Util.Bitmap (tests)
@@ -66,6 +67,7 @@ tests =
     , testGroup
         "Peras"
         [ Test.Consensus.Peras.Cert.Inclusion.tests
+        , Test.Consensus.Peras.Voting.Committee.tests
         , Test.Consensus.Peras.Voting.Rules.tests
         , Test.Consensus.Peras.WeightSnapshot.tests
         , Test.Consensus.Peras.Serialisation.tests
