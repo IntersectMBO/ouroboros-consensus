@@ -275,13 +275,13 @@ leiosFetchLogicIteration env offerings =
     [] -> []
     (point, Left ebBytesSize) : vs -> Left (point, ebBytesSize) : expand vs
     (point, Right v) : vs ->
-      [Right (point, txHash) | (_txOffset, (txHash, _txBytesSize)) <- IntMap.toAscList v]
+      [Right (point, txBytesSize, txHash) | (_txOffset, (txHash, txBytesSize)) <- IntMap.toAscList v]
         <> expand vs
 
   go1 ::
     LeiosOutstanding pid ->
     LeiosFetchDecisions pid ->
-    [Either (LeiosPoint, BytesSize) (LeiosPoint, TxHash)] ->
+    [Either (LeiosPoint, BytesSize) (LeiosPoint, BytesSize, TxHash)] ->
     (LeiosOutstanding pid, LeiosFetchDecisions pid)
   go1 !acc !accNew = \case
     [] ->
@@ -290,13 +290,13 @@ leiosFetchLogicIteration env offerings =
       | let peerIds :: Set (PeerId pid)
             peerIds = Map.findWithDefault Set.empty point.pointEbHash (Leios.requestedEbPeers acc) ->
           goEb2 acc accNew targets point ebBytesSize peerIds
-    Right (point, txHash) : targets ->
+    Right (point, txBytesSize, txHash) : targets ->
       let !txOffsets = case Map.lookup txHash (Leios.txOffsetss acc) of
             Nothing -> error "impossible!"
             Just x -> x
           peerIds :: Set (PeerId pid)
           peerIds = Map.findWithDefault Set.empty txHash (Leios.requestedTxPeers acc)
-       in goTx2 acc accNew targets point txHash txOffsets peerIds
+       in goTx2 acc accNew targets point txBytesSize txHash txOffsets peerIds
 
   goEb2 !acc !accNew targets point ebBytesSize peerIds
     | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
@@ -345,13 +345,14 @@ leiosFetchLogicIteration env offerings =
   goTx2 ::
     LeiosOutstanding pid ->
     LeiosFetchDecisions pid ->
-    [Either (LeiosPoint, BytesSize) (LeiosPoint, TxHash)] ->
+    [Either (LeiosPoint, BytesSize) (LeiosPoint, BytesSize, TxHash)] ->
     LeiosPoint ->
+    BytesSize ->
     TxHash ->
     Map EbHash Int ->
     Set (PeerId pid) ->
     (LeiosOutstanding pid, LeiosFetchDecisions pid)
-  goTx2 !acc !accNew targets point txHash txOffsets peerIds
+  goTx2 !acc !accNew targets point txBytesSize txHash txOffsets peerIds
     | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
       =
         (acc, accNew)
@@ -360,14 +361,7 @@ leiosFetchLogicIteration env offerings =
     -- tx has only been requested at lower priorities?
     , Just (peerId, txOffsets') <- choosePeerTx peerIds acc txOffsets =
         -- there's a peer who offered it and we haven't already requested it from them
-        let txBytesSize = case Map.lookupMax txOffsets' of
-              Nothing -> error "impossible!"
-              Just (_ebHash, txOffset) -> case Map.lookup point (Leios.missingEbTxs acc) of
-                Nothing -> error "impossible!"
-                Just v -> case IntMap.lookup txOffset v of
-                  Nothing -> error "impossible!"
-                  Just (_txHash, x) -> x
-            accNew' =
+        let accNew' =
               MkLeiosFetchDecisions $
                 Map.insertWith
                   (Map.unionWith (<>))
@@ -383,7 +377,7 @@ leiosFetchLogicIteration env offerings =
                 , Leios.requestedBytesSize = txBytesSize + Leios.requestedBytesSize acc
                 }
             peerIds' = Set.insert peerId peerIds
-         in goTx2 acc' accNew' targets point txHash txOffsets peerIds'
+         in goTx2 acc' accNew' targets point txBytesSize txHash txOffsets peerIds'
     | otherwise =
         go1 acc accNew targets
 
