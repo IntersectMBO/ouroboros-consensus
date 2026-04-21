@@ -244,15 +244,15 @@ filterMissingWork db outstanding = do
           Map.map
             (IntMap.filter (\(txHash, _) -> Set.member txHash stillMissingTxSet))
             (Leios.missingEbTxs outstanding)
-      filteredTxOffsetss =
+      filteredReverseEbIndexByTx =
         Map.filterWithKey
           (\txHash _ -> Set.member txHash stillMissingTxSet)
-          (Leios.txOffsetss outstanding)
+          (Leios.reverseEbIndexByTx outstanding)
   pure $
     outstanding
       { Leios.missingEbBodies = filteredMissingEbBodies
       , Leios.missingEbTxs = filteredMissingEbTxs
-      , Leios.txOffsetss = filteredTxOffsetss
+      , Leios.reverseEbIndexByTx = filteredReverseEbIndexByTx
       , Leios.acquiredEbBodies =
           Leios.acquiredEbBodies outstanding `Set.union` Set.fromList acquiredEbHashes
       }
@@ -275,13 +275,13 @@ leiosFetchLogicIteration env offerings =
     [] -> []
     (point, Left ebBytesSize) : vs -> Left (point, ebBytesSize) : expand vs
     (point, Right v) : vs ->
-      [Right (point, txHash) | (_txOffset, (txHash, _txBytesSize)) <- IntMap.toAscList v]
+      [Right (point, txBytesSize, txHash) | (_txOffset, (txHash, txBytesSize)) <- IntMap.toAscList v]
         <> expand vs
 
   go1 ::
     LeiosOutstanding pid ->
     LeiosFetchDecisions pid ->
-    [Either (LeiosPoint, BytesSize) (LeiosPoint, TxHash)] ->
+    [Either (LeiosPoint, BytesSize) (LeiosPoint, BytesSize, TxHash)] ->
     (LeiosOutstanding pid, LeiosFetchDecisions pid)
   go1 !acc !accNew = \case
     [] ->
@@ -290,13 +290,13 @@ leiosFetchLogicIteration env offerings =
       | let peerIds :: Set (PeerId pid)
             peerIds = Map.findWithDefault Set.empty point.pointEbHash (Leios.requestedEbPeers acc) ->
           goEb2 acc accNew targets point ebBytesSize peerIds
-    Right (point, txHash) : targets ->
-      let !txOffsets = case Map.lookup txHash (Leios.txOffsetss acc) of
+    Right (point, txBytesSize, txHash) : targets ->
+      let !txOffsets = case Map.lookup txHash (Leios.reverseEbIndexByTx acc) of
             Nothing -> error "impossible!"
             Just x -> x
           peerIds :: Set (PeerId pid)
           peerIds = Map.findWithDefault Set.empty txHash (Leios.requestedTxPeers acc)
-       in goTx2 acc accNew targets point txHash txOffsets peerIds
+       in goTx2 acc accNew targets point txBytesSize txHash txOffsets peerIds
 
   goEb2 !acc !accNew targets point ebBytesSize peerIds
     | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
@@ -342,23 +342,26 @@ leiosFetchLogicIteration env offerings =
       ebHash `Set.member` ebHashes -- peer has offered this EB body
       ]
 
-  goTx2 !acc !accNew targets point txHash txOffsets peerIds
+  goTx2 ::
+    LeiosOutstanding pid ->
+    LeiosFetchDecisions pid ->
+    [Either (LeiosPoint, BytesSize) (LeiosPoint, BytesSize, TxHash)] ->
+    LeiosPoint ->
+    BytesSize ->
+    TxHash ->
+    Map EbHash (Int, BytesSize) ->
+    Set (PeerId pid) ->
+    (LeiosOutstanding pid, LeiosFetchDecisions pid)
+  goTx2 !acc !accNew targets point txBytesSize txHash txOffsets peerIds
     | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
       =
         (acc, accNew)
     | Set.size peerIds < Leios.maxRequestsPerTx env -- we would like to request it from an additional peer
     -- TODO if requests list priority, does this limit apply even if the
     -- tx has only been requested at lower priorities?
-    , Just (peerId, txOffsets') <- choosePeerTx peerIds acc txOffsets =
+    , Just (peerId, txOffsets') <- choosePeerTx peerIds acc txOffsets txBytesSize =
         -- there's a peer who offered it and we haven't already requested it from them
-        let txBytesSize = case Map.lookupMax txOffsets' of
-              Nothing -> error "impossible!"
-              Just (_ebHash, txOffset) -> case Map.lookup point (Leios.missingEbTxs acc) of
-                Nothing -> error "impossible!"
-                Just v -> case IntMap.lookup txOffset v of
-                  Nothing -> error "impossible!"
-                  Just (_txHash, x) -> x
-            accNew' =
+        let accNew' =
               MkLeiosFetchDecisions $
                 Map.insertWith
                   (Map.unionWith (<>))
@@ -374,15 +377,19 @@ leiosFetchLogicIteration env offerings =
                 , Leios.requestedBytesSize = txBytesSize + Leios.requestedBytesSize acc
                 }
             peerIds' = Set.insert peerId peerIds
-         in goTx2 acc' accNew' targets point txHash txOffsets peerIds'
+         in goTx2 acc' accNew' targets point txBytesSize txHash txOffsets peerIds'
     | otherwise =
         go1 acc accNew targets
 
   choosePeerTx ::
-    Set (PeerId pid) -> LeiosOutstanding pid -> Map EbHash Int -> Maybe (PeerId pid, Map EbHash Int)
-  choosePeerTx peerIds acc txOffsets =
+    Set (PeerId pid) ->
+    LeiosOutstanding pid ->
+    Map EbHash (Int, BytesSize) ->
+    BytesSize ->
+    Maybe (PeerId pid, Map EbHash Int)
+  choosePeerTx peerIds acc txOffsets targetTxBytesSize =
     foldr (\a _ -> Just a) Nothing $
-      [ (peerId, txOffsets')
+      [ (peerId, Map.map fst txOffsets')
       | (peerId, (_ebIds, ebIds)) <-
           Map.toList $ -- TODO prioritize/shuffle?
             (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
@@ -391,7 +398,9 @@ leiosFetchLogicIteration env offerings =
           <= Leios.maxRequestedBytesSizePerPeer env
       , -- peer can be sent more requests
       let txOffsets' = txOffsets `Map.restrictKeys` ebIds
-      , not $ Map.null txOffsets' -- peer has offered an EB closure that includes this tx
+      , case Map.lookupMax txOffsets' of
+          Nothing -> False
+          Just (_ebHash, (_txOffset, txBytesSize)) -> targetTxBytesSize == txBytesSize -- peer has offered at least one EB closure that includes this tx with the same size
       ]
 
 packRequests ::
@@ -618,12 +627,12 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
                           (let MkLeiosEb v = eb in v)
                       )
                       (Leios.missingEbTxs outstanding)
-                , Leios.txOffsetss =
+                , Leios.reverseEbIndexByTx =
                     V.ifoldl
-                      ( \acc i (txHash, _txBytesSize) ->
-                          Map.insertWith Map.union txHash (Map.singleton ebHash i) acc
+                      ( \acc i (txHash, txBytesSize) ->
+                          Map.insertWith Map.union txHash (Map.singleton ebHash (i, txBytesSize)) acc
                       )
-                      (Leios.txOffsetss outstanding)
+                      (Leios.reverseEbIndexByTx outstanding)
                       (let MkLeiosEb v = eb in v)
                 , Leios.requestedBytesSize = Leios.requestedBytesSize outstanding - ebBytesSize
                 , Leios.requestedBytesSizePerPeer =
@@ -692,12 +701,12 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
     forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
-    let (requestedTxPeers', txOffsetss', txsBytesSize) =
+    let (requestedTxPeers', reverseEbIndexByTx', txsBytesSize) =
           ( \f ->
               V.foldl
                 f
                 ( Leios.requestedTxPeers outstanding
-                , Leios.txOffsetss outstanding
+                , Leios.reverseEbIndexByTx outstanding
                 , 0
                 )
                 (txHashes `V.zip` txBytess)
@@ -719,7 +728,7 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
                   (delIf IntMap.null . (`IntMap.withoutKeys` offsetsSet))
                   point
                   (Leios.missingEbTxs outstanding)
-            , Leios.txOffsetss = txOffsetss'
+            , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
             , Leios.blockingPerEb =
                 if IntMap.null beatOtherPeers
                   then Leios.blockingPerEb outstanding

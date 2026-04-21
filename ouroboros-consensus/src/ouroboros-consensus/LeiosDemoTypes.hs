@@ -195,7 +195,7 @@ newLeiosPeerVars = do
 -- 2. The acquiredEbBodies set is now redundant with DB - we update it in
 --    filterMissingWork but could remove it entirely once we trust DB filtering.
 --
--- 3. The txOffsetss inverse index could be computed on-demand from missingEbTxs
+-- 3. The reverseEbIndexByTx inverse index could be computed on-demand from missingEbTxs
 --    rather than maintained incrementally, simplifying state updates.
 --
 -- 4. Consider separating "offer tracking" from "request tracking" into distinct
@@ -226,7 +226,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   --   will be a no-op for all except the first to arrive carrying this EbTx.
   --
   -- TODO this is far too big for the heap
-  , txOffsetss :: !(Map TxHash (Map EbHash Int))
+  , reverseEbIndexByTx :: !(Map TxHash (Map EbHash (Int, BytesSize)))
   -- ^ Inverse of missingEbTxs - for each TX, which EBs (and offsets) need it
   --
   -- TODO this is far too big for the heap
@@ -255,7 +255,7 @@ emptyLeiosOutstanding =
     , requestedBytesSizePerPeer = Map.empty
     , requestedBytesSize = 0
     , missingEbTxs = Map.empty
-    , txOffsetss = Map.empty
+    , reverseEbIndexByTx = Map.empty
     , blockingPerEb = Map.empty
     }
 
