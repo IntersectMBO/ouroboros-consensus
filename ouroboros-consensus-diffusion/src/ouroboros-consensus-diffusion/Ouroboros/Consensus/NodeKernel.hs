@@ -715,6 +715,7 @@ forkBlockForging IS{..} blockForging =
     trace $ TraceNodeIsLeader currentSlot
 
     -- Leios: decide if we're forging an CertRb or a TxsRb
+    -- NOTE(bladyjoker): Leaving this here because it's simpler for now, otherwise I need to thread in the `unticked`.
     forgeType <-
       lift $
         leiosDecideForgeType blockForging $
@@ -787,7 +788,6 @@ forkBlockForging IS{..} blockForging =
     -- TODO: Needs access to Leios certificate of (blockNo - 1), if it exists
     -- and decide whether we want to put txs or the leios certificate into the
     -- body.
-    -- NOTE(bladyjoker): I stuffed this logic in the Shelley `forgeBlock` as it relies on `shelleyLedgerLeiosState` field of the `ShelleyLedgerState`
     let forgeBlockArgs =
           ForgeBlockArgs
             { fbIsLeader = proof
