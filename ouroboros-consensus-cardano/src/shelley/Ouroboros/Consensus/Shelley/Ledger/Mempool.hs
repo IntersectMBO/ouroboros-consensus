@@ -351,12 +351,12 @@ reapplyShelleyTx mode cfg _ vgtx st0 = do
       , castPoint @(LedgerState (ShelleyBlock proto era)) @(ShelleyBlock proto era) . getTip
       )
     ReapplyTickedLedgerState ->
-      ( CompAp . stowLedgerTables . unCompAp
-      , CompAp . unstowLedgerTables . unCompAp
-      , tickedShelleyLedgerState . unCompAp
+      ( WrapTickedLedgerState . stowLedgerTables . unWrapTickedLedgerState
+      , WrapTickedLedgerState . unstowLedgerTables . unWrapTickedLedgerState
+      , tickedShelleyLedgerState . unWrapTickedLedgerState
       , castPoint @(TickedLedgerState (ShelleyBlock proto era)) @(ShelleyBlock proto era)
           . getTip
-          . unCompAp
+          . unWrapTickedLedgerState
       )
 
   ShelleyValidatedTx _txid vtx = vgtx
@@ -369,10 +369,10 @@ setMempoolState ::
 setMempoolState mode mempoolState st = case mode of
   ReapplyLedgerState -> st{shelleyLedgerState = set SL.overNewEpochState mempoolState (shelleyLedgerState st)}
   ReapplyTickedLedgerState ->
-    CompAp
-      (unCompAp st)
+    WrapTickedLedgerState
+      (unWrapTickedLedgerState st)
         { tickedShelleyLedgerState =
-            set SL.overNewEpochState mempoolState (tickedShelleyLedgerState $ unCompAp st)
+            set SL.overNewEpochState mempoolState (tickedShelleyLedgerState $ unWrapTickedLedgerState st)
         }
 
 -- | The lens combinator
@@ -420,7 +420,7 @@ txsMaxBytes mode st =
   maxBlockBodySize = getPParams s ^. ppMaxBBSizeL
   s = case mode of
     ReapplyLedgerState -> shelleyLedgerState st
-    ReapplyTickedLedgerState -> tickedShelleyLedgerState $ unCompAp st
+    ReapplyTickedLedgerState -> tickedShelleyLedgerState $ unWrapTickedLedgerState st
 
 txInBlockSize ::
   (ShelleyCompatible proto era, MaxTxSizeUTxO era) =>
@@ -606,7 +606,7 @@ blockCapacityAlonzoMeasure mode ledgerState =
  where
   pparams = getPParams $ case mode of
     ReapplyLedgerState -> shelleyLedgerState ledgerState
-    ReapplyTickedLedgerState -> tickedShelleyLedgerState $ unCompAp ledgerState
+    ReapplyTickedLedgerState -> tickedShelleyLedgerState $ unWrapTickedLedgerState ledgerState
 
 txMeasureAlonzo ::
   forall proto era.
@@ -780,7 +780,7 @@ blockCapacityConwayMeasure mode st =
  where
   pparams = getPParams $ case mode of
     ReapplyLedgerState -> shelleyLedgerState st
-    ReapplyTickedLedgerState -> tickedShelleyLedgerState $ unCompAp st
+    ReapplyTickedLedgerState -> tickedShelleyLedgerState $ unWrapTickedLedgerState st
 
 txMeasureConway ::
   forall proto era.

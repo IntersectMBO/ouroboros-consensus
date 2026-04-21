@@ -58,7 +58,6 @@ import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -111,7 +110,7 @@ type family InputTxDiffs blk l where
 type ReapplyMode :: (Type -> MapKind -> Type) -> Type
 data ReapplyMode l where
   ReapplyLedgerState :: ReapplyMode LedgerState
-  ReapplyTickedLedgerState :: ReapplyMode (Ticked :.^: LedgerState)
+  ReapplyTickedLedgerState :: ReapplyMode WrapTickedLedgerState
 
 type ReapplyTx l blk =
   LedgerConfig blk ->
@@ -206,7 +205,7 @@ class
           (reverse val)
           ( case mode of
               ReapplyLedgerState -> forgetLedgerTables st'
-              ReapplyTickedLedgerState -> CompAp $ forgetLedgerTables $ unCompAp st'
+              ReapplyTickedLedgerState -> WrapTickedLedgerState $ forgetLedgerTables $ unWrapTickedLedgerState st'
           )
     )
       $ foldReapplyTxs fst3 txs
@@ -268,7 +267,7 @@ class
     l blk ValuesMK
   applyMempoolDiffsMode mode vs ks l = case mode of
     ReapplyLedgerState -> applyDiffForKeysOnTables vs ks l
-    ReapplyTickedLedgerState -> CompAp $ applyDiffForKeysOnTables vs ks (unCompAp l)
+    ReapplyTickedLedgerState -> WrapTickedLedgerState $ applyDiffForKeysOnTables vs ks (unWrapTickedLedgerState l)
 
   -- | The ledger rules' error type for the mempool's current era might allow
   -- the mempool to reject a tx for its own reasons.
@@ -284,7 +283,7 @@ class
 reapplyTx :: LedgerSupportsMempool blk => ReapplyTx LedgerState blk
 reapplyTx cfg slot vtx st = reapplyTxBoth ReapplyLedgerState cfg slot vtx st
 
-reapplyTx' :: LedgerSupportsMempool blk => ReapplyTx (Ticked :.^: LedgerState) blk
+reapplyTx' :: LedgerSupportsMempool blk => ReapplyTx WrapTickedLedgerState blk
 reapplyTx' cfg slot vtx st = reapplyTxBoth ReapplyTickedLedgerState cfg slot vtx st
 
 applyMempoolDiffs ::

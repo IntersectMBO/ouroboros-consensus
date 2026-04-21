@@ -470,7 +470,7 @@ computeSnapshot cfg slot st values txTickets =
             validatedTxs $
               reapplyTxsBoth @blk @_ @Discard ReapplyTickedLedgerState cfg slot inputTxs $
                 applyMempoolDiffsMode ReapplyTickedLedgerState values inputKeys $
-                  CompAp st
+                  WrapTickedLedgerState st
         )
         (castPoint $ getTip st)
         slot

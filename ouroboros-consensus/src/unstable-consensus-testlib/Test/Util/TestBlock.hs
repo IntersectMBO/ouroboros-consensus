@@ -51,6 +51,7 @@ module Test.Util.TestBlock
   , PayloadDependentState (..)
   , PayloadSemantics (..)
   , applyDirectlyToPayloadDependentState
+  , applyDirectlyToPayloadDependentState'
 
     -- * LedgerState
   , LedgerState (TestLedger, payloadDependentState, lastAppliedPoint)
@@ -449,12 +450,25 @@ instance PayloadSemantics () where
 -- ticked state, leaving the rest of the input ticked state unaltered.
 applyDirectlyToPayloadDependentState ::
   PayloadSemantics ptype =>
-  Ticked (LedgerState (TestBlockWith ptype)) ValuesMK ->
+  LedgerState (TestBlockWith ptype) ValuesMK ->
   ptype ->
   Either
     (PayloadDependentError ptype)
-    (Ticked (LedgerState (TestBlockWith ptype)) TrackingMK)
-applyDirectlyToPayloadDependentState (TickedTestLedger st) tx = do
+    (LedgerState (TestBlockWith ptype) TrackingMK)
+applyDirectlyToPayloadDependentState st tx = do
+  payloadDepSt' <- applyPayload (payloadDependentState st) tx
+  pure $ st{payloadDependentState = payloadDepSt'}
+
+-- | Apply the payload directly to the payload dependent state portion of a
+-- ticked state, leaving the rest of the input ticked state unaltered.
+applyDirectlyToPayloadDependentState' ::
+  PayloadSemantics ptype =>
+  TickedLedgerState (TestBlockWith ptype) ValuesMK ->
+  ptype ->
+  Either
+    (PayloadDependentError ptype)
+    (TickedLedgerState (TestBlockWith ptype) TrackingMK)
+applyDirectlyToPayloadDependentState' (TickedTestLedger st) tx = do
   payloadDepSt' <- applyPayload (payloadDependentState st) tx
   pure $ TickedTestLedger $ st{payloadDependentState = payloadDepSt'}
 

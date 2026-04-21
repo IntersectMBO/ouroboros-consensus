@@ -141,13 +141,13 @@ instance LedgerSupportsMempool ByronBlock where
         (\st' -> st{byronLedgerState = st'})
           <$> applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) (byronLedgerState st)
       ReapplyTickedLedgerState ->
-        (\st' -> CompAp $ (unCompAp st){tickedByronLedgerState = st'})
+        (\st' -> WrapTickedLedgerState $ (unWrapTickedLedgerState st){tickedByronLedgerState = st'})
           <$> applyByronGenTx
             validationMode
             cfg
             slot
             (forgetValidatedByronTx vtx)
-            (tickedByronLedgerState $ unCompAp st)
+            (tickedByronLedgerState $ unWrapTickedLedgerState st)
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
@@ -176,7 +176,7 @@ instance TxLimits ByronBlock where
    where
     cvs = case mode of
       ReapplyLedgerState -> byronLedgerState st
-      ReapplyTickedLedgerState -> tickedByronLedgerState $ unCompAp st
+      ReapplyTickedLedgerState -> tickedByronLedgerState $ unWrapTickedLedgerState st
 
   txMeasure _cfg st tx =
     if txszNat > maxTxSize

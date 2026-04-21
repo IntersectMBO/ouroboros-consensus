@@ -161,10 +161,10 @@ instance
       ( \(err, val, st) ->
           ReapplyTxsResult (mismatched' ++ err) val $ case (mode, hardForkState) of
             (ReapplyLedgerState, _) -> HardForkLedgerState st
-            (ReapplyTickedLedgerState, CompAp (TickedHardForkLedgerState transition _)) ->
-              CompAp $
+            (ReapplyTickedLedgerState, WrapTickedLedgerState (TickedHardForkLedgerState transition _)) ->
+              WrapTickedLedgerState $
                 TickedHardForkLedgerState transition $
-                  hmap (FlipTickedLedgerState . unCompAp . unFlip) st
+                  hmap (FlipTickedLedgerState . unWrapTickedLedgerState . unFlip) st
       )
         $ hsequence'
         $ hcizipWith
@@ -177,7 +177,7 @@ instance
       cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
       ei = case (mode, hardForkState) of
         (ReapplyLedgerState, HardForkLedgerState s) -> State.epochInfoLedger hcfg s
-        (ReapplyTickedLedgerState, CompAp (TickedHardForkLedgerState transition s)) ->
+        (ReapplyTickedLedgerState, WrapTickedLedgerState (TickedHardForkLedgerState transition s)) ->
           State.epochInfoPrecomputedTransitionInfo
             hardForkLedgerConfigShape
             transition
@@ -194,10 +194,10 @@ instance
           ( case mode of
               ReapplyLedgerState -> State.getHardForkState $ hardForkLedgerStatePerEra hardForkState
               ReapplyTickedLedgerState ->
-                hmap (\(State.Current a b) -> State.Current a . Flip . CompAp . getFlipTickedLedgerState $ b) $
+                hmap (\(State.Current a b) -> State.Current a . Flip . WrapTickedLedgerState . getFlipTickedLedgerState $ b) $
                   State.getHardForkState $
                     tickedHardForkLedgerStatePerEra $
-                      unCompAp hardForkState
+                      unWrapTickedLedgerState hardForkState
           )
           [ hmap (Comp . (extra,df,)) . getOneEraValidatedGenTx . getHardForkValidatedGenTx $ tx
           | (tx, df, extra) <- vtxs
@@ -322,8 +322,8 @@ instance
                       a
             )
             st'
-    (ReapplyTickedLedgerState, CompAp (TickedHardForkLedgerState transition (State.HardForkState st'))) ->
-      CompAp $
+    (ReapplyTickedLedgerState, WrapTickedLedgerState (TickedHardForkLedgerState transition (State.HardForkState st'))) ->
+      WrapTickedLedgerState $
         TickedHardForkLedgerState transition $
           State.HardForkState $
             hcimap
@@ -331,12 +331,12 @@ instance
               ( \idx (State.Current start (FlipTickedLedgerState a)) ->
                   State.Current start $
                     FlipTickedLedgerState $
-                      unCompAp $
+                      unWrapTickedLedgerState $
                         applyMempoolDiffsMode
                           mode
                           (ejectLedgerTables idx vals)
                           (ejectLedgerTables idx keys)
-                          (CompAp a)
+                          (WrapTickedLedgerState a)
               )
               st'
 
@@ -383,15 +383,15 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
         ( case mode of
             ReapplyLedgerState -> hardForkLedgerStatePerEra hardForkState
             ReapplyTickedLedgerState ->
-              hmap (Flip . CompAp . getFlipTickedLedgerState) $
+              hmap (Flip . WrapTickedLedgerState . getFlipTickedLedgerState) $
                 tickedHardForkLedgerStatePerEra $
-                  unCompAp hardForkState
+                  unWrapTickedLedgerState hardForkState
         )
    where
     pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
     ei = case (mode, hardForkState) of
       (ReapplyLedgerState, HardForkLedgerState s) -> State.epochInfoLedger cfg s
-      (ReapplyTickedLedgerState, CompAp (TickedHardForkLedgerState transition s)) ->
+      (ReapplyTickedLedgerState, WrapTickedLedgerState (TickedHardForkLedgerState transition s)) ->
         State.epochInfoPrecomputedTransitionInfo
           hardForkLedgerConfigShape
           transition
@@ -497,7 +497,7 @@ applyHelper
       ( case (mode, hardForkState) of
           (ModeApply, HardForkLedgerState st) -> st
           (ModeReapply ReapplyLedgerState _, HardForkLedgerState st) -> st
-          (ModeReapply ReapplyTickedLedgerState _, CompAp (TickedHardForkLedgerState _ st)) -> hmap (Flip . CompAp . getFlipTickedLedgerState) st
+          (ModeReapply ReapplyTickedLedgerState _, WrapTickedLedgerState (TickedHardForkLedgerState _ st)) -> hmap (Flip . WrapTickedLedgerState . getFlipTickedLedgerState) st
       ) of
       Left mismatch ->
         throwError $
@@ -534,10 +534,10 @@ applyHelper
             ret = case (mode, hardForkState) of
               (ModeApply, _) -> HardForkLedgerState $ (Flip . arState) `hmap` result
               (ModeReapply ReapplyLedgerState _, _) -> HardForkLedgerState $ (Flip . arState) `hmap` result
-              (ModeReapply ReapplyTickedLedgerState _, CompAp (TickedHardForkLedgerState transition _)) ->
-                CompAp $
+              (ModeReapply ReapplyTickedLedgerState _, WrapTickedLedgerState (TickedHardForkLedgerState transition _)) ->
+                WrapTickedLedgerState $
                   TickedHardForkLedgerState transition $
-                    (FlipTickedLedgerState . unCompAp . arState) `hmap` result
+                    (FlipTickedLedgerState . unWrapTickedLedgerState . arState) `hmap` result
           return
             (ret, vtx)
    where
@@ -546,7 +546,7 @@ applyHelper
     ei = case (mode, hardForkState) of
       (ModeApply, HardForkLedgerState s) -> State.epochInfoLedger hcfg s
       (ModeReapply ReapplyLedgerState _, HardForkLedgerState s) -> State.epochInfoLedger hcfg s
-      (ModeReapply ReapplyTickedLedgerState _, CompAp (TickedHardForkLedgerState transition s)) ->
+      (ModeReapply ReapplyTickedLedgerState _, WrapTickedLedgerState (TickedHardForkLedgerState transition s)) ->
         State.epochInfoPrecomputedTransitionInfo
           hardForkLedgerConfigShape
           transition

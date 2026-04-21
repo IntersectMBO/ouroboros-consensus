@@ -21,6 +21,7 @@ import Ouroboros.Consensus.ByronSpec.Ledger.GenTx
 import qualified Ouroboros.Consensus.ByronSpec.Ledger.GenTx as GenTx
 import Ouroboros.Consensus.ByronSpec.Ledger.Ledger
 import Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 
@@ -40,19 +41,31 @@ newtype instance Validated (GenTx ByronSpecBlock) = ValidatedByronSpecGenTx
 type instance ApplyTxErr ByronSpecBlock = ByronSpecGenTxErr
 
 instance LedgerSupportsMempool ByronSpecBlock where
-  applyTx cfg _wti _slot tx (TickedByronSpecLedgerState tip st) =
+  applyTx cfg _wti tx st =
     fmap
       ( \st' ->
-          ( TickedByronSpecLedgerState tip st'
+          ( st{byronSpecLedgerState = st'}
           , ValidatedByronSpecGenTx tx
           )
       )
-      $ GenTx.apply cfg (unByronSpecGenTx tx) st
+      $ GenTx.apply cfg (unByronSpecGenTx tx) (byronSpecLedgerState st)
 
   -- Byron spec doesn't have multiple validation modes
-  reapplyTx cfg slot vtx st =
-    applyDiffs st . fst
-      <$> applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
+  reapplyTxBoth mode cfg _ vtx st =
+    case mode of
+      ReapplyLedgerState ->
+        applyDiffs st . fst
+          <$> applyTx cfg DoNotIntervene (forgetValidatedByronSpecGenTx vtx) st
+      ReapplyTickedLedgerState ->
+        fmap
+          ( WrapTickedLedgerState
+              . applyDiffs (unWrapTickedLedgerState st)
+              . (\st' -> (unWrapTickedLedgerState st){tickedByronSpecLedgerState = st'})
+          )
+          $ GenTx.apply
+            cfg
+            (unByronSpecGenTx $ forgetValidatedByronSpecGenTx vtx)
+            (tickedByronSpecLedgerState $ unWrapTickedLedgerState st)
 
   txForgetValidated = forgetValidatedByronSpecGenTx
 
@@ -65,6 +78,6 @@ instance TxLimits ByronSpecBlock where
 
   -- Dummy values, as these are not used in practice.
   txWireSize = const . fromIntegral $ (0 :: Int)
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 1
+  blockCapacityTxMeasure _mode _cfg _st = IgnoringOverflow $ ByteSize32 1
 
   txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0

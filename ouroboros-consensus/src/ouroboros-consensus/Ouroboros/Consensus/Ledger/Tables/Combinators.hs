@@ -74,7 +74,6 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators
     -- * Basic bifunctors
   , K2 (..)
   , type (:..:) (..)
-  , type (:.^:) (..)
   ) where
 
 import Data.Bifunctor
@@ -311,9 +310,3 @@ deriving stock instance
 
 instance (Functor f, Bifunctor g) => Bifunctor (f :..: g) where
   bimap f g (Comp2 x) = Comp2 $ fmap (bimap f g) x
-
--- | Standing for 'compose then apply"
-type (:.^:) ::
-  forall blk mk.
-  ((mk -> Type) -> (mk -> Type)) -> (blk -> mk -> Type) -> blk -> mk -> Type
-newtype (:.^:) f g a b = CompAp {unCompAp :: f (g a) b}
