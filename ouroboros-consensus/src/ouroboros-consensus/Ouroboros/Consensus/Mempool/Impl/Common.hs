@@ -39,7 +39,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   , jsonMempoolRejectionDetails
 
     -- * Conversions
-  , snapshotFromIS
+  , snapshotFromValidTxs
 
     -- * Ticking a ledger state
   , tickLedgerState
@@ -459,108 +459,96 @@ data RevalidateTxsResult blk
 computeSnapshot ::
   forall blk.
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
   -- | The ticked ledger state againt which txs will be revalidated
   TickedLedgerState blk DiffMK ->
   -- | The tables with all the inputs for the transactions
   LedgerTables (LedgerState blk) ValuesMK ->
-  TicketNo ->
-  [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
+  [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
   MempoolSnapshot blk
-computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
+computeSnapshot cfg slot st values txTickets =
   let inputTxs = map wrap txTickets
       inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
-
-      ReapplyTxsResult _ validatedTxs st' =
-        reapplyTxs @blk @Discard cfg slot inputTxs $
-          applyMempoolDiffs values inputKeys st
-   in snapshotFromIS $
-        IS
-          { isTxs = TxSeq.fromList $ map unwrap validatedTxs
-          , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) validatedTxs
-          , -- These two can be empty since we don't need the resulting
-            -- values at all when making a snapshot, as we won't update
-            -- the internal state.
-            isTxKeys = emptyLedgerTables
-          , isTxValues = emptyLedgerTables
-          , -- This one can use the empty tables because we don't use the
-            -- resulting ledger state except for its point
-            isLedgerState = st' `withLedgerTables` emptyLedgerTables
-          , isTip = castPoint $ getTip st
-          , isSlotNo = slot
-          , isLastTicketNo = lastTicketNo
-          , isCapacity = computeMempoolCapacity cfg st' capacityOverride
-          }
+   in snapshotFromValidTxs
+        ( map unwrap $
+            validatedTxs $
+              reapplyTxs @blk @Discard cfg slot inputTxs $
+                applyMempoolDiffs values inputKeys st
+        )
+        (castPoint $ getTip st)
+        slot
  where
   fst3 (x, _, _) = x
-  wrap = (\(TxTicket (ValidatedTxWithDiffs tx df) tk tz) -> (tx, (), (df, tk, tz)))
-  unwrap = (\(tx, (), (df, tk, tz)) -> (TxTicket (ValidatedTxWithDiffs tx df) tk tz))
+  wrap = (\(TxTicket tx tk tz) -> (tx, (), (tk, tz)))
+  unwrap = (\(tx, (), (tk, tz)) -> (TxTicket tx tk tz))
 
 {-------------------------------------------------------------------------------
   Conversions
 -------------------------------------------------------------------------------}
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
-snapshotFromIS ::
+snapshotFromValidTxs ::
   forall blk.
-  (HasTxId (GenTx blk), TxLimits blk, GetTip (TickedLedgerState blk)) =>
-  InternalState blk ->
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
+  Point blk ->
+  SlotNo ->
   MempoolSnapshot blk
-snapshotFromIS is =
+snapshotFromValidTxs validTxs tipPoint slot =
   MempoolSnapshot
-    { snapshotTxs = implSnapshotGetTxs is
-    , snapshotTxsAfter = implSnapshotGetTxsAfter is
-    , snapshotLookupTx = implSnapshotGetTx is
-    , snapshotHasTx = implSnapshotHasTx is
-    , snapshotMempoolSize = implSnapshotGetMempoolSize is
-    , snapshotSlotNo = isSlotNo is
-    , snapshotStateHash = pointHash $ castPoint $ getTip $ isLedgerState is
-    , snapshotTake = implSnapshotTake is
-    , snapshotPoint = castPoint $ getTip $ isLedgerState is
+    { snapshotTxs = implSnapshotGetTxs
+    , snapshotTxsAfter = implSnapshotGetTxsAfter
+    , snapshotLookupTx = implSnapshotGetTx
+    , snapshotHasTx = implSnapshotHasTx
+    , snapshotMempoolSize = implSnapshotGetMempoolSize
+    , snapshotSlotNo = slot
+    , snapshotStateHash = pointHash tipPoint
+    , snapshotTake = implSnapshotTake
+    , snapshotPoint = castPoint tipPoint
     }
  where
+  txs = TxSeq.fromList validTxs
+  txIds = Set.fromList $ map (txId . txForgetValidated . txTicketTx) validTxs
+
   implSnapshotGetTxs ::
-    InternalState blk ->
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
-  implSnapshotGetTxs = flip implSnapshotGetTxsAfter TxSeq.zeroTicketNo
+  implSnapshotGetTxs = implSnapshotGetTxsAfter TxSeq.zeroTicketNo
 
   implSnapshotGetTxsAfter ::
-    InternalState blk ->
     TicketNo ->
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
-  implSnapshotGetTxsAfter IS{isTxs} =
-    (\x -> [(validatedTx a, b, forgetTxMeasureWithDiffTime c) | (a, b, c) <- x])
+  implSnapshotGetTxsAfter =
+    (\x -> [(a, b, forgetTxMeasureWithDiffTime c) | (a, b, c) <- x])
       . TxSeq.toTuples
       . snd
-      . TxSeq.splitAfterTicketNo isTxs
+      . TxSeq.splitAfterTicketNo txs
 
   implSnapshotTake ::
-    InternalState blk ->
     TxMeasure blk ->
     ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
-  implSnapshotTake IS{isTxs} limit =
-    (map (validatedTx . TxSeq.txTicketTx) (TxSeq.toList x), TxSeq.toSize x)
+  implSnapshotTake limit =
+    (map TxSeq.txTicketTx (TxSeq.toList x), TxSeq.toSize x)
    where
-    (x, _y) = TxSeq.splitAfterTxSize isTxs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
+    (x, _y) = TxSeq.splitAfterTxSize txs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
 
   implSnapshotGetTx ::
-    InternalState blk ->
     TicketNo ->
     Maybe (Validated (GenTx blk))
-  implSnapshotGetTx IS{isTxs} = fmap validatedTx . (isTxs `TxSeq.lookupByTicketNo`)
+  implSnapshotGetTx = (txs `TxSeq.lookupByTicketNo`)
 
   implSnapshotHasTx ::
-    InternalState blk ->
     GenTxId blk ->
     Bool
-  implSnapshotHasTx IS{isTxIds} = flip Set.member isTxIds
+  implSnapshotHasTx = (`Set.member` txIds)
 
   implSnapshotGetMempoolSize ::
-    InternalState blk ->
     MempoolSize
-  implSnapshotGetMempoolSize = isMempoolSize
+  implSnapshotGetMempoolSize =
+    MempoolSize
+      { msNumTxs = fromIntegral $ length $ txs
+      , msNumBytes = txMeasureByteSize $ forgetTxMeasureWithDiffTime $ TxSeq.toSize $ txs
+      }
 
 {-------------------------------------------------------------------------------
   Tracing support for the mempool operations
