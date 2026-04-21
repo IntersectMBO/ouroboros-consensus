@@ -86,6 +86,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Network.Tx (HasRawTxId (..), RawTxId (..))
 
 {-------------------------------------------------------------------------------
   Transactions
@@ -205,6 +206,9 @@ instance ConvertRawTxId (GenTx ByronBlock) where
   toRawTxIdHash (ByronDlgId i) = CC.abstractHashToShort i
   toRawTxIdHash (ByronUpdateProposalId i) = CC.abstractHashToShort i
   toRawTxIdHash (ByronUpdateVoteId i) = CC.abstractHashToShort i
+
+instance HasRawTxId (TxId (GenTx ByronBlock)) where
+  getRawTxId = RawTxId . toRawTxIdHash
 
 instance HasTxs ByronBlock where
   extractTxs blk = case byronBlockRaw blk of

@@ -145,6 +145,7 @@ import Ouroboros.Network.Protocol.TxSubmission2.Codec
 import Ouroboros.Network.Protocol.TxSubmission2.Server
 import Ouroboros.Network.Protocol.TxSubmission2.Type
 import Ouroboros.Network.TxSubmission.Inbound.V1
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V2
   ( PeerTxAPI
   , TxDecisionPolicy (..)
@@ -660,6 +661,7 @@ mkApps ::
   , ShowProxy (GenTx blk)
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasRawTxId (TxId (GenTx blk))
   ) =>
   -- | Needed for bracketing only
   NodeKernel m addrNTN addrNTC blk ->

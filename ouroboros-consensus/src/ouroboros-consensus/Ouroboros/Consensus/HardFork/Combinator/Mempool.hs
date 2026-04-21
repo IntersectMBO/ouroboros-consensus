@@ -57,6 +57,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
+import Ouroboros.Network.Tx (HasRawTxId (..), RawTxId (..))
 
 data HardForkApplyTxErr xs
   = -- | Validation error from one of the eras
@@ -566,6 +567,13 @@ instance CanHardFork xs => HasTxId (GenTx (HardForkBlock xs)) where
       . hcmap proxySingle (WrapGenTxId . txId)
       . getOneEraGenTx
       . getHardForkGenTx
+
+instance CanHardFork xs => HasRawTxId (TxId (GenTx (HardForkBlock xs))) where
+  getRawTxId = RawTxId
+             . hcollapse
+             . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
+             . getOneEraGenTxId
+             . getHardForkGenTxId
 
 {-------------------------------------------------------------------------------
   HasTxs
