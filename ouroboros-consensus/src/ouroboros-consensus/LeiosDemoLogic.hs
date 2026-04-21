@@ -387,7 +387,7 @@ leiosFetchLogicIteration env offerings =
     Map EbHash (Int, BytesSize) ->
     BytesSize ->
     Maybe (PeerId pid, Map EbHash Int)
-  choosePeerTx peerIds acc txOffsets targetBytesSize =
+  choosePeerTx peerIds acc txOffsets targetTxBytesSize =
     foldr (\a _ -> Just a) Nothing $
       [ (peerId, Map.map fst txOffsets')
       | (peerId, (_ebIds, ebIds)) <-
@@ -400,7 +400,7 @@ leiosFetchLogicIteration env offerings =
       let txOffsets' = txOffsets `Map.restrictKeys` ebIds
       , case Map.lookupMax txOffsets' of
           Nothing -> False
-          Just (_k, (_offset, sz)) -> targetBytesSize == sz -- peer has offered at least one EB closure that includes this tx with the same size
+          Just (_ebHash, (_txOffset, txBytesSize)) -> targetTxBytesSize == txBytesSize -- peer has offered at least one EB closure that includes this tx with the same size
       ]
 
 packRequests ::
