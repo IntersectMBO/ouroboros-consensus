@@ -88,8 +88,10 @@ import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
   ( Era
   , eraDecoder
+  , fromTxSeq
   , ppMaxBHSizeL
   , ppMaxTxSizeL
+  , sizeTxF
   )
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -109,6 +111,7 @@ import qualified Control.State.Transition.Extended as STS
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Coerce (coerce)
+import Data.Foldable (toList)
 import Data.Functor.Identity
 import Data.MemPack
 import qualified Data.Sequence.Strict as StrictSeq
@@ -330,6 +333,16 @@ applyBlockShelleyLedgerLeiosState blk leiosSt =
         MkLeiosPoint (blockSlot blk) . fromLedgerEbHash <$> SL.blockMayAnnouncedEb (shelleyBlockRaw blk)
     }
 
+blockTxBytes ::
+  ShelleyCompatible proto era =>
+  ShelleyBlock proto era -> Word64
+blockTxBytes blk = case SL.blockBody (shelleyBlockRaw blk) of
+  SL.BodyInline txSeq ->
+    fromIntegral $ sum $ map (view sizeTxF) $ toList $ fromTxSeq txSeq
+  SL.BodyCertificate _ (Just txSeq) ->
+    fromIntegral $ sum $ map (view sizeTxF) $ toList $ fromTxSeq txSeq
+  SL.BodyCertificate _ Nothing -> 0
+
 -- -.-
 fromLedgerEbHash :: SL.EbHash -> EbHash
 fromLedgerEbHash = MkEbHash . BL.toStrict . SL.unEbHash
@@ -340,6 +353,7 @@ data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   , shelleyLedgerTransition :: !ShelleyTransition
   , shelleyLedgerTables :: !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
   , shelleyLedgerLeiosState :: ShelleyLedgerLeiosState
+  , shelleyCumulativeTxBytes :: !Word64
   }
   deriving Generic
 
@@ -557,6 +571,7 @@ data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLe
   , tickedShelleyLedgerTables ::
       !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
   , tickedShelleyLedgerLeiosState :: ShelleyLedgerLeiosState
+  , tickedShelleyCumulativeTxBytes :: !Word64
   }
   deriving Generic
 
@@ -579,6 +594,7 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
       , shelleyLedgerState
       , shelleyLedgerTransition
       , shelleyLedgerLeiosState
+      , shelleyCumulativeTxBytes
       } =
       appTick globals shelleyLedgerState slotNo <&> \l' ->
         TickedShelleyLedgerState
@@ -595,6 +611,7 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
             -- era translations, that is why we put empty tables here.
             tickedShelleyLedgerTables = emptyLedgerTables
           , tickedShelleyLedgerLeiosState = applyTickShelleyLedgerLeiosState shelleyLedgerLeiosState slotNo
+          , tickedShelleyCumulativeTxBytes = shelleyCumulativeTxBytes
           }
      where
       globals = shelleyLedgerGlobals cfg
@@ -737,6 +754,8 @@ applyHelper f cfg blk stBefore = do
               , shelleyLedgerTables = emptyLedgerTables
               , shelleyLedgerLeiosState =
                   applyBlockShelleyLedgerLeiosState blk (tickedShelleyLedgerLeiosState stBefore)
+              , shelleyCumulativeTxBytes =
+                  tickedShelleyCumulativeTxBytes stBefore + blockTxBytes blk
               }
  where
   globals = shelleyLedgerGlobals cfg
@@ -872,14 +891,16 @@ encodeShelleyLedgerState
     , shelleyLedgerState
     , shelleyLedgerTransition
     , shelleyLedgerLeiosState
+    , shelleyCumulativeTxBytes
     } =
     encodeVersion serialisationFormatVersion2 $
       mconcat
-        [ CBOR.encodeListLen 4
+        [ CBOR.encodeListLen 5
         , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
         , toCBOR shelleyLedgerState
         , encodeShelleyTransition shelleyLedgerTransition
         , encodeShelleyLedgerLeiosState shelleyLedgerLeiosState
+        , toCBOR shelleyCumulativeTxBytes
         ]
 
 decodeShelleyLedgerState ::
@@ -893,11 +914,12 @@ decodeShelleyLedgerState =
  where
   decodeShelleyLedgerState2 :: Decoder s' (LedgerState (ShelleyBlock proto era) EmptyMK)
   decodeShelleyLedgerState2 = do
-    enforceSize "LedgerState ShelleyBlock" 4
+    enforceSize "LedgerState ShelleyBlock" 5
     shelleyLedgerTip <- decodeWithOrigin decodeShelleyTip
     shelleyLedgerState <- fromCBOR
     shelleyLedgerTransition <- decodeShelleyTransition
     shelleyLedgerLeiosState <- decodeShelleyLedgerLeiosState
+    shelleyCumulativeTxBytes <- fromCBOR
     return
       ShelleyLedgerState
         { shelleyLedgerTip
@@ -905,6 +927,7 @@ decodeShelleyLedgerState =
         , shelleyLedgerTransition
         , shelleyLedgerTables = emptyLedgerTables
         , shelleyLedgerLeiosState
+        , shelleyCumulativeTxBytes
         }
 
 instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where

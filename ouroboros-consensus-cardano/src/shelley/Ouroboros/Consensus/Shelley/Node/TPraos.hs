@@ -293,6 +293,7 @@ protocolInfoTPraosShelleyBased
           , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
           , shelleyLedgerTables = emptyLedgerTables
           , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
+          , shelleyCumulativeTxBytes = 0
           }
 
     initChainDepState :: TPraosState
