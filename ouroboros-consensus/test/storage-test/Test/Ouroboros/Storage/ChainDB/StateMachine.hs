@@ -320,6 +320,7 @@ data Success blk it flr
   | MbPoint (Maybe (Point blk))
   | MaxSlot MaxSlotNo
   | MbPerasRoundNo (Maybe PerasRoundNo)
+  | SnapshotSlots [SlotNo]
   deriving (Functor, Foldable, Traversable)
 
 -- | Product of all 'BlockComponent's. As this is a GADT, generating random
@@ -486,7 +487,7 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
       --              snapshots and can conditionally copy to ImmutableDB.
       -- let copyImmutableBlocks = persistBlks GarbageCollect internal
       let noCopyImmutableBlocks = pure ()
-      ignore <$> intTryTakeSnapshot internal noCopyImmutableBlocks (\_ -> pure 0)
+      SnapshotSlots <$> intTryTakeSnapshot internal noCopyImmutableBlocks (\_ -> pure 0)
     WipeVolatileDB -> Point <$> wipeVolatileDB st
  where
   mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True
@@ -752,7 +753,7 @@ runPure cfg = \case
   -- in the system under test. It would be better if we modelled the
   -- snapshots so that this aspect of the system would be explicitly
   -- specified. See https://github.com/IntersectMBO/ouroboros-network/issues/3375
-  UpdateLedgerSnapshots -> ok Unit $ update_ id
+  UpdateLedgerSnapshots -> ok SnapshotSlots $ update (\m -> ([], m))
   Close -> openOrClosed $ update_ Model.closeDB
   Reopen -> openOrClosed $ update_ Model.reopen
   WipeVolatileDB -> ok Point $ update (Model.wipeVolatileDB cfg)

@@ -328,7 +328,7 @@ ledgerDbTaskWatcher cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
     , wReader = blockUntilJust $ withOriginToMaybe <$> readTVar varSt
     , wNotify = \slotNo -> do
         LedgerDB.tryFlush cdbLedgerDB
-        LedgerDB.tryTakeSnapshot cdbLedgerDB (void $ copyToImmutableDB cdb) mkRandomDelay
+        void $ LedgerDB.tryTakeSnapshot cdbLedgerDB (void $ copyToImmutableDB cdb) mkRandomDelay
         -- tryTakeSnapshot is blocking, so the randomised snapshot delay will also delay
         -- the call to LedgerDB.garbageCollect below
         --

@@ -319,7 +319,7 @@ implTryTakeSnapshot ::
   LedgerDBEnv m l blk ->
   m () ->
   (SnapshotDelayRange -> m DiffTime) ->
-  m ()
+  m [SlotNo]
 implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
   now <- getMonotonicTime
   timeSinceLastSnapshot <- do
@@ -374,6 +374,7 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
           trimSnapshots snapManager (ldbSnapshotPolicy env)
       traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
         SnapshotRequestCompleted
+  pure snapshotSlots
 
 -- If the DbChangelog in the LedgerDB can flush (based on the SnapshotPolicy
 -- with which this LedgerDB was opened), flush differences to the backing

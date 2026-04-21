@@ -338,7 +338,7 @@ implTryTakeSnapshot ::
   LedgerDBEnv m l blk ->
   m () ->
   (SnapshotDelayRange -> m DiffTime) ->
-  m ()
+  m [SlotNo]
 implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
   now <- getMonotonicTime
   timeSinceLastSnapshot <- do
@@ -370,7 +370,7 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
 
   -- look at the list of the ledger tables handles from the previous step and take the snapshots
   case NonEmpty.nonEmpty handles of
-    Nothing -> pure ()
+    Nothing -> pure []
     Just nonEmptyHandles -> do
       copyBlocks
 
@@ -389,6 +389,7 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
       Monad.void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
       traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
         SnapshotRequestCompleted
+      pure . NonEmpty.toList $ NonEmpty.map fst nonEmptyHandles
  where
   duplicateStateRef :: StateRef m l -> m (StateRef m l)
   duplicateStateRef StateRef{state, tables} = do
