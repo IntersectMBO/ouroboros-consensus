@@ -278,9 +278,10 @@ sumChainTxBytes topConfig initLedger node = runSimOrThrow $ do
   let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
   stateVar <- StrictTVar.newTVarIO db
   leiosDb <- newLeiosDBInMemoryWith stateVar
-  let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
-      cfg = ExtLedgerCfg topConfig
-  fst <$> foldM (step leiosDb cfg) (0, initLedger) chain
+  withLeiosDb leiosDb $ \leiosConn -> do
+    let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
+        cfg = ExtLedgerCfg topConfig
+    fst <$> foldM (step leiosConn cfg) (0, initLedger) chain
  where
   step leiosDb cfg (total, st) blk = do
     blk' <- resolveLeiosBlock leiosDb st blk
