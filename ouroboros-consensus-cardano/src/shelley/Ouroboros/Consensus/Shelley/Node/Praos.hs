@@ -22,7 +22,9 @@ import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import Control.Tracer (traceWith)
 import qualified Data.Text as T
-import LeiosDemoDb (LeiosDbConnection (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint))
+import LeiosDemoDb
+  ( LeiosDbConnection (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint)
+  )
 import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement, ebAnnouncementHash)
   , LeiosPoint (..)
