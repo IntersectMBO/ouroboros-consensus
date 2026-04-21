@@ -46,6 +46,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as LedgerDB.V2.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util (dropLast)
+import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (Enclosing' (FallingEdgeWith))
 import Ouroboros.Consensus.Util.IOLike
@@ -218,7 +219,7 @@ data TestSetup = TestSetup
   deriving stock Show
 
 data TestSnapshotPolicyArgs = TestSnapshotPolicyArgs
-  { tspaNum :: Word
+  { tspaNum :: NumOfDiskSnapshots
   , tspaInterval :: NonZero Word64
   , tspaOffset :: SlotNo
   , tspaRateLimit :: DiffTime
@@ -228,7 +229,7 @@ data TestSnapshotPolicyArgs = TestSnapshotPolicyArgs
 
 instance Arbitrary TestSnapshotPolicyArgs where
   arbitrary = do
-    tspaNum <- choose (1, 10)
+    tspaNum <- NumOfDiskSnapshots <$> choose (1, 10)
     tspaInterval <- choose (1, 10) `suchThatMap` nonZero
     tspaOffset <- SlotNo <$> choose (1, 20)
     tspaRateLimit <-
@@ -441,7 +442,7 @@ checkTestOutcome testSetup testOutcome =
           strictlyIncreasing (snd <$> actualSnapshots)
       , counterexample ("Unexpected number of on-disk snapshots " <> show toutFinalSnapshots) $
           length toutFinalSnapshots
-            === min (length actualSnapshots) (fromIntegral tspaNum)
+            === min (length actualSnapshots) (fromIntegral . getNumOfDiskSnapshots $ tspaNum)
       , counterexample ("Rate limit not respected...") $
           conjoin
             [ counterexample ("...between " <> condense pt1 <> " and " <> condense pt2) $

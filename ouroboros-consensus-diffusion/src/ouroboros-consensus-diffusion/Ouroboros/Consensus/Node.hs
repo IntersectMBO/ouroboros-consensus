@@ -842,8 +842,8 @@ openChainDB ::
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile FS, see 'NodeDatabasePaths'
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
-  StdGen ->
   -- | RNG used to randomise snapshot delays
+  StdGen ->
   LedgerDbBackendArgs m blk ->
   -- | A set of default arguments (possibly modified from 'defaultArgs')
   Incomplete ChainDbArgs m blk ->

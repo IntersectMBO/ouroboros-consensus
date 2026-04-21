@@ -139,7 +139,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbResolveBlock = getBlock
                 , ldbGetVolatileSuffix = getVolatileSuffix
-                , ldbLastSnapshotRequestedAt = lastSnapshotRequestedAt
+                , ldbLastSuccessfulSnapshotRequestedAt = lastSnapshotRequestedAt
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -321,11 +321,11 @@ implTryTakeSnapshot ::
   (SnapshotDelayRange -> m DiffTime) ->
   m ()
 implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
-  snapshotRequestTime <- getMonotonicTime
+  now <- getMonotonicTime
   timeSinceLastSnapshot <- do
-    mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
+    mLastSnapshotRequested <- readTVarIO $ ldbLastSuccessfulSnapshotRequestedAt env
     forM mLastSnapshotRequested $ \lastSnapshotRequested -> do
-      pure $ snapshotRequestTime `diffTime` lastSnapshotRequested
+      pure $ now `diffTime` lastSnapshotRequested
   -- Get all states before the volatile suffix.
   immutableStates <- atomically $ do
     states <- changelogStates <$> readTVar (ldbChangelog env)
@@ -342,21 +342,17 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
             { sscTimeSinceLast = timeSinceLastSnapshot
             , sscSnapshotSlots = immutableSlots
             }
-  case snapshotSlots of
-    [] -> pure ()
-    _ -> do
+  case NonEmpty.nonEmpty snapshotSlots of
+    Nothing -> pure ()
+    Just nonEmptySnapshotSlots -> do
       copyBlocks
 
       delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
-      let nonEmptySnapshotSlots =
-            case NonEmpty.nonEmpty $ snapshotSlots of
-              Nothing -> error "impossible: empty handles, see pattern-match above"
-              Just slots -> slots
       traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
-        SnapshotRequestDelayed snapshotRequestTime delayBeforeSnapshotting nonEmptySnapshotSlots
+        SnapshotRequestDelayed now delayBeforeSnapshotting nonEmptySnapshotSlots
       threadDelay delayBeforeSnapshotting
 
-      forM_ snapshotSlots $ \slot -> do
+      forM_ nonEmptySnapshotSlots $ \slot -> do
         -- Prune the 'DbChangelog' such that the resulting anchor state has slot
         -- number @slot@.
         let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
@@ -373,7 +369,7 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
               snapManager
               Nothing
               (ldbChangelog env, ldbBackingStore env)
-        atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
+        atomically $ writeTVar (ldbLastSuccessfulSnapshotRequestedAt env) (Just $! now)
         void $
           trimSnapshots snapManager (ldbSnapshotPolicy env)
       traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
@@ -595,7 +591,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLastSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
+  , ldbLastSuccessfulSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
   -- ^ The time at which the latest successfully-completed snapshot was
   -- requested. Note that this is not the the last time any snapshot was
   -- requested -- there may be later snapshot requests that have failed, or that
