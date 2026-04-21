@@ -349,7 +349,7 @@ leiosFetchLogicIteration env offerings =
     LeiosPoint ->
     BytesSize ->
     TxHash ->
-    Map EbHash Int ->
+    Map EbHash (Int, BytesSize) ->
     Set (PeerId pid) ->
     (LeiosOutstanding pid, LeiosFetchDecisions pid)
   goTx2 !acc !accNew targets point txBytesSize txHash txOffsets peerIds
@@ -382,10 +382,10 @@ leiosFetchLogicIteration env offerings =
         go1 acc accNew targets
 
   choosePeerTx ::
-    Set (PeerId pid) -> LeiosOutstanding pid -> Map EbHash Int -> Maybe (PeerId pid, Map EbHash Int)
+    Set (PeerId pid) -> LeiosOutstanding pid -> Map EbHash (Int, BytesSize) -> Maybe (PeerId pid, Map EbHash Int)
   choosePeerTx peerIds acc txOffsets =
     foldr (\a _ -> Just a) Nothing $
-      [ (peerId, txOffsets')
+      [ (peerId, Map.map fst txOffsets')
       | (peerId, (_ebIds, ebIds)) <-
           Map.toList $ -- TODO prioritize/shuffle?
             (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
@@ -623,8 +623,8 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
                       (Leios.missingEbTxs outstanding)
                 , Leios.txOffsetss =
                     V.ifoldl
-                      ( \acc i (txHash, _txBytesSize) ->
-                          Map.insertWith Map.union txHash (Map.singleton ebHash i) acc
+                      ( \acc i (txHash, txBytesSize) ->
+                          Map.insertWith Map.union txHash (Map.singleton ebHash (i, txBytesSize)) acc
                       )
                       (Leios.txOffsetss outstanding)
                       (let MkLeiosEb v = eb in v)

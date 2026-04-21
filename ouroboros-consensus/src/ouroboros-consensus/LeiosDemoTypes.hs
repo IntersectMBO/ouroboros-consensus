@@ -226,7 +226,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   --   will be a no-op for all except the first to arrive carrying this EbTx.
   --
   -- TODO this is far too big for the heap
-  , txOffsetss :: !(Map TxHash (Map EbHash Int))
+  , txOffsetss :: !(Map TxHash (Map EbHash (Int, BytesSize)))
   -- ^ Inverse of missingEbTxs - for each TX, which EBs (and offsets) need it
   --
   -- TODO this is far too big for the heap
