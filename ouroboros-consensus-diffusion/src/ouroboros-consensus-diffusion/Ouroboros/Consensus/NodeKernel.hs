@@ -257,6 +257,7 @@ initNodeKernel
     , blockFetchConfiguration
     , btime
     , gsmArgs
+    , miniProtocolParameters
     , peerSharingRng
     , publicPeerSelectionStateVar
     , genesisArgs
@@ -384,8 +385,10 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
         txCountersThreadV2
+          (txDecisionPolicy miniProtocolParameters)
           (txCountersTracer tracers)
           txCountersVar
+          sharedTxStateVar
 
     return
       NodeKernel
