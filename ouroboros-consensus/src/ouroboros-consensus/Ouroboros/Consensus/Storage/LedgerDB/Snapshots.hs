@@ -51,6 +51,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , SnapshotMetadata (..)
   , SnapshotPolicyArgs (..)
   , TablesCodecVersion (..)
+  , NumOfDiskSnapshots (..)
   , defaultSnapshotPolicyArgs
 
     -- * Codec
@@ -412,7 +413,7 @@ trimSnapshots snapManager SnapshotPolicy{onDiskNumSnapshots} = do
   ss <- filter diskSnapshotIsTemporary <$> listSnapshots snapManager
   -- The snapshot are most recent first, so we can simply drop from the
   -- front to get the snapshots that are "too" old.
-  let ssTooOld = drop (fromIntegral onDiskNumSnapshots) ss
+  let ssTooOld = drop (fromIntegral . getNumOfDiskSnapshots $ onDiskNumSnapshots) ss
   mapM
     ( \s -> do
         deleteSnapshotIfTemporary snapManager s
@@ -499,6 +500,12 @@ decodeLBackwardsCompatible _ decodeLedger decodeHash =
   Policy
 -------------------------------------------------------------------------------}
 
+-- | Number of snapshots to be stored on disk. See the
+-- @'SnapshotPolicy'@ documentation for more information.
+newtype NumOfDiskSnapshots
+  = NumOfDiskSnapshots {getNumOfDiskSnapshots :: Word}
+  deriving stock (Eq, Generic, Show)
+
 -- | Type-safe flag to regulate the checksum policy of the ledger state snapshots.
 --
 -- These patterns are exposed to cardano-node and will be passed as part of @'SnapshotPolicy'@.
@@ -512,7 +519,7 @@ pattern NoDoDiskSnapshotChecksum = Flag False
 -- snapshots that are guaranteed valid). The on-disk policy determines how often
 -- we write to disk and how many checkpoints we keep.
 data SnapshotPolicy = SnapshotPolicy
-  { onDiskNumSnapshots :: Word
+  { onDiskNumSnapshots :: NumOfDiskSnapshots
   -- ^ How many snapshots do we want to keep on disk?
   --
   -- A higher number of on-disk snapshots is primarily a safe-guard against
@@ -611,7 +618,7 @@ data SnapshotFrequency
 
 data SnapshotPolicyArgs = SnapshotPolicyArgs
   { spaFrequency :: SnapshotFrequency
-  , spaNum :: OverrideOrDefault Word
+  , spaNum :: OverrideOrDefault NumOfDiskSnapshots
   -- ^ See 'onDiskNumSnapshots'.
   }
   deriving stock (Show, Eq)
@@ -636,7 +643,7 @@ defaultSnapshotPolicy (SecurityParam k) args =
  where
   SnapshotPolicyArgs
     { spaFrequency
-    , spaNum = provideDefault 2 -> onDiskNumSnapshots
+    , spaNum = provideDefault (NumOfDiskSnapshots 2) -> onDiskNumSnapshots
     } = args
 
   onDiskSnapshotSelector :: SnapshotSelectorContext -> [SlotNo]

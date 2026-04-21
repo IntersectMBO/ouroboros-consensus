@@ -106,7 +106,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
         prevApplied <- newTVarIO Set.empty
         lock <- RAWLock.new ()
         nextForkerKey <- newTVarIO (ForkerKey 0)
-        lastSnapshotRequestedAt <- newTVarIO Nothing
+        ldbLastSuccessfulSnapshotRequestedAt <- newTVarIO Nothing
         let env =
               LedgerDBEnv
                 { ldbSeq = varDB
@@ -121,7 +121,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbOpenHandlesLock = lock
                 , ldbGetVolatileSuffix = getVolatileSuffix
                 , ldbBackendResources = SomeResources res
-                , ldbLastSnapshotRequestedAt = lastSnapshotRequestedAt
+                , ldbLastSuccessfulSnapshotRequestedAt = ldbLastSuccessfulSnapshotRequestedAt
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -340,11 +340,11 @@ implTryTakeSnapshot ::
   (SnapshotDelayRange -> m DiffTime) ->
   m ()
 implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
-  snapshotRequestTime <- getMonotonicTime
+  now <- getMonotonicTime
   timeSinceLastSnapshot <- do
-    mLastSnapshotRequested <- readTVarIO $ ldbLastSnapshotRequestedAt env
+    mLastSnapshotRequested <- readTVarIO $ ldbLastSuccessfulSnapshotRequestedAt env
     for mLastSnapshotRequested $ \lastSnapshotRequested -> do
-      pure $ snapshotRequestTime `diffTime` lastSnapshotRequested
+      pure $ now `diffTime` lastSnapshotRequested
   -- calculate and duplicate the ledger tables handles that we will be taking snapshots of
   handles <- RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
     lseq@(LedgerSeq immutableStates) <- atomically $ do
@@ -369,27 +369,23 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
       (slot,) <$> (duplicateStateRef $ anchorHandle $ snd $ prune pruneStrat lseq)
 
   -- look at the list of the ledger tables handles from the previous step and take the snapshots
-  case handles of
-    [] -> pure ()
-    _ -> do
+  case NonEmpty.nonEmpty handles of
+    Nothing -> pure ()
+    Just nonEmptyHandles -> do
       copyBlocks
 
       delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
-      let slotsOfHandles =
-            case NonEmpty.nonEmpty $ map fst handles of
-              Nothing -> error "impossible: empty handles, see pattern-match above"
-              Just slots -> slots
       traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
-        SnapshotRequestDelayed snapshotRequestTime delayBeforeSnapshotting slotsOfHandles
+        SnapshotRequestDelayed now delayBeforeSnapshotting (NonEmpty.map fst nonEmptyHandles)
       threadDelay delayBeforeSnapshotting
 
-      for_ handles $ \(_, h) -> do
+      for_ nonEmptyHandles $ \(_, h) -> do
         Monad.void $ takeSnapshot snapManager Nothing h
         Monad.void $ close . tables $ h
       -- we don't bracket around the handles because it is tedious. An exception that may occur
       -- before we close them would bring the whole cardano-node down anyway.
 
-      atomically $ writeTVar (ldbLastSnapshotRequestedAt env) (Just $! snapshotRequestTime)
+      atomically $ writeTVar (ldbLastSuccessfulSnapshotRequestedAt env) (Just $! now)
       Monad.void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
       traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
         SnapshotRequestCompleted
@@ -468,10 +464,12 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLastSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
-  -- ^ The time at which the latest snapshot was requested. Note that this is
-  --   not the the last time a snapshot was requested -- this is only updated
-  --   with the request time when a snapshot is successfully made.
+  , ldbLastSuccessfulSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
+  -- ^ The time at which the latest successfully-completed snapshot was
+  -- requested. Note that this is not the the last time any snapshot was
+  -- requested -- there may be later snapshot requests that have failed, or that
+  -- are currently in progress (but may be blocked by a snapshot delay or
+  -- working).
   }
   deriving Generic
 
