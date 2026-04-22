@@ -390,8 +390,7 @@ mkHandlers
                   MsgLeiosVotes vs -> do
                     -- TODO: reduce this trace a bit to the essential
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
-                    -- FIXME: this forms a cycle of fetches
-                    -- mapM_ addVote vs
+                    mapM_ addVote vs
                     forM_ vs $ \MkLeiosVote{electionId, ebHash, voterId} ->
                       traceWith kernelTracer $
                         TraceLeiosVoteAcquired
