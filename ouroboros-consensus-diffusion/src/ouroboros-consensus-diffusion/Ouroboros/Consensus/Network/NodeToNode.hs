@@ -325,7 +325,6 @@ mkHandlers
                   )
                   txSubmissionInitDelay
                   (txDecisionPolicy $ miniProtocolParameters)
-                  (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
                   (getMempoolWriter getMempool)
                   txWireSize
                   api
