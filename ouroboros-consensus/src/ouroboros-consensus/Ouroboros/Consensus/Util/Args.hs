@@ -1,4 +1,6 @@
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -39,10 +41,20 @@ module Ouroboros.Consensus.Util.Args
   , Complete
   , Incomplete
   , noDefault
+  , OverrideOrDefault (..)
+  , provideDefault
   ) where
 
 import Data.Functor.Identity (Identity (..))
 import Data.Kind
+
+data OverrideOrDefault a = Override !a | UseDefault
+  deriving stock (Show, Eq, Functor)
+
+provideDefault :: a -> OverrideOrDefault a -> a
+provideDefault d = \case
+  UseDefault -> d
+  Override t -> t
 
 data Defaults t = NoDefault
   deriving Functor

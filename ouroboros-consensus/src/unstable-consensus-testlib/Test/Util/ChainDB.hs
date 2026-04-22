@@ -43,6 +43,7 @@ import System.FS.API (SomeHasFS (..))
 import System.FS.Sim.MockFS
 import qualified System.FS.Sim.MockFS as Mock
 import System.FS.Sim.STM (simHasFS)
+import System.Random (mkStdGen)
 import Test.Util.Orphans.NoThunks ()
 import Test.Util.TestBlock (TestBlock, TestBlockLedgerConfig (..))
 
@@ -122,10 +123,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           }
     , cdbLgrDbArgs =
         LedgerDbArgs
-          { lgrSnapshotPolicyArgs =
-              LedgerDB.SnapshotPolicyArgs
-                LedgerDB.DefaultSnapshotInterval
-                LedgerDB.DefaultNumOfDiskSnapshots
+          { lgrSnapshotPolicyArgs = LedgerDB.defaultSnapshotPolicyArgs
           , -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
             -- k seconds, where k is the security parameter.
             lgrGenesis = return mcdbInitLedger
@@ -155,5 +153,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTracer = nullTracer
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
+          , cdbsSnapshotDelayRNG = mkStdGen 0
           }
     }

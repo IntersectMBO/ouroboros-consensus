@@ -19,12 +19,14 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import Control.Tracer
+import Data.Containers.ListUtils (nubOrd)
 import qualified Data.Foldable as Foldable
 import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
-import Data.Maybe (isJust)
+import qualified Data.List.NonEmpty as NonEmpty
+import Data.Maybe (isJust, mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
@@ -121,6 +123,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
           (,) <$> newTVarIO db <*> newTVarIO Set.empty
         flushLock <- mkLedgerDBLock
         nextForkerKey <- newTVarIO (ForkerKey 0)
+        lastSnapshotRequestedAt <- newTVarIO Nothing
         let env =
               LedgerDBEnv
                 { ldbChangelog = varDB
@@ -136,6 +139,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbResolveBlock = getBlock
                 , ldbGetVolatileSuffix = getVolatileSuffix
+                , ldbLastSuccessfulSnapshotRequestedAt = lastSnapshotRequestedAt
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -181,7 +185,7 @@ implMkLedgerDb h snapManager =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
-      , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
+      , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot snapManager)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -306,34 +310,70 @@ implGarbageCollect env slotNo = atomically $ do
     Set.dropWhileAntitone ((< slotNo) . realPointSlot)
 
 implTryTakeSnapshot ::
-  ( l ~ ExtLedgerState blk
+  ( IsLedger (LedgerState blk)
+  , l ~ ExtLedgerState blk
+  , HasLedgerTables l
   , IOLike m
   ) =>
   SnapshotManagerV1 m blk ->
   LedgerDBEnv m l blk ->
   m () ->
-  Maybe (Time, Time) ->
-  Word64 ->
-  m SnapCounters
-implTryTakeSnapshot snapManager env copyBlocks mTime nrBlocks =
-  if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
-    then do
+  (SnapshotDelayRange -> m DiffTime) ->
+  m ()
+implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
+  now <- getMonotonicTime
+  timeSinceLastSnapshot <- do
+    mLastSnapshotRequested <- readTVarIO $ ldbLastSuccessfulSnapshotRequestedAt env
+    forM mLastSnapshotRequested $ \lastSnapshotRequested -> do
+      pure $ now `diffTime` lastSnapshotRequested
+  -- Get all states before the volatile suffix.
+  immutableStates <- atomically $ do
+    states <- changelogStates <$> readTVar (ldbChangelog env)
+    volSuffix <- getVolatileSuffix (ldbGetVolatileSuffix env)
+    pure $ AS.dropNewest (AS.length (volSuffix states)) states
+  let immutableSlots :: [SlotNo] =
+        -- Remove duplicates due to EBBs.
+        nubOrd . mapMaybe (withOriginToMaybe . getTipSlot) $
+          AS.anchor immutableStates : AS.toOldestFirst immutableStates
+      snapshotSlots =
+        onDiskSnapshotSelector
+          (ldbSnapshotPolicy env)
+          SnapshotSelectorContext
+            { sscTimeSinceLast = timeSinceLastSnapshot
+            , sscSnapshotSlots = immutableSlots
+            }
+  case NonEmpty.nonEmpty snapshotSlots of
+    Nothing -> pure ()
+    Just nonEmptySnapshotSlots -> do
       copyBlocks
-      void $
-        withReadLock
+
+      delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
+      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+        SnapshotRequestDelayed now delayBeforeSnapshotting nonEmptySnapshotSlots
+      threadDelay delayBeforeSnapshotting
+
+      forM_ nonEmptySnapshotSlots $ \slot -> do
+        -- Prune the 'DbChangelog' such that the resulting anchor state has slot
+        -- number @slot@.
+        let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
+        atomically $ modifyTVar (ldbChangelog env) (prune pruneStrat)
+        -- Flush the LedgerDB such that we can take a snapshot for the new anchor
+        -- state due to the previous prune.
+        withWriteLock
           (ldbLock env)
-          ( takeSnapshot
+          (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
+        -- Now, taking a snapshot (for the last flushed state) will do what we want.
+        void $
+          withReadLock (ldbLock env) $
+            takeSnapshot
               snapManager
               Nothing
               (ldbChangelog env, ldbBackingStore env)
-          )
-      void $
-        trimSnapshots
-          snapManager
-          (ldbSnapshotPolicy env)
-      (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
-    else
-      pure $ SnapCounters (fst <$> mTime) nrBlocks
+        atomically $ writeTVar (ldbLastSuccessfulSnapshotRequestedAt env) (Just $! now)
+        void $
+          trimSnapshots snapManager (ldbSnapshotPolicy env)
+      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+        SnapshotRequestCompleted
 
 -- If the DbChangelog in the LedgerDB can flush (based on the SnapshotPolicy
 -- with which this LedgerDB was opened), flush differences to the backing
@@ -551,6 +591,12 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
+  , ldbLastSuccessfulSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
+  -- ^ The time at which the latest successfully-completed snapshot was
+  -- requested. Note that this is not the the last time any snapshot was
+  -- requested -- there may be later snapshot requests that have failed, or that
+  -- are currently in progress (but may be blocked by a snapshot delay or
+  -- working).
   }
   deriving Generic
 
@@ -595,17 +641,6 @@ getEnv2 ::
   b ->
   m r
 getEnv2 h f a b = getEnv h (\env -> f env a b)
-
--- | Variant 'of 'getEnv' for functions taking two arguments.
-getEnv3 ::
-  (IOLike m, HasCallStack) =>
-  LedgerDBHandle m l blk ->
-  (LedgerDBEnv m l blk -> a -> b -> c -> m r) ->
-  a ->
-  b ->
-  c ->
-  m r
-getEnv3 h f a b c = getEnv h (\env -> f env a b c)
 
 -- | Variant 'of 'getEnv' for functions taking five arguments.
 getEnv5 ::

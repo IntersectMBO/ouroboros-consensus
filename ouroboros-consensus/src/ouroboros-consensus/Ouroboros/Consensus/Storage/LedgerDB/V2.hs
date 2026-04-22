@@ -7,6 +7,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -14,17 +15,20 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
-import qualified Control.Monad as Monad (join, void)
+import qualified Control.Monad as Monad (forM, join, void)
 import Control.Monad.Except
 import Control.RAWLock
 import qualified Control.RAWLock as RAWLock
 import Control.Tracer
 import Data.Bifunctor (first)
+import Data.Containers.ListUtils (nubOrd)
+import Data.Foldable (for_)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
-import Data.Maybe
+import qualified Data.List.NonEmpty as NonEmpty
+import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
@@ -102,6 +106,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
         prevApplied <- newTVarIO Set.empty
         lock <- RAWLock.new ()
         nextForkerKey <- newTVarIO (ForkerKey 0)
+        ldbLastSuccessfulSnapshotRequestedAt <- newTVarIO Nothing
         let env =
               LedgerDBEnv
                 { ldbSeq = varDB
@@ -116,6 +121,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbOpenHandlesLock = lock
                 , ldbGetVolatileSuffix = getVolatileSuffix
                 , ldbBackendResources = SomeResources res
+                , ldbLastSuccessfulSnapshotRequestedAt = ldbLastSuccessfulSnapshotRequestedAt
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -157,7 +163,7 @@ implMkLedgerDb h snapManager =
           , validateFork = getEnv5 h (implValidate h)
           , getPrevApplied = getEnvSTM h implGetPrevApplied
           , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
-          , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
+          , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot snapManager)
           , tryFlush = getEnv h implTryFlush
           , closeDB = implCloseDB h
           }
@@ -331,26 +337,63 @@ implTryTakeSnapshot ::
   SnapshotManager m m blk (StateRef m l) ->
   LedgerDBEnv m l blk ->
   m () ->
-  Maybe (Time, Time) ->
-  Word64 ->
-  m SnapCounters
-implTryTakeSnapshot snapManager env copyBlocks mTime nrBlocks =
-  if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
-    then do
+  (SnapshotDelayRange -> m DiffTime) ->
+  m ()
+implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
+  now <- getMonotonicTime
+  timeSinceLastSnapshot <- do
+    mLastSnapshotRequested <- readTVarIO $ ldbLastSuccessfulSnapshotRequestedAt env
+    for mLastSnapshotRequested $ \lastSnapshotRequested -> do
+      pure $ now `diffTime` lastSnapshotRequested
+  -- calculate and duplicate the ledger tables handles that we will be taking snapshots of
+  handles <- RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
+    lseq@(LedgerSeq immutableStates) <- atomically $ do
+      LedgerSeq states <- readTVar $ ldbSeq env
+      volSuffix <- getVolatileSuffix (ldbGetVolatileSuffix env)
+      pure $ LedgerSeq $ AS.dropNewest (AS.length (volSuffix states)) states
+    let immutableSlots :: [SlotNo] =
+          -- Remove duplicates due to EBBs.
+          nubOrd . mapMaybe (withOriginToMaybe . getTipSlot . state) $
+            AS.anchor immutableStates : AS.toOldestFirst immutableStates
+        snapshotSlots =
+          onDiskSnapshotSelector
+            (ldbSnapshotPolicy env)
+            SnapshotSelectorContext
+              { sscTimeSinceLast = timeSinceLastSnapshot
+              , sscSnapshotSlots = immutableSlots
+              }
+    Monad.forM snapshotSlots $ \slot -> do
+      -- Prune the 'LedgerSeq' such that the resulting anchor state has slot
+      -- number @slot@.
+      let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
+      (slot,) <$> (duplicateStateRef $ anchorHandle $ snd $ prune pruneStrat lseq)
+
+  -- look at the list of the ledger tables handles from the previous step and take the snapshots
+  case NonEmpty.nonEmpty handles of
+    Nothing -> pure ()
+    Just nonEmptyHandles -> do
       copyBlocks
-      withStateRef env (MkSolo . anchorHandle) $ \(MkSolo st) ->
-        Monad.void $
-          takeSnapshot
-            snapManager
-            Nothing
-            st
-      Monad.void $
-        trimSnapshots
-          snapManager
-          (ldbSnapshotPolicy env)
-      (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
-    else
-      pure $ SnapCounters (fst <$> mTime) nrBlocks
+
+      delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
+      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+        SnapshotRequestDelayed now delayBeforeSnapshotting (NonEmpty.map fst nonEmptyHandles)
+      threadDelay delayBeforeSnapshotting
+
+      for_ nonEmptyHandles $ \(_, h) -> do
+        Monad.void $ takeSnapshot snapManager Nothing h
+        Monad.void $ close . tables $ h
+      -- we don't bracket around the handles because it is tedious. An exception that may occur
+      -- before we close them would bring the whole cardano-node down anyway.
+
+      atomically $ writeTVar (ldbLastSuccessfulSnapshotRequestedAt env) (Just $! now)
+      Monad.void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
+      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+        SnapshotRequestCompleted
+ where
+  duplicateStateRef :: StateRef m l -> m (StateRef m l)
+  duplicateStateRef StateRef{state, tables} = do
+    h <- duplicate tables
+    pure $ StateRef state h
 
 -- In the first version of the LedgerDB for UTxO-HD, there is a need to
 -- periodically flush the accumulated differences to the disk. However, in the
@@ -421,6 +464,12 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
+  , ldbLastSuccessfulSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
+  -- ^ The time at which the latest successfully-completed snapshot was
+  -- requested. Note that this is not the the last time any snapshot was
+  -- requested -- there may be later snapshot requests that have failed, or that
+  -- are currently in progress (but may be blocked by a snapshot delay or
+  -- working).
   }
   deriving Generic
 
@@ -474,15 +523,14 @@ getEnv (LDBHandle varState) f =
     LedgerDBClosed -> throwIO $ ClosedDBError prettyCallStack
 
 -- | Variant 'of 'getEnv' for functions taking two arguments.
-getEnv3 ::
-  (IOLike m, HasCallStack) =>
+getEnv2 ::
+  IOLike m =>
   LedgerDBHandle m l blk ->
-  (LedgerDBEnv m l blk -> a -> b -> c -> m r) ->
+  (LedgerDBEnv m l blk -> a -> b -> m r) ->
   a ->
   b ->
-  c ->
   m r
-getEnv3 h f a b c = getEnv h (\env -> f env a b c)
+getEnv2 h f a b = getEnv h (\env -> f env a b)
 
 -- | Variant 'of 'getEnv' for functions taking five arguments.
 getEnv5 ::

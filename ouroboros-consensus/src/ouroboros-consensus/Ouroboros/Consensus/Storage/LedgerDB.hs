@@ -19,7 +19,6 @@ module Ouroboros.Consensus.Storage.LedgerDB
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Data.Functor.Contravariant ((>$<))
-import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -71,7 +70,7 @@ openDB ::
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
   GetVolatileSuffix m blk ->
-  WithTempRegistry st m (LedgerDB' m blk, Word64)
+  WithTempRegistry st m (LedgerDB' m blk)
 openDB
   args
   stream
@@ -129,11 +128,9 @@ doOpenDB ::
   SnapshotManager m n blk st ->
   StreamAPI m blk blk ->
   Point blk ->
-  m (LedgerDB' m blk, Word64)
+  m (LedgerDB' m blk)
 doOpenDB args initDb snapManager stream replayGoal =
-  f <$> openDBInternal args initDb snapManager stream replayGoal
- where
-  f (ldb, replayCounter, _) = (ldb, replayCounter)
+  fst <$> openDBInternal args initDb snapManager stream replayGoal
 
 -- | Open the ledger DB and expose internals for testing purposes
 openDBInternal ::
@@ -147,10 +144,10 @@ openDBInternal ::
   SnapshotManager m n blk st ->
   StreamAPI m blk blk ->
   Point blk ->
-  m (LedgerDB' m blk, Word64, TestInternals' m blk)
+  m (LedgerDB' m blk, TestInternals' m blk)
 openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal = do
   createDirectoryIfMissing fs True (mkFsPath [])
-  (_initLog, db, replayCounter) <-
+  (_initLog, db) <-
     initialize
       replayTracer
       snapTracer
@@ -161,7 +158,7 @@ openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager s
       snapManager
       lgrStartSnapshot
   (ledgerDb, internal) <- mkLedgerDb initDb db
-  return (ledgerDb, replayCounter, internal)
+  return (ledgerDb, internal)
  where
   LedgerDbArgs
     { lgrConfig

@@ -184,7 +184,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   -- want to track that one to close it on exception. See "Resource management
   -- in the LedgerDB" in "Ouroboros.Consensus.Storage.LedgerDB.API" for an
   -- explanation of why.
-  (lgrDB, replayed) <-
+  lgrDB <-
     LedgerDB.openDB
       argsLgrDb
       (ImmutableDB.streamAPI immutableDB)
@@ -243,6 +243,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     chainSelFuse <- newFuse "chain selection"
     chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
+    varSnapshotDelayRNG <- newTVarIO (Args.cdbsSnapshotDelayRNG cdbSpecificArgs)
 
     let env =
           CDB
@@ -270,6 +271,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
             , cdbPerasVoteDB = perasVoteDB
+            , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -321,13 +323,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                 Background.garbageCollectBlocks e slot
                 Background.garbageCollectPeras e slot
                 LedgerDB.garbageCollect (cdbLedgerDB e) slot
-            , intTryTakeSnapshot = getEnv h $ \env' ->
-                void $
-                  LedgerDB.tryTakeSnapshot
-                    (cdbLedgerDB env')
-                    (void $ Background.copyToImmutableDB env')
-                    Nothing
-                    maxBound
+            , intTryTakeSnapshot = getEnv2 h $ LedgerDB.tryTakeSnapshot . cdbLedgerDB
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
             }
@@ -338,7 +334,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env replayed
+    when launchBgTasks $ Background.launchBgTasks env
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually

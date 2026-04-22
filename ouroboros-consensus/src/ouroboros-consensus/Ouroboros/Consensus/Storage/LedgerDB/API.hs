@@ -237,9 +237,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , getTipStatistics
   , withTipForker
 
-    -- * Snapshots
-  , SnapCounters (..)
-
     -- * Streaming
   , StreamingBackend (..)
   , Yield
@@ -255,7 +252,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
 import Codec.CBOR.Decoding
 import Codec.CBOR.Read
 import Codec.Serialise
-import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
 import Control.Tracer
 import Data.ByteString (ByteString)
@@ -363,21 +359,24 @@ data LedgerDB m l blk = LedgerDB
   --  * The set of previously applied points.
   , tryTakeSnapshot ::
       m () ->
-      Maybe (Time, Time) ->
-      Word64 ->
-      m SnapCounters
+      (SnapshotDelayRange -> m DiffTime) ->
+      m ()
   -- ^ If the provided arguments indicate so (based on the SnapshotPolicy with
   -- which this LedgerDB was opened), take a snapshot and delete stale ones.
   --
   -- The arguments are:
+  -- - a callback to run before taking a snapshot. Usually it will
+  --   flush the immutable blocks from the VolatileDB into the
+  --   ImmutableDB.
+  -- - a function that calculates the delay before the snapshot
   --
-  -- - If a snapshot has been taken already, the time at which it was taken
-  --   and the current time.
-  --
-  -- - How many blocks have been processed since the last snapshot.
+  -- For V1, this MUST NOT be called concurrently with 'garbageCollect' and/or
+  -- 'tryFlush'.
   , tryFlush :: m ()
   -- ^ Flush V1 in-memory LedgerDB state to disk, if possible. This is a no-op
   -- for implementations that do not need an explicit flush function.
+  --
+  -- For V1, this MUST NOT be called concurrently with 'tryTakeSnapshot'.
   --
   -- Note that this is rate-limited by 'ldbShouldFlush'.
   , closeDB :: m ()
@@ -501,18 +500,6 @@ openReadOnlyForker ::
 openReadOnlyForker ldb pt = fmap readOnlyForker <$> openForkerAtTarget ldb pt
 
 {-------------------------------------------------------------------------------
-  Snapshots
--------------------------------------------------------------------------------}
-
--- | Counters to keep track of when we made the last snapshot.
-data SnapCounters = SnapCounters
-  { prevSnapshotTime :: !(Maybe Time)
-  -- ^ When was the last time we made a snapshot
-  , ntBlocksSinceLastSnap :: !Word64
-  -- ^ How many blocks have we processed since the last snapshot
-  }
-
-{-------------------------------------------------------------------------------
   Initialization
 -------------------------------------------------------------------------------}
 
@@ -591,7 +578,7 @@ initialize ::
   InitDB db m blk ->
   SnapshotManager m n blk st ->
   Maybe DiskSnapshot ->
-  m (InitLog blk, db, Word64)
+  m (InitLog blk, db)
 initialize
   replayTracer
   snapTracer
@@ -610,7 +597,7 @@ initialize
     tryNewestFirst ::
       (InitLog blk -> InitLog blk) ->
       [DiskSnapshot] ->
-      m (InitLog blk, db, Word64)
+      m (InitLog blk, db)
     tryNewestFirst acc [] = do
       -- We're out of snapshots. Start at genesis
       traceWith (TraceReplayStartEvent >$< replayTracer) ReplayFromGenesis
@@ -619,7 +606,7 @@ initialize
       initDb <- initFromGenesis
 
       traceMarkerIO "Genesis loaded"
-      (db, replayed) <-
+      db <-
         replayStartingWith
           replayTracer''
           cfg
@@ -627,7 +614,7 @@ initialize
           initDb
           (Point Origin)
           dbIface
-      return (acc InitFromGenesis, db, replayed)
+      return (acc InitFromGenesis, db)
     tryNewestFirst acc (s : ss) = do
       if ( case pointSlot replayGoal of
              Origin -> True
@@ -669,7 +656,7 @@ initialize
               let pt' = realPointToPoint pt
               traceWith (TraceReplayStartEvent >$< replayTracer) (ReplayFromSnapshot s (ReplayStart pt'))
               let replayTracer'' = decorateReplayTracerWithStart pt' replayTracer'
-              (db, replayed) <-
+              db <-
                 replayStartingWith
                   replayTracer''
                   cfg
@@ -677,7 +664,7 @@ initialize
                   initDb
                   pt'
                   dbIface
-              return (acc (InitFromSnapshot s pt), db, replayed)
+              return (acc (InitFromSnapshot s pt), db)
 
     replayTracer' =
       decorateReplayTracerWithGoal
@@ -701,7 +688,7 @@ replayStartingWith ::
   db ->
   Point blk ->
   InitDB db m blk ->
-  m (db, Word64)
+  m db
 replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, currentTip} = do
   res <-
     runExceptT $
@@ -709,7 +696,7 @@ replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, curren
         stream
         from
         id
-        (initDb, 0)
+        initDb
         push
   case res of
     Left _ ->
@@ -719,23 +706,18 @@ replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, curren
           <> " that was in immutable db is gone before we could open ledgerdb"
     Right v -> pure v
  where
-  push ::
-    blk ->
-    (db, Word64) ->
-    m (db, Word64)
-  push blk (!db, !replayed) = do
+  push :: blk -> db -> m db
+  push blk !db = do
     !db' <- initReapplyBlock cfg blk db
 
-    let !replayed' = replayed + 1
-
-        events =
+    let events =
           inspectLedger
             (getExtLedgerCfg (ledgerDbCfg cfg))
             (currentTip db)
             (currentTip db')
 
     traceWith tracer (ReplayedBlock (blockRealPoint blk) events)
-    return (db', replayed')
+    return db'
 
 {-------------------------------------------------------------------------------
   Trace replay events

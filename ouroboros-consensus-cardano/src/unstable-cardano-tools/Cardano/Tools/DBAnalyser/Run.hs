@@ -56,7 +56,7 @@ import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
 import System.FS.API
 import System.IO
-import System.Random
+import System.Random (genWord64, newStdGen)
 import Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
@@ -78,7 +78,7 @@ openLedgerDB ::
 openLedgerDB args =
   runWithTempRegistry $
     (,()) <$> do
-      (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
+      (ldb, od) <- case LedgerDB.lgrBackendArgs args of
         LedgerDB.LedgerDbBackendArgsV1 bss ->
           let snapManager = LedgerDB.V1.snapshotManager args
               initDb =
@@ -145,6 +145,7 @@ analyse dbaConfig args =
     lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
+    snapshotDelayRng <- newStdGen
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
@@ -174,6 +175,7 @@ analyse dbaConfig args =
             (const True)
             shfs
             shfs
+            snapshotDelayRng
             flavargs
             $ ChainDB.defaultArgs
         -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever

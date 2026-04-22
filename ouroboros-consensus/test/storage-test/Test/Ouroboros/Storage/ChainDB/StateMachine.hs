@@ -62,6 +62,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   , close
   , mkTestCfg
   , open
+  , reopen
   , persistBlks
   , run
 
@@ -473,7 +474,19 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
     Reopen -> Unit <$> reopen env
     PersistBlks -> ignore <$> persistBlks DoNotGarbageCollect internal
     PersistBlksThenGC -> ignore <$> persistBlks GarbageCollect internal
-    UpdateLedgerSnapshots -> ignore <$> intTryTakeSnapshot internal
+    UpdateLedgerSnapshots -> do
+      -- In these tests, we don't copy the immutable blocks when taking
+      -- a ledger state snapshot, because the model cannot yet faithfully implement
+      -- this behaviour. In production, the snapshots are taken conditionally, and the
+      -- 'tryTakeSnapshot' routine will only copy blocks only if it does take a snapshot.
+      -- The model can only always either copy or not, unconditionally, as it does not
+      -- implement the snapshot decision logic.
+      --
+      -- TODO(geo2a): re-enable copying when the model has a notion of ledger state
+      --              snapshots and can conditionally copy to ImmutableDB.
+      -- let copyImmutableBlocks = persistBlks GarbageCollect internal
+      let noCopyImmutableBlocks = pure ()
+      ignore <$> intTryTakeSnapshot internal noCopyImmutableBlocks (\_ -> pure 0)
     WipeVolatileDB -> Point <$> wipeVolatileDB st
  where
   mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True
@@ -739,13 +752,7 @@ runPure cfg = \case
   -- in the system under test. It would be better if we modelled the
   -- snapshots so that this aspect of the system would be explicitly
   -- specified. See https://github.com/IntersectMBO/ouroboros-network/issues/3375
-  --
-  -- Apart from that, to ensure that whenever we write a snapshot we have copied
-  -- the blocks to the immdb, we run the copying synchronously in the
-  -- snapshotting logic
-  -- (https://github.com/IntersectMBO/ouroboros-consensus/issues/1822), so we
-  -- update the model accordingly here.
-  UpdateLedgerSnapshots -> ok Unit $ update_ (Model.copyToImmutableDB k GarbageCollect)
+  UpdateLedgerSnapshots -> ok Unit $ update_ id
   Close -> openOrClosed $ update_ Model.closeDB
   Reopen -> openOrClosed $ update_ Model.reopen
   WipeVolatileDB -> ok Point $ update (Model.wipeVolatileDB cfg)
