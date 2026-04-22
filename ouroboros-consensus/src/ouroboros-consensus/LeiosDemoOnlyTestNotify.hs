@@ -42,6 +42,7 @@ import Data.Primitive.MutVar (MutVar)
 import qualified Data.Primitive.MutVar as Prim
 import Data.Singletons
 import Data.Word (Word32)
+import LeiosDemoTypes (LeiosVote)
 import qualified Network.Mux.Types as Mux
 import Network.TypedProtocol.Codec.CBOR
 import Network.TypedProtocol.Core
@@ -112,8 +113,9 @@ instance Protocol (LeiosNotify point announcement) where
     MsgLeiosBlockTxsOffer ::
       !point ->
       Message (LeiosNotify point announcement) StBusy StIdle
-    -- votes offer
-
+    MsgLeiosVotes ::
+      [LeiosVote] ->
+      Message (LeiosNotify point announcement) StBusy StIdle
     MsgDone ::
       Message (LeiosNotify point announcement) StIdle StDone
 

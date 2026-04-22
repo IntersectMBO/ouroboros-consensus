@@ -51,6 +51,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure)
+import Control.Applicative ((<|>))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
@@ -80,6 +81,7 @@ import LeiosDemoTypes
   , TraceLeiosPeer (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosVoteState (LeiosVoteSubscription (..), subscribeVotes)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
@@ -382,12 +384,22 @@ mkHandlers
               )
       , hLeiosNotifyServer = \_version _peer -> Effect $ do
           chan <- subscribeEbNotifications leiosDB
-          pure . leiosNotifyServerPeer $ do
-            atomically (readTChan chan) >>= \case
-              AcquiredEb point ebSize ->
-                pure $ MsgLeiosBlockOffer point ebSize
-              AcquiredEbTxs point ->
-                pure $ MsgLeiosBlockTxsOffer point
+          let processEbNotification =
+                readTChan chan >>= \case
+                  AcquiredEb point ebSize ->
+                    pure $ MsgLeiosBlockOffer point ebSize
+                  AcquiredEbTxs point ->
+                    pure $ MsgLeiosBlockTxsOffer point
+
+          LeiosVoteSubscription{getNextVote} <- subscribeVotes leiosVoteState
+          let processVote = do
+                vote <- getNextVote
+                -- FIXME: Yields each vote separately
+                pure $ MsgLeiosVotes [vote]
+
+          pure . leiosNotifyServerPeer $
+            atomically $
+              processEbNotification <|> processVote
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           reqVar <-
             let loop = do
@@ -429,6 +441,7 @@ mkHandlers
       } = nodeKernel
     NodeKernel
       { leiosDB
+      , leiosVoteState
       , getLeiosPeersVars
       , getLeiosOutstanding
       , getLeiosReady
