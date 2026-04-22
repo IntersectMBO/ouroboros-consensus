@@ -12,30 +12,47 @@
 --  validating votes and certificates older than the immutability window, e.g.,
 --  for historical queries.
 module Ouroboros.Consensus.Committee.AcrossEpochs
-  ( InterEpochVotingCommittee (..)
+  ( ElectionEpoch (..)
+  , InterEpochVotingCommittee (..)
   , mkInterEpochVotingCommittee
   , newEpoch
   , getVotingCommitteeForElection
   ) where
 
-import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
 import Ouroboros.Consensus.Committee.Crypto (ElectionId)
 
+-- | Tag to identify to which epoch an election belongs to.
+data ElectionEpoch
+  = -- | The election belongs to the current epoch.
+    CurrentEpoch
+  | -- | The election belongs to the previous epoch.
+    PreviousEpoch
+  | -- | The election belongs to an epoch other than the last two ones.
+    UnknownEpoch
+  deriving (Eq, Show)
+
+-- | Voting committee composition across epochs
 data InterEpochVotingCommittee crypto committee
   = InterEpochVotingCommittee
   { currEpochVotingCommittee :: !(VotingCommittee crypto committee)
+  -- ^ Voting committee composition for the current epoch
   , prevEpochVotingCommittee :: !(StrictMaybe (VotingCommittee crypto committee))
+  -- ^ Voting committee composition for the previous epoch, if known
+  , getElectionEpoch :: ElectionId crypto -> ElectionEpoch
+  -- ^ Mapping election IDs to their corresponding epochs
   }
 
 -- | Construct an inter-epoch committee selection for the first epoch
 mkInterEpochVotingCommittee ::
   CryptoSupportsVotingCommittee crypto committee =>
   VotingCommitteeInput crypto committee ->
+  (ElectionId crypto -> ElectionEpoch) ->
   Either
     (VotingCommitteeError crypto committee)
     (InterEpochVotingCommittee crypto committee)
-mkInterEpochVotingCommittee votingCommitteeInput = do
+mkInterEpochVotingCommittee votingCommitteeInput electionEpoch = do
   votingCommittee <-
     mkVotingCommittee votingCommitteeInput
   pure $
@@ -44,6 +61,8 @@ mkInterEpochVotingCommittee votingCommitteeInput = do
           votingCommittee
       , prevEpochVotingCommittee =
           SNothing
+      , getElectionEpoch =
+          electionEpoch
       }
 
 -- | Update an inter-epoch committee selection at the beginning of a new epoch
@@ -58,7 +77,7 @@ newEpoch newEpochVotingCommitteeInput interEpochVotingCommittee = do
   newEpochVotingCommittee <-
     mkVotingCommittee newEpochVotingCommitteeInput
   pure $
-    InterEpochVotingCommittee
+    interEpochVotingCommittee
       { currEpochVotingCommittee =
           newEpochVotingCommittee
       , prevEpochVotingCommittee =
@@ -67,8 +86,14 @@ newEpoch newEpochVotingCommitteeInput interEpochVotingCommittee = do
 
 -- | Get the voting committee corresponding to an election, if any
 getVotingCommitteeForElection ::
-  ElectionId crypto ->
+  ElectionEpoch ->
   InterEpochVotingCommittee crypto committee ->
   Maybe (VotingCommittee crypto committee)
-getVotingCommitteeForElection _electionId _interEpochVotingCommittee = do
-  error "TODO: implement getVotingCommitteeForElection"
+getVotingCommitteeForElection electionEpoch interEpochVotingCommittee = do
+  case electionEpoch of
+    CurrentEpoch ->
+      Just (currEpochVotingCommittee interEpochVotingCommittee)
+    PreviousEpoch ->
+      strictMaybeToMaybe (prevEpochVotingCommittee interEpochVotingCommittee)
+    UnknownEpoch ->
+      Nothing
