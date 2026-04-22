@@ -79,6 +79,12 @@ newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
 instance Show EbHash where
   show = prettyEbHash
 
+encodeEbHash :: EbHash -> Encoding
+encodeEbHash (MkEbHash bytes) = CBOR.encodeBytes bytes
+
+decodeEbHash :: Decoder s EbHash
+decodeEbHash = MkEbHash <$> CBOR.decodeBytes
+
 prettyEbHash :: EbHash -> String
 prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
 
@@ -105,15 +111,15 @@ prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
   "(" ++ show slotNo ++ ", " ++ BS8.unpack (BS16.encode bytes) ++ ")"
 
 encodeLeiosPoint :: LeiosPoint -> Encoding
-encodeLeiosPoint (MkLeiosPoint ebSlot (MkEbHash ebHash)) =
+encodeLeiosPoint (MkLeiosPoint ebSlot ebHash) =
   CBOR.encodeListLen 2
     <> encode ebSlot
-    <> encode ebHash
+    <> encodeEbHash ebHash
 
 decodeLeiosPoint :: Decoder s LeiosPoint
 decodeLeiosPoint = do
   enforceSize (fromString "LeiosPoint") 2
-  MkLeiosPoint <$> decode <*> decode
+  MkLeiosPoint <$> decode <*> decodeEbHash
 
 -- | Types used in Praos headers
 data EbAnnouncement = EbAnnouncement
@@ -492,13 +498,36 @@ data LeiosVote = MkLeiosVote
   }
   deriving (Eq, Show)
 
+encodeLeiosVote :: LeiosVote -> Encoding
+encodeLeiosVote MkLeiosVote{electionId, voterId, ebHash, voteSignature} =
+  CBOR.encodeListLen 4
+    <> encode electionId
+    <> encodeVoterId voterId
+    <> encodeEbHash ebHash
+    <> CBOR.encodeBool voteSignature
+
+decodeLeiosVote :: Decoder s LeiosVote
+decodeLeiosVote = do
+  enforceSize (fromString "LeiosVote") 4
+  electionId <- decode
+  voterId <- decodeVoterId
+  ebHash <- decodeEbHash
+  voteSignature <- CBOR.decodeBool
+  pure MkLeiosVote{electionId, voterId, ebHash, voteSignature}
+
 -- | Identifier for the voting round. In Leios, this is the slot number of the
 -- EB to vote on.
 type ElectionId = SlotNo
 
 -- | Voter in a committee, identified by their seat index.
 newtype VoterId = MkVoterId {voterIndex :: Word16}
-  deriving (Eq, Show)
+  deriving (Ord, Eq, Show)
+
+encodeVoterId :: VoterId -> Encoding
+encodeVoterId (MkVoterId idx) = CBOR.encodeWord16 idx
+
+decodeVoterId :: Decoder s VoterId
+decodeVoterId = MkVoterId <$> CBOR.decodeWord16
 
 -- FIXME: proper signing of votes using BLS (SigDSIGN BLS12381MinSigDSIGN)
 type VoteSignature = Bool

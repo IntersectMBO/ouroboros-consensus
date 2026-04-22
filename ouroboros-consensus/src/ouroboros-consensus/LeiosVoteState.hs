@@ -14,6 +14,10 @@ import LeiosDemoTypes (LeiosVote)
 data LeiosVoteState m = LeiosVoteState
   { addVote :: LeiosVote -> m ()
   -- ^ Add a new vote to the LeiosVoteState.
+  --
+  -- FIXME: Adding the same vote multiple times should not result in multiple
+  -- notifications to subscribers. We should deduplicate votes based on their
+  -- content.
   , subscribeVotes :: m (LeiosVoteSubscription m)
   -- ^ Subscribe to new votes arriving in the LeiosVoteState. This will only
   -- serve new additions, starting from when this function was called.

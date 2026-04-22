@@ -55,6 +55,7 @@ import Control.Applicative ((<|>))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
+import Control.Monad (forM_)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
@@ -78,10 +79,12 @@ import LeiosDemoTypes
   ( LeiosEb
   , LeiosPoint (..)
   , LeiosTx
+  , LeiosVote (..)
+  , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosVoteState (LeiosVoteSubscription (..), subscribeVotes)
+import LeiosVoteState (LeiosVoteState (..), LeiosVoteSubscription (..), subscribeVotes)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
@@ -100,6 +103,7 @@ import Ouroboros.Consensus.Node.ExitPolicy
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Node.Tracers (leiosKernelTracer)
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -336,6 +340,8 @@ mkHandlers
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
       , hLeiosNotifyClient = \_version controlMessageSTM peer -> toLeiosNotifyClientPeerPipelined $ Effect $ do
           let tracer = leiosPeerTracer peer
+              kernelTracer = leiosKernelTracer tracers
+              LeiosVoteState{addVote} = leiosVoteState
           MVar.modifyMVar_ getLeiosPeersVars $ \leiosPeersVars -> do
             x <- Leios.newLeiosPeerVars
             let !leiosPeersVars' = Map.insert (Leios.MkPeerId peer) x leiosPeersVars
@@ -381,6 +387,17 @@ mkHandlers
                       let !offers2' = Set.insert ebHash offers2
                       pure (offers1, offers2')
                     void $ MVar.tryPutMVar getLeiosReady ()
+                  MsgLeiosVotes vs -> do
+                    -- TODO: reduce this trace a bit to the essential
+                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
+                    -- FIXME: this forms a cycle of fetches
+                    -- mapM_ addVote vs
+                    forM_ vs $ \MkLeiosVote{electionId, ebHash, voterId} ->
+                      traceWith kernelTracer $
+                        TraceLeiosVoteAcquired
+                          { point = MkLeiosPoint electionId ebHash
+                          , voter = voterId
+                          }
               )
       , hLeiosNotifyServer = \_version _peer -> Effect $ do
           chan <- subscribeEbNotifications leiosDB
