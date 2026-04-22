@@ -83,6 +83,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , updateLoE
   , perasCertModel
   , validChains
+  , takeSnapshot
   , volatileDbBlocks
   , wipeVolatileDB
   ) where
@@ -93,7 +94,7 @@ import Control.Monad (unless)
 import Control.Monad.Except (runExcept)
 import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as Lazy
-import Data.Containers.ListUtils (nubOrdOn)
+import Data.Containers.ListUtils (nubOrd, nubOrdOn)
 import Data.Foldable (foldMap')
 import Data.Function (on, (&))
 import Data.Functor (($>), (<&>))
@@ -1145,6 +1146,29 @@ copyToImmutableDB secParam shouldCollectGarbage m =
  where
   garbageCollectIf GarbageCollect = garbageCollect secParam
   garbageCollectIf DoNotGarbageCollect = id
+
+-- | Model the snapshot selection logic.
+--
+-- Given a snapshot selector (immutable slots -> snapshot slots), compute which
+-- slots should get snapshots. If any snapshots are selected, copy blocks to the
+-- ImmutableDB with garbage collection (matching SUT behavior where copyBlocks
+-- is only called when snapshots are taken).
+--
+-- We use 'immutableChain' (the theoretical immutable prefix based on the
+-- security parameter) because the SUT's LedgerSeq computes its immutable
+-- portion by dropping a volatile suffix of length
+-- @min(k, currentChainLength)@ — which matches the theoretical immutable
+-- prefix.
+takeSnapshot ::
+  HasHeader blk =>
+  ([SlotNo] -> [SlotNo]) ->
+  SecurityParam ->
+  Model blk ->
+  ([SlotNo], Model blk)
+takeSnapshot selector secParam m =
+  let immSlots = nubOrd . map blockSlot . Chain.toOldestFirst $ immutableChain secParam m
+      snapshotSlots = selector immSlots
+   in (snapshotSlots, m)
 
 closeDB :: Model blk -> Model blk
 closeDB m@Model{..} =

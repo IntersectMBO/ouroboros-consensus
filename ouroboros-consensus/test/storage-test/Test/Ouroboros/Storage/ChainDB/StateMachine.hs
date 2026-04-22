@@ -65,6 +65,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   , reopen
   , persistBlks
   , run
+  , testSnapshotPolicyArgs
 
     -- * Specifying block components
   , AllComponents
@@ -140,12 +141,21 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+  ( SnapshotFrequency (..)
+  , SnapshotFrequencyArgs (..)
+  , SnapshotPolicy (..)
+  , SnapshotPolicyArgs (..)
+  , SnapshotSelectorContext (..)
+  , defaultSnapshotPolicy
+  )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (split)
+import Ouroboros.Consensus.Util.Args (OverrideOrDefault (..))
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Condense (condense)
 import Ouroboros.Consensus.Util.Enclose
@@ -320,7 +330,7 @@ data Success blk it flr
   | MbPoint (Maybe (Point blk))
   | MaxSlot MaxSlotNo
   | MbPerasRoundNo (Maybe PerasRoundNo)
-  | SnapshotSlots [SlotNo]
+  | SnapshotSlots SnapshotSlotsResult
   deriving (Functor, Foldable, Traversable)
 
 -- | Product of all 'BlockComponent's. As this is a GADT, generating random
@@ -476,18 +486,8 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
     PersistBlks -> ignore <$> persistBlks DoNotGarbageCollect internal
     PersistBlksThenGC -> ignore <$> persistBlks GarbageCollect internal
     UpdateLedgerSnapshots -> do
-      -- In these tests, we don't copy the immutable blocks when taking
-      -- a ledger state snapshot, because the model cannot yet faithfully implement
-      -- this behaviour. In production, the snapshots are taken conditionally, and the
-      -- 'tryTakeSnapshot' routine will only copy blocks only if it does take a snapshot.
-      -- The model can only always either copy or not, unconditionally, as it does not
-      -- implement the snapshot decision logic.
-      --
-      -- TODO(geo2a): re-enable copying when the model has a notion of ledger state
-      --              snapshots and can conditionally copy to ImmutableDB.
-      -- let copyImmutableBlocks = persistBlks GarbageCollect internal
       let noCopyImmutableBlocks = pure ()
-      SnapshotSlots <$> intTryTakeSnapshot internal noCopyImmutableBlocks (\_ -> pure 0)
+      SnapshotSlots . SnapshotSlotsResult True <$> intTryTakeSnapshot internal noCopyImmutableBlocks (\_ -> pure 0)
     WipeVolatileDB -> Point <$> wipeVolatileDB st
  where
   mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True
@@ -670,6 +670,39 @@ instance Eq IsValidResult where
       (Nothing, Just _) -> True
       (Just _, Nothing) -> False
 
+-- | Result of 'UpdateLedgerSnapshots'. Similar to 'MaybeGCedBlock', the real
+-- implementation might return fewer snapshot slots than the model because chain
+-- selection's @forkerCommit@ can replace the @LedgerSeq@ with one anchored at
+-- the immutable tip, discarding earlier ledger states. This means the SUT might
+-- see fewer immutable slots than the model, and consequently select fewer (or
+-- no) snapshot slots.
+--
+-- The 'Eq' instance is therefore lenient: when comparing a real result with a
+-- model result, the real result's slots must be a sublist of the model's.
+data SnapshotSlotsResult = SnapshotSlotsResult
+  { real :: Bool
+  -- ^ 'True':  result from the real implementation
+  -- ^ 'False': result from the model implementation
+  , snapshotSlots :: [SlotNo]
+  }
+  deriving Show
+
+instance Eq SnapshotSlotsResult where
+  SnapshotSlotsResult _real1 slots1 == SnapshotSlotsResult _real2 slots2 =
+    slots1 == slots2
+   --  case (real1, real2) of
+   --    (False, False) -> slots1 == slots2
+   --    (True, False) -> slots1 `isSublistOf` slots2
+   --    (False, True) -> slots2 `isSublistOf` slots1
+   --    (True, True) -> slots1 == slots2
+   -- where
+   --  -- Check if @xs@ is a sublist of @ys@ (preserving order).
+   --  isSublistOf [] _ = True
+   --  isSublistOf _ [] = False
+   --  isSublistOf xss@(x : xs) (y : ys)
+   --    | x == y = isSublistOf xs ys
+   --    | otherwise = isSublistOf xss ys
+
 {-------------------------------------------------------------------------------
   Responses
 -------------------------------------------------------------------------------}
@@ -747,18 +780,21 @@ runPure cfg = \case
   FollowerClose flr -> ok Unit $ update_ (Model.followerClose flr)
   PersistBlks -> ok Unit $ update_ (Model.copyToImmutableDB k DoNotGarbageCollect)
   PersistBlksThenGC -> ok Unit $ update_ (Model.copyToImmutableDB k GarbageCollect)
-  -- TODO: The model does not capture the notion of ledger snapshots,
-  -- therefore we ignore this command here. This introduces an assymetry in
-  -- the way the 'UpdateLedgerSnapshots' command is handled in the model and
-  -- in the system under test. It would be better if we modelled the
-  -- snapshots so that this aspect of the system would be explicitly
-  -- specified. See https://github.com/IntersectMBO/ouroboros-network/issues/3375
-  UpdateLedgerSnapshots -> ok SnapshotSlots $ update (\m -> ([], m))
+  UpdateLedgerSnapshots ->
+    ok (SnapshotSlots . SnapshotSlotsResult False) $ update (Model.takeSnapshot testingSnapshotSelector k)
   Close -> openOrClosed $ update_ Model.closeDB
   Reopen -> openOrClosed $ update_ Model.reopen
   WipeVolatileDB -> ok Point $ update (Model.wipeVolatileDB cfg)
  where
   k = configSecurityParam cfg
+
+  testingSnapshotSelector immSlots =
+    onDiskSnapshotSelector
+      (defaultSnapshotPolicy k testSnapshotPolicyArgs)
+      SnapshotSelectorContext
+        { sscTimeSinceLast = Nothing
+        , sscSnapshotSlots = immSlots
+        }
 
   add blk m = (Model.tipPoint m', m')
    where
@@ -1822,7 +1858,7 @@ genBlkPair ::
   ( Gen (TestBlock, Persistent [TestBlock])
   , Gen (TestBlock, Persistent [TestBlock])
   )
-genBlkPair chunkInfo loe Model{..} =
+genBlkPair chunkInfo _loe Model{..} =
   ( -- For block generation
     frequency
       [ -- We want to prioritise growing the tree connected to genesis, as it is
@@ -2159,6 +2195,23 @@ mkTestCfg :: SecurityParam -> ImmutableDB.ChunkInfo -> TopLevelConfig TestBlock
 mkTestCfg k (ImmutableDB.UniformChunkSize chunkSize) =
   mkTestConfig k chunkSize
 
+-- | Snapshot policy args for tests. Uses default interval (@2*k@) and offset
+-- (@0@), but disables rate limiting so that the snapshot selection is purely
+-- deterministic and can be replicated in the pure model.
+testSnapshotPolicyArgs :: SnapshotPolicyArgs
+testSnapshotPolicyArgs =
+  SnapshotPolicyArgs
+    { spaFrequency =
+        SnapshotFrequency
+          SnapshotFrequencyArgs
+            { sfaInterval = UseDefault
+            , sfaOffset = UseDefault
+            , sfaRateLimit = Override 0
+            , sfaDelaySnapshotRange = UseDefault
+            }
+    , spaNum = UseDefault
+    }
+
 envUnused :: ChainDBEnv m blk
 envUnused = error "ChainDBEnv used during command generation"
 
@@ -2409,21 +2462,22 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
             , mcdbNodeDBs = nodeDBs
             }
    in ChainDB.updateTracer tracer $
-        args
-          { cdbsArgs =
-              (cdbsArgs args)
-                { ChainDB.cdbsBlocksToAddSize = 2
-                , ChainDB.cdbsLoE = traverse (atomically . readTVar) varLoEFragment
-                }
-          , cdbImmDbArgs =
-              (cdbImmDbArgs args)
-                { ImmutableDB.immCheckIntegrity = testBlockIsValid
-                }
-          , cdbVolDbArgs =
-              (cdbVolDbArgs args)
-                { VolatileDB.volCheckIntegrity = testBlockIsValid
-                }
-          }
+        ChainDB.updateSnapshotPolicyArgs testSnapshotPolicyArgs $
+          args
+            { cdbsArgs =
+                (cdbsArgs args)
+                  { ChainDB.cdbsBlocksToAddSize = 2
+                  , ChainDB.cdbsLoE = traverse (atomically . readTVar) varLoEFragment
+                  }
+            , cdbImmDbArgs =
+                (cdbImmDbArgs args)
+                  { ImmutableDB.immCheckIntegrity = testBlockIsValid
+                  }
+            , cdbVolDbArgs =
+                (cdbVolDbArgs args)
+                  { VolatileDB.volCheckIntegrity = testBlockIsValid
+                  }
+            }
 
 tests :: TestTree
 tests =

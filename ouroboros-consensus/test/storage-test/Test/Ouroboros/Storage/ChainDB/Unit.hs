@@ -64,6 +64,7 @@ import Test.Ouroboros.Storage.ChainDB.StateMachine
   , close
   , mkTestCfg
   , open
+  , testSnapshotPolicyArgs
   )
 import qualified Test.Ouroboros.Storage.ChainDB.StateMachine as SM
 import Test.Ouroboros.Storage.TestBlock
@@ -678,7 +679,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
               , mcdbRegistry = registry
               , mcdbNodeDBs = nodeDbs
               }
-     in updateTracer tracer args
+     in updateTracer tracer $ updateSnapshotPolicyArgs testSnapshotPolicyArgs args
 
 -- | Run a 'Cmd' against the real ChainDB via 'SM.run'.
 runCmd ::
