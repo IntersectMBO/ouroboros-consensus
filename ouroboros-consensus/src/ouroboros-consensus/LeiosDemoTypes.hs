@@ -496,7 +496,7 @@ data LeiosVote = MkLeiosVote
   , ebHash :: EbHash
   , voteSignature :: VoteSignature
   }
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 encodeLeiosVote :: LeiosVote -> Encoding
 encodeLeiosVote MkLeiosVote{electionId, voterId, ebHash, voteSignature} =

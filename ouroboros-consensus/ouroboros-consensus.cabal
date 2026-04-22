@@ -610,6 +610,7 @@ test-suite consensus-test
     Test.Consensus.Util.Versioned
     Test.LeiosDemoDb
     Test.LeiosDemoTypes
+    Test.LeiosVoteState
 
   build-depends:
     QuickCheck,
