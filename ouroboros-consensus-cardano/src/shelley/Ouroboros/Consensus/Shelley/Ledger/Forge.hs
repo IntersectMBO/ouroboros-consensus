@@ -17,12 +17,13 @@ import qualified Data.ByteString as BL
 import qualified Data.Sequence.Strict as Seq
 import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
-  , ForgedLeiosEb (body, point)
+  , ForgedLeiosEb (point)
   , LeiosCertificate (unLeiosCertificate)
   , LeiosPoint (pointEbHash)
   , forgeLeiosEb
   , leiosEbBytesSize
   )
+import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -58,15 +59,15 @@ forgeShelleyBlock ::
 forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   -- Only build an EB if ebTxs is not empty
   let
-    -- Current EB to announce
-    mayForgedEbAnn :: Maybe (ForgedLeiosEb, EbAnnouncement) = do
-      forgedEb <- forgeLeiosEb fbCurrentSlotNo <$> nonEmpty (extractTx <$> fbEbTxs)
-      let ebAnn = EbAnnouncement (pointEbHash . point $ forgedEb) (leiosEbBytesSize . body $ forgedEb)
-      return (forgedEb, ebAnn)
 
-  blk <- case fbForgeType of
+  (blk, mayForgedEb) <- case fbForgeType of
     ForgeTxsRb -> do
       let body = SL.BodyInline rbTxs'
+          -- Current EB to announce
+          mayForgedEbAnn :: Maybe (ForgedLeiosEb, EbAnnouncement) = do
+            forgedEb <- forgeLeiosEb fbCurrentSlotNo <$> nonEmpty (extractTx <$> fbEbTxs)
+            let ebAnn = EbAnnouncement (pointEbHash . point $ forgedEb) (leiosEbBytesSize . Leios.body $ forgedEb)
+            return (forgedEb, ebAnn)
 
       hdr <-
         mkHeader @_ @(ProtoCrypto proto)
@@ -80,12 +81,14 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
           (SL.bodyBytesSize protocolVersion body)
           protocolVersion
           (snd <$> mayForgedEbAnn)
+
       let blk =
             mkShelleyBlock $
               SL.Block
                 hdr
                 body
-      return blk
+
+      return (blk, fst <$> mayForgedEbAnn)
     ForgeCertRb cert ebClosure -> do
       let body = SL.BodyCertificate (toLedgerCert cert) (Just . toTxSeq $ ebClosure)
       hdr <-
@@ -105,11 +108,12 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
               SL.Block
                 hdr
                 body
-      return blk
+
+      return (blk, Nothing)
 
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
-      (blk, fst <$> mayForgedEbAnn) -- FIXME
+      (blk, mayForgedEb)
  where
   protocolVersion = shelleyProtocolVersion $ configBlock fbConfig
 
