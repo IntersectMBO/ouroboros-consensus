@@ -214,7 +214,7 @@ prop_leios seed =
     TraceLeiosVoted{point} -> Just point
     _ -> Nothing
 
-  acquiredVotes = Map.fromList . flip mapMaybe leiosTraces $ \case
+  acquiredVotes = Map.fromListWith mappend . flip mapMaybe leiosTraces $ \case
     TraceLeiosVoteAcquired{point, voter} -> Just (point, Set.singleton voter)
     _ -> Nothing
 
