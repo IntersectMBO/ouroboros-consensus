@@ -486,10 +486,11 @@ data Committee
 -- | A vote in the Leios protocol.
 data LeiosVote = MkLeiosVote
   { electionId :: ElectionId
-  , ebHash :: EbHash
   , voterId :: VoterId
+  , ebHash :: EbHash
   , voteSignature :: VoteSignature
   }
+  deriving (Eq, Show)
 
 -- | Identifier for the voting round. In Leios, this is the slot number of the
 -- EB to vote on.
@@ -497,7 +498,7 @@ type ElectionId = SlotNo
 
 -- | Voter in a committee, identified by their seat index.
 newtype VoterId = MkVoterId {voterIndex :: Word16}
-  deriving Show
+  deriving (Eq, Show)
 
 -- FIXME: proper signing of votes using BLS (SigDSIGN BLS12381MinSigDSIGN)
 type VoteSignature = Bool

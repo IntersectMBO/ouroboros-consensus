@@ -179,10 +179,12 @@ import LeiosDemoTypes
   ( ForgedLeiosEb
   , LeiosOutstanding
   , LeiosPeerVars
+  , LeiosVote (..)
   , TraceLeiosKernel (..)
   , VoterId (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 
@@ -232,6 +234,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
 
     -- See 'LeiosPeerVars' for the write patterns
     leiosDB :: LeiosDbHandle m
+  , leiosVoteState :: LeiosVoteState m
   , getLeiosPeersVars :: MVar m (Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , -- Written to by the fetch logic, by the LeiosNotify&LeiosFetch, and by LeiosCopier
     -- clients (TODO and by eviction).
@@ -411,6 +414,7 @@ initNodeKernel
           fetchClientRegistry
           blockFetchConfiguration
 
+    leiosVoteState <- newLeiosVoteState
     getLeiosPeersVars <- MVar.newMVar Map.empty
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
@@ -454,6 +458,7 @@ initNodeKernel
 
     void $ forkLinkedThread registry "NodeKernel.leiosVoting" $ do
       let tracer = leiosKernelTracer tracers
+          LeiosVoteState{addVote} = leiosVoteState
       -- Subscribe to EBs for which we have the full closure
       chan <- subscribeEbNotifications leiosDB
       let getNext f =
@@ -475,7 +480,15 @@ initNodeKernel
             -- TODO: check whether already voted
             -- TODO: validate EB closures against selected chain
             -- TODO: create vote (sign the eb hash)
+            let vote =
+                  MkLeiosVote
+                    { electionId = point.pointSlotNo
+                    , voterId = me
+                    , ebHash = point.pointEbHash
+                    , voteSignature = True
+                    }
             -- TODO: store vote in memory and notify downstream peers
+            addVote vote
             -- FIXME: fake it till you make it
             traceWith tracer TraceLeiosVoted{point}
             traceWith tracer TraceLeiosVoteAcquired{point, voter = me}
@@ -498,6 +511,7 @@ initNodeKernel
         , getDiffusionPipeliningSupport
         , getBlockchainTime = btime
         , leiosDB
+        , leiosVoteState
         , getLeiosPeersVars
         , getLeiosOutstanding
         , getLeiosReady
