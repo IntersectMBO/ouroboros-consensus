@@ -645,13 +645,13 @@ traceLeiosKernelToObject = \case
       ]
   TraceLeiosVoted{point} ->
     mconcat
-      [ "kind" .= Aeson.String "LeiosBlockVoted"
+      [ "kind" .= Aeson.String "LeiosVoted"
       , "slot" .= point.pointSlotNo
       , "hash" .= prettyEbHash point.pointEbHash
       ]
   TraceLeiosVoteAcquired{point, voter} ->
     mconcat
-      [ "kind" .= Aeson.String "LeiosBlockVoteAcquired"
+      [ "kind" .= Aeson.String "LeiosVoteAcquired"
       , "slot" .= point.pointSlotNo
       , "hash" .= prettyEbHash point.pointEbHash
       , "voter" .= voter.voterIndex
