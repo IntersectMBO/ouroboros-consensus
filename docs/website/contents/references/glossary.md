@@ -619,6 +619,13 @@ The process of becoming synchronized with the system, either from scratch or due
 TPraos (Transitional Praos) is a Proof-of-Stake consensus protocol used in the early decentralized eras of Cardano (specifically Shelley, Allegra, and Mary).
 It was designed to manage the transition from the initial federated system by using a decentralization parameter (`d`) which controls the ratio of slots produced by legacy bootstrap keys (OBFT slots) versus those produced by stake pools selected via Ouroboros Praos, allowing for a smooth shift toward full decentralization.
 
+## ;Tick, ;Ticking, ;Ticked
+
+Ticking advances a [ledger state](#ledger-state) or protocol state from its current slot to a later target slot, applying every rule that depends only on time (epoch transitions, rewards pulsing, nonce switching, hard-fork activations).
+It is distinct from applying a block: ticking captures the changes that happen between blocks, even at slots where no block exists.
+A *ticked* state is one to which ticking has been applied; the `Ticked` type wrapper enforces that blocks are only applied on top of ticked states.
+See the [Ticking explanation](../explanations/ticking.md) for when and why consensus ticks, and its relationship to [forecasting](#forecasting).
+
 ## ;Transactions
 
 If a slot has multiple leaders or if the leader of a slot hadn't received the latest block, then they will issue multiple blocks that all claim to have the same predecessor.A [block body](#header-and-body) is just a sequence of transactions.
