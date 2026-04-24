@@ -363,6 +363,9 @@ instance ShowProxy blk => ShowProxy (PerasCert blk) where
 instance ShowProxy blk => ShowProxy (PerasVote blk) where
   showProxy _ = "PerasVote " <> showProxy (Proxy @blk)
 
+instance ShowProxy blk => ShowProxy (PerasVoteId blk) where
+  showProxy _ = "PerasVoteId " <> showProxy (Proxy @blk)
+
 instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
   encode PerasCert{pcCertRound, pcCertBoostedBlock} =
     encodeListLen 2
@@ -386,6 +389,17 @@ instance Serialise (HeaderHash blk) => Serialise (PerasVote blk) where
     pvVoteBlock <- decode
     pvVoteVoterId <- PerasVoterId <$> KeyHash.fromCBOR
     pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
+
+instance Serialise (PerasVoteId blk) where
+  encode PerasVoteId{pviRoundNo, pviVoterId} =
+    encodeListLen 2
+      <> encode pviRoundNo
+      <> KeyHash.toCBOR (unPerasVoterId pviVoterId)
+  decode = do
+    decodeListLenOf 2
+    pviRoundNo <- decode
+    pviVoterId <- PerasVoterId <$> KeyHash.fromCBOR
+    pure $ PerasVoteId{pviRoundNo, pviVoterId}
 
 -- | Extract the certificate round from a Peras certificate container
 class HasPerasCertRound cert where

@@ -43,6 +43,8 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
   )
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
 import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
@@ -78,6 +80,14 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , txLogicTracer :: f (TraceTxLogic remotePeer (GenTxId blk) (GenTx blk))
   , txCountersTracer :: f TxSubmissionCounters
   , mempoolTracer :: f (TraceEventMempool blk)
+  , perasCertDiffusionInboundTracer ::
+      f (TraceLabelPeer remotePeer (TracePerasCertDiffusionInbound blk))
+  , perasCertDiffusionOutboundTracer ::
+      f (TraceLabelPeer remotePeer (TracePerasCertDiffusionOutbound blk))
+  , perasVoteDiffusionInboundTracer ::
+      f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionInbound blk))
+  , perasVoteDiffusionOutboundTracer ::
+      f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionOutbound blk))
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
@@ -110,6 +120,10 @@ instance
       , txLogicTracer = f txLogicTracer
       , txCountersTracer = f txCountersTracer
       , mempoolTracer = f mempoolTracer
+      , perasCertDiffusionInboundTracer = f perasCertDiffusionInboundTracer
+      , perasCertDiffusionOutboundTracer = f perasCertDiffusionOutboundTracer
+      , perasVoteDiffusionInboundTracer = f perasVoteDiffusionInboundTracer
+      , perasVoteDiffusionOutboundTracer = f perasVoteDiffusionOutboundTracer
       , forgeTracer = f forgeTracer
       , blockchainTimeTracer = f blockchainTimeTracer
       , forgeStateInfoTracer = f forgeStateInfoTracer
@@ -147,6 +161,10 @@ nullTracers =
     , txOutboundTracer = nullTracer
     , localTxSubmissionServerTracer = nullTracer
     , mempoolTracer = nullTracer
+    , perasCertDiffusionInboundTracer = nullTracer
+    , perasCertDiffusionOutboundTracer = nullTracer
+    , perasVoteDiffusionInboundTracer = nullTracer
+    , perasVoteDiffusionOutboundTracer = nullTracer
     , forgeTracer = nullTracer
     , blockchainTimeTracer = nullTracer
     , forgeStateInfoTracer = nullTracer
@@ -191,6 +209,10 @@ showTracers tr =
     , txLogicTracer = showTracing tr
     , txCountersTracer = showTracing tr
     , mempoolTracer = showTracing tr
+    , perasCertDiffusionInboundTracer = showTracing tr
+    , perasCertDiffusionOutboundTracer = showTracing tr
+    , perasVoteDiffusionInboundTracer = showTracing tr
+    , perasVoteDiffusionOutboundTracer = showTracing tr
     , forgeTracer = showTracing tr
     , blockchainTimeTracer = showTracing tr
     , forgeStateInfoTracer = showTracing tr
