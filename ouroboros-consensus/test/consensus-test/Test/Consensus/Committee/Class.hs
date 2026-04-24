@@ -74,7 +74,7 @@ instance CryptoSupportsVotingCommittee TestCrypto MockCommittee where
   forgeVote _ _ electionId candidate = MockVote electionId candidate
   verifyVote _ _ = Right MockWitness
   eligiblePartyVoteWeight _ _ = VoteWeight 1
-  forgeCert _ = MockCert
+  forgeCert _ = Right MockCert
   verifyCert _ _ = Right (MockWitness :| [])
 
 deriving instance Show (Vote TestCrypto MockCommittee)

@@ -59,7 +59,6 @@ import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
-import Data.Semigroup (Semigroup (..))
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
   , VotesWithSameTarget
@@ -68,7 +67,8 @@ import Ouroboros.Consensus.Committee.Class
   , getVoteCandidateFromVotes
   )
 import Ouroboros.Consensus.Committee.Crypto
-  ( CryptoSupportsAggregateVRF (..)
+  ( Aggregate
+  , CryptoSupportsAggregateVRF (..)
   , CryptoSupportsAggregateVoteSigning (..)
   , CryptoSupportsVRF (..)
   , CryptoSupportsVoteSigning (..)
@@ -166,8 +166,12 @@ instance
       ZeroNonPersistentSeats SeatIndex
     | -- The vote signature is invalid
       InvalidVoteSignature String
+    | -- The voter eligibility is invalid
+      InvalidVoterEligibilityProof String
     | -- The certificate signature is invalid
       InvalidCertSignature String
+    | -- We triggered an unexpected cryptographic error
+      CryptoError String
     deriving (Show, Eq)
 
   data EligibilityWitness crypto WFALS
@@ -200,7 +204,7 @@ instance
         !(ElectionId crypto)
         !(VoteCandidate crypto)
         !(NE (Map SeatIndex (Maybe (VRFOutput crypto))))
-        !(AggregateVoteSignature crypto)
+        !(Aggregate (VoteSignature crypto))
 
   mkVotingCommittee = mkWFALSVotingCommittee
   checkShouldVote = implCheckShouldVote
@@ -278,7 +282,15 @@ implCheckShouldVote committee ourId ourPrivateKey electionId
           False -> do
             let vrfContext =
                   VRFSignContext ourVRFSigningKey
-            vrfOutput <- checkVRFOutput vrfContext electionId committee
+            vrfOutput <-
+              bimap InvalidVoteSignature id $ do
+                evalVRF
+                  vrfContext
+                  ( mkVRFElectionInput
+                      @crypto
+                      (epochNonce committee)
+                      electionId
+                  )
             let numSeats =
                   localSortitionNumSeats
                     (nonPersistentCommitteeSize committee)
@@ -353,12 +365,24 @@ implVerifyVote committee = \case
               getCandidateInSeat seatIndex (extWFAStakeDistr committee)
         let voterVoteVerificationKey =
               getVoteVerificationKey (Proxy @crypto) voterPublicKey
-        checkVoteSignature voterVoteVerificationKey electionId message sig
+        bimap InvalidVoteSignature id $ do
+          verifyVoteSignature
+            voterVoteVerificationKey
+            electionId
+            message
+            sig
         let voterVRFVerificationKey =
               getVRFVerificationKey (Proxy @crypto) voterPublicKey
         let vrfContext =
               VRFVerifyContext voterVRFVerificationKey vrfOutput
-        void $ checkVRFOutput vrfContext electionId committee
+        void $ bimap InvalidVoterEligibilityProof id $ do
+          evalVRF
+            vrfContext
+            ( mkVRFElectionInput
+                @crypto
+                (epochNonce committee)
+                electionId
+            )
         let numSeats =
               localSortitionNumSeats
                 (nonPersistentCommitteeSize committee)
@@ -423,23 +447,31 @@ implForgeCert ::
   forall crypto.
   CryptoSupportsAggregateVoteSigning crypto =>
   VotesWithSameTarget crypto WFALS ->
-  Cert crypto WFALS
+  Either
+    (VotingCommitteeError crypto WFALS)
+    (Cert crypto WFALS)
 implForgeCert votes = do
-  WFALSCert
-    (getElectionIdFromVotes votes)
-    (getVoteCandidateFromVotes votes)
-    (NEMap.fromAscList voters)
-    (sconcat voteSignatures)
+  aggSig <-
+    bimap CryptoError id $
+      aggregateVoteSignatures
+        (Proxy @crypto)
+        voteSignatures
+  pure $
+    WFALSCert
+      (getElectionIdFromVotes votes)
+      (getVoteCandidateFromVotes votes)
+      (NEMap.fromAscList voters)
+      aggSig
  where
   (voters, voteSignatures) =
     munzip $ flip fmap votesInAscendingSeatIndexOrder $ \case
       WFALSPersistentVote seatIndex _ _ sig ->
         ( (seatIndex, Nothing)
-        , liftVoteSignature (Proxy @crypto) sig
+        , sig
         )
       WFALSNonPersistentVote seatIndex _ _ vrfOutput sig ->
         ( (seatIndex, Just vrfOutput)
-        , liftVoteSignature (Proxy @crypto) sig
+        , sig
         )
 
   -- Make sure we have votes in ascending seat index order, which is something
@@ -484,9 +516,7 @@ implVerifyCert committee = \case
                 ( WFALSPersistentMember
                     seatIndex
                     voterStake
-                , liftVoteVerificationKey
-                    (Proxy @crypto)
-                    voterVoteVerificationKey
+                , voterVoteVerificationKey
                 , Nothing
                 )
           | otherwise ->
@@ -517,24 +547,25 @@ implVerifyCert committee = \case
                         voterStake
                         vrfOutput
                         nonZeroNumSeats
-                    , liftVoteVerificationKey
-                        (Proxy @crypto)
-                        voterVoteVerificationKey
-                    , Just
-                        ( liftVRFVerificationKey
-                            (Proxy @crypto)
-                            voterVRFVerificationKey
-                        , liftVRFOutput
-                            (Proxy @crypto)
-                            vrfOutput
-                        )
+                    , voterVoteVerificationKey
+                    , Just (voterVRFVerificationKey, vrfOutput)
                     )
           | otherwise ->
               Left (NotANonPersistentMember seatIndex)
 
     -- Verify aggregate signature
-    let aggVerificationKey = sconcat voteVerificationKeys
-    checkAggregateCertSignature aggVerificationKey aggSig electionId candidate
+    aggVerificationKey <-
+      bimap CryptoError id $
+        aggregateVoteVerificationKeys
+          (Proxy @crypto)
+          voteVerificationKeys
+    bimap InvalidCertSignature id $
+      verifyAggregateVoteSignature
+        (Proxy @crypto)
+        aggVerificationKey
+        electionId
+        candidate
+        aggSig
 
     -- Verify VRF outputs for non-persistent voters (if any)
     case catMaybes (NonEmpty.toList optionalVRFKeysAndOutputs) of
@@ -543,12 +574,19 @@ implVerifyCert committee = \case
         pure ()
       -- Some non-persistent voters => verify their aggregate VRF outputs
       vrfKeysAndOutputs -> do
-        let (aggVRFVerificationKey, aggVRFOutput) =
-              bimap sconcat sconcat
-                . munzip
-                . NonEmpty.fromList -- safe because 'vrfKeysAndOutputs' is not empty
+        let (vrfVerificationKeys, vrfOutputs) =
+              munzip
+                . NonEmpty.fromList -- safe 'vrfKeysAndOutputs' /= []
                 $ vrfKeysAndOutputs
-        checkAggregateVRFOutput aggVRFVerificationKey aggVRFOutput electionId committee
+        bimap InvalidCertSignature id $
+          verifyAggregateVRFOutputs
+            vrfVerificationKeys
+            ( mkVRFElectionInput
+                @crypto
+                (epochNonce committee)
+                electionId
+            )
+            vrfOutputs
 
     -- Return the list of voters attesting the election winner
     pure members
@@ -582,70 +620,6 @@ checkVoteSignature verificationKey electionId message sig =
       electionId
       message
       sig
-
--- | Get the VRF output associated to a given context
-checkVRFOutput ::
-  forall crypto.
-  CryptoSupportsVRF crypto =>
-  VRFPoolContext crypto ->
-  ElectionId crypto ->
-  VotingCommittee crypto WFALS ->
-  Either
-    (VotingCommitteeError crypto WFALS)
-    (VRFOutput crypto)
-checkVRFOutput context electionId committee =
-  bimap InvalidVoteSignature id $ do
-    evalVRF
-      context
-      ( mkVRFElectionInput
-          @crypto
-          (epochNonce committee)
-          electionId
-      )
-
--- | Check the validity of an aggregate certificate signature
-checkAggregateCertSignature ::
-  forall crypto.
-  CryptoSupportsAggregateVoteSigning crypto =>
-  AggregateVoteVerificationKey crypto ->
-  AggregateVoteSignature crypto ->
-  ElectionId crypto ->
-  VoteCandidate crypto ->
-  Either
-    (VotingCommitteeError crypto WFALS)
-    ()
-checkAggregateCertSignature aggVerificationKey aggSig electionId candidate =
-  bimap InvalidCertSignature id $
-    verifyAggregateVoteSignature
-      (Proxy @crypto)
-      aggVerificationKey
-      electionId
-      candidate
-      aggSig
-
--- Check the validity of an aggregate VRF output
-checkAggregateVRFOutput ::
-  forall crypto.
-  ( CryptoSupportsVRF crypto
-  , CryptoSupportsAggregateVRF crypto
-  ) =>
-  AggregateVRFVerificationKey crypto ->
-  AggregateVRFOutput crypto ->
-  ElectionId crypto ->
-  VotingCommittee crypto WFALS ->
-  Either
-    (VotingCommitteeError crypto WFALS)
-    ()
-checkAggregateVRFOutput aggVRFVerificationKey aggVRFOutput electionId committee =
-  bimap InvalidCertSignature id $
-    verifyAggregateVRFOutput
-      aggVRFVerificationKey
-      ( mkVRFElectionInput
-          @crypto
-          (epochNonce committee)
-          electionId
-      )
-      aggVRFOutput
 
 -- | Extended unzip3 for 'NonEmpty' lists
 nonEmptyUnzip3 ::

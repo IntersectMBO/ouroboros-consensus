@@ -34,7 +34,6 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
-import Data.Semigroup (Semigroup (..))
 import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
 import Ouroboros.Consensus.Committee.Class
@@ -45,7 +44,8 @@ import Ouroboros.Consensus.Committee.Class
   , getVoteCandidateFromVotes
   )
 import Ouroboros.Consensus.Committee.Crypto
-  ( CryptoSupportsAggregateVoteSigning (..)
+  ( Aggregate (..)
+  , CryptoSupportsAggregateVoteSigning (..)
   , CryptoSupportsVoteSigning (..)
   , ElectionId
   , PrivateKey
@@ -107,6 +107,8 @@ instance
       InvalidVoteSignature String
     | -- The certificate signature is invalid
       InvalidCertSignature String
+    | -- We triggered an unexpected cryptographic error
+      CryptoError String
     deriving (Show, Eq)
 
   data EligibilityWitness crypto EveryoneVotes
@@ -126,7 +128,7 @@ instance
         !(ElectionId crypto)
         !(VoteCandidate crypto)
         !(NE (Set SeatIndex))
-        !(AggregateVoteSignature crypto)
+        !(Aggregate (VoteSignature crypto))
 
   mkVotingCommittee = mkEveryoneVotesVotingCommittee
   checkShouldVote = implCheckShouldVote
@@ -233,7 +235,12 @@ implVerifyVote committee = \case
               getCandidateInSeat seatIndex (extWFAStakeDistr committee)
         let voterVerificationKey =
               getVoteVerificationKey (Proxy @crypto) voterPublicKey
-        checkVoteSignature voterVerificationKey electionId candidate sig
+        bimap InvalidVoteSignature id $ do
+          verifyVoteSignature
+            voterVerificationKey
+            electionId
+            candidate
+            sig
         case nonZero voterStake of
           Nothing ->
             Left (PoolHasNoStake seatIndex)
@@ -263,19 +270,27 @@ implForgeCert ::
   forall crypto.
   CryptoSupportsAggregateVoteSigning crypto =>
   VotesWithSameTarget crypto EveryoneVotes ->
-  Cert crypto EveryoneVotes
+  Either
+    (VotingCommitteeError crypto EveryoneVotes)
+    (Cert crypto EveryoneVotes)
 implForgeCert votes = do
-  EveryoneVotesCert
-    (getElectionIdFromVotes votes)
-    (getVoteCandidateFromVotes votes)
-    (NESet.fromList voters)
-    (sconcat voteSignatures)
+  aggSig <-
+    bimap CryptoError id $ do
+      aggregateVoteSignatures
+        (Proxy @crypto)
+        voteSignatures
+  pure $
+    EveryoneVotesCert
+      (getElectionIdFromVotes votes)
+      (getVoteCandidateFromVotes votes)
+      (NESet.fromList voters)
+      aggSig
  where
   (voters, voteSignatures) =
     munzip $ flip fmap votesInAscendingSeatIndexOrder $ \case
       EveryoneVotesVote seatIndex _ _ sig ->
         ( seatIndex
-        , liftVoteSignature (Proxy @crypto) sig
+        , sig
         )
 
   -- Make sure we have votes in ascending seat index order, which is something
@@ -317,55 +332,23 @@ implVerifyCert committee = \case
                     ( EveryoneVotesMember
                         seatIndex
                         nonZeroVoterStake
-                    , liftVoteVerificationKey
-                        (Proxy @crypto)
-                        voterVerificationKey
+                    , voterVerificationKey
                     )
           | otherwise ->
               Left (MissingSeatIndex seatIndex)
     -- Verify aggregate signature
-    let aggVerificationKey = sconcat voteVerificationKeys
-    checkAggregateCertSignature aggVerificationKey aggSig electionId candidate
+    aggVerificationKey <-
+      bimap CryptoError id $ do
+        aggregateVoteVerificationKeys
+          (Proxy @crypto)
+          voteVerificationKeys
+    bimap InvalidCertSignature id $
+      verifyAggregateVoteSignature
+        (Proxy @crypto)
+        aggVerificationKey
+        electionId
+        candidate
+        aggSig
+
     -- Return the list of voters attesting the election winner
     pure members
-
--- * Helpers
-
--- | Check the validity of a vote signature
-checkVoteSignature ::
-  forall crypto.
-  CryptoSupportsVoteSigning crypto =>
-  VoteVerificationKey crypto ->
-  ElectionId crypto ->
-  VoteCandidate crypto ->
-  VoteSignature crypto ->
-  Either
-    (VotingCommitteeError crypto EveryoneVotes)
-    ()
-checkVoteSignature verificationKey electionId message sig =
-  bimap InvalidVoteSignature id $ do
-    verifyVoteSignature
-      verificationKey
-      electionId
-      message
-      sig
-
--- | Check the validity of an aggregate certificate signature
-checkAggregateCertSignature ::
-  forall crypto.
-  CryptoSupportsAggregateVoteSigning crypto =>
-  AggregateVoteVerificationKey crypto ->
-  AggregateVoteSignature crypto ->
-  ElectionId crypto ->
-  VoteCandidate crypto ->
-  Either
-    (VotingCommitteeError crypto EveryoneVotes)
-    ()
-checkAggregateCertSignature aggVerificationKey aggSig electionId candidate =
-  bimap InvalidCertSignature id $
-    verifyAggregateVoteSignature
-      (Proxy @crypto)
-      aggVerificationKey
-      electionId
-      candidate
-      aggSig

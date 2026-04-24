@@ -103,7 +103,9 @@ class
   -- | Forge a certificate attesting the winner of a given election
   forgeCert ::
     VotesWithSameTarget crypto committee ->
-    Cert crypto committee
+    Either
+      (VotingCommitteeError crypto committee)
+      (Cert crypto committee)
 
   -- | Verify a certificate attesting the winner of a given election
   verifyCert ::

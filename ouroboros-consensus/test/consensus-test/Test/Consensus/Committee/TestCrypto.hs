@@ -44,31 +44,13 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import Data.Containers.NonEmpty (HasNonEmpty (..))
+import Data.Either (fromRight)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
-import Data.Semigroup (Semigroup (..))
 import Data.Word (Word64)
 import GHC.Word (Word8)
-import Ouroboros.Consensus.Committee.Crypto
-  ( CryptoSupportsAggregateVRF (..)
-  , CryptoSupportsAggregateVoteSigning (..)
-  , CryptoSupportsVRF (..)
-  , CryptoSupportsVoteSigning (..)
-  , ElectionId
-  , PrivateKey
-  , PublicKey
-  , TrivialAggregateVRFOutput (..)
-  , TrivialAggregateVRFVerificationKey (..)
-  , TrivialAggregateVoteSignature (..)
-  , TrivialAggregateVoteVerificationKey (..)
-  , VRFPoolContext (..)
-  , VoteCandidate
-  , trivialLiftVRFOutput
-  , trivialLiftVRFVerificationKey
-  , trivialLiftVoteSignature
-  , trivialLiftVoteVerificationKey
-  )
+import Ouroboros.Consensus.Committee.Crypto (Aggregate (..), CryptoSupportsAggregateVRF (..), CryptoSupportsAggregateVoteSigning (..), CryptoSupportsVRF (..), CryptoSupportsVoteSigning (..), ElectionId, PrivateKey, PublicKey, VRFPoolContext (..), VoteCandidate)
 import Ouroboros.Consensus.Committee.Crypto.BLS (KeyRole (..))
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 import Test.Consensus.Committee.Utils (genEpochNonce)
@@ -167,24 +149,28 @@ instance CryptoSupportsVoteSigning TestCrypto where
       sig
 
 instance CryptoSupportsAggregateVoteSigning TestCrypto where
-  type AggregateVoteVerificationKey TestCrypto = TrivialAggregateVoteVerificationKey TestCrypto
-  type AggregateVoteSignature TestCrypto = TrivialAggregateVoteSignature TestCrypto
+  aggregateVoteVerificationKeys _ pks = do
+    aggPk <-
+      BLS.aggregatePublicKeys @SIGN pks
+    pure (Aggregate aggPk)
 
-  liftVoteVerificationKey = trivialLiftVoteVerificationKey
-  liftVoteSignature = trivialLiftVoteSignature
+  aggregateVoteSignatures _ sigs = do
+    aggSig <-
+      BLS.aggregateSignatures @SIGN
+      . fmap unTestVoteSignature
+      $ sigs
+    pure (Aggregate (TestVoteSignature aggSig))
 
   verifyAggregateVoteSignature
     _
-    (TrivialAggregateVoteVerificationKey pks)
+    (Aggregate aggPk)
     electionId
     candidate
-    (TrivialAggregateVoteSignature sigs) = do
-      aggPk <- BLS.aggregatePublicKeys @SIGN pks
-      aggSig <- BLS.aggregateSignatures @SIGN (unTestVoteSignature <$> sigs)
+    (Aggregate aggSig) = do
       BLS.verifyWithRole @SIGN
         aggPk
         (hashVoteSignature electionId candidate)
-        aggSig
+        (unTestVoteSignature aggSig)
 
 instance CryptoSupportsVRF TestCrypto where
   type VRFSigningKey TestCrypto = BLS.PrivateKey VRF
@@ -224,20 +210,15 @@ instance CryptoSupportsVRF TestCrypto where
     BLS.toNormalizedVRFOutput sig
 
 instance CryptoSupportsAggregateVRF TestCrypto where
-  type AggregateVRFVerificationKey TestCrypto = TrivialAggregateVRFVerificationKey TestCrypto
-  type AggregateVRFOutput TestCrypto = TrivialAggregateVRFOutput TestCrypto
-
-  liftVRFVerificationKey = trivialLiftVRFVerificationKey
-  liftVRFOutput = trivialLiftVRFOutput
-
-  verifyAggregateVRFOutput
-    (TrivialAggregateVRFVerificationKey pks)
+  verifyAggregateVRFOutputs
+    pks
     (TestVRFElectionInput input)
-    (TrivialAggregateVRFOutput sigs) = do
+    sigs = do
       BLS.linearizeAndVerifyVRFs
         pks
         input
-        (fmap unTestVRFOutput sigs)
+        . fmap unTestVRFOutput
+        $ sigs
 
 -- * QuickCheck helpers
 
@@ -327,13 +308,13 @@ prop_SignAndVerifyAggregateVote =
                   . fmap (second (getVoteVerificationKey (Proxy @TestCrypto)))
                   $ keyPairs
           let aggVoteSignature =
-                sconcat
-                  . fmap (liftVoteSignature (Proxy @TestCrypto))
+                fromRight (error "Failed to aggregate vote signatures")
+                  . aggregateVoteSignatures (Proxy @TestCrypto)
                   . fmap (\sk -> signVote @TestCrypto sk electionId candidate)
                   $ voteSigningKeys
           let aggVoteVerificationKey =
-                sconcat
-                  . fmap (liftVoteVerificationKey (Proxy @TestCrypto))
+                fromRight (error "Failed to aggregate vote verification keys")
+                  . aggregateVoteVerificationKeys (Proxy @TestCrypto)
                   $ voteVerificationKeys
           tabulate "Number of vote signers" [show numSigners] $
             case ( verifyAggregateVoteSignature
@@ -404,19 +385,11 @@ prop_EvalAndVerifyAggregateVRFOutput =
                 counterexample
                   ("VRF evaluation failed: " <> err)
                   $ property False
-              Right outputs -> do
-                let aggVRFVerificationKey =
-                      sconcat
-                        . fmap (liftVRFVerificationKey (Proxy @TestCrypto))
-                        $ vrfVerificationKeys
-                let aggOutput =
-                      sconcat
-                        . fmap (liftVRFOutput (Proxy @TestCrypto))
-                        $ outputs
-                case ( verifyAggregateVRFOutput @TestCrypto
-                         aggVRFVerificationKey
+              Right vrfOutputs -> do
+                case ( verifyAggregateVRFOutputs @TestCrypto
+                         vrfVerificationKeys
                          input
-                         aggOutput
+                         vrfOutputs
                      ) of
                   Left err ->
                     counterexample
@@ -448,20 +421,12 @@ prop_SwapAttackOnAggregateVRF =
                 counterexample
                   ("VRF evaluation failed: " <> err)
                   $ property False
-              Right outputs -> do
-                forAll (swapTwoElements outputs) $ \(i, j, swappedOutputs) -> do
-                  let aggVRFVerificationKey =
-                        sconcat
-                          . fmap (liftVRFVerificationKey (Proxy @TestCrypto))
-                          $ vrfVerificationKeys
-                  let aggOutput =
-                        sconcat
-                          . fmap (liftVRFOutput (Proxy @TestCrypto))
-                          $ swappedOutputs
-                  case ( verifyAggregateVRFOutput @TestCrypto
-                           aggVRFVerificationKey
+              Right vrfOutputs -> do
+                forAll (swapTwoElements vrfOutputs) $ \(i, j, swappedVRFOutputs) -> do
+                  case ( verifyAggregateVRFOutputs @TestCrypto
+                           vrfVerificationKeys
                            input
-                           aggOutput
+                           swappedVRFOutputs
                        ) of
                     Left _ ->
                       property True
@@ -478,27 +443,28 @@ prop_SwapAttackOnAggregateVRF =
 -- | Associativity of aggregate vote verifaction keys.
 --
 -- NOTE: this is desirable if we want aggregate keys to be a closed Semigroup
--- under real BLS aggregation. This means that we can either choose to collect
--- all keys and aggregate them at once, or we can partially aggregate them as
--- we go, keeping only a single aggregate key in memory at any time.
+-- under real BLS aggregation (module rare aggregation failures). This means
+-- that we can either choose to collect all keys and aggregate them at once, or
+-- we can partially aggregate them as we go, keeping only a single aggregate key
+-- in memory at any time.
 prop_AssociativityOfAggregateKeys :: Property
 prop_AssociativityOfAggregateKeys =
   forAll genKeyPair $ \(_, pk1) ->
     forAll genKeyPair $ \(_, pk2) ->
       forAll genKeyPair $ \(_, pk3) -> do
         let toAggKey pk =
-              liftVoteVerificationKey (Proxy @TestCrypto)
+              NonEmpty.singleton
                 . getVoteVerificationKey (Proxy @TestCrypto)
                 $ pk
-        let TrivialAggregateVoteVerificationKey pk1' = toAggKey pk1
-        let TrivialAggregateVoteVerificationKey pk2' = toAggKey pk2
-        let TrivialAggregateVoteVerificationKey pk3' = toAggKey pk3
+        let pk1' = toAggKey pk1
+        let pk2' = toAggKey pk2
+        let pk3' = toAggKey pk3
         let lhs = do
-              pk12' <- BLS.aggregatePublicKeys (pk1' <> pk2')
-              BLS.aggregatePublicKeys (NonEmpty.singleton pk12' <> pk3')
+              pk12' <- NonEmpty.singleton <$> BLS.aggregatePublicKeys (pk1' <> pk2')
+              BLS.aggregatePublicKeys (pk12' <> pk3')
         let rhs = do
-              pk23' <- BLS.aggregatePublicKeys (pk2' <> pk3')
-              BLS.aggregatePublicKeys (pk1' <> NonEmpty.singleton pk23')
+              pk23' <- NonEmpty.singleton <$> BLS.aggregatePublicKeys (pk2' <> pk3')
+              BLS.aggregatePublicKeys (pk1' <> pk23')
         counterexample
           "Aggregate vote verification keys should be associative"
           $ lhs === rhs
@@ -506,27 +472,28 @@ prop_AssociativityOfAggregateKeys =
 -- | Associativity of aggregate VRF verification keys.
 --
 -- NOTE: this is desirable if we want aggregate keys to be a closed Semigroup
--- under real BLS aggregation. This means that we can either choose to collect
--- all keys and aggregate them at once, or we can partially aggregate them as
--- we go, keeping only a single aggregate key in memory at any time.
+-- under real BLS aggregation (module rare aggregation failures). This means
+-- that we can either choose to collect all keys and aggregate them at once, or
+-- we can partially aggregate them as we go, keeping only a single aggregate key
+-- in memory at any time.
 prop_AssociativityOfAggregateVRFKeys :: Property
 prop_AssociativityOfAggregateVRFKeys =
   forAll genKeyPair $ \(_, pk1) ->
     forAll genKeyPair $ \(_, pk2) ->
       forAll genKeyPair $ \(_, pk3) -> do
         let toAggKey pk =
-              liftVRFVerificationKey (Proxy @TestCrypto)
+              NonEmpty.singleton
                 . getVRFVerificationKey (Proxy @TestCrypto)
                 $ pk
-        let TrivialAggregateVRFVerificationKey pk1' = toAggKey pk1
-        let TrivialAggregateVRFVerificationKey pk2' = toAggKey pk2
-        let TrivialAggregateVRFVerificationKey pk3' = toAggKey pk3
+        let pk1' = toAggKey pk1
+        let pk2' = toAggKey pk2
+        let pk3' = toAggKey pk3
         let lhs = do
-              pk12' <- BLS.aggregatePublicKeys (pk1' <> pk2')
-              BLS.aggregatePublicKeys (NonEmpty.singleton pk12' <> pk3')
+              pk12' <- NonEmpty.singleton <$> BLS.aggregatePublicKeys (pk1' <> pk2')
+              BLS.aggregatePublicKeys (pk12' <> pk3')
         let rhs = do
-              pk23' <- BLS.aggregatePublicKeys (pk2' <> pk3')
-              BLS.aggregatePublicKeys (pk1' <> NonEmpty.singleton pk23')
+              pk23' <- NonEmpty.singleton <$> BLS.aggregatePublicKeys (pk2' <> pk3')
+              BLS.aggregatePublicKeys (pk1' <> pk23')
         counterexample
           "Aggregate VRF verification keys should be associative"
           $ lhs === rhs

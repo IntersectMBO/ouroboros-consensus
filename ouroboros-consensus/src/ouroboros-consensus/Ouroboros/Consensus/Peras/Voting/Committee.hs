@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Peras.Voting.Committee
   , PerasCertSupportsVotingCommittee (..)
   ) where
 
-import Data.Bifunctor (Bifunctor (..))
 import Data.Containers.NonEmpty (HasNonEmpty (..))
 import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -35,13 +34,7 @@ import Ouroboros.Consensus.Committee.EveryoneVotes
 import Ouroboros.Consensus.Committee.WFA (SeatIndex (..))
 import Ouroboros.Consensus.Committee.WFALS (Cert (..), Vote (..), WFALS)
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
-import Ouroboros.Consensus.Peras.Crypto.BLS
-  ( PerasBLSCrypto
-  , fromPerasBLSCertSignature
-  , fromPerasBLSVoteSignature
-  , toPerasBLSCertSignature
-  , toPerasBLSVoteSignature
-  )
+import Ouroboros.Consensus.Peras.Crypto.BLS (PerasBLSCrypto)
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 
 -- * Peras support for multiple voting committee implementations
@@ -94,7 +87,7 @@ instance PerasVoteSupportsVotingCommittee V1.PerasVote WFALS where
           , V1.pvBoostedBlock = candidate
           , V1.pvSeatIndex = perasSeatIndex
           , V1.pvEligibilityProof = V1.PersistentPerasVoteEligibilityProof
-          , V1.pvSignature = toPerasBLSVoteSignature sig
+          , V1.pvSignature = sig
           }
     WFALSNonPersistentVote seatIndex electionId candidate vrfOutput sig -> do
       perasSeatIndex <- toPerasSeatIndex seatIndex
@@ -105,13 +98,12 @@ instance PerasVoteSupportsVotingCommittee V1.PerasVote WFALS where
           , V1.pvBoostedBlock = candidate
           , V1.pvSeatIndex = perasSeatIndex
           , V1.pvEligibilityProof = proof
-          , V1.pvSignature = toPerasBLSVoteSignature sig
+          , V1.pvSignature = sig
           }
 
   fromPerasVote = \case
     V1.PerasVote electionId candidate seatIndex proof sig -> do
       let seatIndex' = fromPerasSeatIndex seatIndex
-      let sig' = fromPerasBLSVoteSignature sig
       case proof of
         V1.PersistentPerasVoteEligibilityProof ->
           pure $
@@ -119,7 +111,7 @@ instance PerasVoteSupportsVotingCommittee V1.PerasVote WFALS where
               seatIndex'
               electionId
               candidate
-              sig'
+              sig
         V1.NonPersistentPerasVoteEligibilityProof vrfOutput ->
           pure $
             WFALSNonPersistentVote
@@ -127,7 +119,7 @@ instance PerasVoteSupportsVotingCommittee V1.PerasVote WFALS where
               electionId
               candidate
               vrfOutput
-              sig'
+              sig
 
 -- 'V1.PerasCert's are compatible with 'WFALS' as long as we make sure to avoid
 -- overflowing the `Word16` seat index of each voter.
@@ -135,25 +127,23 @@ instance PerasCertSupportsVotingCommittee V1.PerasCert WFALS where
   toPerasCert = \case
     WFALSCert electionId candidate voters sig -> do
       voters' <- toPerasCertVoters voters
-      sig' <- bimap CryptoError id (toPerasBLSCertSignature sig)
       pure $
         V1.PerasCert
           { V1.pcRoundNo = electionId
           , V1.pcBoostedBlock = candidate
           , V1.pcVoters = voters'
-          , V1.pcSignature = sig'
+          , V1.pcSignature = sig
           }
 
   fromPerasCert = \case
     V1.PerasCert electionId candidate voters sig -> do
       let voters' = fromPerasCertVoters voters
-      let sig' = fromPerasBLSCertSignature sig
       pure $
         WFALSCert
           electionId
           candidate
           voters'
-          sig'
+          sig
 
 -- 'V1.PerasVote's are compatible with 'EveryoneVotes' as long as we make sure
 -- to only accept votes with persistent elegibility proofs (in addition to
@@ -168,13 +158,12 @@ instance PerasVoteSupportsVotingCommittee V1.PerasVote EveryoneVotes where
           , V1.pvBoostedBlock = candidate
           , V1.pvSeatIndex = perasSeatIndex
           , V1.pvEligibilityProof = V1.PersistentPerasVoteEligibilityProof
-          , V1.pvSignature = toPerasBLSVoteSignature sig
+          , V1.pvSignature = sig
           }
 
   fromPerasVote = \case
     V1.PerasVote electionId candidate seatIndex proof sig -> do
       let seatIndex' = fromPerasSeatIndex seatIndex
-      let sig' = fromPerasBLSVoteSignature sig
       case proof of
         V1.PersistentPerasVoteEligibilityProof ->
           pure $
@@ -182,7 +171,7 @@ instance PerasVoteSupportsVotingCommittee V1.PerasVote EveryoneVotes where
               seatIndex'
               electionId
               candidate
-              sig'
+              sig
         V1.NonPersistentPerasVoteEligibilityProof _ ->
           Left $
             EveryoneVotesButFoundNonPersistentVoterInVote seatIndex'
@@ -197,19 +186,17 @@ instance PerasCertSupportsVotingCommittee V1.PerasCert EveryoneVotes where
         toPerasCertVoters
           . NEMap.fromSet (const Nothing)
           $ voters
-      sig' <- bimap CryptoError id (toPerasBLSCertSignature sig)
       pure $
         V1.PerasCert
           { V1.pcRoundNo = electionId
           , V1.pcBoostedBlock = candidate
           , V1.pcVoters = voters'
-          , V1.pcSignature = sig'
+          , V1.pcSignature = sig
           }
 
   fromPerasCert = \case
     V1.PerasCert electionId candidate voters sig -> do
       let voters' = fromPerasCertVoters voters
-      let sig' = fromPerasBLSCertSignature sig
       case nonPersistentVoters voters' of
         Nothing ->
           pure $
@@ -217,7 +204,7 @@ instance PerasCertSupportsVotingCommittee V1.PerasCert EveryoneVotes where
               electionId
               candidate
               (NEMap.keysSet voters')
-              sig'
+              sig
         Just nonPersistentSeatIndices ->
           Left $
             EveryoneVotesButFoundNonPersistentVotersInCert

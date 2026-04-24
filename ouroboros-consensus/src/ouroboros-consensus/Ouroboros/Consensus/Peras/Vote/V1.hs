@@ -26,9 +26,9 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasRoundNo
   , PerasSeatIndex
   )
+import Ouroboros.Consensus.Committee.Crypto (CryptoSupportsVoteSigning (..))
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
-  , PerasBLSVoteSignature
   , VRFOutput
   )
 
@@ -44,7 +44,7 @@ data PerasVote
   , pvEligibilityProof :: !PerasVoteEligibilityProof
   -- ^ Proof of eligibility for voting, depending on the type of membership to
   -- the committee (persistent vs non-persistent)
-  , pvSignature :: !PerasBLSVoteSignature
+  , pvSignature :: !(VoteSignature PerasBLSCrypto)
   -- ^ BLS signature on the hash of the election identifier and vote message
   }
   deriving (Show, Eq)
