@@ -16,7 +16,7 @@ module Spec.OperationalCertificate.Properties
 open import Ledger.Prelude
 open import Data.Maybe.Relation.Unary.Any as M
 open import Spec.OperationalCertificate crypto nonces es bs af
-open import Tactic.GenError using (genError)
+open import stdlib-meta.Tactic.GenError using (genError)
 
 instance
 
