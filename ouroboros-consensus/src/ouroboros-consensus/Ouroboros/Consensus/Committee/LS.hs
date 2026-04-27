@@ -5,6 +5,9 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Local sortition used by non-persistent members of the voting committee
+-- Implements the @LS@ component of the wFA^LS scheme from the Fait-Accompli
+-- Committee Selection paper (https://eprint.iacr.org/2023/1273.pdf, §2.3).
+-- See also https://github.com/input-output-hk/ouroboros-leios/blob/c5658913221a7f58063bc4f82efaec0900e53dab/post-cip/weighted-fait-accompli.pdf
 module Ouroboros.Consensus.Committee.LS
   ( -- * Local sortition check
     LocalSortitionNumSeats (..)
