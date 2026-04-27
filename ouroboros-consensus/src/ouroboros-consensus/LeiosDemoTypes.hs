@@ -442,7 +442,7 @@ maxMsgLeiosBlockBytesSize :: BytesSize
 maxMsgLeiosBlockBytesSize = 500 * 10 ^ (3 :: Int) -- from CIP-0164's recommendations
 
 minEbItemBytesSize :: BytesSize
-minEbItemBytesSize = (32 - hashOverhead) + minSizeOverhead
+minEbItemBytesSize = 32 + hashOverhead + minSizeOverhead
  where
   hashOverhead = 1 + 1 -- bytestring major byte + a length = 32
   minSizeOverhead = 1 + 1 -- int major byte + a value at low as 55
