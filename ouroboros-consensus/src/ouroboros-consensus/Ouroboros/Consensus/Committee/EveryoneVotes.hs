@@ -143,18 +143,9 @@ mkEveryoneVotesVotingCommittee
   ( EveryoneVotesVotingCommitteeInput
       stakeDistr
     ) = do
-    let accumVotersWithPositiveStake
-          numPoolsAcc
-          (seatIndex, (poolId, _, stake, _)) =
-            ( if isZero stake
-                then numPoolsAcc
-                else succ numPoolsAcc
-            , (poolId, seatIndex)
-            )
-
-    let (poolsWithPositiveStake, seats) =
-          bimap NumPoolsWithPositiveStake Map.fromList
-            . List.mapAccumL accumVotersWithPositiveStake 0
+    let seats =
+          Map.fromList
+            . fmap (\(seatIndex, (poolId, _, _, _)) -> (poolId, seatIndex))
             . Array.assocs
             . unExtWFAStakeDistr
             $ stakeDistr
@@ -163,7 +154,7 @@ mkEveryoneVotesVotingCommittee
       EveryoneVotesVotingCommittee
         { extWFAStakeDistr = stakeDistr
         , candidateSeats = seats
-        , numActiveVoters = poolsWithPositiveStake
+        , numActiveVoters = numPoolsWithPositiveStake stakeDistr
         }
 
 -- | Check whether we should vote in a given election
