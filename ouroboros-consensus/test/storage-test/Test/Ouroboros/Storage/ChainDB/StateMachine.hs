@@ -1322,6 +1322,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
                     { pvVoteRound = roundNo
                     , pvVoteBlock = blockPoint blk
                     , pvVoteVoterId = voterId
+                    , pvVoteStake = stake
                     }
               , vpvVoteStake = stake
               }
