@@ -19,10 +19,9 @@
 --   have some properties that verify that that the model behaves the way we
 --   think it should.
 -- * The main DB itself.
---
 module Test.Ouroboros.Storage.ChainDB (tests) where
 
-import           System.Info (os)
+import System.Info (os)
 import qualified Test.Ouroboros.Storage.ChainDB.FollowerPromptness as FollowerPromptness
 import qualified Test.Ouroboros.Storage.ChainDB.GcSchedule as GcSchedule
 import qualified Test.Ouroboros.Storage.ChainDB.Iterator as Iterator
@@ -30,17 +29,19 @@ import qualified Test.Ouroboros.Storage.ChainDB.Model.Test as Model
 import qualified Test.Ouroboros.Storage.ChainDB.Paths as Paths
 import qualified Test.Ouroboros.Storage.ChainDB.StateMachine as StateMachine
 import qualified Test.Ouroboros.Storage.ChainDB.Unit as Unit
-import           Test.Tasty
+import Test.Tasty
 
 tests :: TestTree
-tests = testGroup "ChainDB" $ [
-      Iterator.tests
+tests =
+  testGroup "ChainDB" $
+    [ Iterator.tests
     , FollowerPromptness.tests
     , GcSchedule.tests
     , Model.tests
     , Paths.tests
     , Unit.tests
-    ] <>
-    -- The ChainDB q-s-m test is flaky on Windows, see
-    -- https://github.com/IntersectMBO/ouroboros-network/issues/3874
-    [ StateMachine.tests | os /= "mingw32" ]
+    ]
+      <>
+      -- The ChainDB q-s-m test is flaky on Windows, see
+      -- https://github.com/IntersectMBO/ouroboros-network/issues/3874
+      [StateMachine.tests | os /= "mingw32"]

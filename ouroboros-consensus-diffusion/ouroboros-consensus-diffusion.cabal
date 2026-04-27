@@ -139,6 +139,7 @@ library unstable-diffusion-testlib
     graphviz >=2999.20.1.0,
     io-classes,
     io-sim,
+    microlens,
     mtl,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-consensus-diffusion,
@@ -203,6 +204,7 @@ test-suite mock-test
     Test.Consensus.Ledger.Mock.LedgerTables
     Test.ThreadNet.BFT
     Test.ThreadNet.LeaderSchedule
+    Test.ThreadNet.LedgerStateConsistency
     Test.ThreadNet.PBFT
     Test.ThreadNet.Praos
 
@@ -238,6 +240,7 @@ test-suite consensus-test
     Test.Consensus.Genesis.Tests.CSJ
     Test.Consensus.Genesis.Tests.DensityDisconnect
     Test.Consensus.Genesis.Tests.LoE
+    Test.Consensus.Genesis.Tests.LoE.CaughtUp
     Test.Consensus.Genesis.Tests.LoP
     Test.Consensus.Genesis.Tests.LongRangeAttack
     Test.Consensus.Genesis.Tests.Uniform

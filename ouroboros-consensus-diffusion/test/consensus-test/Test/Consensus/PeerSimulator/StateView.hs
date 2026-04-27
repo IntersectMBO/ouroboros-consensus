@@ -4,8 +4,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Test.Consensus.PeerSimulator.StateView (
-    PeerSimulatorComponent (..)
+module Test.Consensus.PeerSimulator.StateView
+  ( PeerSimulatorComponent (..)
   , PeerSimulatorComponentResult (..)
   , PeerSimulatorResult (..)
   , StateView (..)
@@ -18,38 +18,48 @@ module Test.Consensus.PeerSimulator.StateView (
   , stateViewTracersWithInitial
   ) where
 
-import           Control.Tracer (Tracer, traceWith)
-import           Data.Containers.ListUtils (nubOrd)
-import           Data.Foldable (for_)
-import           Data.List (sort)
-import           Data.Maybe (mapMaybe)
-import           Network.TypedProtocol.Codec (AnyMessage)
-import           Ouroboros.Consensus.Block (Header, Point)
+import Control.Tracer (Tracer, traceWith)
+import Data.Containers.ListUtils (nubOrd)
+import Data.Foldable (for_)
+import Data.List (sort)
+import Data.Maybe (mapMaybe)
+import Network.TypedProtocol.Codec (AnyMessage)
+import Ouroboros.Consensus.Block (Header, Point)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
-import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
+import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
-import           Ouroboros.Consensus.Util.Condense (Condense (..),
-                     CondenseList (..), PaddingDirection (..), padListWith)
-import           Ouroboros.Consensus.Util.IOLike (IOLike, SomeException,
-                     atomically)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
-import           Ouroboros.Network.Block (StandardHash, Tip)
-import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch)
-import           Ouroboros.Network.Protocol.ChainSync.Type (ChainSync)
-import           Test.Consensus.PeerSimulator.Trace (TraceEvent)
-import           Test.Consensus.PointSchedule.Peers (PeerId)
-import           Test.Util.TersePrinting (terseBlock, terseHFragment,
-                     terseMaybe)
-import           Test.Util.TestBlock (TestBlock)
-import           Test.Util.Tracer (recordingTracerTVar)
+import Ouroboros.Consensus.Util.Condense
+  ( Condense (..)
+  , CondenseList (..)
+  , PaddingDirection (..)
+  , padListWith
+  )
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , SomeException
+  , atomically
+  )
+import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import Ouroboros.Network.Block (StandardHash, Tip)
+import Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch)
+import Ouroboros.Network.Protocol.ChainSync.Type (ChainSync)
+import Test.Consensus.PeerSimulator.Trace (TraceEvent)
+import Test.Consensus.PointSchedule.Peers (PeerId)
+import Test.Util.TersePrinting
+  ( terseBlock
+  , terseHFragment
+  , terseMaybe
+  )
+import Test.Util.TestBlock (TestBlock)
+import Test.Util.Tracer (recordingTracerTVar)
 
 -- | A record to associate an exception thrown by a thread
 -- running a component of the peer simulator with the peer
 -- that it was running for.
 data PeerSimulatorResult blk = PeerSimulatorResult
-       { psePeerId :: PeerId
-       , pseResult :: PeerSimulatorComponentResult blk
-       }
+  { psePeerId :: PeerId
+  , pseResult :: PeerSimulatorComponentResult blk
+  }
   deriving (Eq, Ord)
 
 data PeerSimulatorComponent
@@ -61,40 +71,40 @@ data PeerSimulatorComponent
 
 data PeerSimulatorComponentResult blk
   = SomeChainSyncClientResult
-    ( Either
-      SomeException
-      ( CSClient.ChainSyncClientResult
-      , Maybe (ChainSyncResult blk)
+      ( Either
+          SomeException
+          ( CSClient.ChainSyncClientResult
+          , Maybe (ChainSyncResult blk)
+          )
       )
-    )
   | SomeChainSyncServerResult
-    ( Either
-      SomeException
-      (Maybe (ChainSyncResult blk))
-    )
+      ( Either
+          SomeException
+          (Maybe (ChainSyncResult blk))
+      )
   | SomeBlockFetchClientResult
-    ( Either
-      SomeException
-      (Maybe (BlockFetchResult blk))
-    )
+      ( Either
+          SomeException
+          (Maybe (BlockFetchResult blk))
+      )
   | SomeBlockFetchServerResult
-    ( Either
-      SomeException
-      (Maybe (BlockFetchResult blk))
-    )
+      ( Either
+          SomeException
+          (Maybe (BlockFetchResult blk))
+      )
 
 toComponent :: PeerSimulatorComponentResult blk -> PeerSimulatorComponent
-toComponent (SomeChainSyncClientResult  _) = ChainSyncClient
-toComponent (SomeChainSyncServerResult  _) = ChainSyncServer
+toComponent (SomeChainSyncClientResult _) = ChainSyncClient
+toComponent (SomeChainSyncServerResult _) = ChainSyncServer
 toComponent (SomeBlockFetchClientResult _) = BlockFetchClient
 toComponent (SomeBlockFetchServerResult _) = BlockFetchServer
 
 pscrToException :: PeerSimulatorComponentResult blk -> Maybe SomeException
-pscrToException (SomeChainSyncClientResult  (Left exn)) = Just exn
-pscrToException (SomeChainSyncServerResult  (Left exn)) = Just exn
+pscrToException (SomeChainSyncClientResult (Left exn)) = Just exn
+pscrToException (SomeChainSyncServerResult (Left exn)) = Just exn
 pscrToException (SomeBlockFetchClientResult (Left exn)) = Just exn
 pscrToException (SomeBlockFetchServerResult (Left exn)) = Just exn
-pscrToException _                                       = Nothing
+pscrToException _ = Nothing
 
 instance Eq (PeerSimulatorComponentResult blk) where
   (==) a b = toComponent a == toComponent b
@@ -120,7 +130,7 @@ instance (StandardHash blk, Show blk, Show (Header blk)) => Condense (PeerSimula
   condense (SomeBlockFetchServerResult (Right res)) =
     "(BlockFetchServer - Success)     : " ++ show res
 
-type ChainSyncResult  blk = AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk))
+type ChainSyncResult blk = AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk))
 type BlockFetchResult blk = AnyMessage (BlockFetch blk (Point blk))
 
 instance (StandardHash blk, Show blk, Show (Header blk)) => Condense (PeerSimulatorResult blk) where
@@ -139,36 +149,42 @@ instance (StandardHash blk, Show blk, Show (Header blk)) => CondenseList (PeerSi
 -- (for instance the fragment that is selected by the ChainDB) but also
 -- information about the mocked peers (for instance the exceptions raised in the
 -- mocked ChainSync server threads).
-data StateView blk = StateView {
-    svSelectedChain        :: AnchoredFragment (Header blk),
-    svPeerSimulatorResults :: [PeerSimulatorResult blk],
-    -- | This field holds the most recent point in the selection (incl. anchor)
-    -- for which we have a full block (not just a header).
-    svTipBlock             :: Maybe blk,
-    -- | List of all TraceEvent that have been sent during the simulation.
-    svTrace                :: [TraceEvent blk]
+data StateView blk = StateView
+  { svSelectedChain :: AnchoredFragment (Header blk)
+  , svPeerSimulatorResults :: [PeerSimulatorResult blk]
+  , svTipBlock :: Maybe blk
+  -- ^ This field holds the most recent point in the selection (incl. anchor)
+  -- for which we have a full block (not just a header).
+  , svTrace :: [TraceEvent blk]
+  -- ^ List of all TraceEvent that have been sent during the simulation.
   }
 
 instance Condense (StateView TestBlock) where
-  condense StateView {svSelectedChain, svPeerSimulatorResults, svTipBlock} =
-    "SelectedChain: " ++ terseHFragment svSelectedChain ++ "\n"
-    ++ "TipBlock: " ++ terseMaybe terseBlock svTipBlock ++ "\n"
-    ++ "PeerSimulatorResults:\n" ++ unlines (fmap ("  - " ++) $ condenseList $ sort svPeerSimulatorResults)
+  condense StateView{svSelectedChain, svPeerSimulatorResults, svTipBlock} =
+    "SelectedChain: "
+      ++ terseHFragment svSelectedChain
+      ++ "\n"
+      ++ "TipBlock: "
+      ++ terseMaybe terseBlock svTipBlock
+      ++ "\n"
+      ++ "PeerSimulatorResults:\n"
+      ++ unlines (fmap ("  - " ++) $ condenseList $ sort svPeerSimulatorResults)
 
 -- | Return the list of peer ids for all peers whose ChainSync thread or
 -- BlockFetch thread was terminated.
 collectDisconnectedPeers :: StateView blk -> [PeerId]
-collectDisconnectedPeers stateView = nubOrd $
+collectDisconnectedPeers stateView =
+  nubOrd $
     map psePeerId (svPeerSimulatorResults stateView)
 
 -- | State view tracers are a lightweight mechanism to record information that
 -- can later be used to produce a state view. This mechanism relies on
 -- contra-tracers which we already use in a pervasives way.
-data StateViewTracers blk m = StateViewTracers {
-    svtPeerSimulatorResultsTracer :: Tracer m (PeerSimulatorResult blk)
-  , svtGetPeerSimulatorResults    :: m [PeerSimulatorResult blk]
-  , svtTraceTracer                :: Tracer m (TraceEvent blk)
-  , svtGetTracerTrace             :: m [TraceEvent blk]
+data StateViewTracers blk m = StateViewTracers
+  { svtPeerSimulatorResultsTracer :: Tracer m (PeerSimulatorResult blk)
+  , svtGetPeerSimulatorResults :: m [PeerSimulatorResult blk]
+  , svtTraceTracer :: Tracer m (TraceEvent blk)
+  , svtGetTracerTrace :: m [TraceEvent blk]
   }
 
 -- | Helper to get exceptions from a StateView.
@@ -178,21 +194,21 @@ exceptionsByComponent ::
   [SomeException]
 exceptionsByComponent component StateView{svPeerSimulatorResults} =
   mapMaybe (matchComponent component) $ pseResult <$> svPeerSimulatorResults
-  where
-    matchComponent :: PeerSimulatorComponent -> PeerSimulatorComponentResult blk -> Maybe SomeException
-    matchComponent = \case
-      ChainSyncClient -> \case
-        SomeChainSyncClientResult (Left exn) -> Just exn
-        _ -> Nothing
-      ChainSyncServer -> \case
-        SomeChainSyncServerResult (Left exn) -> Just exn
-        _ -> Nothing
-      BlockFetchClient -> \case
-        SomeBlockFetchClientResult (Left exn) -> Just exn
-        _ -> Nothing
-      BlockFetchServer -> \case
-        SomeBlockFetchServerResult (Left exn) -> Just exn
-        _ -> Nothing
+ where
+  matchComponent :: PeerSimulatorComponent -> PeerSimulatorComponentResult blk -> Maybe SomeException
+  matchComponent = \case
+    ChainSyncClient -> \case
+      SomeChainSyncClientResult (Left exn) -> Just exn
+      _ -> Nothing
+    ChainSyncServer -> \case
+      SomeChainSyncServerResult (Left exn) -> Just exn
+      _ -> Nothing
+    BlockFetchClient -> \case
+      SomeBlockFetchClientResult (Left exn) -> Just exn
+      _ -> Nothing
+    BlockFetchServer -> \case
+      SomeBlockFetchServerResult (Left exn) -> Just exn
+      _ -> Nothing
 
 -- | Make default state view tracers. The tracers are all freshly initialised
 -- and contain no information.
@@ -202,12 +218,13 @@ defaultStateViewTracers ::
 defaultStateViewTracers = do
   (svtPeerSimulatorResultsTracer, svtGetPeerSimulatorResults) <- recordingTracerTVar
   (svtTraceTracer, svtGetTracerTrace) <- recordingTracerTVar
-  pure StateViewTracers
-    { svtPeerSimulatorResultsTracer
-    , svtGetPeerSimulatorResults
-    , svtTraceTracer
-    , svtGetTracerTrace
-    }
+  pure
+    StateViewTracers
+      { svtPeerSimulatorResultsTracer
+      , svtGetPeerSimulatorResults
+      , svtTraceTracer
+      , svtGetTracerTrace
+      }
 
 -- | Call 'defaultStateViewTracers' and add the provided results.
 stateViewTracersWithInitial ::
@@ -232,4 +249,4 @@ snapshotStateView StateViewTracers{svtGetPeerSimulatorResults, svtGetTracerTrace
   svTrace <- svtGetTracerTrace
   svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
   svTipBlock <- ChainDB.getTipBlock chainDb
-  pure StateView {svSelectedChain, svPeerSimulatorResults, svTipBlock, svTrace}
+  pure StateView{svSelectedChain, svPeerSimulatorResults, svTipBlock, svTrace}

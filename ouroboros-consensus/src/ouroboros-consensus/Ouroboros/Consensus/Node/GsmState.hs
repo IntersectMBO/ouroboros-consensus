@@ -6,18 +6,16 @@
 -- ChainSync client relies on its state.
 module Ouroboros.Consensus.Node.GsmState (GsmState (..)) where
 
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 
 -- | Current state of the Genesis State Machine
-data GsmState =
-    PreSyncing
-    -- ^ We are syncing, and the Honest Availability Assumption is not
+data GsmState
+  = -- | We are syncing, and the Honest Availability Assumption is not
     -- satisfied.
-  |
+    PreSyncing
+  | -- | We are syncing, and the Honest Availability Assumption is satisfied.
     Syncing
-    -- ^ We are syncing, and the Honest Availability Assumption is satisfied.
-  |
+  | -- | We are caught-up.
     CaughtUp
-    -- ^ We are caught-up.
   deriving (Eq, Show, Read, Generic, NoThunks)
