@@ -387,6 +387,8 @@ mkExtWFAStakeDistr tiebreaker pools
       cumulativeStakeAndPools
 
   ((_totalStake, numPoolsWithPositiveStakeAcc), cumulativeStakeAndPools) =
+    -- Accum right-to-left so seat 0's cumulative = total stake
+    -- and the last seat's cumulative = its own stake.
     List.mapAccumR
       accumStakeAndCountPoolsWithPositiveStake
       ( Cumulative (LedgerStake 0)
