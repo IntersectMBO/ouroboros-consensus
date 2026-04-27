@@ -46,7 +46,6 @@ module Ouroboros.Consensus.Committee.WFALS
   ) where
 
 import Cardano.Ledger.BaseTypes (NonZero (..), Nonce, nonZero)
-import Control.Exception (assert)
 import Control.Monad (void)
 import Control.Monad.Zip (MonadZip (..))
 import qualified Data.Array as Array
@@ -96,8 +95,7 @@ import Ouroboros.Consensus.Committee.WFA
   , TotalNonPersistentStake (..)
   , TotalPersistentStake
   , WFAError
-  , getCandidateInSeat
-  , seatIndexWithinBounds
+  , getCandidateIfSeatWithinBounds
   , weightedFaitAccompliSplitSeats
   )
 
@@ -266,47 +264,51 @@ implCheckShouldVote ::
     (Maybe (EligibilityWitness crypto WFALS))
 implCheckShouldVote committee ourId ourPrivateKey electionId
   | Just seatIndex <- Map.lookup ourId (candidateSeats committee) =
-      assert (seatIndexWithinBounds seatIndex (extWFAStakeDistr committee)) $ do
-        let (_, _, ourStake, _) =
-              getCandidateInSeat seatIndex (extWFAStakeDistr committee)
-        let ourVRFSigningKey =
-              getVRFSigningKey (Proxy @crypto) ourPrivateKey
-        case isPersistentMember seatIndex committee of
-          True -> do
-            pure $
-              Just $
-                WFALSPersistentMember
-                  seatIndex
-                  ourStake
-          False -> do
-            let vrfContext =
-                  VRFSignContext ourVRFSigningKey
-            vrfOutput <-
-              bimap InvalidVoteSignature id $ do
-                evalVRF
-                  vrfContext
-                  ( mkVRFElectionInput
-                      @crypto
-                      (epochNonce committee)
-                      electionId
-                  )
-            let numSeats =
-                  localSortitionNumSeats
-                    (nonPersistentCommitteeSize committee)
-                    (totalNonPersistentStake committee)
+      case getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee) of
+        Nothing ->
+          -- This should not happen: the seat index comes from the committee's
+          -- own map, so it should always be within bounds.
+          error $
+            "implCheckShouldVote: seat index " ++ show seatIndex ++ " is out of bounds for the committee"
+        Just (_, _, ourStake, _) -> do
+          let ourVRFSigningKey =
+                getVRFSigningKey (Proxy @crypto) ourPrivateKey
+          case isPersistentMember seatIndex committee of
+            True -> do
+              pure $
+                Just $
+                  WFALSPersistentMember
+                    seatIndex
                     ourStake
-                    (normalizeVRFOutput vrfOutput)
-            case nonZero numSeats of
-              Nothing ->
-                pure Nothing
-              Just nonZeroNumSeats ->
-                pure $
-                  Just $
-                    WFALSNonPersistentMember
-                      seatIndex
+            False -> do
+              let vrfContext =
+                    VRFSignContext ourVRFSigningKey
+              vrfOutput <-
+                bimap InvalidVoteSignature id $ do
+                  evalVRF
+                    vrfContext
+                    ( mkVRFElectionInput
+                        @crypto
+                        (epochNonce committee)
+                        electionId
+                    )
+              let numSeats =
+                    localSortitionNumSeats
+                      (nonPersistentCommitteeSize committee)
+                      (totalNonPersistentStake committee)
                       ourStake
-                      vrfOutput
-                      nonZeroNumSeats
+                      (normalizeVRFOutput vrfOutput)
+              case nonZero numSeats of
+                Nothing ->
+                  pure Nothing
+                Just nonZeroNumSeats ->
+                  pure $
+                    Just $
+                      WFALSNonPersistentMember
+                        seatIndex
+                        ourStake
+                        vrfOutput
+                        nonZeroNumSeats
   | otherwise =
       Left (MissingPoolId ourId)
 
@@ -344,10 +346,9 @@ implVerifyVote ::
     (EligibilityWitness crypto WFALS)
 implVerifyVote committee = \case
   WFALSPersistentVote seatIndex electionId candidate sig
-    | seatIndexWithinBounds seatIndex (extWFAStakeDistr committee)
+    | Just (_, voterPublicKey, voterStake, _) <-
+        getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee)
     , isPersistentMember seatIndex committee -> do
-        let (_, voterPublicKey, voterStake, _) =
-              getCandidateInSeat seatIndex (extWFAStakeDistr committee)
         let voterVerificationKey =
               getVoteVerificationKey (Proxy @crypto) voterPublicKey
         checkVoteSignature voterVerificationKey electionId candidate sig
@@ -358,10 +359,9 @@ implVerifyVote committee = \case
     | otherwise -> do
         Left (NotAPersistentMember seatIndex)
   WFALSNonPersistentVote seatIndex electionId message vrfOutput sig
-    | seatIndexWithinBounds seatIndex (extWFAStakeDistr committee)
+    | Just (_, voterPublicKey, voterStake, _) <-
+        getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee)
     , not (isPersistentMember seatIndex committee) -> do
-        let (_, voterPublicKey, voterStake, _) =
-              getCandidateInSeat seatIndex (extWFAStakeDistr committee)
         let voterVoteVerificationKey =
               getVoteVerificationKey (Proxy @crypto) voterPublicKey
         bimap InvalidVoteSignature id $ do
@@ -505,10 +505,9 @@ implVerifyCert committee = \case
       fmap nonEmptyUnzip3 . flip traverse (NEMap.toAscList voters) $ \case
         -- Persistent voter
         (seatIndex, Nothing)
-          | seatIndexWithinBounds seatIndex (extWFAStakeDistr committee)
+          | Just (_, voterPublicKey, voterStake, _) <-
+              getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee)
           , isPersistentMember seatIndex committee -> do
-              let (_, voterPublicKey, voterStake, _) =
-                    getCandidateInSeat seatIndex (extWFAStakeDistr committee)
               let voterVoteVerificationKey =
                     getVoteVerificationKey (Proxy @crypto) voterPublicKey
               pure
@@ -522,10 +521,9 @@ implVerifyCert committee = \case
               Left (NotAPersistentMember seatIndex)
         -- Non-persistent voter
         (seatIndex, Just vrfOutput)
-          | seatIndexWithinBounds seatIndex (extWFAStakeDistr committee)
+          | Just (_, voterPublicKey, voterStake, _) <-
+              getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee)
           , not (isPersistentMember seatIndex committee) -> do
-              let (_, voterPublicKey, voterStake, _) =
-                    getCandidateInSeat seatIndex (extWFAStakeDistr committee)
               let voterVoteVerificationKey =
                     getVoteVerificationKey (Proxy @crypto) voterPublicKey
               let voterVRFVerificationKey =
