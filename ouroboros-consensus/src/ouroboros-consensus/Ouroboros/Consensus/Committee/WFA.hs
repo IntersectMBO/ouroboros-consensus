@@ -192,7 +192,8 @@ isAbovePersistentSeatThreshold ::
   SeatIndex ->
   -- | Current voter stake
   LedgerStake ->
-  -- | Cumulated stake of voters with smaller or equal stake than the current one
+  -- | Cumulated stake of voters with smaller stake, or equal stake but smaller
+  -- tiebreaker than the current one
   Cumulative LedgerStake ->
   -- | Whether the current voter has a persistent seat or not
   Bool
