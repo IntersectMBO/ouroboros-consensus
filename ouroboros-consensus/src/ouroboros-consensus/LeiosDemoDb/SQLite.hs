@@ -578,7 +578,7 @@ dbWithBEGIN db k =
   do
     fmap fst
     $ generalBracket
-      (dbExec db (fromString "BEGIN IMMEDIATE"))
+      (dbExec db (fromString "BEGIN"))
       ( \() -> \case
           MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
           MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
