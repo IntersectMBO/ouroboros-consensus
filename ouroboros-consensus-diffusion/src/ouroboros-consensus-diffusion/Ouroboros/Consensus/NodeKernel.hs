@@ -177,6 +177,7 @@ import LeiosDemoTypes
   , LeiosOutstanding
   , LeiosPeerVars
   , TraceLeiosKernel (..)
+  , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
@@ -772,7 +773,7 @@ forkBlockForging IS{..} blockForging =
         (ebTxs, restTxs') = case mayEndorserBlockCapacity of
           Nothing -> (TxSeq.fromList [], TxSeq.fromList [])
           Just endorserBlockCapacity -> TxSeq.splitAfterTxSize restTxs endorserBlockCapacity
-        ebTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ ebTxs
+        ebTxsList = take maxTxsPerEb $ fmap TxSeq.txTicketTx . TxSeq.toList $ ebTxs
 
     -- NB respect the capacity of the ledger state we're extending,
     -- which is /not/ 'snapshotLedgerState'

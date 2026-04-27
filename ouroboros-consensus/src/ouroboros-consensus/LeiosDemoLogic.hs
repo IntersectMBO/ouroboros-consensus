@@ -67,6 +67,7 @@ import LeiosDemoTypes
   , hashLeiosEb
   , hashLeiosTx
   , leiosEbBytesSize
+  , maxMsgLeiosBlockBytesSize
   , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
@@ -566,6 +567,8 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
     let ebHash' = hashLeiosEb eb
     when (ebHash' /= ebHash) $ do
       error $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
+  when (leiosEbBytesSize eb > maxMsgLeiosBlockBytesSize) $ do
+    error $ "MsgLeiosBlock too large: " <> show (leiosEbBytesSize eb) <> " > " <> show maxMsgLeiosBlockBytesSize
   -- ingest it
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let novel = not $ Set.member ebHash (Leios.acquiredEbBodies outstanding)
