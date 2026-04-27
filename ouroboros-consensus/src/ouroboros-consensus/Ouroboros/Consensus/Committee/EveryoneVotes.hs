@@ -24,7 +24,6 @@ module Ouroboros.Consensus.Committee.EveryoneVotes
 
 import Cardano.Ledger.BaseTypes (NonZero)
 import Cardano.Ledger.BaseTypes.NonZero (NonZero (..), nonZero)
-import Control.Exception (assert)
 import Control.Monad.Zip (MonadZip (..))
 import qualified Data.Array as Array
 import Data.Bifunctor (Bifunctor (..))
@@ -60,8 +59,7 @@ import Ouroboros.Consensus.Committee.WFA
   , NumPoolsWithPositiveStake (..)
   , SeatIndex
   , WFAError
-  , getCandidateInSeat
-  , seatIndexWithinBounds
+  , getCandidateIfSeatWithinBounds
   )
 
 -- | Tag for a simple voting committee where pools with positive stake can vote.
@@ -168,18 +166,22 @@ implCheckShouldVote ::
     (Maybe (EligibilityWitness crypto EveryoneVotes))
 implCheckShouldVote committee ourId _ourPrivateKey _electionId
   | Just seatIndex <- Map.lookup ourId (candidateSeats committee) =
-      assert (seatIndexWithinBounds seatIndex (extWFAStakeDistr committee)) $ do
-        let (_, _, ourStake, _) =
-              getCandidateInSeat seatIndex (extWFAStakeDistr committee)
-        case nonZero ourStake of
-          Nothing ->
-            Right Nothing
-          Just nonZeroOurStake ->
-            Right $
-              Just $
-                EveryoneVotesMember
-                  seatIndex
-                  nonZeroOurStake
+      case getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee) of
+        Nothing ->
+          -- This should not happen: the seat index comes from the committee's
+          -- own map, so it should always be within bounds.
+          error $
+            "implCheckShouldVote: seat index " ++ show seatIndex ++ " is out of bounds for the committee"
+        Just (_, _, ourStake, _) ->
+          case nonZero ourStake of
+            Nothing ->
+              Right Nothing
+            Just nonZeroOurStake ->
+              Right $
+                Just $
+                  EveryoneVotesMember
+                    seatIndex
+                    nonZeroOurStake
   | otherwise =
       Left (MissingPoolId ourId)
 
@@ -213,9 +215,8 @@ implVerifyVote ::
     (EligibilityWitness crypto EveryoneVotes)
 implVerifyVote committee = \case
   EveryoneVotesVote seatIndex electionId candidate sig
-    | seatIndexWithinBounds seatIndex (extWFAStakeDistr committee) -> do
-        let (_, voterPublicKey, voterStake, _) =
-              getCandidateInSeat seatIndex (extWFAStakeDistr committee)
+    | Just (_, voterPublicKey, voterStake, _) <-
+        getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee) -> do
         let voterVerificationKey =
               getVoteVerificationKey (Proxy @crypto) voterPublicKey
         bimap InvalidVoteSignature id $ do
@@ -302,9 +303,8 @@ implVerifyCert committee = \case
     (members, voteVerificationKeys) <-
       fmap munzip . flip traverse (NESet.toAscList voters) $ \case
         seatIndex
-          | seatIndexWithinBounds seatIndex (extWFAStakeDistr committee) -> do
-              let (_, voterPublicKey, voterStake, _) =
-                    getCandidateInSeat seatIndex (extWFAStakeDistr committee)
+          | Just (_, voterPublicKey, voterStake, _) <-
+              getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee) -> do
               let voterVerificationKey =
                     getVoteVerificationKey (Proxy @crypto) voterPublicKey
               case nonZero voterStake of

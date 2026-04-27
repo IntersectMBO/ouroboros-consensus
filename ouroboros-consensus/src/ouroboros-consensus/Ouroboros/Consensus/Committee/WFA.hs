@@ -19,8 +19,7 @@ module Ouroboros.Consensus.Committee.WFA
   , WFATiebreaker (..)
   , ExtWFAStakeDistr (..)
   , mkExtWFAStakeDistr
-  , getCandidateInSeat
-  , seatIndexWithinBounds
+  , getCandidateIfSeatWithinBounds
   , wFATiebreakerWithEpochNonce
   ) where
 
@@ -426,24 +425,18 @@ mkExtWFAStakeDistr tiebreaker pools
             )
           )
 
--- | Retrieve the candidate information associated to a given seat index.
---
--- PRECONDITION: the seat index must be within bounds in the stake distribution
-getCandidateInSeat ::
+-- | Retrieve the candidate information associated to a given seat index, if the
+-- seat index is within bounds in the stake distribution.
+getCandidateIfSeatWithinBounds ::
   SeatIndex ->
   ExtWFAStakeDistr a ->
-  (PoolId, a, LedgerStake, Cumulative LedgerStake)
-getCandidateInSeat seatIndex distr =
-  (Array.!) (unExtWFAStakeDistr distr) seatIndex
-
--- | Check that a seat index is within bounds in a stake distribution
-seatIndexWithinBounds ::
-  SeatIndex ->
-  ExtWFAStakeDistr a ->
-  Bool
-seatIndexWithinBounds seatIndex distr =
-  unSeatIndex seatIndex >= unSeatIndex lowerBound
-    && unSeatIndex seatIndex <= unSeatIndex upperBound
+  Maybe (PoolId, a, LedgerStake, Cumulative LedgerStake)
+getCandidateIfSeatWithinBounds seatIndex distr
+  | unSeatIndex seatIndex >= unSeatIndex lowerBound
+  , unSeatIndex seatIndex <= unSeatIndex upperBound =
+      Just $ (Array.!) (unExtWFAStakeDistr distr) seatIndex
+  | otherwise =
+      Nothing
  where
   (lowerBound, upperBound) =
     Array.bounds (unExtWFAStakeDistr distr)
