@@ -63,7 +63,7 @@ localTxMonitorServer mempool =
             (txForgetValidated -> h, _tno, _byteSize) : q ->
               pure $ SendMsgReplyNextTx (Just h) (serverStAcquired s q)
       , recvMsgHasTx = \txid ->
-          pure $ SendMsgReplyHasTx (snapshotHasTx snapshot txid) (serverStAcquired s txs)
+          pure $ SendMsgReplyHasTx (snapshotHasTx snapshot (toRawTxIdHash txid)) (serverStAcquired s txs)
       , recvMsgGetSizes = do
           let MempoolSize{msNumTxs, msNumBytes} = snapshotMempoolSize snapshot
           let sizes =

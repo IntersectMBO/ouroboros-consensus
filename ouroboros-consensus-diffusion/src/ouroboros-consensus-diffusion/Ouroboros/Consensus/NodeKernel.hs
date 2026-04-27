@@ -28,6 +28,7 @@ module Ouroboros.Consensus.NodeKernel
   ) where
 
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import qualified Cardano.Ledger.TxIn as SL
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
@@ -198,7 +199,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
   , getBlockchainTime :: BlockchainTime m
-  , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk)
+  , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) SL.TxId
   -- ^ Shared state of all `TxSubmission` clients.
   , getTxCountersVar :: TxSubmissionCountersVar m
   -- ^ Monotonic tx-submission counters.
@@ -884,10 +885,9 @@ getMempoolReader ::
   forall m blk.
   ( LedgerSupportsMempool blk
   , IOLike m
-  , HasTxId (GenTx blk)
   ) =>
   Mempool m blk ->
-  TxSubmissionMempoolReader (GenTxId blk) (Validated (GenTx blk)) TicketNo m
+  TxSubmissionMempoolReader SL.TxId (Validated (GenTx blk)) TicketNo m
 getMempoolReader mempool =
   MempoolReader.TxSubmissionMempoolReader
     { mempoolZeroIdx = zeroTicketNo
@@ -896,7 +896,7 @@ getMempoolReader mempool =
  where
   convertSnapshot ::
     MempoolSnapshot blk ->
-    MempoolReader.MempoolSnapshot (GenTxId blk) (Validated (GenTx blk)) TicketNo
+    MempoolReader.MempoolSnapshot SL.TxId (Validated (GenTx blk)) TicketNo
   convertSnapshot
     MempoolSnapshot
       { snapshotTxsAfter
@@ -905,7 +905,7 @@ getMempoolReader mempool =
       } =
       MempoolReader.MempoolSnapshot
         { mempoolTxIdsAfter = \idx ->
-            [ ( txId (txForgetValidated tx)
+            [ ( toRawTxIdHash $ txId (txForgetValidated tx)
               , idx'
               , txWireSize $ txForgetValidated tx
               )
@@ -919,25 +919,24 @@ getMempoolWriter ::
   forall blk m.
   ( LedgerSupportsMempool blk
   , IOLike m
-  , HasTxId (GenTx blk)
   ) =>
   Mempool m blk ->
-  InboundV2.TxSubmissionMempoolWriter (GenTxId blk) (GenTx blk) TicketNo m ()
+  InboundV2.TxSubmissionMempoolWriter SL.TxId (GenTx blk) TicketNo m ()
 getMempoolWriter mempool =
   InboundV2.TxSubmissionMempoolWriter
-    { InboundV2.txId = txId
+    { InboundV2.txId = toRawTxIdHash . txId
     , InboundV2.mempoolAddTxs = \txs ->
         partitionTxIds <$> addTxs mempool txs
     }
  where
   partitionTxIds ::
-    [MempoolAddTxResult blk] -> ([TxId (GenTx blk)], [(TxId (GenTx blk), ())])
+    [MempoolAddTxResult blk] -> ([SL.TxId], [(SL.TxId, ())])
   partitionTxIds = partitionEithers . map getTxId
 
-  getTxId :: MempoolAddTxResult blk -> Either (TxId (GenTx blk)) (TxId (GenTx blk), ())
+  getTxId :: MempoolAddTxResult blk -> Either SL.TxId (SL.TxId, ())
   getTxId = \case
-    MempoolTxAdded tx _ -> Left $ txId (txForgetValidated tx)
-    MempoolTxRejected tx _reason -> Right $ (txId tx, ())
+    MempoolTxAdded tx _ -> Left $ toRawTxIdHash $ txId (txForgetValidated tx)
+    MempoolTxRejected tx _reason -> Right $ (toRawTxIdHash $ txId tx, ())
 
 {-------------------------------------------------------------------------------
   PeerSelection integration

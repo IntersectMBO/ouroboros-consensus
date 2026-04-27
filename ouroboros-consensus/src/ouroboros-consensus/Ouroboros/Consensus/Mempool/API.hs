@@ -48,6 +48,7 @@ module Ouroboros.Consensus.Mempool.API
   , zeroTicketNo
   ) where
 
+import qualified Cardano.Ledger.TxIn as SL
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.List.NonEmpty as NE
 import Data.Measure (Measure)
@@ -445,7 +446,7 @@ data MempoolSnapshot blk = MempoolSnapshot
   , snapshotLookupTx :: TicketNo -> Maybe (Validated (GenTx blk))
   -- ^ Get a specific transaction from the mempool snapshot by its ticket
   -- number, if it exists.
-  , snapshotHasTx :: GenTxId blk -> Bool
+  , snapshotHasTx :: SL.TxId -> Bool
   -- ^ Determine whether a specific transaction exists within the mempool
   -- snapshot.
   , snapshotMempoolSize :: Cap.MempoolSize

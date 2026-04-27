@@ -119,7 +119,6 @@ import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 import Ouroboros.Network.SizeInBytes
-import Ouroboros.Network.Tx (HasRawTxId (..), RawTxId (..))
 
 data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx TopTx era)
   deriving stock Generic
@@ -230,9 +229,6 @@ instance ShelleyBasedEra era => HasTxId (GenTx (ShelleyBlock proto era)) where
 
 instance ShelleyBasedEra era => ConvertRawTxId (GenTx (ShelleyBlock proto era)) where
   toRawTxIdHash (ShelleyTxId i) = i
-
-instance ShelleyBasedEra era => HasRawTxId (TxId (GenTx (ShelleyBlock proto era))) where
-  getRawTxId = RawTxId . toRawTxIdHash
 
 instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
   extractTxs =

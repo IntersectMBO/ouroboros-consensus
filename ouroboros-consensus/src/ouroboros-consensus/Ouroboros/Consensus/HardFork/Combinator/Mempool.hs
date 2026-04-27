@@ -57,7 +57,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
-import Ouroboros.Network.Tx (HasRawTxId (..), RawTxId (..))
 
 data HardForkApplyTxErr xs
   = -- | Validation error from one of the eras
@@ -555,7 +554,7 @@ applyHelper
 newtype instance TxId (GenTx (HardForkBlock xs)) = HardForkGenTxId
   { getHardForkGenTxId :: OneEraGenTxId xs
   }
-  deriving (Eq, Generic, Ord, Show)
+  deriving (Generic, Show)
   deriving anyclass NoThunks
 
 instance Typeable xs => ShowProxy (TxId (GenTx (HardForkBlock xs)))
@@ -568,12 +567,12 @@ instance CanHardFork xs => HasTxId (GenTx (HardForkBlock xs)) where
       . getOneEraGenTx
       . getHardForkGenTx
 
-instance CanHardFork xs => HasRawTxId (TxId (GenTx (HardForkBlock xs))) where
-  getRawTxId = RawTxId
-             . hcollapse
-             . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
-             . getOneEraGenTxId
-             . getHardForkGenTxId
+instance CanHardFork xs => ConvertRawTxId (GenTx (HardForkBlock xs)) where
+  toRawTxIdHash =
+    hcollapse
+      . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
+      . getOneEraGenTxId
+      . getHardForkGenTxId
 
 {-------------------------------------------------------------------------------
   HasTxs

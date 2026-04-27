@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
@@ -52,6 +53,7 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Network.SizeInBytes as Network
+import Ouroboros.Network.Tx
 
 -- | Generalized transaction
 --
@@ -108,6 +110,7 @@ class
   , Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (ApplyTxErr blk)
+  , ConvertRawTxId (GenTx blk)
   ) =>
   LedgerSupportsMempool blk
   where
@@ -270,7 +273,6 @@ data family TxId blk
 -- transactions should have different identifiers.
 class
   ( Show (TxId tx)
-  , Ord (TxId tx)
   , NoThunks (TxId tx)
   ) =>
   HasTxId tx
@@ -290,6 +292,10 @@ class HasTxId tx => ConvertRawTxId tx where
   -- | NOTE: The composition @'toRawTxIdHash' . 'txId'@ must satisfy the same
   -- properties as defined in the docs of 'txId'.
   toRawTxIdHash :: TxId tx -> SL.TxId
+
+instance HasRawTxId SL.TxId where
+  type RawTxId SL.TxId = SL.TxId
+  getRawTxId = id
 
 -- | Shorthand: ID of a generalized transaction
 type GenTxId blk = TxId (GenTx blk)

@@ -14,7 +14,6 @@ import Ouroboros.Consensus.Util.IOLike
 implGetSnapshotFor ::
   ( IOLike m
   , LedgerSupportsMempool blk
-  , HasTxId (GenTx blk)
   ) =>
   MempoolEnv m blk ->
   -- | Get snapshot for this slot number (usually the current slot)

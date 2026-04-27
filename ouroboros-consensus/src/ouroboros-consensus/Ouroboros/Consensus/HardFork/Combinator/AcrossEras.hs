@@ -67,7 +67,6 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
-import qualified Cardano.Ledger.TxIn as SL
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad.Except (throwError)
@@ -75,7 +74,6 @@ import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BSC
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
-import Data.Function (on)
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -171,19 +169,6 @@ instance Condense (OneEraHash xs) where
   OneEraGenTxId
 -------------------------------------------------------------------------------}
 
--- | This instance compares the underlying raw hash ('toRawTxIdHash') of the
--- 'TxId'.
---
--- Note that this means that transactions in different eras can have equal
--- 'TxId's. This should only be the case when the transaction format is
--- backwards compatible from one era to the next.
-instance CanHardFork xs => Eq (OneEraGenTxId xs) where
-  (==) = (==) `on` oneEraGenTxIdRawHash
-
--- | See the corresponding 'Eq' instance.
-instance CanHardFork xs => Ord (OneEraGenTxId xs) where
-  compare = compare `on` oneEraGenTxIdRawHash
-
 {-------------------------------------------------------------------------------
   Value for two /different/ eras
 -------------------------------------------------------------------------------}
@@ -276,12 +261,6 @@ getSameValue values =
         return ()
     | otherwise =
         throwError "differing values across hard fork"
-
-oneEraGenTxIdRawHash :: CanHardFork xs => OneEraGenTxId xs -> SL.TxId
-oneEraGenTxIdRawHash =
-  hcollapse
-    . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
-    . getOneEraGenTxId
 
 {-------------------------------------------------------------------------------
   NoThunks instances

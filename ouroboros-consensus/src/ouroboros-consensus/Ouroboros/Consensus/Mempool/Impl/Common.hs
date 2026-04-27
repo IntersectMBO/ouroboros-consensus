@@ -45,6 +45,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   , tickLedgerState
   ) where
 
+import qualified Cardano.Ledger.TxIn as SL
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import Control.Monad.Trans.Except (runExcept)
 import Control.Tracer
@@ -112,7 +113,7 @@ data InternalState blk = IS
   -- the normal way: by becoming invalid w.r.t. the updated ledger state.
   -- We treat a Mempool /over/ capacity in the same way as a Mempool /at/
   -- capacity.
-  , isTxIds :: !(Set (GenTxId blk))
+  , isTxIds :: !(Set SL.TxId)
   -- ^ The cached IDs of transactions currently in the mempool.
   --
   -- This allows one to more quickly lookup transactions by ID from a
@@ -344,7 +345,7 @@ tickLedgerState cfg (ForgeInUnknownSlot st) =
 -- | Extend 'InternalState' with a new transaction (one which we have not
 -- previously validated) that may or may not be valid in this ledger state.
 validateNewTransaction ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  LedgerSupportsMempool blk =>
   LedgerConfig blk ->
   WhetherToIntervene ->
   GenTx blk ->
@@ -375,7 +376,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
                     (MkTxMeasureWithDiffTime txsz dur)
             , isTxKeys = isTxKeys <> getTransactionKeySets tx
             , isTxValues = ltliftA2 unionValues isTxValues origValues
-            , isTxIds = Set.insert (txId tx) isTxIds
+            , isTxIds = Set.insert (toRawTxIdHash $ txId tx) isTxIds
             , isLedgerState = prependMempoolDiffs isLedgerState st'
             , isLastTicketNo = nextTicketNo
             }
@@ -402,7 +403,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
 -- some transactions and revalidate the remaining ones.
 revalidateTxsFor ::
   forall blk.
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  LedgerSupportsMempool blk =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
@@ -427,7 +428,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
    in RevalidateTxsResult
         ( IS
             { isTxs = TxSeq.fromList $ map unwrap validTxs
-            , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) validTxs
+            , isTxIds = Set.fromList $ map (toRawTxIdHash . txId . txForgetValidated . fst3) validTxs
             , isTxKeys = outputKeys
             , isTxValues = ltliftA2 restrictValuesMK values outputKeys
             , isLedgerState =
@@ -458,7 +459,7 @@ data RevalidateTxsResult blk
 -- but we ignore the diffs.
 computeSnapshot ::
   forall blk.
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  LedgerSupportsMempool blk =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
@@ -479,7 +480,7 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
    in snapshotFromIS $
         IS
           { isTxs = TxSeq.fromList $ map unwrap validatedTxs
-          , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) validatedTxs
+          , isTxIds = Set.fromList $ map (toRawTxIdHash . txId . txForgetValidated . fst3) validatedTxs
           , -- These two can be empty since we don't need the resulting
             -- values at all when making a snapshot, as we won't update
             -- the internal state.
@@ -505,7 +506,7 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
 snapshotFromIS ::
   forall blk.
-  (HasTxId (GenTx blk), TxLimits blk, GetTip (TickedLedgerState blk)) =>
+  (TxLimits blk, GetTip (TickedLedgerState blk)) =>
   InternalState blk ->
   MempoolSnapshot blk
 snapshotFromIS is =
@@ -553,7 +554,7 @@ snapshotFromIS is =
 
   implSnapshotHasTx ::
     InternalState blk ->
-    GenTxId blk ->
+    SL.TxId ->
     Bool
   implSnapshotHasTx IS{isTxIds} = flip Set.member isTxIds
 

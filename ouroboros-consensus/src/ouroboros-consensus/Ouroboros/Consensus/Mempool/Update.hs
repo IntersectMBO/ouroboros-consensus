@@ -68,7 +68,6 @@ implAddTx ::
   ( IOLike m
   , MonadTimer m
   , LedgerSupportsMempool blk
-  , HasTxId (GenTx blk)
   ) =>
   MempoolEnv m blk ->
   WhichAddTx f ->
@@ -177,7 +176,6 @@ data TransactionProcessed blk
 doAddTx ::
   forall m blk f.
   ( LedgerSupportsMempool blk
-  , HasTxId (GenTx blk)
   , IOLike m
   , MonadTimer m
   ) =>
@@ -298,9 +296,7 @@ doAddTx mpEnv caller wti tx = do
       (TestingAddTx _, Right x) -> pure $ Just x
 
 pureTryAddTx ::
-  ( LedgerSupportsMempool blk
-  , HasTxId (GenTx blk)
-  ) =>
+  LedgerSupportsMempool blk =>
   MempoolEnv m blk ->
   -- | The ledger configuration.
   LedgerCfg (LedgerState blk) ->
@@ -433,7 +429,6 @@ pureTryAddTx mpEnv cfg wti tx is values =
 implRemoveTxsEvenIfValid ::
   ( IOLike m
   , LedgerSupportsMempool blk
-  , HasTxId (GenTx blk)
   ) =>
   MempoolEnv m blk ->
   NE.NonEmpty (GenTxId blk) ->
@@ -443,7 +438,8 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
     \is -> do
       let toKeep =
             filter
-              ( (`notElem` Set.fromList (NE.toList toRemove))
+              ( (`notElem` Set.fromList (map toRawTxIdHash $ NE.toList toRemove))
+                  . toRawTxIdHash
                   . txId
                   . txForgetValidated
                   . validatedTx
@@ -480,9 +476,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
 -- | Craft a 'RemoveTxs' that manually removes the given transactions from the
 -- mempool, returning inside it an updated InternalState.
 pureRemoveTxs ::
-  ( LedgerSupportsMempool blk
-  , HasTxId (GenTx blk)
-  ) =>
+  LedgerSupportsMempool blk =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
@@ -520,7 +514,6 @@ implSyncWithLedger ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , ValidateEnvelope blk
-  , HasTxId (GenTx blk)
   ) =>
   -- | This argument is only to be able to acquire a snapshot in the same
   -- atomically block as the re-sync when testing the mempool in the QSM
@@ -613,7 +606,7 @@ implSyncWithLedger projectResult mpEnv =
 --
 -- See the documentation of 'runSyncWithLedger' for more context.
 pureSyncWithLedger ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  LedgerSupportsMempool blk =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->

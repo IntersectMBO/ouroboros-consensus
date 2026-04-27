@@ -766,6 +766,9 @@ instance
 instance Bridge m a => HasTxId (GenTx (DualBlock m a)) where
   txId = DualGenTxId . txId . dualGenTxMain
 
+instance Bridge m a => ConvertRawTxId (GenTx (DualBlock m a)) where
+  toRawTxIdHash = undefined
+
 deriving instance Bridge m a => Show (GenTx (DualBlock m a))
 deriving instance Bridge m a => Show (Validated (GenTx (DualBlock m a)))
 deriving instance Bridge m a => Show (DualGenTxErr m a)

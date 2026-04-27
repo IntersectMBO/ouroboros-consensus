@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -37,6 +38,8 @@ module Ouroboros.Consensus.Node.Serialisation
   ) where
 
 import qualified Cardano.Binary as KeyHash
+import qualified Cardano.Ledger.Binary as Ledger
+import qualified Cardano.Ledger.TxIn as SL
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (Serialise (decode, encode))
@@ -84,6 +87,10 @@ class SerialiseNodeToNode blk a where
     CodecConfig blk -> BlockNodeToNodeVersion blk -> forall s. Decoder s a
   decodeNodeToNode _ccfg _version = decode
 
+instance SerialiseNodeToNode blk SL.TxId where
+  encodeNodeToNode _ _ = Ledger.toPlainEncoding (Ledger.natVersion @2) . Ledger.encCBOR
+  decodeNodeToNode _ _ = Ledger.toPlainDecoder Nothing (Ledger.natVersion @2) Ledger.decCBOR
+
 {-------------------------------------------------------------------------------
   NodeToClient
 -------------------------------------------------------------------------------}
@@ -106,6 +113,10 @@ class SerialiseNodeToClient blk a where
     Serialise a =>
     CodecConfig blk -> BlockNodeToClientVersion blk -> forall s. Decoder s a
   decodeNodeToClient _ccfg _version = decode
+
+instance SerialiseNodeToClient blk SL.TxId where
+  encodeNodeToClient _ _ = Ledger.toPlainEncoding (Ledger.natVersion @2) . Ledger.encCBOR
+  decodeNodeToClient _ _ = Ledger.toPlainDecoder Nothing (Ledger.natVersion @2) Ledger.decCBOR
 
 {-------------------------------------------------------------------------------
   NodeToClient - SerialiseResult
