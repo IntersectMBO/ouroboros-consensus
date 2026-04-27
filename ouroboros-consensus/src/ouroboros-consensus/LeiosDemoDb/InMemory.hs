@@ -105,6 +105,7 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbQueryFetchWork = imQueryFetchWork stateVar
               , leiosDbQueryCompletedEbByPoint = imQueryCompletedEbByPoint stateVar
               , leiosDbQueryCertificateByPoint = \_ebPoint -> return $ Just trustNoVerifyLeiosCertificate
+              , leiosDbQueryCertificateByPoint = return . Just . trustNoVerifyLeiosCertificate
               }
       }
 

@@ -6,6 +6,7 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
+import Cardano.Binary (serialize')
 import qualified Cardano.Ledger.Block as SL
 import qualified Cardano.Ledger.Core as Core (Tx)
 import qualified Cardano.Ledger.Core as SL (toTxSeq)
@@ -18,8 +19,9 @@ import qualified Data.Sequence.Strict as Seq
 import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
   , ForgedLeiosEb (point)
-  , LeiosCertificate (unLeiosCertificate)
+  , LeiosCertificate (leiosCertificateEbPoint)
   , LeiosPoint (pointEbHash)
+  , encodeLeiosPoint
   , forgeLeiosEb
   , leiosEbBytesSize
   )
@@ -133,4 +135,4 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       $ fbCurrentTickedLedgerState
 
 toLedgerCert :: LeiosCertificate -> SL.Certificate
-toLedgerCert = SL.Certificate . BL.fromStrict . unLeiosCertificate
+toLedgerCert = SL.Certificate . BL.fromStrict . serialize' . encodeLeiosPoint . leiosCertificateEbPoint
