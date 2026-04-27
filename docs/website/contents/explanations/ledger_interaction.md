@@ -72,6 +72,9 @@ particular blocks defined in the ledger.
 
 ## Ledger state ticking and forecasting
 
+This section covers the Ledger-side implementation of ticking (the `TICK` and `TICKF` transition rules).
+For a consensus-level treatment — what ticking means, where consensus ticks, and how it relates to forecasting — see [Ticking](ticking.md).
+
 Before a block can be applied to a Ledger state, the state has to be transported
 through time up to the slot in which the block was forged. There are mutations
 in the Ledger state that are enacted just by the passing of time, such as epoch

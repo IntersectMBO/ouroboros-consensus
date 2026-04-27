@@ -185,13 +185,17 @@ The class has five methods, each corresponding to a concept already introduced:
 
 ### Ticked state
 
-Several methods require the protocol state to be *ticked* to a specific slot before use.
-[`tickChainDepState`][consensus-protocol] takes a `ChainDepState p` and produces a [`Ticked`][ticked] `(ChainDepState p)` — a type-level distinction that makes it impossible to accidentally use an unticked state where a ticked one is expected.
+The protocol state evolves due to two factors: headers being applied, and time passing.
+Some updates fire purely from the passage of time — Praos rotates its nonces at epoch boundaries, for example — and must happen even at slots where no header exists.
+*Ticking* is the operation that advances the protocol state to account for these time-only changes, producing a distinct `Ticked` variant of the state.
 
+[`tickChainDepState`][consensus-protocol] takes a `ChainDepState p` and produces a [`Ticked`][ticked] `(ChainDepState p)` — a type-level distinction that makes it impossible to accidentally use an unticked state where a ticked one is expected.
 Both `checkIsLeader` and `updateChainDepState` require a ticked state as input.
-Ticking also requires a `LedgerView` (see below), because some time-dependent state transitions need ledger information — for example, Praos rotates its nonces at epoch boundaries using the ledger's epoch structure.
+Ticking also takes a `LedgerView` (see below), because some time-dependent transitions need ledger information — the Praos nonce rotation above uses the ledger's epoch structure, for instance.
 
 For BFT, ticking is a no-op (`TickedTrivial`) since there is no protocol state.
+
+See [Ticking](ticking.md) for the full picture, including where ticking is invoked across the consensus layer and how it relates to forecasting.
 
 ### LedgerView and forecasting
 
