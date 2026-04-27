@@ -22,7 +22,7 @@ module Ouroboros.Consensus.Committee.EveryoneVotes
   , numActiveVoters
   ) where
 
-import Cardano.Ledger.BaseTypes (HasZero (..), NonZero, Nonce)
+import Cardano.Ledger.BaseTypes (HasZero (..), NonZero)
 import Cardano.Ledger.BaseTypes.NonZero (NonZero (..), nonZero)
 import Control.Exception (assert)
 import Control.Monad.Zip (MonadZip (..))
@@ -82,14 +82,10 @@ instance
       candidateSeats :: !(Map PoolId SeatIndex)
     , -- Number of active voters (i.e., those with non-zero stake)
       numActiveVoters :: !NumPoolsWithPositiveStake
-    , --  Epoch nonce of the epoch where this committee selection takes place
-      epochNonce :: !Nonce
     }
 
   data VotingCommitteeInput crypto EveryoneVotes
     = EveryoneVotesVotingCommitteeInput
-        -- Epoch nonce for the epoch where this voting committee takes place
-        !Nonce
         -- Extended cumulative stake distribution of the potential voters
         !(ExtWFAStakeDistr (PublicKey crypto))
 
@@ -145,7 +141,6 @@ mkEveryoneVotesVotingCommittee ::
     (VotingCommittee crypto EveryoneVotes)
 mkEveryoneVotesVotingCommittee
   ( EveryoneVotesVotingCommitteeInput
-      nonce
       stakeDistr
     ) = do
     let accumVotersWithPositiveStake
@@ -169,7 +164,6 @@ mkEveryoneVotesVotingCommittee
         { extWFAStakeDistr = stakeDistr
         , candidateSeats = seats
         , numActiveVoters = poolsWithPositiveStake
-        , epochNonce = nonce
         }
 
 -- | Check whether we should vote in a given election
