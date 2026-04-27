@@ -157,7 +157,7 @@ instance
       MissingPoolId PoolId
     | -- Voter claims to be a persistent member of the committee, but it's not
       NotAPersistentMember SeatIndex
-    | -- Voter claims to be a non-persistent member of the committe, but it's not
+    | -- Voter claims to be a non-persistent member of the committee, but it's not
       NotANonPersistentMember SeatIndex
     | -- VRF evaluation for local sortition failed (e.g. due to invalid proof)
       LocalSortitionError String
@@ -403,7 +403,7 @@ implVerifyVote committee = \case
 
 -- | Compute the voting power of an eligible committee member
 --
--- NOTE: theres is a subtle difference between the "Ledger stake" and the "Vote
+-- NOTE: there is a subtle difference between the "Ledger stake" and the "Vote
 -- weight" of a given voter. On one hand, the ledger stake is the stake as
 -- reflected directly by the ledger stake distribution under consideration. On
 -- the other hand, the "Vote" weight refers to the voting power of that voter,

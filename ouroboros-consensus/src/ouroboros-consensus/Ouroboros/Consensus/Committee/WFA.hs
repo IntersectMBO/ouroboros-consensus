@@ -183,7 +183,7 @@ weightedFaitAccompliSplitSeats extWFAStakeDistr totalSeats
             (LedgerStake voterStake)
             cumulativeStake
 
--- | Evaluate whether a voter with its give stake and relatile position in the
+-- | Evaluate whether a voter with the given stake and relative position in the
 -- stake distribution can be granted a persistent seat in the voting committee.
 isAbovePersistentSeatThreshold ::
   -- | Total committee size (persistent + non-persistent)
