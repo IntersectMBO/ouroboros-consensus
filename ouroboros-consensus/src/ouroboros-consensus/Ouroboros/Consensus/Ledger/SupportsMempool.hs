@@ -33,10 +33,10 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , nothingMkMempoolApplyTxError
   ) where
 
+import qualified Cardano.Ledger.TxIn as SL
 import Codec.Serialise (Serialise)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
-import Data.ByteString.Short (ShortByteString)
 import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.Foldable as Foldable
@@ -289,7 +289,7 @@ class
 class HasTxId tx => ConvertRawTxId tx where
   -- | NOTE: The composition @'toRawTxIdHash' . 'txId'@ must satisfy the same
   -- properties as defined in the docs of 'txId'.
-  toRawTxIdHash :: TxId tx -> ShortByteString
+  toRawTxIdHash :: TxId tx -> SL.TxId
 
 -- | Shorthand: ID of a generalized transaction
 type GenTxId blk = TxId (GenTx blk)

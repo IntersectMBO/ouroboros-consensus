@@ -48,6 +48,7 @@ import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Chain.ValidationMode as CC
 import Cardano.Crypto (hashDecoded)
 import qualified Cardano.Crypto as CC
+import Cardano.Crypto.Hash.Class
 import Cardano.Ledger.Binary
   ( ByteSpan
   , DecoderError (..)
@@ -59,6 +60,8 @@ import Cardano.Ledger.Binary
   , unsafeDeserialize
   )
 import Cardano.Ledger.Binary.Plain (enforceSize)
+import Cardano.Ledger.Hashes
+import qualified Cardano.Ledger.TxIn as SL
 import Cardano.Prelude (Natural, cborError)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -66,10 +69,9 @@ import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad (void)
 import Control.Monad.Except (Except, throwError)
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
-import Data.Maybe (maybeToList)
+import Data.Maybe (fromJust, maybeToList)
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class (InspectHeapNamed (..), NoThunks (..))
@@ -202,10 +204,11 @@ instance HasTxId (GenTx ByronBlock) where
   txId (ByronUpdateVote i _) = ByronUpdateVoteId i
 
 instance ConvertRawTxId (GenTx ByronBlock) where
-  toRawTxIdHash (ByronTxId i) = CC.abstractHashToShort i
-  toRawTxIdHash (ByronDlgId i) = CC.abstractHashToShort i
-  toRawTxIdHash (ByronUpdateProposalId i) = CC.abstractHashToShort i
-  toRawTxIdHash (ByronUpdateVoteId i) = CC.abstractHashToShort i
+  toRawTxIdHash txid = SL.TxId $ unsafeMakeSafeHash $ fromJust $ hashFromBytesShort $ case txid of
+    ByronTxId i -> CC.abstractHashToShort i
+    ByronDlgId i -> CC.abstractHashToShort i
+    ByronUpdateProposalId i -> CC.abstractHashToShort i
+    ByronUpdateVoteId i -> CC.abstractHashToShort i
 
 instance HasRawTxId (TxId (GenTx ByronBlock)) where
   getRawTxId = RawTxId . toRawTxIdHash

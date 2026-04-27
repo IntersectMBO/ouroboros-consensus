@@ -40,15 +40,15 @@ module Test.Consensus.HardFork.Combinator.A
   , TxId (..)
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Ledger.BaseTypes.NonZero
+import qualified Cardano.Ledger.TxIn as SL
 import Cardano.Slotting.EpochInfo
 import Codec.Serialise
 import Control.Monad (guard)
 import qualified Data.Binary as B
 import Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
-import qualified Data.ByteString.Short as SBS
 import Data.Functor.Identity
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -410,15 +410,27 @@ instance TxLimits BlockA where
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
   txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
 
-newtype instance TxId (GenTx BlockA) = TxIdA Int
+newtype instance TxId (GenTx BlockA) = TxIdA SL.TxId
   deriving stock (Show, Eq, Ord, Generic)
   deriving newtype (NoThunks, Serialise)
+
+instance Serialise SL.TxId where
+  encode (SL.TxId h) = toCBOR h
+  decode = SL.TxId <$> fromCBOR
 
 instance HasTxId (GenTx BlockA) where
   txId = txA_id
 
 instance ConvertRawTxId (GenTx BlockA) where
-  toRawTxIdHash = SBS.toShort . Lazy.toStrict . serialise
+  toRawTxIdHash (TxIdA i) = i
+
+-- SL.TxId
+--   . SL.unsafeMakeSafeHash
+--   . fromJust
+--   . Hash.hashFromBytesShort
+--   . SBS.toShort
+--   . Lazy.toStrict
+--   . serialise
 
 instance ShowQuery (BlockQuery BlockA fp) where
   showResult qry = case qry of {}

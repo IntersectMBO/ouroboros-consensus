@@ -18,8 +18,12 @@
 
 module Test.Consensus.HardFork.Combinator (tests) where
 
+import qualified Cardano.Crypto.Hash.Class as Hash
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
+import qualified Cardano.Ledger.Hashes as SL
+import qualified Cardano.Ledger.TxIn as SL
 import qualified Data.Map.Strict as Map
+import Data.Maybe
 import Data.MemPack
 import Data.SOP.BasicFunctors
 import Data.SOP.Counting
@@ -347,7 +351,19 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
       , lcfgA_systemStart = SystemStart dawnOfTime -- required for RunNode
       , lcfgA_forgeTxs =
           Map.fromList
-            [ (testSetupTxSlot, [TxA (TxIdA 0) InitiateAtoB])
+            [
+              ( testSetupTxSlot
+              ,
+                [ TxA
+                    ( TxIdA $
+                        SL.TxId $
+                          SL.unsafeMakeSafeHash $
+                            fromJust $
+                              Hash.hashFromStringAsHex "00000000000000000000000000000000"
+                    )
+                    InitiateAtoB
+                ]
+              )
             ]
       }
 

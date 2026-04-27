@@ -67,6 +67,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import qualified Cardano.Ledger.TxIn as SL
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad.Except (throwError)
@@ -276,7 +277,7 @@ getSameValue values =
     | otherwise =
         throwError "differing values across hard fork"
 
-oneEraGenTxIdRawHash :: CanHardFork xs => OneEraGenTxId xs -> ShortByteString
+oneEraGenTxIdRawHash :: CanHardFork xs => OneEraGenTxId xs -> SL.TxId
 oneEraGenTxIdRawHash =
   hcollapse
     . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)

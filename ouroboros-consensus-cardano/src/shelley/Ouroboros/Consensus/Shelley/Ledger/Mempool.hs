@@ -41,7 +41,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   , fromExUnits
   ) where
 
-import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Allegra (ApplyTxError (AllegraApplyTxError))
 import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import Cardano.Ledger.Alonzo (ApplyTxError (AlonzoApplyTxError))
@@ -85,7 +84,6 @@ import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError))
 import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
-import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
@@ -231,8 +229,7 @@ instance ShelleyBasedEra era => HasTxId (GenTx (ShelleyBlock proto era)) where
   txId (ShelleyTx i _) = ShelleyTxId i
 
 instance ShelleyBasedEra era => ConvertRawTxId (GenTx (ShelleyBlock proto era)) where
-  toRawTxIdHash (ShelleyTxId i) =
-    Hash.hashToBytesShort . SL.extractHash . SL.unTxId $ i
+  toRawTxIdHash (ShelleyTxId i) = i
 
 instance ShelleyBasedEra era => HasRawTxId (TxId (GenTx (ShelleyBlock proto era))) where
   getRawTxId = RawTxId . toRawTxIdHash
