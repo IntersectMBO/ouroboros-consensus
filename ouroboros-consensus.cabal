@@ -558,7 +558,7 @@ library unstable-consensus-testlib
     file-embed,
     filepath,
     fs-api,
-    fs-sim ^>=0.4,
+    fs-sim ^>=0.5,
     generics-sop,
     hashable,
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm},
