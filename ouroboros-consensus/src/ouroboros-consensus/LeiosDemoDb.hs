@@ -18,7 +18,7 @@ module LeiosDemoDb
 
     -- * SQL (re-exported for leiosdemo app)
   , sql_schema
-  , sql_insert_ebPoint
+  , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx
   ) where

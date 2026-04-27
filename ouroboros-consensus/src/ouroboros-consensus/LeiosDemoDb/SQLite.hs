@@ -10,12 +10,12 @@ module LeiosDemoDb.SQLite
 
     -- * SQL strings (re-exported for leiosdemo app)
   , sql_schema
-  , sql_insert_ebPoint
+  , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx
   ) where
 
-import Cardano.Prelude (foldM, forM_, traverse_, when)
+import Cardano.Prelude (forM_, traverse_, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -133,7 +133,7 @@ openSQLiteConnection dbPath notificationChan = do
 
 sqlScanEbPoints :: DB.Database -> IO [(SlotNo, EbHash)]
 sqlScanEbPoints db =
-  dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_ebPoints) $ \stmt -> do
+  dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_ebs) $ \stmt -> do
     let loop acc =
           dbStep stmt >>= \case
             DB.Done -> pure (reverse acc)
@@ -145,7 +145,7 @@ sqlScanEbPoints db =
 
 sqlLookupEbPoint :: DB.Database -> EbHash -> IO (Maybe SlotNo)
 sqlLookupEbPoint db ebHash =
-  dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebPoint) $ \stmt -> do
+  dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_eb) $ \stmt -> do
     dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
     dbStep stmt >>= \case
       DB.Done -> pure Nothing
@@ -155,7 +155,7 @@ sqlLookupEbPoint db ebHash =
 
 sqlInsertEbPoint :: DB.Database -> LeiosPoint -> BytesSize -> IO ()
 sqlInsertEbPoint db point ebBytesSize =
-  dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebPoint) $ \stmt -> do
+  dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_eb) $ \stmt -> do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
     dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
     dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
@@ -179,51 +179,58 @@ sqlInsertEbBody db notify point eb = do
   let items = leiosEbBodyItems eb
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
-  dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_ebBody) $ \stmt ->
-    mapM_
-      ( \(txOffset, txHash, txBytesSize) -> do
-          dbBindBlob stmt 1 point.pointEbHash.ebHashBytes
-          dbBindInt64 stmt 2 (fromIntegral txOffset)
-          dbBindBlob stmt 3 (let MkTxHash bytes = txHash in bytes)
-          dbBindInt64 stmt 4 (fromIntegral txBytesSize)
-          dbStep1 stmt
-          dbReset stmt
-      )
-      items
+  dbWithBEGIN db $ do
+    dbWithPrepare db (fromString sql_insert_ebBody) $ \stmt ->
+      mapM_
+        ( \(txOffset, txHash, txBytesSize) -> do
+            dbBindBlob stmt 1 point.pointEbHash.ebHashBytes
+            dbBindInt64 stmt 2 (fromIntegral txOffset)
+            dbBindBlob stmt 3 (let MkTxHash bytes = txHash in bytes)
+            dbBindInt64 stmt 4 (fromIntegral txBytesSize)
+            dbStep1 stmt
+            dbReset stmt
+        )
+        items
+    -- Initialize missingTxCount (accounts for txs already in the DB)
+    dbWithPrepare db (fromString sql_init_missing_tx_count) $ \stmt -> do
+      dbBindBlob stmt 1 point.pointEbHash.ebHashBytes
+      dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
+      dbBindInt64 stmt 3 (fromIntegral $ unSlotNo point.pointSlotNo)
+      dbStep1 stmt
   notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
 
 sqlInsertTxs ::
   DB.Database -> (LeiosNotification -> IO ()) -> [(TxHash, ByteString)] -> IO CompletedEbs
 sqlInsertTxs db notify txs = do
-  -- Insert all txs into global txs table, then check for newly-complete EBs
   completed <- dbWithBEGIN db $ do
-    -- INSERT OR IGNORE all txs
-    dbWithPrepare db (fromString sql_insert_tx) $ \stmtTx ->
-      forM_ txs $ \(txHash, txBytes) -> do
-        let txBytesSize = fromIntegral $ BS.length txBytes
-            txHashBytes = let MkTxHash bytes = txHash in bytes
-        dbBindBlob stmtTx 1 txHashBytes
-        dbBindBlob stmtTx 2 txBytes
-        dbBindInt64 stmtTx 3 txBytesSize
-        dbStep1 stmtTx
-        dbReset stmtTx
-    -- For each inserted txHash, find EBs that are now complete
-    -- Collect results in a Map to deduplicate (same EB may be found via multiple txHashes)
+    stmtInsert <- dbPrepare db (fromString sql_insert_tx)
+    stmtDecr <- dbPrepare db (fromString sql_decrement_missing_tx_count)
+    -- Insert each tx; on success (novel), decrement missingTxCount for referencing EBs
+    forM_ txs $ \(txHash, txBytes) -> do
+      let txBytesSize = fromIntegral $ BS.length txBytes
+          txHashBytes = let MkTxHash bytes = txHash in bytes
+      dbBindBlob stmtInsert 1 txHashBytes
+      dbBindBlob stmtInsert 2 txBytes
+      dbBindInt64 stmtInsert 3 txBytesSize
+      novel <- dbStepInsert stmtInsert
+      -- Use raw reset: after ErrorConstraint, dbReset would re-throw the error
+      void $ DB.reset stmtInsert
+      when novel $ do
+        dbBindBlob stmtDecr 1 txHashBytes
+        dbStep1 stmtDecr
+        dbReset stmtDecr
+    dbFinalize stmtInsert
+    dbFinalize stmtDecr
+    -- Find newly-complete EBs (missingTxCount reached 0)
     dbWithPrepare db (fromString sql_find_complete_ebs) $ \stmt -> do
-      let checkTxHash acc (txHash, _) = do
-            dbBindBlob stmt 1 (let MkTxHash bytes = txHash in bytes)
-            let loop acc' =
-                  dbStep stmt >>= \case
-                    DB.Done -> pure acc'
-                    DB.Row -> do
-                      ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-                      slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
-                      loop (Map.insert ebHash slot acc')
-            result <- loop acc
-            dbReset stmt
-            pure result
-      ebMap <- foldM checkTxHash Map.empty txs
-      pure [MkLeiosPoint slot ebHash | (ebHash, slot) <- Map.toList ebMap]
+      let loop acc =
+            dbStep stmt >>= \case
+              DB.Done -> pure (reverse acc)
+              DB.Row -> do
+                ebHash <- MkEbHash <$> DB.columnBlob stmt 0
+                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
+                loop (MkLeiosPoint slot ebHash : acc)
+      loop []
   -- Emit notifications for each completed EB
   forM_ completed $ notify . LeiosOfferBlockTxs
   pure completed
@@ -359,18 +366,20 @@ sqlQueryCompletedEbByPoint db ebPoint =
 
 sql_schema :: String
 sql_schema =
-  "CREATE TABLE ebPoints (\n\
+  "CREATE TABLE ebs (\n\
   \    ebSlot INTEGER NOT NULL\n\
   \  ,\n\
   \    ebHashBytes BLOB NOT NULL\n\
   \  ,\n\
   \    ebBytesSize INTEGER NOT NULL\n\
   \  ,\n\
+  \    missingTxCount INTEGER\n\
+  \  ,\n\
   \    PRIMARY KEY (ebSlot, ebHashBytes)\n\
   \  );\n\
-  \CREATE INDEX idx_ebPoints_ebHashBytes ON ebPoints(ebHashBytes);\n\
+  \CREATE INDEX idx_ebs_ebHashBytes ON ebs(ebHashBytes);\n\
   \CREATE TABLE ebTxs (\n\
-  \    ebHashBytes BLOB NOT NULL   -- foreign key ebPoints.ebHashBytes\n\
+  \    ebHashBytes BLOB NOT NULL   -- foreign key ebs.ebHashBytes\n\
   \  ,\n\
   \    txOffset INTEGER NOT NULL\n\
   \  ,\n\
@@ -390,20 +399,20 @@ sql_schema =
   \  );\n\
   \"
 
-sql_scan_ebPoints :: String
-sql_scan_ebPoints =
+sql_scan_ebs :: String
+sql_scan_ebs =
   "SELECT ebSlot, ebHashBytes\n\
-  \FROM ebPoints\n\
+  \FROM ebs\n\
   \ORDER BY ebSlot ASC\n\
   \"
 
-sql_lookup_ebPoint :: String
-sql_lookup_ebPoint =
-  "SELECT ebSlot FROM ebPoints WHERE ebHashBytes = ?"
+sql_lookup_eb :: String
+sql_lookup_eb =
+  "SELECT ebSlot FROM ebs WHERE ebHashBytes = ?"
 
-sql_insert_ebPoint :: String
-sql_insert_ebPoint =
-  "INSERT OR IGNORE INTO ebPoints (ebSlot, ebHashBytes, ebBytesSize) VALUES (?, ?, ?)"
+sql_insert_eb :: String
+sql_insert_eb =
+  "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytesSize) VALUES (?, ?, ?)"
 
 sql_lookup_ebBodies :: String
 sql_lookup_ebBodies =
@@ -419,7 +428,7 @@ sql_insert_ebBody =
 
 sql_insert_tx :: String
 sql_insert_tx =
-  "INSERT OR IGNORE INTO txs (txHashBytes, txBytes, txBytesSize) VALUES (?, ?, ?)\n\
+  "INSERT INTO txs (txHashBytes, txBytes, txBytesSize) VALUES (?, ?, ?)\n\
   \"
 
 -- | Query for missing EB bodies: EBs announced but not yet downloaded.
@@ -427,10 +436,8 @@ sql_insert_tx =
 sql_query_missing_eb_bodies :: String
 sql_query_missing_eb_bodies =
   "SELECT ep.ebSlot, ep.ebHashBytes, ep.ebBytesSize\n\
-  \FROM ebPoints ep\n\
-  \WHERE NOT EXISTS (\n\
-  \    SELECT 1 FROM ebTxs e WHERE e.ebHashBytes = ep.ebHashBytes\n\
-  \)\n\
+  \FROM ebs ep\n\
+  \WHERE missingTxCount IS NULL\n\
   \ORDER BY ep.ebSlot DESC\n\
   \"
 
@@ -440,7 +447,7 @@ sql_query_missing_eb_txs :: String
 sql_query_missing_eb_txs =
   "SELECT ep.ebSlot, e.ebHashBytes, e.txOffset, e.txHashBytes, e.txBytesSize\n\
   \FROM ebTxs e\n\
-  \JOIN ebPoints ep ON e.ebHashBytes = ep.ebHashBytes\n\
+  \JOIN ebs ep ON e.ebHashBytes = ep.ebHashBytes\n\
   \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
   \WHERE t.txHashBytes IS NULL\n\
   \ORDER BY ep.ebSlot DESC, e.txOffset ASC\n\
@@ -480,26 +487,29 @@ sql_flush_memTxHashes :: String
 sql_flush_memTxHashes =
   "DELETE FROM mem.txHashes"
 
--- | Find EBs that are now complete (all txs present in txs table).
--- This query finds EBs referencing the given txHash where all txs are present.
--- Uses idx_ebTxs_txHashBytes to find candidate EBs efficiently.
--- Parameter 1: txHashBytes to check
---
--- TODO: If JSON1 extension is available, we could pass all txHashes in a single
--- query using json_each() with unhex() for more efficient batch checking:
---   WHERE e.txHashBytes IN (SELECT unhex(j.value) FROM json_each(?) AS j)
+-- | Find EBs that are now complete (missingTxCount reached 0).
 sql_find_complete_ebs :: String
 sql_find_complete_ebs =
-  "SELECT DISTINCT e.ebHashBytes, ep.ebSlot\n\
-  \FROM ebTxs e\n\
-  \JOIN ebPoints ep ON e.ebHashBytes = ep.ebHashBytes\n\
-  \WHERE e.txHashBytes = ?\n\
-  \  AND NOT EXISTS (\n\
-  \    SELECT 1 FROM ebTxs e2\n\
-  \    LEFT JOIN txs t ON e2.txHashBytes = t.txHashBytes\n\
-  \    WHERE e2.ebHashBytes = e.ebHashBytes\n\
-  \      AND t.txHashBytes IS NULL\n\
-  \  )\n\
+  "SELECT ebHashBytes, ebSlot FROM ebs WHERE missingTxCount = 0"
+
+-- | Decrement missingTxCount for all EBs referencing the given txHash.
+-- Parameter 1: txHashBytes
+sql_decrement_missing_tx_count :: String
+sql_decrement_missing_tx_count =
+  "UPDATE ebs SET missingTxCount = missingTxCount - 1\n\
+  \WHERE ebHashBytes IN (SELECT ebHashBytes FROM ebTxs WHERE txHashBytes = ?)\n\
+  \"
+
+-- | Initialize missingTxCount after EB body is inserted.
+-- Counts ebTxs entries that don't yet have a corresponding tx in the txs table.
+-- Parameters: 1 = ebHashBytes, 2 = ebHashBytes, 3 = ebSlot
+sql_init_missing_tx_count :: String
+sql_init_missing_tx_count =
+  "UPDATE ebs SET missingTxCount = (\n\
+  \    SELECT COUNT(*) FROM ebTxs e\n\
+  \    LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
+  \    WHERE e.ebHashBytes = ? AND t.txHashBytes IS NULL\n\
+  \) WHERE ebHashBytes = ? AND ebSlot = ?\n\
   \"
 
 sql_insert_memTxPoints :: String
@@ -594,6 +604,30 @@ dbStep stmt = withDieStmt stmt $ DB.stepNoCB stmt
 
 dbStep1 :: HasCallStack => DB.Statement -> IO ()
 dbStep1 stmt = withDieDoneStmt stmt $ DB.stepNoCB stmt
+
+-- | Like 'dbStep1' but returns 'True' on success and 'False' on constraint
+-- violation (duplicate key). Other errors are thrown as usual.
+dbStepInsert :: HasCallStack => DB.Statement -> IO Bool
+dbStepInsert stmt =
+  go maxBusyRetries (DB.stepNoCB stmt)
+ where
+  go 0 io =
+    io >>= \case
+      Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
+      Right DB.Done -> pure True
+      Right DB.Row -> error "dbStepInsert: unexpected Row result"
+  go n io =
+    io >>= \case
+      Left DB.ErrorBusy -> do
+        let retryNum = maxBusyRetries - n
+            baseDelay = 100
+        jitter <- (`mod` baseDelay) <$> randomIO
+        threadDelay (baseDelay * retryNum + jitter)
+        go (n - 1) io
+      Left DB.ErrorConstraint -> pure False
+      Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
+      Right DB.Done -> pure True
+      Right DB.Row -> error "dbStepInsert: unexpected Row result"
 
 -- ** Error "handling"
 

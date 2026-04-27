@@ -270,7 +270,7 @@ generateDb prng0 db ebRecipes = do
   -- init db
   -- NOTE: The SQLSchema evolved and the "generate" tool was only patched to stay compatible.
   withDieMsg $ DB.exec db (fromString LeiosDemoDb.sql_schema)
-  stmt_write_ebPoint <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_ebPoint)
+  stmt_write_ebPoint <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_eb)
   stmt_write_ebBody <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_ebBody)
   stmt_write_tx <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_tx)
   -- loop over EBs (one SQL transaction each, to be gentle)
@@ -1008,7 +1008,7 @@ ebIdFromPoint' db ebSlot ebHash = do
     Nothing -> pure ()
     Just{} -> do
       -- INSERT INTO ebPoints
-      stmt_write_ebPoints <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_ebPoint)
+      stmt_write_ebPoints <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_eb)
       withDie $ DB.bindInt64 stmt_write_ebPoints 1 (fromIntegral ebSlot)
       withDie $ DB.bindBlob stmt_write_ebPoints 2 ebHash
       withDie $ DB.bindInt64 stmt_write_ebPoints 3 (fromIntegralEbId ebId)

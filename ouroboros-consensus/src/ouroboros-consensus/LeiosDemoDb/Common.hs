@@ -54,7 +54,7 @@ data LeiosDbConnection m = LeiosDbConnection
   , leiosDbLookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
   , leiosDbQueryFetchWork :: HasCallStack => m LeiosFetchWork
   -- ^ Query all work needed for the fetch logic (used at startup):
-  -- - Missing EB bodies: EBs in ebPoints without entries in ebTxs
+  -- - Missing EB bodies: EBs in ebs with NULL missingTxCount
   -- - Missing TXs: TXs in ebTxs without entries in txs
   -- NOTE: This is O(n) and should only be used at startup for initialization.
   , -- NOTE: yields a LeiosOfferBlock notification
