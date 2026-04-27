@@ -85,12 +85,12 @@ import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
-import Data.Measure (Measure)
+import Data.Measure (Measure (zero))
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
-import LeiosDemoTypes (leiosEBMaxClosureSize)
+import LeiosDemoTypes (leiosEBMaxClosureSize, maxTxsPerEb)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -616,6 +616,7 @@ instance
 data ConwayMeasure = ConwayMeasure
   { alonzoMeasure :: !AlonzoMeasure
   , refScriptsSize :: !(IgnoringOverflow ByteSize32)
+  , leiosMaxTxsPerEb :: !(IgnoringOverflow TxCount)
   }
   deriving stock (Eq, Generic, Show)
   deriving anyclass NoThunks
@@ -624,12 +625,12 @@ data ConwayMeasure = ConwayMeasure
     via (InstantiatedAt Generic ConwayMeasure)
 
 instance Semigroup ConwayMeasure where
-  ConwayMeasure a1 r1 <> ConwayMeasure a2 r2 =
-    ConwayMeasure (a1 <> a2) (r1 <> r2)
+  ConwayMeasure a1 r1 l1 <> ConwayMeasure a2 r2 l2 =
+    ConwayMeasure (a1 <> a2) (r1 <> r2) (l1 <> l2)
 
 instance Monoid ConwayMeasure where
   mappend = (<>)
-  mempty = ConwayMeasure mempty mempty
+  mempty = ConwayMeasure mempty mempty zero
 
 instance HasByteSize ConwayMeasure where
   txMeasureByteSize = txMeasureByteSize . alonzoMeasure
@@ -657,6 +658,7 @@ blockCapacityConwayMeasure st =
             fromIntegral $
               -- For post-Conway eras, this will become a protocol parameter.
               SL.maxRefScriptSizePerBlock
+    , leiosMaxTxsPerEb = maxBound -- FIXME(bladyjoker): Use Maybe
     }
 
 txMeasureConway ::
@@ -672,7 +674,7 @@ txMeasureConway ::
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) ConwayMeasure
 txMeasureConway st tx@(ShelleyTx _txid tx') =
-  ConwayMeasure <$> txMeasureAlonzo st tx <*> refScriptBytes
+  ConwayMeasure <$> txMeasureAlonzo st tx <*> refScriptBytes <*> pure oneTxCount
  where
   utxo = SL.getUTxO . tickedShelleyLedgerState $ st
   txsz = SL.txNonDistinctRefScriptsSize utxo tx' :: Int
@@ -711,7 +713,7 @@ txMeasureBabbage ::
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) ConwayMeasure
 txMeasureBabbage st tx@(ShelleyTx _txid tx') =
-  (\x -> ConwayMeasure x refScriptBytes) <$> txMeasureAlonzo st tx
+  (\x -> ConwayMeasure x refScriptBytes oneTxCount) <$> txMeasureAlonzo st tx
  where
   utxo = SL.getUTxO $ tickedShelleyLedgerState st
 
@@ -763,4 +765,5 @@ leiosEndorserBlockMeasure st =
             fromIntegral $
               -- For post-Conway eras, this will become a protocol parameter.
               SL.maxRefScriptSizePerBlock
+    , leiosMaxTxsPerEb = IgnoringOverflow . TxCount . fromIntegral $ maxTxsPerEb
     }
