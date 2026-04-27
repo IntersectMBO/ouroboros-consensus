@@ -1,7 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -19,35 +18,20 @@ module Ouroboros.Consensus.Committee.Crypto
 
     -- * Vote signing interface
   , CryptoSupportsVoteSigning (..)
-  , CryptoSupportsAggregateVoteSigning (..)
-
-    -- ** Trivial aggregate vote signature verification helpers
-  , TrivialAggregateVoteVerificationKey (..)
-  , TrivialAggregateVoteSignature (..)
-  , trivialLiftVoteVerificationKey
-  , trivialLiftVoteSignature
-  , trivialVerifyAggregateVoteSignature
 
     -- * VRF-based eligibility proofs interface
   , VRFPoolContext (..)
   , NormalizedVRFOutput (..)
   , CryptoSupportsVRF (..)
-  , CryptoSupportsAggregateVRF (..)
 
-    -- ** Trivial aggregate VRF verification helpers
-  , TrivialAggregateVRFVerificationKey (..)
-  , TrivialAggregateVRFOutput (..)
-  , trivialLiftVRFVerificationKey
-  , trivialLiftVRFOutput
-  , trivialVerifyAggregateVRFOutput
+    -- * Aggregate verification interface
+  , CryptoSupportsAggregateVoteSigning (..)
+  , CryptoSupportsBatchVRFVerification (..)
   ) where
 
 import Cardano.Ledger.BaseTypes (Nonce)
 import Data.Containers.NonEmpty (HasNonEmpty (..))
-import Data.Either (partitionEithers)
 import Data.Kind (Type)
-import Data.List (intercalate)
-import qualified Data.List.NonEmpty as NonEmpty
 import Data.Proxy (Proxy)
 
 -- * Core types associated to voting committees
@@ -103,100 +87,6 @@ class CryptoSupportsVoteSigning crypto where
     VoteCandidate crypto ->
     VoteSignature crypto ->
     Either String ()
-
--- | Crypto interface used for verifying aggregate vote signatures
-class
-  ( Semigroup (AggregateVoteVerificationKey crypto)
-  , Semigroup (AggregateVoteSignature crypto)
-  ) =>
-  CryptoSupportsAggregateVoteSigning crypto
-  where
-  -- | Key used for verifying aggregate vote signatures
-  type AggregateVoteVerificationKey crypto :: Type
-
-  -- | Aggregate cryptographic signature of a vote
-  type AggregateVoteSignature crypto :: Type
-
-  -- | Lift a single vote signature verification key into an aggregate one
-  liftVoteVerificationKey ::
-    Proxy crypto ->
-    VoteVerificationKey crypto ->
-    AggregateVoteVerificationKey crypto
-
-  -- | Lift a single vote signature into an aggregate one
-  liftVoteSignature ::
-    Proxy crypto ->
-    VoteSignature crypto ->
-    AggregateVoteSignature crypto
-
-  -- | Verify an aggregate vote signature for a given election and candidate
-  verifyAggregateVoteSignature ::
-    Proxy crypto ->
-    AggregateVoteVerificationKey crypto ->
-    ElectionId crypto ->
-    VoteCandidate crypto ->
-    AggregateVoteSignature crypto ->
-    Either String ()
-
--- ** Trivial aggregate vote signature verification helpers
-
-newtype TrivialAggregateVoteVerificationKey crypto
-  = TrivialAggregateVoteVerificationKey (NE [VoteVerificationKey crypto])
-  deriving newtype Semigroup
-
-newtype TrivialAggregateVoteSignature crypto
-  = TrivialAggregateVoteSignature (NE [VoteSignature crypto])
-  deriving newtype Semigroup
-
-trivialLiftVoteVerificationKey ::
-  Proxy crypto ->
-  VoteVerificationKey crypto ->
-  TrivialAggregateVoteVerificationKey crypto
-trivialLiftVoteVerificationKey _ =
-  TrivialAggregateVoteVerificationKey
-    . NonEmpty.singleton
-
-trivialLiftVoteSignature ::
-  Proxy crypto ->
-  VoteSignature crypto ->
-  TrivialAggregateVoteSignature crypto
-trivialLiftVoteSignature _ =
-  TrivialAggregateVoteSignature
-    . NonEmpty.singleton
-
-trivialVerifyAggregateVoteSignature ::
-  CryptoSupportsVoteSigning crypto =>
-  Proxy crypto ->
-  TrivialAggregateVoteVerificationKey crypto ->
-  ElectionId crypto ->
-  VoteCandidate crypto ->
-  TrivialAggregateVoteSignature crypto ->
-  Either String ()
-trivialVerifyAggregateVoteSignature
-  _
-  (TrivialAggregateVoteVerificationKey keys)
-  electionId
-  candidate
-  (TrivialAggregateVoteSignature signatures)
-    | length keys /= length signatures =
-        Left $
-          "Aggregate vote signature verification failed: "
-            <> "number of keys and signatures do not match"
-    | not (null errors) =
-        Left $
-          "Aggregate vote signature verification failed: "
-            <> intercalate "; " errors
-    | otherwise =
-        Right ()
-   where
-    (errors, _) =
-      partitionEithers $
-        zipWith
-          ( \key sig ->
-              verifyVoteSignature key electionId candidate sig
-          )
-          (NonEmpty.toList keys)
-          (NonEmpty.toList signatures)
 
 -- * VRF-based eligibility proofs interface
 
@@ -262,90 +152,93 @@ class CryptoSupportsVRF crypto where
     VRFOutput crypto ->
     NormalizedVRFOutput
 
--- | Crypto interface used for verifying aggregate VRF signatures
+-- * Aggregate verification interface
+
+--
+-- NOTE: vote signatures and VRF outputs are treated asymmetrically here.
+--
+-- On one hand, individual vote signatures are used to prove the identity of
+-- of their issuers for a given election and candidate being voted for. When
+-- forging a certificate, we might want to aggregate the signatures of multiple
+-- voters that participated in the same election and voted for the same
+-- candidate into a single aggregate signature that attests the participation of
+-- the entire group of voters. Such a signature is much smaller than the sum of
+-- the individual signatures of each voter, and can be verified more efficiently
+-- than verifying each individual signature separately. To do so, verifiers will
+-- first need to create an aggregate verification key by combining the
+-- verification key of each voter in the group (whose identity will likely have
+-- to be declared in the corresponding certificate), and then verify the
+-- aggregate signature using the aggregate verification key in a single step.
+-- Note that since all voters sign the same thing (election ID and candidate),
+-- swapping the signatures of two voters in the group would not have any effect
+-- on the aggregate signature.
+--
+-- On the other hand, VRF outputs attest both the eligibility of a single voter
+-- to participate in a given election /and/ the number of seats they are
+-- entitled to in such election (which can directly affect their voting power).
+-- Because of this, their VRF outputs cannot be aggregated into a single one
+-- when forging a certificate, and must instead be included individually. When
+-- verifying a certificate, however, we can still take advantage of aggregation
+-- to verify the VRF outputs of all voters in a single step, but since each VRF
+-- output might grant each voter a different number of seats, we need to be
+-- careful about swap-attacks. This is where an adversary could swap their VRF
+-- output with someone else's before forging a certificate, stealing their
+-- (more favorable) eligibility proof. To avoid this, the interface for batch
+-- VRF verification explicitly expects unaggregated VRF verification keys and
+-- VRF outputs, so that the implementation should be able to first bind each
+-- VRF output to the corresponding voter's verification key via linearization.
+-- In layman terms, this means multiplying each VRF output by a unique scalar
+-- before aggregating them. This enforces that, during verification, the order
+-- of the VRF outputs must match the order of the verification keys verification
+-- keys, thus avoiding any attempt of swapping VRF outputs between voters.
+
+-- | Crypto interface used for creating and verifying aggregate vote signatures
 class
-  ( Semigroup (AggregateVRFVerificationKey crypto)
-  , Semigroup (AggregateVRFOutput crypto)
-  ) =>
-  CryptoSupportsAggregateVRF crypto
+  CryptoSupportsVoteSigning crypto =>
+  CryptoSupportsAggregateVoteSigning crypto
   where
-  -- | Key used for verifying aggregate VRF outputs
-  type AggregateVRFVerificationKey crypto :: Type
+  -- | Aggregate vote verification keys
+  type AggregateVoteVerificationKey crypto :: Type
 
-  -- | Aggregate cryptographic signature of a VRF output
-  type AggregateVRFOutput crypto :: Type
+  -- | Aggregate vote signatures
+  type AggregateVoteSignature crypto :: Type
 
-  -- | Lift a single VRF output verification key into an aggregate one
-  liftVRFVerificationKey ::
+  -- | Combine multiple vote verification keys into a single aggregate one
+  aggregateVoteVerificationKeys ::
     Proxy crypto ->
-    VRFVerificationKey crypto ->
-    AggregateVRFVerificationKey crypto
+    NE [VoteVerificationKey crypto] ->
+    Either String (AggregateVoteVerificationKey crypto)
 
-  -- | Lift a single VRF output into an aggregate one
-  liftVRFOutput ::
+  -- | Combine multiple vote signatures into a single aggregate one
+  aggregateVoteSignatures ::
     Proxy crypto ->
-    VRFOutput crypto ->
-    AggregateVRFOutput crypto
+    NE [VoteSignature crypto] ->
+    Either String (AggregateVoteSignature crypto)
 
   -- | Verify an aggregate vote signature for a given election and candidate
-  verifyAggregateVRFOutput ::
-    AggregateVRFVerificationKey crypto ->
-    VRFElectionInput crypto ->
-    AggregateVRFOutput crypto ->
+  verifyAggregateVoteSignature ::
+    Proxy crypto ->
+    AggregateVoteVerificationKey crypto ->
+    ElectionId crypto ->
+    VoteCandidate crypto ->
+    AggregateVoteSignature crypto ->
     Either String ()
 
--- ** Trivial aggregate VRF verification helpers
-
-newtype TrivialAggregateVRFVerificationKey crypto
-  = TrivialAggregateVRFVerificationKey (NE [VRFVerificationKey crypto])
-  deriving newtype Semigroup
-
-newtype TrivialAggregateVRFOutput crypto
-  = TrivialAggregateVRFOutput (NE [VRFOutput crypto])
-  deriving newtype Semigroup
-
-trivialLiftVRFVerificationKey ::
-  Proxy crypto ->
-  VRFVerificationKey crypto ->
-  TrivialAggregateVRFVerificationKey crypto
-trivialLiftVRFVerificationKey _ =
-  TrivialAggregateVRFVerificationKey
-    . NonEmpty.singleton
-
-trivialLiftVRFOutput ::
-  Proxy crypto ->
-  VRFOutput crypto ->
-  TrivialAggregateVRFOutput crypto
-trivialLiftVRFOutput _ =
-  TrivialAggregateVRFOutput
-    . NonEmpty.singleton
-
-trivialVerifyAggregateVRFOutput ::
+-- | Crypto interface used for verifying multiple VRF outputs at once
+class
   CryptoSupportsVRF crypto =>
-  TrivialAggregateVRFVerificationKey crypto ->
-  VRFElectionInput crypto ->
-  TrivialAggregateVRFOutput crypto ->
-  Either String ()
-trivialVerifyAggregateVRFOutput
-  (TrivialAggregateVRFVerificationKey keys)
-  vrfInput
-  (TrivialAggregateVRFOutput vrfOutputs)
-    | length keys /= length vrfOutputs =
-        Left $
-          "Aggregate VRF output verification failed: "
-            <> "number of keys and outputs do not match"
-    | not (null errors) =
-        Left $
-          "Aggregate VRF output verification failed: "
-            <> intercalate "; " errors
-    | otherwise =
-        Right ()
-   where
-    (errors, _) =
-      partitionEithers $
-        zipWith
-          ( \key vrfOutput ->
-              evalVRF (VRFVerifyContext key vrfOutput) vrfInput
-          )
-          (NonEmpty.toList keys)
-          (NonEmpty.toList vrfOutputs)
+  CryptoSupportsBatchVRFVerification crypto
+  where
+  -- | Verify a list of VRF outputs for a given election input using the
+  -- corresponding verification keys of their issuers.
+  --
+  -- NOTE: this expects non-aggregate VRF verification keys and VRF outputs so
+  -- that each (key_i, output_i) pair can be bound at verification time (e.g.
+  -- via linearization). This per-pair binding defeats swap-attacks where an
+  -- adversary swaps their VRF output with someone else's more-favorable one
+  -- before forging a certificate.
+  batchVerifyVRFOutputs ::
+    NE [VRFVerificationKey crypto] ->
+    VRFElectionInput crypto ->
+    NE [VRFOutput crypto] ->
+    Either String ()
