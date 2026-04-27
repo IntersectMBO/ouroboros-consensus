@@ -166,9 +166,11 @@ prop_leios seed =
     [ blocksProduced
     , ebCertificateInclusion
     , cumulativeTxBytes
+    , propVoting
     ]
  where
-  numNodes = 3 :: Integer
+  numNodes = 3 :: Int
+
   numSlots = 200 :: Word64
 
   (testOutput, ProtocolInfo{pInfoConfig, pInfoInitLedger}) =
@@ -190,6 +192,30 @@ prop_leios seed =
 
   acquiredPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
     TraceLeiosBlockTxsAcquired point -> Just point
+    _ -> Nothing
+
+  propVoting =
+    conjoin
+      [ length votedPoints > 0
+          & counterexample "never voted"
+      , acquiredPoints `Set.isSubsetOf` votedPoints
+          & counterexample "not voted on all acquired EBs"
+          & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
+          & prettyCounterexampleList "voted on EBs" 120 votedPoints
+      , ( Map.keysSet acquiredVotes === votedPoints
+            .&&. all (\voters -> length voters == numNodes) acquiredVotes
+        )
+          & counterexample "created votes not diffused"
+          & prettyCounterexampleMap "acquired votes" 120 acquiredVotes
+          & prettyCounterexampleList "voted on EBs" 120 votedPoints
+      ]
+
+  votedPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosVoted{point} -> Just point
+    _ -> Nothing
+
+  acquiredVotes = Map.fromListWith mappend . flip mapMaybe leiosTraces $ \case
+    TraceLeiosVoteAcquired{point, voter} -> Just (point, Set.singleton voter)
     _ -> Nothing
 
   mempoolTraces = traces ^.. each . _nodeEvent . _FromMempool

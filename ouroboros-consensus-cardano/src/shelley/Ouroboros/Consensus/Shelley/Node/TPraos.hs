@@ -233,6 +233,7 @@ protocolInfoTPraosShelleyBased
         , topLevelConfigCodec = ShelleyCodecConfig
         , topLevelConfigStorage = storageConfig
         , topLevelConfigCheckpoints = emptyCheckpointsMap
+        , topLevelConfigVotingKey = Nothing
         }
 
     consensusConfig :: ConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) era))
