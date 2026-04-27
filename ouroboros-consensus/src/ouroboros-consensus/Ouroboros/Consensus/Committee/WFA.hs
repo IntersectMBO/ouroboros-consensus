@@ -21,11 +21,22 @@ module Ouroboros.Consensus.Committee.WFA
   , mkExtWFAStakeDistr
   , getCandidateInSeat
   , seatIndexWithinBounds
+  , wFATiebreakerWithEpochNonce
   ) where
 
+-- DSIGN/BLS imports are needed for the 'WFATiebreaker' using epoch nonce.
+-- If we move away from BLS in the future of Peras/Leios, we might want to
+-- revisit the implementation of the tiebreaker to use a different hash function.
+import Cardano.Crypto.DSIGN (BLS12381MinSigDSIGN, DSIGNAlgorithm (SigDSIGN))
+import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
+import Cardano.Ledger.Binary (runByteBuilder)
+import Cardano.Ledger.Core (HASH, Hash, KeyHash (unKeyHash))
 import Control.Exception (assert)
 import Data.Array (Array, Ix, listArray)
 import qualified Data.Array as Array
+import qualified Data.ByteString.Builder.Extra as BS
+import Data.Function (on)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -35,6 +46,7 @@ import Ouroboros.Consensus.Committee.Types
   , LedgerStake (..)
   , PoolId
   , TargetCommitteeSize (..)
+  , unPoolId
   )
 
 -- * Weighted Fait-Accompli committee selection scheme
@@ -255,13 +267,44 @@ newtype NumPoolsWithPositiveStake
 -- One possible implementation of this tiebreaker is to sort the pools with the
 -- same stake according to the hash of the epoch nonce and the pool ID. This way
 -- the tiebreaker would be deterministic and resilient to manipulation since an
--- adversary would not be able to predict the epoch nonce in advance.
+-- adversary would not be able to predict the epoch nonce in advance
+-- (see 'wFATiebreakerWithEpochNonce' below).
 newtype WFATiebreaker
   = WFATiebreaker
   { unWFATiebreaker :: PoolId -> PoolId -> Ordering
   -- ^ Given two pool IDs, returns an ordering between them to be used as a
   -- tiebreaker for voters with the same stake.
   }
+
+-- | Fair weighted Fait-Accompli tiebreaker.
+--
+-- For this, we throw the current epoch nonce into the mix to avoid giving an
+-- adversary an edge to manipulate the tiebreaking in their favor, as they
+-- cannot predict the epoch nonce in advance.
+--
+-- NOTE: this implementation uses BLS-based hashing, but could be replaced by
+-- any other cryptographic hash function with similar properties.
+wFATiebreakerWithEpochNonce :: Nonce -> WFATiebreaker
+wFATiebreakerWithEpochNonce epochNonce =
+  WFATiebreaker (compare `on` hashWithNonce)
+ where
+  hashWithNonce :: PoolId -> Hash HASH (SigDSIGN BLS12381MinSigDSIGN)
+  hashWithNonce poolId =
+    Hash.castHash
+      . Hash.hashWith id
+      . runByteBuilder (32 + 32)
+      $ epochNonceBytes <> poolIdBytes
+   where
+    epochNonceBytes =
+      case epochNonce of
+        NeutralNonce -> mempty
+        Nonce h -> BS.byteStringCopy (Hash.hashToBytes h)
+    poolIdBytes =
+      BS.byteStringCopy
+        . Hash.hashToBytes
+        . unKeyHash
+        . unPoolId
+        $ poolId
 
 -- | Extended cumulative stake distribution.
 --
