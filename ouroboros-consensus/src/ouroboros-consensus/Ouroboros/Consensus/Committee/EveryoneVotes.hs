@@ -174,9 +174,9 @@ implCheckShouldVote committee ourId _ourPrivateKey _electionId
               getCandidateInSeat seatIndex (extWFAStakeDistr committee)
         case nonZero ourStake of
           Nothing ->
-            Left (PoolHasNoStake seatIndex)
+            Right Nothing
           Just nonZeroOurStake ->
-            pure $
+            Right $
               Just $
                 EveryoneVotesMember
                   seatIndex
