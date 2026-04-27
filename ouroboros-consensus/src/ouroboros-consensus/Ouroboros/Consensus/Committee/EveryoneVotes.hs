@@ -22,14 +22,12 @@ module Ouroboros.Consensus.Committee.EveryoneVotes
   , numActiveVoters
   ) where
 
-import Cardano.Ledger.BaseTypes (HasZero (..), NonZero)
 import Cardano.Ledger.BaseTypes.NonZero (NonZero (..), nonZero)
 import Control.Exception (assert)
 import Control.Monad.Zip (MonadZip (..))
 import qualified Data.Array as Array
 import Data.Bifunctor (Bifunctor (..))
 import Data.Containers.NonEmpty (HasNonEmpty (..))
-import qualified Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
