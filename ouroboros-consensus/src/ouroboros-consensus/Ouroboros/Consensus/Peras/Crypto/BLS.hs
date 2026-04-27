@@ -17,6 +17,12 @@ module Ouroboros.Consensus.Peras.Crypto.BLS
   , VoteSignature (..)
   , VRFElectionInput (..)
   , VRFOutput (..)
+  , AggregateVoteVerificationKey
+  , AggregateVoteSignature
+
+    -- * For testing purposes
+  , PerasBLSCryptoAggregateVoteVerificationKey (..)
+  , PerasBLSCryptoAggregateVoteSignature (..)
   ) where
 
 import Cardano.Binary (FromCBOR, ToCBOR (..))
@@ -33,9 +39,8 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasRoundNo (..)
   )
 import Ouroboros.Consensus.Committee.Crypto
-  ( Aggregate (..)
-  , CryptoSupportsAggregateVRF (..)
-  , CryptoSupportsAggregateVoteSigning (..)
+  ( CryptoSupportsAggregateVoteSigning (..)
+  , CryptoSupportsBatchVRFVerification (..)
   , CryptoSupportsVRF (..)
   , CryptoSupportsVoteSigning (..)
   , ElectionId
@@ -193,31 +198,54 @@ instance CryptoSupportsVRF PerasBLSCrypto where
 
 -- * Support for aggregate signatures and VRF outputs
 
+-- | Wrapper around the aggregate vote signatures.
+newtype PerasBLSCryptoAggregateVoteVerificationKey
+  = PerasBLSCryptoAggregateVoteVerificationKey
+  { unPerasBLSCryptoAggregateVoteVerificationKey ::
+      BLS.PublicKey SIGN
+  }
+  deriving stock (Eq, Show)
+
+-- | Wrapper around the aggregate vote verification keys.
+newtype PerasBLSCryptoAggregateVoteSignature
+  = PerasBLSCryptoAggregateVoteSignature
+  { unPerasBLSCryptoAggregateVoteSignature ::
+      BLS.Signature SIGN
+  }
+  deriving stock (Eq, Show)
+  deriving newtype (FromCBOR, ToCBOR)
+
 instance CryptoSupportsAggregateVoteSigning PerasBLSCrypto where
+  type
+    AggregateVoteVerificationKey PerasBLSCrypto =
+      PerasBLSCryptoAggregateVoteVerificationKey
+  type
+    AggregateVoteSignature PerasBLSCrypto =
+      PerasBLSCryptoAggregateVoteSignature
+
   aggregateVoteVerificationKeys _ pks = do
-    aggPk <-
-      BLS.aggregatePublicKeys @SIGN pks
-    pure (Aggregate aggPk)
+    aggPk <- BLS.aggregatePublicKeys @SIGN pks
+    pure (PerasBLSCryptoAggregateVoteVerificationKey aggPk)
 
   aggregateVoteSignatures _ sigs = do
     aggSig <-
       BLS.aggregateSignatures @SIGN
         . fmap unPerasBLSCryptoVoteSignature
         $ sigs
-    pure (Aggregate (PerasBLSCryptoVoteSignature aggSig))
+    pure (PerasBLSCryptoAggregateVoteSignature aggSig)
 
   verifyAggregateVoteSignature
     _
-    (Aggregate aggPk)
+    aggPk
     roundNo
     boostedBlock
-    (Aggregate aggSig) = do
+    aggSig = do
       BLS.verifyWithRole @SIGN
-        aggPk
+        (unPerasBLSCryptoAggregateVoteVerificationKey aggPk)
         (hashVoteSignature roundNo boostedBlock)
-        (unPerasBLSCryptoVoteSignature aggSig)
+        (unPerasBLSCryptoAggregateVoteSignature aggSig)
 
-instance CryptoSupportsAggregateVRF PerasBLSCrypto where
+instance CryptoSupportsBatchVRFVerification PerasBLSCrypto where
   -- NOTE: in contrast to vote signatures, we cannot aggregate multiple VRF
   -- outputs into a single one when forging a certificate (because we need to
   -- derive non-persistent seat numbers from each individual one). This means
@@ -230,7 +258,7 @@ instance CryptoSupportsAggregateVRF PerasBLSCrypto where
   -- outputs in the list locally (using linearization to avoid swap-attacks),
   -- and then verifying the resulting aggregate VRF output against the aggregate
   -- VRF verification key.
-  verifyAggregateVRFOutputs
+  batchVerifyVRFOutputs
     pks
     (PerasBLSCryptoVRFElectionInput input)
     sigs = do

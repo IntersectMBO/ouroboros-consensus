@@ -37,10 +37,13 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasRoundNo (..)
   , PerasSeatIndex (..)
   )
-import Ouroboros.Consensus.Committee.Crypto (Aggregate (..))
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
-import Ouroboros.Consensus.Peras.Crypto.BLS (VRFOutput (..), VoteSignature (..))
+import Ouroboros.Consensus.Peras.Crypto.BLS
+  ( PerasBLSCryptoAggregateVoteSignature (..)
+  , VRFOutput (..)
+  , VoteSignature (..)
+  )
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import Test.QuickCheck
   ( Arbitrary (..)
@@ -191,8 +194,7 @@ genPerasCert shouldGenNonPersistent = do
   pcBoostedBlock <- genBoostedBlock
   pcVoters <- genVoters shouldGenNonPersistent
   pcSignature <-
-    Aggregate
-      . PerasBLSCryptoVoteSignature
+    PerasBLSCryptoAggregateVoteSignature
       <$> genSignature (Proxy @BLS.SIGN)
   pure
     V1.PerasCert

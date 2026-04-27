@@ -67,9 +67,8 @@ import Ouroboros.Consensus.Committee.Class
   , getVoteCandidateFromVotes
   )
 import Ouroboros.Consensus.Committee.Crypto
-  ( Aggregate
-  , CryptoSupportsAggregateVRF (..)
-  , CryptoSupportsAggregateVoteSigning (..)
+  ( CryptoSupportsAggregateVoteSigning (..)
+  , CryptoSupportsBatchVRFVerification (..)
   , CryptoSupportsVRF (..)
   , CryptoSupportsVoteSigning (..)
   , ElectionId
@@ -109,7 +108,7 @@ instance
   ( CryptoSupportsVoteSigning crypto
   , CryptoSupportsAggregateVoteSigning crypto
   , CryptoSupportsVRF crypto
-  , CryptoSupportsAggregateVRF crypto
+  , CryptoSupportsBatchVRFVerification crypto
   ) =>
   CryptoSupportsVotingCommittee crypto WFALS
   where
@@ -204,7 +203,7 @@ instance
         !(ElectionId crypto)
         !(VoteCandidate crypto)
         !(NE (Map SeatIndex (Maybe (VRFOutput crypto))))
-        !(Aggregate (VoteSignature crypto))
+        !(AggregateVoteSignature crypto)
 
   mkVotingCommittee = mkWFALSVotingCommittee
   checkShouldVote = implCheckShouldVote
@@ -488,7 +487,7 @@ implVerifyCert ::
   ( CryptoSupportsVoteSigning crypto
   , CryptoSupportsAggregateVoteSigning crypto
   , CryptoSupportsVRF crypto
-  , CryptoSupportsAggregateVRF crypto
+  , CryptoSupportsBatchVRFVerification crypto
   ) =>
   VotingCommittee crypto WFALS ->
   Cert crypto WFALS ->
@@ -579,7 +578,7 @@ implVerifyCert committee = \case
                 . NonEmpty.fromList -- safe 'vrfKeysAndOutputs' /= []
                 $ vrfKeysAndOutputs
         bimap InvalidCertSignature id $
-          verifyAggregateVRFOutputs
+          batchVerifyVRFOutputs
             vrfVerificationKeys
             ( mkVRFElectionInput
                 @crypto

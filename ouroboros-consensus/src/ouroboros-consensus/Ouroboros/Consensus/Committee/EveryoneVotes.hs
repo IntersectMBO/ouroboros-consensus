@@ -44,8 +44,7 @@ import Ouroboros.Consensus.Committee.Class
   , getVoteCandidateFromVotes
   )
 import Ouroboros.Consensus.Committee.Crypto
-  ( Aggregate (..)
-  , CryptoSupportsAggregateVoteSigning (..)
+  ( CryptoSupportsAggregateVoteSigning (..)
   , CryptoSupportsVoteSigning (..)
   , ElectionId
   , PrivateKey
@@ -128,7 +127,7 @@ instance
         !(ElectionId crypto)
         !(VoteCandidate crypto)
         !(NE (Set SeatIndex))
-        !(Aggregate (VoteSignature crypto))
+        !(AggregateVoteSignature crypto)
 
   mkVotingCommittee = mkEveryoneVotesVotingCommittee
   checkShouldVote = implCheckShouldVote

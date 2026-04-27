@@ -50,7 +50,17 @@ import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Word (Word64)
 import GHC.Word (Word8)
-import Ouroboros.Consensus.Committee.Crypto (Aggregate (..), CryptoSupportsAggregateVRF (..), CryptoSupportsAggregateVoteSigning (..), CryptoSupportsVRF (..), CryptoSupportsVoteSigning (..), ElectionId, PrivateKey, PublicKey, VRFPoolContext (..), VoteCandidate)
+import Ouroboros.Consensus.Committee.Crypto
+  ( CryptoSupportsAggregateVoteSigning (..)
+  , CryptoSupportsBatchVRFVerification (..)
+  , CryptoSupportsVRF (..)
+  , CryptoSupportsVoteSigning (..)
+  , ElectionId
+  , PrivateKey
+  , PublicKey
+  , VRFPoolContext (..)
+  , VoteCandidate
+  )
 import Ouroboros.Consensus.Committee.Crypto.BLS (KeyRole (..))
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 import Test.Consensus.Committee.Utils (genEpochNonce)
@@ -149,24 +159,26 @@ instance CryptoSupportsVoteSigning TestCrypto where
       sig
 
 instance CryptoSupportsAggregateVoteSigning TestCrypto where
-  aggregateVoteVerificationKeys _ pks = do
-    aggPk <-
-      BLS.aggregatePublicKeys @SIGN pks
-    pure (Aggregate aggPk)
+  -- NOTE: in a real implementation, we would want to wrap these into newtypes
+  type AggregateVoteVerificationKey TestCrypto = VoteVerificationKey TestCrypto
+  type AggregateVoteSignature TestCrypto = VoteSignature TestCrypto
+
+  aggregateVoteVerificationKeys _ pks =
+    BLS.aggregatePublicKeys @SIGN pks
 
   aggregateVoteSignatures _ sigs = do
     aggSig <-
       BLS.aggregateSignatures @SIGN
-      . fmap unTestVoteSignature
-      $ sigs
-    pure (Aggregate (TestVoteSignature aggSig))
+        . fmap unTestVoteSignature
+        $ sigs
+    pure (TestVoteSignature aggSig)
 
   verifyAggregateVoteSignature
     _
-    (Aggregate aggPk)
+    aggPk
     electionId
     candidate
-    (Aggregate aggSig) = do
+    aggSig = do
       BLS.verifyWithRole @SIGN
         aggPk
         (hashVoteSignature electionId candidate)
@@ -209,8 +221,8 @@ instance CryptoSupportsVRF TestCrypto where
   normalizeVRFOutput (TestVRFOutput sig) =
     BLS.toNormalizedVRFOutput sig
 
-instance CryptoSupportsAggregateVRF TestCrypto where
-  verifyAggregateVRFOutputs
+instance CryptoSupportsBatchVRFVerification TestCrypto where
+  batchVerifyVRFOutputs
     pks
     (TestVRFElectionInput input)
     sigs = do
@@ -386,7 +398,7 @@ prop_EvalAndVerifyAggregateVRFOutput =
                   ("VRF evaluation failed: " <> err)
                   $ property False
               Right vrfOutputs -> do
-                case ( verifyAggregateVRFOutputs @TestCrypto
+                case ( batchVerifyVRFOutputs @TestCrypto
                          vrfVerificationKeys
                          input
                          vrfOutputs
@@ -423,7 +435,7 @@ prop_SwapAttackOnAggregateVRF =
                   $ property False
               Right vrfOutputs -> do
                 forAll (swapTwoElements vrfOutputs) $ \(i, j, swappedVRFOutputs) -> do
-                  case ( verifyAggregateVRFOutputs @TestCrypto
+                  case ( batchVerifyVRFOutputs @TestCrypto
                            vrfVerificationKeys
                            input
                            swappedVRFOutputs
@@ -443,7 +455,7 @@ prop_SwapAttackOnAggregateVRF =
 -- | Associativity of aggregate vote verifaction keys.
 --
 -- NOTE: this is desirable if we want aggregate keys to be a closed Semigroup
--- under real BLS aggregation (module rare aggregation failures). This means
+-- under real BLS aggregation (modulo rare aggregation failures). This means
 -- that we can either choose to collect all keys and aggregate them at once, or
 -- we can partially aggregate them as we go, keeping only a single aggregate key
 -- in memory at any time.

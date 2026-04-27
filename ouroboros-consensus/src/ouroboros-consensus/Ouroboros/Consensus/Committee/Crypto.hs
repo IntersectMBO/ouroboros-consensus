@@ -25,9 +25,8 @@ module Ouroboros.Consensus.Committee.Crypto
   , CryptoSupportsVRF (..)
 
     -- * Aggregate verification interface
-  , Aggregate (..)
   , CryptoSupportsAggregateVoteSigning (..)
-  , CryptoSupportsAggregateVRF (..)
+  , CryptoSupportsBatchVRFVerification (..)
   ) where
 
 import Cardano.Ledger.BaseTypes (Nonce)
@@ -155,37 +154,37 @@ class CryptoSupportsVRF crypto where
 
 -- * Aggregate verification interface
 
--- | Wrapper for aggregated resources
-newtype Aggregate a = Aggregate
-  { unAggregate :: a
-  }
-  deriving stock (Eq, Show)
-
 -- | Crypto interface used for verifying aggregate vote signatures
 class CryptoSupportsAggregateVoteSigning crypto where
+  -- | Aggregate vote verification keys
+  type AggregateVoteVerificationKey crypto :: Type
+
+  -- | Aggregate vote signatures
+  type AggregateVoteSignature crypto :: Type
+
   -- | Aggregate vote verification keys
   aggregateVoteVerificationKeys ::
     Proxy crypto ->
     NE [VoteVerificationKey crypto] ->
-    Either String (Aggregate (VoteVerificationKey crypto))
+    Either String (AggregateVoteVerificationKey crypto)
 
   -- | Aggregate vote signatures
   aggregateVoteSignatures ::
     Proxy crypto ->
     NE [VoteSignature crypto] ->
-    Either String (Aggregate (VoteSignature crypto))
+    Either String (AggregateVoteSignature crypto)
 
   -- | Verify an aggregate vote signature for a given election and candidate.
   verifyAggregateVoteSignature ::
     Proxy crypto ->
-    Aggregate (VoteVerificationKey crypto) ->
+    AggregateVoteVerificationKey crypto ->
     ElectionId crypto ->
     VoteCandidate crypto ->
-    Aggregate (VoteSignature crypto) ->
+    AggregateVoteSignature crypto ->
     Either String ()
 
--- | Crypto interface used for verifying multiple VRF signatures at once via aggregation.
-class CryptoSupportsAggregateVRF crypto where
+-- | Crypto interface used for verifying multiple VRF signatures at once.
+class CryptoSupportsBatchVRFVerification crypto where
   -- | Verify a list of VRF outputs for a given election input, give their
   -- corresponding verification keys.
   --
@@ -193,9 +192,9 @@ class CryptoSupportsAggregateVRF crypto where
   -- the implementation should be able first to bind each key to its
   -- corresponding VRF output via linearization. This is needed to avoid
   -- swap-attacks where an adversary could swap their VRF output with someone
-  -- else's before forging a certificate, stealing their (more favorabe)
+  -- else's before forging a certificate, stealing their (more favorable)
   -- eligibility proof.
-  verifyAggregateVRFOutputs ::
+  batchVerifyVRFOutputs ::
     NE [VRFVerificationKey crypto] ->
     VRFElectionInput crypto ->
     NE [VRFOutput crypto] ->

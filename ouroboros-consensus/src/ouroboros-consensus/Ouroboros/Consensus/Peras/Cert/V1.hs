@@ -36,8 +36,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasSeatIndex (..)
   )
 import Ouroboros.Consensus.Committee.Crypto
-  ( Aggregate (..)
-  , CryptoSupportsVoteSigning (..)
+  ( CryptoSupportsAggregateVoteSigning (..)
   )
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
@@ -56,7 +55,7 @@ data PerasCert
   -- ^ Certificate message, i.e., the hash of the block being boosted
   , pcVoters :: !PerasCertVoters
   -- ^ Voters who contributed to this certificate
-  , pcSignature :: !(Aggregate (VoteSignature PerasBLSCrypto))
+  , pcSignature :: !(AggregateVoteSignature PerasBLSCrypto)
   -- ^ Aggregate BLS signature on the hash of the election identifier and
   -- the certificate message
   }
@@ -68,7 +67,7 @@ instance FromCBOR PerasCert where
     pcRoundNo <- fromCBOR
     pcBoostedBlock <- fromCBOR
     pcVoters <- fromCBOR
-    pcSignature <- Aggregate <$> fromCBOR
+    pcSignature <- fromCBOR
     pure
       PerasCert
         { pcRoundNo
@@ -83,7 +82,7 @@ instance ToCBOR PerasCert where
       <> toCBOR (pcRoundNo cert)
       <> toCBOR (pcBoostedBlock cert)
       <> toCBOR (pcVoters cert)
-      <> toCBOR (unAggregate (pcSignature cert))
+      <> toCBOR (pcSignature cert)
 
 -- | Voters contained in a certificate with their appropriate eligibility proof
 newtype PerasCertVoters
