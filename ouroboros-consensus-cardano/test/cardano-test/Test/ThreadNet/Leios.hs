@@ -204,10 +204,13 @@ prop_leios seed =
 
   nodeChains = nodeOutputFinalChain <$> testOutput.testOutputNodes
 
+  certifyingBlocks :: [CardanoBlock StandardCrypto]
   certifyingBlocks =
     [ blk
-    | blk@(BlockConway shelleyBlk) <- concatMap Chain.toOldestFirst nodeChains
-    , SL.blockCertifiesEb (shelleyBlockRaw shelleyBlk)
+    | blk@(BlockConway conwayBlk) <- concatMap Chain.toOldestFirst nodeChains
+    , case shelleyBlockRaw conwayBlk of
+        SL.Block _ (SL.BodyCertificate _ _) -> True
+        _ -> False
     ]
 
   throughput = fromIntegral (sum includedTxCounts) / fromIntegral numSlots :: Double
@@ -284,11 +287,12 @@ sumChainTxBytes topConfig initLedger node = runSimOrThrow $ do
     fst <$> foldM (step leiosConn cfg) (0, initLedger) chain
  where
   step leiosDb cfg (total, st) blk = do
-    blk' <- resolveLeiosBlock leiosDb st blk
+    blk' <- resolveLeiosBlock leiosDb (headerState st) blk
     let txBytes = blockTxSizeSum blk'
         st' = applyDiffs st $ tickThenReapply OmitLedgerEvents cfg blk' st
     pure (total + txBytes, st')
 
+  -- FIXME(bladyjoker): Why not use blockTxBytes?
   blockTxSizeSum (BlockConway shelleyBlk) =
     case SL.blockBody (shelleyBlockRaw shelleyBlk) of
       SL.BodyInline txSeq -> sumTxSizes txSeq
@@ -338,7 +342,7 @@ foldWithResolution leiosDb cfg blks initState =
   foldM step initState blks
  where
   step state blk = do
-    blk' <- resolveLeiosBlock leiosDb state blk
+    blk' <- resolveLeiosBlock leiosDb (headerState state) blk
     pure $ applyDiffs state $ tickThenReapply OmitLedgerEvents cfg blk' state
 
 -- * Running the thread net

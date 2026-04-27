@@ -454,21 +454,25 @@ instance Functor m => Isomorphic (BlockForging m) where
               )
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \leiosDb cfg bno sno tickedLgrSt rbTxs ebTxs isLeader ->
+      , forgeBlock = \ForgeBlockArgs{..} ->
           ( \(hfRb :: HardForkBlock '[blk], mayEb) ->
               ( project' (Proxy @(I blk)) hfRb
               , mayEb
               )
           )
             <$> forgeBlock
-              leiosDb
-              (inject cfg)
-              bno
-              sno
-              (getFlipTickedLedgerState (inject (FlipTickedLedgerState tickedLgrSt)))
-              (inject' (Proxy @(WrapValidatedGenTx blk)) <$> rbTxs)
-              (inject' (Proxy @(WrapValidatedGenTx blk)) <$> ebTxs)
-              (inject' (Proxy @(WrapIsLeader blk)) isLeader)
+              ForgeBlockArgs
+                { fbIsLeader = inject' (Proxy @(WrapIsLeader blk)) fbIsLeader
+                , fbEbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs
+                , fbRbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbRbTxs
+                , fbCurrentTickedLedgerState =
+                    getFlipTickedLedgerState (inject (FlipTickedLedgerState fbCurrentTickedLedgerState))
+                , fbCurrentSlotNo = fbCurrentSlotNo
+                , fbCurrentBlockNo = fbCurrentBlockNo
+                , fbConfig = inject fbConfig
+                , fbForgeType = fbForgeType
+                }
+      , leiosDecideForgeType = \_args -> return ForgeTxsRb
       }
    where
     injTickedChainDepSt ::
@@ -505,21 +509,25 @@ instance Functor m => Isomorphic (BlockForging m) where
               (projTickedChainDepSt tickedChainDepSt)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \leiosDb cfg bno sno tickedLgrSt rbTxs ebTxs isLeader ->
+      , forgeBlock = \ForgeBlockArgs{..} ->
           ( \(hfRb :: blk, mayEb) ->
               ( inject' (Proxy @(I blk)) hfRb
               , mayEb
               )
           )
             <$> forgeBlock
-              leiosDb
-              (project cfg)
-              bno
-              sno
-              (getFlipTickedLedgerState (project (FlipTickedLedgerState tickedLgrSt)))
-              (project' (Proxy @(WrapValidatedGenTx blk)) <$> rbTxs)
-              (project' (Proxy @(WrapValidatedGenTx blk)) <$> ebTxs)
-              (project' (Proxy @(WrapIsLeader blk)) isLeader)
+              ForgeBlockArgs
+                { fbIsLeader = project' (Proxy @(WrapIsLeader blk)) fbIsLeader
+                , fbEbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs
+                , fbRbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbRbTxs
+                , fbCurrentTickedLedgerState =
+                    getFlipTickedLedgerState (project (FlipTickedLedgerState fbCurrentTickedLedgerState))
+                , fbCurrentSlotNo = fbCurrentSlotNo
+                , fbCurrentBlockNo = fbCurrentBlockNo
+                , fbConfig = project fbConfig
+                , fbForgeType = fbForgeType
+                }
+      , leiosDecideForgeType = \_args -> return ForgeTxsRb
       }
    where
     projTickedChainDepSt ::

@@ -48,6 +48,7 @@ import Data.Kind (Type)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (EbAnnouncement)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -162,6 +163,8 @@ class ProtocolHeaderSupportsKES proto where
     Int ->
     -- | Protocol version
     ProtVer ->
+    -- | Leios EB announcement
+    Maybe EbAnnouncement ->
     m (ShelleyProtocolHeader proto)
 
 -- | ProtocolHeaderSupportsProtocol` provides support for the concrete

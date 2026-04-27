@@ -714,6 +714,17 @@ forkBlockForging IS{..} blockForging =
     -- At this point we have established that we are indeed slot leader
     trace $ TraceNodeIsLeader currentSlot
 
+    -- Leios: decide if we're forging an CertRb or a TxsRb
+    -- NOTE(bladyjoker): Leaving this here because it's simpler for now, otherwise I need to thread in the `unticked`.
+    forgeType <-
+      lift $
+        leiosDecideForgeType blockForging $
+          LeiosDecideForgeTypeArgs
+            { ldftaChainDepState = headerStateChainDep (headerState unticked)
+            , ldftaLeiosTracer = leiosKernelTracer tracers
+            , ldftaLeiosDb = leiosConn
+            }
+
     -- Tick the ledger state for the 'SlotNo' we're producing a block for
     let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
         tickedLedgerState =
@@ -777,19 +788,18 @@ forkBlockForging IS{..} blockForging =
     -- TODO: Needs access to Leios certificate of (blockNo - 1), if it exists
     -- and decide whether we want to put txs or the leios certificate into the
     -- body.
-    -- NOTE(bladyjoker): I stuffed this logic in the Shelley `forgeBlock` as it relies on `shelleyLedgerLeiosState` field of the `ShelleyLedgerState`
-    (newBlock, mayForgedEb) <-
-      lift $
-        Block.forgeBlock
-          blockForging
-          leiosConn
-          cfg
-          bcBlockNo
-          currentSlot
-          (forgetLedgerTables tickedLedgerState)
-          rbTxsList
-          ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
-          proof
+    let forgeBlockArgs =
+          ForgeBlockArgs
+            { fbIsLeader = proof
+            , fbEbTxs = ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
+            , fbRbTxs = rbTxsList
+            , fbCurrentTickedLedgerState = (forgetLedgerTables tickedLedgerState)
+            , fbCurrentSlotNo = currentSlot
+            , fbCurrentBlockNo = bcBlockNo
+            , fbConfig = cfg
+            , fbForgeType = forgeType
+            }
+    (newBlock, mayForgedEb) <- lift $ Block.forgeBlock blockForging forgeBlockArgs
 
     trace $
       TraceForgedBlock currentSlot $

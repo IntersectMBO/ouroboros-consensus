@@ -220,7 +220,6 @@ fromShelleyLedgerExamples
         , shelleyLedgerState = sleNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = LedgerTables EmptyMK
-        , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
         , shelleyCumulativeTxBytes = 0
         }
     chainDepState = TPraosState (NotOrigin 1) sleChainDepState
@@ -264,8 +263,8 @@ fromShelleyLedgerExamplesPraos
    where
     blk =
       mkShelleyBlock $
-        let SL.Block hdr1 bdy mayAnnEb mayCertEb = sleBlock
-         in SL.Block (translateHeader hdr1) bdy mayAnnEb mayCertEb
+        let SL.Block hdr1 bdy = sleBlock
+         in SL.Block (translateHeader hdr1) bdy
 
     translateHeader :: SL.BHeader StandardCrypto -> Praos.Header StandardCrypto
     translateHeader (SL.BHeader bhBody bhSig) =
@@ -283,6 +282,7 @@ fromShelleyLedgerExamplesPraos
           , hbBodyHash = SL.bhash bhBody
           , hbOCert = SL.bheaderOCert bhBody
           , hbProtVer = SL.bprotver bhBody
+          , hbMayEbAnnouncement = Nothing
           }
       hSig = coerce bhSig
     hash = ShelleyHash $ SL.unHashHeader sleHashHeader
@@ -332,7 +332,6 @@ fromShelleyLedgerExamplesPraos
         , shelleyLedgerState = sleNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = emptyLedgerTables
-        , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
         , shelleyCumulativeTxBytes = 0
         }
     chainDepState =

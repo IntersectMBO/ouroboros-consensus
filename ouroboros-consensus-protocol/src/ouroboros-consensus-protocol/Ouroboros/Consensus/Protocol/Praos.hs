@@ -1,11 +1,13 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -26,8 +28,10 @@ module Ouroboros.Consensus.Protocol.Praos
   , PraosToSign (..)
   , PraosValidationErr (..)
   , Ticked (..)
+  , LeiosState (..)
   , forgePraosFields
   , praosCheckCanForge
+  , withOriginToSlotNo
 
     -- * For testing purposes
   , doValidateKESSignature
@@ -78,7 +82,7 @@ import Cardano.Slotting.EpochInfo
 import Cardano.Slotting.Slot
   ( EpochNo (EpochNo)
   , SlotNo (SlotNo)
-  , WithOrigin
+  , WithOrigin (Origin)
   , unSlotNo
   )
 import qualified Codec.CBOR.Encoding as CBOR
@@ -94,6 +98,7 @@ import Data.Proxy (Proxy (Proxy))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (BytesSize, EbAnnouncement (ebAnnouncementSize))
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
@@ -284,6 +289,7 @@ data PraosState = PraosState
   , praosStateLastEpochBlockNonce :: !Nonce
   -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
   -- epoch
+  , praosStateLeios :: !LeiosState
   }
   deriving (Generic, Show, Eq)
 
@@ -305,10 +311,11 @@ instance Serialise PraosState where
       , praosStateEpochNonce
       , praosStateLabNonce
       , praosStateLastEpochBlockNonce
+      , praosStateLeios
       } =
       encodeVersion 0 $
         mconcat
-          [ CBOR.encodeListLen 7
+          [ CBOR.encodeListLen 8
           , toCBOR praosStateLastSlot
           , toCBOR praosStateOCertCounters
           , toCBOR praosStateEvolvingNonce
@@ -316,6 +323,7 @@ instance Serialise PraosState where
           , toCBOR praosStateEpochNonce
           , toCBOR praosStateLabNonce
           , toCBOR praosStateLastEpochBlockNonce
+          , toCBOR praosStateLeios
           ]
 
   decode =
@@ -323,9 +331,10 @@ instance Serialise PraosState where
       [(0, Decode decodePraosState)]
    where
     decodePraosState = do
-      enforceSize "PraosState" 7
+      enforceSize "PraosState" 8
       PraosState
         <$> fromCBOR
+        <*> fromCBOR
         <*> fromCBOR
         <*> fromCBOR
         <*> fromCBOR
@@ -337,6 +346,61 @@ data instance Ticked PraosState = TickedPraosState
   { tickedPraosStateChainDepState :: PraosState
   , tickedPraosStateLedgerView :: Views.LedgerView
   }
+
+data LeiosState = LeiosState
+  { leiosStatePreviousAnnouncement :: Maybe EbAnnouncement
+  , leiosStateCanCertify :: Bool
+  , leiosStateCumulativeEbAnnouncementSize :: BytesSize
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+initLeiosState :: LeiosState
+initLeiosState = LeiosState Nothing False 0
+
+instance ToCBOR LeiosState where
+  toCBOR LeiosState{..} =
+    mconcat
+      [ CBOR.encodeListLen 3
+      , toCBOR leiosStatePreviousAnnouncement
+      , toCBOR leiosStateCanCertify
+      , toCBOR leiosStateCumulativeEbAnnouncementSize
+      ]
+
+instance FromCBOR LeiosState where
+  fromCBOR = do
+    enforceSize "LeiosState" 3
+    LeiosState <$> fromCBOR <*> fromCBOR <*> fromCBOR
+
+tickChainDepStateLeios :: LeiosState -> WithOrigin SlotNo -> SlotNo -> LeiosState
+tickChainDepStateLeios leiosSt prevSlotNo currSlotNo =
+  leiosSt
+    { leiosStateCanCertify = not (leiosTooSoonToCertify leiosSt prevSlotNo currSlotNo)
+    }
+
+leiosTooSoonToCertify :: LeiosState -> WithOrigin SlotNo -> SlotNo -> Bool
+leiosTooSoonToCertify leiosSt prevSlotNo currSlotNo =
+  maybe
+    True
+    ( \_ebAnn ->
+        unSlotNo currSlotNo - unSlotNo (withOriginToSlotNo prevSlotNo) <= certifyMinDuration
+    )
+    (leiosStatePreviousAnnouncement leiosSt)
+ where
+  certifyMinDuration = 10 -- FIXME(bladyjoker): Hardcore real value or wire in through config
+
+withOriginToSlotNo :: WithOrigin SlotNo -> SlotNo
+withOriginToSlotNo Origin = SlotNo 0 -- FIXME(bladyjoker): Is this correct?
+withOriginToSlotNo (NotOrigin slotNo) = slotNo
+
+reupdateChainDepStateLeios :: Views.HeaderView c -> LeiosState -> LeiosState
+reupdateChainDepStateLeios hdr leiosState =
+  leiosState
+    { leiosStatePreviousAnnouncement = Views.hvMayEbAnnouncement hdr
+    , leiosStateCumulativeEbAnnouncementSize =
+        leiosStateCumulativeEbAnnouncementSize leiosState
+          + maybe 0 ebAnnouncementSize (Views.hvMayEbAnnouncement hdr)
+    }
 
 -- | Errors which we might encounter
 data PraosValidationErr c
@@ -422,8 +486,8 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
 
   -- Updating the chain dependent state for Praos.
   --
-  -- If we are not in a new epoch, then nothing happens. If we are in a new
-  -- epoch, we do two things:
+  -- If we are not in a new epoch, then we update the Leios state. If we are in a new
+  -- epoch, we update the Leios state AND we do two things:
   -- - Update the epoch nonce to the combination of the candidate nonce and the
   --   nonce derived from the last block of the previous epoch.
   -- - Update the "last block of previous epoch" nonce to the nonce derived from
@@ -434,7 +498,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
     slot
     st =
       TickedPraosState
-        { tickedPraosStateChainDepState = st'
+        { tickedPraosStateChainDepState = st''
         , tickedPraosStateLedgerView = lv
         }
      where
@@ -453,6 +517,10 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
               , praosStateLastEpochBlockNonce = praosStateLabNonce st
               }
           else st
+      st'' =
+        st'
+          { praosStateLeios = tickChainDepStateLeios (praosStateLeios st') (praosStateLastSlot st) slot
+          }
 
   -- Validate and update the chain dependent state as a result of processing a
   -- new header.
@@ -507,6 +575,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
               else praosStateCandidateNonce cs
         , praosStateOCertCounters =
             Map.insert hk n $ praosStateOCertCounters cs
+        , praosStateLeios = reupdateChainDepStateLeios b (praosStateLeios cs)
         }
      where
       epochInfoWithErr =
@@ -759,6 +828,7 @@ instance TranslateProto (TPraos c) (Praos c) where
       , praosStateEpochNonce = SL.ticknStateEpochNonce csTickn
       , praosStateLabNonce = csLabNonce
       , praosStateLastEpochBlockNonce = SL.ticknStatePrevHashNonce csTickn
+      , praosStateLeios = initLeiosState
       }
    where
     SL.ChainDepState{SL.csProtocol, SL.csTickn, SL.csLabNonce} =

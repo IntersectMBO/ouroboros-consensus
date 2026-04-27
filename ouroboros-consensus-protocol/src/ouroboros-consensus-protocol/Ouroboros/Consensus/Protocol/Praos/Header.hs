@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Block header associated with Praos.
 --
@@ -39,6 +40,8 @@ import Cardano.Ledger.Binary
   , DecCBOR (decCBOR)
   , EncCBOR (..)
   , ToCBOR (..)
+  , decodeListLen
+  , encodeListLen
   , encodedSigKESSizeExpr
   , serialize'
   , unCBORGroup
@@ -67,6 +70,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Word (Word32)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (EbAnnouncement)
 import NoThunks.Class (AllowThunksIn (..), NoThunks (..))
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
@@ -93,6 +97,8 @@ data HeaderBody crypto = HeaderBody
   -- ^ operational certificate
   , hbProtVer :: !ProtVer
   -- ^ protocol version
+  , hbMayEbAnnouncement :: Maybe EbAnnouncement
+  -- ^ Leios EB announcement
   }
   deriving Generic
 
@@ -181,6 +187,8 @@ headerHash = Hash.castHash . Hash.hashWithSerialiser toCBOR
 -- Serialisation
 --------------------------------------------------------------------------------
 
+-- NOTE(bladyjoker): The HeaderBody codec is trying to be backwards compatible with tools that only work with plain Praos headers.
+
 instance Crypto crypto => EncCBOR (HeaderBody crypto) where
   encCBOR
     HeaderBody
@@ -194,34 +202,60 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbBodyHash
       , hbOCert
       , hbProtVer
+      , hbMayEbAnnouncement
       } =
-      encode $
-        Rec HeaderBody
-          !> To hbBlockNo
-          !> To hbSlotNo
-          !> To hbPrev
-          !> To hbVk
-          !> E encodeVerKeyVRF hbVrfVk
-          !> To hbVrfRes
-          !> To hbBodySize
-          !> To hbBodyHash
-          !> To hbOCert
-          !> To hbProtVer
+      let (len, encEbAnnouncement) = case hbMayEbAnnouncement of -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
+            Nothing -> (10, mempty)
+            Just ebAnnouncement ->
+              ( 11
+              , encCBOR ebAnnouncement
+              )
+       in mconcat
+            [ encodeListLen len
+            , encCBOR hbBlockNo
+            , encCBOR hbSlotNo
+            , encCBOR hbPrev
+            , encCBOR hbVk
+            , encodeVerKeyVRF hbVrfVk
+            , encCBOR hbVrfRes
+            , encCBOR hbBodySize
+            , encCBOR hbBodyHash
+            , encCBOR hbOCert
+            , encCBOR hbProtVer
+            , encEbAnnouncement
+            ]
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
-  decCBOR =
-    decode $
-      RecD HeaderBody
-        <! From
-        <! From
-        <! From
-        <! From
-        <! D decodeVerKeyVRF
-        <! From
-        <! From
-        <! From
-        <! mapCoder unCBORGroup From
-        <! From
+  decCBOR = do
+    len <- decodeListLen
+    hbBlockNo <- decCBOR
+    hbSlotNo <- decCBOR
+    hbPrev <- decCBOR
+    hbVk <- decCBOR
+    hbVrfVk <- decodeVerKeyVRF
+    hbVrfRes <- decCBOR
+    hbBodySize <- decCBOR
+    hbBodyHash <- decCBOR
+    hbOCert <- unCBORGroup <$> decCBOR
+    hbProtVer <- decCBOR
+    hbMayEbAnnouncement <- case len of
+      10 -> return Nothing
+      11 -> Just <$> decCBOR @EbAnnouncement -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
+      _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
+    return $
+      HeaderBody
+        { hbBlockNo
+        , hbSlotNo
+        , hbPrev
+        , hbVk
+        , hbVrfVk
+        , hbVrfRes
+        , hbBodySize
+        , hbBodyHash
+        , hbOCert
+        , hbProtVer
+        , hbMayEbAnnouncement
+        }
 
 encodeHeaderRaw ::
   Crypto crypto =>

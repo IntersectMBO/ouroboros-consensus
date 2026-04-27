@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -135,15 +136,16 @@ praosBlockForging cid initHotKey = do
               . second forgeStateUpdateInfoFromUpdateInfo
               . evolveKey sno
       , checkCanForge = \_ _ _ _ _ -> return ()
-      , forgeBlock = \_leiosDb cfg bno sno tickedLedgerSt txs _ebtxs isLeader -> do
+      , forgeBlock = \ForgeBlockArgs{..} -> do
           hotKey <- readMVar varHotKey
           return . (,Nothing) $
             forgeSimple
               (forgePraosExt hotKey)
-              cfg
-              bno
-              sno
-              tickedLedgerSt
-              (map txForgetValidated txs)
-              isLeader
+              fbConfig
+              fbCurrentBlockNo
+              fbCurrentSlotNo
+              fbCurrentTickedLedgerState
+              (txForgetValidated <$> fbRbTxs)
+              fbIsLeader
+      , leiosDecideForgeType = \_ -> return ForgeTxsRb
       }

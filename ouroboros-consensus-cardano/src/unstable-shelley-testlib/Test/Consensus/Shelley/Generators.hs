@@ -93,8 +93,6 @@ instance
       SL.Block
         <$> arbitrary
         <*> (L.BodyInline . L.toTxSeq @era <$> arbitrary)
-        <*> pure Nothing
-        <*> pure False -- FIXME(bladyjoker)
 
 -- | This uses a different upstream generator to ensure the header and block
 -- body relate as expected.
@@ -126,9 +124,9 @@ instance
     mkBlk sleBlock =
       mkShelleyBlock $
         let
-          SL.Block hdr1 bdy mayAnnEb mayCertEb = sleBlock
+          SL.Block hdr1 bdy = sleBlock
          in
-          SL.Block (translateHeader hdr1) bdy mayAnnEb mayCertEb
+          SL.Block (translateHeader hdr1) bdy
 
     translateHeader :: Crypto c => SL.BHeader c -> Praos.Header c
     translateHeader (SL.BHeader bhBody bhSig) =
@@ -146,6 +144,7 @@ instance
           , Praos.hbBodyHash = SL.bhash bhBody
           , Praos.hbOCert = SL.bheaderOCert bhBody
           , Praos.hbProtVer = SL.bprotver bhBody
+          , Praos.hbMayEbAnnouncement = Nothing
           }
       hSig = coerce bhSig
 
@@ -240,7 +239,6 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> pure (LedgerTables EmptyMK)
-      <*> pure initShelleyLedgerLeiosState
       <*> arbitrary
 
 instance
@@ -253,7 +251,6 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> (LedgerTables . ValuesMK <$> arbitrary)
-      <*> pure initShelleyLedgerLeiosState
       <*> arbitrary
 
 instance CanMock proto era => Arbitrary (AnnTip (ShelleyBlock proto era)) where

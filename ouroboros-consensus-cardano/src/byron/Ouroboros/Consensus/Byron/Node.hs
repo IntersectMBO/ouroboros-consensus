@@ -1,6 +1,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -141,11 +142,19 @@ byronBlockForging creds =
           canBeLeader
           slot
           tickedPBftState
-    , forgeBlock = \_leiosDb cfg blkNo slotNo ledgerState rbTxs _ebTxs isLeader ->
+    , forgeBlock = \ForgeBlockArgs{..} ->
         let
-          byronBlock = forgeByronBlock cfg blkNo slotNo ledgerState rbTxs isLeader
+          byronBlock =
+            forgeByronBlock
+              fbConfig
+              fbCurrentBlockNo
+              fbCurrentSlotNo
+              fbCurrentTickedLedgerState
+              fbRbTxs
+              fbIsLeader
          in
           return (byronBlock, Nothing)
+    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
  where
   canBeLeader = mkPBftCanBeLeader creds

@@ -297,7 +297,6 @@ translateLedgerStateByronToShelleyWrapper =
                 , shelleyLedgerTransition =
                     ShelleyTransitionInfo{shelleyAfterVoting = 0}
                 , shelleyLedgerTables = emptyLedgerTables
-                , shelleyLedgerLeiosState = initShelleyLedgerLeiosState
                 , shelleyCumulativeTxBytes = 0
                 }
         }
@@ -632,13 +631,12 @@ translateLedgerStateAlonzoToBabbageWrapper =
   transPraosLS ::
     LedgerState (ShelleyBlock (TPraos c) AlonzoEra) mk ->
     LedgerState (ShelleyBlock (Praos c) AlonzoEra) mk
-  transPraosLS (ShelleyLedgerState wo nes st tb l ctb) =
+  transPraosLS (ShelleyLedgerState wo nes st tb ctb) =
     ShelleyLedgerState
       { shelleyLedgerTip = fmap castShelleyTip wo
       , shelleyLedgerState = nes
       , shelleyLedgerTransition = st
       , shelleyLedgerTables = coerce tb
-      , shelleyLedgerLeiosState = l
       , shelleyCumulativeTxBytes = ctb
       }
 

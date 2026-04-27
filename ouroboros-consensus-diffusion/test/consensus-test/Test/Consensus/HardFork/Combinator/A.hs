@@ -356,9 +356,16 @@ blockForgingA =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \_leiosDb cfg bno slot st txs _ebTxs proof ->
+    , forgeBlock = \ForgeBlockArgs{..} ->
         return . (,Nothing) $
-          forgeBlockA cfg bno slot st (fmap txForgetValidated txs) proof
+          forgeBlockA
+            fbConfig
+            fbCurrentBlockNo
+            fbCurrentSlotNo
+            fbCurrentTickedLedgerState
+            (txForgetValidated <$> fbRbTxs)
+            fbIsLeader
+    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
 
 -- | See 'Ouroboros.Consensus.HardFork.History.EraParams.safeFromTip'
