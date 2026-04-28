@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | Deterministic portion of the Weighted Fait-Accompli committee selection scheme
 module Ouroboros.Consensus.Committee.WFA
@@ -32,7 +31,7 @@ import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
 import Cardano.Ledger.Binary (runByteBuilder)
 import Cardano.Ledger.Core (HASH, Hash, KeyHash (unKeyHash))
 import Control.Exception (assert)
-import Data.Array (Array, Ix, listArray)
+import Data.Array (Array, listArray)
 import qualified Data.Array as Array
 import qualified Data.ByteString.Builder.Extra as BS
 import Data.Function (on)
@@ -44,6 +43,7 @@ import Ouroboros.Consensus.Committee.Types
   ( Cumulative (..)
   , LedgerStake (..)
   , PoolId
+  , SeatIndex (..)
   , TargetCommitteeSize (..)
   , unPoolId
   )
@@ -226,13 +226,6 @@ isAbovePersistentSeatThreshold
             )
 
 -- * Cumulative stake distributions
-
--- | Seat index in the voting committee
-newtype SeatIndex
-  = SeatIndex
-  { unSeatIndex :: Word64
-  }
-  deriving (Show, Eq, Ord, Enum, Ix)
 
 -- | Number of pools with positive stake in the underlying stake distribution
 newtype NumPoolsWithPositiveStake

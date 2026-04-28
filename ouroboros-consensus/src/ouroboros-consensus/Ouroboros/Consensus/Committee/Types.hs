@@ -8,10 +8,12 @@ module Ouroboros.Consensus.Committee.Types
   , VoteWeight (..)
   , TargetCommitteeSize (..)
   , Cumulative (..)
+  , SeatIndex (..)
   ) where
 
 import Cardano.Ledger.BaseTypes (HasZero)
 import Cardano.Ledger.Core (KeyHash, KeyRole (..))
+import Data.Array (Ix)
 import Data.Word (Word64)
 
 -- | Identifier of a given voter in the committee selection scheme
@@ -44,3 +46,10 @@ newtype Cumulative a = Cumulative
   { unCumulative :: a
   }
   deriving (Show, Eq)
+
+-- | Seat index in the voting committee
+newtype SeatIndex
+  = SeatIndex
+  { unSeatIndex :: Word64
+  }
+  deriving (Show, Eq, Ord, Enum, Ix)

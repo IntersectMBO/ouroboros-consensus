@@ -35,7 +35,7 @@ import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
-  , VotesWithSameTarget
+  , VotesNoDupNonEmptySameTarget
   , getElectionIdFromVotes
   , getRawVotes
   , getVoteCandidateFromVotes
@@ -252,11 +252,15 @@ implEligiblePartyVoteWeight _committee member =
 implForgeCert ::
   forall crypto.
   CryptoSupportsAggregateVoteSigning crypto =>
-  VotesWithSameTarget crypto EveryoneVotes ->
+  VotesNoDupNonEmptySameTarget crypto EveryoneVotes SeatIndex ->
   Either
     (VotingCommitteeError crypto EveryoneVotes)
     (Cert crypto EveryoneVotes)
 implForgeCert votes = do
+  -- Voter ID uniqueness is guaranteed by the VotesNoDupNonEmptySameTarget smart
+  -- constructor, so fromAscList preserves length.
+  let voterSet = NESet.fromAscList sortedVoters
+
   aggSig <-
     bimap CryptoError id $ do
       aggregateVoteSignatures
@@ -266,10 +270,10 @@ implForgeCert votes = do
     EveryoneVotesCert
       (getElectionIdFromVotes votes)
       (getVoteCandidateFromVotes votes)
-      (NESet.fromList voters)
+      voterSet
       aggSig
  where
-  (voters, voteSignatures) =
+  (sortedVoters, voteSignatures) =
     munzip $ flip fmap votesInAscendingSeatIndexOrder $ \case
       EveryoneVotesVote seatIndex _ _ sig ->
         ( seatIndex
@@ -277,7 +281,7 @@ implForgeCert votes = do
         )
 
   -- Make sure we have votes in ascending seat index order, which is something
-  -- 'VotesWithSameTarget' cannot guarantee by itself, since seat indices are
+  -- 'VotesNoDupNonEmptySameTarget' cannot guarantee by itself, since seat indices are
   -- an implementation detail of this voting committee scheme.
   votesInAscendingSeatIndexOrder =
     flip NonEmpty.sortWith (getRawVotes votes) $ \case
