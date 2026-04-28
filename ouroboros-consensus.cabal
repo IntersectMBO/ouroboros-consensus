@@ -1073,7 +1073,6 @@ library diffusion
     cardano-base,
     cardano-diffusion:{api, cardano-diffusion, protocols},
     cardano-slotting,
-    cardano-ledger-core,
     cborg,
     containers,
     contra-tracer,

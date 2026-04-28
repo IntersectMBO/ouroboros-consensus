@@ -17,7 +17,6 @@ module Ouroboros.Consensus.Node.Tracers
   , TraceLabelCreds (..)
   ) where
 
-import qualified Cardano.Ledger.TxIn as SL
 import Control.Exception (SomeException)
 import Control.Tracer (Tracer, nullTracer, showTracing)
 import Data.Text (Text)
@@ -57,6 +56,7 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent
   )
 import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
+import Ouroboros.Network.Tx
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types
 import Ouroboros.Network.TxSubmission.Outbound
 
@@ -72,11 +72,11 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , blockFetchClientTracer :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
   , blockFetchServerTracer :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
   , txInboundTracer ::
-      f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound SL.TxId (GenTx blk)))
+      f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound (GenTxId blk) (GenTx blk)))
   , txOutboundTracer ::
-      f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound SL.TxId (GenTx blk)))
+      f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
-  , txLogicTracer :: f (TraceTxLogic remotePeer SL.TxId (GenTx blk))
+  , txLogicTracer :: f (TraceTxLogic remotePeer (GenTxId blk) (GenTx blk))
   , txCountersTracer :: f TxSubmissionCounters
   , mempoolTracer :: f (TraceEventMempool blk)
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
@@ -167,6 +167,7 @@ showTracers ::
   ( Show blk
   , Show (GenTx blk)
   , Show (Validated (GenTx blk))
+  , Show (GenTxId blk)
   , Show (ApplyTxErr blk)
   , Show (Header blk)
   , Show (ForgeStateInfo blk)
@@ -174,8 +175,8 @@ showTracers ::
   , Show (CannotForge blk)
   , Show (TxMeasure blk)
   , Show remotePeer
-  , ConvertRawTxId (GenTx blk)
   , LedgerSupportsProtocol blk
+  , HasRawTxId (TxId (GenTx blk))
   ) =>
   Tracer m String -> Tracers m remotePeer localPeer blk
 showTracers tr =

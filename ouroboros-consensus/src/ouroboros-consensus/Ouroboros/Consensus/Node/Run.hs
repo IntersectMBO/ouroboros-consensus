@@ -46,6 +46,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Network.Block (Serialised)
+import Ouroboros.Network.Tx
 
 {-------------------------------------------------------------------------------
   RunNode proper
@@ -96,7 +97,6 @@ class
   , InspectLedger blk
   , HasHardForkHistory blk
   , LedgerSupportsMempool blk
-  , HasTxId (GenTx blk)
   , ConvertRawTxId (GenTx blk)
   , BlockSupportsLedgerQuery blk
   , SupportedNetworkProtocolVersion blk
@@ -123,6 +123,8 @@ class
   , ShowProxy (TxId (GenTx blk))
   , (forall fp. ShowQuery (BlockQuery blk fp))
   , LedgerSupportsLedgerDB blk
+  , Ord (TxId (GenTx blk))
+  , ConvertRawTxId (GenTx blk)
   ) =>
   RunNode blk
 

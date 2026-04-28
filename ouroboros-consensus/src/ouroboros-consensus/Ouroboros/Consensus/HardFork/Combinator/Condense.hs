@@ -58,8 +58,8 @@ instance All CondenseConstraints xs => Condense (Header (HardForkBlock xs)) wher
 instance All CondenseConstraints xs => Condense (GenTx (HardForkBlock xs)) where
   condense = defaultCondenseNS (Proxy @GenTx) . coerce
 
--- instance All CondenseConstraints xs => Condense (TxId (GenTx (HardForkBlock xs))) where
---   condense = defaultCondenseNS (Proxy @WrapGenTxId) . coerce
+instance All CondenseConstraints xs => Condense (TxId (GenTx (HardForkBlock xs))) where
+  condense = show . getHardForkGenTxId
 
 {-------------------------------------------------------------------------------
   Forwarding

@@ -29,6 +29,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
 import qualified Cardano.Ledger.TxIn as SL
 import Control.Arrow ((+++))
 import Control.Monad.Except
+import Data.Function (on)
 import Data.Functor.Identity
 import Data.Functor.Product
 import Data.Kind (Type)
@@ -573,6 +574,12 @@ instance CanHardFork xs => HasTxId (GenTx (HardForkBlock xs)) where
           . hcmap proxySingle (WrapGenTxId . txId)
           $ tx
       )
+
+instance Ord (TxId (GenTx (HardForkBlock xs))) where
+  compare = compare `on` getHardForkGenTxId
+
+instance Eq (TxId (GenTx (HardForkBlock xs))) where
+  (==) = (==) `on` getHardForkGenTxId
 
 instance CanHardFork xs => ConvertRawTxId (GenTx (HardForkBlock xs)) where
   toRawTxIdHash = getHardForkGenTxId

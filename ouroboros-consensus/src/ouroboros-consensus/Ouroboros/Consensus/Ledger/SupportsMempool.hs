@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
@@ -288,9 +289,9 @@ class HasTxId tx => ConvertRawTxId tx where
   -- properties as defined in the docs of 'txId'.
   toRawTxIdHash :: TxId tx -> SL.TxId
 
-instance HasRawTxId SL.TxId where
-  type RawTxId SL.TxId = SL.TxId
-  getRawTxId = id
+instance ConvertRawTxId tx => HasRawTxId (TxId tx) where
+  type RawTxId (TxId tx) = SL.TxId
+  getRawTxId = toRawTxIdHash
 
 -- | Shorthand: ID of a generalized transaction
 type GenTxId blk = TxId (GenTx blk)

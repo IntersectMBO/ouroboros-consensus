@@ -5,7 +5,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Intended for qualified import
 module Ouroboros.Consensus.Network.NodeToNode
@@ -40,7 +39,6 @@ module Ouroboros.Consensus.Network.NodeToNode
   , initiatorAndResponder
   ) where
 
-import qualified Cardano.Ledger.TxIn as SL
 import Cardano.Network.NodeToNode
 import Cardano.Network.PeerSelection (PeerTrustable (..))
 import Codec.CBOR.Decoding (Decoder)
@@ -146,6 +144,7 @@ import Ouroboros.Network.Protocol.TxSubmission2.Client
 import Ouroboros.Network.Protocol.TxSubmission2.Codec
 import Ouroboros.Network.Protocol.TxSubmission2.Server
 import Ouroboros.Network.Protocol.TxSubmission2.Type
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V1
 import Ouroboros.Network.TxSubmission.Inbound.V2
   ( PeerTxAPI
@@ -206,14 +205,14 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
-      TxSubmissionClient SL.TxId (GenTx blk) m ()
+      TxSubmissionClient (GenTxId blk) (GenTx blk) m ()
   , hTxSubmissionServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
       Either
-        (TxSubmissionServerPipelined SL.TxId (GenTx blk) m ())
-        ( PeerTxAPI m SL.TxId (GenTx blk) ->
-          TxSubmissionServerPipelined SL.TxId (GenTx blk) m ()
+        (TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ())
+        ( PeerTxAPI m (GenTxId blk) (GenTx blk) ->
+          TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ()
         )
   -- ^ Either we use the legacy tx submission protocol or the newest one
   -- which require PeerTxAPI. This is decided by
@@ -250,6 +249,7 @@ mkHandlers ::
   , LedgerSupportsProtocol blk
   , Ord addrNTN
   , Hashable addrNTN
+  , Ord (TxId (GenTx blk))
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->
@@ -360,7 +360,7 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bKA bPS = Codecs
   , cBlockFetchCodec :: Codec (BlockFetch blk (Point blk)) e m bBF
   , cBlockFetchCodecSerialised ::
       Codec (BlockFetch (Serialised blk) (Point blk)) e m bSBF
-  , cTxSubmission2Codec :: Codec (TxSubmission2 SL.TxId (GenTx blk)) e m bTX
+  , cTxSubmission2Codec :: Codec (TxSubmission2 (GenTxId blk) (GenTx blk)) e m bTX
   , cKeepAliveCodec :: Codec KeepAlive e m bKA
   , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
   }
@@ -437,8 +437,6 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion =
   dec :: SerialiseNodeToNode blk a => forall s. Decoder s a
   dec = decodeNodeToNode ccfg version
 
-instance ShowProxy SL.TxId
-
 -- | Identity codecs used in tests.
 identityCodecs ::
   Monad m =>
@@ -451,7 +449,7 @@ identityCodecs ::
     (AnyMessage (ChainSync (SerialisedHeader blk) (Point blk) (Tip blk)))
     (AnyMessage (BlockFetch blk (Point blk)))
     (AnyMessage (BlockFetch (Serialised blk) (Point blk)))
-    (AnyMessage (TxSubmission2 SL.TxId (GenTx blk)))
+    (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
 identityCodecs =
@@ -482,10 +480,10 @@ data Tracers' peer ntnAddr blk e f = Tracers
   , tBlockFetchSerialisedTracer ::
       f (TraceLabelPeer peer (TraceSendRecv (BlockFetch (Serialised blk) (Point blk))))
   , tTxSubmission2Tracer ::
-      f (TraceLabelPeer peer (TraceSendRecv (TxSubmission2 SL.TxId (GenTx blk))))
+      f (TraceLabelPeer peer (TraceSendRecv (TxSubmission2 (GenTxId blk) (GenTx blk))))
   , tKeepAliveTracer :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
   , tPeerSharingTracer :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
-  , tTxLogicTracer :: f (TraceLabelPeer peer (TraceTxLogic peer SL.TxId (GenTx blk)))
+  , tTxLogicTracer :: f (TraceLabelPeer peer (TraceTxLogic peer (GenTxId blk) (GenTx blk)))
   }
 
 instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f) where
@@ -527,8 +525,10 @@ showTracers ::
   , Show ntnAddr
   , Show (Header blk)
   , Show (GenTx blk)
+  , Show (GenTxId blk)
   , HasHeader blk
   , HasNestedContent Header blk
+  , ConvertRawTxId (GenTx blk)
   ) =>
   Tracer m String -> Tracers m ntnAddr blk e
 showTracers tr =
@@ -657,8 +657,11 @@ mkApps ::
   , LedgerSupportsProtocol blk
   , ShowProxy blk
   , ShowProxy (Header blk)
+  , ShowProxy (TxId (GenTx blk))
   , ShowProxy (GenTx blk)
   , LedgerSupportsMempool blk
+  , ConvertRawTxId (GenTx blk)
+  , Ord (TxId (GenTx blk))
   ) =>
   -- | Needed for bracketing only
   NodeKernel m addrNTN addrNTC blk ->
