@@ -30,7 +30,7 @@ class
   -- relation between this and forecasting.
   protocolLedgerView ::
     LedgerConfig blk ->
-    Ticked (LedgerState blk) mk ->
+    Ticked LedgerState blk mk ->
     LedgerView (BlockProtocol blk)
 
   -- | Get a forecast at the given ledger state.

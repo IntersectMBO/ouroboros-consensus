@@ -32,7 +32,7 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 class
   ( All SingleEraBlock xs
   , All (Compose HasLedgerTables LedgerState) xs
-  , All (Compose HasTickedLedgerTables LedgerState) xs
+  , All (Compose HasLedgerTables (Ticked LedgerState)) xs
   , Typeable xs
   , IsNonEmpty xs
   , Measure (HardForkTxMeasure xs)

@@ -238,10 +238,10 @@ closeLedgerSeq (LedgerSeq l) =
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
   (IOLike m, ApplyBlock l blk) =>
-  LedgerDbCfg l ->
+  LedgerDbCfg l blk ->
   blk ->
-  LedgerSeq m l ->
-  m (LedgerSeq m l)
+  LedgerSeq m (l blk) ->
+  m (LedgerSeq m (l blk))
 reapplyThenPush cfg ap db = do
   newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
   let (m, db') = pruneToImmTipOnly $ extend newSt db
@@ -252,10 +252,10 @@ reapplyBlock ::
   forall m l blk.
   (ApplyBlock l blk, IOLike m) =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg l blk ->
   blk ->
-  LedgerSeq m l ->
-  m (StateRef m l)
+  LedgerSeq m (l blk) ->
+  m (StateRef m (l blk))
 reapplyBlock evs cfg b db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db

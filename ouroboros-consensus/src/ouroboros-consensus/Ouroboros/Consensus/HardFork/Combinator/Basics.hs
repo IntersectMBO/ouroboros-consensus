@@ -150,7 +150,7 @@ data HardForkLedgerConfig xs = HardForkLedgerConfig
 deriving instance Show (PerEraLedgerConfig xs) => Show (HardForkLedgerConfig xs)
 instance CanHardFork xs => NoThunks (HardForkLedgerConfig xs)
 
-type instance LedgerCfg (LedgerState (HardForkBlock xs)) = HardForkLedgerConfig xs
+type instance LedgerCfg LedgerState (HardForkBlock xs) = HardForkLedgerConfig xs
 
 {-------------------------------------------------------------------------------
   Operations on config

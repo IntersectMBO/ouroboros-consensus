@@ -305,7 +305,7 @@ instance GetTip l => AS.Anchorable (WithOrigin SlotNo) (l EmptyMK) (l EmptyMK) w
   asAnchor = id
   getAnchorMeasure _ = getTipSlot
 
-instance IsLedger l => GetTip (K (DbChangelog l)) where
+instance IsLedger l blk => GetTip (K (DbChangelog (l blk))) where
   getTip =
     castPoint
       . getTip
@@ -341,11 +341,11 @@ reapplyBlock ::
   forall m l blk.
   (ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg l blk ->
   blk ->
-  KeySetsReader m l ->
-  DbChangelog l ->
-  m (l DiffMK)
+  KeySetsReader m (l blk) ->
+  DbChangelog (l blk) ->
+  m (l blk DiffMK)
 reapplyBlock evs cfg b ksReader db =
   withKeysReadSets (current db) ksReader db (getBlockKeySets b) (return . tickThenReapply evs cfg b)
 
@@ -353,11 +353,11 @@ reapplyBlock evs cfg b ksReader db =
 -- the result ledger state.
 reapplyThenPush ::
   (Monad m, ApplyBlock l blk) =>
-  LedgerDbCfg l ->
+  LedgerDbCfg l blk ->
   blk ->
-  KeySetsReader m l ->
-  DbChangelog l ->
-  m (DbChangelog l)
+  KeySetsReader m (l blk) ->
+  DbChangelog (l blk) ->
+  m (DbChangelog (l blk))
 reapplyThenPush cfg ap ksReader db =
   (\current' -> pruneToImmTipOnly $ extend current' db)
     <$> reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap ksReader db
@@ -766,14 +766,14 @@ isSaturated (SecurityParam k) db =
 -- returned.
 getPastLedgerAt ::
   ( HasHeader blk
-  , IsLedger l
-  , HeaderHash l ~ HeaderHash blk
-  , StandardHash l
-  , HasLedgerTables l
+  , IsLedger l blk
+  , HeaderHash (l blk) ~ HeaderHash blk
+  , StandardHash (l blk)
+  , HasLedgerTables (l blk)
   ) =>
   Point blk ->
-  DbChangelog l ->
-  Maybe (l EmptyMK)
+  DbChangelog (l blk) ->
+  Maybe (l blk EmptyMK)
 getPastLedgerAt pt db = current <$> rollback pt db
 
 -- | Roll back the volatile states up to the specified point.
@@ -839,14 +839,14 @@ trunc n (SeqDiffMK sq) =
 -- returned.
 rollback ::
   ( HasHeader blk
-  , IsLedger l
-  , HeaderHash l ~ HeaderHash blk
-  , StandardHash l
-  , HasLedgerTables l
+  , IsLedger l blk
+  , HeaderHash (l blk) ~ HeaderHash blk
+  , StandardHash (l blk)
+  , HasLedgerTables (l blk)
   ) =>
   Point blk ->
-  DbChangelog l ->
-  Maybe (DbChangelog l)
+  DbChangelog (l blk) ->
+  Maybe (DbChangelog (l blk))
 rollback pt db
   | pt == castPoint (getTip (anchor db)) =
       Just $ rollbackToAnchor db
@@ -897,19 +897,19 @@ volatileStatesBimap f g =
 
 reapplyThenPush' ::
   ApplyBlock l blk =>
-  LedgerDbCfg l ->
+  LedgerDbCfg l blk ->
   blk ->
-  KeySetsReader Identity l ->
-  DbChangelog l ->
-  DbChangelog l
+  KeySetsReader Identity (l blk) ->
+  DbChangelog (l blk) ->
+  DbChangelog (l blk)
 reapplyThenPush' cfg b bk = runIdentity . reapplyThenPush cfg b bk
 
 reapplyThenPushMany' ::
-  (ApplyBlock l blk, LedgerTablesAreTrivial l) =>
-  LedgerDbCfg l ->
+  (ApplyBlock l blk, LedgerTablesAreTrivial (l blk)) =>
+  LedgerDbCfg l blk ->
   [blk] ->
-  DbChangelog l ->
-  DbChangelog l
+  DbChangelog (l blk) ->
+  DbChangelog (l blk)
 reapplyThenPushMany' cfg bs dblog =
   runIdentity
     . reapplyThenPushMany cfg bs (trivialKeySetsReader (getTipSlot (changelogLastFlushedState dblog)))
@@ -917,22 +917,22 @@ reapplyThenPushMany' cfg bs dblog =
 
 reapplyThenPushMany ::
   (ApplyBlock l blk, Monad m) =>
-  LedgerDbCfg l ->
+  LedgerDbCfg l blk ->
   [blk] ->
-  KeySetsReader m l ->
-  DbChangelog l ->
-  m (DbChangelog l)
+  KeySetsReader m (l blk) ->
+  DbChangelog (l blk) ->
+  m (DbChangelog (l blk))
 reapplyThenPushMany cfg aps ksReader =
   repeatedlyM (\ap -> reapplyThenPush cfg ap ksReader) aps
 
 switch ::
   (ApplyBlock l blk, Monad m) =>
-  LedgerDbCfg l ->
+  LedgerDbCfg l blk ->
   Word64 ->
   [blk] ->
-  KeySetsReader m l ->
-  DbChangelog l ->
-  m (Either ExceededRollback (DbChangelog l))
+  KeySetsReader m (l blk) ->
+  DbChangelog (l blk) ->
+  m (Either ExceededRollback (DbChangelog (l blk)))
 switch cfg numRollbacks newBlocks ksReader db =
   case rollbackN numRollbacks db of
     Nothing ->
@@ -955,12 +955,12 @@ switch cfg numRollbacks newBlocks ksReader db =
               db'
 
 switch' ::
-  (ApplyBlock l blk, LedgerTablesAreTrivial l) =>
-  LedgerDbCfg l ->
+  (ApplyBlock l blk, LedgerTablesAreTrivial (l blk)) =>
+  LedgerDbCfg l blk ->
   Word64 ->
   [blk] ->
-  DbChangelog l ->
-  Maybe (DbChangelog l)
+  DbChangelog (l blk) ->
+  Maybe (DbChangelog (l blk))
 switch' cfg n bs db =
   case runIdentity $ switch cfg n bs (trivialKeySetsReader (getTipSlot (changelogLastFlushedState db))) db of
     Left ExceededRollback{} -> Nothing

@@ -3,7 +3,9 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -23,6 +25,7 @@ module Ouroboros.Consensus.Ledger.Basics
     -- * Definition of a ledger independent of a choice of block
   , ComputeLedgerEvents (..)
   , IsLedger (..)
+  , AuxLedgerEvent
   , applyChainTick
 
     -- * Ledger Events
@@ -84,16 +87,17 @@ getTipM = atomically . getTipSTM
 
 -- | A 'Data.Void.Void' isomorph for explicitly declaring that some ledger has
 -- no events
-type VoidLedgerEvent :: LedgerStateKind -> Type
-data VoidLedgerEvent l
+type VoidLedgerEvent :: Type
+data VoidLedgerEvent
 
 -- | The result of invoke a ledger function that does validation
 --
 -- Note: we do not instantiate 'Applicative' or 'Monad' for this type because
 -- those interfaces would typically incur space leaks. We encourage you to
 -- process the events each time you invoke a ledger function.
-data LedgerResult l a = LedgerResult
-  { lrEvents :: [AuxLedgerEvent l]
+type LedgerResult :: Type -> Type -> Type
+data LedgerResult blk a = LedgerResult
+  { lrEvents :: [AuxLedgerEvent blk]
   , lrResult :: !a
   }
   deriving (Foldable, Functor, Traversable)
@@ -124,8 +128,16 @@ pureLedgerResult a =
 -- | Static environment required for the ledger
 --
 -- Types that inhabit this family will come from the Ledger code.
-type LedgerCfg :: LedgerStateKind -> Type
-type family LedgerCfg l :: Type
+type LedgerCfg :: StateKind -> Type -> Type
+type family LedgerCfg l blk :: Type
+
+-- | Event emitted by the ledger
+--
+-- TODO we call this 'AuxLedgerEvent' to differentiate from 'LedgerEvent' in
+-- 'InspectLedger'. When that module is rewritten to make use of ledger
+-- derived events, we may rename this type.
+type AuxLedgerEvent :: Type -> Type
+type family AuxLedgerEvent blk :: Type
 
 -- | Whether we tell the ledger layer to compute ledger events
 --
@@ -139,39 +151,32 @@ type family LedgerCfg l :: Type
 data ComputeLedgerEvents = ComputeLedgerEvents | OmitLedgerEvents
   deriving (Eq, Show, Generic, NoThunks)
 
-type IsLedger :: LedgerStateKind -> Constraint
+type IsLedger :: StateKind -> Type -> Constraint
 class
   ( -- Requirements on the ledger state itself
-    forall mk. EqMK mk => Eq (l mk)
-  , forall mk. NoThunksMK mk => NoThunks (l mk)
-  , forall mk. ShowMK mk => Show (l mk)
+    forall mk. EqMK mk => Eq (l blk mk)
+  , forall mk. NoThunksMK mk => NoThunks (l blk mk)
+  , forall mk. ShowMK mk => Show (l blk mk)
   , -- Requirements on 'LedgerCfg'
-    NoThunks (LedgerCfg l)
+    NoThunks (LedgerCfg l blk)
   , -- Requirements on 'LedgerErr'
-    Show (LedgerErr l)
-  , Eq (LedgerErr l)
-  , NoThunks (LedgerErr l)
+    Show (LedgerErr l blk)
+  , Eq (LedgerErr l blk)
+  , NoThunks (LedgerErr l blk)
   , -- Get the tip
     --
     -- See comment for 'applyChainTickLedgerResult' about the tip of the
     -- ticked ledger.
-    GetTip l
-  , GetTip (Ticked l)
+    GetTip (l blk)
+  , GetTip (Ticked l blk)
   ) =>
-  IsLedger l
+  IsLedger l blk
   where
   -- | Errors that can arise when updating the ledger
   --
   -- This is defined here rather than in 'ApplyBlock', since the /type/ of
   -- these errors does not depend on the type of the block.
-  type LedgerErr l :: Type
-
-  -- | Event emitted by the ledger
-  --
-  -- TODO we call this 'AuxLedgerEvent' to differentiate from 'LedgerEvent' in
-  -- 'InspectLedger'. When that module is rewritten to make use of ledger
-  -- derived events, we may rename this type.
-  type AuxLedgerEvent l :: Type
+  type LedgerErr l blk :: Type
 
   -- | Apply "slot based" state transformations
   --
@@ -205,19 +210,19 @@ class
   -- prop> ledgerTipPoint (applyChainTick cfg slot st) == ledgerTipPoint st
   applyChainTickLedgerResult ::
     ComputeLedgerEvents ->
-    LedgerCfg l ->
+    LedgerCfg l blk ->
     SlotNo ->
-    l EmptyMK ->
-    LedgerResult l (Ticked l DiffMK)
+    l blk EmptyMK ->
+    LedgerResult blk (Ticked l blk DiffMK)
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
-  IsLedger l =>
+  IsLedger l blk =>
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg l blk ->
   SlotNo ->
-  l EmptyMK ->
-  Ticked l DiffMK
+  l blk EmptyMK ->
+  Ticked l blk DiffMK
 applyChainTick = lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
@@ -243,11 +248,11 @@ applyChainTick = lrResult ...: applyChainTickLedgerResult
 type LedgerState :: Type -> LedgerStateKind
 data family LedgerState blk mk
 
-type TickedLedgerState blk = Ticked (LedgerState blk)
+type TickedLedgerState blk = Ticked LedgerState blk
 
 type instance HeaderHash (LedgerState blk) = HeaderHash blk
 
 instance StandardHash blk => StandardHash (LedgerState blk)
 
-type LedgerConfig blk = LedgerCfg (LedgerState blk)
-type LedgerError blk = LedgerErr (LedgerState blk)
+type LedgerConfig blk = LedgerCfg LedgerState blk
+type LedgerError blk = LedgerErr LedgerState blk

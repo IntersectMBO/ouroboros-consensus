@@ -190,6 +190,30 @@ instance
 
 instance
   CardanoHardForkConstraints c =>
+  IndexedMemPack (Ticked LedgerState (HardForkBlock (CardanoEras c)) EmptyMK) (CardanoTxOut c)
+  where
+  indexedTypeName _ = "CardanoTxOut"
+  indexedPackM _ = eliminateCardanoTxOut (const packM)
+  indexedPackedByteCount _ = eliminateCardanoTxOut (const packedByteCount)
+  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
+    let
+      -- These could be made into a CAF to avoid recomputing it, but
+      -- it is only used in serialization so it is not critical.
+      np =
+        ( (Fn $ const $ error "unpacking a byron txout")
+            :* (Fn $ const $ Comp $ K . ShelleyTxOut <$> unpackM)
+            :* (Fn $ const $ Comp $ K . AllegraTxOut <$> unpackM)
+            :* (Fn $ const $ Comp $ K . MaryTxOut <$> unpackM)
+            :* (Fn $ const $ Comp $ K . AlonzoTxOut <$> unpackM)
+            :* (Fn $ const $ Comp $ K . BabbageTxOut <$> unpackM)
+            :* (Fn $ const $ Comp $ K . ConwayTxOut <$> unpackM)
+            :* (Fn $ const $ Comp $ K . DijkstraTxOut <$> unpackM)
+            :* Nil
+        )
+    hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
+
+instance
+  CardanoHardForkConstraints c =>
   SerializeTablesWithHint (LedgerState (HardForkBlock (CardanoEras c)))
   where
   encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =

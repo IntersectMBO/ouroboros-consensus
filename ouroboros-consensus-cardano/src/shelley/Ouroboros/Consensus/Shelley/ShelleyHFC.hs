@@ -491,6 +491,15 @@ instance
   indexedUnpackM _ = unpackM
 
 instance
+  (txout ~ SL.TxOut era, MemPack txout) =>
+  IndexedMemPack (Ticked LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK) txout
+  where
+  indexedTypeName _ = typeName @txout
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
+
+instance
   ShelleyCompatible proto era =>
   SerializeTablesWithHint (LedgerState (HardForkBlock '[ShelleyBlock proto era]))
   where
