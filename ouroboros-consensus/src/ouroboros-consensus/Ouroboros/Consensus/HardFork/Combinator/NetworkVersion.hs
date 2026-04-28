@@ -32,6 +32,7 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 -- protocols, e.g., the era tag.
 data HardForkSpecificNodeToNodeVersion
   = HardForkSpecificNodeToNodeVersion1
+  | HardForkSpecificNodeToNodeVersion2
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | Versioning of the specific additions made by the HFC to the @NodeToClient@
@@ -39,6 +40,7 @@ data HardForkSpecificNodeToNodeVersion
 data HardForkSpecificNodeToClientVersion
   = -- | Include the Genesis window in 'EraParams'.
     HardForkSpecificNodeToClientVersion3
+  | HardForkSpecificNodeToClientVersion4
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 data HardForkNodeToNodeVersion xs where

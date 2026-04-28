@@ -175,7 +175,8 @@ deriving via
   IsomorphicUnary NS WrapForgeStateUpdateError
   instance
     Isomorphic WrapForgeStateUpdateError
-deriving via IsomorphicUnary NS WrapGenTxId instance Isomorphic WrapGenTxId
+
+-- deriving via IsomorphicUnary NS WrapGenTxId instance Isomorphic WrapGenTxId
 deriving via IsomorphicUnary NS WrapIsLeader instance Isomorphic WrapIsLeader
 deriving via IsomorphicUnary NS WrapTipInfo instance Isomorphic WrapTipInfo
 deriving via IsomorphicUnary NS WrapValidatedGenTx instance Isomorphic WrapValidatedGenTx

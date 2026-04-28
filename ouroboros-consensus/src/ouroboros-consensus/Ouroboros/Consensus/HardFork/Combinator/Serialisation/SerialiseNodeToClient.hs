@@ -22,7 +22,7 @@ import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import qualified Codec.CBOR.Encoding as Enc
 import qualified Codec.Serialise as Serialise
 import Control.Exception (throw)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromJust)
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -45,10 +45,11 @@ import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseDisk ()
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
+import Ouroboros.Consensus.Ledger.SupportsMempool (ConvertRawTxId (..), GenTxId)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util ((.:))
 import Ouroboros.Network.Block
   ( Serialised
@@ -367,8 +368,20 @@ instance
   SerialiseHFC xs =>
   SerialiseNodeToClient (HardForkBlock xs) (GenTxId (HardForkBlock xs))
   where
-  encodeNodeToClient = dispatchEncoder `after` (getOneEraGenTxId . getHardForkGenTxId)
-  decodeNodeToClient = fmap (HardForkGenTxId . OneEraGenTxId) .: dispatchDecoder
+  encodeNodeToClient ccfg ntcVersion txid =
+    case ntcVersion of
+      HardForkNodeToClientEnabled HardForkSpecificNodeToClientVersion4 _ ->
+        encodeNodeToClient ccfg ntcVersion (getHardForkGenTxId txid)
+      _ -> dispatchEncoder ccfg ntcVersion (getOneEraGenTxId $ fromJust $ mOldHardForkGenTxId txid)
+  decodeNodeToClient ccfg ntcVersion = case ntcVersion of
+    HardForkNodeToClientEnabled HardForkSpecificNodeToClientVersion4 _ ->
+      flip HardForkGenTxId Nothing <$> decodeNodeToClient ccfg ntcVersion
+    _ -> do
+      txid <- dispatchDecoder ccfg ntcVersion
+      pure $
+        HardForkGenTxId
+          (hcollapse . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId) $ txid)
+          (Just (OneEraGenTxId txid))
 
 instance
   SerialiseHFC xs =>

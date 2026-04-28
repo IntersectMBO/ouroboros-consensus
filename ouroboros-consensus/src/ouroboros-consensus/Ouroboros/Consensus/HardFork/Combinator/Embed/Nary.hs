@@ -204,8 +204,8 @@ instance Inject WrapHeaderHash where
 instance Inject GenTx where
   inject = injectNS' (Proxy @GenTx) . forgetInjectionIndex
 
-instance Inject WrapGenTxId where
-  inject = injectNS' (Proxy @WrapGenTxId) . forgetInjectionIndex
+-- instance Inject WrapGenTxId where
+--   inject = injectNS' (Proxy @WrapGenTxId) . forgetInjectionIndex
 
 instance Inject WrapApplyTxErr where
   inject =

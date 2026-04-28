@@ -16,11 +16,13 @@ import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.Serialise as Serialise
 import Control.Exception (throw)
+import Data.Maybe
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.NonEmpty (ProofNonEmpty (..), isNonEmpty)
 import Data.SOP.Strict
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Block
@@ -164,5 +166,17 @@ instance
   SerialiseHFC xs =>
   SerialiseNodeToNode (HardForkBlock xs) (GenTxId (HardForkBlock xs))
   where
-  encodeNodeToNode = dispatchEncoder `after` (getOneEraGenTxId . getHardForkGenTxId)
-  decodeNodeToNode = fmap (HardForkGenTxId . OneEraGenTxId) .: dispatchDecoder
+  encodeNodeToNode ccfg ntnVersion txid =
+    case ntnVersion of
+      HardForkNodeToNodeEnabled HardForkSpecificNodeToNodeVersion2 _ ->
+        encodeNodeToNode ccfg ntnVersion (getHardForkGenTxId txid)
+      _ -> dispatchEncoder ccfg ntnVersion (getOneEraGenTxId $ fromJust $ mOldHardForkGenTxId txid)
+  decodeNodeToNode ccfg ntnVersion = case ntnVersion of
+    HardForkNodeToNodeEnabled HardForkSpecificNodeToNodeVersion2 _ ->
+      flip HardForkGenTxId Nothing <$> decodeNodeToNode ccfg ntnVersion
+    _ -> do
+      txid <- dispatchDecoder ccfg ntnVersion
+      pure $
+        HardForkGenTxId
+          (hcollapse . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId) $ txid)
+          (Just (OneEraGenTxId txid))

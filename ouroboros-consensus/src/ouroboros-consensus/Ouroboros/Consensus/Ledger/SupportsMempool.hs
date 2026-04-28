@@ -271,12 +271,7 @@ data family TxId blk
 --
 -- The mempool will use these to locate transactions, so two different
 -- transactions should have different identifiers.
-class
-  ( Show (TxId tx)
-  , NoThunks (TxId tx)
-  ) =>
-  HasTxId tx
-  where
+class (Show (TxId tx), NoThunks (TxId tx)) => HasTxId tx where
   -- | Return the 'TxId' of a 'GenTx'.
   --
   -- NOTE: a 'TxId' must be unique up to ledger rules, i.e., two 'GenTx's with

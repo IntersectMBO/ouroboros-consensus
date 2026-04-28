@@ -26,6 +26,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
   , hardForkApplyTxErrToEither
   ) where
 
+import qualified Cardano.Ledger.TxIn as SL
 import Control.Arrow ((+++))
 import Control.Monad.Except
 import Data.Functor.Identity
@@ -551,8 +552,9 @@ applyHelper
                     , arState = st'
                     }
 
-newtype instance TxId (GenTx (HardForkBlock xs)) = HardForkGenTxId
-  { getHardForkGenTxId :: OneEraGenTxId xs
+data instance TxId (GenTx (HardForkBlock xs)) = HardForkGenTxId
+  { getHardForkGenTxId :: SL.TxId
+  , mOldHardForkGenTxId :: Maybe (OneEraGenTxId xs)
   }
   deriving (Generic, Show)
   deriving anyclass NoThunks
@@ -560,19 +562,20 @@ newtype instance TxId (GenTx (HardForkBlock xs)) = HardForkGenTxId
 instance Typeable xs => ShowProxy (TxId (GenTx (HardForkBlock xs)))
 
 instance CanHardFork xs => HasTxId (GenTx (HardForkBlock xs)) where
-  txId =
+  txId (HardForkGenTx (OneEraGenTx tx)) =
     HardForkGenTxId
-      . OneEraGenTxId
-      . hcmap proxySingle (WrapGenTxId . txId)
-      . getOneEraGenTx
-      . getHardForkGenTx
+      ( hcollapse
+          . hcmap proxySingle (K . toRawTxIdHash . txId)
+          $ tx
+      )
+      ( Just
+          . OneEraGenTxId
+          . hcmap proxySingle (WrapGenTxId . txId)
+          $ tx
+      )
 
 instance CanHardFork xs => ConvertRawTxId (GenTx (HardForkBlock xs)) where
-  toRawTxIdHash =
-    hcollapse
-      . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
-      . getOneEraGenTxId
-      . getHardForkGenTxId
+  toRawTxIdHash = getHardForkGenTxId
 
 {-------------------------------------------------------------------------------
   HasTxs
