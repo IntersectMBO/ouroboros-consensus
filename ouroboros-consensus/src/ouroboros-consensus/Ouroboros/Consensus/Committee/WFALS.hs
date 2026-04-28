@@ -30,7 +30,7 @@
 module Ouroboros.Consensus.Committee.WFALS
   ( -- * Voting committee interface
     WFALS
-  , VotingCommittee -- opaque, only the metrics below are exported
+  , VotingCommittee -- VotingCommittee internals are not exported
   , VotingCommitteeInput (..)
   , VotingCommitteeError (..)
   , EligibilityWitness (..)

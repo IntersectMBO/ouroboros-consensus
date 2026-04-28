@@ -10,7 +10,7 @@
 module Ouroboros.Consensus.Committee.EveryoneVotes
   ( -- * Voting committee interface
     EveryoneVotes
-  , VotingCommittee -- opaque
+  , VotingCommittee -- VotingCommittee internals are not exported
   , VotingCommitteeInput (..)
   , VotingCommitteeError (..)
   , EligibilityWitness (..)
