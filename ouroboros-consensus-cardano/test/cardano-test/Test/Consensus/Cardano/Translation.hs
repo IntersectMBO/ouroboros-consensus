@@ -229,8 +229,8 @@ PCons
 testTablesTranslation ::
   forall srcBlk dstBlk.
   ( Arbitrary (TestSetup srcBlk dstBlk)
-  , Show (LedgerCfg (LedgerState srcBlk))
-  , Show (LedgerCfg (LedgerState dstBlk))
+  , Show (LedgerCfg LedgerState srcBlk)
+  , Show (LedgerCfg LedgerState dstBlk)
   , Show (LedgerState srcBlk EmptyMK)
   ) =>
   -- | Property label

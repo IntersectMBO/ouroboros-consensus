@@ -563,20 +563,18 @@ data TestBlockError
     InvalidBlock
   deriving (Eq, Show, Generic, NoThunks)
 
-type instance LedgerCfg (LedgerState TestBlock) = HardFork.EraParams
+type instance LedgerCfg LedgerState TestBlock = HardFork.EraParams
 
 instance GetTip (LedgerState TestBlock) where
   getTip = castPoint . lastAppliedPoint
 
-instance GetTip (Ticked (LedgerState TestBlock)) where
+instance GetTip (Ticked LedgerState TestBlock) where
   getTip = castPoint . getTip . getTickedTestLedger
 
-instance IsLedger (LedgerState TestBlock) where
-  type LedgerErr (LedgerState TestBlock) = TestBlockError
+type instance AuxLedgerEvent TestBlock = VoidLedgerEvent
 
-  type
-    AuxLedgerEvent (LedgerState TestBlock) =
-      VoidLedgerEvent (LedgerState TestBlock)
+instance IsLedger LedgerState TestBlock where
+  type LedgerErr LedgerState TestBlock = TestBlockError
 
   applyChainTickLedgerResult _ _ _ =
     pureLedgerResult
@@ -588,16 +586,16 @@ type instance TxOut (LedgerState TestBlock) = Void
 
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x y z) = TestLedger x y z
-instance LedgerTablesAreTrivial (Ticked (LedgerState TestBlock)) where
+instance LedgerTablesAreTrivial (Ticked LedgerState TestBlock) where
   convertMapKind (TickedTestLedger x) = TickedTestLedger (convertMapKind x)
 deriving via
   TrivialLedgerTables (LedgerState TestBlock)
   instance
     HasLedgerTables (LedgerState TestBlock)
 deriving via
-  TrivialLedgerTables (Ticked (LedgerState TestBlock))
+  TrivialLedgerTables (Ticked LedgerState TestBlock)
   instance
-    HasLedgerTables (Ticked (LedgerState TestBlock))
+    HasLedgerTables (Ticked LedgerState TestBlock)
 deriving via
   TrivialLedgerTables (LedgerState TestBlock)
   instance
@@ -614,8 +612,12 @@ deriving via
   Void
   instance
     IndexedMemPack (LedgerState TestBlock EmptyMK) Void
+deriving via
+  Void
+  instance
+    IndexedMemPack (Ticked LedgerState TestBlock EmptyMK) Void
 
-instance ApplyBlock (LedgerState TestBlock) TestBlock where
+instance ApplyBlock LedgerState TestBlock where
   applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
     | blockPrevHash tb /= lastAppliedHash =
         throwError $ InvalidHash lastAppliedHash (blockPrevHash tb)
@@ -663,7 +665,7 @@ data instance LedgerState TestBlock mk
   deriving anyclass (Serialise, NoThunks)
 
 -- Ticking has no effect on the test ledger state
-newtype instance Ticked (LedgerState TestBlock) mk = TickedTestLedger
+newtype instance Ticked LedgerState TestBlock mk = TickedTestLedger
   { getTickedTestLedger :: LedgerState TestBlock mk
   }
 

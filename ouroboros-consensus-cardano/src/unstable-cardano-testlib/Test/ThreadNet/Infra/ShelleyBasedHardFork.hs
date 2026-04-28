@@ -632,3 +632,31 @@ instance
         (Proxy @MemPackTxOut)
         (const $ Comp $ WrapTxOut <$> unpackM)
       $ Telescope.tip idx
+
+instance
+  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
+  IndexedMemPack
+    (Ticked LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK)
+    (DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+  where
+  indexedTypeName _ =
+    typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+  indexedPackedByteCount _ txout =
+    hcollapse $
+      hcmap
+        (Proxy @MemPackTxOut)
+        (K . packedByteCount . unwrapTxOut)
+        txout
+  indexedPackM _ =
+    hcollapse
+      . hcimap
+        (Proxy @MemPackTxOut)
+        ( \_ (WrapTxOut txout) -> K $ do
+            packM txout
+        )
+  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
+    hsequence'
+      $ hcmap
+        (Proxy @MemPackTxOut)
+        (const $ Comp $ WrapTxOut <$> unpackM)
+      $ Telescope.tip idx

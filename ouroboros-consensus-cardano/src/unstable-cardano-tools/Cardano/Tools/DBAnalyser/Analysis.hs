@@ -760,7 +760,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     tickTheLedgerState ::
       SlotNo ->
       ExtLedgerState blk EmptyMK ->
-      IO (Ticked (LedgerState blk) DiffMK)
+      IO (Ticked LedgerState blk DiffMK)
     tickTheLedgerState slot st =
       pure $ applyChainTick OmitLedgerEvents lcfg slot (ledgerState st)
 

@@ -208,10 +208,10 @@ data ChainSetup = ChainSetup
   }
   deriving Show
 
-csBlockConfig :: ChainSetup -> LedgerDbCfg (LedgerState TestBlock.TestBlock)
+csBlockConfig :: ChainSetup -> LedgerDbCfg LedgerState TestBlock.TestBlock
 csBlockConfig = csBlockConfig' . csSecParam
 
-csBlockConfig' :: SecurityParam -> LedgerDbCfg (LedgerState TestBlock.TestBlock)
+csBlockConfig' :: SecurityParam -> LedgerDbCfg LedgerState TestBlock.TestBlock
 csBlockConfig' secParam =
   LedgerDbCfg
     { ledgerDbCfgSecParam = secParam

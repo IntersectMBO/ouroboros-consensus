@@ -223,6 +223,12 @@ instance IndexedMemPack (LedgerState TestBlock EmptyMK) TValue where
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
+instance IndexedMemPack (Ticked LedgerState TestBlock EmptyMK) TValue where
+  indexedTypeName _ = typeName @TValue
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
+
 instance SerializeTablesWithHint (LedgerState TestBlock) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
@@ -235,7 +241,7 @@ instance HasLedgerTables (LedgerState TestBlock) where
           (payloadDependentState st){utxtoktables = table}
       }
 
-instance HasLedgerTables (Ticked (LedgerState TestBlock)) where
+instance HasLedgerTables (Ticked LedgerState TestBlock) where
   projectLedgerTables (TickedTestLedger st) =
     castLedgerTables $ projectLedgerTables st
   withLedgerTables (TickedTestLedger st) tables =
@@ -366,7 +372,7 @@ genBlock pt =
     dummyBlk :: TestBlockWith ()
     dummyBlk = mkBlockFrom (castPoint pt) ()
 
-extLedgerDbConfig :: SecurityParam -> LedgerDbCfg (ExtLedgerState TestBlock)
+extLedgerDbConfig :: SecurityParam -> LedgerDbCfg ExtLedgerState TestBlock
 extLedgerDbConfig secParam =
   LedgerDbCfg
     { ledgerDbCfgSecParam = secParam

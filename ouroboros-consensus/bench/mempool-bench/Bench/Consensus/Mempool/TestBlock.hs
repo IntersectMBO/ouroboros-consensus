@@ -190,7 +190,7 @@ instance HasLedgerTables (LedgerState TestBlock) where
    where
     TestLedger{payloadDependentState = plds} = st
 
-instance HasLedgerTables (Ticked (LedgerState TestBlock)) where
+instance HasLedgerTables (Ticked LedgerState TestBlock) where
   projectLedgerTables (TickedTestLedger st) =
     Ledger.castLedgerTables $
       Ledger.projectLedgerTables st
@@ -202,6 +202,12 @@ instance CanStowLedgerTables (LedgerState TestBlock) where
   unstowLedgerTables = error "Mempool bench TestBlock unused: unstowLedgerTables"
 
 instance IndexedMemPack (LedgerState TestBlock EmptyMK) () where
+  indexedTypeName _ = typeName @()
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
+
+instance IndexedMemPack (Ticked LedgerState TestBlock EmptyMK) () where
   indexedTypeName _ = typeName @()
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
