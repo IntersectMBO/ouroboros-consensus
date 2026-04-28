@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | Deterministic portion of the Weighted Fait-Accompli committee selection scheme
 module Ouroboros.Consensus.Committee.WFA
@@ -19,13 +18,23 @@ module Ouroboros.Consensus.Committee.WFA
   , WFATiebreaker (..)
   , ExtWFAStakeDistr (..)
   , mkExtWFAStakeDistr
-  , getCandidateInSeat
-  , seatIndexWithinBounds
+  , getCandidateIfSeatWithinBounds
+  , wFATiebreakerWithEpochNonce
   ) where
 
+-- DSIGN/BLS imports are needed for the 'WFATiebreaker' using epoch nonce.
+-- If we move away from BLS in the future of Peras/Leios, we might want to
+-- revisit the implementation of the tiebreaker to use a different hash function.
+import Cardano.Crypto.DSIGN (BLS12381MinSigDSIGN, DSIGNAlgorithm (SigDSIGN))
+import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
+import Cardano.Ledger.Binary (runByteBuilder)
+import Cardano.Ledger.Core (HASH, Hash, KeyHash (unKeyHash))
 import Control.Exception (assert)
-import Data.Array (Array, Ix, listArray)
+import Data.Array (Array, listArray)
 import qualified Data.Array as Array
+import qualified Data.ByteString.Builder.Extra as BS
+import Data.Function (on)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -34,7 +43,9 @@ import Ouroboros.Consensus.Committee.Types
   ( Cumulative (..)
   , LedgerStake (..)
   , PoolId
+  , SeatIndex (..)
   , TargetCommitteeSize (..)
+  , unPoolId
   )
 
 -- * Weighted Fait-Accompli committee selection scheme
@@ -183,7 +194,7 @@ weightedFaitAccompliSplitSeats extWFAStakeDistr totalSeats
             (LedgerStake voterStake)
             cumulativeStake
 
--- | Evaluate whether a voter with its give stake and relatile position in the
+-- | Evaluate whether a voter with the given stake and relative position in the
 -- stake distribution can be granted a persistent seat in the voting committee.
 isAbovePersistentSeatThreshold ::
   -- | Total committee size (persistent + non-persistent)
@@ -192,7 +203,8 @@ isAbovePersistentSeatThreshold ::
   SeatIndex ->
   -- | Current voter stake
   LedgerStake ->
-  -- | Cumulated stake of voters with smaller or equal stake than the current one
+  -- | Cumulated stake of voters with smaller stake, or equal stake but smaller
+  -- tiebreaker than the current one
   Cumulative LedgerStake ->
   -- | Whether the current voter has a persistent seat or not
   Bool
@@ -214,13 +226,6 @@ isAbovePersistentSeatThreshold
             )
 
 -- * Cumulative stake distributions
-
--- | Seat index in the voting committee
-newtype SeatIndex
-  = SeatIndex
-  { unSeatIndex :: Word64
-  }
-  deriving (Show, Eq, Ord, Enum, Ix)
 
 -- | Number of pools with positive stake in the underlying stake distribution
 newtype NumPoolsWithPositiveStake
@@ -254,13 +259,44 @@ newtype NumPoolsWithPositiveStake
 -- One possible implementation of this tiebreaker is to sort the pools with the
 -- same stake according to the hash of the epoch nonce and the pool ID. This way
 -- the tiebreaker would be deterministic and resilient to manipulation since an
--- adversary would not be able to predict the epoch nonce in advance.
+-- adversary would not be able to predict the epoch nonce in advance
+-- (see 'wFATiebreakerWithEpochNonce' below).
 newtype WFATiebreaker
   = WFATiebreaker
   { unWFATiebreaker :: PoolId -> PoolId -> Ordering
   -- ^ Given two pool IDs, returns an ordering between them to be used as a
   -- tiebreaker for voters with the same stake.
   }
+
+-- | Fair weighted Fait-Accompli tiebreaker.
+--
+-- For this, we throw the current epoch nonce into the mix to avoid giving an
+-- adversary an edge to manipulate the tiebreaking in their favor, as they
+-- cannot predict the epoch nonce in advance.
+--
+-- NOTE: this implementation uses BLS-based hashing, but could be replaced by
+-- any other cryptographic hash function with similar properties.
+wFATiebreakerWithEpochNonce :: Nonce -> WFATiebreaker
+wFATiebreakerWithEpochNonce epochNonce =
+  WFATiebreaker (compare `on` hashWithNonce)
+ where
+  hashWithNonce :: PoolId -> Hash HASH (SigDSIGN BLS12381MinSigDSIGN)
+  hashWithNonce poolId =
+    Hash.castHash
+      . Hash.hashWith id
+      . runByteBuilder (32 + 32)
+      $ epochNonceBytes <> poolIdBytes
+   where
+    epochNonceBytes =
+      case epochNonce of
+        NeutralNonce -> mempty
+        Nonce h -> BS.byteStringCopy (Hash.hashToBytes h)
+    poolIdBytes =
+      BS.byteStringCopy
+        . Hash.hashToBytes
+        . unKeyHash
+        . unPoolId
+        $ poolId
 
 -- | Extended cumulative stake distribution.
 --
@@ -343,6 +379,8 @@ mkExtWFAStakeDistr tiebreaker pools
       cumulativeStakeAndPools
 
   ((_totalStake, numPoolsWithPositiveStakeAcc), cumulativeStakeAndPools) =
+    -- Accum right-to-left so seat 0's cumulative = total stake
+    -- and the last seat's cumulative = its own stake.
     List.mapAccumR
       accumStakeAndCountPoolsWithPositiveStake
       ( Cumulative (LedgerStake 0)
@@ -380,24 +418,18 @@ mkExtWFAStakeDistr tiebreaker pools
             )
           )
 
--- | Retrieve the candidate information associated to a given seat index.
---
--- PRECONDITION: the seat index must be within bounds in the stake distribution
-getCandidateInSeat ::
+-- | Retrieve the candidate information associated to a given seat index, if the
+-- seat index is within bounds in the stake distribution.
+getCandidateIfSeatWithinBounds ::
   SeatIndex ->
   ExtWFAStakeDistr a ->
-  (PoolId, a, LedgerStake, Cumulative LedgerStake)
-getCandidateInSeat seatIndex distr =
-  (Array.!) (unExtWFAStakeDistr distr) seatIndex
-
--- | Check that a seat index is within bounds in a stake distribution
-seatIndexWithinBounds ::
-  SeatIndex ->
-  ExtWFAStakeDistr a ->
-  Bool
-seatIndexWithinBounds seatIndex distr =
-  unSeatIndex seatIndex >= unSeatIndex lowerBound
-    && unSeatIndex seatIndex <= unSeatIndex upperBound
+  Maybe (PoolId, a, LedgerStake, Cumulative LedgerStake)
+getCandidateIfSeatWithinBounds seatIndex distr
+  | unSeatIndex seatIndex >= unSeatIndex lowerBound
+  , unSeatIndex seatIndex <= unSeatIndex upperBound =
+      Just $ (Array.!) (unExtWFAStakeDistr distr) seatIndex
+  | otherwise =
+      Nothing
  where
   (lowerBound, upperBound) =
     Array.bounds (unExtWFAStakeDistr distr)

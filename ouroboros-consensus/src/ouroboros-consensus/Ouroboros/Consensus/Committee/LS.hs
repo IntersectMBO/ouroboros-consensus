@@ -5,6 +5,9 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Local sortition used by non-persistent members of the voting committee
+-- Implements the @LS@ component of the wFA^LS scheme from the Fait-Accompli
+-- Committee Selection paper (https://eprint.iacr.org/2023/1273.pdf, §2.3).
+-- See also https://github.com/input-output-hk/ouroboros-leios/blob/c5658913221a7f58063bc4f82efaec0900e53dab/post-cip/weighted-fait-accompli.pdf
 module Ouroboros.Consensus.Committee.LS
   ( -- * Local sortition check
     LocalSortitionNumSeats (..)
@@ -51,8 +54,13 @@ localSortitionNumSeats
     -- NOTE: this check also exists to prevent division by zero below.
     | totalNonPersistentStake <= 0 = LocalSortitionNumSeats 0
     -- This voter has no stake (but some others do) => it does not get any seat.
-    -- NOTE: this is an optimization to avoid the expensive computation below.
+    -- NOTE: this check avoids the expensive computation below and also
+    -- prevent division by zero in computing "orders"
     | voterStake <= 0 = LocalSortitionNumSeats 0
+    -- If the voter has stake close to zero, the conversion from 'Rational' to
+    -- 'FixedPoint' for 'lambda' might underflow to zero, which would cause the
+    -- "orders" computation below to divide by zero.
+    | lambda <= 0 = LocalSortitionNumSeats 0
     -- This voter might be entitled to some seats => run the local sortition.
     | otherwise = LocalSortitionNumSeats (fromIntegral expectedSeats)
    where

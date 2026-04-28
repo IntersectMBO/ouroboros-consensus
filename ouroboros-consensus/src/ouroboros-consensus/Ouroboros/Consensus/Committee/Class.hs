@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -9,25 +10,26 @@ module Ouroboros.Consensus.Committee.Class
     CryptoSupportsVotingCommittee (..)
 
     -- * Votes with same target
-  , VotesWithSameTarget
+  , VotesNoDupNonEmptySameTarget
   , getElectionIdFromVotes
   , getVoteCandidateFromVotes
   , getRawVotes
-  , VotesWithSameTargetError (..)
-  , ensureSameTarget
+  , VotesNoDupNonEmptySameTargetError (..)
+  , ensureNoDupNonEmptySameTarget
   ) where
 
 import Data.Containers.NonEmpty (HasNonEmpty (..))
 import Data.Either (partitionEithers)
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.Set as Set
 import Ouroboros.Consensus.Committee.Crypto
   ( CryptoSupportsVoteSigning
   , ElectionId
   , PrivateKey
   , VoteCandidate
   )
-import Ouroboros.Consensus.Committee.Types (PoolId, VoteWeight)
+import Ouroboros.Consensus.Committee.Types (PoolId, SeatIndex, VoteWeight)
 
 -- * Voting committee interface
 
@@ -102,7 +104,7 @@ class
 
   -- | Forge a certificate attesting the winner of a given election
   forgeCert ::
-    VotesWithSameTarget crypto committee ->
+    VotesNoDupNonEmptySameTarget crypto committee SeatIndex ->
     Either
       (VotingCommitteeError crypto committee)
       (Cert crypto committee)
@@ -117,74 +119,105 @@ class
 
 -- * Votes with same target
 
--- | Collection of votes all targeting the same election and candidate
-data VotesWithSameTarget crypto committee
-  = VotesWithSameTarget
+-- | Non-empty collection of votes all targeting the same election and candidate
+-- with unique voter IDs.
+data VotesNoDupNonEmptySameTarget crypto committee voterId
+  = VotesNoDupNonEmptySameTarget
       (ElectionId crypto)
       (VoteCandidate crypto)
       (NE [Vote crypto committee])
 
 -- | Get the election identifier targeted by a collection of votes
 getElectionIdFromVotes ::
-  VotesWithSameTarget crypto committee ->
+  VotesNoDupNonEmptySameTarget crypto committee voterId ->
   ElectionId crypto
-getElectionIdFromVotes (VotesWithSameTarget electionId _ _) =
+getElectionIdFromVotes (VotesNoDupNonEmptySameTarget electionId _ _) =
   electionId
 
 -- | Get the vote candidate targeted by a collection of votes
 getVoteCandidateFromVotes ::
-  VotesWithSameTarget crypto committee ->
+  VotesNoDupNonEmptySameTarget crypto committee voterId ->
   VoteCandidate crypto
-getVoteCandidateFromVotes (VotesWithSameTarget _ candidate _) =
+getVoteCandidateFromVotes (VotesNoDupNonEmptySameTarget _ candidate _) =
   candidate
 
 -- | Get the raw votes from a collection of votes with the same target.
 --
 -- NOTE: this returns votes in ascending seat index order.
 getRawVotes ::
-  VotesWithSameTarget crypto committee ->
+  VotesNoDupNonEmptySameTarget crypto committee voterId ->
   NE [Vote crypto committee]
-getRawVotes (VotesWithSameTarget _ _ votes) =
+getRawVotes (VotesNoDupNonEmptySameTarget _ _ votes) =
   votes
 
--- | Errors when votes do not all target the same election and candidate
-data VotesWithSameTargetError crypto committee
+-- | Errors when votes do not respect the requirements to be grouped together to
+-- eventually forge a certificate.
+data VotesNoDupNonEmptySameTargetError crypto committee voterId
   = EmptyVotes
   | TargetMismatch
       -- First vote and the rest of the votes that match its target
       (NE [Vote crypto committee])
       -- Votes that do not match the target of the first vote
       (NE [Vote crypto committee])
+  | DuplicateVoter voterId
 
--- | Check that a list of votes all target the same election and candidate
-ensureSameTarget ::
+-- | Check:
+--     + that a list of votes is non-empty,
+--     + that all votes target the same election and candidate,
+--     + and that no two votes come from the same voter.
+ensureNoDupNonEmptySameTarget ::
   ( Eq (ElectionId crypto)
   , Eq (VoteCandidate crypto)
+  , Ord voterId
   ) =>
-  (Vote crypto committee -> (ElectionId crypto, VoteCandidate crypto)) ->
+  (Vote crypto committee -> (ElectionId crypto, VoteCandidate crypto, voterId)) ->
   [Vote crypto committee] ->
   Either
-    (VotesWithSameTargetError crypto committee)
-    (VotesWithSameTarget crypto committee)
-ensureSameTarget getTarget = \case
+    (VotesNoDupNonEmptySameTargetError crypto committee voterId)
+    (VotesNoDupNonEmptySameTarget crypto committee voterId)
+ensureNoDupNonEmptySameTarget getVoteInfo = \case
   [] ->
     Left EmptyVotes
   (firstVote : nextVotes) -> do
     case partitionEithers (fmap matchesTarget nextVotes) of
-      ([], matchingVotes) ->
-        Right $
-          VotesWithSameTarget
-            electionId
-            candidate
-            (firstVote :| matchingVotes)
+      ([], matchingVotes) -> do
+        let allVotes = firstVote :| matchingVotes
+        case findDuplicate (\v -> let (_, _, vid) = getVoteInfo v in vid) allVotes of
+          Just dup -> Left (DuplicateVoter dup)
+          Nothing ->
+            Right $
+              VotesNoDupNonEmptySameTarget
+                electionId
+                candidate
+                allVotes
       (firstMismatchingVote : nextMismatchingVotes, matchingVotes) ->
         Left $
           TargetMismatch
             (firstVote :| matchingVotes)
             (firstMismatchingVote :| nextMismatchingVotes)
    where
-    target@(electionId, candidate) =
-      getTarget firstVote
+    (electionId, candidate, _) =
+      getVoteInfo firstVote
+    target = (electionId, candidate)
     matchesTarget v'
-      | getTarget v' /= target = Left v'
+      | let (eid, vc, _) = getVoteInfo v'
+      , (eid, vc) /= target =
+          Left v'
       | otherwise = Right v'
+
+-- | Find the first duplicate voter ID in a non-empty list of votes.
+findDuplicate ::
+  Ord voterId =>
+  (vote -> voterId) ->
+  NonEmpty vote ->
+  Maybe voterId
+findDuplicate getId =
+  go Set.empty
+ where
+  go !seen (v :| rest) =
+    let vid = getId v
+     in if Set.member vid seen
+          then Just vid
+          else case rest of
+            [] -> Nothing
+            (next : more) -> go (Set.insert vid seen) (next :| more)

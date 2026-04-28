@@ -10,7 +10,7 @@
 module Ouroboros.Consensus.Committee.EveryoneVotes
   ( -- * Voting committee interface
     EveryoneVotes
-  , VotingCommittee -- opaque
+  , VotingCommittee -- VotingCommittee internals are not exported
   , VotingCommitteeInput (..)
   , VotingCommitteeError (..)
   , EligibilityWitness (..)
@@ -22,14 +22,11 @@ module Ouroboros.Consensus.Committee.EveryoneVotes
   , numActiveVoters
   ) where
 
-import Cardano.Ledger.BaseTypes (HasZero (..), NonZero, Nonce)
 import Cardano.Ledger.BaseTypes.NonZero (NonZero (..), nonZero)
-import Control.Exception (assert)
 import Control.Monad.Zip (MonadZip (..))
 import qualified Data.Array as Array
 import Data.Bifunctor (Bifunctor (..))
 import Data.Containers.NonEmpty (HasNonEmpty (..))
-import qualified Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -38,7 +35,7 @@ import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
-  , VotesWithSameTarget
+  , VotesNoDupNonEmptySameTarget
   , getElectionIdFromVotes
   , getRawVotes
   , getVoteCandidateFromVotes
@@ -61,8 +58,7 @@ import Ouroboros.Consensus.Committee.WFA
   , NumPoolsWithPositiveStake (..)
   , SeatIndex
   , WFAError
-  , getCandidateInSeat
-  , seatIndexWithinBounds
+  , getCandidateIfSeatWithinBounds
   )
 
 -- | Tag for a simple voting committee where pools with positive stake can vote.
@@ -82,14 +78,10 @@ instance
       candidateSeats :: !(Map PoolId SeatIndex)
     , -- Number of active voters (i.e., those with non-zero stake)
       numActiveVoters :: !NumPoolsWithPositiveStake
-    , --  Epoch nonce of the epoch where this committee selection takes place
-      epochNonce :: !Nonce
     }
 
   data VotingCommitteeInput crypto EveryoneVotes
     = EveryoneVotesVotingCommitteeInput
-        -- Epoch nonce for the epoch where this voting committee takes place
-        !Nonce
         -- Extended cumulative stake distribution of the potential voters
         !(ExtWFAStakeDistr (PublicKey crypto))
 
@@ -145,21 +137,11 @@ mkEveryoneVotesVotingCommittee ::
     (VotingCommittee crypto EveryoneVotes)
 mkEveryoneVotesVotingCommittee
   ( EveryoneVotesVotingCommitteeInput
-      nonce
       stakeDistr
     ) = do
-    let accumVotersWithPositiveStake
-          numPoolsAcc
-          (seatIndex, (poolId, _, stake, _)) =
-            ( if isZero stake
-                then numPoolsAcc
-                else succ numPoolsAcc
-            , (poolId, seatIndex)
-            )
-
-    let (poolsWithPositiveStake, seats) =
-          bimap NumPoolsWithPositiveStake Map.fromList
-            . List.mapAccumL accumVotersWithPositiveStake 0
+    let seats =
+          Map.fromList
+            . fmap (\(seatIndex, (poolId, _, _, _)) -> (poolId, seatIndex))
             . Array.assocs
             . unExtWFAStakeDistr
             $ stakeDistr
@@ -168,8 +150,7 @@ mkEveryoneVotesVotingCommittee
       EveryoneVotesVotingCommittee
         { extWFAStakeDistr = stakeDistr
         , candidateSeats = seats
-        , numActiveVoters = poolsWithPositiveStake
-        , epochNonce = nonce
+        , numActiveVoters = numPoolsWithPositiveStake stakeDistr
         }
 
 -- | Check whether we should vote in a given election
@@ -184,18 +165,22 @@ implCheckShouldVote ::
     (Maybe (EligibilityWitness crypto EveryoneVotes))
 implCheckShouldVote committee ourId _ourPrivateKey _electionId
   | Just seatIndex <- Map.lookup ourId (candidateSeats committee) =
-      assert (seatIndexWithinBounds seatIndex (extWFAStakeDistr committee)) $ do
-        let (_, _, ourStake, _) =
-              getCandidateInSeat seatIndex (extWFAStakeDistr committee)
-        case nonZero ourStake of
-          Nothing ->
-            Left (PoolHasNoStake seatIndex)
-          Just nonZeroOurStake ->
-            pure $
-              Just $
-                EveryoneVotesMember
-                  seatIndex
-                  nonZeroOurStake
+      case getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee) of
+        Nothing ->
+          -- This should not happen: the seat index comes from the committee's
+          -- own map, so it should always be within bounds.
+          error $
+            "implCheckShouldVote: seat index " ++ show seatIndex ++ " is out of bounds for the committee"
+        Just (_, _, ourStake, _) ->
+          case nonZero ourStake of
+            Nothing ->
+              Right Nothing
+            Just nonZeroOurStake ->
+              Right $
+                Just $
+                  EveryoneVotesMember
+                    seatIndex
+                    nonZeroOurStake
   | otherwise =
       Left (MissingPoolId ourId)
 
@@ -229,9 +214,8 @@ implVerifyVote ::
     (EligibilityWitness crypto EveryoneVotes)
 implVerifyVote committee = \case
   EveryoneVotesVote seatIndex electionId candidate sig
-    | seatIndexWithinBounds seatIndex (extWFAStakeDistr committee) -> do
-        let (_, voterPublicKey, voterStake, _) =
-              getCandidateInSeat seatIndex (extWFAStakeDistr committee)
+    | Just (_, voterPublicKey, voterStake, _) <-
+        getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee) -> do
         let voterVerificationKey =
               getVoteVerificationKey (Proxy @crypto) voterPublicKey
         bimap InvalidVoteSignature id $ do
@@ -268,11 +252,15 @@ implEligiblePartyVoteWeight _committee member =
 implForgeCert ::
   forall crypto.
   CryptoSupportsAggregateVoteSigning crypto =>
-  VotesWithSameTarget crypto EveryoneVotes ->
+  VotesNoDupNonEmptySameTarget crypto EveryoneVotes SeatIndex ->
   Either
     (VotingCommitteeError crypto EveryoneVotes)
     (Cert crypto EveryoneVotes)
 implForgeCert votes = do
+  -- Voter ID uniqueness is guaranteed by the VotesNoDupNonEmptySameTarget smart
+  -- constructor, so fromAscList preserves length.
+  let voterSet = NESet.fromAscList sortedVoters
+
   aggSig <-
     bimap CryptoError id $ do
       aggregateVoteSignatures
@@ -282,10 +270,10 @@ implForgeCert votes = do
     EveryoneVotesCert
       (getElectionIdFromVotes votes)
       (getVoteCandidateFromVotes votes)
-      (NESet.fromList voters)
+      voterSet
       aggSig
  where
-  (voters, voteSignatures) =
+  (sortedVoters, voteSignatures) =
     munzip $ flip fmap votesInAscendingSeatIndexOrder $ \case
       EveryoneVotesVote seatIndex _ _ sig ->
         ( seatIndex
@@ -293,7 +281,7 @@ implForgeCert votes = do
         )
 
   -- Make sure we have votes in ascending seat index order, which is something
-  -- 'VotesWithSameTarget' cannot guarantee by itself, since seat indices are
+  -- 'VotesNoDupNonEmptySameTarget' cannot guarantee by itself, since seat indices are
   -- an implementation detail of this voting committee scheme.
   votesInAscendingSeatIndexOrder =
     flip NonEmpty.sortWith (getRawVotes votes) $ \case
@@ -318,9 +306,8 @@ implVerifyCert committee = \case
     (members, voteVerificationKeys) <-
       fmap munzip . flip traverse (NESet.toAscList voters) $ \case
         seatIndex
-          | seatIndexWithinBounds seatIndex (extWFAStakeDistr committee) -> do
-              let (_, voterPublicKey, voterStake, _) =
-                    getCandidateInSeat seatIndex (extWFAStakeDistr committee)
+          | Just (_, voterPublicKey, voterStake, _) <-
+              getCandidateIfSeatWithinBounds seatIndex (extWFAStakeDistr committee) -> do
               let voterVerificationKey =
                     getVoteVerificationKey (Proxy @crypto) voterPublicKey
               case nonZero voterStake of
