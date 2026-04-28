@@ -254,9 +254,14 @@ copyToImmutableDBRunner ::
   GcSchedule m ->
   m Void
 copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
+  -- This runner only fires after the initial chain selection has completed,
+  -- so the LedgerDB is guaranteed to be ready by the time we read it via
+  -- 'awaitLedgerDB'. Acquire it once at the top so subsequent flushes inside
+  -- the loop don't re-enter STM.
+  ldb <- atomically $ awaitLedgerDB cdb
   -- this first flush will persist the differences that come from the initial
   -- chain selection.
-  LedgerDB.tryFlush cdbLedgerDB
+  LedgerDB.tryFlush ldb
   forever copyAndTrigger
  where
   copyAndTrigger :: m ()
@@ -327,14 +332,18 @@ ledgerDbTaskWatcher cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
     , wInitial = Nothing
     , wReader = blockUntilJust $ withOriginToMaybe <$> readTVar varSt
     , wNotify = \slotNo -> do
-        LedgerDB.tryFlush cdbLedgerDB
-        LedgerDB.tryTakeSnapshot cdbLedgerDB (void $ copyToImmutableDB cdb) mkRandomDelay
+        -- This watcher is only forked after initial chain selection has
+        -- completed (see 'launchBgTasks'), so the LedgerDB is guaranteed
+        -- to be ready and 'awaitLedgerDB' returns immediately.
+        ldb <- atomically $ awaitLedgerDB cdb
+        LedgerDB.tryFlush ldb
+        LedgerDB.tryTakeSnapshot ldb (void $ copyToImmutableDB cdb) mkRandomDelay
         -- tryTakeSnapshot is blocking, so the randomised snapshot delay will also delay
         -- the call to LedgerDB.garbageCollect below
         --
         -- TODO: once we have deleted V1, we can run the snapshot routine in a separate thread, which
         -- would allow us to eliminate the delay before LedgerDB.garbageCollect.
-        LedgerDB.garbageCollect cdbLedgerDB slotNo
+        LedgerDB.garbageCollect ldb slotNo
     }
  where
   mkRandomDelay :: LedgerDB.SnapshotDelayRange -> m DiffTime

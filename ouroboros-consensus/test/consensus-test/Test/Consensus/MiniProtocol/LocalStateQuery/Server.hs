@@ -1,7 +1,9 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Tests for the local state query server.
@@ -19,7 +21,7 @@
 module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 
 import Cardano.Crypto.DSIGN.Mock
-import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
+import Cardano.Ledger.BaseTypes (knownNonZeroBounded, nonZero, unNonZero)
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar
 import Control.Monad (join)
 import Control.Monad.IOSim (runSimOrThrow)
@@ -82,6 +84,8 @@ tests =
   testGroup
     "LocalStateQueryServer"
     [ testProperty "localStateQueryServer" prop_localStateQueryServer
+    , testProperty "acquireFailsDuringLedgerReplay" prop_acquireFailsDuringLedgerReplay
+    , testProperty "acquireSucceedsAfterLedgerReady" prop_acquireSucceedsAfterLedgerReady
     ]
 
 {-------------------------------------------------------------------------------
@@ -313,6 +317,91 @@ testCfg securityParam =
 
   eraParams :: HardFork.EraParams
   eraParams = HardFork.defaultEraParams securityParam slotLength
+
+{-------------------------------------------------------------------------------
+  Option A: LSQ Acquire fail-fast during LedgerDB replay
+-------------------------------------------------------------------------------}
+
+-- | When the LedgerDB is still replaying, the production
+-- 'openReadOnlyForkerAtPoint' returns @Left LedgerNotReady@. The LSQ server
+-- must translate that into @MsgFailure AcquireFailurePointTooOld@ regardless
+-- of which 'Target' the client requested.
+prop_acquireFailsDuringLedgerReplay :: Property
+prop_acquireFailsDuringLedgerReplay = once $
+  conjoin
+    [ counterexample ("target " ++ show t ++ ", got: " ++ show res) $
+        case res of
+          Left AcquireFailurePointTooOld -> property True
+          _ -> property False
+    | (t, res) <- outcomes
+    ]
+ where
+  outcomes :: [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
+  outcomes = runSimOrThrow $ do
+    let getView _ = pure (Left LedgerNotReady)
+        server = localStateQueryServer cfg getView
+        points = [VolatileTip, ImmutableTip, SpecificPoint GenesisPoint]
+        client = mkClient points
+    (\(a, _, _) -> a)
+      <$> connect
+        StateIdle
+        (localStateQueryClientPeer client)
+        (localStateQueryServerPeer server)
+
+  cfg :: ExtLedgerCfg TestBlock
+  cfg = ExtLedgerCfg $ testCfg (SecurityParam $ knownNonZeroBounded @2)
+
+-- | Once the LedgerDB transitions from replaying to ready, subsequent
+-- @MsgAcquire@s must succeed. We simulate the transition by flipping a
+-- 'TVar' between two acquires in the same session: the first call to
+-- 'getView' returns @Left LedgerNotReady@, the second falls through to
+-- the real LedgerDB-backed forker.
+prop_acquireSucceedsAfterLedgerReady ::
+  SecurityParam ->
+  BlockTree ->
+  Property
+prop_acquireSucceedsAfterLedgerReady k bt = once $
+  counterexample ("outcomes: " ++ show outcomes) $
+    case outcomes of
+      [(_, Left AcquireFailurePointTooOld), (_, Right _)] -> property True
+      _ -> property False
+ where
+  chain :: Chain TestBlock
+  chain = treePreferredChain emptyPerasWeightSnapshot bt
+
+  outcomes :: [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
+  outcomes = runSimOrThrow $ withRegistry $ \rr -> do
+    firstCall <- atomically $ newTVar True
+    lgrDB <- initLedgerDB k chain
+    let getView t = do
+          isFirst <- atomically $ do
+            b <- readTVar firstCall
+            writeTVar firstCall False
+            pure b
+          if isFirst
+            then pure (Left LedgerNotReady)
+            else do
+              (rk, res) <-
+                allocate
+                  rr
+                  (\_ -> LedgerDB.openReadOnlyForker lgrDB t)
+                  ( \case
+                      Left{} -> pure ()
+                      Right v -> roforkerClose v
+                  )
+              case res of
+                Left err -> release rk >> pure (Left err)
+                Right v -> pure (Right (rk, v))
+        server = localStateQueryServer cfg getView
+        client = mkClient [VolatileTip, VolatileTip]
+    (\(a, _, _) -> a)
+      <$> connect
+        StateIdle
+        (localStateQueryClientPeer client)
+        (localStateQueryServerPeer server)
+
+  cfg :: ExtLedgerCfg TestBlock
+  cfg = ExtLedgerCfg $ testCfg k
 
 {-------------------------------------------------------------------------------
   Orphans

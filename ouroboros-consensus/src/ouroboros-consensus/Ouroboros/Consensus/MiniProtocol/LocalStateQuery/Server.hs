@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryServer) where
@@ -57,6 +58,9 @@ localStateQueryServer cfg getView =
             SendMsgFailure AcquireFailurePointTooOld idle
           PointNotOnChain ->
             SendMsgFailure AcquireFailurePointNotOnChain idle
+          -- LedgerDB still replaying; reuse PointTooOld so clients retry.
+          LedgerNotReady ->
+            SendMsgFailure AcquireFailurePointTooOld idle
 
   acquired ::
     ResourceKey m ->

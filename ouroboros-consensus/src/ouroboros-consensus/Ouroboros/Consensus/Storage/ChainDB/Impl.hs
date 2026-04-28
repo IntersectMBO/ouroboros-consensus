@@ -44,6 +44,8 @@ import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
 import Control.ResourceRegistry
   ( allocate
+  , cancelThread
+  , forkLinkedThread
   , runWithTempRegistry
   )
 import Control.Tracer
@@ -56,7 +58,7 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
-import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
+import Ouroboros.Consensus.HeaderValidation (HeaderWithTime, mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
@@ -169,8 +171,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     volatileDB <- VolatileDB.openDB argsVolatileDb
     maxSlot <- atomically $ VolatileDB.getMaxSlotNo volatileDB
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
-    traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
-    (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <- mkLedgerDbGetVolatileSuffix
+    -- The 'StartedOpeningLgrDB' / 'OpenedLgrDB' trace events fire later,
+    -- inside 'runInitLedgerDB', once the background thread starts the
+    -- LedgerDB-open work.
+    (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <-
+      mkLedgerDbGetVolatileSuffix
     pure
       ( immutableDB
       , immutableDbTipPoint
@@ -179,59 +184,30 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       , setGetCurrentChainForLedgerDB
       )
 
-  -- Note this is the only step that actually cares about the temporary registry
-  -- while initializing the ChainDB. It opens the handle to the backend and we
-  -- want to track that one to close it on exception. See "Resource management
-  -- in the LedgerDB" in "Ouroboros.Consensus.Storage.LedgerDB.API" for an
-  -- explanation of why.
-  lgrDB <-
-    LedgerDB.openDB
-      argsLgrDb
-      (ImmutableDB.streamAPI immutableDB)
-      immutableDbTipPoint
-      (Query.getAnyKnownBlock immutableDB volatileDB)
-      ledgerDbGetVolatileSuffix
-
+  -- The LedgerDB is opened later inside 'runInitLedgerDB' so that, when
+  -- 'EarlyN2C' is enabled, the (potentially long) initial replay can run
+  -- on a background thread. See "Resource management in the LedgerDB" in
+  -- "Ouroboros.Consensus.Storage.LedgerDB.API" for the temp-registry
+  -- handover details.
   lift $ do
-    traceWith tracer $ TraceOpenEvent OpenedLgrDB
-
     perasCertDB <- PerasCertDB.createDB argsPerasCertDB
     perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
+    varLdbStatus <- newTVarIO LdbReplaying
+    varCancelInit <- newTVarIO (return ())
 
-    let initChainSelTracer = TraceInitChainSelEvent >$< tracer
+    -- Empty current chain anchored at the immutable tip; the background
+    -- initialiser populates this once initial chain selection runs.
+    immutableTipAnchor <- atomically $ ImmutableDB.getTipAnchor immutableDB
+    let initialChain :: AnchoredFragment (Header blk)
+        initialChain = AF.Empty (AF.castAnchor immutableTipAnchor)
+        initialChainWithTime :: AnchoredFragment (HeaderWithTime blk)
+        initialChainWithTime = AF.Empty (AF.castAnchor immutableTipAnchor)
 
-    traceWith initChainSelTracer StartedInitChainSelection
-    initialLoE <- Args.cdbsLoE cdbSpecificArgs
-    initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    chain <-
-      ChainSel.initialChainSelection
-        immutableDB
-        volatileDB
-        lgrDB
-        initChainSelTracer
-        (Args.cdbsTopLevelConfig cdbSpecificArgs)
-        varInvalid
-        (void initialLoE)
-        (forgetFingerprint initialWeights)
-    traceWith initChainSelTracer InitialChainSelected
-    LedgerDB.tryFlush lgrDB
-
-    curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
-    let lcfg = configLedger (Args.cdbsTopLevelConfig cdbSpecificArgs)
-
-        -- the volatile tip ledger state can translate the slots of the volatile
-        -- headers
-        chainWithTime =
-          AF.mapAnchoredFragment
-            ( mkHeaderWithTime
-                lcfg
-                (ledgerState curLedger)
-            )
-            chain
-
-    varChain <- newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
+    varChain <-
+      newTVarWithInvariantIO checkInternalChain $
+        InternalChain initialChain initialChainWithTime
     varTentativeState <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)
     varTentativeHeader <- newTVarIO SNothing
     varIterators <- newTVarIO Map.empty
@@ -245,11 +221,20 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
     varSnapshotDelayRNG <- newTVarIO (Args.cdbsSnapshotDelayRNG cdbSpecificArgs)
 
-    let env =
+    let synthesisedLedger =
+          case Args.cdbsSynthesiseLedger cdbSpecificArgs of
+            Nothing -> Nothing
+            Just f -> f immutableDbTipPoint
+        env =
           CDB
             { cdbImmutableDB = immutableDB
+            , cdbImmutableDBLock = immdbLock
             , cdbVolatileDB = volatileDB
-            , cdbLedgerDB = lgrDB
+            , cdbLedgerDBStatus = varLdbStatus
+            , cdbCancelInit = varCancelInit
+            , cdbEarlyN2C =
+                Args.cdbsEarlyN2C cdbSpecificArgs
+            , cdbSyntheticLedger = synthesisedLedger
             , cdbChain = varChain
             , cdbTentativeState = varTentativeState
             , cdbTentativeHeader = varTentativeHeader
@@ -259,7 +244,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbInvalid = varInvalid
             , cdbNextIteratorKey = varNextIteratorKey
             , cdbNextFollowerKey = varNextFollowerKey
-            , cdbImmutableDBLock = immdbLock
             , cdbChainSelFuse = chainSelFuse
             , cdbTracer = tracer
             , cdbRegistry = Args.cdbsRegistry cdbSpecificArgs
@@ -273,8 +257,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbPerasVoteDB = perasVoteDB
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             }
-
-    setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
 
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
@@ -322,19 +304,46 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , intGarbageCollect = \slot -> getEnv h $ \e -> do
                 Background.garbageCollectBlocks e slot
                 Background.garbageCollectPeras e slot
-                LedgerDB.garbageCollect (cdbLedgerDB e) slot
-            , intTryTakeSnapshot = getEnv2 h $ LedgerDB.tryTakeSnapshot . cdbLedgerDB
+                ldb <- atomically $ awaitLedgerDB e
+                LedgerDB.garbageCollect ldb slot
+            , intTryTakeSnapshot = getEnv2 h $ \env' cb delay -> do
+                ldb <- atomically $ awaitLedgerDB env'
+                LedgerDB.tryTakeSnapshot ldb cb delay
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
             }
 
-    traceWith tracer $
-      TraceOpenEvent $
-        OpenedDB
-          (castPoint $ AF.anchorPoint chain)
-          (castPoint $ AF.headPoint chain)
+    -- When 'EarlyN2C' is enabled, fork the LedgerDB
+    -- initialiser so 'openDB' can return immediately; otherwise run it
+    -- inline (original synchronous open).
+    case Args.cdbsEarlyN2C cdbSpecificArgs of
+      API.EarlyN2CEnabled -> do
+        traceWith tracer $
+          TraceOpenEvent $
+            OpenedDBImmutableReady immutableDbTipPoint
 
-    when launchBgTasks $ Background.launchBgTasks env
+        initThread <-
+          forkLinkedThread (Args.cdbsRegistry cdbSpecificArgs) "ChainDB.initLedgerDB" $
+            runInitLedgerDB
+              args
+              env
+              immutableDB
+              volatileDB
+              immutableDbTipPoint
+              ledgerDbGetVolatileSuffix
+              setGetCurrentChainForLedgerDB
+              launchBgTasks
+        atomically $ writeTVar varCancelInit (cancelThread initThread)
+      API.EarlyN2CDisabled ->
+        runInitLedgerDB
+          args
+          env
+          immutableDB
+          volatileDB
+          immutableDbTipPoint
+          ledgerDbGetVolatileSuffix
+          setGetCurrentChainForLedgerDB
+          launchBgTasks
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually
@@ -351,20 +360,22 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   Args.ChainDbArgs
     argsImmutableDb
     argsVolatileDb
-    argsLgrDb
+    _argsLgrDb
     argsPerasCertDB
     argsPerasVoteDB
     cdbSpecificArgs = args
 
   -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')
-  -- determining which of its states are volatile/immutable. Once we have
-  -- initialized the ChainDB we can defer this decision to
+  -- determining which of its states are volatile/immutable. Once initial
+  -- chain selection has run we can defer this decision to
   -- 'Query.getCurrentChain'.
   --
-  -- However, we initialize the LedgerDB before the ChainDB (for initial chain
-  -- selection), so during that period, we temporarily consider no state (apart
-  -- from the anchor state) as immutable. This is fine as we don't perform eg
-  -- any rollbacks during this period.
+  -- The LedgerDB is initialised on the background thread spawned by
+  -- 'openDBInternal' (see 'runInitLedgerDB'). 'setVarChain' is only invoked
+  -- once that background work has selected an initial chain. While the
+  -- LedgerDB is replaying, the TMVar is empty and the suffix defaults to
+  -- 'id', i.e. the entire suffix is treated as volatile. This is fine as we
+  -- don't perform any rollbacks during this period.
   mkLedgerDbGetVolatileSuffix ::
     m
       ( LedgerDB.GetVolatileSuffix m blk
@@ -387,6 +398,104 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                 pure $ AF.anchorNewest (fromIntegral curChainLen)
         setVarChain = atomically . writeTMVar varGetCurrentChain . OnlyCheckWhnf
     pure (getVolatileSuffix, setVarChain)
+
+-- | Background initialisation of the LedgerDB and initial chain selection.
+--
+-- Runs on a registry-linked thread spawned by 'openDBInternal'. On success
+-- the result of initial chain selection is written to 'cdbChain',
+-- 'cdbLedgerDBStatus' is transitioned to 'LdbReady', 'cdbCancelInit' is
+-- cleared, and (when requested) the ChainDB background tasks are launched.
+-- On failure the linked-thread exception propagates to the parent registry.
+runInitLedgerDB ::
+  forall m blk.
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsDiffusionPipelining blk
+  , InspectLedger blk
+  , HasHardForkHistory blk
+  , LedgerSupportsLedgerDB blk
+  ) =>
+  Complete Args.ChainDbArgs m blk ->
+  ChainDbEnv m blk ->
+  ImmutableDB.ImmutableDB m blk ->
+  VolatileDB.VolatileDB m blk ->
+  Point blk ->
+  LedgerDB.GetVolatileSuffix m blk ->
+  (STM m (AnchoredFragment (Header blk)) -> m ()) ->
+  Bool ->
+  m ()
+runInitLedgerDB
+  args
+  env
+  immutableDB
+  volatileDB
+  immutableDbTipPoint
+  ledgerDbGetVolatileSuffix
+  setGetCurrentChainForLedgerDB
+  launchBgTasks = runWithTempRegistry $ do
+    lift $ traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
+
+    lgrDB <-
+      LedgerDB.openDB
+        argsLgrDb
+        (ImmutableDB.streamAPI immutableDB)
+        immutableDbTipPoint
+        (Query.getAnyKnownBlock immutableDB volatileDB)
+        ledgerDbGetVolatileSuffix
+
+    lift $ do
+      traceWith tracer $ TraceOpenEvent OpenedLgrDB
+
+      let initChainSelTracer = TraceInitChainSelEvent >$< tracer
+      traceWith initChainSelTracer StartedInitChainSelection
+      initialLoE <- Args.cdbsLoE cdbSpecificArgs
+      initialWeights <-
+        atomically $ PerasCertDB.getWeightSnapshot (cdbPerasCertDB env)
+      chain <-
+        ChainSel.initialChainSelection
+          immutableDB
+          volatileDB
+          lgrDB
+          initChainSelTracer
+          (cdbTopLevelConfig env)
+          (cdbInvalid env)
+          (void initialLoE)
+          (forgetFingerprint initialWeights)
+      traceWith initChainSelTracer InitialChainSelected
+      LedgerDB.tryFlush lgrDB
+
+      curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
+      let lcfg = configLedger (cdbTopLevelConfig env)
+          chainWithTime =
+            AF.mapAnchoredFragment
+              (mkHeaderWithTime lcfg (ledgerState curLedger))
+              chain
+
+      atomically $ do
+        writeTVar (cdbChain env) (InternalChain chain chainWithTime)
+        writeTVar (cdbLedgerDBStatus env) (LdbReady lgrDB)
+        writeTVar (cdbCancelInit env) (return ())
+
+      setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
+
+      traceWith tracer $
+        TraceOpenEvent $
+          OpenedDB
+            (castPoint (AF.anchorPoint chain) :: Point blk)
+            (castPoint (AF.headPoint chain) :: Point blk)
+
+      when launchBgTasks $ Background.launchBgTasks env
+
+      return ((), env)
+   where
+    Args.ChainDbArgs
+      _argsImmutableDb
+      _argsVolatileDb
+      argsLgrDb
+      _argsPerasCertDB
+      _argsPerasVoteDB
+      cdbSpecificArgs = args
+    tracer = Args.cdbsTracer cdbSpecificArgs
 
 isOpen :: IOLike m => ChainDbHandle m blk -> STM m Bool
 isOpen (CDBHandle varState) =
@@ -413,6 +522,11 @@ closeDB (CDBHandle varState) = do
 
   -- Only when the ChainDB was open
   whenJust mbOpenEnv $ \cdb@CDB{..} -> do
+    -- If the LedgerDB is still being initialised in the background, cancel
+    -- that work first so it cannot race with the cleanup below.
+    cancelInit <- atomically $ readTVar cdbCancelInit
+    cancelInit
+
     Follower.closeAllFollowers cdb
     Iterator.closeAllIterators cdb
 
@@ -421,7 +535,12 @@ closeDB (CDBHandle varState) = do
 
     ImmutableDB.closeDB cdbImmutableDB
     VolatileDB.closeDB cdbVolatileDB
-    LedgerDB.closeDB cdbLedgerDB
+
+    -- The LedgerDB is only opened by the background initialisation; if that
+    -- never reached 'LdbReady', there is no LedgerDB handle to close.
+    atomically (readTVar cdbLedgerDBStatus) >>= \case
+      LdbReplaying -> pure ()
+      LdbReady ldb -> LedgerDB.closeDB ldb
 
     chain <- atomically $ icWithoutTime <$> readTVar cdbChain
 
