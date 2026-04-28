@@ -285,7 +285,7 @@ instance ApplyBlock (LedgerState BlockA) BlockA where
   applyBlockLedgerResultWithValidation _ _ cfg blk =
     fmap (pureLedgerResult . convertMapKind . setTip)
       . repeatedlyM
-        (fmap (convertMapKind . fst) .: applyTx cfg DoNotIntervene (blockSlot blk))
+        (fmap (convertMapKind . fst) .: applyTx cfg DoNotIntervene)
         (blkA_body blk)
    where
     setTip :: TickedLedgerState BlockA mk -> LedgerState BlockA mk
@@ -390,13 +390,13 @@ newtype instance Validated (GenTx BlockA) = ValidatedGenTxA {forgetValidatedGenT
 type instance ApplyTxErr BlockA = Void
 
 instance LedgerSupportsMempool BlockA where
-  applyTx _ _wti sno tx@(TxA _ payload) (TickedLedgerStateA st) =
+  applyTx _ _wti tx@(TxA _ payload) (TickedLedgerStateA st) =
     case payload of
       InitiateAtoB -> do
-        return (TickedLedgerStateA $ st{lgrA_transition = Just sno}, ValidatedGenTxA tx)
+        return (TickedLedgerStateA st, ValidatedGenTxA tx)
 
-  reapplyTx cfg slot tx st =
-    applyDiffs st . fst <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) st
+  reapplyTxBoth _ cfg slot tx st =
+    applyDiffs st . fst <$> applyTx cfg DoNotIntervene (forgetValidatedGenTxA tx) st
 
   txForgetValidated = forgetValidatedGenTxA
 
@@ -407,7 +407,7 @@ instance LedgerSupportsMempool BlockA where
 instance TxLimits BlockA where
   type TxMeasure BlockA = IgnoringOverflow ByteSize32
   txWireSize = const . fromIntegral $ (0 :: Int)
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
+  blockCapacityTxMeasure _mode _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
   txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int

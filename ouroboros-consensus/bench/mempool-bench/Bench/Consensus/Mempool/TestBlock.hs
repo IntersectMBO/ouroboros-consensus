@@ -224,14 +224,24 @@ txSize (TestBlockGenTx tx) =
       1 + length (consumed tx) + length (produced tx)
 
 instance Ledger.LedgerSupportsMempool TestBlock where
-  applyTx _cfg _shouldIntervene _slot (TestBlockGenTx tx) tickedSt =
+  applyTx _cfg _shouldIntervene (TestBlockGenTx tx) st =
     except $
       fmap ((,ValidatedGenTx (TestBlockGenTx tx)) . Ledger.trackingToDiffs) $
-        applyDirectlyToPayloadDependentState tickedSt tx
+        applyDirectlyToPayloadDependentState st tx
 
-  reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt =
-    Ledger.applyDiffs tickedSt . fst
-      <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
+  reapplyTxBoth mode cfg slot vtx@(ValidatedGenTx genTx@(TestBlockGenTx tx)) st =
+    case mode of
+      Ledger.ReapplyLedgerState ->
+        Ledger.applyDiffs st . fst
+          <$> Ledger.applyTx cfg Ledger.DoNotIntervene genTx st
+      Ledger.ReapplyTickedLedgerState ->
+        except
+          $ fmap
+            ( Ledger.WrapTickedLedgerState
+                . Ledger.applyDiffs (Ledger.unWrapTickedLedgerState st)
+                . Ledger.trackingToDiffs
+            )
+          $ applyDirectlyToPayloadDependentState' (Ledger.unWrapTickedLedgerState st) tx
 
   -- FIXME: it is ok to use 'DoNotIntervene' here?
 
@@ -248,7 +258,7 @@ instance Ledger.TxLimits TestBlock where
 
   -- We tweaked this in such a way that we test the case in which we exceed the
   -- maximum mempool capacity. The value used here depends on 'txInBlockSize'.
-  blockCapacityTxMeasure _cfg _st =
+  blockCapacityTxMeasure _mode _cfg _st =
     Ledger.IgnoringOverflow $ Ledger.ByteSize32 20
 
   txMeasure _cfg _st = pure . Ledger.IgnoringOverflow . txSize

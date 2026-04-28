@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -19,6 +20,7 @@ module Ouroboros.Consensus.Ledger.Basics
     LedgerCfg
   , LedgerState
   , TickedLedgerState
+  , WrapTickedLedgerState (..)
 
     -- * Definition of a ledger independent of a choice of block
   , ComputeLedgerEvents (..)
@@ -251,3 +253,8 @@ instance StandardHash blk => StandardHash (LedgerState blk)
 
 type LedgerConfig blk = LedgerCfg (LedgerState blk)
 type LedgerError blk = LedgerErr (LedgerState blk)
+
+type WrapTickedLedgerState :: Type -> MapKind -> Type
+newtype WrapTickedLedgerState blk mk = WrapTickedLedgerState
+  { unWrapTickedLedgerState :: Ticked (LedgerState blk) mk
+  }
