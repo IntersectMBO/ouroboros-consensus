@@ -157,8 +157,6 @@ instance
       NotAPersistentMember SeatIndex
     | -- Voter claims to be a non-persistent member of the committee, but it's not
       NotANonPersistentMember SeatIndex
-    | -- VRF evaluation for local sortition failed (e.g. due to invalid proof)
-      LocalSortitionError String
     | -- The VRF evaluation returned zero non-persistent seats
       ZeroNonPersistentSeats SeatIndex
     | -- The vote signature is invalid
@@ -284,7 +282,10 @@ implCheckShouldVote committee ourId ourPrivateKey electionId
               let vrfContext =
                     VRFSignContext ourVRFSigningKey
               vrfOutput <-
-                bimap InvalidVoteSignature id $ do
+                -- Here we are using evalVRF to compute our own VRF output, so
+                -- if that fails, it means something went wrong with the crypto
+                -- process
+                bimap CryptoError id $ do
                   evalVRF
                     vrfContext
                     ( mkVRFElectionInput
