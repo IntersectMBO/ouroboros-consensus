@@ -50,7 +50,7 @@ data family Ticked st
 data instance Ticked () = TickedTrivial
   deriving Show
 
-type instance HeaderHash (Ticked l) = HeaderHash l
+type instance HeaderHash (Ticked l blk) = HeaderHash (l blk)
 
 {-------------------------------------------------------------------------------
   Forwarding type class instances

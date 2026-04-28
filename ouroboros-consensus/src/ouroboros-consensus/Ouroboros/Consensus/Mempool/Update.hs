@@ -303,7 +303,7 @@ pureTryAddTx ::
   ) =>
   MempoolEnv m blk ->
   -- | The ledger configuration.
-  LedgerCfg (LedgerState blk) ->
+  LedgerCfg LedgerState blk ->
   WhetherToIntervene ->
   -- | The transaction to add to the mempool.
   GenTx blk ->

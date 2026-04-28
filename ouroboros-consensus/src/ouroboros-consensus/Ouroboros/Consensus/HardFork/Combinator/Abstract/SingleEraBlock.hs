@@ -78,7 +78,7 @@ class
   , -- LedgerTables
     CanStowLedgerTables (LedgerState blk)
   , HasLedgerTables (LedgerState blk)
-  , HasLedgerTables (Ticked (LedgerState blk))
+  , HasLedgerTables (Ticked LedgerState blk)
   , -- Instances required to support testing
     Eq (GenTx blk)
   , Eq (Validated (GenTx blk))

@@ -219,7 +219,7 @@ mkShelleyLedgerConfig genesis transCtxt epochInfo =
     , shelleyLedgerTranslationContext = transCtxt
     }
 
-type instance LedgerCfg (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerConfig era
+type instance LedgerCfg LedgerState (ShelleyBlock proto era) = ShelleyLedgerConfig era
 
 data ShelleyPartialLedgerConfig era = ShelleyPartialLedgerConfig
   { shelleyLedgerConfig :: !(ShelleyLedgerConfig era)
@@ -372,6 +372,15 @@ instance
   indexedUnpackM _ = unpackM
 
 instance
+  (txout ~ Core.TxOut era, MemPack txout) =>
+  IndexedMemPack (Ticked LedgerState (ShelleyBlock proto era) EmptyMK) txout
+  where
+  indexedTypeName _ = typeName @txout
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
+
+instance
   ShelleyCompatible proto era =>
   SerializeTablesWithHint (LedgerState (ShelleyBlock proto era))
   where
@@ -412,7 +421,7 @@ instance
 
 instance
   ShelleyBasedEra era =>
-  HasLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  HasLedgerTables (Ticked LedgerState (ShelleyBlock proto era))
   where
   projectLedgerTables = castLedgerTables . tickedShelleyLedgerTables
   withLedgerTables st tables =
@@ -471,7 +480,7 @@ instance
 
 instance
   ShelleyBasedEra era =>
-  CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  CanStowLedgerTables (Ticked LedgerState (ShelleyBlock proto era))
   where
   stowLedgerTables st =
     TickedShelleyLedgerState
@@ -525,7 +534,7 @@ slUtxoL st vals =
 instance GetTip (LedgerState (ShelleyBlock proto era)) where
   getTip = castPoint . shelleyLedgerTipPoint
 
-instance GetTip (Ticked (LedgerState (ShelleyBlock proto era))) where
+instance GetTip (Ticked LedgerState (ShelleyBlock proto era)) where
   getTip = castPoint . untickedShelleyLedgerTipPoint
 
 {-------------------------------------------------------------------------------
@@ -533,7 +542,7 @@ instance GetTip (Ticked (LedgerState (ShelleyBlock proto era))) where
 -------------------------------------------------------------------------------}
 
 -- | Ticking only affects the state itself
-data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLedgerState
+data instance Ticked LedgerState (ShelleyBlock proto era) mk = TickedShelleyLedgerState
   { untickedShelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
   , tickedShelleyLedgerTransition :: !ShelleyTransition
   -- ^ We are counting blocks within an epoch, this means:
@@ -553,10 +562,10 @@ untickedShelleyLedgerTipPoint ::
   Point (ShelleyBlock proto era)
 untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
-instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) where
-  type LedgerErr (LedgerState (ShelleyBlock proto era)) = SL.BlockTransitionError era
+type instance AuxLedgerEvent (ShelleyBlock proto era) = ShelleyLedgerEvent era
 
-  type AuxLedgerEvent (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerEvent era
+instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) where
+  type LedgerErr LedgerState (ShelleyBlock proto era) = SL.BlockTransitionError era
 
   applyChainTickLedgerResult
     evs
@@ -608,7 +617,7 @@ data ShelleyLedgerEvent era
 
 instance
   ShelleyCompatible proto era =>
-  ApplyBlock (LedgerState (ShelleyBlock proto era)) (ShelleyBlock proto era)
+  ApplyBlock LedgerState (ShelleyBlock proto era)
   where
   -- Note: in the Shelley ledger, the @CHAIN@ rule is used to apply a whole
   -- block. In consensus, we split up the application of a block to the ledger
@@ -664,17 +673,17 @@ applyHelper ::
     Either
       (SL.BlockTransitionError era)
       ( LedgerResult
-          (LedgerState (ShelleyBlock proto era))
+          (ShelleyBlock proto era)
           (SL.NewEpochState era)
       )
   ) ->
   LedgerConfig (ShelleyBlock proto era) ->
   ShelleyBlock proto era ->
-  Ticked (LedgerState (ShelleyBlock proto era)) ValuesMK ->
+  Ticked LedgerState (ShelleyBlock proto era) ValuesMK ->
   Either
     (SL.BlockTransitionError era)
     ( LedgerResult
-        (LedgerState (ShelleyBlock proto era))
+        (ShelleyBlock proto era)
         (LedgerState (ShelleyBlock proto era) DiffMK)
     )
 applyHelper f cfg blk stBefore = do

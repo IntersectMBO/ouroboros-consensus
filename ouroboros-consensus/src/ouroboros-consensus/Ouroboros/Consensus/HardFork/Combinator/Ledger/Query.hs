@@ -124,7 +124,7 @@ class
   ( All (Compose NoThunks WrapTxOut) xs
   , All (Compose Show WrapTxOut) xs
   , All (Compose Eq WrapTxOut) xs
-  , All (Compose HasTickedLedgerTables LedgerState) xs
+  , All (Compose HasLedgerTables (Ticked LedgerState)) xs
   , All (Compose HasLedgerTables LedgerState) xs
   ) =>
   BlockSupportsHFLedgerQuery xs

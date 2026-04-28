@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
     -- instantiation for the type variables.
     LedgerStateKind
   , MapKind
+  , StateKind
 
     -- * Ledger tables
   , LedgerTables (..)
@@ -44,6 +45,8 @@ import Ouroboros.Consensus.Ticked (Ticked)
 type MapKind {- key -} = Type {- value -} -> Type -> Type
 
 type LedgerStateKind = MapKind -> Type
+
+type StateKind = Type -> LedgerStateKind
 
 {-------------------------------------------------------------------------------
   Ledger tables
@@ -99,8 +102,8 @@ type family TxOut l
 
 type instance TxIn (LedgerTables l) = TxIn l
 type instance TxOut (LedgerTables l) = TxOut l
-type instance TxIn (Ticked l) = TxIn l
-type instance TxOut (Ticked l) = TxOut l
+type instance TxIn (Ticked l blk) = TxIn (l blk)
+type instance TxOut (Ticked l blk) = TxOut (l blk)
 
 -- | Auxiliary information for @IndexedMemPack@.
 type MemPackIdx :: LedgerStateKind -> MapKind -> Type

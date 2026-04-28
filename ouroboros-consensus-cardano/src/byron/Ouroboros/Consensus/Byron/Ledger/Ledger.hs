@@ -125,7 +125,7 @@ data ByronTransition
 
 instance UpdateLedger ByronBlock
 
-type instance LedgerCfg (LedgerState ByronBlock) = Gen.Config
+type instance LedgerCfg LedgerState ByronBlock = Gen.Config
 
 initByronLedgerState ::
   Gen.Config ->
@@ -160,7 +160,7 @@ initByronLedgerState genesis mUtxo =
 instance GetTip (LedgerState ByronBlock) where
   getTip = castPoint . getByronTip . byronLedgerState
 
-instance GetTip (Ticked (LedgerState ByronBlock)) where
+instance GetTip (Ticked LedgerState ByronBlock) where
   getTip = castPoint . getByronTip . tickedByronLedgerState
 
 getByronTip :: CC.ChainValidationState -> Point ByronBlock
@@ -178,18 +178,16 @@ getByronTip state =
 -------------------------------------------------------------------------------}
 
 -- | The ticked Byron ledger state
-data instance Ticked (LedgerState ByronBlock) mk = TickedByronLedgerState
+data instance Ticked LedgerState ByronBlock mk = TickedByronLedgerState
   { tickedByronLedgerState :: !CC.ChainValidationState
   , untickedByronLedgerTransition :: !ByronTransition
   }
   deriving (Generic, NoThunks)
 
-instance IsLedger (LedgerState ByronBlock) where
-  type LedgerErr (LedgerState ByronBlock) = CC.ChainValidationError
+type instance AuxLedgerEvent ByronBlock = VoidLedgerEvent
 
-  type
-    AuxLedgerEvent (LedgerState ByronBlock) =
-      VoidLedgerEvent (LedgerState ByronBlock)
+instance IsLedger LedgerState ByronBlock where
+  type LedgerErr LedgerState ByronBlock = CC.ChainValidationError
 
   applyChainTickLedgerResult _ cfg slotNo ByronLedgerState{..} =
     pureLedgerResult $
@@ -205,22 +203,26 @@ type instance TxOut (LedgerState ByronBlock) = Void
 
 instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
   convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
-instance LedgerTablesAreTrivial (Ticked (LedgerState ByronBlock)) where
+instance LedgerTablesAreTrivial (Ticked LedgerState ByronBlock) where
   convertMapKind (TickedByronLedgerState x y) = TickedByronLedgerState x y
 
 deriving via
   Void
   instance
     IndexedMemPack (LedgerState ByronBlock EmptyMK) Void
+deriving via
+  Void
+  instance
+    IndexedMemPack (Ticked LedgerState ByronBlock EmptyMK) Void
 
 deriving via
   TrivialLedgerTables (LedgerState ByronBlock)
   instance
     HasLedgerTables (LedgerState ByronBlock)
 deriving via
-  TrivialLedgerTables (Ticked (LedgerState ByronBlock))
+  TrivialLedgerTables (Ticked LedgerState ByronBlock)
   instance
-    HasLedgerTables (Ticked (LedgerState ByronBlock))
+    HasLedgerTables (Ticked LedgerState ByronBlock)
 deriving via
   TrivialLedgerTables (LedgerState ByronBlock)
   instance
@@ -234,7 +236,7 @@ deriving via
   Supporting the various consensus interfaces
 -------------------------------------------------------------------------------}
 
-instance ApplyBlock (LedgerState ByronBlock) ByronBlock where
+instance ApplyBlock LedgerState ByronBlock where
   applyBlockLedgerResultWithValidation doValidation opts =
     fmap pureLedgerResult ..: applyByronBlock doValidation opts
   applyBlockLedgerResult = defaultApplyBlockLedgerResult

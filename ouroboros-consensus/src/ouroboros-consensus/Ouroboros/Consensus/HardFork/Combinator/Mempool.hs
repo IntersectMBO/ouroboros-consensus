@@ -421,7 +421,7 @@ type family ApplyMK k where
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs txIn blk = ApplyResult
-  { arState :: Ticked (LedgerState blk) (ApplyMK (ApplyHelperMode txIn))
+  { arState :: Ticked LedgerState blk (ApplyMK (ApplyHelperMode txIn))
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
 

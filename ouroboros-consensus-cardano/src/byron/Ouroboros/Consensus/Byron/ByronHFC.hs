@@ -310,6 +310,10 @@ deriving via
   Void
   instance
     IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
+deriving via
+  Void
+  instance
+    IndexedMemPack (Ticked LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}

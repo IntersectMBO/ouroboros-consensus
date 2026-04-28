@@ -358,22 +358,22 @@ data DualLedgerConfig m a = DualLedgerConfig
 
 deriving instance (Show (LedgerConfig m), Show (LedgerConfig a)) => Show (DualLedgerConfig m a)
 
-type instance LedgerCfg (LedgerState (DualBlock m a)) = DualLedgerConfig m a
+type instance LedgerCfg LedgerState (DualBlock m a) = DualLedgerConfig m a
 
 instance Bridge m a => HasPartialLedgerConfig (DualBlock m a)
 
 instance Bridge m a => GetTip (LedgerState (DualBlock m a)) where
   getTip = castPoint . getTip . dualLedgerStateMain
 
-instance Bridge m a => GetTip (Ticked (LedgerState (DualBlock m a))) where
+instance Bridge m a => GetTip (Ticked LedgerState (DualBlock m a)) where
   getTip = castPoint . getTip . tickedDualLedgerStateMain
 
 -- We only have tables on the main ledger state to be able to compare it to a
 -- reference spec implementation which doesn't use tables. The result should be
 -- the same.
-data instance Ticked (LedgerState (DualBlock m a)) mk = TickedDualLedgerState
-  { tickedDualLedgerStateMain :: Ticked (LedgerState m) mk
-  , tickedDualLedgerStateAux :: Ticked (LedgerState a) ValuesMK
+data instance Ticked LedgerState (DualBlock m a) mk = TickedDualLedgerState
+  { tickedDualLedgerStateMain :: Ticked LedgerState m mk
+  , tickedDualLedgerStateAux :: Ticked LedgerState a ValuesMK
   , tickedDualLedgerStateBridge :: BridgeLedger m a
   , tickedDualLedgerStateAuxOrig :: LedgerState a ValuesMK
   -- ^ The original, unticked ledger for the auxiliary block
@@ -382,10 +382,12 @@ data instance Ticked (LedgerState (DualBlock m a)) mk = TickedDualLedgerState
   -- not every main block is paired with an auxiliary block. When there is
   -- no auxiliary block, the auxiliary ledger state remains unchanged.
   }
-  deriving NoThunks via AllowThunk (Ticked (LedgerState (DualBlock m a)) mk)
+  deriving NoThunks via AllowThunk (Ticked LedgerState (DualBlock m a) mk)
 
-instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
-  type LedgerErr (LedgerState (DualBlock m a)) = DualLedgerError m a
+type instance AuxLedgerEvent (DualBlock m a) = AuxLedgerEvent m
+
+instance Bridge m a => IsLedger LedgerState (DualBlock m a) where
+  type LedgerErr LedgerState (DualBlock m a) = DualLedgerError m a
 
   -- \| The dual ledger events are exactly those of the main ledger; it ignores
   -- any possible auxiliary ledger events.
@@ -394,7 +396,6 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
   -- the same events. And right now we only use the Dual ledger for our tests,
   -- and do so only with the Byron and ByronSpecs ledgers, neither of which have
   -- any events. So we make this easy choice for for now.
-  type AuxLedgerEvent (LedgerState (DualBlock m a)) = AuxLedgerEvent (LedgerState m)
 
   applyChainTickLedgerResult
     evs
@@ -425,18 +426,18 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
 applyHelper ::
   Bridge m a =>
   ( ComputeLedgerEvents ->
-    LedgerCfg (LedgerState m) ->
+    LedgerCfg LedgerState m ->
     m ->
-    Ticked (LedgerState m) ValuesMK ->
-    Except (LedgerErr (LedgerState m)) (LedgerResult (LedgerState m) (LedgerState m DiffMK))
+    Ticked LedgerState m ValuesMK ->
+    Except (LedgerErr LedgerState m) (LedgerResult m (LedgerState m DiffMK))
   ) ->
   ComputeLedgerEvents ->
   DualLedgerConfig m a ->
   DualBlock m a ->
-  Ticked (LedgerState (DualBlock m a)) ValuesMK ->
+  Ticked LedgerState (DualBlock m a) ValuesMK ->
   Except
     (DualLedgerError m a)
-    (LedgerResult (LedgerState (DualBlock m a)) (LedgerState (DualBlock m a) DiffMK))
+    (LedgerResult (DualBlock m a) (LedgerState (DualBlock m a) DiffMK))
 applyHelper f opts cfg block@DualBlock{..} TickedDualLedgerState{..} = do
   (ledgerResult, aux') <-
     agreeOnError
@@ -464,7 +465,7 @@ applyHelper f opts cfg block@DualBlock{..} TickedDualLedgerState{..} = do
               tickedDualLedgerStateBridge
         }
 
-instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) where
+instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
   applyBlockLedgerResultWithValidation doValidate =
     applyHelper (applyBlockLedgerResultWithValidation doValidate)
 
@@ -502,7 +503,7 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
 
   getBlockKeySets =
     castLedgerTables
-      . getBlockKeySets @(LedgerState m)
+      . getBlockKeySets @LedgerState @m
       . dualBlockMain
 
 data instance LedgerState (DualBlock m a) mk = DualLedgerState
@@ -950,8 +951,8 @@ agreeOnError f (ma, mb) =
 -------------------------------------------------------------------------------}
 
 encodeDualLedgerConfig ::
-  (LedgerCfg (LedgerState m) -> Encoding) ->
-  (LedgerCfg (LedgerState a) -> Encoding) ->
+  (LedgerCfg LedgerState m -> Encoding) ->
+  (LedgerCfg LedgerState a -> Encoding) ->
   DualLedgerConfig m a ->
   Encoding
 encodeDualLedgerConfig encodeM encodeA (DualLedgerConfig m a) =
@@ -962,8 +963,8 @@ encodeDualLedgerConfig encodeM encodeA (DualLedgerConfig m a) =
     ]
 
 decodeDualLedgerConfig ::
-  Decoder s (LedgerCfg (LedgerState m)) ->
-  Decoder s (LedgerCfg (LedgerState a)) ->
+  Decoder s (LedgerCfg LedgerState m) ->
+  Decoder s (LedgerCfg LedgerState a) ->
   Decoder s (DualLedgerConfig m a)
 decodeDualLedgerConfig decodeM decodeA = do
   enforceSize "DualLedgerConfig" 2
@@ -1120,6 +1121,15 @@ instance
   indexedUnpackM (DualLedgerState st _ _) = indexedUnpackM st
 
 instance
+  (txout ~ TxOut (LedgerState m), IndexedMemPack (Ticked LedgerState m EmptyMK) txout) =>
+  IndexedMemPack (Ticked LedgerState (DualBlock m a) EmptyMK) txout
+  where
+  indexedTypeName (TickedDualLedgerState st _ _ _) = indexedTypeName @(Ticked LedgerState m EmptyMK) @txout st
+  indexedPackedByteCount (TickedDualLedgerState st _ _ _) = indexedPackedByteCount st
+  indexedPackM (TickedDualLedgerState st _ _ _) = indexedPackM st
+  indexedUnpackM (TickedDualLedgerState st _ _ _) = indexedUnpackM st
+
+instance
   (Ord (TxIn (LedgerState m)), MemPack (TxIn (LedgerState m)), MemPack (TxOut (LedgerState m))) =>
   SerializeTablesWithHint (LedgerState (DualBlock m a))
   where
@@ -1161,7 +1171,7 @@ instance
   , Ord (TxIn (LedgerState m))
   , MemPack (TxIn (LedgerState m))
   ) =>
-  HasLedgerTables (Ticked (LedgerState (DualBlock m a)))
+  HasLedgerTables (Ticked LedgerState (DualBlock m a))
   where
   projectLedgerTables TickedDualLedgerState{..} =
     castLedgerTables

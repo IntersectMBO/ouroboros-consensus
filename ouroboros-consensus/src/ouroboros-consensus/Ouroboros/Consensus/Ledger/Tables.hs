@@ -169,7 +169,6 @@ module Ouroboros.Consensus.Ledger.Tables
 
     -- ** Extracting and injecting ledger tables
   , HasLedgerTables (..)
-  , HasTickedLedgerTables
 
     -- * Serialization
   , SerializeTablesHint
@@ -196,7 +195,6 @@ import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Ledger.Tables.Basics
 import Ouroboros.Consensus.Ledger.Tables.Combinators
 import Ouroboros.Consensus.Ledger.Tables.MapKind
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
@@ -257,13 +255,6 @@ instance
   where
   projectLedgerTables = castLedgerTables
   withLedgerTables _ = castLedgerTables
-
--- | Convenience class, useful for partially applying the composition of
--- 'HasLedgerTables' and 'Ticked'.
-type HasTickedLedgerTables :: LedgerStateKind -> Constraint
-class HasLedgerTables (Ticked l) => HasTickedLedgerTables l
-
-instance HasLedgerTables (Ticked l) => HasTickedLedgerTables l
 
 -- | LedgerTables are projections of data from a LedgerState and as such they
 -- can be injected back into a LedgerState. This is necessary because the Ledger
