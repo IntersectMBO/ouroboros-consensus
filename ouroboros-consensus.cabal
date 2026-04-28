@@ -41,6 +41,11 @@ flag expensive-invariants
   manual: True
   default: False
 
+flag skip-lmdb
+  description: Skip building the LMDB sublibrary and components that depend on it
+  manual: True
+  default: False
+
 common ghc-9.14
   if impl(ghc >=9.14)
     ghc-options:
@@ -433,34 +438,38 @@ library lsm
 library lmdb
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus/src/ouroboros-consensus-lmdb
-  exposed-modules:
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
 
-  build-depends:
-    base,
-    bytestring,
-    cardano-lmdb >=0.4,
-    cardano-lmdb-simple ^>=0.8,
-    cardano-slotting,
-    containers,
-    contra-tracer,
-    directory,
-    filepath,
-    fs-api,
-    io-classes,
-    mempack,
-    mtl,
-    nothunks,
-    ouroboros-consensus,
-    rawlock,
-    serialise,
-    sop-core,
-    streaming,
-    temporary,
-    text,
+  if flag(skip-lmdb)
+    buildable: False
+  else
+    hs-source-dirs: ouroboros-consensus/src/ouroboros-consensus-lmdb
+    exposed-modules:
+      Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
+      Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
+      Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
+
+    build-depends:
+      base,
+      bytestring,
+      cardano-lmdb >=0.4,
+      cardano-lmdb-simple ^>=0.8,
+      cardano-slotting,
+      containers,
+      contra-tracer,
+      directory,
+      filepath,
+      fs-api,
+      io-classes,
+      mempack,
+      mtl,
+      nothunks,
+      ouroboros-consensus,
+      rawlock,
+      serialise,
+      sop-core,
+      streaming,
+      temporary,
+      text,
 
 library unstable-consensus-testlib
   import: common-lib
@@ -816,7 +825,6 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog
-    Test.Ouroboros.Storage.LedgerDB.V1.LMDB
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.PerasCertDB
     Test.Ouroboros.Storage.PerasCertDB.Model
@@ -857,8 +865,14 @@ test-suite storage-test
     mempack,
     mtl,
     nothunks,
-    ouroboros-consensus:{lmdb, lsm, ouroboros-consensus},
+    ouroboros-consensus:{lsm, ouroboros-consensus},
     ouroboros-network:{api, api-tests-lib, protocols-tests-lib},
+
+  if !flag(skip-lmdb)
+    other-modules:
+      Test.Ouroboros.Storage.LedgerDB.V1.LMDB
+    build-depends:
+      ouroboros-consensus:lmdb,
     pretty-show,
     quickcheck-dynamic ^>=4,
     quickcheck-lockstep ^>=0.8,
@@ -1812,8 +1826,12 @@ library unstable-cardano-tools
     network,
     network-mux,
     nothunks,
-    ouroboros-consensus:{cardano, diffusion, lmdb, lsm, ouroboros-consensus, protocol, unstable-protocol-testlib},
+    ouroboros-consensus:{cardano, diffusion, lsm, ouroboros-consensus, protocol, unstable-protocol-testlib},
     ouroboros-network:{api, framework, ouroboros-network, protocols},
+
+  if !flag(skip-lmdb)
+    build-depends:
+      ouroboros-consensus:lmdb,
     random,
     resource-registry,
     singletons,
@@ -1930,7 +1948,7 @@ library unstable-snapshot-conversion
     fs-api,
     microlens,
     mtl,
-    ouroboros-consensus:{cardano, lmdb, lsm, ouroboros-consensus},
+    ouroboros-consensus:{cardano, lsm, ouroboros-consensus},
     random,
     serialise,
     sop-core,
@@ -1938,6 +1956,10 @@ library unstable-snapshot-conversion
     strict-sop-core,
     terminal-progress-bar,
     text,
+
+  if !flag(skip-lmdb)
+    build-depends:
+      ouroboros-consensus:lmdb,
 
 executable snapshot-converter
   import: common-exe
