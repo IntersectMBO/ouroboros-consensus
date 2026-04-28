@@ -487,10 +487,9 @@ initNodeKernel
                     , ebHash = point.pointEbHash
                     , voteSignature = True
                     }
-            -- TODO: store vote in memory and notify downstream peers
+            -- Store vote in memory and notify downstream peers
             addVote vote
-            -- FIXME: fake it till you make it
-            traceWith tracer TraceLeiosVoted{point}
+            traceWith tracer TraceLeiosVoted{point, voter = me}
             traceWith tracer TraceLeiosVoteAcquired{point, voter = me}
 
     return

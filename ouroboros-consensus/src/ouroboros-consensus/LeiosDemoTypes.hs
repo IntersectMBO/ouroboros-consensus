@@ -607,7 +607,7 @@ data TraceLeiosKernel
       , mempoolRestMeasure :: m
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
-  | TraceLeiosVoted {point :: LeiosPoint}
+  | TraceLeiosVoted {point :: LeiosPoint, voter :: VoterId}
   | TraceLeiosVoteAcquired {point :: LeiosPoint, voter :: VoterId}
   | TraceLeiosDbException LeiosDbException
 
@@ -654,11 +654,12 @@ traceLeiosKernelToObject = \case
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
       ]
-  TraceLeiosVoted{point} ->
+  TraceLeiosVoted{point, voter} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosVoted"
       , "slot" .= point.pointSlotNo
       , "hash" .= prettyEbHash point.pointEbHash
+      , "voter" .= voter.voterIndex
       ]
   TraceLeiosVoteAcquired{point, voter} ->
     mconcat
