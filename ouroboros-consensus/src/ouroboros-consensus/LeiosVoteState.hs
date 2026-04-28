@@ -12,7 +12,6 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTChan
   , writeTVar
   )
-import Data.Set (Set)
 import qualified Data.Set as Set
 import LeiosDemoTypes (LeiosVote)
 

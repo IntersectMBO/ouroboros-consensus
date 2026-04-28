@@ -32,7 +32,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Data.Aeson ((.=))
+import Data.Aeson (ToJSON, object, toJSON, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
 import Data.ByteString (ByteString)
@@ -496,7 +496,15 @@ data LeiosVote = MkLeiosVote
   , ebHash :: EbHash
   , voteSignature :: VoteSignature
   }
-  deriving (Eq, Ord, Show)
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON LeiosVote where
+  toJSON MkLeiosVote{electionId, voterId, ebHash} =
+    object
+      [ "electionId" .= electionId
+      , "voterId" .= voterId
+      , "ebHash" .= prettyEbHash ebHash
+      ]
 
 encodeLeiosVote :: LeiosVote -> Encoding
 encodeLeiosVote MkLeiosVote{electionId, voterId, ebHash, voteSignature} =
@@ -522,6 +530,9 @@ type ElectionId = SlotNo
 -- | Voter in a committee, identified by their seat index.
 newtype VoterId = MkVoterId {voterIndex :: Word16}
   deriving (Ord, Eq, Show)
+
+instance ToJSON VoterId where
+  toJSON (MkVoterId idx) = toJSON idx
 
 encodeVoterId :: VoterId -> Encoding
 encodeVoterId (MkVoterId idx) = CBOR.encodeWord16 idx
