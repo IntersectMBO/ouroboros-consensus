@@ -188,7 +188,7 @@ instance {-# OVERLAPPING #-} Show TestBlock where
 
 data TestArguments m = TestArguments
   { argFlavorArgs :: !(LedgerDbBackendArgs m TestBlock)
-  , argLedgerDbCfg :: !(LedgerDbCfg (ExtLedgerState TestBlock))
+  , argLedgerDbCfg :: !(LedgerDbCfg ExtLedgerState TestBlock)
   }
 
 noFilePath :: IO (FilePath, IO ())
@@ -572,7 +572,7 @@ blockNotFound =
 openLedgerDB ::
   LedgerDbBackendArgs IO TestBlock ->
   ChainDB IO ->
-  LedgerDbCfg (ExtLedgerState TestBlock) ->
+  LedgerDbCfg ExtLedgerState TestBlock ->
   SomeHasFS IO ->
   IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock, IO NumOpenHandles)
 openLedgerDB flavArgs env cfg fs = do

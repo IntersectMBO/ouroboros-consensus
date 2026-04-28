@@ -198,11 +198,11 @@ data instance LedgerState BlockA mk = LgrA
   deriving NoThunks via OnlyCheckWhnfNamed "LgrA" (LedgerState BlockA mk)
 
 -- | Ticking has no state on the A ledger state
-newtype instance Ticked (LedgerState BlockA) mk = TickedLedgerStateA
+newtype instance Ticked LedgerState BlockA mk = TickedLedgerStateA
   { getTickedLedgerStateA :: LedgerState BlockA mk
   }
   deriving stock (Generic, Show, Eq)
-  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked (LedgerState BlockA) mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked LedgerState BlockA mk)
 
 {-------------------------------------------------------------------------------
   Ledger Tables
@@ -213,20 +213,24 @@ type instance TxOut (LedgerState BlockA) = Void
 
 instance LedgerTablesAreTrivial (LedgerState BlockA) where
   convertMapKind (LgrA x y) = LgrA x y
-instance LedgerTablesAreTrivial (Ticked (LedgerState BlockA)) where
+instance LedgerTablesAreTrivial (Ticked LedgerState BlockA) where
   convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
 deriving via
   Void
   instance
     IndexedMemPack (LedgerState BlockA EmptyMK) Void
 deriving via
+  Void
+  instance
+    IndexedMemPack (Ticked LedgerState BlockA EmptyMK) Void
+deriving via
   TrivialLedgerTables (LedgerState BlockA)
   instance
     HasLedgerTables (LedgerState BlockA)
 deriving via
-  TrivialLedgerTables (Ticked (LedgerState BlockA))
+  TrivialLedgerTables (Ticked LedgerState BlockA)
   instance
-    HasLedgerTables (Ticked (LedgerState BlockA))
+    HasLedgerTables (Ticked LedgerState BlockA)
 deriving via
   TrivialLedgerTables (LedgerState BlockA)
   instance
@@ -259,29 +263,25 @@ instance (HasZero a, Serialise a) => Serialise (NonZero a) where
       Nothing -> fail "Expected non zero but found zero!"
       Just a' -> pure a'
 
-type instance
-  LedgerCfg (LedgerState BlockA) =
-    (EpochInfo Identity, PartialLedgerConfigA)
+type instance LedgerCfg LedgerState BlockA = (EpochInfo Identity, PartialLedgerConfigA)
 
 instance GetTip (LedgerState BlockA) where
   getTip = castPoint . lgrA_tip
 
-instance GetTip (Ticked (LedgerState BlockA)) where
+instance GetTip (Ticked LedgerState BlockA) where
   getTip = castPoint . getTip . getTickedLedgerStateA
 
-instance IsLedger (LedgerState BlockA) where
-  type LedgerErr (LedgerState BlockA) = Void
+type instance AuxLedgerEvent BlockA = VoidLedgerEvent
 
-  type
-    AuxLedgerEvent (LedgerState BlockA) =
-      VoidLedgerEvent (LedgerState BlockA)
+instance IsLedger LedgerState BlockA where
+  type LedgerErr LedgerState BlockA = Void
 
   applyChainTickLedgerResult _ _ _ =
     pureLedgerResult
       . TickedLedgerStateA
       . noNewTickingDiffs
 
-instance ApplyBlock (LedgerState BlockA) BlockA where
+instance ApplyBlock LedgerState BlockA where
   applyBlockLedgerResultWithValidation _ _ cfg blk =
     fmap (pureLedgerResult . convertMapKind . setTip)
       . repeatedlyM

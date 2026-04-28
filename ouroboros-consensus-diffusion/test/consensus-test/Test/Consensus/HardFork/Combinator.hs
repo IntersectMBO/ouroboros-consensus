@@ -508,6 +508,32 @@ instance
         (const $ Comp $ WrapTxOut <$> unpackM)
       $ Telescope.tip idx
 
+instance
+  IndexedMemPack
+    (Ticked LedgerState (HardForkBlock '[BlockA, BlockB]) EmptyMK)
+    (DefaultHardForkTxOut '[BlockA, BlockB])
+  where
+  indexedTypeName _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
+  indexedPackedByteCount _ txout =
+    hcollapse $
+      hcmap
+        (Proxy @MemPackTxOut)
+        (K . packedByteCount . unwrapTxOut)
+        txout
+  indexedPackM _ =
+    hcollapse
+      . hcimap
+        (Proxy @MemPackTxOut)
+        ( \_ (WrapTxOut txout) -> K $ do
+            packM txout
+        )
+  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
+    hsequence'
+      $ hcmap
+        (Proxy @MemPackTxOut)
+        (const $ Comp $ WrapTxOut <$> unpackM)
+      $ Telescope.tip idx
+
 {-------------------------------------------------------------------------------
   Translation
 -------------------------------------------------------------------------------}

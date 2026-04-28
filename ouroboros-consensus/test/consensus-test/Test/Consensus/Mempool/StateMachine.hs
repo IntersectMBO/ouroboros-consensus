@@ -102,7 +102,7 @@ data Model blk r = Model
   -- ^ Last seen ticket number
   --
   -- This indicates how many transactions have ever been added to the mempool.
-  , modelConfig :: !(LedgerCfg (LedgerState blk))
+  , modelConfig :: !(LedgerCfg LedgerState blk)
   , --  * LedgerDB
 
     modelLedgerDBTip :: !(LedgerState blk ValuesMK)

@@ -200,7 +200,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
       _ -> exitEarly' "NoLeader"
 
     -- Tick the ledger state for the 'SlotNo' we're producing a block for
-    let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
+    let tickedLedgerState :: Ticked LedgerState blk DiffMK
         tickedLedgerState =
           applyChainTick
             OmitLedgerEvents

@@ -186,7 +186,7 @@ type instance TxOut (LedgerState BlockB) = Void
 
 instance LedgerTablesAreTrivial (LedgerState BlockB) where
   convertMapKind (LgrB x) = LgrB x
-instance LedgerTablesAreTrivial (Ticked (LedgerState BlockB)) where
+instance LedgerTablesAreTrivial (Ticked LedgerState BlockB) where
   convertMapKind (TickedLedgerStateB x) = TickedLedgerStateB (convertMapKind x)
 
 deriving via
@@ -194,9 +194,9 @@ deriving via
   instance
     HasLedgerTables (LedgerState BlockB)
 deriving via
-  TrivialLedgerTables (Ticked (LedgerState BlockB))
+  TrivialLedgerTables (Ticked LedgerState BlockB)
   instance
-    HasLedgerTables (Ticked (LedgerState BlockB))
+    HasLedgerTables (Ticked LedgerState BlockB)
 deriving via
   TrivialLedgerTables (LedgerState BlockB)
   instance
@@ -213,36 +213,38 @@ deriving via
   Void
   instance
     IndexedMemPack (LedgerState BlockB EmptyMK) Void
+deriving via
+  Void
+  instance
+    IndexedMemPack (Ticked LedgerState BlockB EmptyMK) Void
 
 type PartialLedgerCfgB = ()
 
-type instance LedgerCfg (LedgerState BlockB) = PartialLedgerCfgB
+type instance LedgerCfg LedgerState BlockB = PartialLedgerCfgB
 
 -- | Ticking has no state on the B ledger state
-newtype instance Ticked (LedgerState BlockB) mk = TickedLedgerStateB
+newtype instance Ticked LedgerState BlockB mk = TickedLedgerStateB
   { getTickedLedgerStateB :: LedgerState BlockB mk
   }
-  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrB" (Ticked (LedgerState BlockB) mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrB" (Ticked LedgerState BlockB mk)
 
 instance GetTip (LedgerState BlockB) where
   getTip = castPoint . lgrB_tip
 
-instance GetTip (Ticked (LedgerState BlockB)) where
+instance GetTip (Ticked LedgerState BlockB) where
   getTip = castPoint . getTip . getTickedLedgerStateB
 
-instance IsLedger (LedgerState BlockB) where
-  type LedgerErr (LedgerState BlockB) = Void
+type instance AuxLedgerEvent BlockB = VoidLedgerEvent
 
-  type
-    AuxLedgerEvent (LedgerState BlockB) =
-      VoidLedgerEvent (LedgerState BlockB)
+instance IsLedger LedgerState BlockB where
+  type LedgerErr LedgerState BlockB = Void
 
   applyChainTickLedgerResult _ _ _ =
     pureLedgerResult
       . TickedLedgerStateB
       . noNewTickingDiffs
 
-instance ApplyBlock (LedgerState BlockB) BlockB where
+instance ApplyBlock LedgerState BlockB where
   applyBlockLedgerResultWithValidation = \_ _ _ b _ -> return $ pureLedgerResult $ LgrB (blockPoint b)
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd

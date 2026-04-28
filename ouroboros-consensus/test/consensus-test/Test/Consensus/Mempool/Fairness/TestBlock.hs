@@ -145,17 +145,21 @@ deriving via
 deriving via
   Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
   instance
-    Ledger.HasLedgerTables (Ticked (Ledger.LedgerState TestBlock))
+    Ledger.HasLedgerTables (Ticked Ledger.LedgerState TestBlock)
 
 deriving via
   Void
   instance
     IndexedMemPack (LedgerState TestBlock EmptyMK) Void
+deriving via
+  Void
+  instance
+    IndexedMemPack (Ticked LedgerState TestBlock EmptyMK) Void
 
 instance Ledger.LedgerTablesAreTrivial (Ledger.LedgerState TestBlock) where
   convertMapKind (TestBlock.TestLedger x NoPayLoadDependentState) =
     TestBlock.TestLedger x NoPayLoadDependentState
-instance Ledger.LedgerTablesAreTrivial (Ticked (Ledger.LedgerState TestBlock)) where
+instance Ledger.LedgerTablesAreTrivial (Ticked Ledger.LedgerState TestBlock) where
   convertMapKind (TestBlock.TickedTestLedger x) =
     TestBlock.TickedTestLedger (Ledger.convertMapKind x)
 deriving via
