@@ -355,13 +355,13 @@ data ForgedLeiosEb = ForgedLeiosEb
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
 newtype LeiosCertificate = LeiosCertificate
-  { unLeiosCertificate :: ByteString -- FIXME(bladyjoker): Mocked
+  { leiosCertificateEbPoint :: LeiosPoint -- FIXME(bladyjoker): Mocked
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
-trustNoVerifyLeiosCertificate :: LeiosCertificate
-trustNoVerifyLeiosCertificate = LeiosCertificate "trust me bruv"
+trustNoVerifyLeiosCertificate :: LeiosPoint -> LeiosCertificate
+trustNoVerifyLeiosCertificate = LeiosCertificate
 
 forgeLeiosEb :: EraTx era => SlotNo -> NonEmpty (Tx era) -> ForgedLeiosEb
 forgeLeiosEb slot txs =
@@ -442,7 +442,7 @@ maxMsgLeiosBlockBytesSize :: BytesSize
 maxMsgLeiosBlockBytesSize = 500 * 10 ^ (3 :: Int) -- from CIP-0164's recommendations
 
 minEbItemBytesSize :: BytesSize
-minEbItemBytesSize = (32 - hashOverhead) + minSizeOverhead
+minEbItemBytesSize = 32 + hashOverhead + minSizeOverhead
  where
   hashOverhead = 1 + 1 -- bytestring major byte + a length = 32
   minSizeOverhead = 1 + 1 -- int major byte + a value at low as 55
@@ -455,6 +455,9 @@ maxTxsPerEb =
  where
   msgOverhead = 1 + 1 -- short list len + small word
   sequenceOverhead = 1 + 2 -- sequence major byte + a length > 255
+
+minCertificationGap :: Word64
+minCertificationGap = 10
 
 -----
 

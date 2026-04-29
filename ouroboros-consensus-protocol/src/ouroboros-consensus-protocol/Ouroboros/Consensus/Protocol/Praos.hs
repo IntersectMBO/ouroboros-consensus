@@ -98,7 +98,7 @@ import Data.Proxy (Proxy (Proxy))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (BytesSize, EbAnnouncement (ebAnnouncementSize))
+import LeiosDemoTypes (BytesSize, EbAnnouncement (ebAnnouncementSize), minCertificationGap)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
@@ -383,11 +383,9 @@ leiosTooSoonToCertify leiosSt prevSlotNo currSlotNo =
   maybe
     True
     ( \_ebAnn ->
-        unSlotNo currSlotNo - unSlotNo (withOriginToSlotNo prevSlotNo) <= certifyMinDuration
+        unSlotNo currSlotNo - unSlotNo (withOriginToSlotNo prevSlotNo) <= minCertificationGap
     )
     (leiosStatePreviousAnnouncement leiosSt)
- where
-  certifyMinDuration = 10 -- FIXME(bladyjoker): Hardcore real value or wire in through config
 
 withOriginToSlotNo :: WithOrigin SlotNo -> SlotNo
 withOriginToSlotNo Origin = SlotNo 0 -- FIXME(bladyjoker): Is this correct?

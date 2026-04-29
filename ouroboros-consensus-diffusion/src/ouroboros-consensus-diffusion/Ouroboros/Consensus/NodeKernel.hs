@@ -720,7 +720,7 @@ forkBlockForging IS{..} blockForging =
       lift $
         leiosDecideForgeType blockForging $
           LeiosDecideForgeTypeArgs
-            { ldftaChainDepState = headerStateChainDep (headerState unticked)
+            { ldftaTickedChainDepState = tickedChainDepState
             , ldftaLeiosTracer = leiosKernelTracer tracers
             , ldftaLeiosDb = leiosConn
             }

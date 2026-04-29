@@ -230,7 +230,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
 
     fromByteSize :: IgnoringOverflow ByteSize32 -> ConwayMeasure
     fromByteSize x = fromAlonzo $ AlonzoMeasure x mempty
-    fromAlonzo x = fromConway $ ConwayMeasure x mempty
+    fromAlonzo x = fromConway $ ConwayMeasure x mempty mempty
     fromConway x = x
 
 class SelectView (BlockProtocol blk) ~ PraosChainSelectView c => HasPraosSelectView c blk

@@ -161,7 +161,7 @@ data ForgeType = ForgeTxsRb | ForgeCertRb LeiosCertificate [(TxHash, ByteString)
 data LeiosDecideForgeTypeArgs m blk = LeiosDecideForgeTypeArgs
   { ldftaLeiosDb :: LeiosDbConnection m
   , ldftaLeiosTracer :: Tracer m TraceLeiosKernel
-  , ldftaChainDepState :: ChainDepState (BlockProtocol blk)
+  , ldftaTickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
   }
 
 data ShouldForge blk
