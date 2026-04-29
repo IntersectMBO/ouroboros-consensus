@@ -132,6 +132,7 @@ mkTestGroups impl =
       , testCase "multiple notifications" $ withFreshDb impl test_multipleNotifications
       , testCase "no offerBlockTxs before last update" $ withFreshDb impl test_noOfferBlockTxsBeforeComplete
       , testCase "offerBlockTxs on last update" $ withFreshDb impl test_offerBlockTxs
+      , testCase "no re-notification of completed EBs" $ withFreshDb impl test_noReNotifyCompletedEbs
       ]
   , testGroup
       "queryFetchWork"
@@ -565,6 +566,38 @@ test_offerBlockTxs db = do
     -- FIXME: blocks forever if impl not working
     notification <- atomically $ readTChan chan
     assertOfferBlockTxs point notification
+
+-- | Test that completed EBs are not re-notified when subsequent unrelated
+-- transactions are inserted.
+test_noReNotifyCompletedEbs :: LeiosDbHandle IO -> IO ()
+test_noReNotifyCompletedEbs db = do
+  chan <- subscribeEbNotifications db
+  let point = mkTestPoint (SlotNo 1) 1
+      eb = mkTestEb 2
+      ebTxList = V.toList (leiosEbTxs eb)
+  withLeiosDb db $ \con -> do
+    -- Insert and complete the EB
+    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbBody con point eb
+    -- Consume the AcquiredEb notification
+    acquiredEb <- atomically $ tryReadTChan chan
+    case acquiredEb of
+      Just (AcquiredEb{}) -> pure ()
+      _ -> assertFailure "expected AcquiredEb notification"
+    let txsToInsert = [(txHash, maxTxBytesZero) | (txHash, _) <- ebTxList]
+    _ <- leiosDbInsertTxs con txsToInsert
+    -- Consume the AcquiredEbTxs notification
+    acquiredTxs <- atomically $ tryReadTChan chan
+    case acquiredTxs of
+      Just (AcquiredEbTxs p) -> p @?= point
+      _ -> assertFailure "expected AcquiredEbTxs notification"
+    -- Insert an unrelated tx
+    _ <- leiosDbInsertTxs con [(mkTestTxHash 99, maxTxBytesZero)]
+    -- No re-notification should occur for the already-completed EB
+    maybeNotif <- atomically $ tryReadTChan chan
+    case maybeNotif of
+      Nothing -> pure ()
+      Just _ -> assertFailure "completed EB should not be re-notified"
 
 -- * Property tests for queryFetchWork
 
