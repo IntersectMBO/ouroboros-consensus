@@ -6,7 +6,6 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
