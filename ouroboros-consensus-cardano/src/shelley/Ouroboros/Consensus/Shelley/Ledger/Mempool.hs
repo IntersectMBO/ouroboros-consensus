@@ -85,7 +85,7 @@ import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
-import Data.Measure (Measure (zero))
+import Data.Measure (Measure)
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import GHC.Generics (Generic)
@@ -630,7 +630,7 @@ instance Semigroup ConwayMeasure where
 
 instance Monoid ConwayMeasure where
   mappend = (<>)
-  mempty = ConwayMeasure mempty mempty zero
+  mempty = ConwayMeasure mempty mempty mempty
 
 instance HasByteSize ConwayMeasure where
   txMeasureByteSize = txMeasureByteSize . alonzoMeasure
