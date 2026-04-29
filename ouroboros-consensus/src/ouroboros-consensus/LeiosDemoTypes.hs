@@ -456,6 +456,9 @@ maxTxsPerEb =
   msgOverhead = 1 + 1 -- short list len + small word
   sequenceOverhead = 1 + 2 -- sequence major byte + a length > 255
 
+minCertificationGap :: Word64
+minCertificationGap = 10
+
 -----
 
 -- TODO which of these limits are allowed to be exceeded by at most one

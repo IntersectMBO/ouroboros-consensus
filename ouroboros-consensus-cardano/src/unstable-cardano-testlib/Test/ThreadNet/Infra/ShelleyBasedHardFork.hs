@@ -217,7 +217,7 @@ instance TranslateTxMeasure AlonzoMeasure AlonzoMeasure where
   translateTxMeasure = id
 
 instance TranslateTxMeasure AlonzoMeasure ConwayMeasure where
-  translateTxMeasure x = ConwayMeasure x mempty
+  translateTxMeasure x = ConwayMeasure x mempty mempty
 
 instance TranslateTxMeasure ConwayMeasure ConwayMeasure where
   translateTxMeasure = id

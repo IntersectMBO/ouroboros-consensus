@@ -39,6 +39,7 @@ import Ouroboros.Consensus.Protocol.Praos
   , Praos
   , PraosParams (..)
   , PraosState (praosStateLastSlot, praosStateLeios)
+  , Ticked (tickedPraosStateChainDepState)
   , praosCheckCanForge
   , withOriginToSlotNo
   )
@@ -129,7 +130,7 @@ leiosDecideForgeTypePraos args = do
   let
     leiosDb = ldftaLeiosDb args
     traceLeios = traceWith (ldftaLeiosTracer args)
-    praosState = ldftaChainDepState args
+    praosState = tickedPraosStateChainDepState $ ldftaTickedChainDepState args
     LeiosState{..} = praosStateLeios praosState
   traceLeios $ MkTraceLeiosKernel $ "leiosDecideForgeTypePraos called with: " <> show praosState
   case leiosStatePreviousAnnouncement of

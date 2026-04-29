@@ -52,9 +52,9 @@ import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection, newLeiosDBInMemoryWith, withLeiosDb)
-import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb)
+import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb, minCertificationGap)
 import Lens.Micro (each, (%~), (^.), (^..))
-import Ouroboros.Consensus.Block (SlotNo (..))
+import Ouroboros.Consensus.Block (SlotNo (..), blockSlot)
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -166,6 +166,7 @@ prop_leios seed =
     [ blocksProduced
     , ebCertificateInclusion
     , cumulativeTxBytes
+    , certificationGapIsCorrect
     ]
  where
   numNodes = 3 :: Integer
@@ -212,6 +213,9 @@ prop_leios seed =
         SL.Block _ (SL.BodyCertificate _ _) -> True
         _ -> False
     ]
+
+  certifyingSlots :: [SlotNo]
+  certifyingSlots = [blockSlot blk | blk <- certifyingBlocks]
 
   throughput = fromIntegral (sum includedTxCounts) / fromIntegral numSlots :: Double
 
@@ -264,6 +268,21 @@ prop_leios seed =
                    & counterexample ("ledger state: " <> show actual)
                    & counterexample ("independent sum: " <> show expected)
                )
+
+  certificationGapIsCorrect =
+    conjoin
+      [ counterexample
+          ( "Certification blocks too close: slots "
+              <> show (unSlotNo s1)
+              <> " and "
+              <> show (unSlotNo s2)
+              <> " (gap = "
+              <> show (unSlotNo s2 - unSlotNo s1)
+              <> ", expected > 10)"
+          )
+          (unSlotNo s2 - unSlotNo s1 > minCertificationGap)
+      | (s1, s2) <- zip certifyingSlots (drop 1 certifyingSlots)
+      ]
 
 -- | Independently compute cumulative tx bytes by resolving each block in the
 -- chain (filling in EB closures from the LeiosDB) and summing individual

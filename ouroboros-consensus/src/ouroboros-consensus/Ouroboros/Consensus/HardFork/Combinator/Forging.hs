@@ -105,27 +105,27 @@ hardForkLeiosDecideForgeType
   LeiosDecideForgeTypeArgs
     { ldftaLeiosTracer
     , ldftaLeiosDb
-    , ldftaChainDepState = ldftaChainDepStateHfc
+    , ldftaTickedChainDepState = ldftaTickedChainDepStateHfc
     } =
     hcollapse $
       hzipWith
         decideForEra
         (OptNP.toNP blockForging)
-        (State.tip ldftaChainDepStateHfc)
+        (State.tip (tickedHardForkChainDepStatePerEra ldftaTickedChainDepStateHfc))
    where
     decideForEra ::
       forall blk.
       (Maybe :.: BlockForging m) blk ->
-      WrapChainDepState blk ->
+      (Ticked :.: WrapChainDepState) blk ->
       K (m ForgeType) blk
     decideForEra (Comp Nothing) _ = K (return ForgeTxsRb)
-    decideForEra (Comp (Just bf)) (WrapChainDepState cds) =
+    decideForEra (Comp (Just bf)) (Comp (WrapTickedChainDepState tcds)) =
       K $
         leiosDecideForgeType bf $
           LeiosDecideForgeTypeArgs
             { ldftaLeiosTracer
             , ldftaLeiosDb
-            , ldftaChainDepState = cds
+            , ldftaTickedChainDepState = tcds
             }
 
 hardForkCanBeLeader ::
