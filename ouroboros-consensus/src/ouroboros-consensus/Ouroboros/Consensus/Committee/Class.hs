@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Generic interface used by implementations of voting committees.
@@ -9,18 +10,23 @@ module Ouroboros.Consensus.Committee.Class
     CryptoSupportsVotingCommittee (..)
 
     -- * Votes with same target
-  , VotesWithSameTarget
+  , UniqueVotesWithSameTarget
   , getElectionIdFromVotes
   , getVoteCandidateFromVotes
   , getRawVotes
-  , VotesWithSameTargetError (..)
-  , ensureSameTarget
+  , UniqueVotesWithSameTargetError (..)
+  , ensureUniqueVotesWithSameTarget
+  , unsafeUniqueVotesWithSameTarget
+  , checkUniqueVotesWithSameTarget -- for testing purposes only
   ) where
 
+import Control.Exception (assert)
 import Data.Containers.NonEmpty (HasNonEmpty (..))
-import Data.Either (partitionEithers)
+import Data.Either (isRight)
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NonEmpty
+import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Committee.Crypto
   ( CryptoSupportsVoteSigning
   , ElectionId
@@ -102,7 +108,7 @@ class
 
   -- | Forge a certificate attesting the winner of a given election
   forgeCert ::
-    VotesWithSameTarget crypto committee ->
+    UniqueVotesWithSameTarget crypto committee ->
     Either
       (VotingCommitteeError crypto committee)
       (Cert crypto committee)
@@ -117,74 +123,180 @@ class
 
 -- * Votes with same target
 
--- | Collection of votes all targeting the same election and candidate
-data VotesWithSameTarget crypto committee
-  = VotesWithSameTarget
+-- | Collection of unique votes all targeting the same election and candidate
+data UniqueVotesWithSameTarget crypto committee
+  = UniqueVotesWithSameTarget
       (ElectionId crypto)
       (VoteCandidate crypto)
       (NE [Vote crypto committee])
 
 -- | Get the election identifier targeted by a collection of votes
 getElectionIdFromVotes ::
-  VotesWithSameTarget crypto committee ->
+  UniqueVotesWithSameTarget crypto committee ->
   ElectionId crypto
-getElectionIdFromVotes (VotesWithSameTarget electionId _ _) =
+getElectionIdFromVotes (UniqueVotesWithSameTarget electionId _ _) =
   electionId
 
 -- | Get the vote candidate targeted by a collection of votes
 getVoteCandidateFromVotes ::
-  VotesWithSameTarget crypto committee ->
+  UniqueVotesWithSameTarget crypto committee ->
   VoteCandidate crypto
-getVoteCandidateFromVotes (VotesWithSameTarget _ candidate _) =
+getVoteCandidateFromVotes (UniqueVotesWithSameTarget _ candidate _) =
   candidate
 
 -- | Get the raw votes from a collection of votes with the same target.
 --
 -- NOTE: this returns votes in ascending seat index order.
 getRawVotes ::
-  VotesWithSameTarget crypto committee ->
+  UniqueVotesWithSameTarget crypto committee ->
   NE [Vote crypto committee]
-getRawVotes (VotesWithSameTarget _ _ votes) =
+getRawVotes (UniqueVotesWithSameTarget _ _ votes) =
   votes
 
 -- | Errors when votes do not all target the same election and candidate
-data VotesWithSameTargetError crypto committee
-  = EmptyVotes
+data UniqueVotesWithSameTargetError vote
+  = DuplicateVotes
+      -- A cluster of votes equal under the supplied ordering, i.e.,
+      -- either true duplicates or equivocating votes (same id, different
+      -- target).
+      (NE [vote])
   | TargetMismatch
-      -- First vote and the rest of the votes that match its target
-      (NE [Vote crypto committee])
+      -- First vote (under the supplied ordering) whose target is treated
+      -- as the canonical target for the comparison
+      vote
       -- Votes that do not match the target of the first vote
-      (NE [Vote crypto committee])
+      (NE [vote])
 
--- | Check that a list of votes all target the same election and candidate
-ensureSameTarget ::
+-- | Check that a non-empty list of votes all target the same election and
+-- candidate and there are no duplicates.
+--
+-- NOTE: duplicates are reported in preference to target mismatches.
+ensureUniqueVotesWithSameTarget ::
+  forall crypto committee.
   ( Eq (ElectionId crypto)
   , Eq (VoteCandidate crypto)
   ) =>
+  -- | How to project the target from an abstract vote
   (Vote crypto committee -> (ElectionId crypto, VoteCandidate crypto)) ->
-  [Vote crypto committee] ->
+  -- | How to compare votes by ID, where EQ means that two votes have the same
+  -- ID and are either total duplicates, or are equivocating (i.e., they have
+  -- the same ID but a different target)
+  (Vote crypto committee -> Vote crypto committee -> Ordering) ->
+  -- | Collection of votes to check
+  NE [Vote crypto committee] ->
   Either
-    (VotesWithSameTargetError crypto committee)
-    (VotesWithSameTarget crypto committee)
-ensureSameTarget getTarget = \case
-  [] ->
-    Left EmptyVotes
-  (firstVote : nextVotes) -> do
-    case partitionEithers (fmap matchesTarget nextVotes) of
-      ([], matchingVotes) ->
-        Right $
-          VotesWithSameTarget
+    (UniqueVotesWithSameTargetError (Vote crypto committee))
+    (UniqueVotesWithSameTarget crypto committee)
+ensureUniqueVotesWithSameTarget getTarget cmpVotes votes =
+  fmap
+    ( const
+        ( UniqueVotesWithSameTarget
             electionId
             candidate
-            (firstVote :| matchingVotes)
-      (firstMismatchingVote : nextMismatchingVotes, matchingVotes) ->
-        Left $
-          TargetMismatch
-            (firstVote :| matchingVotes)
-            (firstMismatchingVote :| nextMismatchingVotes)
-   where
-    target@(electionId, candidate) =
-      getTarget firstVote
-    matchesTarget v'
-      | getTarget v' /= target = Left v'
-      | otherwise = Right v'
+            (firstVote :| nextVotes)
+        )
+    )
+    $ checkUniqueVotesWithSameTarget
+      (Proxy @crypto)
+      getTarget
+      cmpVotes
+      votes
+ where
+  firstVote :| nextVotes = votes
+  (electionId, candidate) = getTarget firstVote
+
+-- | Same as 'ensureUniqueVotesWithSameTarget' but turns the invariant
+-- checks into assertions.
+--
+-- WARNING: asserts become a no-op if the code is compiled with optimizations,
+-- thus this function should only be used in production when the caller can
+-- guarantee that the input votes satisfy the contract.
+unsafeUniqueVotesWithSameTarget ::
+  forall crypto committee.
+  ( Eq (ElectionId crypto)
+  , Eq (VoteCandidate crypto)
+  ) =>
+  -- | How to project the target from an abstract vote
+  (Vote crypto committee -> (ElectionId crypto, VoteCandidate crypto)) ->
+  -- | How to compare votes by ID, where EQ means that two votes have the same
+  -- ID and are either total duplicates, or are equivocating (i.e., they have
+  -- the same ID but a different target)
+  (Vote crypto committee -> Vote crypto committee -> Ordering) ->
+  -- | Collection of votes to check
+  NE [Vote crypto committee] ->
+  UniqueVotesWithSameTarget crypto committee
+unsafeUniqueVotesWithSameTarget getTarget cmpVotes votes =
+  assert
+    ( isRight
+        ( checkUniqueVotesWithSameTarget
+            (Proxy @crypto)
+            getTarget
+            cmpVotes
+            votes
+        )
+    )
+    $ UniqueVotesWithSameTarget
+      electionId
+      candidate
+      (firstVote :| nextVotes)
+ where
+  firstVote :| nextVotes = votes
+  (electionId, candidate) = getTarget firstVote
+
+-- | Validate that a non-empty collection of votes is well-formed for
+-- certificate forging: all votes target the same election and candidate
+-- (per @getTarget@), and no two votes are equal under @cmpVotes@.
+--
+-- Equality (@EQ@) is treated as evidence of a duplicate or equivocating vote
+-- and is reported via 'DuplicateVotes' in preference to any 'TargetMismatch'.
+--
+-- NOTE: this is exposed for testing; production code should use
+-- 'ensureUniqueVotesWithSameTarget' or 'unsafeUniqueVotesWithSameTarget'.
+checkUniqueVotesWithSameTarget ::
+  ( Eq (ElectionId crypto)
+  , Eq (VoteCandidate crypto)
+  ) =>
+  Proxy crypto ->
+  -- | How to project the target an abstract vote
+  (vote -> (ElectionId crypto, VoteCandidate crypto)) ->
+  -- | How to compare votes by ID, where EQ means that two votes have the same
+  -- ID and are either total duplicates, or are equivocating (i.e., they have
+  -- the same ID but a different target)
+  (vote -> vote -> Ordering) ->
+  -- | Collection of votes to check
+  NE [vote] ->
+  Either (UniqueVotesWithSameTargetError vote) ()
+checkUniqueVotesWithSameTarget _ getTarget cmpVotes votes =
+  go firstVote nextVotes
+ where
+  -- Sort the votes so checking for duplicates can be done in the same pass as
+  -- checking for target mismatches
+  firstVote :| nextVotes =
+    NonEmpty.sortBy cmpVotes votes
+
+  -- Check that all votes have the same target and there are no duplicates. The
+  -- first argument is the last vote we have checked, passed sequentially to the
+  -- next step to check against duplicates (the input must be sorted for this).
+  go _ [] =
+    Right ()
+  go v (v' : vs)
+    | isDuplicateOf v v' = do
+        -- NOTE: duplicates are contiguous because the input is sorted by
+        -- @cmpVotes@, thus we can stop at the first non-duplicate vote.
+        let duplicateVotes = v :| (v' : takeWhile (isDuplicateOf v) vs)
+        Left (DuplicateVotes duplicateVotes)
+    | doesNotMatchFirstVoteTarget v' = do
+        -- NOTE: mismatches are /not/ necessarily contiguous, thus we cannot
+        -- stop at the first matching vote.
+        let mismatchingVotes = v' :| filter doesNotMatchFirstVoteTarget vs
+        Left (TargetMismatch firstVote mismatchingVotes)
+    | otherwise =
+        go v' vs
+
+  -- Check if a vote does not match the target of the first vote
+  doesNotMatchFirstVoteTarget v =
+    getTarget v /= getTarget firstVote
+
+  -- Check if two votes are duplicates of each other acording to @cmpVotes@
+  isDuplicateOf v v' =
+    cmpVotes v v' == EQ
