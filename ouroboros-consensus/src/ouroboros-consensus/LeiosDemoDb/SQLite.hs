@@ -126,7 +126,6 @@ openSQLiteConnection dbPath notificationChan = do
       , leiosDbFilterMissingTxs = sqlFilterMissingTxs db
       , leiosDbQueryFetchWork = sqlQueryFetchWork db
       , leiosDbQueryCompletedEbByPoint = sqlQueryCompletedEbByPoint db
-      , leiosDbQueryCertificateByPoint = \_ebPoint -> return $ Just trustNoVerifyLeiosCertificate
       , leiosDbQueryCertificateByPoint = return . Just . trustNoVerifyLeiosCertificate
       }
 
