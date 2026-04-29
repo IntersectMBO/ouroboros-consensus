@@ -1202,7 +1202,7 @@ customForgeBlock ::
   ) =>
   CustomForgeBlockArgs m blk ->
   BlockForging m blk ->
-  ForgeBlockArgs blk ->
+  ForgeBlockArgs m blk ->
   m (blk, Maybe ForgedLeiosEb)
 customForgeBlock CustomForgeBlockArgs{..} origBlockForging forgeBlockArgs@ForgeBlockArgs{..} = do
   let currentEpoch = HFF.futureSlotToEpoch cfbaFuture fbCurrentSlotNo

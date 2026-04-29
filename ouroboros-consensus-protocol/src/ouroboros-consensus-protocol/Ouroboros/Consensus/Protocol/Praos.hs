@@ -98,7 +98,7 @@ import Data.Proxy (Proxy (Proxy))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (BytesSize, EbAnnouncement (ebAnnouncementSize), minCertificationGap)
+import LeiosDemoTypes (BytesSize, EbAnnouncement (ebAnnouncementSize))
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
@@ -349,43 +349,26 @@ data instance Ticked PraosState = TickedPraosState
 
 data LeiosState = LeiosState
   { leiosStatePreviousAnnouncement :: Maybe EbAnnouncement
-  , leiosStateCanCertify :: Bool
   , leiosStateCumulativeEbAnnouncementSize :: BytesSize
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
 initLeiosState :: LeiosState
-initLeiosState = LeiosState Nothing False 0
+initLeiosState = LeiosState Nothing 0
 
 instance ToCBOR LeiosState where
   toCBOR LeiosState{..} =
     mconcat
-      [ CBOR.encodeListLen 3
+      [ CBOR.encodeListLen 2
       , toCBOR leiosStatePreviousAnnouncement
-      , toCBOR leiosStateCanCertify
       , toCBOR leiosStateCumulativeEbAnnouncementSize
       ]
 
 instance FromCBOR LeiosState where
   fromCBOR = do
-    enforceSize "LeiosState" 3
-    LeiosState <$> fromCBOR <*> fromCBOR <*> fromCBOR
-
-tickChainDepStateLeios :: LeiosState -> WithOrigin SlotNo -> SlotNo -> LeiosState
-tickChainDepStateLeios leiosSt prevSlotNo currSlotNo =
-  leiosSt
-    { leiosStateCanCertify = not (leiosTooSoonToCertify leiosSt prevSlotNo currSlotNo)
-    }
-
-leiosTooSoonToCertify :: LeiosState -> WithOrigin SlotNo -> SlotNo -> Bool
-leiosTooSoonToCertify leiosSt prevSlotNo currSlotNo =
-  maybe
-    True
-    ( \_ebAnn ->
-        unSlotNo currSlotNo - unSlotNo (withOriginToSlotNo prevSlotNo) <= minCertificationGap
-    )
-    (leiosStatePreviousAnnouncement leiosSt)
+    enforceSize "LeiosState" 2
+    LeiosState <$> fromCBOR <*> fromCBOR
 
 withOriginToSlotNo :: WithOrigin SlotNo -> SlotNo
 withOriginToSlotNo Origin = SlotNo 0 -- FIXME(bladyjoker): Is this correct?
@@ -496,7 +479,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
     slot
     st =
       TickedPraosState
-        { tickedPraosStateChainDepState = st''
+        { tickedPraosStateChainDepState = st'
         , tickedPraosStateLedgerView = lv
         }
      where
@@ -515,10 +498,6 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
               , praosStateLastEpochBlockNonce = praosStateLabNonce st
               }
           else st
-      st'' =
-        st'
-          { praosStateLeios = tickChainDepStateLeios (praosStateLeios st') (praosStateLastSlot st) slot
-          }
 
   -- Validate and update the chain dependent state as a result of processing a
   -- new header.

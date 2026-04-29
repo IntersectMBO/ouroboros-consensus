@@ -147,5 +147,4 @@ praosBlockForging cid initHotKey = do
               fbCurrentTickedLedgerState
               (txForgetValidated <$> fbRbTxs)
               fbIsLeader
-      , leiosDecideForgeType = \_ -> return ForgeTxsRb
       }

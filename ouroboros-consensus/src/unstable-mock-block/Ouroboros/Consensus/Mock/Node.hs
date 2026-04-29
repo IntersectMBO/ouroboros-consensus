@@ -112,7 +112,6 @@ simpleBlockForging aCanBeLeader aForgeExt =
             fbCurrentTickedLedgerState
             (txForgetValidated <$> fbRbTxs)
             fbIsLeader
-    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
  where
   _ = keepRedundantConstraint (Proxy @(ForgeStateUpdateError (SimpleBlock c ext) ~ Void))

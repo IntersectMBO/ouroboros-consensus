@@ -644,6 +644,7 @@ forkBlockForging IS{..} blockForging =
       Right forker -> pure forker
 
     unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
+    let untickedChainDepState = headerStateChainDep (headerState unticked)
 
     trace $ TraceLedgerState currentSlot bcPrevPoint
 
@@ -681,7 +682,7 @@ forkBlockForging IS{..} blockForging =
             (configConsensus cfg)
             ledgerView
             currentSlot
-            (headerStateChainDep (headerState unticked))
+            untickedChainDepState
 
     -- Check if we are the leader
     proof <- do
@@ -713,17 +714,6 @@ forkBlockForging IS{..} blockForging =
 
     -- At this point we have established that we are indeed slot leader
     trace $ TraceNodeIsLeader currentSlot
-
-    -- Leios: decide if we're forging an CertRb or a TxsRb
-    -- NOTE(bladyjoker): Leaving this here because it's simpler for now, otherwise I need to thread in the `unticked`.
-    forgeType <-
-      lift $
-        leiosDecideForgeType blockForging $
-          LeiosDecideForgeTypeArgs
-            { ldftaTickedChainDepState = tickedChainDepState
-            , ldftaLeiosTracer = leiosKernelTracer tracers
-            , ldftaLeiosDb = leiosConn
-            }
 
     -- Tick the ledger state for the 'SlotNo' we're producing a block for
     let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
@@ -785,9 +775,6 @@ forkBlockForging IS{..} blockForging =
     trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo -- TODO(bladyjoker): mempoolHash and mempoolSlotNo only for tracing? Why?
 
     -- Actually produce the block
-    -- TODO: Needs access to Leios certificate of (blockNo - 1), if it exists
-    -- and decide whether we want to put txs or the leios certificate into the
-    -- body.
     let forgeBlockArgs =
           ForgeBlockArgs
             { fbIsLeader = proof
@@ -797,7 +784,9 @@ forkBlockForging IS{..} blockForging =
             , fbCurrentSlotNo = currentSlot
             , fbCurrentBlockNo = bcBlockNo
             , fbConfig = cfg
-            , fbForgeType = forgeType
+            , fbChainDepState = untickedChainDepState
+            , fbLeiosDb = leiosConn
+            , fbLeiosTracer = leiosKernelTracer tracers
             }
     (newBlock, mayForgedEb) <- lift $ Block.forgeBlock blockForging forgeBlockArgs
 

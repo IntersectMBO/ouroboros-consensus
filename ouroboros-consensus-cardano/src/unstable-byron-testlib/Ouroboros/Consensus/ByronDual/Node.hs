@@ -76,7 +76,6 @@ dualByronBlockForging creds =
             fbCurrentTickedLedgerState
             fbRbTxs
             fbIsLeader
-    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
  where
   BlockForging{..} = byronBlockForging creds

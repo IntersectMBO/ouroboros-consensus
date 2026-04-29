@@ -93,40 +93,7 @@ hardForkBlockForging label blockForging =
     , updateForgeState = hardForkUpdateForgeState blockForging
     , checkCanForge = hardForkCheckCanForge blockForging
     , forgeBlock = hardForkForgeBlock blockForging
-    , leiosDecideForgeType = hardForkLeiosDecideForgeType blockForging
     }
-
-hardForkLeiosDecideForgeType ::
-  forall m xs.
-  (CanHardFork xs, Monad m) =>
-  NonEmptyOptNP (BlockForging m) xs -> LeiosDecideForgeTypeArgs m (HardForkBlock xs) -> m ForgeType
-hardForkLeiosDecideForgeType
-  blockForging
-  LeiosDecideForgeTypeArgs
-    { ldftaLeiosTracer
-    , ldftaLeiosDb
-    , ldftaTickedChainDepState = ldftaTickedChainDepStateHfc
-    } =
-    hcollapse $
-      hzipWith
-        decideForEra
-        (OptNP.toNP blockForging)
-        (State.tip (tickedHardForkChainDepStatePerEra ldftaTickedChainDepStateHfc))
-   where
-    decideForEra ::
-      forall blk.
-      (Maybe :.: BlockForging m) blk ->
-      (Ticked :.: WrapChainDepState) blk ->
-      K (m ForgeType) blk
-    decideForEra (Comp Nothing) _ = K (return ForgeTxsRb)
-    decideForEra (Comp (Just bf)) (Comp (WrapTickedChainDepState tcds)) =
-      K $
-        leiosDecideForgeType bf $
-          LeiosDecideForgeTypeArgs
-            { ldftaLeiosTracer
-            , ldftaLeiosDb
-            , ldftaTickedChainDepState = tcds
-            }
 
 hardForkCanBeLeader ::
   CanHardFork xs =>
@@ -334,7 +301,7 @@ hardForkForgeBlock ::
   forall m xs empty.
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
-  ForgeBlockArgs (HardForkBlock xs) ->
+  ForgeBlockArgs m (HardForkBlock xs) ->
   m (HardForkBlock xs, Maybe ForgedLeiosEb)
 hardForkForgeBlock
   blockForging
@@ -354,6 +321,9 @@ hardForkForgeBlock
         $ Match.mustMatchNS
           "IsLeader"
           (getOneEraIsLeader fbIsLeader)
+        $ Match.mustMatchNS
+          "ChainDepState"
+          (State.tip fbChainDepState)
           (State.tip . tickedHardForkLedgerStatePerEra $ fbCurrentTickedLedgerState)
 
     injectTxs =
@@ -425,7 +395,7 @@ hardForkForgeBlock
       Product
         ( Product
             WrapIsLeader
-            (FlipTickedLedgerState EmptyMK)
+            (Product WrapChainDepState (FlipTickedLedgerState EmptyMK))
         )
         (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
         blk ->
@@ -435,7 +405,10 @@ hardForkForgeBlock
       cfg'
       (Comp mBlockForging')
       ( Pair
-          (Pair (WrapIsLeader isLeader') (FlipTickedLedgerState ledgerState'))
+          ( Pair
+              (WrapIsLeader isLeader')
+              (Pair (WrapChainDepState chainDepState') (FlipTickedLedgerState ledgerState'))
+            )
           (Pair (Comp rbTxs') (Comp ebTxs'))
         ) =
         Comp $
@@ -453,5 +426,7 @@ hardForkForgeBlock
                 , fbCurrentSlotNo
                 , fbCurrentBlockNo
                 , fbConfig = cfg'
-                , fbForgeType
+                , fbChainDepState = chainDepState'
+                , fbLeiosDb
+                , fbLeiosTracer
                 }

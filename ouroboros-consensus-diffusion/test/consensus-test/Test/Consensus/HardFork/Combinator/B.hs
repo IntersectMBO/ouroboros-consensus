@@ -270,7 +270,6 @@ type instance ForgeStateInfo BlockB = ()
 type instance ForgeStateUpdateError BlockB = Void
 
 forgeBlockB ::
-  ForgeType ->
   TopLevelConfig BlockB ->
   BlockNo ->
   SlotNo ->
@@ -278,7 +277,7 @@ forgeBlockB ::
   [GenTx BlockB] ->
   IsLeader (BlockProtocol BlockB) ->
   BlockB
-forgeBlockB _ _ bno sno (TickedLedgerStateB st) _txs _ =
+forgeBlockB _ bno sno (TickedLedgerStateB st) _txs _ =
   BlkB
     { blkB_header =
         HdrB
@@ -302,14 +301,12 @@ blockForgingB =
     , forgeBlock = \ForgeBlockArgs{..} ->
         return . (,Nothing) $
           forgeBlockB
-            fbForgeType
             fbConfig
             fbCurrentBlockNo
             fbCurrentSlotNo
             fbCurrentTickedLedgerState
             (txForgetValidated <$> fbRbTxs)
             fbIsLeader
-    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
 
 -- | A basic 'History.SafeZone'
