@@ -43,7 +43,6 @@ import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import Control.Monad.Except (runExcept, throwError)
 import Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
-import Data.Measure (Measure (zero))
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors (Flip (..))
@@ -231,7 +230,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
 
     fromByteSize :: IgnoringOverflow ByteSize32 -> ConwayMeasure
     fromByteSize x = fromAlonzo $ AlonzoMeasure x mempty
-    fromAlonzo x = fromConway $ ConwayMeasure x mempty zero
+    fromAlonzo x = fromConway $ ConwayMeasure x mempty mempty
     fromConway x = x
 
 class SelectView (BlockProtocol blk) ~ PraosChainSelectView c => HasPraosSelectView c blk
