@@ -17,20 +17,23 @@ module Test.Consensus.Mempool.Fairness.TestBlock
   , unGenTx
   ) where
 
+import qualified Codec.CBOR.Decoding as CBOR
+import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.DeepSeq (NFData)
+import qualified Data.Map.Strict as Map
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.Ledger.Abstract
-  ( EmptyMK
-  , LedgerState
+  ( LedgerTables (..)
+  , ValuesMK (..)
   , convertMapKind
-  , trivialLedgerTables
   )
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
+import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Ticked (Ticked)
 import Ouroboros.Consensus.Util.IndexedMemPack
@@ -66,7 +69,7 @@ instance TestBlock.PayloadSemantics Tx where
 
   applyPayload NoPayLoadDependentState _tx = Right NoPayLoadDependentState
 
-  getPayloadKeySets = const trivialLedgerTables
+  getPayloadKeySets = const emptyLedgerTables
 
 data instance Block.CodecConfig TestBlock = TestBlockCodecConfig
   deriving (Show, Generic, NoThunks)
@@ -113,7 +116,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
-  getTransactionKeySets _ = trivialLedgerTables
+  getTransactionKeySets _ = emptyLedgerTables
 
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
 
@@ -134,39 +137,35 @@ instance Ledger.TxLimits TestBlock where
 
 type instance Ledger.ApplyTxErr TestBlock = ()
 
-type instance Ledger.TxIn (Ledger.LedgerState TestBlock) = Void
-type instance Ledger.TxOut (Ledger.LedgerState TestBlock) = Void
+type instance Ledger.TxIn TestBlock = Void
+type instance Ledger.TxOut TestBlock = Void
 
-deriving via
-  Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
-  instance
-    Ledger.HasLedgerTables (Ledger.LedgerState TestBlock)
-
-deriving via
-  Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
-  instance
-    Ledger.HasLedgerTables (Ticked Ledger.LedgerState TestBlock)
-
-deriving via
-  Void
-  instance
-    IndexedMemPack (LedgerState TestBlock EmptyMK) Void
-deriving via
-  Void
-  instance
-    IndexedMemPack (Ticked LedgerState TestBlock EmptyMK) Void
-
-instance Ledger.LedgerTablesAreTrivial (Ledger.LedgerState TestBlock) where
+instance Ledger.LedgerTablesAreTrivial Ledger.LedgerState TestBlock where
   convertMapKind (TestBlock.TestLedger x NoPayLoadDependentState) =
     TestBlock.TestLedger x NoPayLoadDependentState
-instance Ledger.LedgerTablesAreTrivial (Ticked Ledger.LedgerState TestBlock) where
+instance Ledger.LedgerTablesAreTrivial (Ticked Ledger.LedgerState) TestBlock where
   convertMapKind (TestBlock.TickedTestLedger x) =
     TestBlock.TickedTestLedger (Ledger.convertMapKind x)
-deriving via
-  Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
-  instance
-    Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock)
-deriving via
-  Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
-  instance
-    CanUpgradeLedgerTables (Ledger.LedgerState TestBlock)
+
+deriving via Void instance IndexedMemPack Ledger.LedgerState TestBlock Void
+
+instance Ledger.HasLedgerTables Ledger.LedgerState TestBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance Ledger.HasLedgerTables (Ticked Ledger.LedgerState) TestBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock) where
+  stowLedgerTables = convertMapKind
+  unstowLedgerTables = convertMapKind
+
+instance CanUpgradeLedgerTables Ledger.LedgerState TestBlock where
+  upgradeTables _ _ = id
+
+instance Ledger.SerializeTablesWithHint Ledger.LedgerState TestBlock where
+  decodeTablesWithHint _ = do
+    _ <- CBOR.decodeMapLen
+    pure (LedgerTables $ ValuesMK Map.empty)
+  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0

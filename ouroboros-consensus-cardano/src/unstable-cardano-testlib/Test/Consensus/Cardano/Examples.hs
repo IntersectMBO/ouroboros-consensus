@@ -57,7 +57,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
 import Ouroboros.Consensus.Ledger.Tables
   ( EmptyMK
   , ValuesMK
-  , castLedgerTables
   )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
@@ -140,7 +139,7 @@ combineEras perEraExamples =
       eraName = singleEraName $ singleEraInfo es
 
   exampleLedgerTablesCardano ::
-    Labelled (LedgerTables (LedgerState (HardForkBlock (CardanoEras Crypto))) ValuesMK)
+    Labelled (LedgerTables (HardForkBlock (CardanoEras Crypto)) ValuesMK)
   exampleLedgerTablesCardano =
     mconcat $
       hcollapse $
@@ -243,13 +242,12 @@ instance Inject Examples where
 
 -- | This wrapper is used only in the 'Example' instance of 'Inject' so that we
 -- can use a type that matches the kind expected by 'inj'.
-newtype WrapLedgerTables blk = WrapLedgerTables (LedgerTables (ExtLedgerState blk) ValuesMK)
+newtype WrapLedgerTables blk = WrapLedgerTables (LedgerTables blk ValuesMK)
 
 instance Inject WrapLedgerTables where
   inject idx (WrapLedgerTables lt) =
     WrapLedgerTables $
-      castLedgerTables $
-        injectLedgerTables (forgetInjectionIndex idx) (castLedgerTables lt)
+      injectLedgerTables (forgetInjectionIndex idx) lt
 
 {-------------------------------------------------------------------------------
   Setup

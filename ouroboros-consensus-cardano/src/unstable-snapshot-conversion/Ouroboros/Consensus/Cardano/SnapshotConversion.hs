@@ -32,7 +32,7 @@ import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node ()
 import Ouroboros.Consensus.Cardano.StreamingLedgerTables
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Storage.LedgerDB.API
@@ -160,8 +160,8 @@ data OutEnv backend = OutEnv
 
 data SomeBackend c where
   SomeBackend ::
-    StreamingBackend IO backend (LedgerState (CardanoBlock StandardCrypto)) =>
-    c IO backend (LedgerState (CardanoBlock StandardCrypto)) -> SomeBackend c
+    StreamingBackend IO backend LedgerState (CardanoBlock StandardCrypto) =>
+    c IO backend LedgerState (CardanoBlock StandardCrypto) -> SomeBackend c
 
 instance NoThunks (SomeBackend c) where
   wNoThunks _ (SomeBackend _) = pure Nothing
@@ -382,12 +382,16 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     ExceptT $
       bracket
         ((,) <$> mYieldArgs <*> mSinkArgs)
-        ( \(SomeBackend (yArgs :: YieldArgs IO backend1 l), (SomeBackend (sArgs :: SinkArgs IO backend2 l))) -> do
-            releaseYieldArgs yArgs
-            releaseSinkArgs sArgs
+        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 l (CardanoBlock StandardCrypto))
+             , (SomeBackend (sArgs :: SinkArgs IO backend2 l (CardanoBlock StandardCrypto)))
+             ) -> do
+              releaseYieldArgs yArgs
+              releaseSinkArgs sArgs
         )
-        ( \(SomeBackend (yArgs :: YieldArgs IO backend1 l), (SomeBackend (sArgs :: SinkArgs IO backend2 l))) -> do
-            runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
+        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 l (CardanoBlock StandardCrypto))
+             , (SomeBackend (sArgs :: SinkArgs IO backend2 l (CardanoBlock StandardCrypto)))
+             ) -> do
+              runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
         )
 
 {-------------------------------------------------------------------------------

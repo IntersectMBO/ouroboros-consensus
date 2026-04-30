@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -145,36 +146,36 @@ class
   , MakeDiff vs d
   , DiffSize d
   , KeysSize ks
-  , MakeInitHint vs
-  , MakeWriteHint d
-  , MakeReadHint vs
-  , MakeSerializeTablesHint vs
+  , MakeInitHint l vs
+  , MakeWriteHint l d
+  , MakeReadHint l vs
+  , MakeSerializeTablesHint l vs
   , Show ks
   , Show vs
   , Show k
   , Show d
-  , Show (BS.InitHint vs)
-  , Show (BS.WriteHint d)
-  , Show (BS.ReadHint vs)
-  , Show (SerializeTablesHint vs)
+  , Show (BS.InitHint l vs)
+  , Show (BS.WriteHint l d)
+  , Show (BS.ReadHint l vs)
+  , Show (SerializeTablesHint l vs)
   , Eq ks
   , Eq vs
   , Eq k
   , Eq d
-  , Eq (BS.InitHint vs)
-  , Eq (BS.WriteHint d)
-  , Eq (BS.ReadHint vs)
-  , Eq (SerializeTablesHint vs)
+  , Eq (BS.InitHint l vs)
+  , Eq (BS.WriteHint l d)
+  , Eq (BS.ReadHint l vs)
+  , Eq (SerializeTablesHint l vs)
   , Typeable ks
   , Typeable vs
   , Typeable k
   , Typeable d
-  , Typeable (BS.InitHint vs)
-  , Typeable (BS.WriteHint d)
-  , Typeable (BS.ReadHint vs)
-  , Typeable (SerializeTablesHint vs)
+  , Typeable (BS.InitHint l vs)
+  , Typeable (BS.WriteHint l d)
+  , Typeable (BS.ReadHint l vs)
+  , Typeable (SerializeTablesHint l vs)
   ) =>
-  HasOps ks k vs d
+  HasOps l ks k vs d
 
 class EmptyValues vs where
   emptyValues :: vs
@@ -202,17 +203,17 @@ class DiffSize d where
 class KeysSize ks where
   keysSize :: ks -> Int
 
-class MakeInitHint vs where
-  makeInitHint :: Proxy vs -> BS.InitHint vs
+class MakeInitHint l vs where
+  makeInitHint :: Proxy l -> Proxy vs -> BS.InitHint l vs
 
-class MakeWriteHint d where
-  makeWriteHint :: Proxy d -> BS.WriteHint d
+class MakeWriteHint l d where
+  makeWriteHint :: Proxy l -> Proxy d -> BS.WriteHint l d
 
-class MakeReadHint vs where
-  makeReadHint :: Proxy vs -> BS.ReadHint vs
+class MakeReadHint l vs where
+  makeReadHint :: Proxy l -> Proxy vs -> BS.ReadHint l vs
 
-class MakeSerializeTablesHint vs where
-  makeSerializeTablesHint :: Proxy vs -> SerializeTablesHint vs
+class MakeSerializeTablesHint l vs where
+  makeSerializeTablesHint :: Proxy l -> Proxy vs -> SerializeTablesHint l vs
 
 {-------------------------------------------------------------------------------
   State monad to run the mock in
@@ -240,10 +241,10 @@ runMockMonad (MockMonad t) = runState . runExceptT $ t
 ------------------------------------------------------------------------------}
 
 mBSInitFromValues ::
-  forall vs m.
+  forall l vs m.
   MonadState (Mock vs) m =>
   WithOrigin SlotNo ->
-  BS.InitHint vs ->
+  BS.InitHint l vs ->
   vs ->
   m ()
 mBSInitFromValues sl _st vs =
@@ -257,9 +258,9 @@ mBSInitFromValues sl _st vs =
     )
 
 mBSInitFromCopy ::
-  forall vs m.
+  forall l vs m.
   (MonadState (Mock vs) m, MonadError Err m) =>
-  BS.InitHint vs ->
+  BS.InitHint l vs ->
   FS.FsPath ->
   m ()
 mBSInitFromCopy _st bsp = do
@@ -300,7 +301,8 @@ mBSClose = do
 
 -- | Copy the contents of the backing store to the given path.
 mBSCopy ::
-  (MonadState (Mock vs) m, MonadError Err m) => SerializeTablesHint vs -> FS.FsPath -> m ()
+  forall l vs m.
+  (MonadState (Mock vs) m, MonadError Err m) => SerializeTablesHint l vs -> FS.FsPath -> m ()
 mBSCopy _ bsp = do
   mGuardBSClosed
   cps <- gets copies
@@ -337,9 +339,10 @@ mBSValueHandle = do
 
 -- | Write a diff to the backing store.
 mBSWrite ::
+  forall l vs d m.
   (MonadState (Mock vs) m, MonadError Err m, ApplyDiff vs d) =>
   SlotNo ->
-  BS.WriteHint d ->
+  BS.WriteHint l d ->
   d ->
   m ()
 mBSWrite sl _st d = do
@@ -401,9 +404,10 @@ mBSVHClose vh = do
 
 -- | Perform a range read on a backing store value handle.
 mBSVHRangeRead ::
+  forall l vs k ks m.
   (MonadState (Mock vs) m, MonadError Err m, LookupKeysRange ks k vs) =>
   ValueHandle vs ->
-  BS.ReadHint vs ->
+  BS.ReadHint l vs ->
   BS.RangeQuery ks ->
   m (vs, Maybe k)
 mBSVHRangeRead vh _ BS.RangeQuery{BS.rqPrev, BS.rqCount} = do
@@ -415,9 +419,10 @@ mBSVHRangeRead vh _ BS.RangeQuery{BS.rqPrev, BS.rqCount} = do
 
 -- | Perform a regular read on a backing store value handle
 mBSVHRead ::
+  forall l vs ks m.
   (MonadState (Mock vs) m, MonadError Err m, LookupKeys ks vs) =>
   ValueHandle vs ->
-  BS.ReadHint vs ->
+  BS.ReadHint l vs ->
   ks ->
   m vs
 mBSVHRead vh _ ks = do

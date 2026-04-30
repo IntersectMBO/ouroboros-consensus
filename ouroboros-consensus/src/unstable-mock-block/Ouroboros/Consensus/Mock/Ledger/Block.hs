@@ -435,12 +435,13 @@ instance
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: unexpected error: " <>) . show)
 
+instance GetBlockKeySets (SimpleBlock c ext) where
   getBlockKeySets SimpleBlock{simpleBody = SimpleBody txs} =
     LedgerTables $ KeysMK $ Mock.txIns txs
 
 data instance LedgerState (SimpleBlock c ext) mk = SimpleLedgerState
   { simpleLedgerState :: MockState (SimpleBlock c ext)
-  , simpleLedgerTables :: LedgerTables (LedgerState (SimpleBlock c ext)) mk
+  , simpleLedgerTables :: LedgerTables (SimpleBlock c ext) mk
   }
   deriving stock Generic
 
@@ -527,39 +528,32 @@ instance LedgerSupportsPeras (SimpleBlock c ext)
   LedgerTables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState (SimpleBlock c ext)) = Mock.TxIn
-type instance TxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
+type instance TxIn (SimpleBlock c ext) = Mock.TxIn
+type instance TxOut (SimpleBlock c ext) = Mock.TxOut
 
-instance CanUpgradeLedgerTables (LedgerState (SimpleBlock c ext)) where
+instance CanUpgradeLedgerTables LedgerState (SimpleBlock c ext) where
   upgradeTables _ _ = id
 
-instance IndexedMemPack (LedgerState (SimpleBlock c ext) EmptyMK) Mock.TxOut where
-  indexedTypeName _ = typeName @Mock.TxOut
+instance IndexedMemPack LedgerState (SimpleBlock c ext) Mock.TxOut where
+  indexedTypeName _ _ = typeName @Mock.TxOut
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
-instance IndexedMemPack (Ticked LedgerState (SimpleBlock c ext) EmptyMK) Mock.TxOut where
-  indexedTypeName _ = typeName @Mock.TxOut
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
-
-instance SerializeTablesWithHint (LedgerState (SimpleBlock c ext)) where
+instance SerializeTablesWithHint LedgerState (SimpleBlock c ext) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
 
-instance HasLedgerTables (LedgerState (SimpleBlock c ext)) where
+instance HasLedgerTables LedgerState (SimpleBlock c ext) where
   projectLedgerTables = simpleLedgerTables
   withLedgerTables (SimpleLedgerState s _) = SimpleLedgerState s
 
-instance HasLedgerTables (Ticked LedgerState (SimpleBlock c ext)) where
+instance HasLedgerTables (Ticked LedgerState) (SimpleBlock c ext) where
   projectLedgerTables =
-    castLedgerTables
-      . simpleLedgerTables
+    simpleLedgerTables
       . getTickedSimpleLedgerState
   withLedgerTables (TickedSimpleLedgerState st) tables =
-    TickedSimpleLedgerState $ withLedgerTables st $ castLedgerTables tables
+    TickedSimpleLedgerState $ withLedgerTables st tables
 
 instance CanStowLedgerTables (LedgerState (SimpleBlock c ext)) where
   stowLedgerTables st =

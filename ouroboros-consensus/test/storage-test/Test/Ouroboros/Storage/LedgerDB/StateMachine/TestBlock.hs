@@ -123,7 +123,7 @@ data TxErr
 instance PayloadSemantics Tx where
   data PayloadDependentState Tx mk
     = UTxTok
-    { utxtoktables :: LedgerTables (LedgerState TestBlock) mk
+    { utxtoktables :: LedgerTables TestBlock mk
     , -- \| All the tokens that ever existed. We use this to
       -- make sure a token is not created more than once. See
       -- the definition of 'applyPayload' in the
@@ -183,18 +183,18 @@ instance PayloadSemantics Tx where
   getPayloadKeySets Tx{consumed} =
     LedgerTables $ KeysMK $ Set.singleton consumed
 
-deriving instance Eq (LedgerTables (LedgerState TestBlock) mk) => Eq (PayloadDependentState Tx mk)
+deriving instance Eq (LedgerTables TestBlock mk) => Eq (PayloadDependentState Tx mk)
 deriving instance
-  NoThunks (LedgerTables (LedgerState TestBlock) mk) => NoThunks (PayloadDependentState Tx mk)
+  NoThunks (LedgerTables TestBlock mk) => NoThunks (PayloadDependentState Tx mk)
 deriving instance
-  Show (LedgerTables (LedgerState TestBlock) mk) => Show (PayloadDependentState Tx mk)
+  Show (LedgerTables TestBlock mk) => Show (PayloadDependentState Tx mk)
 deriving instance
-  Serialise (LedgerTables (LedgerState TestBlock) mk) => Serialise (PayloadDependentState Tx mk)
+  Serialise (LedgerTables TestBlock mk) => Serialise (PayloadDependentState Tx mk)
 
 onValues ::
   (Map Token TValue -> Map Token TValue) ->
-  LedgerTables (LedgerState TestBlock) ValuesMK ->
-  LedgerTables (LedgerState TestBlock) ValuesMK
+  LedgerTables TestBlock ValuesMK ->
+  LedgerTables TestBlock ValuesMK
 onValues f (LedgerTables testUtxtokTable) = LedgerTables $ updateMap testUtxtokTable
  where
   updateMap :: ValuesMK Token TValue -> ValuesMK Token TValue
@@ -203,7 +203,7 @@ onValues f (LedgerTables testUtxtokTable) = LedgerTables $ updateMap testUtxtokT
 
 queryKeys ::
   (Map Token TValue -> a) ->
-  LedgerTables (LedgerState TestBlock) ValuesMK ->
+  LedgerTables TestBlock ValuesMK ->
   a
 queryKeys f (LedgerTables (ValuesMK utxovals)) = f utxovals
 
@@ -211,29 +211,23 @@ queryKeys f (LedgerTables (ValuesMK utxovals)) = f utxovals
   Instances required for on-disk storage of ledger state tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState TestBlock) = Token
-type instance TxOut (LedgerState TestBlock) = TValue
+type instance TxIn TestBlock = Token
+type instance TxOut TestBlock = TValue
 
-instance CanUpgradeLedgerTables (LedgerState TestBlock) where
+instance CanUpgradeLedgerTables LedgerState TestBlock where
   upgradeTables _ _ = id
 
-instance IndexedMemPack (LedgerState TestBlock EmptyMK) TValue where
-  indexedTypeName _ = typeName @TValue
+instance IndexedMemPack LedgerState TestBlock TValue where
+  indexedTypeName _ _ = typeName @TValue
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
-instance IndexedMemPack (Ticked LedgerState TestBlock EmptyMK) TValue where
-  indexedTypeName _ = typeName @TValue
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
-
-instance SerializeTablesWithHint (LedgerState TestBlock) where
+instance SerializeTablesWithHint LedgerState TestBlock where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
 
-instance HasLedgerTables (LedgerState TestBlock) where
+instance HasLedgerTables LedgerState TestBlock where
   projectLedgerTables st = utxtoktables $ payloadDependentState st
   withLedgerTables st table =
     st
@@ -241,13 +235,12 @@ instance HasLedgerTables (LedgerState TestBlock) where
           (payloadDependentState st){utxtoktables = table}
       }
 
-instance HasLedgerTables (Ticked LedgerState TestBlock) where
-  projectLedgerTables (TickedTestLedger st) =
-    castLedgerTables $ projectLedgerTables st
+instance HasLedgerTables (Ticked LedgerState) TestBlock where
+  projectLedgerTables (TickedTestLedger st) = projectLedgerTables st
   withLedgerTables (TickedTestLedger st) tables =
-    TickedTestLedger $ withLedgerTables st $ castLedgerTables tables
+    TickedTestLedger $ withLedgerTables st tables
 
-instance Serialise (LedgerTables (LedgerState TestBlock) EmptyMK) where
+instance Serialise (LedgerTables TestBlock EmptyMK) where
   encode (LedgerTables (_ :: EmptyMK Token TValue)) =
     CBOR.encodeNull
   decode = LedgerTables EmptyMK <$ CBOR.decodeNull
@@ -280,9 +273,9 @@ deriving anyclass instance ToExpr DS.Length
 deriving anyclass instance ToExpr DS.SlotNoUB
 deriving anyclass instance ToExpr DS.SlotNoLB
 deriving anyclass instance
-  ToExpr (mk Token TValue) => ToExpr (LedgerTables (LedgerState TestBlock) mk)
+  ToExpr (mk Token TValue) => ToExpr (LedgerTables TestBlock mk)
 deriving instance
-  ToExpr (LedgerTables (LedgerState TestBlock) mk) => ToExpr (PayloadDependentState Tx mk)
+  ToExpr (LedgerTables TestBlock mk) => ToExpr (PayloadDependentState Tx mk)
 
 deriving newtype instance ToExpr (ValuesMK Token TValue)
 

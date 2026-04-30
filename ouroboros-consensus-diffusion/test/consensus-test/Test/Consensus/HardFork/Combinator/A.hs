@@ -43,6 +43,8 @@ module Test.Consensus.HardFork.Combinator.A
 import Cardano.Binary (DecoderError)
 import Cardano.Ledger.BaseTypes.NonZero
 import Cardano.Slotting.EpochInfo
+import qualified Codec.CBOR.Decoding as CBOR
+import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.Monad (guard)
 import qualified Data.Binary as B
@@ -208,41 +210,36 @@ newtype instance Ticked LedgerState BlockA mk = TickedLedgerStateA
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState BlockA) = Void
-type instance TxOut (LedgerState BlockA) = Void
+type instance TxIn BlockA = Void
+type instance TxOut BlockA = Void
 
-instance LedgerTablesAreTrivial (LedgerState BlockA) where
+instance LedgerTablesAreTrivial LedgerState BlockA where
   convertMapKind (LgrA x y) = LgrA x y
-instance LedgerTablesAreTrivial (Ticked LedgerState BlockA) where
+instance LedgerTablesAreTrivial (Ticked LedgerState) BlockA where
   convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
-deriving via
-  Void
-  instance
-    IndexedMemPack (LedgerState BlockA EmptyMK) Void
-deriving via
-  Void
-  instance
-    IndexedMemPack (Ticked LedgerState BlockA EmptyMK) Void
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    HasLedgerTables (LedgerState BlockA)
-deriving via
-  TrivialLedgerTables (Ticked LedgerState BlockA)
-  instance
-    HasLedgerTables (Ticked LedgerState BlockA)
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    CanStowLedgerTables (LedgerState BlockA)
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    CanUpgradeLedgerTables (LedgerState BlockA)
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    SerializeTablesWithHint (LedgerState BlockA)
+
+deriving via Void instance IndexedMemPack LedgerState BlockA Void
+
+instance HasLedgerTables LedgerState BlockA where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance HasLedgerTables (Ticked LedgerState) BlockA where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance CanStowLedgerTables (LedgerState BlockA) where
+  stowLedgerTables = convertMapKind
+  unstowLedgerTables = convertMapKind
+
+instance CanUpgradeLedgerTables LedgerState BlockA where
+  upgradeTables _ _ = id
+
+instance SerializeTablesWithHint LedgerState BlockA where
+  decodeTablesWithHint _ = do
+    _ <- CBOR.decodeMapLen
+    pure (LedgerTables $ ValuesMK Map.empty)
+  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
 
 data PartialLedgerConfigA = LCfgA
   { lcfgA_k :: SecurityParam
@@ -295,7 +292,8 @@ instance ApplyBlock LedgerState BlockA where
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult absurd
 
-  getBlockKeySets _blk = trivialLedgerTables
+instance GetBlockKeySets BlockA where
+  getBlockKeySets _blk = emptyLedgerTables
 
 instance UpdateLedger BlockA
 
@@ -400,7 +398,7 @@ instance LedgerSupportsMempool BlockA where
 
   txForgetValidated = forgetValidatedGenTxA
 
-  getTransactionKeySets _tx = trivialLedgerTables
+  getTransactionKeySets _tx = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 

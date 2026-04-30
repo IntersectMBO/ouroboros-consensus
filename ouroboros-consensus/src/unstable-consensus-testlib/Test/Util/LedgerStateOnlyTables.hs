@@ -18,6 +18,7 @@
 module Test.Util.LedgerStateOnlyTables
   ( OTLedgerState
   , OTLedgerTables
+  , OTBlock
   , emptyOTLedgerState
   , pattern OTLedgerState
   ) where
@@ -36,7 +37,7 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 -------------------------------------------------------------------------------}
 
 type OTLedgerState k v = LedgerState (OTBlock k v)
-type OTLedgerTables k v = LedgerTables (OTLedgerState k v)
+type OTLedgerTables k v = LedgerTables (OTBlock k v)
 
 -- | An empty type for blocks, which is only used to record the types @k@ and
 -- @v@.
@@ -63,19 +64,19 @@ emptyOTLedgerState ::
   LedgerState (OTBlock k v) mk
 emptyOTLedgerState = OTLedgerState emptyMK emptyLedgerTables
 
-instance CanUpgradeLedgerTables (LedgerState (OTBlock k v)) where
+instance CanUpgradeLedgerTables LedgerState (OTBlock k v) where
   upgradeTables _ _ = id
 
 instance
   MemPack v =>
-  IndexedMemPack (LedgerState (OTBlock k v) EmptyMK) v
+  IndexedMemPack LedgerState (OTBlock k v) v
   where
-  indexedTypeName _ = typeName @v
+  indexedTypeName _ _ = typeName @v
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
-instance (Ord k, MemPack k, MemPack v) => SerializeTablesWithHint (LedgerState (OTBlock k v)) where
+instance (Ord k, MemPack k, MemPack v) => SerializeTablesWithHint LedgerState (OTBlock k v) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
 
@@ -99,12 +100,12 @@ instance
   Simple ledger tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (OTLedgerState k v) = k
-type instance TxOut (OTLedgerState k v) = v
+type instance TxIn (OTBlock k v) = k
+type instance TxOut (OTBlock k v) = v
 
 instance
-  (Ord k, Eq v, Show k, Show v, MemPack k, MemPack v, NoThunks k, NoThunks v) =>
-  HasLedgerTables (OTLedgerState k v)
+  (Ord k, Eq v, MemPack k, MemPack v, NoThunks k, NoThunks v) =>
+  HasLedgerTables LedgerState (OTBlock k v)
   where
   projectLedgerTables OTLedgerState{otlsLedgerTables} =
     otlsLedgerTables

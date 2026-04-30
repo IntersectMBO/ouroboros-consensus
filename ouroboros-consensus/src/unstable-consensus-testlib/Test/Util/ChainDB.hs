@@ -19,7 +19,7 @@ import Ouroboros.Consensus.Config
   , configCodec
   )
 import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Params (mkPerasParams)
